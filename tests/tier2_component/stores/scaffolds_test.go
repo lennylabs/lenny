@@ -42,20 +42,14 @@ import "testing"
 // invokes ReconcileMax on Redis recovery are the follow-on tracked
 // in BUILD-GAPS.md.
 
-// TestTokenStoreContract — Postgres encrypted token store. Coverage:
-// KMS-envelope encryption, hash storage, revocation lookup, rotation,
-// RLS.
-//
-// spec: 12.2.1
-// diagnosis: no Postgres-backed encrypted TokenStore exists. The
-// migrations table issued_tokens stores only the SHA-256 hash of the
-// raw token, never the token bytes; the §13.3 TokenStore role for
-// encrypted downstream tokens is unimplemented, with no KMS-envelope
-// writer wired through pkg/kms/envelope for token secrets and no
-// revocation lookup index for the encrypted-token shape.
-func TestTokenStoreContract(t *testing.T) {
-	t.Skip("blocked: §12.2.1 TokenStore — the Postgres encrypted-token table, the KMS-envelope writer for token secrets, and the matching revocation-lookup migration are not built")
-}
+// TestTokenStoreContract is implemented in
+// connectorcredstore_test.go, which exercises the §13.3 Postgres
+// encrypted TokenStore (pkg/gateway/connectorcredstore/pgstore)
+// against a real container with migration 0048 applied: KMS-envelope
+// encryption of the access and refresh tokens, SHA-256 hash storage
+// for the revocation-lookup hot path, upsert + UpdatedAt monotonicity,
+// cross-tenant isolation under the RLS policy, and Delete /
+// ListByConnector semantics.
 
 // TestTokenIssuanceStoreContract is implemented in
 // issuedtokenstore_test.go against pkg/gateway/issuedtokenstore.

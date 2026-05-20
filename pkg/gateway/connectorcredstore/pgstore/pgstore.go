@@ -1,0 +1,407 @@
+// SPDX-License-Identifier: MIT
+
+// Package pgstore is the §13.3 Postgres-backed encrypted TokenStore
+// for §9.3 connector OAuth credentials. Mirrors the §4.9 user-credential
+// envelope pattern in pkg/gateway/credentialstore/pgstore: every token
+// secret is sealed with a per-record DEK wrapped by the per-tenant KMS
+// KEK before it reaches Postgres, and a SHA-256 hash of the access
+// token is stored alongside for the §13.3 revocation-lookup hot path.
+package pgstore
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
+	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/kms/envelope"
+)
+
+// Store is the Postgres-backed §9.3 connector-credential registry
+// with §13.3 KMS-envelope encryption. Construct with New.
+type Store struct {
+	pool  *pgxpool.Pool
+	kms   kms.Provider
+	clock func() time.Time
+}
+
+// New returns a Store backed by pool, envelope-encrypting connector
+// OAuth tokens under KEKs from provider. Pool must point at a
+// database with migration 0048 applied. provider must not be nil:
+// §13.3 requires T4 token material to be stored under envelope
+// encryption; a nil provider cannot satisfy the contract.
+//
+// clock returns the current time used by Put / RotateAccessToken /
+// Revoke. Pass nil to use time.Now in UTC.
+func New(pool *pgxpool.Pool, provider kms.Provider, clock func() time.Time) (*Store, error) {
+	if pool == nil {
+		return nil, errors.New("connectorcredstore/pgstore: nil pool")
+	}
+	if provider == nil {
+		return nil, errors.New("connectorcredstore/pgstore: nil kms provider; §13.3 token secrets require envelope encryption")
+	}
+	if clock == nil {
+		clock = func() time.Time { return time.Now().UTC() }
+	}
+	return &Store{pool: pool, kms: provider, clock: clock}, nil
+}
+
+var _ connectorcredstore.Store = (*Store)(nil)
+
+// kekAlias is the per-tenant KEK alias, matching credentialstore/pgstore.
+func kekAlias(tenantID string) string { return "tenant:" + tenantID }
+
+func (s *Store) cipher(tenantID string) (*envelope.Cipher, error) {
+	return envelope.New(s.kms, kekAlias(tenantID))
+}
+
+// seal envelope-encrypts a plaintext secret for tenantID.
+func (s *Store) seal(ctx context.Context, tenantID, plaintext string) ([]byte, int, error) {
+	if plaintext == "" {
+		return nil, 0, nil
+	}
+	c, err := s.cipher(tenantID)
+	if err != nil {
+		return nil, 0, err
+	}
+	sealed, err := c.Seal(ctx, []byte(plaintext))
+	if err != nil {
+		return nil, 0, fmt.Errorf("connectorcredstore/pgstore: seal: %w", err)
+	}
+	blob, err := envelope.Encode(sealed)
+	if err != nil {
+		return nil, 0, fmt.Errorf("connectorcredstore/pgstore: encode sealed: %w", err)
+	}
+	return blob, sealed.KEKVersion, nil
+}
+
+// open reverses seal. An empty blob decodes to the empty string.
+func (s *Store) open(ctx context.Context, tenantID string, blob []byte, keyVersion int) (string, error) {
+	if len(blob) == 0 {
+		return "", nil
+	}
+	c, err := s.cipher(tenantID)
+	if err != nil {
+		return "", err
+	}
+	sealed, err := envelope.Decode(blob)
+	if err != nil {
+		return "", fmt.Errorf("connectorcredstore/pgstore: decode sealed: %w", err)
+	}
+	if sealed.KEKVersion != keyVersion {
+		return "", fmt.Errorf("connectorcredstore/pgstore: key_version %d does not match sealed blob version %d",
+			keyVersion, sealed.KEKVersion)
+	}
+	plain, err := c.Open(ctx, sealed)
+	if err != nil {
+		return "", fmt.Errorf("connectorcredstore/pgstore: open: %w", err)
+	}
+	return string(plain), nil
+}
+
+func accessTokenHash(token string) []byte {
+	sum := sha256.Sum256([]byte(token))
+	return sum[:]
+}
+
+// Put implements connectorcredstore.Store. The (tenant, connector,
+// user) triple is the upsert key; a re-store advances UpdatedAt and
+// rewrites the token blobs and the hash.
+func (s *Store) Put(ctx context.Context, cred connectorcredstore.ConnectorCredential) error {
+	if err := validate(cred); err != nil {
+		return err
+	}
+	accBlob, accVer, err := s.seal(ctx, cred.TenantID, cred.AccessToken)
+	if err != nil {
+		return err
+	}
+	var refBlob []byte
+	var refVerPtr *int
+	if cred.RefreshToken != "" {
+		blob, ver, err := s.seal(ctx, cred.TenantID, cred.RefreshToken)
+		if err != nil {
+			return err
+		}
+		refBlob = blob
+		refVerPtr = &ver
+	}
+	hash := accessTokenHash(cred.AccessToken)
+	scopesJSON, err := json.Marshal(append([]string(nil), cred.Scopes...))
+	if err != nil {
+		return fmt.Errorf("connectorcredstore/pgstore: marshal scopes: %w", err)
+	}
+
+	return pgtenant.InTx(ctx, s.pool, cred.TenantID, func(tx pgx.Tx) error {
+		now := s.clock().UTC()
+		var prevCreated, prevUpdated time.Time
+		row := tx.QueryRow(ctx,
+			`SELECT created_at, updated_at FROM connector_credentials
+			 WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
+			cred.TenantID, cred.ConnectorID, cred.UserID)
+		err := row.Scan(&prevCreated, &prevUpdated)
+		var created time.Time
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			created = now
+		case err != nil:
+			return err
+		default:
+			created = prevCreated
+			now = pgtenant.MonotonicNext(prevUpdated, now)
+		}
+		expires := pgtenant.NullTime(cred.ExpiresAt)
+		_, err = tx.Exec(ctx, `
+			INSERT INTO connector_credentials (
+				tenant_id, connector_id, user_id,
+				access_token_blob, access_token_key_version, access_token_hash,
+				refresh_token_blob, refresh_token_key_version,
+				token_type, scopes, expires_at,
+				created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13)
+			ON CONFLICT (tenant_id, connector_id, user_id) DO UPDATE SET
+				access_token_blob = EXCLUDED.access_token_blob,
+				access_token_key_version = EXCLUDED.access_token_key_version,
+				access_token_hash = EXCLUDED.access_token_hash,
+				refresh_token_blob = EXCLUDED.refresh_token_blob,
+				refresh_token_key_version = EXCLUDED.refresh_token_key_version,
+				token_type = EXCLUDED.token_type,
+				scopes = EXCLUDED.scopes,
+				expires_at = EXCLUDED.expires_at,
+				updated_at = EXCLUDED.updated_at`,
+			cred.TenantID, cred.ConnectorID, cred.UserID,
+			accBlob, accVer, hash,
+			refBlob, refVerPtr,
+			cred.TokenType, string(scopesJSON), expires,
+			created, now)
+		return err
+	})
+}
+
+// Get implements connectorcredstore.Store.
+func (s *Store) Get(ctx context.Context, tenantID, connectorID, userID string) (connectorcredstore.ConnectorCredential, error) {
+	var out connectorcredstore.ConnectorCredential
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		var (
+			accBlob, refBlob, hash []byte
+			accVer                 int
+			refVer                 *int
+			scopesJSON             []byte
+			expiresAt              *time.Time
+		)
+		row := tx.QueryRow(ctx, `
+			SELECT access_token_blob, access_token_key_version, access_token_hash,
+			       refresh_token_blob, refresh_token_key_version,
+			       token_type, scopes, expires_at, created_at, updated_at
+			FROM connector_credentials
+			WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
+			tenantID, connectorID, userID)
+		err := row.Scan(&accBlob, &accVer, &hash,
+			&refBlob, &refVer,
+			&out.TokenType, &scopesJSON, &expiresAt, &out.CreatedAt, &out.UpdatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return connectorcredstore.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		out.TenantID = tenantID
+		out.ConnectorID = connectorID
+		out.UserID = userID
+		access, err := s.open(ctx, tenantID, accBlob, accVer)
+		if err != nil {
+			return err
+		}
+		out.AccessToken = access
+		if refBlob != nil && refVer != nil {
+			refresh, err := s.open(ctx, tenantID, refBlob, *refVer)
+			if err != nil {
+				return err
+			}
+			out.RefreshToken = refresh
+		}
+		if expiresAt != nil {
+			out.ExpiresAt = *expiresAt
+		}
+		if len(scopesJSON) > 0 {
+			if err := json.Unmarshal(scopesJSON, &out.Scopes); err != nil {
+				return fmt.Errorf("connectorcredstore/pgstore: unmarshal scopes: %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return connectorcredstore.ConnectorCredential{}, err
+	}
+	return out, nil
+}
+
+// Delete implements connectorcredstore.Store.
+func (s *Store) Delete(ctx context.Context, tenantID, connectorID, userID string) error {
+	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			DELETE FROM connector_credentials
+			WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
+			tenantID, connectorID, userID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return connectorcredstore.ErrNotFound
+		}
+		return nil
+	})
+}
+
+// ListByConnector implements connectorcredstore.Store.
+func (s *Store) ListByConnector(ctx context.Context, tenantID, connectorID string) ([]connectorcredstore.ConnectorCredential, error) {
+	var out []connectorcredstore.ConnectorCredential
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT user_id,
+			       access_token_blob, access_token_key_version,
+			       refresh_token_blob, refresh_token_key_version,
+			       token_type, scopes, expires_at, created_at, updated_at
+			FROM connector_credentials
+			WHERE tenant_id = $1 AND connector_id = $2
+			ORDER BY user_id`, tenantID, connectorID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				cred                connectorcredstore.ConnectorCredential
+				accBlob, refBlob    []byte
+				accVer              int
+				refVer              *int
+				scopesJSON          []byte
+				expiresAt           *time.Time
+			)
+			if err := rows.Scan(&cred.UserID,
+				&accBlob, &accVer,
+				&refBlob, &refVer,
+				&cred.TokenType, &scopesJSON, &expiresAt, &cred.CreatedAt, &cred.UpdatedAt); err != nil {
+				return err
+			}
+			cred.TenantID = tenantID
+			cred.ConnectorID = connectorID
+			access, err := s.open(ctx, tenantID, accBlob, accVer)
+			if err != nil {
+				return err
+			}
+			cred.AccessToken = access
+			if refBlob != nil && refVer != nil {
+				refresh, err := s.open(ctx, tenantID, refBlob, *refVer)
+				if err != nil {
+					return err
+				}
+				cred.RefreshToken = refresh
+			}
+			if expiresAt != nil {
+				cred.ExpiresAt = *expiresAt
+			}
+			if len(scopesJSON) > 0 {
+				if err := json.Unmarshal(scopesJSON, &cred.Scopes); err != nil {
+					return fmt.Errorf("connectorcredstore/pgstore: unmarshal scopes: %w", err)
+				}
+			}
+			out = append(out, cred)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// FindByAccessTokenHash returns the credential whose access token
+// hashes to hash, or ErrNotFound. The §13.3 revocation hot path uses
+// it to resolve a presented bearer to a stored row without
+// decrypting every credential under the tenant.
+func (s *Store) FindByAccessTokenHash(ctx context.Context, tenantID string, hash []byte) (connectorcredstore.ConnectorCredential, error) {
+	var (
+		connectorID, userID string
+		accBlob, refBlob    []byte
+		accVer              int
+		refVer              *int
+		tokenType           string
+		scopesJSON          []byte
+		expiresAt           *time.Time
+		createdAt, updatedAt time.Time
+	)
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx, `
+			SELECT connector_id, user_id,
+			       access_token_blob, access_token_key_version,
+			       refresh_token_blob, refresh_token_key_version,
+			       token_type, scopes, expires_at, created_at, updated_at
+			FROM connector_credentials
+			WHERE tenant_id = $1 AND access_token_hash = $2
+			LIMIT 1`, tenantID, hash)
+		err := row.Scan(&connectorID, &userID,
+			&accBlob, &accVer,
+			&refBlob, &refVer,
+			&tokenType, &scopesJSON, &expiresAt, &createdAt, &updatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return connectorcredstore.ErrNotFound
+		}
+		return err
+	})
+	if err != nil {
+		return connectorcredstore.ConnectorCredential{}, err
+	}
+	cred := connectorcredstore.ConnectorCredential{
+		TenantID:    tenantID,
+		ConnectorID: connectorID,
+		UserID:      userID,
+		TokenType:   tokenType,
+		CreatedAt:   createdAt,
+		UpdatedAt:   updatedAt,
+	}
+	access, err := s.open(ctx, tenantID, accBlob, accVer)
+	if err != nil {
+		return connectorcredstore.ConnectorCredential{}, err
+	}
+	cred.AccessToken = access
+	if refBlob != nil && refVer != nil {
+		refresh, err := s.open(ctx, tenantID, refBlob, *refVer)
+		if err != nil {
+			return connectorcredstore.ConnectorCredential{}, err
+		}
+		cred.RefreshToken = refresh
+	}
+	if expiresAt != nil {
+		cred.ExpiresAt = *expiresAt
+	}
+	if len(scopesJSON) > 0 {
+		if err := json.Unmarshal(scopesJSON, &cred.Scopes); err != nil {
+			return connectorcredstore.ConnectorCredential{}, err
+		}
+	}
+	return cred, nil
+}
+
+// validate mirrors the Memory.Put validation; the inputs the same
+// constraints hold on either backend.
+func validate(c connectorcredstore.ConnectorCredential) error {
+	switch {
+	case c.TenantID == "":
+		return errors.New("connectorcredstore/pgstore: tenant id is required")
+	case c.ConnectorID == "":
+		return errors.New("connectorcredstore/pgstore: connector id is required")
+	case c.UserID == "":
+		return errors.New("connectorcredstore/pgstore: user id is required")
+	case c.AccessToken == "":
+		return errors.New("connectorcredstore/pgstore: access token is required")
+	}
+	return nil
+}
