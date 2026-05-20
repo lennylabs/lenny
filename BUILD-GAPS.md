@@ -334,14 +334,6 @@ identified.
   Blocks `TestStoreRouterContract` in
   `tests/tier2_component/stores/scaffolds_test.go:153`.
 
-- **TokenStore stores SHA-256 hashes only.**
-  `pkg/gateway/issuedtokenstore/issuedtokenstore.go:43-45` declares
-  `TokenHash []byte` as the SHA-256 digest;
-  `migrations/0001_initial_schema.up.sql:188-189` confirms the database
-  column carries the digest. There is no encrypted TokenStore with
-  KMS-envelope writes or a revocation-lookup index. Blocks
-  `TestTokenStoreContract`.
-
 - **CRDPodRegistry over the Kubernetes API is absent.**
   `pkg/podsession.Registry` is an in-process map. There is no `WatchPods`
   event-latency surface. Blocks `TestPodRegistryContract`.
