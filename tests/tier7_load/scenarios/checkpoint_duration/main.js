@@ -84,6 +84,12 @@ export default function () {
     { headers: authHeaders({ 'Content-Type': 'application/json', 'Idempotency-Key': `${__VU}-${__ITER}-${Date.now()}` }) },
   );
   if (!check(create, { 'session created': (r) => r.status === 201 })) {
+    // Surface the first 256 bytes of the response body on the
+    // failing create so the §15.1 error envelope (code / message)
+    // is visible in the k6 stderr; otherwise the scenario reports
+    // only the HTTP status. Use console.error so the message
+    // reaches stderr without inflating the summary JSON.
+    console.error(`create failed: status=${create.status} body=${(create.body || '').slice(0, 256)}`);
     return;
   }
   const body = JSON.parse(create.body);
@@ -103,5 +109,11 @@ export default function () {
       tags: { name: 'checkpoint' },
     },
   );
-  check(ckpt, { 'workspace persisted': (r) => r.status === 201 });
+  if (!check(ckpt, { 'workspace persisted': (r) => r.status === 201 })) {
+    // Capture the first 256 bytes of the upload response so the
+    // failing §15.1 error envelope is diagnosable from the k6
+    // stderr stream. The session ID lets a reader correlate the
+    // failure with the gateway-side request log.
+    console.error(`upload failed: session=${sessionID} status=${ckpt.status} body=${(ckpt.body || '').slice(0, 256)}`);
+  }
 }

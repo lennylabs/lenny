@@ -474,8 +474,23 @@ re-attempt them.
   AssignCredentials / RotateCredentials / RevokeCredentials to the
   remote, replacing the in-process MintLease call.
 - **`POST /v1/sessions/{id}/upload` 100% error rate against Kind.**
-  Recorded above under Gateway request handling. Resolution needs
-  captured k6 output from a Kind run.
+  Recorded above under Gateway request handling. The local
+  reproduction against an in-process gateway with dev mode plus
+  the documented `checkpoint_duration` payload (1 MB octet stream)
+  returns `201 Created` cleanly, so the handler path itself is
+  not the failure. The failure is specific to the e2e Kind
+  install: most likely candidates are the
+  `checkpoint_duration` k6 scenario's hard-coded
+  `runtimeRef: 'claude-code'` (no `Idempotency-Key` collision is
+  possible since each VU iteration mints a fresh key, and the
+  size sits well under the 64 MiB `UploadMaxBodyBytes` cap), or
+  a tenant / runtime registration race against the bootstrap Job
+  on a freshly-installed cluster. Resolution needs captured k6
+  output from a Kind run that shows the response body and status
+  on the failing request — the scenario's `check()` callback
+  currently discards both. Adding a `response.body` capture on
+  failure to `tests/tier7_load/scenarios/checkpoint_duration/main.js`
+  is the next step.
 - **`docs/runbooks/` structural completion (59 runbooks).** Every
   runbook in `docs/runbooks/` is missing at least one of the
   required canonical sections (Symptom, Diagnosis, Procedure,
