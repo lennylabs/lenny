@@ -66,13 +66,65 @@ services:
   redis:
     image: redis:7-alpine
     container_name: lenny-redis
-    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    command:
+      ["redis-server", "--appendonly", "no", "--save", "", "--replica-announce-ip", "redis"]
     ports: ["16379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       timeout: 2s
       retries: 30
+
+  # §12.8 Redis Sentinel topology. The default profile runs a single
+  # master (the `redis` service above) plus one replica plus three
+  # Sentinel nodes — the minimum quorum to elect a new master when
+  # the original fails. The tier-8 TestRedisSentinelFailover chaos
+  # scaffold uses this to drive an automatic failover under fault
+  # injection. Production deployments run a Kubernetes Sentinel-based
+  # operator; this compose is a fault-injection harness, not a
+  # production posture.
+  redis-replica:
+    image: redis:7-alpine
+    container_name: lenny-redis-replica
+    command:
+      ["redis-server", "--appendonly", "no", "--save", "", "--replicaof", "redis", "6379",
+       "--replica-announce-ip", "redis-replica"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  redis-sentinel-1: &redis-sentinel
+    image: redis:7-alpine
+    container_name: lenny-redis-sentinel-1
+    entrypoint:
+      ["sh", "-c",
+       "echo 'sentinel resolve-hostnames yes\nsentinel announce-hostnames yes\nsentinel monitor lenny-master redis 6379 2\nsentinel down-after-milliseconds lenny-master 2000\nsentinel failover-timeout lenny-master 5000\nsentinel parallel-syncs lenny-master 1' > /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"]
+    ports: ["26379:26379"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  redis-sentinel-2:
+    <<: *redis-sentinel
+    container_name: lenny-redis-sentinel-2
+    ports: ["26380:26379"]
+
+  redis-sentinel-3:
+    <<: *redis-sentinel
+    container_name: lenny-redis-sentinel-3
+    ports: ["26381:26379"]
 
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z

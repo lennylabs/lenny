@@ -413,12 +413,13 @@ topologies, the published Homebrew tap) are recorded under the
 Blocked section because they are external infrastructure the
 repository does not yet provision.
 
-- **The compose profile lacks Redis Sentinel.** `compose/default.yml`
-  runs a single Redis node. The tier-8 `TestRedisSentinelFailover`
-  chaos scaffold needs a Sentinel topology to exercise. PgBouncer is
-  wired in session pooling mode and reachable via
-  `Stack.PgBouncerDSN()`; the `TestRLSPoolerReuseDoesNotLeakContext`
-  scaffold can convert to a live test.
+- **PgBouncer (session pooling) and Redis Sentinel topology are now
+  wired** in `compose/default.yml`, reachable via
+  `Stack.PgBouncerDSN()` and `Stack.RedisSentinelAddrs()` /
+  `Stack.RedisSentinelMasterName()`. The
+  `TestRLSPoolerReuseDoesNotLeakContext` (tier 2 RLS) and
+  `TestRedisSentinelFailover` (tier 8 chaos) scaffolds can convert
+  to live tests against this compose profile.
 
 ## Cross-cutting findings
 

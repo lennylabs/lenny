@@ -177,9 +177,24 @@ func (s *Stack) PgBouncerDSN() string {
 	return "postgres://lenny:lenny@127.0.0.1:16432/lenny?sslmode=disable"
 }
 
-// RedisAddr returns the host:port for the Redis service.
+// RedisAddr returns the host:port for the Redis master node.
 func (s *Stack) RedisAddr() string {
 	return "127.0.0.1:16379"
+}
+
+// RedisSentinelAddrs returns the three Sentinel host:port pairs the
+// §12.8 TestRedisSentinelFailover chaos scaffold consumes. The
+// quorum is 2; a client should connect via the redis Sentinel
+// protocol against any of the three addresses.
+func (s *Stack) RedisSentinelAddrs() []string {
+	return []string{"127.0.0.1:26379", "127.0.0.1:26380", "127.0.0.1:26381"}
+}
+
+// RedisSentinelMasterName returns the master name the Sentinel
+// quorum monitors. Matches the `sentinel monitor lenny-master`
+// directive rendered into the Sentinel config.
+func (s *Stack) RedisSentinelMasterName() string {
+	return "lenny-master"
 }
 
 // MinIOEndpoint returns the S3-compatible endpoint URL.
