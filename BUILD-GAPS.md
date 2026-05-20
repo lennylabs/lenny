@@ -171,30 +171,52 @@ controller. Each scenario's underlying behaviour has unit / tier-2
 
 ### Tier 6 (E2E on cloud)
 
-All 11 tests in `tests/tier6_e2e_cloud/scaffolds_test.go` skip after
-the cloud-availability guard (`cloud.SkipUnlessAvailable` reads
-`LENNY_CLOUD_PROVIDER`, then probes the provider CLI). The cloud
-guard alone covers the common local-developer path; when a
-provider is configured, the second `t.Skip("blocked: ...")`
-documents the per-suite cloud prerequisite. Two prerequisite
-classes:
+Two of the 11 scaffolds now run live against the cloud adapters:
 
-- **Code-side (pkg/\* adapters absent).** `TestCloudCSI`
-  (GCS / S3 / Azure Blob adapters next to `pkg/blobstore/miniostore`),
-  `TestCloudKMS` (Cloud KMS / AWS KMS / Azure Key Vault providers
-  next to `pkg/kms/local`), `TestCloudSecretStore` (provider-managed
-  TokenStore adapter in `pkg/credential`), and `TestCloudBillingExport`
-  (BigQuery / Athena / Azure Data Lake billing sink).
-- **Config-side (Terraform / Helm absent).** `TestGvisorIsolation`,
-  `TestKataIsolation`, `TestMultiZoneDR`, `TestManagedIngress`,
-  `TestCloudOIDC`, `TestMultiAZMinIO`, and `TestCloudObservability`
-  need `deploy/terraform/cloud/<provider>/`, the operator-supplied
-  Ingress example, the per-provider IAM binding, and the Helm
-  values that select the per-provider collector.
+- `TestCloudKMS` exercises `pkg/kms/aws.Provider` end-to-end
+  against the AWS KMS key the AWS Terraform module emits. A
+  random 32-byte DEK round-trips through WrapDEK + UnwrapDEK
+  against AWS KMS and a cross-alias unwrap fails on the
+  EncryptionContext binding.
+- `TestCloudCSI` exercises `pkg/blobstore/s3.Store` end-to-end
+  against the S3 bucket the AWS Terraform module emits. A
+  Put + Get + Stat + SoftDelete lifecycle on a per-run session
+  prefix asserts byte-for-byte body recovery and ErrNotFound
+  after SoftDelete.
 
-The aggregate is captured under [Infrastructure gaps](#infrastructure-gaps);
-they unblock together when a Wave-7 implementer lands the
-per-provider Terraform and the cloud adapter set.
+Both passed against a fresh EKS apply (account 780138804904,
+us-west-2, release `lenny-e2e`, cluster `lenny-e2e-eks`) using
+`scripts/cloud/eks/up.sh` + the Terraform-emitted env vars
+`LENNY_AWS_KMS_KEY_ARN` and `LENNY_AWS_ARTIFACT_BUCKET`. Mirror
+implementations for the GCP and Azure adapters land when an
+operator drives the equivalent `scripts/cloud/{gke,aks}/up.sh`
++ `LENNY_GCP_*` / `LENNY_AZURE_*` env-var bundle.
+
+Eight scaffolds still skip because they need the chart installed
+against the cluster (`TestGvisorIsolation`, `TestKataIsolation`,
+`TestMultiZoneDR`, `TestManagedIngress`, `TestCloudOIDC`,
+`TestMultiAZMinIO`, `TestCloudObservability`, `TestCloudBillingExport`).
+Each needs an additional sequence beyond the Terraform apply:
+
+1. Build the `lenny-*` images (gateway, controller, ops,
+   token-service, webhook, runtimes) and push them to ECR (or the
+   per-provider registry).
+2. Render a per-provider values overlay that points the chart at
+   ECR + the Terraform outputs (bucket / KMS / IRSA role) and
+   selects the right sandbox node pool / observability sink for
+   the test.
+3. `helm install lenny-e2e charts/lenny -f <cloud-values>` and
+   wait for readiness.
+4. Write the per-test body that drives the §12.6 invariant
+   (gVisor pod placement, multi-zone failover, ingress reach,
+   etc.) against the installed gateway.
+
+Steps 1-3 are mechanical operator work; step 4 is per-test code.
+The `TestCloudSecretStore` scaffold is a separate
+v2 deliverable — connector credentials today go through the
+shipped `pkg/credential/connectorcredstore` Postgres-backed
+encrypted TokenStore; routing them through Secrets Manager / Key
+Vault is a future option, not a v1 gap.
 
 ### Tier 7 (Load and SLO)
 
