@@ -56,6 +56,7 @@ package tier9_security_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/tier9_security/pentest"
@@ -200,12 +201,37 @@ func TestElicitationPlatformFloor(t *testing.T) {
 		"tenant_stored_mode) resolver on a live request. The echo runtime emits none")
 }
 
-// §12.9.11 SBOM generation. Pre-release only.
+// §12.9.11 SBOM generation. The release pipeline emits one
+// CycloneDX SBOM per built image, attaches each SBOM as a Sigstore
+// in-toto attestation bound to the image digest, and uploads the
+// SBOMs as release artifacts. The Kind cluster cannot observe the
+// release pipeline at runtime, so this test enforces the static
+// contract: .github/workflows/release.yml carries the SBOM
+// generation step, the cosign attest step that binds it, and the
+// per-image upload step. A future release that drops any of these
+// steps trips this gate before the image ships.
 func TestSBOMGeneration(t *testing.T) {
-	t.Skip("not implemented: §12.9.11 SBOM — this is not a live-cluster behaviour test. SBOM generation " +
-		"is a release-pipeline build step (the SBOM generator, artifact storage, and the per-image " +
-		"attestation run at image-build time); there is nothing on a running Kind cluster to assert it " +
-		"against")
+	path := filepath.Join(repoRoot(t), ".github", "workflows", "release.yml")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("§12.9.11 SBOM gate: cannot read %s: %v", path, err)
+	}
+	src := string(body)
+	required := []struct {
+		marker string
+		why    string
+	}{
+		{"anchore/sbom-action", "the CycloneDX SBOM generator step must be present"},
+		{"format: cyclonedx-json", "the SBOM must be emitted in CycloneDX JSON format"},
+		{"cosign attest", "every SBOM must be attached as a Sigstore in-toto attestation"},
+		{"--type cyclonedx", "the cosign attest step must declare the CycloneDX predicate type"},
+		{"name: Upload SBOM for the release job", "the SBOM must be uploaded as a release artifact"},
+	}
+	for _, r := range required {
+		if !strings.Contains(src, r.marker) {
+			t.Errorf("§12.9.11 SBOM gate: %s missing marker %q (%s)", path, r.marker, r.why)
+		}
+	}
 }
 
 // External pen-test driver. Pre-release ships a security artifact

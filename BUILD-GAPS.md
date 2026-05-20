@@ -456,8 +456,12 @@ re-attempt them.
   as remediated. Release engineering points
   `LENNY_PENTEST_BUNDLE` at the partner bundle when an external
   engagement ships.
-- **SBOM generation as a CI step.** Tier-9 `TestSBOMGeneration` is a
-  release-pipeline artifact, not a cluster-testable behavior.
+- **SBOM generation as a CI step.** RESOLVED. `TestSBOMGeneration`
+  now enforces the static contract on `.github/workflows/release.yml`:
+  the `anchore/sbom-action` step, the `cyclonedx-json` format flag,
+  the `cosign attest --type cyclonedx` step, and the
+  "Upload SBOM for the release job" artifact step must all be
+  present. A release that drops any step trips the gate.
 
 ## Recommended sequencing
 
