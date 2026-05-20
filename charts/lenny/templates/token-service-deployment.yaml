@@ -97,14 +97,12 @@ spec:
       port: {{ .Values.tokenService.metricsPort }}
       targetPort: grpc
 ---
-{{- /*
-PodDisruptionBudget for the lenny-token-service. The §4.3 trust
-boundary requires the gateway to reach the Token Service for every
-credential lease materialization; an unprotected voluntary disruption
-(node drain, cluster autoscaler) of both replicas at once would stall
-every new session that needs a fresh lease. minAvailable: 1 ensures
-at least one replica stays serving across rolling node operations.
-*/ -}}
+# PodDisruptionBudget for the lenny-token-service. The §4.3 trust
+# boundary requires the gateway to reach the Token Service for every
+# credential lease materialization; an unprotected voluntary disruption
+# (node drain, cluster autoscaler) of both replicas at once would stall
+# every new session that needs a fresh lease. minAvailable: 1 ensures
+# at least one replica stays serving across rolling node operations.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
