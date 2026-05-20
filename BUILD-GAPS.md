@@ -100,32 +100,29 @@ envelope-structure and field-preservation contracts. Streaming, tool calls,
 attachments, system prompts, request-ID propagation, and multi-turn
 conversations are not exercised.
 
-`tests/tier3_contract/rest_sessions/sessions_test.go` exercises 7 of the
-roughly 25 `/v1/sessions/...` REST endpoints declared at
-`pkg/gateway/sessionserver/sessionserver.go:443-476`. The unexercised
-endpoints are:
-
-- `POST /v1/sessions/start`
-- `POST /v1/sessions/{id}/derive`
-- `POST /v1/sessions/{id}/replay`
-- `POST /v1/sessions/{id}/extend-retention`
-- `POST /v1/sessions/{id}/eval`
-- `POST /v1/sessions/{id}/upload`
-- `POST /v1/sessions/{id}/messages`
-- `GET /v1/sessions/{id}/transcript`
-- `GET /v1/sessions/{id}/tree`
-- `GET /v1/sessions/{id}/events`
-- `POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve`
-- `POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny`
-- `POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond`
-- `POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss`
-- `GET /v1/runtimes`
-- `GET /v1/runtimes/{name}/meta/{key}`
-- `GET /v1/models`
-- `POST /v1/environments/{name}/sessions`
-- `GET /v1/usage`
-- `GET /v1/metering/events`
-- `GET /v1/blobs/{ref...}`
+`tests/tier3_contract/rest_sessions/sessions_test.go` plus
+`unexercised_endpoints_test.go` exercise the §15.1 REST surface.
+The original suite covered the core lifecycle (create/get/list/delete,
+finalize, start, interrupt, terminate, resume); the unexercised
+suite (commit pending) covers `POST /v1/sessions/start`,
+`POST /v1/environments/{name}/sessions`, `GET /v1/runtimes`,
+`GET /v1/runtimes/{name}/meta/{key}`, `GET /v1/models`,
+`GET /v1/usage` (FORBIDDEN gate), `GET /v1/metering/events`
+(FORBIDDEN gate), `POST /v1/sessions/{id}/derive`,
+`POST /v1/sessions/{id}/replay`,
+`POST /v1/sessions/{id}/extend-retention`,
+`POST /v1/sessions/{id}/eval` (EVAL_UNAVAILABLE),
+`POST /v1/sessions/{id}/upload`,
+`POST /v1/sessions/{id}/messages`,
+`GET /v1/sessions/{id}/transcript`,
+`GET /v1/sessions/{id}/tree`,
+`GET /v1/sessions/{id}/events`,
+`POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve`,
+`POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny`,
+`POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond`,
+`POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss`,
+`GET /v1/blobs/{ref...}`. Each test pins the §15.1 error envelope
+shape on the wire.
 
 `tests/tier3_contract/adapter_jsonl/messages_test.go` covers the Basic
 level. Standard-level extensions (tool-call correlation, response-shorthand
