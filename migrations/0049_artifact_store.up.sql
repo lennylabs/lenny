@@ -42,8 +42,10 @@ CREATE INDEX idx_artifact_store_gc
     ON artifact_store (state, tombstone_deadline)
     WHERE state = 'tombstoned';
 
--- Per-tenant listing for the §12.8 erasure orchestrator.
-CREATE INDEX idx_artifact_store_tenant_session
-    ON artifact_store (tenant_id, session_id);
+-- Per-tenant listing for the §12.8 erasure orchestrator. The
+-- declaration sits on one line so the R-01 lint regex
+-- (`ON artifact_store(tenant_id`) sees tenant_id as the leading
+-- column on a single line — the linter is line-based.
+CREATE INDEX idx_artifact_store_tenant_session ON artifact_store (tenant_id, session_id);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON artifact_store TO lenny_app;
