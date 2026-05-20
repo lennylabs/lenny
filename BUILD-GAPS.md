@@ -544,10 +544,6 @@ identified.
   `TestGatewayClockDrift`, `TestCertificateExpiryAdvance`, and the
   `TestT3T4SLABreach` scenario all need it.
 
-- **The drain-readiness webhook is not enabled in the e2e overlay.**
-  `features.drainReadiness` is off. Blocks tier-8
-  `TestNodeDrainDuringMinIOOutage` and limits tier-5 drain coverage.
-
 - **No published Homebrew tap.** `lennylabs/tap` does not exist. The
   formula-install step of the quick-start documentation cannot be
   validated.
@@ -677,9 +673,6 @@ unblocks disproportionately many tests.
    `tests/testinfra/chaos/runbook_map_test.go`, then reconcile
    `docs/runbooks/` against `tests/tier8_chaos/runbook-map.yaml` by
    either mapping the 44 unmapped runbooks or deleting the docs.
-6. Enable `features.drainReadiness` in the e2e overlay so the drain-
-   readiness webhook is exercisable by the existing tier-5 admission-
-   feature-gated suite and the tier-8 node-drain scenario.
 
 ## Maintenance
 
