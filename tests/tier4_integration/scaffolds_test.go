@@ -30,13 +30,9 @@ import "testing"
 // the cross-replica revocation propagation need a pod and a Redis
 // EventBus the integration harness does not provide.
 
-// §13.20 — delegation. The platform MCP server and the
-// lenny/delegate_task tool are built; the full §8 delegation contract
-// still needs the delegation lease, the budget primitives, and a
-// delegation-aware runtime.
-func TestDelegation(t *testing.T) {
-	t.Skip("not implemented: §8.2 delegation contract — the platform MCP server hosts lenny/delegate_task and it spawns child sessions, but the full §8 delegation lease, the Redis-backed delegation budget Lua scripts, and the delegation-echo Standard-level runtime that runs the delegated task are not yet built")
-}
+// §13.20 — delegation. TestDelegation is converted in delegation_test.go:
+// the §8.2 delegate_task spawn-and-tree contract and the §8.3
+// tracingContext propagation are exercised against the live gateway.
 
 // §13.22 — MCP fabric.
 // TestMCPElicitationChain and TestMCPProvenance are converted in
