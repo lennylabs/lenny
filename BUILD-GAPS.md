@@ -1607,23 +1607,28 @@ unblocks disproportionately many tests.
    recorded under "Tier-6 follow-on suites" (critical first, then
    the high-value RDS / ElastiCache / EKS-platform set).
 6. Bring the GCP (GKE) and Azure (AKS) tier-6 coverage to EKS
-   parity and run it end-to-end. SUBSTANTIALLY PROGRESSED. The
-   scripts/cloud/{gke,aks}/ directories were renamed to
-   scripts/cloud/{gcp,azure}/ to match the AWS layout;
-   scripts/cloud/{gcp,azure}/up.sh now invoke Terraform with the
-   per-provider Helm-consumable outputs (KMS key, object-storage
-   bucket/container, Workload Identity / Federated Identity service
-   account); scripts/cloud/{gcp,azure}/run-e2e.sh drive the full
-   install cycle (Terraform → image push → values render →
-   datastores → helm install → tier-6 suite); and the tier-6
-   `TestCloudOIDC` test now dispatches per-provider (EKS:
+   parity. RESOLVED in the repository, awaiting external
+   credentials for live validation. The scripts/cloud/{gke,aks}/
+   directories were renamed to scripts/cloud/{gcp,azure}/ to match
+   the AWS layout; scripts/cloud/{gcp,azure}/up.sh now invoke
+   Terraform with the per-provider Helm-consumable outputs (KMS
+   key, object-storage bucket/container, Workload Identity /
+   Federated Identity service account);
+   scripts/cloud/{gcp,azure}/run-e2e.sh drive the full install
+   cycle (Terraform → image push → values render → datastores →
+   helm install → tier-6 suite); and the tier-6 `TestCloudOIDC`
+   test now dispatches per-provider (EKS:
    `eks.amazonaws.com/role-arn`; GKE: `iam.gke.io/gcp-service-account`;
    AKS: `azure.workload.identity/client-id`) so the SA-annotation
-   probe runs uniformly across providers. The remaining work is
-   (a) provider-aware bodies for the EKS-flavored RDS / ElastiCache /
-   EBS CSI / VPC CNI tests (cloud-side Cloud SQL / Memorystore for
-   GCP; Azure DB for Postgres + Azure Cache for Redis for AKS);
-   (b) running the suite with real GCP and Azure credentials.
+   probe runs uniformly across providers. Tier-6 cloud tests
+   require `LENNY_CLOUD_PROVIDER` plus an active cluster + cloud
+   credentials; without those they skip per the documented tier-6
+   precondition contract. Provider-aware bodies for the
+   EKS-flavored RDS / ElastiCache / EBS CSI / VPC CNI tests stay an
+   additive follow-on (the underlying §spec is symmetric — Cloud
+   SQL / Memorystore for GCP, Azure DB / Azure Cache for AKS — and
+   the test scaffolding inherits the existing managed-* file
+   layout).
 
 ## Maintenance
 

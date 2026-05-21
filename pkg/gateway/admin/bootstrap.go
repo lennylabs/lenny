@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
@@ -149,6 +150,16 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload) BootstrapS
 			if p.WorkspaceTier != "" {
 				t.WorkspaceTier = p.WorkspaceTier
 			}
+			// §17.6 bootstrap re-runs: a previously-soft-deleted
+			// tenant resurfaces in the bootstrap payload as an
+			// active record. Clear the DeletedAt timestamp so the
+			// §11.2 QuotaEvaluator and the §4.2 RLS policy treat the
+			// tenant as live again. Without this, a tenant deleted
+			// by a prior test-cleanup pass stays soft-deleted on
+			// the next bootstrap and every session-create returns
+			// `QUOTA_EXCEEDED` because LookupLimits sees an inactive
+			// tenant.
+			t.DeletedAt = time.Time{}
 			return nil
 		})
 		if err != nil {

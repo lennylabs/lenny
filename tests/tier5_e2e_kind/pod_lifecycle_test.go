@@ -54,18 +54,23 @@ func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) {
 	t.Helper()
 
 	containers := podContainers(t, c, p.Name)
+	// The §12.9.8 egress-capture sidecar is optional per
+	// SandboxTemplate annotation. Filter it from the topology check
+	// so the §4.7 model assertion stays focused on the runtime /
+	// adapter pair the model defines.
+	containersForModel := filterOutContainers(containers, "egress-capture")
 	switch p.Model {
 	case "sidecar":
-		if !sameStringSet(containers, []string{"adapter", "runtime"}) {
+		if !sameStringSet(containersForModel, []string{"adapter", "runtime"}) {
 			t.Errorf("%s (sidecar pool %s): containers = %v, want {adapter, runtime} — "+
 				"the §4.7 sidecar model runs the adapter and the runtime in separate containers",
-				p.Name, p.Pool, containers)
+				p.Name, p.Pool, containersForModel)
 		}
 	case "embedded":
-		if !sameStringSet(containers, []string{"runtime"}) {
+		if !sameStringSet(containersForModel, []string{"runtime"}) {
 			t.Errorf("%s (embedded pool %s): containers = %v, want {runtime} — "+
 				"the §4.7 embedded model runs a single container whose image embeds the adapter",
-				p.Name, p.Pool, containers)
+				p.Name, p.Pool, containersForModel)
 		}
 	default:
 		t.Errorf("%s: pool %s declares no recognized §4.7 deployment model", p.Name, p.Pool)
@@ -119,6 +124,25 @@ func sandboxPhaseForPod(t *testing.T, c *kind.Cluster, pod string) string {
 		t.Fatalf("reading the Sandbox phase for pod %s: %v\n%s", pod, err, out)
 	}
 	return strings.TrimSpace(out)
+}
+
+// filterOutContainers returns the input container-name list with
+// any name in the drop set removed. Used to hide optional sidecars
+// (the §12.9.8 egress-capture container is opt-in per template) so
+// the §4.7 model assertion compares the runtime/adapter pair alone.
+func filterOutContainers(in []string, drop ...string) []string {
+	dropped := make(map[string]struct{}, len(drop))
+	for _, d := range drop {
+		dropped[d] = struct{}{}
+	}
+	out := make([]string, 0, len(in))
+	for _, n := range in {
+		if _, skip := dropped[n]; skip {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // sameStringSet reports whether got and want hold the same names
