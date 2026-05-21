@@ -57,7 +57,15 @@ esac
 echo "eks/up.sh: shape=${SHAPE} region=${REGION} release=${RELEASE} node=${NODE_TYPE} desired=${DESIRED} max=${MAX}" >&2
 
 # Stage tfvars: create_cluster=true so the apply produces the EKS
-# cluster alongside the per-release resources.
+# cluster alongside the per-release resources. The optional
+# create_rds + create_elasticache flags add managed-service
+# provisioning when the caller sets WITH_RDS=1 / WITH_ELASTICACHE=1
+# in the environment.
+WITH_RDS="${WITH_RDS:-0}"
+WITH_ELASTICACHE="${WITH_ELASTICACHE:-0}"
+RDS_MULTI_AZ="${RDS_MULTI_AZ:-0}"
+ELASTICACHE_REPLICAS="${ELASTICACHE_REPLICAS:-0}"
+ELASTICACHE_SHARDS="${ELASTICACHE_SHARDS:-1}"
 cat > "${TFVARS_FILE}" <<JSON
 {
   "release":            "${RELEASE}",
@@ -66,7 +74,12 @@ cat > "${TFVARS_FILE}" <<JSON
   "kubernetes_version": "1.31",
   "node_instance_type": "${NODE_TYPE}",
   "node_desired_size":  ${DESIRED},
-  "node_max_size":      ${MAX}
+  "node_max_size":      ${MAX},
+  "create_rds":         $([[ "${WITH_RDS}" == "1" ]] && echo true || echo false),
+  "rds_multi_az":       $([[ "${RDS_MULTI_AZ}" == "1" ]] && echo true || echo false),
+  "create_elasticache": $([[ "${WITH_ELASTICACHE}" == "1" ]] && echo true || echo false),
+  "elasticache_num_node_groups":         ${ELASTICACHE_SHARDS},
+  "elasticache_replicas_per_node_group": ${ELASTICACHE_REPLICAS}
 }
 JSON
 

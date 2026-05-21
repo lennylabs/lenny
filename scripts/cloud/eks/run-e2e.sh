@@ -98,16 +98,28 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 1. terraform apply (VPC + EKS + S3 + KMS + IRSA). Skipped when the
-#    cluster already exists; we just refresh kubeconfig so kubectl
-#    keeps working across iterations.
-echo "==[1/6] terraform apply (shape=${SHAPE})==" >&2
+# 1. terraform apply (VPC + EKS + S3 + KMS + IRSA, plus optional
+#    RDS / ElastiCache when WITH_RDS=1 / WITH_ELASTICACHE=1).
+#
+# Skipped when the cluster already exists and the caller has not
+# asked for additional managed services on top, so the common
+# fast-iteration path doesn't re-run terraform every cycle.
+# Re-runs apply when WITH_RDS or WITH_ELASTICACHE is set so the
+# tfvars-driven RDS + ElastiCache modules reconcile their state.
+WITH_RDS="${WITH_RDS:-0}"
+WITH_ELASTICACHE="${WITH_ELASTICACHE:-0}"
+echo "==[1/6] terraform apply (shape=${SHAPE}, rds=${WITH_RDS}, elasticache=${WITH_ELASTICACHE})==" >&2
+cluster_exists=0
 if aws eks describe-cluster --region "${REGION}" --name "${RELEASE}-eks" >/dev/null 2>&1; then
+  cluster_exists=1
+fi
+if [[ "${cluster_exists}" == "0" ]] || [[ "${WITH_RDS}" == "1" ]] || [[ "${WITH_ELASTICACHE}" == "1" ]]; then
+  AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
+    WITH_RDS="${WITH_RDS}" WITH_ELASTICACHE="${WITH_ELASTICACHE}" \
+    "${SCRIPT_DIR}/up.sh" "${SHAPE}"
+else
   echo "run-e2e.sh: cluster ${RELEASE}-eks already exists; skipping terraform apply, refreshing kubeconfig" >&2
   aws eks --region "${REGION}" update-kubeconfig --name "${RELEASE}-eks"
-else
-  AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
-    "${SCRIPT_DIR}/up.sh" "${SHAPE}"
 fi
 
 # 2. Build + push Lenny images to ECR.
@@ -399,6 +411,21 @@ KMS_KEY_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw kms_key_arn)"
 export LENNY_CLOUD_PROVIDER=eks
 export LENNY_AWS_ARTIFACT_BUCKET="${ARTIFACT_BUCKET}"
 export LENNY_AWS_KMS_KEY_ARN="${KMS_KEY_ARN}"
+
+# Optional managed-service endpoints. Tier-6 managed_rds_test.go and
+# managed_elasticache_test.go read these env vars; the tests skip
+# cleanly when an endpoint is empty, so the existing in-cluster
+# fixtures-only path keeps working without managed services.
+LENNY_AWS_RDS_ENDPOINT="$("${TF}" -chdir="${TF_DIR}" output -raw rds_endpoint 2>/dev/null || echo)"
+LENNY_AWS_RDS_DATABASE="$("${TF}" -chdir="${TF_DIR}" output -raw rds_database_name 2>/dev/null || echo)"
+LENNY_AWS_RDS_MASTER_SECRET_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw rds_master_secret_arn 2>/dev/null || echo)"
+LENNY_AWS_RDS_RESOURCE_ID="$("${TF}" -chdir="${TF_DIR}" output -raw rds_resource_id 2>/dev/null || echo)"
+LENNY_AWS_REDIS_ENDPOINT="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_endpoint 2>/dev/null || echo)"
+LENNY_AWS_REDIS_PORT="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_port 2>/dev/null || echo)"
+LENNY_AWS_REDIS_AUTH_SECRET_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_auth_secret_arn 2>/dev/null || echo)"
+LENNY_AWS_REDIS_CONFIG_ENDPOINT="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_configuration_endpoint 2>/dev/null || echo)"
+export LENNY_AWS_RDS_ENDPOINT LENNY_AWS_RDS_DATABASE LENNY_AWS_RDS_MASTER_SECRET_ARN LENNY_AWS_RDS_RESOURCE_ID
+export LENNY_AWS_REDIS_ENDPOINT LENNY_AWS_REDIS_PORT LENNY_AWS_REDIS_AUTH_SECRET_ARN LENNY_AWS_REDIS_CONFIG_ENDPOINT
 
 # Install lenny-test if missing. `go install` writes the binary to
 # `$(go env GOPATH)/bin` which is not always on the script's PATH;
