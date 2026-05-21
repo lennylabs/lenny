@@ -15,19 +15,59 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/lifecycle"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
+
+// retryOnConflictSSA implements the §4.6.3 SSA-conflict retry policy:
+// always re-read before re-applying, never force-conflicts, bounded
+// retry with jittered backoff (100ms initial, 2s ceiling, 5 attempts
+// before logging the stuck-state event). The apply closure receives
+// the freshly-read live object on each attempt and may either Apply
+// the patch or return nil to short-circuit.
+func retryOnConflictSSA(ctx context.Context, apply func(attempt int) error) error {
+	const maxAttempts = 5
+	delay := 100 * time.Millisecond
+	const maxDelay = 2 * time.Second
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := apply(attempt); err == nil {
+			return nil
+		} else if !apierrors.IsConflict(err) {
+			return err
+		} else {
+			lastErr = err
+		}
+		jitter := time.Duration(rand.Int63n(int64(delay) / 4))
+		sleep := delay + jitter
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(sleep):
+		}
+		if delay < maxDelay {
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+	}
+	return lastErr
+}
 
 // Reconciler materializes Sandbox resources into Pods and advances the
 // §6.2 warm-path phase (§4.6.1).
@@ -159,34 +199,102 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 // syncStatus writes the post-action phase, the backing pod name and
 // node, and the observed generation to the Sandbox status, skipping the
 // write when nothing changed.
+//
+// Per spec §4.6.3, the write goes through Kubernetes Server-Side Apply
+// with the `lenny-warm-pool-controller` field manager so the API
+// server enforces the per-field ownership boundary against the
+// gateway's parallel slot-claim writes (which use the
+// `lenny-gateway` field manager). On HTTP 409 (a concurrent apply
+// from another manager touched a controller-owned field) the spec
+// retry policy applies: re-read, re-compute the patch against the
+// freshly-read state, never force-conflicts, bounded retry with
+// jittered backoff up to 5 attempts.
 func (r *Reconciler) syncStatus(ctx context.Context, sb *lennyv1.Sandbox, decision lifecycle.Decision, pod *corev1.Pod, obs lifecycle.PodObservation) error {
-	before := sb.Status
+	return retryOnConflictSSA(ctx, func(attempt int) error {
+		var live lennyv1.Sandbox
+		if attempt == 0 {
+			live = *sb
+		} else if err := r.Client.Get(ctx, client.ObjectKeyFromObject(sb), &live); err != nil {
+			return err
+		}
+		patch := buildSandboxStatusPatch(&live, decision, pod, obs)
+		if patch == nil {
+			return nil
+		}
+		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
+	})
+}
 
+// buildSandboxStatusPatch returns an SSA Apply patch object carrying
+// only the controller-owned Sandbox.status fields, or nil when no
+// field changes. The patch is a minimal Sandbox with name/namespace
+// metadata and the status fields we own; the API server merges it
+// onto the live object under the controller's field manager,
+// leaving every other field manager's contributions intact.
+func buildSandboxStatusPatch(live *lennyv1.Sandbox, decision lifecycle.Decision, pod *corev1.Pod, obs lifecycle.PodObservation) *lennyv1.Sandbox {
+	before := live.Status
+	want := sandboxStatusFields{
+		PodName:            before.PodName,
+		NodeName:           before.NodeName,
+		PodIP:              before.PodIP,
+		ObservedGeneration: live.Generation,
+	}
 	if decision.Action == lifecycle.ActionSetPhase {
-		sb.Status.Phase = string(decision.NextPhase)
+		want.Phase = string(decision.NextPhase)
+		want.HasPhase = true
 	}
 	switch {
 	case decision.Action == lifecycle.ActionCreatePod:
-		sb.Status.PodName = sb.Name
+		want.PodName = live.Name
 	case obs == lifecycle.PodAbsent:
-		sb.Status.PodName = ""
-		sb.Status.NodeName = ""
-		sb.Status.PodIP = ""
+		want.PodName = ""
+		want.NodeName = ""
+		want.PodIP = ""
 	default:
-		sb.Status.PodName = sb.Name
-		sb.Status.NodeName = pod.Spec.NodeName
-		sb.Status.PodIP = pod.Status.PodIP
+		want.PodName = live.Name
+		if pod != nil {
+			want.NodeName = pod.Spec.NodeName
+			want.PodIP = pod.Status.PodIP
+		}
 	}
-	sb.Status.ObservedGeneration = sb.Generation
-
-	if sb.Status.Phase == before.Phase &&
-		sb.Status.PodName == before.PodName &&
-		sb.Status.NodeName == before.NodeName &&
-		sb.Status.PodIP == before.PodIP &&
-		sb.Status.ObservedGeneration == before.ObservedGeneration {
+	phaseUnchanged := !want.HasPhase || want.Phase == before.Phase
+	if phaseUnchanged &&
+		want.PodName == before.PodName &&
+		want.NodeName == before.NodeName &&
+		want.PodIP == before.PodIP &&
+		want.ObservedGeneration == before.ObservedGeneration {
 		return nil
 	}
-	return r.Client.Status().Update(ctx, sb)
+	patch := &lennyv1.Sandbox{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: lennyv1.GroupVersion.String(),
+			Kind:       "Sandbox",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      live.Name,
+			Namespace: live.Namespace,
+		},
+	}
+	if want.HasPhase {
+		patch.Status.Phase = want.Phase
+	}
+	patch.Status.PodName = want.PodName
+	patch.Status.NodeName = want.NodeName
+	patch.Status.PodIP = want.PodIP
+	patch.Status.ObservedGeneration = want.ObservedGeneration
+	return patch
+}
+
+// sandboxStatusFields is the in-memory carrier for the per-attempt
+// status computation. Phase carries the optional-set flag because
+// not every decision touches Phase.
+type sandboxStatusFields struct {
+	Phase              string
+	HasPhase           bool
+	PodName            string
+	NodeName           string
+	PodIP              string
+	ObservedGeneration int64
 }
 
 // SetupWithManager registers the reconciler. It reconciles Sandbox

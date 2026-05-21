@@ -14,8 +14,11 @@ package warmpool
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -23,11 +26,45 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
+
+// retryOnConflictSSA implements the §4.6.3 SSA-conflict retry policy
+// for the WarmPoolController status applies: always re-read before
+// re-applying, never force-conflicts, bounded retry with jittered
+// backoff (100ms initial, 2s ceiling, 5 attempts).
+func retryOnConflictSSA(ctx context.Context, apply func(attempt int) error) error {
+	const maxAttempts = 5
+	delay := 100 * time.Millisecond
+	const maxDelay = 2 * time.Second
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := apply(attempt); err == nil {
+			return nil
+		} else if !apierrors.IsConflict(err) {
+			return err
+		} else {
+			lastErr = err
+		}
+		jitter := time.Duration(rand.Int63n(int64(delay) / 4))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay + jitter):
+		}
+		if delay < maxDelay {
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+	}
+	return lastErr
+}
 
 // conditionPoolWarmingUp is the §5.2 bootstrap condition the
 // WarmPoolController maintains on SandboxTemplate.status.
@@ -267,16 +304,47 @@ func propagatedAnnotations(tmpl *lennyv1.SandboxTemplate) map[string]string {
 // drainSandbox transitions the named Sandbox to the draining phase so
 // the pod-lifecycle layer retires it. The planner only ever names idle
 // Sandboxes, for which idle → draining is a valid §6.2 transition.
+//
+// Per spec §4.6.3, the write goes through SSA with the
+// `lenny-warm-pool-controller` field manager; the patch carries only
+// the controller-owned Phase field so the API server merges it onto
+// the live Sandbox under WPC's ownership boundary. The §4.6.3
+// retry policy applies on HTTP 409.
 func (r *Reconciler) drainSandbox(ctx context.Context, items []lennyv1.Sandbox, name string) error {
+	namespace := ""
+	found := false
 	for i := range items {
-		sb := &items[i]
-		if sb.Name != name {
-			continue
+		if items[i].Name == name {
+			namespace = items[i].Namespace
+			found = true
+			break
 		}
-		sb.Status.Phase = string(state.Draining)
-		return r.Client.Status().Update(ctx, sb)
 	}
-	return nil
+	if !found {
+		return nil
+	}
+	key := client.ObjectKey{Namespace: namespace, Name: name}
+	return retryOnConflictSSA(ctx, func(attempt int) error {
+		var live lennyv1.Sandbox
+		if err := r.Client.Get(ctx, key, &live); err != nil {
+			return err
+		}
+		if live.Status.Phase == string(state.Draining) {
+			return nil
+		}
+		patch := &lennyv1.Sandbox{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: lennyv1.GroupVersion.String(),
+				Kind:       "Sandbox",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      live.Name,
+				Namespace: live.Namespace,
+			},
+		}
+		patch.Status.Phase = string(state.Draining)
+		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
+	})
 }
 
 // updateStatus writes the post-action warm and ready counts and the
@@ -293,10 +361,34 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 		pool.Status.ObservedGeneration == pool.Generation {
 		return nil
 	}
-	pool.Status.WarmCount = warm
-	pool.Status.ReadyCount = ready
-	pool.Status.ObservedGeneration = pool.Generation
-	return r.Client.Status().Update(ctx, pool)
+	key := client.ObjectKeyFromObject(pool)
+	return retryOnConflictSSA(ctx, func(attempt int) error {
+		var live lennyv1.SandboxWarmPool
+		if attempt == 0 {
+			live = *pool
+		} else if err := r.Client.Get(ctx, key, &live); err != nil {
+			return err
+		}
+		if live.Status.WarmCount == warm &&
+			live.Status.ReadyCount == ready &&
+			live.Status.ObservedGeneration == live.Generation {
+			return nil
+		}
+		patch := &lennyv1.SandboxWarmPool{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: lennyv1.GroupVersion.String(),
+				Kind:       "SandboxWarmPool",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      live.Name,
+				Namespace: live.Namespace,
+			},
+		}
+		patch.Status.WarmCount = warm
+		patch.Status.ReadyCount = ready
+		patch.Status.ObservedGeneration = live.Generation
+		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
+	})
 }
 
 // updateTemplateCondition writes the §5.2 PoolWarmingUp condition to
@@ -311,17 +403,38 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 	ready := decision.ReadyCount - drained
 
 	cond := poolWarmingUpCondition(int(pool.Spec.MinWarm), warm, ready)
-	cond.ObservedGeneration = tmpl.Generation
-
-	changed := meta.SetStatusCondition(&tmpl.Status.Conditions, cond)
-	if tmpl.Status.ObservedGeneration != tmpl.Generation {
-		tmpl.Status.ObservedGeneration = tmpl.Generation
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	return r.Client.Status().Update(ctx, tmpl)
+	key := client.ObjectKeyFromObject(tmpl)
+	return retryOnConflictSSA(ctx, func(attempt int) error {
+		var live lennyv1.SandboxTemplate
+		if attempt == 0 {
+			live = *tmpl
+		} else if err := r.Client.Get(ctx, key, &live); err != nil {
+			return err
+		}
+		desired := cond
+		desired.ObservedGeneration = live.Generation
+		mergedConditions := append([]metav1.Condition{}, live.Status.Conditions...)
+		changed := meta.SetStatusCondition(&mergedConditions, desired)
+		if live.Status.ObservedGeneration != live.Generation {
+			changed = true
+		}
+		if !changed {
+			return nil
+		}
+		patch := &lennyv1.SandboxTemplate{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: lennyv1.GroupVersion.String(),
+				Kind:       "SandboxTemplate",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      live.Name,
+				Namespace: live.Namespace,
+			},
+		}
+		patch.Status.Conditions = mergedConditions
+		patch.Status.ObservedGeneration = live.Generation
+		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
+	})
 }
 
 // poolWarmingUpCondition derives the §5.2 PoolWarmingUp condition from
