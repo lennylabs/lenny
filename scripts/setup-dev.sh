@@ -486,6 +486,38 @@ install_cloud() {
       ;;
     *) lenny_log_warn "no package manager: see TESTING_DEPENDENCIES.md §7" ;;
   esac
+
+  # Terraform / OpenTofu — required by scripts/cloud/{eks,gke,aks}/{up,down}.sh.
+  # The per-provider drivers prefer `terraform` and fall back to `tofu`, so
+  # either binary unblocks the cloud toolchain. Install terraform by default;
+  # operators who can't use Hashicorp's BSL license can swap in `tofu`
+  # (opentofu) without further changes.
+  if have_cmd terraform || have_cmd tofu; then
+    if have_cmd terraform; then
+      local tfv
+      tfv="$(_lenny_probe_version terraform -version terraform)"
+      if [[ -n "$tfv" ]] && lenny_version_ge "$tfv" "$LENNY_VERSION_TERRAFORM" && ! (( FORCE )); then
+        lenny_log_ok "terraform ($tfv)"
+        return
+      fi
+      if (( FORCE )); then
+        lenny_log_info "terraform (${tfv:-unknown}): --force reinstall"
+      else
+        lenny_log_warn "terraform (${tfv:-unknown}) is below pinned $LENNY_VERSION_TERRAFORM; upgrading"
+      fi
+    else
+      lenny_log_ok "tofu (opentofu) on PATH; skipping terraform install"
+      return
+    fi
+  else
+    lenny_log_miss "terraform: not installed; installing"
+  fi
+  case "$PKG" in
+    brew) run_or_dry brew install hashicorp/tap/terraform ;;
+    apt)  lenny_log_info "terraform on apt: follow https://developer.hashicorp.com/terraform/install#linux (apt repo) or `brew install opentofu` for the BSL-free fork" ;;
+    dnf)  lenny_log_info "terraform on dnf: follow https://developer.hashicorp.com/terraform/install#linux or install opentofu via dnf" ;;
+    *)    lenny_log_warn "no package manager: install terraform per https://developer.hashicorp.com/terraform/install" ;;
+  esac
 }
 
 # ---- Load and chaos toolchain (tiers 7-8) ----
