@@ -47,10 +47,20 @@ func FromEnv() Provider {
 
 // SkipUnlessAvailable short-circuits the test when the provider is
 // not configured or the CLI is absent.
+//
+// LENNY_CLOUD_SKIP_CLI_CHECK=1 bypasses the CLI presence + auth
+// check. The in-cluster tier-6 runner sets it because the runner
+// pod's image carries no aws / gcloud / az CLI; the tests in the
+// suite either read pre-staged env vars (LENNY_AWS_REDIS_AUTH_TOKEN
+// etc.) or fall back to the in-pod IRSA-resolved AWS SDK
+// credentials, neither of which depend on the CLI being installed.
 func SkipUnlessAvailable(t testing.TB, p Provider) {
 	t.Helper()
 	if p == "" {
 		t.Skip("cloud.SkipUnlessAvailable: LENNY_CLOUD_PROVIDER is unset; export gke|eks|aks to enable tier-6 cloud tests")
+	}
+	if strings.ToLower(strings.TrimSpace(os.Getenv("LENNY_CLOUD_SKIP_CLI_CHECK"))) == "1" {
+		return
 	}
 	cli := providerCLI(p)
 	if cli == "" {

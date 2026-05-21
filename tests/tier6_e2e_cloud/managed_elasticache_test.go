@@ -51,22 +51,32 @@ func requireRedis(t *testing.T) redisParams {
 		region = "us-west-2"
 	}
 
-	secretARN := strings.TrimSpace(os.Getenv("LENNY_AWS_REDIS_AUTH_SECRET_ARN"))
-	if secretARN == "" {
-		t.Fatalf("requireRedis: LENNY_AWS_REDIS_AUTH_SECRET_ARN is empty even though the endpoint is set; the Terraform module should always emit both")
+	// Two AUTH-token resolution paths: a direct env var
+	// (LENNY_AWS_REDIS_AUTH_TOKEN, used by the in-cluster runner
+	// where Secrets Manager IAM permissions are not provisioned),
+	// and a Secrets Manager ARN lookup (used by the operator's
+	// local invocation, which carries the AWS profile credentials).
+	var token string
+	if direct := strings.TrimSpace(os.Getenv("LENNY_AWS_REDIS_AUTH_TOKEN")); direct != "" {
+		token = direct
+	} else {
+		secretARN := strings.TrimSpace(os.Getenv("LENNY_AWS_REDIS_AUTH_SECRET_ARN"))
+		if secretARN == "" {
+			t.Fatalf("requireRedis: neither LENNY_AWS_REDIS_AUTH_TOKEN nor LENNY_AWS_REDIS_AUTH_SECRET_ARN is set; the Terraform module emits the secret ARN, the in-cluster runner passes the token directly")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+		if err != nil {
+			t.Fatalf("requireRedis: load AWS config: %v", err)
+		}
+		sm := secretsmanager.NewFromConfig(cfg)
+		out, err := sm.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: &secretARN})
+		if err != nil {
+			t.Fatalf("requireRedis: fetch AUTH secret: %v", err)
+		}
+		token = strings.TrimSpace(*out.SecretString)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
-	if err != nil {
-		t.Fatalf("requireRedis: load AWS config: %v", err)
-	}
-	sm := secretsmanager.NewFromConfig(cfg)
-	out, err := sm.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: &secretARN})
-	if err != nil {
-		t.Fatalf("requireRedis: fetch AUTH secret: %v", err)
-	}
-	token := strings.TrimSpace(*out.SecretString)
 
 	params := redisParams{
 		host:      endpoint,
@@ -225,18 +235,29 @@ func TestCloudRedisEvictionPolicy(t *testing.T) {
 	})
 	defer func() { _ = client.Close() }()
 
-	res, err := client.ConfigGet(ctx, "maxmemory-policy").Result()
+	// ElastiCache disables CONFIG GET / CONFIG SET (the AUTH /
+	// renamed-command set). Read the active maxmemory_policy from
+	// INFO memory instead — that section is always available and
+	// includes the current effective value.
+	info, err := client.Info(ctx, "memory").Result()
 	if err != nil {
-		t.Fatalf("CONFIG GET maxmemory-policy: %v", err)
+		t.Fatalf("INFO memory: %v", err)
 	}
-	policy, ok := res["maxmemory-policy"]
-	if !ok {
-		t.Fatalf("CONFIG GET did not return maxmemory-policy; got %v", res)
+	var policy string
+	for _, line := range strings.Split(info, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "maxmemory_policy:") {
+			policy = strings.TrimSpace(strings.TrimPrefix(line, "maxmemory_policy:"))
+			break
+		}
+	}
+	if policy == "" {
+		t.Fatalf("INFO memory did not include maxmemory_policy: %s", info)
 	}
 	if policy != "noeviction" {
-		t.Errorf("maxmemory-policy = %q, want noeviction (the §11.2.1 billing-stream invariant)", policy)
+		t.Errorf("maxmemory_policy = %q, want noeviction (the §11.2.1 billing-stream invariant)", policy)
 	}
-	t.Logf("TestCloudRedisEvictionPolicy: maxmemory-policy=%s", policy)
+	t.Logf("TestCloudRedisEvictionPolicy: maxmemory_policy=%s", policy)
 }
 
 // spec: 13.3 (Redis engine version floor).
