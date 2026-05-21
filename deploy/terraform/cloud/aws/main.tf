@@ -71,6 +71,26 @@ provider "aws" {
   region = var.region
 }
 
+# Auto-derive the OIDC provider when this root module also created the
+# cluster (create_cluster=true). An operator who supplies their own
+# cluster passes the OIDC inputs via var.eks_cluster_oidc_provider_arn
+# and var.eks_cluster_oidc_issuer. Without this auto-derivation, IRSA
+# requires a two-apply dance (first apply produces the cluster outputs;
+# second apply consumes them) and run-e2e.sh would have to thread the
+# values through manually.
+locals {
+  effective_oidc_provider_arn = (
+    var.eks_cluster_oidc_provider_arn != ""
+      ? var.eks_cluster_oidc_provider_arn
+      : try(aws_iam_openid_connect_provider.cluster[0].arn, "")
+  )
+  effective_oidc_issuer = (
+    var.eks_cluster_oidc_issuer != ""
+      ? var.eks_cluster_oidc_issuer
+      : try(replace(aws_eks_cluster.lenny[0].identity[0].oidc[0].issuer, "https://", ""), "")
+  )
+}
+
 # §4.5 ArtifactStore bucket. SSE-S3 (AES256) bucket-level encryption
 # default; the gateway can switch to SSE-KMS per object via the
 # pkg/blobstore/miniostore SSEKeyResolver hook against the per-tenant
@@ -124,35 +144,35 @@ resource "aws_kms_alias" "platform" {
 
 # §13 IAM role: IRSA binding to the gateway service account.
 data "aws_iam_policy_document" "gateway_trust" {
-  count = var.eks_cluster_oidc_provider_arn == "" ? 0 : 1
+  count = local.effective_oidc_provider_arn == "" ? 0 : 1
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     effect  = "Allow"
     principals {
       type        = "Federated"
-      identifiers = [var.eks_cluster_oidc_provider_arn]
+      identifiers = [local.effective_oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
-      variable = "${var.eks_cluster_oidc_issuer}:aud"
+      variable = "${local.effective_oidc_issuer}:aud"
       values   = ["sts.amazonaws.com"]
     }
     condition {
       test     = "StringEquals"
-      variable = "${var.eks_cluster_oidc_issuer}:sub"
+      variable = "${local.effective_oidc_issuer}:sub"
       values   = ["system:serviceaccount:${var.namespace}:${var.service_account}"]
     }
   }
 }
 
 resource "aws_iam_role" "gateway" {
-  count              = var.eks_cluster_oidc_provider_arn == "" ? 0 : 1
+  count              = local.effective_oidc_provider_arn == "" ? 0 : 1
   name               = "${var.release}-gateway"
   assume_role_policy = data.aws_iam_policy_document.gateway_trust[0].json
 }
 
 data "aws_iam_policy_document" "gateway_permissions" {
-  count = var.eks_cluster_oidc_provider_arn == "" ? 0 : 1
+  count = local.effective_oidc_provider_arn == "" ? 0 : 1
   statement {
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
     resources = [aws_s3_bucket.artifacts.arn, "${aws_s3_bucket.artifacts.arn}/*"]
@@ -164,7 +184,7 @@ data "aws_iam_policy_document" "gateway_permissions" {
 }
 
 resource "aws_iam_role_policy" "gateway" {
-  count  = var.eks_cluster_oidc_provider_arn == "" ? 0 : 1
+  count  = local.effective_oidc_provider_arn == "" ? 0 : 1
   name   = "${var.release}-gateway"
   role   = aws_iam_role.gateway[0].id
   policy = data.aws_iam_policy_document.gateway_permissions[0].json
@@ -191,6 +211,6 @@ output "kms_key_alias" {
 }
 
 output "iam_role_arn" {
-  description = "IRSA role ARN. Empty when var.eks_cluster_oidc_provider_arn is unset."
+  description = "IRSA role ARN. Empty when no OIDC provider is wired (var.eks_cluster_oidc_provider_arn unset and create_cluster=false)."
   value       = try(aws_iam_role.gateway[0].arn, "")
 }
