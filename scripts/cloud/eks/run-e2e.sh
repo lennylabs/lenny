@@ -39,7 +39,32 @@
 #                                  Default lenny-e2e.
 #   IMAGE_TAG                    — image tag (default 0.1.0).
 #   SHAPE                        — up.sh shape (default cloud-small).
-#   KEEP_CLUSTER=1               — skip the terraform destroy on exit.
+#   KEEP_CLUSTER=1               — default. Skip the terraform destroy on
+#                                  exit so the cluster stays up for the
+#                                  next iteration. Set to 0 to tear down
+#                                  on exit (or run scripts/cloud/eks/down.sh).
+#   NODE_DESIRED, NODE_MAX       — node-group sizing overrides. Default 4/6
+#                                  when any WITH_* flag below is on (the
+#                                  combined chart + managed-services pod
+#                                  footprint exceeds 2 t3.medium nodes'
+#                                  ENI-bounded pod density).
+#   WITH_RDS=1                   — provision an RDS Postgres instance via
+#                                  the var.create_rds Terraform gate.
+#                                  Unblocks the TestCloudRDS* suite.
+#   RDS_MULTI_AZ=1               — flip the RDS instance to Multi-AZ so
+#                                  TestCloudRDSMultiAZ runs.
+#   WITH_ELASTICACHE=1           — provision a single-shard ElastiCache
+#                                  Redis replication group. Unblocks the
+#                                  TLS / AUTH / eviction / engine-version
+#                                  tests (run from inside the cluster via
+#                                  step 6b).
+#   WITH_ELASTICACHE_CLUSTER=1   — provision a SECOND, cluster-mode
+#                                  ElastiCache replication group. The
+#                                  configuration endpoint feeds
+#                                  TestCloudRedisClusterMode.
+#   ELASTICACHE_CLUSTER_SHARDS=N — shard count for the cluster-mode RG
+#                                  (default 2; minimum to exercise cross-
+#                                  shard hash-slot routing).
 
 set -euo pipefail
 
