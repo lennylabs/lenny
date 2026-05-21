@@ -1489,22 +1489,21 @@ without an external decision, observation, or multi-hour reconciliation.
 They are listed separately so the loop's per-gap workflow does not
 re-attempt them.
 
-- **Gateway client migration to the Token Service gRPC.** The
-  §4.3 trust boundary requires the gateway to call the Token
-  Service over mTLS for lease materialization rather than running
-  `pkg/credential.MintLease` in-process.
-  `pkg/tokenservice.GRPCServer` (lenny.tokenservice.v1.TokenService —
-  AssignCredentials, RotateCredentials, RevokeCredentials) is
-  built and tier-2 covered. `cmd/lenny-token-service` serves
-  both the HTTP RFC 8693 token-exchange surface and the gRPC
-  TokenService surface (`--grpc-addr` flag); the Helm chart wires
-  both ports through `tokenService.httpPort` and
-  `tokenService.grpcPort` and ships a
-  `PodDisruptionBudget(minAvailable: 1)`. The remaining step is
-  the gateway-side cutover: an mTLS-aware Token Service gRPC
-  client in `pkg/gateway/credassign` that delegates
-  AssignCredentials / RotateCredentials / RevokeCredentials to the
-  remote, replacing the in-process MintLease call.
+- **Gateway client migration to the Token Service gRPC.** RESOLVED.
+  `pkg/gateway/credassign.Client` is the mTLS-aware gRPC client; it
+  satisfies the new `credassign.Assigner` interface so the §4.7 binder
+  and the §4.9 Proactive Lease Renewal worker drive the cutover path
+  transparently. The gateway main wires the Client when
+  `--token-service-grpc-addr` (env `LENNY_TOKEN_SERVICE_GRPC_ADDR`) is
+  set; `--token-service-tls-cert`/`-key`/`-ca` carry the per-replica
+  mTLS identity (TLS 1.3 floor). The proto carries a new
+  `upstream_credential` field so the Token Service can return the
+  materialized provider secret to the gateway over mTLS and the
+  gateway's `credcache` serves the §4.9 LLM proxy without an extra
+  round-trip per upstream call. Tier-2 covers the full cutover via
+  `tests/tier2_component/controllers/tokenservice_client_test.go`
+  (AssignProto round-trip + credcache mirror, PoolForLease binding,
+  Release across both sides, ErrPoolNotFound mapping).
 - **`POST /v1/sessions/{id}/upload` 100% error rate against Kind.**
   The local reproduction against an in-process gateway with dev
   mode plus the documented `checkpoint_duration` payload (1 MB

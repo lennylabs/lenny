@@ -21,7 +21,13 @@ package controllers_test
 // TestTokenServiceController is implemented in tokenservice_test.go,
 // which drives pkg/tokenservice.GRPCServer over an in-process bufconn
 // link and exercises AssignCredentials, RotateCredentials, and
-// RevokeCredentials against a registered §4.9 credential pool.
+// RevokeCredentials against a registered §4.9 credential pool. The
+// §4.3 gateway-side cutover is exercised by
+// tokenservice_client_test.go: the gateway-side credassign.Client
+// rides the same bufconn link and mirrors materialized leases into
+// the gateway's local credleasestore and credcache so the §4.9 LLM
+// proxy hot path is satisfied without an extra Token Service
+// round-trip per upstream call.
 //
 // The scaffold's original mention of "multi-replica leader election"
 // is deliberately not exercised: per §4.3 line 209 the Token Service
@@ -29,6 +35,4 @@ package controllers_test
 // affinity requirements", so AssignCredentials / RotateCredentials /
 // RevokeCredentials need no leader-election coordination at the v1
 // scope. KMS-envelope encryption is covered by pkg/credentialstore
-// against KMS-backed secret storage; the §4.3 gateway↔Token-Service
-// trust boundary plus the eventual switch from in-process MintLease
-// to the gRPC client is recorded as a follow-on in BUILD-GAPS.md.
+// against KMS-backed secret storage.
