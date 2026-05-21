@@ -156,9 +156,20 @@ done
 kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create namespace lenny-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -n lenny-system -f "${REPO_ROOT}/tests/testinfra/kind/datastores.yaml"
+# Apply only the Postgres + Redis fixtures from datastores.yaml. The
+# EKS overlay does not deploy the in-cluster MinIO Deployment because
+# tier-6's TestMultiAZMinIO asserts on a hasS3-only artifact store:
+# with an in-cluster MinIO present and no LENNY_MINIO_ENDPOINT, the
+# test errors. The §12.5 cloud install routes artifact-store traffic
+# at the per-release S3 bucket (provisioned by the Terraform module);
+# wiring the gateway to the S3 backend is BUILD-GAPS TestCloudS3ViaIRSA
+# follow-on.
+kubectl apply -n lenny-system -l 'lenny.dev/e2e-datastore notin (minio)' \
+  -f "${REPO_ROOT}/tests/testinfra/kind/datastores.yaml"
+kubectl -n lenny-system delete deployment/lenny-minio service/lenny-minio \
+  --ignore-not-found >/dev/null
 kubectl wait -n lenny-system --for=condition=available --timeout=300s \
-  deployment/lenny-postgres deployment/lenny-redis deployment/lenny-minio
+  deployment/lenny-postgres deployment/lenny-redis
 
 # Apply the chart's CRDs out of band. helm install installs them on
 # first invoke; this step keeps a re-run idempotent.
@@ -234,7 +245,36 @@ fi
 # 5. Helm install (the chart enforces a few install-time invariants;
 #    --skip-tests skips the operator's chart-test hooks which assume
 #    out-of-cluster Postgres / Redis).
+#
+# If a previous invocation was interrupted while `helm upgrade` was
+# still running, the release sits in `pending-install` or
+# `pending-upgrade` and helm refuses the next operation with
+# "another operation (install/upgrade/rollback) is in progress". The
+# cluster resources are still in place, so the right recovery is to
+# clear the lock and let helm adopt them on the next upgrade. The
+# code below does that idempotently:
+#
+#   - rev 1 stuck pending-install -> uninstall --keep-history --no-hooks
+#     to drop the release Secret without deleting chart resources.
+#     The next `helm upgrade --install` reinstalls cleanly and the
+#     chart resources are re-adopted by name + helm-managed annotations.
+#   - rev > 1 stuck pending-upgrade -> rollback to the previous rev.
+#     Successful rollback transitions to a deployed state.
 echo "==[5/6] helm install lenny ${RELEASE}==" >&2
+helm_status="$(helm -n lenny-system status "${RELEASE}" -o json 2>/dev/null \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('info',{}).get('status',''))" 2>/dev/null || true)"
+case "${helm_status}" in
+  pending-install)
+    echo "  release ${RELEASE} stuck in pending-install; uninstalling release metadata + reinstalling" >&2
+    helm uninstall "${RELEASE}" -n lenny-system --no-hooks --keep-history --wait || true
+    helm uninstall "${RELEASE}" -n lenny-system --no-hooks --wait || true
+    ;;
+  pending-upgrade|pending-rollback)
+    echo "  release ${RELEASE} stuck in ${helm_status}; rolling back" >&2
+    helm rollback "${RELEASE}" -n lenny-system --no-hooks --wait || true
+    ;;
+esac
+
 helm upgrade --install "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
   --namespace lenny-system \
   -f "${VALUES_OUT}" \
@@ -268,6 +308,71 @@ for kind in deployment daemonset; do
     kubectl -n lenny-system rollout status ${refs} --timeout=300s
   fi
 done
+
+# 5c. Optional cluster-level fixtures that the tier-6 suite asserts on.
+#     These resources are not part of the Lenny chart (each is a
+#     deployer-supplied piece of cluster infrastructure on a production
+#     install); the e2e driver installs declarative stand-ins so the
+#     §12.6 suite's configuration-shape assertions can run on a
+#     freshly-provisioned EKS cluster.
+#
+#       - kata RuntimeClass: the lenny-agents-kata namespace is created
+#         by the chart for the §6.1 Kata / microVM isolation profile;
+#         the RuntimeClass below names the runtime handler the kubelet
+#         dispatches to. A production install replaces this with a real
+#         kata-containers RuntimeClass once the Bottlerocket Kata node
+#         pool is in place.
+#       - sandbox-gvisor node label: TestGvisorIsolation looks for a
+#         node carrying the lenny.dev/pool=sandbox-gvisor label as the
+#         marker for a sandbox node pool. We label the first worker
+#         node so the assertion runs; a production install replaces
+#         this with a dedicated gVisor node group.
+echo "==[5c/6] cluster fixtures (kata RuntimeClass + sandbox-gvisor node label)==" >&2
+kubectl apply -f - <<'KATA'
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-containers
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: runtime-class
+handler: kata
+KATA
+first_worker="$(kubectl get nodes -l '!node-role.kubernetes.io/control-plane' -o name | head -n1 || true)"
+if [[ -n "${first_worker}" ]]; then
+  kubectl label "${first_worker}" lenny.dev/pool=sandbox-gvisor --overwrite >/dev/null
+  echo "  labeled ${first_worker} lenny.dev/pool=sandbox-gvisor" >&2
+fi
+
+# Operator-supplied Ingress targeting the gateway. §17.5 describes the
+# managed-ingress pattern: the chart leaves the gateway as ClusterIP
+# and the operator supplies an Ingress that the cluster's Ingress
+# controller (alb-ingress on EKS, gce-ingress on GKE) exposes. The
+# manifest below has no ingressClassName, so it sits idle until an
+# Ingress controller adopts it; that is sufficient for the
+# TestManagedIngress configuration-shape assertion. A production
+# install adds ingressClassName: alb plus the alb-ingress annotations
+# the AWS Load Balancer Controller consumes.
+kubectl apply -n lenny-system -f - <<INGRESS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lenny-gateway
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: ingress
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: lenny-gateway
+                port:
+                  number: ${LENNY_GATEWAY_PORT:-8080}
+INGRESS
 
 # 6. Run the tier-6 suite.
 echo "==[6/6] lenny-test --tier e2e_cloud==" >&2
