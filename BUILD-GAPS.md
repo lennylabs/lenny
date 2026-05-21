@@ -356,22 +356,26 @@ duplicating it.
 
 Authentication and transport:
 
-13. **`TestCloudRDSTLSRequired`** (§13.2). Attempt a non-TLS
-    connection to the RDS endpoint and assert the connection is
-    refused at the `sslmode=disable` boundary. Configure the
-    gateway with `sslmode=require` and assert the connection
-    succeeds. Validates the deployment's `rds.force_ssl=1`
-    parameter group is wired and that the gateway does not
-    silently fall through to plaintext.
+13. **`TestCloudRDSTLSRequired`** (§13.2). *Implemented* in
+    `tests/tier6_e2e_cloud/managed_rds_test.go`. sslmode=disable
+    is refused; sslmode=require succeeds and SELECT version()
+    round-trips. Validates the deployment's `rds.force_ssl=1`
+    parameter group is wired and the engine refuses a
+    plaintext fall-through. The companion
+    `TestCloudRDSForceSSLParameterGroup` test queries
+    `pg_settings.rds.force_ssl` directly for parameter-group
+    introspection.
 
-14. **`TestCloudRDSIAMAuth`** (§13.3). Swap the gateway's
-    DSN-password authentication for the IAM authentication
-    token path (`AWSAuthenticationPlugin`), assert the IRSA
-    role's `rds-db:connect` permission resolves at connect
-    time, and verify the 15-minute token lifetime does not
-    drop long-running sessions (the SDK refreshes
-    automatically through the connection pool's reconnect
-    hook).
+14. **`TestCloudRDSIAMAuth`** (§13.3). *Implemented* in
+    `tests/tier6_e2e_cloud/managed_rds_test.go`. Generates an
+    IAM auth token via `aws-sdk-go-v2/feature/rds/auth.BuildAuthToken`,
+    asserts the token shape (X-Amz-Signature payload, >= 16
+    chars), then connects using the token as the password.
+    Skips with a clear diagnosis when the caller's IAM principal
+    lacks `rds-db:connect`. Validates the rotation-friendly auth
+    path against a real engine. Full long-running-session
+    refresh coverage stays a follow-on (requires a custom
+    pgx.Conn config hook that the gateway code can opt into).
 
 15. **`TestCloudRDSPasswordRotation`** (§13.3, §17.6). Trigger a
     Secrets Manager rotation against the master password, assert
@@ -421,13 +425,13 @@ High availability and failover (expands the existing
 form):
 
 21. **`TestCloudRDSMultiAZFailoverPreservesSessions`** (§17.3)
-    *(expands `TestMultiZoneDR`)*. Trigger an RDS reboot with
-    failover (`aws rds reboot-db-instance --force-failover`),
-    measure RTO from API call to the gateway re-issuing a write
-    against the standby endpoint, and assert a session that
-    held an open transaction at the failover instant either
-    succeeds or surfaces a retriable error the gateway's middle-
-    ware catches.
+    *(expands `TestMultiZoneDR`)*. Baseline check `TestCloudRDSMultiAZ`
+    *implemented* in `tests/tier6_e2e_cloud/managed_rds_test.go`:
+    queries `pg_stat_replication` for a non-zero replica count
+    and skips with a clear hint when the instance is single-AZ.
+    The full failover-injection-RTO measurement (`reboot-db-instance
+    --force-failover` + retry-middleware assertion) remains a
+    follow-on; the baseline gate unblocks it.
 
 22. **`TestCloudRDSDNSTTLBoundsRTO`** (§17.3). Validate the
     chart-rendered Postgres DSN uses the RDS endpoint
@@ -612,21 +616,22 @@ when the deployment swaps in an ElastiCache replication group.
 
 Authentication and transport:
 
-41. **`TestCloudElastiCacheTLSRequired`** (§13.2). Attempt a
-    non-TLS connection to the ElastiCache primary endpoint and
-    assert it is refused. Configure the gateway with
-    `rediss://` (TLS) and assert the connection succeeds.
-    ElastiCache enforces TLS only when `TransitEncryptionEnabled`
-    is set on the replication group; the test asserts the chart
-    refuses to boot against a non-TLS endpoint when the operator
-    has marked the deployment compliance-tier T3+.
+41. **`TestCloudElastiCacheTLSRequired`** (§13.2). *Implemented*
+    as `TestCloudRedisTLSRequired` in
+    `tests/tier6_e2e_cloud/managed_elasticache_test.go`. Plaintext
+    PING refused; TLS PING returns PONG. Validates the
+    `transit_encryption_enabled` setting on the replication group.
+    The chart-side "refuses to boot against a non-TLS endpoint when
+    compliance-tier T3+" assertion remains a follow-on (needs a
+    compliance-tier values knob the chart does not yet expose).
 
-42. **`TestCloudElastiCacheAuthToken`** (§13.3). Configure
-    ElastiCache with an AUTH token rotated through Secrets
-    Manager, assert the gateway reads the secret + presents the
-    token on connect, and assert a manual AUTH rotation
-    triggers a reconnect path that never drops in-flight
-    requests below the §17.6 budget.
+42. **`TestCloudElastiCacheAuthToken`** (§13.3). *Implemented*
+    as `TestCloudRedisAUTH` in
+    `tests/tier6_e2e_cloud/managed_elasticache_test.go`. No-AUTH
+    client receives NOAUTH/WRONGPASS; AUTH-bearing client
+    SET/GET round-trips. The AUTH-rotation-during-flight assertion
+    stays a follow-on (needs the gateway's Redis client to honor
+    a secret-watcher reload path that does not yet exist).
 
 43. **`TestCloudElastiCacheIAMAuth`** (§13.3). On Redis 7.1+,
     swap the AUTH-token path for IAM authentication
@@ -646,15 +651,15 @@ Cluster mode (the production deployment mode; the in-cluster
 fixture is single-node and exercises none of this):
 
 45. **`TestCloudElastiCacheClusterModeKeyHashing`** (§12.4).
-    Drive each Redis-backed subsystem against an ElastiCache
-    replication group with cluster mode enabled (multiple
-    shards), sample the keys each subsystem writes
-    (`t:{tenant}:scache:...` for §4.9 semantic cache,
-    `lenny:cb:{subsystem}:...` for circuit breakers, etc.),
-    assert the keys hash into the documented shard distribution
-    via the hash-tag pattern. A subsystem whose keys land on a
-    different shard than its companion keys cannot run atomic
-    multi-key operations against them.
+    Baseline smoke check `TestCloudRedisClusterMode` *implemented*
+    in `tests/tier6_e2e_cloud/managed_elasticache_test.go`:
+    routes a SET/GET round-trip through a cluster-aware client
+    against the configuration endpoint, skips when single-shard.
+    The per-subsystem hash-tag distribution audit (sampling
+    `t:{tenant}:scache:...`, `lenny:cb:{subsystem}:...`, etc.)
+    stays a follow-on; it depends on each subsystem actually
+    writing its keys, which the current EKS install does not
+    drive (no real sessions yet).
 
 46. **`TestCloudElastiCacheClusterModeMovedRedirection`**
     (§12.4). Trigger a slot migration mid-traffic (the
@@ -771,10 +776,11 @@ drop counters under memory pressure and disable the §11.6
 admission controller):
 
 59. **`TestCloudElastiCacheEvictionPolicyNoeviction`** (§11.6).
-    Assert the ElastiCache parameter group sets
-    `maxmemory-policy=noeviction`. Otherwise circuit-breaker
-    INCR-and-set-TTL counters drop under memory pressure and
-    the §11.6 admission rate-limit fail-opens.
+    *Implemented* as `TestCloudRedisEvictionPolicy` in
+    `tests/tier6_e2e_cloud/managed_elasticache_test.go`. Runs
+    `CONFIG GET maxmemory-policy` and asserts the value is
+    `noeviction`. Closes the silent-drop failure mode where the
+    parameter group regresses to `volatile-lru`.
 
 60. **`TestCloudElastiCacheMemoryPressureFailClosed`** (§11.6,
     §11.7). Push Redis into the maxmemory boundary, attempt a
