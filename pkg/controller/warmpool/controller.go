@@ -332,6 +332,11 @@ func (r *Reconciler) drainSandbox(ctx context.Context, items []lennyv1.Sandbox, 
 		if live.Status.Phase == string(state.Draining) {
 			return nil
 		}
+		// Re-include every WPC-owned status field in the patch so SSA's
+		// Go-zero-value-is-set semantics don't clobber PodName/
+		// NodeName/PodIP/ObservedGeneration when we only intend to
+		// transition Phase. Including the live values keeps the WPC
+		// claim on those fields without overwriting them.
 		patch := &lennyv1.Sandbox{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: lennyv1.GroupVersion.String(),
@@ -343,6 +348,10 @@ func (r *Reconciler) drainSandbox(ctx context.Context, items []lennyv1.Sandbox, 
 			},
 		}
 		patch.Status.Phase = string(state.Draining)
+		patch.Status.PodName = live.Status.PodName
+		patch.Status.NodeName = live.Status.NodeName
+		patch.Status.PodIP = live.Status.PodIP
+		patch.Status.ObservedGeneration = live.Generation
 		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
 	})
 }

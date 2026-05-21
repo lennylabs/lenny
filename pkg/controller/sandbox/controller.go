@@ -226,14 +226,26 @@ func (r *Reconciler) syncStatus(ctx context.Context, sb *lennyv1.Sandbox, decisi
 }
 
 // buildSandboxStatusPatch returns an SSA Apply patch object carrying
-// only the controller-owned Sandbox.status fields, or nil when no
-// field changes. The patch is a minimal Sandbox with name/namespace
-// metadata and the status fields we own; the API server merges it
-// onto the live object under the controller's field manager,
-// leaving every other field manager's contributions intact.
+// the controller-owned Sandbox.status fields, or nil when none change.
+// The patch is a minimal Sandbox with name/namespace metadata and the
+// controller-owned status fields; the API server merges it onto the
+// live object under the WPC's field manager, leaving every other
+// field manager's contributions intact.
+//
+// Every controller-owned field present in the patch carries either
+// the planner's new value or, when the planner is not transitioning
+// that field, the live value re-applied. SSA treats a struct's Go
+// zero-value field as an intentional set ("Phase=''"), so omitting a
+// field by leaving it zero would clobber the live value and erase
+// the controller's claim onto it. Re-including the live value keeps
+// the WPC's ownership of the field intact without overwriting
+// the planner's intent.
 func buildSandboxStatusPatch(live *lennyv1.Sandbox, decision lifecycle.Decision, pod *corev1.Pod, obs lifecycle.PodObservation) *lennyv1.Sandbox {
 	before := live.Status
+	// Start with the live values for every controller-owned field so
+	// the SSA patch is a no-op on fields the planner does not touch.
 	want := sandboxStatusFields{
+		Phase:              before.Phase,
 		PodName:            before.PodName,
 		NodeName:           before.NodeName,
 		PodIP:              before.PodIP,
@@ -241,7 +253,6 @@ func buildSandboxStatusPatch(live *lennyv1.Sandbox, decision lifecycle.Decision,
 	}
 	if decision.Action == lifecycle.ActionSetPhase {
 		want.Phase = string(decision.NextPhase)
-		want.HasPhase = true
 	}
 	switch {
 	case decision.Action == lifecycle.ActionCreatePod:
@@ -257,8 +268,7 @@ func buildSandboxStatusPatch(live *lennyv1.Sandbox, decision lifecycle.Decision,
 			want.PodIP = pod.Status.PodIP
 		}
 	}
-	phaseUnchanged := !want.HasPhase || want.Phase == before.Phase
-	if phaseUnchanged &&
+	if want.Phase == before.Phase &&
 		want.PodName == before.PodName &&
 		want.NodeName == before.NodeName &&
 		want.PodIP == before.PodIP &&
@@ -275,9 +285,7 @@ func buildSandboxStatusPatch(live *lennyv1.Sandbox, decision lifecycle.Decision,
 			Namespace: live.Namespace,
 		},
 	}
-	if want.HasPhase {
-		patch.Status.Phase = want.Phase
-	}
+	patch.Status.Phase = want.Phase
 	patch.Status.PodName = want.PodName
 	patch.Status.NodeName = want.NodeName
 	patch.Status.PodIP = want.PodIP
@@ -286,11 +294,9 @@ func buildSandboxStatusPatch(live *lennyv1.Sandbox, decision lifecycle.Decision,
 }
 
 // sandboxStatusFields is the in-memory carrier for the per-attempt
-// status computation. Phase carries the optional-set flag because
-// not every decision touches Phase.
+// status computation.
 type sandboxStatusFields struct {
 	Phase              string
-	HasPhase           bool
 	PodName            string
 	NodeName           string
 	PodIP              string
