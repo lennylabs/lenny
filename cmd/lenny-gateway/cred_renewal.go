@@ -56,8 +56,10 @@ type renewalProvider struct {
 type credRenewalWiring struct {
 	// assign mints replacement leases — the §4.9 AssignCredentials path
 	// the renewal worker reuses (spec §4.9 Proactive Lease Renewal,
-	// step 2).
-	assign *credassign.Service
+	// step 2). The interface lets the wiring run against either the
+	// in-process credassign.Service (used by lenny-token-service) or
+	// the gateway-side credassign.Client (the §4.3 mTLS gRPC client).
+	assign credassign.Assigner
 	// registry resolves a session's pod so a rotated credential can be
 	// pushed to it. Nil without warm-pod placement.
 	registry *podsession.Registry
@@ -72,7 +74,7 @@ type credRenewalWiring struct {
 // credential pools are registered. registry may be nil when the gateway
 // runs without warm-pod placement; a renewal then refreshes the lease
 // record without a RotateCredentials push.
-func newCredRenewalWiring(assign *credassign.Service, registry *podsession.Registry) *credRenewalWiring {
+func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry) *credRenewalWiring {
 	if assign == nil {
 		return nil
 	}

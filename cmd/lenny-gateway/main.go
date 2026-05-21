@@ -49,6 +49,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -175,6 +177,7 @@ import (
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -234,6 +237,16 @@ func main() {
 		"path to the private key for --adapter-tls-cert.")
 	adapterCA := flag.String("adapter-ca", os.Getenv("LENNY_ADAPTER_CA"),
 		"path to the CA bundle that verifies a pod adapter's server certificate on the §4.7 mTLS link.")
+	tokenServiceAddr := flag.String("token-service-grpc-addr", os.Getenv("LENNY_TOKEN_SERVICE_GRPC_ADDR"),
+		"§4.3 lenny-token-service gRPC address (host:port). When set, the gateway materializes every §4.9 credential lease over mTLS against the Token Service instead of running pkg/credential.MintLease in-process, enforcing the §4.3 'gateway has no KMS decrypt rights' boundary. Empty falls back to the in-process credassign.Service for dev mode and self-contained tests.")
+	tokenServiceCert := flag.String("token-service-tls-cert", os.Getenv("LENNY_TOKEN_SERVICE_TLS_CERT"),
+		"path to the gateway's client certificate for the §4.3 mTLS link to lenny-token-service. Empty dials the Token Service in plaintext (dev mode only).")
+	tokenServiceKey := flag.String("token-service-tls-key", os.Getenv("LENNY_TOKEN_SERVICE_TLS_KEY"),
+		"path to the private key for --token-service-tls-cert.")
+	tokenServiceCA := flag.String("token-service-ca", os.Getenv("LENNY_TOKEN_SERVICE_CA"),
+		"path to the CA bundle that verifies the Token Service's server certificate on the §4.3 mTLS link.")
+	tokenServiceTenant := flag.String("token-service-tenant", os.Getenv("LENNY_TOKEN_SERVICE_TENANT"),
+		"tenant id the gateway carries on every §4.3 Token Service request. The Token Service applies §4.2 RLS against this id. Empty disables tenant binding (dev mode).")
 	grpcAddr := flag.String("grpc-addr", os.Getenv("LENNY_GRPC_ADDR"),
 		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — currently the ExtendLease lease-extension RPC — on this address. Empty disables the GatewayControl listener.")
 	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
@@ -618,13 +631,53 @@ func main() {
 	if pgPool != nil {
 		llmLeases = credleasepg.New(pgPool)
 	}
-	// credAssign mints a session's §4.9 credential leases: it records
-	// each lease in llmLeases and caches the upstream credential in
-	// credCache. The §4.7 binder pushes the minted leases to a pod via
-	// the adapter's AssignCredentials RPC. Deployer-configured credential
-	// pools are registered via RegisterPool; with no pools registered
-	// the binder assigns nothing.
-	credAssign := credassign.New(llmLeases, credCache)
+	// credAssign mints a session's §4.9 credential leases. It is one of
+	// two implementations:
+	//
+	//   - The §4.3-compliant Client when --token-service-grpc-addr is
+	//     set: the gateway calls lenny-token-service over mTLS and the
+	//     Token Service is the only component with KMS decrypt rights;
+	//     the gateway materializes nothing in-process. The Client
+	//     mirrors each minted lease into llmLeases and the upstream
+	//     credential into credCache so the §4.9 LLM proxy hot path is
+	//     unchanged.
+	//
+	//   - The in-process Service when --token-service-grpc-addr is
+	//     empty: dev mode and self-contained tests run without a
+	//     separate Token Service process. The Service registers
+	//     deployer-configured credential pools and mints leases
+	//     locally.
+	//
+	// In both modes the §4.7 binder pushes the minted leases to a pod
+	// via the adapter's AssignCredentials RPC and the §4.9 renewal
+	// worker tracks them for proactive rotation.
+	var (
+		credAssign        credassign.Assigner
+		inProcessAssign   *credassign.Service
+		tokenServiceConn  *grpc.ClientConn
+	)
+	if *tokenServiceAddr != "" {
+		conn, err := dialTokenService(*tokenServiceAddr, *tokenServiceCert, *tokenServiceKey, *tokenServiceCA)
+		if err != nil {
+			log.Fatalf("lenny-gateway: dial Token Service %q: %v", *tokenServiceAddr, err)
+		}
+		tokenServiceConn = conn
+		credAssign = credassign.NewClient(credassign.ClientOptions{
+			Stub:     tokensv1.NewTokenServiceClient(conn),
+			Leases:   llmLeases,
+			Creds:    credCache,
+			TenantID: *tokenServiceTenant,
+		})
+		log.Printf("lenny-gateway: §4.3 credential materialization via lenny-token-service at %s", *tokenServiceAddr)
+	} else {
+		inProcessAssign = credassign.New(llmLeases, credCache)
+		credAssign = inProcessAssign
+	}
+	defer func() {
+		if tokenServiceConn != nil {
+			_ = tokenServiceConn.Close()
+		}
+	}()
 
 	// §15.1 pod placement: with --agent-namespace the gateway claims a
 	// §5 warm pod for each started session and dispatches its messages
@@ -2154,4 +2207,42 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return out
+}
+
+// dialTokenService dials lenny-token-service for the §4.3 credential
+// materialization path. mTLS is required in production deployments —
+// the gateway has a distinct client identity per replica per §4.3 —
+// and certPath / keyPath / caPath name the project's mTLS material.
+// With every TLS flag empty the dial falls through to plaintext for
+// dev mode, which is the path the gateway-side bufconn tests exercise.
+func dialTokenService(addr, certPath, keyPath, caPath string) (*grpc.ClientConn, error) {
+	if addr == "" {
+		return nil, fmt.Errorf("token service address is empty")
+	}
+	var transport grpc.DialOption
+	switch {
+	case certPath == "" && keyPath == "" && caPath == "":
+		transport = grpc.WithTransportCredentials(insecure.NewCredentials())
+	case certPath == "" || keyPath == "" || caPath == "":
+		return nil, fmt.Errorf("token service mTLS requires --token-service-tls-cert, --token-service-tls-key, and --token-service-ca to all be set")
+	default:
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load token-service client cert: %w", err)
+		}
+		caPEM, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("read token-service CA bundle: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("token-service CA bundle %q parsed no certificates", caPath)
+		}
+		transport = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{cert},
+			RootCAs:      pool,
+			MinVersion:   tls.VersionTLS13,
+		}))
+	}
+	return grpc.NewClient(addr, transport)
 }

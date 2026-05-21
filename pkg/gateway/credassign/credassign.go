@@ -16,11 +16,39 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // ErrPoolNotFound reports that no credential pool is registered under
 // the requested name.
 var ErrPoolNotFound = errors.New("credassign: no such credential pool")
+
+// Assigner is the shared §4.9 credential-assignment surface the gateway
+// depends on. The in-process Service (used by lenny-token-service)
+// satisfies it; the gateway-side Client (talking to lenny-token-service
+// over mTLS) also satisfies it. Call sites depend on the interface so
+// the gateway main can construct either implementation without
+// branching at every call site.
+type Assigner interface {
+	// Assign mints a §4.9 credential lease from poolName for sessionID
+	// and returns it. spiffeURI is the issuing pod's SPIFFE identity for
+	// proxy-mode SPIFFE-binding; an empty value disables binding.
+	Assign(poolName, sessionID, spiffeURI string) (credential.Lease, error)
+	// AssignProto mints a lease and returns its adapter wire form for
+	// the §4.7 binder to push to a pod via AssignCredentials.
+	AssignProto(poolName, sessionID, spiffeURI string) (*adapterv1.CredentialLease, error)
+	// ProtoLeaseByID returns the adapter wire form of a recorded lease.
+	// The §4.9 renewal worker uses it to push a rotated lease to a pod
+	// without re-deriving the wire form from raw fields.
+	ProtoLeaseByID(leaseID string) (*adapterv1.CredentialLease, error)
+	// Release frees the credential session slot a lease held and removes
+	// the lease record. It is a no-op for an unknown lease id.
+	Release(leaseID string)
+	// OnAssigned registers an observer the assigner invokes after every
+	// successful Assign. The §4.9 Proactive Lease Renewal worker
+	// registers here so each minted lease is tracked for renewal.
+	OnAssigned(fn func(LeaseAssignment))
+}
 
 // PoolCredential is one upstream credential in a §4.9 credential pool.
 type PoolCredential struct {
