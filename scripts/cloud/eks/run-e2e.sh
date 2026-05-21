@@ -489,4 +489,69 @@ if [[ -z "${LENNY_TEST_BIN}" ]]; then
 fi
 "${LENNY_TEST_BIN}" --tier e2e_cloud --output human
 
+# 6b. In-cluster tier-6 runner for the ElastiCache tests. The Redis
+#     endpoint is VPC-private and not reachable from outside the
+#     cluster (AWS does not surface a public-DNS option for
+#     ElastiCache). The runner pod has VPC access by definition;
+#     compile a static linux/amd64 build of the tier-6 test binary,
+#     kubectl-cp it into a minimal alpine pod with the Redis env
+#     vars + AUTH token, and stream the test output back.
+if [[ "${WITH_ELASTICACHE}" == "1" && -n "${LENNY_AWS_REDIS_ENDPOINT}" ]]; then
+  echo "==[6b/6] in-cluster ElastiCache tier-6 runner==" >&2
+  redis_token=""
+  if [[ -n "${LENNY_AWS_REDIS_AUTH_SECRET_ARN}" ]]; then
+    redis_token="$(aws secretsmanager get-secret-value --region "${REGION}" \
+      --secret-id "${LENNY_AWS_REDIS_AUTH_SECRET_ARN}" --query SecretString --output text)"
+  fi
+  if [[ -z "${redis_token}" ]]; then
+    echo "  could not resolve Redis AUTH token from Secrets Manager; skipping in-cluster Redis runner" >&2
+  else
+    runner_tmpdir="$(mktemp -d)"
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+      go test -c -tags=e2e_cloud -o "${runner_tmpdir}/tier6.test" \
+      "${REPO_ROOT}/tests/tier6_e2e_cloud" >&2
+    kubectl -n lenny-system delete pod lenny-tier6-redis-runner --ignore-not-found --wait=true --force --grace-period=0 >/dev/null 2>&1
+    kubectl -n lenny-system apply -f - <<POD
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lenny-tier6-redis-runner
+  labels:
+    lenny.dev/test: tier6-redis-runner
+spec:
+  restartPolicy: Never
+  containers:
+    - name: runner
+      image: alpine:3.20
+      command: ["sleep", "1800"]
+      env:
+        - name: LENNY_CLOUD_PROVIDER
+          value: "eks"
+        - name: LENNY_CLOUD_SKIP_CLI_CHECK
+          value: "1"
+        - name: LENNY_AWS_REDIS_ENDPOINT
+          value: "${LENNY_AWS_REDIS_ENDPOINT}"
+        - name: LENNY_AWS_REDIS_PORT
+          value: "${LENNY_AWS_REDIS_PORT}"
+        - name: LENNY_AWS_REDIS_AUTH_TOKEN
+          value: "${redis_token}"
+        - name: LENNY_AWS_REDIS_CONFIG_ENDPOINT
+          value: "${LENNY_AWS_REDIS_CONFIG_ENDPOINT}"
+POD
+    until kubectl -n lenny-system get pod lenny-tier6-redis-runner 2>/dev/null | grep -q Running; do sleep 2; done
+    kubectl cp "${runner_tmpdir}/tier6.test" lenny-system/lenny-tier6-redis-runner:/tier6.test
+    set +e
+    kubectl -n lenny-system exec lenny-tier6-redis-runner -- \
+      /tier6.test -test.v -test.count=1 -test.run "TestCloudRedis"
+    runner_rc=$?
+    set -e
+    kubectl -n lenny-system delete pod lenny-tier6-redis-runner --ignore-not-found --wait=false >/dev/null
+    rm -rf "${runner_tmpdir}"
+    if [[ "${runner_rc}" -ne 0 ]]; then
+      echo "  in-cluster ElastiCache runner returned ${runner_rc}" >&2
+      exit "${runner_rc}"
+    fi
+  fi
+fi
+
 echo "run-e2e.sh: tier-6 suite completed" >&2
