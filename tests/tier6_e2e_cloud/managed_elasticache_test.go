@@ -85,6 +85,18 @@ func requireRedis(t *testing.T) redisParams {
 			params.configPort = port
 		}
 	}
+
+	// ElastiCache endpoints live on private VPC subnets only;
+	// AWS does not surface a public-DNS / public-IP option. A test
+	// runner outside the VPC fails to reach the endpoint at all,
+	// which is a different failure mode from the engine refusing a
+	// plaintext connection. Skip with a clear hint when the
+	// endpoint is unreachable.
+	probe, perr := net.DialTimeout("tcp", net.JoinHostPort(params.host, params.port), 3*time.Second)
+	if perr != nil {
+		t.Skipf("requireRedis: cannot reach %s:%s (%v); ElastiCache endpoints are VPC-private. Run the suite from inside the cluster (`kubectl run --rm -it lenny-test-runner ...`) to exercise these tests, or via a VPN/bastion to the lenny-e2e VPC.", params.host, params.port, perr)
+	}
+	_ = probe.Close()
 	return params
 }
 

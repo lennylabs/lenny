@@ -80,6 +80,12 @@ variable "elasticache_replicas_per_node_group" {
 # network on Postgres 5432 + Redis 6379). The existing
 # aws_eks_cluster's vpc_config attaches the cluster ENIs to the same
 # public subnets, so the cluster's pod CIDR is reachable.
+variable "managed_datastores_test_cidrs" {
+  description = "Extra CIDRs admitted to Postgres + Redis on the managed-datastores security group. Operator's home/office IP goes here so tier-6 tests can connect from outside the VPC. Default empty so a stock install only admits VPC traffic."
+  type        = list(string)
+  default     = []
+}
+
 resource "aws_security_group" "managed_datastores" {
   count       = (var.create_rds || var.create_elasticache) ? 1 : 0
   name        = "${var.release}-managed-datastores"
@@ -87,19 +93,19 @@ resource "aws_security_group" "managed_datastores" {
   vpc_id      = var.create_cluster ? aws_vpc.lenny[0].id : null
 
   ingress {
-    description = "Postgres from the VPC"
+    description = "Postgres from the VPC + test CIDRs"
     from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
+    cidr_blocks = concat([var.vpc_cidr], var.managed_datastores_test_cidrs)
   }
 
   ingress {
-    description = "Redis from the VPC"
+    description = "Redis from the VPC + test CIDRs"
     from_port   = 6379
     to_port     = 6379
     protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
+    cidr_blocks = concat([var.vpc_cidr], var.managed_datastores_test_cidrs)
   }
 
   # The egress default-allow is intentional: the managed services
@@ -268,8 +274,8 @@ output "rds_endpoint" {
 }
 
 output "rds_instance_id" {
-  description = "RDS instance identifier — used by tests that query the RDS API directly."
-  value       = try(aws_db_instance.rds[0].id, "")
+  description = "RDS instance identifier (the human name, e.g. lenny-e2e-rds) — used by tests that query the RDS API directly."
+  value       = try(aws_db_instance.rds[0].identifier, "")
 }
 
 output "rds_master_secret_arn" {

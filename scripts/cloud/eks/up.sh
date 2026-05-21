@@ -61,11 +61,24 @@ echo "eks/up.sh: shape=${SHAPE} region=${REGION} release=${RELEASE} node=${NODE_
 # create_rds + create_elasticache flags add managed-service
 # provisioning when the caller sets WITH_RDS=1 / WITH_ELASTICACHE=1
 # in the environment.
+#
+# TEST_CIDR (single CIDR for the caller's home/office IP) admits
+# external Postgres + Redis connections so the tier-6 managed-
+# service tests can run from outside the VPC. Defaults to the
+# caller's current public IP fetched from checkip.amazonaws.com.
 WITH_RDS="${WITH_RDS:-0}"
 WITH_ELASTICACHE="${WITH_ELASTICACHE:-0}"
 RDS_MULTI_AZ="${RDS_MULTI_AZ:-0}"
 ELASTICACHE_REPLICAS="${ELASTICACHE_REPLICAS:-0}"
 ELASTICACHE_SHARDS="${ELASTICACHE_SHARDS:-1}"
+TEST_CIDR="${TEST_CIDR:-$(curl -s https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')/32}"
+if [[ "${TEST_CIDR}" == "/32" ]]; then
+  TEST_CIDR=""
+fi
+cidr_array="[]"
+if [[ -n "${TEST_CIDR}" ]]; then
+  cidr_array="[\"${TEST_CIDR}\"]"
+fi
 cat > "${TFVARS_FILE}" <<JSON
 {
   "release":            "${RELEASE}",
@@ -79,7 +92,8 @@ cat > "${TFVARS_FILE}" <<JSON
   "rds_multi_az":       $([[ "${RDS_MULTI_AZ}" == "1" ]] && echo true || echo false),
   "create_elasticache": $([[ "${WITH_ELASTICACHE}" == "1" ]] && echo true || echo false),
   "elasticache_num_node_groups":         ${ELASTICACHE_SHARDS},
-  "elasticache_replicas_per_node_group": ${ELASTICACHE_REPLICAS}
+  "elasticache_replicas_per_node_group": ${ELASTICACHE_REPLICAS},
+  "managed_datastores_test_cidrs":       ${cidr_array}
 }
 JSON
 

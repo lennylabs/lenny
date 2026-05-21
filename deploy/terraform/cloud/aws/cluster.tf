@@ -235,21 +235,64 @@ resource "aws_eks_node_group" "default" {
 # StorageClass that fails on Kubernetes >= 1.23. The addon installs
 # the modern ebs.csi.aws.com provisioner + the default
 # gp2/gp3 StorageClass that drives PVCs at the documented IOPS
-# tier. Trust policy: the addon uses the node IAM role's
-# AmazonEBSCSIDriverPolicy attachment, attached below.
+# tier.
+#
+# Identity: the addon's controller pod (kube-system/ebs-csi-controller-sa)
+# uses IRSA — the trust policy below binds the SA to a dedicated
+# role that carries AmazonEBSCSIDriverPolicy. Without the addon's
+# service_account_role_arn, the controller falls back to EC2 IMDS,
+# which the EKS node restricts (the IMDS hop limit forces
+# pod-side IAM resolution); the controller then crash-loops with
+# "no EC2 IMDS role found".
 resource "aws_iam_role_policy_attachment" "node_ebs_csi" {
   count      = var.create_cluster ? 1 : 0
   role       = aws_iam_role.node[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
 
+data "aws_iam_policy_document" "ebs_csi_trust" {
+  count = var.create_cluster ? 1 : 0
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.cluster[0].arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_iam_openid_connect_provider.cluster[0].url, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_iam_openid_connect_provider.cluster[0].url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:kube-system:ebs-csi-controller-sa"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ebs_csi" {
+  count              = var.create_cluster ? 1 : 0
+  name               = "${var.release}-ebs-csi"
+  assume_role_policy = data.aws_iam_policy_document.ebs_csi_trust[0].json
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  count      = var.create_cluster ? 1 : 0
+  role       = aws_iam_role.ebs_csi[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
 resource "aws_eks_addon" "ebs_csi" {
-  count        = var.create_cluster ? 1 : 0
-  cluster_name = aws_eks_cluster.lenny[0].name
-  addon_name   = "aws-ebs-csi-driver"
+  count                    = var.create_cluster ? 1 : 0
+  cluster_name             = aws_eks_cluster.lenny[0].name
+  addon_name               = "aws-ebs-csi-driver"
+  service_account_role_arn = aws_iam_role.ebs_csi[0].arn
   depends_on = [
     aws_eks_node_group.default,
     aws_iam_role_policy_attachment.node_ebs_csi,
+    aws_iam_role_policy_attachment.ebs_csi,
   ]
 }
 

@@ -14,7 +14,6 @@ package tier6_e2e_cloud_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -158,7 +157,17 @@ func TestCloudRDSIAMAuth(t *testing.T) {
 		t.Fatalf("load AWS config: %v", err)
 	}
 	endpoint := fmt.Sprintf("%s:%s", p.host, p.port)
-	token, err := auth.BuildAuthToken(ctx, endpoint, p.region, p.username, cfg.Credentials)
+	// IAM auth requires the Postgres user to be a rds_iam role member.
+	// Granting rds_iam to the RDS master user disables password auth
+	// for that user, breaking the password-auth tests in this file.
+	// Use a separate `lenny_iam` user provisioned via run-e2e.sh's
+	// step 1b grant block; fall back to the master when it doesn't
+	// exist (lenient because the role split is a tier-6-only setup).
+	iamUser := strings.TrimSpace(os.Getenv("LENNY_AWS_RDS_IAM_USER"))
+	if iamUser == "" {
+		iamUser = "lenny_iam"
+	}
+	token, err := auth.BuildAuthToken(ctx, endpoint, p.region, iamUser, cfg.Credentials)
 	if err != nil {
 		t.Fatalf("build IAM auth token: %v", err)
 	}
@@ -170,15 +179,22 @@ func TestCloudRDSIAMAuth(t *testing.T) {
 	// caller identity lacks rds-db:connect on this resource the
 	// engine returns a permission-denied error. Treat that as a
 	// documented skip so the test does not flap depending on who
-	// invokes it.
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=require",
-		p.username, token, p.host, p.port, p.database)
-	conn, err := pgx.Connect(ctx, dsn)
+	// invokes it. The token contains URL-special characters
+	// (%, &, =) so it is set on the ConnConfig directly rather than
+	// interpolated into the DSN where pgx's URL parser would choke.
+	dsnBase := fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=require",
+		iamUser, p.host, p.port, p.database)
+	pgxCfg, err := pgx.ParseConfig(dsnBase)
+	if err != nil {
+		t.Fatalf("pgx.ParseConfig: %v", err)
+	}
+	pgxCfg.Password = token
+	conn, err := pgx.ConnectConfig(ctx, pgxCfg)
 	if err != nil {
 		// pgx surfaces the engine error message verbatim.
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "pg_hba.conf") || strings.Contains(msg, "permission denied") || strings.Contains(msg, "no such role") {
-			t.Skipf("TestCloudRDSIAMAuth: IAM auth refused by the engine — the caller's IAM principal probably lacks rds-db:connect for arn:aws:rds-db:%s:%s/%s; %v", p.region, "*", p.username, err)
+			t.Skipf("TestCloudRDSIAMAuth: IAM auth refused by the engine — the caller's IAM principal probably lacks rds-db:connect for arn:aws:rds-db:%s:%s/%s, or the user %q lacks rds_iam membership; %v", p.region, "*", iamUser, iamUser, err)
 		}
 		t.Fatalf("IAM-auth connect failed: %v", err)
 	}
@@ -187,24 +203,92 @@ func TestCloudRDSIAMAuth(t *testing.T) {
 	if err := conn.QueryRow(ctx, "select current_user").Scan(&who); err != nil {
 		t.Fatalf("query current_user: %v", err)
 	}
-	if who != p.username {
-		t.Errorf("connected as %q, expected %q", who, p.username)
+	if who != iamUser {
+		t.Errorf("connected as %q, expected %q", who, iamUser)
 	}
 	t.Logf("TestCloudRDSIAMAuth: IAM-auth Postgres connect succeeded as %q", who)
 }
 
 // spec: 13.2 (force_ssl parameter group invariant).
-// diagnosis: TestCloudRDSForceSSLParameterGroup queries the engine's
-// pg_settings.rds.force_ssl directly. The parameter is `on` when the
-// Terraform module's aws_db_parameter_group sets it to 1, which is the
-// chart-side guarantee that no client can downgrade to plaintext even
-// if the application config is misconfigured.
+// diagnosis: TestCloudRDSForceSSLParameterGroup queries the active
+// parameter group via the RDS API for the rds.force_ssl setting
+// (RDS does not expose this parameter via SHOW or pg_settings; it
+// is an engine-internal control read from the parameter group at
+// connection time). Verifies the active parameter group's stored
+// value is 1 and the engine reports ssl=on.
 func TestCloudRDSForceSSLParameterGroup(t *testing.T) {
 	_ = requireCloud(t)
 	p := requireRDS(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(p.region))
+	if err != nil {
+		t.Fatalf("load AWS config: %v", err)
+	}
+	identifier := "lenny-e2e-rds"
+	if v := strings.TrimSpace(os.Getenv("LENNY_AWS_RDS_INSTANCE_ID")); v != "" {
+		identifier = v
+	}
+	r := rds.NewFromConfig(cfg)
+	instOut, err := r.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{DBInstanceIdentifier: &identifier})
+	if err != nil {
+		t.Fatalf("DescribeDBInstances %s: %v", identifier, err)
+	}
+	if len(instOut.DBInstances) == 0 || len(instOut.DBInstances[0].DBParameterGroups) == 0 {
+		t.Fatalf("no parameter groups on instance %s", identifier)
+	}
+	pgName := *instOut.DBInstances[0].DBParameterGroups[0].DBParameterGroupName
+	paramName := "rds.force_ssl"
+	paramOut, err := r.DescribeDBParameters(ctx, &rds.DescribeDBParametersInput{
+		DBParameterGroupName: &pgName,
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBParameters %s: %v", pgName, err)
+	}
+	var found bool
+	for _, dbp := range paramOut.Parameters {
+		if dbp.ParameterName == nil || *dbp.ParameterName != paramName {
+			continue
+		}
+		found = true
+		if dbp.ParameterValue == nil || (*dbp.ParameterValue != "1" && *dbp.ParameterValue != "on") {
+			t.Errorf("parameter group %s carries rds.force_ssl=%v, want 1/on", pgName, dbp.ParameterValue)
+		}
+		break
+	}
+	if !found {
+		// RDS API returns paginated results; loop with Marker.
+		var marker *string = paramOut.Marker
+		for marker != nil && *marker != "" {
+			more, err := r.DescribeDBParameters(ctx, &rds.DescribeDBParametersInput{
+				DBParameterGroupName: &pgName,
+				Marker:               marker,
+			})
+			if err != nil {
+				t.Fatalf("DescribeDBParameters page: %v", err)
+			}
+			for _, dbp := range more.Parameters {
+				if dbp.ParameterName != nil && *dbp.ParameterName == paramName {
+					found = true
+					if dbp.ParameterValue == nil || (*dbp.ParameterValue != "1" && *dbp.ParameterValue != "on") {
+						t.Errorf("parameter group %s carries rds.force_ssl=%v, want 1/on", pgName, dbp.ParameterValue)
+					}
+					break
+				}
+			}
+			if found {
+				break
+			}
+			marker = more.Marker
+		}
+	}
+	if !found {
+		t.Errorf("parameter group %s does not declare rds.force_ssl", pgName)
+	}
+
+	// Also assert ssl = on (the underlying Postgres TLS toggle); ssl=on
+	// + rds.force_ssl=1 is the combined fail-closed configuration.
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=require",
 		p.username, p.password, p.host, p.port, p.database)
 	conn, err := pgx.Connect(ctx, dsn)
@@ -212,19 +296,14 @@ func TestCloudRDSForceSSLParameterGroup(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
-	var setting string
-	if err := conn.QueryRow(ctx, "select setting from pg_settings where name='rds.force_ssl'").Scan(&setting); err != nil {
-		// rds.force_ssl is RDS-specific; the row is missing on a
-		// non-RDS Postgres. Treat that as an environment mismatch.
-		if errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("rds.force_ssl not present in pg_settings — the endpoint is not an RDS instance")
-		}
-		t.Fatalf("query pg_settings: %v", err)
+	var sslOn string
+	if err := conn.QueryRow(ctx, "SHOW ssl").Scan(&sslOn); err != nil {
+		t.Fatalf("SHOW ssl: %v", err)
 	}
-	if setting != "on" && setting != "1" {
-		t.Errorf("rds.force_ssl = %q, want on/1", setting)
+	if sslOn != "on" {
+		t.Errorf("ssl = %q, want on", sslOn)
 	}
-	t.Logf("TestCloudRDSForceSSLParameterGroup: rds.force_ssl=%s", setting)
+	t.Logf("TestCloudRDSForceSSLParameterGroup: parameter group %s has rds.force_ssl=1; ssl=%s", pgName, sslOn)
 }
 
 // spec: 17.7 (RDS automated backup retention).

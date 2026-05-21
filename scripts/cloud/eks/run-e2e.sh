@@ -123,27 +123,20 @@ else
 fi
 
 # 1b. Optional one-shot post-provisioning grants for managed services.
-#     The §13.3 RDS IAM auth path requires the Postgres user to be a
-#     member of the rds_iam role; the GRANT is idempotent and only
-#     fires when WITH_RDS=1. Without this grant the
-#     TestCloudRDSIAMAuth test skips with a permission-denied
-#     diagnosis even though the IRSA role + IAM auth token are
-#     valid.
+#     The §13.3 RDS IAM auth path requires a Postgres user to be a
+#     member of the rds_iam role. Granting rds_iam to the master user
+#     (lenny) DISABLES password auth for the master, which breaks the
+#     password-auth tier-6 tests. Create a separate `lenny_iam` user
+#     for the IAM auth path; the master keeps password auth.
+#     Idempotent; only fires when WITH_RDS=1.
 if [[ "${WITH_RDS}" == "1" ]]; then
-  echo "==[1b/6] GRANT rds_iam TO lenny (idempotent)==" >&2
-  rds_endpoint="$("${TF}" -chdir="${TF_DIR}" output -raw rds_endpoint 2>/dev/null || echo)"
-  rds_secret_arn="$("${TF}" -chdir="${TF_DIR}" output -raw rds_master_secret_arn 2>/dev/null || echo)"
-  rds_db="$("${TF}" -chdir="${TF_DIR}" output -raw rds_database_name 2>/dev/null || echo)"
-  if [[ -n "${rds_endpoint}" && -n "${rds_secret_arn}" && -n "${rds_db}" ]]; then
-    rds_password="$(aws secretsmanager get-secret-value --region "${REGION}" \
-      --secret-id "${rds_secret_arn}" --query SecretString --output text \
-      | python3 -c "import json,sys; print(json.load(sys.stdin)['password'])")"
-    PGPASSWORD="${rds_password}" psql "postgresql://lenny@${rds_endpoint}/${rds_db}?sslmode=require" \
-      -v ON_ERROR_STOP=1 -c "GRANT rds_iam TO lenny;" >/dev/null \
-      || echo "  GRANT rds_iam returned non-zero (often benign: already a member, or psql missing)" >&2
-  else
-    echo "  RDS endpoint/secret outputs are empty; skipping the GRANT step" >&2
-  fi
+  echo "==[1b/6] provision lenny_iam user for the §13.3 IAM auth tests==" >&2
+  go run "${REPO_ROOT}/scripts/cloud/eks/rds-grant-iam.go" \
+    --endpoint "$("${TF}" -chdir="${TF_DIR}" output -raw rds_endpoint 2>/dev/null || true)" \
+    --secret-arn "$("${TF}" -chdir="${TF_DIR}" output -raw rds_master_secret_arn 2>/dev/null || true)" \
+    --database "$("${TF}" -chdir="${TF_DIR}" output -raw rds_database_name 2>/dev/null || true)" \
+    --region "${REGION}" \
+    || echo "  rds-grant-iam returned non-zero (often benign: already provisioned)" >&2
 fi
 
 # 2. Build + push Lenny images to ECR.
@@ -381,15 +374,38 @@ done
 #         marker for a sandbox node pool. We label the first worker
 #         node so the assertion runs; a production install replaces
 #         this with a dedicated gVisor node group.
-# Mark the gp2 StorageClass the cluster default if no other class
-# carries the annotation. The EBS CSI driver addon installs gp2 but
-# leaves the cluster-default marker unset; a Deployment with an
-# unnamed-StorageClass PVC fails to bind without it. Idempotent.
-default_sc="$(kubectl get sc -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{":"}{.metadata.name}{"\n"}{end}' | awk -F: '$1=="true"{print $2}' | head -n1)"
-if [[ -z "${default_sc}" ]] && kubectl get sc gp2 >/dev/null 2>&1; then
-  kubectl annotate storageclass gp2 storageclass.kubernetes.io/is-default-class=true --overwrite >/dev/null
-  echo "  marked StorageClass gp2 the cluster default" >&2
-fi
+# Create an EBS-CSI-backed StorageClass (gp3) and mark it the
+# cluster default. The aws-ebs-csi-driver addon installs the
+# controller + node DaemonSet but does not create a StorageClass
+# — the cluster ships only the legacy `gp2` class using the
+# deprecated kubernetes.io/aws-ebs provisioner, which fails on
+# Kubernetes >= 1.23. A Deployment with an unnamed-StorageClass
+# PVC needs both a CSI provisioner and a cluster-default marker.
+# Idempotent.
+kubectl apply -f - <<'STORAGECLASS'
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+parameters:
+  type: gp3
+  encrypted: "true"
+STORAGECLASS
+
+# Drop the cluster-default annotation off any other class so there
+# is exactly one default (the kubernetes default-class admission
+# controller refuses to bind to a PVC with no class when more than
+# one class is default).
+kubectl get sc -o jsonpath='{range .items[*]}{.metadata.name}{":"}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' | awk -F: '$2=="true" && $1!="gp3"{print $1}' | while read -r sc; do
+  kubectl annotate storageclass "${sc}" storageclass.kubernetes.io/is-default-class- >/dev/null 2>&1 || true
+  echo "  cleared default annotation on ${sc}" >&2
+done
 
 echo "==[5c/6] cluster fixtures (kata RuntimeClass + sandbox-gvisor node label)==" >&2
 kubectl apply -f - <<'KATA'
