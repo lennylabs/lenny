@@ -216,7 +216,7 @@ these services.
 
 ### Region and quotas
 
-The cluster region is set by the Terraform under `deploy/terraform/cloud/eks/`.
+The cluster region is set by the Terraform under `deploy/terraform/cloud/aws/`.
 The test harness takes no region argument; the region lives in that Terraform
 configuration. Until it exists, `us-west-2` or `us-east-1` is the proposed
 default. Both have at least three Availability Zones, which `multi_zone_dr`
@@ -299,7 +299,7 @@ The value is not used for token verification.
 
 Replace the two managed policies with a custom policy scoped to the actions
 for the "Services the suites use" list once the Terraform under
-`deploy/terraform/cloud/eks/` defines the resources it manages.
+`deploy/terraform/cloud/aws/` defines the resources it manages.
 
 ## Microsoft Azure (AKS)
 

@@ -509,7 +509,7 @@ gateway:
   # ServiceAccount. The §13 IRSA-on-EKS install sets
   # eks.amazonaws.com/role-arn here to bind the SA to the IAM role
   # the Terraform module provisions. Empty by default; provider-
-  # specific overlays (scripts/cloud/eks/render-values.sh, etc.)
+  # specific overlays (scripts/cloud/aws/render-values.sh, etc.)
   # populate it.
   serviceAccount:
     annotations: {}

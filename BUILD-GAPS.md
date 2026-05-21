@@ -177,7 +177,7 @@ preconditions are met. `tests/tier6_e2e_cloud/scaffolds_test.go` is
 now an entry-point shim that exports the shared `requireCloud` guard;
 no test bodies live there.
 
-`scripts/cloud/eks/run-e2e.sh` drives the full sequence (`up.sh` →
+`scripts/cloud/aws/run-e2e.sh` drives the full sequence (`up.sh` →
 ECR push → render-values → datastores → cert-manager +
 prometheus-operator CRDs → migrate Job → helm install → cluster
 fixtures → tier-6 suite). Coverage by file:
@@ -220,7 +220,7 @@ operator drives the equivalent `scripts/cloud/{gke,aks}/up.sh` +
 
 The Redis tests skip on a local invocation because the ElastiCache
 endpoints live on VPC-private subnets and are not reachable from
-outside the VPC. `scripts/cloud/eks/run-e2e.sh` step 6b
+outside the VPC. `scripts/cloud/aws/run-e2e.sh` step 6b
 automatically runs those five tests via an in-cluster runner Pod
 (static linux/amd64 build of the tier-6 test binary, kubectl-cp +
 exec, env-staged AUTH token), so the combined e2e cycle exercises
@@ -619,7 +619,7 @@ subsystems (`breakerstore`, `quotastore`, `coordination`,
 when the deployment swaps in an ElastiCache replication group.
 
 ElastiCache endpoints live on VPC-private subnets and are not
-reachable from outside the VPC. `scripts/cloud/eks/run-e2e.sh`
+reachable from outside the VPC. `scripts/cloud/aws/run-e2e.sh`
 step 6b automates the in-cluster runner pattern: when
 `WITH_ELASTICACHE=1`, after the local lenny-test invocation
 finishes the script builds a static linux/amd64 tier-6 test
@@ -1611,7 +1611,7 @@ unblocks disproportionately many tests.
    the cluster + managed datastores + Workload-Identity / Federated
    -Identity bindings the chart consumes; (b) add the
    `scripts/cloud/{gke,aks}/run-e2e.sh` end-to-end drivers
-   mirroring `scripts/cloud/eks/run-e2e.sh`; (c) extend or fork
+   mirroring `scripts/cloud/aws/run-e2e.sh`; (c) extend or fork
    the tier-6 test files into provider-aware paths covering Cloud
    SQL + Memorystore (GCP) and Azure Database for PostgreSQL +
    Azure Cache for Redis (Azure); (d) run the suite with real GCP

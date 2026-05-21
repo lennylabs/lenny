@@ -75,8 +75,12 @@ func SkipUnlessAvailable(t testing.TB, p Provider) {
 }
 
 // Up brings up the per-provider cluster shape via
-// scripts/cloud/<provider>/up.sh. Registers a t.Cleanup that runs
-// the matching down.sh.
+// scripts/cloud/<cloud>/up.sh. Registers a t.Cleanup that runs
+// the matching down.sh. The directory is the cloud-broad name
+// (aws / gcp / azure) rather than the Kubernetes-flavor provider
+// identifier (eks / gke / aks), since the scripts cover the whole
+// cloud surface (RDS, ElastiCache, KMS, S3, etc.) not just the
+// managed-Kubernetes service.
 func Up(t testing.TB, p Provider, shape string) {
 	t.Helper()
 	SkipUnlessAvailable(t, p)
@@ -84,7 +88,11 @@ func Up(t testing.TB, p Provider, shape string) {
 	if err != nil {
 		t.Fatalf("cloud.Up: %v", err)
 	}
-	script := filepath.Join(repoRoot, "scripts", "cloud", string(p), "up.sh")
+	dir := providerScriptsDir(p)
+	if dir == "" {
+		t.Skipf("cloud.Up: provider %q has no documented scripts directory", p)
+	}
+	script := filepath.Join(repoRoot, "scripts", "cloud", dir, "up.sh")
 	if _, err := os.Stat(script); err != nil {
 		t.Skipf("cloud.Up: %s not present (Phase 13+ deliverable)", script)
 	}
@@ -95,7 +103,7 @@ func Up(t testing.TB, p Provider, shape string) {
 		t.Fatalf("cloud.Up: %s failed: %v", script, err)
 	}
 	t.Cleanup(func() {
-		down := filepath.Join(repoRoot, "scripts", "cloud", string(p), "down.sh")
+		down := filepath.Join(repoRoot, "scripts", "cloud", dir, "down.sh")
 		if _, err := os.Stat(down); err == nil {
 			cmd := exec.Command("bash", down, shape)
 			cmd.Stdout = os.Stdout
@@ -114,6 +122,24 @@ func providerCLI(p Provider) string {
 		return "aws"
 	case ProviderAKS:
 		return "az"
+	}
+	return ""
+}
+
+// providerScriptsDir maps a Kubernetes-flavor provider identifier to
+// the matching cloud-broad scripts directory under scripts/cloud/.
+// The provider identifier names the K8s service (eks / gke / aks);
+// the scripts directory names the underlying cloud (aws / gcp /
+// azure) because the scripts also drive non-Kubernetes resources
+// (RDS, ElastiCache, IAM, etc.) under the same cloud account.
+func providerScriptsDir(p Provider) string {
+	switch p {
+	case ProviderGKE:
+		return "gcp"
+	case ProviderEKS:
+		return "aws"
+	case ProviderAKS:
+		return "azure"
 	}
 	return ""
 }

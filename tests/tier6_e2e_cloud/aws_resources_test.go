@@ -6,7 +6,7 @@
 // `deploy/terraform/cloud/aws` module provisions. Each test requires
 // LENNY_CLOUD_PROVIDER=eks plus the Terraform-output env vars the
 // helper below reads (LENNY_AWS_KMS_KEY_ARN and
-// LENNY_AWS_ARTIFACT_BUCKET). scripts/cloud/eks/up.sh writes those
+// LENNY_AWS_ARTIFACT_BUCKET). scripts/cloud/aws/up.sh writes those
 // env vars into a `.env` file the test runner sources before the
 // invocation.
 
@@ -45,7 +45,7 @@ func requireEnv(t *testing.T, name string) string {
 // loadAWSConfig resolves the SDK config from the standard AWS env vars
 // (AWS_PROFILE / AWS_REGION / AWS_ACCESS_KEY_ID etc.) or skips the
 // test with the documented diagnosis. The default profile selection
-// matches scripts/cloud/eks/up.sh; the operator runs both under the
+// matches scripts/cloud/aws/up.sh; the operator runs both under the
 // same shell.
 func loadAWSConfig(t *testing.T) aws.Config {
 	t.Helper()

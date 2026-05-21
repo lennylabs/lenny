@@ -40,7 +40,7 @@ func requireRedis(t *testing.T) redisParams {
 	t.Helper()
 	endpoint := strings.TrimSpace(os.Getenv("LENNY_AWS_REDIS_ENDPOINT"))
 	if endpoint == "" {
-		t.Skip("requireRedis: LENNY_AWS_REDIS_ENDPOINT is empty; re-run with WITH_ELASTICACHE=1 scripts/cloud/eks/run-e2e.sh to provision ElastiCache via terraform")
+		t.Skip("requireRedis: LENNY_AWS_REDIS_ENDPOINT is empty; re-run with WITH_ELASTICACHE=1 scripts/cloud/aws/run-e2e.sh to provision ElastiCache via terraform")
 	}
 	port := strings.TrimSpace(os.Getenv("LENNY_AWS_REDIS_PORT"))
 	if port == "" || port == "0" {
@@ -312,7 +312,7 @@ func TestCloudRedisClusterMode(t *testing.T) {
 	_ = requireCloud(t)
 	p := requireRedis(t)
 	if !p.clusterMode {
-		t.Skip("TestCloudRedisClusterMode: replication group is single-shard; re-run with ELASTICACHE_SHARDS=2 WITH_ELASTICACHE=1 scripts/cloud/eks/run-e2e.sh to enable cluster mode")
+		t.Skip("TestCloudRedisClusterMode: replication group is single-shard; re-run with ELASTICACHE_SHARDS=2 WITH_ELASTICACHE=1 scripts/cloud/aws/run-e2e.sh to enable cluster mode")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

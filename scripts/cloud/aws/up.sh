@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/eks/up.sh — provisions the tier-6 EKS cluster.
+# scripts/cloud/aws/up.sh — provisions the tier-6 EKS cluster.
 #
 # Runs `terraform apply` against deploy/terraform/cloud/aws/ with
 # var.create_cluster=true so the apply produces a working EKS
@@ -18,8 +18,8 @@
 #
 # Usage:
 #
-#   scripts/cloud/eks/up.sh                  # default cloud-small shape
-#   scripts/cloud/eks/up.sh cloud-medium     # bumps node count + size
+#   scripts/cloud/aws/up.sh                  # default cloud-small shape
+#   scripts/cloud/aws/up.sh cloud-medium     # bumps node count + size
 
 set -euo pipefail
 
@@ -54,12 +54,12 @@ case "${SHAPE}" in
     MAX="${NODE_MAX:-10}"
     ;;
   *)
-    echo "scripts/cloud/eks/up.sh: unknown shape ${SHAPE}; supported: cloud-small, cloud-medium, cloud-large" >&2
+    echo "scripts/cloud/aws/up.sh: unknown shape ${SHAPE}; supported: cloud-small, cloud-medium, cloud-large" >&2
     exit 2
     ;;
 esac
 
-echo "eks/up.sh: shape=${SHAPE} region=${REGION} release=${RELEASE} node=${NODE_TYPE} desired=${DESIRED} max=${MAX}" >&2
+echo "aws/up.sh: shape=${SHAPE} region=${REGION} release=${RELEASE} node=${NODE_TYPE} desired=${DESIRED} max=${MAX}" >&2
 
 # Stage tfvars: create_cluster=true so the apply produces the EKS
 # cluster alongside the per-release resources. The optional
@@ -113,7 +113,7 @@ if command -v terraform >/dev/null 2>&1; then
 elif command -v tofu >/dev/null 2>&1; then
   TF="tofu"
 else
-  echo "eks/up.sh: neither terraform nor tofu on PATH; install one of:" >&2
+  echo "aws/up.sh: neither terraform nor tofu on PATH; install one of:" >&2
   echo "  brew install hashicorp/tap/terraform" >&2
   echo "  brew install opentofu" >&2
   exit 3
@@ -126,7 +126,7 @@ ${TF} apply -input=false -auto-approve -var-file="${TFVARS_FILE}"
 # Sync kubeconfig so kubectl reaches the cluster.
 aws eks --region "${REGION}" update-kubeconfig --name "${RELEASE}-eks"
 
-echo "eks/up.sh: cluster ${RELEASE}-eks ready in region ${REGION}" >&2
+echo "aws/up.sh: cluster ${RELEASE}-eks ready in region ${REGION}" >&2
 echo "  artifact_bucket=$(${TF} output -raw artifact_bucket)" >&2
 echo "  kms_key_arn=$(${TF} output -raw kms_key_arn)" >&2
 echo "  cluster_endpoint=$(${TF} output -raw cluster_endpoint)" >&2

@@ -18,7 +18,7 @@
 //                                 against the EKS cluster).
 //
 // This file keeps the shared requireCloud guard the other files use.
-// scripts/cloud/eks/run-e2e.sh wires the env vars (LENNY_CLOUD_PROVIDER,
+// scripts/cloud/aws/run-e2e.sh wires the env vars (LENNY_CLOUD_PROVIDER,
 // LENNY_AWS_KMS_KEY_ARN, LENNY_AWS_ARTIFACT_BUCKET) the tests read.
 
 package tier6_e2e_cloud_test

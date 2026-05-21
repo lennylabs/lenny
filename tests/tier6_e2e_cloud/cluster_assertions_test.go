@@ -40,7 +40,7 @@ const lennySystem = "lenny-system"
 // points at, or skips when the kubeconfig is missing / invalid. The
 // operator typically populates the kubeconfig via
 // `aws eks update-kubeconfig --name <release>-eks` which
-// scripts/cloud/eks/up.sh runs automatically.
+// scripts/cloud/aws/up.sh runs automatically.
 func kube(t *testing.T) *kubernetes.Clientset {
 	t.Helper()
 	cfg, err := loadKubeconfig()
@@ -90,7 +90,7 @@ func requireGatewayInstalled(t *testing.T, cli *kubernetes.Clientset) (selector 
 		t.Skipf("requireGatewayInstalled: list deployments: %v", err)
 	}
 	if len(deps.Items) == 0 {
-		t.Skip("requireGatewayInstalled: no gateway Deployment in lenny-system; run scripts/cloud/eks/run-e2e.sh to install the chart")
+		t.Skip("requireGatewayInstalled: no gateway Deployment in lenny-system; run scripts/cloud/aws/run-e2e.sh to install the chart")
 	}
 	return "lenny.dev/component=gateway"
 }

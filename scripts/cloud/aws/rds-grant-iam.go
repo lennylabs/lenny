@@ -11,7 +11,7 @@
 // is already disabled (a leftover from a previous run that granted
 // rds_iam to the master directly).
 //
-// Invoked by scripts/cloud/eks/run-e2e.sh step 1b after the
+// Invoked by scripts/cloud/aws/run-e2e.sh step 1b after the
 // Terraform-provisioned RDS instance becomes available.
 
 //go:build ignore

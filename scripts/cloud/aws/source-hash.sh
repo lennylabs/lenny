@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/eks/source-hash.sh — emit a stable hash over the
+# scripts/cloud/aws/source-hash.sh — emit a stable hash over the
 # repository's image-relevant source so the build-images.sh script
 # can use it as the ECR tag and skip a re-push when the source has
 # not changed since the last build.

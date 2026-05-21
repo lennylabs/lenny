@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/eks/run-e2e.sh — single end-to-end driver for a
+# scripts/cloud/aws/run-e2e.sh — single end-to-end driver for a
 # tier-6 EKS verification run.
 #
 # Sequence:
 #
-#   1. scripts/cloud/eks/up.sh        — terraform apply (VPC + EKS +
+#   1. scripts/cloud/aws/up.sh        — terraform apply (VPC + EKS +
 #                                       S3 + KMS + IRSA).
-#   2. scripts/cloud/eks/build-images.sh
+#   2. scripts/cloud/aws/build-images.sh
 #                                     — build + push Lenny images
 #                                       to ECR.
-#   3. scripts/cloud/eks/render-values.sh
+#   3. scripts/cloud/aws/render-values.sh
 #                                     — render a cloud values overlay
 #                                       pointing the chart at ECR +
 #                                       the Terraform outputs.
@@ -21,7 +21,7 @@
 #                                       overlay; wait for ready.
 #   6. lenny-test --tier e2e_cloud    — run the tier-6 suite against
 #                                       the freshly-installed gateway.
-#   7. scripts/cloud/eks/down.sh      — terraform destroy on exit
+#   7. scripts/cloud/aws/down.sh      — terraform destroy on exit
 #                                       (unless KEEP_CLUSTER=1).
 #
 # The script is idempotent at each step: re-running after a failure
@@ -42,7 +42,7 @@
 #   KEEP_CLUSTER=1               — default. Skip the terraform destroy on
 #                                  exit so the cluster stays up for the
 #                                  next iteration. Set to 0 to tear down
-#                                  on exit (or run scripts/cloud/eks/down.sh).
+#                                  on exit (or run scripts/cloud/aws/down.sh).
 #   NODE_DESIRED, NODE_MAX       — node-group sizing overrides. Default 4/6
 #                                  when any WITH_* flag below is on (the
 #                                  combined chart + managed-services pod
@@ -75,16 +75,16 @@ RELEASE="${LENNY_RELEASE:-lenny-e2e}"
 # repeat run skips the docker build + ECR push when nothing
 # changed. Set IMAGE_TAG explicitly to override (e.g. to a
 # release tag like 0.1.0 for a known-good build).
-TAG="${IMAGE_TAG:-$(${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}/scripts/cloud/eks/source-hash.sh)}"
+TAG="${IMAGE_TAG:-$(${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}/scripts/cloud/aws/source-hash.sh)}"
 # KEEP_CLUSTER=1 leaves the cluster running on exit so the operator
 # can iterate. Default 1 in this script. Set KEEP_CLUSTER=0
 # explicitly when the run should tear the cluster down.
 KEEP_CLUSTER="${KEEP_CLUSTER:-1}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-SCRIPT_DIR="${REPO_ROOT}/scripts/cloud/eks"
+SCRIPT_DIR="${REPO_ROOT}/scripts/cloud/aws"
 TF_DIR="${REPO_ROOT}/deploy/terraform/cloud/aws"
-VALUES_OUT="${REPO_ROOT}/scripts/cloud/eks/values-cloud-aws.${RELEASE}.yaml"
+VALUES_OUT="${REPO_ROOT}/scripts/cloud/aws/values-cloud-aws.${RELEASE}.yaml"
 
 # Pick terraform / tofu the same way the sub-scripts do.
 if command -v terraform >/dev/null 2>&1; then
@@ -113,7 +113,7 @@ fi
 cleanup() {
   local rc=$?
   if [[ "${KEEP_CLUSTER}" == "1" ]]; then
-    echo "run-e2e.sh: KEEP_CLUSTER=1 (default), leaving cluster running. Run scripts/cloud/eks/down.sh to destroy." >&2
+    echo "run-e2e.sh: KEEP_CLUSTER=1 (default), leaving cluster running. Run scripts/cloud/aws/down.sh to destroy." >&2
     exit "${rc}"
   fi
   echo "run-e2e.sh: KEEP_CLUSTER=0, tearing down the cluster (exit code ${rc})" >&2
@@ -168,7 +168,7 @@ fi
 #     Idempotent; only fires when WITH_RDS=1.
 if [[ "${WITH_RDS}" == "1" ]]; then
   echo "==[1b/6] provision lenny_iam user for the §13.3 IAM auth tests==" >&2
-  go run "${REPO_ROOT}/scripts/cloud/eks/rds-grant-iam.go" \
+  go run "${REPO_ROOT}/scripts/cloud/aws/rds-grant-iam.go" \
     --endpoint "$("${TF}" -chdir="${TF_DIR}" output -raw rds_endpoint 2>/dev/null || true)" \
     --secret-arn "$("${TF}" -chdir="${TF_DIR}" output -raw rds_master_secret_arn 2>/dev/null || true)" \
     --database "$("${TF}" -chdir="${TF_DIR}" output -raw rds_database_name 2>/dev/null || true)" \

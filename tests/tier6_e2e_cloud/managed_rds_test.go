@@ -46,7 +46,7 @@ func requireRDS(t *testing.T) rdsParams {
 	t.Helper()
 	endpoint := strings.TrimSpace(os.Getenv("LENNY_AWS_RDS_ENDPOINT"))
 	if endpoint == "" {
-		t.Skip("requireRDS: LENNY_AWS_RDS_ENDPOINT is empty; re-run with WITH_RDS=1 scripts/cloud/eks/run-e2e.sh to provision RDS via terraform")
+		t.Skip("requireRDS: LENNY_AWS_RDS_ENDPOINT is empty; re-run with WITH_RDS=1 scripts/cloud/aws/run-e2e.sh to provision RDS via terraform")
 	}
 	host, port, err := net.SplitHostPort(endpoint)
 	if err != nil {
@@ -426,7 +426,7 @@ func TestCloudRDSMultiAZ(t *testing.T) {
 	}
 	multiAZ := out.DBInstances[0].MultiAZ
 	if multiAZ == nil || !*multiAZ {
-		t.Skip("TestCloudRDSMultiAZ: the active RDS instance has MultiAZ=false. Re-run with RDS_MULTI_AZ=1 WITH_RDS=1 scripts/cloud/eks/run-e2e.sh to provision Multi-AZ and unblock the §17.3 failover suite")
+		t.Skip("TestCloudRDSMultiAZ: the active RDS instance has MultiAZ=false. Re-run with RDS_MULTI_AZ=1 WITH_RDS=1 scripts/cloud/aws/run-e2e.sh to provision Multi-AZ and unblock the §17.3 failover suite")
 	}
 	if out.DBInstances[0].SecondaryAvailabilityZone == nil || *out.DBInstances[0].SecondaryAvailabilityZone == "" {
 		t.Errorf("MultiAZ=true but SecondaryAvailabilityZone is empty — the standby has not been provisioned yet")
