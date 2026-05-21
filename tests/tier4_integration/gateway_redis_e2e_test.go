@@ -83,6 +83,27 @@ func TestGatewayRedisCoordinationE2E(t *testing.T) {
 		"--coordination-interval=300ms")
 	ctx := context.Background()
 
+	// §11.2: the QuotaEvaluator fails closed on an unconfigured
+	// tenant. Bootstrap a `default` tenant so the session create
+	// admission satisfies the quota gate.
+	bootstrap, _ := json.Marshal(map[string]any{
+		"tenants": []map[string]any{{"id": "default", "displayName": "Default"}},
+	})
+	bsReq, _ := http.NewRequest(http.MethodPost, gw.BaseURL()+"/v1/admin/bootstrap", bytes.NewReader(bootstrap))
+	bsReq.Header.Set("Content-Type", "application/json")
+	bsReq.Header.Set("X-Lenny-Tenant-ID", "platform")
+	bsReq.Header.Set("X-Lenny-User-ID", "ops@acme.com")
+	bsReq.Header.Set("X-Lenny-Roles", "platform-admin")
+	bsResp, err := http.DefaultClient.Do(bsReq)
+	if err != nil {
+		t.Fatalf("bootstrap default tenant: %v", err)
+	}
+	bsRaw, _ := io.ReadAll(bsResp.Body)
+	bsResp.Body.Close()
+	if bsResp.StatusCode != http.StatusOK {
+		t.Fatalf("bootstrap default tenant: status %d body %s", bsResp.StatusCode, bsRaw)
+	}
+
 	body, _ := json.Marshal(map[string]any{
 		"runtimeRef": "echo",
 		"userId":     "alice@acme.com",
