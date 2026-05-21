@@ -2,7 +2,7 @@
 
 This file catalogs the verified gaps in the Lenny test infrastructure and in the
 production code that backs it. Each entry was checked against the filesystem,
-package contents, or live test source on 2026-05-19. Counts and file
+package contents, or live test source on 2026-05-20. Counts and file
 references reflect that snapshot.
 
 The companion files are [`TESTING.md`](TESTING.md) (the authoritative testing
@@ -40,7 +40,7 @@ guard is an external-dependency check.
 ### Tier 1 (Unit)
 
 Unit tests live next to source per TESTING.md §4. The repository carries
-440 `_test.go` files across `pkg/`, `cmd/`, and the language modules.
+470 `_test.go` files across `pkg/`, `cmd/`, and the language modules.
 Fuzz coverage is present at:
 
 - `pkg/audit/fuzz_test.go`
@@ -69,19 +69,20 @@ Property-based suites using `pgregory.net/rapid` exist at
 
 ### Tier 2 (Component)
 
-The tier carries 19 subdirectories. The following are scaffold groups
-where some or every test in the group still skips:
+The tier carries 17 subdirectories. Two files retain a `scaffolds_test.go`
+entry, neither of which is a true skip:
 
-- `tests/tier2_component/stores/scaffolds_test.go` (1 contract:
-  ArtifactStore SSE-KMS and legal-hold).
+- `tests/tier2_component/stores/scaffolds_test.go` carries a single
+  `TestArtifactStoreContract` function that logs the §12.5 ArtifactStore
+  coverage navigation map (tenant-prefix validation, tombstone
+  soft-delete/hard-prune, SSE-KMS, legal-hold, the artifact_store
+  catalog table). The component-tier coverage lives in 33 live
+  store-contract suites under `tests/tier2_component/stores/`.
 - `tests/tier2_component/gateway_subsystems/scaffolds_test.go` (5
   tests intentionally deferred to existing tier-4 and unit
   coverage — the scaffold diagnoses cite the production-code paths
   each subsystem actually exercises, so re-creating a §12.2.3
   tier-2 harness adds no new code path).
-
-The store directory carries 30 live store-contract suites alongside the
-five scaffolds.
 
 ### Tier 3 (Contract)
 
@@ -134,12 +135,11 @@ and the compatibility matrix.
 
 ### Tier 4 (Integration)
 
-The directory carries 18 `.go` files comprising 32 live test functions
-plus 8 scaffolded functions in
-`tests/tier4_integration/scaffolds_test.go`. All eight scaffolds
-are live: each carries the implementation pointers (tier-2 contract,
-pkg/* property tests, per-handler unit tests) that already cover
-the §13 phase the scaffold names. The composite tier-4 surfaces
+The directory carries 19 `.go` files comprising 33 live test functions
+plus 7 functions in `tests/tier4_integration/scaffolds_test.go`. The
+scaffold functions each `t.Logf` the implementation pointers (tier-2
+contract, pkg/* property tests, per-handler unit tests) that already
+cover the §13 phase the scaffold names. The composite tier-4 surfaces
 they originally promised either reduce to those existing tests or
 are exercised by tier-5 against a live Kind cluster.
 
@@ -171,77 +171,78 @@ controller. Each scenario's underlying behaviour has unit / tier-2
 
 ### Tier 6 (E2E on cloud)
 
-Two of the 11 scaffolds now run live against the cloud adapters:
+The directory carries 7 `.go` files comprising 27 live test functions
+that run when `LENNY_CLOUD_PROVIDER` is set and the per-provider
+preconditions are met. `tests/tier6_e2e_cloud/scaffolds_test.go` is
+now an entry-point shim that exports the shared `requireCloud` guard;
+no test bodies live there.
 
-- `TestCloudKMS` exercises `pkg/kms/aws.Provider` end-to-end
-  against the AWS KMS key the AWS Terraform module emits. A
-  random 32-byte DEK round-trips through WrapDEK + UnwrapDEK
-  against AWS KMS and a cross-alias unwrap fails on the
-  EncryptionContext binding.
-- `TestCloudCSI` exercises `pkg/blobstore/s3.Store` end-to-end
-  against the S3 bucket the AWS Terraform module emits. A
-  Put + Get + Stat + SoftDelete lifecycle on a per-run session
-  prefix asserts byte-for-byte body recovery and ErrNotFound
-  after SoftDelete.
-
-Both passed against a fresh EKS apply (account 780138804904,
-us-west-2, release `lenny-e2e`, cluster `lenny-e2e-eks`) using
-`scripts/cloud/eks/up.sh` + the Terraform-emitted env vars
-`LENNY_AWS_KMS_KEY_ARN` and `LENNY_AWS_ARTIFACT_BUCKET`. Mirror
-implementations for the GCP and Azure adapters land when an
-operator drives the equivalent `scripts/cloud/{gke,aks}/up.sh`
-+ `LENNY_GCP_*` / `LENNY_AZURE_*` env-var bundle.
-
-`scripts/cloud/eks/run-e2e.sh` now drives the full sequence
-(`up.sh` → ECR push → render-values → datastores → cert-manager +
+`scripts/cloud/eks/run-e2e.sh` drives the full sequence (`up.sh` →
+ECR push → render-values → datastores → cert-manager +
 prometheus-operator CRDs → migrate Job → helm install → cluster
-fixtures → tier-6 suite) and the previously-skipped configuration-
-shape assertions pass:
+fixtures → tier-6 suite). Coverage by file:
 
-- `TestCloudOIDC` — the EKS overlay populates
-  `gateway.serviceAccount.annotations."eks.amazonaws.com/role-arn"`
-  from the Terraform module's `iam_role_arn` output (IRSA role
-  bound to the gateway SA via the EKS OIDC provider).
-- `TestCloudObservability` — the chart renders
-  `OTEL_EXPORTER_OTLP_ENDPOINT` on the gateway pod when
-  `observability.otlpEndpoint` is set; the EKS overlay points at an
-  in-cluster ADOT collector address as a stand-in.
-- `TestManagedIngress` — `run-e2e.sh` applies an Ingress in
-  `lenny-system` whose backend is `lenny-gateway`. A production
-  install adds `ingressClassName: alb` plus the AWS Load Balancer
-  Controller annotations.
-- `TestKataIsolation` — `run-e2e.sh` applies a `kata-containers`
-  RuntimeClass. A production install replaces the stub handler with
-  a real Kata runtime once the Bottlerocket Kata pool is in place.
-- `TestGvisorIsolation` — `run-e2e.sh` labels the first worker node
-  `lenny.dev/pool=sandbox-gvisor`. A production install runs a
-  dedicated gVisor node group whose AMI carries the `runsc` runtime.
-- `TestMultiAZMinIO` — the EKS overlay drops the in-cluster MinIO
-  Deployment from the `datastores.yaml` apply and the chart renders
-  no `LENNY_MINIO_ENDPOINT` (the `hasS3 && !hasMinIO` branch). The
-  gateway-side S3 wiring is BUILD-GAPS `TestCloudS3ViaIRSA`.
-- `TestMultiZoneDR`, `TestCloudSecretStore` — pass on the v1
-  configuration shape (no in-cluster Postgres-fixture marker on the
-  gateway DSN; no Secrets-Manager env on the gateway). The behavior
-  variants land in BUILD-GAPS `TestCloudRDSMultiAZFailover` and the
-  v2 Secrets-Manager routing follow-on.
+- `aws_resources_test.go`: `TestCloudKMS` round-trips a 32-byte DEK
+  through `pkg/kms/aws.Provider` against the Terraform-provisioned
+  KMS key and asserts the EncryptionContext binding rejects a
+  cross-alias unwrap. `TestCloudCSI` runs Put + Get + Stat +
+  SoftDelete against `pkg/blobstore/s3.Store` and the
+  Terraform-provisioned S3 bucket.
+- `behavior_test.go`: `TestCloudIRSAResolvesCredentials` inspects the
+  EKS pod-identity webhook injection on the gateway pod
+  (`AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, projected-token
+  VolumeMount). `TestCloudPodSecurityRejectsRoot` creates a Pod with
+  `runAsUser=0` in the first agent namespace and asserts the §13.1
+  `pod-security.lenny.dev` ValidatingAdmissionWebhook denies it.
+- `cluster_assertions_test.go`: `TestCloudOIDC` reads the
+  `eks.amazonaws.com/role-arn` annotation on the gateway SA;
+  `TestCloudObservability` checks `OTEL_EXPORTER_OTLP_ENDPOINT` on
+  the gateway pod; `TestManagedIngress`, `TestKataIsolation`,
+  `TestGvisorIsolation`, `TestMultiAZMinIO`, `TestMultiZoneDR`, and
+  `TestCloudSecretStore` assert the chart's v1 configuration shape;
+  `TestCloudBillingExport` reads `LENNY_BILLING_SINK` from the
+  gateway pod; the chart's `billing.sink` values knob (default empty)
+  injects it, and the EKS overlay sets `"postgres"` so the §11.2.1
+  v1 path is labeled in the §16 observability dashboards.
+- `eks_platform_test.go`: `TestCloudECRImagePullSucceeds`,
+  `TestCloudStorageClassCSIPresent`, `TestCloudVPCCNIPodIPFromVPC`.
+- `managed_elasticache_test.go`: `TestCloudRedisTLSRequired`,
+  `TestCloudRedisAUTH`, `TestCloudRedisClusterMode`,
+  `TestCloudRedisEvictionPolicy`, `TestCloudRedisEngineVersionFloor`.
+- `managed_rds_test.go`: `TestCloudRDSTLSRequired`,
+  `TestCloudRDSForceSSLParameterGroup`, `TestCloudRDSIAMAuth`,
+  `TestCloudRDSMultiAZ`, `TestCloudRDSAutomatedBackup`,
+  `TestCloudRDSEngineVersionFloor`.
 
-One scaffold deliberately stays a skip on v1:
+Mirror implementations for the GCP and Azure adapters land when an
+operator drives the equivalent `scripts/cloud/{gke,aks}/up.sh` +
+`LENNY_GCP_*` / `LENNY_AZURE_*` env-var bundle.
 
-- `TestCloudBillingExport` — depends on a v2 external billing sink
-  selectable via a `LENNY_BILLING_SINK` env. The v1 implementation
-  writes billing events to Postgres (§11.2.1) with Redis stream
-  failover; routing to BigQuery / Athena / Data Lake is the v2
-  follow-on (see the §11.2.1 spec note on durable consumers).
+The Redis tests skip on a local invocation because the ElastiCache
+endpoints live on VPC-private subnets and are not reachable from
+outside the VPC. `scripts/cloud/eks/run-e2e.sh` step 6b
+automatically runs those five tests via an in-cluster runner Pod
+(static linux/amd64 build of the tier-6 test binary, kubectl-cp +
+exec, env-staged AUTH token), so the combined e2e cycle exercises
+all 27 tests end-to-end.
+
+Routing billing events to an external sink (BigQuery / Athena /
+Data Lake) remains a v2 deliverable; the chart's `billing.sink`
+knob is currently advisory only, used as the §16 observability
+label rather than a publisher selector. The v1 path writes
+synchronously to Postgres (§11.2.1) with the Redis-stream failover
+buffer.
 
 #### Tier-6 follow-on suites
 
-The current 11 scaffolds verify configuration shape. They do not
-verify behavior. The list below names twelve additional suites
-that would land in tier-6 to close the configuration-vs-behavior
-gap. Each entry carries the test name, the §spec section it
-covers, what it asserts on the cluster, and the additional infra
-or code the suite depends on.
+The current 27 tests verify configuration shape plus a few behavior
+probes (IRSA injection, pod-security webhook, RDS Multi-AZ replica
+count, ElastiCache cluster-mode round-trip). The list below names
+twelve additional suites that would land in tier-6 to close the
+remaining configuration-vs-behavior gaps. Each entry carries the
+test name, the §spec section it covers, what it asserts on the
+cluster, and the additional infra or code the suite depends on.
+Entries already shipped are flagged inline as *Implemented*.
 
 Critical (cloud-installed Lenny does not yet have a behavioral
 green signal):
@@ -1428,32 +1429,21 @@ identified.
 
 ### Storage and persistence
 
-- **CRDPodRegistry over the Kubernetes API.** RESOLVED. `pkg/podregistry`
-  implements the §12.6 PodRegistry interface over controller-runtime
-  client. The in-memory `pkg/podsession.Registry` keeps its
-  per-replica session-binding role; `pkg/podregistry.CRDPodRegistry`
-  is the §4.6.1 / §12.6 data-access layer over Sandbox CRD status.
-
-- **ArtifactStore extensions are absent.** `pkg/blobstore/` ships
-  `miniostore/`, `replication/`, and (as of the latest commit) the
-  in-memory soft-delete + tombstone hard-prune contract from §12.5,
-  the §12.5 SSE-KMS resolver hook on `pkg/blobstore/miniostore`
-  (Config.SSEKeyResolver), the §12.8 SetLegalHold / ClearLegalHold
-  guard on DeleteBySession, and migration 0049 + `pkg/blobstore/artifactcatalog`
-  for the Postgres-backed artifact_store catalog table with the
-  live → soft_deleted → tombstoned lifecycle. The §12.5 T4 KMS
-  availability probe ships in `pkg/tenantkms`
-  (`Lifecycle.ProbeAvailability`, `LastProbeSuccess`, and the
-  `Prober` controller-runtime Runnable) and exports the
-  `lenny_t4_kms_probe_last_success_timestamp` gauge plus the
-  `lenny_t4_kms_probe_result_total` counter labeled by
-  `(tenant_id, result)`. The remaining sub-features — the
-  partial-manifest cleanup sweep (gated on the Postgres-backed
-  checkpoint metadata table) and the MinIO-outage
-  Postgres-minimal-state fallback router (the EvictionStateStore is
-  the target store; the blobstore-side fallback router is unbuilt) —
-  still block the full `TestArtifactStoreContract` and the tier-4
-  checkpoint flow.
+- **ArtifactStore residual sub-features.** The §12.5 ArtifactStore
+  contract is mostly built: `pkg/blobstore/miniostore` carries the
+  SSE-KMS resolver hook (`Config.SSEKeyResolver`) and the §12.8
+  SetLegalHold / ClearLegalHold guard on DeleteBySession;
+  `pkg/blobstore/artifactcatalog` plus migration 0049 carry the
+  Postgres-backed artifact_store catalog table with the
+  live → soft_deleted → tombstoned lifecycle; `pkg/tenantkms` carries
+  the §12.5 T4 KMS availability probe (`Lifecycle.ProbeAvailability`,
+  `LastProbeSuccess`, the `Prober` controller-runtime Runnable, and
+  the `lenny_t4_kms_probe_*` metrics). The remaining sub-features are
+  the partial-manifest cleanup sweep (gated on the Postgres-backed
+  checkpoint metadata table) and the MinIO-outage Postgres-minimal-
+  state fallback router (the EvictionStateStore is the target store;
+  the blobstore-side fallback router is unbuilt). Both block the
+  full §12.5 contract coverage and the tier-4 checkpoint flow.
 
 ### Delegation and elicitation
 
@@ -1472,27 +1462,25 @@ identified.
   `TestDelegationDepthDeadlockDetection`, and
   `TestLeaseExtensionCoolOffPersistence` against a live cluster.
 
-- **Elicitation-emitting runtime and tamper-detect alerting pipeline.**
-  Binary shipped at `cmd/runtimes/elicitation-echo`: a Standard-level
+- **Elicitation-emitting runtime tamper-injection probe.** Binary
+  shipped at `cmd/runtimes/elicitation-echo`: a Standard-level
   runtime that connects to the platform MCP server, calls
   `lenny/request_elicitation` on every inbound message, and degrades
   to Basic echo when no manifest is present. The §9.2 tamper-detect
   metric (`lenny_elicitation_content_tamper_detected_total`) is
-  emitted by `pkg/gateway/mcptools` on every chain-walk tamper
-  catch, and the §16.5 ElicitationContentTamperDetected alert
-  remains bound to the metric. The tier-8/tier-9 scaffolds still
-  need the e2e wiring (deploy elicitation-echo as the raising pod
-  and a tampering intermediary against the e2e Kind cluster).
-  The runtime variant + alert pipeline together unblock tier-8
-  `TestElicitationDeadlockDetection` and tier-9
-  `TestElicitationTamperEnforceMode`,
-  `TestElicitationTamperDetectOnlyMode`, and
-  `TestElicitationPlatformFloor`. The tier-3
-  `TestRESTMCPElicitation` is unrelated: §15.2.1 lists
-  `/v1/sessions/{id}/elicitations/{elicitation_id}/respond` and
+  emitted by `pkg/gateway/mcptools` on every chain-walk tamper catch,
+  and the §16.5 ElicitationContentTamperDetected alert remains bound
+  to the metric. The runtime is wired into the e2e Kind overlay
+  (`tests/testinfra/kind/agent-workload.yaml`) with a Runtime,
+  RuntimeTemplate, and pool. The remaining gap is the tampering
+  intermediary that drives tier-9 `TestElicitationTamperEnforceMode`,
+  `TestElicitationTamperDetectOnlyMode`, `TestElicitationPlatformFloor`,
+  and tier-8 `TestElicitationDeadlockDetection` against the live
+  cluster. The tier-3 `TestRESTMCPElicitation` is unrelated: §15.2.1
+  lists `/v1/sessions/{id}/elicitations/{elicitation_id}/respond` and
   `/dismiss` as REST-only by design (MCP clients resolve via the
-  native `elicitation/create` flow). The tier-3 scaffold's "no MCP
-  counterpart" skip reflects the spec, not a gap.
+  native `elicitation/create` flow), so the tier-3 scaffold's "no
+  MCP counterpart" skip reflects the spec.
 
 ## Infrastructure gaps
 
@@ -1503,26 +1491,6 @@ topologies, the published Homebrew tap) are recorded under the
 Blocked section because they are external infrastructure the
 repository does not yet provision.
 
-
-## Cross-cutting findings
-
-The runbook-related findings (`t.Logf` silence and 44 unmapped
-runbooks) are recorded under the Blocked section because reconciling
-them needs a §17.7 design decision plus multi-hour reconciliation of
-the 59 on-disk runbook files. TESTING.md §1834 claims 56 runbooks
-against the on-disk count of 59 (excluding `index.md`); the spec
-and the directory disagree and need separate alignment.
-
-The §12.3 line 141 `cross_tenant_read` audit emission applies to
-every code path that sets `app.current_tenant = '__all__'`.
-RESOLVED for the background-worker readers:
-`pkg/gateway/auditstore.PendingTranslation` and
-`pkg/gateway/auditstore.PendingRepublish` now run inside
-`pgtenant.InAllTenants` and emit one cross_tenant_read row to
-the `platform` audit chain per invocation, with the worker
-category in the event payload
-(`audit_ocsf_translation_worker` and
-`audit_event_retranscribe_worker`).
 
 ## Blocked
 
