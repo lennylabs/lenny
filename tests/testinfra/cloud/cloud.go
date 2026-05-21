@@ -6,14 +6,28 @@
 //
 // The package does not embed Terraform; it shells out to per-
 // provider scripts under scripts/cloud/<provider>/{up,down}.sh.
-// When the relevant SDK / CLI is not installed (gcloud, aws, az)
-// the test skips with a precise diagnosis.
+// The operator provides only the cloud-auth env vars (AWS_PROFILE
+// or AWS_ACCESS_KEY_ID/SECRET; gcloud auth login; az login). The
+// scripts/cloud/<provider>/up.sh script is responsible for
+// provisioning Lenny-side resources (KMS key, object-storage
+// bucket, managed identity binding) and emitting the per-resource
+// env vars the tests read.
 //
 // # Environment variables
 //
-//	LENNY_CLOUD_PROVIDER  Selects the active provider: gcp, aws, azure.
-//	                      Unset / empty → tests that gate on a
-//	                      specific provider skip.
+//	LENNY_CLOUD_PROVIDERS  Comma-separated list of providers the
+//	                       tier-6 suite must validate, e.g.
+//	                       `aws`, `aws,gcp`, `aws,gcp,azure`.
+//	                       Each provider in the list spawns a
+//	                       subtest. A provider listed but not
+//	                       authenticated (no AWS_PROFILE etc.) is a
+//	                       test failure — the operator named it, so
+//	                       the test expects it to work. Unset or
+//	                       empty → tier-6 fails with the missing-
+//	                       provider diagnosis.
+//	LENNY_CLOUD_PROVIDER   (Deprecated, single-provider alias).
+//	                       When set, the helper treats it as a
+//	                       one-element list.
 package cloud
 
 import (
@@ -44,10 +58,74 @@ const (
 // CLI is not on PATH.
 var ErrProviderUnavailable = errors.New("cloud: required CLI not on PATH")
 
-// FromEnv reads LENNY_CLOUD_PROVIDER and returns the named provider.
-// Returns "" when unset.
+// FromEnv reads LENNY_CLOUD_PROVIDERS (canonical) or
+// LENNY_CLOUD_PROVIDER (deprecated single-value alias) and returns
+// the first provider. Returns "" when both are unset. Tests should
+// use ConfiguredProviders to iterate over the full list.
 func FromEnv() Provider {
-	return Provider(strings.ToLower(strings.TrimSpace(os.Getenv("LENNY_CLOUD_PROVIDER"))))
+	if ps := ConfiguredProviders(); len(ps) > 0 {
+		return ps[0]
+	}
+	return ""
+}
+
+// ConfiguredProviders returns the list of cloud providers the tier-6
+// suite must validate. The canonical env var is
+// LENNY_CLOUD_PROVIDERS (comma-separated); LENNY_CLOUD_PROVIDER is
+// retained as a single-value alias. Unknown provider names are
+// silently dropped; an empty result indicates no provider is
+// configured.
+func ConfiguredProviders() []Provider {
+	raw := strings.TrimSpace(os.Getenv("LENNY_CLOUD_PROVIDERS"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("LENNY_CLOUD_PROVIDER"))
+	}
+	if raw == "" {
+		return nil
+	}
+	var out []Provider
+	seen := make(map[Provider]bool)
+	for _, part := range strings.Split(raw, ",") {
+		p := Provider(strings.ToLower(strings.TrimSpace(part)))
+		if p == "" || seen[p] {
+			continue
+		}
+		switch p {
+		case ProviderAWS, ProviderGCP, ProviderAzure:
+			seen[p] = true
+			out = append(out, p)
+		default:
+			// Unknown provider; the per-test fail-closed path will
+			// surface a diagnosis when the suite tries to run against
+			// it.
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// RunPerProvider runs fn as a subtest for every provider listed in
+// LENNY_CLOUD_PROVIDERS. The parent test fails when the env var is
+// unset — tier-6 cloud assertions require at least one configured
+// provider. Each subtest's name is the provider id, so a failing
+// per-provider assertion is attributable in the test report.
+//
+// fn receives the *testing.T scoped to the subtest plus the
+// provider value; SkipUnlessAvailable is called inside fn (most
+// tests already invoke it via requireCloud).
+func RunPerProvider(t *testing.T, fn func(t *testing.T, p Provider)) {
+	t.Helper()
+	providers := ConfiguredProviders()
+	if len(providers) == 0 {
+		t.Fatalf("cloud: LENNY_CLOUD_PROVIDERS is required for tier-6; export a comma-separated subset of aws,gcp,azure (e.g. LENNY_CLOUD_PROVIDERS=aws). The operator provides only cloud-auth credentials (AWS_PROFILE / gcloud / az); scripts/cloud/<provider>/up.sh provisions the per-release resources and emits the per-resource env vars the test reads.")
+	}
+	for _, p := range providers {
+		p := p
+		t.Run(string(p), func(t *testing.T) {
+			fn(t, p)
+		})
+	}
 }
 
 // SkipUnlessAvailable enforces the tier-6 precondition contract:

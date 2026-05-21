@@ -495,6 +495,9 @@ INGRESS
 echo "==[6/6] lenny-test --tier e2e_cloud==" >&2
 ARTIFACT_BUCKET="$("${TF}" -chdir="${TF_DIR}" output -raw artifact_bucket)"
 KMS_KEY_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw kms_key_arn)"
+export LENNY_CLOUD_PROVIDERS=aws
+# LENNY_CLOUD_PROVIDER retained as the single-value alias for tier-6
+# tests that have not migrated to the plural canonical env var.
 export LENNY_CLOUD_PROVIDER=aws
 export LENNY_AWS_ARTIFACT_BUCKET="${ARTIFACT_BUCKET}"
 export LENNY_AWS_KMS_KEY_ARN="${KMS_KEY_ARN}"

@@ -19,7 +19,7 @@
 #   scripts/cloud/gke/up.sh <release-name>
 #
 # Outputs the env vars the tier-6 tests read:
-#   LENNY_CLOUD_PROVIDER=gke
+#   LENNY_CLOUD_PROVIDERS=gcp
 #   LENNY_GCP_PROJECT
 #   LENNY_GCP_REGION
 #   LENNY_GCP_KMS_KEY_ID
@@ -70,7 +70,8 @@ if [[ -n "${CLUSTER_NAME}" ]]; then
 fi
 
 cat <<EOF
-export LENNY_CLOUD_PROVIDER=gke
+export LENNY_CLOUD_PROVIDERS=gcp
+export LENNY_CLOUD_PROVIDER=gcp
 export LENNY_GCP_PROJECT="${PROJECT}"
 export LENNY_GCP_REGION="${REGION}"
 export LENNY_GCP_KMS_KEY_ID="${KMS_KEY_ID}"

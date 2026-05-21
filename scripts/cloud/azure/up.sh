@@ -18,7 +18,7 @@
 #   scripts/cloud/aks/up.sh <release-name>
 #
 # Outputs the env vars the tier-6 tests read:
-#   LENNY_CLOUD_PROVIDER=aks
+#   LENNY_CLOUD_PROVIDERS=azure
 #   LENNY_AZURE_RESOURCE_GROUP
 #   LENNY_AZURE_LOCATION
 #   LENNY_AZURE_KEY_VAULT_KEY_ID
@@ -80,7 +80,8 @@ if [[ -n "${CLUSTER_NAME}" ]]; then
 fi
 
 cat <<EOF
-export LENNY_CLOUD_PROVIDER=aks
+export LENNY_CLOUD_PROVIDERS=azure
+export LENNY_CLOUD_PROVIDER=azure
 export LENNY_AZURE_RESOURCE_GROUP="${RESOURCE_GROUP}"
 export LENNY_AZURE_LOCATION="${LOCATION}"
 export LENNY_AZURE_KEY_VAULT_KEY_ID="${KEY_VAULT_KEY_ID}"
