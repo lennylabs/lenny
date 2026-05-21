@@ -73,9 +73,11 @@ echo "eks/up.sh: shape=${SHAPE} region=${REGION} release=${RELEASE} node=${NODE_
 # caller's current public IP fetched from checkip.amazonaws.com.
 WITH_RDS="${WITH_RDS:-0}"
 WITH_ELASTICACHE="${WITH_ELASTICACHE:-0}"
+WITH_ELASTICACHE_CLUSTER="${WITH_ELASTICACHE_CLUSTER:-0}"
 RDS_MULTI_AZ="${RDS_MULTI_AZ:-0}"
 ELASTICACHE_REPLICAS="${ELASTICACHE_REPLICAS:-0}"
 ELASTICACHE_SHARDS="${ELASTICACHE_SHARDS:-1}"
+ELASTICACHE_CLUSTER_SHARDS="${ELASTICACHE_CLUSTER_SHARDS:-2}"
 TEST_CIDR="${TEST_CIDR:-$(curl -s https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')/32}"
 if [[ "${TEST_CIDR}" == "/32" ]]; then
   TEST_CIDR=""
@@ -98,6 +100,8 @@ cat > "${TFVARS_FILE}" <<JSON
   "create_elasticache": $([[ "${WITH_ELASTICACHE}" == "1" ]] && echo true || echo false),
   "elasticache_num_node_groups":         ${ELASTICACHE_SHARDS},
   "elasticache_replicas_per_node_group": ${ELASTICACHE_REPLICAS},
+  "create_elasticache_cluster_mode":     $([[ "${WITH_ELASTICACHE_CLUSTER}" == "1" ]] && echo true || echo false),
+  "elasticache_cluster_num_shards":      ${ELASTICACHE_CLUSTER_SHARDS},
   "managed_datastores_test_cidrs":       ${cidr_array}
 }
 JSON

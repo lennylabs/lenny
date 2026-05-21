@@ -156,6 +156,10 @@ spec:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.billing.sink }}
+            - name: LENNY_BILLING_SINK
+              value: {{ . | quote }}
+            {{- end }}
             {{- if $hasPg }}
             - name: LENNY_POSTGRES_DSN
               valueFrom:

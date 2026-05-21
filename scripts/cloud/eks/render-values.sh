@@ -113,6 +113,13 @@ ${GATEWAY_SA_BLOCK}
 observability:
   otlpEndpoint: "http://adot-collector.lenny-system.svc:4317"
 
+# §11.2.1 billing-event sink. The v1 path writes synchronously to
+# Postgres with the Redis-stream failover buffer; the env var labels
+# emitted events for the §16 observability dashboards and unblocks
+# the TestCloudBillingExport assertion on the gateway pod.
+billing:
+  sink: "postgres"
+
 ops:
   image:
     repository: ${ECR_REGISTRY}/lenny-ops

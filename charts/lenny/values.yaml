@@ -255,6 +255,24 @@ postgres:
   # Deployments read LENNY_POSTGRES_DSN from that Secret.
   dsn: ""
 
+# billing configures the §11.2.1 billing-event publisher sink. The v1
+# default writes events synchronously to Postgres with a Redis stream
+# failover buffer ([§11.2.1 Postgres / Redis-stream failover path]).
+# `sink` is an advisory selector the chart pipes into the gateway pod
+# as LENNY_BILLING_SINK so the §16 observability dashboards can label
+# emitted events by sink.
+#
+# Supported values:
+#   "postgres" — v1 default (Postgres-backed billing_events table).
+#   "<future>" — v2 external sinks (BigQuery / Athena / Data Lake) ride
+#                in once the corresponding publisher lands.
+#
+# Empty string leaves the env unset and the gateway runs the v1 path
+# unchanged. The tier-6 EKS overlay sets `sink: "postgres"` so the
+# §11.2.1 TestCloudBillingExport sees the env var on the gateway pod.
+billing:
+  sink: ""
+
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render
 # unconditionally; these flags add the later-phase webhooks.

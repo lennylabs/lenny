@@ -75,6 +75,18 @@ variable "elasticache_replicas_per_node_group" {
   default     = 0
 }
 
+variable "create_elasticache_cluster_mode" {
+  description = "When true, provision a SECOND ElastiCache replication group with cluster mode enabled (multi-shard hash-slot partitioning). Tier-6 TestCloudRedisClusterMode targets this RG via its configuration endpoint while the single-shard primary RG continues to back the TLS / AUTH / eviction tests."
+  type        = bool
+  default     = false
+}
+
+variable "elasticache_cluster_num_shards" {
+  description = "Number of shards in the cluster-mode replication group. 2 is the minimum to exercise cross-shard hash-slot routing; higher counts validate larger keyspace partitioning."
+  type        = number
+  default     = 2
+}
+
 # Shared security group: allow ingress from anywhere inside the VPC
 # (the EKS pods reach the managed services over the VPC's private
 # network on Postgres 5432 + Redis 6379). The existing
@@ -264,6 +276,51 @@ resource "aws_elasticache_replication_group" "redis" {
   apply_immediately          = true
 }
 
+# Cluster-mode replication group. The §12.4 cluster-mode invariants
+# (MOVED redirection, cross-slot rejection, multi-shard pub/sub) need
+# `cluster_mode` enabled, which is incompatible with the primary RG
+# above (cluster-mode-enabled does not expose primary_endpoint_address,
+# so the TLS / AUTH / eviction tests cannot reuse it). The second RG
+# carries num_node_groups > 1 with replicas_per_node_group=0 (the
+# minimum to keep the hourly cost in line).
+resource "aws_elasticache_replication_group" "redis_cluster" {
+  count                      = var.create_elasticache_cluster_mode ? 1 : 0
+  replication_group_id       = "${var.release}-redis-cluster"
+  description                = "Lenny tier-6 ElastiCache Redis (cluster mode)"
+  engine                     = "redis"
+  engine_version             = "7.1"
+  node_type                  = var.elasticache_node_type
+  num_node_groups            = var.elasticache_cluster_num_shards
+  replicas_per_node_group    = 0
+  parameter_group_name       = aws_elasticache_parameter_group.redis_cluster[0].name
+  subnet_group_name          = aws_elasticache_subnet_group.redis[0].name
+  security_group_ids         = [aws_security_group.managed_datastores[0].id]
+  port                       = 6379
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+  auth_token                 = random_password.redis_auth[0].result
+  apply_immediately          = true
+}
+
+# Cluster-mode requires a `cluster-enabled` parameter group family
+# (redis7-cluster). Reuse the same maxmemory-policy invariant.
+resource "aws_elasticache_parameter_group" "redis_cluster" {
+  count       = var.create_elasticache_cluster_mode ? 1 : 0
+  name        = "${var.release}-redis-7-cluster"
+  description = "Lenny tier-6 ElastiCache Redis cluster-mode parameter group"
+  family      = "redis7"
+
+  parameter {
+    name  = "cluster-enabled"
+    value = "yes"
+  }
+
+  parameter {
+    name  = "maxmemory-policy"
+    value = "noeviction"
+  }
+}
+
 # ===========================================================================
 # Outputs
 # ===========================================================================
@@ -299,13 +356,13 @@ output "rds_multi_az" {
 }
 
 output "elasticache_endpoint" {
-  description = "ElastiCache primary endpoint. Empty when create_elasticache=false. Tier-6 Redis tests read LENNY_AWS_REDIS_ENDPOINT from this output."
+  description = "ElastiCache primary endpoint of the single-shard replication group. Empty when create_elasticache=false. Tier-6 Redis tests read LENNY_AWS_REDIS_ENDPOINT from this output."
   value       = try(aws_elasticache_replication_group.redis[0].primary_endpoint_address, "")
 }
 
 output "elasticache_configuration_endpoint" {
-  description = "ElastiCache configuration endpoint for cluster-mode clients. Empty when create_elasticache=false or num_node_groups=1."
-  value       = try(aws_elasticache_replication_group.redis[0].configuration_endpoint_address, "")
+  description = "ElastiCache configuration endpoint of the cluster-mode replication group. Empty when create_elasticache_cluster_mode=false. TestCloudRedisClusterMode reads this output as LENNY_AWS_REDIS_CONFIG_ENDPOINT."
+  value       = try(aws_elasticache_replication_group.redis_cluster[0].configuration_endpoint_address, "")
 }
 
 output "elasticache_auth_secret_arn" {

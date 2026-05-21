@@ -108,23 +108,25 @@ trap cleanup EXIT
 # tfvars-driven RDS + ElastiCache modules reconcile their state.
 WITH_RDS="${WITH_RDS:-0}"
 WITH_ELASTICACHE="${WITH_ELASTICACHE:-0}"
-echo "==[1/6] terraform apply (shape=${SHAPE}, rds=${WITH_RDS}, elasticache=${WITH_ELASTICACHE})==" >&2
+WITH_ELASTICACHE_CLUSTER="${WITH_ELASTICACHE_CLUSTER:-0}"
+echo "==[1/6] terraform apply (shape=${SHAPE}, rds=${WITH_RDS}, elasticache=${WITH_ELASTICACHE}, elasticache-cluster=${WITH_ELASTICACHE_CLUSTER})==" >&2
 cluster_exists=0
 if aws eks describe-cluster --region "${REGION}" --name "${RELEASE}-eks" >/dev/null 2>&1; then
   cluster_exists=1
 fi
-if [[ "${cluster_exists}" == "0" ]] || [[ "${WITH_RDS}" == "1" ]] || [[ "${WITH_ELASTICACHE}" == "1" ]]; then
+if [[ "${cluster_exists}" == "0" ]] || [[ "${WITH_RDS}" == "1" ]] || [[ "${WITH_ELASTICACHE}" == "1" ]] || [[ "${WITH_ELASTICACHE_CLUSTER}" == "1" ]]; then
   # NODE_DESIRED defaults to 4 (vs cloud-small's 2-node default)
   # when one of the managed-service flags is on, because the rolling
   # restart of the chart-managed Deployments doubles the pod count
   # briefly and the chart + managed-services pod footprint already
   # exceeds two t3.medium nodes' ENI-bounded pod density (~17/node).
-  if [[ "${WITH_RDS}" == "1" || "${WITH_ELASTICACHE}" == "1" ]] && [[ -z "${NODE_DESIRED:-}" ]]; then
+  if [[ "${WITH_RDS}" == "1" || "${WITH_ELASTICACHE}" == "1" || "${WITH_ELASTICACHE_CLUSTER}" == "1" ]] && [[ -z "${NODE_DESIRED:-}" ]]; then
     export NODE_DESIRED=4
     export NODE_MAX=6
   fi
   AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
     WITH_RDS="${WITH_RDS}" WITH_ELASTICACHE="${WITH_ELASTICACHE}" \
+    WITH_ELASTICACHE_CLUSTER="${WITH_ELASTICACHE_CLUSTER}" \
     NODE_DESIRED="${NODE_DESIRED:-}" NODE_MAX="${NODE_MAX:-}" \
     "${SCRIPT_DIR}/up.sh" "${SHAPE}"
 else
