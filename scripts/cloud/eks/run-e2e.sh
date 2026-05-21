@@ -454,11 +454,12 @@ LENNY_AWS_RDS_ENDPOINT="$("${TF}" -chdir="${TF_DIR}" output -raw rds_endpoint 2>
 LENNY_AWS_RDS_DATABASE="$("${TF}" -chdir="${TF_DIR}" output -raw rds_database_name 2>/dev/null || echo)"
 LENNY_AWS_RDS_MASTER_SECRET_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw rds_master_secret_arn 2>/dev/null || echo)"
 LENNY_AWS_RDS_RESOURCE_ID="$("${TF}" -chdir="${TF_DIR}" output -raw rds_resource_id 2>/dev/null || echo)"
+LENNY_AWS_RDS_INSTANCE_ID="$("${TF}" -chdir="${TF_DIR}" output -raw rds_instance_id 2>/dev/null || echo)"
 LENNY_AWS_REDIS_ENDPOINT="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_endpoint 2>/dev/null || echo)"
 LENNY_AWS_REDIS_PORT="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_port 2>/dev/null || echo)"
 LENNY_AWS_REDIS_AUTH_SECRET_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_auth_secret_arn 2>/dev/null || echo)"
 LENNY_AWS_REDIS_CONFIG_ENDPOINT="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_configuration_endpoint 2>/dev/null || echo)"
-export LENNY_AWS_RDS_ENDPOINT LENNY_AWS_RDS_DATABASE LENNY_AWS_RDS_MASTER_SECRET_ARN LENNY_AWS_RDS_RESOURCE_ID
+export LENNY_AWS_RDS_ENDPOINT LENNY_AWS_RDS_DATABASE LENNY_AWS_RDS_MASTER_SECRET_ARN LENNY_AWS_RDS_RESOURCE_ID LENNY_AWS_RDS_INSTANCE_ID
 export LENNY_AWS_REDIS_ENDPOINT LENNY_AWS_REDIS_PORT LENNY_AWS_REDIS_AUTH_SECRET_ARN LENNY_AWS_REDIS_CONFIG_ENDPOINT
 
 # Install lenny-test if missing. `go install` writes the binary to

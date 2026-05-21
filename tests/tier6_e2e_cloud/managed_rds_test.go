@@ -24,6 +24,7 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/rds/auth"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/jackc/pgx/v5"
 )
@@ -224,6 +225,59 @@ func TestCloudRDSForceSSLParameterGroup(t *testing.T) {
 		t.Errorf("rds.force_ssl = %q, want on/1", setting)
 	}
 	t.Logf("TestCloudRDSForceSSLParameterGroup: rds.force_ssl=%s", setting)
+}
+
+// spec: 17.7 (RDS automated backup retention).
+// diagnosis: TestCloudRDSAutomatedBackup queries the RDS API for the
+// instance's backup_retention_period and asserts it is at least 1
+// day (the §17.7 floor for any production-track deployment). The
+// Terraform module defaults the retention to 1; a production install
+// should raise it to 7. Below 1 day the §17.7 RTO claim collapses
+// because there is no automated snapshot to restore from.
+func TestCloudRDSAutomatedBackup(t *testing.T) {
+	_ = requireCloud(t)
+	p := requireRDS(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(p.region))
+	if err != nil {
+		t.Fatalf("load AWS config: %v", err)
+	}
+	identifier := "lenny-e2e-rds"
+	if v := strings.TrimSpace(os.Getenv("LENNY_AWS_RDS_INSTANCE_ID")); v != "" {
+		identifier = v
+	}
+	r := rds.NewFromConfig(cfg)
+	out, err := r.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+		DBInstanceIdentifier: &identifier,
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBInstances %s: %v", identifier, err)
+	}
+	if len(out.DBInstances) == 0 {
+		t.Fatalf("no RDS instance named %s", identifier)
+	}
+	inst := out.DBInstances[0]
+	if inst.BackupRetentionPeriod == nil || *inst.BackupRetentionPeriod < 1 {
+		t.Errorf("BackupRetentionPeriod = %v, want >= 1 (§17.7 RTO floor)", inst.BackupRetentionPeriod)
+	}
+	t.Logf("TestCloudRDSAutomatedBackup: BackupRetentionPeriod=%d days, BackupWindow=%v",
+		ifInt(inst.BackupRetentionPeriod), strDeref(inst.PreferredBackupWindow))
+}
+
+func ifInt(p *int32) int32 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func strDeref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // spec: 13.3 (RDS engine version floor).

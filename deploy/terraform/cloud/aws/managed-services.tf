@@ -267,6 +267,11 @@ output "rds_endpoint" {
   value       = try(aws_db_instance.rds[0].endpoint, "")
 }
 
+output "rds_instance_id" {
+  description = "RDS instance identifier — used by tests that query the RDS API directly."
+  value       = try(aws_db_instance.rds[0].id, "")
+}
+
 output "rds_master_secret_arn" {
   description = "Secrets Manager ARN holding the RDS master {username, password} JSON. Empty when create_rds=false."
   value       = try(aws_secretsmanager_secret.rds_master[0].arn, "")
