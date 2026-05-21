@@ -7,16 +7,18 @@ import (
 	"errors"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // concurrentSandbox builds a Sandbox in the test pool with the given
@@ -41,13 +43,64 @@ func concurrentSandbox(name, phase string, activeSlots int32, tenantID string) *
 	return sb
 }
 
+// newEnvtestClient boots an envtest API server, creates the test
+// namespace, and seeds the supplied objects (Spec via Create, Status
+// via SSA Apply under the `lenny-gateway` field manager — matching
+// the production SlotClaimer's field manager so the test's pre-seed
+// is on the same code path the gateway exercises at runtime).
+func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
+	t.Helper()
+	env := envtest.Start(t)
+	c, err := client.NewWithWatch(env.RESTConfig(), client.Options{Scheme: newScheme(t)})
+	if err != nil {
+		t.Fatalf("client.NewWithWatch: %v", err)
+	}
+	ctx := context.Background()
+	if err := c.Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: testNS},
+	}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create namespace %s: %v", testNS, err)
+	}
+	for _, o := range objs {
+		var (
+			sbStatus  lennyv1.SandboxStatus
+			seedAfter func()
+		)
+		if sb, ok := o.(*lennyv1.Sandbox); ok {
+			sbStatus = sb.Status
+			sb.Status = lennyv1.SandboxStatus{}
+			seedAfter = func() {
+				if sbStatus.Phase == "" && sbStatus.PodName == "" &&
+					sbStatus.NodeName == "" && sbStatus.PodIP == "" &&
+					sbStatus.TenantID == "" && sbStatus.ActiveSlots == 0 {
+					return
+				}
+				patch := &lennyv1.Sandbox{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: lennyv1.GroupVersion.String(),
+						Kind:       "Sandbox",
+					},
+					ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace},
+				}
+				patch.Status = sbStatus
+				if err := c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil {
+					t.Fatalf("seed status Sandbox %s: %v", sb.Name, err)
+				}
+			}
+		}
+		if err := c.Create(ctx, o); err != nil {
+			t.Fatalf("create %T %s: %v", o, o.GetName(), err)
+		}
+		if seedAfter != nil {
+			seedAfter()
+		}
+	}
+	return c
+}
+
 func slotClaimerFor(t *testing.T, objs ...client.Object) (*podclaim.SlotClaimer, client.Client) {
 	t.Helper()
-	c := fake.NewClientBuilder().
-		WithScheme(newScheme(t)).
-		WithObjects(objs...).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
-		Build()
+	c := newEnvtestClient(t, objs...)
 	return &podclaim.SlotClaimer{Client: c, Namespace: testNS}, c
 }
 
@@ -290,31 +343,32 @@ func TestClaimSlotRejectsInvalidRequests(t *testing.T) {
 
 // spec: 5.2
 // diagnosis: the §5.2 atomic slot-reservation guarantee was not upheld
-// under a competing gateway replica. A status-update conflict on a pod
+// under a competing gateway replica. A status-apply conflict on a pod
 // (a competing replica reserved a slot there first) must make ClaimSlot
 // re-evaluate or move on rather than overrun the maxConcurrent bound.
+//
+// The test wraps the envtest client with an interceptor that returns
+// a 409 conflict on the first SSA Apply targeting sbx-a, forcing the
+// claimer to fall through to sbx-b. Subsequent applies pass through
+// to the real apiserver.
 func TestClaimSlotRetriesOnReservationConflict(t *testing.T) {
+	envClient := newEnvtestClient(t,
+		concurrentSandbox("sbx-a", "idle", 0, ""),
+		concurrentSandbox("sbx-b", "idle", 0, ""),
+	)
 	conflicted := false
-	c := fake.NewClientBuilder().
-		WithScheme(newScheme(t)).
-		WithObjects(
-			concurrentSandbox("sbx-a", "idle", 0, ""),
-			concurrentSandbox("sbx-b", "idle", 0, ""),
-		).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
-		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourceUpdate: func(ctx context.Context, cl client.Client, sr string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-				if obj.GetName() == "sbx-a" && !conflicted {
-					conflicted = true
-					return apierrors.NewConflict(
-						schema.GroupResource{Group: "lenny.dev", Resource: "sandboxes"},
-						"sbx-a", errors.New("slot reserved by a competing replica"),
-					)
-				}
-				return cl.Status().Update(ctx, obj, opts...)
-			},
-		}).
-		Build()
+	c := interceptor.NewClient(envClient, interceptor.Funcs{
+		SubResourcePatch: func(ctx context.Context, cl client.Client, sr string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+			if obj.GetName() == "sbx-a" && !conflicted {
+				conflicted = true
+				return apierrors.NewConflict(
+					schema.GroupResource{Group: "lenny.dev", Resource: "sandboxes"},
+					"sbx-a", errors.New("slot reserved by a competing replica"),
+				)
+			}
+			return cl.Status().Patch(ctx, obj, patch, opts...)
+		},
+	})
 	claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS}
 
 	res, err := claimer.ClaimSlot(context.Background(),
@@ -323,10 +377,10 @@ func TestClaimSlotRetriesOnReservationConflict(t *testing.T) {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
 	if res.SandboxName == "sbx-a" {
-		t.Error("ClaimSlot opened sbx-a despite the conflicting status update")
+		t.Error("ClaimSlot opened sbx-a despite the conflicting status apply")
 	}
 	if !conflicted {
-		t.Error("the conflicting-update path was not exercised")
+		t.Error("the conflicting-apply path was not exercised")
 	}
 }
 

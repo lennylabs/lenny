@@ -317,18 +317,32 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 	sb.Status.TenantID = tenantID
 
 	// Stamp the §5.2 tenant-pinning label so the
-	// lenny-tenant-label-immutability webhook backstops the pin at the
-	// Kubernetes layer. Best-effort: the status write above already
-	// pinned the pod at the application layer, and a label conflict means
-	// a competing writer set the same value.
-	if sb.Labels == nil || sb.Labels[LabelTenant] != req.TenantID {
+	// lenny-tenant-label-immutability webhook backstops the pin at
+	// the Kubernetes layer. Apply via SSA on the Sandbox spec under
+	// the `lenny-gateway` field manager so labels merge cleanly with
+	// the WPC's label set (WPC owns lenny.dev/pool and
+	// lenny.dev/managed; this Apply only claims lenny.dev/tenant-id).
+	// A label conflict means a competing writer set the same value
+	// — that is the spec-intended idempotency, not an error.
+	if sb.Labels[LabelTenant] != req.TenantID {
+		labelPatch := &lennyv1.Sandbox{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: lennyv1.GroupVersion.String(),
+				Kind:       "Sandbox",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      sb.Name,
+				Namespace: sb.Namespace,
+				Labels:    map[string]string{LabelTenant: req.TenantID},
+			},
+		}
+		if err := c.Client.Patch(ctx, labelPatch, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil && !apierrors.IsConflict(err) {
+			return nil, false, fmt.Errorf("label sandbox %s with tenant: %w", sb.Name, err)
+		}
 		if sb.Labels == nil {
 			sb.Labels = map[string]string{}
 		}
 		sb.Labels[LabelTenant] = req.TenantID
-		if err := c.Client.Update(ctx, sb); err != nil && !apierrors.IsConflict(err) {
-			return nil, false, fmt.Errorf("label sandbox %s with tenant: %w", sb.Name, err)
-		}
 	}
 
 	return &SlotResult{

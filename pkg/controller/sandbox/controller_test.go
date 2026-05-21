@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -14,10 +15,11 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
+	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 const (
@@ -34,13 +36,93 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-func newClient(s *runtime.Scheme, objs ...client.Object) client.Client {
-	return fake.NewClientBuilder().
-		WithScheme(s).
-		WithObjects(objs...).
-		WithStatusSubresource(&lennyv1.Sandbox{}).
-		Build()
+// newClient boots an envtest API server, pre-creates the
+// `lenny-agents` namespace, and seeds the supplied objects (Spec
+// via Create, then Status via SSA Apply under the
+// `lenny-warm-pool-controller` field manager so the production
+// reconciler's Apply path sees a same-manager update rather than
+// a cross-manager conflict). The fake client does not yet implement
+// SSA (kubernetes/kubernetes#115598), so this routes through a real
+// kube-apiserver via envtest.
+func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.Client {
+	t.Helper()
+	env := envtest.Start(t)
+	c, err := client.New(env.RESTConfig(), client.Options{Scheme: s})
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	ctx := context.Background()
+	if err := c.Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: testNS},
+	}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create namespace %s: %v", testNS, err)
+	}
+	// Pre-create the three §5.3 RuntimeClass objects podspec.Build
+	// references. envtest enforces the RuntimeClass admission check
+	// (real apiserver); the fake client did not. The handlers are
+	// stand-ins — the test never schedules these pods anywhere.
+	for _, rc := range []string{"runc", "gvisor", "kata"} {
+		if err := c.Create(ctx, &nodev1.RuntimeClass{
+			ObjectMeta: metav1.ObjectMeta{Name: rc},
+			Handler:    rc,
+		}); err != nil && !apierrors.IsAlreadyExists(err) {
+			t.Fatalf("create RuntimeClass %s: %v", rc, err)
+		}
+	}
+	for _, o := range objs {
+		var (
+			sbStatus  lennyv1.SandboxStatus
+			podStatus corev1.PodStatus
+			seedAfter func()
+		)
+		switch v := o.(type) {
+		case *lennyv1.Sandbox:
+			sbStatus = v.Status
+			v.Status = lennyv1.SandboxStatus{}
+			seedAfter = func() {
+				if sbStatus.Phase == "" && sbStatus.PodName == "" &&
+					sbStatus.NodeName == "" && sbStatus.PodIP == "" {
+					return
+				}
+				patch := &lennyv1.Sandbox{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: lennyv1.GroupVersion.String(),
+						Kind:       "Sandbox",
+					},
+					ObjectMeta: metav1.ObjectMeta{Name: v.Name, Namespace: v.Namespace},
+				}
+				patch.Status = sbStatus
+				if err := c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
+					t.Fatalf("seed status Sandbox %s: %v", v.Name, err)
+				}
+			}
+		case *corev1.Pod:
+			podStatus = v.Status
+			v.Status = corev1.PodStatus{}
+			seedAfter = func() {
+				if podStatus.Phase == "" && podStatus.PodIP == "" && len(podStatus.Conditions) == 0 {
+					return
+				}
+				v.Status = podStatus
+				if err := c.Status().Update(ctx, v); err != nil {
+					t.Fatalf("seed status Pod %s: %v", v.Name, err)
+				}
+			}
+		}
+		if err := c.Create(ctx, o); err != nil {
+			t.Fatalf("create %T %s: %v", o, o.GetName(), err)
+		}
+		if seedAfter != nil {
+			seedAfter()
+		}
+	}
+	return c
 }
+
+// utilruntime + clientgoscheme stay referenced for tests that build a
+// fresh scheme directly.
+var _ = utilruntime.Must
+var _ = clientgoscheme.AddToScheme
 
 func sandboxCR(phase string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
@@ -66,9 +148,15 @@ func runtimeCR() *lennyv1.Runtime {
 }
 
 func podCR(phase corev1.PodPhase, ready bool) *corev1.Pod {
+	// envtest enforces real Pod validation (spec.containers is
+	// required). A stand-in container suffices; the reconciler reads
+	// only pod.Status, not pod.Spec, for its phase decisions.
 	p := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS},
-		Status:     corev1.PodStatus{Phase: phase, PodIP: testPodIP},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "stub", Image: "k8s.gcr.io/pause"}},
+		},
+		Status: corev1.PodStatus{Phase: phase, PodIP: testPodIP},
 	}
 	if ready {
 		p.Status.Conditions = []corev1.PodCondition{
@@ -98,7 +186,7 @@ func getSandbox(t *testing.T, c client.Client) lennyv1.Sandbox {
 
 func TestReconcileCreatesPodForNewSandbox(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR(""), runtimeCR())
+	c := newClient(t, s, sandboxCR(""), runtimeCR())
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -129,7 +217,7 @@ func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
 	s := newScheme(t)
 	rt := runtimeCR()
 	rt.Spec.DeploymentModel = "embedded"
-	c := newClient(s, sandboxCR(""), rt)
+	c := newClient(t, s, sandboxCR(""), rt)
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -146,7 +234,7 @@ func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
 
 func TestReconcileAdvancesWarmingToIdleWhenPodReady(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))
+	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -158,7 +246,7 @@ func TestReconcileAdvancesWarmingToIdleWhenPodReady(t *testing.T) {
 
 func TestReconcileRecordsPodIP(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))
+	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -170,7 +258,7 @@ func TestReconcileRecordsPodIP(t *testing.T) {
 
 func TestReconcileAdvancesWarmingToFailedOnPodFailure(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodFailed, false))
+	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodFailed, false))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -182,7 +270,7 @@ func TestReconcileAdvancesWarmingToFailedOnPodFailure(t *testing.T) {
 
 func TestReconcileWaitsWhilePodPending(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodPending, false))
+	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodPending, false))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -194,7 +282,7 @@ func TestReconcileWaitsWhilePodPending(t *testing.T) {
 
 func TestReconcileDrainsIdleSandboxWhosePodVanished(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR("idle"), runtimeCR())
+	c := newClient(t, s, sandboxCR("idle"), runtimeCR())
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -206,7 +294,7 @@ func TestReconcileDrainsIdleSandboxWhosePodVanished(t *testing.T) {
 
 func TestReconcileDeletesPodWhileDraining(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR("draining"), runtimeCR(), podCR(corev1.PodRunning, true))
+	c := newClient(t, s, sandboxCR("draining"), runtimeCR(), podCR(corev1.PodRunning, true))
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -220,7 +308,7 @@ func TestReconcileDeletesPodWhileDraining(t *testing.T) {
 
 func TestReconcileTerminatesDrainingSandboxWithNoPod(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR("draining"), runtimeCR())
+	c := newClient(t, s, sandboxCR("draining"), runtimeCR())
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -232,7 +320,7 @@ func TestReconcileTerminatesDrainingSandboxWithNoPod(t *testing.T) {
 
 func TestReconcileMissingRuntimeErrors(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR("")) // no Runtime CR
+	c := newClient(t, s, sandboxCR("")) // no Runtime CR
 
 	if err := reconcile(t, c, s); err == nil {
 		t.Fatal("Reconcile should error when the referenced Runtime is missing")
@@ -241,7 +329,7 @@ func TestReconcileMissingRuntimeErrors(t *testing.T) {
 
 func TestReconcileSandboxNotFound(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s)
+	c := newClient(t, s)
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Errorf("Reconcile of a deleted sandbox should not error: %v", err)

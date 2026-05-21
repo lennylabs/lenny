@@ -25,7 +25,7 @@ func TestReconcileInjectsEgressCaptureSidecarFromAnnotation(t *testing.T) {
 	sb.Annotations = map[string]string{
 		sandbox.EgressCaptureUpstreamAnnotation: "api.openai.com:443",
 	}
-	c := newClient(s, sb, runtimeCR())
+	c := newClient(t, s, sb, runtimeCR())
 
 	r := &sandbox.Reconciler{
 		Client:             c,
@@ -76,7 +76,7 @@ func TestReconcileInjectsEgressCaptureSidecarFromAnnotation(t *testing.T) {
 // §12.9.8 sidecar is opt-in per Sandbox.
 func TestReconcileOmitsEgressCaptureWithoutAnnotation(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, sandboxCR(""), runtimeCR())
+	c := newClient(t, s, sandboxCR(""), runtimeCR())
 
 	r := &sandbox.Reconciler{
 		Client:             c,
@@ -113,7 +113,7 @@ func TestReconcileOmitsEgressCaptureWithoutControllerImage(t *testing.T) {
 	sb.Annotations = map[string]string{
 		sandbox.EgressCaptureUpstreamAnnotation: "api.openai.com:443",
 	}
-	c := newClient(s, sb, runtimeCR())
+	c := newClient(t, s, sb, runtimeCR())
 
 	r := &sandbox.Reconciler{
 		Client:       c,

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,6 +31,9 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	s := runtime.NewScheme()
 	if err := lennyv1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
+	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme corev1: %v", err)
 	}
 	return s
 }

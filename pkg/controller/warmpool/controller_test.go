@@ -6,14 +6,17 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 const (
@@ -27,19 +30,127 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	if err := lennyv1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
 	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme corev1: %v", err)
+	}
 	return s
 }
 
-func newClient(s *runtime.Scheme, objs ...client.Object) client.Client {
-	return fake.NewClientBuilder().
-		WithScheme(s).
-		WithObjects(objs...).
-		WithStatusSubresource(
-			&lennyv1.SandboxWarmPool{},
-			&lennyv1.SandboxTemplate{},
-			&lennyv1.Sandbox{},
-		).
-		Build()
+// applyStatus seeds a status using SSA Apply under the same field
+// manager the reconciler uses. Status().Update would create CSA
+// ownership of the same fields, which then conflicts with the
+// reconciler's SSA Apply at runtime (CSA and SSA track ownership
+// independently, so two managers claiming the same field with
+// different strategies always conflict). Using Apply here puts the
+// test seeding on the same path the production reconciler uses,
+// so the reconciler's subsequent Apply is a same-manager update
+// rather than a cross-manager conflict.
+func applyStatus(ctx context.Context, c client.Client, obj client.Object) error {
+	switch v := obj.(type) {
+	case *lennyv1.SandboxWarmPool:
+		patch := &lennyv1.SandboxWarmPool{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: lennyv1.GroupVersion.String(),
+				Kind:       "SandboxWarmPool",
+			},
+			ObjectMeta: metav1.ObjectMeta{Name: v.Name, Namespace: v.Namespace},
+		}
+		patch.Status = v.Status
+		return c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
+	case *lennyv1.SandboxTemplate:
+		patch := &lennyv1.SandboxTemplate{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: lennyv1.GroupVersion.String(),
+				Kind:       "SandboxTemplate",
+			},
+			ObjectMeta: metav1.ObjectMeta{Name: v.Name, Namespace: v.Namespace},
+		}
+		patch.Status = v.Status
+		return c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
+	case *lennyv1.Sandbox:
+		patch := &lennyv1.Sandbox{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: lennyv1.GroupVersion.String(),
+				Kind:       "Sandbox",
+			},
+			ObjectMeta: metav1.ObjectMeta{Name: v.Name, Namespace: v.Namespace},
+		}
+		patch.Status = v.Status
+		return c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
+	}
+	return nil
+}
+
+// newClient boots an envtest API server, pre-creates the
+// `lenny-agents` namespace, and seeds the supplied objects (Spec
+// then Status) so the reconciler observes them on first Reconcile.
+// envtest backs the controller-runtime client with a real
+// kube-apiserver so the §4.6.3 SSA Apply path the controllers use
+// works; the fake client does not yet implement SSA
+// (kubernetes/kubernetes#115598).
+func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.Client {
+	t.Helper()
+	env := envtest.Start(t)
+	c, err := client.New(env.RESTConfig(), client.Options{Scheme: s})
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	ctx := context.Background()
+	if err := c.Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: testNS},
+	}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create namespace %s: %v", testNS, err)
+	}
+	for _, o := range objs {
+		// Capture and clear status before Create — the API server
+		// rejects status on Create, so we set it via a follow-up
+		// Status().Update.
+		var (
+			wpStatus    lennyv1.SandboxWarmPoolStatus
+			tmplStatus  lennyv1.SandboxTemplateStatus
+			sbStatus    lennyv1.SandboxStatus
+			updateAfter func()
+		)
+		switch v := o.(type) {
+		case *lennyv1.SandboxWarmPool:
+			wpStatus = v.Status
+			v.Status = lennyv1.SandboxWarmPoolStatus{}
+			updateAfter = func() {
+				v.Status = wpStatus
+				if err := applyStatus(ctx, c, v); err != nil {
+					t.Fatalf("set status SandboxWarmPool %s: %v", v.Name, err)
+				}
+			}
+		case *lennyv1.SandboxTemplate:
+			tmplStatus = v.Status
+			v.Status = lennyv1.SandboxTemplateStatus{}
+			updateAfter = func() {
+				v.Status = tmplStatus
+				if err := applyStatus(ctx, c, v); err != nil {
+					t.Fatalf("set status SandboxTemplate %s: %v", v.Name, err)
+				}
+			}
+		case *lennyv1.Sandbox:
+			sbStatus = v.Status
+			v.Status = lennyv1.SandboxStatus{}
+			updateAfter = func() {
+				if sbStatus.Phase == "" {
+					return
+				}
+				v.Status = sbStatus
+				if err := applyStatus(ctx, c, v); err != nil {
+					t.Fatalf("set status Sandbox %s: %v", v.Name, err)
+				}
+			}
+		}
+		if err := c.Create(ctx, o); err != nil {
+			t.Fatalf("create %T %s: %v", o, o.GetName(), err)
+		}
+		if updateAfter != nil {
+			updateAfter()
+		}
+	}
+	return c
 }
 
 func template() *lennyv1.SandboxTemplate {
@@ -129,7 +240,7 @@ func warmingUpCondition(t *testing.T, tm lennyv1.SandboxTemplate) metav1.Conditi
 
 func TestReconcileCreatesUpToMinWarm(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, template(), pool(3, 10))
+	c := newClient(t, s, template(), pool(3, 10))
 
 	reconcile(t, c, s)
 
@@ -171,7 +282,7 @@ func TestReconcileCreatesUpToMinWarm(t *testing.T) {
 
 func TestReconcileAtTargetCreatesNothing(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, template(), pool(3, 10),
+	c := newClient(t, s, template(), pool(3, 10),
 		idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"))
 
 	reconcile(t, c, s)
@@ -187,7 +298,7 @@ func TestReconcileAtTargetCreatesNothing(t *testing.T) {
 
 func TestReconcileBelowTargetCreatesGap(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, template(), pool(3, 10), idleSandbox("sb-a"))
+	c := newClient(t, s, template(), pool(3, 10), idleSandbox("sb-a"))
 
 	reconcile(t, c, s)
 
@@ -202,7 +313,7 @@ func TestReconcileBelowTargetCreatesGap(t *testing.T) {
 
 func TestReconcileOverTargetDrainsExcess(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, template(), pool(2, 10),
+	c := newClient(t, s, template(), pool(2, 10),
 		idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"),
 		idleSandbox("sb-d"), idleSandbox("sb-e"))
 
@@ -232,7 +343,7 @@ func TestReconcileOverTargetDrainsExcess(t *testing.T) {
 
 func TestReconcileMaxWarmCapsCreation(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, template(), pool(10, 4))
+	c := newClient(t, s, template(), pool(10, 4))
 
 	reconcile(t, c, s)
 
@@ -243,7 +354,7 @@ func TestReconcileMaxWarmCapsCreation(t *testing.T) {
 
 func TestReconcileMissingTemplateErrors(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, pool(3, 10)) // no SandboxTemplate
+	c := newClient(t, s, pool(3, 10)) // no SandboxTemplate
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -259,7 +370,7 @@ func TestReconcileMissingTemplateErrors(t *testing.T) {
 
 func TestReconcilePoolNotFound(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s)
+	c := newClient(t, s)
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s}
 	res, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -276,7 +387,7 @@ func TestReconcilePoolNotFound(t *testing.T) {
 func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 	t.Run("provisioning while fresh pods warm", func(t *testing.T) {
 		s := newScheme(t)
-		c := newClient(s, template(), pool(3, 10))
+		c := newClient(t, s, template(), pool(3, 10))
 
 		reconcile(t, c, s)
 
@@ -288,7 +399,7 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 
 	t.Run("available once idle pods exist", func(t *testing.T) {
 		s := newScheme(t)
-		c := newClient(s, template(), pool(3, 10),
+		c := newClient(t, s, template(), pool(3, 10),
 			idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"))
 
 		reconcile(t, c, s)
@@ -303,7 +414,7 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 		s := newScheme(t)
 		// minWarm 3 with maxWarm 0: the ceiling caps creation at zero,
 		// leaving the hot pool with no idle and no warming pods.
-		c := newClient(s, template(), pool(3, 0))
+		c := newClient(t, s, template(), pool(3, 0))
 
 		reconcile(t, c, s)
 
@@ -319,7 +430,7 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 
 func TestReconcileIsIdempotent(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(s, template(), pool(3, 10))
+	c := newClient(t, s, template(), pool(3, 10))
 
 	reconcile(t, c, s)
 	first := len(poolSandboxes(t, c))
@@ -343,7 +454,7 @@ func TestReconcilePropagatesEgressCaptureAnnotation(t *testing.T) {
 		"lenny.dev/test-egress-capture-upstream": "api.openai.com:443",
 		"lenny.dev/unrelated":                    "ignore-me",
 	}
-	c := newClient(s, tmpl, pool(1, 1))
+	c := newClient(t, s, tmpl, pool(1, 1))
 
 	reconcile(t, c, s)
 
