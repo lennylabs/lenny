@@ -31,6 +31,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"github.com/lennylabs/lenny/tests/testinfra/cloud"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -255,11 +257,16 @@ func TestManagedIngress(t *testing.T) {
 
 // spec: 13 (security model: workload identity / IRSA)
 // diagnosis: TestCloudOIDC asserts the gateway ServiceAccount carries
-// the IRSA annotation that maps the SA to an AWS IAM role. Without
-// the annotation the gateway pod cannot acquire AWS credentials
-// through the OIDC issuer the Terraform provisioned.
+// the per-provider workload-identity annotation that maps the SA to
+// a cloud IAM identity. Without the annotation the gateway pod
+// cannot acquire cloud credentials through the OIDC issuer the
+// Terraform provisioned. Each provider stamps a distinct key:
+//
+//   - EKS:  `eks.amazonaws.com/role-arn` -> arn:aws:iam::.../role/...
+//   - GKE:  `iam.gke.io/gcp-service-account` -> <sa>@<project>.iam.gserviceaccount.com
+//   - AKS:  `azure.workload.identity/client-id` -> a Client ID UUID
 func TestCloudOIDC(t *testing.T) {
-	_ = requireCloud(t)
+	p := requireCloud(t)
 	cli := kube(t)
 	requireGatewayInstalled(t, cli)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -272,14 +279,40 @@ func TestCloudOIDC(t *testing.T) {
 		}
 		t.Fatalf("get lenny-gateway SA: %v", err)
 	}
-	roleARN := sa.Annotations["eks.amazonaws.com/role-arn"]
-	if roleARN == "" {
-		t.Skip("TestCloudOIDC: lenny-gateway SA has no eks.amazonaws.com/role-arn annotation; set gateway.serviceAccount.annotations.\"eks.amazonaws.com/role-arn\" to the IRSA role the Terraform produced to unblock")
+
+	switch p {
+	case cloud.ProviderEKS:
+		roleARN := sa.Annotations["eks.amazonaws.com/role-arn"]
+		if roleARN == "" {
+			t.Skip("TestCloudOIDC: lenny-gateway SA has no eks.amazonaws.com/role-arn annotation; set gateway.serviceAccount.annotations.\"eks.amazonaws.com/role-arn\" to the IRSA role the Terraform produced to unblock")
+		}
+		if !strings.HasPrefix(roleARN, "arn:aws:iam::") {
+			t.Errorf("EKS IRSA role ARN does not look right: %q", roleARN)
+		}
+		t.Logf("TestCloudOIDC (EKS): lenny-gateway SA bound to %s", roleARN)
+	case cloud.ProviderGKE:
+		gcpSA := sa.Annotations["iam.gke.io/gcp-service-account"]
+		if gcpSA == "" {
+			t.Skip("TestCloudOIDC: lenny-gateway SA has no iam.gke.io/gcp-service-account annotation; set gateway.serviceAccount.annotations.\"iam.gke.io/gcp-service-account\" to the GCP SA the Terraform produced to unblock")
+		}
+		if !strings.Contains(gcpSA, "@") || !strings.HasSuffix(gcpSA, ".iam.gserviceaccount.com") {
+			t.Errorf("GKE Workload Identity GCP SA does not look right: %q", gcpSA)
+		}
+		t.Logf("TestCloudOIDC (GKE): lenny-gateway SA bound to %s", gcpSA)
+	case cloud.ProviderAKS:
+		clientID := sa.Annotations["azure.workload.identity/client-id"]
+		if clientID == "" {
+			t.Skip("TestCloudOIDC: lenny-gateway SA has no azure.workload.identity/client-id annotation; set gateway.serviceAccount.annotations.\"azure.workload.identity/client-id\" to the managed-identity Client ID the Terraform produced to unblock")
+		}
+		// Client IDs are UUIDs; a basic shape check catches gross
+		// drift without depending on the uuid package.
+		if len(clientID) != 36 || strings.Count(clientID, "-") != 4 {
+			t.Errorf("AKS Workload Identity Client ID does not look like a UUID: %q", clientID)
+		}
+		t.Logf("TestCloudOIDC (AKS): lenny-gateway SA bound to %s", clientID)
+	default:
+		t.Skipf("TestCloudOIDC: unknown cloud provider %q", p)
 	}
-	if !strings.HasPrefix(roleARN, "arn:aws:iam::") {
-		t.Errorf("IRSA role ARN does not look right: %q", roleARN)
-	}
-	t.Logf("TestCloudOIDC: lenny-gateway SA bound to %s", roleARN)
 }
 
 // spec: 4.3 (Token Service: cloud-managed TokenStore backend)

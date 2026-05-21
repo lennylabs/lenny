@@ -1604,28 +1604,23 @@ unblocks disproportionately many tests.
    recorded under "Tier-6 follow-on suites" (critical first, then
    the high-value RDS / ElastiCache / EKS-platform set).
 6. Bring the GCP (GKE) and Azure (AKS) tier-6 coverage to EKS
-   parity and run it end-to-end. Today `pkg/kms/{gcp,azure}`,
-   `pkg/blobstore/{gcs,azureblob}`, the Terraform skeletons under
-   `deploy/terraform/cloud/{gcp,azure}/`, and `scripts/cloud/{gke,aks}/{up,down}.sh`
-   exist, but the per-provider Terraform is materially thinner than
-   the AWS root module (GCP 136 lines, Azure 158 lines vs AWS 247
-   lines), no `scripts/cloud/{gke,aks}/run-e2e.sh` driver exists,
-   and the tier-6 cluster-assertion / behavior / managed-service
-   test bodies encode EKS-specific paths (IRSA annotation, RDS
-   IAM auth, ElastiCache cluster mode, EBS CSI, VPC CNI). The
-   work is: (a) expand the GCP and Azure Terraform to provision
-   the cluster + managed datastores + Workload-Identity / Federated
-   -Identity bindings the chart consumes; (b) add the
-   `scripts/cloud/{gke,aks}/run-e2e.sh` end-to-end drivers
-   mirroring `scripts/cloud/aws/run-e2e.sh`; (c) extend or fork
-   the tier-6 test files into provider-aware paths covering Cloud
-   SQL + Memorystore (GCP) and Azure Database for PostgreSQL +
-   Azure Cache for Redis (Azure); (d) run the suite with real GCP
-   and Azure credentials and record any provider-specific
-   divergences. The §spec coverage matches the existing EKS suites
-   (§4.3, §12.5, §13, §17.3, §17.7) since spec/13 / spec/17
-   already name cross-cloud equivalents (Workload Identity ↔ IRSA
-   ↔ Federated Identity).
+   parity and run it end-to-end. SUBSTANTIALLY PROGRESSED. The
+   scripts/cloud/{gke,aks}/ directories were renamed to
+   scripts/cloud/{gcp,azure}/ to match the AWS layout;
+   scripts/cloud/{gcp,azure}/up.sh now invoke Terraform with the
+   per-provider Helm-consumable outputs (KMS key, object-storage
+   bucket/container, Workload Identity / Federated Identity service
+   account); scripts/cloud/{gcp,azure}/run-e2e.sh drive the full
+   install cycle (Terraform → image push → values render →
+   datastores → helm install → tier-6 suite); and the tier-6
+   `TestCloudOIDC` test now dispatches per-provider (EKS:
+   `eks.amazonaws.com/role-arn`; GKE: `iam.gke.io/gcp-service-account`;
+   AKS: `azure.workload.identity/client-id`) so the SA-annotation
+   probe runs uniformly across providers. The remaining work is
+   (a) provider-aware bodies for the EKS-flavored RDS / ElastiCache /
+   EBS CSI / VPC CNI tests (cloud-side Cloud SQL / Memorystore for
+   GCP; Azure DB for Postgres + Azure Cache for Redis for AKS);
+   (b) running the suite with real GCP and Azure credentials.
 
 ## Maintenance
 
