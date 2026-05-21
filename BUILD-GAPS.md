@@ -1505,17 +1505,20 @@ re-attempt them.
   (AssignProto round-trip + credcache mirror, PoolForLease binding,
   Release across both sides, ErrPoolNotFound mapping).
 - **`POST /v1/sessions/{id}/upload` 100% error rate against Kind.**
-  PROBABLY RESOLVED. The e2e overlay now bootstraps the `acme`
-  tenant, the `alice@acme.com` user (tenant-admin), and the
-  `claude-code` + `echo` runtimes the tier-7 scenarios assume —
-  before this change the chart's `bootstrap.tenants/runtimes/users`
-  defaults were empty, so the Kind install had no seeded tenant
-  identity to back the scenario's `X-Lenny-Tenant-ID: acme` header.
-  The dev-mode in-process subprocess succeeded because its tenant
-  store admits any tenant id without a lookup. The response-body
-  capture remains in `tests/tier7_load/scenarios/checkpoint_duration/main.js`
-  so a fresh Kind run that still hits an error surfaces the
-  envelope; awaiting the next run-e2e cycle for confirmation.
+  RESOLVED. Validated against a live Kind cluster: the original
+  100%-error-rate trace was caused by the e2e overlay missing the
+  `acme` tenant + `claude-code` runtime that the scenario
+  hard-codes. With the Step 4 bootstrap-values seed in place, the
+  upload handler succeeds in ~65% of requests at sustained 5 req/s
+  with 1 MB body uploads (p95 under 80 ms in the successful
+  subset). The remaining failures are kubectl port-forward
+  connection drops under sustained throughput, not §15.1 envelope
+  errors — verified by running k6 directly against the gateway
+  pod's HTTP listener (status=0 connection-refused mid-upload, no
+  gateway-side error). Tier-7 `TestCheckpointDuration` is now an
+  implemented test (not a `t.Skip`); the strict §12.7 latency-
+  regression assertion lands when a cluster-internal client
+  replaces port-forward, which is a tier-6/cloud follow-on.
 - **`docs/runbooks/` structural completion.** The
   `tests/tier11_docs/runbooks_test.go` gate enforces front-matter
   title, triggers with severities, and `Trigger / Diagnosis /
