@@ -55,11 +55,21 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: postgres
     spec:
-      # Pin Postgres to the control-plane node so the §13.19 node-drain
+      # Prefer the control-plane node so the §13.19 Kind node-drain
       # test (which drains a worker) does not evict the database, lose
       # its emptyDir, and force every downstream test to re-migrate.
-      nodeSelector:
-        lenny.dev/role: control-plane
+      # The preference falls back to any node on clusters that lack a
+      # lenny.dev/role=control-plane label (EKS / cloud installs), so
+      # the same manifest works on Kind and on managed Kubernetes.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: lenny.dev/role
+                    operator: In
+                    values: [control-plane]
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -161,11 +171,19 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: redis
     spec:
-      # Pin Redis to the control-plane node so the §13.19 node-drain
+      # Prefer the control-plane node so the §13.19 Kind node-drain
       # test does not evict the cache, lose its emptyDir, and clear
-      # coordination state mid-suite.
-      nodeSelector:
-        lenny.dev/role: control-plane
+      # coordination state mid-suite. Falls back to any node when the
+      # control-plane label is absent (EKS / cloud installs).
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: lenny.dev/role
+                    operator: In
+                    values: [control-plane]
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -257,16 +275,22 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: minio
     spec:
-      # Pin MinIO to the control-plane node. The §13.19 tier-5
-      # TestNodeDrainDuringActiveSession drains a worker; if MinIO
-      # lives on the same worker the drain evicts it, the bucket
-      # vanishes with the emptyDir, and the gateway's §12.5 drain-
-      # readiness probe rejects the remaining agent-pod evictions.
-      # The control-plane node is never drained by the tier-5 tests,
-      # so pinning MinIO there isolates the artifact store from the
-      # drain target.
-      nodeSelector:
-        lenny.dev/role: control-plane
+      # Prefer the control-plane node so the §13.19 Kind node-drain
+      # test does not evict MinIO, vanish the bucket with the emptyDir,
+      # and cause the gateway's §12.5 drain-readiness probe to reject
+      # subsequent agent-pod evictions. Falls back to any node when
+      # the control-plane label is absent (EKS / cloud installs;
+      # production installs use the cloud-native artifact store
+      # instead of MinIO anyway).
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: lenny.dev/role
+                    operator: In
+                    values: [control-plane]
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
