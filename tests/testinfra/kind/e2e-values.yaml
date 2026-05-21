@@ -93,13 +93,31 @@ bootstrap:
   runtimes:
     - name: claude-code
       type: agent
-      image: lenny-runtime-echo:e2e
+      image: lenny-runtime-echo:e2e@sha256:67004f3e8d61a71973397685b58933e013089ff61cf5eb59833a0e47eba4a069
       integrationLevel: basic
       executionMode: session
       isolationProfile: standard
     - name: echo
       type: agent
-      image: lenny-runtime-echo:e2e
+      image: lenny-runtime-echo:e2e@sha256:67004f3e8d61a71973397685b58933e013089ff61cf5eb59833a0e47eba4a069
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+    # The §4.7 sidecar / embedded reference runtimes the tier-5/8
+    # sessiondriver harness drives by name. Their Runtime CRDs are
+    # applied via agent-workload.yaml; the runtimestore copy here
+    # makes the gateway's runtime lookup succeed when the test posts
+    # POST /v1/sessions with runtimeRef = echo-runtime-sidecar /
+    # echo-runtime-embedded.
+    - name: echo-runtime-sidecar
+      type: agent
+      image: lenny-runtime-echo:e2e@sha256:67004f3e8d61a71973397685b58933e013089ff61cf5eb59833a0e47eba4a069
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+    - name: echo-runtime-embedded
+      type: agent
+      image: lenny-runtime-echo-embedded:e2e@sha256:98579a97400b6a3134ec46cfeed4095f96c018a8ca9ec0df9fd477793de7bc4d
       integrationLevel: basic
       executionMode: session
       isolationProfile: standard

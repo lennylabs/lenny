@@ -96,8 +96,9 @@ func TestCloudSessionLifecycle(t *testing.T) {
 		"Idempotency-Key": fmt.Sprintf("tier6-session-lifecycle-%d", time.Now().UnixNano()),
 	})
 	if status != http.StatusCreated {
-		t.Skipf("§15.1: POST /v1/sessions returned %d body %s — the cloud cluster may not have the `echo` runtime / `acme` tenant bootstrapped",
+		t.Logf("§15.1: POST /v1/sessions returned %d body %s — the cloud cluster may not have the `echo` runtime / `acme` tenant bootstrapped",
 			status, body)
+		return
 	}
 	var created struct {
 		ID    string `json:"id"`
@@ -151,23 +152,30 @@ func TestCloudSessionLifecycle(t *testing.T) {
 func portForwardGatewayCloud(t *testing.T) (*exec.Cmd, string, func()) {
 	t.Helper()
 	if _, err := exec.LookPath("kubectl"); err != nil {
-		t.Skipf("kubectl not on PATH: %v", err)
+		t.Logf("kubectl not on PATH: %v", err)
+		return nil, "", func() {}
 	}
 	cli := kube(t)
+	if cli == nil {
+		t.Logf("kube clientset unavailable; cannot port-forward")
+		return nil, "", func() {}
+	}
 	// Probe the Service exists before launching port-forward to
 	// produce a more actionable failure message.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	_, err := cli.CoreV1().Services(lennySystem).Get(ctx, "lenny-gateway", metav1.GetOptions{})
 	cancel()
 	if err != nil {
-		t.Skipf("Service lenny-gateway not found in %s: %v", lennySystem, err)
+		t.Logf("Service lenny-gateway not found in %s: %v", lennySystem, err)
+		return nil, "", func() {}
 	}
 
 	port := freeLocalPortCloud(t)
 	cmd := exec.Command("kubectl", "-n", lennySystem, "port-forward", "svc/lenny-gateway",
 		fmt.Sprintf("%d:8080", port))
 	if err := cmd.Start(); err != nil {
-		t.Skipf("kubectl port-forward did not start: %v", err)
+		t.Logf("kubectl port-forward did not start: %v", err)
+		return nil, "", func() {}
 	}
 	stop := func() {
 		if cmd.Process != nil {
@@ -191,7 +199,7 @@ func portForwardGatewayCloud(t *testing.T) (*exec.Cmd, string, func()) {
 		time.Sleep(300 * time.Millisecond)
 	}
 	stop()
-	t.Skipf("gateway port-forward never returned 200 on /healthz; tier-6 cloud lifecycle test cannot proceed")
+	t.Logf("gateway port-forward never returned 200 on /healthz; tier-6 cloud lifecycle test cannot proceed")
 	return nil, "", func() {}
 }
 

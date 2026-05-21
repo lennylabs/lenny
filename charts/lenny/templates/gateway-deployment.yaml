@@ -137,6 +137,13 @@ spec:
             # as max(floor, tenantStored); a PUT below the floor is
             # rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR.
             - --elicitation-content-integrity-floor={{ .Values.security.elicitationContentIntegrity.floor }}
+            {{- /* §4.6 pod placement: pin the gateway at the first
+                  agent namespace so SandboxClaims land against live
+                  warm pods. Without --agent-namespace the gateway
+                  runs in-memory and no Sandbox is claimed. */ -}}
+            {{- with (first .Values.agentNamespaces) }}
+            - --agent-namespace={{ .name }}
+            {{- end }}
             {{- if .Values.global.devMode }}
             - --dev-mode
             {{- end }}

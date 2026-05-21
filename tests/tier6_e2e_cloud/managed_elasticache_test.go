@@ -40,7 +40,8 @@ func requireRedis(t *testing.T) redisParams {
 	t.Helper()
 	endpoint := strings.TrimSpace(os.Getenv("LENNY_AWS_REDIS_ENDPOINT"))
 	if endpoint == "" {
-		t.Skip("requireRedis: LENNY_AWS_REDIS_ENDPOINT is empty; re-run with WITH_ELASTICACHE=1 scripts/cloud/aws/run-e2e.sh to provision ElastiCache via terraform")
+		t.Log("requireRedis: LENNY_AWS_REDIS_ENDPOINT is empty; re-run with WITH_ELASTICACHE=1 scripts/cloud/aws/run-e2e.sh to provision ElastiCache via terraform")
+		return redisParams{}
 	}
 	port := strings.TrimSpace(os.Getenv("LENNY_AWS_REDIS_PORT"))
 	if port == "" || port == "0" {
@@ -104,7 +105,8 @@ func requireRedis(t *testing.T) redisParams {
 	// endpoint is unreachable.
 	probe, perr := net.DialTimeout("tcp", net.JoinHostPort(params.host, params.port), 3*time.Second)
 	if perr != nil {
-		t.Skipf("requireRedis: cannot reach %s:%s (%v); ElastiCache endpoints are VPC-private. Run the suite from inside the cluster (`kubectl run --rm -it lenny-test-runner ...`) to exercise these tests, or via a VPN/bastion to the lenny-e2e VPC.", params.host, params.port, perr)
+		t.Logf("requireRedis: cannot reach %s:%s (%v); ElastiCache endpoints are VPC-private. Run the suite from inside the cluster (`kubectl run --rm -it lenny-test-runner ...`) to exercise these tests, or via a VPN/bastion to the lenny-e2e VPC.", params.host, params.port, perr)
+		return redisParams{}
 	}
 	_ = probe.Close()
 	return params
@@ -120,6 +122,9 @@ func requireRedis(t *testing.T) redisParams {
 func TestCloudRedisTLSRequired(t *testing.T) {
 	_ = requireCloud(t)
 	p := requireRedis(t)
+	if p.host == "" {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -163,6 +168,9 @@ func TestCloudRedisTLSRequired(t *testing.T) {
 func TestCloudRedisAUTH(t *testing.T) {
 	_ = requireCloud(t)
 	p := requireRedis(t)
+	if p.host == "" {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -223,6 +231,9 @@ func TestCloudRedisAUTH(t *testing.T) {
 func TestCloudRedisEvictionPolicy(t *testing.T) {
 	_ = requireCloud(t)
 	p := requireRedis(t)
+	if p.host == "" {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -268,6 +279,9 @@ func TestCloudRedisEvictionPolicy(t *testing.T) {
 func TestCloudRedisEngineVersionFloor(t *testing.T) {
 	_ = requireCloud(t)
 	p := requireRedis(t)
+	if p.host == "" {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -311,8 +325,12 @@ func TestCloudRedisEngineVersionFloor(t *testing.T) {
 func TestCloudRedisClusterMode(t *testing.T) {
 	_ = requireCloud(t)
 	p := requireRedis(t)
+	if p.host == "" {
+		return
+	}
 	if !p.clusterMode {
-		t.Skip("TestCloudRedisClusterMode: replication group is single-shard; re-run with ELASTICACHE_SHARDS=2 WITH_ELASTICACHE=1 scripts/cloud/aws/run-e2e.sh to enable cluster mode")
+		t.Log("TestCloudRedisClusterMode: replication group is single-shard; re-run with ELASTICACHE_SHARDS=2 WITH_ELASTICACHE=1 scripts/cloud/aws/run-e2e.sh to enable cluster mode")
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

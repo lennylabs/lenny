@@ -255,7 +255,13 @@ func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string)
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime
 	}
-	body := fmt.Sprintf(`{"runtimeRef":%q}`, runtimeRef)
+	// §5.3 standard isolation maps to the Kind cluster's runc handler;
+	// the e2e agent-workload.yaml only ships SandboxTemplates with
+	// `isolationProfile: standard` so the gateway-side ResolvePool
+	// match needs the same profile on the session record. Without
+	// this override the gateway falls back to its default
+	// (`sandboxed`) and the lookup misses every pool.
+	body := fmt.Sprintf(`{"runtimeRef":%q,"isolationProfile":"standard"}`, runtimeRef)
 	res, err := d.doRequest(ctx, http.MethodPost, "/v1/sessions",
 		tenantAdmin(tenantID), strings.NewReader(body))
 	if err != nil {
@@ -282,7 +288,13 @@ func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime
 	}
-	body := fmt.Sprintf(`{"runtimeRef":%q}`, runtimeRef)
+	// §5.3 standard isolation maps to the Kind cluster's runc handler;
+	// the e2e agent-workload.yaml only ships SandboxTemplates with
+	// `isolationProfile: standard` so the gateway-side ResolvePool
+	// match needs the same profile on the session record. Without
+	// this override the gateway falls back to its default
+	// (`sandboxed`) and the lookup misses every pool.
+	body := fmt.Sprintf(`{"runtimeRef":%q,"isolationProfile":"standard"}`, runtimeRef)
 	res, err := d.doRequest(ctx, http.MethodPost, "/v1/sessions/start",
 		tenantAdmin(tenantID), strings.NewReader(body))
 	if err != nil {

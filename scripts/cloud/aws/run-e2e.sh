@@ -495,7 +495,7 @@ INGRESS
 echo "==[6/6] lenny-test --tier e2e_cloud==" >&2
 ARTIFACT_BUCKET="$("${TF}" -chdir="${TF_DIR}" output -raw artifact_bucket)"
 KMS_KEY_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw kms_key_arn)"
-export LENNY_CLOUD_PROVIDER=eks
+export LENNY_CLOUD_PROVIDER=aws
 export LENNY_AWS_ARTIFACT_BUCKET="${ARTIFACT_BUCKET}"
 export LENNY_AWS_KMS_KEY_ARN="${KMS_KEY_ARN}"
 
@@ -563,7 +563,7 @@ spec:
       command: ["sleep", "1800"]
       env:
         - name: LENNY_CLOUD_PROVIDER
-          value: "eks"
+          value: "aws"
         - name: LENNY_CLOUD_SKIP_CLI_CHECK
           value: "1"
         - name: LENNY_AWS_REDIS_ENDPOINT

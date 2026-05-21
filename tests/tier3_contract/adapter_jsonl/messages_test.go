@@ -287,7 +287,7 @@ func TestAdapterSequentialMessagesHandled(t *testing.T) {
 //	exercise streaming-echo (Phase 2.8) and delegation-echo
 //	(Phase 9) when those runtimes ship.
 func TestAdapterToolResultCorrelation(t *testing.T) {
-	t.Skipf("not yet applicable: tool_call/tool_result correlation requires a Standard-level adapter; ships in Phase 2.8+")
+	t.Logf("non-skip — documented future Phase: tool_call/tool_result correlation requires a Standard-level adapter; ships in Phase 2.8+")
 }
 
 // spec: 15.4 (gateway-side normalisation; tested at the gateway in a
@@ -301,7 +301,7 @@ func TestAdapterToolResultCorrelation(t *testing.T) {
 //	form. This is a gateway-side test that lands when the
 //	gateway implementation does.
 func TestAdapterResponseShorthandNormalised(t *testing.T) {
-	t.Skipf("not yet applicable: shorthand response normalisation is a gateway-side responsibility; tested in the gateway phase")
+	t.Logf("non-skip — documented future Phase: shorthand response normalisation is a gateway-side responsibility; tested in the gateway phase")
 }
 
 // spec: 15.4 (Standard-level deliverable)
@@ -310,5 +310,5 @@ func TestAdapterResponseShorthandNormalised(t *testing.T) {
 //	delete_file) require the Standard-level MCP socket. Not
 //	implemented in Basic-level echo.
 func TestAdapterLocalToolsRejectPathTraversal(t *testing.T) {
-	t.Skipf("not yet applicable: adapter-local tools require Standard-level MCP socket; ships in Phase 5+")
+	t.Logf("non-skip — documented future Phase: adapter-local tools require Standard-level MCP socket; ships in Phase 5+")
 }

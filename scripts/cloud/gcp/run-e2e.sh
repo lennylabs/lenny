@@ -104,7 +104,7 @@ helm upgrade --install "${LENNY_RELEASE}" "${REPO_ROOT}/charts/lenny" \
 
 log "step 6: run tier-6 suite"
 cd "${REPO_ROOT}"
-LENNY_CLOUD_PROVIDER=gke \
+LENNY_CLOUD_PROVIDER=gcp \
 LENNY_GCP_PROJECT="${LENNY_GCP_PROJECT}" \
 LENNY_GCP_REGION="${LENNY_GCP_REGION}" \
 LENNY_GCP_KMS_KEY_ID="${LENNY_GCP_KMS_KEY_ID}" \
