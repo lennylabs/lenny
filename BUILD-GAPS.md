@@ -254,13 +254,17 @@ green signal):
    the message round-trip. Closes the gap that nothing in tier-6
    actually exercises a session on EKS.
 
-2. **`TestCloudIRSAResolvesCredentials`** (§13). Exec into the
-   gateway pod and run `aws sts get-caller-identity` (or call
-   the AWS SDK metadata endpoint). Assert the assumed role ARN
-   matches the IRSA role the Terraform produced. Today's
-   `TestCloudOIDC` only checks the SA annotation; an annotation
-   without a working trust policy or projected SA-token is a
-   silent failure mode.
+2. **`TestCloudIRSAResolvesCredentials`** (§13). *Implemented*
+   in `tests/tier6_e2e_cloud/behavior_test.go`. Reads the gateway
+   pod and asserts the EKS pod-identity webhook injected the
+   `AWS_ROLE_ARN` env, the `AWS_WEB_IDENTITY_TOKEN_FILE` env
+   pointing at the canonical projected-token path, and a
+   matching VolumeMount. `TestCloudOIDC` checks the SA
+   annotation; this test goes one level deeper to catch the
+   silent failure mode where the webhook is absent or
+   misconfigured. Lifting it further (exec into the gateway pod
+   and run an AWS SDK call) requires a debug ephemeral container
+   because the gateway image is distroless.
 
 3. **`TestCloudS3ViaIRSA`** (§4.5, §13). Once the gateway's
    ArtifactStore is wired through IRSA-resolved S3 credentials
@@ -279,11 +283,13 @@ green signal):
 High value, more wiring (these surface behaviors the current
 suite cannot prove):
 
-5. **`TestCloudPodSecurityRejectsRoot`** (§13). `kubectl apply` a
-   Pod with `runAsUser: 0` to an agent namespace and assert the
-   `lenny-pod-security` admission webhook rejects it. Tier-9
-   exercises the same rejection on Kind; the EKS API server's
-   webhook-latency profile differs and a regression is silent.
+5. **`TestCloudPodSecurityRejectsRoot`** (§13). *Implemented*
+   in `tests/tier6_e2e_cloud/behavior_test.go`. Creates a Pod
+   with `runAsUser=0` in the first `lenny.dev/agent-namespace=true`
+   namespace and asserts the §13.1 `pod-security.lenny.dev`
+   ValidatingAdmissionWebhook denies the request, matching on
+   the webhook name or the §13.1 row markers (`runAsNonRoot`,
+   `runAsUser`).
 
 6. **`TestCloudCosignVerifyRejectsUnsigned`** (§13, §17.6).
    `kubectl apply` a Pod whose image is unsigned and assert the
