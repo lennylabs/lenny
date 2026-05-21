@@ -12,11 +12,28 @@
 // wraps it, supplying the observed pods and applying the returned
 // Plan via the API server.
 //
-// Warm-pod accounting follows the §6.2 state machine: a pod counts as
-// warm inventory while it is unclaimed and either warming or idle
-// (phases warming, sdk_connecting, idle). Only an idle pod is ready to
-// serve a claim. Claimed, draining, and terminal pods are not warm
-// inventory and the planner ignores them.
+// Warm-pod accounting follows the §6.2 state machine:
+//
+//   - A pod counts as warm inventory while it is unclaimed
+//     (warming, sdk_connecting, idle) OR while it is serving §5.2
+//     concurrent slots (slot_active). Slot-active pods stay alive
+//     across slot releases and remain part of the pool's effective
+//     capacity, so the planner counts them as warm to avoid
+//     oscillating between "pool below target → create more" and
+//     "pool above target → drain idle" each time a slot releases.
+//   - Only an idle pod is ready to serve a fresh §4.6 claim
+//     (session-mode claims a whole pod; concurrent-mode slot
+//     reservation onto a slot-active pod does not consume an idle
+//     pod). ReadyCount tracks only idle pods.
+//   - Claimed, draining, and terminal pods are not warm inventory
+//     and the planner ignores them. The session-mode claim path
+//     (the gateway flipping idle → claimed) reduces both warm and
+//     ready by one until the pod returns to idle or terminates;
+//     this is the established contract and is unchanged.
+//   - Drain candidates are still limited to idle pods. The planner
+//     never drains a slot-active pod — its slots carry live
+//     sessions whose termination is the gateway's responsibility,
+//     not the planner's.
 package plan
 
 import (
@@ -86,6 +103,14 @@ func Compute(in Inputs) Plan {
 			idleNames = append(idleNames, p.Name)
 		case isWarming(p.Phase):
 			warmCount++
+		case p.Phase == state.SlotActive:
+			// §5.2 concurrent modes: a slot-active pod is still part
+			// of pool capacity. It is not eligible for fresh §4.6
+			// claims (idle is) and not eligible for drain (its slots
+			// host live sessions), but counting it as warm keeps the
+			// planner from creating a replacement every time a pod
+			// flips idle → slot_active under sustained slot churn.
+			warmCount++
 		}
 	}
 
@@ -96,9 +121,11 @@ func Compute(in Inputs) Plan {
 		plan.Create = target - warmCount
 	case warmCount > target:
 		// Shed the excess by draining idle pods. A pod still warming
-		// is left alone; it becomes idle and is drained on a later
-		// pass if the pool is still over target. This keeps the
-		// planner convergent without draining half-warmed capacity.
+		// or hosting concurrent slots is left alone; it becomes idle
+		// (warming → idle, or slot_active → idle on last release) and
+		// is drained on a later pass if the pool is still over target.
+		// This keeps the planner convergent without draining half-
+		// warmed capacity or evicting live concurrent sessions.
 		excess := warmCount - target
 		if excess > len(idleNames) {
 			excess = len(idleNames)

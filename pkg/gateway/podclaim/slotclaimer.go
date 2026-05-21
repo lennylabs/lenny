@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
@@ -266,13 +267,37 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 	}
 
 	freshPod := sb.Status.ActiveSlots == 0
-	sb.Status.Phase = string(state.SlotActive)
-	sb.Status.ActiveSlots++
-	if sb.Status.TenantID == "" {
+	nextActiveSlots := sb.Status.ActiveSlots + 1
+	tenantID := sb.Status.TenantID
+	if tenantID == "" {
 		// First slot on this pod pins it to the tenant for its lifetime.
-		sb.Status.TenantID = req.TenantID
+		tenantID = req.TenantID
 	}
-	if err := c.Client.Status().Update(ctx, sb); err != nil {
+	// Per spec §4.6.3, write the gateway-owned Sandbox.status fields
+	// via Server-Side Apply with the `lenny-gateway` field manager.
+	// SSA enforces field ownership at the API server: a §5.2 slot
+	// reservation patches only Phase + ActiveSlots + TenantID, which
+	// are gateway-owned. The §4.6.1 WPC's own fields
+	// (PodName / NodeName / PodIP / ObservedGeneration) are not
+	// touched by this patch, so the controller's parallel applies do
+	// not race. The pre-read above checked the cap; the API server's
+	// Apply does not retry on a stale cap because the patch carries
+	// the new (post-increment) count directly. A conflict response
+	// indicates a competing replica reserved a slot first.
+	patch := &lennyv1.Sandbox{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: lennyv1.GroupVersion.String(),
+			Kind:       "Sandbox",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sb.Name,
+			Namespace: sb.Namespace,
+		},
+	}
+	patch.Status.Phase = string(state.SlotActive)
+	patch.Status.ActiveSlots = nextActiveSlots
+	patch.Status.TenantID = tenantID
+	if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil {
 		if apierrors.IsConflict(err) {
 			// A competing replica reserved a slot on this pod first. Undo
 			// the SandboxClaim so the caller can retry cleanly on another
@@ -283,6 +308,13 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 		_ = c.Client.Delete(ctx, claim)
 		return nil, false, fmt.Errorf("reserve slot on sandbox %s: %w", sb.Name, err)
 	}
+	// Reflect the applied values onto the caller's in-memory Sandbox
+	// so downstream code observing this Sandbox sees the slot it just
+	// won; ReadyCount math in the planner remains based on a live
+	// re-read so this in-memory mutation is not load-bearing.
+	sb.Status.Phase = string(state.SlotActive)
+	sb.Status.ActiveSlots = nextActiveSlots
+	sb.Status.TenantID = tenantID
 
 	// Stamp the §5.2 tenant-pinning label so the
 	// lenny-tenant-label-immutability webhook backstops the pin at the
@@ -333,9 +365,12 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		return fmt.Errorf("podclaim: delete slot claim for session %s: %w", sessionID, err)
 	}
 
-	// Decrement the pod's slot count under optimistic locking, retrying
-	// on conflict so a sibling slot's concurrent release does not clobber
-	// this decrement.
+	// Decrement the pod's slot count under SSA. Per spec §4.6.3 the
+	// gateway is the §5.2 owner of Sandbox.status.activeSlots; the
+	// patch carries only gateway-owned fields so the API server
+	// merges it under the `lenny-gateway` manager without racing the
+	// WPC's controller-owned fields. A conflict (the live phase
+	// moved past the gateway's read) triggers a re-read + re-compute.
 	for {
 		var sb lennyv1.Sandbox
 		if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: sandboxName}, &sb); err != nil {
@@ -350,12 +385,29 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 			// Already at zero — a double release, or the pod was reset.
 			return nil
 		}
-		sb.Status.ActiveSlots--
-		if sb.Status.ActiveSlots == 0 {
+		nextActiveSlots := sb.Status.ActiveSlots - 1
+		nextPhase := sb.Status.Phase
+		if nextActiveSlots == 0 {
 			// §6.2: the last slot drained, the pod returns to idle.
-			sb.Status.Phase = string(state.Idle)
+			nextPhase = string(state.Idle)
 		}
-		if err := c.Client.Status().Update(ctx, &sb); err != nil {
+		patch := &lennyv1.Sandbox{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: lennyv1.GroupVersion.String(),
+				Kind:       "Sandbox",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      sb.Name,
+				Namespace: sb.Namespace,
+			},
+		}
+		patch.Status.Phase = nextPhase
+		patch.Status.ActiveSlots = nextActiveSlots
+		// TenantID stays pinned (§5.2 tenant-pinning over the pod's
+		// lifetime, not per-slot). Re-include the live value so SSA
+		// keeps the gateway's claim on the field after the patch.
+		patch.Status.TenantID = sb.Status.TenantID
+		if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil {
 			if apierrors.IsConflict(err) {
 				continue
 			}

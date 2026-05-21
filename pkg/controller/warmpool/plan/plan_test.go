@@ -75,6 +75,41 @@ func TestCompute(t *testing.T) {
 			want: plan.Plan{Create: 2, WarmCount: 1, ReadyCount: 1},
 		},
 		{
+			name: "slot_active pods count as warm but not ready",
+			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "s1", Phase: state.SlotActive},
+				{Name: "s2", Phase: state.SlotActive},
+			}},
+			want: plan.Plan{WarmCount: 2},
+		},
+		{
+			name: "slot_active prevents oscillation when sized at minWarm",
+			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "s1", Phase: state.SlotActive},
+				{Name: "i1", Phase: state.Idle},
+				{Name: "i2", Phase: state.Idle},
+			}},
+			want: plan.Plan{Drain: []string{"i1"}, WarmCount: 3, ReadyCount: 2},
+		},
+		{
+			name: "slot_active is not a drain candidate even above target",
+			in: plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "s1", Phase: state.SlotActive},
+				{Name: "s2", Phase: state.SlotActive},
+				{Name: "i1", Phase: state.Idle},
+			}},
+			want: plan.Plan{Drain: []string{"i1"}, WarmCount: 3, ReadyCount: 1},
+		},
+		{
+			name: "slot_active over target with no idle keeps every slot pod",
+			in: plan.Inputs{MinWarm: 1, MaxWarm: 10, Pods: []plan.Pod{
+				{Name: "s1", Phase: state.SlotActive},
+				{Name: "s2", Phase: state.SlotActive},
+				{Name: "s3", Phase: state.SlotActive},
+			}},
+			want: plan.Plan{WarmCount: 3},
+		},
+		{
 			name: "draining and terminal pods are ignored",
 			in: plan.Inputs{MinWarm: 2, MaxWarm: 10, Pods: []plan.Pod{
 				{Name: "i1", Phase: state.Idle},
