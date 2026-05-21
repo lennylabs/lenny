@@ -403,23 +403,34 @@ func TestCloudRDSMultiAZ(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=require",
-		p.username, p.password, p.host, p.port, p.database)
-	conn, err := pgx.Connect(ctx, dsn)
+	// RDS Multi-AZ DB Instance uses block-level synchronous storage
+	// replication (not Postgres-level streaming), so the standby
+	// does not surface in pg_stat_replication. The AWS-API path is
+	// the only authoritative signal — DescribeDBInstances.MultiAZ
+	// reflects whether the standby is in place.
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(p.region))
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Fatalf("load AWS config: %v", err)
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
-	// The cheapest engine-side signal that a standby is in place: the
-	// `pg_stat_replication` view lists at least one replica when the
-	// instance is Multi-AZ. Without the IAM permission to call RDS
-	// DescribeDBInstances we read this directly from Postgres.
-	var replicaCount int
-	if err := conn.QueryRow(ctx, "select count(*) from pg_stat_replication").Scan(&replicaCount); err != nil {
-		t.Fatalf("query pg_stat_replication: %v", err)
+	identifier := "lenny-e2e-rds"
+	if v := strings.TrimSpace(os.Getenv("LENNY_AWS_RDS_INSTANCE_ID")); v != "" {
+		identifier = v
 	}
-	if replicaCount == 0 {
-		t.Skip("TestCloudRDSMultiAZ: no replicas in pg_stat_replication; the active RDS instance is single-AZ. Re-run with RDS_MULTI_AZ=1 WITH_RDS=1 scripts/cloud/eks/run-e2e.sh to provision Multi-AZ and unblock the §17.3 failover suite")
+	r := rds.NewFromConfig(cfg)
+	out, err := r.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{DBInstanceIdentifier: &identifier})
+	if err != nil {
+		t.Fatalf("DescribeDBInstances %s: %v", identifier, err)
 	}
-	t.Logf("TestCloudRDSMultiAZ: pg_stat_replication shows %d replica(s); Multi-AZ standby is in place", replicaCount)
+	if len(out.DBInstances) == 0 {
+		t.Fatalf("no RDS instance named %s", identifier)
+	}
+	multiAZ := out.DBInstances[0].MultiAZ
+	if multiAZ == nil || !*multiAZ {
+		t.Skip("TestCloudRDSMultiAZ: the active RDS instance has MultiAZ=false. Re-run with RDS_MULTI_AZ=1 WITH_RDS=1 scripts/cloud/eks/run-e2e.sh to provision Multi-AZ and unblock the §17.3 failover suite")
+	}
+	if out.DBInstances[0].SecondaryAvailabilityZone == nil || *out.DBInstances[0].SecondaryAvailabilityZone == "" {
+		t.Errorf("MultiAZ=true but SecondaryAvailabilityZone is empty — the standby has not been provisioned yet")
+	}
+	t.Logf("TestCloudRDSMultiAZ: instance %s is Multi-AZ; primary in %s, standby in %s",
+		identifier, strDeref(out.DBInstances[0].AvailabilityZone), strDeref(out.DBInstances[0].SecondaryAvailabilityZone))
 }
