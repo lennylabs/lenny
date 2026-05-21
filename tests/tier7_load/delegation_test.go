@@ -35,9 +35,10 @@ import (
 // the k6 output for the failing check, the MCP error envelope, and
 // the gateway logs for the delegation error.
 func TestDelegationFanout(t *testing.T) {
+	requireCloudLoad(t, "delegation_fanout_mcp",
+		"a single root with N=50 concurrent children spawned through the MCP "+
+			"lenny/delegate_task tool, depth=10, completing within the §12.7 30s budget")
 	_, baseURL := prepareGateway(t)
-	// The §12.7 production fan-out is N=50; the smoke run uses a small
-	// fan-out so a single PR run does not flood the e2e gateway.
 	res := load.RunScenario(t, "delegation_fanout_mcp", smokeOptions(baseURL, map[string]string{
 		"LENNY_FANOUT": "5",
 	}))

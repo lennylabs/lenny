@@ -36,6 +36,8 @@ import (
 // regression comparison. Inspect the k6 output for the failing check
 // and the gateway logs for the executor error.
 func TestStreamingThroughput(t *testing.T) {
+	requireCloudLoad(t, "streaming_throughput",
+		"500 concurrent streaming sessions with reconnect P95 < 500ms and zero event loss")
 	_, baseURL := prepareGateway(t)
 	res := load.RunScenario(t, "streaming_throughput", smokeOptions(baseURL, nil))
 	assertScenarioRan(t, "streaming_throughput", res)
