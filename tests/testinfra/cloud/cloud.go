@@ -76,9 +76,25 @@ func FromEnv() Provider {
 // silently dropped; an empty result indicates no provider is
 // configured.
 func ConfiguredProviders() []Provider {
-	raw := strings.TrimSpace(os.Getenv("LENNY_CLOUD_PROVIDERS"))
+	return parseProviders(strings.TrimSpace(os.Getenv("LENNY_CLOUD_PROVIDERS")),
+		strings.TrimSpace(os.Getenv("LENNY_CLOUD_PROVIDER")))
+}
+
+// ConfiguredLoadProviders returns the list of cloud providers the
+// tier-7 cloud-load suite must validate. The env var is
+// LENNY_LOAD_CLOUD_PROVIDERS (comma-separated), separate from the
+// tier-6 LENNY_CLOUD_PROVIDERS so an operator can run cloud-load
+// against a different cluster (or only one provider) than the
+// tier-6 cluster-shape assertions. An empty result indicates the
+// suite is opt-out (the PR-cadence path).
+func ConfiguredLoadProviders() []Provider {
+	return parseProviders(strings.TrimSpace(os.Getenv("LENNY_LOAD_CLOUD_PROVIDERS")), "")
+}
+
+func parseProviders(plural, singular string) []Provider {
+	raw := plural
 	if raw == "" {
-		raw = strings.TrimSpace(os.Getenv("LENNY_CLOUD_PROVIDER"))
+		raw = singular
 	}
 	if raw == "" {
 		return nil

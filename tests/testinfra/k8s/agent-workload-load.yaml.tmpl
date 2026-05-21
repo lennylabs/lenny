@@ -1,0 +1,188 @@
+# SPDX-License-Identifier: MIT
+#
+# Tier-7 cloud-load runtime fixture. Adds one §5.2 runtime + template
+# + warm pool per execution mode (session, concurrent-workspace,
+# concurrent-stateless, task) so the cloud-load scenarios exercise
+# every mode the spec defines, not only `session`. The image is
+# lenny-runtime-echo (a test stub that echoes; no LLM, no
+# credentials), aliased to per-mode names so the scenarios target
+# the mode directly.
+#
+# This file is a `envsubst` template. scripts/cloud/<provider>/run-load.sh
+# resolves the LOAD_* placeholders from LENNY_LOAD_SCALE and
+# kubectl-applies the rendered manifest. The placeholders are:
+#
+#   ${LOAD_RUNTIME_IMAGE}      — runtime image. The render script
+#                                 sets it to the ECR-pushed
+#                                 lenny-runtime-echo digest.
+#   ${LOAD_SESSION_MIN}        — session pool minWarm.
+#   ${LOAD_SESSION_MAX}        — session pool maxWarm.
+#   ${LOAD_CWORKSPACE_MIN}     — concurrent-workspace pool minWarm.
+#   ${LOAD_CWORKSPACE_MAX}     — concurrent-workspace pool maxWarm.
+#   ${LOAD_CWORKSPACE_SLOTS}   — per-pod slot count for concurrent-workspace.
+#   ${LOAD_CSTATELESS_MIN}     — concurrent-stateless pool minWarm.
+#   ${LOAD_CSTATELESS_MAX}     — concurrent-stateless pool maxWarm.
+#   ${LOAD_CSTATELESS_SLOTS}   — per-pod slot count for concurrent-stateless.
+#   ${LOAD_TASK_MIN}           — task pool minWarm.
+#   ${LOAD_TASK_MAX}           — task pool maxWarm.
+#   ${LOAD_TASK_MAX_PER_POD}   — task pool MaxTasksPerPod cap.
+#
+# The session-mode runtime maps `runtimeRef: load-session-runtime`
+# on the create body to a real warm pod. The concurrent-* runtimes
+# require the deployer-acknowledgment fields per §5.2 and the
+# §13.1 pool-config admission webhook; the task runtime requires
+# acknowledgeBestEffortScrub + MaxTasksPerPod. All four are
+# isolationProfile: standard so the gateway's --default-isolation-profile
+# matches without an explicit override on every scenario.
+
+---
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: load-session-runtime
+spec:
+  type: agent
+  image: ${LOAD_RUNTIME_IMAGE}
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+apiVersion: lenny.dev/v1
+kind: SandboxTemplate
+metadata:
+  name: load-session-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: load-session-runtime
+  isolationProfile: standard
+  executionMode: session
+---
+apiVersion: lenny.dev/v1
+kind: SandboxWarmPool
+metadata:
+  name: load-session-pool
+  namespace: lenny-agents
+spec:
+  templateRef: load-session-template
+  minWarm: ${LOAD_SESSION_MIN}
+  maxWarm: ${LOAD_SESSION_MAX}
+---
+# concurrent-workspace: one pod hosts multiple sessions, each with
+# its own materialized workspace. The deployer acknowledges that
+# slots share the pod's process namespace.
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: load-cworkspace-runtime
+spec:
+  type: agent
+  image: ${LOAD_RUNTIME_IMAGE}
+  integrationLevel: basic
+  executionMode: concurrent
+  concurrencyStyle: workspace
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+apiVersion: lenny.dev/v1
+kind: SandboxTemplate
+metadata:
+  name: load-cworkspace-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: load-cworkspace-runtime
+  isolationProfile: standard
+  executionMode: concurrent
+  concurrencyStyle: workspace
+  maxConcurrent: ${LOAD_CWORKSPACE_SLOTS}
+  concurrentWorkspacePolicy:
+    acknowledgeProcessLevelIsolation: true
+    cleanupTimeoutSeconds: 60
+---
+apiVersion: lenny.dev/v1
+kind: SandboxWarmPool
+metadata:
+  name: load-cworkspace-pool
+  namespace: lenny-agents
+spec:
+  templateRef: load-cworkspace-template
+  minWarm: ${LOAD_CWORKSPACE_MIN}
+  maxWarm: ${LOAD_CWORKSPACE_MAX}
+---
+# concurrent-stateless: one pod hosts multiple sessions with no
+# per-session state, routed through a Service. No workspace
+# materialization, so the per-slot cost is lower than
+# concurrent-workspace.
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: load-cstateless-runtime
+spec:
+  type: agent
+  image: ${LOAD_RUNTIME_IMAGE}
+  integrationLevel: basic
+  executionMode: concurrent
+  concurrencyStyle: stateless
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+apiVersion: lenny.dev/v1
+kind: SandboxTemplate
+metadata:
+  name: load-cstateless-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: load-cstateless-runtime
+  isolationProfile: standard
+  executionMode: concurrent
+  concurrencyStyle: stateless
+  maxConcurrent: ${LOAD_CSTATELESS_SLOTS}
+---
+apiVersion: lenny.dev/v1
+kind: SandboxWarmPool
+metadata:
+  name: load-cstateless-pool
+  namespace: lenny-agents
+spec:
+  templateRef: load-cstateless-template
+  minWarm: ${LOAD_CSTATELESS_MIN}
+  maxWarm: ${LOAD_CSTATELESS_MAX}
+---
+# task: one-shot task execution with pod-reuse policy. Pods cycle
+# through multiple tasks (up to MaxTasksPerPod) before retirement,
+# with a between-task workspace scrub.
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: load-task-runtime
+spec:
+  type: agent
+  image: ${LOAD_RUNTIME_IMAGE}
+  integrationLevel: basic
+  executionMode: task
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+apiVersion: lenny.dev/v1
+kind: SandboxTemplate
+metadata:
+  name: load-task-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: load-task-runtime
+  isolationProfile: standard
+  executionMode: task
+  taskPolicy:
+    acknowledgeBestEffortScrub: true
+    maxTasksPerPod: ${LOAD_TASK_MAX_PER_POD}
+    onCleanupFailure: warn
+---
+apiVersion: lenny.dev/v1
+kind: SandboxWarmPool
+metadata:
+  name: load-task-pool
+  namespace: lenny-agents
+spec:
+  templateRef: load-task-template
+  minWarm: ${LOAD_TASK_MIN}
+  maxWarm: ${LOAD_TASK_MAX}
