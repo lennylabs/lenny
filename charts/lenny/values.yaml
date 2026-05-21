@@ -487,6 +487,14 @@ gateway:
   # provisional values are 50 (Tier 1), 200 (Tier 2), and 400 (Tier 3);
   # the tier presets override this value.
   maxSessionsPerReplica: 50
+  # serviceAccount.annotations are stamped onto the lenny-gateway
+  # ServiceAccount. The §13 IRSA-on-EKS install sets
+  # eks.amazonaws.com/role-arn here to bind the SA to the IAM role
+  # the Terraform module provisions. Empty by default; provider-
+  # specific overlays (scripts/cloud/eks/render-values.sh, etc.)
+  # populate it.
+  serviceAccount:
+    annotations: {}
 
 # autoscaling configures the §10.1 gateway horizontal scaler. The chart
 # renders exactly one scaler resource, selected by autoscaling.provider:
