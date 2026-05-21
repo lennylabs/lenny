@@ -34,9 +34,9 @@ variable "rds_instance_class" {
 }
 
 variable "rds_engine_version" {
-  description = "Postgres engine version. 16.x for spec parity with the in-cluster pgvector/pgvector:pg16 fixture."
+  description = "Postgres engine version. 16.x for spec parity with the in-cluster pgvector/pgvector:pg16 fixture. RDS only ships specific minor versions (16.6, 16.8, ..., 16.14 in us-west-2); leave the default unless a region/engine combination requires a different minor."
   type        = string
-  default     = "16.4"
+  default     = "16.14"
 }
 
 variable "rds_allocated_storage_gb" {

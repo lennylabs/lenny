@@ -122,6 +122,30 @@ else
   aws eks --region "${REGION}" update-kubeconfig --name "${RELEASE}-eks"
 fi
 
+# 1b. Optional one-shot post-provisioning grants for managed services.
+#     The §13.3 RDS IAM auth path requires the Postgres user to be a
+#     member of the rds_iam role; the GRANT is idempotent and only
+#     fires when WITH_RDS=1. Without this grant the
+#     TestCloudRDSIAMAuth test skips with a permission-denied
+#     diagnosis even though the IRSA role + IAM auth token are
+#     valid.
+if [[ "${WITH_RDS}" == "1" ]]; then
+  echo "==[1b/6] GRANT rds_iam TO lenny (idempotent)==" >&2
+  rds_endpoint="$("${TF}" -chdir="${TF_DIR}" output -raw rds_endpoint 2>/dev/null || echo)"
+  rds_secret_arn="$("${TF}" -chdir="${TF_DIR}" output -raw rds_master_secret_arn 2>/dev/null || echo)"
+  rds_db="$("${TF}" -chdir="${TF_DIR}" output -raw rds_database_name 2>/dev/null || echo)"
+  if [[ -n "${rds_endpoint}" && -n "${rds_secret_arn}" && -n "${rds_db}" ]]; then
+    rds_password="$(aws secretsmanager get-secret-value --region "${REGION}" \
+      --secret-id "${rds_secret_arn}" --query SecretString --output text \
+      | python3 -c "import json,sys; print(json.load(sys.stdin)['password'])")"
+    PGPASSWORD="${rds_password}" psql "postgresql://lenny@${rds_endpoint}/${rds_db}?sslmode=require" \
+      -v ON_ERROR_STOP=1 -c "GRANT rds_iam TO lenny;" >/dev/null \
+      || echo "  GRANT rds_iam returned non-zero (often benign: already a member, or psql missing)" >&2
+  else
+    echo "  RDS endpoint/secret outputs are empty; skipping the GRANT step" >&2
+  fi
+fi
+
 # 2. Build + push Lenny images to ECR.
 echo "==[2/6] build + push images (tag=${TAG})==" >&2
 AWS_REGION="${REGION}" IMAGE_TAG="${TAG}" \

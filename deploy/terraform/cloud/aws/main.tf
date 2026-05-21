@@ -185,6 +185,33 @@ data "aws_iam_policy_document" "gateway_permissions" {
     actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
     resources = [aws_kms_key.platform.arn]
   }
+  # rds-db:connect lets the gateway pod IAM-auth into the managed
+  # RDS instance under the `lenny` user. The Postgres user must
+  # additionally be granted `rds_iam` role membership for the auth
+  # mechanism to take effect (handled outside Terraform with a
+  # one-shot GRANT). When create_rds is false this resources clause
+  # is a no-op because the rds_resource_id reference is empty; the
+  # statement still renders but does not grant access to any real
+  # resource. Wildcard the principal-of-record so a fresh RDS
+  # provisioning (a new resource_id) does not require a re-render.
+  dynamic "statement" {
+    for_each = var.create_rds ? [1] : []
+    content {
+      actions   = ["rds-db:connect"]
+      resources = ["arn:aws:rds-db:${var.region}:*:dbuser:*/lenny"]
+    }
+  }
+  # secretsmanager:GetSecretValue lets the gateway pod read the
+  # AWS-managed master credentials + Redis AUTH token Secrets that
+  # the managed-services module writes. Scoped to this release's
+  # secret prefix.
+  dynamic "statement" {
+    for_each = (var.create_rds || var.create_elasticache) ? [1] : []
+    content {
+      actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+      resources = ["arn:aws:secretsmanager:${var.region}:*:secret:${var.release}-*"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "gateway" {
