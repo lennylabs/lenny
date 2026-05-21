@@ -11,6 +11,40 @@ features.drainReadiness is enabled.
 {{- if .Values.features.drainReadiness }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-drain-readiness") }}
 ---
+{{- /*
+allow-drain-readiness-egress re-admits the §12.5 gateway-probe egress
+the system-network-policies default-deny otherwise blocks. The drain-
+readiness webhook calls GET /internal/drain-readiness on
+lenny-gateway.<release>.svc:internalPort before admitting each
+eviction; without this egress rule the call times out and the fail-
+closed webhook rejects every eviction with MinIOUnreachable, blocking
+node drain in any cluster that runs Lenny with default network
+policies in place. The allow-gateway-ingress counterpart admits the
+inbound side. Scoped to the drain-readiness pod selector so the
+broader admission-webhook pods stay restricted to apiserver + DNS
+egress.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-drain-readiness-gateway-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/webhook: lenny-drain-readiness
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+  policyTypes: [Egress]
+---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:

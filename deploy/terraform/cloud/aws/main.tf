@@ -93,6 +93,12 @@ locals {
       ? var.eks_cluster_oidc_issuer
       : try(replace(aws_eks_cluster.lenny[0].identity[0].oidc[0].issuer, "https://", ""), "")
   )
+  # has_oidc is the count gate for IRSA-bound resources. It must be
+  # known at plan time, so it cannot depend on effective_oidc_provider_arn
+  # (computed when create_cluster=true). Either the operator supplied
+  # the OIDC inputs directly, or this module is creating the cluster
+  # and will create the OIDC provider as part of the apply.
+  has_oidc = var.create_cluster || var.eks_cluster_oidc_provider_arn != ""
 }
 
 # §4.5 ArtifactStore bucket. SSE-S3 (AES256) bucket-level encryption
@@ -148,7 +154,7 @@ resource "aws_kms_alias" "platform" {
 
 # §13 IAM role: IRSA binding to the gateway service account.
 data "aws_iam_policy_document" "gateway_trust" {
-  count = local.effective_oidc_provider_arn == "" ? 0 : 1
+  count = local.has_oidc ? 1 : 0
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     effect  = "Allow"
@@ -170,13 +176,13 @@ data "aws_iam_policy_document" "gateway_trust" {
 }
 
 resource "aws_iam_role" "gateway" {
-  count              = local.effective_oidc_provider_arn == "" ? 0 : 1
+  count              = local.has_oidc ? 1 : 0
   name               = "${var.release}-gateway"
   assume_role_policy = data.aws_iam_policy_document.gateway_trust[0].json
 }
 
 data "aws_iam_policy_document" "gateway_permissions" {
-  count = local.effective_oidc_provider_arn == "" ? 0 : 1
+  count = local.has_oidc ? 1 : 0
   statement {
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
     resources = [aws_s3_bucket.artifacts.arn, "${aws_s3_bucket.artifacts.arn}/*"]
@@ -215,7 +221,7 @@ data "aws_iam_policy_document" "gateway_permissions" {
 }
 
 resource "aws_iam_role_policy" "gateway" {
-  count  = local.effective_oidc_provider_arn == "" ? 0 : 1
+  count  = local.has_oidc ? 1 : 0
   name   = "${var.release}-gateway"
   role   = aws_iam_role.gateway[0].id
   policy = data.aws_iam_policy_document.gateway_permissions[0].json

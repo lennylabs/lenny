@@ -337,12 +337,34 @@ echo "==[5/6] helm install lenny ${RELEASE}==" >&2
 # and server-side-applying them in advance reconciles the live state
 # to the new chart, so preflight sees the corrected shapes.
 echo "  reconciling NetworkPolicies before helm upgrade==" >&2
+# Stamp the Helm release metadata onto each rendered NetworkPolicy so a
+# subsequent `helm upgrade --install` adopts the resources cleanly. A
+# fresh apply without the meta.helm.sh annotations + the
+# app.kubernetes.io/managed-by label causes Helm to error out on
+# "exists and cannot be imported into the current release: invalid
+# ownership metadata". The annotations are scoped to the rendered
+# manifest stream so Helm treats the pre-applied resources as its own
+# on the next reconcile.
 helm template "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
   -f "${VALUES_OUT}" \
   -n lenny-system \
   --set gateway.noEnvironmentPolicy=allow-all \
   --show-only templates/system-network-policies.yaml \
   --show-only templates/agent-network-policies.yaml 2>/dev/null \
+  | python3 -c "
+import sys, yaml
+docs = list(yaml.safe_load_all(sys.stdin))
+for d in docs:
+    if not d:
+        continue
+    md = d.setdefault('metadata', {})
+    md.setdefault('annotations', {})
+    md['annotations']['meta.helm.sh/release-name'] = '${RELEASE}'
+    md['annotations']['meta.helm.sh/release-namespace'] = 'lenny-system'
+    md.setdefault('labels', {})
+    md['labels']['app.kubernetes.io/managed-by'] = 'Helm'
+print(yaml.safe_dump_all([d for d in docs if d]))
+" \
   | kubectl apply -f - --force-conflicts --server-side >/dev/null || true
 
 helm_status="$(helm -n lenny-system status "${RELEASE}" -o json 2>/dev/null \

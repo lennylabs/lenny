@@ -239,6 +239,20 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: minio
     spec:
+      # Pin MinIO to the control-plane node. The §13.19 tier-5
+      # TestNodeDrainDuringActiveSession drains a worker; if MinIO
+      # lives on the same worker the drain evicts it, the bucket
+      # vanishes with the emptyDir, and the gateway's §12.5 drain-
+      # readiness probe rejects the remaining agent-pod evictions.
+      # The control-plane node is never drained by the tier-5 tests,
+      # so pinning MinIO there isolates the artifact store from the
+      # drain target.
+      nodeSelector:
+        lenny.dev/role: control-plane
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       securityContext:
         runAsNonRoot: true
         # The minio/minio image runs as uid/gid 1000.
@@ -296,8 +310,59 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+        # bucket-init keeps lenny-artifacts present across MinIO
+        # restarts. The base Deployment uses emptyDir, so any pod
+        # restart wipes /data — the install.sh one-shot bucket
+        # creation no longer covers it. This sidecar polls the in-
+        # pod MinIO endpoint and runs `mc mb --ignore-existing` until
+        # the bucket reappears. The §12.5 drain-readiness probe runs
+        # BucketExists and rejects evictions when the bucket is
+        # missing, so this loop is what keeps tier-5 node-drain
+        # exercisable across the lifetime of the cluster.
+        - name: bucket-init
+          image: minio/mc:RELEASE.2024-09-16T17-43-14Z
+          imagePullPolicy: IfNotPresent
+          # The mc client writes its config to $HOME/.mc; the image's
+          # default HOME is `/` which is unwritable for uid 1000.
+          # Point HOME at a writable scratch dir mounted from the
+          # init-scratch emptyDir below.
+          env:
+            - name: HOME
+              value: /tmp/mc
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /tmp/mc
+              until mc alias set local http://127.0.0.1:9000 lennyminio lennyminio123 >/dev/null 2>&1; do
+                sleep 2
+              done
+              while :; do
+                mc mb --ignore-existing local/lenny-artifacts >/dev/null 2>&1 || true
+                mc version enable local/lenny-artifacts >/dev/null 2>&1 || true
+                sleep 30
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: init-scratch
+              mountPath: /tmp/mc
       volumes:
         - name: data
+          emptyDir: {}
+        - name: init-scratch
           emptyDir: {}
 ---
 apiVersion: v1
