@@ -54,6 +54,15 @@ cat > "${OUT}" <<YAML
 # and points the gateway / artifact store at the Terraform-provisioned
 # AWS resources. Re-render between runs; do not check in.
 
+# Dev mode stays on for the EKS e2e overlay so the gateway keeps its
+# dev-header auth shortcuts. The bootstrap Job uses --dev-tenant /
+# --dev-roles to call POST /v1/admin/bootstrap, and the gateway only
+# honors those headers when global.devMode is true. The Kind e2e
+# overlay (tests/testinfra/kind/e2e-values.yaml) sets the same flag
+# for the same reason.
+global:
+  devMode: true
+
 controller:
   image:
     repository: ${ECR_REGISTRY}/lenny-controller
