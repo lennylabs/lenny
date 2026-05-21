@@ -597,7 +597,10 @@ spec:
           podSelector:
             matchLabels:
               k8s-app: kube-dns
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
             matchLabels:
               lenny.dev/component: coredns
       ports:
@@ -668,7 +671,10 @@ spec:
           podSelector:
             matchLabels:
               k8s-app: kube-dns
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
             matchLabels:
               lenny.dev/component: coredns
       ports:
