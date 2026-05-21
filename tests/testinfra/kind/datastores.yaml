@@ -65,7 +65,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: postgres
-          image: postgres:16.4
+          image: pgvector/pgvector:pg16
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_USER
