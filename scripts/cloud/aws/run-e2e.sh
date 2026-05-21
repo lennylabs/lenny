@@ -123,6 +123,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Pin every kubectl call to the EKS context derived from the release
+# name. A parallel `kind create cluster` (e.g. another test session
+# running tier-5) would otherwise switch ~/.kube/config's current-
+# context out from under this script mid-run and the subsequent
+# kubectl applies would error against the wrong (or absent) cluster.
+EKS_CONTEXT_NAME="arn:aws:eks:${REGION}:$(aws sts get-caller-identity --query Account --output text):cluster/${RELEASE}-eks"
+export KUBECTL_CONTEXT="${EKS_CONTEXT_NAME}"
+kubectl() {
+  command kubectl --context "${KUBECTL_CONTEXT}" "$@"
+}
+export -f kubectl
+helm() {
+  command helm --kube-context "${KUBECTL_CONTEXT}" "$@"
+}
+export -f helm
+
 # 1. terraform apply (VPC + EKS + S3 + KMS + IRSA, plus optional
 #    RDS / ElastiCache when WITH_RDS=1 / WITH_ELASTICACHE=1).
 #
@@ -337,35 +353,33 @@ echo "==[5/6] helm install lenny ${RELEASE}==" >&2
 # and server-side-applying them in advance reconciles the live state
 # to the new chart, so preflight sees the corrected shapes.
 echo "  reconciling NetworkPolicies before helm upgrade==" >&2
-# Stamp the Helm release metadata onto each rendered NetworkPolicy so a
-# subsequent `helm upgrade --install` adopts the resources cleanly. A
-# fresh apply without the meta.helm.sh annotations + the
-# app.kubernetes.io/managed-by label causes Helm to error out on
-# "exists and cannot be imported into the current release: invalid
-# ownership metadata". The annotations are scoped to the rendered
-# manifest stream so Helm treats the pre-applied resources as its own
-# on the next reconcile.
 helm template "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
   -f "${VALUES_OUT}" \
   -n lenny-system \
   --set gateway.noEnvironmentPolicy=allow-all \
   --show-only templates/system-network-policies.yaml \
   --show-only templates/agent-network-policies.yaml 2>/dev/null \
-  | python3 -c "
-import sys, yaml
-docs = list(yaml.safe_load_all(sys.stdin))
-for d in docs:
-    if not d:
-        continue
-    md = d.setdefault('metadata', {})
-    md.setdefault('annotations', {})
-    md['annotations']['meta.helm.sh/release-name'] = '${RELEASE}'
-    md['annotations']['meta.helm.sh/release-namespace'] = 'lenny-system'
-    md.setdefault('labels', {})
-    md['labels']['app.kubernetes.io/managed-by'] = 'Helm'
-print(yaml.safe_dump_all([d for d in docs if d]))
-" \
   | kubectl apply -f - --force-conflicts --server-side >/dev/null || true
+# Stamp the Helm release metadata onto each pre-applied NetworkPolicy
+# so the follow-up `helm upgrade --install` adopts them cleanly. A
+# fresh apply without the meta.helm.sh annotations + the
+# app.kubernetes.io/managed-by label causes Helm to error out on
+# "exists and cannot be imported into the current release: invalid
+# ownership metadata".
+for ns in lenny-system lenny-agents lenny-agents-kata; do
+  if ! kubectl get ns "${ns}" >/dev/null 2>&1; then continue; fi
+  refs="$(kubectl -n "${ns}" get networkpolicy -o name 2>/dev/null || true)"
+  if [[ -z "${refs}" ]]; then continue; fi
+  # shellcheck disable=SC2086
+  kubectl -n "${ns}" annotate ${refs} \
+    "meta.helm.sh/release-name=${RELEASE}" \
+    "meta.helm.sh/release-namespace=lenny-system" \
+    --overwrite >/dev/null 2>&1 || true
+  # shellcheck disable=SC2086
+  kubectl -n "${ns}" label ${refs} \
+    "app.kubernetes.io/managed-by=Helm" \
+    --overwrite >/dev/null 2>&1 || true
+done
 
 helm_status="$(helm -n lenny-system status "${RELEASE}" -o json 2>/dev/null \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('info',{}).get('status',''))" 2>/dev/null || true)"

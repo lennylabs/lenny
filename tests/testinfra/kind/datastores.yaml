@@ -55,6 +55,15 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: postgres
     spec:
+      # Pin Postgres to the control-plane node so the §13.19 node-drain
+      # test (which drains a worker) does not evict the database, lose
+      # its emptyDir, and force every downstream test to re-migrate.
+      nodeSelector:
+        lenny.dev/role: control-plane
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       securityContext:
         runAsNonRoot: true
         # The postgres:16 image's "postgres" account is uid/gid 999.
@@ -152,6 +161,15 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: redis
     spec:
+      # Pin Redis to the control-plane node so the §13.19 node-drain
+      # test does not evict the cache, lose its emptyDir, and clear
+      # coordination state mid-suite.
+      nodeSelector:
+        lenny.dev/role: control-plane
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       securityContext:
         runAsNonRoot: true
         # The redis:7 image's "redis" account is uid/gid 999.
