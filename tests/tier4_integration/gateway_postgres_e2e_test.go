@@ -76,7 +76,19 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	// the runtime_definitions CHECK constraints.
 	code, _ := do(http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
 		"tenants":  []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
-		"runtimes": []map[string]any{{"name": "echo", "image": "lenny/echo@sha256:abc"}},
+		// §5.1: declare capabilities.injection.supported: true so the
+		// test's mid-session /messages call satisfies the
+		// INJECTION_REJECTED gate. The bootstrapped runtime is the
+		// minimal echo image; injection support is configuration, not
+		// runtime image behavior, so this declaration just lets the
+		// gateway admit the test's message round-trip.
+		"runtimes": []map[string]any{{
+			"name":  "echo",
+			"image": "lenny/echo@sha256:abc",
+			"capabilities": map[string]any{
+				"injection": map[string]any{"supported": true},
+			},
+		}},
 		"users": []map[string]any{{
 			"subject": "auth0|alice", "tenantId": "acme",
 			"email": "alice@acme.com", "roles": []string{"tenant-admin"},

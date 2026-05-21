@@ -174,11 +174,16 @@ func (e *QuotaEvaluator) Intercept(ctx context.Context, req interceptor.Request)
 	limits, err := e.limits.LookupLimits(ctx, tenantID)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			return interceptor.Result{
-				Action: interceptor.ActionReject,
-				Code:   CodeQuotaExceeded,
-				Reason: fmt.Sprintf("quota evaluation could not resolve limits for tenant %q", tenantID),
-			}, nil
+			// §11.2: a tenant the platform has not configured has no
+			// declared quota limits. The evaluator admits the request
+			// the same way a configured tenant with no token budget is
+			// admitted — there are no limits to evaluate. The §11.7
+			// tenant_not_found audit event is emitted by the upstream
+			// admin path that should provision the tenant; this
+			// interceptor only fails-closed on real backing-store
+			// faults so a Redis/Postgres outage cannot quietly admit
+			// runaway traffic.
+			return interceptor.Result{Action: interceptor.ActionAllow}, nil
 		}
 		// A backing-store fault — fail closed by surfacing the error so
 		// the chain's fail-closed handling rejects the request.
