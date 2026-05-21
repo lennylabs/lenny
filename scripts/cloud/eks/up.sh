@@ -32,21 +32,26 @@ TF_DIR="${REPO_ROOT}/deploy/terraform/cloud/aws"
 TFVARS_FILE="${TF_DIR}/${RELEASE}.tfvars.json"
 
 # Shape -> (node_instance_type, node_desired_size, node_max_size).
+# NODE_DESIRED + NODE_MAX env vars override the shape defaults so an
+# operator can scale the e2e cluster up without dropping to a larger
+# shape (cloud-small's t3.medium is sufficient for the tier-6 pod
+# density once the count rises past 2). The override is also used by
+# run-e2e.sh's chart-rollout-capacity heuristic.
 case "${SHAPE}" in
   cloud-small)
     NODE_TYPE="t3.medium"
-    DESIRED=2
-    MAX=4
+    DESIRED="${NODE_DESIRED:-2}"
+    MAX="${NODE_MAX:-4}"
     ;;
   cloud-medium)
     NODE_TYPE="m5.large"
-    DESIRED=3
-    MAX=6
+    DESIRED="${NODE_DESIRED:-3}"
+    MAX="${NODE_MAX:-6}"
     ;;
   cloud-large)
     NODE_TYPE="m5.xlarge"
-    DESIRED=5
-    MAX=10
+    DESIRED="${NODE_DESIRED:-5}"
+    MAX="${NODE_MAX:-10}"
     ;;
   *)
     echo "scripts/cloud/eks/up.sh: unknown shape ${SHAPE}; supported: cloud-small, cloud-medium, cloud-large" >&2

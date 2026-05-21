@@ -114,8 +114,18 @@ if aws eks describe-cluster --region "${REGION}" --name "${RELEASE}-eks" >/dev/n
   cluster_exists=1
 fi
 if [[ "${cluster_exists}" == "0" ]] || [[ "${WITH_RDS}" == "1" ]] || [[ "${WITH_ELASTICACHE}" == "1" ]]; then
+  # NODE_DESIRED defaults to 4 (vs cloud-small's 2-node default)
+  # when one of the managed-service flags is on, because the rolling
+  # restart of the chart-managed Deployments doubles the pod count
+  # briefly and the chart + managed-services pod footprint already
+  # exceeds two t3.medium nodes' ENI-bounded pod density (~17/node).
+  if [[ "${WITH_RDS}" == "1" || "${WITH_ELASTICACHE}" == "1" ]] && [[ -z "${NODE_DESIRED:-}" ]]; then
+    export NODE_DESIRED=4
+    export NODE_MAX=6
+  fi
   AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
     WITH_RDS="${WITH_RDS}" WITH_ELASTICACHE="${WITH_ELASTICACHE}" \
+    NODE_DESIRED="${NODE_DESIRED:-}" NODE_MAX="${NODE_MAX:-}" \
     "${SCRIPT_DIR}/up.sh" "${SHAPE}"
 else
   echo "run-e2e.sh: cluster ${RELEASE}-eks already exists; skipping terraform apply, refreshing kubeconfig" >&2
