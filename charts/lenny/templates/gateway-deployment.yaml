@@ -132,6 +132,11 @@ spec:
             # credential lease through lenny-token-service over mTLS;
             # the in-process MintLease path is reserved for dev mode.
             - --token-service-grpc-addr=lenny-token-service.{{ .Release.Namespace }}.svc:{{ .Values.tokenService.grpcPort }}
+            # §9.2 platform-wide elicitation content-integrity floor.
+            # The admin API's GET endpoint reports the effective mode
+            # as max(floor, tenantStored); a PUT below the floor is
+            # rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR.
+            - --elicitation-content-integrity-floor={{ .Values.security.elicitationContentIntegrity.floor }}
             {{- if .Values.global.devMode }}
             - --dev-mode
             {{- end }}

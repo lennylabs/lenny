@@ -238,30 +238,13 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 // The live e2e exercise (deploy elicitation-echo + a tampering
 // intermediary, observe ELICITATION_CONTENT_TAMPERED + the §16.5
 // alert) is on the tier-9 ops backlog.
-// spec: 13
-// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
-func TestElicitationTamperEnforceMode(t *testing.T) {
-	t.Logf("§12.9.9 enforce: §9.2 walker + dispatcher + alert covered by pkg/elicitation, " +
-		"pkg/gateway/mcptools, pkg/gateway/gatewaymetrics, pkg/alerting/rules. Live e2e on " +
-		"the tier-9 ops backlog (elicitation-echo wired in 3aa580b).")
-}
-
-// spec: 13
-// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
-func TestElicitationTamperDetectOnlyMode(t *testing.T) {
-	t.Logf("§12.9.9 detect-only: same coverage path as the enforce variant; the " +
-		"enforcement_mode label on lenny_elicitation_content_tamper_detected_total scopes " +
-		"the §16.5 alert to enforce catches and lets detect-only catches still bump the " +
-		"metric for visibility.")
-}
-
-// spec: 13
-// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
-func TestElicitationPlatformFloor(t *testing.T) {
-	t.Logf("§12.9.9 platform-floor: pkg/elicitation/elicitation_test.go::TestResolveEffective " +
-		"pins the max(platform_floor, tenant_stored_mode) resolver; the gateway routes " +
-		"every elicitation through it.")
-}
+// §12.9.9 tamper-detect tests are implemented in
+// elicitation_tamper_test.go: they drive the gateway's
+// /v1/admin/tenants/{id}/elicitation-content-integrity surface
+// against a real cluster, set the tenant mode under each §9.2
+// posture, and assert the §16.5 metric / audit envelope respond
+// correctly. The §9.2 chain walker remains covered by
+// pkg/elicitation and pkg/gateway/mcptools unit tests.
 
 // §12.9.11 SBOM generation. The release pipeline emits one
 // CycloneDX SBOM per built image, attaches each SBOM as a Sigstore

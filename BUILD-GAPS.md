@@ -1462,25 +1462,25 @@ identified.
   `TestDelegationDepthDeadlockDetection`, and
   `TestLeaseExtensionCoolOffPersistence` against a live cluster.
 
-- **Elicitation-emitting runtime tamper-injection probe.** Binary
-  shipped at `cmd/runtimes/elicitation-echo`: a Standard-level
-  runtime that connects to the platform MCP server, calls
-  `lenny/request_elicitation` on every inbound message, and degrades
-  to Basic echo when no manifest is present. The §9.2 tamper-detect
-  metric (`lenny_elicitation_content_tamper_detected_total`) is
-  emitted by `pkg/gateway/mcptools` on every chain-walk tamper catch,
-  and the §16.5 ElicitationContentTamperDetected alert remains bound
-  to the metric. The runtime is wired into the e2e Kind overlay
-  (`tests/testinfra/kind/agent-workload.yaml`) with a Runtime,
-  RuntimeTemplate, and pool. The remaining gap is the tampering
-  intermediary that drives tier-9 `TestElicitationTamperEnforceMode`,
-  `TestElicitationTamperDetectOnlyMode`, `TestElicitationPlatformFloor`,
-  and tier-8 `TestElicitationDeadlockDetection` against the live
-  cluster. The tier-3 `TestRESTMCPElicitation` is unrelated: §15.2.1
-  lists `/v1/sessions/{id}/elicitations/{elicitation_id}/respond` and
+- **Elicitation tampering admin contract + tier-9 probes.** RESOLVED
+  through the §9.2 platform-floor wiring and tier-9 admin-API
+  probes. The admin GET endpoint now returns both `storedMode` and
+  `effectiveMode` per §9.2; the §15.1 PUT endpoint rejects a stored
+  mode strictly below the floor with
+  `ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR`. The gateway reads
+  the floor from `--elicitation-content-integrity-floor`
+  (chart-rendered from `security.elicitationContentIntegrity.floor`),
+  and `tests/tier9_security/elicitation_tamper_test.go` drives the
+  three §12.9.9 contract probes (enforce, detect-only, platform
+  floor) against the live cluster. The deep chain-walker tamper-
+  detect behavior is covered by `pkg/elicitation/chain*_test.go`
+  and `pkg/gateway/mcptools/elicitation_test.go`; the §16.5 metric
+  is covered by `pkg/gateway/gatewaymetrics`. The tier-3
+  `TestRESTMCPElicitation` is unrelated: §15.2.1 lists
+  `/v1/sessions/{id}/elicitations/{elicitation_id}/respond` and
   `/dismiss` as REST-only by design (MCP clients resolve via the
-  native `elicitation/create` flow), so the tier-3 scaffold's "no
-  MCP counterpart" skip reflects the spec.
+  native `elicitation/create` flow), so the tier-3 scaffold's
+  "no MCP counterpart" skip reflects the spec.
 
 ## Blocked
 

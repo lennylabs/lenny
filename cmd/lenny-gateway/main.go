@@ -247,6 +247,8 @@ func main() {
 		"path to the CA bundle that verifies the Token Service's server certificate on the §4.3 mTLS link.")
 	tokenServiceTenant := flag.String("token-service-tenant", os.Getenv("LENNY_TOKEN_SERVICE_TENANT"),
 		"tenant id the gateway carries on every §4.3 Token Service request. The Token Service applies §4.2 RLS against this id. Empty disables tenant binding (dev mode).")
+	elicitationFloor := flag.String("elicitation-content-integrity-floor", os.Getenv("LENNY_ELICITATION_CONTENT_INTEGRITY_FLOOR"),
+		"§9.2 platform-wide elicitation content-integrity floor (off | detect-only | enforce). The §15.1 admin GET endpoint reports the resolved effective mode as max(floor, tenantStored). A PUT below the floor is rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR. Empty defaults to `off` (no floor).")
 	grpcAddr := flag.String("grpc-addr", os.Getenv("LENNY_GRPC_ADDR"),
 		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — currently the ExtendLease lease-extension RPC — on this address. Empty disables the GatewayControl listener.")
 	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
@@ -1114,6 +1116,9 @@ func main() {
 	adminRouter = adminRouter.
 		WithEventBuffer(opsEmitter.Buffer()).
 		WithEventEmitter(opsEmitter)
+	if *elicitationFloor != "" {
+		adminRouter = adminRouter.WithElicitationFloor(*elicitationFloor)
+	}
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.

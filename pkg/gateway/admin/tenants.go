@@ -141,7 +141,8 @@ type Router struct {
 	eventBuffer     EventBufferQuerier
 	eventEmitter    *opsevents.Emitter
 
-	kmsProbe KMSProbe
+	kmsProbe         KMSProbe
+	elicitationFloor string
 }
 
 // KMSProbe is the §12.5 T4 per-tenant KMS availability probe seam.
@@ -216,6 +217,21 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 // gateway has no KMS lifecycle wired.
 func (r *Router) WithKMSProbe(p KMSProbe) *Router {
 	r.kmsProbe = p
+	return r
+}
+
+// WithElicitationFloor wires the §9.2 platform-wide elicitation
+// content-integrity floor onto the Router. The
+// /v1/admin/tenants/{id}/elicitation-content-integrity GET handler
+// returns both `storedMode` (the tenant's persisted value) and
+// `effectiveMode` (the resolved `max(platformFloor, storedMode)`).
+// The PUT handler rejects a write whose stored mode is strictly
+// weaker than the floor with the
+// ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR error. Without a wired
+// floor every floor is treated as `off` and the resolver is the
+// identity function, matching the §9.2 default.
+func (r *Router) WithElicitationFloor(mode string) *Router {
+	r.elicitationFloor = mode
 	return r
 }
 
