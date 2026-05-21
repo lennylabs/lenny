@@ -229,6 +229,38 @@ resource "aws_eks_node_group" "default" {
   ]
 }
 
+# EBS CSI driver addon — the tier-6 test surface (and any chart
+# Deployment that needs a PVC) relies on the EBS CSI provisioner.
+# A bare EKS install ships a deprecated kubernetes.io/aws-ebs
+# StorageClass that fails on Kubernetes >= 1.23. The addon installs
+# the modern ebs.csi.aws.com provisioner + the default
+# gp2/gp3 StorageClass that drives PVCs at the documented IOPS
+# tier. Trust policy: the addon uses the node IAM role's
+# AmazonEBSCSIDriverPolicy attachment, attached below.
+resource "aws_iam_role_policy_attachment" "node_ebs_csi" {
+  count      = var.create_cluster ? 1 : 0
+  role       = aws_iam_role.node[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
+resource "aws_eks_addon" "ebs_csi" {
+  count        = var.create_cluster ? 1 : 0
+  cluster_name = aws_eks_cluster.lenny[0].name
+  addon_name   = "aws-ebs-csi-driver"
+  depends_on = [
+    aws_eks_node_group.lenny,
+    aws_iam_role_policy_attachment.node_ebs_csi,
+  ]
+}
+
+# Default StorageClass marker. The aws-ebs-csi-driver addon installs
+# a `gp2` StorageClass but does NOT mark it the cluster default.
+# Without a default, chart Deployments that reference an unnamed
+# StorageClass on a PVC fail to bind. The Kubernetes provider would
+# patch the existing class, but adding that provider just for this
+# patch is overkill; the run-e2e.sh driver applies the default-
+# annotation after the addon converges.
+
 output "cluster_name" {
   description = "EKS cluster name. Empty when var.create_cluster is false."
   value       = try(aws_eks_cluster.lenny[0].name, "")

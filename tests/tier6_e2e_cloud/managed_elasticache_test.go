@@ -227,6 +227,47 @@ func TestCloudRedisEvictionPolicy(t *testing.T) {
 	t.Logf("TestCloudRedisEvictionPolicy: maxmemory-policy=%s", policy)
 }
 
+// spec: 13.3 (Redis engine version floor).
+// diagnosis: TestCloudRedisEngineVersionFloor asserts the ElastiCache
+// engine is Redis 7.0 or newer. §13.3 ACLs, the `RESET` command, and
+// the cluster-mode pub/sub sharding fix all require 7.0+; a 6.x
+// deployment silently weakens the §13.3 auth posture.
+func TestCloudRedisEngineVersionFloor(t *testing.T) {
+	_ = requireCloud(t)
+	p := requireRedis(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := redis.NewClient(&redis.Options{
+		Addr:        fmt.Sprintf("%s:%s", p.host, p.port),
+		Password:    p.authToken,
+		TLSConfig:   &tls.Config{ServerName: p.host, MinVersion: tls.VersionTLS12},
+		DialTimeout: 10 * time.Second,
+		ReadTimeout: 10 * time.Second,
+	})
+	defer func() { _ = client.Close() }()
+	info, err := client.Info(ctx, "server").Result()
+	if err != nil {
+		t.Fatalf("INFO server: %v", err)
+	}
+	var version string
+	for _, line := range strings.Split(info, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "redis_version:") {
+			version = strings.TrimPrefix(line, "redis_version:")
+			break
+		}
+	}
+	if version == "" {
+		t.Fatalf("INFO server did not include redis_version: %s", info)
+	}
+	major, _, _ := strings.Cut(version, ".")
+	if major < "7" {
+		t.Errorf("redis_version = %q, want >= 7.0", version)
+	}
+	t.Logf("TestCloudRedisEngineVersionFloor: redis_version=%s", version)
+}
+
 // spec: 12.4 (cluster-mode pub/sub across shards).
 // diagnosis: TestCloudRedisClusterMode asserts the replication group
 // is configured with more than one shard (num_node_groups > 1) and

@@ -226,6 +226,36 @@ func TestCloudRDSForceSSLParameterGroup(t *testing.T) {
 	t.Logf("TestCloudRDSForceSSLParameterGroup: rds.force_ssl=%s", setting)
 }
 
+// spec: 13.3 (RDS engine version floor).
+// diagnosis: TestCloudRDSEngineVersionFloor asserts Postgres 16+ on
+// the RDS instance. The §9.4 pgvector backend depends on the
+// migration 0044 schema landing against Postgres 16; the in-cluster
+// fixture uses `pgvector/pgvector:pg16`. An RDS instance on an older
+// engine would silently mis-route the gateway's writes.
+func TestCloudRDSEngineVersionFloor(t *testing.T) {
+	_ = requireCloud(t)
+	p := requireRDS(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=require",
+		p.username, p.password, p.host, p.port, p.database)
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	var versionNum int
+	if err := conn.QueryRow(ctx, "select current_setting('server_version_num')::int").Scan(&versionNum); err != nil {
+		t.Fatalf("query server_version_num: %v", err)
+	}
+	const floor = 160000
+	if versionNum < floor {
+		t.Errorf("server_version_num = %d, want >= %d (Postgres 16+)", versionNum, floor)
+	}
+	t.Logf("TestCloudRDSEngineVersionFloor: server_version_num=%d", versionNum)
+}
+
 // spec: 17.3 (Multi-AZ failover, RPO=0).
 // diagnosis: TestCloudRDSMultiAZ asserts that the active RDS instance
 // is provisioned in Multi-AZ mode. The Terraform module gates Multi-AZ

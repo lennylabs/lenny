@@ -357,6 +357,16 @@ done
 #         marker for a sandbox node pool. We label the first worker
 #         node so the assertion runs; a production install replaces
 #         this with a dedicated gVisor node group.
+# Mark the gp2 StorageClass the cluster default if no other class
+# carries the annotation. The EBS CSI driver addon installs gp2 but
+# leaves the cluster-default marker unset; a Deployment with an
+# unnamed-StorageClass PVC fails to bind without it. Idempotent.
+default_sc="$(kubectl get sc -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{":"}{.metadata.name}{"\n"}{end}' | awk -F: '$1=="true"{print $2}' | head -n1)"
+if [[ -z "${default_sc}" ]] && kubectl get sc gp2 >/dev/null 2>&1; then
+  kubectl annotate storageclass gp2 storageclass.kubernetes.io/is-default-class=true --overwrite >/dev/null
+  echo "  marked StorageClass gp2 the cluster default" >&2
+fi
+
 echo "==[5c/6] cluster fixtures (kata RuntimeClass + sandbox-gvisor node label)==" >&2
 kubectl apply -f - <<'KATA'
 apiVersion: node.k8s.io/v1
