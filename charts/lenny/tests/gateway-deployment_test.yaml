@@ -74,6 +74,17 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --grpc-addr=:50051
 
+  - it: wires the gateway to lenny-token-service over gRPC for §4.3 credential materialization
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --token-service-grpc-addr=lenny-token-service.NAMESPACE.svc:50052
+    release:
+      namespace: NAMESPACE
+
   - it: omits the LLM proxy listener when the feature flag is off
     documentSelector:
       path: kind

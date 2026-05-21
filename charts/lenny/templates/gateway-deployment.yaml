@@ -128,6 +128,10 @@ spec:
             - --addr=:{{ .Values.gateway.internalPort }}
             - --grpc-addr=:{{ .Values.gateway.grpcPort }}
             - --no-environment-policy={{ .Values.gateway.noEnvironmentPolicy }}
+            # §4.3 trust boundary: the gateway materializes every §4.9
+            # credential lease through lenny-token-service over mTLS;
+            # the in-process MintLease path is reserved for dev mode.
+            - --token-service-grpc-addr=lenny-token-service.{{ .Release.Namespace }}.svc:{{ .Values.tokenService.grpcPort }}
             {{- if .Values.global.devMode }}
             - --dev-mode
             {{- end }}
