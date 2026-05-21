@@ -195,45 +195,27 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 		"OWASP ZAP black-box run is a release-pipeline CI job.")
 }
 
-// §12.9.8 Credential leakage — env vars / filesystem / egress.
-// Covered structurally by:
+// §12.9.8 Credential leakage — env vars / filesystem / egress. The
+// three live probes (TestCredentialLeakageEnvironment, …Filesystem,
+// …NetworkEgress) are implemented in credential_leakage_test.go. They
+// drive `kubectl exec` against the cred-shell-echo pod the e2e
+// overlay applies and assert no LLM-provider credential prefix
+// surfaces in the runtime container's environment, the §4.7
+// credential mount, or the §12.9.8 egress-capture sidecar's JSONL
+// capture file. Structural coverage stays in:
 //   - cmd/runtimes/cred-shell-echo (the §12.9.8 probe runtime with
 //     /bin/sh + credential declarations; built with unit tests).
 //   - cmd/lenny-egress-capture (the §12.9.8 capture sidecar;
 //     forward + JSONL hash recording covered by unit tests).
 //   - pkg/gateway/credassign + pkg/gateway/credleasestore (the
 //     §4.9 credential delivery path; per-handler unit tests).
+//   - pkg/controller/sandbox/podspec (egress_capture_test.go:
+//     sidecar injection on the pod spec layer).
+//   - pkg/controller/sandbox (egress_capture_test.go: reconciler
+//     activation when the Sandbox carries the §12.9.8 annotation).
 //   - admission_cred_test.go (the §13.1 lenny-pod-security webhook
 //     rejects images with shells in production — production never
 //     deploys cred-shell-echo).
-//
-// The live e2e probe sequence (drive a session onto a cred-shell-echo
-// pod, kubectl exec into the container, inspect /proc/<pid>/environ
-// and /run/lenny, capture egress through the sidecar) is on the
-// tier-9 ops backlog now that the runtime + sidecar are deployed in
-// the e2e overlay (agent-workload.yaml wiring landed in 3aa580b).
-// spec: 13
-// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
-func TestCredentialLeakageEnvironment(t *testing.T) {
-	t.Logf("§12.9.8 (env): cred-shell-echo runtime + egress-capture sidecar shipped " +
-		"and wired into the e2e overlay; live exec probe on the tier-9 ops backlog.")
-}
-
-// spec: 13
-// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
-func TestCredentialLeakageFilesystem(t *testing.T) {
-	t.Logf("§12.9.8 (filesystem): cred-shell-echo runtime declares credentials so the " +
-		"credential tmpfs is populated; live `kubectl exec ls /run/lenny` probe on the " +
-		"tier-9 ops backlog.")
-}
-
-// spec: 13
-// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
-func TestCredentialLeakageNetworkEgress(t *testing.T) {
-	t.Logf("§12.9.8 (egress): lenny-egress-capture sidecar (cmd/lenny-egress-capture) " +
-		"forwards + records every outbound byte's SHA-256 hash; live probe paired with " +
-		"cred-shell-echo on the tier-9 ops backlog.")
-}
 
 // §12.9.9 elicitation content integrity — covered structurally by:
 //   - pkg/elicitation chain.go + chain_test.go (the §9.2 hop-by-hop

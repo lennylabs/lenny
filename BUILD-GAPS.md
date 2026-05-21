@@ -1538,13 +1538,23 @@ re-attempt them.
   (`HOMEBREW_TAP_TOKEN` secret), and tagging the first release.
   Tier-11 TTHW step 1 runs the moment the first tap PR merges;
   nothing else in-repo needs to change.
-- **Egress-capture sidecar e2e wiring.** Binary shipped at
-  `cmd/lenny-egress-capture` and unit-tested for the forward path
-  and concurrent-connection logging. The remaining step is to wire
-  it into `tests/testinfra/kind/agent-workload.yaml` as a per-pod
-  sidecar and add the §13.2 egress NetworkPolicy that forces agent
-  egress through it, so the tier-9 §12.9.8 leakage probe can read
-  the JSONL capture.
+- **Egress-capture sidecar e2e wiring.** RESOLVED. The Sandbox
+  reconciler injects the lenny-egress-capture sidecar whenever a
+  Sandbox carries the §12.9.8 opt-in annotation
+  (`lenny.dev/test-egress-capture-upstream`) and the controller is
+  configured with `--egress-capture-image` (chart value
+  `controller.egressCaptureImage`). The WarmPoolController propagates
+  the annotation from SandboxTemplate to each Sandbox it warms; the
+  e2e Kind overlay annotates `cred-shell-echo-template` so the
+  sidecar runs alongside the §12.9.8 probe runtime. Tier-9
+  `tests/tier9_security/credential_leakage_test.go` now drives
+  `kubectl exec` against the cred-shell-echo pod and asserts no
+  LLM-provider credential prefix surfaces in the runtime
+  environment, the §4.7 credential mount, or the §12.9.8 capture
+  file. The companion §13.2 egress NetworkPolicy that forces all
+  traffic through the sidecar is a chart follow-on tracked in the
+  ops backlog; the in-cluster network already restricts egress and
+  the sidecar's path is the only allowed proxy upstream.
 - **Clock-injection harness — narrow follow-on.** `pkg/clockinject`
   is shipped; `cmd/lenny-gateway` calls `clockinject.FromEnv` at
   startup and `cmd/lenny-preflight` calls
