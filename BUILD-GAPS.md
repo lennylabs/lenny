@@ -617,6 +617,18 @@ subsystems (`breakerstore`, `quotastore`, `coordination`,
 `semanticcache`, `revocation/propagator`, `eventbus`) expose
 when the deployment swaps in an ElastiCache replication group.
 
+ElastiCache endpoints live on VPC-private subnets and are not
+reachable from outside the VPC. `scripts/cloud/eks/run-e2e.sh`
+step 6b automates the in-cluster runner pattern: when
+`WITH_ELASTICACHE=1`, after the local lenny-test invocation
+finishes the script builds a static linux/amd64 tier-6 test
+binary, deploys a minimal alpine runner Pod with the Redis
+endpoint + AUTH token staged as env vars, kubectl-cp's the
+binary into the Pod, and runs `tier6.test -test.run TestCloudRedis`
+inside the cluster. The runner reads `LENNY_AWS_REDIS_AUTH_TOKEN`
+directly so it does not need an in-pod `secretsmanager:GetSecretValue`
+permission.
+
 Authentication and transport:
 
 41. **`TestCloudElastiCacheTLSRequired`** (§13.2). *Implemented*
