@@ -45,6 +45,20 @@ fi
 # Resolve Terraform outputs.
 ARTIFACT_BUCKET="$("${TF}" -chdir="${TF_DIR}" output -raw artifact_bucket)"
 KMS_KEY_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw kms_key_arn)"
+# iam_role_arn is empty when the Terraform module did not wire IRSA
+# (no OIDC provider available). The overlay then leaves the SA
+# annotations empty.
+IAM_ROLE_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw iam_role_arn 2>/dev/null || echo)"
+
+# SA annotation block: emitted only when IAM_ROLE_ARN is populated.
+# Built as a separate variable rather than inlined into the YAML
+# heredoc because nested heredocs do not survive the outer heredoc's
+# expansion pass cleanly.
+if [[ -n "${IAM_ROLE_ARN}" ]]; then
+  GATEWAY_SA_BLOCK=$'  serviceAccount:\n    annotations:\n      eks.amazonaws.com/role-arn: "'"${IAM_ROLE_ARN}"'"'
+else
+  GATEWAY_SA_BLOCK=""
+fi
 
 cat > "${OUT}" <<YAML
 # SPDX-License-Identifier: MIT
@@ -87,6 +101,17 @@ gateway:
     repository: ${ECR_REGISTRY}/lenny-gateway
     tag: "${TAG}"
     pullPolicy: IfNotPresent
+${GATEWAY_SA_BLOCK}
+
+# §16 OpenTelemetry trace export. observability.otlpEndpoint is the
+# Helm-values trigger: when set, the chart pipes OTEL_EXPORTER_OTLP_ENDPOINT
+# into the gateway pod env and the agent-namespace
+# allow-pod-egress-otlp NetworkPolicy admits the egress. The tier-6
+# overlay points at a stand-in OTLP receiver address; a production
+# install replaces it with the per-account collector endpoint (ADOT,
+# Cloud Trace, X-Ray).
+observability:
+  otlpEndpoint: "http://adot-collector.lenny-system.svc:4317"
 
 ops:
   image:
@@ -115,18 +140,19 @@ bootstrap:
 # Point the gateway + controller at the in-cluster data-store
 # fixtures (tests/testinfra/kind/datastores.yaml). A future revision
 # routes the gateway through RDS / ElastiCache / S3 directly.
+#
+# Note: the cloud overlay deliberately omits the minio.* keys. EKS
+# uses the per-release S3 bucket for the §4.5 ArtifactStore; the
+# in-cluster MinIO Deployment is skipped at apply time (run-e2e.sh
+# selects datastores.yaml entries not labeled lenny.dev/e2e-datastore=minio),
+# and the chart's gateway template renders no LENNY_MINIO_* env when
+# minio.endpoint is empty. TestMultiAZMinIO asserts on this exact
+# shape (gateway has no LENNY_MINIO_ENDPOINT AND no MinIO Deployment).
 postgres:
   dsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
 
 redis:
   url: "redis://lenny-redis.lenny-system.svc:6379"
-
-minio:
-  endpoint: "lenny-minio.lenny-system.svc:9000"
-  accessKey: "lennyminio"
-  secretKey: "lennyminio123"
-  bucket: "lenny-artifacts"
-  useSSL: false
 
 # Documentation surface for the operator: which S3 bucket + KMS key
 # the AWS Terraform produced. The §12.5 ArtifactStore SSE-KMS path
