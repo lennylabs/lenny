@@ -291,7 +291,12 @@ resource "aws_elasticache_replication_group" "redis_cluster" {
   engine_version             = "7.1"
   node_type                  = var.elasticache_node_type
   num_node_groups            = var.elasticache_cluster_num_shards
-  replicas_per_node_group    = 0
+  # Cluster mode mandates automatic failover, which mandates >= 1
+  # replica per shard. Drop to the minimum 1-replica/shard to bound
+  # the hourly cost (cluster_num_shards * 2 nodes total).
+  replicas_per_node_group    = 1
+  automatic_failover_enabled = true
+  multi_az_enabled           = true
   parameter_group_name       = aws_elasticache_parameter_group.redis_cluster[0].name
   subnet_group_name          = aws_elasticache_subnet_group.redis[0].name
   security_group_ids         = [aws_security_group.managed_datastores[0].id]
