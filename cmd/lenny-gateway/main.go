@@ -179,6 +179,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -231,6 +232,8 @@ func main() {
 		"§11.2 per-user LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the user scope. Zero disables the per-user token cap. Only active when --redis-url is set.")
 	agentNamespace := flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
+	defaultIsolationProfile := flag.String("default-isolation-profile", os.Getenv("LENNY_DEFAULT_ISOLATION_PROFILE"),
+		"§5.3 isolation profile applied to a session that omits isolationProfile on the create body. Defaults to the chart's compiled-in fallback (`sandboxed`); the e2e overlay sets `standard` so every k6 scenario lands on the warm pool the agent-workload defines.")
 	adapterTLSCert := flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),
 		"path to the gateway's client certificate for the §4.7 mTLS link to pod adapters. Empty dials adapters in plaintext (local development only).")
 	adapterTLSKey := flag.String("adapter-tls-key", os.Getenv("LENNY_ADAPTER_TLS_KEY"),
@@ -910,15 +913,16 @@ func main() {
 		Users:           users,
 		Billing:         billing,
 		Tenants:         tenants,
-		StorageQuota:    storageCounter,
-		PodBinder:       podBinder,
-		PodRegistry:     podRegistry,
-		AgentNamespace:  *agentNamespace,
-		Sealer:          sessionSealer,
-		TreeArchive:     treeArchive,
-		Interceptors:    policyChain,
-		PolicyAuditSink: policyAuditSink,
-		Clock:           clockinject.Now,
+		StorageQuota:            storageCounter,
+		PodBinder:               podBinder,
+		PodRegistry:             podRegistry,
+		AgentNamespace:          *agentNamespace,
+		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
+		Sealer:                  sessionSealer,
+		TreeArchive:             treeArchive,
+		Interceptors:            policyChain,
+		PolicyAuditSink:         policyAuditSink,
+		Clock:                   clockinject.Now,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

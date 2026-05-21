@@ -27,7 +27,7 @@
 //   LENNY_ROLES      Roles for X-Lenny-Roles. Default tenant-admin.
 //   LENNY_USER       User ID for X-Lenny-User-ID. Default alice.
 //   LENNY_RUNTIME    runtimeRef on the parent and the child task.
-//                    Default claude-code.
+//                    Default echo-runtime-sidecar.
 //   LENNY_FANOUT     Children spawned per root. Default 5.
 //   LENNY_RATE       Arrivals per second. Default 5.
 //   LENNY_DURATION   Run duration. Default 30s.
@@ -39,7 +39,7 @@ const BASE = __ENV.LENNY_BASE_URL || 'http://127.0.0.1:8080';
 const TENANT = __ENV.LENNY_TENANT || 'acme';
 const ROLES = __ENV.LENNY_ROLES || 'tenant-admin';
 const USER = __ENV.LENNY_USER || 'alice';
-const RUNTIME = __ENV.LENNY_RUNTIME || 'claude-code';
+const RUNTIME = __ENV.LENNY_RUNTIME || 'echo-runtime-sidecar';
 const FANOUT = parseInt(__ENV.LENNY_FANOUT || '5', 10);
 
 export const options = {
@@ -113,6 +113,7 @@ export default function () {
 
   // Fan out FANOUT children through the MCP delegate_task tool. Each
   // call's duration is the §8.2 MCP delegation-spawn cost.
+  const childIDs = [];
   for (let i = 0; i < FANOUT; i++) {
     const res = mcpCall(
       'lenny/delegate_task',
@@ -123,9 +124,31 @@ export default function () {
       },
       'mcp_delegate',
     );
-    check(res, {
-      'mcp delegate returned 200': (r) => r.status === 200,
-      'mcp delegate has no error': (r) => r.body && !r.body.includes('"error"'),
+    if (
+      check(res, {
+        'mcp delegate returned 200': (r) => r.status === 200,
+        'mcp delegate has no error': (r) => r.body && !r.body.includes('"error"'),
+      }) && res.body
+    ) {
+      // delegate_task's content text carries the child session id.
+      const m = res.body.match(/"sessionId"\s*:\s*"([^"]+)"/);
+      if (m) childIDs.push(m[1]);
+    }
+  }
+
+  // Release each claimed child + the parent so the §4.6 SandboxClaims
+  // free their pods back to the warm pool. Without this each iteration
+  // leaks 1 + FANOUT pod claims and the pool exhausts within a handful
+  // of iterations on a smoke-sized Kind cluster — production callers
+  // terminate sessions when done, so the smoke does the same.
+  for (let i = 0; i < childIDs.length; i++) {
+    http.post(`${BASE}/v1/sessions/${childIDs[i]}/terminate`, '', {
+      headers: authHeaders({}),
+      tags: { name: 'release_child' },
     });
   }
+  http.post(`${BASE}/v1/sessions/${parentID}/terminate`, '', {
+    headers: authHeaders({}),
+    tags: { name: 'release_root' },
+  });
 }

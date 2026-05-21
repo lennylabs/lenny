@@ -28,7 +28,7 @@
 //   LENNY_TENANT     Tenant ID for X-Lenny-Tenant-ID. Default acme.
 //   LENNY_ROLES      Roles for X-Lenny-Roles. Default tenant-admin.
 //   LENNY_USER       User ID for X-Lenny-User-ID. Default alice.
-//   LENNY_RUNTIME    runtimeRef on the session. Default claude-code.
+//   LENNY_RUNTIME    runtimeRef on the session. Default echo-runtime-sidecar.
 //   LENNY_RATE       Arrivals per second. Default 5.
 //   LENNY_DURATION   Run duration. Default 30s.
 
@@ -39,7 +39,7 @@ const BASE = __ENV.LENNY_BASE_URL || 'http://127.0.0.1:8080';
 const TENANT = __ENV.LENNY_TENANT || 'acme';
 const ROLES = __ENV.LENNY_ROLES || 'tenant-admin';
 const USER = __ENV.LENNY_USER || 'alice';
-const RUNTIME = __ENV.LENNY_RUNTIME || 'claude-code';
+const RUNTIME = __ENV.LENNY_RUNTIME || 'echo-runtime-sidecar';
 
 export const options = {
   // Emit p99 and p99.9 in the summary export so the Tier-7 baseline
@@ -78,9 +78,13 @@ function authHeaders(extra) {
 }
 
 export default function () {
-  // Create the session the streaming-throughput iteration drives.
+  // Create-and-start the session: /messages requires a session in a
+  // running state, which the create-and-start path enters in one call.
+  // POST /v1/sessions alone leaves the session in `created` (no pod
+  // claim) and /messages then 409s, which the original script masked
+  // as a 50% error rate.
   const create = http.post(
-    `${BASE}/v1/sessions`,
+    `${BASE}/v1/sessions/start`,
     JSON.stringify({ runtimeRef: RUNTIME }),
     {
       headers: authHeaders({
@@ -110,5 +114,12 @@ export default function () {
   check(msg, {
     'message delivered': (r) => r.status === 200,
     'response carries output': (r) => r.body && r.body.includes('"deliveryStatus"'),
+  });
+
+  // Release the claimed pod back to the warm pool. Without this the
+  // pool exhausts within a few iterations.
+  http.post(`${BASE}/v1/sessions/${sessionID}/terminate`, '', {
+    headers: authHeaders({}),
+    tags: { name: 'release_session' },
   });
 }

@@ -26,7 +26,7 @@
 //   LENNY_TENANT     Tenant ID for X-Lenny-Tenant-ID. Default acme.
 //   LENNY_ROLES      Roles for X-Lenny-Roles. Default tenant-admin.
 //   LENNY_USER       User ID for X-Lenny-User-ID. Default alice.
-//   LENNY_RUNTIME    runtimeRef on the create body. Default claude-code.
+//   LENNY_RUNTIME    runtimeRef on the create body. Default echo-runtime-sidecar.
 //   LENNY_RATE       Arrivals per second. Default 5.
 //   LENNY_DURATION   Run duration. Default 30s.
 
@@ -37,7 +37,7 @@ const BASE = __ENV.LENNY_BASE_URL || 'http://127.0.0.1:8080';
 const TENANT = __ENV.LENNY_TENANT || 'acme';
 const ROLES = __ENV.LENNY_ROLES || 'tenant-admin';
 const USER = __ENV.LENNY_USER || 'alice';
-const RUNTIME = __ENV.LENNY_RUNTIME || 'claude-code';
+const RUNTIME = __ENV.LENNY_RUNTIME || 'echo-runtime-sidecar';
 
 export const options = {
   // Emit p99 and p99.9 in the summary export so the Tier-7 baseline

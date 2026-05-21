@@ -35,6 +35,24 @@ tokenService:
     tag: e2e
     pullPolicy: Never
 
+sandbox:
+  # The e2e agent-workload registers SandboxTemplates with
+  # isolationProfile: standard (matching the §13.1 cluster lacking
+  # a Kata / microVM runtime class). Without this override the
+  # gateway falls back to its compiled-in `sandboxed` default and
+  # `POST /v1/sessions/start` returns 503 POD_CLAIM_FAILED for every
+  # session that omits the profile — every k6 scenario does.
+  defaultIsolationProfile: standard
+
+# Disable the §26 reference-runtime catalog on the Kind overlay. The
+# chart's catalog ships ghcr.io/lennylabs/runtime-<name>:1.0.0 images
+# the local Kind cluster cannot pull, and one of those entries
+# (claude-code) collides with the agent-workload.yaml's claude-code
+# Runtime + SandboxTemplate + SandboxWarmPool the tier-7 load
+# scenarios target. The agent-workload owns the e2e runtime set.
+referenceRuntimes:
+  enabled: false
+
 gateway:
   image:
     repository: lenny-gateway

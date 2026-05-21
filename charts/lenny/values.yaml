@@ -458,6 +458,17 @@ adapter:
   # allow-gateway-ingress NetworkPolicy admits it.
   grpcPort: 50051
 
+# sandbox configures the §5.3 isolation-profile defaults the gateway
+# applies to session-create bodies that omit isolationProfile.
+sandbox:
+  # defaultIsolationProfile is the §5.3 fallback the gateway stamps
+  # onto a create body that omits isolationProfile. Empty falls back
+  # to the binary's compiled-in default (`sandboxed`); the e2e
+  # overlay sets `standard` so every k6 scenario and every test that
+  # does not specify the profile lands on the warm pool the
+  # agent-workload.yaml defines.
+  defaultIsolationProfile: ""
+
 # gateway configures the §4.1 edge gateway. The lenny-gateway
 # Deployment runs the gateway binary; it is stateless and horizontally
 # scaled (§17.1), so the chart sizes it with a replica count and an

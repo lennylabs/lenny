@@ -144,6 +144,9 @@ spec:
             {{- with (first .Values.agentNamespaces) }}
             - --agent-namespace={{ .name }}
             {{- end }}
+            {{- with .Values.sandbox.defaultIsolationProfile }}
+            - --default-isolation-profile={{ . }}
+            {{- end }}
             {{- if .Values.global.devMode }}
             - --dev-mode
             {{- end }}

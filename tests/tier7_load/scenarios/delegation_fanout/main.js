@@ -22,7 +22,7 @@
 //   LENNY_TENANT     Tenant ID for X-Lenny-Tenant-ID. Default acme.
 //   LENNY_ROLES      Roles for X-Lenny-Roles. Default tenant-admin.
 //   LENNY_USER       User ID for X-Lenny-User-ID. Default alice.
-//   LENNY_RUNTIME    runtimeRef on every session. Default claude-code.
+//   LENNY_RUNTIME    runtimeRef on every session. Default echo-runtime-sidecar.
 //   LENNY_FANOUT     Children spawned per root. Default 50.
 
 import http from 'k6/http';
@@ -32,7 +32,7 @@ const BASE = __ENV.LENNY_BASE_URL || 'http://127.0.0.1:8080';
 const TENANT = __ENV.LENNY_TENANT || 'acme';
 const ROLES = __ENV.LENNY_ROLES || 'tenant-admin';
 const USER = __ENV.LENNY_USER || 'alice';
-const RUNTIME = __ENV.LENNY_RUNTIME || 'claude-code';
+const RUNTIME = __ENV.LENNY_RUNTIME || 'echo-runtime-sidecar';
 const FANOUT = parseInt(__ENV.LENNY_FANOUT || '50', 10);
 
 export const options = {
@@ -71,14 +71,31 @@ export default function () {
 
   // Fan out the children. Each child is a started session carrying the
   // parent id so the gateway records the delegation edge.
+  const childIDs = [];
   for (let i = 0; i < FANOUT; i++) {
     const payload = JSON.stringify({ runtimeRef: RUNTIME, parentID: parentID });
     const res = http.post(`${BASE}/v1/sessions/start`, payload, {
       headers: authHeaders({ 'Idempotency-Key': `child-${__VU}-${__ITER}-${i}-${Date.now()}` }),
       tags: { name: 'spawn_child' },
     });
-    check(res, {
-      'child accepted': (r) => r.status === 201,
+    if (check(res, { 'child accepted': (r) => r.status === 201 }) && res.body) {
+      const cid = JSON.parse(res.body).id;
+      if (cid) childIDs.push(cid);
+    }
+  }
+
+  // Terminate every claimed child + the parent so the §4.6
+  // SandboxClaims release their pods back to the warm pool. Without
+  // this, each iteration leaks FANOUT pods and the pool exhausts
+  // within ~10 iterations on a Kind cluster sized for smoke runs.
+  for (let i = 0; i < childIDs.length; i++) {
+    http.post(`${BASE}/v1/sessions/${childIDs[i]}/terminate`, '', {
+      headers: authHeaders({}),
+      tags: { name: 'release_child' },
     });
   }
+  http.post(`${BASE}/v1/sessions/${parentID}/terminate`, '', {
+    headers: authHeaders({}),
+    tags: { name: 'release_root' },
+  });
 }

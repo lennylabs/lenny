@@ -23,7 +23,7 @@
 //   LENNY_TENANT            Tenant ID for X-Lenny-Tenant-ID. Default acme.
 //   LENNY_ROLES             Roles for X-Lenny-Roles. Default tenant-admin.
 //   LENNY_USER              User ID for X-Lenny-User-ID. Default alice.
-//   LENNY_RUNTIME           runtimeRef on the session. Default claude-code.
+//   LENNY_RUNTIME           runtimeRef on the session. Default echo-runtime-sidecar.
 //   LENNY_WORKSPACE_BYTES   Workspace blob size. Default 1 MB.
 
 import http from 'k6/http';
@@ -33,7 +33,7 @@ const BASE = __ENV.LENNY_BASE_URL || 'http://127.0.0.1:8080';
 const TENANT = __ENV.LENNY_TENANT || 'acme';
 const ROLES = __ENV.LENNY_ROLES || 'tenant-admin';
 const USER = __ENV.LENNY_USER || 'alice';
-const RUNTIME = __ENV.LENNY_RUNTIME || 'claude-code';
+const RUNTIME = __ENV.LENNY_RUNTIME || 'echo-runtime-sidecar';
 const SIZE = parseInt(__ENV.LENNY_WORKSPACE_BYTES || '1048576', 10); // 1 MB default
 
 export const options = {
