@@ -109,6 +109,15 @@ kind: SandboxTemplate
 metadata:
   name: cred-shell-echo-template
   namespace: lenny-agents
+  # §12.9.8 tier-9 opt-in: every pod warmed from this template carries
+  # the lenny-egress-capture sidecar that records every outbound
+  # connection's SHA-256 hash to a JSONL file. The §12.9.8 probe
+  # reads the file via `kubectl exec` and asserts no credential
+  # string appears in egress. The Sandbox reconciler propagates this
+  # annotation to each warmed Sandbox; the §12.9.8 sidecar is
+  # injected by the reconciler's resolveEgressCapture path.
+  annotations:
+    lenny.dev/test-egress-capture-upstream: "echo.example.com:443"
 spec:
   runtimeRef: cred-shell-echo-runtime
   isolationProfile: standard

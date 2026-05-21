@@ -82,11 +82,12 @@ func main() {
 	var (
 		metricsAddr   string
 		probeAddr     string
-		leaderElect   bool
-		leaderElectNS string
-		adapterImage  string
-		postgresDSN   string
-		agentNSList   string
+		leaderElect        bool
+		leaderElectNS      string
+		adapterImage       string
+		egressCaptureImage string
+		postgresDSN        string
+		agentNSList        string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -98,6 +99,8 @@ func main() {
 		"namespace that holds the leader-election Lease")
 	flag.StringVar(&adapterImage, "adapter-image", "",
 		"the lenny-adapter sidecar image stamped into agent pods")
+	flag.StringVar(&egressCaptureImage, "egress-capture-image", os.Getenv("LENNY_EGRESS_CAPTURE_IMAGE"),
+		"the §12.9.8 tier-9 lenny-egress-capture sidecar image. Empty disables capture globally. Non-empty enables injection on every Sandbox whose annotation set carries `lenny.dev/test-egress-capture-upstream`. Production rejects the sidecar via lenny-pod-security; the flag exists for tier-9 §12.9.8 credential-leakage probes.")
 	flag.StringVar(&postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, the WarmPoolController mirrors Sandbox status to the §4.6.1 agent_pod_state table (the migrations/ schema must already be applied). When empty, mirroring is disabled.")
 	flag.StringVar(&agentNSList, "agent-namespaces", os.Getenv("LENNY_AGENT_NAMESPACES"),
@@ -155,9 +158,10 @@ func main() {
 	}
 
 	if err := (&sandbox.Reconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		AdapterImage: adapterImage,
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		AdapterImage:       adapterImage,
+		EgressCaptureImage: egressCaptureImage,
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
 	}

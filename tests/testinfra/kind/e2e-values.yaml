@@ -17,6 +17,11 @@ controller:
   # The Sandbox reconciler stamps this adapter image into every agent
   # pod. install.sh builds and kind-loads lenny-adapter:e2e.
   adapterImage: lenny-adapter:e2e
+  # §12.9.8 tier-9 egress-capture sidecar. The reconciler injects it
+  # into every Sandbox whose template carries the
+  # `lenny.dev/test-egress-capture-upstream` annotation (today, only
+  # the cred-shell-echo template in agent-workload.yaml).
+  egressCaptureImage: lenny-egress-capture:e2e
 
 admissionWebhooks:
   image:

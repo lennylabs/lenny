@@ -218,6 +218,7 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 				LabelPool:    pool.Name,
 				LabelManaged: "true",
 			},
+			Annotations: propagatedAnnotations(tmpl),
 		},
 		Spec: lennyv1.SandboxSpec{
 			RuntimeRef:       tmpl.Spec.RuntimeRef,
@@ -230,6 +231,37 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 		return err
 	}
 	return r.Client.Create(ctx, sb)
+}
+
+// propagatedAnnotations carries the small set of opt-in annotations
+// from a SandboxTemplate onto every Sandbox it warms. The
+// reconciler's createPod path reads these to decide whether to inject
+// optional features (the §12.9.8 egress-capture sidecar today; more
+// per-template knobs land alongside).
+func propagatedAnnotations(tmpl *lennyv1.SandboxTemplate) map[string]string {
+	if tmpl == nil {
+		return nil
+	}
+	src := tmpl.Annotations
+	if len(src) == 0 {
+		return nil
+	}
+	keys := []string{
+		// §12.9.8: a SandboxTemplate annotated with the egress-capture
+		// upstream propagates that annotation to every Sandbox it
+		// warms, and the Sandbox reconciler reads it on createPod.
+		"lenny.dev/test-egress-capture-upstream",
+	}
+	var out map[string]string
+	for _, k := range keys {
+		if v, ok := src[k]; ok && v != "" {
+			if out == nil {
+				out = make(map[string]string, len(keys))
+			}
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // drainSandbox transitions the named Sandbox to the draining phase so

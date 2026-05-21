@@ -121,6 +121,40 @@ type Inputs struct {
 	// Runtime.spec.deploymentModel. An empty value defaults to the
 	// sidecar model.
 	DeploymentModel string
+	// EgressCapture is the §12.9.8 tier-9 egress-capture sidecar
+	// configuration. Non-nil injects an additional container running
+	// lenny-egress-capture into the pod, plus a shared emptyDir mounted
+	// on the runtime container so the §12.9.8 leakage probe can read
+	// the JSONL capture file. The sidecar is TEST-ONLY: the
+	// lenny-pod-security admission webhook rejects pods carrying it in
+	// production.
+	EgressCapture *EgressCapture
+}
+
+// EgressCapture configures the §12.9.8 egress-capture sidecar an
+// agent pod runs alongside its runtime. The sidecar listens on
+// ListenPort, forwards every accepted TCP connection to Upstream,
+// and writes one JSONL row per connection to a path under the shared
+// capture volume; the §12.9.8 leakage probe (tier-9) reads the file
+// via `kubectl exec` to assert no credential material appears in
+// egress.
+type EgressCapture struct {
+	// Image is the OCI image of the egress-capture container.
+	// Production rejects this image via the lenny-pod-security
+	// admission webhook.
+	Image string
+	// Upstream is the host:port the sidecar forwards every accepted
+	// connection to (e.g. `api.openai.com:443`). Required.
+	Upstream string
+	// ListenPort is the local TCP port the runtime container dials.
+	// Defaults to 8443 when zero.
+	ListenPort int32
+	// CapturePath is the in-pod path the sidecar writes the JSONL
+	// capture file to. Defaults to /run/lenny-capture/egress.jsonl
+	// when empty. The capture lives on a shared emptyDir mounted into
+	// both the sidecar and the runtime container (the probe reads via
+	// the runtime mount with `kubectl exec`).
+	CapturePath string
 }
 
 // Build assembles the agent Pod for one Sandbox. It dispatches on the
@@ -207,6 +241,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		},
 	}
 	pod.Spec.Volumes = volumes
+	injectEgressCaptureSidecar(in, pod, []int{1})
 	return pod, nil
 }
 
@@ -241,7 +276,80 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		},
 	}
 	pod.Spec.Volumes = volumes
+	injectEgressCaptureSidecar(in, pod, []int{0})
 	return pod, nil
+}
+
+const (
+	// EgressCaptureContainerName is the name of the §12.9.8 egress
+	// capture sidecar container injected into agent pods that opt in.
+	EgressCaptureContainerName = "egress-capture"
+	// EgressCaptureVolumeName is the shared emptyDir between the
+	// sidecar (writer) and the runtime container (reader) that holds
+	// the JSONL capture file.
+	EgressCaptureVolumeName = "egress-capture"
+	// EgressCaptureMountPath is the in-pod path the capture volume is
+	// mounted on in both the sidecar and the runtime containers. The
+	// JSONL file lives at egress.jsonl within it by default.
+	EgressCaptureMountPath = "/run/lenny-capture"
+	// defaultEgressCaptureListenPort is the TCP port the sidecar
+	// listens on by default. The runtime container dials it instead
+	// of the real upstream.
+	defaultEgressCaptureListenPort int32 = 8443
+)
+
+// defaultEgressCapturePath is the default in-pod path for the
+// JSONL capture file. The §12.9.8 leakage probe reads it via
+// `kubectl exec` against the runtime container.
+var defaultEgressCapturePath = EgressCaptureMountPath + "/egress.jsonl"
+
+// injectEgressCaptureSidecar appends the §12.9.8 egress-capture
+// container to pod.Spec.Containers, mounts the capture volume on
+// each container index named in mountOn (typically the runtime
+// container so the §12.9.8 probe can read it), and appends the
+// emptyDir volume to pod.Spec.Volumes. The injection is a no-op when
+// in.EgressCapture is nil.
+func injectEgressCaptureSidecar(in Inputs, pod *corev1.Pod, mountOn []int) {
+	if in.EgressCapture == nil {
+		return
+	}
+	listenPort := in.EgressCapture.ListenPort
+	if listenPort == 0 {
+		listenPort = defaultEgressCaptureListenPort
+	}
+	capturePath := in.EgressCapture.CapturePath
+	if capturePath == "" {
+		capturePath = defaultEgressCapturePath
+	}
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: EgressCaptureVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
+		},
+	})
+	captureMount := corev1.VolumeMount{Name: EgressCaptureVolumeName, MountPath: EgressCaptureMountPath}
+	for _, idx := range mountOn {
+		if idx >= 0 && idx < len(pod.Spec.Containers) {
+			pod.Spec.Containers[idx].VolumeMounts = append(pod.Spec.Containers[idx].VolumeMounts, corev1.VolumeMount{
+				Name: EgressCaptureVolumeName, MountPath: EgressCaptureMountPath, ReadOnly: true,
+			})
+		}
+	}
+	pod.Spec.Containers = append(pod.Spec.Containers, corev1.Container{
+		Name:  EgressCaptureContainerName,
+		Image: in.EgressCapture.Image,
+		Args: []string{
+			fmt.Sprintf("--listen=:%d", listenPort),
+			fmt.Sprintf("--upstream=%s", in.EgressCapture.Upstream),
+			fmt.Sprintf("--capture=%s", capturePath),
+		},
+		Ports: []corev1.ContainerPort{{
+			Name:          "capture",
+			ContainerPort: listenPort,
+		}},
+		VolumeMounts:    []corev1.VolumeMount{captureMount},
+		SecurityContext: containerSecurityContext(AgentUID),
+	})
 }
 
 // podVolumes returns the §6.1 / §13.1 pod volumes: the workspace

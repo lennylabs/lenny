@@ -60,3 +60,17 @@ tests:
               secretKeyRef:
                 name: lenny-datastore-conn
                 key: postgres-dsn
+
+  - it: omits the §12.9.8 egress-capture image arg by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --egress-capture-image=lenny-egress-capture:e2e
+
+  - it: renders the §12.9.8 egress-capture image arg when controller.egressCaptureImage is set
+    set:
+      controller.egressCaptureImage: "lenny-egress-capture:e2e"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --egress-capture-image=lenny-egress-capture:e2e

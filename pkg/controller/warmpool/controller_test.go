@@ -330,3 +330,32 @@ func TestReconcileIsIdempotent(t *testing.T) {
 		t.Errorf("sandbox count drifted across reconciles: first=%d second=%d, want 3/3", first, second)
 	}
 }
+
+// spec: 12.9.8
+// diagnosis: the §12.9.8 egress-capture annotation lives on the
+// SandboxTemplate; the WarmPoolController propagates it to every
+// Sandbox it creates so the Sandbox reconciler can read it on
+// createPod. Other template annotations stay on the template.
+func TestReconcilePropagatesEgressCaptureAnnotation(t *testing.T) {
+	s := newScheme(t)
+	tmpl := template()
+	tmpl.Annotations = map[string]string{
+		"lenny.dev/test-egress-capture-upstream": "api.openai.com:443",
+		"lenny.dev/unrelated":                    "ignore-me",
+	}
+	c := newClient(s, tmpl, pool(1, 1))
+
+	reconcile(t, c, s)
+
+	sandboxes := poolSandboxes(t, c)
+	if len(sandboxes) != 1 {
+		t.Fatalf("created %d sandboxes, want 1", len(sandboxes))
+	}
+	got := sandboxes[0].Annotations
+	if got["lenny.dev/test-egress-capture-upstream"] != "api.openai.com:443" {
+		t.Errorf("sandbox annotations = %v, want egress-capture upstream propagated", got)
+	}
+	if _, leaked := got["lenny.dev/unrelated"]; leaked {
+		t.Errorf("sandbox annotations = %v; unrelated annotation should not propagate", got)
+	}
+}

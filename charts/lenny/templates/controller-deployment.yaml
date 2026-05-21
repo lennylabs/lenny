@@ -50,6 +50,9 @@ spec:
             {{- if .Values.controller.adapterImage }}
             - --adapter-image={{ .Values.controller.adapterImage }}
             {{- end }}
+            {{- if .Values.controller.egressCaptureImage }}
+            - --egress-capture-image={{ .Values.controller.egressCaptureImage }}
+            {{- end }}
           {{- if $hasPg }}
           env:
             - name: LENNY_POSTGRES_DSN

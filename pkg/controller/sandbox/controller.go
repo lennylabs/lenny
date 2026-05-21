@@ -39,7 +39,22 @@ type Reconciler struct {
 	// AdapterImage is the lenny-adapter sidecar image stamped into
 	// every agent Pod.
 	AdapterImage string
+	// EgressCaptureImage is the §12.9.8 egress-capture sidecar image.
+	// Empty disables the sidecar globally; a non-empty value enables
+	// the §12.9.8 tier-9 leakage probe path on Sandboxes whose
+	// SandboxTemplate carries the egress-capture annotation
+	// (EgressCaptureUpstreamAnnotation).
+	EgressCaptureImage string
 }
+
+// EgressCaptureUpstreamAnnotation is the §12.9.8 opt-in annotation an
+// operator stamps on a SandboxTemplate (and the reconciler propagates
+// to the Sandbox) to enable the egress-capture sidecar on every pod
+// created from that template. The value is the upstream the sidecar
+// forwards to (e.g., `api.openai.com:443`). The sidecar is TEST-ONLY
+// and the lenny-pod-security webhook rejects pods carrying it in
+// production deployments.
+const EgressCaptureUpstreamAnnotation = "lenny.dev/test-egress-capture-upstream"
 
 // Reconcile drives one Sandbox: it observes the backing Pod, runs the
 // lifecycle planner, and applies the resulting action.
@@ -127,6 +142,7 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		AdapterImage:     r.AdapterImage,
 		IsolationProfile: profile,
 		DeploymentModel:  rt.Spec.DeploymentModel,
+		EgressCapture:    r.resolveEgressCapture(sb),
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)
@@ -181,4 +197,27 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Pod{}).
 		Named("sandbox").
 		Complete(r)
+}
+
+// resolveEgressCapture returns the §12.9.8 egress-capture configuration
+// for the pod the reconciler is about to create, or nil when capture is
+// not enabled. Capture activates when the Sandbox carries the
+// EgressCaptureUpstreamAnnotation and the reconciler is configured with
+// an egress-capture image. The annotation's value is the upstream
+// host:port the sidecar forwards every accepted connection to.
+func (r *Reconciler) resolveEgressCapture(sb *lennyv1.Sandbox) *podspec.EgressCapture {
+	if r.EgressCaptureImage == "" {
+		return nil
+	}
+	if sb.Annotations == nil {
+		return nil
+	}
+	upstream := sb.Annotations[EgressCaptureUpstreamAnnotation]
+	if upstream == "" {
+		return nil
+	}
+	return &podspec.EgressCapture{
+		Image:    r.EgressCaptureImage,
+		Upstream: upstream,
+	}
 }

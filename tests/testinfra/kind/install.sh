@@ -77,6 +77,9 @@ BINARIES=(
   lenny-preflight
   lenny-backup
   lenny-ctl
+  # §12.9.8 tier-9 egress-capture sidecar; the controller injects this
+  # image when a Sandbox carries the egress-capture annotation.
+  lenny-egress-capture
 )
 
 # The reference echo runtime images exercise the two §4.7 deployment
