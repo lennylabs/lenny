@@ -130,4 +130,16 @@ message CredentialLease {
   string lease_token = 16;
   // upstream_model is the optional proxy-mode upstream model hint.
   string upstream_model = 17;
+  // upstream_credential is the materialized upstream provider secret
+  // (API key, access token) the Token Service resolved for this lease.
+  // The gateway caches it in its in-memory §4.9 credential cache
+  // (`pkg/gateway/credcache`) keyed by the lease's CredentialKey so the
+  // LLM reverse proxy can inject it into upstream calls. The field
+  // carries credential material and MUST be excluded from gRPC access
+  // log payload capture, OpenTelemetry span attributes, and any
+  // request/response logging middleware. The mTLS transport between
+  // gateway and Token Service protects it on the wire; no other layer
+  // sees it. Empty for direct-mode leases where the upstream secret is
+  // delivered to the runtime via the adapter credential file instead.
+  string upstream_credential = 18;
 }

@@ -237,3 +237,13 @@ func credentialSecret(p Pool, credentialID string) string {
 	}
 	return ""
 }
+
+// UpstreamCredential returns the materialized upstream provider secret
+// the service cached for a lease's backing credential. It satisfies the
+// §4.3 Token Service gRPC server, which forwards the secret to the
+// gateway over mTLS so the gateway's in-memory credential cache
+// (`pkg/gateway/credcache`) can serve the §4.9 LLM reverse proxy. ok
+// reports whether the secret is currently cached.
+func (s *Service) UpstreamCredential(lease credential.Lease) (string, bool) {
+	return s.creds.UpstreamCredential(lease)
+}

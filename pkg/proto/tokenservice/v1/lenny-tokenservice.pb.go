@@ -410,8 +410,20 @@ type CredentialLease struct {
 	LeaseToken string `protobuf:"bytes,16,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
 	// upstream_model is the optional proxy-mode upstream model hint.
 	UpstreamModel string `protobuf:"bytes,17,opt,name=upstream_model,json=upstreamModel,proto3" json:"upstream_model,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// upstream_credential is the materialized upstream provider secret
+	// (API key, access token) the Token Service resolved for this lease.
+	// The gateway caches it in its in-memory §4.9 credential cache
+	// (`pkg/gateway/credcache`) keyed by the lease's CredentialKey so the
+	// LLM reverse proxy can inject it into upstream calls. The field
+	// carries credential material and MUST be excluded from gRPC access
+	// log payload capture, OpenTelemetry span attributes, and any
+	// request/response logging middleware. The mTLS transport between
+	// gateway and Token Service protects it on the wire; no other layer
+	// sees it. Empty for direct-mode leases where the upstream secret is
+	// delivered to the runtime via the adapter credential file instead.
+	UpstreamCredential string `protobuf:"bytes,18,opt,name=upstream_credential,json=upstreamCredential,proto3" json:"upstream_credential,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *CredentialLease) Reset() {
@@ -563,6 +575,13 @@ func (x *CredentialLease) GetUpstreamModel() string {
 	return ""
 }
 
+func (x *CredentialLease) GetUpstreamCredential() string {
+	if x != nil {
+		return x.UpstreamCredential
+	}
+	return ""
+}
+
 var File_lenny_tokenservice_proto protoreflect.FileDescriptor
 
 const file_lenny_tokenservice_proto_rawDesc = "" +
@@ -589,7 +608,7 @@ const file_lenny_tokenservice_proto_rawDesc = "" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x19\n" +
 	"\blease_id\x18\x02 \x01(\tR\aleaseId\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"\x1b\n" +
-	"\x19RevokeCredentialsResponse\"\xf4\x04\n" +
+	"\x19RevokeCredentialsResponse\"\xa5\x05\n" +
 	"\x0fCredentialLease\x12\x19\n" +
 	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x1d\n" +
 	"\n" +
@@ -612,7 +631,8 @@ const file_lenny_tokenservice_proto_rawDesc = "" +
 	"\rproxy_dialect\x18\x0f \x01(\tR\fproxyDialect\x12\x1f\n" +
 	"\vlease_token\x18\x10 \x01(\tR\n" +
 	"leaseToken\x12%\n" +
-	"\x0eupstream_model\x18\x11 \x01(\tR\rupstreamModel2\xfc\x02\n" +
+	"\x0eupstream_model\x18\x11 \x01(\tR\rupstreamModel\x12/\n" +
+	"\x13upstream_credential\x18\x12 \x01(\tR\x12upstreamCredential2\xfc\x02\n" +
 	"\fTokenService\x12x\n" +
 	"\x11AssignCredentials\x12/.lenny.tokenservice.v1.AssignCredentialsRequest\x1a0.lenny.tokenservice.v1.AssignCredentialsResponse\"\x00\x12x\n" +
 	"\x11RotateCredentials\x12/.lenny.tokenservice.v1.RotateCredentialsRequest\x1a0.lenny.tokenservice.v1.RotateCredentialsResponse\"\x00\x12x\n" +

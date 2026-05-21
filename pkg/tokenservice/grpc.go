@@ -74,7 +74,7 @@ func (s *GRPCServer) AssignCredentials(ctx context.Context, req *tokensv1.Assign
 			return nil, status.Errorf(codes.Internal,
 				"assign from pool %q: %v", poolID, err)
 		}
-		out[string(lease.Provider)] = leaseToProto(lease)
+		out[string(lease.Provider)] = s.leaseToProtoWithSecret(lease)
 	}
 	return &tokensv1.AssignCredentialsResponse{Leases: out}, nil
 }
@@ -115,7 +115,7 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 		return nil, status.Errorf(codes.Internal,
 			"rotate via pool %q: %v", old.PoolID, err)
 	}
-	return &tokensv1.RotateCredentialsResponse{Lease: leaseToProto(fresh)}, nil
+	return &tokensv1.RotateCredentialsResponse{Lease: s.leaseToProtoWithSecret(fresh)}, nil
 }
 
 // RevokeCredentials releases a lease. The credential's session-slot
@@ -138,7 +138,10 @@ func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.Revoke
 	return &tokensv1.RevokeCredentialsResponse{}, nil
 }
 
-// leaseToProto encodes the in-process Lease record on the wire.
+// leaseToProto encodes the in-process Lease record on the wire. It
+// omits the materialized upstream credential; use
+// leaseToProtoWithSecret on the AssignCredentials and RotateCredentials
+// response paths so the gateway can populate its §4.9 credential cache.
 func leaseToProto(l credential.Lease) *tokensv1.CredentialLease {
 	out := &tokensv1.CredentialLease{
 		LeaseId:         l.LeaseID,
@@ -160,6 +163,19 @@ func leaseToProto(l credential.Lease) *tokensv1.CredentialLease {
 		out.ProxyDialect = l.Proxy.ProxyDialect
 		out.LeaseToken = l.Proxy.LeaseToken
 		out.UpstreamModel = l.Proxy.UpstreamModel
+	}
+	return out
+}
+
+// leaseToProtoWithSecret extends leaseToProto with the upstream
+// provider secret the gateway needs to inject into upstream LLM calls
+// from its §4.9 reverse proxy. The mTLS transport between gateway and
+// Token Service protects the secret on the wire; the gateway caches it
+// in `pkg/gateway/credcache` and never persists it.
+func (s *GRPCServer) leaseToProtoWithSecret(l credential.Lease) *tokensv1.CredentialLease {
+	out := leaseToProto(l)
+	if secret, ok := s.assign.UpstreamCredential(l); ok {
+		out.UpstreamCredential = secret
 	}
 	return out
 }
