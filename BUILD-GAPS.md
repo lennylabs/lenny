@@ -1482,16 +1482,6 @@ identified.
   native `elicitation/create` flow), so the tier-3 scaffold's "no
   MCP counterpart" skip reflects the spec.
 
-## Infrastructure gaps
-
-The cloud-provider absences (`deploy/terraform/cloud/<provider>/`,
-the cloud bring-up scripts, the runtime image with a shell, the
-egress-capture sidecar, the clock-injection harness, HA store
-topologies, the published Homebrew tap) are recorded under the
-Blocked section because they are external infrastructure the
-repository does not yet provision.
-
-
 ## Blocked
 
 Entries here are real gaps that the autonomous loop cannot close
@@ -1499,203 +1489,141 @@ without an external decision, observation, or multi-hour reconciliation.
 They are listed separately so the loop's per-gap workflow does not
 re-attempt them.
 
-- **Cloud-provider integrations (`pkg/blobstore` GCS/S3/Azure,
-  `pkg/kms` cloud variants).** Shipped. Per-provider Go
-  adapters live at:
-  - `pkg/kms/aws/`, `pkg/kms/gcp/`, `pkg/kms/azure/` — implement
-    `kms.Provider` over AWS KMS / Cloud KMS / Azure Key Vault.
-    Each binds the Lenny alias into the cloud-side
-    AAD / EncryptionContext field so a wrapped DEK cannot
-    unwrap under a different alias.
-  - `pkg/blobstore/s3/`, `pkg/blobstore/gcs/`,
-    `pkg/blobstore/azureblob/` — implement `blobstore.Store` +
-    `blobstore.Tombstoner` over S3 / GCS / Azure Blob. Each
-    supports a per-tenant key resolver hook for SSE-KMS / CMEK /
-    CPK so the §12.5 SSE-KMS path runs per-tenant. Tombstoning
-    uses object tags (S3) or blob metadata (GCS, Azure).
-  Each adapter ships fake-client tests covering the round-trip,
-  cross-alias / tombstone behavior, and the per-provider error-
-  mapping table. Unblocking the tier-6 cloud scaffolds further
-  needs only the cloud credentials + the per-provider Terraform
-  under `deploy/terraform/cloud/<provider>/` (also shipped).
-- **Per-provider Terraform.** `deploy/terraform/cloud/<provider>/`
-  now ships AWS, GCP, and Azure root-module skeletons that
-  provision the per-release resources the chart consumes (KMS KEK
-  + alias, object-storage bucket with versioning + public-access
-  blocks, IRSA / Workload Identity / Federated Identity binding to
-  the cluster's OIDC issuer). The outputs map to the Helm install's
-  expected values. The skeletons intentionally omit cluster / VPC /
-  network layers (operator-specific). See `deploy/terraform/cloud/README.md`
-  for the provider matrix and the release-pipeline contract.
 - **Gateway client migration to the Token Service gRPC.** The
   §4.3 trust boundary requires the gateway to call the Token
   Service over mTLS for lease materialization rather than running
   `pkg/credential.MintLease` in-process.
   `pkg/tokenservice.GRPCServer` (lenny.tokenservice.v1.TokenService —
   AssignCredentials, RotateCredentials, RevokeCredentials) is
-  built and tier-2 covered. `cmd/lenny-token-service` now serves
+  built and tier-2 covered. `cmd/lenny-token-service` serves
   both the HTTP RFC 8693 token-exchange surface and the gRPC
-  TokenService surface (`--grpc-addr` flag; defaults to disabled
-  for backward compatibility); the Helm chart wires both ports
-  through `tokenService.httpPort` and `tokenService.grpcPort` and
-  ships a `PodDisruptionBudget(minAvailable: 1)`. The remaining
-  step is the gateway-side cutover: an mTLS-aware Token Service
-  gRPC client in `pkg/gateway/credassign` that delegates
+  TokenService surface (`--grpc-addr` flag); the Helm chart wires
+  both ports through `tokenService.httpPort` and
+  `tokenService.grpcPort` and ships a
+  `PodDisruptionBudget(minAvailable: 1)`. The remaining step is
+  the gateway-side cutover: an mTLS-aware Token Service gRPC
+  client in `pkg/gateway/credassign` that delegates
   AssignCredentials / RotateCredentials / RevokeCredentials to the
   remote, replacing the in-process MintLease call.
 - **`POST /v1/sessions/{id}/upload` 100% error rate against Kind.**
-  Recorded above under Gateway request handling. The local
-  reproduction against an in-process gateway with dev mode plus
-  the documented `checkpoint_duration` payload (1 MB octet stream)
-  returns `201 Created` cleanly, so the handler path itself is
-  not the failure. The failure is specific to the e2e Kind
-  install: most likely candidates are the
-  `checkpoint_duration` k6 scenario's hard-coded
-  `runtimeRef: 'claude-code'` (no `Idempotency-Key` collision is
-  possible since each VU iteration mints a fresh key, and the
-  size sits well under the 64 MiB `UploadMaxBodyBytes` cap), or
-  a tenant / runtime registration race against the bootstrap Job
-  on a freshly-installed cluster. Resolution needs captured k6
-  output from a Kind run that shows the response body and status
-  on the failing request — the scenario's `check()` callback
-  currently discards both. Adding a `response.body` capture on
-  failure to `tests/tier7_load/scenarios/checkpoint_duration/main.js`
-  is the next step.
-- **`docs/runbooks/` structural completion (59 runbooks).** Every
-  runbook in `docs/runbooks/` is missing at least one of the
-  required canonical sections (Symptom, Diagnosis, Procedure,
-  Verification) or its severity / title front matter. The
-  `tests/tier11_docs/runbooks_test.go` gate runs as informational
-  pending Phase 13.5+ when the canonical layout rolls out. Promoting
-  the gate before reconciliation would fail every runbook.
-- **`runbook-map.yaml` coverage.** RESOLVED. Operational runbooks
-  (`triggers: []` — key rotations, tier promotion) are exempt by
-  the updated gate; every alert-driven runbook is mapped to a
-  chaos test and every map entry resolves to a `.md` under
-  `docs/runbooks/`. Both directions of TestRunbookMapCoverage are
-  now hard gates (`t.Errorf`).
+  The local reproduction against an in-process gateway with dev
+  mode plus the documented `checkpoint_duration` payload (1 MB
+  octet stream) returns `201 Created` cleanly, so the handler path
+  itself is not the failure. The failure is specific to the e2e
+  Kind install: likely candidates are the `checkpoint_duration` k6
+  scenario's hard-coded `runtimeRef: 'claude-code'` (no
+  `Idempotency-Key` collision is possible since each VU iteration
+  mints a fresh key, and the size sits well under the 64 MiB
+  `UploadMaxBodyBytes` cap), or a tenant / runtime registration
+  race against the bootstrap Job on a freshly-installed cluster.
+  The response-body capture on failure now lands in
+  `tests/tier7_load/scenarios/checkpoint_duration/main.js`; the
+  remaining step is to re-run against a Kind install and read the
+  captured error envelope.
+- **`docs/runbooks/` structural completion.** The
+  `tests/tier11_docs/runbooks_test.go` gate enforces front-matter
+  title, triggers with severities, and `Trigger / Diagnosis /
+  Remediation` section headings as hard `t.Errorf` failures. The
+  block here is for any runbook that drifts out of conformance
+  during a future merge; the on-disk catalog is 94 runbooks under
+  `docs/runbooks/` (excluding `index.md`).
 - **Homebrew tap publishing (`lennylabs/tap`).** The formula
   source ships at `dist/brew/lenny.rb`; the `cli` job in
   `.github/workflows/release.yml` cross-compiles the four
   `(GOOS, GOARCH)` archives and attaches them to the GitHub
-  release; the `homebrew-tap-pr` job renders the formula with
-  the tag version + the four SHA-256 digests and opens a PR
-  against `lennylabs/homebrew-tap`. The remaining work is
-  external-only — creating the `lennylabs/homebrew-tap`
-  repository on GitHub, granting the release bot push access to
-  the operator's fork (`HOMEBREW_TAP_TOKEN` secret), and tagging
-  the first release. Tier-11 TTHW step 1 runs the moment the
-  first tap PR merges; nothing else in-repo needs to change.
-- **Credential-carrying runtime image with a shell.** Binary +
-  Dockerfile shipped at `cmd/runtimes/cred-shell-echo/`. The image
-  is Alpine-based with a non-root user, retains /bin/sh for the
-  `kubectl exec ... cat /proc/<pid>/environ` probe, and runs the
-  Basic echocore loop. Marked TEST-ONLY in the Dockerfile header
-  (production install rejects via lenny-pod-security webhook).
-  Wiring into the e2e Kind overlay (agent-workload.yaml Runtime
-  declaration + a credentialPool seeded with a real lease) is the
-  remaining e2e-ops step before the §12.9.8 leakage probes can
-  exercise the live image.
-- **Egress-capture sidecar.** Binary shipped at
-  `cmd/lenny-egress-capture`. The sidecar listens on a known port,
-  forwards every accepted connection to a configured upstream, and
-  writes one JSONL row per connection (timestamp, peer, upstream,
-  bytes sent, SHA-256 hash of the sent payload). The hash-not-bytes
-  capture lets the probe verify credential material does not appear
-  in egress without retaining the raw bytes in the capture artifact.
-  Unit-tested for the forward path and concurrent-connection
-  rowping. Wiring into the e2e Kind agent-workload.yaml as a
-  per-pod sidecar plus the §13.2 egress NetworkPolicy that forces
-  the agent through it is the remaining e2e-ops step.
-- **Clock-injection harness.** Shipped as `pkg/clockinject`. The
-  package reads `LENNY_CLOCK_OFFSET_SECONDS` at process start and
-  exposes `clockinject.Now` plus a `Wrap` helper that turns any
-  `func() time.Time` into an offset-applied source. Chaos tests
-  set the env var on the gateway-under-test pod's Deployment;
-  the chaos driver's own clock is unaffected (the offset is
-  per-process). `cmd/lenny-gateway` calls
-  `clockinject.FromEnv` once at startup (failing loudly on a
-  non-integer value) and the two direct `time.Now()` sites in the
-  gateway main (admin audit event timestamp, idempotency cutoff)
-  read through `clockinject.Now`. `cmd/lenny-preflight` calls
-  `clockinject.AssertProductionDefault` so a production install
-  carrying a non-zero offset fails at install time. The
-  per-subsystem clocks the gateway main passes to constructors
-  (sessionserver, admin, delegation, mcptools, credrenewal,
-  orphancleanup, retentiongc, leasecontrol) now flow through
-  `clockinject.Now`, so a chaos offset propagates to every
-  time-sensitive call site behind those entry points. The narrow
-  follow-on is the inner Postgres / Redis store packages that
-  read time directly without an injected clock; passing those
-  through the same harness is a per-package refactor.
-- **HA store topology overlays.** `tests/testinfra/kind/`
-  ships three optional overlays the tier-8 chaos failover tests
-  opt into:
-  - `datastores-ha-redis.yaml` adds a Redis replica plus a
-    three-pod Sentinel StatefulSet monitoring the base
-    `lenny-redis` Service (master name `lenny-master`, quorum 2)
-    so `TestRedisSentinelFailover` can drive a master-kill and
-    follow Sentinel-promoted writes.
-  - `datastores-ha-postgres.yaml` adds a `lenny-postgres-replica`
-    Deployment that streams WAL from the base Postgres through a
-    `replicator` role + slot the bootstrap Job provisions, so
-    `TestPostgresFailover` can drive a primary-kill and exec
-    `pg_ctl promote` on the standby. Automatic promotion is
-    operator-managed in v1 (no in-cluster failover controller).
-  - `datastores-ha-minio.yaml` replaces the base single-node
-    MinIO with a four-pod distributed-mode StatefulSet under EC:2
-    erasure coding, so `TestMinIOReplicationLag` can drive a
-    pod-kill and observe two-pod redundancy.
-  The multi-zone Kind cluster
-  (`tests/testinfra/kind/cluster-multi-zone.yaml`) ships three
-  workers labelled into `us-fake-a / us-fake-b / us-fake-c`. The
-  install script reads `LENNY_CLUSTER_CONFIG` to select between the
-  single-zone baseline and the multi-zone cluster, so
-  `TestCrossZonePartition` and `TestMultiZoneDR` can opt in. Apply
-  notes are in `tests/testinfra/kind/datastores-ha.md`.
+  release; the `homebrew-tap-pr` job renders the formula with the
+  tag version + the four SHA-256 digests and opens a PR against
+  `lennylabs/homebrew-tap`. The remaining work is external-only —
+  creating the `lennylabs/homebrew-tap` repository on GitHub,
+  granting the release bot push access to the operator's fork
+  (`HOMEBREW_TAP_TOKEN` secret), and tagging the first release.
+  Tier-11 TTHW step 1 runs the moment the first tap PR merges;
+  nothing else in-repo needs to change.
+- **Egress-capture sidecar e2e wiring.** Binary shipped at
+  `cmd/lenny-egress-capture` and unit-tested for the forward path
+  and concurrent-connection logging. The remaining step is to wire
+  it into `tests/testinfra/kind/agent-workload.yaml` as a per-pod
+  sidecar and add the §13.2 egress NetworkPolicy that forces agent
+  egress through it, so the tier-9 §12.9.8 leakage probe can read
+  the JSONL capture.
+- **Clock-injection harness — narrow follow-on.** `pkg/clockinject`
+  is shipped; `cmd/lenny-gateway` calls `clockinject.FromEnv` at
+  startup and `cmd/lenny-preflight` calls
+  `clockinject.AssertProductionDefault`. Per-subsystem clocks the
+  gateway main passes to constructors (sessionserver, admin,
+  delegation, mcptools, credrenewal, orphancleanup, retentiongc,
+  leasecontrol, billing failover, translators) flow through
+  `clockinject.Now`. The narrow follow-on is the inner Postgres /
+  Redis store packages that read time directly without an injected
+  clock; passing those through the same harness is a per-package
+  refactor.
 - **§26 reference-runtime OCI images.** The image registry the
   nightly conformance run pulls from does not exist.
-- **External pen-test bundle.** Tier-9 `TestPentestReplay` now
-  defaults to the v1 internal baseline at
+- **External pen-test bundle.** Tier-9 `TestPentestReplay` defaults
+  to the v1 internal baseline at
   `tests/tier9_security/pentest/v1-baseline-bundle.json`, which
   encodes the findings recorded in `tests/tier9_security/reviews/`
-  as remediated. Release engineering points
-  `LENNY_PENTEST_BUNDLE` at the partner bundle when an external
-  engagement ships.
-- **SBOM generation as a CI step.** RESOLVED. `TestSBOMGeneration`
-  now enforces the static contract on `.github/workflows/release.yml`:
-  the `anchore/sbom-action` step, the `cyclonedx-json` format flag,
-  the `cosign attest --type cyclonedx` step, and the
-  "Upload SBOM for the release job" artifact step must all be
-  present. A release that drops any step trips the gate.
+  as remediated. Release engineering points `LENNY_PENTEST_BUNDLE`
+  at the partner bundle when an external engagement ships.
 
 ## Recommended sequencing
 
-The implementation gaps cluster such that a small set of investments
+The remaining gaps cluster such that a small set of investments
 unblocks disproportionately many tests.
 
-1. Build the Token Service gRPC controller (`AssignCredentials`,
-   `RotateCredentials`, `RevokeCredentials`) and ship a credential-
-   carrying runtime image with a shell. Unblocks one tier-2 controller
-   test, one tier-4 integration test, four tier-8 chaos tests, and
-   three tier-9 security tests.
-2. Ship the elicitation-emitting runtime variant and the tamper-
-   detect, tamper-enforce, and platform-floor resolver wiring.
-   Unblocks one tier-3 contract test, one tier-8 chaos test, and
-   three tier-9 security tests.
-3. Fix the `/v1/sessions/{id}/upload` 100% error rate so the
-   checkpoint-duration k6 scenario can baseline. Currently blocked on
-   reproducing the Kind-specific failure; the dev-mode subprocess
-   handles the same request shape correctly.
-4. Promote runbook-coverage assertions from `t.Logf` to `t.Errorf` in
-   `tests/tier11_docs/runbooks_test.go` and
-   `tests/testinfra/chaos/runbook_map_test.go`, then reconcile
-   `docs/runbooks/` against `tests/tier8_chaos/runbook-map.yaml` by
-   either mapping the 44 unmapped runbooks or deleting the docs.
+1. Cut the gateway-side credential path over to the Token Service
+   gRPC. Build an mTLS-aware client in `pkg/gateway/credassign` that
+   delegates `AssignCredentials` / `RotateCredentials` /
+   `RevokeCredentials` to `lenny-token-service`, and retire the
+   in-process `pkg/credential.MintLease` path. Closes the §4.3 trust
+   boundary and unblocks one tier-2 controller test, one tier-4
+   integration test, and the tier-8 chaos suites that depend on a
+   live Token Service.
+2. Wire the egress-capture sidecar into the e2e Kind overlay
+   (`tests/testinfra/kind/agent-workload.yaml`) with the §13.2 egress
+   NetworkPolicy that forces agent pods through it. Unblocks the
+   tier-9 §12.9.8 credential-leakage probe.
+3. Ship the elicitation tampering intermediary. The
+   `elicitation-echo` runtime is already wired in the e2e overlay;
+   the remaining piece is the intermediary that drives tier-9
+   `TestElicitationTamperEnforceMode`,
+   `TestElicitationTamperDetectOnlyMode`,
+   `TestElicitationPlatformFloor`, and tier-8
+   `TestElicitationDeadlockDetection` against the live cluster.
+4. Re-run the `checkpoint_duration` k6 scenario against a Kind
+   install with the now-captured response body, read the error
+   envelope, and fix the failure mode in the gateway upload path or
+   the scenario's tenant/runtime setup.
+5. Land the tier-6 cloud follow-on suites in the sequencing order
+   recorded under "Tier-6 follow-on suites" (critical first, then
+   the high-value RDS / ElastiCache / EKS-platform set).
+6. Bring the GCP (GKE) and Azure (AKS) tier-6 coverage to EKS
+   parity and run it end-to-end. Today `pkg/kms/{gcp,azure}`,
+   `pkg/blobstore/{gcs,azureblob}`, the Terraform skeletons under
+   `deploy/terraform/cloud/{gcp,azure}/`, and `scripts/cloud/{gke,aks}/{up,down}.sh`
+   exist, but the per-provider Terraform is materially thinner than
+   the AWS root module (GCP 136 lines, Azure 158 lines vs AWS 247
+   lines), no `scripts/cloud/{gke,aks}/run-e2e.sh` driver exists,
+   and the tier-6 cluster-assertion / behavior / managed-service
+   test bodies encode EKS-specific paths (IRSA annotation, RDS
+   IAM auth, ElastiCache cluster mode, EBS CSI, VPC CNI). The
+   work is: (a) expand the GCP and Azure Terraform to provision
+   the cluster + managed datastores + Workload-Identity / Federated
+   -Identity bindings the chart consumes; (b) add the
+   `scripts/cloud/{gke,aks}/run-e2e.sh` end-to-end drivers
+   mirroring `scripts/cloud/eks/run-e2e.sh`; (c) extend or fork
+   the tier-6 test files into provider-aware paths covering Cloud
+   SQL + Memorystore (GCP) and Azure Database for PostgreSQL +
+   Azure Cache for Redis (Azure); (d) run the suite with real GCP
+   and Azure credentials and record any provider-specific
+   divergences. The §spec coverage matches the existing EKS suites
+   (§4.3, §12.5, §13, §17.3, §17.7) since spec/13 / spec/17
+   already name cross-cloud equivalents (Workload Identity ↔ IRSA
+   ↔ Federated Identity).
 
 ## Maintenance
 
-This file records the verified state on 2026-05-19. When a gap is
+This file records the verified state on 2026-05-20. When a gap is
 closed, delete its entry. When a new gap surfaces, add it under the
 matching section with a verified file or line reference. Counts in
 this file are snapshots; treat them as the audit's record of the
