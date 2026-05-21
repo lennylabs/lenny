@@ -6,7 +6,7 @@
 // LENNY_AWS_RDS_* env vars the Terraform module emits (see
 // deploy/terraform/cloud/aws/managed-services.tf) and skips when the
 // endpoint is empty. The in-cluster `lenny-postgres` fixture-based
-// flow under tests/testinfra/kind/datastores.yaml keeps running
+// flow under tests/testinfra/k8s/datastores.yaml keeps running
 // independently — the managed-service tests are additive.
 
 package tier6_e2e_cloud_test

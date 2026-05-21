@@ -52,7 +52,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 KIND_CONFIG="${LENNY_CLUSTER_CONFIG:-${REPO_ROOT}/tests/testinfra/kind/cluster.yaml}"
 E2E_VALUES="${REPO_ROOT}/tests/testinfra/kind/e2e-values.yaml"
-DATASTORES_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/datastores.yaml"
+DATASTORES_MANIFEST="${REPO_ROOT}/tests/testinfra/k8s/datastores.yaml"
 MIGRATE_JOB_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/migrate-job.yaml"
 AGENT_WORKLOAD_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/agent-workload.yaml"
 CHART_DIR="${REPO_ROOT}/charts/lenny"

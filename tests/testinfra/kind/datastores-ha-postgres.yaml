@@ -20,7 +20,7 @@
 #
 # Apply on top of the base datastores.yaml:
 #
-#   kubectl apply -f tests/testinfra/kind/datastores.yaml
+#   kubectl apply -f tests/testinfra/k8s/datastores.yaml
 #   kubectl apply -f tests/testinfra/kind/datastores-ha-postgres.yaml
 #
 # Fixed connection facts:

@@ -26,7 +26,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
-// Data-store Deployment names from tests/testinfra/kind/datastores.yaml.
+// Data-store Deployment names from tests/testinfra/k8s/datastores.yaml.
 const (
 	postgresDeployment = "lenny-postgres"
 	redisDeployment    = "lenny-redis"

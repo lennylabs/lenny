@@ -11,7 +11,7 @@
 #                                       Workload Identity binding).
 #   2. docker push images to Artifact Registry (operator-supplied).
 #   3. helm template lenny chart with the GCP values overlay.
-#   4. kubectl apply -f tests/testinfra/kind/datastores.yaml
+#   4. kubectl apply -f tests/testinfra/k8s/datastores.yaml
 #                                     — Postgres + Redis fixtures
 #                                       inside the cluster (GCS replaces
 #                                       MinIO).
@@ -94,7 +94,7 @@ features:
 EOF
 
 log "step 4: in-cluster Postgres + Redis fixtures (or Cloud SQL / Memorystore)"
-kubectl apply -f "${REPO_ROOT}/tests/testinfra/kind/datastores.yaml"
+kubectl apply -f "${REPO_ROOT}/tests/testinfra/k8s/datastores.yaml"
 
 log "step 5: helm install ${LENNY_RELEASE}"
 helm upgrade --install "${LENNY_RELEASE}" "${REPO_ROOT}/charts/lenny" \

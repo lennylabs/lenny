@@ -14,7 +14,7 @@
 #                                     — render a cloud values overlay
 #                                       pointing the chart at ECR +
 #                                       the Terraform outputs.
-#   4. kubectl apply -f tests/testinfra/kind/datastores.yaml
+#   4. kubectl apply -f tests/testinfra/k8s/datastores.yaml
 #                                     — Postgres + Redis + MinIO
 #                                       fixtures inside the cluster.
 #   5. helm install lenny-e2e         — chart install with the cloud
@@ -247,7 +247,7 @@ kubectl create namespace lenny-system --dry-run=client -o yaml | kubectl apply -
 # wiring the gateway to the S3 backend is BUILD-GAPS TestCloudS3ViaIRSA
 # follow-on.
 kubectl apply -n lenny-system -l 'lenny.dev/e2e-datastore notin (minio)' \
-  -f "${REPO_ROOT}/tests/testinfra/kind/datastores.yaml"
+  -f "${REPO_ROOT}/tests/testinfra/k8s/datastores.yaml"
 kubectl -n lenny-system delete deployment/lenny-minio service/lenny-minio \
   --ignore-not-found >/dev/null
 kubectl wait -n lenny-system --for=condition=available --timeout=300s \

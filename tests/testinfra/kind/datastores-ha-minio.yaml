@@ -15,7 +15,7 @@
 # Deployment / Service is deleted first so the distributed MinIO can
 # bind the lenny-minio Service name the gateway already targets:
 #
-#   kubectl apply -f tests/testinfra/kind/datastores.yaml
+#   kubectl apply -f tests/testinfra/k8s/datastores.yaml
 #   kubectl delete deployment lenny-minio -n lenny-system --ignore-not-found
 #   kubectl delete svc lenny-minio -n lenny-system --ignore-not-found
 #   kubectl apply -f tests/testinfra/kind/datastores-ha-minio.yaml

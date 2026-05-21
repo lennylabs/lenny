@@ -145,7 +145,7 @@ bootstrap:
     pullPolicy: IfNotPresent
 
 # Point the gateway + controller at the in-cluster data-store
-# fixtures (tests/testinfra/kind/datastores.yaml). A future revision
+# fixtures (tests/testinfra/k8s/datastores.yaml). A future revision
 # routes the gateway through RDS / ElastiCache / S3 directly.
 #
 # Note: the cloud overlay deliberately omits the minio.* keys. EKS

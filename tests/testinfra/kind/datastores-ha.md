@@ -23,7 +23,7 @@ sets `LENNY_REDIS_SENTINEL_ADDRS` to the headless Sentinel Service
 Apply with the base baseline:
 
 ```bash
-kubectl apply -f tests/testinfra/kind/datastores.yaml
+kubectl apply -f tests/testinfra/k8s/datastores.yaml
 kubectl apply -f tests/testinfra/kind/datastores-ha-redis.yaml
 ```
 
@@ -43,7 +43,7 @@ arrive on the `lenny-postgres-replica.lenny-system.svc:5432` Service.
 Apply with the base baseline:
 
 ```bash
-kubectl apply -f tests/testinfra/kind/datastores.yaml
+kubectl apply -f tests/testinfra/k8s/datastores.yaml
 kubectl apply -f tests/testinfra/kind/datastores-ha-postgres.yaml
 ```
 
@@ -67,7 +67,7 @@ Deployment / Service first so the StatefulSet can bind the
 `lenny-minio` Service name the gateway already targets:
 
 ```bash
-kubectl apply -f tests/testinfra/kind/datastores.yaml
+kubectl apply -f tests/testinfra/k8s/datastores.yaml
 kubectl delete deployment lenny-minio -n lenny-system --ignore-not-found
 kubectl delete svc lenny-minio -n lenny-system --ignore-not-found
 kubectl apply -f tests/testinfra/kind/datastores-ha-minio.yaml
