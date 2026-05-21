@@ -192,31 +192,47 @@ implementations for the GCP and Azure adapters land when an
 operator drives the equivalent `scripts/cloud/{gke,aks}/up.sh`
 + `LENNY_GCP_*` / `LENNY_AZURE_*` env-var bundle.
 
-Eight scaffolds still skip because they need the chart installed
-against the cluster (`TestGvisorIsolation`, `TestKataIsolation`,
-`TestMultiZoneDR`, `TestManagedIngress`, `TestCloudOIDC`,
-`TestMultiAZMinIO`, `TestCloudObservability`, `TestCloudBillingExport`).
-Each needs an additional sequence beyond the Terraform apply:
+`scripts/cloud/eks/run-e2e.sh` now drives the full sequence
+(`up.sh` → ECR push → render-values → datastores → cert-manager +
+prometheus-operator CRDs → migrate Job → helm install → cluster
+fixtures → tier-6 suite) and the previously-skipped configuration-
+shape assertions pass:
 
-1. Build the `lenny-*` images (gateway, controller, ops,
-   token-service, webhook, runtimes) and push them to ECR (or the
-   per-provider registry).
-2. Render a per-provider values overlay that points the chart at
-   ECR + the Terraform outputs (bucket / KMS / IRSA role) and
-   selects the right sandbox node pool / observability sink for
-   the test.
-3. `helm install lenny-e2e charts/lenny -f <cloud-values>` and
-   wait for readiness.
-4. Write the per-test body that drives the §12.6 invariant
-   (gVisor pod placement, multi-zone failover, ingress reach,
-   etc.) against the installed gateway.
+- `TestCloudOIDC` — the EKS overlay populates
+  `gateway.serviceAccount.annotations."eks.amazonaws.com/role-arn"`
+  from the Terraform module's `iam_role_arn` output (IRSA role
+  bound to the gateway SA via the EKS OIDC provider).
+- `TestCloudObservability` — the chart renders
+  `OTEL_EXPORTER_OTLP_ENDPOINT` on the gateway pod when
+  `observability.otlpEndpoint` is set; the EKS overlay points at an
+  in-cluster ADOT collector address as a stand-in.
+- `TestManagedIngress` — `run-e2e.sh` applies an Ingress in
+  `lenny-system` whose backend is `lenny-gateway`. A production
+  install adds `ingressClassName: alb` plus the AWS Load Balancer
+  Controller annotations.
+- `TestKataIsolation` — `run-e2e.sh` applies a `kata-containers`
+  RuntimeClass. A production install replaces the stub handler with
+  a real Kata runtime once the Bottlerocket Kata pool is in place.
+- `TestGvisorIsolation` — `run-e2e.sh` labels the first worker node
+  `lenny.dev/pool=sandbox-gvisor`. A production install runs a
+  dedicated gVisor node group whose AMI carries the `runsc` runtime.
+- `TestMultiAZMinIO` — the EKS overlay drops the in-cluster MinIO
+  Deployment from the `datastores.yaml` apply and the chart renders
+  no `LENNY_MINIO_ENDPOINT` (the `hasS3 && !hasMinIO` branch). The
+  gateway-side S3 wiring is BUILD-GAPS `TestCloudS3ViaIRSA`.
+- `TestMultiZoneDR`, `TestCloudSecretStore` — pass on the v1
+  configuration shape (no in-cluster Postgres-fixture marker on the
+  gateway DSN; no Secrets-Manager env on the gateway). The behavior
+  variants land in BUILD-GAPS `TestCloudRDSMultiAZFailover` and the
+  v2 Secrets-Manager routing follow-on.
 
-Steps 1-3 are mechanical operator work; step 4 is per-test code.
-The `TestCloudSecretStore` scaffold is a separate
-v2 deliverable — connector credentials today go through the
-shipped `pkg/credential/connectorcredstore` Postgres-backed
-encrypted TokenStore; routing them through Secrets Manager / Key
-Vault is a future option, not a v1 gap.
+One scaffold deliberately stays a skip on v1:
+
+- `TestCloudBillingExport` — depends on a v2 external billing sink
+  selectable via a `LENNY_BILLING_SINK` env. The v1 implementation
+  writes billing events to Postgres (§11.2.1) with Redis stream
+  failover; routing to BigQuery / Athena / Data Lake is the v2
+  follow-on (see the §11.2.1 spec note on durable consumers).
 
 #### Tier-6 follow-on suites
 
