@@ -1505,20 +1505,17 @@ re-attempt them.
   (AssignProto round-trip + credcache mirror, PoolForLease binding,
   Release across both sides, ErrPoolNotFound mapping).
 - **`POST /v1/sessions/{id}/upload` 100% error rate against Kind.**
-  The local reproduction against an in-process gateway with dev
-  mode plus the documented `checkpoint_duration` payload (1 MB
-  octet stream) returns `201 Created` cleanly, so the handler path
-  itself is not the failure. The failure is specific to the e2e
-  Kind install: likely candidates are the `checkpoint_duration` k6
-  scenario's hard-coded `runtimeRef: 'claude-code'` (no
-  `Idempotency-Key` collision is possible since each VU iteration
-  mints a fresh key, and the size sits well under the 64 MiB
-  `UploadMaxBodyBytes` cap), or a tenant / runtime registration
-  race against the bootstrap Job on a freshly-installed cluster.
-  The response-body capture on failure now lands in
-  `tests/tier7_load/scenarios/checkpoint_duration/main.js`; the
-  remaining step is to re-run against a Kind install and read the
-  captured error envelope.
+  PROBABLY RESOLVED. The e2e overlay now bootstraps the `acme`
+  tenant, the `alice@acme.com` user (tenant-admin), and the
+  `claude-code` + `echo` runtimes the tier-7 scenarios assume —
+  before this change the chart's `bootstrap.tenants/runtimes/users`
+  defaults were empty, so the Kind install had no seeded tenant
+  identity to back the scenario's `X-Lenny-Tenant-ID: acme` header.
+  The dev-mode in-process subprocess succeeded because its tenant
+  store admits any tenant id without a lookup. The response-body
+  capture remains in `tests/tier7_load/scenarios/checkpoint_duration/main.js`
+  so a fresh Kind run that still hits an error surfaces the
+  envelope; awaiting the next run-e2e cycle for confirmation.
 - **`docs/runbooks/` structural completion.** The
   `tests/tier11_docs/runbooks_test.go` gate enforces front-matter
   title, triggers with severities, and `Trigger / Diagnosis /

@@ -77,6 +77,32 @@ bootstrap:
     repository: lenny-ctl
     tag: e2e
     pullPolicy: Never
+  # Seed the §17.6 Day-1 fixture data the tier-3/4/7 scenarios assume:
+  # an `acme` tenant, an `alice@acme.com` user with tenant-admin, and
+  # the `claude-code` and `echo` runtimes the tier-7 scenarios use as
+  # session runtimeRef. The bootstrap Job is idempotent; re-runs are
+  # safe and the Job runs on every helm install/upgrade.
+  tenants:
+    - id: acme
+      displayName: Acme Corp
+  users:
+    - subject: alice@acme.com
+      tenantId: acme
+      roles:
+        - tenant-admin
+  runtimes:
+    - name: claude-code
+      type: agent
+      image: lenny-runtime-echo:e2e
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+    - name: echo
+      type: agent
+      image: lenny-runtime-echo:e2e
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
 
 # Dev mode stays on for e2e so the gateway keeps its dev-header auth
 # shortcuts. The data stores below are real in-cluster services, so
