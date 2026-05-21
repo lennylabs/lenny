@@ -100,6 +100,7 @@ func (p *elicitationProbe) put(t *testing.T, path string, body any) (int, string
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "platform")
 	req.Header.Set("X-Lenny-User-ID", "tier9-admin")
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
 	resp, err := p.client.Do(req)
 	if err != nil {
 		t.Fatalf("PUT %s: %v", path, err)
@@ -115,6 +116,7 @@ func (p *elicitationProbe) get(t *testing.T, path string) (int, string) {
 	req, _ := http.NewRequest(http.MethodGet, p.baseURL+path, nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "platform")
 	req.Header.Set("X-Lenny-User-ID", "tier9-admin")
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
 	resp, err := p.client.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
@@ -125,26 +127,44 @@ func (p *elicitationProbe) get(t *testing.T, path string) (int, string) {
 }
 
 // requireTenantAcme returns whether a tenant 'acme' is seeded in the
-// cluster (skipping otherwise). The bootstrap path creates it
-// automatically in dev mode; tests that require it skip cleanly
-// when the cluster has not been bootstrapped.
+// cluster (creating it via POST /v1/admin/tenants if needed). The
+// bootstrap path creates it automatically when the chart's
+// bootstrap.tenants is set; tests that require it skip cleanly when
+// the create fails too.
 func requireTenantAcme(t *testing.T, p *elicitationProbe) {
 	t.Helper()
-	status, body := p.get(t, "/v1/admin/tenants/acme")
-	if status == http.StatusNotFound {
-		// Try to create it inline — dev-mode admin tolerates the
-		// platform-admin tenant header.
-		_ = body
-		status, body = p.put(t, "/v1/admin/tenants/acme", map[string]any{
-			"workspaceTier":      "T1",
-			"complianceProfile":  "standard",
-			"residencyResolved":  "us",
-			"residencyRequested": "us",
-		})
-		if status != http.StatusOK && status != http.StatusCreated {
-			t.Skipf("§12.9.9: tenant 'acme' missing and PUT to create returned %d body %s", status, body)
-		}
+	status, _ := p.get(t, "/v1/admin/tenants/acme")
+	if status == http.StatusOK {
+		return
 	}
+	// Create the tenant via POST.
+	status, body := p.post(t, "/v1/admin/tenants", map[string]any{
+		"id":                "acme",
+		"displayName":       "Acme Corp",
+		"workspaceTier":     "T1",
+		"complianceProfile": "standard",
+	})
+	if status != http.StatusOK && status != http.StatusCreated {
+		t.Skipf("§12.9.9: tenant 'acme' missing and POST to create returned %d body %s", status, body)
+	}
+}
+
+// post drives a POST against the admin API. Returns status and body.
+func (p *elicitationProbe) post(t *testing.T, path string, body any) (int, string) {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, p.baseURL+path, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "platform")
+	req.Header.Set("X-Lenny-User-ID", "tier9-admin")
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
+	resp, err := p.client.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(bodyBytes)
 }
 
 // spec: §9.2

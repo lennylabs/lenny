@@ -102,7 +102,13 @@ spec:
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
-  deploymentModel: embedded
+  # cred-shell-echo is a stdin/stdout §15.4.1 binary (it does not
+  # link the adapter), so the §4.7 sidecar deployment model is the
+  # correct fit: the lenny-adapter sidecar serves the gRPC contract
+  # and bridges to cred-shell-echo over the abstract Unix socket.
+  # The egress-capture sidecar (Step 2 §12.9.8) is injected by the
+  # reconciler alongside the adapter + runtime pair.
+  deploymentModel: sidecar
 ---
 apiVersion: lenny.dev/v1
 kind: SandboxTemplate

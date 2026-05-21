@@ -145,8 +145,14 @@ func TestCredentialLeakageFilesystem(t *testing.T) {
 
 	// /run/lenny is the §4.7 credential mount path. ls -la makes the
 	// mode + group ownership readable from the test, and `cat` on
-	// each readable file probes for credential strings.
-	listing, err := execContainer(t, c, pod, "runtime", "sh", "-c", "ls -la /run/lenny || true; for f in /run/lenny/*; do [ -f \"$f\" ] && cat \"$f\"; done")
+	// each readable file probes for credential strings. The
+	// `2>/dev/null || true` guards against an empty mount (no
+	// credential files yet) — `ls /run/lenny/*` returns exit code 1
+	// when the glob doesn't match, which is the safe "no credentials
+	// on disk" state. The probe only needs to assert that whatever
+	// files do exist contain no LLM-provider credential prefix.
+	listing, err := execContainer(t, c, pod, "runtime", "sh", "-c",
+		"ls -la /run/lenny 2>/dev/null || true; find /run/lenny -type f 2>/dev/null -exec cat {} +; true")
 	if err != nil {
 		t.Skipf("§12.9.8 (filesystem): probe failed against cred-shell-echo pod %s: %v\noutput:\n%s",
 			pod, err, listing)
