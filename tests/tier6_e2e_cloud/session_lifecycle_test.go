@@ -185,9 +185,14 @@ func portForwardGatewayCloud(t *testing.T) (*exec.Cmd, string, func()) {
 	}
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	// Poll /healthz until it answers 200; bound the wait.
+	// Poll /healthz until it answers 200. The 120s ceiling covers a
+	// freshly-restarted gateway pod settling on EKS (rolling restart
+	// from run-e2e.sh's step 5b can take ~30s for both replicas to
+	// reach Ready), plus the kubectl subprocess's apiserver upgrade
+	// negotiation. The original 30s window was occasionally too tight
+	// for the EKS path.
 	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(baseURL + "/healthz")
 		if err == nil {
@@ -196,7 +201,7 @@ func portForwardGatewayCloud(t *testing.T) (*exec.Cmd, string, func()) {
 				return cmd, baseURL, stop
 			}
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
 	stop()
 	t.Logf("gateway port-forward never returned 200 on /healthz; tier-6 cloud lifecycle test cannot proceed")

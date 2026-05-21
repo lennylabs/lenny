@@ -284,6 +284,13 @@ func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string)
 // convenience path that bundles create + finalize + start in one call.
 // Returns the running session with the placed-pod identity recorded in
 // the gateway's sessionstore.
+//
+// Retries up to 6 times with linear backoff when the gateway returns
+// 503 POD_CLAIM_FAILED. The §4.6 WarmPoolController scales the pool
+// asynchronously after a claim drains it, so a follow-up test that
+// arrives before the next warm pod settles sees a transient
+// "pool has no idle pod" envelope. The retry window covers the
+// observed sub-second replenish on the tier-5/8/9 Kind path.
 func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string) (*Session, error) {
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime
@@ -295,22 +302,39 @@ func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string
 	// this override the gateway falls back to its default
 	// (`sandboxed`) and the lookup misses every pool.
 	body := fmt.Sprintf(`{"runtimeRef":%q,"isolationProfile":"standard"}`, runtimeRef)
-	res, err := d.doRequest(ctx, http.MethodPost, "/v1/sessions/start",
-		tenantAdmin(tenantID), strings.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create-and-start session: %w", err)
+	var (
+		lastStatus int
+		lastBody   []byte
+	)
+	for attempt := 0; attempt < 6; attempt++ {
+		res, err := d.doRequest(ctx, http.MethodPost, "/v1/sessions/start",
+			tenantAdmin(tenantID), strings.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create-and-start session: %w", err)
+		}
+		rb, _ := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		if res.StatusCode == http.StatusCreated {
+			var s Session
+			if err := json.Unmarshal(rb, &s); err != nil {
+				return nil, fmt.Errorf("decode session response: %w; body %s", err, string(rb))
+			}
+			return &s, nil
+		}
+		lastStatus = res.StatusCode
+		lastBody = rb
+		if res.StatusCode != http.StatusServiceUnavailable ||
+			!bytes.Contains(rb, []byte("POD_CLAIM_FAILED")) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+		}
 	}
-	defer res.Body.Close()
-	rb, _ := io.ReadAll(res.Body)
-	if res.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("create-and-start session for tenant %q: status %d, body %s",
-			tenantID, res.StatusCode, string(rb))
-	}
-	var s Session
-	if err := json.Unmarshal(rb, &s); err != nil {
-		return nil, fmt.Errorf("decode session response: %w; body %s", err, string(rb))
-	}
-	return &s, nil
+	return nil, fmt.Errorf("create-and-start session for tenant %q: status %d, body %s",
+		tenantID, lastStatus, string(lastBody))
 }
 
 // Start issues POST /v1/sessions/{id}/start, transitioning a ready
