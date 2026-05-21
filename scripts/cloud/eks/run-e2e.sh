@@ -382,10 +382,15 @@ export LENNY_CLOUD_PROVIDER=eks
 export LENNY_AWS_ARTIFACT_BUCKET="${ARTIFACT_BUCKET}"
 export LENNY_AWS_KMS_KEY_ARN="${KMS_KEY_ARN}"
 
-# Install lenny-test if missing.
-if ! command -v lenny-test >/dev/null 2>&1; then
+# Install lenny-test if missing. `go install` writes the binary to
+# `$(go env GOPATH)/bin` which is not always on the script's PATH;
+# resolve it explicitly so the invocation works regardless of the
+# operator's shell setup.
+LENNY_TEST_BIN="$(command -v lenny-test || true)"
+if [[ -z "${LENNY_TEST_BIN}" ]]; then
   go install "${REPO_ROOT}/cmd/lenny-test"
+  LENNY_TEST_BIN="$(go env GOPATH)/bin/lenny-test"
 fi
-lenny-test --tier e2e_cloud --output human
+"${LENNY_TEST_BIN}" --tier e2e_cloud --output human
 
 echo "run-e2e.sh: tier-6 suite completed" >&2
