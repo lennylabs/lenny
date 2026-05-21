@@ -61,6 +61,12 @@ type Options struct {
 	VUs      int
 	BaseURL  string
 	ExtraEnv map[string]string
+	// ScenarioRoot overrides the default scenario lookup directory
+	// (tests/tier7_load/scenarios). The cloud-load tier-7 suite
+	// stores its scenarios under tests/tier7_load_cloud/scenarios
+	// and sets this to that path; smoke callers leave it empty
+	// and the runner picks the smoke default.
+	ScenarioRoot string
 }
 
 // Threshold is the per-percentile regression budget.
@@ -97,7 +103,11 @@ func RunScenario(t testing.TB, scenario string, opts Options) Result {
 	if !K6Available(t) {
 		t.Skipf("RunScenario: k6 not on PATH; install via `brew install k6` or per https://k6.io")
 	}
-	scriptPath := filepath.Join(schematest.RepoRoot(t), "tests", "tier7_load", "scenarios", scenario, "main.js")
+	root := opts.ScenarioRoot
+	if root == "" {
+		root = filepath.Join("tests", "tier7_load", "scenarios")
+	}
+	scriptPath := filepath.Join(schematest.RepoRoot(t), root, scenario, "main.js")
 	if _, err := os.Stat(scriptPath); err != nil {
 		t.Skipf("RunScenario: scenario %s not present at %s", scenario, scriptPath)
 	}

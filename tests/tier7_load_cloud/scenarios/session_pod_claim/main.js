@@ -57,7 +57,7 @@ export default function () {
   const idem = `${__VU}-${__ITER}-${Date.now()}`;
   const create = http.post(
     `${BASE}/v1/sessions/start`,
-    JSON.stringify({ runtimeRef: RUNTIME }),
+    JSON.stringify({ runtimeRef: RUNTIME, isolationProfile: 'standard' }),
     { headers: authHeaders({ 'Idempotency-Key': idem }), tags: { name: 'claim_pod' } },
   );
   if (!check(create, { 'session running': (r) => r.status === 201 }) || !create.body) {

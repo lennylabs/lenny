@@ -47,7 +47,7 @@ function authHeaders(extra) {
 export default function () {
   const create = http.post(
     `${BASE}/v1/sessions/start`,
-    JSON.stringify({ runtimeRef: RUNTIME }),
+    JSON.stringify({ runtimeRef: RUNTIME, isolationProfile: 'standard' }),
     { headers: authHeaders({ 'Idempotency-Key': `${__VU}-${__ITER}-${Date.now()}` }), tags: { name: 'run_task' } },
   );
   if (!check(create, { 'task started': (r) => r.status === 201 }) || !create.body) return;

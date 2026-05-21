@@ -48,7 +48,7 @@ function authHeaders(extra) {
 export default function () {
   const create = http.post(
     `${BASE}/v1/sessions/start`,
-    JSON.stringify({ runtimeRef: RUNTIME }),
+    JSON.stringify({ runtimeRef: RUNTIME, isolationProfile: 'standard' }),
     { headers: authHeaders({ 'Idempotency-Key': `${__VU}-${__ITER}-${Date.now()}` }), tags: { name: 'create_session' } },
   );
   if (!check(create, { 'session created': (r) => r.status === 201 }) || !create.body) return;

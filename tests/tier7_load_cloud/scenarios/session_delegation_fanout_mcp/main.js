@@ -57,7 +57,7 @@ function mcpCall(name, args, tagName) {
 export default function () {
   const parent = http.post(
     `${BASE}/v1/sessions/start`,
-    JSON.stringify({ runtimeRef: RUNTIME }),
+    JSON.stringify({ runtimeRef: RUNTIME, isolationProfile: 'standard' }),
     { headers: authHeaders({ 'Idempotency-Key': `root-${__VU}-${__ITER}-${Date.now()}` }), tags: { name: 'spawn_root' } },
   );
   if (!check(parent, { 'root created': (r) => r.status === 201 }) || !parent.body) return;

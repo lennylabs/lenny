@@ -47,7 +47,7 @@ function authHeaders(extra) {
 export default function () {
   const parent = http.post(
     `${BASE}/v1/sessions`,
-    JSON.stringify({ runtimeRef: RUNTIME }),
+    JSON.stringify({ runtimeRef: RUNTIME, isolationProfile: 'standard' }),
     { headers: authHeaders({ 'Idempotency-Key': `root-${__VU}-${__ITER}-${Date.now()}` }), tags: { name: 'spawn_root' } },
   );
   if (!check(parent, { 'root created': (r) => r.status === 201 }) || !parent.body) return;
@@ -57,7 +57,7 @@ export default function () {
   for (let i = 0; i < FANOUT; i++) {
     const res = http.post(
       `${BASE}/v1/sessions/start`,
-      JSON.stringify({ runtimeRef: RUNTIME, parentID: parentID }),
+      JSON.stringify({ runtimeRef: RUNTIME, parentID: parentID, isolationProfile: 'standard' }),
       { headers: authHeaders({ 'Idempotency-Key': `child-${__VU}-${__ITER}-${i}-${Date.now()}` }), tags: { name: 'spawn_child' } },
     );
     if (check(res, { 'child accepted': (r) => r.status === 201 }) && res.body) {

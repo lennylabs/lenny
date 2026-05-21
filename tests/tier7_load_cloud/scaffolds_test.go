@@ -159,13 +159,16 @@ func scenarioEnv(s scaleConfig, extra map[string]string) map[string]string {
 // cloudLoadOptions returns the load.Options every cloud-load test
 // passes to load.RunScenario. The k6 invocation reads --duration
 // and --vus from Options; the rate-bounded scenarios in the suite
-// read LENNY_RATE through ExtraEnv and ignore --vus.
+// read LENNY_RATE through ExtraEnv and ignore --vus. The
+// ScenarioRoot points at the cloud-load scenarios directory; the
+// load.RunScenario default targets the smoke directory.
 func cloudLoadOptions(s scaleConfig, baseURL string, extra map[string]string) load.Options {
 	return load.Options{
-		Duration: s.Duration,
-		VUs:      s.VUs,
-		BaseURL:  baseURL,
-		ExtraEnv: scenarioEnv(s, extra),
+		Duration:     s.Duration,
+		VUs:          s.VUs,
+		BaseURL:      baseURL,
+		ExtraEnv:     scenarioEnv(s, extra),
+		ScenarioRoot: "tests/tier7_load_cloud/scenarios",
 	}
 }
 
