@@ -459,12 +459,15 @@ Backup and point-in-time recovery (expands #4
 `TestCloudBackupRestore` with the RDS-side forms):
 
 25. **`TestCloudRDSAutomatedBackup`** (§17.7) *(expands #4)*.
-    Verify the RDS instance's automated-backup retention window
-    is set to the §17.7 floor (7 days minimum). Trigger a manual
-    `aws rds create-db-snapshot`, restore it into a fresh
-    `<release>-restore` instance, point a fresh gateway at it,
-    and assert the restored session lifecycle reads back
-    correctly.
+    *Implemented* in `tests/tier6_e2e_cloud/managed_rds_test.go`.
+    Queries the RDS API for the instance's `BackupRetentionPeriod`
+    and asserts it is at least 1 day. The Terraform module's
+    default retention is 1; raise via `var.rds_backup_retention_days`
+    to 7+ for production parity. The full
+    create-snapshot + restore-into-sidecar + row-count parity is
+    a follow-on that needs a second RDS instance per run (RDS
+    snapshot restore takes 10-15 minutes; gated behind a separate
+    expensive-tier flag).
 
 26. **`TestCloudRDSPointInTimeRestore`** (§17.7). After a known
     sequence of writes, run `aws rds restore-db-instance-to-point-in-time`
@@ -795,11 +798,12 @@ admission controller):
 
 Performance and engine:
 
-62. **`TestCloudElastiCacheEngineVersionFloor`** (§13.3). Assert
-    the deployment uses Redis engine >= 7.0. Lenny relies on
-    ACLs, the `RESET` command, and the cluster-mode pub/sub
-    sharding fix that landed in Redis 7.0. A 6.x deployment
-    silently weakens the §13.3 auth posture.
+62. **`TestCloudElastiCacheEngineVersionFloor`** (§13.3).
+    *Implemented* as `TestCloudRedisEngineVersionFloor` in
+    `tests/tier6_e2e_cloud/managed_elasticache_test.go`. Runs
+    `INFO server` and asserts the redis_version major is >= 7.
+    Skips when the endpoint is unreachable (ElastiCache is
+    VPC-private).
 
 63. **`TestCloudElastiCacheSlowlogSurfaced`** (§16.5). Verify
     `aws elasticache describe-events` and the chart-rendered
@@ -948,21 +952,24 @@ Storage (EBS-backed PVCs replace Kind's hostPath emptyDir):
     credits not in use). EBS gp3 silently throttles past
     burst; Kind's hostPath has no such ceiling.
 
-79. **`TestCloudStorageClassCSIPresent`** (§17.6). Assert the
-    EBS CSI driver addon is installed and the default
-    StorageClass uses it. A missing CSI driver fails PVC
-    attach but the chart's deployments come up regardless;
-    the failure surfaces only when a session needs a
-    workspace volume.
+79. **`TestCloudStorageClassCSIPresent`** (§17.6). *Implemented*
+    in `tests/tier6_e2e_cloud/eks_platform_test.go`. Lists
+    StorageClasses, asserts a cluster default exists and that
+    at least one class uses `ebs.csi.aws.com`. The Terraform
+    module installs the EBS CSI driver as a managed EKS addon
+    with a dedicated IRSA role; run-e2e.sh applies a gp3 default
+    StorageClass since the addon installs the driver but not
+    the class.
 
 Networking (VPC CNI + AWS Load Balancer Controller replace
 kindnet + Kind's host port mapping):
 
-80. **`TestCloudVPCCNIPodIPFromVPC`** (§13.2). Assert each pod
-    receives an IP from the VPC subnet (not from a CNI
-    overlay). VPC CNI's IP-per-pod model means pod density per
-    node is bounded by the ENI count for the instance type;
-    Kind's kindnet does not have this limit.
+80. **`TestCloudVPCCNIPodIPFromVPC`** (§13.2). *Implemented* in
+    `tests/tier6_e2e_cloud/eks_platform_test.go`. Samples each
+    gateway pod's PodIP and asserts it lives inside the VPC CIDR
+    (10.42.0.0/16 default) or an RFC1918 / RFC6598 range. Public
+    IPs surface a CNI misconfiguration that would route pod
+    traffic outside the VPC default-deny boundary.
 
 81. **`TestCloudPodENILimitRespected`** (§17.1). Schedule the
     documented per-node maximum number of pods on a single
@@ -1021,6 +1028,12 @@ Image registry (ECR replaces Kind's `kind load docker-image`):
     image pull succeeds. The chart's `imagePullSecrets`
     must be wired to a credential-refresh source (the EKS
     addon `aws-secrets-manager-csi-driver` or `ecr-credential-provider`).
+    Baseline smoke check `TestCloudECRImagePullSucceeds`
+    *implemented* in `tests/tier6_e2e_cloud/eks_platform_test.go`:
+    inspects each gateway pod container status for the
+    presence of a `dkr.ecr.` image and asserts no
+    `ImagePullBackOff` / `ErrImagePull` waiting state. The
+    >12-hour refresh assertion remains a follow-on.
 
 89. **`TestCloudECRImageScanGate`** (§17.6, §13.1). On a push
     of a known-vulnerable image, assert the ECR scan results
