@@ -261,6 +261,24 @@ fi
 #   - rev > 1 stuck pending-upgrade -> rollback to the previous rev.
 #     Successful rollback transitions to a deployed state.
 echo "==[5/6] helm install lenny ${RELEASE}==" >&2
+# Self-heal NetworkPolicies from a previous release's manifest before
+# the pre-upgrade preflight hook runs. lenny-preflight reads live
+# cluster state, not the chart manifests, so a chart-side fix to
+# §13.2 NetworkPolicy rendering (e.g. NET-067 DNS-peer parity) leaves
+# the previously-installed NetworkPolicies in their old form; the
+# pre-upgrade preflight then refuses the upgrade that would have
+# corrected them. Re-rendering the chart's NetworkPolicy manifests
+# and server-side-applying them in advance reconciles the live state
+# to the new chart, so preflight sees the corrected shapes.
+echo "  reconciling NetworkPolicies before helm upgrade==" >&2
+helm template "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
+  -f "${VALUES_OUT}" \
+  -n lenny-system \
+  --set gateway.noEnvironmentPolicy=allow-all \
+  --show-only templates/system-network-policies.yaml \
+  --show-only templates/agent-network-policies.yaml 2>/dev/null \
+  | kubectl apply -f - --force-conflicts --server-side >/dev/null || true
+
 helm_status="$(helm -n lenny-system status "${RELEASE}" -o json 2>/dev/null \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('info',{}).get('status',''))" 2>/dev/null || true)"
 case "${helm_status}" in
