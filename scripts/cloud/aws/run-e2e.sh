@@ -591,8 +591,39 @@ kubectl get sc -o jsonpath='{range .items[*]}{.metadata.name}{":"}{.metadata.ann
   echo "  cleared default annotation on ${sc}" >&2
 done
 
-echo "==[5c/6] cluster fixtures (kata RuntimeClass + sandbox-gvisor node label)==" >&2
-kubectl apply -f - <<'KATA'
+echo "==[5c/6] cluster fixtures (RuntimeClasses + sandbox-gvisor node label)==" >&2
+# The Sandbox controller maps §5.3 isolationProfile to a Kubernetes
+# RuntimeClass on the pod spec: standard → runc, sandboxed → gvisor,
+# microvm → kata-containers. Kubernetes admission rejects a pod
+# whose runtimeClassName references a missing RuntimeClass, so all
+# three resources must exist on the cluster even when the underlying
+# node-level runtime (runsc / kata) is not actually installed —
+# pods that schedule to a node lacking the named handler stay
+# Pending, which is the spec-intended behavior and is what the
+# §5.3 isolation-fallback tests assert on. The handlers below name
+# the containerd shim plugins each provider's image ships with;
+# Bottlerocket Kata uses `kata`, the upstream gVisor build uses
+# `runsc`, and the kernel default is `runc`.
+kubectl apply -f - <<'RUNTIMECLASSES'
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: runc
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: runtime-class
+handler: runc
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: runtime-class
+handler: runsc
+---
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
@@ -601,7 +632,7 @@ metadata:
     app.kubernetes.io/name: lenny
     lenny.dev/component: runtime-class
 handler: kata
-KATA
+RUNTIMECLASSES
 first_worker="$(kubectl get nodes -l '!node-role.kubernetes.io/control-plane' -o name | head -n1 || true)"
 if [[ -n "${first_worker}" ]]; then
   kubectl label "${first_worker}" lenny.dev/pool=sandbox-gvisor --overwrite >/dev/null
