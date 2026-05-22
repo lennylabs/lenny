@@ -11,6 +11,16 @@
 # module does not create AKS / VNet / node-pools. Set AKS_CLUSTER_NAME
 # / AZURE_RESOURCE_GROUP / AZURE_SUBSCRIPTION_ID before invoking.
 #
+# Recommended AKS cluster sizing per LENNY_LOAD_SCALE (sized for the
+# warm-pool pod-request envelope plus chart workloads):
+#
+#   small:      Standard_D4s_v5 × 3 (12 vCPU, 48 GB)  — fits ~25 vCPU of pod requests
+#   medium:     Standard_D8s_v5 × 4 (32 vCPU, 128 GB) — fits ~55 vCPU
+#   production: Standard_D16s_v5 × 8 (128 vCPU, 512 GB) — fits ~175 vCPU
+#
+# Enable cluster autoscaler with max bounded at the values above so a
+# slow ramp-up does not exhaust capacity mid-test.
+#
 # Required environment:
 #
 #   AZURE_SUBSCRIPTION_ID

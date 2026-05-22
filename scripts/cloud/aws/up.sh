@@ -32,29 +32,54 @@ TF_DIR="${REPO_ROOT}/deploy/terraform/cloud/aws"
 TFVARS_FILE="${TF_DIR}/${RELEASE}.tfvars.json"
 
 # Shape -> (node_instance_type, node_desired_size, node_max_size).
-# NODE_DESIRED + NODE_MAX env vars override the shape defaults so an
-# operator can scale the e2e cluster up without dropping to a larger
-# shape (cloud-small's t3.medium is sufficient for the tier-6 pod
-# density once the count rises past 2). The override is also used by
-# run-e2e.sh's chart-rollout-capacity heuristic.
+# The cloud-* shapes are sized for the tier-6 conformance suite (no
+# load fixture, no warm-pool churn). The load-* shapes are sized for
+# tier-7 cloud-load: each scale's warm pools alone add ~25 / ~55 /
+# ~175 vCPU of pod requests on top of the chart workloads, so the
+# tier-6 shapes are dramatically undersized for tier-7. NODE_DESIRED,
+# NODE_MAX, and NODE_INSTANCE_TYPE env vars override the shape
+# defaults so a caller (run-load.sh, an ad-hoc operator) can tune
+# without picking a new shape; the override is also how
+# run-e2e.sh's chart-rollout-capacity heuristic bumps node count
+# when managed services are on.
 case "${SHAPE}" in
   cloud-small)
-    NODE_TYPE="t3.medium"
+    NODE_TYPE="${NODE_INSTANCE_TYPE:-t3.medium}"
     DESIRED="${NODE_DESIRED:-2}"
     MAX="${NODE_MAX:-4}"
     ;;
   cloud-medium)
-    NODE_TYPE="m5.large"
+    NODE_TYPE="${NODE_INSTANCE_TYPE:-m5.large}"
     DESIRED="${NODE_DESIRED:-3}"
     MAX="${NODE_MAX:-6}"
     ;;
   cloud-large)
-    NODE_TYPE="m5.xlarge"
+    NODE_TYPE="${NODE_INSTANCE_TYPE:-m5.xlarge}"
     DESIRED="${NODE_DESIRED:-5}"
     MAX="${NODE_MAX:-10}"
     ;;
+  load-small)
+    # ~25 vCPU pod requests: 6 × m5.xlarge (4 vCPU each) = 24 vCPU at
+    # max scale; desired starts at 3 (12 vCPU) and the EKS managed
+    # nodegroup picks up the rest when warm pools fill.
+    NODE_TYPE="${NODE_INSTANCE_TYPE:-m5.xlarge}"
+    DESIRED="${NODE_DESIRED:-3}"
+    MAX="${NODE_MAX:-6}"
+    ;;
+  load-medium)
+    # ~55 vCPU pod requests: 8 × m5.2xlarge (8 vCPU each) = 64 vCPU at max.
+    NODE_TYPE="${NODE_INSTANCE_TYPE:-m5.2xlarge}"
+    DESIRED="${NODE_DESIRED:-4}"
+    MAX="${NODE_MAX:-8}"
+    ;;
+  load-production)
+    # ~175 vCPU pod requests: 16 × m5.4xlarge (16 vCPU each) = 256 vCPU at max.
+    NODE_TYPE="${NODE_INSTANCE_TYPE:-m5.4xlarge}"
+    DESIRED="${NODE_DESIRED:-8}"
+    MAX="${NODE_MAX:-16}"
+    ;;
   *)
-    echo "scripts/cloud/aws/up.sh: unknown shape ${SHAPE}; supported: cloud-small, cloud-medium, cloud-large" >&2
+    echo "scripts/cloud/aws/up.sh: unknown shape ${SHAPE}; supported: cloud-{small,medium,large}, load-{small,medium,production}" >&2
     exit 2
     ;;
 esac

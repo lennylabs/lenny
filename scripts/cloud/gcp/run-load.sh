@@ -12,6 +12,16 @@
 # Access (the operator must have configured the VPC's PSA allocation
 # at cluster creation time, outside this module).
 #
+# Recommended GKE node-pool sizing per LENNY_LOAD_SCALE (sized for
+# the warm-pool pod-request envelope plus chart workloads):
+#
+#   small:      e2-standard-4 × 3 (12 vCPU, 48 GB)   — fits ~25 vCPU of pod requests
+#   medium:     e2-standard-8 × 4 (32 vCPU, 128 GB)  — fits ~55 vCPU
+#   production: n2-standard-16 × 8 (128 vCPU, 512 GB) — fits ~175 vCPU
+#
+# Enable cluster autoscaler with max bounded at the values above so a
+# slow ramp-up does not exhaust capacity mid-test.
+#
 # Required environment:
 #
 #   GCP_PROJECT
