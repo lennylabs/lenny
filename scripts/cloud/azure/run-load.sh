@@ -35,6 +35,15 @@
 #   KEEP_CLUSTER=1                          default. Skip terraform
 #                                           destroy on exit.
 #   LENNY_SKIP_TIER6_GATE=1                 bypass the tier-6 PASS gate.
+#   LENNY_DETACH=1                          re-exec the script inside a
+#                                           detached `screen` session
+#                                           so a short-lived caller
+#                                           (CI step, interactive
+#                                           harness) does not kill the
+#                                           in-flight bring-up. The
+#                                           parent exits immediately
+#                                           with the log path + session
+#                                           name. Requires `screen`.
 
 set -euo pipefail
 
@@ -92,6 +101,37 @@ if ! az account show --output none 2>/dev/null; then
   exit 3
 fi
 
+# LENNY_DETACH=1 re-execs the script inside a detached `screen`
+# session so a parent process with a short lifetime (a CI step that
+# polls for completion via the log, an editor terminal, an
+# interactive harness with a process-tree timeout) does not kill the
+# in-flight cluster bring-up. The detached child re-runs the script
+# with LENNY_DETACH=0 so it executes inline. The session name is
+# scoped by release + scale so two concurrent scales do not collide.
+if [[ "${LENNY_DETACH:-0}" == "1" ]]; then
+  if ! command -v screen >/dev/null 2>&1; then
+    echo "run-load.sh: LENNY_DETACH=1 requires 'screen' on PATH (brew install screen / apt install screen)" >&2
+    exit 3
+  fi
+  SCREEN_NAME="lenny-load-${RELEASE}-${LENNY_LOAD_SCALE}"
+  LOG_FILE="/tmp/${SCREEN_NAME}.log"
+  if screen -ls "${SCREEN_NAME}" 2>/dev/null | grep -q "[0-9]\.${SCREEN_NAME}"; then
+    echo "run-load.sh: detached session ${SCREEN_NAME} is already running" >&2
+    echo "  tail:   tail -F ${LOG_FILE}" >&2
+    echo "  attach: screen -r ${SCREEN_NAME}" >&2
+    echo "  cancel: screen -S ${SCREEN_NAME} -X quit" >&2
+    exit 1
+  fi
+  : > "${LOG_FILE}"
+  screen -dmS "${SCREEN_NAME}" bash -c "LENNY_DETACH=0 bash '${SCRIPT_DIR}/run-load.sh' >> '${LOG_FILE}' 2>&1; echo \"run-load.sh: exit=\$?\" >> '${LOG_FILE}'"
+  echo "run-load.sh: detached as screen session ${SCREEN_NAME}" >&2
+  echo "  log:    ${LOG_FILE}" >&2
+  echo "  tail:   tail -F ${LOG_FILE}" >&2
+  echo "  attach: screen -r ${SCREEN_NAME}" >&2
+  echo "  cancel: screen -S ${SCREEN_NAME} -X quit" >&2
+  exit 0
+fi
+
 # Tier-6 gate. Identical contract to scripts/cloud/aws/run-load.sh.
 if [[ "${LENNY_SKIP_TIER6_GATE:-0}" != "1" ]]; then
   tier6_pass="$(jq -r 'select(.tiers.e2e_cloud == "pass") | .run_id' \
@@ -135,7 +175,8 @@ export -f helm
 # 1b. Drain any leftover load-* SandboxWarmPools from a prior run, so
 #     the helm rollout has CPU headroom against the warm-pool
 #     sandboxes. Same contract as scripts/cloud/aws/run-load.sh.
-if kubectl get namespace lenny-agents >/dev/null 2>&1; then
+# Subshell wrap works around a bash 3.2 quirk; see the AWS sibling.
+if (kubectl get namespace lenny-agents >/dev/null 2>&1); then
   echo "==[1b/5] drain leftover load-* SandboxWarmPools==" >&2
   kubectl -n lenny-agents delete sandboxwarmpool \
     load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool \

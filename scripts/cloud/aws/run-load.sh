@@ -27,6 +27,14 @@
 #   KEEP_CLUSTER=1                    — default. Skip the terraform destroy
 #                                       on exit so the cluster stays up.
 #   LENNY_LOAD_CLOUD_PROVIDERS        — auto-set to "aws" by the script.
+#   LENNY_DETACH=1                    — re-exec the script inside a
+#                                       detached `screen` session so a
+#                                       short-lived caller (CI step,
+#                                       interactive harness) does not
+#                                       kill the in-flight bring-up.
+#                                       The parent exits immediately
+#                                       with the log path + session
+#                                       name. Requires `screen`.
 #
 # The script gates on the tier-6 verdict: it refuses to run unless
 # the most recent tier-6 e2e_cloud run on this branch reported PASS.
@@ -87,6 +95,37 @@ if ! aws sts get-caller-identity >/dev/null 2>&1; then
   exit 3
 fi
 
+# LENNY_DETACH=1 re-execs the script inside a detached `screen`
+# session so a parent process with a short lifetime (a CI step that
+# polls for completion via the log, an editor terminal, an
+# interactive harness with a process-tree timeout) does not kill the
+# in-flight cluster bring-up. The detached child re-runs the script
+# with LENNY_DETACH=0 so it executes inline. The session name is
+# scoped by release + scale so two concurrent scales do not collide.
+if [[ "${LENNY_DETACH:-0}" == "1" ]]; then
+  if ! command -v screen >/dev/null 2>&1; then
+    echo "run-load.sh: LENNY_DETACH=1 requires 'screen' on PATH (brew install screen / apt install screen)" >&2
+    exit 3
+  fi
+  SCREEN_NAME="lenny-load-${RELEASE}-${LENNY_LOAD_SCALE}"
+  LOG_FILE="/tmp/${SCREEN_NAME}.log"
+  if screen -ls "${SCREEN_NAME}" 2>/dev/null | grep -q "[0-9]\.${SCREEN_NAME}"; then
+    echo "run-load.sh: detached session ${SCREEN_NAME} is already running" >&2
+    echo "  tail:   tail -F ${LOG_FILE}" >&2
+    echo "  attach: screen -r ${SCREEN_NAME}" >&2
+    echo "  cancel: screen -S ${SCREEN_NAME} -X quit" >&2
+    exit 1
+  fi
+  : > "${LOG_FILE}"
+  screen -dmS "${SCREEN_NAME}" bash -c "LENNY_DETACH=0 bash '${SCRIPT_DIR}/run-load.sh' >> '${LOG_FILE}' 2>&1; echo \"run-load.sh: exit=\$?\" >> '${LOG_FILE}'"
+  echo "run-load.sh: detached as screen session ${SCREEN_NAME}" >&2
+  echo "  log:    ${LOG_FILE}" >&2
+  echo "  tail:   tail -F ${LOG_FILE}" >&2
+  echo "  attach: screen -r ${SCREEN_NAME}" >&2
+  echo "  cancel: screen -S ${SCREEN_NAME} -X quit" >&2
+  exit 0
+fi
+
 # Tier-6 gate. The cloud-load run shares all cluster-shape
 # preconditions with tier-6; failing tier-6 first means cloud-load
 # is wasted spend. LENNY_SKIP_TIER6_GATE=1 bypasses (e.g. when
@@ -134,7 +173,12 @@ export -f helm
 #     applies the runtime fixture, recreating the pools fresh against
 #     the upgraded chart. Skip on a fresh cluster where the namespace
 #     does not yet exist.
-if kubectl get namespace lenny-agents >/dev/null 2>&1; then
+# The subshell wrap on the if-condition works around a bash 3.2
+# quirk: under `set -e`, a `command kubectl` (inside the kubectl()
+# wrapper function above) returning non-zero inside an `if` condition
+# terminates the script even though the if is supposed to swallow the
+# failure. macOS still ships bash 3.2 and the cloud scripts run there.
+if (kubectl get namespace lenny-agents >/dev/null 2>&1); then
   echo "==[1b/5] drain leftover load-* SandboxWarmPools==" >&2
   # The four pool names are deterministic across runs; deleting them
   # before re-applying the load fixture frees the CPU the prior run's
