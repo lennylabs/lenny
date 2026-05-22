@@ -71,6 +71,77 @@ func TestCreateRejectsWhenNonTerminalClaimExists(t *testing.T) {
 	}
 }
 
+// spec: §5.2 — a slot-bearing claim is concurrent-mode by definition.
+// The duplicate-claim rule from §4.6.1 (added to prevent the
+// Postgres-fallback claim path from racing with the CRD claim path
+// for session-mode pods) does not apply: concurrent-mode dispatch
+// opens up to maxConcurrent simultaneous claims against the same
+// Sandbox, and the maxConcurrent cap is enforced upstream by the
+// gateway's Redis Lua slot counter (§5.2 atomic GET-compare-INCR).
+// The webhook must admit a slot-bearing claim even when an existing
+// non-terminal sibling claim references the same Sandbox.
+func TestCreateAdmitsSlotClaimEvenWithExistingSiblings(t *testing.T) {
+	d, err := Decide(Request{
+		Operation:    OpCreate,
+		ClaimName:    "claim-session-2",
+		SandboxRef:   "sandbox-1",
+		HasSlotID:    true,
+		SandboxPhase: PhaseIdle, // first slot: phase mirror has not yet been patched
+		ExistingClaims: []ExistingClaim{
+			{Name: "claim-session-1", Status: ClaimBound},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if !d.Allowed {
+		t.Errorf("CREATE of a slot-bearing claim must be admitted regardless of siblings: %v", d)
+	}
+}
+
+// spec: §5.2 — the first slot reservation transitions the Sandbox
+// from idle to slot_active. The phase patch is the SSA mirror of the
+// Redis counter and lands after the SandboxClaim CREATE, so the
+// webhook must admit the first slot-bearing claim while the phase
+// still reads idle. The slot-counter (not the webhook) enforces the
+// maxConcurrent cap.
+func TestCreateAdmitsFirstSlotClaimWithIdlePhase(t *testing.T) {
+	d, err := Decide(Request{
+		Operation:    OpCreate,
+		ClaimName:    "claim-session-1",
+		SandboxRef:   "sandbox-1",
+		HasSlotID:    true,
+		SandboxPhase: PhaseIdle,
+	})
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if !d.Allowed {
+		t.Errorf("first slot-bearing claim against idle Sandbox must be admitted: %v", d)
+	}
+}
+
+// spec: §4.6.1 — a session-mode (non-slot) duplicate must still be
+// rejected. HasSlotID=false leaves the original session-mode rule in
+// force.
+func TestCreateRejectsSessionDuplicateEvenWithSlotIDFlagDefault(t *testing.T) {
+	d, err := Decide(Request{
+		Operation:  OpCreate,
+		ClaimName:  "claim-2",
+		SandboxRef: "sandbox-1",
+		HasSlotID:  false,
+		ExistingClaims: []ExistingClaim{
+			{Name: "claim-1", Status: ClaimBound},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if d.Allowed {
+		t.Errorf("session-mode duplicate must still be rejected when HasSlotID=false")
+	}
+}
+
 func TestPatchAdmitsWhenSandboxClaimed(t *testing.T) {
 	d, err := Decide(Request{
 		Operation:    OpPatch,

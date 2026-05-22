@@ -119,6 +119,20 @@ type Request struct {
 	// slots). Ignored when UnderDeletion is set.
 	SandboxPhase SandboxPhase
 
+	// HasSlotID is true when the inbound SandboxClaim carries a
+	// non-empty `.spec.slotId`. A non-empty SlotID is the §5.2
+	// concurrent-mode marker on the claim object itself, independent
+	// of the referenced Sandbox's status.phase. Used on CREATE to
+	// skip the duplicate-claim rule: concurrent-mode dispatch opens
+	// multiple non-terminal claims against the same Sandbox by
+	// design, and the maxConcurrent cap is enforced upstream by the
+	// gateway's Redis Lua slot counter rather than the webhook.
+	// The phase-based PhaseSlotActive exemption stays valid for the
+	// second-and-later claims after the first slot pushed the phase
+	// over to slot_active; HasSlotID covers the first-claim window
+	// where the SSA status patch has not yet landed.
+	HasSlotID bool
+
 	// UnderDeletion is true when the SandboxClaim being modified carries
 	// a non-zero metadata.deletionTimestamp. A claim under deletion is
 	// exempt from the PATCH/PUT staleness rule so its finalizers can be
@@ -159,16 +173,30 @@ func Decide(r Request) (Decision, error) {
 	}
 	switch r.Operation {
 	case OpCreate:
-		// §5.2 concurrent-mode: a Sandbox in `slot_active` hosts up to
-		// MaxConcurrent simultaneous slot claims. Multiple non-terminal
-		// claims are expected and required for the concurrent-mode
-		// dispatch path. The deterministic claim name
-		// (claim-<session-id>) still prevents a duplicate-session race
-		// at the API server's CREATE conflict path; the guard does not
-		// need to re-enforce that here. For session-mode Sandboxes
-		// (phase `idle` or `claimed`) the duplicate-claim rule remains
+		// §5.2 concurrent-mode: a Sandbox hosting up to MaxConcurrent
+		// simultaneous slot claims expects multiple non-terminal
+		// claims at once. Two signals identify a concurrent-mode
+		// claim:
+		//
+		//   - HasSlotID (the claim's own `.spec.slotId`). This is
+		//     authoritative on the very first slot, where the
+		//     Sandbox.status.phase has not yet transitioned from
+		//     `idle` to `slot_active` because the SSA mirror patch
+		//     lands after the claim CREATE.
+		//   - SandboxPhase == PhaseSlotActive. Covers the path where
+		//     the inbound claim happens to omit SlotID (defensive),
+		//     and stays valid for the second-and-later claims after
+		//     the first reservation pushed the pod to slot_active.
+		//
+		// The maxConcurrent cap is enforced upstream by the gateway's
+		// Redis Lua slot counter (§5.2 atomic GET-compare-INCR), so
+		// the webhook does not need to count slots itself. The
+		// deterministic claim name (claim-<session-id>) prevents the
+		// duplicate-session race at the API server's CREATE conflict
+		// path. For session-mode Sandboxes (HasSlotID=false and
+		// phase `idle`/`claimed`) the duplicate-claim rule remains
 		// in force.
-		if r.SandboxPhase == PhaseSlotActive {
+		if r.HasSlotID || r.SandboxPhase == PhaseSlotActive {
 			return Decision{Allowed: true, Code: 200}, nil
 		}
 		for _, ec := range r.ExistingClaims {

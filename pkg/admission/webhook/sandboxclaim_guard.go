@@ -32,6 +32,7 @@ func SandboxClaimGuard(reader client.Reader) Decider {
 		guardReq := guard.Request{
 			ClaimName:  claim.Name,
 			SandboxRef: claim.Spec.SandboxRef,
+			HasSlotID:  claim.Spec.SlotID != "",
 		}
 
 		switch req.Operation {
@@ -42,11 +43,15 @@ func SandboxClaimGuard(reader client.Reader) Decider {
 				return Deny(http.StatusInternalServerError, "list sibling SandboxClaims: "+err.Error())
 			}
 			guardReq.ExistingClaims = existing
-			// The §5.2 concurrent-mode dispatch path opens multiple
-			// non-terminal claims against the same Sandbox; the guard
-			// distinguishes that case from session-mode duplicates by
-			// the Sandbox's phase (slot_active vs idle/claimed). Read
-			// it on CREATE too so Decide can apply the §5.2 exemption.
+			// §5.2 concurrent-mode dispatch opens multiple non-terminal
+			// claims against the same Sandbox; the guard distinguishes
+			// that case from session-mode duplicates by two signals:
+			// the inbound claim's own .spec.slotId (authoritative for
+			// the first slot, before the Sandbox.status.phase mirror
+			// patch has landed), and the Sandbox's phase
+			// (slot_active vs idle/claimed) for subsequent slots.
+			// Read the phase on CREATE too so Decide can apply the
+			// §5.2 exemption on either signal.
 			phase, err := referencedSandboxPhase(ctx, reader, req.Namespace, claim.Spec.SandboxRef)
 			if err != nil {
 				return Deny(http.StatusInternalServerError, "read referenced Sandbox: "+err.Error())
