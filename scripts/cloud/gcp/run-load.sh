@@ -270,6 +270,42 @@ spec:
 MIGRATE
 kubectl -n "${LENNY_NAMESPACE}" wait --for=condition=complete job/lenny-load-migrate --timeout=600s
 
+# RuntimeClasses for the §5.3 isolation profiles. The Sandbox
+# controller pod-create call references runtimeClassName by these
+# names; Kubernetes admission rejects pods whose runtimeClassName
+# does not exist, so these resources must be present before the
+# load fixture creates SandboxWarmPools at step 5. Same pattern as
+# scripts/cloud/aws/run-e2e.sh step 5c.
+kubectl apply -f - <<'RUNTIMECLASSES'
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: runc
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: runtime-class
+handler: runc
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: runtime-class
+handler: runsc
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-containers
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: runtime-class
+handler: kata
+RUNTIMECLASSES
+
 helm upgrade --install "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
   --namespace "${LENNY_NAMESPACE}" --create-namespace \
   --values "${VALUES_OUT}" \

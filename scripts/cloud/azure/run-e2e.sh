@@ -90,6 +90,44 @@ EOF
 log "step 4: in-cluster Postgres + Redis fixtures (or Azure DB / Cache)"
 kubectl apply -f "${REPO_ROOT}/tests/testinfra/k8s/datastores.yaml"
 
+log "step 4b: RuntimeClasses (runc + gvisor + kata-containers)"
+# The Sandbox controller maps §5.3 isolationProfile to a Kubernetes
+# RuntimeClass on the pod spec: standard → runc, sandboxed → gvisor,
+# microvm → kata-containers. Kubernetes admission rejects a pod
+# whose runtimeClassName references a missing RuntimeClass, so all
+# three resources must exist on the cluster even when the underlying
+# node-level runtime is not installed. Same pattern as the AWS
+# run-e2e.sh step 5c.
+kubectl apply -f - <<'RUNTIMECLASSES'
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: runc
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: runtime-class
+handler: runc
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: runtime-class
+handler: runsc
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-containers
+  labels:
+    app.kubernetes.io/name: lenny
+    lenny.dev/component: runtime-class
+handler: kata
+RUNTIMECLASSES
+
 log "step 5: helm install ${LENNY_RELEASE}"
 helm upgrade --install "${LENNY_RELEASE}" "${REPO_ROOT}/charts/lenny" \
   --namespace "${LENNY_NAMESPACE}" --create-namespace \
