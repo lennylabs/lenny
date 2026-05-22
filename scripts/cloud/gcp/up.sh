@@ -50,17 +50,35 @@ cd "$(dirname "$0")/../../../deploy/terraform/cloud/gcp"
 
 terraform init -upgrade >/dev/null
 
+WITH_CLOUD_SQL="${WITH_CLOUD_SQL:-false}"
+WITH_MEMORYSTORE="${WITH_MEMORYSTORE:-false}"
+MANAGED_DATASTORES_NETWORK="${MANAGED_DATASTORES_NETWORK:-}"
+MANAGED_DATASTORES_AUTHORIZED_NETWORKS="${MANAGED_DATASTORES_AUTHORIZED_NETWORKS:-[]}"
+
 terraform apply -auto-approve \
   -var "release=${RELEASE}" \
   -var "project=${PROJECT}" \
   -var "region=${REGION}" \
   -var "gke_cluster_name=${CLUSTER_NAME}" \
   -var "gke_cluster_location=${CLUSTER_LOCATION}" \
-  -var "namespace=${NAMESPACE}"
+  -var "namespace=${NAMESPACE}" \
+  -var "create_cloud_sql=${WITH_CLOUD_SQL}" \
+  -var "create_memorystore=${WITH_MEMORYSTORE}" \
+  -var "managed_datastores_network=${MANAGED_DATASTORES_NETWORK}" \
+  -var "managed_datastores_authorized_networks=${MANAGED_DATASTORES_AUTHORIZED_NETWORKS}"
 
 KMS_KEY_ID=$(terraform output -raw kms_key_id)
 ARTIFACT_BUCKET=$(terraform output -raw artifact_bucket)
 SA_EMAIL=$(terraform output -raw gcp_service_account_email 2>/dev/null || echo "")
+CLOUD_SQL_CONNECTION_NAME=$(terraform output -raw cloud_sql_connection_name 2>/dev/null || echo "")
+CLOUD_SQL_PUBLIC_IP=$(terraform output -raw cloud_sql_public_ip 2>/dev/null || echo "")
+CLOUD_SQL_PRIVATE_IP=$(terraform output -raw cloud_sql_private_ip 2>/dev/null || echo "")
+CLOUD_SQL_ADMIN_SECRET_NAME=$(terraform output -raw cloud_sql_admin_secret_name 2>/dev/null || echo "")
+CLOUD_SQL_DATABASE_NAME=$(terraform output -raw cloud_sql_database_name 2>/dev/null || echo "")
+MEMORYSTORE_INSTANCE_ID=$(terraform output -raw memorystore_instance_id 2>/dev/null || echo "")
+MEMORYSTORE_HOST=$(terraform output -raw memorystore_host 2>/dev/null || echo "")
+MEMORYSTORE_PORT=$(terraform output -raw memorystore_port 2>/dev/null || echo "")
+MEMORYSTORE_AUTH_SECRET_NAME=$(terraform output -raw memorystore_auth_secret_name 2>/dev/null || echo "")
 
 # Resolve kubeconfig for the operator-supplied cluster.
 if [[ -n "${CLUSTER_NAME}" ]]; then
@@ -77,4 +95,13 @@ export LENNY_GCP_REGION="${REGION}"
 export LENNY_GCP_KMS_KEY_ID="${KMS_KEY_ID}"
 export LENNY_GCP_ARTIFACT_BUCKET="${ARTIFACT_BUCKET}"
 export LENNY_GCP_SERVICE_ACCOUNT_EMAIL="${SA_EMAIL}"
+export LENNY_GCP_CLOUD_SQL_CONNECTION_NAME="${CLOUD_SQL_CONNECTION_NAME}"
+export LENNY_GCP_CLOUD_SQL_PUBLIC_IP="${CLOUD_SQL_PUBLIC_IP}"
+export LENNY_GCP_CLOUD_SQL_PRIVATE_IP="${CLOUD_SQL_PRIVATE_IP}"
+export LENNY_GCP_CLOUD_SQL_ADMIN_SECRET_NAME="${CLOUD_SQL_ADMIN_SECRET_NAME}"
+export LENNY_GCP_CLOUD_SQL_DATABASE_NAME="${CLOUD_SQL_DATABASE_NAME}"
+export LENNY_GCP_MEMORYSTORE_INSTANCE_ID="${MEMORYSTORE_INSTANCE_ID}"
+export LENNY_GCP_MEMORYSTORE_HOST="${MEMORYSTORE_HOST}"
+export LENNY_GCP_MEMORYSTORE_PORT="${MEMORYSTORE_PORT}"
+export LENNY_GCP_MEMORYSTORE_AUTH_SECRET_NAME="${MEMORYSTORE_AUTH_SECRET_NAME}"
 EOF
