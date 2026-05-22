@@ -1,3 +1,6 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/discord/1507235632966275085?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/2kcteA8Y64)
+
 # Lenny
 
 **Kubernetes-native, runtime-agnostic agent session platform.**
@@ -129,7 +132,6 @@ ASCII fallback for the diagram above (architecture-overview):
       | +-----+ |      | +-----+ |      | +-----+ |
       +---------+      +---------+      +---------+
 -->
-
 
 | Component                 | Role                                                                                                                                                                    |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
