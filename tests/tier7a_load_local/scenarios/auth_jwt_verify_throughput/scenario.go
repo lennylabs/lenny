@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: MIT
+
+//go:build load_local
+
+// Package auth_jwt_verify_throughput exercises pkg/auth/jwt.HMACSigner
+// Verify at sustained throughput. The §10.2 invariant: a valid token
+// verifies in microseconds; a tampered token always rejects; the
+// hot path is safe under concurrent goroutine access.
+//
+// TESTING.md §12.7.a component-isolated benches.
+package auth_jwt_verify_throughput
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
+	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
+)
+
+const name = "auth_jwt_verify_throughput"
+
+func init() {
+	loadgen.Register(name, func() loadgen.Scenario { return &Scenario{counters: scenkit.NewCounters()} })
+}
+
+type Scenario struct {
+	counters *scenkit.Counters
+	signer   *jwt.HMACSigner
+	token    string
+	tamper   string
+}
+
+func (s *Scenario) Name() string { return name }
+func (s *Scenario) DefaultProfile() loadgen.Profile {
+	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 32, Duration: 2 * time.Second}
+}
+
+func (s *Scenario) Setup(ctx context.Context) error {
+	s.signer = jwt.NewHMACSigner("k-1", []byte("test-secret-bytes-of-sufficient-length-32+"))
+	tok, err := s.signer.Sign(jwt.Claims{
+		Issuer: "lenny", Subject: "alice@acme.com",
+		Audience: []string{"lenny.api"},
+		Expiry:   time.Now().Add(time.Hour).Unix(),
+		TenantID: "acme", JWTID: "load-1",
+	})
+	if err != nil {
+		return fmt.Errorf("Sign: %w", err)
+	}
+	s.token = tok
+	last := tok[len(tok)-1]
+	if last == 'A' {
+		s.tamper = tok[:len(tok)-1] + "B"
+	} else {
+		s.tamper = tok[:len(tok)-1] + "A"
+	}
+	return nil
+}
+
+func (s *Scenario) Teardown(ctx context.Context) error { return nil }
+
+func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
+	if iter%2 == 0 {
+		if _, err := s.signer.Verify(s.token); err != nil {
+			return fmt.Errorf("valid Verify rejected: %v", err)
+		}
+		s.counters.Inc("verified")
+		return nil
+	}
+	if _, err := s.signer.Verify(s.tamper); err == nil {
+		s.counters.Inc("leaks")
+		return fmt.Errorf("§10.2 violated: tampered token verified")
+	}
+	s.counters.Inc("rejected")
+	return nil
+}
+
+func (s *Scenario) Assert(r *loadgen.Result) error {
+	s.counters.EmitTo(r)
+	if v := s.counters.Get("leaks"); v > 0 {
+		return fmt.Errorf("§10.2 violated: %d tampered tokens verified", v)
+	}
+	if s.counters.Get("verified") == 0 || s.counters.Get("rejected") == 0 {
+		return fmt.Errorf("scenario must exercise both paths")
+	}
+	return nil
+}

@@ -125,7 +125,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - `pkg/common/registry/resolver.go` (`ImageResolver` with override > url > default precedence and digest enforcement).
 - Adapter `SO_PEERCRED` startup self-test per [§4.7](04_system-components.md#47-runtime-adapter) (runs on every pod start before the READY signal; ships with `lenny_adapter_sopeercred_selftest_failed_total` and the `adapter.requireSoPeercred` flag).
 - Per-connection HMAC challenge-response (nonce handshake) for the adapter↔agent socket per [§4.7](04_system-components.md#47-runtime-adapter), plus the `lenny_adapter_sopeercred_disabled_total` counter for the nonce-only fallback path.
-- Startup-latency benchmark harness in `tests/tier7_load/scenarios/startup_latency` with a first baseline committed under `tests/tier7_load/baselines/startup_latency.json`.
+- Startup-latency benchmark harness in `tests/tier7b_load_kind/scenarios/startup_latency` with a first baseline committed under `tests/tier7b_load_kind/baselines/startup_latency.json`.
 - SQLite-dev-mode schema for `make run` use.
 - Checkpoint-duration baseline (best-effort; the consistent-quiescence rebaseline is deferred to Phase 8).
 - Runtime-author SDKs `runtime-sdk-go`, `lenny-runtime` (Python), and `@lennylabs/runtime-sdk` (TypeScript) per [§15.7](15_external-api-surface.md#157-runtime-author-sdks), built in lockstep with the adapter binary protocol so the SDKs and the protocol ship together.
@@ -368,8 +368,8 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Deliverables.**
 
-- Streaming-reconnect load scenario in `tests/tier7_load/scenarios/streaming_reconnect.go`.
-- Phase 6.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Streaming-reconnect load scenario in `tests/tier7b_load_kind/scenarios/streaming_reconnect.go`.
+- Phase 6.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 
 **Prerequisites.** Phase 6 exit gate.
 
@@ -444,8 +444,8 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Deliverables.**
 
-- Delegation fan-out load scenario in `tests/tier7_load/scenarios/delegation_fanout.go`.
-- Phase 9.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Delegation fan-out load scenario in `tests/tier7b_load_kind/scenarios/delegation_fanout.go`.
+- Phase 9.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 
 **Prerequisites.** Phase 9 exit gate.
 
@@ -490,8 +490,8 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Deliverables.**
 
-- Credential-rotation-under-load scenario in `tests/tier7_load/scenarios/credential_rotation_under_load.go`.
-- Phase 11.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Credential-rotation-under-load scenario in `tests/tier7b_load_kind/scenarios/credential_rotation_under_load.go`.
+- Phase 11.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 
 **Prerequisites.** Phase 11 exit gate.
 
@@ -627,7 +627,7 @@ _`lenny-ctl` operability extensions per [§25.14](25_agent-operability.md#2514-l
 **Deliverables.**
 
 - Tier 7 cloud load scenarios fully operational against the production-class environment.
-- Phase 13.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Phase 13.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 - Lenny-specific Postgres write-pattern benchmark and the calibrated `postgres.writeCeilingIops` per [§12.3](12_storage-architecture.md#123-postgres-ha-requirements).
 - Calibrated `PostgresWriteBurstIops` alert threshold per [§16.5](16_observability.md#165-alerting-rules-and-slos).
 - HPA and KEDA custom-metrics pipeline per [§10.1](10_gateway-internals.md#101-horizontal-scaling): the Prometheus Adapter wiring, the `lenny_gateway_request_queue_depth` and `lenny_gateway_rejection_rate` leading-indicator metrics, the KEDA `ScaledObject` Helm conditional, and the SCL-024 mutual-exclusion enforcement. KEDA is mandatory at Tier 3.
@@ -681,7 +681,7 @@ _Hardening validation._
 **Deliverables.**
 
 - Re-run of every Phase 13.5 scenario with full security hardening in place.
-- Delta documentation recorded under `tests/tier7_load/baselines/`.
+- Delta documentation recorded under `tests/tier7b_load_kind/baselines/`.
 
 **Prerequisites.** Phase 14 exit gate.
 
@@ -719,7 +719,7 @@ _Hardening validation._
 
 **Deliverables.**
 
-- Phase 16.5 baseline JSON committed under `tests/tier7_load/baselines/`.
+- Phase 16.5 baseline JSON committed under `tests/tier7b_load_kind/baselines/`.
 - Experiment-active scenario re-baselined with PoolScalingController variant-pool sizing active.
 
 **Prerequisites.** Phase 16 exit gate.
@@ -771,7 +771,7 @@ _Web playground._
 
 _Benchmarks._
 
-- `tests/tier7_load/scenarios/tthw.go` time-to-hello-world benchmark validated against the < 5-minute target.
+- `tests/tier7b_load_kind/scenarios/tthw.go` time-to-hello-world benchmark validated against the < 5-minute target.
 
 **Prerequisites.** Phase 16.5 exit gate.
 

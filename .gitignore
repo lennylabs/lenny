@@ -2,7 +2,7 @@
 tmp/
 
 # Built Go binaries left in the repo root by `go build` against package
-# subdirectories. The names match the cmd/ and tests/tier7_load/scenarios/
+# subdirectories. The names match the cmd/ and tests/tier7b_load_kind/scenarios/
 # package directories.
 /lenny-test
 /lenny-test-cached
@@ -14,6 +14,9 @@ tmp/
 /lenny-migrate
 /lenny-token-service
 /lenny-webhook
+/lenny-loadrunner
+/lenny-loadctl
+/cloud-metrics-collector
 /echo
 /streaming-echo
 /startup_latency

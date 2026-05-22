@@ -91,7 +91,7 @@ func runValidateMaps(args []string) int {
 // Phase 0 implementation:
 //   - Walks tests/ recursively looking for *_test.go files under tier
 //     directories at or above component (tier2_component, tier3_contract,
-//     tier4_integration, tier5_e2e_kind, tier6_e2e_cloud, tier7_load,
+//     tier4_integration, tier5_e2e_kind, tier6_e2e_cloud, tier7b_load_kind,
 //     tier8_chaos, tier9_security, tier10_conformance).
 //   - For each, scans for top-level Test functions and confirms a //
 //     diagnosis: comment appears within the 10 lines preceding the function.
@@ -112,10 +112,12 @@ func runValidateDiagnosis(args []string) int {
 		"tests/tier4_integration",
 		"tests/tier5_e2e_kind",
 		"tests/tier6_e2e_cloud",
-		"tests/tier7_load",
+		"tests/tier7a_load_local",
+		"tests/tier7b_load_kind",
 		"tests/tier8_chaos",
 		"tests/tier9_security",
 		"tests/tier10_conformance",
+		"tests/tier12_load_cloud",
 	}
 
 	totalFiles := 0
@@ -354,10 +356,12 @@ func validateTestFilesMapped(specMapPath, root string) checkResult {
 		"tests/tier4_integration",
 		"tests/tier5_e2e_kind",
 		"tests/tier6_e2e_cloud",
-		"tests/tier7_load",
+		"tests/tier7a_load_local",
+		"tests/tier7b_load_kind",
 		"tests/tier8_chaos",
 		"tests/tier9_security",
 		"tests/tier10_conformance",
+		"tests/tier12_load_cloud",
 	}
 	orphans := []string{}
 	for _, dir := range tierDirs {

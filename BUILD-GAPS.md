@@ -1281,8 +1281,8 @@ already.
 
 ### Tier 7 (Load and SLO)
 
-The `tests/tier7_load/scenarios/` directory contains 14 k6 scenario
-folders and `tests/tier7_load/baselines/` carries 14 baseline JSON
+The `tests/tier7b_load_kind/scenarios/` directory contains 14 k6 scenario
+folders and `tests/tier7b_load_kind/baselines/` carries 14 baseline JSON
 files — every scenario has a baseline. Five baselines are
 placeholder values pending a recorded cloud-overlay run:
 `credential_lifecycle`, `delegation_fanout_mcp`, `experiment_load`,

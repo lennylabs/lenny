@@ -104,7 +104,7 @@ func validateGroupsSubsetsYAML(path string) checkResult {
 	}
 	// Subsets carry their contents through one of several slots:
 	//   tests:        []string of paths, or the scalar `all`
-	//   scenarios:    same shape as tests, for tier 7 load
+	//   scenarios:    same shape as tests, for tier 7a / 7b load
 	//   scenarios_ref: name of another subset (delegation)
 	//   runtimes:     []string of runtime ids (tier 10 conformance)
 	//   run:          Go regexp matched against test names (tier 4)
@@ -142,7 +142,7 @@ func validateGroupsSubsetsYAML(path string) checkResult {
 			problems = append(problems, fmt.Sprintf("%s: unknown tier %q", name, s.Tier))
 		}
 		// A subset declares its contents through one of three slots:
-		// tests (most tiers), scenarios (tier 7 load), or scenarios_ref
+		// tests (most tiers), scenarios (tier 7a / 7b load), or scenarios_ref
 		// (delegates to another subset). Each may carry a sequence of
 		// paths or the scalar sentinel `all`.
 		hasTests := s.Tests.Kind == yaml.SequenceNode && len(s.Tests.Content) > 0

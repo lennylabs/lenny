@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Lenny load-test control plane</title>
+<link rel="stylesheet" href="/assets/style.css" />
+<script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body>
+<header>
+  <h1>Lenny load-test control plane</h1>
+  <p class="subtitle">Tier 12 — cloud-load orchestration</p>
+</header>
+
+<section>
+  <h2>Recent runs</h2>
+  <div hx-get="/api/v1/runs" hx-trigger="load, every 5s" hx-target="this" hx-swap="innerHTML">
+    Loading recent runs…
+  </div>
+</section>
+
+<section>
+  <h2>Trigger run</h2>
+  <form hx-post="/api/v1/runs" hx-headers='{"Content-Type":"application/json"}' hx-ext="json-enc">
+    <label>Scale:
+      <select name="scale">
+        <option value="small">small</option>
+        <option value="medium">medium</option>
+        <option value="production">production</option>
+      </select>
+    </label>
+    <label>Cluster release: <input type="text" name="cluster_release" value="lenny-load-small" /></label>
+    <button type="submit">Start run</button>
+  </form>
+</section>
+
+<footer>
+  <p>API surface: <a href="/api/v1/runs">/api/v1/runs</a> · <a href="/api/v1/runners">/api/v1/runners</a> · <a href="/api/v1/scenarios">/api/v1/scenarios</a></p>
+  <p>See <code>TESTING.md §12.12</code> for the documented contract.</p>
+</footer>
+</body>
+</html>

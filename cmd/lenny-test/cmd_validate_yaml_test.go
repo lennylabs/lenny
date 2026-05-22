@@ -129,12 +129,20 @@ subsets:
     tier: conformance
     runtimes: [echo]
   load-ref:
-    tier: load
+    tier: load_kind
     scenarios_ref: full-system
   load-with-scenarios:
-    tier: load
+    tier: load_kind
     scenarios:
-      - tests/tier7_load/scenarios/foo.go
+      - tests/tier7b_load_kind/scenarios/foo.go
+  load-local-ref:
+    tier: load_local
+    scenarios:
+      - tests/tier7a_load_local/scenarios/foo/scenario.go
+  load-cloud-ref:
+    tier: load_cloud
+    scenarios:
+      - tests/tier12_load_cloud/scenarios/foo/main.js
   matrix:
     tier: integration
     run: TestX|TestY

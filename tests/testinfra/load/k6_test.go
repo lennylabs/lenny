@@ -86,7 +86,7 @@ func TestAssertBaselineSeeds(t *testing.T) {
 	t.Setenv("LENNY_UPDATE_BASELINE", "1")
 	tmp := t.TempDir()
 	res := Result{Scenario: "test", MetricMS: map[string]float64{"p99": 100}}
-	path := filepath.Join(tmp, "tests", "tier7_load", "baselines", "test.json")
+	path := filepath.Join(tmp, "tests", "tier7b_load_kind", "baselines", "test.json")
 	// Synthesise a fake repo root so writeBaseline lands in tmp.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("setup: %v", err)

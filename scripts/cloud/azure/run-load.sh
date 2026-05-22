@@ -1,359 +1,62 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/azure/run-load.sh — tier-7 cloud-load driver for Azure.
-#
-# Mirrors scripts/cloud/aws/run-load.sh. Provisions Azure Database for
-# PostgreSQL Flexible Server + Azure Cache for Redis alongside the
-# operator-supplied AKS cluster, applies the load fixture, port-
-# forwards the gateway, and runs `lenny-test --tier load_cloud`.
-#
-# The AKS cluster itself is operator-supplied — the Lenny Terraform
-# module does not create AKS / VNet / node-pools. Set AKS_CLUSTER_NAME
-# / AZURE_RESOURCE_GROUP / AZURE_SUBSCRIPTION_ID before invoking.
-#
-# Recommended AKS cluster sizing per LENNY_LOAD_SCALE (sized for the
-# warm-pool pod-request envelope plus chart workloads):
-#
-#   small:      Standard_D4s_v5 × 3 (12 vCPU, 48 GB)  — fits ~25 vCPU of pod requests
-#   medium:     Standard_D8s_v5 × 4 (32 vCPU, 128 GB) — fits ~55 vCPU
-#   production: Standard_D16s_v5 × 8 (128 vCPU, 512 GB) — fits ~175 vCPU
-#
-# Enable cluster autoscaler with max bounded at the values above so a
-# slow ramp-up does not exhaust capacity mid-test.
-#
-# Required environment:
-#
-#   AZURE_SUBSCRIPTION_ID
-#   AZURE_RESOURCE_GROUP
-#   AKS_CLUSTER_NAME
-#   ACR_REGISTRY                            ACR registry host (e.g.
-#                                           lennye2e.azurecr.io). Images
-#                                           must already be pushed.
-#
-# Optional environment:
-#
-#   AZURE_LOCATION                          default eastus.
-#   LENNY_LOAD_SCALE=small|medium|production
-#                                           sizing profile (default small).
-#                                           Currently affects only the per-
-#                                           mode pool sizes in the load
-#                                           fixture; Azure terraform always
-#                                           provisions the same SKU.
-#   LENNY_RELEASE                           Helm release prefix. Default
-#                                           lenny-load-{scale}.
-#   IMAGE_TAG                               Image tag. Default 0.1.0.
-#   KEEP_CLUSTER=1                          default. Skip terraform
-#                                           destroy on exit.
-#   LENNY_SKIP_TIER6_GATE=1                 bypass the tier-6 PASS gate.
-#   LENNY_DETACH=1                          re-exec the script inside a
-#                                           detached `screen` session
-#                                           so a short-lived caller
-#                                           (CI step, interactive
-#                                           harness) does not kill the
-#                                           in-flight bring-up. The
-#                                           parent exits immediately
-#                                           with the log path + session
-#                                           name. Requires `screen`.
+# scripts/cloud/azure/run-load.sh — tier-12 cloud-load trigger.
+# Pre-flight + API trigger. No terraform. No helm. See the canonical
+# documentation in scripts/cloud/aws/run-load.sh.
+# TESTING.md §12.12 / Wave 5.
 
 set -euo pipefail
 
-LENNY_LOAD_SCALE="${LENNY_LOAD_SCALE:-small}"
-AZURE_LOCATION="${AZURE_LOCATION:-eastus}"
-RELEASE="${LENNY_RELEASE:-lenny-load-${LENNY_LOAD_SCALE}}"
-LENNY_NAMESPACE="${LENNY_NAMESPACE:-lenny-system}"
-IMAGE_TAG="${IMAGE_TAG:-0.1.0}"
-KEEP_CLUSTER="${KEEP_CLUSTER:-1}"
+LENNY_RELEASE="${LENNY_RELEASE:-lenny-load-small}"
+LOCATION="${AZURE_LOCATION:-eastus}"
+RG="${AZURE_RESOURCE_GROUP:-}"
+SCALE="${LENNY_LOAD_SCALE:-small}"
+SCENARIOS="${LENNY_SCENARIOS:-default}"
 
-AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID must be set}"
-AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:?AZURE_RESOURCE_GROUP must be set}"
-AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:?AKS_CLUSTER_NAME must be set}"
-ACR_REGISTRY="${ACR_REGISTRY:?ACR_REGISTRY must be set; push images first}"
-
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-SCRIPT_DIR="${REPO_ROOT}/scripts/cloud/azure"
-
-# Map LENNY_LOAD_SCALE → per-mode pool sizing placeholders. Identical
-# to scripts/cloud/aws/run-load.sh so the load fixture renders the
-# same per-mode envelope across providers.
-case "${LENNY_LOAD_SCALE}" in
-  small)
-    export LOAD_SESSION_MIN=10 LOAD_SESSION_MAX=30
-    export LOAD_CWORKSPACE_MIN=2 LOAD_CWORKSPACE_MAX=4 LOAD_CWORKSPACE_SLOTS=4
-    export LOAD_CSTATELESS_MIN=2 LOAD_CSTATELESS_MAX=4 LOAD_CSTATELESS_SLOTS=8
-    export LOAD_TASK_MIN=4 LOAD_TASK_MAX=12 LOAD_TASK_MAX_PER_POD=10
-    # Flexible Server B_Standard_B2s (2 vCPU, 4 GB), Redis Standard C1 (1 GB).
-    export FLEXIBLE_POSTGRES_SKU="${FLEXIBLE_POSTGRES_SKU:-B_Standard_B2s}"
-    export FLEXIBLE_POSTGRES_STORAGE_MB="${FLEXIBLE_POSTGRES_STORAGE_MB:-32768}"
-    export AZURE_REDIS_SKU="${AZURE_REDIS_SKU:-Standard}"
-    export AZURE_REDIS_FAMILY="${AZURE_REDIS_FAMILY:-C}"
-    export AZURE_REDIS_CAPACITY="${AZURE_REDIS_CAPACITY:-1}"
-    ;;
-  medium)
-    export LOAD_SESSION_MIN=30 LOAD_SESSION_MAX=100
-    export LOAD_CWORKSPACE_MIN=4 LOAD_CWORKSPACE_MAX=10 LOAD_CWORKSPACE_SLOTS=8
-    export LOAD_CSTATELESS_MIN=4 LOAD_CSTATELESS_MAX=10 LOAD_CSTATELESS_SLOTS=16
-    export LOAD_TASK_MIN=10 LOAD_TASK_MAX=30 LOAD_TASK_MAX_PER_POD=20
-    # Flexible Server GP_Standard_D2s_v3 (2 vCPU, 8 GB GeneralPurpose),
-    # Redis Standard C2 (2.5 GB).
-    export FLEXIBLE_POSTGRES_SKU="${FLEXIBLE_POSTGRES_SKU:-GP_Standard_D2s_v3}"
-    export FLEXIBLE_POSTGRES_STORAGE_MB="${FLEXIBLE_POSTGRES_STORAGE_MB:-65536}"
-    export AZURE_REDIS_SKU="${AZURE_REDIS_SKU:-Standard}"
-    export AZURE_REDIS_FAMILY="${AZURE_REDIS_FAMILY:-C}"
-    export AZURE_REDIS_CAPACITY="${AZURE_REDIS_CAPACITY:-2}"
-    ;;
-  production)
-    export LOAD_SESSION_MIN=100 LOAD_SESSION_MAX=500
-    export LOAD_CWORKSPACE_MIN=10 LOAD_CWORKSPACE_MAX=30 LOAD_CWORKSPACE_SLOTS=16
-    export LOAD_CSTATELESS_MIN=10 LOAD_CSTATELESS_MAX=30 LOAD_CSTATELESS_SLOTS=32
-    export LOAD_TASK_MIN=30 LOAD_TASK_MAX=100 LOAD_TASK_MAX_PER_POD=50
-    # Flexible Server GP_Standard_D4s_v3 (4 vCPU, 16 GB),
-    # Redis Premium P1 (6 GB).
-    export FLEXIBLE_POSTGRES_SKU="${FLEXIBLE_POSTGRES_SKU:-GP_Standard_D4s_v3}"
-    export FLEXIBLE_POSTGRES_STORAGE_MB="${FLEXIBLE_POSTGRES_STORAGE_MB:-131072}"
-    export AZURE_REDIS_SKU="${AZURE_REDIS_SKU:-Premium}"
-    export AZURE_REDIS_FAMILY="${AZURE_REDIS_FAMILY:-P}"
-    export AZURE_REDIS_CAPACITY="${AZURE_REDIS_CAPACITY:-1}"
-    ;;
-  *)
-    echo "run-load.sh: unknown LENNY_LOAD_SCALE=${LENNY_LOAD_SCALE}; supported: small, medium, production" >&2
-    exit 2
-    ;;
-esac
-
-for cli in az kubectl helm terraform envsubst jq; do
-  if ! command -v "${cli}" >/dev/null 2>&1; then
-    echo "run-load.sh: required CLI ${cli} not on PATH" >&2
-    exit 3
-  fi
+for cli in az curl jq; do
+  command -v "${cli}" >/dev/null 2>&1 || { echo "run-load.sh: ${cli} not on PATH" >&2; exit 3; }
 done
-if ! az account show --output none 2>/dev/null; then
-  echo "run-load.sh: az login required (az login)" >&2
-  exit 3
+if [[ -z "${RG}" ]]; then echo "AZURE_RESOURCE_GROUP required" >&2; exit 2; fi
+
+echo "==[1/4] verifying AKS cluster" >&2
+az aks show --resource-group "${RG}" --name "${LENNY_RELEASE}-aks" >/dev/null 2>&1 \
+  || { echo "  FAIL: AKS ${LENNY_RELEASE}-aks not found. Run up.sh first." >&2; exit 3; }
+echo "  OK"
+
+echo "==[2/4] verifying Helm release" >&2
+az aks get-credentials --resource-group "${RG}" --name "${LENNY_RELEASE}-aks" >/dev/null 2>&1
+helm status "${LENNY_RELEASE}" -n lenny-system >/dev/null 2>&1 \
+  || { echo "  FAIL: install-lenny.sh first" >&2; exit 3; }
+echo "  OK"
+
+echo "==[3/4] verifying loadgen VMSS" >&2
+VMSS_NAME="${LENNY_RELEASE}-loadgen-runner"
+CAPACITY=$(az vmss show --resource-group "${RG}" --name "${VMSS_NAME}" --query 'sku.capacity' --output tsv 2>/dev/null || echo 0)
+[[ "${CAPACITY}" =~ ^[1-9] ]] || { echo "  FAIL: up-loadgen.sh first (capacity=${CAPACITY})" >&2; exit 3; }
+echo "  OK (capacity=${CAPACITY})"
+
+echo "==[4/4] triggering run scale=${SCALE} scenarios=${SCENARIOS}" >&2
+LOADCTL_URL="${LENNY_LOADCTL_URL:-}"
+if [[ -z "${LOADCTL_URL}" ]]; then
+  LOADCTL_URL=$(az containerapp show --resource-group "${RG}" --name "${LENNY_RELEASE}-loadctl" --query 'properties.configuration.ingress.fqdn' --output tsv 2>/dev/null || echo "")
+  [[ -n "${LOADCTL_URL}" ]] && LOADCTL_URL="https://${LOADCTL_URL}"
 fi
+[[ -n "${LOADCTL_URL}" ]] || { echo "  FAIL: up-loadctl.sh first" >&2; exit 3; }
 
-# LENNY_DETACH=1 re-execs the script inside a detached `screen`
-# session so a parent process with a short lifetime (a CI step that
-# polls for completion via the log, an editor terminal, an
-# interactive harness with a process-tree timeout) does not kill the
-# in-flight cluster bring-up. The detached child re-runs the script
-# with LENNY_DETACH=0 so it executes inline. The session name is
-# scoped by release + scale so two concurrent scales do not collide.
-if [[ "${LENNY_DETACH:-0}" == "1" ]]; then
-  if ! command -v screen >/dev/null 2>&1; then
-    echo "run-load.sh: LENNY_DETACH=1 requires 'screen' on PATH (brew install screen / apt install screen)" >&2
-    exit 3
-  fi
-  SCREEN_NAME="lenny-load-${RELEASE}-${LENNY_LOAD_SCALE}"
-  LOG_FILE="/tmp/${SCREEN_NAME}.log"
-  if screen -ls "${SCREEN_NAME}" 2>/dev/null | grep -q "[0-9]\.${SCREEN_NAME}"; then
-    echo "run-load.sh: detached session ${SCREEN_NAME} is already running" >&2
-    echo "  tail:   tail -F ${LOG_FILE}" >&2
-    echo "  attach: screen -r ${SCREEN_NAME}" >&2
-    echo "  cancel: screen -S ${SCREEN_NAME} -X quit" >&2
-    exit 1
-  fi
-  : > "${LOG_FILE}"
-  screen -dmS "${SCREEN_NAME}" bash -c "LENNY_DETACH=0 bash '${SCRIPT_DIR}/run-load.sh' >> '${LOG_FILE}' 2>&1; echo \"run-load.sh: exit=\$?\" >> '${LOG_FILE}'"
-  echo "run-load.sh: detached as screen session ${SCREEN_NAME}" >&2
-  echo "  log:    ${LOG_FILE}" >&2
-  echo "  tail:   tail -F ${LOG_FILE}" >&2
-  echo "  attach: screen -r ${SCREEN_NAME}" >&2
-  echo "  cancel: screen -S ${SCREEN_NAME} -X quit" >&2
-  exit 0
-fi
+RUN_REQ=$(jq -n --arg scale "${SCALE}" --arg sc "${SCENARIOS}" --arg release "${LENNY_RELEASE}" \
+  '{scale: $scale, scenarios: ($sc | split(",")), cluster_release: $release}')
+RUN_ID=$(curl -fsS -X POST "${LOADCTL_URL}/api/v1/runs" \
+  -H "Authorization: Bearer ${LENNY_OIDC_TOKEN:-}" -H "Content-Type: application/json" \
+  -d "${RUN_REQ}" | jq -r '.id' 2>/dev/null || echo "")
+[[ -n "${RUN_ID}" && "${RUN_ID}" != "null" ]] || { echo "  FAIL: POST /api/v1/runs (Wave 6 wires real endpoint)" >&2; exit 1; }
+echo "  run_id=${RUN_ID}"
 
-# Tier-6 gate. Identical contract to scripts/cloud/aws/run-load.sh.
-if [[ "${LENNY_SKIP_TIER6_GATE:-0}" != "1" ]]; then
-  tier6_pass="$(jq -r 'select(.tiers.e2e_cloud == "pass") | .run_id' \
-    "${REPO_ROOT}/tests/results/history.jsonl" 2>/dev/null | tail -n1)"
-  if [[ -z "${tier6_pass}" ]]; then
-    echo "run-load.sh: tier-6 e2e_cloud has not passed on this branch (tests/results/history.jsonl); " >&2
-    echo "  the cloud-load run gates on a recent tier-6 PASS to avoid wasted spend on a known-broken cluster shape." >&2
-    echo "  Run scripts/cloud/azure/run-e2e.sh first, or set LENNY_SKIP_TIER6_GATE=1 to bypass." >&2
-    exit 4
-  fi
-  echo "run-load.sh: tier-6 PASS gate cleared (most-recent passing run ${tier6_pass})" >&2
-fi
-
-# 1. terraform apply for the per-release Azure resources, with
-#    managed Postgres + Redis enabled.
-echo "==[1/5] terraform apply (release=${RELEASE}, with-managed-datastores)==" >&2
-ENV_OUT=$(AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID}" \
-  AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP}" \
-  AZURE_LOCATION="${AZURE_LOCATION}" \
-  AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME}" \
-  LENNY_NAMESPACE="${LENNY_NAMESPACE}" \
-  WITH_FLEXIBLE_POSTGRES=true \
-  WITH_AZURE_REDIS=true \
-  bash "${SCRIPT_DIR}/up.sh" "${RELEASE}")
-eval "${ENV_OUT}"
-
-# Pin every kubectl + helm call to the AKS context up.sh just merged
-# so a parallel `kind create cluster` does not switch
-# ~/.kube/config's current context out from under us mid-run. The
-# context name az aks get-credentials writes is the cluster name.
-export KUBECTL_CONTEXT="${AKS_CLUSTER_NAME}"
-kubectl() {
-  command kubectl --context "${KUBECTL_CONTEXT}" "$@"
-}
-export -f kubectl
-helm() {
-  command helm --kube-context "${KUBECTL_CONTEXT}" "$@"
-}
-export -f helm
-
-# 1b. Drain any leftover load-* SandboxWarmPools from a prior run, so
-#     the helm rollout has CPU headroom against the warm-pool
-#     sandboxes. Same contract as scripts/cloud/aws/run-load.sh.
-# Subshell wrap works around a bash 3.2 quirk; see the AWS sibling.
-if (kubectl get namespace lenny-agents >/dev/null 2>&1); then
-  echo "==[1b/5] drain leftover load-* SandboxWarmPools==" >&2
-  kubectl -n lenny-agents delete sandboxwarmpool \
-    load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool \
-    --ignore-not-found
-  for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
-    kubectl -n lenny-agents delete sandbox -l "lenny.dev/pool=${pool}" \
-      --ignore-not-found --grace-period=1 --wait=false
-  done
-fi
-
-# 2. Compose the managed DSN + Redis URL from the Key Vault secrets
-#    that managed-services.tf wrote at terraform apply.
-echo "==[2/5] compose managed DSN + Redis URL from Key Vault==" >&2
-if [[ -z "${LENNY_AZURE_FLEXIBLE_POSTGRES_FQDN}" || -z "${LENNY_AZURE_FLEXIBLE_POSTGRES_ADMIN_SECRET_NAME}" ]]; then
-  echo "run-load.sh: Flexible Server outputs missing; terraform apply must have failed silently" >&2
-  exit 5
-fi
-pg_secret="$(az keyvault secret show \
-  --vault-name "${LENNY_AZURE_KEY_VAULT_NAME}" \
-  --name "${LENNY_AZURE_FLEXIBLE_POSTGRES_ADMIN_SECRET_NAME}" \
-  --query value --output tsv)"
-pg_user="$(echo "${pg_secret}" | jq -r .username)"
-pg_pass="$(echo "${pg_secret}" | jq -r .password)"
-pg_pass_enc="$(jq -rn --arg p "${pg_pass}" '$p|@uri')"
-LENNY_POSTGRES_DSN="postgres://${pg_user}:${pg_pass_enc}@${LENNY_AZURE_FLEXIBLE_POSTGRES_FQDN}:5432/${LENNY_AZURE_FLEXIBLE_POSTGRES_DATABASE_NAME}?sslmode=require"
-
-redis_secret="$(az keyvault secret show \
-  --vault-name "${LENNY_AZURE_KEY_VAULT_NAME}" \
-  --name "${LENNY_AZURE_REDIS_AUTH_SECRET_NAME}" \
-  --query value --output tsv)"
-redis_token="$(echo "${redis_secret}" | jq -r .auth)"
-redis_token_enc="$(jq -rn --arg p "${redis_token}" '$p|@uri')"
-# rediss:// — Azure Redis Cache enforces TLS-only above non_ssl_port.
-LENNY_REDIS_URL="rediss://:${redis_token_enc}@${LENNY_AZURE_REDIS_HOSTNAME}:${LENNY_AZURE_REDIS_SSL_PORT}"
-export LENNY_POSTGRES_DSN LENNY_REDIS_URL
-
-# 3. Render the chart values overlay with the managed endpoints.
-echo "==[3/5] render Helm values overlay==" >&2
-VALUES_OUT="${SCRIPT_DIR}/values-cloud-azure.${RELEASE}.yaml"
-# Azure Flexible Server + Cache for Redis sit on the public Internet
-# (firewalled to AllowAllAzureIps). The chart's gateway / token-service
-# NetworkPolicy must admit egress to those endpoints; using 0.0.0.0/0
-# bounded by per-port (5432 / 6380) is the simplest fit and matches
-# the chart's existing postgres.cidr=0.0.0.0/0 pattern.
-ACR_REGISTRY="${ACR_REGISTRY}" IMAGE_TAG="${IMAGE_TAG}" \
-  LENNY_POSTGRES_DSN="${LENNY_POSTGRES_DSN}" LENNY_REDIS_URL="${LENNY_REDIS_URL}" \
-  LENNY_AZURE_WORKLOAD_IDENTITY_CLIENT_ID="${LENNY_AZURE_WORKLOAD_IDENTITY_CLIENT_ID}" \
-  POSTGRES_GATEWAY_EGRESS_CIDR="0.0.0.0/0" \
-  REDIS_GATEWAY_EGRESS_CIDR="0.0.0.0/0" \
-  REDIS_GATEWAY_EGRESS_PORT="${LENNY_AZURE_REDIS_SSL_PORT}" \
-  bash "${SCRIPT_DIR}/render-values.sh" "${VALUES_OUT}"
-
-# 4. Apply CRDs + run lenny-migrate Job + helm upgrade.
-echo "==[4/5] CRDs + migrate + helm upgrade ${RELEASE}==" >&2
-kubectl apply -f "${REPO_ROOT}/charts/lenny/crds/"
-kubectl create namespace "${LENNY_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n "${LENNY_NAMESPACE}" delete job lenny-load-migrate --ignore-not-found --wait=true >/dev/null
-cat <<MIGRATE | kubectl apply -f -
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: lenny-load-migrate
-  namespace: ${LENNY_NAMESPACE}
-spec:
-  backoffLimit: 3
-  ttlSecondsAfterFinished: 600
-  template:
-    spec:
-      restartPolicy: Never
-      securityContext:
-        runAsNonRoot: true
-      containers:
-        - name: migrate
-          image: ${ACR_REGISTRY}/lenny-migrate:${IMAGE_TAG}
-          imagePullPolicy: IfNotPresent
-          args: ["up"]
-          env:
-            - name: LENNY_POSTGRES_DSN
-              value: "${LENNY_POSTGRES_DSN}"
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: [ALL]
-MIGRATE
-kubectl -n "${LENNY_NAMESPACE}" wait --for=condition=complete job/lenny-load-migrate --timeout=600s
-
-# RuntimeClasses for the §5.3 isolation profiles. The Sandbox
-# controller pod-create call references runtimeClassName by these
-# names; Kubernetes admission rejects pods whose runtimeClassName
-# does not exist, so these resources must be present before the
-# load fixture creates SandboxWarmPools at step 5. Same pattern as
-# scripts/cloud/aws/run-e2e.sh step 5c.
-kubectl apply -f - <<'RUNTIMECLASSES'
----
-apiVersion: node.k8s.io/v1
-kind: RuntimeClass
-metadata:
-  name: runc
-  labels:
-    app.kubernetes.io/name: lenny
-    lenny.dev/component: runtime-class
-handler: runc
----
-apiVersion: node.k8s.io/v1
-kind: RuntimeClass
-metadata:
-  name: gvisor
-  labels:
-    app.kubernetes.io/name: lenny
-    lenny.dev/component: runtime-class
-handler: runsc
----
-apiVersion: node.k8s.io/v1
-kind: RuntimeClass
-metadata:
-  name: kata-containers
-  labels:
-    app.kubernetes.io/name: lenny
-    lenny.dev/component: runtime-class
-handler: kata
-RUNTIMECLASSES
-
-helm upgrade --install "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
-  --namespace "${LENNY_NAMESPACE}" --create-namespace \
-  --values "${VALUES_OUT}" \
-  --wait --timeout 10m
-
-# 5. Apply the load fixture and run the suite.
-echo "==[5/5] apply load fixture + run lenny-test --tier load_cloud==" >&2
-export LOAD_RUNTIME_IMAGE="${ACR_REGISTRY}/lenny-runtime-echo:${IMAGE_TAG}"
-envsubst < "${REPO_ROOT}/tests/testinfra/k8s/agent-workload-load.yaml.tmpl" \
-  | kubectl apply -f -
-for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
-  echo "  waiting for ${pool} to scale to minWarm..." >&2
-  until [[ "$(kubectl -n lenny-agents get sandboxwarmpool "${pool}" -o jsonpath='{.status.readyCount}' 2>/dev/null)" -ge 1 ]]; do
-    sleep 5
-  done
-  echo "  ${pool} ready" >&2
+while true; do
+  STATUS=$(curl -fsS "${LOADCTL_URL}/api/v1/runs/${RUN_ID}" -H "Authorization: Bearer ${LENNY_OIDC_TOKEN:-}" | jq -r '.status')
+  case "${STATUS}" in
+    PASS) echo "run-load.sh: PASS"; exit 0 ;;
+    FAIL|ABORTED) echo "run-load.sh: ${STATUS}"; exit 1 ;;
+    PENDING|RUNNING) sleep 15 ;;
+    *) echo "run-load.sh: unexpected ${STATUS}" >&2; exit 1 ;;
+  esac
 done
-
-kubectl -n "${LENNY_NAMESPACE}" port-forward svc/lenny-gateway 28080:8080 >/tmp/lenny-load-pf.log 2>&1 &
-pf_pid=$!
-trap 'kill ${pf_pid} 2>/dev/null || true' EXIT
-sleep 3
-
-LENNY_GATEWAY_BASE_URL="http://127.0.0.1:28080" \
-  LENNY_LOAD_CLOUD_PROVIDERS=azure \
-  LENNY_LOAD_SCALE="${LENNY_LOAD_SCALE}" \
-  go test -tags load_cloud -count=1 -timeout 60m -v "${REPO_ROOT}/tests/tier7_load_cloud/..."

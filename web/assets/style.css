@@ -1,0 +1,33 @@
+/* SPDX-License-Identifier: MIT */
+/* lenny-loadctl shared styles. */
+body {
+  font-family: -apple-system, system-ui, Helvetica, Arial, sans-serif;
+  max-width: 1000px;
+  margin: 2em auto;
+  padding: 0 1em;
+  color: #1f2933;
+  line-height: 1.5;
+}
+header h1 { font-size: 1.5em; margin-bottom: 0.2em; }
+.subtitle { color: #54616e; }
+section { margin: 2em 0; }
+h2 { font-size: 1.1em; border-bottom: 1px solid #c0b290; padding-bottom: 0.2em; }
+form { display: flex; gap: 1em; align-items: center; flex-wrap: wrap; }
+label { display: flex; gap: 0.4em; align-items: center; }
+input, select { padding: 0.3em 0.4em; }
+button {
+  background: #ffe9c7;
+  border: 1px solid #1f2933;
+  color: #1f2933;
+  padding: 0.4em 0.8em;
+  border-radius: 4px;
+  cursor: pointer;
+}
+code {
+  background: #fffaf0;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  font-family: SF Mono, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+footer { color: #54616e; font-size: 0.85em; margin-top: 3em; }
