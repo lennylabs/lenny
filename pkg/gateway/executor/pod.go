@@ -131,6 +131,16 @@ func readAttachResponse(stream *adapterclient.AttachStream) ([]OutputPart, error
 
 // Close removes the session's binding, closes its Attach stream, and
 // releases the pod. Closing a session that was never bound is a no-op.
+//
+// The release path branches on the §5.2 mode the bind was opened in:
+// a session-mode bind (BindResult.SlotID == "") drains the pod via
+// binder.Release per §6.2 (claimed → draining → terminated). A
+// concurrent-mode bind (BindResult.SlotID != "") releases only that
+// slot via binder.ReleaseSlot — the pod's sibling slots stay live and
+// the pod returns to idle only when its last slot drains, per §5.2.
+// Routing every concurrent termination through the session-mode
+// drain would (a) tear down sibling slots that did not terminate and
+// (b) leak the SandboxClaim that the slot reservation created.
 func (e *PodExecutor) Close(ctx context.Context, sessionID string) error {
 	e.mu.Lock()
 	if s, ok := e.streams[sessionID]; ok {
@@ -142,6 +152,9 @@ func (e *PodExecutor) Close(ctx context.Context, sessionID string) error {
 	bind, ok := e.registry.Remove(sessionID)
 	if !ok {
 		return nil
+	}
+	if bind.SlotID != "" {
+		return e.binder.ReleaseSlot(ctx, bind)
 	}
 	return e.binder.Release(ctx, bind)
 }
