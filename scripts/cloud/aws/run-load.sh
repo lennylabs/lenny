@@ -3,9 +3,12 @@
 # scripts/cloud/aws/run-load.sh — tier-7 cloud-load driver for AWS.
 #
 # The script provisions (or reuses) an EKS cluster sized for the
-# active LENNY_LOAD_SCALE, applies the per-mode runtime fixture
-# (tests/testinfra/k8s/agent-workload-load.yaml.tmpl), port-forwards
-# the gateway, and runs `lenny-test --tier load_cloud`.
+# active LENNY_LOAD_SCALE, brings up managed RDS Postgres + ElastiCache
+# Redis alongside it so the gateway routes through managed datastores
+# (the in-cluster postgres / redis pods are skipped), drains any
+# leftover load-* warm pools from a prior run, applies the per-mode
+# runtime fixture (tests/testinfra/k8s/agent-workload-load.yaml.tmpl),
+# port-forwards the gateway, and runs `lenny-test --tier load_cloud`.
 #
 # Required environment:
 #
@@ -149,10 +152,17 @@ fi
 
 # 2. Apply the Lenny chart (reuse the tier-6 run-e2e.sh's chart
 #    install path so the gateway + admission webhooks come up the
-#    same way).
+#    same way). Tier-7 runs the gateway against managed RDS Postgres
+#    + ElastiCache (non-cluster-mode) so the in-cluster postgres /
+#    redis pods (~1.6 CPU) do not steal capacity from the warm-pool
+#    sandboxes. The chart uses gateway-process-local Redis client
+#    (pkg/redisconn), which does not support cluster-mode, so the
+#    standard single-shard replication group is the right target;
+#    WITH_ELASTICACHE_CLUSTER stays off here (tier-6's cluster-mode
+#    tests own that path).
 echo "==[2/5] reuse tier-6 install path (delegating to run-e2e.sh)==" >&2
 AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
-  WITH_RDS=0 WITH_ELASTICACHE=0 \
+  WITH_RDS=1 WITH_ELASTICACHE=1 WITH_ELASTICACHE_CLUSTER=0 \
   KEEP_CLUSTER=1 \
   LENNY_CLOUD_PROVIDERS=aws \
   bash "${SCRIPT_DIR}/run-e2e.sh"

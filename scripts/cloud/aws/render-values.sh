@@ -144,9 +144,16 @@ bootstrap:
     tag: "${TAG}"
     pullPolicy: IfNotPresent
 
-# Point the gateway + controller at the in-cluster data-store
-# fixtures (tests/testinfra/k8s/datastores.yaml). A future revision
-# routes the gateway through RDS / ElastiCache / S3 directly.
+# Postgres + Redis routing. By default the overlay points the gateway
+# at the in-cluster data-store fixtures (tests/testinfra/k8s/datastores.yaml),
+# which run-e2e.sh applies. When the caller has provisioned a managed
+# RDS + ElastiCache (the WITH_RDS=1 + WITH_ELASTICACHE=1 path that
+# tier-7 cloud-load uses), it exports LENNY_POSTGRES_DSN and
+# LENNY_REDIS_URL with the managed endpoints and credentials; this
+# overlay honors those overrides. The chart's gateway template reads
+# postgres.dsn / redis.url directly into LENNY_POSTGRES_DSN /
+# LENNY_REDIS_URL on the gateway pod, so a managed-services run never
+# touches the in-cluster fixture.
 #
 # Note: the cloud overlay deliberately omits the minio.* keys. EKS
 # uses the per-release S3 bucket for the §4.5 ArtifactStore; the
@@ -156,10 +163,10 @@ bootstrap:
 # minio.endpoint is empty. TestMultiAZMinIO asserts on this exact
 # shape (gateway has no LENNY_MINIO_ENDPOINT AND no MinIO Deployment).
 postgres:
-  dsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+  dsn: "${LENNY_POSTGRES_DSN:-postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable}"
 
 redis:
-  url: "redis://lenny-redis.lenny-system.svc:6379"
+  url: "${LENNY_REDIS_URL:-redis://lenny-redis.lenny-system.svc:6379}"
 
 # Documentation surface for the operator: which S3 bucket + KMS key
 # the AWS Terraform produced. The §12.5 ArtifactStore SSE-KMS path

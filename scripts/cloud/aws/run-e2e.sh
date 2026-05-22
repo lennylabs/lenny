@@ -204,8 +204,62 @@ ECR_REGISTRY="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
 export ECR_REGISTRY IMAGE_TAG="${TAG}"
 
 # 3. Render the cloud values overlay.
+#
+# When the managed RDS / ElastiCache modules are provisioned
+# (WITH_RDS=1 / WITH_ELASTICACHE=1), compose the DSN + Redis URL from
+# the Terraform endpoints and the per-release Secrets Manager
+# entries, then export them so render-values.sh routes the chart
+# at the managed services. With neither set, the script leaves the
+# vars empty and render-values.sh keeps the in-cluster default.
+MANAGED_PG_DSN=""
+MANAGED_REDIS_URL=""
+if [[ "${WITH_RDS}" == "1" ]]; then
+  rds_endpoint="$("${TF}" -chdir="${TF_DIR}" output -raw rds_endpoint 2>/dev/null || echo)"
+  rds_database="$("${TF}" -chdir="${TF_DIR}" output -raw rds_database_name 2>/dev/null || echo lenny)"
+  rds_master_secret_arn="$("${TF}" -chdir="${TF_DIR}" output -raw rds_master_secret_arn 2>/dev/null || echo)"
+  if [[ -n "${rds_endpoint}" && -n "${rds_master_secret_arn}" ]]; then
+    # The master secret JSON is {"username":"lenny","password":"..."}
+    # in the layout aws_secretsmanager_secret_version produces. Parse
+    # both fields rather than hardcoding the username so a future
+    # tf module change does not silently break this composition.
+    rds_secret_json="$(aws secretsmanager get-secret-value --region "${REGION}" \
+      --secret-id "${rds_master_secret_arn}" --query SecretString --output text)"
+    rds_user="$(echo "${rds_secret_json}" | jq -r .username)"
+    rds_pass="$(echo "${rds_secret_json}" | jq -r .password)"
+    # aws_db_instance.endpoint already carries :port; strip it so we
+    # can re-attach the canonical 5432 (RDS Postgres does not run on
+    # alternative ports in the tf module).
+    rds_host="${rds_endpoint%:*}"
+    # url-encode the password — RDS-generated passwords often include
+    # `/`, `@`, and `#` which break a raw DSN.
+    rds_pass_enc="$(jq -rn --arg p "${rds_pass}" '$p|@uri')"
+    MANAGED_PG_DSN="postgres://${rds_user}:${rds_pass_enc}@${rds_host}:5432/${rds_database}?sslmode=require"
+  fi
+fi
+if [[ "${WITH_ELASTICACHE}" == "1" ]]; then
+  redis_endpoint="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_endpoint 2>/dev/null || echo)"
+  redis_port="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_port 2>/dev/null || echo 6379)"
+  redis_auth_secret_arn="$("${TF}" -chdir="${TF_DIR}" output -raw elasticache_auth_secret_arn 2>/dev/null || echo)"
+  if [[ -n "${redis_endpoint}" && -n "${redis_auth_secret_arn}" ]]; then
+    redis_token="$(aws secretsmanager get-secret-value --region "${REGION}" \
+      --secret-id "${redis_auth_secret_arn}" --query SecretString --output text)"
+    redis_token_enc="$(jq -rn --arg p "${redis_token}" '$p|@uri')"
+    # rediss:// for TLS — the tf module sets transit_encryption_enabled=true.
+    MANAGED_REDIS_URL="rediss://:${redis_token_enc}@${redis_endpoint}:${redis_port}"
+  fi
+fi
+export LENNY_POSTGRES_DSN="${MANAGED_PG_DSN}"
+export LENNY_REDIS_URL="${MANAGED_REDIS_URL}"
+
 echo "==[3/6] render cloud values overlay==" >&2
+if [[ -n "${MANAGED_PG_DSN}" ]]; then
+  echo "  routing chart at managed RDS Postgres (host=${rds_host:-?})" >&2
+fi
+if [[ -n "${MANAGED_REDIS_URL}" ]]; then
+  echo "  routing chart at managed ElastiCache Redis (host=${redis_endpoint:-?})" >&2
+fi
 ECR_REGISTRY="${ECR_REGISTRY}" IMAGE_TAG="${TAG}" \
+LENNY_POSTGRES_DSN="${MANAGED_PG_DSN}" LENNY_REDIS_URL="${MANAGED_REDIS_URL}" \
   "${SCRIPT_DIR}/render-values.sh" "${VALUES_OUT}"
 
 # 4. Prerequisites + in-cluster datastores. The chart's templates
@@ -238,20 +292,48 @@ done
 kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create namespace lenny-system --dry-run=client -o yaml | kubectl apply -f -
-# Apply only the Postgres + Redis fixtures from datastores.yaml. The
-# EKS overlay does not deploy the in-cluster MinIO Deployment because
-# tier-6's TestMultiAZMinIO asserts on a hasS3-only artifact store:
-# with an in-cluster MinIO present and no LENNY_MINIO_ENDPOINT, the
-# test errors. The §12.5 cloud install routes artifact-store traffic
-# at the per-release S3 bucket (provisioned by the Terraform module);
-# wiring the gateway to the S3 backend is BUILD-GAPS TestCloudS3ViaIRSA
-# follow-on.
-kubectl apply -n lenny-system -l 'lenny.dev/e2e-datastore notin (minio)' \
+# Apply datastore fixtures from datastores.yaml selectively. The EKS
+# overlay always skips in-cluster MinIO because tier-6's
+# TestMultiAZMinIO asserts on a hasS3-only artifact store (the
+# per-release S3 bucket from the Terraform module is the artifact
+# store; the §12.5 SSE-KMS wiring is BUILD-GAPS TestCloudS3ViaIRSA
+# follow-on). When the caller has provisioned a managed RDS or
+# ElastiCache (MANAGED_PG_DSN / MANAGED_REDIS_URL non-empty), the
+# corresponding in-cluster fixture is skipped too — the chart's
+# gateway points at the managed endpoint, so the in-cluster pod
+# would just sit there consuming CPU.
+skip_datastores=(minio)
+wait_datastores=(deployment/lenny-postgres deployment/lenny-redis)
+if [[ -n "${MANAGED_PG_DSN}" ]]; then
+  skip_datastores+=(postgres)
+  wait_datastores=("${wait_datastores[@]/deployment\/lenny-postgres}")
+fi
+if [[ -n "${MANAGED_REDIS_URL}" ]]; then
+  skip_datastores+=(redis)
+  wait_datastores=("${wait_datastores[@]/deployment\/lenny-redis}")
+fi
+skip_expr="$(IFS=,; echo "${skip_datastores[*]}")"
+kubectl apply -n lenny-system -l "lenny.dev/e2e-datastore notin (${skip_expr})" \
   -f "${REPO_ROOT}/tests/testinfra/k8s/datastores.yaml"
 kubectl -n lenny-system delete deployment/lenny-minio service/lenny-minio \
   --ignore-not-found >/dev/null
-kubectl wait -n lenny-system --for=condition=available --timeout=300s \
-  deployment/lenny-postgres deployment/lenny-redis
+if [[ -n "${MANAGED_PG_DSN}" ]]; then
+  kubectl -n lenny-system delete deployment/lenny-postgres service/lenny-postgres pvc/lenny-postgres-data \
+    --ignore-not-found >/dev/null
+fi
+if [[ -n "${MANAGED_REDIS_URL}" ]]; then
+  kubectl -n lenny-system delete deployment/lenny-redis service/lenny-redis \
+    --ignore-not-found >/dev/null
+fi
+# Filter out any empty entries left by the array-replace pattern
+# above, then only wait when there is at least one in-cluster store.
+filtered_wait=()
+for ref in "${wait_datastores[@]}"; do
+  [[ -n "${ref}" ]] && filtered_wait+=("${ref}")
+done
+if [[ "${#filtered_wait[@]}" -gt 0 ]]; then
+  kubectl wait -n lenny-system --for=condition=available --timeout=300s "${filtered_wait[@]}"
+fi
 
 # Apply the chart's CRDs out of band. helm install installs them on
 # first invoke; this step keeps a re-run idempotent.
@@ -277,6 +359,7 @@ kubectl apply -f "${REPO_ROOT}/charts/lenny/crds/"
 # from ECR.
 echo "==[4c/6] run lenny-migrate Job==" >&2
 kubectl -n lenny-system delete job lenny-e2e-migrate --ignore-not-found --wait=true >/dev/null
+migrate_dsn="${MANAGED_PG_DSN:-postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable}"
 cat <<MIGRATE | kubectl apply -f -
 apiVersion: batch/v1
 kind: Job
@@ -298,7 +381,7 @@ spec:
           args: ["up"]
           env:
             - name: LENNY_POSTGRES_DSN
-              value: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+              value: "${migrate_dsn}"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
