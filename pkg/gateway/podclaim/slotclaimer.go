@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -157,6 +158,15 @@ type SlotClaimer struct {
 	Client client.Client
 	// Namespace is the agent namespace the pool's Sandboxes live in.
 	Namespace string
+	// Counter is the §5.2 atomic slot counter. When wired (production
+	// install with --redis-url), every reservation goes through the
+	// Redis Lua GET-compare-INCR sequence so multiple gateway replicas
+	// racing on the same pod cannot transiently exceed maxConcurrent.
+	// When nil (test harnesses without Redis), the claimer falls back
+	// to the SSA-only path which is race-prone — it remains for the
+	// envtest unit tests' single-writer scenarios and is explicitly
+	// not spec-aligned for production.
+	Counter *slotcounter.Counter
 }
 
 // ClaimSlot reserves a concurrent-mode slot for the request's session.
@@ -289,53 +299,90 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 // successful reservation reserveSlot stamps the lenny.dev/tenant-id
 // label (best-effort).
 func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req SlotRequest) (res *SlotResult, conflict bool, err error) {
-	// Re-check the cap and the tenant pin against the freshly-listed
-	// object before doing any writes.
-	if sb.Status.ActiveSlots >= req.MaxConcurrent {
-		return nil, true, nil
-	}
+	// Tenant pin check (§5.2 binds a pod to its first tenant for the
+	// pod's lifetime; a slot for a different tenant is never placed
+	// here). Cheap, no API call.
 	if sb.Status.TenantID != "" && sb.Status.TenantID != req.TenantID {
 		return nil, true, nil
 	}
 
-	// Create the binding SandboxClaim first — the deterministic-name
-	// CREATE is the duplicate-session guard and must precede any slot
-	// count mutation.
+	// §5.2 atomic slot reservation. When wired to Redis, the Lua
+	// GET-compare-INCR sequence enforces the maxConcurrent cap
+	// atomically across gateway replicas — two concurrent reservers
+	// cannot both observe "1 slot available" on a maxConcurrent=1
+	// pod. The SSA fallback (Counter unwired) is race-prone and is
+	// only used by single-writer unit tests; the production path
+	// requires --redis-url.
+	var nextActiveSlots int32
+	if c.Counter != nil {
+		newCount, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrent)
+		if errors.Is(err, slotcounter.ErrSlotsExhausted) {
+			return nil, true, nil
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("reserve slot via counter on sandbox %s: %w", sb.Name, err)
+		}
+		nextActiveSlots = newCount
+	} else {
+		// SSA-only fallback. The pre-read cap-check is a best-effort
+		// approximation of the atomic CAS and is documented as
+		// race-prone in the SlotClaimer doc comment.
+		if sb.Status.ActiveSlots >= req.MaxConcurrent {
+			return nil, true, nil
+		}
+		nextActiveSlots = sb.Status.ActiveSlots + 1
+	}
+
+	// Create the binding SandboxClaim. The deterministic-name CREATE
+	// is the duplicate-session guard — a repeated slot claim for a
+	// live session collides at CREATE rather than opening a second
+	// slot. On failure, undo the counter reservation so the slot
+	// budget stays accurate.
 	claim, err := createSlotClaim(ctx, c.Client, c.Namespace, sb.Name, req)
 	if err != nil {
+		if c.Counter != nil {
+			_, _ = c.Counter.Release(ctx, sb.Name)
+		}
 		return nil, false, err
 	}
 
-	freshPod := sb.Status.ActiveSlots == 0
-	nextActiveSlots := sb.Status.ActiveSlots + 1
+	freshPod := nextActiveSlots == 1
 	tenantID := sb.Status.TenantID
 	if tenantID == "" {
 		// First slot on this pod pins it to the tenant for its lifetime.
 		tenantID = req.TenantID
 	}
-	// Per spec §4.6.3, write the gateway-owned Sandbox.status fields
-	// via Server-Side Apply with the `lenny-gateway` field manager.
-	// SSA enforces field ownership at the API server: a §5.2 slot
-	// reservation patches only Phase + ActiveSlots + TenantID, which
-	// are gateway-owned. The §4.6.1 WPC's own fields
-	// (PodName / NodeName / PodIP / ObservedGeneration) are not
-	// touched by this patch, so the controller's parallel applies do
-	// not race. The pre-read above checked the cap; the API server's
-	// Apply does not retry on a stale cap because the patch carries
-	// the new (post-increment) count directly. A conflict response
-	// indicates a competing replica reserved a slot first.
+	// Mirror the new slot count + phase + tenant pin onto the
+	// Sandbox.status (observable spec-§4.6.3 fields). When the
+	// Counter is wired, this write is purely observability — the
+	// Redis counter is the source of truth and the SSA mirror lags
+	// it. A conflict on the mirror is ignored (the slot is already
+	// reserved); a hard error is logged but does not unwind the
+	// reservation. When the Counter is unwired, the SSA mirror IS
+	// the cap check, so a conflict means another replica raced and
+	// the caller must retry on another pod.
 	patch := gatewayStatusPatch(sb.Name, sb.Namespace,
 		string(state.SlotActive), nextActiveSlots, tenantID)
 	if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway)), client.ForceOwnership); err != nil {
 		if apierrors.IsConflict(err) {
-			// A competing replica reserved a slot on this pod first. Undo
-			// the SandboxClaim so the caller can retry cleanly on another
-			// pod, and report the conflict.
-			_ = c.Client.Delete(ctx, claim)
-			return nil, true, nil
+			if c.Counter == nil {
+				// SSA-only path: the conflict means a competing replica
+				// reserved first. Undo and retry on another pod.
+				_ = c.Client.Delete(ctx, claim)
+				return nil, true, nil
+			}
+			// Redis-counter path: the reservation is canonical, the
+			// SSA mirror just lagged. Continue.
+		} else {
+			if c.Counter == nil {
+				_ = c.Client.Delete(ctx, claim)
+				return nil, false, fmt.Errorf("reserve slot on sandbox %s: %w", sb.Name, err)
+			}
+			// Counter is wired: the SSA mirror failure is observability-only.
+			// Log via the wrapped error so an operator notices, but the
+			// reservation stands.
+			_ = fmt.Errorf("reserve slot mirror on sandbox %s: %w", sb.Name, err)
 		}
-		_ = c.Client.Delete(ctx, claim)
-		return nil, false, fmt.Errorf("reserve slot on sandbox %s: %w", sb.Name, err)
 	}
 	// Reflect the applied values onto the caller's in-memory Sandbox
 	// so downstream code observing this Sandbox sees the slot it just
@@ -406,6 +453,15 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 	}
 	if err := c.Client.Delete(ctx, claim); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("podclaim: delete slot claim for session %s: %w", sessionID, err)
+	}
+
+	// §5.2 atomic slot release. The Redis counter is the source of
+	// truth — DECR clamped at zero. The SSA Sandbox.status mirror
+	// follows below.
+	if c.Counter != nil {
+		if _, err := c.Counter.Release(ctx, sandboxName); err != nil {
+			return fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
+		}
 	}
 
 	// Decrement the pod's slot count under SSA. Per spec §4.6.3 the

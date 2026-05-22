@@ -141,6 +141,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
@@ -729,6 +730,17 @@ func main() {
 			log.Fatalf("lenny-gateway: adapter TLS: %v", err)
 		}
 		podRegistry = podsession.NewRegistry()
+		// §5.2 atomic slot counter. When Redis is wired, every
+		// concurrent-mode slot reservation goes through the Redis Lua
+		// GET-compare-INCR sequence so two gateway replicas racing on
+		// the same pod cannot transiently exceed maxConcurrent. With
+		// no Redis the SlotClaimer falls back to a race-prone SSA-only
+		// path that is unsafe for the production envelope; the
+		// fallback is retained only for tier-2 unit tests.
+		var slotCounter *slotcounter.Counter
+		if redisClient != nil {
+			slotCounter = slotcounter.New(redisClient)
+		}
 		podBinder = &podsession.Binder{
 			Client:           k8sClient,
 			Namespace:        *agentNamespace,
@@ -743,6 +755,9 @@ func main() {
 			// StartSession. A BindRequest that names no credential pools
 			// assigns nothing.
 			Credentials: credAssign,
+			// §5.2 atomic slot counter (Redis-backed); nil falls back
+			// to the SSA-only path documented on SlotClaimer.
+			SlotCounter: slotCounter,
 		}
 		// §4.6.1 Postgres-backed fallback claim: when Postgres is
 		// configured the binder reads the agent_pod_state mirror to

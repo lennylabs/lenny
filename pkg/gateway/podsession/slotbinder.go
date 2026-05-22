@@ -161,7 +161,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 // handler can map it to WARM_POOL_EXHAUSTED with the §5.2
 // "concurrent_slots_exhausted" reason.
 func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxName, slotID, podIP string, cl *adapterclient.Client, err error) {
-	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace}
+	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
 	res, err := claimer.ClaimSlot(ctx, podclaim.SlotRequest{
 		Pool:          req.Pool,
 		SessionID:     req.SessionID,
@@ -221,7 +221,7 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
 		result.Adapter.Close()
 	}
-	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace}
+	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
 	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID)
 }
 

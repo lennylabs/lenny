@@ -26,6 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
@@ -72,6 +73,13 @@ type Binder struct {
 	// the deployment configures no credential pools; a BindRequest then
 	// names no pools and Bind assigns nothing.
 	Credentials CredentialAssigner
+	// SlotCounter is the §5.2 atomic slot counter. Wired in production
+	// installs that expose --redis-url; the SlotClaimer constructed
+	// per BindSlot call carries it through so the Redis Lua
+	// GET-compare-INCR sequence enforces maxConcurrent atomically
+	// across gateway replicas. Nil when no Redis is wired; the
+	// SlotClaimer then falls back to its race-prone SSA-only path.
+	SlotCounter *slotcounter.Counter
 }
 
 // CredentialAssigner mints a session's §4.9 credential leases. The
