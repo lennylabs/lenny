@@ -112,9 +112,15 @@ func TestCloudSessionLifecycle(t *testing.T) {
 	}
 	t.Logf("created session %s in state %s", created.ID, created.State)
 
-	// 2. POST /v1/sessions/{id}/messages — drive at least one message
+	// 2. POST /v1/sessions/{id}/messages — drive at least one message.
+	// The §15.1 body is {"messages": [{role, content}, ...]}; the
+	// gateway returns 400 VALIDATION_ERROR on an empty messages array,
+	// so wrap the content in the batch envelope rather than send a
+	// bare content field.
 	status, body = post("/v1/sessions/"+created.ID+"/messages", map[string]any{
-		"content": "hello cloud",
+		"messages": []map[string]any{
+			{"role": "user", "content": "hello cloud"},
+		},
 	}, nil)
 	if status != http.StatusAccepted && status != http.StatusOK {
 		// The §15.1 messages endpoint requires the session in a
