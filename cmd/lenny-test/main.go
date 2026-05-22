@@ -113,8 +113,24 @@ Usage:
   lenny-test list [flags]                  Print the tests that would run for a
                                            given selector, without executing them.
   lenny-test infra <up|down|status|prune>  Manage cached test infrastructure.
+  lenny-test cached <status|ensure|       Manage the long-lived lenny-test-cached
+                     endpoints|shutdown>   container daemon.
   lenny-test stress --test <name> [flags]  Run a single test N times to detect
                                            flakes (§17.10).
+  lenny-test watch [--tier <t> | --changed | --pattern <re>]
+                                           Rerun tests on file changes.
+  lenny-test coverage --go|--spec|        Report Go, spec-section, or diff
+                       --diff <ref>        coverage (§5, §19).
+  lenny-test mutation [--pkg <pat>]       Run scripts/mutation.sh and compare
+                       [--threshold <f>]   against the §19.3 per-package threshold.
+  lenny-test baseline diff --before <a>   Diff two baseline JSON documents and
+                            --after <b>    enforce the §22.5 regression budget.
+                            [--threshold <f>]
+  lenny-test report --dir <path>          Aggregate verdict JSONs from <path>
+                    [--output             into a single roll-up.
+                     human|markdown|json]
+  lenny-test comment --verdict <path>     Render a verdict as a Markdown PR
+                     [--output <file>]    comment.
   lenny-test conformance --image <ref>     Run the §12.10 conformance battery
                           --level <basic|standard|full>
                                            against a third-party runtime image.

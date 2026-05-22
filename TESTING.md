@@ -129,23 +129,46 @@ lenny/
 ├── pkg/                           # Application code (Phase 2 onward)
 ├── cmd/                           # Binaries
 │   ├── lenny-gateway/
+│   ├── lenny-controller/
+│   ├── lenny-adapter/
+│   ├── lenny-webhook/
+│   ├── lenny-token-service/
 │   ├── lenny-ops/
 │   ├── lenny-ctl/
+│   ├── lenny-migrate/
+│   ├── lenny-backup/
+│   ├── lenny-preflight/
+│   ├── lenny-tier-promote/
+│   ├── lenny-egress-capture/
 │   ├── lenny-compliance/          # Runtime conformance harness
 │   ├── lenny-test/                # Test selector and runner (this plan's CLI)
-│   └── runtimes/
+│   ├── lenny-test-cached/         # Container-cache daemon for the harness
+│   ├── lenny/                     # Embedded-mode single-binary entry point
+│   ├── gen-alerting-rules/        # Renders the §16.5 alert catalog
+│   └── runtimes/                  # Reference and conformance runtimes
 │       ├── echo/                  # Basic-level reference runtime
-│       ├── streaming-echo/        # Streaming + lifecycle channel
-│       └── delegation-echo/       # Scripted delegation behavior
+│       ├── streaming-echo/        # Full-level streaming + lifecycle
+│       ├── delegation-echo/       # Scripted delegation behaviour
+│       ├── mcp-reference/         # MCP reference adapter
+│       ├── elicitation-echo/      # Elicitation channel fixture
+│       ├── cred-shell-echo/       # Credential-shell fixture
+│       └── echo-embedded/         # Embedded-model runtime (links adapter)
 └── tests/
     ├── README.md                  # Pointer to this file
     ├── spec-map.json              # Spec section → tests
+    ├── spec-map-exceptions.yaml   # Spec sections explicitly exempt
     ├── change-graph.json          # Source package → tests
     ├── groups.yaml                # Named test selection groups
+    ├── groups.subsets.yaml        # Concrete subset definitions
+    ├── flake-budget.yaml          # Per-test flake budget
+    ├── change-graph-pending.txt   # Pending change-graph updates
+    ├── testdata/                  # Canonical fixtures (translator corpora, uploads, migrations)
     ├── results/                   # Latest verdict, kept under .gitignore
     │   └── latest.json
     ├── testinfra/                 # Shared infrastructure (see tests/testinfra/README.md)
+    │   ├── admission/             # Webhook validation test fixture
     │   ├── assertions/            # Cross-cutting assertions (RLS, state machine)
+    │   ├── audit/                 # Audit-pipeline helpers
     │   ├── chaos/                 # Failure injection primitives
     │   ├── cloud/                 # Tier 6 cloud-provider lifecycle
     │   ├── compose/               # docker-compose harness
@@ -156,18 +179,22 @@ lenny/
     │   ├── gateway/               # cmd/lenny-gateway subprocess for Tier 4
     │   ├── golden/                # Golden-file roundtrip helpers
     │   ├── goleak/                # Per-test goroutine-leak detection
+    │   ├── helm/                  # Helm chart render and apply helpers
+    │   ├── k8s/                   # Asset directory (workload + datastore manifests)
     │   ├── kind/                  # Kind cluster lifecycle helpers
-    │   ├── load/                  # k6 / vegeta wrappers
+    │   ├── load/                  # k6 / vegeta wrappers and baseline diffing
     │   ├── matrix/                # Contract-test matrix runner
     │   ├── mocks/                 # LLM provider mocks, OAuth mocks
     │   ├── ports/                 # Random free-port allocator
     │   ├── randctl/               # Seeded RNG
-    │   ├── runtimes/              # Test runtime images + conformance fixtures
+    │   ├── runtimes/              # Asset directory (conformance-fixture runtime images)
     │   ├── schematest/            # JSON Schema + protobuf roundtrip helpers
-    │   ├── sdkhelper/             # Per-language SDK conformance scaffolding
+    │   ├── sdkhelper/             # SDK conformance scaffolding (`echo/` subcommand)
     │   ├── security/              # SBOM, cosign, ZAP, trivy, kube-bench wrappers
-    │   ├── stubs/                 # In-process fault models (KMS, OIDC, SIEM)
+    │   ├── sessiondriver/         # Live session driver (HTTP, SSE, chaos bridge)
+    │   ├── stubs/                 # In-process fault models (KMS, OIDC, SIEM, LLM)
     │   ├── timectl/               # Deterministic time control
+    │   ├── tokenservice/          # Token-service minting helpers
     │   └── wait/                  # Polling helpers (For, ForResult)
     │
     │   # Diagnosis extraction and verdict production live in
@@ -175,44 +202,64 @@ lenny/
     │   # verdict.go) rather than as separate testinfra packages;
     │   # both are exposed through the harness's subcommands.
     ├── tier0_static/
-    ├── tier1_unit/                # Co-located with packages; this is the index
+    ├── tier1_unit/                # Index only; unit tests live with their packages under pkg/.
+    │   └── helm/                  # Helm chart-rendering units (no obvious source-tree home)
     ├── tier2_component/
-    │   ├── stores/
+    │   ├── auditintegrity/
+    │   ├── auditstore/
+    │   ├── breakers/
     │   ├── controllers/
+    │   ├── coordination/
     │   ├── gateway_subsystems/
+    │   ├── healthchecks/
+    │   ├── leases/
+    │   ├── migrations/
+    │   ├── observability/
+    │   ├── quota/
+    │   ├── ratelimit/
+    │   ├── rls/
+    │   ├── securitycaches/
+    │   ├── storagequota/
+    │   ├── stores/
     │   └── translators/
     ├── tier3_contract/
-    │   ├── rest_mcp/
-    │   ├── rest_openai_completions/
-    │   ├── rest_openai_responses/
-    │   ├── adapter_jsonl/
-    │   └── ocsf_audit/
-    ├── tier4_integration/
-    ├── tier5_e2e_kind/
-    ├── tier6_e2e_cloud/
-    ├── tier7_load/
-    │   ├── scenarios/
-    │   ├── slo.go
-    │   └── baselines/
-    ├── tier8_chaos/
-    ├── tier9_security/
-    │   ├── tenant_isolation/
-    │   ├── network_policy/
-    │   ├── admission/
-    │   ├── mtls/
-    │   ├── fuzz/
-    │   └── pentest/               # Driver only; real pentest is external
-    ├── tier10_conformance/
-    │   ├── basic/
-    │   ├── standard/
-    │   └── full/
-    └── tier11_docs/
+    │   ├── adapter_jsonl/         # Adapter JSONL binary protocol
+    │   ├── cloudevents/           # CloudEvents envelope
+    │   ├── oauth_token/           # OAuth token exchange
+    │   ├── ocsf_audit/            # OCSF audit-event schema
+    │   ├── ops_endpoints/         # Ops HTTP surface
+    │   ├── playground/            # Playground API
+    │   ├── rest_auth/             # REST auth contract
+    │   ├── rest_circuitbreaker/   # REST circuit breaker
+    │   ├── rest_idempotency/      # REST idempotency
+    │   ├── rest_mcp_consistency/  # REST ↔ MCP consistency
+    │   ├── rest_openai_chat/      # REST ↔ OpenAI Chat Completions
+    │   ├── rest_openai_responses/ # REST ↔ OpenAI Responses
+    │   ├── rest_sessions/         # REST sessions surface
+    │   ├── sdks/                  # SDK contract matrix
+    │   └── workspaceplan/         # Workspace plan JSON schema
+    ├── tier4_integration/         # Flat *_test.go layout, one file per subject
+    ├── tier5_e2e_kind/            # Flat *_test.go layout, one file per subject
+    ├── tier6_e2e_cloud/           # Flat *_test.go layout + parity-matrix.yaml + README.md
+    ├── tier7_load/                # Kind smoke runs + per-scenario baselines
+    │   ├── scenarios/             # k6 scripts (one subdir per scenario)
+    │   └── baselines/             # Per-scenario baseline JSON files
+    ├── tier7_load_cloud/          # Opt-in cloud-profile load runs
+    │   └── scenarios/             # Cloud-only k6 scenarios
+    ├── tier8_chaos/               # Flat *_test.go layout + runbook-map.yaml
+    ├── tier9_security/            # Flat *_test.go layout
+    │   ├── pentest/               # Driver, fixtures, findings store
+    │   └── reviews/               # Security-review notes
+    ├── tier10_conformance/        # Placeholder; scaffolds_test.go only until the suite ships
+    └── tier11_docs/               # No build tag; verification-only doc tests
 ```
 
 ### Why this layout
 
 - Unit tests live next to the code they cover (`pkg/.../foo_test.go`). The `tests/tier1_unit/` directory is a convention marker, not a code location.
 - Every other tier has its own directory, its own build tag, and its own dependency set.
+- Tier 7 is split into `tier7_load/` (Kind-based smoke and the canonical baseline corpus) and `tier7_load_cloud/` (opt-in cloud-profile runs). The two share scenario definitions but bind to different harnesses and run cadences.
+- A few `testinfra/` subdirectories carry only YAML, fixtures, or a single subcommand (`runtimes/`, `k8s/`, `sdkhelper/`). They are listed as asset directories in `tests/testinfra/README.md` so a reader does not expect a Go package at the top of each path.
 - Shared infrastructure lives under `tests/testinfra/`. There is one canonical helper per concern (one container manager, one fixture loader, one verdict producer).
 - `cmd/lenny-test/` builds the harness binary. It is the only entry point developers and CI use to run tests.
 
@@ -337,6 +384,37 @@ lenny-test infra up   --profile compose|kind|all
 lenny-test infra down --profile compose|kind|all
 lenny-test infra prune
 lenny-test infra status
+
+# Cached container daemon (§6.1)
+lenny-test cached status                          # daemon liveness
+lenny-test cached ensure                          # spawn if absent, return endpoints
+lenny-test cached endpoints                       # print endpoint table
+lenny-test cached shutdown                        # stop the daemon
+
+# Iteration helpers
+lenny-test stress --test TestX --runs 50          # flake budget (§17.10)
+lenny-test stress --pattern 'TestSession.*' --runs 25
+lenny-test watch  --tier unit                     # rerun on file changes
+lenny-test watch  --changed
+
+# Coverage
+lenny-test coverage --go                          # Go coverage from tests/results/cover.out
+lenny-test coverage --spec                        # spec-section coverage
+lenny-test coverage --diff <ref>                  # coverage of lines changed since <ref>
+
+# Mutation (§19.3)
+lenny-test mutation                               # pkg/...
+lenny-test mutation --pkg pkg/quota
+lenny-test mutation --threshold 0.80
+
+# Baselines (§22.5)
+lenny-test baseline diff --before old.json --after new.json
+lenny-test baseline diff --before old.json --after new.json --threshold 0.15
+
+# Reporting
+lenny-test report  --dir tests/results            # aggregate verdict JSONs
+lenny-test report  --dir tests/results --output markdown|json
+lenny-test comment --verdict tests/results/latest.json [--output comment.md]
 
 # Conformance and operator surfaces
 lenny-test conformance --image <runtime-image> --level <basic|standard|full>
