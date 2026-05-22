@@ -32,8 +32,13 @@ PLATFORMS="${PLATFORMS:-linux/amd64}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
-# IMAGES is the list of (image name, BINARY build-arg) pairs the chart
-# consumes. Order matters only for log readability.
+# IMAGES is the list of (image name, BINARY build-arg) pairs. The
+# 10 platform binaries share the convention image-name == cmd path;
+# the runtime echo image points at cmd/runtimes/echo via an explicit
+# BINARY=runtimes/echo. Tier-7 cloud-load references the runtime
+# image from the agent-workload-load.yaml.tmpl fixture as
+# LOAD_RUNTIME_IMAGE=<ecr>/lenny-runtime-echo:<source-hash>, so it
+# must be built and pushed alongside the platform images.
 IMAGES=(
   "lenny-controller:lenny-controller"
   "lenny-webhook:lenny-webhook"
@@ -45,6 +50,7 @@ IMAGES=(
   "lenny-ctl:lenny-ctl"
   "lenny-adapter:lenny-adapter"
   "lenny-migrate:lenny-migrate"
+  "lenny-runtime-echo:runtimes/echo"
 )
 
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
