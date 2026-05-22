@@ -23,14 +23,29 @@ import (
 
 func main() {
 	var (
-		listen          = flag.String("listen", ":9100", "HTTP listen address for /metrics")
-		provider        = flag.String("provider", "aws", "cloud provider: aws|gcp|azure")
-		region          = flag.String("region", "us-west-2", "cloud region")
-		interval        = flag.Duration("interval", 30*time.Second, "polling interval")
-		rdsInstance     = flag.String("aws-rds-instance", "", "RDS instance identifier")
-		cacheCluster    = flag.String("aws-elasticache-cluster", "", "ElastiCache cluster id")
-		loadBalancer    = flag.String("aws-alb", "", "ALB name")
-		autoScalingASG  = flag.String("aws-asg", "", "Node ASG name")
+		listen   = flag.String("listen", ":9100", "HTTP listen address for /metrics")
+		provider = flag.String("provider", "aws", "cloud provider: aws|gcp|azure")
+		region   = flag.String("region", "us-west-2", "cloud region")
+		interval = flag.Duration("interval", 30*time.Second, "polling interval")
+
+		// AWS resources
+		awsRDSInstance    = flag.String("aws-rds-instance", "", "RDS instance identifier")
+		awsCacheCluster   = flag.String("aws-elasticache-cluster", "", "ElastiCache cluster id")
+		awsLoadBalancer   = flag.String("aws-alb", "", "ALB name")
+		awsAutoScalingASG = flag.String("aws-asg", "", "Node ASG name")
+
+		// GCP resources
+		gcpProjectID   = flag.String("gcp-project", "", "GCP project ID")
+		gcpSQLInstance = flag.String("gcp-sql-instance", "", "Cloud SQL instance name")
+		gcpCacheName   = flag.String("gcp-memorystore-instance", "", "Memorystore instance id")
+		gcpLBName      = flag.String("gcp-loadbalancer", "", "Cloud Load Balancer URL map name")
+		gcpMIGName     = flag.String("gcp-mig", "", "GCE managed instance group name")
+
+		// Azure resource IDs (full ARM IDs)
+		azPGServerID = flag.String("azure-pg-server-id", "", "Flexible Server resource ID")
+		azCacheID    = flag.String("azure-cache-id", "", "Azure Cache for Redis resource ID")
+		azLBID       = flag.String("azure-lb-id", "", "Azure Load Balancer resource ID")
+		azVMSSID     = flag.String("azure-vmss-id", "", "VMSS resource ID")
 	)
 	flag.Parse()
 
@@ -40,7 +55,14 @@ func main() {
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 	go func() { <-sigs; cancel() }()
 
-	collector, err := buildCollector(ctx, *provider, *region, *interval, *rdsInstance, *cacheCluster, *loadBalancer, *autoScalingASG)
+	collector, err := buildCollector(ctx, *provider, *region, *interval, builderArgs{
+		awsRDSInstance: *awsRDSInstance, awsCacheCluster: *awsCacheCluster,
+		awsLoadBalancer: *awsLoadBalancer, awsAutoScalingASG: *awsAutoScalingASG,
+		gcpProjectID: *gcpProjectID, gcpSQLInstance: *gcpSQLInstance,
+		gcpCacheName: *gcpCacheName, gcpLBName: *gcpLBName, gcpMIGName: *gcpMIGName,
+		azPGServerID: *azPGServerID, azCacheID: *azCacheID,
+		azLBID: *azLBID, azVMSSID: *azVMSSID,
+	})
 	if err != nil {
 		log.Fatalf("cloud-metrics-collector: %v", err)
 	}
@@ -70,20 +92,35 @@ func main() {
 	}
 }
 
-func buildCollector(ctx context.Context, provider, region string, interval time.Duration, rdsID, cacheID, alb, asg string) (*cloudmetrics.Collector, error) {
+type builderArgs struct {
+	awsRDSInstance, awsCacheCluster, awsLoadBalancer, awsAutoScalingASG string
+	gcpProjectID, gcpSQLInstance, gcpCacheName, gcpLBName, gcpMIGName   string
+	azPGServerID, azCacheID, azLBID, azVMSSID                           string
+}
+
+func buildCollector(ctx context.Context, provider, region string, interval time.Duration, a builderArgs) (*cloudmetrics.Collector, error) {
 	switch provider {
 	case "aws":
-		poller, err := cloudmetrics.NewAWSPoller(ctx, region, rdsID, cacheID, alb, asg)
+		poller, err := cloudmetrics.NewAWSPoller(ctx, region, a.awsRDSInstance, a.awsCacheCluster, a.awsLoadBalancer, a.awsAutoScalingASG)
 		if err != nil {
 			return nil, err
 		}
 		return cloudmetrics.NewCollector(interval, poller), nil
-	case "gcp", "azure":
-		// Wave 6 cut: AWS is the canonical poller. GCP (Cloud
-		// Monitoring) and Azure (Azure Monitor) pollers mirror the
-		// AWS structure; they land behind the cloud-specific build
-		// tag in the same wave that wires the dispatcher SDKs.
-		return cloudmetrics.NewCollector(interval), nil
+	case "gcp":
+		if a.gcpProjectID == "" {
+			return nil, fmt.Errorf("gcp: -gcp-project is required")
+		}
+		poller, err := cloudmetrics.NewGCPPoller(ctx, a.gcpProjectID, region, a.gcpSQLInstance, a.gcpCacheName, a.gcpLBName, a.gcpMIGName)
+		if err != nil {
+			return nil, err
+		}
+		return cloudmetrics.NewCollector(interval, poller), nil
+	case "azure":
+		poller, err := cloudmetrics.NewAzurePoller(ctx, region, a.azPGServerID, a.azCacheID, a.azLBID, a.azVMSSID)
+		if err != nil {
+			return nil, err
+		}
+		return cloudmetrics.NewCollector(interval, poller), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q (want aws|gcp|azure)", provider)
 	}

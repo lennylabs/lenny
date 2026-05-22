@@ -40,4 +40,28 @@ import (
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/idempotency_cache_eviction"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/streaming_reconnect_storm"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/tenant_isolation_load"
+
+	// Wave 7 follow-up: scenarios closing the deferred §3.4 and §3.5
+	// catalogue against the now-available fakekube SSA semantics and
+	// the broader inproc surface.
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/audit_sink_backpressure"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/checkpointer_concurrent"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/claim_admission_ordering"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/clientgo_throttle_floor"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/connector_oauth_refresh_race"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/controller_reconcile_rate"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/credassign_lease_rotation"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/delegation_depth_n"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/goroutine_leak_long_run"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/large_workspace_upload"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/memory_leak_long_run"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/mixed_workload"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/pg_pool_exhaustion"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/pgtenant_rls_isolation_load"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/pubsub_fanout"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/pubsub_slow_consumer"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/terminate_path_branching"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/tokenservice_issue_burst"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/webhook_admission_latency"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/webhook_tls_rotation_under_load"
 )

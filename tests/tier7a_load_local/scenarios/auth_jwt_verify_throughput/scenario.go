@@ -50,11 +50,21 @@ func (s *Scenario) Setup(ctx context.Context) error {
 		return fmt.Errorf("Sign: %w", err)
 	}
 	s.token = tok
-	last := tok[len(tok)-1]
-	if last == 'A' {
-		s.tamper = tok[:len(tok)-1] + "B"
+	// Flip a character in the middle of the signature segment. The
+	// last byte of a base64url-encoded HMAC-SHA256 signature encodes
+	// only 4 effective bits (the other 2 are padding); some
+	// decoders tolerate non-zero values in those padding bits and
+	// decode to the same byte sequence, so flipping the very last
+	// char is not always a real tamper. Flipping a middle char is.
+	mid := len(tok) - 8
+	if mid < len(tok)-1 && mid > 0 {
+		flip := byte('A')
+		if tok[mid] == 'A' {
+			flip = 'B'
+		}
+		s.tamper = tok[:mid] + string(flip) + tok[mid+1:]
 	} else {
-		s.tamper = tok[:len(tok)-1] + "A"
+		s.tamper = tok + "X"
 	}
 	return nil
 }

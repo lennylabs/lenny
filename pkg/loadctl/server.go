@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/loadrunner/dispatch"
 )
 
 // Config configures a Server.
@@ -20,18 +23,24 @@ type Config struct {
 	StorageURL string
 
 	// DatabaseURL selects the run-state backend: "memory://" or a
-	// Postgres connection string. Wave 6 ships the in-memory backend;
-	// the Postgres backend lands in a Wave 6 follow-up alongside the
-	// loadctl terraform modules.
+	// Postgres connection string.
 	DatabaseURL string
+
+	// Submitter dispatches scenario jobs to the loadrunner pool.
+	// Nil means the server runs in "scaffolding" mode where
+	// driveRun simulates state transitions for development and
+	// tests. Production wiring supplies a per-cloud Submitter
+	// (SQS / Pub/Sub / Service Bus).
+	Submitter dispatch.Submitter
 }
 
 // Server is the HTTP control plane. It exposes the API described in
 // TESTING.md §12.12.
 type Server struct {
-	config Config
-	store  Store
-	hub    *Hub
+	config    Config
+	store     Store
+	hub       *Hub
+	submitter dispatch.Submitter
 
 	mu        sync.RWMutex
 	runners   map[string]*Runner
@@ -88,6 +97,7 @@ func NewServer(c Config) (*Server, error) {
 		config:    c,
 		store:     store,
 		hub:       NewHub(),
+		submitter: c.Submitter,
 		runners:   make(map[string]*Runner),
 		baselines: make(map[string]string),
 		scenarios: defaultScenarios(),
@@ -122,9 +132,126 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/runners", s.handleRunners)
 	mux.HandleFunc("/api/v1/scenarios", s.handleScenarios)
 	mux.HandleFunc("/api/v1/baselines/", s.handleBaselines)
+	mux.HandleFunc("/api/v1/ack", s.handleRunnerAck)
 	mux.HandleFunc("/healthz", s.handleHealthz)
-	mux.HandleFunc("/", s.handleIndex)
+	// Serve the embedded web tree (HTMX UI + stylesheet). The
+	// embed lives in embed.go; the inlined indexHTML constant is
+	// the fallback when the embed is empty.
+	if assets, ok := embeddedAssets(); ok {
+		mux.Handle("/assets/", http.FileServer(http.FS(assets)))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/" {
+				http.NotFound(w, r)
+				return
+			}
+			body, err := fs.ReadFile(assets, "index.html")
+			if err != nil {
+				s.handleIndex(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(body)
+		})
+	} else {
+		mux.HandleFunc("/", s.handleIndex)
+	}
 	return loggingMiddleware(mux)
+}
+
+// RunnerAck is the runner → loadctl callback payload. The runner
+// POSTs one ack per scenario execution containing the outcome and a
+// pointer to the uploaded k6 report.
+type RunnerAck struct {
+	RunID     string             `json:"run_id"`
+	Scenario  string             `json:"scenario"`
+	Outcome   string             `json:"outcome"` // PASS | FAIL
+	ReportURL string             `json:"report_url,omitempty"`
+	Metrics   map[string]float64 `json:"metrics,omitempty"`
+	Error     string             `json:"error,omitempty"`
+}
+
+// handleRunnerAck receives the runner → loadctl callback. When the
+// final scenario in a run acks, the run transitions terminal.
+func (s *Server) handleRunnerAck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var ack RunnerAck
+	if err := json.NewDecoder(r.Body).Decode(&ack); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
+		return
+	}
+	if ack.RunID == "" || ack.Scenario == "" {
+		writeError(w, http.StatusBadRequest, "MISSING_FIELDS", "run_id and scenario are required")
+		return
+	}
+	run, err := s.store.GetRun(r.Context(), ack.RunID)
+	if err == ErrRunNotFound {
+		writeError(w, http.StatusNotFound, "RUN_NOT_FOUND", ack.RunID)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
+		return
+	}
+
+	// Publish the ack event so live subscribers see the per-scenario
+	// completion.
+	s.hub.Publish(ack.RunID, Event{Type: "ack", Payload: ack})
+
+	// Track per-run scenario completion in the run's CurrentMetrics
+	// field (semicolon-separated list of "scenario=outcome" pairs).
+	// Persist the updated CurrentMetrics before any potential
+	// terminal transition; otherwise completeRun reloads a stale
+	// copy from the store and the most recent ack is lost.
+	completed, total := s.recordAck(run, ack)
+	_ = s.store.UpdateRun(r.Context(), run)
+	if completed < total {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"received": true, "completed": completed, "total": total,
+		})
+		return
+	}
+
+	// All scenarios in; determine the run-level outcome.
+	outcome := StatusPass
+	for _, pair := range strings.Split(run.CurrentMetrics, ";") {
+		if strings.HasSuffix(pair, "=FAIL") {
+			outcome = StatusFail
+			break
+		}
+	}
+	s.completeRun(r.Context(), ack.RunID, outcome, nil)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"received": true, "completed": completed, "total": total, "outcome": outcome,
+	})
+}
+
+// recordAck appends scenario=outcome to run.CurrentMetrics and
+// returns (completedCount, totalCount).
+func (s *Server) recordAck(run *Run, ack RunnerAck) (int, int) {
+	pair := ack.Scenario + "=" + ack.Outcome
+	if run.CurrentMetrics == "" {
+		run.CurrentMetrics = pair
+	} else {
+		// Replace any prior entry for this scenario; otherwise append.
+		existing := strings.Split(run.CurrentMetrics, ";")
+		replaced := false
+		for i, e := range existing {
+			if strings.HasPrefix(e, ack.Scenario+"=") {
+				existing[i] = pair
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			existing = append(existing, pair)
+		}
+		run.CurrentMetrics = strings.Join(existing, ";")
+	}
+	completed := len(strings.Split(run.CurrentMetrics, ";"))
+	return completed, len(run.Scenarios)
 }
 
 func loggingMiddleware(h http.Handler) http.Handler {
@@ -194,26 +321,119 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, run)
 }
 
-// driveRun moves a freshly-created run through its state machine.
-// The dispatcher publish + loadrunner ack lands here; until the
-// cloud dispatcher is wired into the loadctl runtime, the path
-// PENDING → RUNNING → PASS is observable by callers.
+// driveRun publishes the run's scenarios to the loadrunner pool.
+// When a Submitter is configured, every scenario in the run becomes
+// a Job submitted through the cloud queue; the runner Acks via the
+// `/api/v1/runs/{id}/runner-ack` callback. When the Submitter is
+// nil (development/test mode), the run progresses through a
+// simulated PENDING → RUNNING → PASS sequence so the UI surface is
+// observable without cloud infrastructure.
 func (s *Server) driveRun(id string) {
 	ctx := context.Background()
-	time.Sleep(50 * time.Millisecond)
-	if run, err := s.store.GetRun(ctx, id); err == nil {
-		run.Status = StatusRunning
-		_ = s.store.UpdateRun(ctx, run)
-		s.hub.Publish(id, Event{Type: "status", Payload: run.Status})
+	run, err := s.store.GetRun(ctx, id)
+	if err != nil {
+		return
 	}
-	time.Sleep(50 * time.Millisecond)
-	if run, err := s.store.GetRun(ctx, id); err == nil {
-		run.Status = StatusPass
-		run.CompletedAt = time.Now().UTC()
-		run.ReportURL = fmt.Sprintf("%s/runs/%s/report.html", s.config.StorageURL, id)
-		_ = s.store.UpdateRun(ctx, run)
-		s.hub.Publish(id, Event{Type: "status", Payload: run.Status})
-		s.hub.Close(id)
+	run.Status = StatusRunning
+	_ = s.store.UpdateRun(ctx, run)
+	s.hub.Publish(id, Event{Type: "status", Payload: run.Status})
+
+	if s.submitter == nil {
+		// Scaffolding path: immediately complete the run so the
+		// developer surface is observable without a runner pool.
+		time.Sleep(50 * time.Millisecond)
+		s.completeRun(ctx, id, StatusPass, nil)
+		return
+	}
+
+	// Submit every scenario as its own Job. The runner pool consumes
+	// them in parallel; the run completes when the last Ack arrives.
+	for _, scenario := range run.Scenarios {
+		job := &dispatch.Job{
+			RunID:     id,
+			Scenario:  scenario,
+			TargetURL: s.config.StorageURL, // placeholder; overlay sets the real gateway URL
+			Duration:  defaultRunDuration,
+			VUs:       scaleVUs(run.Scale),
+			Rate:      scaleRate(run.Scale),
+		}
+		if err := s.submitter.Submit(ctx, job); err != nil {
+			s.hub.Publish(id, Event{Type: "submit_error", Payload: err.Error()})
+			s.completeRun(ctx, id, StatusFail, fmt.Errorf("submit %s: %w", scenario, err))
+			return
+		}
+		s.hub.Publish(id, Event{Type: "scenario_dispatched", Payload: scenario})
+	}
+	// State machine advances on runner-ack callbacks; if no runner
+	// acks within the timeout, the run is marked FAIL.
+	go s.watchRun(ctx, id)
+}
+
+// watchRun fails the run if no terminal ack arrives within the
+// configured timeout.
+func (s *Server) watchRun(ctx context.Context, id string) {
+	deadline := time.NewTimer(defaultRunTimeout)
+	defer deadline.Stop()
+	<-deadline.C
+	run, err := s.store.GetRun(ctx, id)
+	if err != nil {
+		return
+	}
+	if run.Status != StatusRunning && run.Status != StatusPending {
+		return
+	}
+	s.completeRun(ctx, id, StatusFail, fmt.Errorf("run %s timed out after %s without runner ack", id, defaultRunTimeout))
+}
+
+// completeRun is the single terminal-transition path. It updates
+// store + hub atomically (from the hub's perspective) and closes
+// the run's WebSocket channel so subscribers see the end frame.
+func (s *Server) completeRun(ctx context.Context, id, status string, ackErr error) {
+	run, err := s.store.GetRun(ctx, id)
+	if err != nil {
+		return
+	}
+	if run.Status == StatusPass || run.Status == StatusFail || run.Status == StatusAborted {
+		// Already terminal; ignore the second-write.
+		return
+	}
+	run.Status = status
+	run.CompletedAt = time.Now().UTC()
+	run.ReportURL = fmt.Sprintf("%s/runs/%s/report.html", s.config.StorageURL, id)
+	_ = s.store.UpdateRun(ctx, run)
+	if ackErr != nil {
+		s.hub.Publish(id, Event{Type: "error", Payload: ackErr.Error()})
+	}
+	s.hub.Publish(id, Event{Type: "status", Payload: run.Status})
+	s.hub.Close(id)
+}
+
+const (
+	defaultRunDuration = 60 * time.Second
+	defaultRunTimeout  = 5 * time.Minute
+)
+
+// scaleVUs picks the worker count from the documented profile.
+func scaleVUs(scale string) int {
+	switch scale {
+	case "production":
+		return 500
+	case "medium":
+		return 100
+	default:
+		return 20
+	}
+}
+
+// scaleRate picks the constant-arrival rate from the profile.
+func scaleRate(scale string) int {
+	switch scale {
+	case "production":
+		return 100
+	case "medium":
+		return 25
+	default:
+		return 5
 	}
 }
 
