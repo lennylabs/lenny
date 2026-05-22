@@ -232,6 +232,10 @@ func main() {
 		"§11.2 per-user LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the user scope. Zero disables the per-user token cap. Only active when --redis-url is set.")
 	agentNamespace := flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
+	clusterQPS := flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
+		"client-go QPS for the cluster client the gateway uses to list/get/patch SandboxWarmPool / SandboxTemplate / Sandbox / SandboxClaim. The session-start path issues 5+ API calls per request, so client-go's default of 5 saturates at trivial load. The spec mandates explicit QPS values for the controller (§4.6.1) but leaves the gateway's client throttle to operator tuning; the kube-apiserver's own priority+fairness is the production-bounded gate. Override via LENNY_CLUSTER_QPS.")
+	clusterBurst := flag.Int("cluster-burst", envInt("LENNY_CLUSTER_BURST", 200),
+		"client-go burst (token-bucket size) for the cluster client. Pairs with --cluster-qps. Override via LENNY_CLUSTER_BURST.")
 	defaultIsolationProfile := flag.String("default-isolation-profile", os.Getenv("LENNY_DEFAULT_ISOLATION_PROFILE"),
 		"§5.3 isolation profile applied to a session that omits isolationProfile on the create body. Defaults to the chart's compiled-in fallback (`sandboxed`); the e2e overlay sets `standard` so every k6 scenario lands on the warm pool the agent-workload defines.")
 	adapterTLSCert := flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),
@@ -698,6 +702,21 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: resolve cluster config for --agent-namespace: %v", err)
 		}
+		// The gateway's session-start path issues 5+ Kubernetes API
+		// calls per request (list pools, get template, list sandboxes,
+		// patch sandbox, create claim). client-go's default of QPS=5 /
+		// Burst=10 saturates at trivial load; the gateway logs spam
+		// "Waited Ns due to client-side throttling" and each
+		// session-start picks up >1s of added latency. The spec
+		// mandates explicit QPS for the controller (§4.6.1) but leaves
+		// the gateway-side throttle to operator tuning, so --cluster-qps
+		// / --cluster-burst (defaults 100 / 200) are configurable like
+		// the controller's --create-qps / --status-qps flags. The
+		// kube-apiserver's own priority+fairness shaping remains the
+		// production-bounded gate; this client-side limit is the safety
+		// net against runaway clients.
+		cfg.QPS = float32(*clusterQPS)
+		cfg.Burst = *clusterBurst
 		scheme := k8sruntime.NewScheme()
 		utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 		utilruntime.Must(lennyv1.AddToScheme(scheme))
