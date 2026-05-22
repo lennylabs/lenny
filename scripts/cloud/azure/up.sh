@@ -56,32 +56,60 @@ if [[ -n "${CLUSTER_NAME}" ]]; then
     --output tsv)
 fi
 
-cd "$(dirname "$0")/../../../deploy/terraform/cloud/azure"
+TF_DIR="$(cd "$(dirname "$0")/../../../deploy/terraform/cloud/azure" && pwd)"
+TFVARS_FILE="${TF_DIR}/${RELEASE}.tfvars.json"
+
+cd "${TF_DIR}"
 
 terraform init -upgrade >/dev/null
 
-# Tier-7 managed datastores. WITH_FLEXIBLE_POSTGRES=1 +
-# WITH_AZURE_REDIS=1 (the Azure equivalents of WITH_RDS /
-# WITH_ELASTICACHE on AWS) provision Azure Database for PostgreSQL
-# Flexible Server and Azure Cache for Redis alongside the chart
-# resources, and persist their credentials in Key Vault. The default
-# tier-6 e2e path leaves both gates off so the existing in-cluster
-# datastore fixtures keep being used.
-WITH_FLEXIBLE_POSTGRES="${WITH_FLEXIBLE_POSTGRES:-false}"
-WITH_AZURE_REDIS="${WITH_AZURE_REDIS:-false}"
-# Caller IP, when known, gets a firewall rule on the Flexible Server
-# so the operator workstation can connect for ad-hoc DSN debugging.
-CALLER_IP="${MANAGED_DATASTORES_CALLER_IP:-}"
+# tfvars is the per-release topology declaration: which managed
+# services to provision, their SKUs, their networking. It is written
+# ONCE at first up.sh and reused as-is on every later invocation,
+# so re-running up.sh after a tier-6 run-e2e.sh (which calls up.sh
+# without WITH_FLEXIBLE_POSTGRES / WITH_AZURE_REDIS set) does NOT
+# destroy the managed datastores that an earlier tier-7 run brought
+# up — the infra is treated as a whole. To change topology, run
+# azure/down.sh first; the next up.sh writes a fresh tfvars from the
+# current env.
+if [[ -f "${TFVARS_FILE}" ]]; then
+  echo "azure/up.sh: reusing existing topology declaration ${TFVARS_FILE}" >&2
+  echo "  (to change topology, run azure/down.sh first; env flags WITH_FLEXIBLE_POSTGRES / WITH_AZURE_REDIS / *_SKU apply only on first creation)" >&2
+else
+  WITH_FLEXIBLE_POSTGRES="${WITH_FLEXIBLE_POSTGRES:-false}"
+  WITH_AZURE_REDIS="${WITH_AZURE_REDIS:-false}"
+  # Tier-7 sizing knobs. Defaults match the terraform module's
+  # tier-6 baseline; tier-7 run-load.sh maps LENNY_LOAD_SCALE into
+  # these so the SKU aligns with the load envelope.
+  FLEXIBLE_POSTGRES_SKU="${FLEXIBLE_POSTGRES_SKU:-B_Standard_B2s}"
+  FLEXIBLE_POSTGRES_STORAGE_MB="${FLEXIBLE_POSTGRES_STORAGE_MB:-32768}"
+  AZURE_REDIS_SKU="${AZURE_REDIS_SKU:-Standard}"
+  AZURE_REDIS_FAMILY="${AZURE_REDIS_FAMILY:-C}"
+  AZURE_REDIS_CAPACITY="${AZURE_REDIS_CAPACITY:-1}"
+  CALLER_IP="${MANAGED_DATASTORES_CALLER_IP:-}"
+  echo "azure/up.sh: writing new topology declaration ${TFVARS_FILE}" >&2
+  echo "  flexible-postgres=${WITH_FLEXIBLE_POSTGRES} (${FLEXIBLE_POSTGRES_SKU}, ${FLEXIBLE_POSTGRES_STORAGE_MB} MB)" >&2
+  echo "  redis=${WITH_AZURE_REDIS} (${AZURE_REDIS_SKU} ${AZURE_REDIS_FAMILY}${AZURE_REDIS_CAPACITY})" >&2
+  cat > "${TFVARS_FILE}" <<JSON
+{
+  "release":            "${RELEASE}",
+  "resource_group":     "${RESOURCE_GROUP}",
+  "location":           "${LOCATION}",
+  "aks_oidc_issuer_url": "${OIDC_ISSUER_URL}",
+  "namespace":          "${NAMESPACE}",
+  "create_flexible_postgres":        ${WITH_FLEXIBLE_POSTGRES},
+  "flexible_postgres_sku":           "${FLEXIBLE_POSTGRES_SKU}",
+  "flexible_postgres_storage_mb":    ${FLEXIBLE_POSTGRES_STORAGE_MB},
+  "create_azure_redis":              ${WITH_AZURE_REDIS},
+  "azure_redis_sku":                 "${AZURE_REDIS_SKU}",
+  "azure_redis_family":              "${AZURE_REDIS_FAMILY}",
+  "azure_redis_capacity":            ${AZURE_REDIS_CAPACITY},
+  "managed_datastores_caller_ip":    "${CALLER_IP}"
+}
+JSON
+fi
 
-terraform apply -auto-approve \
-  -var "release=${RELEASE}" \
-  -var "resource_group=${RESOURCE_GROUP}" \
-  -var "location=${LOCATION}" \
-  -var "aks_oidc_issuer_url=${OIDC_ISSUER_URL}" \
-  -var "namespace=${NAMESPACE}" \
-  -var "create_flexible_postgres=${WITH_FLEXIBLE_POSTGRES}" \
-  -var "create_azure_redis=${WITH_AZURE_REDIS}" \
-  -var "managed_datastores_caller_ip=${CALLER_IP}"
+terraform apply -auto-approve -var-file="${TFVARS_FILE}"
 
 KEY_VAULT_KEY_ID=$(terraform output -raw key_vault_key_id)
 ARTIFACT_CONTAINER_URL=$(terraform output -raw artifact_container_url)

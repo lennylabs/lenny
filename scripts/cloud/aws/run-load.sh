@@ -62,6 +62,10 @@ case "${LENNY_LOAD_SCALE}" in
     export LOAD_CWORKSPACE_MIN=2 LOAD_CWORKSPACE_MAX=4 LOAD_CWORKSPACE_SLOTS=4
     export LOAD_CSTATELESS_MIN=2 LOAD_CSTATELESS_MAX=4 LOAD_CSTATELESS_SLOTS=8
     export LOAD_TASK_MIN=4 LOAD_TASK_MAX=12 LOAD_TASK_MAX_PER_POD=10
+    # Managed-datastore sizing for ~30 concurrent sessions of churn.
+    export RDS_INSTANCE_CLASS="${RDS_INSTANCE_CLASS:-db.t3.small}"
+    export RDS_ALLOCATED_STORAGE_GB="${RDS_ALLOCATED_STORAGE_GB:-20}"
+    export ELASTICACHE_NODE_TYPE="${ELASTICACHE_NODE_TYPE:-cache.t3.micro}"
     ;;
   medium)
     SHAPE="cloud-medium"
@@ -69,6 +73,10 @@ case "${LENNY_LOAD_SCALE}" in
     export LOAD_CWORKSPACE_MIN=4 LOAD_CWORKSPACE_MAX=10 LOAD_CWORKSPACE_SLOTS=8
     export LOAD_CSTATELESS_MIN=4 LOAD_CSTATELESS_MAX=10 LOAD_CSTATELESS_SLOTS=16
     export LOAD_TASK_MIN=10 LOAD_TASK_MAX=30 LOAD_TASK_MAX_PER_POD=20
+    # ~100 concurrent sessions: 2 vCPU / 4 GB RDS, 1.55 GB Redis.
+    export RDS_INSTANCE_CLASS="${RDS_INSTANCE_CLASS:-db.t3.medium}"
+    export RDS_ALLOCATED_STORAGE_GB="${RDS_ALLOCATED_STORAGE_GB:-50}"
+    export ELASTICACHE_NODE_TYPE="${ELASTICACHE_NODE_TYPE:-cache.t3.small}"
     ;;
   production)
     SHAPE="cloud-large"
@@ -76,6 +84,10 @@ case "${LENNY_LOAD_SCALE}" in
     export LOAD_CWORKSPACE_MIN=10 LOAD_CWORKSPACE_MAX=30 LOAD_CWORKSPACE_SLOTS=16
     export LOAD_CSTATELESS_MIN=10 LOAD_CSTATELESS_MAX=30 LOAD_CSTATELESS_SLOTS=32
     export LOAD_TASK_MIN=30 LOAD_TASK_MAX=100 LOAD_TASK_MAX_PER_POD=50
+    # ~500 concurrent sessions: m5.large RDS (2 vCPU / 8 GB), 6.4 GB Redis.
+    export RDS_INSTANCE_CLASS="${RDS_INSTANCE_CLASS:-db.m5.large}"
+    export RDS_ALLOCATED_STORAGE_GB="${RDS_ALLOCATED_STORAGE_GB:-100}"
+    export ELASTICACHE_NODE_TYPE="${ELASTICACHE_NODE_TYPE:-cache.m5.large}"
     ;;
   *)
     echo "run-load.sh: unknown LENNY_LOAD_SCALE=${LENNY_LOAD_SCALE}; supported: small, medium, production" >&2
@@ -142,16 +154,21 @@ if [[ "${LENNY_SKIP_TIER6_GATE:-0}" != "1" ]]; then
   echo "run-load.sh: tier-6 PASS gate cleared (most-recent passing run ${tier6_pass})" >&2
 fi
 
-# 1. Cluster bring-up. Reuses scripts/cloud/aws/up.sh with the
-#    matching shape and the managed-datastore flags tier-7 needs.
-#    WITH_RDS=1 + WITH_ELASTICACHE=1 must be passed here AND on the
-#    step-2 run-e2e.sh delegation: every up.sh invocation rewrites
-#    deploy/terraform/cloud/aws/<release>.tfvars.json from its current
-#    env, so a step-1 invocation without the flags would set
-#    create_rds=false and `terraform apply` would DESTROY the managed
-#    services that the next step is about to provision (or reuse).
-#    On a repeat run the existing cluster + RDS + ElastiCache are
-#    detected and apply is a no-op.
+# 1. Cluster bring-up + managed datastores in one apply. The EKS
+#    cluster and the managed RDS / ElastiCache are co-provisioned by
+#    a single terraform apply: terraform parallelizes them (RDS + EC
+#    create from the VPC subnets, EKS creates the control plane and
+#    node group from the same subnets), so the slowest path is
+#    ~10 min on a fresh release. On a repeat run, up.sh detects the
+#    per-release tfvars file already on disk and reuses it — re-
+#    running this script (or running run-e2e.sh for tier-6) against
+#    the same release does NOT regenerate tfvars and therefore does
+#    NOT destroy the managed services. To change topology (e.g. swap
+#    scales, drop managed services), run aws/down.sh first.
+#
+#    The scale-derived RDS_INSTANCE_CLASS / ELASTICACHE_NODE_TYPE
+#    exported above flow through up.sh only on first creation. The
+#    WITH_* flags do the same.
 echo "==[1/5] terraform apply (shape=${SHAPE}, release=${RELEASE}, rds=1, elasticache=1)==" >&2
 AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
   WITH_RDS=1 WITH_ELASTICACHE=1 WITH_ELASTICACHE_CLUSTER=0 \

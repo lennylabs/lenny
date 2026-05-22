@@ -61,32 +61,55 @@ esac
 
 echo "aws/up.sh: shape=${SHAPE} region=${REGION} release=${RELEASE} node=${NODE_TYPE} desired=${DESIRED} max=${MAX}" >&2
 
-# Stage tfvars: create_cluster=true so the apply produces the EKS
-# cluster alongside the per-release resources. The optional
-# create_rds + create_elasticache flags add managed-service
-# provisioning when the caller sets WITH_RDS=1 / WITH_ELASTICACHE=1
-# in the environment.
-#
-# TEST_CIDR (single CIDR for the caller's home/office IP) admits
-# external Postgres + Redis connections so the tier-6 managed-
-# service tests can run from outside the VPC. Defaults to the
-# caller's current public IP fetched from checkip.amazonaws.com.
-WITH_RDS="${WITH_RDS:-0}"
-WITH_ELASTICACHE="${WITH_ELASTICACHE:-0}"
-WITH_ELASTICACHE_CLUSTER="${WITH_ELASTICACHE_CLUSTER:-0}"
-RDS_MULTI_AZ="${RDS_MULTI_AZ:-0}"
-ELASTICACHE_REPLICAS="${ELASTICACHE_REPLICAS:-0}"
-ELASTICACHE_SHARDS="${ELASTICACHE_SHARDS:-1}"
-ELASTICACHE_CLUSTER_SHARDS="${ELASTICACHE_CLUSTER_SHARDS:-2}"
-TEST_CIDR="${TEST_CIDR:-$(curl -s https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')/32}"
-if [[ "${TEST_CIDR}" == "/32" ]]; then
-  TEST_CIDR=""
-fi
-cidr_array="[]"
-if [[ -n "${TEST_CIDR}" ]]; then
-  cidr_array="[\"${TEST_CIDR}\"]"
-fi
-cat > "${TFVARS_FILE}" <<JSON
+# tfvars is the per-release topology declaration: which managed
+# services to provision, their instance sizes, their networking. It
+# is written ONCE at first up.sh and reused as-is on every later
+# invocation. Reusing it means re-running up.sh after a tier-6
+# `run-e2e.sh` (which calls up.sh without WITH_RDS / WITH_ELASTICACHE
+# set) does NOT destroy the managed RDS + ElastiCache that an
+# earlier tier-7 `run-load.sh` brought up — the infra is treated as
+# a whole. To change topology (add managed services, resize, switch
+# multi-AZ), run aws/down.sh first; the next up.sh writes a fresh
+# tfvars from the current env.
+if [[ -f "${TFVARS_FILE}" ]]; then
+  echo "aws/up.sh: reusing existing topology declaration ${TFVARS_FILE}" >&2
+  echo "  (to change topology, run aws/down.sh first; env flags WITH_RDS / WITH_ELASTICACHE / *_INSTANCE_CLASS apply only on first creation)" >&2
+else
+  # First-creation env knobs:
+  #   WITH_RDS / WITH_ELASTICACHE / WITH_ELASTICACHE_CLUSTER — opt-in
+  #     to managed services at first creation. Once on, they stay on
+  #     for the lifetime of the release.
+  #   RDS_INSTANCE_CLASS / RDS_ALLOCATED_STORAGE_GB / RDS_MULTI_AZ
+  #     — RDS size + HA. Tier-7 run-load.sh maps LENNY_LOAD_SCALE
+  #     into these so the size aligns with the load envelope.
+  #   ELASTICACHE_NODE_TYPE / ELASTICACHE_SHARDS / ELASTICACHE_REPLICAS
+  #     — Redis node type and topology.
+  #   TEST_CIDR — single CIDR for the caller's home/office IP. Admits
+  #     external Postgres + Redis connections so the tier-6 managed-
+  #     service tests can run from outside the VPC. Defaults to the
+  #     caller's current public IP fetched from checkip.amazonaws.com.
+  WITH_RDS="${WITH_RDS:-0}"
+  WITH_ELASTICACHE="${WITH_ELASTICACHE:-0}"
+  WITH_ELASTICACHE_CLUSTER="${WITH_ELASTICACHE_CLUSTER:-0}"
+  RDS_INSTANCE_CLASS="${RDS_INSTANCE_CLASS:-db.t3.micro}"
+  RDS_ALLOCATED_STORAGE_GB="${RDS_ALLOCATED_STORAGE_GB:-20}"
+  RDS_MULTI_AZ="${RDS_MULTI_AZ:-0}"
+  ELASTICACHE_NODE_TYPE="${ELASTICACHE_NODE_TYPE:-cache.t3.micro}"
+  ELASTICACHE_REPLICAS="${ELASTICACHE_REPLICAS:-0}"
+  ELASTICACHE_SHARDS="${ELASTICACHE_SHARDS:-1}"
+  ELASTICACHE_CLUSTER_SHARDS="${ELASTICACHE_CLUSTER_SHARDS:-2}"
+  TEST_CIDR="${TEST_CIDR:-$(curl -s https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')/32}"
+  if [[ "${TEST_CIDR}" == "/32" ]]; then
+    TEST_CIDR=""
+  fi
+  cidr_array="[]"
+  if [[ -n "${TEST_CIDR}" ]]; then
+    cidr_array="[\"${TEST_CIDR}\"]"
+  fi
+  echo "aws/up.sh: writing new topology declaration ${TFVARS_FILE}" >&2
+  echo "  rds=${WITH_RDS} (${RDS_INSTANCE_CLASS}, ${RDS_ALLOCATED_STORAGE_GB}GB${RDS_MULTI_AZ:+, multi-AZ})" >&2
+  echo "  elasticache=${WITH_ELASTICACHE} (${ELASTICACHE_NODE_TYPE}, shards=${ELASTICACHE_SHARDS}, replicas=${ELASTICACHE_REPLICAS})" >&2
+  cat > "${TFVARS_FILE}" <<JSON
 {
   "release":            "${RELEASE}",
   "region":             "${REGION}",
@@ -96,8 +119,11 @@ cat > "${TFVARS_FILE}" <<JSON
   "node_desired_size":  ${DESIRED},
   "node_max_size":      ${MAX},
   "create_rds":         $([[ "${WITH_RDS}" == "1" ]] && echo true || echo false),
+  "rds_instance_class": "${RDS_INSTANCE_CLASS}",
+  "rds_allocated_storage_gb": ${RDS_ALLOCATED_STORAGE_GB},
   "rds_multi_az":       $([[ "${RDS_MULTI_AZ}" == "1" ]] && echo true || echo false),
   "create_elasticache": $([[ "${WITH_ELASTICACHE}" == "1" ]] && echo true || echo false),
+  "elasticache_node_type":               "${ELASTICACHE_NODE_TYPE}",
   "elasticache_num_node_groups":         ${ELASTICACHE_SHARDS},
   "elasticache_replicas_per_node_group": ${ELASTICACHE_REPLICAS},
   "create_elasticache_cluster_mode":     $([[ "${WITH_ELASTICACHE_CLUSTER}" == "1" ]] && echo true || echo false),
@@ -105,6 +131,7 @@ cat > "${TFVARS_FILE}" <<JSON
   "managed_datastores_test_cidrs":       ${cidr_array}
 }
 JSON
+fi
 
 # Pick terraform if installed; otherwise fall back to opentofu's
 # `tofu` binary (drop-in replacement for terraform).

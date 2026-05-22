@@ -46,26 +46,58 @@ require gcloud
 require terraform
 require kubectl
 
-cd "$(dirname "$0")/../../../deploy/terraform/cloud/gcp"
+TF_DIR="$(cd "$(dirname "$0")/../../../deploy/terraform/cloud/gcp" && pwd)"
+TFVARS_FILE="${TF_DIR}/${RELEASE}.tfvars.json"
+
+cd "${TF_DIR}"
 
 terraform init -upgrade >/dev/null
 
-WITH_CLOUD_SQL="${WITH_CLOUD_SQL:-false}"
-WITH_MEMORYSTORE="${WITH_MEMORYSTORE:-false}"
-MANAGED_DATASTORES_NETWORK="${MANAGED_DATASTORES_NETWORK:-}"
-MANAGED_DATASTORES_AUTHORIZED_NETWORKS="${MANAGED_DATASTORES_AUTHORIZED_NETWORKS:-[]}"
+# tfvars is the per-release topology declaration: which managed
+# services to provision, their tiers, their PSA wiring. It is
+# written ONCE at first up.sh and reused as-is on every later
+# invocation, so re-running up.sh after a tier-6 run-e2e.sh (which
+# calls up.sh without WITH_CLOUD_SQL / WITH_MEMORYSTORE set) does
+# NOT destroy the managed datastores that an earlier tier-7 run
+# brought up — the infra is treated as a whole. To change topology,
+# run gcp/down.sh first; the next up.sh writes a fresh tfvars from
+# the current env.
+if [[ -f "${TFVARS_FILE}" ]]; then
+  echo "gcp/up.sh: reusing existing topology declaration ${TFVARS_FILE}" >&2
+  echo "  (to change topology, run gcp/down.sh first; env flags WITH_CLOUD_SQL / WITH_MEMORYSTORE / CLOUD_SQL_TIER / MEMORYSTORE_MEMORY_SIZE_GB apply only on first creation)" >&2
+else
+  WITH_CLOUD_SQL="${WITH_CLOUD_SQL:-false}"
+  WITH_MEMORYSTORE="${WITH_MEMORYSTORE:-false}"
+  CLOUD_SQL_TIER="${CLOUD_SQL_TIER:-db-custom-2-7680}"
+  CLOUD_SQL_DISK_SIZE_GB="${CLOUD_SQL_DISK_SIZE_GB:-20}"
+  MEMORYSTORE_TIER="${MEMORYSTORE_TIER:-STANDARD_HA}"
+  MEMORYSTORE_MEMORY_SIZE_GB="${MEMORYSTORE_MEMORY_SIZE_GB:-1}"
+  MANAGED_DATASTORES_NETWORK="${MANAGED_DATASTORES_NETWORK:-}"
+  MANAGED_DATASTORES_AUTHORIZED_NETWORKS="${MANAGED_DATASTORES_AUTHORIZED_NETWORKS:-[]}"
+  echo "gcp/up.sh: writing new topology declaration ${TFVARS_FILE}" >&2
+  echo "  cloud-sql=${WITH_CLOUD_SQL} (${CLOUD_SQL_TIER}, ${CLOUD_SQL_DISK_SIZE_GB} GB)" >&2
+  echo "  memorystore=${WITH_MEMORYSTORE} (${MEMORYSTORE_TIER}, ${MEMORYSTORE_MEMORY_SIZE_GB} GB)" >&2
+  cat > "${TFVARS_FILE}" <<JSON
+{
+  "release":                              "${RELEASE}",
+  "project":                              "${PROJECT}",
+  "region":                               "${REGION}",
+  "gke_cluster_name":                     "${CLUSTER_NAME}",
+  "gke_cluster_location":                 "${CLUSTER_LOCATION}",
+  "namespace":                            "${NAMESPACE}",
+  "create_cloud_sql":                     ${WITH_CLOUD_SQL},
+  "cloud_sql_tier":                       "${CLOUD_SQL_TIER}",
+  "cloud_sql_disk_size_gb":               ${CLOUD_SQL_DISK_SIZE_GB},
+  "create_memorystore":                   ${WITH_MEMORYSTORE},
+  "memorystore_tier":                     "${MEMORYSTORE_TIER}",
+  "memorystore_memory_size_gb":           ${MEMORYSTORE_MEMORY_SIZE_GB},
+  "managed_datastores_network":           "${MANAGED_DATASTORES_NETWORK}",
+  "managed_datastores_authorized_networks": ${MANAGED_DATASTORES_AUTHORIZED_NETWORKS}
+}
+JSON
+fi
 
-terraform apply -auto-approve \
-  -var "release=${RELEASE}" \
-  -var "project=${PROJECT}" \
-  -var "region=${REGION}" \
-  -var "gke_cluster_name=${CLUSTER_NAME}" \
-  -var "gke_cluster_location=${CLUSTER_LOCATION}" \
-  -var "namespace=${NAMESPACE}" \
-  -var "create_cloud_sql=${WITH_CLOUD_SQL}" \
-  -var "create_memorystore=${WITH_MEMORYSTORE}" \
-  -var "managed_datastores_network=${MANAGED_DATASTORES_NETWORK}" \
-  -var "managed_datastores_authorized_networks=${MANAGED_DATASTORES_AUTHORIZED_NETWORKS}"
+terraform apply -auto-approve -var-file="${TFVARS_FILE}"
 
 KMS_KEY_ID=$(terraform output -raw kms_key_id)
 ARTIFACT_BUCKET=$(terraform output -raw artifact_bucket)
