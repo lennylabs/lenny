@@ -60,6 +60,7 @@ const (
 	PhaseSDKConnecting       SandboxPhase = "sdk_connecting"
 	PhaseIdle                SandboxPhase = "idle"
 	PhaseClaimed             SandboxPhase = "claimed"
+	PhaseSlotActive          SandboxPhase = "slot_active"
 	PhaseReceivingUploads    SandboxPhase = "receiving_uploads"
 	PhaseFinalizingWorkspace SandboxPhase = "finalizing_workspace"
 	PhaseRunningSetup        SandboxPhase = "running_setup"
@@ -112,8 +113,10 @@ type Request struct {
 
 	// SandboxPhase is the current `.status.phase` of the referenced
 	// Sandbox. Read from the API server by the webhook before calling
-	// Decide. Required on PATCH and PUT; ignored on CREATE and when
-	// UnderDeletion is set.
+	// Decide. Required on PATCH and PUT; on CREATE, used to skip the
+	// "concurrent claim rejected" rule when the Sandbox is in the §5.2
+	// `slot_active` phase (concurrent mode actively serving multiple
+	// slots). Ignored when UnderDeletion is set.
 	SandboxPhase SandboxPhase
 
 	// UnderDeletion is true when the SandboxClaim being modified carries
@@ -156,6 +159,18 @@ func Decide(r Request) (Decision, error) {
 	}
 	switch r.Operation {
 	case OpCreate:
+		// §5.2 concurrent-mode: a Sandbox in `slot_active` hosts up to
+		// MaxConcurrent simultaneous slot claims. Multiple non-terminal
+		// claims are expected and required for the concurrent-mode
+		// dispatch path. The deterministic claim name
+		// (claim-<session-id>) still prevents a duplicate-session race
+		// at the API server's CREATE conflict path; the guard does not
+		// need to re-enforce that here. For session-mode Sandboxes
+		// (phase `idle` or `claimed`) the duplicate-claim rule remains
+		// in force.
+		if r.SandboxPhase == PhaseSlotActive {
+			return Decision{Allowed: true, Code: 200}, nil
+		}
 		for _, ec := range r.ExistingClaims {
 			if !ec.Status.IsTerminal() {
 				return Decision{

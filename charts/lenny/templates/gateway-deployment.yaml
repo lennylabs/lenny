@@ -67,7 +67,12 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxes"]
-    verbs: ["get", "list", "watch"]
+    # The §5.2 slot-claim path SSA-patches the Sandbox metadata to
+    # stamp the tenant-pinning label (lenny.dev/tenant-id) on a
+    # concurrent-mode Sandbox's first slot reservation. That patch
+    # targets the main resource (not /status), so the gateway needs
+    # the `patch` verb here in addition to the read verbs.
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxes/status"]
     verbs: ["get", "update", "patch"]

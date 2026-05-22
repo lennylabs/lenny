@@ -42,6 +42,16 @@ func SandboxClaimGuard(reader client.Reader) Decider {
 				return Deny(http.StatusInternalServerError, "list sibling SandboxClaims: "+err.Error())
 			}
 			guardReq.ExistingClaims = existing
+			// The §5.2 concurrent-mode dispatch path opens multiple
+			// non-terminal claims against the same Sandbox; the guard
+			// distinguishes that case from session-mode duplicates by
+			// the Sandbox's phase (slot_active vs idle/claimed). Read
+			// it on CREATE too so Decide can apply the §5.2 exemption.
+			phase, err := referencedSandboxPhase(ctx, reader, req.Namespace, claim.Spec.SandboxRef)
+			if err != nil {
+				return Deny(http.StatusInternalServerError, "read referenced Sandbox: "+err.Error())
+			}
+			guardReq.SandboxPhase = phase
 		case admissionv1.Update:
 			guardReq.Operation = guard.OpPut
 			guardReq.UnderDeletion = !claim.DeletionTimestamp.IsZero()

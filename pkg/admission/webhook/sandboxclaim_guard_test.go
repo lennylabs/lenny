@@ -94,6 +94,31 @@ func TestSandboxClaimGuardRejectsCreateWithExistingBoundClaim(t *testing.T) {
 	}
 }
 
+// TestSandboxClaimGuardAllowsCreateOnSlotActiveSandbox is the
+// regression for the §5.2 concurrent-mode dispatch path. A Sandbox in
+// `slot_active` phase already hosts a non-terminal claim from a prior
+// slot reservation; the next dispatched session must be able to add
+// its own claim without the §4.6.1 duplicate-claim rule rejecting it.
+// The 100% error rate on every tier-7 cstateless / cworkspace
+// scenario before this fix came from the webhook applying the
+// session-mode rule uniformly.
+func TestSandboxClaimGuardAllowsCreateOnSlotActiveSandbox(t *testing.T) {
+	c := guardClient(
+		t,
+		sandbox("sbx-1", "slot_active"),
+		seededClaim("claim-slot-1", "sbx-1", "active"),
+	)
+	resp := webhook.SandboxClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
+		UID:       "cslot",
+		Operation: admissionv1.Create,
+		Namespace: guardNS,
+		Object:    claimRaw(t, "claim-slot-2", "sbx-1"),
+	})
+	if !resp.Allowed {
+		t.Errorf("a slot_active Sandbox must accept additional concurrent slot claims; got %+v", resp.Result)
+	}
+}
+
 func TestSandboxClaimGuardAllowsCreateWhenExistingClaimTerminal(t *testing.T) {
 	c := guardClient(
 		t,
