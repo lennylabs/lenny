@@ -296,7 +296,12 @@ CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.16.2}"
 PROM_OPERATOR_VERSION="${PROM_OPERATOR_VERSION:-v0.79.2}"
 echo "==[4/6] install cert-manager ${CERT_MANAGER_VERSION} + prometheus-operator CRDs + datastores==" >&2
 
-if ! kubectl -n cert-manager get deploy cert-manager >/dev/null 2>&1; then
+# Subshell wrap on the negated if-condition works around a bash 3.2
+# quirk: under `set -e`, a `command kubectl` (inside the kubectl()
+# wrapper function) returning non-zero inside an `if !` terminates
+# the script even though the `!` is supposed to invert the failure.
+# macOS still ships bash 3.2.
+if ! (kubectl -n cert-manager get deploy cert-manager >/dev/null 2>&1); then
   echo "  installing cert-manager ${CERT_MANAGER_VERSION}" >&2
   kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
 fi
@@ -304,7 +309,7 @@ kubectl -n cert-manager wait --for=condition=Available deploy --all --timeout=30
 
 PROM_CRD_BASE="https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/${PROM_OPERATOR_VERSION}/example/prometheus-operator-crd"
 for crd in prometheusrules servicemonitors podmonitors; do
-  if ! kubectl get crd "${crd}.monitoring.coreos.com" >/dev/null 2>&1; then
+  if ! (kubectl get crd "${crd}.monitoring.coreos.com" >/dev/null 2>&1); then
     echo "  installing prometheus-operator CRD ${crd}" >&2
     kubectl apply --server-side -f "${PROM_CRD_BASE}/monitoring.coreos.com_${crd}.yaml"
   fi
@@ -416,7 +421,7 @@ MIGRATE
 # pull of each Lenny image on a node typically takes 60-120s; a
 # concurrent first-pull plus pod scheduling can spend most of the
 # previous 300s window before the migrate command even runs.
-if ! kubectl -n lenny-system wait --for=condition=complete job/lenny-e2e-migrate --timeout=600s; then
+if ! (kubectl -n lenny-system wait --for=condition=complete job/lenny-e2e-migrate --timeout=600s); then
   echo "==[4c/6] migrate Job did not complete; capturing diagnostics==" >&2
   kubectl -n lenny-system describe job/lenny-e2e-migrate >&2 || true
   for pod in $(kubectl -n lenny-system get pods -l job-name=lenny-e2e-migrate -o name 2>/dev/null); do
@@ -473,7 +478,7 @@ helm template "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
 # "exists and cannot be imported into the current release: invalid
 # ownership metadata".
 for ns in lenny-system lenny-agents lenny-agents-kata; do
-  if ! kubectl get ns "${ns}" >/dev/null 2>&1; then continue; fi
+  if ! (kubectl get ns "${ns}" >/dev/null 2>&1); then continue; fi
   refs="$(kubectl -n "${ns}" get networkpolicy -o name 2>/dev/null || true)"
   if [[ -z "${refs}" ]]; then continue; fi
   # shellcheck disable=SC2086
