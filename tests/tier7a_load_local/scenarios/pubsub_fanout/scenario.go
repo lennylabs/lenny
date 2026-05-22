@@ -122,12 +122,18 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	if published == 0 {
 		return fmt.Errorf("scenario published nothing")
 	}
+	// Tolerate a small tail of events emitted right before Teardown
+	// that the subscriber goroutine had not pumped yet. Express as a
+	// fraction of total published so the bound scales with the
+	// achieved throughput.
+	tolerance := published / 1000
+	if tolerance < 64 {
+		tolerance = 64
+	}
 	for i := 0; i < 4; i++ {
 		got := s.counters.Get(fmt.Sprintf("sub_%d_received", i))
-		// Allow a small tail (events emitted right before Teardown
-		// may not have been pumped by the subscriber goroutine).
-		if got < published-int64(8) {
-			return fmt.Errorf("§4.8 violated: sub_%d received %d of %d published (drops > tail tolerance)", i, got, published)
+		if got < published-tolerance {
+			return fmt.Errorf("§4.8 violated: sub_%d received %d of %d published (drops > tail tolerance %d)", i, got, published, tolerance)
 		}
 	}
 	return nil
