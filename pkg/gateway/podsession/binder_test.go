@@ -19,11 +19,14 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
@@ -33,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -152,11 +156,95 @@ func (m *fakeMirror) ClaimIdle(_ context.Context, poolID, sessionID, tenantID st
 
 func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
-	return fake.NewClientBuilder().
-		WithScheme(newScheme(t)).
-		WithObjects(objs...).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
-		Build()
+	// envtest backs the client with a real kube-apiserver so the
+	// §4.6.3 SSA Apply path the gateway slot-claimer uses works.
+	// The fake client does not yet implement SSA
+	// (kubernetes/kubernetes#115598).
+	env := envtest.Start(t)
+	s := newScheme(t)
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme corev1: %v", err)
+	}
+	c, err := client.New(env.RESTConfig(), client.Options{Scheme: s})
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	ctx := context.Background()
+	if err := c.Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: testNS},
+	}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create namespace %s: %v", testNS, err)
+	}
+	for _, o := range objs {
+		var (
+			sbStatus  lennyv1.SandboxStatus
+			seedAfter func()
+		)
+		if sb, ok := o.(*lennyv1.Sandbox); ok {
+			sbStatus = sb.Status
+			sb.Status = lennyv1.SandboxStatus{}
+			seedAfter = func() {
+				if sbStatus.Phase == "" && sbStatus.PodName == "" &&
+					sbStatus.NodeName == "" && sbStatus.PodIP == "" &&
+					sbStatus.TenantID == "" && sbStatus.ActiveSlots == 0 {
+					return
+				}
+				// Split the seed by §4.6.3 field ownership. WPC owns
+				// Phase / PodName / NodeName / PodIP / ObservedGeneration;
+				// the gateway owns ActiveSlots / TenantID. Seeding each
+				// subset under its rightful manager keeps the production
+				// Apply paths conflict-free.
+				wpc := map[string]interface{}{}
+				if sbStatus.Phase != "" {
+					wpc["phase"] = sbStatus.Phase
+				}
+				if sbStatus.PodName != "" {
+					wpc["podName"] = sbStatus.PodName
+				}
+				if sbStatus.NodeName != "" {
+					wpc["nodeName"] = sbStatus.NodeName
+				}
+				if sbStatus.PodIP != "" {
+					wpc["podIP"] = sbStatus.PodIP
+				}
+				if len(wpc) > 0 {
+					u := &unstructured.Unstructured{}
+					u.SetAPIVersion(lennyv1.GroupVersion.String())
+					u.SetKind("Sandbox")
+					u.SetName(sb.Name)
+					u.SetNamespace(sb.Namespace)
+					_ = unstructured.SetNestedField(u.Object, wpc, "status")
+					if err := c.Status().Patch(ctx, u, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
+						t.Fatalf("seed WPC status Sandbox %s: %v", sb.Name, err)
+					}
+				}
+				if sbStatus.ActiveSlots > 0 || sbStatus.TenantID != "" {
+					gw := map[string]interface{}{
+						"activeSlots": int64(sbStatus.ActiveSlots),
+					}
+					if sbStatus.TenantID != "" {
+						gw["tenantId"] = sbStatus.TenantID
+					}
+					u := &unstructured.Unstructured{}
+					u.SetAPIVersion(lennyv1.GroupVersion.String())
+					u.SetKind("Sandbox")
+					u.SetName(sb.Name)
+					u.SetNamespace(sb.Namespace)
+					_ = unstructured.SetNestedField(u.Object, gw, "status")
+					if err := c.Status().Patch(ctx, u, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil {
+						t.Fatalf("seed gateway status Sandbox %s: %v", sb.Name, err)
+					}
+				}
+			}
+		}
+		if err := c.Create(ctx, o); err != nil {
+			t.Fatalf("create %T %s: %v", o, o.GetName(), err)
+		}
+		if seedAfter != nil {
+			seedAfter()
+		}
+	}
+	return c
 }
 
 // adapterDialer serves srv over an in-memory connection and returns a

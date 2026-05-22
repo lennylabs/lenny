@@ -31,7 +31,7 @@ func TestResolvePoolMatchesByRuntime(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool("claude-pool", "claude-tmpl"),
-		sandboxTemplate("claude-tmpl", "claude-code", "gvisor"),
+		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
 	)
 	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "")
 	if err != nil {
@@ -46,7 +46,7 @@ func TestResolvePoolNoMatch(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool("claude-pool", "claude-tmpl"),
-		sandboxTemplate("claude-tmpl", "claude-code", "gvisor"),
+		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
 	)
 	_, err := podsession.ResolvePool(context.Background(), c, testNS, "other-runtime", "")
 	if !errors.Is(err, podsession.ErrNoMatchingPool) {
@@ -58,11 +58,11 @@ func TestResolvePoolDisambiguatesByIsolation(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool("claude-gvisor", "tmpl-gvisor"),
-		sandboxTemplate("tmpl-gvisor", "claude-code", "gvisor"),
+		sandboxTemplate("tmpl-gvisor", "claude-code", "sandboxed"),
 		warmPool("claude-kata", "tmpl-kata"),
-		sandboxTemplate("tmpl-kata", "claude-code", "kata"),
+		sandboxTemplate("tmpl-kata", "claude-code", "microvm"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "kata")
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "microvm")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -77,11 +77,11 @@ func TestResolvePoolAmbiguous(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool("pool-a", "tmpl-a"),
-		sandboxTemplate("tmpl-a", "claude-code", "gvisor"),
+		sandboxTemplate("tmpl-a", "claude-code", "sandboxed"),
 		warmPool("pool-b", "tmpl-b"),
-		sandboxTemplate("tmpl-b", "claude-code", "gvisor"),
+		sandboxTemplate("tmpl-b", "claude-code", "sandboxed"),
 	)
-	_, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "gvisor")
+	_, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
 	if !errors.Is(err, podsession.ErrAmbiguousPool) {
 		t.Errorf("error = %v, want ErrAmbiguousPool", err)
 	}
@@ -94,9 +94,9 @@ func TestResolvePoolSkipsDanglingTemplateRef(t *testing.T) {
 		t,
 		warmPool("broken-pool", "missing-tmpl"),
 		warmPool("claude-pool", "claude-tmpl"),
-		sandboxTemplate("claude-tmpl", "claude-code", "gvisor"),
+		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "gvisor")
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}

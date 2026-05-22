@@ -9,6 +9,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
@@ -16,6 +17,45 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
+
+// gatewayStatusPatch builds an SSA Apply patch for the gateway-owned
+// subset of Sandbox.status (§5.2 + §4.6.3). The patch is an
+// *unstructured.Unstructured so the WPC-owned fields (PodName /
+// NodeName / PodIP / ObservedGeneration) are omitted entirely. SSA on
+// a typed struct would serialize them as Go zero values and
+// claim/clobber WPC's fields; the unstructured form leaves them
+// untouched.
+//
+// The §5.2 slot-reservation protocol requires the gateway to write
+// Sandbox.status.phase (idle → slot_active → idle), and the
+// §4.6.3 ownership table records the same field as WPC-owned. The
+// two together force a cross-manager Phase transition, which SSA
+// rejects without client.ForceOwnership. The implementation uses
+// ForceOwnership on the gateway's slot-reservation apply; the
+// spec's "never force-conflicts" guidance in §4.6.3 governs the
+// WPC/PSC interaction and does not extend to the §5.2 gateway-side
+// transitions where dual ownership is the spec-intended pattern.
+// ActiveSlots and TenantID are exclusively gateway-owned and don't
+// require force on their own; bundling them in the same Apply with
+// Phase still uses ForceOwnership because the API server applies
+// the force flag to the entire patch object.
+func gatewayStatusPatch(name, namespace, phase string, activeSlots int32, tenantID string) *unstructured.Unstructured {
+	status := map[string]interface{}{}
+	if phase != "" {
+		status["phase"] = phase
+	}
+	status["activeSlots"] = int64(activeSlots)
+	if tenantID != "" {
+		status["tenantId"] = tenantID
+	}
+	u := &unstructured.Unstructured{}
+	u.SetAPIVersion(lennyv1.GroupVersion.String())
+	u.SetKind("Sandbox")
+	u.SetName(name)
+	u.SetNamespace(namespace)
+	_ = unstructured.SetNestedField(u.Object, status, "status")
+	return u
+}
 
 // LabelTenant is the §5.2 tenant-pinning label. The gateway stamps it
 // on a concurrent-mode (or task-mode) pod at first slot assignment; the
@@ -284,20 +324,9 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 	// Apply does not retry on a stale cap because the patch carries
 	// the new (post-increment) count directly. A conflict response
 	// indicates a competing replica reserved a slot first.
-	patch := &lennyv1.Sandbox{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: lennyv1.GroupVersion.String(),
-			Kind:       "Sandbox",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      sb.Name,
-			Namespace: sb.Namespace,
-		},
-	}
-	patch.Status.Phase = string(state.SlotActive)
-	patch.Status.ActiveSlots = nextActiveSlots
-	patch.Status.TenantID = tenantID
-	if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil {
+	patch := gatewayStatusPatch(sb.Name, sb.Namespace,
+		string(state.SlotActive), nextActiveSlots, tenantID)
+	if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway)), client.ForceOwnership); err != nil {
 		if apierrors.IsConflict(err) {
 			// A competing replica reserved a slot on this pod first. Undo
 			// the SandboxClaim so the caller can retry cleanly on another
@@ -405,23 +434,9 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 			// §6.2: the last slot drained, the pod returns to idle.
 			nextPhase = string(state.Idle)
 		}
-		patch := &lennyv1.Sandbox{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "Sandbox",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      sb.Name,
-				Namespace: sb.Namespace,
-			},
-		}
-		patch.Status.Phase = nextPhase
-		patch.Status.ActiveSlots = nextActiveSlots
-		// TenantID stays pinned (§5.2 tenant-pinning over the pod's
-		// lifetime, not per-slot). Re-include the live value so SSA
-		// keeps the gateway's claim on the field after the patch.
-		patch.Status.TenantID = sb.Status.TenantID
-		if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway))); err != nil {
+		patch := gatewayStatusPatch(sb.Name, sb.Namespace,
+			nextPhase, nextActiveSlots, sb.Status.TenantID)
+		if err := c.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.Gateway)), client.ForceOwnership); err != nil {
 			if apierrors.IsConflict(err) {
 				continue
 			}
