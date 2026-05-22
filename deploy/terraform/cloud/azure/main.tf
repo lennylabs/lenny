@@ -21,6 +21,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = ">= 3.80.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.5.0"
+    }
   }
 }
 
