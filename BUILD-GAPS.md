@@ -1482,6 +1482,29 @@ identified.
   native `elicitation/create` flow), so the tier-3 scaffold's
   "no MCP counterpart" skip reflects the spec.
 
+### Concurrent-mode slot reservation (§5.2)
+
+- **§5.2 post-recovery rehydration of the Redis slot counter.** The
+  atomic GET-compare-INCR slot reservation is implemented in
+  `pkg/gateway/slotcounter` (Redis Lua) and wired through
+  `pkg/gateway/podclaim/slotclaimer.go` so racing reservers cannot
+  exceed `maxConcurrent`. The post-recovery rehydration path
+  required by §5.2 ("Post-recovery rehydration atomicity") is not
+  yet implemented. If Redis is wiped while concurrent-mode pods are
+  hosting slots, a fresh allocation reads `active_slots = 0` from
+  Redis and could over-commit a pod whose
+  `Sandbox.status.activeSlots` still reflects active slots. The MVP
+  assumes Redis outlives the gateway's session lifetime. The
+  rehydration follow-up requires (a) a
+  `SessionStore.GetActiveSlotsByPod` aggregator that lists sessions
+  by `pod_id` from Postgres, (b) a `SET NX` lock on
+  `lenny:pod:{pod_id}:rehydrating` so two gateway replicas do not
+  rehydrate the same pod twice, and (c) a startup hook in
+  `cmd/lenny-gateway/main.go` that runs the rehydration sweep
+  before serving traffic. Tier-7 cloud-load surfaces the
+  consequence: a Redis restart mid-load can briefly over-commit
+  pods until the next slot release rebalances the counter.
+
 ## Blocked
 
 Entries here are real gaps that the autonomous loop cannot close
