@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -138,7 +139,16 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 		_ = s.sealer.Seal(ctx, sess.TenantID, sess.ID)
 	}
 	if s.executor != nil {
-		_ = s.executor.Close(ctx, sess.ID)
+		if err := s.executor.Close(ctx, sess.ID); err != nil {
+			// recordSessionCompleted is best-effort by design (a failed
+			// teardown does not unwind the terminal-state transition), but
+			// silently dropping the error has bitten us: a 403 on
+			// SandboxClaim Delete or an SSA conflict on the
+			// activeSlots decrement leaves a slot stuck and the pool
+			// drains its capacity unobserved. Logging makes the failure
+			// surface in the gateway log so an operator notices.
+			log.Printf("lenny-gateway: executor.Close session=%s: %v", sess.ID, err)
+		}
 	}
 	// §8.10: a child session reaching a terminal state is archived to
 	// the session_tree_archive so a resumed parent can replay it.

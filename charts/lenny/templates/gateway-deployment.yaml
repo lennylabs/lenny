@@ -77,10 +77,15 @@ rules:
     resources: ["sandboxes/status"]
     verbs: ["get", "update", "patch"]
   # SandboxClaim: the gateway creates the binding claim CRD that the
-  # §17.2 lenny-sandboxclaim-guard webhook validates on CREATE.
+  # §17.2 lenny-sandboxclaim-guard webhook validates on CREATE, and
+  # deletes it on session terminate (session-mode Release path and
+  # §5.2 concurrent-mode SlotClaimer.ReleaseSlot both do
+  # Client.Delete on the SandboxClaim). Without `delete`, the
+  # gateway returns terminate=200 but the claim deletion silently
+  # 403s and Sandbox.status.activeSlots stays elevated indefinitely.
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxclaims"]
-    verbs: ["get", "list", "watch", "create"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
