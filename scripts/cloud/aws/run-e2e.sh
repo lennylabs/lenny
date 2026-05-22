@@ -251,6 +251,26 @@ fi
 export LENNY_POSTGRES_DSN="${MANAGED_PG_DSN}"
 export LENNY_REDIS_URL="${MANAGED_REDIS_URL}"
 
+# When the chart's NetworkPolicies are CNI-enforced, the gateway and
+# token-service need a CIDR egress allow rule to reach RDS / ElastiCache.
+# The terraform module's VPC CIDR (var.vpc_cidr default 10.42.0.0/16)
+# is what their security groups already admit; using the same CIDR
+# bounds the chart-side allowance to the cluster's VPC range.
+VPC_CIDR_FOR_EGRESS=""
+if [[ -n "${MANAGED_PG_DSN}" || -n "${MANAGED_REDIS_URL}" ]]; then
+  VPC_CIDR_FOR_EGRESS="$("${TF}" -chdir="${TF_DIR}" output -raw vpc_cidr 2>/dev/null || echo 10.42.0.0/16)"
+fi
+POSTGRES_GATEWAY_EGRESS_CIDR=""
+REDIS_GATEWAY_EGRESS_CIDR=""
+REDIS_GATEWAY_EGRESS_PORT="6379"
+if [[ -n "${MANAGED_PG_DSN}" ]]; then
+  POSTGRES_GATEWAY_EGRESS_CIDR="${VPC_CIDR_FOR_EGRESS}"
+fi
+if [[ -n "${MANAGED_REDIS_URL}" ]]; then
+  REDIS_GATEWAY_EGRESS_CIDR="${VPC_CIDR_FOR_EGRESS}"
+fi
+export POSTGRES_GATEWAY_EGRESS_CIDR REDIS_GATEWAY_EGRESS_CIDR REDIS_GATEWAY_EGRESS_PORT
+
 echo "==[3/6] render cloud values overlay==" >&2
 if [[ -n "${MANAGED_PG_DSN}" ]]; then
   echo "  routing chart at managed RDS Postgres (host=${rds_host:-?})" >&2
@@ -260,6 +280,9 @@ if [[ -n "${MANAGED_REDIS_URL}" ]]; then
 fi
 ECR_REGISTRY="${ECR_REGISTRY}" IMAGE_TAG="${TAG}" \
 LENNY_POSTGRES_DSN="${MANAGED_PG_DSN}" LENNY_REDIS_URL="${MANAGED_REDIS_URL}" \
+POSTGRES_GATEWAY_EGRESS_CIDR="${POSTGRES_GATEWAY_EGRESS_CIDR}" \
+REDIS_GATEWAY_EGRESS_CIDR="${REDIS_GATEWAY_EGRESS_CIDR}" \
+REDIS_GATEWAY_EGRESS_PORT="${REDIS_GATEWAY_EGRESS_PORT}" \
   "${SCRIPT_DIR}/render-values.sh" "${VALUES_OUT}"
 
 # 4. Prerequisites + in-cluster datastores. The chart's templates

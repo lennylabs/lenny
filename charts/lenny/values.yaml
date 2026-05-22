@@ -140,6 +140,19 @@ redis:
   # an external Redis. When set, the chart renders the value into the
   # lenny-datastore-conn Secret and the gateway env reads it from there.
   url: ""
+  # gatewayEgressCIDR is the destination CIDR the gateway and token-
+  # service NetworkPolicies admit for external Redis egress. Empty
+  # disables the rule, so the default install only allows the
+  # in-cluster Redis pod (matched by component label). Tier-7 cloud-
+  # load sets this to the managed-Redis CIDR (or 0.0.0.0/0 with the
+  # per-port bound) so the gateway can reach Azure Cache for Redis,
+  # ElastiCache, or Memorystore.
+  gatewayEgressCIDR: ""
+  # gatewayEgressPort is the port the gatewayEgressCIDR rule admits.
+  # Honored only when gatewayEgressCIDR is non-empty. Defaults to the
+  # TLS port; managed Redis uses 6379 (rediss://) for ElastiCache and
+  # Memorystore, 6380 for Azure Cache for Redis.
+  gatewayEgressPort: 6379
 
 # minio configures the MinIO object store (self-managed profile).
 minio:
@@ -250,6 +263,14 @@ postgres:
   # database endpoint; the broad default is bounded by the per-port
   # (5432) egress rule.
   cidr: "0.0.0.0/0"
+  # gatewayEgressCIDR is the destination CIDR the gateway and token-
+  # service NetworkPolicies admit for external Postgres egress.
+  # Empty disables the rule, so the default install only allows the
+  # in-cluster PgBouncer pod (matched by component label). Tier-7
+  # cloud-load sets this to the managed-Postgres CIDR (or 0.0.0.0/0
+  # with the per-port bound) so the gateway can reach RDS, Azure
+  # Flexible Server, or Cloud SQL.
+  gatewayEgressCIDR: ""
   # dsn is the Postgres connection string the gateway and controller
   # use to persist session, transcript, tenant, runtime, and §4.6.1
   # agent_pod_state records. Postgres is a bring-your-own external

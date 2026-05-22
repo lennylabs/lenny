@@ -164,9 +164,18 @@ bootstrap:
 # shape (gateway has no LENNY_MINIO_ENDPOINT AND no MinIO Deployment).
 postgres:
   dsn: "${LENNY_POSTGRES_DSN:-postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable}"
+  # When the gateway routes to a managed Postgres, the chart's
+  # default-deny NetworkPolicy blocks the external connection unless
+  # a CIDR egress rule is added. Empty default keeps the rule
+  # absent on the in-cluster-fixture path. Tier-7 cloud-load on
+  # AWS exports POSTGRES_GATEWAY_EGRESS_CIDR with the VPC CIDR so
+  # the gateway can reach the RDS endpoint.
+  gatewayEgressCIDR: "${POSTGRES_GATEWAY_EGRESS_CIDR:-}"
 
 redis:
   url: "${LENNY_REDIS_URL:-redis://lenny-redis.lenny-system.svc:6379}"
+  gatewayEgressCIDR: "${REDIS_GATEWAY_EGRESS_CIDR:-}"
+  gatewayEgressPort: ${REDIS_GATEWAY_EGRESS_PORT:-6379}
 
 # Documentation surface for the operator: which S3 bucket + KMS key
 # the AWS Terraform produced. The §12.5 ArtifactStore SSE-KMS path

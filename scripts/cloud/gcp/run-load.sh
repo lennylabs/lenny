@@ -113,6 +113,21 @@ ENV_OUT=$(GCP_PROJECT="${GCP_PROJECT}" \
   bash "${SCRIPT_DIR}/up.sh" "${RELEASE}")
 eval "${ENV_OUT}"
 
+# Pin every kubectl + helm call to the GKE context up.sh just merged
+# so a parallel `kind create cluster` does not switch
+# ~/.kube/config's current context out from under us mid-run. The
+# context name gcloud container clusters get-credentials writes is
+# gke_<project>_<location>_<cluster>.
+export KUBECTL_CONTEXT="gke_${GCP_PROJECT}_${GKE_CLUSTER_LOCATION}_${GKE_CLUSTER_NAME}"
+kubectl() {
+  command kubectl --context "${KUBECTL_CONTEXT}" "$@"
+}
+export -f kubectl
+helm() {
+  command helm --kube-context "${KUBECTL_CONTEXT}" "$@"
+}
+export -f helm
+
 if kubectl get namespace lenny-agents >/dev/null 2>&1; then
   echo "==[1b/5] drain leftover load-* SandboxWarmPools==" >&2
   kubectl -n lenny-agents delete sandboxwarmpool \
@@ -149,9 +164,18 @@ export LENNY_POSTGRES_DSN LENNY_REDIS_URL
 
 echo "==[3/5] render Helm values overlay==" >&2
 VALUES_OUT="${SCRIPT_DIR}/values-cloud-gcp.${RELEASE}.yaml"
+# Cloud SQL + Memorystore attach to the GKE VPC via Private Service
+# Access. The chart's gateway / token-service NetworkPolicy must
+# admit egress to the PSA range; the per-VPC PSA allocation prefix
+# is the cluster's `services_ipv4_cidr_block`. The operator may set
+# MANAGED_DATASTORES_EGRESS_CIDR to a tighter range; the default
+# 0.0.0.0/0 is bounded by per-port (5432 / 6379).
 AR_REGISTRY="${AR_REGISTRY}" IMAGE_TAG="${IMAGE_TAG}" \
   LENNY_POSTGRES_DSN="${LENNY_POSTGRES_DSN}" LENNY_REDIS_URL="${LENNY_REDIS_URL}" \
   LENNY_GCP_SERVICE_ACCOUNT_EMAIL="${LENNY_GCP_SERVICE_ACCOUNT_EMAIL}" \
+  POSTGRES_GATEWAY_EGRESS_CIDR="${MANAGED_DATASTORES_EGRESS_CIDR:-0.0.0.0/0}" \
+  REDIS_GATEWAY_EGRESS_CIDR="${MANAGED_DATASTORES_EGRESS_CIDR:-0.0.0.0/0}" \
+  REDIS_GATEWAY_EGRESS_PORT="${LENNY_GCP_MEMORYSTORE_PORT}" \
   bash "${SCRIPT_DIR}/render-values.sh" "${VALUES_OUT}"
 
 echo "==[4/5] CRDs + migrate + helm upgrade ${RELEASE}==" >&2

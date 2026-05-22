@@ -106,6 +106,20 @@ resource "azurerm_postgresql_flexible_server_database" "lenny" {
   collation = "en_US.utf8"
 }
 
+# pgvector allowlist. Migration 0044_agent_memory_embedding.up.sql
+# runs `CREATE EXTENSION vector;` to enable the §9.4 pgvector
+# embedding column. Azure Flexible Server rejects CREATE EXTENSION
+# unless the extension is named in `azure.extensions`; without this
+# parameter the migration fails with "extension not allow-listed" and
+# the gateway never starts. require_secure_transport defaults to ON,
+# matching the sslmode=require DSN the script composes.
+resource "azurerm_postgresql_flexible_server_configuration" "extensions" {
+  count     = var.create_flexible_postgres ? 1 : 0
+  name      = "azure.extensions"
+  server_id = azurerm_postgresql_flexible_server.this[0].id
+  value     = "VECTOR,PG_STAT_STATEMENTS"
+}
+
 resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
   count            = var.create_flexible_postgres ? 1 : 0
   name             = "allow-azure-services"

@@ -113,6 +113,14 @@ spec:
       ports:
         - port: 5432
           protocol: TCP
+    {{- if .Values.postgres.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.gatewayEgressCIDR | quote }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
     - to:
         - namespaceSelector:
             matchLabels:
@@ -169,6 +177,22 @@ spec:
       ports:
         - port: {{ .Values.redis.tlsPort }}
           protocol: TCP
+    {{- if .Values.postgres.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.gatewayEgressCIDR | quote }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.redis.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.redis.gatewayEgressCIDR | quote }}
+      ports:
+        - port: {{ .Values.redis.gatewayEgressPort }}
+          protocol: TCP
+    {{- end }}
     - to:
         - ipBlock:
             cidr: {{ .Values.kms.endpointCIDR | quote }}
@@ -465,6 +489,22 @@ spec:
       ports:
         - port: {{ .Values.minio.tlsPort }}
           protocol: TCP
+    {{- if .Values.postgres.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.gatewayEgressCIDR | quote }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.redis.gatewayEgressCIDR }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.redis.gatewayEgressCIDR | quote }}
+      ports:
+        - port: {{ .Values.redis.gatewayEgressPort }}
+          protocol: TCP
+    {{- end }}
     - to:
         - ipBlock:
             cidr: {{ .Values.kubeApiServerCIDR | quote }}

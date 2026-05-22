@@ -110,9 +110,19 @@ bootstrap:
 
 postgres:
   dsn: "${LENNY_POSTGRES_DSN:-postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable}"
+  # When the gateway routes to a managed Postgres, the chart's
+  # default-deny NetworkPolicy blocks the external connection
+  # unless a CIDR egress rule is added. Empty default keeps the rule
+  # absent on the in-cluster-fixture path. Tier-7 cloud-load on
+  # Azure exports POSTGRES_GATEWAY_EGRESS_CIDR=0.0.0.0/0 — Flexible
+  # Server is reached over the public Internet (firewalled to
+  # AllowAllAzureIps), so the egress is bound per port, not by IP.
+  gatewayEgressCIDR: "${POSTGRES_GATEWAY_EGRESS_CIDR:-}"
 
 redis:
   url: "${LENNY_REDIS_URL:-redis://lenny-redis.lenny-system.svc:6379}"
+  gatewayEgressCIDR: "${REDIS_GATEWAY_EGRESS_CIDR:-}"
+  gatewayEgressPort: ${REDIS_GATEWAY_EGRESS_PORT:-6380}
 YAML
 
 if [[ "${OUT}" != "/dev/stdout" ]]; then

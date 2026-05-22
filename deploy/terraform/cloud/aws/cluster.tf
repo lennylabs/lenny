@@ -329,3 +329,8 @@ output "cluster_oidc_issuer" {
   description = "OIDC issuer URL without the https:// prefix."
   value       = try(replace(aws_eks_cluster.lenny[0].identity[0].oidc[0].issuer, "https://", ""), "")
 }
+
+output "vpc_cidr" {
+  description = "CIDR of the cluster VPC. Tier-7 cloud-load reads this output to build chart NetworkPolicy egress rules that admit gateway connections to RDS / ElastiCache without widening the default-deny."
+  value       = var.vpc_cidr
+}

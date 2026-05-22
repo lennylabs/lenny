@@ -118,6 +118,20 @@ ENV_OUT=$(AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID}" \
   bash "${SCRIPT_DIR}/up.sh" "${RELEASE}")
 eval "${ENV_OUT}"
 
+# Pin every kubectl + helm call to the AKS context up.sh just merged
+# so a parallel `kind create cluster` does not switch
+# ~/.kube/config's current context out from under us mid-run. The
+# context name az aks get-credentials writes is the cluster name.
+export KUBECTL_CONTEXT="${AKS_CLUSTER_NAME}"
+kubectl() {
+  command kubectl --context "${KUBECTL_CONTEXT}" "$@"
+}
+export -f kubectl
+helm() {
+  command helm --kube-context "${KUBECTL_CONTEXT}" "$@"
+}
+export -f helm
+
 # 1b. Drain any leftover load-* SandboxWarmPools from a prior run, so
 #     the helm rollout has CPU headroom against the warm-pool
 #     sandboxes. Same contract as scripts/cloud/aws/run-load.sh.
@@ -161,9 +175,17 @@ export LENNY_POSTGRES_DSN LENNY_REDIS_URL
 # 3. Render the chart values overlay with the managed endpoints.
 echo "==[3/5] render Helm values overlay==" >&2
 VALUES_OUT="${SCRIPT_DIR}/values-cloud-azure.${RELEASE}.yaml"
+# Azure Flexible Server + Cache for Redis sit on the public Internet
+# (firewalled to AllowAllAzureIps). The chart's gateway / token-service
+# NetworkPolicy must admit egress to those endpoints; using 0.0.0.0/0
+# bounded by per-port (5432 / 6380) is the simplest fit and matches
+# the chart's existing postgres.cidr=0.0.0.0/0 pattern.
 ACR_REGISTRY="${ACR_REGISTRY}" IMAGE_TAG="${IMAGE_TAG}" \
   LENNY_POSTGRES_DSN="${LENNY_POSTGRES_DSN}" LENNY_REDIS_URL="${LENNY_REDIS_URL}" \
   LENNY_AZURE_WORKLOAD_IDENTITY_CLIENT_ID="${LENNY_AZURE_WORKLOAD_IDENTITY_CLIENT_ID}" \
+  POSTGRES_GATEWAY_EGRESS_CIDR="0.0.0.0/0" \
+  REDIS_GATEWAY_EGRESS_CIDR="0.0.0.0/0" \
+  REDIS_GATEWAY_EGRESS_PORT="${LENNY_AZURE_REDIS_SSL_PORT}" \
   bash "${SCRIPT_DIR}/render-values.sh" "${VALUES_OUT}"
 
 # 4. Apply CRDs + run lenny-migrate Job + helm upgrade.
