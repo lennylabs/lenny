@@ -9,12 +9,21 @@
 # stands up single-replica Postgres, Redis, and MinIO Deployments with
 # ClusterIP Services in the lenny-system namespace.
 #
-# These are test fixtures, not the product. Storage is emptyDir (the
-# e2e cluster is ephemeral and torn down per run), resource requests
-# are small, and the credentials below are fixed and well-known. The
-# security context is hardened where a stock image allows it
-# (non-root, no privilege escalation, all capabilities dropped), but
-# these manifests are not a deployment reference.
+# These are test fixtures, not the product. Postgres is backed by a
+# PersistentVolumeClaim against the cluster's default StorageClass so
+# the schema survives a pod restart within the cluster's lifetime; on
+# Kind that is the kindest/node local-path provisioner, on EKS that is
+# the gp3 EBS class. Redis and MinIO use emptyDir because they hold no
+# state the suite needs across restarts (Redis is started with
+# persistence off; MinIO's bucket is re-created by the bucket-init
+# sidecar). The e2e cluster is still ephemeral and torn down per run
+# (the PVC is reclaimed with the namespace); the PVC switch protects
+# against in-cluster postgres-pod recreation between runs when
+# KEEP_CLUSTER=1 reuses the cluster across invocations. Resource
+# requests are small and the credentials below are fixed and well-
+# known. The security context is hardened where a stock image allows
+# it (non-root, no privilege escalation, all capabilities dropped),
+# but these manifests are not a deployment reference.
 #
 # Fixed connection facts the e2e Helm overlay and the test code use:
 #
@@ -29,6 +38,21 @@
 #
 # install.sh applies this file, waits for the three Deployments to be
 # Available, then runs the lenny-migrate Job before the Helm install.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lenny-postgres-data
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: postgres
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -130,7 +154,8 @@ spec:
               mountPath: /var/lib/postgresql/data
       volumes:
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: lenny-postgres-data
 ---
 apiVersion: v1
 kind: Service

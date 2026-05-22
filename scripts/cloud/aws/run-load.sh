@@ -121,6 +121,32 @@ helm() {
 }
 export -f helm
 
+# 1b. Drain any leftover load-* SandboxWarmPools from a prior run.
+#     The previous run's pools (4 pools × 2 CPU per sandbox at small
+#     scale) pin both nodes at 100% CPU, blocking the rolling deploy of
+#     gateway/webhook replicas in run-e2e.sh — `kubectl wait` then times
+#     out on the datastore Deployments and the suite never reaches the
+#     test-execution step. Deleting the pools triggers WPC drain; the
+#     freed CPU is what lets the helm rollout converge. Step 4 re-
+#     applies the runtime fixture, recreating the pools fresh against
+#     the upgraded chart. Skip on a fresh cluster where the namespace
+#     does not yet exist.
+if kubectl get namespace lenny-agents >/dev/null 2>&1; then
+  echo "==[1b/5] drain leftover load-* SandboxWarmPools==" >&2
+  # The four pool names are deterministic across runs; deleting them
+  # before re-applying the load fixture frees the CPU the prior run's
+  # warm pods were holding. Force-drain the orphaned Sandboxes after
+  # so CPU frees up immediately instead of waiting on the per-sandbox
+  # §6.2 drain timeout. Both deletes are idempotent.
+  kubectl -n lenny-agents delete sandboxwarmpool \
+    load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool \
+    --ignore-not-found
+  for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
+    kubectl -n lenny-agents delete sandbox -l "lenny.dev/pool=${pool}" \
+      --ignore-not-found --grace-period=1 --wait=false
+  done
+fi
+
 # 2. Apply the Lenny chart (reuse the tier-6 run-e2e.sh's chart
 #    install path so the gateway + admission webhooks come up the
 #    same way).
