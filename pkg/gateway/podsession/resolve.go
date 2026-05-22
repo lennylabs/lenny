@@ -22,20 +22,39 @@ var ErrNoMatchingPool = errors.New("podsession: no warm pool matches the runtime
 // gateway cannot resolve to a single pool.
 var ErrAmbiguousPool = errors.New("podsession: more than one warm pool matches the runtime")
 
+// PoolMatch is a resolved SandboxWarmPool with the dispatch-relevant
+// SandboxTemplate fields copied alongside it, so the start path can
+// decide between session-claim and slot-claim without re-reading the
+// template.
+type PoolMatch struct {
+	// Pool is the resolved SandboxWarmPool name.
+	Pool string
+	// ExecutionMode is the §5.2 pod-reuse mode declared on the
+	// template. Empty is treated as `session`.
+	ExecutionMode string
+	// ConcurrencyStyle is the §5.2 concurrent-mode sub-variant, set
+	// only when ExecutionMode is `concurrent`.
+	ConcurrencyStyle string
+	// MaxConcurrent is the per-pod slot count for concurrent mode.
+	MaxConcurrent int32
+}
+
 // ResolvePool finds the SandboxWarmPool whose SandboxTemplate serves
 // the given runtime — and, when isolationProfile is non-empty, the
 // given §5.3 isolation profile. The gateway calls it to choose the
-// pool a session's pod is claimed from. A pool whose templateRef
-// dangles is skipped rather than treated as an error. ResolvePool
-// returns ErrNoMatchingPool when none match and ErrAmbiguousPool when
-// more than one does.
-func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRef, isolationProfile string) (string, error) {
+// pool a session's pod is claimed from, and to read the dispatch
+// fields (executionMode, concurrencyStyle, maxConcurrent) that route
+// the bind between session-claim and slot-claim. A pool whose
+// templateRef dangles is skipped rather than treated as an error.
+// ResolvePool returns ErrNoMatchingPool when none match and
+// ErrAmbiguousPool when more than one does.
+func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRef, isolationProfile string) (PoolMatch, error) {
 	var pools lennyv1.SandboxWarmPoolList
 	if err := reader.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
-		return "", fmt.Errorf("podsession: list warm pools: %w", err)
+		return PoolMatch{}, fmt.Errorf("podsession: list warm pools: %w", err)
 	}
 
-	var matches []string
+	var matches []PoolMatch
 	for i := range pools.Items {
 		pool := &pools.Items[i]
 		var tmpl lennyv1.SandboxTemplate
@@ -44,7 +63,7 @@ func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRe
 			continue
 		}
 		if err != nil {
-			return "", fmt.Errorf("podsession: get template %s: %w", pool.Spec.TemplateRef, err)
+			return PoolMatch{}, fmt.Errorf("podsession: get template %s: %w", pool.Spec.TemplateRef, err)
 		}
 		if tmpl.Spec.RuntimeRef != runtimeRef {
 			continue
@@ -52,15 +71,20 @@ func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRe
 		if isolationProfile != "" && tmpl.Spec.IsolationProfile != isolationProfile {
 			continue
 		}
-		matches = append(matches, pool.Name)
+		matches = append(matches, PoolMatch{
+			Pool:             pool.Name,
+			ExecutionMode:    tmpl.Spec.ExecutionMode,
+			ConcurrencyStyle: tmpl.Spec.ConcurrencyStyle,
+			MaxConcurrent:    tmpl.Spec.MaxConcurrent,
+		})
 	}
 
 	switch len(matches) {
 	case 0:
-		return "", ErrNoMatchingPool
+		return PoolMatch{}, ErrNoMatchingPool
 	case 1:
 		return matches[0], nil
 	default:
-		return "", ErrAmbiguousPool
+		return PoolMatch{}, ErrAmbiguousPool
 	}
 }

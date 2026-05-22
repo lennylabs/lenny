@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -397,17 +398,39 @@ func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *ad
 
 // startOnPod places a started session on a Kubernetes warm pod. It
 // resolves the warm pool serving the session's runtime and §5.3
-// isolation profile, claims an idle pod from it, starts the session on
-// the pod's §4.7 adapter, and records the binding so the message and
-// teardown paths can reach the pod.
+// isolation profile, then dispatches by the pool's executionMode:
+// session and task modes claim an idle pod through podBinder.Bind,
+// concurrent mode reserves a slot on a shared pod through
+// podBinder.BindSlot (§5.2). The pod's §4.7 adapter runs the
+// per-mode assignment sequence and the binding is recorded so the
+// message and teardown paths can reach the pod.
 func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) error {
-	pool, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
 		return err
 	}
+	if match.ExecutionMode == string(runtimestore.ExecutionModeConcurrent) {
+		result, err := s.podBinder.BindSlot(ctx, podsession.SlotBindRequest{
+			Pool:              match.Pool,
+			SessionID:         row.ID,
+			TenantID:          row.TenantID,
+			Runtime:           row.RuntimeRef,
+			Style:             podclaim.ConcurrencyStyle(match.ConcurrencyStyle),
+			MaxConcurrent:     match.MaxConcurrent,
+			Plan:              podsession.WorkspacePlanToProto(plan),
+			ExperimentContext: experimentContextToProto(row.ExperimentContext),
+			TracingContext:    row.TracingContext,
+			SetupPolicy:       s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+		})
+		if err != nil {
+			return err
+		}
+		s.podRegistry.Put(result)
+		return nil
+	}
 	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
-		Pool:              pool,
+		Pool:              match.Pool,
 		SessionID:         row.ID,
 		TenantID:          row.TenantID,
 		Runtime:           row.RuntimeRef,
@@ -565,13 +588,13 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) erro
 		}
 		return s.startOnPod(ctx, row, plan)
 	}
-	pool, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
 		return err
 	}
 	result, err := s.podBinder.Resume(ctx, podsession.ResumeRequest{
-		Pool:              pool,
+		Pool:              match.Pool,
 		SessionID:         row.ID,
 		TenantID:          row.TenantID,
 		Runtime:           row.RuntimeRef,

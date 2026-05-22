@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -18,6 +19,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -456,6 +458,171 @@ func TestReleaseSlotIsIdempotentAtZero(t *testing.T) {
 	}
 	if sb.Status.ActiveSlots != 0 {
 		t.Errorf("activeSlots = %d, want 0; release must not drive the count negative", sb.Status.ActiveSlots)
+	}
+}
+
+// seedWPCSandboxStatus writes the WPC-owned subset of
+// Sandbox.status (phase, podName, nodeName, podIP) under the
+// WarmPoolController field manager. Tests that need to verify
+// cross-manager Apply behavior (gateway forcing Phase ownership,
+// gateway's unstructured patch leaving WPC-owned fields intact)
+// must seed those fields under WPC, not Gateway — otherwise the
+// test would pre-claim ownership for the gateway and fail to
+// exercise the spec-§4.6.3 dual-ownership tension that the slot-
+// claim path resolves with ForceOwnership.
+func seedWPCSandboxStatus(t *testing.T, c client.Client, name, phase, podName, nodeName, podIP string) {
+	t.Helper()
+	wpc := map[string]interface{}{}
+	if phase != "" {
+		wpc["phase"] = phase
+	}
+	if podName != "" {
+		wpc["podName"] = podName
+	}
+	if nodeName != "" {
+		wpc["nodeName"] = nodeName
+	}
+	if podIP != "" {
+		wpc["podIP"] = podIP
+	}
+	if len(wpc) == 0 {
+		return
+	}
+	u := &unstructured.Unstructured{}
+	u.SetAPIVersion(lennyv1.GroupVersion.String())
+	u.SetKind("Sandbox")
+	u.SetName(name)
+	u.SetNamespace(testNS)
+	_ = unstructured.SetNestedField(u.Object, wpc, "status")
+	if err := c.Status().Patch(context.Background(), u, client.Apply,
+		client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
+		t.Fatalf("seed WPC status %s: %v", name, err)
+	}
+}
+
+// TestClaimSlotForcesPhaseFromWPCOwnership is the regression for the
+// §4.6.3-vs-§5.2 cross-manager Phase write that the spec-aligned
+// gateway slot-claim resolves with client.ForceOwnership. The seed
+// puts Sandbox.status.phase under the WarmPoolController field
+// manager (§4.6.3 owner). The gateway's slot-reservation Apply must
+// still transition phase to slot_active per §5.2, which only
+// succeeds when ForceOwnership is on the Apply call. Without it,
+// the API server returns a 409 Conflict on the Phase field and the
+// slot-claim fails — exactly the regression that pinned EKS
+// sandboxes in `claimed` instead of `slot_active`.
+func TestClaimSlotForcesPhaseFromWPCOwnership(t *testing.T) {
+	claimer, c := slotClaimerFor(t, &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sbx-wpc-owned",
+			Namespace: testNS,
+			Labels:    map[string]string{warmpool.LabelPool: testPool},
+		},
+	})
+	// Re-seed phase=idle under the WPC field manager so the
+	// gateway's slot-claim Apply must force ownership across managers.
+	seedWPCSandboxStatus(t, c, "sbx-wpc-owned", string(state.Idle), "", "", "10.0.0.7")
+
+	res, err := claimer.ClaimSlot(context.Background(),
+		slotReq("sess-force", "acme", podclaim.StyleStateless, 4))
+	if err != nil {
+		t.Fatalf("ClaimSlot under WPC-owned phase: %v", err)
+	}
+	if res.SandboxName != "sbx-wpc-owned" {
+		t.Errorf("claimed %q, want sbx-wpc-owned", res.SandboxName)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-wpc-owned"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != string(state.SlotActive) {
+		t.Errorf("phase = %q, want slot_active — the gateway's Phase Apply must force across the §4.6.3 WPC ownership (regression: 409 Conflict left it idle)", sb.Status.Phase)
+	}
+	if sb.Status.ActiveSlots != 1 {
+		t.Errorf("activeSlots = %d, want 1", sb.Status.ActiveSlots)
+	}
+}
+
+// TestClaimSlotPreservesWPCOwnedFieldsAcrossGatewayApply is the
+// regression for the SSA Go-zero-value clobbering bug. The gateway
+// slot-claim patch is built as *unstructured.Unstructured carrying
+// only gateway-owned fields (phase, activeSlots, tenantId).
+// A typed-struct patch would serialize unset WPC-owned fields
+// (PodName, NodeName, PodIP, ObservedGeneration) as Go zero values
+// and the SSA apply would claim those fields and wipe WPC's writes.
+// This test seeds full WPC-owned state, runs the gateway's Apply,
+// and asserts every WPC-owned field still holds the seeded value.
+func TestClaimSlotPreservesWPCOwnedFieldsAcrossGatewayApply(t *testing.T) {
+	claimer, c := slotClaimerFor(t, &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sbx-keep-wpc",
+			Namespace: testNS,
+			Labels:    map[string]string{warmpool.LabelPool: testPool},
+		},
+	})
+	seedWPCSandboxStatus(t, c, "sbx-keep-wpc",
+		string(state.Idle), "pod-keep-wpc", "node-keep-wpc", "10.0.0.42")
+
+	if _, err := claimer.ClaimSlot(context.Background(),
+		slotReq("sess-keep", "acme", podclaim.StyleStateless, 4)); err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-keep-wpc"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != string(state.SlotActive) {
+		t.Errorf("phase = %q, want slot_active — the gateway must still transition it", sb.Status.Phase)
+	}
+	if sb.Status.PodName != "pod-keep-wpc" {
+		t.Errorf("podName = %q, want pod-keep-wpc — regression: gateway Apply zeroed a WPC-owned field", sb.Status.PodName)
+	}
+	if sb.Status.NodeName != "node-keep-wpc" {
+		t.Errorf("nodeName = %q, want node-keep-wpc — regression: gateway Apply zeroed a WPC-owned field", sb.Status.NodeName)
+	}
+	if sb.Status.PodIP != "10.0.0.42" {
+		t.Errorf("podIP = %q, want 10.0.0.42 — regression: gateway Apply zeroed a WPC-owned field", sb.Status.PodIP)
+	}
+}
+
+// TestReleaseSlotPreservesWPCOwnedFieldsOnReturnToIdle is the
+// release-side regression for the same Go-zero-value clobbering bug.
+// When a concurrent-mode pod returns to idle on its last slot
+// release, the gateway's Apply must transition phase back to idle
+// without touching the WPC-owned podName / nodeName / podIP fields.
+// A typed-struct patch would zero them.
+func TestReleaseSlotPreservesWPCOwnedFieldsOnReturnToIdle(t *testing.T) {
+	claimer, c := slotClaimerFor(t, &lennyv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sbx-release-keep",
+			Namespace: testNS,
+			Labels:    map[string]string{warmpool.LabelPool: testPool},
+		},
+	})
+	seedWPCSandboxStatus(t, c, "sbx-release-keep",
+		string(state.Idle), "pod-release", "node-release", "10.0.0.99")
+
+	// Claim a single slot to set up the slot_active state, then
+	// release it: the release path is what transitions back to idle.
+	if _, err := claimer.ClaimSlot(context.Background(),
+		slotReq("sess-release", "acme", podclaim.StyleStateless, 4)); err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+	if err := claimer.ReleaseSlot(context.Background(), "sbx-release-keep", "sess-release"); err != nil {
+		t.Fatalf("ReleaseSlot: %v", err)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-release-keep"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != string(state.Idle) {
+		t.Errorf("phase = %q, want idle after the last slot drains", sb.Status.Phase)
+	}
+	if sb.Status.PodName != "pod-release" || sb.Status.NodeName != "node-release" || sb.Status.PodIP != "10.0.0.99" {
+		t.Errorf("WPC-owned fields after release = %+v, want podName=pod-release nodeName=node-release podIP=10.0.0.99 — regression: gateway Apply on return-to-idle zeroed WPC fields",
+			sb.Status)
 	}
 }
 

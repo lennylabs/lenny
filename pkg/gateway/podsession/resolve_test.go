@@ -27,6 +27,73 @@ func sandboxTemplate(name, runtimeRef, isolation string) *lennyv1.SandboxTemplat
 	}
 }
 
+func concurrentTemplate(name, runtimeRef, isolation, style string, maxConcurrent int32) *lennyv1.SandboxTemplate {
+	return &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:       runtimeRef,
+			IsolationProfile: isolation,
+			ExecutionMode:    "concurrent",
+			ConcurrencyStyle: style,
+			MaxConcurrent:    maxConcurrent,
+		},
+	}
+}
+
+// TestResolvePoolReturnsConcurrentDispatchFields covers the gateway
+// dispatch fix: ResolvePool must surface ExecutionMode,
+// ConcurrencyStyle, and MaxConcurrent so startOnPod can route a
+// concurrent-mode runtime through BindSlot rather than Bind. A
+// regression here would put concurrent-mode sandboxes into `claimed`
+// instead of `slot_active`.
+func TestResolvePoolReturnsConcurrentDispatchFields(t *testing.T) {
+	c := k8sClient(
+		t,
+		warmPool("cstateless-pool", "cstateless-tmpl"),
+		concurrentTemplate("cstateless-tmpl", "load-cstateless-runtime", "sandboxed", "stateless", 8),
+	)
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "load-cstateless-runtime", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.Pool != "cstateless-pool" {
+		t.Errorf("resolved pool = %q, want cstateless-pool", got.Pool)
+	}
+	if got.ExecutionMode != "concurrent" {
+		t.Errorf("executionMode = %q, want concurrent (the start path dispatches to BindSlot when this is concurrent)", got.ExecutionMode)
+	}
+	if got.ConcurrencyStyle != "stateless" {
+		t.Errorf("concurrencyStyle = %q, want stateless", got.ConcurrencyStyle)
+	}
+	if got.MaxConcurrent != 8 {
+		t.Errorf("maxConcurrent = %d, want 8", got.MaxConcurrent)
+	}
+}
+
+// TestResolvePoolSessionModeLeavesDispatchFieldsEmpty covers the
+// negative case: a session-mode pool must not carry concurrent-mode
+// dispatch fields, so startOnPod takes the Bind path.
+func TestResolvePoolSessionModeLeavesDispatchFieldsEmpty(t *testing.T) {
+	c := k8sClient(
+		t,
+		warmPool("session-pool", "session-tmpl"),
+		sandboxTemplate("session-tmpl", "claude-code", "sandboxed"),
+	)
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.ExecutionMode != "" {
+		t.Errorf("executionMode = %q, want empty for the default session mode", got.ExecutionMode)
+	}
+	if got.ConcurrencyStyle != "" {
+		t.Errorf("concurrencyStyle = %q, want empty", got.ConcurrencyStyle)
+	}
+	if got.MaxConcurrent != 0 {
+		t.Errorf("maxConcurrent = %d, want 0", got.MaxConcurrent)
+	}
+}
+
 func TestResolvePoolMatchesByRuntime(t *testing.T) {
 	c := k8sClient(
 		t,
@@ -37,8 +104,8 @@ func TestResolvePoolMatchesByRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
-	if got != "claude-pool" {
-		t.Errorf("resolved pool = %q, want claude-pool", got)
+	if got.Pool != "claude-pool" {
+		t.Errorf("resolved pool = %q, want claude-pool", got.Pool)
 	}
 }
 
@@ -66,8 +133,8 @@ func TestResolvePoolDisambiguatesByIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
-	if got != "claude-kata" {
-		t.Errorf("resolved pool = %q, want claude-kata", got)
+	if got.Pool != "claude-kata" {
+		t.Errorf("resolved pool = %q, want claude-kata", got.Pool)
 	}
 }
 
@@ -100,7 +167,7 @@ func TestResolvePoolSkipsDanglingTemplateRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
-	if got != "claude-pool" {
-		t.Errorf("resolved pool = %q, want claude-pool", got)
+	if got.Pool != "claude-pool" {
+		t.Errorf("resolved pool = %q, want claude-pool", got.Pool)
 	}
 }
