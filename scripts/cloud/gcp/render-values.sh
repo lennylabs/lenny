@@ -107,6 +107,20 @@ bootstrap:
     repository: ${AR_REGISTRY}/lenny-ctl
     tag: "${TAG}"
     pullPolicy: IfNotPresent
+  # Seed the tenant + user the tier-6 e2e_cloud and tier-7 cloud-load
+  # tests authenticate as. Without these the gateway's §4.8
+  # QuotaEvaluator returns 429 QUOTA_EXCEEDED on every request
+  # bearing X-Lenny-Tenant-ID: acme because no tenant row exists
+  # for the quota lookup.
+  tenants:
+    - id: acme
+      displayName: Acme Corp
+      workspaceTier: standard
+  users:
+    - subject: alice@acme.com
+      tenantId: acme
+      email: alice@acme.com
+      roles: [tenant-admin]
 
 postgres:
   dsn: "${LENNY_POSTGRES_DSN:-postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable}"
