@@ -143,10 +143,18 @@ if [[ "${LENNY_SKIP_TIER6_GATE:-0}" != "1" ]]; then
 fi
 
 # 1. Cluster bring-up. Reuses scripts/cloud/aws/up.sh with the
-#    matching shape; on a repeat run the existing cluster is
-#    detected and terraform apply runs as a no-op against it.
-echo "==[1/5] terraform apply (shape=${SHAPE}, release=${RELEASE})==" >&2
+#    matching shape and the managed-datastore flags tier-7 needs.
+#    WITH_RDS=1 + WITH_ELASTICACHE=1 must be passed here AND on the
+#    step-2 run-e2e.sh delegation: every up.sh invocation rewrites
+#    deploy/terraform/cloud/aws/<release>.tfvars.json from its current
+#    env, so a step-1 invocation without the flags would set
+#    create_rds=false and `terraform apply` would DESTROY the managed
+#    services that the next step is about to provision (or reuse).
+#    On a repeat run the existing cluster + RDS + ElastiCache are
+#    detected and apply is a no-op.
+echo "==[1/5] terraform apply (shape=${SHAPE}, release=${RELEASE}, rds=1, elasticache=1)==" >&2
 AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
+  WITH_RDS=1 WITH_ELASTICACHE=1 WITH_ELASTICACHE_CLUSTER=0 \
   bash "${SCRIPT_DIR}/up.sh" "${SHAPE}"
 
 # Pin every kubectl call to the EKS context this script provisioned
