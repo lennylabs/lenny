@@ -2,10 +2,42 @@ suite: lenny-gateway deployment
 templates:
   - gateway-deployment.yaml
 tests:
-  - it: renders the service account, cluster role, binding, deployment, and services
+  - it: renders the service account, cluster role, binding, deployment, services, and the §4.1 PodDisruptionBudget by default
+    asserts:
+      - hasDocuments:
+          count: 7
+
+  - it: renders the §4.1 PodDisruptionBudget with maxUnavailable 1 and the gateway selector
+    documentSelector:
+      path: kind
+      value: PodDisruptionBudget
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-gateway
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: gateway
+      - equal:
+          path: spec.maxUnavailable
+          value: 1
+      - equal:
+          path: spec.selector.matchLabels["lenny.dev/component"]
+          value: gateway
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: lenny
+
+  - it: omits the PodDisruptionBudget when gateway.podDisruptionBudget.enabled is false
+    set:
+      gateway.podDisruptionBudget.enabled: false
     asserts:
       - hasDocuments:
           count: 6
+      # The PDB document is the seventh document on the default render
+      # (after SA, ClusterRole, ClusterRoleBinding, Deployment, Service,
+      # headless Service). When the opt-out is set the document count
+      # drops to six, so no PodDisruptionBudget is rendered.
 
   - it: renders a Deployment named lenny-gateway
     documentSelector:

@@ -33,8 +33,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/kms"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 )
 
@@ -43,6 +45,13 @@ func main() {
 	grpcAddr := flag.String("grpc-addr", "",
 		"address to bind for the §4.3 gRPC TokenService surface (host:port). Empty disables the gRPC listener.")
 	issuer := flag.String("issuer", "https://lenny.dev.local/token", "iss claim stamped on issued tokens")
+	redisURL := flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
+		"Redis connection URL for the §25.5 operational event stream. When set, the Token "+
+			"Service's EventEmitter writes to ops:events:stream alongside the gateway and the "+
+			"controllers; when empty, events stay in the local in-memory buffer. Override via "+
+			"LENNY_REDIS_URL.")
+	redisPassword := flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
+		"Redis AUTH password. Override via LENNY_REDIS_PASSWORD.")
 	flag.Parse()
 
 	// §4 KMS provider. The in-process kms.Local provider is the
@@ -66,6 +75,45 @@ func main() {
 			"llm-proxy":     1 * time.Hour,
 		},
 	})
+
+	// §4.0 EventEmitter wiring. The §4.0 spec requires every process
+	// hosting subsystems that may emit §16.6 operational events to
+	// construct an EventEmitter so a future emit site does not have to
+	// re-thread the dependency through the binary. The Token Service
+	// signs and mints credential tokens (§4.3) and rotates leases for
+	// §4.9; once the rotation events are wired they will land on this
+	// emitter without further main.go changes. With --redis-url the
+	// emitter streams to the §25.5 platform-scoped Redis stream alongside
+	// the gateway and the controllers; without Redis the emitter writes
+	// only to the process-local in-memory buffer (the §25.5 per-replica
+	// fall-back). The buffer is constructed unconditionally so a Redis
+	// outage degrades to local-only delivery rather than dropping events.
+	replicaID := os.Getenv("HOSTNAME")
+	if replicaID == "" {
+		replicaID = "token-service"
+	}
+	opsEventBuffer := events.NewEventBuffer(0)
+	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, replicaID)
+	if *redisURL != "" {
+		redisClient, err := redisconn.NewClient(redisconn.Config{URL: *redisURL, Password: *redisPassword})
+		if err != nil {
+			log.Fatalf("lenny-token-service: redis client: %v", err)
+		}
+		defer func() { _ = redisClient.Close() }()
+		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
+			Client:    redisClient,
+			Buffer:    opsEventBuffer,
+			Source:    "//lenny.dev/token-service/" + replicaID,
+			ReplicaID: replicaID,
+		})
+		log.Printf("lenny-token-service: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
+	}
+	// Keep opsEmitter live so the linker retains the wiring even before a
+	// subsystem in this binary takes it as a constructor dependency. A
+	// future credential-rotation event emit will replace this no-op log.
+	log.Printf("lenny-token-service: §4.0 EventEmitter ready (replica=%s, redis=%t)",
+		replicaID, *redisURL != "")
+	_ = opsEmitter
 
 	httpSrv := &http.Server{
 		Addr:              *addr,

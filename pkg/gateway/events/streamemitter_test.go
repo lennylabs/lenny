@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -204,4 +205,76 @@ func TestNewStreamEmitterRequiresBuffer(t *testing.T) {
 		}
 	}()
 	events.NewStreamEmitter(events.StreamEmitterOptions{Client: client})
+}
+
+// spec §4.0 / §25.5: multiple processes (gateway, controller,
+// lenny-ops, token-service) write to the same platform-scoped Redis
+// stream `ops:events:stream`. The stable eventKey carries the
+// per-process replicaID so a downstream consumer can attribute each
+// event to its emitting process. miniredis stands in for the Redis
+// stream; the two emitters share the client and read back both records
+// in order.
+func TestStreamEmitterMultiProcessReplay(t *testing.T) {
+	client := newMiniRedisClient(t)
+	gatewayBuf := events.NewEventBuffer(0)
+	controllerBuf := events.NewEventBuffer(0)
+	gatewayEmitter := events.NewStreamEmitter(events.StreamEmitterOptions{
+		Client: client, Buffer: gatewayBuf,
+		Source: "//lenny.dev/gateway/replica-1", ReplicaID: "gateway-replica-1",
+	})
+	controllerEmitter := events.NewStreamEmitter(events.StreamEmitterOptions{
+		Client: client, Buffer: controllerBuf,
+		Source: "//lenny.dev/controller/replica-1", ReplicaID: "controller-replica-1",
+	})
+
+	if _, err := gatewayEmitter.Emit(context.Background(), events.OperationalEvent{
+		Type: "dev.lenny.session_failed",
+	}); err != nil {
+		t.Fatalf("gateway Emit: %v", err)
+	}
+	if _, err := controllerEmitter.Emit(context.Background(), events.OperationalEvent{
+		Type: "dev.lenny.pool_state_changed",
+	}); err != nil {
+		t.Fatalf("controller Emit: %v", err)
+	}
+
+	entries, err := client.XRange(context.Background(), events.DefaultStreamKey, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("stream holds %d entries, want 2 (one per process)", len(entries))
+	}
+
+	// The gateway-emitted event lands in the gateway buffer only;
+	// the controller-emitted event lands in the controller buffer only.
+	// The per-process local buffer is private, even though the Redis
+	// destination is shared.
+	if got := len(gatewayBuf.Query(0, events.EventFilter{}, 100).Events); got != 1 {
+		t.Errorf("gateway local buffer holds %d events, want 1", got)
+	}
+	if got := len(controllerBuf.Query(0, events.EventFilter{}, 100).Events); got != 1 {
+		t.Errorf("controller local buffer holds %d events, want 1", got)
+	}
+
+	// Each stream entry's eventKey ID prefix identifies its emitting
+	// process, so lenny-ops can attribute and replay it.
+	var payloads []map[string]any
+	for _, entry := range entries {
+		raw, ok := entry.Values["event"].(string)
+		if !ok {
+			t.Fatalf("stream entry %s missing event payload", entry.ID)
+		}
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+			t.Fatalf("unmarshal stream entry %s: %v", entry.ID, err)
+		}
+		payloads = append(payloads, ev)
+	}
+	if !strings.HasPrefix(payloads[0]["id"].(string), "gateway-replica-1:") {
+		t.Errorf("first event id = %q, want prefix gateway-replica-1:", payloads[0]["id"])
+	}
+	if !strings.HasPrefix(payloads[1]["id"].(string), "controller-replica-1:") {
+		t.Errorf("second event id = %q, want prefix controller-replica-1:", payloads[1]["id"])
+	}
 }

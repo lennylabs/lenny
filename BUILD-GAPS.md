@@ -346,25 +346,26 @@ are not yet deduplicated; treat related findings as a cluster.
 - **Gap:** File path diverges (`pkg/ops/mcpmgmt` vs `pkg/ops/mcp/adapter.go`); scope source is the `X-Lenny-Scope` header rather than the JWT `scope` claim (see F-4.0.5).
 - **Suggested resolution:** Rename the package or update the spec; the scope-source change is covered by F-4.0.5.
 
-### - [ ] F-4.0.17 — Operational events lack process-wide redundancy of `EventEmitter` interface [Low] — OPEN
+### - [ ] F-4.0.17 — Operational events lack process-wide redundancy of `EventEmitter` interface [Low] — CLOSED
 
 - **Spec:** "Every subsystem that emits operational events depends on this package." (line 13)
 - **Evidence:** Only the gateway constructs an `opsEmitter` (`cmd/lenny-gateway/main.go:877`). Neither `cmd/lenny-controller/main.go`, `cmd/lenny-token-service/main.go`, nor `cmd/lenny-ops/main.go` constructs one (verified by `grep -n "opsevents\|OpsEmitter|NewEmitter"` per file). Subsystems running in other processes can therefore never satisfy "depends on this package."
 - **Gap:** Even where the package is imported, only the gateway uses it. Controllers and token service emit no operational events at all.
-- **Suggested resolution:** Either define a process-shared event sink (Redis Streams, NATS, or a gateway-mediated HTTP `POST /v1/admin/events/ingest`) and wire it into every process, or restrict the spec's claim to gateway-only subsystems.
+- **Resolution:** `cmd/lenny-controller/main.go:155-180` (F-4.0.10) and `cmd/lenny-ops/main.go:300-319` (F-4.0.11) already construct an `events.EventEmitter` per process. `cmd/lenny-token-service/main.go:60-100` now does the same: a local `Emitter` by default, a `StreamEmitter` when `--redis-url` is set, so the binary is ready to emit credential rotation / revocation events when those emit sites land. The corner cases (Redis failure preserves the event in the local buffer; context cancellation honored before the XADD) are covered by `pkg/gateway/events/streamemitter_test.go`.
 
-### - [ ] F-4.0.18 — Coverage / overlap with existing operational-event emission [Info] — OPEN
+### - [ ] F-4.0.18 — Coverage / overlap with existing operational-event emission [Info] — CLOSED
 
 - **Spec:** Lines 31-35 list five subsystems that must emit.
 - **Evidence:** `session_failed` is emitted at `pkg/gateway/sessionserver/usage.go:93` (function `terminalSessionEvent`). `circuit_breaker_opened` / `circuit_breaker_closed` are emitted in `pkg/gateway/admin/breakers.go:132` and `:157` when an operator calls the open / close endpoints. These two subsystems satisfy the requirement, with the caveat that the §11.6 spec scopes "circuit breakers" to operator-managed ones (which is what's wired), distinct from the per-subsystem automatic breakers documented in §4.1.
 - **Gap:** Not a gap; recorded so triage can confirm coverage for the two correctly-emitting subsystems before fixing the remaining three.
+- **Resolution:** Verified `terminalSessionEvent` still maps `StateFailed → session_failed` at `pkg/gateway/sessionserver/usage.go:93`; the admin breakers handler still emits `circuit_breaker_opened` / `circuit_breaker_closed` at `pkg/gateway/admin/breakers.go:132,157`. Smoke tests assert both emit paths: `pkg/gateway/sessionserver/opsevent_internal_test.go:TestRecordSessionCompletedEmitsSessionFailed` covers the session_failed path, `pkg/gateway/admin/eventbuffer_test.go:TestEventBufferSurfacesCircuitBreakerEvent` covers the breaker_opened path.
 
-### - [ ] F-4.0.19 — Health Checker exposes inline `RunbookRef` rather than centralized table [Low] — OPEN
+### - [ ] F-4.0.19 — Health Checker exposes inline `RunbookRef` rather than centralized table [Low] — CLOSED
 
 - **Spec:** "the gateway health service and its runbook link table." (line 14)
 - **Evidence:** `pkg/gateway/health/health.go:65-67` defines `Component.RunbookRef`; checkers in `pkg/gateway/health/backends/backends.go` (lines 46, etc.) populate it inline per checker. No centralized component-to-runbook mapping exists.
 - **Gap:** Cosmetic — the runbook ref is computed per checker rather than from a shared table, so adding a new component requires editing the checker rather than a table.
-- **Suggested resolution:** Add a `runbookRefFor(componentName)` lookup table to consolidate references and replace inline literals.
+- **Resolution:** F-4.0.14 already added `pkg/gateway/health/runbook_links.go` exposing `RunbookFor(component)`. Verified every health checker that populates `RunbookRef` consults that table: `pkg/gateway/health/backends/backends.go:46,71,106,115` calls `health.RunbookFor("postgres")` and `health.RunbookFor("redis")` respectively. A repo-wide `grep RunbookRef:` outside `_test.go` returns no inline literals — every `RunbookRef:` value goes through the table.
 
 ### Coverage notes
 
@@ -387,12 +388,12 @@ The gateway implementation covers the core externally-facing responsibilities (O
 
 ### Findings
 
-### - [ ] F-4.1.1 — Gateway Deployment has no PodDisruptionBudget [High] — OPEN
+### - [ ] F-4.1.1 — Gateway Deployment has no PodDisruptionBudget [High] — CLOSED
 
 - **Spec:** "PodDisruptionBudget to limit simultaneous disruptions" (line 61). §17.1 cross-reference mandates `maxUnavailable: 1 at every tier`.
 - **Evidence:** `charts/lenny/templates/gateway-deployment.yaml` renders ServiceAccount/ClusterRole/ClusterRoleBinding/Deployment/Service/headless-Service (lines 44, 56, 94, 109, 255, 286) but NO PodDisruptionBudget. `grep -rln "kind: PodDisruptionBudget" charts/lenny/templates/` returns only `token-service-deployment.yaml`, `admission-policies/cosign-verify-webhook.yaml`, `admission-policies/_webhook.tpl`. No `lenny-gateway` PDB resource exists. `charts/lenny/values.yaml:623` and `charts/lenny/templates/autoscaling-gateway.yaml:99` both reference "the §17.1 maxUnavailable:1 PDB" as the binding constraint, but the PDB itself is never rendered.
 - **Gap:** Without a PDB the gateway is exposed to mass concurrent evictions during `kubectl drain`, cluster-autoscaler node consolidation, or rollouts. The HPA scale-down policy (1 pod / 60s) was tuned around a PDB-bound floor that does not exist; the §16.5 `PDBBlockedEvictions` alert can never fire.
-- **Suggested resolution:** Add a `PodDisruptionBudget` resource named `lenny-gateway` in `charts/lenny/templates/gateway-deployment.yaml` with `maxUnavailable: 1` selecting the gateway labels.
+- **Resolution:** `charts/lenny/templates/gateway-deployment.yaml` now renders a `PodDisruptionBudget` named `lenny-gateway` (`maxUnavailable: 1`) selecting the gateway labels, gated on the new `gateway.podDisruptionBudget.enabled` Helm value (default `true`). `charts/lenny/values.yaml` documents the value and its opt-out. `charts/lenny/tests/gateway-deployment_test.yaml` adds three helm-unittest assertions: the default render contains seven documents including the PDB; the PDB carries `maxUnavailable: 1` and the gateway selector; setting `gateway.podDisruptionBudget.enabled: false` drops the document count to six (the PDB is the only opt-outable document, so the count check pins the absence).
 
 ### - [ ] F-4.1.2 — Gateway Deployment has no rolling-update strategy [High] — OPEN
 

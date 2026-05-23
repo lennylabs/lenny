@@ -552,6 +552,16 @@ gateway:
   # populate it.
   serviceAccount:
     annotations: {}
+  # podDisruptionBudget configures the §4.1 / §17.1 PDB on the gateway
+  # Deployment. The §17.1 cross-reference mandates maxUnavailable: 1 at
+  # every tier so voluntary disruptions (kubectl drain, autoscaler node
+  # consolidation, HPA scale-down) cap the §10.1 CheckpointBarrier
+  # fan-out at one replica's 400-pod budget. The opt-out exists so an
+  # operator can disable the PDB during a controlled migration; the
+  # default is true because §17.1 has no supported topology without it.
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
 
 # autoscaling configures the §10.1 gateway horizontal scaler. The chart
 # renders exactly one scaler resource, selected by autoscaling.provider:

@@ -299,3 +299,31 @@ spec:
     - name: http
       port: {{ .Values.gateway.internalPort }}
       targetPort: http
+{{- if .Values.gateway.podDisruptionBudget.enabled }}
+---
+# PodDisruptionBudget for the lenny-gateway Deployment (§4.1 line 61,
+# §17.1). The gateway's §10.1 preStop hook fans out CheckpointBarrier to
+# up to 400 pods per replica; a flat maxUnavailable: 1 caps voluntary
+# disruptions (kubectl drain, cluster-autoscaler node consolidation,
+# HPA scale-down) at one replica's quota across all tiers. The same
+# integer at Tier 1 (minReplicas: 2) leaves one replica of disruption
+# budget, while a percentage or formula at higher tiers would either be
+# inexpressible in PDB syntax or exceed the §17.8.2 MinIO checkpoint
+# fan-out budget. The rolling-update strategy bounds Deployment-initiated
+# rollouts on an independent axis (see the Deployment.spec.strategy
+# block above).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: gateway
+spec:
+  maxUnavailable: {{ .Values.gateway.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      lenny.dev/component: gateway
+{{- end }}

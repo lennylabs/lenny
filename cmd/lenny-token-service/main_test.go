@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,5 +110,73 @@ func TestBinaryServesGRPC(t *testing.T) {
 	}
 	if st.Code() != codes.NotFound {
 		t.Errorf("AssignCredentials code = %s, want NotFound (no pool registered)", st.Code())
+	}
+}
+
+// spec: 4.0 (line 13: "Every subsystem that emits operational events
+// depends on this package."). The Token Service binary constructs an
+// EventEmitter at startup so future emit sites (credential rotation,
+// revocation) do not require re-threading the dependency through main.
+// The log line emitted on startup is the smoke-test signal: it confirms
+// the emitter wiring ran and reports whether the local-only or Redis
+// stream destination is active.
+// diagnosis: a regression in main.go that removes the EventEmitter
+// construction (or moves it behind an unrelated flag) drops the
+// "§4.0 EventEmitter ready" log line; this test fails fast so a
+// reviewer notices before the binary ships without the dependency.
+func TestBinaryEmitsEventEmitterReadyLog(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("go toolchain not on PATH: %v", err)
+	}
+
+	bin := filepath.Join(t.TempDir(), "lenny-token-service")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+
+	httpLis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("http listen: %v", err)
+	}
+	httpAddr := httpLis.Addr().String()
+	_ = httpLis.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(
+		ctx, bin,
+		"--addr="+httpAddr,
+		"--issuer=https://test.local/token",
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start binary: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		_ = cmd.Wait()
+	})
+
+	// Poll the binary's log output until the §4.0 emitter-ready line
+	// appears. The line is logged before ListenAndServe, so a short
+	// poll window suffices.
+	deadline := time.Now().Add(5 * time.Second)
+	ready := false
+	for time.Now().Before(deadline) {
+		if strings.Contains(stderr.String(), "§4.0 EventEmitter ready") {
+			ready = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatalf("token-service did not log §4.0 EventEmitter ready within 5s; stderr=%q", stderr.String())
+	}
+	// In the no-Redis path the log reports redis=false so the operator
+	// sees the local-only delivery mode.
+	if !strings.Contains(stderr.String(), "redis=false") {
+		t.Errorf("token-service §4.0 emitter log did not report redis=false; stderr=%q", stderr.String())
 	}
 }
