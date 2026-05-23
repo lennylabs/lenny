@@ -270,9 +270,12 @@ tests:
       path: kind
       value: Deployment
     asserts:
+      # POD_NAME + LENNY_MAX_SESSIONS_PER_REPLICA + LENNY_MIN_REPLICAS
+      # + LENNY_STREAM_CEILING + 8 extraction-threshold gauges
+      # + LENNY_POOLER_MODE (§4.2 line 165) = 13.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 12
+          count: 13
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -331,6 +334,30 @@ tests:
           content:
             name: LENNY_MINIO_ENDPOINT
           any: true
+      # §4.2 line 165 — LENNY_POOLER_MODE defaults to `transactional`.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POOLER_MODE
+            value: "transactional"
+
+  # spec: §4.2 line 165 — pgbouncer.poolerMode = external propagates
+  # to the gateway as LENNY_POOLER_MODE=external. The gateway logs
+  # the value at startup; the load-bearing __all__-sentinel guard is
+  # enforced by the migration 0057 trigger via the
+  # lenny.allow_all_sentinel GUC.
+  - it: renders LENNY_POOLER_MODE from pgbouncer.poolerMode override
+    set:
+      pgbouncer.poolerMode: "external"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POOLER_MODE
+            value: "external"
 
   - it: renders the §4.1 extractionThresholds from a Helm-value override
     set:

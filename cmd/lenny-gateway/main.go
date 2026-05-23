@@ -327,6 +327,15 @@ func main() {
 		"§4.1 / §16.5 gateway HPA minReplicas floor (§17.8.2 SCL-036). Emitted at startup on the lenny_gateway_min_replicas gauge so the GatewayNoHealthyReplicas alert (§16.5) can evaluate via scalar(lenny_gateway_min_replicas). Override via LENNY_MIN_REPLICAS.")
 	streamCeiling := flag.Int("stream-ceiling", envInt("LENNY_STREAM_CEILING", 100),
 		"§4.1 / §16.5 per-replica streaming-connection ceiling. Emitted at startup on the lenny_gateway_stream_ceiling gauge so the GatewayActiveStreamsHigh alert (§16.5) can evaluate via scalar(lenny_gateway_stream_ceiling). Override via LENNY_STREAM_CEILING.")
+	// spec: §4.2 line 165 — LENNY_POOLER_MODE names the deployment
+	// posture for the Postgres pooler. The gateway honours the value
+	// at the application layer (logging it at startup so operators can
+	// confirm the deployment posture); the load-bearing enforcement
+	// is the migration 0057 lenny_tenant_guard trigger that rejects
+	// the __all__ sentinel unless pgtenant.InAllTenants opts in via
+	// the lenny.allow_all_sentinel session GUC.
+	poolerMode := flag.String("pooler-mode", envOr("LENNY_POOLER_MODE", "transactional"),
+		"§4.2 deployment posture for the Postgres pooler. `transactional` is the chart-managed in-cluster default; `external` names an out-of-process / managed pooler (RDS Proxy, Cloud SQL Auth Proxy with pgBouncer, etc.). The value is logged at startup; the underlying __all__ sentinel guard is enforced by the lenny_tenant_guard trigger via the lenny.allow_all_sentinel GUC.")
 	flag.Parse()
 
 	// §12.8 clock-injection harness. Read LENNY_CLOCK_OFFSET_SECONDS
@@ -353,6 +362,17 @@ func main() {
 	}
 	if resolvedNoEnvPolicy != tenantstore.NoEnvPolicyDenyAll && resolvedNoEnvPolicy != tenantstore.NoEnvPolicyAllowAll {
 		log.Fatalf("lenny-gateway: --no-environment-policy must be deny-all or allow-all, got %q", resolvedNoEnvPolicy)
+	}
+
+	// spec: §4.2 line 165 — LENNY_POOLER_MODE must be one of the two
+	// documented values. The trigger-level guard runs regardless of
+	// this check; failing at startup keeps a misconfigured deploy
+	// from running silently with the wrong assumed posture.
+	switch *poolerMode {
+	case "transactional", "external":
+		log.Printf("lenny-gateway: pooler-mode=%s (§4.2 line 165)", *poolerMode)
+	default:
+		log.Fatalf("lenny-gateway: --pooler-mode must be `transactional` or `external`, got %q (§4.2 line 165)", *poolerMode)
 	}
 
 	// ----- Stores -----

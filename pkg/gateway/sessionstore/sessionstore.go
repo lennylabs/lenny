@@ -172,6 +172,33 @@ type Session struct {
 	// row layout while leaving the gateway's read path stable.
 	// spec: §4.2 line 156.
 	SchemaVersion int32
+
+	// RetryCount is the §4.2 line 158 retry counter the Session
+	// Manager tracks. Incremented by the coordinator / watchdog on
+	// each retry of this logical session (pod recovery, coordinator
+	// handoff retry). Monotonically non-decreasing across every
+	// transition; the pgstore enforces the floor on Update and the
+	// DB CHECK constraint catches the impossible negative.
+	// spec: §4.2 line 158 — "Retry counters and policy enforcement".
+	RetryCount int64
+
+	// PolicyEnforcementState is the §4.2 line 158 policy-enforcement
+	// state payload. Schemaless JSON the Session Manager uses to
+	// record per-session policy decisions (delegation bookkeeping,
+	// rate-limit decision audit, last circuit-breaker decision) and
+	// extend without a migration per field. Nil maps to the empty
+	// object `{}` in the row.
+	// spec: §4.2 line 158 — "Retry counters and policy enforcement".
+	PolicyEnforcementState json.RawMessage
+
+	// ResumeEligibleUntil is the §4.2 line 159 resume-window
+	// deadline. A session may be resumed up to this UTC instant,
+	// after which the watchdog forces the session to a terminal
+	// state. Zero when the session has no resume budget (e.g.,
+	// already-terminal sessions, sessions created without a resume
+	// window).
+	// spec: §4.2 line 159 — "Resume eligibility and window".
+	ResumeEligibleUntil time.Time
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a

@@ -9,26 +9,84 @@ package pgtenant
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// tenantIDPattern is the §12.3 line 53 / migration 0047
+// lenny_tenant_guard format check the trigger applies before any row
+// is touched. The helper re-validates client-side so the SET LOCAL
+// form below can interpolate the value without any chance of SQL
+// injection: only [A-Za-z0-9_-]{1,128} reach the SQL string.
+// spec: §4.2 line 163 / §12.3 line 53.
+var tenantIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+// ErrInvalidTenantID reports a tenant ID that does not match the
+// §12.3 line 53 format check. The helper rejects the value before
+// the SET LOCAL statement runs so a malicious caller cannot smuggle
+// SQL into the tenant context. The trigger would catch this even if
+// the helper did not, but failing client-side keeps the error
+// classification clean and avoids a round trip.
+var ErrInvalidTenantID = errors.New("pgtenant: tenant id is not a valid identifier")
+
+// quoteTenantID renders a validated tenant ID as a SQL string
+// literal: every embedded single quote is doubled per the SQL spec.
+// The regex above already restricts the alphabet to [A-Za-z0-9_-], so
+// no escape is strictly required, but doubling is kept as
+// defense-in-depth in case a future migration relaxes the format.
+func quoteTenantID(tenantID string) string {
+	out := make([]byte, 0, len(tenantID)+2)
+	out = append(out, '\'')
+	for i := 0; i < len(tenantID); i++ {
+		if tenantID[i] == '\'' {
+			out = append(out, '\'', '\'')
+			continue
+		}
+		out = append(out, tenantID[i])
+	}
+	out = append(out, '\'')
+	return string(out)
+}
+
 // InTx runs fn inside a transaction that has set app.current_tenant
 // to tenantID (transaction-local, per §12.3). fn's error is returned
 // verbatim — not wrapped — so callers can errors.Is it against their
 // store sentinels. The transaction commits when fn returns nil and
 // rolls back otherwise.
+//
+// The statement uses the spec-mandated SET LOCAL form
+// (`SET LOCAL app.current_tenant = '<id>'`). Postgres SET LOCAL does
+// not accept query parameters, so the helper validates the tenant ID
+// against the §12.3 line 53 format check (tenantIDPattern) before
+// interpolating; an invalid ID returns ErrInvalidTenantID and never
+// touches the connection. The trigger re-validates the value, so the
+// regex is defense-in-depth. The sentinel values `__all__` and
+// `__unset__` are also rejected: callers wanting cross-tenant access
+// must use InAllTenants instead, and the unset sentinel is never a
+// valid concrete tenant id.
+// spec: §4.2 line 163 ("SET LOCAL app.current_tenant = '<tenant_id>'").
 func InTx(ctx context.Context, pool *pgxpool.Pool, tenantID string, fn func(pgx.Tx) error) error {
+	if tenantID == AllTenantsSentinel || tenantID == "__unset__" {
+		return ErrInvalidTenantID
+	}
+	if !tenantIDPattern.MatchString(tenantID) {
+		return ErrInvalidTenantID
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("pgtenant: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	// spec: §4.2 line 163 — SET LOCAL form. The value is interpolated
+	// after the regex check above; SET LOCAL has no parameter binding,
+	// so the regex is the load-bearing guard.
+	stmt := "SET LOCAL app.current_tenant = " + quoteTenantID(tenantID)
+	if _, err := tx.Exec(ctx, stmt); err != nil {
 		return fmt.Errorf("pgtenant: set tenant context: %w", err)
 	}
 	if err := fn(tx); err != nil {
@@ -57,14 +115,32 @@ const AllTenantsSentinel = "__all__"
 // sentinel. Use this on any code path that needs to SELECT, INSERT,
 // UPDATE, or DELETE rows across tenants (tenant list, usage
 // dashboards, erasure jobs).
+//
+// The helper additionally sets lenny.allow_all_sentinel = 'true'
+// via SET LOCAL, satisfying the §4.2 line 165 pooler-mode guard:
+// the lenny_tenant_guard trigger rejects the __all__ sentinel unless
+// this GUC is explicitly opted in, so out-of-process leaks that
+// bypass this helper fail closed when LENNY_POOLER_MODE = external.
+// spec: §4.2 line 165 ("the __all__ sentinel is rejected by the
+// lenny_tenant_guard trigger when LENNY_POOLER_MODE = external and
+// the trigger is configured to allow only concrete tenant IDs").
 func InAllTenants(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("pgtenant: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// spec: §4.2 line 165 — opt in to the __all__ sentinel before
+	// setting app.current_tenant. The trigger reads
+	// lenny.allow_all_sentinel = 'true' as the platform-admin opt-in.
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.current_tenant', $1, true)", AllTenantsSentinel); err != nil {
+		"SET LOCAL lenny.allow_all_sentinel = 'true'"); err != nil {
+		return fmt.Errorf("pgtenant: opt in to all-tenants sentinel: %w", err)
+	}
+	// spec: §4.2 line 163 — SET LOCAL form. The constant AllTenantsSentinel
+	// is a static literal, so no parameter binding is needed.
+	if _, err := tx.Exec(ctx,
+		"SET LOCAL app.current_tenant = '"+AllTenantsSentinel+"'"); err != nil {
 		return fmt.Errorf("pgtenant: set all-tenants context: %w", err)
 	}
 	if err := fn(tx); err != nil {
@@ -95,8 +171,10 @@ func InAdminMode(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error)
 		return fmt.Errorf("pgtenant: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// spec: §4.2 line 163 / line 177 — SET LOCAL form. The value is a
+	// static literal, so no parameter binding is needed.
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('lenny.admin_mode', 'true', true)"); err != nil {
+		"SET LOCAL lenny.admin_mode = 'true'"); err != nil {
 		return fmt.Errorf("pgtenant: set admin_mode: %w", err)
 	}
 	if err := fn(tx); err != nil {

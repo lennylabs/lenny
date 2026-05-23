@@ -11,6 +11,33 @@
 // The package is pure: no Redis, no Postgres. Redis-backed atomic
 // reservations (the budget_reserve.lua script) live in later phases
 // that import this package.
+//
+// §4.2 delegation-lease design clarification:
+//
+// The §4.2 line 161 Session Manager bullet ("Delegation lease
+// tracking") is realised in v1 by the child session row plus the
+// Redis budget keys ({root_session_id}:dlg:*), not by a separate
+// delegation_leases table. The lease lifecycle maps onto session
+// fields as follows:
+//
+//   * The lease is "granted" when the child session row is created
+//     under a parent's parent_session_id; sessions.created_at
+//     records the grant time.
+//   * The lease's expiry tracks sessions.resume_eligible_until from
+//     migration 0055 — the per-session resume window that doubles
+//     as the lease lifetime cap.
+//   * The lease's policy reference is the delegation_policies row
+//     resolved at issuance and recorded on the child via the §8.3
+//     effective policy carried through tracingContext and
+//     policy_enforcement_state (§4.2 line 158).
+//   * The lease's remaining slice is the in-Redis budget under
+//     {root_session_id}:dlg:* — atomically reserved at every
+//     lenny/delegate_task call per §8.2.
+//
+// A future iteration may extract a dedicated delegation_leases
+// table; the v1 invariant is "delegation lease == child session
+// row + Redis budget keys" with no separate row.
+// spec: §4.2 line 161.
 package lease
 
 import (

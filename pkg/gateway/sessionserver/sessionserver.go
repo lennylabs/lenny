@@ -136,6 +136,10 @@ type Server struct {
 	interceptors       *interceptor.Chain
 	policyAuditSink    *policy.AuditSink
 	uploadSubsystem    *subsystem.Subsystem
+	// resumeWindow is the §4.2 line 159 default resume-eligibility
+	// duration stamped onto each session at create time. A non-zero
+	// value falls through to DefaultResumeWindow.
+	resumeWindow       time.Duration
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -143,6 +147,18 @@ type Server struct {
 // cap, the gateway falls back to `cancel_all` so orphans cannot
 // accumulate without bound.
 const DefaultMaxOrphanTasksPerTenant = 100
+
+// DefaultResumeWindow is the §4.2 line 159 default resume-eligibility
+// window. A session created without an explicit override is eligible
+// for resume up to this duration after creation; once the deadline
+// passes, the watchdog forces the session to a terminal state.
+//
+// The value mirrors watchdog.DefaultMaxSessionAgeSeconds (2 hours).
+// Operators tuning the watchdog's lifetime cap should also override
+// the resume window so the two budgets stay aligned; the option
+// hook below lets the gateway plumb the watchdog-configured value.
+// spec: §4.2 line 159 — "Resume eligibility and window".
+const DefaultResumeWindow = 2 * time.Hour
 
 // Sealer takes the §7.1 final workspace snapshot of a session that has
 // reached a terminal state. The gateway invokes it as the
@@ -309,6 +325,15 @@ type Options struct {
 	// §8.10. A non-positive value selects DefaultMaxOrphanTasksPerTenant.
 	MaxOrphanTasksPerTenant int
 
+	// ResumeWindow is the §4.2 line 159 resume-eligibility duration
+	// stamped onto each session at create. A non-positive value
+	// selects DefaultResumeWindow (2 hours, mirroring the watchdog's
+	// MaxSessionAgeSeconds default). Operators tuning the watchdog
+	// budget should pass the matching value here so the two budgets
+	// stay aligned.
+	// spec: §4.2 line 159 — "Resume eligibility and window".
+	ResumeWindow time.Duration
+
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// §9.1 GET /v1/runtimes discovery endpoint returns an empty list.
 	Runtimes runtimestore.Store
@@ -416,6 +441,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		interceptors:       opts.Interceptors,
 		policyAuditSink:    opts.PolicyAuditSink,
 		uploadSubsystem:    opts.UploadSubsystem,
+		resumeWindow:       opts.ResumeWindow,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
@@ -425,6 +451,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 	}
 	if s.maxOrphanTasks <= 0 {
 		s.maxOrphanTasks = DefaultMaxOrphanTasksPerTenant
+	}
+	if s.resumeWindow <= 0 {
+		s.resumeWindow = DefaultResumeWindow
 	}
 	if s.uploadIssuer == nil {
 		// Default to a freshly-generated random key so the server is
@@ -561,6 +590,23 @@ type SessionResponse struct {
 	// sessions report schema_version=1.
 	// spec: §4.2 line 156.
 	SchemaVersion int32 `json:"schemaVersion"`
+
+	// RetryCount is the §4.2 line 158 retry counter the Session
+	// Manager tracks across this logical session's lifetime.
+	// spec: §4.2 line 158 — "Retry counters and policy enforcement".
+	RetryCount int64 `json:"retryCount"`
+
+	// PolicyEnforcementState is the §4.2 line 158 schemaless
+	// policy-enforcement payload. Omitted from the JSON envelope
+	// when empty.
+	// spec: §4.2 line 158.
+	PolicyEnforcementState json.RawMessage `json:"policyEnforcementState,omitempty"`
+
+	// ResumeEligibleUntil is the §4.2 line 159 resume-window
+	// deadline as RFC 3339 nanos. Empty when the session has no
+	// resume budget.
+	// spec: §4.2 line 159 — "Resume eligibility and window".
+	ResumeEligibleUntil string `json:"resumeEligibleUntil,omitempty"`
 }
 
 // CreateSessionResponse is the §15.1 POST /v1/sessions response
@@ -706,6 +752,13 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
+	// spec: §4.2 line 159 — stamp the resume-eligibility deadline
+	// onto the row at create time. The watchdog can then expire a
+	// session whose resume window has passed without consulting the
+	// global watchdog budget; the per-session window also lets
+	// individual sessions override the platform default by adjusting
+	// this field on Update.
+	row.ResumeEligibleUntil = row.CreatedAt.Add(s.resumeWindow)
 	// §10.7: the ExperimentRouter may enroll the session in a variant,
 	// rewriting its runtime/pool before the row is persisted. It fails
 	// the creation closed when the variant pool is less isolated than
@@ -1076,12 +1129,24 @@ func toResponse(row sessionstore.Session) SessionResponse {
 		PodAssignment:      row.PodAssignment,
 		RecoveryGeneration: row.RecoveryGeneration,
 		SchemaVersion:      schemaVersion,
+		RetryCount:         row.RetryCount,
 	}
 	if row.FailureClass != "" {
 		out.FailureClass = string(row.FailureClass)
 	}
 	if len(row.WorkspacePlan) > 0 {
 		out.WorkspacePlan = row.WorkspacePlan
+	}
+	// spec: §4.2 line 158 — only surface the policy enforcement
+	// state when the gateway has written something other than the
+	// migration default `{}`. The omitempty json tag suppresses the
+	// payload when nil; an explicit `{}` is preserved as-is.
+	if len(row.PolicyEnforcementState) > 0 {
+		out.PolicyEnforcementState = row.PolicyEnforcementState
+	}
+	// spec: §4.2 line 159 — emit the resume window only when set.
+	if !row.ResumeEligibleUntil.IsZero() {
+		out.ResumeEligibleUntil = row.ResumeEligibleUntil.UTC().Format(time.RFC3339Nano)
 	}
 	return out
 }

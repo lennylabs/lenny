@@ -98,6 +98,38 @@ var prodMigrationSchema = []struct {
 		"cwd", "pod_assignment", "recovery_generation",
 		"coordination_generation", "schema_version",
 	}},
+	// 0051 rewrites every lenny_tenant_isolation policy in the
+	// hard-error current_setting(..., false) form per §4.2 line 163
+	// so an unset GUC raises rather than silently filtering rows out.
+	// The policy bodies are covered by the §12.3 RLS suite under
+	// tests/tier2_component/rls.
+	// 0052 introduces the §4.2 line 177 admin-mode trigger that
+	// rejects writes to runtime_tenant_access / pool_tenant_access
+	// when lenny.admin_mode = 'true' is not set. The trigger behavior
+	// is covered by tests/tier2_component/rls/admin_mode_test.go.
+	// 0053 tenant-scopes the connectors table per §4.2 line 173;
+	// covered by the §4.2 RLS suite.
+	// 0054 tenant-scopes the delegation_policies table per §4.2
+	// line 172; covered by the §4.2 RLS suite.
+	// 0055 adds the §4.2 line 158-159 retry_count, policy enforcement
+	// state, and resume window the Session Manager tracks on each
+	// session row.
+	{migration: "0055", table: "sessions", columns: []string{
+		"retry_count", "policy_enforcement_state", "resume_eligible_until",
+	}},
+	// 0056 creates the §4.2 line 179 session_dlq_archive scaffold —
+	// the tenant-scoped table the future DLQ archive feature writes
+	// to. v1 has no consumer; the migration lands the table, the
+	// composite PK (tenant_id, session_id, message_id), the
+	// lenny_tenant_guard trigger, and the lenny_tenant_isolation
+	// policy.
+	{migration: "0056", table: "session_dlq_archive", create: true},
+	// 0057 extends lenny_tenant_guard() with the §4.2 line 165
+	// LENNY_POOLER_MODE guard: the __all__ sentinel is rejected
+	// unless lenny.allow_all_sentinel = 'true' is opted in via SET
+	// LOCAL by pgtenant.InAllTenants. The trigger and policy
+	// behavior are covered by
+	// tests/tier2_component/rls/all_tenants_test.go.
 }
 
 // spec: 12.2, 18.5

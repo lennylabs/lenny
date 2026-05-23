@@ -311,6 +311,14 @@ spec:
             - name: LENNY_BILLING_SINK
               value: {{ . | quote }}
             {{- end }}
+            # §4.2 line 165 LENNY_POOLER_MODE: deployment-posture knob
+            # for the Postgres pooler. The gateway logs it at startup
+            # so operators can confirm the value the running binary
+            # observed; the §4.2 __all__-sentinel guard is enforced
+            # at the database trigger via the lenny.allow_all_sentinel
+            # GUC, which pgtenant.InAllTenants sets via SET LOCAL.
+            - name: LENNY_POOLER_MODE
+              value: {{ .Values.pgbouncer.poolerMode | quote }}
             {{- if $hasPg }}
             - name: LENNY_POSTGRES_DSN
               valueFrom:

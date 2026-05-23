@@ -84,20 +84,24 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	prevUpdatedAt := row.UpdatedAt
 	prevRecoveryGen := row.RecoveryGeneration
 	prevCoordGen := row.CoordinationGeneration
+	prevRetryCount := row.RetryCount
 	if err := mutate(&row); err != nil {
 		return sessionstore.Session{}, err
 	}
-	// spec: §4.2 line 156 — recovery_generation and
-	// coordination_generation are monotonically non-decreasing. Clamp
-	// the floor here so an accidental rollback in the mutate callback
-	// cannot violate the invariant; the pgstore enforces the same
-	// floor and the DB CHECK constraint catches the impossible
-	// negative.
+	// spec: §4.2 line 156 / line 158 — recovery_generation,
+	// coordination_generation, and retry_count are monotonically
+	// non-decreasing. Clamp the floor here so an accidental rollback
+	// in the mutate callback cannot violate the invariant; the
+	// pgstore enforces the same floor and the DB CHECK constraint
+	// catches the impossible negative.
 	if row.RecoveryGeneration < prevRecoveryGen {
 		row.RecoveryGeneration = prevRecoveryGen
 	}
 	if row.CoordinationGeneration < prevCoordGen {
 		row.CoordinationGeneration = prevCoordGen
+	}
+	if row.RetryCount < prevRetryCount {
+		row.RetryCount = prevRetryCount
 	}
 	if row.SchemaVersion == 0 {
 		row.SchemaVersion = 1

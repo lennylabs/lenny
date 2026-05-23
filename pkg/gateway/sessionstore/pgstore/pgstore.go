@@ -44,9 +44,13 @@ var _ sessionstore.Store = (*Store)(nil)
 // rendered as text so they scan into the Session struct's string
 // fields; parent_session_id collapses NULL to the empty string.
 //
-// The trailing five columns (cwd, pod_assignment, recovery_generation,
-// coordination_generation, schema_version) are the §4.2 session-record
-// fields added in migration 0050. spec: §4.2 line 156.
+// The trailing five columns from migration 0050 are
+// (cwd, pod_assignment, recovery_generation, coordination_generation,
+// schema_version) — the §4.2 line 156 session-record fields. The
+// final three columns from migration 0055 are
+// (retry_count, policy_enforcement_state, resume_eligible_until) —
+// the §4.2 line 158-159 retry counter, policy enforcement state,
+// and resume window.
 const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
@@ -55,7 +59,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	workspace_plan, legal_hold,
 	experiment_id, experiment_variant_id, experiment_inherited, environment,
 	cwd, pod_assignment, recovery_generation, coordination_generation,
-	schema_version`
+	schema_version,
+	retry_count, policy_enforcement_state, resume_eligible_until`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -72,7 +77,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	// The trailing five binds ($26-$30) cover the §4.2 session-record
 	// fields added in migration 0050: cwd, pod_assignment,
 	// recovery_generation, coordination_generation, schema_version.
-	// spec: §4.2 line 156.
+	// The final three binds ($31-$33) cover the §4.2 line 158-159
+	// retry counter, policy enforcement state, and resume window
+	// added in migration 0055.
 	const insertSQL = `INSERT INTO sessions (
 		id, tenant_id, user_id, state, runtime_ref, pool_ref, isolation_profile,
 		parent_session_id, root_session_id, failure_class, failure_reason,
@@ -81,13 +88,15 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		upload_token_expiry, created_at, updated_at, workspace_plan, legal_hold,
 		experiment_id, experiment_variant_id, experiment_inherited, environment,
 		cwd, pod_assignment, recovery_generation, coordination_generation,
-		schema_version
+		schema_version,
+		retry_count, policy_enforcement_state, resume_eligible_until
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
 		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21,
 		$22, $23, $24, $25,
-		$26, $27, $28, $29, $30
+		$26, $27, $28, $29, $30,
+		$31, $32::jsonb, $33
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -107,7 +116,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			jsonbArg(sess.WorkspacePlan), sess.LegalHold,
 			expID, expVariant, expInherited, sess.Environment,
 			sess.Cwd, sess.PodAssignment, sess.RecoveryGeneration,
-			sess.CoordinationGeneration, schemaVersion)
+			sess.CoordinationGeneration, schemaVersion,
+			sess.RetryCount, policyEnforcementArg(sess.PolicyEnforcementState),
+			pgtenant.NullTime(sess.ResumeEligibleUntil))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -144,7 +155,9 @@ func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Sess
 // resolution) so callers can rely on monotonicity.
 func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	// The trailing five SET clauses cover the §4.2 session-record
-	// fields added in migration 0050. spec: §4.2 line 156.
+	// fields added in migration 0050; the final three cover the §4.2
+	// line 158-159 retry counter, policy enforcement state, and
+	// resume window added in migration 0055.
 	const updateSQL = `UPDATE sessions SET
 		user_id = $3, state = $4, runtime_ref = $5, pool_ref = $6,
 		isolation_profile = $7, parent_session_id = NULLIF($8, '')::uuid,
@@ -155,7 +168,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		legal_hold = $19, experiment_id = $20, experiment_variant_id = $21,
 		experiment_inherited = $22, environment = $23,
 		cwd = $24, pod_assignment = $25, recovery_generation = $26,
-		coordination_generation = $27, schema_version = $28
+		coordination_generation = $27, schema_version = $28,
+		retry_count = $29, policy_enforcement_state = $30::jsonb,
+		resume_eligible_until = $31
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -170,19 +185,24 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		prevUpdated := sess.UpdatedAt
 		prevRecoveryGen := sess.RecoveryGeneration
 		prevCoordGen := sess.CoordinationGeneration
+		prevRetryCount := sess.RetryCount
 		if err := mutate(&sess); err != nil {
 			return err
 		}
-		// spec: §4.2 line 156 — recovery_generation and
-		// coordination_generation are monotonically non-decreasing.
-		// Enforce the floor here so an accidental rollback in the
-		// mutate callback cannot violate the invariant; the DB CHECK
-		// constraint catches the impossible negative.
+		// spec: §4.2 line 156 / line 158 — recovery_generation,
+		// coordination_generation, and retry_count are monotonically
+		// non-decreasing. Enforce the floor here so an accidental
+		// rollback in the mutate callback cannot violate the
+		// invariant; the DB CHECK constraint catches the impossible
+		// negative.
 		if sess.RecoveryGeneration < prevRecoveryGen {
 			sess.RecoveryGeneration = prevRecoveryGen
 		}
 		if sess.CoordinationGeneration < prevCoordGen {
 			sess.CoordinationGeneration = prevCoordGen
+		}
+		if sess.RetryCount < prevRetryCount {
+			sess.RetryCount = prevRetryCount
 		}
 		sess.UpdatedAt = pgtenant.MonotonicNext(prevUpdated, time.Now())
 		ref, src, at := snapshotCols(sess.WorkspaceSnapshot)
@@ -201,6 +221,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			sess.LegalHold, expID, expVariant, expInherited, sess.Environment,
 			sess.Cwd, sess.PodAssignment, sess.RecoveryGeneration,
 			sess.CoordinationGeneration, schemaVersion,
+			sess.RetryCount, policyEnforcementArg(sess.PolicyEnforcementState),
+			pgtenant.NullTime(sess.ResumeEligibleUntil),
 		); err != nil {
 			return err
 		}
@@ -296,6 +318,10 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		planJSON                []byte
 		expID, expVariant       string
 		expInherited            bool
+		// §4.2 line 158-159 retry / policy / resume fields from
+		// migration 0055.
+		policyJSON []byte
+		resumeUntil *time.Time
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -307,8 +333,17 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// spec: §4.2 line 156.
 		&s.Cwd, &s.PodAssignment, &s.RecoveryGeneration,
 		&s.CoordinationGeneration, &s.SchemaVersion,
+		// §4.2 line 158-159 retry / policy / resume fields from
+		// migration 0055.
+		&s.RetryCount, &policyJSON, &resumeUntil,
 	); err != nil {
 		return sessionstore.Session{}, err
+	}
+	if len(policyJSON) > 0 {
+		s.PolicyEnforcementState = policyJSON
+	}
+	if resumeUntil != nil {
+		s.ResumeEligibleUntil = *resumeUntil
 	}
 	if expID != "" {
 		s.ExperimentContext = &sessionstore.ExperimentContext{
@@ -365,6 +400,18 @@ func experimentCols(ec *sessionstore.ExperimentContext) (id, variantID string, i
 func jsonbArg(raw json.RawMessage) any {
 	if len(raw) == 0 {
 		return nil
+	}
+	return string(raw)
+}
+
+// policyEnforcementArg renders the §4.2 line 158 policy enforcement
+// state as a jsonb argument. The column carries a NOT NULL DEFAULT
+// of '{}'::jsonb, so an empty payload falls through to the spec
+// default rather than the SQL NULL the workspace-plan column uses.
+// spec: §4.2 line 158 — "Retry counters and policy enforcement".
+func policyEnforcementArg(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "{}"
 	}
 	return string(raw)
 }

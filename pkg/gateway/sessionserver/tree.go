@@ -2,6 +2,27 @@
 
 package sessionserver
 
+// §4.2 task-record design clarification:
+//
+// The §4.2 line 157 Session Manager bullet ("Task records and
+// parent/child lineage (task tree)") is realised in v1 by the
+// sessions table — there is no separate task table. Every task
+// record IS a session row, identified by sessions.id and linked to
+// its parent via sessions.parent_session_id. The §8.8 TaskRecord
+// state machine in pkg/task/state describes the externally-visible
+// MCP task lifecycle, but the persistent record is the session row
+// the task corresponds to.
+//
+// The tree handler below walks this lineage: every session whose
+// parent chain leads back to the requested session is a descendant.
+// Cross-session metadata (cwd, pod assignment, recovery generation,
+// resume window, retry count, policy enforcement state) lives on the
+// same row and travels with the task. A future iteration may split
+// long-lived task metadata onto a dedicated table, but the v1
+// invariant is "task record == session row linked by
+// parent_session_id".
+// spec: §4.2 line 157.
+
 import (
 	"encoding/json"
 	"errors"

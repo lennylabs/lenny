@@ -117,6 +117,59 @@ func TestTreeMissingSession(t *testing.T) {
 	}
 }
 
+// spec: §4.2 line 157 design clarification — "task record == session
+// row linked by parent_session_id". The v1 invariant is that every
+// task record IS a session row; the tree walker observes the parent
+// chain through sessions.parent_session_id rather than a separate
+// tasks table. This test asserts the invariant by seeding a chain
+// and confirming every node in the §15.1 tree response is one of
+// the seeded session IDs.
+func TestTreeRecordsAreSessionRowsLinkedByParentSessionID(t *testing.T) {
+	store := memstore.New()
+	seedTreeSession(t, store, "sess_root", "")
+	seedTreeSession(t, store, "sess_child", "sess_root")
+	seedTreeSession(t, store, "sess_grandchild", "sess_child")
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	rr, resp := getTree(t, srv.Handler(), "sess_root")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	if resp.NodeCount != 3 {
+		t.Fatalf("node count = %d, want 3 (root + child + grandchild)", resp.NodeCount)
+	}
+	// Walk the response collecting every observed session id. The
+	// invariant: every observed id is one of the seeded session IDs
+	// — there is no separate task identifier surfaced by the tree
+	// handler.
+	want := map[string]bool{"sess_root": true, "sess_child": true, "sess_grandchild": true}
+	var walk func(n sessionserver.TreeNode)
+	walk = func(n sessionserver.TreeNode) {
+		if !want[n.SessionID] {
+			t.Errorf("tree node %q is not a seeded session id (§4.2 line 157: task record == session row)", n.SessionID)
+		}
+		delete(want, n.SessionID)
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(resp.Root)
+	if len(want) != 0 {
+		t.Errorf("missing session rows from tree: %v", want)
+	}
+
+	// The invariant also says the link is sessions.parent_session_id.
+	// Verify by reading the seeded grandchild row and confirming the
+	// ParentSessionID points at the seeded child row.
+	row, err := store.Get(context.Background(), "acme", "sess_grandchild")
+	if err != nil {
+		t.Fatalf("read grandchild: %v", err)
+	}
+	if row.ParentSessionID != "sess_child" {
+		t.Errorf("grandchild.ParentSessionID = %q, want sess_child (§4.2 line 157)", row.ParentSessionID)
+	}
+}
+
 func TestTreeCrossTenantIsolation(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()

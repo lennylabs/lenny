@@ -5,6 +5,19 @@
 // The state enum and ValidTransitions() form the authoritative contract
 // for the §8.8 task lifecycle. IsValid returns nil for an edge present
 // in ValidTransitions() and an InvalidTransitionError otherwise.
+//
+// §4.2 task-record design clarification:
+//
+// The §4.2 line 157 Session Manager bullet ("Task records and
+// parent/child lineage (task tree)") is realised in v1 by the
+// sessions table — there is no separate task table. Every task
+// record IS a session row identified by sessions.id and linked to
+// its parent via sessions.parent_session_id. The §8.8 state values
+// declared here govern the externally-visible MCP task lifecycle;
+// the persistent record lives on the matching session row. The
+// gateway's task-tree handler walks this lineage to assemble the
+// §15.1 GET /v1/sessions/{id}/tree response.
+// spec: §4.2 line 157.
 package state
 
 import "fmt"

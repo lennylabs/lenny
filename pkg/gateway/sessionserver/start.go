@@ -647,10 +647,17 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) erro
 // transaction. The store's monotonicity floor ensures the counter
 // only advances; the in-memory Registry already holds the new BindResult
 // on success.
+//
+// A pod recovery is also a §4.2 line 158 retry — the Session Manager
+// is responsible for both counters, and a recovery onto a fresh pod
+// is the v1 retry path. retry_count is bumped in the same
+// transaction; the store enforces monotonicity on both columns.
 // spec: §4.2 line 156 — "incremented on each pod recovery".
+// spec: §4.2 line 158 — "Retry counters and policy enforcement".
 func (s *Server) bumpRecoveryGeneration(ctx context.Context, tenantID, sessionID, podAssignment string) {
 	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.RecoveryGeneration++
+		row.RetryCount++
 		if podAssignment != "" {
 			row.PodAssignment = podAssignment
 		}

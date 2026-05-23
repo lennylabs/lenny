@@ -53,3 +53,23 @@ tests:
       - matchRegex:
           path: data["pgbouncer.ini"]
           pattern: "pool_mode = session"
+
+  # spec: §4.2 line 165 — the chart wires LENNY_POOLER_MODE into the
+  # gateway env from pgbouncer.poolerMode. The default `transactional`
+  # is round-trippable from values.yaml without an override; the
+  # gateway logs the value at startup so operators can confirm the
+  # posture matches their pooler topology.
+  - it: pgbouncer.poolerMode default is transactional
+    asserts:
+      - equal:
+          path: data["pgbouncer.ini"]
+          value: |
+            [pgbouncer]
+            pool_mode = transaction
+            # spec: §4.2 line 163 — fresh server connections begin with the
+            # SET sentinel so an unclaimed pooled connection is rejected by
+            # the lenny_tenant_guard trigger and by RLS before tenant data
+            # could leak. The pgbouncer.ini INI parser wraps the value in
+            # single quotes and doubles any embedded single quote, so we
+            # transform `'` -> `''` from the values.yaml literal here.
+            connect_query = 'SET app.current_tenant = ''__unset__'''
