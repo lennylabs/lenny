@@ -77,9 +77,9 @@ func (s *server) startDrain() {
 }
 
 type Scenario struct {
-	counters *scenkit.Counters
-	srv      *server
-	drainOnce sync.Once
+	counters  *scenkit.Counters
+	srv       *server
+	drainOnce *sync.Once
 }
 
 func (s *Scenario) Name() string { return name }
@@ -96,18 +96,28 @@ func (s *Scenario) RampProfiles() []loadgen.Profile {
 
 func (s *Scenario) Setup(ctx context.Context) error {
 	s.srv = &server{}
+	// Re-arm the drainOnce on every profile: capacity ramp reuses
+	// the same Scenario instance across profiles, so a Once captured
+	// on the struct would only fire on the first profile.
+	s.drainOnce = &sync.Once{}
+	// Trigger drain on wall clock rather than on per-VU iteration
+	// count. An iter-based trigger fires when all VUs happen to be
+	// between calls (because the synthetic 5ms accept tends to
+	// synchronise them), and the assertion that some in-flight call
+	// completes after drain never sees an in-flight call. A
+	// time-based trigger fires while at least some VUs are inside
+	// accept(), which is the situation §17.7 actually models.
+	time.AfterFunc(150*time.Millisecond, func() {
+		s.drainOnce.Do(func() {
+			s.counters.Inc("drain_started")
+			s.srv.startDrain()
+		})
+	})
 	return nil
 }
 func (s *Scenario) Teardown(ctx context.Context) error { return nil }
 
 func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
-	// Start drain halfway through the run.
-	if iter == 50 {
-		s.drainOnce.Do(func() {
-			s.counters.Inc("drain_started")
-			s.srv.startDrain()
-		})
-	}
 	err := s.srv.accept(ctx, 5*time.Millisecond)
 	if errors.Is(err, errShuttingDown) {
 		s.counters.Inc("rejected_503")

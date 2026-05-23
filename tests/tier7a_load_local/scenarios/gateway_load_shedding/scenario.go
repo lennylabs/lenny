@@ -2,11 +2,14 @@
 
 //go:build load_local
 
-// Package gateway_load_shedding models the §10.1 load-shedding
-// contract: when the gateway's request queue depth exceeds a
-// configured ceiling, new requests return 503 immediately instead
-// of waiting on a saturated worker pool. The invariant: the gateway
-// never exhausts resources; it sheds with a clean error envelope.
+// Package gateway_load_shedding is a synthetic check on the §12.1
+// load-shedding posture: when a saturated subsystem's queue depth
+// exceeds its ceiling, new requests return 503 immediately rather
+// than waiting on a backed-up worker pool. The scenario uses an
+// in-process queue model and does not yet drive a product package;
+// the gateway's write-classification load-shedding lives across
+// several subsystem boundaries (Stream Proxy, Upload Handler,
+// LLM Proxy) and has no single shared library.
 //
 // TESTING.md §12.7.a resiliency scenarios.
 package gateway_load_shedding
@@ -108,10 +111,10 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	if accepted == 0 {
 		return fmt.Errorf("scenario never accepted a request")
 	}
-	// §10.1 invariant: under sustained pressure above the drain
+	// §12.1 invariant: under sustained pressure above the drain
 	// rate, the gateway must shed rather than queue indefinitely.
 	if shed == 0 {
-		return fmt.Errorf("§10.1 violated: gateway did not shed under sustained load (accepted=%d, shed=0)", accepted)
+		return fmt.Errorf("§12.1 violated: gateway did not shed under sustained load (accepted=%d, shed=0)", accepted)
 	}
 	return nil
 }

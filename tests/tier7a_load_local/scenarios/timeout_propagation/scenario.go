@@ -2,11 +2,13 @@
 
 //go:build load_local
 
-// Package timeout_propagation models the §10.1 timeout-propagation
-// contract: a request with deadline T propagates that deadline to
-// every downstream call, so the total request lifetime is bounded
-// by T regardless of how many downstream calls it makes. Invariant:
-// no goroutine outlives the request context.
+// Package timeout_propagation is a synthetic check on the §11.3
+// timeout-and-cancellation contract: a request with deadline T
+// propagates that deadline to every downstream call, so the total
+// request lifetime is bounded by T regardless of how many downstream
+// calls it makes. The scenario uses an in-process call chain; the
+// gateway's actual timeout propagation runs through context.Context
+// at every call site and is not factored into a single library.
 //
 // TESTING.md §12.7.a resiliency scenarios.
 package timeout_propagation
@@ -70,7 +72,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	if elapsed > 60*time.Millisecond {
 		s.overshoots.Add(1)
 		s.counters.Inc("overshoots")
-		return fmt.Errorf("§10.1 violated: call elapsed %s past the 30ms budget (+ slack)", elapsed)
+		return fmt.Errorf("§11.3 violated: call elapsed %s past the 30ms budget (+ slack)", elapsed)
 	}
 	s.counters.Inc("bounded_calls")
 	return nil
@@ -79,7 +81,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 func (s *Scenario) Assert(r *loadgen.Result) error {
 	s.counters.EmitTo(r)
 	if v := s.overshoots.Load(); v > 0 {
-		return fmt.Errorf("§10.1 violated: %d calls overshot the deadline", v)
+		return fmt.Errorf("§11.3 violated: %d calls overshot the deadline", v)
 	}
 	if s.counters.Get("bounded_calls") == 0 {
 		return fmt.Errorf("scenario did not exercise the bounded path")

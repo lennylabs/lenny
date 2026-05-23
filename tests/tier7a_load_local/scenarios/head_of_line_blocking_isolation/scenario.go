@@ -2,11 +2,13 @@
 
 //go:build load_local
 
-// Package head_of_line_blocking_isolation models the §10.1 worker
-// pool contract: independent worker goroutines mean a slow request
-// at position N does not block fast requests at positions N+1..N+M.
-// Invariant: fast-request P99 latency stays below the slow-request
-// hold time even when fast requests are interleaved with slow ones.
+// Package head_of_line_blocking_isolation is a synthetic check on
+// the §4.1 Stream Proxy subsystem invariant: independent worker
+// goroutines mean a slow request at position N does not block fast
+// requests at positions N+1..N+M. The scenario uses an in-process
+// worker-pool model; it does not yet drive the gateway's actual
+// Stream Proxy because that subsystem is not factored into a
+// standalone library.
 //
 // TESTING.md §12.7.a resiliency scenarios.
 package head_of_line_blocking_isolation
@@ -117,7 +119,7 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	}
 	r.AddCustom("fast_max_ms", float64(max.Milliseconds()))
 	if max > 80*time.Millisecond {
-		return fmt.Errorf("§10.1 violated: fast-call max %s ≥ 80%% of slow hold (head-of-line blocking)", max)
+		return fmt.Errorf("§4.1 violated: fast-call max %s ≥ 80%% of slow hold (head-of-line blocking)", max)
 	}
 	return nil
 }

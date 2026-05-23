@@ -2,11 +2,13 @@
 
 //go:build load_local
 
-// Package streaming_reconnect_backoff models the §15.5 reconnect
-// backoff schedule: clients re-establish a stream with exponential
-// delays. Invariant: across N reconnect attempts, the cumulative
-// wait time is at least the sum of the documented exponential
-// schedule.
+// Package streaming_reconnect_backoff is a synthetic check on the
+// §10.4 client-reconnect cadence: a client re-establishing a stream
+// must honour an exponential backoff so the gateway's event replay
+// buffer is not hammered by a tight reconnect loop. The scenario
+// does not drive a product package (the backoff is enforced by
+// individual client SDKs, not by a single gateway component); it
+// documents the §10.4 invariant for tier-7a.
 //
 // TESTING.md §12.7.a resiliency scenarios.
 package streaming_reconnect_backoff
@@ -72,7 +74,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	// Expected sum: 10 + 20 + 40 = 70ms; allow a small overhead.
 	if elapsed < 70*time.Millisecond {
 		s.counters.Inc("too_fast")
-		return fmt.Errorf("§15.5 violated: 3 reconnects completed in %s (< 70ms minimum)", elapsed)
+		return fmt.Errorf("§10.4 violated: 3 reconnects completed in %s (< 70ms minimum)", elapsed)
 	}
 	s.counters.Inc("backoff_observed")
 	return nil
@@ -81,7 +83,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 func (s *Scenario) Assert(r *loadgen.Result) error {
 	s.counters.EmitTo(r)
 	if v := s.counters.Get("too_fast"); v > 0 {
-		return fmt.Errorf("§15.5 violated: %d reconnect cycles completed faster than the documented schedule", v)
+		return fmt.Errorf("§10.4 violated: %d reconnect cycles completed faster than the documented schedule", v)
 	}
 	if s.counters.Get("backoff_observed") == 0 {
 		return fmt.Errorf("scenario did not observe any backoff cycles")

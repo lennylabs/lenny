@@ -2,11 +2,13 @@
 
 //go:build load_local
 
-// Package auth_failure_storm models the §10.2 per-key rate limit:
-// N invalid auth attempts from one source must not block legitimate
-// auth from another source. Invariant: legitimate requests stay
-// admitted at full throughput even when invalid attempts saturate
-// the per-key limit.
+// Package auth_failure_storm asserts the §11.1 per-user request-rate
+// isolation invariant: a single shared bad-actor key that exhausts
+// its per-minute budget must not consume the global budget headroom
+// that legitimate per-user keys depend on. The scenario drives the
+// real pkg/gateway/ratelimit.Memory counter, increments the
+// bad-actor scope from VUs 0..7 and per-VU legitimate scopes from
+// VUs 8+, and compares throttling ratios.
 //
 // TESTING.md §12.7.a resiliency scenarios.
 package auth_failure_storm
@@ -14,52 +16,26 @@ package auth_failure_storm
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
 	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
 )
 
 const name = "auth_failure_storm"
 
+// perKeyLimit is the §11.1 per-user requests-per-minute cap the
+// scenario enforces against ratelimit.Memory's running count.
+const perKeyLimit = 100
+
 func init() {
 	loadgen.Register(name, func() loadgen.Scenario { return &Scenario{counters: scenkit.NewCounters()} })
 }
 
-// limiter is a per-key token-bucket. Each key gets 100 tokens per
-// second; when exhausted, the source is throttled.
-type limiter struct {
-	mu       sync.Mutex
-	keys     map[string]int
-	maxRate  int
-	lastTick time.Time
-}
-
-func newLimiter() *limiter {
-	return &limiter{keys: make(map[string]int), maxRate: 100, lastTick: time.Now()}
-}
-
-func (l *limiter) allow(key string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	// Refill: simplistic — reset on a 1-second tick.
-	if time.Since(l.lastTick) > time.Second {
-		for k := range l.keys {
-			l.keys[k] = 0
-		}
-		l.lastTick = time.Now()
-	}
-	if l.keys[key] >= l.maxRate {
-		return false
-	}
-	l.keys[key]++
-	return true
-}
-
 type Scenario struct {
 	counters *scenkit.Counters
-	lim      *limiter
+	counter  *ratelimit.Memory
 }
 
 func (s *Scenario) Name() string { return name }
@@ -75,22 +51,29 @@ func (s *Scenario) RampProfiles() []loadgen.Profile {
 }
 
 func (s *Scenario) Setup(ctx context.Context) error {
-	s.lim = newLimiter()
+	s.counter = ratelimit.NewMemory()
 	return nil
 }
 func (s *Scenario) Teardown(ctx context.Context) error { return nil }
 
 func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
-	// vu 0-7 attempt with one shared bad-actor key (storm).
-	// vu 8+ each have their own legitimate key.
+	// VUs 0-7 share one bad-actor key (storm). VUs 8+ each have
+	// their own legitimate key. The §11.1 per-user scope keeps the
+	// two from interfering: bad-actor's count climbs through one
+	// key and saturates; legit keys climb independently.
 	var key string
 	storm := vu < 8
 	if storm {
-		key = "bad-actor"
+		key = "u:acme:bad-actor"
 	} else {
-		key = fmt.Sprintf("legit-%d", vu)
+		key = fmt.Sprintf("u:acme:legit-%d", vu)
 	}
-	allowed := s.lim.allow(key)
+	count, err := s.counter.Incr(ctx, key, time.Now())
+	if err != nil {
+		s.counters.Inc("counter_error")
+		return nil
+	}
+	allowed := count <= perKeyLimit
 	switch {
 	case storm && allowed:
 		s.counters.Inc("storm_allowed")
@@ -99,7 +82,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	case !storm && allowed:
 		s.counters.Inc("legit_allowed")
 	case !storm && !allowed:
-		s.counters.Inc("legit_throttled_unexpected")
+		s.counters.Inc("legit_throttled")
 	}
 	return nil
 }
@@ -109,12 +92,7 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	stormAllowed := s.counters.Get("storm_allowed")
 	stormThrottled := s.counters.Get("storm_throttled")
 	legitAllowed := s.counters.Get("legit_allowed")
-	legitThrottled := s.counters.Get("legit_throttled_unexpected")
-	// At very high throughput, even legit per-key limits saturate.
-	// The §10.2 isolation invariant is that the bad actor is
-	// throttled *more aggressively* than the legitimate keys —
-	// because the bad actor's calls share one key while legit keys
-	// are per-source. Compare the throttling ratios.
+	legitThrottled := s.counters.Get("legit_throttled")
 	if stormAllowed+stormThrottled == 0 || legitAllowed+legitThrottled == 0 {
 		return fmt.Errorf("scenario must exercise both paths")
 	}
@@ -122,13 +100,14 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	legitRatio := float64(legitThrottled) / float64(legitAllowed+legitThrottled)
 	r.AddCustom("storm_throttle_ratio", stormRatio)
 	r.AddCustom("legit_throttle_ratio", legitRatio)
-	// The bad actor must be throttled significantly more than legit
-	// keys; this is what per-key rate limiting buys you.
+	// The §11.1 isolation invariant: the bad-actor key, shared by 8
+	// VUs, saturates its per-user cap and gets throttled at a
+	// significantly higher rate than per-VU legitimate keys.
 	if stormRatio <= legitRatio {
-		return fmt.Errorf("§10.2 violated: storm throttle ratio %.4f ≤ legit ratio %.4f (isolation failed)", stormRatio, legitRatio)
+		return fmt.Errorf("§11.1 violated: storm throttle ratio %.4f ≤ legit ratio %.4f (per-user isolation failed)", stormRatio, legitRatio)
 	}
 	if stormThrottled == 0 {
-		return fmt.Errorf("§10.2 violated: bad-actor storm not rate-limited")
+		return fmt.Errorf("§11.1 violated: bad-actor storm not rate-limited")
 	}
 	return nil
 }

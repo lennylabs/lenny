@@ -2,11 +2,14 @@
 
 //go:build load_local
 
-// Package client_disconnect_mid_stream models the §15.5 streaming
-// disconnect contract: when the client cancels mid-stream, the
-// backend cleans up the corresponding session goroutine promptly.
-// Invariant: in-flight session count returns to baseline after the
-// disconnect storm.
+// Package client_disconnect_mid_stream models the §10.4 streaming-
+// reconnect goroutine-cleanup invariant: when the client cancels
+// mid-stream, the gateway's per-stream goroutine exits promptly and
+// the in-flight session count returns to baseline. The scenario is
+// synthetic — it does not yet drive a product package because the
+// gateway's per-stream cleanup is not factored into a standalone
+// component. It documents the §10.4 invariant for tier-7a and
+// stresses the in-process model for goroutine leaks.
 //
 // TESTING.md §12.7.a resiliency scenarios.
 package client_disconnect_mid_stream
@@ -90,7 +93,7 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 		return fmt.Errorf("scenario did not exercise the disconnect path")
 	}
 	if v := s.srv.inFlight.Load(); v > 0 {
-		return fmt.Errorf("§15.5 violated: %d residual in-flight streams after disconnect storm", v)
+		return fmt.Errorf("§10.4 violated: %d residual in-flight streams after disconnect storm", v)
 	}
 	return nil
 }
