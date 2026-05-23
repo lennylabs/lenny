@@ -64,4 +64,32 @@ import (
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/tokenservice_issue_burst"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/webhook_admission_latency"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/webhook_tls_rotation_under_load"
+
+	// Wave 8: resiliency scenarios (load shedding, retry storms,
+	// cascading failure, bulkhead isolation, graceful shutdown,
+	// degraded provider, timeout propagation, KMS outage, slow
+	// loris, HOL blocking, client disconnect, reconnect backoff,
+	// partial-response retry, breaker recovery, oversized burst,
+	// header cap, auth failure storm, conn exhaustion + recovery,
+	// audit disk full, low-resource startup).
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/auth_failure_storm"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/bulkhead_thread_pool_isolation"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/cascading_failure_isolation"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/client_disconnect_mid_stream"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/connection_exhaustion_recovery"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/degraded_llm_provider"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/disk_full_audit_handling"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/gateway_load_shedding"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/graceful_shutdown_drain"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/head_of_line_blocking_isolation"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/header_size_cap"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/high_error_rate_circuit_open"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/kms_outage_session_continuation"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/low_resource_startup"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/oversized_request_rejection_recovery"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/partial_response_retry_idempotency"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/retry_storm_dampening"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/slow_loris_protection"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/streaming_reconnect_backoff"
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/timeout_propagation"
 )

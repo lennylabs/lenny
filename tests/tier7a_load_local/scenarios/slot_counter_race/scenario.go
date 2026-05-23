@@ -66,6 +66,19 @@ type Scenario struct {
 
 func (s *Scenario) Name() string { return "slot_counter_race" }
 
+// RampProfiles enumerates ascending VU counts for capacity discovery.
+// Used when scaffolds_test.go runs under LENNY_TIER7A_CAPACITY=1.
+func (s *Scenario) RampProfiles() []loadgen.Profile {
+	return []loadgen.Profile{
+		{Kind: loadgen.ConstantVU, VUs: 25, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 50, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 100, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 200, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 400, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 800, Duration: 2 * time.Second},
+	}
+}
+
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{
 		Kind:     loadgen.ConstantVU,

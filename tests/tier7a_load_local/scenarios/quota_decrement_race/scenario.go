@@ -32,6 +32,19 @@ type Scenario struct {
 }
 
 func (s *Scenario) Name() string { return name }
+// RampProfiles enumerates ascending VU counts for capacity discovery
+// under LENNY_TIER7A_CAPACITY=1.
+func (s *Scenario) RampProfiles() []loadgen.Profile {
+	return []loadgen.Profile{
+		{Kind: loadgen.ConstantVU, VUs: 16, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 32, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 64, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 128, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 256, Duration: 2 * time.Second},
+		{Kind: loadgen.ConstantVU, VUs: 512, Duration: 2 * time.Second},
+	}
+}
+
 func (s *Scenario) DefaultProfile() loadgen.Profile {
 	return loadgen.Profile{Kind: loadgen.ConstantVU, VUs: 32, Duration: 2 * time.Second}
 }

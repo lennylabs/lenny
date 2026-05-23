@@ -4,6 +4,43 @@ Working progress doc for the `load-test-overhaul` branch. Tracks each wave again
 
 **Status legend:** ☐ pending · ◐ in progress · ☑ complete · ⚠ partial (notes inline)
 
+## Round-2 closure
+
+### Resiliency scenarios — closed (20 new)
+
+Audit of the 38 existing tier-7a scenarios showed correctness coverage was broad but resiliency coverage was thin. `circuit_breaker_state_machine` only modelled transitions; we had no scenarios for retry storms, graceful degradation under sustained errors, cascading-failure isolation, slow-loris protection, graceful shutdown drain, KMS-outage continuation, or load shedding. 20 new resiliency scenarios landed:
+
+- ☑ `gateway_load_shedding` — queue-depth-based load shedding returns 503 before resource exhaustion.
+- ☑ `retry_storm_dampening` — exponential backoff dampens N concurrent retries against a failing endpoint.
+- ☑ `cascading_failure_isolation` — one component failure (e.g. LLM provider) does not propagate to the rest of the gateway.
+- ☑ `bulkhead_thread_pool_isolation` — slow tenant does not steal worker capacity from fast tenants.
+- ☑ `graceful_shutdown_drain` — SIGTERM mid-load drains in-flight requests; new requests rejected with 503.
+- ☑ `degraded_llm_provider` — LLM provider returns 5xx; sessions fail-closed with the documented error envelope rather than hang.
+- ☑ `timeout_propagation` — request with deadline T cancels downstream calls when T elapses (no infinite waits).
+- ☑ `kms_outage_session_continuation` — cached envelope keys keep sessions running during KMS unavailability for the documented grace window.
+- ☑ `slow_loris_protection` — slow-reading client does not tie up resources; bounded by the documented body-read timeout.
+- ☑ `head_of_line_blocking_isolation` — one slow request does not block N parallel fast requests behind it.
+- ☑ `client_disconnect_mid_stream` — backend cleans up promptly when client disconnects mid-stream; no goroutine or session leak.
+- ☑ `streaming_reconnect_backoff` — reconnect attempts follow the documented exponential backoff schedule.
+- ☑ `partial_response_retry_idempotency` — retry after a partial response does not duplicate side effects.
+- ☑ `high_error_rate_circuit_open` — sustained 50% downstream errors trip the breaker; half-open probes recover when downstream is healthy.
+- ☑ `oversized_request_rejection_recovery` — burst of oversized requests rejected; valid requests in parallel unaffected.
+- ☑ `header_size_cap` — oversized headers rejected with the documented 431 envelope; no resource leak.
+- ☑ `auth_failure_storm` — N invalid auth attempts do not block legitimate auth; per-key rate-limit isolates the bad actor.
+- ☑ `connection_exhaustion_recovery` — gateway client conn pool exhausts under load, then recovers without operator action.
+- ☑ `disk_full_audit_handling` — audit sink full; gateway fails closed for audit-required tenants and stays open for others.
+- ☑ `low_resource_startup` — gateway under sustained CPU pressure still serves `/healthz` and rejects new sessions with 503.
+
+### Reporter / baseline / capacity discovery
+
+Architecture (designed below; build under `tests/testinfra/loadgen/`):
+
+- ☑ **Reporter** — `loadgen.Reporter` interface + `FileReporter` writing JSON (machine-readable) + Markdown (human-readable) per-scenario summary into `LENNY_TIER7A_REPORT_DIR`. Off by default; opt in via env.
+- ☑ **Baseline + threshold gate** — `loadgen.Baseline`, `FileBaselineStore`, `Threshold`, `CompareToBaseline`. When `LENNY_TIER7A_BASELINE_DIR` is set and a `<scenario>.json` baseline is present, scaffolds_test.go compares the current result and fails the test if the regression exceeds `Threshold{ThroughputDropPct, LatencyP95RisePct, LatencyP99RisePct, ErrorRateAbs}`. `LENNY_TIER7A_UPDATE_BASELINES=1` writes the baseline from the current run (the canonical "reseed" path).
+- ☑ **Capacity discovery** — `loadgen.RampableScenario` optional interface. Scenarios that opt in expose `RampProfiles() []Profile`. Under `LENNY_TIER7A_CAPACITY=1`, the harness runs each profile in ascending order until one fails the scenario's `Assert`; the last passing profile is the discovered "knee" and is recorded by the Reporter for bottleneck analysis. At least 10 existing scenarios get rampable profiles (`slot_counter_race`, `audit_chain_concurrent`, `auth_jwt_verify_throughput`, `quota_decrement_race`, `idempotency_replay_race`, `lease_extension_race`, `experiment_bucket_determinism`, `tokenservice_issue_burst`, `webhook_admission_latency`, `controller_reconcile_rate`).
+
+Architectural choice: env-var-gated modes layered on top of the existing `Scenario` interface. Default behaviour is unchanged; report/baseline/capacity each opt in independently. Scenarios that do not declare a rampable profile are skipped in capacity mode with a "no capacity profile" log line so the report is honest about coverage.
+
 ## Wave 1 — tier rename + TESTING.md update
 
 - ☑ Rename `tests/tier7_load` → `tests/tier7b_load_kind` (directory + build tag `load`→`load_kind`)
