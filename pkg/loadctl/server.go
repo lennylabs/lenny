@@ -48,6 +48,17 @@ type Config struct {
 	// the slot for cloud-storage sinks that ship alongside the
 	// report uploader.
 	ProgressDir string
+
+	// Auth carries the bearer tokens that protect the /api/v1/*
+	// surface. An empty AuthConfig disables auth so dev / scaffold
+	// flows work out-of-the-box; production deployments MUST set
+	// both OperatorTokens and RunnerTokens. See AuthConfig.
+	Auth AuthConfig
+
+	// RateLimit caps the request rate on the write-heavy + runner
+	// callback endpoints. An empty RateLimitConfig disables all
+	// limits. See RateLimitConfig.
+	RateLimit RateLimitConfig
 }
 
 // Server is the HTTP control plane. It exposes the API described in
@@ -58,6 +69,15 @@ type Server struct {
 	hub       *Hub
 	submitter dispatch.Submitter
 	sink      ProgressSink
+	metrics   *metricsBundle
+
+	// ctx scopes every background goroutine the server spawns
+	// (driveRun, watchRun, simulateScenario). Server.Shutdown
+	// cancels it so SIGTERM unblocks any in-flight scaffolding,
+	// watchdog timers, or pending scenario submits.
+	ctx    context.Context
+	cancel context.CancelFunc
+	bg     sync.WaitGroup
 
 	mu        sync.RWMutex
 	runners   map[string]*Runner
@@ -115,12 +135,16 @@ func NewServer(c Config) (*Server, error) {
 		_ = store.Close()
 		return nil, err
 	}
+	srvCtx, cancel := context.WithCancel(context.Background())
 	return &Server{
 		config:    c,
 		store:     store,
 		hub:       NewHub(),
 		submitter: c.Submitter,
 		sink:      sink,
+		metrics:   newMetricsBundle(),
+		ctx:       srvCtx,
+		cancel:    cancel,
 		runners:   make(map[string]*Runner),
 		baselines: make(map[string]string),
 		scenarios: defaultScenarios(),
@@ -139,12 +163,45 @@ func openStore(url string) (Store, error) {
 	}
 }
 
-// Close releases resources.
+// Close releases resources. It calls Shutdown with a short default
+// drain window so tests and abrupt callers don't block forever on a
+// misbehaving background goroutine. Production deployers should
+// prefer Shutdown(ctx) with their own deadline.
 func (s *Server) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = s.Shutdown(ctx)
 	if s.store != nil {
 		return s.store.Close()
 	}
 	return nil
+}
+
+// Shutdown signals every background goroutine to wind down and
+// waits for them up to the supplied ctx's deadline. It closes every
+// active hub channel so WebSocket subscribers receive a clean end
+// frame instead of a TCP reset.
+//
+// Shutdown is idempotent.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.cancel == nil {
+		return nil
+	}
+	s.cancel()
+	s.cancel = nil
+	// Close the hub so live WS subscribers see the terminal frame.
+	s.hub.CloseAll()
+	done := make(chan struct{})
+	go func() {
+		s.bg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Handler returns the HTTP handler for the control plane.
@@ -159,6 +216,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/ack", s.handleRunnerAck)
 	mux.HandleFunc("/api/v1/progress", s.handleRunnerProgress)
 	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.Handle("/metrics", s.metrics.handler())
 	// Serve the embedded web tree (HTMX UI + stylesheet). The
 	// embed lives in embed.go; the inlined indexHTML constant is
 	// the fallback when the embed is empty.
@@ -189,7 +247,13 @@ func (s *Server) Handler() http.Handler {
 	} else {
 		mux.HandleFunc("/", s.handleIndex)
 	}
-	return loggingMiddleware(mux)
+	auth := newAuthMiddleware(s.config.Auth)
+	limiter := rateLimitMiddleware(s.config.RateLimit)
+	// Order: metrics → logging → auth → ratelimit → mux. Metrics
+	// observes every request including auth rejections; rate limit
+	// runs after auth so authenticated callers get their own
+	// per-token bucket rather than sharing a per-IP one.
+	return s.metrics.instrumentMiddleware(loggingMiddleware(auth(limiter(mux))))
 }
 
 // RunnerAck is the runner → loadctl callback payload. The runner
@@ -312,11 +376,11 @@ func (s *Server) handleRunnerProgress(w http.ResponseWriter, r *http.Request) {
 // receive the event in the same order it landed on disk.
 func (s *Server) publishProgress(p RunnerProgress) {
 	if err := s.sink.Append(p.RunID, p); err != nil {
-		// Sink errors are operational — don't fail the request, but
-		// record so an operator can debug a misconfigured sink.
 		log.Printf("loadctl: progress sink append: %v", err)
+		s.metrics.sinkErrors.Inc()
 	}
 	s.hub.Publish(p.RunID, Event{Type: "progress", Payload: p})
+	s.metrics.progressEvents.Inc()
 }
 
 // recordAck appends scenario=outcome to run.CurrentMetrics and
@@ -408,7 +472,12 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
 		return
 	}
-	go s.driveRun(run.ID)
+	s.metrics.runsCreated.Inc()
+	s.bg.Add(1)
+	go func() {
+		defer s.bg.Done()
+		s.driveRun(run.ID)
+	}()
 	writeJSON(w, http.StatusCreated, run)
 }
 
@@ -420,7 +489,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 // simulated PENDING → RUNNING → PASS sequence so the UI surface is
 // observable without cloud infrastructure.
 func (s *Server) driveRun(id string) {
-	ctx := context.Background()
+	ctx := s.ctx
 	run, err := s.store.GetRun(ctx, id)
 	if err != nil {
 		return
@@ -472,7 +541,11 @@ func (s *Server) driveRun(id string) {
 	}
 	// State machine advances on runner-ack callbacks; if no runner
 	// acks within the timeout, the run is marked FAIL.
-	go s.watchRun(ctx, id)
+	s.bg.Add(1)
+	go func() {
+		defer s.bg.Done()
+		s.watchRun(ctx, id)
+	}()
 }
 
 // watchRun fails the run if no terminal ack arrives within the
@@ -480,7 +553,11 @@ func (s *Server) driveRun(id string) {
 func (s *Server) watchRun(ctx context.Context, id string) {
 	deadline := time.NewTimer(defaultRunTimeout)
 	defer deadline.Stop()
-	<-deadline.C
+	select {
+	case <-deadline.C:
+	case <-ctx.Done():
+		return
+	}
 	run, err := s.store.GetRun(ctx, id)
 	if err != nil {
 		return
@@ -512,6 +589,7 @@ func (s *Server) completeRun(ctx context.Context, id, status string, ackErr erro
 	}
 	s.hub.Publish(id, Event{Type: "status", Payload: run.Status})
 	s.hub.Close(id)
+	s.metrics.runsTerminal.WithLabelValues(status).Inc()
 }
 
 const (
@@ -538,6 +616,8 @@ func (s *Server) runDuration() time.Duration {
 func (s *Server) simulateScenario(runID, scenario string) {
 	start := time.Now()
 	deadline := start.Add(scaffoldDuration)
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for now := time.Now(); now.Before(deadline); now = time.Now() {
 		elapsed := now.Sub(start)
 		fraction := float64(elapsed) / float64(scaffoldDuration)
@@ -556,7 +636,19 @@ func (s *Server) simulateScenario(runID, scenario string) {
 				"http_req_failed_rate":  0.001 * (1 + fraction),
 			},
 		})
-		time.Sleep(scaffoldTick)
+		// Reset to scaffoldTick; abort early on server shutdown.
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(scaffoldTick)
+		select {
+		case <-timer.C:
+		case <-s.ctx.Done():
+			return
+		}
 	}
 }
 
@@ -701,6 +793,7 @@ func (s *Server) handleRunners(w http.ResponseWriter, r *http.Request) {
 	for _, run := range s.runners {
 		out = append(out, run)
 	}
+	s.metrics.runnersGauge.Set(float64(len(s.runners)))
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, out)
 }

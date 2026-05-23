@@ -67,6 +67,21 @@ func (h *Hub) Publish(runID string, e Event) {
 	}
 }
 
+// CloseAll terminates every active run channel and removes them
+// from the hub. Used by Server.Shutdown so SIGTERM produces clean
+// close frames on every live WebSocket subscriber.
+func (h *Hub) CloseAll() {
+	h.mu.Lock()
+	ids := make([]string, 0, len(h.channels))
+	for id := range h.channels {
+		ids = append(ids, id)
+	}
+	h.mu.Unlock()
+	for _, id := range ids {
+		h.Close(id)
+	}
+}
+
 // Close marks the run channel terminal. Subscribers receive a
 // final close frame and the channel is removed from the hub.
 func (h *Hub) Close(runID string) {

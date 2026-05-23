@@ -4,6 +4,7 @@ package loadctl
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -171,5 +172,34 @@ func TestRunnerRegisterAndHeartbeat(t *testing.T) {
 	resp.Body.Close()
 	if len(roster) != 0 {
 		t.Errorf("roster after DELETE=%+v", roster)
+	}
+}
+
+func TestShutdownCancelsBackgroundGoroutines(t *testing.T) {
+	server, err := NewServer(Config{
+		StorageURL:  "s3://test",
+		RunDuration: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv := httptest.NewServer(server.Handler())
+	defer srv.Close()
+
+	// Kick off a run that would otherwise take ~4s (scaffoldDuration).
+	resp, _ := http.Post(srv.URL+"/api/v1/runs", "application/json",
+		bytes.NewBufferString(`{"scale":"small","scenarios":["a","b","c"]}`))
+	resp.Body.Close()
+
+	// Shutdown promptly; the scaffold goroutine should observe
+	// ctx.Done and return before the 2-second deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := server.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown returned err=%v after %s", err, time.Since(start))
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("Shutdown took %s; want <2s (background goroutines did not honour ctx)", elapsed)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,8 +41,14 @@ func run() error {
 		dispatcherKind = flag.String("dispatcher", "scaffold", "dispatcher kind: scaffold|aws|gcp|azure (scaffold runs the simulated-state-machine dev path with no real runner)")
 		queueURL       = flag.String("queue-url", "", "queue identifier for non-scaffold dispatchers (SQS URL / Pub/Sub topic / Service Bus queue path)")
 		region         = flag.String("region", "", "cloud region (required when dispatcher is aws|gcp|azure)")
+		rlRunsPerMin   = flag.Int("ratelimit-runs-per-min", 0, "POST /api/v1/runs per-source rate cap (0 disables)")
+		rlProgressPerS = flag.Int("ratelimit-progress-per-sec", 0, "POST /api/v1/progress per-source rate cap (0 disables)")
+		rlAckPerS      = flag.Int("ratelimit-ack-per-sec", 0, "POST /api/v1/ack per-source rate cap (0 disables)")
 	)
 	flag.Parse()
+
+	operatorTokens := splitTokens(os.Getenv("LENNY_LOADCTL_OPERATOR_TOKENS"))
+	runnerTokens := splitTokens(os.Getenv("LENNY_LOADCTL_RUNNER_TOKENS"))
 
 	submitter, err := newSubmitter(*dispatcherKind, *queueURL, *region)
 	if err != nil {
@@ -54,6 +61,15 @@ func run() error {
 		ProgressDir: *progressDir,
 		RunDuration: *runDuration,
 		Submitter:   submitter,
+		Auth: loadctl.AuthConfig{
+			OperatorTokens: operatorTokens,
+			RunnerTokens:   runnerTokens,
+		},
+		RateLimit: loadctl.RateLimitConfig{
+			RunCreatePerMinute: *rlRunsPerMin,
+			ProgressPerSecond:  *rlProgressPerS,
+			AckPerSecond:       *rlAckPerS,
+		},
 	})
 	if err != nil {
 		if submitter != nil {
@@ -77,9 +93,12 @@ func run() error {
 	go func() {
 		<-sigs
 		log.Printf("lenny-loadctl: shutting down")
-		shutdownCtx, c := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, c := context.WithTimeout(context.Background(), 30*time.Second)
 		defer c()
+		// Stop the HTTP listener first (existing requests drain), then
+		// signal the Server's background goroutines and wait for them.
 		_ = srv.Shutdown(shutdownCtx)
+		_ = server.Shutdown(shutdownCtx)
 		cancel()
 	}()
 
@@ -89,6 +108,23 @@ func run() error {
 	}
 	<-ctx.Done()
 	return nil
+}
+
+// splitTokens parses a comma-separated env-var value into a slice of
+// non-empty tokens. Whitespace around tokens is trimmed.
+func splitTokens(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // newSubmitter constructs the dispatch.Submitter the loadctl Server

@@ -49,6 +49,7 @@ func run() error {
 		k6Binary       = flag.String("k6", "k6", "path to the k6 binary; falls back to a noop runner when missing")
 	)
 	flag.Parse()
+	runnerToken := os.Getenv("LENNY_LOADRUNNER_TOKEN")
 
 	id := *runnerID
 	if id == "" {
@@ -73,29 +74,58 @@ func run() error {
 		cancel()
 	}()
 
+	client := authedClient(runnerToken)
+
 	if *loadctlURL != "" {
-		if err := registerRunner(ctx, *loadctlURL, id, *cloudLabel, *capacity); err != nil {
+		if err := registerRunner(ctx, client, *loadctlURL, id, *cloudLabel, *capacity); err != nil {
 			log.Printf("register: %v (continuing; will retry on next heartbeat)", err)
 		}
-		go heartbeatLoop(ctx, *loadctlURL, id, *registerHB)
+		go heartbeatLoop(ctx, client, *loadctlURL, id, *registerHB)
 	}
 
 	cfg := exec.Config{
 		Runner:     &exec.K6Runner{Binary: *k6Binary},
 		LoadctlURL: *loadctlURL,
+		HTTPClient: client,
 		HeartbeatFn: func(ctx context.Context, j *dispatch.Job) error {
 			return d.Heartbeat(ctx, j)
 		},
 		HeartbeatInt: 30 * time.Second,
-		ProgressFn:   makeProgressFn(*loadctlURL),
+		ProgressFn:   makeProgressFn(client, *loadctlURL),
 		ProgressInt:  time.Second,
 	}
 	return loop(ctx, d, cfg)
 }
 
+// authedClient wraps http.DefaultClient with a Transport that
+// injects the configured Bearer token on every request. When the
+// token is empty the function returns http.DefaultClient unchanged,
+// preserving the dev / unauthenticated flow.
+func authedClient(token string) *http.Client {
+	if token == "" {
+		return &http.Client{Timeout: 30 * time.Second}
+	}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &bearerTransport{token: token, base: http.DefaultTransport},
+	}
+}
+
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (b *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone the request to avoid mutating the caller's headers.
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+b.token)
+	return b.base.RoundTrip(req)
+}
+
 // registerRunner posts the runner's identity to loadctl. Idempotent
 // on (id); the server upserts the roster entry.
-func registerRunner(ctx context.Context, loadctlURL, id, cloud string, capacity int) error {
+func registerRunner(ctx context.Context, client *http.Client, loadctlURL, id, cloud string, capacity int) error {
 	body, err := json.Marshal(map[string]any{
 		"id":       id,
 		"cloud":    cloud,
@@ -109,7 +139,7 @@ func registerRunner(ctx context.Context, loadctlURL, id, cloud string, capacity 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -124,7 +154,7 @@ func registerRunner(ctx context.Context, loadctlURL, id, cloud string, capacity 
 // heartbeatLoop posts a heartbeat every interval until ctx cancels.
 // A 404 from the heartbeat (loadctl restarted and lost the roster)
 // triggers a re-registration on the next tick.
-func heartbeatLoop(ctx context.Context, loadctlURL, id string, interval time.Duration) {
+func heartbeatLoop(ctx context.Context, client *http.Client, loadctlURL, id string, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -134,15 +164,14 @@ func heartbeatLoop(ctx context.Context, loadctlURL, id string, interval time.Dur
 		case <-ticker.C:
 		}
 		req, _ := http.NewRequestWithContext(ctx, "POST", loadctlURL+"/api/v1/runners/"+id+"/heartbeat", nil)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			log.Printf("heartbeat: %v", err)
 			continue
 		}
 		_ = resp.Body.Close()
 		if resp.StatusCode == http.StatusNotFound {
-			// Roster lost the entry; re-register.
-			_ = registerRunner(ctx, loadctlURL, id, "", 0)
+			_ = registerRunner(ctx, client, loadctlURL, id, "", 0)
 		} else if resp.StatusCode >= 400 {
 			log.Printf("heartbeat: status=%d", resp.StatusCode)
 		}
@@ -152,11 +181,10 @@ func heartbeatLoop(ctx context.Context, loadctlURL, id string, interval time.Dur
 // makeProgressFn returns a ProgressFn that POSTs Progress to the
 // loadctl `/api/v1/progress` endpoint. Returns nil when loadctlURL
 // is empty so the unit-test path (no callback wired) keeps working.
-func makeProgressFn(loadctlURL string) exec.ProgressFn {
+func makeProgressFn(client *http.Client, loadctlURL string) exec.ProgressFn {
 	if loadctlURL == "" {
 		return nil
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
 	return func(ctx context.Context, j *dispatch.Job, p exec.Progress) error {
 		body, err := json.Marshal(map[string]any{
 			"run_id":          j.RunID,
