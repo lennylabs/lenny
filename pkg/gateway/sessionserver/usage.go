@@ -121,7 +121,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 				payload["failureClass"] = string(sess.FailureClass)
 			}
 			data, _ := json.Marshal(payload)
-			s.opsEmitter.Emit(opsevents.OperationalEvent{
+			_, _ = s.opsEmitter.Emit(ctx, opsevents.OperationalEvent{
 				Source:          "/v1/sessions",
 				Type:            et.CloudEventsType(),
 				Severity:        severity,

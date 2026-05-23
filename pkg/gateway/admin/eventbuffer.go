@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -20,7 +21,7 @@ func (r *Router) WithEventBuffer(buf EventBufferQuerier) *Router {
 // WithEventEmitter wires the §25.3 operational-event emitter onto the
 // Router so admin handlers record state-change events into the event
 // buffer. It is the emit counterpart of WithEventBuffer's query side.
-func (r *Router) WithEventEmitter(em *opsevents.Emitter) *Router {
+func (r *Router) WithEventEmitter(em opsevents.EventEmitter) *Router {
 	r.eventEmitter = em
 	return r
 }
@@ -29,7 +30,7 @@ func (r *Router) WithEventEmitter(em *opsevents.Emitter) *Router {
 // wired. It is a no-op otherwise, so the admin handlers do not depend
 // on the event buffer being configured. eventType is a §16.6 catalogue
 // short name; its CloudEvents `type` is derived via CloudEventsType.
-func (r *Router) emitOpsEvent(eventType opsevents.EventType, severity string, data map[string]any) {
+func (r *Router) emitOpsEvent(ctx context.Context, eventType opsevents.EventType, severity string, data map[string]any) {
 	if r.eventEmitter == nil {
 		return
 	}
@@ -39,7 +40,7 @@ func (r *Router) emitOpsEvent(eventType opsevents.EventType, severity string, da
 			payload = b
 		}
 	}
-	r.eventEmitter.Emit(opsevents.OperationalEvent{
+	_, _ = r.eventEmitter.Emit(ctx, opsevents.OperationalEvent{
 		Source:          "/v1/admin",
 		Type:            eventType.CloudEventsType(),
 		Severity:        severity,

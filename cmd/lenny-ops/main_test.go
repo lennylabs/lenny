@@ -4,9 +4,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
@@ -55,6 +61,57 @@ func TestEmptySourcesYieldNothing(t *testing.T) {
 	}
 	if subs := (emptySubscriptionSource{}).Subscriptions(); len(subs) != 0 {
 		t.Errorf("emptySubscriptionSource.Subscriptions = %v, want none", subs)
+	}
+}
+
+// spec §25.5: an event published through the redisFanOutEmitter lands
+// on the platform-scoped ops:events:stream and also reaches the local
+// events.Service buffer so SSE subscribers and the polling cursor see
+// it without a separate consumer loop.
+func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	local := events.New(events.Options{})
+
+	em := newRedisFanOutEmitter(client, local, "ops-replica-1")
+	id, err := em.Emit(context.Background(), opsevents.OperationalEvent{
+		Type: "dev.lenny.escalation_created", Severity: "critical",
+	})
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if id == 0 {
+		t.Error("redisFanOutEmitter returned id=0; local Publish must assign a non-zero cursor")
+	}
+
+	// The local events.Service buffer holds the event.
+	page := local.Query(0, opsevents.EventFilter{}, 100)
+	if len(page.Events) != 1 {
+		t.Fatalf("local buffer holds %d events, want 1", len(page.Events))
+	}
+	if page.Events[0].Event.Type != "dev.lenny.escalation_created" {
+		t.Errorf("local event type = %q, want dev.lenny.escalation_created", page.Events[0].Event.Type)
+	}
+
+	// The Redis stream carries the same event.
+	entries, err := client.XRange(context.Background(), opsevents.DefaultStreamKey, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("stream length = %d, want 1", len(entries))
+	}
+	raw, ok := entries[0].Values["event"].(string)
+	if !ok {
+		t.Fatalf("stream entry missing event field: %+v", entries[0].Values)
+	}
+	var streamed opsevents.OperationalEvent
+	if err := json.Unmarshal([]byte(raw), &streamed); err != nil {
+		t.Fatalf("decode stream event: %v", err)
+	}
+	if streamed.Type != "dev.lenny.escalation_created" {
+		t.Errorf("stream event type = %q, want dev.lenny.escalation_created", streamed.Type)
 	}
 }
 

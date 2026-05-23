@@ -93,8 +93,14 @@ func New(opts Options) *Service {
 // Publish stamps the §25.3 / §25.5 CloudEvents envelope, records the
 // event in the buffer, fans out to live SSE subscribers, and forwards
 // to the webhook callback when configured. Returns the assigned buffer
-// id (the polling cursor).
-func (s *Service) Publish(ctx context.Context, e opsevents.OperationalEvent) uint64 {
+// id (the polling cursor). The error returns satisfies the §4.0
+// opsevents.EventEmitter contract so the Service is a drop-in for any
+// subsystem that takes an EventEmitter; in v1 the in-memory write
+// never errors, so the error is always nil unless ctx is cancelled.
+func (s *Service) Publish(ctx context.Context, e opsevents.OperationalEvent) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if e.SpecVersion == "" {
 		e.SpecVersion = opsevents.CloudEventsSpecVersion
 	}
@@ -109,8 +115,18 @@ func (s *Service) Publish(ctx context.Context, e opsevents.OperationalEvent) uin
 	if s.webhook != nil {
 		s.webhook(ctx, e)
 	}
-	return id
+	return id, nil
 }
+
+// Emit satisfies the §4.0 opsevents.EventEmitter interface so the
+// Service can be passed to any subsystem that takes an EventEmitter.
+// It is a one-line forward to Publish.
+func (s *Service) Emit(ctx context.Context, e opsevents.OperationalEvent) (uint64, error) {
+	return s.Publish(ctx, e)
+}
+
+// Compile-time guard that *Service satisfies opsevents.EventEmitter.
+var _ opsevents.EventEmitter = (*Service)(nil)
 
 // fanOutToSubscribers delivers ev to every subscriber whose filter
 // matches. A slow subscriber whose channel is full is skipped — the

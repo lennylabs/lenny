@@ -3,6 +3,7 @@
 package opsevents
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -12,16 +13,33 @@ import (
 // version every operational event carries.
 const CloudEventsSpecVersion = "1.0.2"
 
-// Emitter records §25.3 operational events. v1 writes each event to the
-// in-process EventBuffer; the §25.3 Redis-stream destination is added
-// alongside the §10.1 Redis EventBus. Emit fills the CloudEvents
-// envelope and assigns the stable eventKey before buffering.
+// EventEmitter is the §4.0 operational-event sink every subsystem
+// depends on. Subsystems take an EventEmitter and call Emit at the
+// documented §16.6 state-change points. The local *Emitter satisfies
+// it; the §25.5 Redis-stream emitter satisfies it; tests substitute
+// fakes through the same interface. ctx threads cancellation through
+// the emit path so a slow Redis write does not pin a shutdown.
+type EventEmitter interface {
+	// Emit records an operational event and returns the assigned
+	// monotonic buffer id. Emitters that wrap a remote stream return
+	// the local-side id and a non-nil error when the remote write
+	// failed; the caller may log without falling back. The local-only
+	// emitter always succeeds (err is nil).
+	Emit(ctx context.Context, event OperationalEvent) (uint64, error)
+}
+
+// Emitter records §25.3 operational events into the in-process
+// EventBuffer. The §25.5 Redis-stream destination is provided by
+// StreamEmitter, which composes this Emitter with an XADD writer.
 type Emitter struct {
 	buffer    *EventBuffer
 	replicaID string
 	now       func() time.Time
 	nonce     atomic.Uint64
 }
+
+// Compile-time guard that *Emitter satisfies EventEmitter.
+var _ EventEmitter = (*Emitter)(nil)
 
 // NewEmitter returns an Emitter that records events into buffer.
 // replicaID is the per-replica identifier baked into each event's
@@ -36,8 +54,13 @@ func NewEmitter(buffer *EventBuffer, replicaID string) *Emitter {
 // Emit stamps an operational event with the §25.3 envelope — the
 // CloudEvents spec version, a timestamp, and the stable eventKey — and
 // records it in the buffer, returning the assigned buffer id. A
-// caller-set ID, Time, or SpecVersion is preserved.
-func (e *Emitter) Emit(event OperationalEvent) uint64 {
+// caller-set ID, Time, or SpecVersion is preserved. The local-only
+// emitter never returns an error; ctx is honored for cancellation but
+// the write itself is in-process and non-blocking.
+func (e *Emitter) Emit(ctx context.Context, event OperationalEvent) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if event.SpecVersion == "" {
 		event.SpecVersion = CloudEventsSpecVersion
 	}
@@ -47,7 +70,7 @@ func (e *Emitter) Emit(event OperationalEvent) uint64 {
 	if event.ID == "" {
 		event.ID = e.eventKey(event.Time)
 	}
-	return e.buffer.Append(event)
+	return e.buffer.Append(event), nil
 }
 
 // eventKey composes the §25.3 stable event identifier

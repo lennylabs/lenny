@@ -23,7 +23,10 @@ func fixedNow() time.Time { return time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC) 
 // (specversion + time + id) and records the event in the buffer.
 func TestService_Publish_StampsEnvelope(t *testing.T) {
 	s := events.New(events.Options{Capacity: 16, Now: fixedNow})
-	id := s.Publish(context.Background(), opsevents.OperationalEvent{Type: "dev.lenny.alert_fired"})
+	id, err := s.Publish(context.Background(), opsevents.OperationalEvent{Type: "dev.lenny.alert_fired"})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
 	if id == 0 {
 		t.Fatal("expected non-zero id")
 	}

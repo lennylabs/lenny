@@ -127,7 +127,7 @@ type Server struct {
 	runtimes           runtimestore.Store
 	environments       environmentstore.Store
 	tenantAccess       tenantaccessstore.Store
-	opsEmitter         *opsevents.Emitter
+	opsEmitter         opsevents.EventEmitter
 	refResolver        workspaceplan.RefResolver
 	credPools          credentialpoolstore.Store
 	defaultNoEnvPolicy string
@@ -323,9 +323,9 @@ type Options struct {
 	TenantAccess tenantaccessstore.Store
 
 	// OpsEmitter records §25.3 operational events into the event
-	// buffer. Optional — when nil, the gateway emits no operational
-	// events for session transitions.
-	OpsEmitter *opsevents.Emitter
+	// buffer or §25.5 Redis stream. Optional — when nil, the gateway
+	// emits no operational events for session transitions.
+	OpsEmitter opsevents.EventEmitter
 
 	// RefResolver pins each §14 gitClone source's ref to an immutable
 	// commit SHA at session creation. Optional — when nil, the gateway

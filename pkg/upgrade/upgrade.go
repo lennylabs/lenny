@@ -9,6 +9,7 @@
 package upgrade
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -104,11 +105,10 @@ func StepNumber(p Phase) (step int, ok bool) {
 }
 
 // Emitter is the §4.0 EventEmitter dependency the upgrade orchestrator
-// uses to publish §16.6 upgrade_progressed events. The opsevents.Emitter
-// type satisfies it. A nil Emitter passed to Advance is a no-op.
-type Emitter interface {
-	Emit(opsevents.OperationalEvent) uint64
-}
+// uses to publish §16.6 upgrade_progressed events. Aliased to
+// opsevents.EventEmitter so the single interface from §4.0 is reused.
+// A nil Emitter passed to Advance is a no-op.
+type Emitter = opsevents.EventEmitter
 
 // Advance progresses an upgrade from current to the next phase per the
 // §25.8 sequence, emitting a §16.6 upgrade_progressed CloudEvents
@@ -118,31 +118,33 @@ type Emitter interface {
 // target image digest the upgrade is converging on, captured for the
 // event payload per §4.0. A nil em emits nothing; the phase transition
 // is unchanged.
-func Advance(em Emitter, pool string, current Phase, imageDigest string) (Phase, error) {
+func Advance(ctx context.Context, em Emitter, pool string, current Phase, imageDigest string) (Phase, error) {
 	next, err := Next(current)
 	if err != nil {
 		return "", err
 	}
-	emitProgressed(em, pool, current, next, imageDigest)
+	emitProgressed(ctx, em, pool, current, next, imageDigest)
 	return next, nil
 }
 
 // AdvanceRollback transitions a rollbackable phase to RolledBack and
 // emits §16.6 upgrade_progressed with the new phase. Returns an error
 // for phases past SchemaMigration per §25.8 CanRollBack.
-func AdvanceRollback(em Emitter, pool string, current Phase, imageDigest string) (Phase, error) {
+func AdvanceRollback(ctx context.Context, em Emitter, pool string, current Phase, imageDigest string) (Phase, error) {
 	next, err := Rollback(current)
 	if err != nil {
 		return "", err
 	}
-	emitProgressed(em, pool, current, next, imageDigest)
+	emitProgressed(ctx, em, pool, current, next, imageDigest)
 	return next, nil
 }
 
 // emitProgressed records the §16.6 upgrade_progressed event when an
 // Emitter is wired. The data payload carries the §4.0 fields: pool,
-// oldPhase, newPhase, and imageDigest.
-func emitProgressed(em Emitter, pool string, oldPhase, newPhase Phase, imageDigest string) {
+// oldPhase, newPhase, and imageDigest. A remote-emitter error is
+// swallowed: the phase progression is authoritative state, the event
+// is observability, so a failed publish must not roll back the phase.
+func emitProgressed(ctx context.Context, em Emitter, pool string, oldPhase, newPhase Phase, imageDigest string) {
 	if em == nil {
 		return
 	}
@@ -157,7 +159,7 @@ func emitProgressed(em Emitter, pool string, oldPhase, newPhase Phase, imageDige
 		"imageDigest": imageDigest,
 	}
 	data, _ := json.Marshal(payload)
-	em.Emit(opsevents.OperationalEvent{
+	_, _ = em.Emit(ctx, opsevents.OperationalEvent{
 		Source:          "//lenny.dev/upgrade",
 		Type:            opsevents.EventUpgradeProgressed.CloudEventsType(),
 		Severity:        severity,

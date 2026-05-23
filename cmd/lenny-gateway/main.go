@@ -65,6 +65,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
@@ -873,9 +875,24 @@ func main() {
 		tenantAccess = tenantaccesspg.New(pgPool)
 	}
 
-	// §25.3 operational-event emitter, shared by the gateway subsystems
-	// that emit and the admin event-buffer query endpoint.
-	opsEmitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), buildVersion)
+	// §25.3 / §25.5 operational-event emitter, shared by the gateway
+	// subsystems that emit and the admin event-buffer query endpoint.
+	// Always keep a local buffer — the §25.3 buffer endpoint reads it
+	// and the §25.5 fall-back path serves the same buffer when Redis is
+	// unreachable. When Redis is wired, every emit also lands on the
+	// §25.5 platform-scoped stream ops:events:stream so lenny-ops and
+	// the controllers share the same logical event source.
+	opsEventBuffer := opsevents.NewEventBuffer(0)
+	var opsEmitter opsevents.EventEmitter = opsevents.NewEmitter(opsEventBuffer, replica)
+	if redisClient != nil {
+		opsEmitter = opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+			Client:    redisClient,
+			Buffer:    opsEventBuffer,
+			Source:    "//lenny.dev/gateway/" + replica,
+			ReplicaID: replica,
+		})
+		log.Printf("lenny-gateway: §25.5 operational events streaming to Redis %s", opsevents.DefaultStreamKey)
+	}
 
 	// §4.9 credential-pool registry, shared by the admin credential-pool
 	// CRUD and the §14 gitClone auth host-to-pool binding check.
@@ -1153,7 +1170,7 @@ func main() {
 			recommendations.NewWindowStore(7 * 24 * time.Hour),
 		))
 	adminRouter = adminRouter.
-		WithEventBuffer(opsEmitter.Buffer()).
+		WithEventBuffer(opsEventBuffer).
 		WithEventEmitter(opsEmitter).
 		WithOperationsInventory(operations.New())
 	if *elicitationFloor != "" {
@@ -1320,7 +1337,7 @@ func main() {
 		data, _ := json.Marshal(map[string]any{
 			"oldStatus": string(prev), "newStatus": string(curr),
 		})
-		opsEmitter.Emit(opsevents.OperationalEvent{
+		_, _ = opsEmitter.Emit(context.Background(), opsevents.OperationalEvent{
 			Source:          "/v1/admin/health",
 			Type:            opsevents.EventHealthStatusChanged.CloudEventsType(),
 			Severity:        "warning",
@@ -1740,6 +1757,24 @@ func main() {
 		}
 	}()
 
+	// §4.0 / §25.13: the per-replica in-process alert tracker drives the
+	// §16.5 catalog through inactive → pending → firing and emits
+	// alert_fired / alert_resolved through the shared EventEmitter. With
+	// no PromQL backend wired the tracker uses NoopExprEvaluator, which
+	// keeps every rule inactive — the fall-back posture for a
+	// Prometheus-less deployment. The wiring is unconditional so a
+	// future commit that supplies a real ExprEvaluator only swaps the
+	// backend, not the surface.
+	alertEvaluator := evaluator.NewWithEmitter(
+		rules.Catalog(),
+		evaluator.NoopExprEvaluator{},
+		evaluator.EventEmitOptions{
+			Emitter: opsEmitter,
+			Source:  "//lenny.dev/gateway/" + replica,
+		},
+	)
+	go alertEvaluator.Run(watchdogCtx)
+
 	stopCh := make(chan os.Signal, 1)
 	signal.Notify(stopCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
@@ -1918,7 +1953,7 @@ type sessionArtifactDeleter interface {
 type experimentRejectionReporter struct {
 	audit   admin.AuditSink
 	metrics *gatewaymetrics.Metrics
-	emitter *opsevents.Emitter
+	emitter opsevents.EventEmitter
 }
 
 func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx context.Context, ev sessionserver.ExperimentIsolationRejection) {
@@ -1945,7 +1980,7 @@ func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx cont
 	// the §25.3 event buffer so ops agents observe it without log scraping.
 	if e.emitter != nil {
 		data, _ := json.Marshal(detail)
-		e.emitter.Emit(opsevents.OperationalEvent{
+		_, _ = e.emitter.Emit(ctx, opsevents.OperationalEvent{
 			Source:          "/v1/sessions",
 			Type:            opsevents.EventExperimentIsolationMismatch.CloudEventsType(),
 			Severity:        "warning",

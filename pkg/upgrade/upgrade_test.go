@@ -3,6 +3,7 @@
 package upgrade_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -90,7 +91,7 @@ func TestAdvanceEmitsUpgradeProgressedOnEveryTransition(t *testing.T) {
 		{upgrade.Verification, upgrade.Complete},
 	}
 	for _, step := range want {
-		next, err := upgrade.Advance(em, "default-gvisor", phase, digest)
+		next, err := upgrade.Advance(context.Background(), em, "default-gvisor", phase, digest)
 		if err != nil {
 			t.Fatalf("Advance(%s): %v", phase, err)
 		}
@@ -131,7 +132,7 @@ func TestAdvanceEmitsUpgradeProgressedOnEveryTransition(t *testing.T) {
 
 // spec §4.0: a nil emitter is a no-op; the phase still advances.
 func TestAdvanceWithNilEmitterStillTransitions(t *testing.T) {
-	next, err := upgrade.Advance(nil, "default", upgrade.Preflight, "sha256:x")
+	next, err := upgrade.Advance(context.Background(), nil, "default", upgrade.Preflight, "sha256:x")
 	if err != nil || next != upgrade.OpsRoll {
 		t.Errorf("Advance(nil) = %s, %v; want OpsRoll, nil", next, err)
 	}
@@ -143,7 +144,7 @@ func TestAdvanceRejectsTerminalPhases(t *testing.T) {
 	buf := opsevents.NewEventBuffer(0)
 	em := opsevents.NewEmitter(buf, "test")
 	for _, p := range []upgrade.Phase{upgrade.Complete, upgrade.RolledBack, "Bogus"} {
-		if _, err := upgrade.Advance(em, "default", p, "sha256:x"); err == nil {
+		if _, err := upgrade.Advance(context.Background(), em, "default", p, "sha256:x"); err == nil {
 			t.Errorf("Advance(%s) = nil error, want a rejection", p)
 		}
 	}
@@ -157,7 +158,7 @@ func TestAdvanceRejectsTerminalPhases(t *testing.T) {
 func TestAdvanceRollbackEmitsRolledBackPhase(t *testing.T) {
 	buf := opsevents.NewEventBuffer(0)
 	em := opsevents.NewEmitter(buf, "test")
-	next, err := upgrade.AdvanceRollback(em, "default", upgrade.OpsRoll, "sha256:abc")
+	next, err := upgrade.AdvanceRollback(context.Background(), em, "default", upgrade.OpsRoll, "sha256:abc")
 	if err != nil || next != upgrade.RolledBack {
 		t.Fatalf("AdvanceRollback(OpsRoll) = %s, %v; want RolledBack, nil", next, err)
 	}
@@ -175,7 +176,7 @@ func TestAdvanceRollbackEmitsRolledBackPhase(t *testing.T) {
 func TestAdvanceRollbackRejectsLatePhases(t *testing.T) {
 	buf := opsevents.NewEventBuffer(0)
 	em := opsevents.NewEmitter(buf, "test")
-	if _, err := upgrade.AdvanceRollback(em, "default", upgrade.SchemaMigration, "sha256:x"); err == nil {
+	if _, err := upgrade.AdvanceRollback(context.Background(), em, "default", upgrade.SchemaMigration, "sha256:x"); err == nil {
 		t.Error("AdvanceRollback(SchemaMigration) = nil error, want a rejection past the point of no return")
 	}
 	if got := buf.Query(0, opsevents.EventFilter{}, 100); len(got.Events) != 0 {

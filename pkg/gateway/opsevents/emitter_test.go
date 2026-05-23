@@ -3,6 +3,8 @@
 package opsevents
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +15,10 @@ func TestEmitFillsEnvelope(t *testing.T) {
 	at := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	em.now = func() time.Time { return at }
 
-	id := em.Emit(OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"})
+	id, err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"})
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
 	if id != 1 {
 		t.Errorf("first emit id = %d, want 1", id)
 	}
@@ -36,9 +41,11 @@ func TestEmitFillsEnvelope(t *testing.T) {
 func TestEmitPreservesCallerSetFields(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(8), "replica-1")
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	em.Emit(OperationalEvent{
+	if _, err := em.Emit(context.Background(), OperationalEvent{
 		ID: "explicit-key", SpecVersion: "1.0.2", Type: "dev.lenny.x", Time: at,
-	})
+	}); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
 	got := em.Buffer().Query(0, EventFilter{}, 100).Events[0].Event
 	if got.ID != "explicit-key" {
 		t.Errorf("caller-set ID overwritten: %q", got.ID)
@@ -52,7 +59,9 @@ func TestEmitEventKeysAreUniqueAndMonotonic(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(64), "replica-1")
 	keys := map[string]bool{}
 	for i := 0; i < 50; i++ {
-		em.Emit(OperationalEvent{Type: "dev.lenny.x"})
+		if _, err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.x"}); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
 	}
 	page := em.Buffer().Query(0, EventFilter{}, 100)
 	for _, e := range page.Events {
@@ -68,9 +77,26 @@ func TestEmitEventKeysAreUniqueAndMonotonic(t *testing.T) {
 
 func TestNewEmitterDefaultsReplicaID(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(8), "")
-	em.Emit(OperationalEvent{Type: "dev.lenny.x"})
+	if _, err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.x"}); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
 	got := em.Buffer().Query(0, EventFilter{}, 100).Events[0].Event
 	if !strings.HasPrefix(got.ID, "gateway:") {
 		t.Errorf("empty replicaID must fall back to gateway: %q", got.ID)
+	}
+}
+
+// spec §4.0: ctx cancellation is honored by Emit so a shutdown does not
+// pin on an in-process buffer write.
+func TestEmitRespectsContextCancellation(t *testing.T) {
+	em := NewEmitter(NewEventBuffer(8), "replica-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := em.Emit(ctx, OperationalEvent{Type: "dev.lenny.x"}); !errors.Is(err, context.Canceled) {
+		t.Errorf("Emit on cancelled ctx returned %v, want context.Canceled", err)
+	}
+	page := em.Buffer().Query(0, EventFilter{}, 100)
+	if len(page.Events) != 0 {
+		t.Errorf("Emit on cancelled ctx wrote %d events, want 0", len(page.Events))
 	}
 }

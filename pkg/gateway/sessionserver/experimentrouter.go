@@ -127,7 +127,7 @@ func (s *Server) applyExperimentRouting(ctx context.Context, row *sessionstore.S
 	// §16.6: the first-match rule left every routable experiment created
 	// after the enrolled one unevaluated. Emit experiment.multi_eligible_skipped
 	// so deployers can audit enrollment overlap.
-	s.emitMultiEligibleSkipped(row, assignment.ExperimentID,
+	s.emitMultiEligibleSkipped(ctx, row, assignment.ExperimentID,
 		experiment.SkippedAfter(defs, assignment.ExperimentID, evaluator != nil))
 	return nil
 }
@@ -138,7 +138,7 @@ func (s *Server) applyExperimentRouting(ctx context.Context, row *sessionstore.S
 // unevaluated for an enrolled session. It is best-effort: a nil
 // emitter or an empty skipped set is a no-op, so experiment routing
 // never depends on the event buffer being wired.
-func (s *Server) emitMultiEligibleSkipped(row *sessionstore.Session, enrolledID string, skipped []string) {
+func (s *Server) emitMultiEligibleSkipped(ctx context.Context, row *sessionstore.Session, enrolledID string, skipped []string) {
 	if s.opsEmitter == nil || len(skipped) == 0 {
 		return
 	}
@@ -148,7 +148,7 @@ func (s *Server) emitMultiEligibleSkipped(row *sessionstore.Session, enrolledID 
 		"enrolled_experiment_id": enrolledID,
 		"skipped_experiment_ids": skipped,
 	})
-	s.opsEmitter.Emit(opsevents.OperationalEvent{
+	_, _ = s.opsEmitter.Emit(ctx, opsevents.OperationalEvent{
 		Source:          "/v1/sessions",
 		Type:            opsevents.EventExperimentMultiEligibleSkipped.CloudEventsType(),
 		Severity:        "info",
@@ -201,14 +201,14 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		result, err := client.Evaluate(ctx, experimentID, evalCtx)
 		if err != nil {
 			failed = true
-			s.emitExperimentTargetingFailed(row, string(cfg.Provider), err)
+			s.emitExperimentTargetingFailed(ctx, row, string(cfg.Provider), err)
 			return "", false
 		}
 		variantID, known := experiment.ResolveExternalVariant(
 			result.Variant, result.Value, variantIDsOf(candidates, experimentID),
 		)
 		if !known {
-			s.emitExperimentUnknownVariant(row, experimentID, string(cfg.Provider), result.Variant)
+			s.emitExperimentUnknownVariant(ctx, row, experimentID, string(cfg.Provider), result.Variant)
 			return "", false
 		}
 		return variantID, true
@@ -235,7 +235,7 @@ func variantIDsOf(candidates []experimentstore.Experiment, experimentID string) 
 // emitExperimentTargetingFailed records the §16.6
 // experiment.targeting_failed operational event. Best-effort: a nil
 // emitter is a no-op.
-func (s *Server) emitExperimentTargetingFailed(row *sessionstore.Session, provider string, evalErr error) {
+func (s *Server) emitExperimentTargetingFailed(ctx context.Context, row *sessionstore.Session, provider string, evalErr error) {
 	if s.opsEmitter == nil {
 		return
 	}
@@ -245,7 +245,7 @@ func (s *Server) emitExperimentTargetingFailed(row *sessionstore.Session, provid
 		"provider":  provider,
 		"error":     evalErr.Error(),
 	})
-	s.opsEmitter.Emit(opsevents.OperationalEvent{
+	_, _ = s.opsEmitter.Emit(ctx, opsevents.OperationalEvent{
 		Source:          "/v1/sessions",
 		Type:            opsevents.EventExperimentTargetingFailed.CloudEventsType(),
 		Severity:        "warning",
@@ -258,7 +258,7 @@ func (s *Server) emitExperimentTargetingFailed(row *sessionstore.Session, provid
 // experiment.unknown_variant_from_provider operational event when an
 // OpenFeature provider returns a variant the experiment does not
 // register. Best-effort: a nil emitter is a no-op.
-func (s *Server) emitExperimentUnknownVariant(row *sessionstore.Session, experimentID, provider, rawVariant string) {
+func (s *Server) emitExperimentUnknownVariant(ctx context.Context, row *sessionstore.Session, experimentID, provider, rawVariant string) {
 	if s.opsEmitter == nil {
 		return
 	}
@@ -269,7 +269,7 @@ func (s *Server) emitExperimentUnknownVariant(row *sessionstore.Session, experim
 		"provider":      provider,
 		"raw_variant":   rawVariant,
 	})
-	s.opsEmitter.Emit(opsevents.OperationalEvent{
+	_, _ = s.opsEmitter.Emit(ctx, opsevents.OperationalEvent{
 		Source:          "/v1/sessions",
 		Type:            opsevents.EventExperimentUnknownVariantFromProvider.CloudEventsType(),
 		Severity:        "warning",

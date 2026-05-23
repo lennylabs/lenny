@@ -104,11 +104,11 @@ const (
 )
 
 // EventEmitter is the §4.0 events sink the WarmPoolController publishes
-// pool_state_changed events through. *opsevents.Emitter satisfies it. A
-// nil EventEmitter on Reconciler disables emission.
-type EventEmitter interface {
-	Emit(opsevents.OperationalEvent) uint64
-}
+// pool_state_changed events through. Aliased to opsevents.EventEmitter
+// so the spec's single interface is reused; *opsevents.Emitter and the
+// §25.5 Redis-stream emitter both satisfy it. A nil EventEmitter on
+// Reconciler disables emission.
+type EventEmitter = opsevents.EventEmitter
 
 // Reconciler is the §4.6.1 WarmPoolController. It reconciles one
 // SandboxWarmPool per pass.
@@ -199,7 +199,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update template %s status: %w", tmpl.Name, err)
 	}
-	r.observePoolPhase(&pool, decision)
+	r.observePoolPhase(ctx, &pool, decision)
 	return ctrl.Result{}, nil
 }
 
@@ -236,7 +236,7 @@ func DerivePoolPhase(minWarm int, decision plan.Plan) PoolPhase {
 // pool_state_changed event when the phase differs from the prior pass.
 // Emission is per spec §4.0 pool state manager. A nil Events sink is a
 // no-op.
-func (r *Reconciler) observePoolPhase(pool *lennyv1.SandboxWarmPool, decision plan.Plan) {
+func (r *Reconciler) observePoolPhase(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision plan.Plan) {
 	current := DerivePoolPhase(int(pool.Spec.MinWarm), decision)
 	key := pool.Namespace + "/" + pool.Name
 
@@ -253,12 +253,12 @@ func (r *Reconciler) observePoolPhase(pool *lennyv1.SandboxWarmPool, decision pl
 		// emitting; spurious "ready→ready" notifications carry no signal.
 		return
 	}
-	r.emitPoolStateChanged(pool.Name, prev, current)
+	r.emitPoolStateChanged(ctx, pool.Name, prev, current)
 }
 
 // emitPoolStateChanged publishes the §16.6 pool_state_changed event per
 // spec §4.0 with pool name, oldState, and newState.
-func (r *Reconciler) emitPoolStateChanged(pool string, oldPhase, newPhase PoolPhase) {
+func (r *Reconciler) emitPoolStateChanged(ctx context.Context, pool string, oldPhase, newPhase PoolPhase) {
 	if r.Events == nil {
 		return
 	}
@@ -271,13 +271,15 @@ func (r *Reconciler) emitPoolStateChanged(pool string, oldPhase, newPhase PoolPh
 		"oldState": string(oldPhase),
 		"newState": string(newPhase),
 	})
-	r.Events.Emit(opsevents.OperationalEvent{
+	if _, err := r.Events.Emit(ctx, opsevents.OperationalEvent{
 		Source:          "//lenny.dev/warmpool",
 		Type:            opsevents.EventPoolStateChanged.CloudEventsType(),
 		Severity:        severity,
 		DataContentType: "application/json",
 		Data:            data,
-	})
+	}); err != nil {
+		logf.FromContext(ctx).Error(err, "emit pool_state_changed", "pool", pool)
+	}
 }
 
 // observedPhase maps a Sandbox's reported phase to a state.State. A

@@ -139,7 +139,7 @@ type Router struct {
 
 	recommendations     RecommendationService
 	eventBuffer         EventBufferQuerier
-	eventEmitter        *opsevents.Emitter
+	eventEmitter        opsevents.EventEmitter
 	operationsInventory OperationsInventory
 
 	kmsProbe         KMSProbe

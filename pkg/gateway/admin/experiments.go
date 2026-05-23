@@ -208,7 +208,7 @@ func (r *Router) checkTenantIsolationFloor(ctx context.Context, principal authmw
 			// §16.6: surface the advisory on the operational-event buffer
 			// so ops agents observe it through GET /v1/admin/events/buffer.
 			// One event per offending variant per admission call.
-			r.emitOpsEvent(opsevents.EventExperimentVariantWeakerThanFloor, "warning", map[string]any{
+			r.emitOpsEvent(ctx, opsevents.EventExperimentVariantWeakerThanFloor, "warning", map[string]any{
 				"tenant_id":              exp.TenantID,
 				"experiment_id":          exp.ID,
 				"variant_id":             v.ID,

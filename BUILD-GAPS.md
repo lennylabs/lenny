@@ -290,28 +290,28 @@ are not yet deduplicated; treat related findings as a cluster.
 - **Gap:** The unified event-stream service that combines SSE, polling, and webhook delivery (one service, three transports) is split across components and missing the SSE / polling transports on `lenny-ops`.
 - **Suggested resolution:** Add `pkg/ops/events/service.go` that consumes the Redis-streamed operational events and exposes `GET /v1/admin/events/stream` (SSE) and `GET /v1/admin/events?cursor=` (polling) on `lenny-ops`, while continuing to fan out to the existing webhook subscriptions.
 
-### - [ ] F-4.0.9 — Bundled alerting rules not compiled into gateway or lenny-ops [Medium] — OPEN
+### - [ ] F-4.0.9 — Bundled alerting rules not compiled into gateway or lenny-ops [Medium] — CLOSED
 
 - **Spec:** "`pkg/alerting/rules` — shared bundled alerting rules, compiled into both the gateway and `lenny-ops`." (line 11)
 - **Evidence:** `grep -rln "alerting/rules" cmd/lenny-gateway/ cmd/lenny-ops/` returns no matches. The only importer is `cmd/gen-alerting-rules/main.go:33`, a build-time YAML renderer. The alerting state evaluator `pkg/alerting/evaluator/evaluator.go` exists but is only imported by its own test file (`grep -rln "alerting/evaluator" .` returns only `pkg/alerting/evaluator/evaluator_test.go`).
 - **Gap:** The shared rule bundle is reachable as YAML via Prometheus but is not compiled into the runtime binaries that the spec names. No runtime alert state evaluator runs.
 - **Suggested resolution:** Import `pkg/alerting/rules` (and `pkg/alerting/evaluator`) into `cmd/lenny-gateway/main.go` and `cmd/lenny-ops/main.go`, instantiate the evaluator against the local `MetricReader`, and emit `alert_fired` / `alert_resolved` events through the existing emitter.
 
-### - [ ] F-4.0.10 — `EventEmitter` is a concrete struct rather than an interface [Medium] — OPEN
+### - [ ] F-4.0.10 — `EventEmitter` is a concrete struct rather than an interface [Medium] — CLOSED
 
 - **Spec:** "`EventEmitter` interface and in-memory ring buffer. Every subsystem that emits operational events depends on this package." (line 13) and "The subsystems below take `EventEmitter` as a constructor dependency and call `Emit(ctx, event)` at the documented state-change point." (line 29)
 - **Evidence:** `pkg/gateway/opsevents/emitter.go:19` declares `type Emitter struct` — no interface is exported. Every consumer takes the concrete `*opsevents.Emitter` (e.g., `pkg/gateway/sessionserver/sessionserver.go:328 OpsEmitter *opsevents.Emitter`, `pkg/gateway/admin/tenants.go:142 eventEmitter *opsevents.Emitter`). The `Emit` method signature is `Emit(event OperationalEvent) uint64` (`emitter.go:40`) — no `ctx` argument, contradicting the spec's `Emit(ctx, event)` contract.
 - **Gap:** Subsystems depend on a concrete type rather than an interface; the signature drops the ctx the spec calls for; substituting a Redis-backed emitter (the `§25.3` future destination noted at `emitter.go:17`) requires constructor type changes across every consumer.
 - **Suggested resolution:** Extract `EventEmitter` interface (`Emit(ctx context.Context, event OperationalEvent) (uint64, error)`) in `pkg/gateway/opsevents`, make the current struct satisfy it, and switch all consumers from `*opsevents.Emitter` to the interface. Thread `ctx` through emit sites so cancellation propagates.
 
-### - [ ] F-4.0.11 — Pool-state and warm-pool emitters not threaded into controller binary [Medium] — OPEN
+### - [ ] F-4.0.11 — Pool-state and warm-pool emitters not threaded into controller binary [Medium] — CLOSED
 
 - **Spec:** "The subsystems below take `EventEmitter` as a constructor dependency..." (line 29; warm-pool / pool-state row at line 32)
 - **Evidence:** `cmd/lenny-controller/main.go` carries no `opsevents` import (verified by `grep`). The warm-pool reconciler (`pkg/controller/warmpool/controller.go`) does not accept an emitter and there is no event bus shared with the gateway. The controllers and the gateway process emit on separate buses since the gateway's `opsEmitter` is instantiated in `cmd/lenny-gateway/main.go:877` only.
 - **Gap:** Even after F-4.0.2 is fixed in the warm-pool reconciler, there is no event transport between `lenny-controller` and the gateway / `lenny-ops` event buffer. The §25.3 Redis-stream destination is unimplemented (catalog file comment at `pkg/gateway/opsevents/emitter.go:16-18`).
 - **Suggested resolution:** Build a Redis-stream-backed `EventEmitter` in `pkg/gateway/opsevents` (or `pkg/ops/events`), wire it into the controller, gateway, and `lenny-ops` binaries so every subsystem writes to the same logical stream, and let the gateway's in-memory ring buffer remain a tail of that stream.
 
-### - [ ] F-4.0.12 — `pkg/ops/runbooks/index.go` is named `runbooks.go` / `steps.go` [Low] — OPEN
+### - [ ] F-4.0.12 — `pkg/ops/runbooks/index.go` is named `runbooks.go` / `steps.go` [Low] — CLOSED
 
 - **Spec:** "`pkg/ops/runbooks/index.go` — runbook index with structured-step parser." (line 20)
 - **Evidence:** `ls pkg/ops/runbooks/` shows `runbooks.go`, `steps.go`. Functionality matches (front-matter parser plus structured-step parser at `pkg/ops/runbooks/steps.go:26-52`), but `index.go` does not exist.

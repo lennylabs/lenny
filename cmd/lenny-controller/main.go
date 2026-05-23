@@ -46,6 +46,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // buildScheme assembles the runtime scheme the manager uses: the
@@ -89,6 +90,8 @@ func main() {
 		egressCaptureImage string
 		postgresDSN        string
 		agentNSList        string
+		redisURL           string
+		redisPassword      string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -106,6 +109,10 @@ func main() {
 		"Postgres connection string. When set, the WarmPoolController mirrors Sandbox status to the §4.6.1 agent_pod_state table (the migrations/ schema must already be applied). When empty, mirroring is disabled.")
 	flag.StringVar(&agentNSList, "agent-namespaces", os.Getenv("LENNY_AGENT_NAMESPACES"),
 		"comma-separated agent namespaces. When set, the §13.2 NET-022 cluster-CIDR drift detector audits the broad-internet egress NetworkPolicies in these namespaces every 5 minutes. When empty, drift detection is disabled.")
+	flag.StringVar(&redisURL, "redis-url", os.Getenv("LENNY_REDIS_URL"),
+		"Redis connection URL for the §25.5 operational event stream. When set, controller-emitted pool_state_changed events land on ops:events:stream alongside the gateway-emitted events. When empty, events stay in the controller-local in-memory buffer.")
+	flag.StringVar(&redisPassword, "redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
+		"Redis AUTH password.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -146,15 +153,31 @@ func main() {
 
 	// §4.0 pool state manager: the controller emits §16.6
 	// pool_state_changed events on every derived PoolPhase transition.
-	// The emitter writes to the controller-local in-memory ring buffer;
-	// lenny-ops aggregates per-replica buffers per §25.3, so the buffer
-	// surface is sufficient for v1. Future commits route the writes onto
-	// the shared Redis stream alongside the gateway's writes.
+	// §25.5: when --redis-url is set, every emit also lands on the
+	// platform-scoped ops:events:stream alongside the gateway-emitted
+	// events; lenny-ops reads from that one stream. When Redis is not
+	// configured the emitter writes only to the controller-local
+	// in-memory ring buffer — the §25.5 per-replica buffer fall-back.
 	controllerReplicaID := os.Getenv("HOSTNAME")
 	if controllerReplicaID == "" {
 		controllerReplicaID = "controller"
 	}
-	opsEmitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), controllerReplicaID)
+	opsEventBuffer := opsevents.NewEventBuffer(0)
+	var opsEmitter opsevents.EventEmitter = opsevents.NewEmitter(opsEventBuffer, controllerReplicaID)
+	if redisURL != "" {
+		redisClient, err := redisconn.NewClient(redisconn.Config{URL: redisURL, Password: redisPassword})
+		if err != nil {
+			log.Fatalf("lenny-controller: redis client: %v", err)
+		}
+		defer func() { _ = redisClient.Close() }()
+		opsEmitter = opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+			Client:    redisClient,
+			Buffer:    opsEventBuffer,
+			Source:    "//lenny.dev/controller/" + controllerReplicaID,
+			ReplicaID: controllerReplicaID,
+		})
+		log.Printf("lenny-controller: §25.5 operational events streaming to Redis %s", opsevents.DefaultStreamKey)
+	}
 
 	warmPool := &warmpool.Reconciler{
 		Client: mgr.GetClient(),

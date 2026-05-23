@@ -46,6 +46,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 
+	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/alerting/rules"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
@@ -296,6 +299,42 @@ func main() {
 		log.Fatalf("lenny-ops: build service: %v", err)
 	}
 
+	// The §25.5 operational-event stream service. lenny-ops emits the
+	// events it originates (ops_health_status_changed, escalation_*,
+	// remediation_lock_*, drift_detected, platform_upgrade_*,
+	// operation_progressed) into this service; subsystems take it as
+	// the §4.0 EventEmitter dependency. When Redis is wired the events
+	// also land on the platform-scoped ops:events:stream alongside the
+	// gateway-emitted events; until then the events.Service in-memory
+	// buffer is the only delivery surface (per §25.5 cold-start).
+	eventStream := events.New(events.Options{})
+
+	// §4.0 EventEmitter for lenny-ops subsystems. With Redis configured
+	// every emit also writes to the §25.5 platform-scoped Redis stream;
+	// without Redis the local events.Service is the only destination.
+	var opsEmitter opsevents.EventEmitter = eventStream
+	if redisClient != nil {
+		opsEmitter = newRedisFanOutEmitter(redisClient, eventStream, replicaID)
+		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s", opsevents.DefaultStreamKey)
+	}
+
+	// §4.0 / §25.13: the in-process alert tracker. lenny-ops has no
+	// PromQL backend wired in this commit, so the evaluator runs with
+	// NoopExprEvaluator and no rule fires — the §25.5 alert events come
+	// from Prometheus's `/api/v1/alerts` aggregation rather than this
+	// evaluator until a real backend lands. The wiring is unconditional
+	// so a future commit that supplies a real ExprEvaluator only swaps
+	// the backend.
+	alertEvaluator := evaluator.NewWithEmitter(
+		rules.Catalog(),
+		evaluator.NoopExprEvaluator{},
+		evaluator.EventEmitOptions{
+			Emitter: opsEmitter,
+			Source:  "//lenny.dev/ops/" + replicaID,
+		},
+	)
+	go alertEvaluator.Run(ctx)
+
 	// The §25.4 HTTP surface. Every replica serves it, leader or not. It
 	// hosts the §25.6 diagnostics, the §25.7 runbook index, the §25.4
 	// self-health, remediation-lock, and escalation endpoints, the
@@ -313,7 +352,7 @@ func main() {
 			Drift:          driftSvc,
 			Locks:          lockStore,
 			Escalations:    escalationSvc,
-			EventStream:    events.New(events.Options{}),
+			EventStream:    eventStream,
 			ReleaseChannel: releaseChannelPub,
 			Production:     *production,
 		}),

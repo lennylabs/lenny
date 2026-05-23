@@ -69,7 +69,7 @@ type credRenewalWiring struct {
 	// credential_pool_exhausted events on the renewal lifecycle. §4.0
 	// requires the credential pool manager to emit both events; a nil
 	// emitter is a no-op.
-	emitter *opsevents.Emitter
+	emitter opsevents.EventEmitter
 
 	mu sync.Mutex
 	// pools maps a tracked lease ID to the pool/provider it was minted
@@ -83,7 +83,7 @@ type credRenewalWiring struct {
 // record without a RotateCredentials push. emitter is the §4.0 events
 // sink for credential_rotated / credential_pool_exhausted; nil disables
 // emission without affecting the renewal lifecycle.
-func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry, emitter *opsevents.Emitter) *credRenewalWiring {
+func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry, emitter opsevents.EventEmitter) *credRenewalWiring {
 	if assign == nil {
 		return nil
 	}
@@ -245,7 +245,7 @@ func (w *credRenewalWiring) emitCredentialRotated(renewed credrenewal.Lease) {
 		"provider":     rp.provider,
 		"reason":       string(credential.TriggerProactiveRenewal),
 	})
-	w.emitter.Emit(opsevents.OperationalEvent{
+	_, _ = w.emitter.Emit(context.Background(), opsevents.OperationalEvent{
 		Source:          "//lenny.dev/credential-pool",
 		Type:            opsevents.EventCredentialRotated.CloudEventsType(),
 		Severity:        "info",
@@ -270,7 +270,7 @@ func (w *credRenewalWiring) emitCredentialPoolExhausted(lease credrenewal.Lease,
 		"leaseId":      lease.LeaseID,
 		"provider":     provider,
 	})
-	w.emitter.Emit(opsevents.OperationalEvent{
+	_, _ = w.emitter.Emit(context.Background(), opsevents.OperationalEvent{
 		Source:          "//lenny.dev/credential-pool",
 		Type:            opsevents.EventCredentialPoolExhausted.CloudEventsType(),
 		Severity:        "warning",

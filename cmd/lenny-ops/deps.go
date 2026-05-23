@@ -13,13 +13,71 @@ import (
 	"log"
 	"os"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
+	"github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
+
+// redisFanOutEmitter wires lenny-ops's §4.0 EventEmitter dependency to
+// both the §25.5 Redis stream and the in-process events.Service buffer.
+// Every Emit lands on the platform-scoped ops:events:stream so other
+// replicas (gateway, controller, peer lenny-ops) and downstream
+// watchdogs see the same event; the local events.Service captures a
+// copy so the SSE/polling endpoints continue to serve this replica's
+// emissions even when the consumer end of the stream has not been
+// wired yet (§25.5 cold-start guarantee).
+type redisFanOutEmitter struct {
+	stream *opsevents.StreamEmitter
+	local  *events.Service
+}
+
+// newRedisFanOutEmitter constructs an emitter that writes every event
+// to client and tees a copy through local.Publish so the local SSE
+// subscribers and polling cursor see it without depending on a
+// separate Redis consumer loop.
+func newRedisFanOutEmitter(client redis.UniversalClient, local *events.Service, replicaID string) *redisFanOutEmitter {
+	stream := opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+		Client: client,
+		// The local buffer the StreamEmitter writes through is the same
+		// data structure the events.Service maintains; using a separate
+		// buffer would split the read view. The events.Service Publish
+		// path covers the local-buffer write, so the stream emitter
+		// here only needs a private buffer to satisfy its non-nil
+		// requirement — the Publish below is the canonical local
+		// delivery.
+		Buffer:    opsevents.NewEventBuffer(0),
+		Source:    "//lenny.dev/ops/" + replicaID,
+		ReplicaID: replicaID,
+	})
+	return &redisFanOutEmitter{stream: stream, local: local}
+}
+
+// Emit publishes to the local events.Service first so SSE subscribers
+// and the polling cursor see the event immediately, then XADDs to the
+// §25.5 Redis stream. A Redis write failure is surfaced as the
+// returned error; the local publish has already succeeded so the §25.5
+// "fall back to gateway buffer" path is preserved.
+func (e *redisFanOutEmitter) Emit(ctx context.Context, event opsevents.OperationalEvent) (uint64, error) {
+	id, err := e.local.Publish(ctx, event)
+	if err != nil {
+		return id, err
+	}
+	if _, streamErr := e.stream.Emit(ctx, event); streamErr != nil {
+		return id, streamErr
+	}
+	return id, nil
+}
+
+// Compile-time guard that *redisFanOutEmitter satisfies the §4.0
+// EventEmitter contract.
+var _ opsevents.EventEmitter = (*redisFanOutEmitter)(nil)
 
 // noopElector is the §25.4 Elector used when lenny-ops has no
 // Kubernetes connection. It never grants leadership, so the
