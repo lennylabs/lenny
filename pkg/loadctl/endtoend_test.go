@@ -24,7 +24,7 @@ func TestEndToEndRunMovesToPass(t *testing.T) {
 	mem := dispatch.NewInMem(30 * time.Second)
 	submitter := &dispatch.InMemSubmitter{Mem: mem}
 	server, err := NewServer(Config{
-		StorageURL:  "s3://test",
+		StorageURL:  "file://" + t.TempDir(),
 		Submitter:   submitter,
 		RunDuration: 100 * time.Millisecond,
 	})
@@ -110,7 +110,7 @@ func TestProgressFlowPublishesViaHub(t *testing.T) {
 	mem := dispatch.NewInMem(30 * time.Second)
 	submitter := &dispatch.InMemSubmitter{Mem: mem}
 	server, err := NewServer(Config{
-		StorageURL:  "s3://test",
+		StorageURL:  "file://" + t.TempDir(),
 		Submitter:   submitter,
 		RunDuration: 500 * time.Millisecond,
 	})
@@ -224,7 +224,7 @@ func makeProgressPoster(loadctlURL string) exec.ProgressFn {
 // TestRunnerAckRejectsUnknownRun confirms the ack callback returns
 // 404 for unknown run IDs.
 func TestRunnerAckRejectsUnknownRun(t *testing.T) {
-	server, _ := NewServer(Config{StorageURL: "s3://test"})
+	server, _ := NewServer(Config{StorageURL: "file://" + t.TempDir()})
 	defer server.Close()
 	srv := httptest.NewServer(server.Handler())
 	defer srv.Close()
@@ -242,7 +242,7 @@ func TestMultiScenarioRunTracksCompletion(t *testing.T) {
 	mem := dispatch.NewInMem(30 * time.Second)
 	submitter := &dispatch.InMemSubmitter{Mem: mem}
 	server, _ := NewServer(Config{
-		StorageURL:  "s3://test",
+		StorageURL:  "file://" + t.TempDir(),
 		Submitter:   submitter,
 		RunDuration: 100 * time.Millisecond,
 	})

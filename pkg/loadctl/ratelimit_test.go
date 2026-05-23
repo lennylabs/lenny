@@ -11,7 +11,7 @@ import (
 
 func TestRateLimitBlocksRunCreate(t *testing.T) {
 	server, _ := NewServer(Config{
-		StorageURL:  "s3://test",
+		StorageURL:  "file://" + t.TempDir(),
 		RateLimit:   RateLimitConfig{RunCreatePerMinute: 2},
 		RunDuration: 50 * 1_000_000, // 50ms
 	})

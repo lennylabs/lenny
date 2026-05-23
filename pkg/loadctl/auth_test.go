@@ -24,7 +24,7 @@ func TestAuthDisabledByDefault(t *testing.T) {
 
 func TestAuthOperatorTokenRequired(t *testing.T) {
 	server, _ := NewServer(Config{
-		StorageURL: "s3://test",
+		StorageURL: "file://" + t.TempDir(),
 		Auth:       AuthConfig{OperatorTokens: []string{"op-token"}},
 	})
 	defer server.Close()
@@ -64,7 +64,7 @@ func TestAuthOperatorTokenRequired(t *testing.T) {
 
 func TestAuthScopeSeparation(t *testing.T) {
 	server, _ := NewServer(Config{
-		StorageURL: "s3://test",
+		StorageURL: "file://" + t.TempDir(),
 		Auth: AuthConfig{
 			OperatorTokens: []string{"op-token"},
 			RunnerTokens:   []string{"runner-token"},
@@ -99,7 +99,7 @@ func TestAuthScopeSeparation(t *testing.T) {
 
 func TestAuthPublicEndpoints(t *testing.T) {
 	server, _ := NewServer(Config{
-		StorageURL: "s3://test",
+		StorageURL: "file://" + t.TempDir(),
 		Auth:       AuthConfig{OperatorTokens: []string{"op-token"}},
 	})
 	defer server.Close()

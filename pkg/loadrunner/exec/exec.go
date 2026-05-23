@@ -71,6 +71,20 @@ type Config struct {
 	HeartbeatInt time.Duration
 	ProgressFn   ProgressFn
 	ProgressInt  time.Duration
+
+	// ReportUploader optionally uploads the per-scenario k6 summary
+	// JSON to the configured object store. The returned URL is
+	// included in the ack payload so loadctl can link to the raw
+	// run artefacts from the rendered report. A nil ReportUploader
+	// skips the upload and leaves Summary.ReportURL empty.
+	ReportUploader ReportUploader
+}
+
+// ReportUploader is the runner-side seam that publishes per-scenario
+// k6 outputs to an object store. The default implementation pushes
+// to pkg/objectstore; tests substitute a no-op.
+type ReportUploader interface {
+	UploadReport(ctx context.Context, j *dispatch.Job, summaryPath string) (string, error)
 }
 
 // Execute runs the scenario described by j, posts the ack callback
@@ -105,6 +119,15 @@ func Execute(ctx context.Context, cfg Config, j *dispatch.Job) (Summary, error) 
 		summary.Error = err.Error()
 	}
 
+	// Best-effort report upload before ack so the ack carries the URL.
+	if cfg.ReportUploader != nil {
+		if path := summaryPathFromRunner(cfg.Runner); path != "" {
+			if url, upErr := cfg.ReportUploader.UploadReport(ctx, j, path); upErr == nil {
+				summary.ReportURL = url
+			}
+		}
+	}
+
 	if cfg.LoadctlURL != "" {
 		if ackErr := postAck(ctx, cfg, j, summary); ackErr != nil {
 			// Surface the ack failure but keep the runner-side result
@@ -113,6 +136,17 @@ func Execute(ctx context.Context, cfg Config, j *dispatch.Job) (Summary, error) 
 		}
 	}
 	return summary, nil
+}
+
+// summaryPathFromRunner extracts the on-disk summary.json path from
+// a Runner that exposes one. Only K6Runner currently does so; other
+// runners return "" and the report-upload path is skipped.
+func summaryPathFromRunner(r Runner) string {
+	type summaryPather interface{ SummaryFilePath() string }
+	if sp, ok := r.(summaryPather); ok {
+		return sp.SummaryFilePath()
+	}
+	return ""
 }
 
 func startHeartbeat(ctx context.Context, cfg Config, j *dispatch.Job) func() {
@@ -215,8 +249,18 @@ type K6Runner struct {
 	// SummaryPath overrides the default `--summary-export` location.
 	SummaryPath string
 
-	mu      sync.Mutex
-	state   k6State
+	mu              sync.Mutex
+	state           k6State
+	lastSummaryPath string
+}
+
+// SummaryFilePath returns the on-disk path of the most recent k6
+// summary.json the runner wrote. Empty when no run has produced one
+// yet. Used by Execute's ReportUploader hook.
+func (r *K6Runner) SummaryFilePath() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastSummaryPath
 }
 
 // k6State is the parsed running aggregate the stdout parser
@@ -275,6 +319,9 @@ func (r *K6Runner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
 	if summaryPath == "" {
 		summaryPath = filepath.Join(filepath.Dir(scriptPath), "summary.json")
 	}
+	r.mu.Lock()
+	r.lastSummaryPath = summaryPath
+	r.mu.Unlock()
 	args := []string{"run",
 		"--vus", fmt.Sprintf("%d", j.VUs),
 		"--duration", j.Duration.String(),

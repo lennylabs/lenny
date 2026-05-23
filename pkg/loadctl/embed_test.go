@@ -18,7 +18,7 @@ func TestEmbeddedAssetsAvailable(t *testing.T) {
 }
 
 func TestServerServesEmbeddedIndex(t *testing.T) {
-	s, err := NewServer(Config{StorageURL: "s3://test"})
+	s, err := NewServer(Config{StorageURL: "file://" + t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestServerServesEmbeddedIndex(t *testing.T) {
 }
 
 func TestServerServesEmbeddedStylesheet(t *testing.T) {
-	s, _ := NewServer(Config{StorageURL: "s3://test"})
+	s, _ := NewServer(Config{StorageURL: "file://" + t.TempDir()})
 	defer s.Close()
 	srv := httptest.NewServer(s.Handler())
 	defer srv.Close()

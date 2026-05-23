@@ -15,7 +15,7 @@ import (
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	s, err := NewServer(Config{StorageURL: "s3://test"})
+	s, err := NewServer(Config{StorageURL: "file://" + t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestRunnerRegisterAndHeartbeat(t *testing.T) {
 
 func TestShutdownCancelsBackgroundGoroutines(t *testing.T) {
 	server, err := NewServer(Config{
-		StorageURL:  "s3://test",
+		StorageURL:  "file://" + t.TempDir(),
 		RunDuration: 100 * time.Millisecond,
 	})
 	if err != nil {

@@ -43,7 +43,7 @@ func TestTier12LocalDryRun(t *testing.T) {
 	submitter := &dispatch.InMemSubmitter{Mem: mem}
 
 	server, err := NewServer(Config{
-		StorageURL:  "s3://lenny-load-reports/dryrun",
+		StorageURL:  "file://" + t.TempDir(),
 		Submitter:   submitter,
 		RunDuration: 100 * time.Millisecond,
 	})

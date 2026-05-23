@@ -27,6 +27,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/loadrunner/dispatch"
 	"github.com/lennylabs/lenny/pkg/loadrunner/exec"
+	"github.com/lennylabs/lenny/pkg/objectstore"
 )
 
 func main() {
@@ -47,6 +48,7 @@ func run() error {
 		cloudLabel     = flag.String("cloud-label", "", "cloud descriptor exposed on the runner roster (aws|gcp|azure|local)")
 		registerHB     = flag.Duration("register-heartbeat", 30*time.Second, "how often to heartbeat to /api/v1/runners/{id}/heartbeat")
 		k6Binary       = flag.String("k6", "k6", "path to the k6 binary; falls back to a noop runner when missing")
+		reportURL      = flag.String("report-storage-url", "", "object-storage URL for per-scenario k6 summary uploads (file://, s3://, gs://, azureblob://). Empty disables uploads.")
 	)
 	flag.Parse()
 	runnerToken := os.Getenv("LENNY_LOADRUNNER_TOKEN")
@@ -83,6 +85,14 @@ func run() error {
 		go heartbeatLoop(ctx, client, *loadctlURL, id, *registerHB)
 	}
 
+	uploader, err := newReportUploader(*reportURL)
+	if err != nil {
+		return fmt.Errorf("report uploader: %w", err)
+	}
+	if uploader != nil {
+		defer uploader.Close()
+	}
+
 	cfg := exec.Config{
 		Runner:     &exec.K6Runner{Binary: *k6Binary},
 		LoadctlURL: *loadctlURL,
@@ -90,12 +100,45 @@ func run() error {
 		HeartbeatFn: func(ctx context.Context, j *dispatch.Job) error {
 			return d.Heartbeat(ctx, j)
 		},
-		HeartbeatInt: 30 * time.Second,
-		ProgressFn:   makeProgressFn(client, *loadctlURL),
-		ProgressInt:  time.Second,
+		HeartbeatInt:   30 * time.Second,
+		ProgressFn:     makeProgressFn(client, *loadctlURL),
+		ProgressInt:    time.Second,
+		ReportUploader: uploader,
 	}
 	return loop(ctx, d, cfg)
 }
+
+// newReportUploader builds the ReportUploader that publishes
+// per-scenario k6 summaries to the configured object storage. An
+// empty URL returns nil so the upload path is skipped — the dev
+// flow without object storage still produces acks, just without
+// a Summary.ReportURL.
+func newReportUploader(url string) (*objectReportUploader, error) {
+	if url == "" {
+		return nil, nil
+	}
+	store, err := objectstore.Open(url)
+	if err != nil {
+		return nil, err
+	}
+	return &objectReportUploader{store: store}, nil
+}
+
+type objectReportUploader struct {
+	store objectstore.Store
+}
+
+func (u *objectReportUploader) UploadReport(ctx context.Context, j *dispatch.Job, summaryPath string) (string, error) {
+	body, err := os.Open(summaryPath)
+	if err != nil {
+		return "", err
+	}
+	defer body.Close()
+	key := fmt.Sprintf("runs/%s/%s.json", j.RunID, j.Scenario)
+	return u.store.Put(ctx, key, body, "application/json")
+}
+
+func (u *objectReportUploader) Close() error { return u.store.Close() }
 
 // authedClient wraps http.DefaultClient with a Transport that
 // injects the configured Bearer token on every request. When the

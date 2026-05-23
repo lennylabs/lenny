@@ -3,6 +3,7 @@
 package loadctl
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/loadreport"
 	"github.com/lennylabs/lenny/pkg/loadrunner/dispatch"
+	"github.com/lennylabs/lenny/pkg/objectstore"
 )
 
 // Config configures a Server.
@@ -69,6 +72,7 @@ type Server struct {
 	hub       *Hub
 	submitter dispatch.Submitter
 	sink      ProgressSink
+	objects   objectstore.Store
 	metrics   *metricsBundle
 
 	// ctx scopes every background goroutine the server spawns
@@ -83,6 +87,11 @@ type Server struct {
 	runners   map[string]*Runner
 	baselines map[string]string
 	scenarios []Scenario
+
+	// scenarioMetrics is the in-memory per-run-scenario metrics map
+	// recordAck populates and completeRun consumes when rendering
+	// the per-run HTML report.
+	scenarioMetrics map[string]map[string]map[string]float64
 }
 
 // Run is a single tier-12 load run.
@@ -135,19 +144,26 @@ func NewServer(c Config) (*Server, error) {
 		_ = store.Close()
 		return nil, err
 	}
+	objects, err := objectstore.Open(c.StorageURL)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("loadctl: open StorageURL: %w", err)
+	}
 	srvCtx, cancel := context.WithCancel(context.Background())
 	return &Server{
-		config:    c,
-		store:     store,
-		hub:       NewHub(),
-		submitter: c.Submitter,
-		sink:      sink,
-		metrics:   newMetricsBundle(),
-		ctx:       srvCtx,
-		cancel:    cancel,
-		runners:   make(map[string]*Runner),
-		baselines: make(map[string]string),
-		scenarios: defaultScenarios(),
+		config:          c,
+		store:           store,
+		hub:             NewHub(),
+		submitter:       c.Submitter,
+		sink:            sink,
+		objects:         objects,
+		metrics:         newMetricsBundle(),
+		ctx:             srvCtx,
+		cancel:          cancel,
+		runners:         make(map[string]*Runner),
+		baselines:       make(map[string]string),
+		scenarios:       defaultScenarios(),
+		scenarioMetrics: make(map[string]map[string]map[string]float64),
 	}, nil
 }
 
@@ -405,6 +421,15 @@ func (s *Server) recordAck(run *Run, ack RunnerAck) (int, int) {
 		}
 		run.CurrentMetrics = strings.Join(existing, ";")
 	}
+	// Stash the per-scenario metrics for the report generator.
+	s.mu.Lock()
+	per, ok := s.scenarioMetrics[run.ID]
+	if !ok {
+		per = make(map[string]map[string]float64)
+		s.scenarioMetrics[run.ID] = per
+	}
+	per[ack.Scenario] = ack.Metrics
+	s.mu.Unlock()
 	completed := len(strings.Split(run.CurrentMetrics, ";"))
 	return completed, len(run.Scenarios)
 }
@@ -582,7 +607,9 @@ func (s *Server) completeRun(ctx context.Context, id, status string, ackErr erro
 	}
 	run.Status = status
 	run.CompletedAt = time.Now().UTC()
-	run.ReportURL = fmt.Sprintf("%s/runs/%s/report.html", s.config.StorageURL, id)
+	if url := s.renderReport(ctx, run); url != "" {
+		run.ReportURL = url
+	}
 	_ = s.store.UpdateRun(ctx, run)
 	if ackErr != nil {
 		s.hub.Publish(id, Event{Type: "error", Payload: ackErr.Error()})
@@ -590,6 +617,67 @@ func (s *Server) completeRun(ctx context.Context, id, status string, ackErr erro
 	s.hub.Publish(id, Event{Type: "status", Payload: run.Status})
 	s.hub.Close(id)
 	s.metrics.runsTerminal.WithLabelValues(status).Inc()
+}
+
+// renderReport collates the run's per-scenario metrics into a
+// loadreport.Run, renders the HTML report, and uploads it through
+// the configured ObjectStore. The returned URL is whatever the store
+// reports as the canonical access URL ("file://path", "s3://bucket/...",
+// etc.). On any error the function logs and returns "", which leaves
+// run.ReportURL empty so the UI surfaces "—".
+func (s *Server) renderReport(ctx context.Context, run *Run) string {
+	s.mu.Lock()
+	per := s.scenarioMetrics[run.ID]
+	s.mu.Unlock()
+	scenarios := make([]loadreport.ScenarioResult, 0, len(run.Scenarios))
+	outcomes := map[string]string{}
+	for _, pair := range strings.Split(run.CurrentMetrics, ";") {
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 {
+			outcomes[parts[0]] = parts[1]
+		}
+	}
+	for _, name := range run.Scenarios {
+		m := per[name]
+		sr := loadreport.ScenarioResult{
+			Name:      name,
+			Status:    outcomes[name],
+			ErrorRate: m["http_req_failed_rate"] * 100,
+			Latency: loadreport.Latency{
+				Avg: m["http_req_duration_avg"],
+				P50: m["http_req_duration_med"],
+				P95: m["http_req_duration_p(95)"],
+				P99: m["http_req_duration_p99"],
+				Max: m["http_req_duration_max"],
+			},
+		}
+		scenarios = append(scenarios, sr)
+	}
+	reportRun := &loadreport.Run{
+		ID:             run.ID,
+		Scale:          run.Scale,
+		ClusterRelease: run.ClusterRelease,
+		StartedAt:      run.StartedAt,
+		CompletedAt:    run.CompletedAt,
+		Scenarios:      scenarios,
+	}
+	body, err := loadreport.RenderBytes(reportRun)
+	if err != nil {
+		log.Printf("loadctl: report render: %v", err)
+		return ""
+	}
+	url, err := s.objects.Put(ctx, "runs/"+run.ID+"/report.html", bytes.NewReader(body), "text/html; charset=utf-8")
+	if err != nil {
+		log.Printf("loadctl: report upload: %v", err)
+		return ""
+	}
+	s.mu.Lock()
+	delete(s.scenarioMetrics, run.ID)
+	s.mu.Unlock()
+	return url
 }
 
 const (
