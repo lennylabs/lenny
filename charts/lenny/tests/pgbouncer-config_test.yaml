@@ -1,0 +1,55 @@
+suite: lenny-pgbouncer-config ConfigMap (§4.2 connect_query sentinel)
+templates:
+  - pgbouncer-config.yaml
+tests:
+  - it: renders the ConfigMap with the spec connect_query under stock values
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-pgbouncer-config
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: pgbouncer
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          # spec: §4.2 line 163 — fresh server connections must SET
+          # app.current_tenant = '__unset__'.
+          pattern: "connect_query = 'SET app.current_tenant = ''__unset__'''"
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "pool_mode = transaction"
+
+  - it: suppresses the ConfigMap when pgbouncer.enabled=false
+    set:
+      pgbouncer.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: honours a custom configMapName
+    set:
+      pgbouncer.configMapName: "acme-pgbouncer"
+    asserts:
+      - equal:
+          path: metadata.name
+          value: acme-pgbouncer
+
+  - it: honours a custom connect_query string for operators who deploy a per-tenant variant
+    set:
+      pgbouncer.connectQuery: "SET app.current_tenant = '__unset__'; SET statement_timeout = '30s'"
+    asserts:
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "SET app.current_tenant = ''__unset__''; SET statement_timeout = ''30s''"
+
+  - it: honours a session pool mode override
+    set:
+      pgbouncer.poolMode: "session"
+    asserts:
+      - matchRegex:
+          path: data["pgbouncer.ini"]
+          pattern: "pool_mode = session"

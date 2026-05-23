@@ -34,9 +34,10 @@ func policyName(t *testing.T) string {
 // tag-matched allow set and an explicit content policy, so the jsonb
 // body has nested Rules, Target maps and slices, and a ContentPolicy
 // to round-trip.
-func sampleDelegationPolicy(name string) delegationpolicystore.DelegationPolicy {
+func sampleDelegationPolicy(tenantID, name string) delegationpolicystore.DelegationPolicy {
 	return delegationpolicystore.DelegationPolicy{
-		Name: name,
+		TenantID: tenantID,
+		Name:     name,
 		Rules: []delegationpolicystore.Rule{
 			{
 				Target: delegationpolicystore.Target{
@@ -71,18 +72,22 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 	_, pg := startStore(t)
 	store := delegationpolicypg.New(pg.Pool)
 	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
 
 	t.Run("create and get round-trip preserves the nested jsonb body", func(t *testing.T) {
-		want := sampleDelegationPolicy(policyName(t))
+		want := sampleDelegationPolicy(tenant, policyName(t))
 		want.ContentPolicy.InterceptorRef = "pii-scanner"
 		want.ContentPolicy.ScanExportedFiles = true
 		want.AllowSelfRecursion = true
 		if err := store.Create(ctx, want); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		got, err := store.Get(ctx, want.Name)
+		got, err := store.Get(ctx, tenant, want.Name)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
+		}
+		if got.TenantID != tenant {
+			t.Errorf("TenantID round-trip: got %q, want %q", got.TenantID, tenant)
 		}
 		if got.Name != want.Name {
 			t.Errorf("Name = %q, want %q", got.Name, want.Name)
@@ -117,7 +122,7 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 	})
 
 	t.Run("duplicate, invalid name, negative size, and scan-without-interceptor are rejected", func(t *testing.T) {
-		p := sampleDelegationPolicy(policyName(t))
+		p := sampleDelegationPolicy(tenant, policyName(t))
 		if err := store.Create(ctx, p); err != nil {
 			t.Fatalf("first Create: %v", err)
 		}
@@ -125,18 +130,18 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 			t.Errorf("duplicate Create: got %v, want ErrAlreadyExists", err)
 		}
 		for _, name := range []string{"", "With Space", "UPPER", "-leading"} {
-			if err := store.Create(ctx, sampleDelegationPolicy(name)); err == nil {
+			if err := store.Create(ctx, sampleDelegationPolicy(tenant, name)); err == nil {
 				t.Errorf("Create with name %q: expected a validation error", name)
 			}
 		}
 		// §8.3: a negative content-policy size is rejected.
-		neg := sampleDelegationPolicy(policyName(t))
+		neg := sampleDelegationPolicy(tenant, policyName(t))
 		neg.ContentPolicy.MaxInputSize = -1
 		if err := store.Create(ctx, neg); err == nil {
 			t.Error("Create with a negative maxInputSize should be rejected")
 		}
 		// §8.3 rule 1: scanExportedFiles requires an interceptorRef.
-		scan := sampleDelegationPolicy(policyName(t))
+		scan := sampleDelegationPolicy(tenant, policyName(t))
 		scan.ContentPolicy.ScanExportedFiles = true // no InterceptorRef
 		if err := store.Create(ctx, scan); !errors.Is(err, delegationpolicystore.ErrScanRequiresInterceptor) {
 			t.Errorf("Create scanExportedFiles without interceptorRef: got %v, want ErrScanRequiresInterceptor", err)
@@ -144,18 +149,18 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 	})
 
 	t.Run("get missing returns ErrNotFound", func(t *testing.T) {
-		if _, err := store.Get(ctx, policyName(t)); !errors.Is(err, delegationpolicystore.ErrNotFound) {
+		if _, err := store.Get(ctx, tenant, policyName(t)); !errors.Is(err, delegationpolicystore.ErrNotFound) {
 			t.Errorf("Get missing: got %v, want ErrNotFound", err)
 		}
 	})
 
 	t.Run("update mutates, advances updated_at, and re-validates", func(t *testing.T) {
 		name := policyName(t)
-		if err := store.Create(ctx, sampleDelegationPolicy(name)); err != nil {
+		if err := store.Create(ctx, sampleDelegationPolicy(tenant, name)); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		before, _ := store.Get(ctx, name)
-		updated, err := store.Update(ctx, name, func(p *delegationpolicystore.DelegationPolicy) error {
+		before, _ := store.Get(ctx, tenant, name)
+		updated, err := store.Update(ctx, tenant, name, func(p *delegationpolicystore.DelegationPolicy) error {
 			p.AllowSelfRecursion = true
 			p.ContentPolicy.MaxInputSize = 4096
 			return nil
@@ -169,13 +174,13 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 		if !updated.UpdatedAt.After(before.UpdatedAt) {
 			t.Errorf("UpdatedAt did not advance: before=%v after=%v", before.UpdatedAt, updated.UpdatedAt)
 		}
-		persisted, _ := store.Get(ctx, name)
+		persisted, _ := store.Get(ctx, tenant, name)
 		if !persisted.AllowSelfRecursion || persisted.ContentPolicy.MaxInputSize != 4096 {
 			t.Errorf("Update not persisted: %+v", persisted)
 		}
 		// §8.3 rule 1 is enforced on the update path too: turning on
 		// scanExportedFiles without an interceptorRef must be rejected.
-		if _, err := store.Update(ctx, name, func(p *delegationpolicystore.DelegationPolicy) error {
+		if _, err := store.Update(ctx, tenant, name, func(p *delegationpolicystore.DelegationPolicy) error {
 			p.ContentPolicy.ScanExportedFiles = true
 			return nil
 		}); !errors.Is(err, delegationpolicystore.ErrScanRequiresInterceptor) {
@@ -183,12 +188,12 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 		}
 		// A mutate error aborts the write.
 		sentinel := errors.New("mutate boom")
-		if _, err := store.Update(ctx, name, func(*delegationpolicystore.DelegationPolicy) error {
+		if _, err := store.Update(ctx, tenant, name, func(*delegationpolicystore.DelegationPolicy) error {
 			return sentinel
 		}); !errors.Is(err, sentinel) {
 			t.Errorf("Update mutate error: got %v, want sentinel", err)
 		}
-		if _, err := store.Update(ctx, policyName(t), func(*delegationpolicystore.DelegationPolicy) error {
+		if _, err := store.Update(ctx, tenant, policyName(t), func(*delegationpolicystore.DelegationPolicy) error {
 			return nil
 		}); !errors.Is(err, delegationpolicystore.ErrNotFound) {
 			t.Errorf("Update missing: got %v, want ErrNotFound", err)
@@ -199,13 +204,13 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 		marker := "dp-" + newUUID(t)[:8]
 		names := []string{marker + "-a", marker + "-b", marker + "-c"}
 		for _, name := range names {
-			if err := store.Create(ctx, sampleDelegationPolicy(name)); err != nil {
+			if err := store.Create(ctx, sampleDelegationPolicy(tenant, name)); err != nil {
 				t.Fatalf("Create %s: %v", name, err)
 			}
 		}
 		marked := func(filter delegationpolicystore.ListFilter) []delegationpolicystore.DelegationPolicy {
 			t.Helper()
-			all, err := store.List(ctx, filter)
+			all, err := store.List(ctx, tenant, filter)
 			if err != nil {
 				t.Fatalf("List: %v", err)
 			}
@@ -222,13 +227,13 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 			t.Fatalf("List: not name-ascending or wrong count: %d", len(all))
 		}
 
-		if err := store.SoftDelete(ctx, names[0], time.Now().UTC()); err != nil {
+		if err := store.SoftDelete(ctx, tenant, names[0], time.Now().UTC()); err != nil {
 			t.Fatalf("SoftDelete: %v", err)
 		}
-		if err := store.SoftDelete(ctx, names[0], time.Now().UTC()); err != nil {
+		if err := store.SoftDelete(ctx, tenant, names[0], time.Now().UTC()); err != nil {
 			t.Errorf("idempotent SoftDelete: %v", err)
 		}
-		if err := store.SoftDelete(ctx, policyName(t), time.Now().UTC()); !errors.Is(err, delegationpolicystore.ErrNotFound) {
+		if err := store.SoftDelete(ctx, tenant, policyName(t), time.Now().UTC()); !errors.Is(err, delegationpolicystore.ErrNotFound) {
 			t.Errorf("SoftDelete missing: got %v, want ErrNotFound", err)
 		}
 		if n := len(marked(delegationpolicystore.ListFilter{})); n != 2 {
@@ -238,7 +243,7 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 			t.Errorf("List IncludeDeleted after delete: %d marked, want 3", n)
 		}
 		// Get still returns the soft-deleted row, reporting inactive.
-		deleted, err := store.Get(ctx, names[0])
+		deleted, err := store.Get(ctx, tenant, names[0])
 		if err != nil || deleted.IsActive() {
 			t.Errorf("Get soft-deleted: %+v err=%v; want inactive", deleted, err)
 		}
@@ -250,7 +255,8 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 		// decision as the in-memory implementation.
 		name := policyName(t)
 		p := delegationpolicystore.DelegationPolicy{
-			Name: name,
+			TenantID: tenant,
+			Name:     name,
 			Rules: []delegationpolicystore.Rule{
 				{Target: delegationpolicystore.Target{Types: []string{"agent"}}, Allow: true},
 				{Target: delegationpolicystore.Target{IDs: []string{"untrusted"}}, Allow: false},
@@ -259,7 +265,7 @@ func TestDelegationPolicyStoreContract(t *testing.T) {
 		if err := store.Create(ctx, p); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		loaded, err := store.Get(ctx, name)
+		loaded, err := store.Get(ctx, tenant, name)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}

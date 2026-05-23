@@ -26,21 +26,25 @@ func connectorID(t *testing.T) string {
 	return "conn-" + newUUID(t)[:8]
 }
 
-// spec: 9.3
+// spec: 9.3, §4.2 line 173
 // diagnosis: the Postgres-backed connector registry in
 // pkg/gateway/connectorstore/pgstore did not behave as specified.
-// Create and Get must round-trip a connector, the §9.3 validation must
-// reject SSRF-prone http:// endpoints and inline client secrets,
-// Update must re-validate and advance updated_at, and the soft-delete
-// lifecycle must honor the IncludeDeleted list filter.
+// Create and Get must round-trip a connector under its owning tenant,
+// the §9.3 validation must reject SSRF-prone http:// endpoints and
+// inline client secrets, Update must re-validate and advance
+// updated_at, and the soft-delete lifecycle must honor the
+// IncludeDeleted list filter. §4.2 line 173 scopes the registry by
+// tenant, so every operation threads a tenant id.
 func TestConnectorStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)
 	store := connectorpg.New(pg.Pool)
 	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
 
 	t.Run("create and get round-trip", func(t *testing.T) {
 		want := connectorstore.Connector{
+			TenantID:     tenant,
 			ID:           connectorID(t),
 			DisplayName:  "GitHub",
 			MCPServerURL: "https://mcp.github.com",
@@ -59,9 +63,12 @@ func TestConnectorStoreContract(t *testing.T) {
 		if err := store.Create(ctx, want); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		got, err := store.Get(ctx, want.ID)
+		got, err := store.Get(ctx, tenant, want.ID)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
+		}
+		if got.TenantID != tenant {
+			t.Errorf("TenantID round-trip: got %q, want %q", got.TenantID, tenant)
 		}
 		if got.DisplayName != want.DisplayName || got.MCPServerURL != want.MCPServerURL ||
 			got.Transport != want.Transport || got.Visibility != want.Visibility {
@@ -85,8 +92,9 @@ func TestConnectorStoreContract(t *testing.T) {
 
 	t.Run("duplicate, invalid id, and SSRF URLs are rejected", func(t *testing.T) {
 		c := connectorstore.Connector{
-			ID: connectorID(t), MCPServerURL: "https://mcp.example.com",
-			Transport: "streamable_http",
+			TenantID: tenant, ID: connectorID(t),
+			MCPServerURL: "https://mcp.example.com",
+			Transport:    "streamable_http",
 		}
 		if err := store.Create(ctx, c); err != nil {
 			t.Fatalf("first Create: %v", err)
@@ -95,29 +103,31 @@ func TestConnectorStoreContract(t *testing.T) {
 			t.Errorf("duplicate Create: got %v, want ErrAlreadyExists", err)
 		}
 		if err := store.Create(ctx, connectorstore.Connector{
-			ID: "Invalid ID", MCPServerURL: "https://mcp.example.com",
+			TenantID: tenant, ID: "Invalid ID", MCPServerURL: "https://mcp.example.com",
 		}); err == nil {
 			t.Error("Create with an invalid id should be rejected")
 		}
 		// §9.3 security: an http:// endpoint must be rejected so a
 		// connector cannot become an SSRF pivot.
 		err := store.Create(ctx, connectorstore.Connector{
-			ID: connectorID(t), MCPServerURL: "http://internal.metadata.local",
+			TenantID: tenant, ID: connectorID(t),
+			MCPServerURL: "http://internal.metadata.local",
 		})
 		if err == nil || !strings.Contains(err.Error(), "https") {
 			t.Errorf("Create with an http:// URL should be rejected for SSRF, got %v", err)
 		}
 		// §9.3 security: the client secret must be a reference, never inline.
 		if err := store.Create(ctx, connectorstore.Connector{
-			ID: connectorID(t), MCPServerURL: "https://mcp.example.com",
-			Auth: &connectorstore.ConnectorAuth{Type: "oauth2", ClientSecretRef: "rawsecretvalue"},
+			TenantID: tenant, ID: connectorID(t),
+			MCPServerURL: "https://mcp.example.com",
+			Auth:         &connectorstore.ConnectorAuth{Type: "oauth2", ClientSecretRef: "rawsecretvalue"},
 		}); err == nil {
 			t.Error("Create with an inline client secret should be rejected")
 		}
 	})
 
 	t.Run("get missing returns ErrNotFound", func(t *testing.T) {
-		if _, err := store.Get(ctx, connectorID(t)); !errors.Is(err, connectorstore.ErrNotFound) {
+		if _, err := store.Get(ctx, tenant, connectorID(t)); !errors.Is(err, connectorstore.ErrNotFound) {
 			t.Errorf("Get missing: got %v, want ErrNotFound", err)
 		}
 	})
@@ -125,12 +135,13 @@ func TestConnectorStoreContract(t *testing.T) {
 	t.Run("update mutates, advances updated_at, and re-validates", func(t *testing.T) {
 		id := connectorID(t)
 		if err := store.Create(ctx, connectorstore.Connector{
-			ID: id, MCPServerURL: "https://mcp.example.com", Transport: "streamable_http",
+			TenantID: tenant, ID: id,
+			MCPServerURL: "https://mcp.example.com", Transport: "streamable_http",
 		}); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		before, _ := store.Get(ctx, id)
-		updated, err := store.Update(ctx, id, func(c *connectorstore.Connector) error {
+		before, _ := store.Get(ctx, tenant, id)
+		updated, err := store.Update(ctx, tenant, id, func(c *connectorstore.Connector) error {
 			c.DisplayName = "Renamed"
 			return nil
 		})
@@ -144,13 +155,13 @@ func TestConnectorStoreContract(t *testing.T) {
 			t.Errorf("UpdatedAt did not advance: before=%v after=%v", before.UpdatedAt, updated.UpdatedAt)
 		}
 		// A mutation to an http:// URL must be rejected by Validate.
-		if _, err := store.Update(ctx, id, func(c *connectorstore.Connector) error {
+		if _, err := store.Update(ctx, tenant, id, func(c *connectorstore.Connector) error {
 			c.MCPServerURL = "http://evil.local"
 			return nil
 		}); err == nil {
 			t.Error("Update to an http:// URL should be rejected")
 		}
-		if _, err := store.Update(ctx, connectorID(t), func(*connectorstore.Connector) error {
+		if _, err := store.Update(ctx, tenant, connectorID(t), func(*connectorstore.Connector) error {
 			return nil
 		}); !errors.Is(err, connectorstore.ErrNotFound) {
 			t.Errorf("Update missing: got %v, want ErrNotFound", err)
@@ -162,14 +173,15 @@ func TestConnectorStoreContract(t *testing.T) {
 		ids := []string{marker + "-a", marker + "-b", marker + "-c"}
 		for _, id := range ids {
 			if err := store.Create(ctx, connectorstore.Connector{
-				ID: id, MCPServerURL: "https://mcp.example.com", Transport: "streamable_http",
+				TenantID: tenant, ID: id,
+				MCPServerURL: "https://mcp.example.com", Transport: "streamable_http",
 			}); err != nil {
 				t.Fatalf("Create %s: %v", id, err)
 			}
 		}
 		marked := func(filter connectorstore.ListFilter) []connectorstore.Connector {
 			t.Helper()
-			all, err := store.List(ctx, filter)
+			all, err := store.List(ctx, tenant, filter)
 			if err != nil {
 				t.Fatalf("List: %v", err)
 			}
@@ -186,13 +198,13 @@ func TestConnectorStoreContract(t *testing.T) {
 			t.Fatalf("List: not id-ascending or wrong count: %d", len(all))
 		}
 
-		if err := store.SoftDelete(ctx, ids[0], time.Now().UTC()); err != nil {
+		if err := store.SoftDelete(ctx, tenant, ids[0], time.Now().UTC()); err != nil {
 			t.Fatalf("SoftDelete: %v", err)
 		}
-		if err := store.SoftDelete(ctx, ids[0], time.Now().UTC()); err != nil {
+		if err := store.SoftDelete(ctx, tenant, ids[0], time.Now().UTC()); err != nil {
 			t.Errorf("idempotent SoftDelete: %v", err)
 		}
-		if err := store.SoftDelete(ctx, connectorID(t), time.Now().UTC()); !errors.Is(err, connectorstore.ErrNotFound) {
+		if err := store.SoftDelete(ctx, tenant, connectorID(t), time.Now().UTC()); !errors.Is(err, connectorstore.ErrNotFound) {
 			t.Errorf("SoftDelete missing: got %v, want ErrNotFound", err)
 		}
 		if n := len(marked(connectorstore.ListFilter{})); n != 2 {
@@ -201,9 +213,53 @@ func TestConnectorStoreContract(t *testing.T) {
 		if n := len(marked(connectorstore.ListFilter{IncludeDeleted: true})); n != 3 {
 			t.Errorf("List IncludeDeleted after delete: %d marked, want 3", n)
 		}
-		deleted, err := store.Get(ctx, ids[0])
+		deleted, err := store.Get(ctx, tenant, ids[0])
 		if err != nil || deleted.IsActive() {
 			t.Errorf("Get soft-deleted: %+v err=%v; want inactive", deleted, err)
+		}
+	})
+
+	// spec: §4.2 line 173 — tenant-isolation: a connector created in
+	// tenant A is not visible from tenant B, and the AllTenantsSentinel
+	// surfaces both rows to platform-admin readers.
+	t.Run("tenant isolation and AllTenantsSentinel", func(t *testing.T) {
+		other := freshTenant(t, ctx, pg)
+		idA := connectorID(t)
+		idB := connectorID(t)
+		if err := store.Create(ctx, connectorstore.Connector{
+			TenantID: tenant, ID: idA,
+			MCPServerURL: "https://mcp.example.com", Transport: "streamable_http",
+		}); err != nil {
+			t.Fatalf("Create A: %v", err)
+		}
+		if err := store.Create(ctx, connectorstore.Connector{
+			TenantID: other, ID: idB,
+			MCPServerURL: "https://mcp.example.com", Transport: "streamable_http",
+		}); err != nil {
+			t.Fatalf("Create B: %v", err)
+		}
+		if _, err := store.Get(ctx, tenant, idB); !errors.Is(err, connectorstore.ErrNotFound) {
+			t.Errorf("cross-tenant Get B from A: got %v, want ErrNotFound", err)
+		}
+		if _, err := store.Get(ctx, other, idA); !errors.Is(err, connectorstore.ErrNotFound) {
+			t.Errorf("cross-tenant Get A from B: got %v, want ErrNotFound", err)
+		}
+		// AllTenantsSentinel surfaces both.
+		all, err := store.List(ctx, connectorstore.AllTenantsSentinel, connectorstore.ListFilter{})
+		if err != nil {
+			t.Fatalf("List under AllTenantsSentinel: %v", err)
+		}
+		var sawA, sawB bool
+		for _, c := range all {
+			if c.ID == idA && c.TenantID == tenant {
+				sawA = true
+			}
+			if c.ID == idB && c.TenantID == other {
+				sawB = true
+			}
+		}
+		if !sawA || !sawB {
+			t.Errorf("__all__ list missing rows: sawA=%v sawB=%v", sawA, sawB)
 		}
 	})
 }

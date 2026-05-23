@@ -256,6 +256,47 @@ observability:
   # instead of the in-cluster namespace/pod selector (§13.2 NET-046).
   otlpCIDR: ""
 
+# pgbouncer configures the §4.2 / §12.3 PgBouncer connect_query
+# sentinel ConfigMap. The chart does not deploy PgBouncer itself
+# (the pooler is operator-managed: self-hosted on a separate workload
+# or an out-of-cluster managed offering such as AWS RDS Proxy or
+# Cloud SQL Connectors). What it does render is a ConfigMap carrying
+# the pgbouncer.ini fragment that sets connect_query to the §4.2
+# line 163 sentinel: every fresh server connection PgBouncer opens
+# to Postgres begins with SET app.current_tenant = '__unset__', so a
+# pooled connection that has not yet been claimed by a tenant-aware
+# transaction cannot leak prior context.
+#
+# Operators mount this ConfigMap onto their PgBouncer pod (typical
+# path: /etc/pgbouncer/pgbouncer.ini) and trust the values from the
+# `pgbouncer` block here to be the source of truth.
+#
+# spec: §4.2 line 163 ("PgBouncer's connect_query is configured to
+# set a sentinel value (SET app.current_tenant = '__unset__') on
+# every fresh connection checkout")
+pgbouncer:
+  # enabled gates rendering of the ConfigMap. Leave true so the
+  # connect_query sentinel always ships with the chart; deployers
+  # who rely on an external pooler that mints its own configuration
+  # set this to false to suppress the ConfigMap.
+  enabled: true
+  # configMapName is the name the ConfigMap renders under in the
+  # release namespace. Operators reference it in their PgBouncer
+  # workload's volumeMounts.
+  configMapName: "lenny-pgbouncer-config"
+  # connectQuery is the SQL run on every fresh server connection
+  # PgBouncer opens to Postgres. The default sets the §4.2
+  # app.current_tenant sentinel so an unclaimed pooled connection is
+  # rejected by the lenny_tenant_guard trigger and by RLS before any
+  # tenant data could leak.
+  connectQuery: "SET app.current_tenant = '__unset__'"
+  # poolMode is the PgBouncer pool mode the ConfigMap stamps. The
+  # §12.3 transaction-mode posture requires transaction pooling; the
+  # tier-2 leak harness exercises session mode to drive the
+  # connection-reuse case, so deployers MAY override on their own
+  # PgBouncer install.
+  poolMode: "transaction"
+
 # postgres configures the Postgres connection.
 postgres:
   # cidr is the destination CIDR PgBouncer is allowed to reach

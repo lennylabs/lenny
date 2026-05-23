@@ -76,6 +76,38 @@ func InAllTenants(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error
 	return nil
 }
 
+// InAdminMode runs fn inside a transaction that has set
+// lenny.admin_mode = 'true'. The §4.2 line 177 trigger on
+// runtime_tenant_access and pool_tenant_access rejects any write
+// without this GUC, so platform-admin code paths that mutate the
+// tenant-access join tables MUST wrap their writes in this helper.
+// The platform-admin RBAC verification is the caller's
+// responsibility — InAdminMode only sets the DB-level sentinel that
+// satisfies the lenny_admin_mode_required trigger.
+//
+// spec: §4.2 line 177 ("BEFORE INSERT/UPDATE/DELETE trigger ...
+// validates that current_setting('lenny.admin_mode', true) = 'true'
+// (set by the gateway only for platform-admin code paths via SET
+// LOCAL)")
+func InAdminMode(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("pgtenant: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		"SELECT set_config('lenny.admin_mode', 'true', true)"); err != nil {
+		return fmt.Errorf("pgtenant: set admin_mode: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("pgtenant: commit: %w", err)
+	}
+	return nil
+}
+
 // NullTime maps a zero time.Time to a SQL NULL, so a nullable
 // TIMESTAMPTZ column distinguishes "unset" from a real instant.
 func NullTime(t time.Time) *time.Time {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -16,7 +17,11 @@ import (
 // DelegationPolicyPayload is the §8.3 / §15.1 admin DelegationPolicy
 // wire shape.
 type DelegationPolicyPayload struct {
-	Name               string                  `json:"name"`
+	Name string `json:"name"`
+	// TenantID is read-only on the wire — the admin handler resolves
+	// it from the principal (or, for platform-admin, the optional
+	// body.tenantId / ?tenant_id= override).
+	TenantID           string                  `json:"tenantId,omitempty"`
 	Rules              []DelegationRulePayload `json:"rules,omitempty"`
 	ContentPolicy      ContentPolicyPayload    `json:"contentPolicy"`
 	AllowSelfRecursion bool                    `json:"allowSelfRecursion,omitempty"`
@@ -50,6 +55,7 @@ type ContentPolicyPayload struct {
 func fromDelegationPolicy(p delegationpolicystore.DelegationPolicy) DelegationPolicyPayload {
 	out := DelegationPolicyPayload{
 		Name:               p.Name,
+		TenantID:           p.TenantID,
 		AllowSelfRecursion: p.AllowSelfRecursion,
 		ContentPolicy: ContentPolicyPayload{
 			MaxInputSize:        p.ContentPolicy.MaxInputSize,
@@ -163,7 +169,19 @@ func (r *Router) handleCreateDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
 		return
 	}
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID, err := resolveTargetTenant(principal, req, body.TenantID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
 	p := delegationpolicystore.DelegationPolicy{
+		TenantID:           tenantID,
 		Name:               body.Name,
 		Rules:              toDelegationRules(body.Rules),
 		ContentPolicy:      toContentPolicy(body.ContentPolicy),
@@ -181,14 +199,9 @@ func (r *Router) handleCreateDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeDelegationPolicyStoreError(w, err)
 		return
 	}
-	stored, _ := r.delegationPolicies.Get(req.Context(), body.Name)
-	principal, ok := authmw.FromContext(req.Context())
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"admin handler reached without authenticated principal", nil)
-		return
-	}
+	stored, _ := r.delegationPolicies.Get(req.Context(), tenantID, body.Name)
 	r.emit(req.Context(), principal, "admin.delegation_policy.created", body.Name, map[string]any{
+		"tenant_id":          tenantID,
 		"ruleCount":          len(stored.Rules),
 		"scanExportedFiles":  stored.ContentPolicy.ScanExportedFiles,
 		"allowSelfRecursion": stored.AllowSelfRecursion,
@@ -199,7 +212,14 @@ func (r *Router) handleCreateDelegationPolicy(w http.ResponseWriter, req *http.R
 }
 
 func (r *Router) handleListDelegationPolicies(w http.ResponseWriter, req *http.Request) {
-	rows, err := r.delegationPolicies.List(req.Context(), delegationpolicystore.ListFilter{
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID := delegationPolicyListScope(principal, req)
+	rows, err := r.delegationPolicies.List(req.Context(), tenantID, delegationpolicystore.ListFilter{
 		IncludeDeleted: req.URL.Query().Get("includeDeleted") == "true",
 	})
 	if err != nil {
@@ -216,7 +236,14 @@ func (r *Router) handleListDelegationPolicies(w http.ResponseWriter, req *http.R
 
 func (r *Router) handleGetDelegationPolicy(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
-	row, err := r.delegationPolicies.Get(req.Context(), name)
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID := delegationPolicyListScope(principal, req)
+	row, err := r.delegationPolicies.Get(req.Context(), tenantID, name)
 	if err != nil {
 		if errors.Is(err, delegationpolicystore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)
@@ -229,6 +256,22 @@ func (r *Router) handleGetDelegationPolicy(w http.ResponseWriter, req *http.Requ
 	_ = json.NewEncoder(w).Encode(fromDelegationPolicy(row))
 }
 
+// delegationPolicyListScope mirrors listTenantScope for delegation
+// policies. tenant-admins read their own tenant; platform-admins read
+// across tenants by default and may narrow with ?tenant_id=.
+//
+// spec: §4.2 line 172 / §10.6 — tenant-admins see only their own
+// tenant; platform-admins see all tenants with optional filter.
+func delegationPolicyListScope(p authmw.Principal, req *http.Request) string {
+	if !p.HasRole(auth.RolePlatformAdmin) {
+		return p.TenantID
+	}
+	if t := req.URL.Query().Get("tenant_id"); t != "" {
+		return t
+	}
+	return delegationpolicystore.AllTenantsSentinel
+}
+
 // handleUpdateDelegationPolicy implements PUT — a full replace of the
 // mutable fields (rules, contentPolicy, allowSelfRecursion).
 func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.Request) {
@@ -238,8 +281,19 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
 		return
 	}
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID, err := resolveTargetTenant(principal, req, body.TenantID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
 	var oldScan bool
-	updated, err := r.delegationPolicies.Update(req.Context(), name, func(p *delegationpolicystore.DelegationPolicy) error {
+	updated, err := r.delegationPolicies.Update(req.Context(), tenantID, name, func(p *delegationpolicystore.DelegationPolicy) error {
 		oldScan = p.ContentPolicy.ScanExportedFiles
 		p.Rules = toDelegationRules(body.Rules)
 		p.ContentPolicy = toContentPolicy(body.ContentPolicy)
@@ -255,13 +309,9 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeDelegationPolicyStoreError(w, err)
 		return
 	}
-	principal, ok := authmw.FromContext(req.Context())
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"admin handler reached without authenticated principal", nil)
-		return
-	}
-	r.emit(req.Context(), principal, "admin.delegation_policy.updated", name, nil)
+	r.emit(req.Context(), principal, "admin.delegation_policy.updated", name, map[string]any{
+		"tenant_id": tenantID,
+	})
 	r.emitScanExportedFilesTransition(req.Context(), principal, name,
 		oldScan, updated.ContentPolicy.ScanExportedFiles, rfc3339Nano(updated.UpdatedAt))
 	w.Header().Set("Content-Type", "application/json")
@@ -308,13 +358,24 @@ func (r *Router) delegationPolicyRuntimeDependents(ctx context.Context, name str
 // are not enumerable from the admin Router.
 func (r *Router) handleDeleteDelegationPolicy(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID, err := resolveTargetTenant(principal, req, "")
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
 	if dep, ok := r.delegationPolicyRuntimeDependents(req.Context(), name); ok {
 		writeError(w, http.StatusConflict, "RESOURCE_HAS_DEPENDENTS",
 			"delegation policy is referenced by one or more runtimes",
 			map[string]any{"dependents": []map[string]any{dep}})
 		return
 	}
-	if err := r.delegationPolicies.SoftDelete(req.Context(), name, r.clock()); err != nil {
+	if err := r.delegationPolicies.SoftDelete(req.Context(), tenantID, name, r.clock()); err != nil {
 		if errors.Is(err, delegationpolicystore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)
 			return
@@ -322,12 +383,8 @@ func (r *Router) handleDeleteDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	principal, ok := authmw.FromContext(req.Context())
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"admin handler reached without authenticated principal", nil)
-		return
-	}
-	r.emit(req.Context(), principal, "admin.delegation_policy.soft_deleted", name, nil)
+	r.emit(req.Context(), principal, "admin.delegation_policy.soft_deleted", name, map[string]any{
+		"tenant_id": tenantID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }

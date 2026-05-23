@@ -6,11 +6,12 @@
 // `allowedRuntimes` / `allowedConnectors` / `allowedPools` runtime
 // fields with named, tag-matched allow/deny rule sets.
 //
-// Per §8.3 a DelegationPolicy is platform-global (no tenant_id): it is
-// referenced by runtimes and delegation leases across tenants. This
-// store is the source of truth for the policy record itself; the
-// tag-matching evaluation that consumes it lives in the delegation
-// service.
+// spec: §4.2 line 172 — delegation policies are tenant-scoped. Each
+// row carries a `tenant_id` column under the standard
+// lenny_tenant_isolation RLS policy, and the §8.3 references from
+// runtimes (`delegationPolicyRef`) and leases (`maxDelegationPolicy`)
+// resolve to a policy in the same tenant as the runtime/lease
+// owner. platform-admin reads pass the AllTenantsSentinel.
 package delegationpolicystore
 
 import (
@@ -69,12 +70,23 @@ type ContentPolicy struct {
 	MaxExportedFileSize int64
 }
 
+// AllTenantsSentinel is the §4.2 platform-admin cross-tenant value
+// accepted by every Store read. Writes always require a concrete
+// tenant id.
+const AllTenantsSentinel = "__all__"
+
 // DelegationPolicy is the §8.3 first-class delegation-policy resource:
 // a named, tag-matched allow/deny rule set plus a content policy and
 // the `allowSelfRecursion` cycle-detection opt-in.
 type DelegationPolicy struct {
+	// TenantID is the §4.2 line 172 tenant-scoping column. Each
+	// policy belongs to exactly one tenant; (TenantID, Name) is the
+	// primary key.
+	TenantID string
+
 	// Name is the §8.3 policy identifier, referenced by
-	// `delegationPolicyRef` and `maxDelegationPolicy`.
+	// `delegationPolicyRef` and `maxDelegationPolicy`, unique within
+	// a tenant.
 	Name string
 
 	// Rules is the ordered tag-based allow/deny rule set.
@@ -120,13 +132,16 @@ func ApplyDefaults(p *DelegationPolicy) {
 	}
 }
 
-// Store is the §8.3 DelegationPolicy registry contract.
+// Store is the §8.3 DelegationPolicy registry contract. Every method
+// takes the §4.2 line 172 tenant context: a concrete tenant id scopes
+// the operation to that tenant; the AllTenantsSentinel sentinel
+// (`__all__`) lets a platform-admin code path span tenants on reads.
 type Store interface {
 	Create(ctx context.Context, p DelegationPolicy) error
-	Get(ctx context.Context, name string) (DelegationPolicy, error)
-	Update(ctx context.Context, name string, mutate func(*DelegationPolicy) error) (DelegationPolicy, error)
-	List(ctx context.Context, filter ListFilter) ([]DelegationPolicy, error)
-	SoftDelete(ctx context.Context, name string, at time.Time) error
+	Get(ctx context.Context, tenantID, name string) (DelegationPolicy, error)
+	Update(ctx context.Context, tenantID, name string, mutate func(*DelegationPolicy) error) (DelegationPolicy, error)
+	List(ctx context.Context, tenantID string, filter ListFilter) ([]DelegationPolicy, error)
+	SoftDelete(ctx context.Context, tenantID, name string, at time.Time) error
 }
 
 // ListFilter narrows the List result.
@@ -173,6 +188,9 @@ func ValidateName(name string) error {
 // interceptor dependency. Every Store implementation runs it before
 // committing a policy.
 func Validate(p DelegationPolicy) error {
+	if p.TenantID == "" {
+		return errors.New("delegationpolicystore: tenant_id is required")
+	}
 	if err := ValidateName(p.Name); err != nil {
 		return err
 	}
@@ -189,23 +207,32 @@ func Validate(p DelegationPolicy) error {
 }
 
 // Memory is the in-memory Store implementation backing tests and the
-// minimal gateway.
+// minimal gateway. Policies are keyed by (tenant_id, name) so two
+// tenants may register a policy with the same logical name.
 type Memory struct {
-	mu       sync.RWMutex
-	policies map[string]DelegationPolicy
+	mu sync.RWMutex
+	// policies[tenant_id][name] = DelegationPolicy
+	policies map[string]map[string]DelegationPolicy
 }
 
 // NewMemory returns an empty Memory store.
-func NewMemory() *Memory { return &Memory{policies: map[string]DelegationPolicy{}} }
+func NewMemory() *Memory {
+	return &Memory{policies: map[string]map[string]DelegationPolicy{}}
+}
 
-// Create implements Store.
+// Create implements Store. The tenant id is read from p.TenantID.
 func (m *Memory) Create(_ context.Context, p DelegationPolicy) error {
 	if err := Validate(p); err != nil {
 		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.policies[p.Name]; exists {
+	tenant, ok := m.policies[p.TenantID]
+	if !ok {
+		tenant = map[string]DelegationPolicy{}
+		m.policies[p.TenantID] = tenant
+	}
+	if _, exists := tenant[p.Name]; exists {
 		return ErrAlreadyExists
 	}
 	now := time.Now().UTC()
@@ -215,27 +242,48 @@ func (m *Memory) Create(_ context.Context, p DelegationPolicy) error {
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = p.CreatedAt
 	}
-	m.policies[p.Name] = clonePolicy(p)
+	tenant[p.Name] = clonePolicy(p)
 	return nil
 }
 
-// Get implements Store. Soft-deleted policies are returned; callers
-// consult DelegationPolicy.IsActive to filter.
-func (m *Memory) Get(_ context.Context, name string) (DelegationPolicy, error) {
+// Get implements Store. tenantID may be the AllTenantsSentinel value
+// for a platform-admin read that does not know which tenant owns the
+// policy. Soft-deleted policies are returned; callers consult
+// DelegationPolicy.IsActive to filter.
+func (m *Memory) Get(_ context.Context, tenantID, name string) (DelegationPolicy, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	row, ok := m.policies[name]
+	if tenantID == AllTenantsSentinel {
+		for _, tenant := range m.policies {
+			if row, ok := tenant[name]; ok {
+				return clonePolicy(row), nil
+			}
+		}
+		return DelegationPolicy{}, ErrNotFound
+	}
+	tenant, ok := m.policies[tenantID]
+	if !ok {
+		return DelegationPolicy{}, ErrNotFound
+	}
+	row, ok := tenant[name]
 	if !ok {
 		return DelegationPolicy{}, ErrNotFound
 	}
 	return clonePolicy(row), nil
 }
 
-// Update implements Store.
-func (m *Memory) Update(_ context.Context, name string, mutate func(*DelegationPolicy) error) (DelegationPolicy, error) {
+// Update implements Store. tenantID must be a concrete tenant id.
+func (m *Memory) Update(_ context.Context, tenantID, name string, mutate func(*DelegationPolicy) error) (DelegationPolicy, error) {
+	if tenantID == "" || tenantID == AllTenantsSentinel {
+		return DelegationPolicy{}, errors.New("delegationpolicystore: Update requires a concrete tenant_id")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.policies[name]
+	tenant, ok := m.policies[tenantID]
+	if !ok {
+		return DelegationPolicy{}, ErrNotFound
+	}
+	row, ok := tenant[name]
 	if !ok {
 		return DelegationPolicy{}, ErrNotFound
 	}
@@ -244,6 +292,7 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*DelegationP
 	if err := mutate(&row); err != nil {
 		return DelegationPolicy{}, err
 	}
+	row.TenantID = tenantID
 	if err := Validate(row); err != nil {
 		return DelegationPolicy{}, err
 	}
@@ -252,31 +301,54 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*DelegationP
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	m.policies[name] = clonePolicy(row)
+	tenant[name] = clonePolicy(row)
 	return clonePolicy(row), nil
 }
 
-// List implements Store, returning policies in name order.
-func (m *Memory) List(_ context.Context, filter ListFilter) ([]DelegationPolicy, error) {
+// List implements Store, returning policies in (tenant_id, name)
+// order. tenantID is either a concrete tenant id or the
+// AllTenantsSentinel for a platform-admin read across tenants.
+func (m *Memory) List(_ context.Context, tenantID string, filter ListFilter) ([]DelegationPolicy, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := make([]DelegationPolicy, 0, len(m.policies))
-	for _, row := range m.policies {
-		if !filter.IncludeDeleted && !row.IsActive() {
-			continue
+	var out []DelegationPolicy
+	emit := func(tenant map[string]DelegationPolicy) {
+		for _, row := range tenant {
+			if !filter.IncludeDeleted && !row.IsActive() {
+				continue
+			}
+			out = append(out, clonePolicy(row))
 		}
-		out = append(out, clonePolicy(row))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if tenantID == AllTenantsSentinel {
+		for _, tenant := range m.policies {
+			emit(tenant)
+		}
+	} else if tenant, ok := m.policies[tenantID]; ok {
+		emit(tenant)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TenantID != out[j].TenantID {
+			return out[i].TenantID < out[j].TenantID
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 
 // SoftDelete implements Store. A second SoftDelete of the same policy
-// is a no-op.
-func (m *Memory) SoftDelete(_ context.Context, name string, at time.Time) error {
+// is a no-op. tenantID must be a concrete tenant id.
+func (m *Memory) SoftDelete(_ context.Context, tenantID, name string, at time.Time) error {
+	if tenantID == "" || tenantID == AllTenantsSentinel {
+		return errors.New("delegationpolicystore: SoftDelete requires a concrete tenant_id")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.policies[name]
+	tenant, ok := m.policies[tenantID]
+	if !ok {
+		return ErrNotFound
+	}
+	row, ok := tenant[name]
 	if !ok {
 		return ErrNotFound
 	}
@@ -285,7 +357,7 @@ func (m *Memory) SoftDelete(_ context.Context, name string, at time.Time) error 
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
-	m.policies[name] = row
+	tenant[name] = row
 	return nil
 }
 

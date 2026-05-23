@@ -148,8 +148,15 @@ func TestReconciledDelegationPolicyRouteAuthorization(t *testing.T) {
 		{"user", withUserPrincipal, http.MethodPost, "/v1/admin/delegation-policies", validDelegationPolicy("np"), http.StatusForbidden, false},
 	} {
 		router, _, _, policies, _, _ := newReconcileAdmin(t)
-		if err := policies.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
-			t.Fatalf("seed policy: %v", err)
+		// Seed under both `platform` (platform-admin reads/writes) and
+		// `acme` (tenant-admin reads/writes), so the §4.2 line 172
+		// per-tenant policy registry has a row resolvable from either
+		// principal.
+		if err := policies.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
+			t.Fatalf("seed policy (platform): %v", err)
+		}
+		if err := policies.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "acme", Name: "p1"}); err != nil {
+			t.Fatalf("seed policy (acme): %v", err)
 		}
 		rr := doAdminReq(t, router.Handler(), c.method, c.path, c.body, c.as)
 		assertAuth(t, c, rr.Code, rr.Body.String())
@@ -169,8 +176,11 @@ func TestReconciledRouteCustomRoleGrant(t *testing.T) {
 	if err := pools.Create(ctx, poolstore.Pool{Name: "p", RuntimeRef: "echo"}); err != nil {
 		t.Fatalf("seed pool: %v", err)
 	}
-	if err := policies.Create(ctx, delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
-		t.Fatalf("seed policy: %v", err)
+	if err := policies.Create(ctx, delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
+		t.Fatalf("seed policy (platform): %v", err)
+	}
+	if err := policies.Create(ctx, delegationpolicystore.DelegationPolicy{TenantID: "acme", Name: "p1"}); err != nil {
+		t.Fatalf("seed policy (acme): %v", err)
 	}
 	if _, err := access.Grant(ctx, tenantaccessstore.KindRuntime, "echo", "acme", "admin", time.Time{}); err != nil {
 		t.Fatalf("seed runtime grant: %v", err)
@@ -304,7 +314,7 @@ func TestReconciledRouteRejectsUnauthenticated(t *testing.T) {
 	ctx := context.Background()
 	_ = runtimes.Create(ctx, runtimestore.Runtime{Name: "echo"})
 	_ = pools.Create(ctx, poolstore.Pool{Name: "p"})
-	_ = policies.Create(ctx, delegationpolicystore.DelegationPolicy{Name: "p1"})
+	_ = policies.Create(ctx, delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"})
 	noPrincipal := func(req *http.Request) *http.Request { return req }
 	for _, c := range []struct {
 		method, path string

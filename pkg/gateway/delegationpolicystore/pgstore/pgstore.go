@@ -5,17 +5,17 @@
 // delegation_policies table. It is a drop-in alternative to
 // delegationpolicystore.Memory.
 //
-// delegation_policies is platform-global (§8.3): a policy is
-// referenced by runtimes and delegation leases across tenants, so the
-// table carries no tenant_id and operations run as plain queries
-// without an app.current_tenant context. Create and Update run
-// delegationpolicystore.Validate so the §8.3 structural invariants —
-// including the scanExportedFiles / interceptorRef dependency — hold
-// regardless of backend.
+// spec: §4.2 line 172 — delegation policies are tenant-scoped. Each
+// row carries a `tenant_id` column under the standard
+// lenny_tenant_guard trigger and lenny_tenant_isolation RLS policy.
+// Every operation runs inside a pgtenant transaction that sets
+// app.current_tenant to the caller's tenant id (concrete value for
+// tenant-admin paths, the AllTenantsSentinel for platform-admin
+// reads).
 //
 // The policy body (the tag-matched Rules, the contentPolicy block, and
-// allowSelfRecursion) is stored in a single jsonb column; the policy
-// name and the audit timestamps are typed columns.
+// allowSelfRecursion) is stored in a single jsonb column; the
+// (tenant_id, name) tuple and the audit timestamps are typed columns.
 package pgstore
 
 import (
@@ -46,12 +46,12 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 var _ delegationpolicystore.Store = (*Store)(nil)
 
 // selectList is the column projection for reads.
-const selectList = `name, policy, created_at, updated_at, deleted_at`
+const selectList = `tenant_id, name, policy, created_at, updated_at, deleted_at`
 
-// policyBody is the jsonb-serialized §8.3 policy body. The policy name
-// and audit timestamps live in their own columns; everything that
-// describes the policy's behavior is carried here so a future field
-// addition does not require a migration.
+// policyBody is the jsonb-serialized §8.3 policy body. The tuple
+// (tenant_id, name) and the audit timestamps live in their own
+// columns; everything that describes the policy's behavior is carried
+// here so a future field addition does not require a migration.
 type policyBody struct {
 	Rules              []delegationpolicystore.Rule        `json:"rules,omitempty"`
 	ContentPolicy      delegationpolicystore.ContentPolicy `json:"contentPolicy"`
@@ -59,7 +59,8 @@ type policyBody struct {
 }
 
 // Create inserts a new delegation-policy row after running the §8.3
-// validation. Returns ErrAlreadyExists when the name is taken.
+// validation. Returns ErrAlreadyExists when (tenant_id, name)
+// collides.
 func (s *Store) Create(ctx context.Context, p delegationpolicystore.DelegationPolicy) error {
 	if err := delegationpolicystore.Validate(p); err != nil {
 		return err
@@ -75,124 +76,173 @@ func (s *Store) Create(ctx context.Context, p delegationpolicystore.DelegationPo
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `INSERT INTO delegation_policies (
-		name, policy, created_at, updated_at, deleted_at
-	) VALUES ($1, $2::jsonb, $3, $4, $5)`,
-		p.Name, body, p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt))
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return delegationpolicystore.ErrAlreadyExists
-	}
-	return err
+	return pgtenant.InTx(ctx, s.pool, p.TenantID, func(tx pgx.Tx) error {
+		_, ierr := tx.Exec(ctx, `INSERT INTO delegation_policies (
+			tenant_id, name, policy, created_at, updated_at, deleted_at
+		) VALUES ($1, $2, $3::jsonb, $4, $5, $6)`,
+			p.TenantID, p.Name, body, p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt))
+		var pgErr *pgconn.PgError
+		if errors.As(ierr, &pgErr) && pgErr.Code == "23505" {
+			return delegationpolicystore.ErrAlreadyExists
+		}
+		return ierr
+	})
 }
 
-// Get returns the delegation-policy row keyed by name. Soft-deleted
-// rows are returned (callers consult DelegationPolicy.IsActive()); a
-// missing row is ErrNotFound.
-func (s *Store) Get(ctx context.Context, name string) (delegationpolicystore.DelegationPolicy, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT `+selectList+` FROM delegation_policies WHERE name = $1`, name)
-	p, err := scanPolicy(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return delegationpolicystore.DelegationPolicy{}, delegationpolicystore.ErrNotFound
-	}
+// Get returns the delegation-policy row keyed by (tenantID, name).
+// Soft-deleted rows are returned (callers consult
+// DelegationPolicy.IsActive()); a missing row is ErrNotFound.
+func (s *Store) Get(ctx context.Context, tenantID, name string) (delegationpolicystore.DelegationPolicy, error) {
+	var out delegationpolicystore.DelegationPolicy
+	err := s.runRead(ctx, tenantID, func(tx pgx.Tx) error {
+		var row pgx.Row
+		if tenantID == delegationpolicystore.AllTenantsSentinel {
+			row = tx.QueryRow(ctx,
+				`SELECT `+selectList+` FROM delegation_policies WHERE name = $1`, name)
+		} else {
+			row = tx.QueryRow(ctx,
+				`SELECT `+selectList+` FROM delegation_policies WHERE name = $1 AND tenant_id = $2`,
+				name, tenantID)
+		}
+		p, err := scanPolicy(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return delegationpolicystore.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		out = p
+		return nil
+	})
 	if err != nil {
 		return delegationpolicystore.DelegationPolicy{}, err
 	}
-	return p, nil
+	return out, nil
 }
 
 // Update applies mutate to the row under SELECT ... FOR UPDATE,
 // re-runs the §8.3 validation, and strictly advances UpdatedAt.
-func (s *Store) Update(ctx context.Context, name string, mutate func(*delegationpolicystore.DelegationPolicy) error) (delegationpolicystore.DelegationPolicy, error) {
-	tx, err := s.pool.Begin(ctx)
+func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*delegationpolicystore.DelegationPolicy) error) (delegationpolicystore.DelegationPolicy, error) {
+	if tenantID == "" || tenantID == delegationpolicystore.AllTenantsSentinel {
+		return delegationpolicystore.DelegationPolicy{},
+			errors.New("delegationpolicystore: Update requires a concrete tenant_id")
+	}
+	var out delegationpolicystore.DelegationPolicy
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM delegation_policies
+			 WHERE name = $1 AND tenant_id = $2 FOR UPDATE`, name, tenantID)
+		p, err := scanPolicy(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return delegationpolicystore.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		prev := p.UpdatedAt
+		if err := mutate(&p); err != nil {
+			return err
+		}
+		p.TenantID = tenantID
+		if err := delegationpolicystore.Validate(p); err != nil {
+			return err
+		}
+		p.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+		body, err := bodyJSON(p)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE delegation_policies SET
+			policy = $3::jsonb, updated_at = $4, deleted_at = $5
+		WHERE name = $1 AND tenant_id = $2`,
+			name, tenantID, body, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt)); err != nil {
+			return err
+		}
+		out = p
+		return nil
+	})
 	if err != nil {
-		return delegationpolicystore.DelegationPolicy{}, fmt.Errorf("delegationpolicystore: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	row := tx.QueryRow(ctx,
-		`SELECT `+selectList+` FROM delegation_policies WHERE name = $1 FOR UPDATE`, name)
-	p, err := scanPolicy(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return delegationpolicystore.DelegationPolicy{}, delegationpolicystore.ErrNotFound
-	}
-	if err != nil {
 		return delegationpolicystore.DelegationPolicy{}, err
 	}
-	prev := p.UpdatedAt
-	if err := mutate(&p); err != nil {
-		return delegationpolicystore.DelegationPolicy{}, err
-	}
-	if err := delegationpolicystore.Validate(p); err != nil {
-		return delegationpolicystore.DelegationPolicy{}, err
-	}
-	p.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-	body, err := bodyJSON(p)
-	if err != nil {
-		return delegationpolicystore.DelegationPolicy{}, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE delegation_policies SET
-		policy = $2::jsonb, updated_at = $3, deleted_at = $4
-	WHERE name = $1`,
-		name, body, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt)); err != nil {
-		return delegationpolicystore.DelegationPolicy{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return delegationpolicystore.DelegationPolicy{}, fmt.Errorf("delegationpolicystore: commit: %w", err)
-	}
-	return p, nil
+	return out, nil
 }
 
-// List returns the delegation-policy rows name-ascending. Soft-deleted
-// rows are dropped unless filter.IncludeDeleted is set.
-func (s *Store) List(ctx context.Context, filter delegationpolicystore.ListFilter) ([]delegationpolicystore.DelegationPolicy, error) {
-	q := `SELECT ` + selectList + ` FROM delegation_policies`
-	if !filter.IncludeDeleted {
-		q += ` WHERE deleted_at IS NULL`
-	}
-	q += ` ORDER BY name`
+// List returns the delegation-policy rows for the supplied tenant id
+// (or across every tenant under the AllTenantsSentinel), ordered by
+// (tenant_id, name). Soft-deleted rows are dropped unless
+// filter.IncludeDeleted is set.
+func (s *Store) List(ctx context.Context, tenantID string, filter delegationpolicystore.ListFilter) ([]delegationpolicystore.DelegationPolicy, error) {
+	var out []delegationpolicystore.DelegationPolicy
+	err := s.runRead(ctx, tenantID, func(tx pgx.Tx) error {
+		q := `SELECT ` + selectList + ` FROM delegation_policies`
+		if !filter.IncludeDeleted {
+			q += ` WHERE deleted_at IS NULL`
+		}
+		q += ` ORDER BY tenant_id, name`
 
-	rows, err := s.pool.Query(ctx, q)
+		rows, err := tx.Query(ctx, q)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			p, err := scanPolicy(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, p)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []delegationpolicystore.DelegationPolicy
-	for rows.Next() {
-		p, err := scanPolicy(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // SoftDelete sets deleted_at on the row. It is idempotent:
-// soft-deleting an already-deleted policy is a no-op success. The
-// timestamp is truncated to the Postgres timestamptz microsecond
-// resolution so a read-back compares equal to the supplied instant.
-func (s *Store) SoftDelete(ctx context.Context, name string, at time.Time) error {
+// soft-deleting an already-deleted policy is a no-op success.
+func (s *Store) SoftDelete(ctx context.Context, tenantID, name string, at time.Time) error {
+	if tenantID == "" || tenantID == delegationpolicystore.AllTenantsSentinel {
+		return errors.New("delegationpolicystore: SoftDelete requires a concrete tenant_id")
+	}
 	at = at.UTC().Truncate(time.Microsecond)
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE delegation_policies SET deleted_at = $2, updated_at = $2
-		 WHERE name = $1 AND deleted_at IS NULL`, name, at)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() > 0 {
+	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`UPDATE delegation_policies SET deleted_at = $3, updated_at = $3
+			 WHERE name = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+			name, tenantID, at)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() > 0 {
+			return nil
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM delegation_policies
+			 WHERE name = $1 AND tenant_id = $2)`, name, tenantID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return delegationpolicystore.ErrNotFound
+		}
 		return nil
+	})
+}
+
+// runRead wraps fn in either a tenant-scoped or all-tenants transaction
+// depending on tenantID. The AllTenantsSentinel value invokes the §4.2
+// platform-admin bypass; concrete tenant ids invoke the per-tenant
+// context.
+func (s *Store) runRead(ctx context.Context, tenantID string, fn func(pgx.Tx) error) error {
+	if tenantID == delegationpolicystore.AllTenantsSentinel {
+		return pgtenant.InAllTenants(ctx, s.pool, fn)
 	}
-	var exists bool
-	if err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM delegation_policies WHERE name = $1)`, name).Scan(&exists); err != nil {
-		return err
+	if tenantID == "" {
+		return fmt.Errorf("delegationpolicystore: read requires a concrete tenant_id or AllTenantsSentinel")
 	}
-	if !exists {
-		return delegationpolicystore.ErrNotFound
-	}
-	return nil
+	return pgtenant.InTx(ctx, s.pool, tenantID, fn)
 }
 
 // scanPolicy reads one row in selectList order into a DelegationPolicy.
@@ -202,7 +252,7 @@ func scanPolicy(row pgx.Row) (delegationpolicystore.DelegationPolicy, error) {
 		bodyRaw   []byte
 		deletedAt *time.Time
 	)
-	if err := row.Scan(&p.Name, &bodyRaw, &p.CreatedAt, &p.UpdatedAt, &deletedAt); err != nil {
+	if err := row.Scan(&p.TenantID, &p.Name, &bodyRaw, &p.CreatedAt, &p.UpdatedAt, &deletedAt); err != nil {
 		return delegationpolicystore.DelegationPolicy{}, err
 	}
 	if len(bodyRaw) > 0 {

@@ -9,6 +9,12 @@
 // inside a pod. The registry is therefore the SSRF allowlist for
 // external MCP traffic: the gateway only dials hosts that resolve
 // to a registered connector.
+//
+// spec: §4.2 line 173 — connectors are tenant-scoped. Each row
+// carries a `tenant_id` column and is filtered by the standard
+// lenny_tenant_isolation RLS policy. The Store API threads the
+// owning tenant through every CRUD call; platform-admin reads pass
+// `pgtenant.AllTenantsSentinel` to bypass the per-tenant predicate.
 package connectorstore
 
 import (
@@ -26,7 +32,12 @@ import (
 // MCP (Streamable HTTP) transport only; A2A / Agent Protocol
 // transports are reserved post-v1.
 type Connector struct {
-	// ID is the §9.3 registry key.
+	// TenantID is the §4.2 line 173 tenant-scoping column. Each
+	// connector belongs to exactly one tenant; an in-memory Store
+	// indexes by (TenantID, ID).
+	TenantID string
+
+	// ID is the §9.3 registry key, unique within a tenant.
 	ID string
 
 	// DisplayName is the human-facing label.
@@ -71,13 +82,16 @@ type ConnectorAuth struct {
 	Scopes                []string `json:"scopes,omitempty"`
 }
 
-// Store is the §9.3 connector registry contract.
+// Store is the §9.3 connector registry contract. Every method takes
+// the §4.2 line 173 tenant context: a concrete tenant id scopes the
+// operation to that tenant, and the AllTenantsSentinel value (`__all__`)
+// lets a platform-admin code path span tenants on reads.
 type Store interface {
 	Create(ctx context.Context, c Connector) error
-	Get(ctx context.Context, id string) (Connector, error)
-	Update(ctx context.Context, id string, mutate func(*Connector) error) (Connector, error)
-	List(ctx context.Context, filter ListFilter) ([]Connector, error)
-	SoftDelete(ctx context.Context, id string, at time.Time) error
+	Get(ctx context.Context, tenantID, id string) (Connector, error)
+	Update(ctx context.Context, tenantID, id string, mutate func(*Connector) error) (Connector, error)
+	List(ctx context.Context, tenantID string, filter ListFilter) ([]Connector, error)
+	SoftDelete(ctx context.Context, tenantID, id string, at time.Time) error
 }
 
 // ListFilter narrows List results.
@@ -112,6 +126,9 @@ func ValidateID(id string) error {
 // cannot become an http:// SSRF pivot, and the §9.3 v1 transport
 // constraint (`streamable_http` only) is enforced.
 func (c Connector) Validate() error {
+	if c.TenantID == "" {
+		return errors.New("connectorstore: tenant_id is required")
+	}
 	if err := ValidateID(c.ID); err != nil {
 		return err
 	}
@@ -163,23 +180,39 @@ func requireHTTPS(raw, field string) error {
 	return nil
 }
 
-// Memory is the in-memory Store implementation.
+// AllTenantsSentinel is the §4.2 platform-admin cross-tenant value
+// accepted by every Store read. Writes (Create/Update/SoftDelete) must
+// always carry a concrete tenant_id — the sentinel is reads-only.
+const AllTenantsSentinel = "__all__"
+
+// Memory is the in-memory Store implementation. It keys connectors
+// by (tenant_id, id) so two tenants may register a connector under
+// the same logical id without collision.
 type Memory struct {
-	mu         sync.RWMutex
-	connectors map[string]Connector
+	mu sync.RWMutex
+	// connectors[tenant_id][id] = Connector
+	connectors map[string]map[string]Connector
 }
 
 // NewMemory returns an empty Memory store.
-func NewMemory() *Memory { return &Memory{connectors: map[string]Connector{}} }
+func NewMemory() *Memory {
+	return &Memory{connectors: map[string]map[string]Connector{}}
+}
 
-// Create implements Store.
+// Create implements Store. The tenant_id is read from c.TenantID;
+// Validate rejects empty values.
 func (m *Memory) Create(_ context.Context, c Connector) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.connectors[c.ID]; exists {
+	tenant, ok := m.connectors[c.TenantID]
+	if !ok {
+		tenant = map[string]Connector{}
+		m.connectors[c.TenantID] = tenant
+	}
+	if _, exists := tenant[c.ID]; exists {
 		return ErrAlreadyExists
 	}
 	now := time.Now().UTC()
@@ -189,26 +222,48 @@ func (m *Memory) Create(_ context.Context, c Connector) error {
 	if c.UpdatedAt.IsZero() {
 		c.UpdatedAt = c.CreatedAt
 	}
-	m.connectors[c.ID] = c
+	tenant[c.ID] = c
 	return nil
 }
 
-// Get implements Store.
-func (m *Memory) Get(_ context.Context, id string) (Connector, error) {
+// Get implements Store. tenantID may be a concrete tenant id or the
+// AllTenantsSentinel for a platform-admin read that does not know
+// which tenant owns the connector.
+func (m *Memory) Get(_ context.Context, tenantID, id string) (Connector, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	row, ok := m.connectors[id]
+	if tenantID == AllTenantsSentinel {
+		for _, tenant := range m.connectors {
+			if row, ok := tenant[id]; ok {
+				return row, nil
+			}
+		}
+		return Connector{}, ErrNotFound
+	}
+	tenant, ok := m.connectors[tenantID]
+	if !ok {
+		return Connector{}, ErrNotFound
+	}
+	row, ok := tenant[id]
 	if !ok {
 		return Connector{}, ErrNotFound
 	}
 	return row, nil
 }
 
-// Update implements Store.
-func (m *Memory) Update(_ context.Context, id string, mutate func(*Connector) error) (Connector, error) {
+// Update implements Store. tenantID must be a concrete tenant id (the
+// AllTenantsSentinel is reads-only).
+func (m *Memory) Update(_ context.Context, tenantID, id string, mutate func(*Connector) error) (Connector, error) {
+	if tenantID == "" || tenantID == AllTenantsSentinel {
+		return Connector{}, errors.New("connectorstore: Update requires a concrete tenant_id")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.connectors[id]
+	tenant, ok := m.connectors[tenantID]
+	if !ok {
+		return Connector{}, ErrNotFound
+	}
+	row, ok := tenant[id]
 	if !ok {
 		return Connector{}, ErrNotFound
 	}
@@ -216,6 +271,9 @@ func (m *Memory) Update(_ context.Context, id string, mutate func(*Connector) er
 	if err := mutate(&row); err != nil {
 		return Connector{}, err
 	}
+	// Lock the tenant id to the row's owner; a mutate that rewrites
+	// it would silently re-parent the row.
+	row.TenantID = tenantID
 	if err := row.Validate(); err != nil {
 		return Connector{}, err
 	}
@@ -224,30 +282,53 @@ func (m *Memory) Update(_ context.Context, id string, mutate func(*Connector) er
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	m.connectors[id] = row
+	tenant[id] = row
 	return row, nil
 }
 
-// List implements Store.
-func (m *Memory) List(_ context.Context, filter ListFilter) ([]Connector, error) {
+// List implements Store. tenantID is either a concrete tenant id
+// (returns that tenant's connectors) or the AllTenantsSentinel
+// (returns every tenant's connectors, sorted by (tenant_id, id)).
+func (m *Memory) List(_ context.Context, tenantID string, filter ListFilter) ([]Connector, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := make([]Connector, 0, len(m.connectors))
-	for _, row := range m.connectors {
-		if !filter.IncludeDeleted && !row.IsActive() {
-			continue
+	var out []Connector
+	emit := func(tenant map[string]Connector) {
+		for _, row := range tenant {
+			if !filter.IncludeDeleted && !row.IsActive() {
+				continue
+			}
+			out = append(out, row)
 		}
-		out = append(out, row)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if tenantID == AllTenantsSentinel {
+		for _, tenant := range m.connectors {
+			emit(tenant)
+		}
+	} else if tenant, ok := m.connectors[tenantID]; ok {
+		emit(tenant)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TenantID != out[j].TenantID {
+			return out[i].TenantID < out[j].TenantID
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out, nil
 }
 
-// SoftDelete implements Store.
-func (m *Memory) SoftDelete(_ context.Context, id string, at time.Time) error {
+// SoftDelete implements Store. tenantID must be a concrete tenant id.
+func (m *Memory) SoftDelete(_ context.Context, tenantID, id string, at time.Time) error {
+	if tenantID == "" || tenantID == AllTenantsSentinel {
+		return errors.New("connectorstore: SoftDelete requires a concrete tenant_id")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.connectors[id]
+	tenant, ok := m.connectors[tenantID]
+	if !ok {
+		return ErrNotFound
+	}
+	row, ok := tenant[id]
 	if !ok {
 		return ErrNotFound
 	}
@@ -256,25 +337,37 @@ func (m *Memory) SoftDelete(_ context.Context, id string, at time.Time) error {
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
-	m.connectors[id] = row
+	tenant[id] = row
 	return nil
 }
 
 // DeleteByUser implements the §12.2.1 mandatory-erasure interface.
-// Connectors are platform-scoped resources keyed by id; the
-// Visibility field discriminates platform vs tenant exposure but
-// the Connector struct carries no tenant id, so per-user erasure
-// has nothing to scope on at this layer. The orchestrator skips
-// connectorstore on user-scoped runs.
+// Connectors are tenant-scoped resources keyed by (tenant_id, id) and
+// carry no user attribution; per-user erasure has nothing to scope on
+// at this layer. The orchestrator skips connectorstore on user-scoped
+// runs.
 func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
 
 // DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
-// A platform-visibility connector survives tenant erasure; tenant-
-// visibility connectors carry no tenant_id today, so the per-tenant
-// sweep is also a no-op at this layer. A follow-on Connector.TenantID
-// migration enables real per-tenant cleanup (see BUILD-GAPS.md).
-func (m *Memory) DeleteByTenant(_ context.Context, _ string) (int, error) {
-	return 0, nil
+// Hard-deletes every connector owned by tenantID, returning the number
+// of rows removed. The erasure orchestrator invokes this after
+// soft-deletes have propagated through downstream consumers.
+//
+// spec: §4.2 line 173 — connectors are tenant-scoped, so a tenant
+// erasure can purge their definitions cleanly.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" || tenantID == AllTenantsSentinel {
+		return 0, errors.New("connectorstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tenant, ok := m.connectors[tenantID]
+	if !ok {
+		return 0, nil
+	}
+	n := len(tenant)
+	delete(m.connectors, tenantID)
+	return n, nil
 }

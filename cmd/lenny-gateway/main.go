@@ -1637,6 +1637,9 @@ func main() {
 		AllowDevRoles:   *devMode,
 		Verifier:        bearerVerifier,
 		Revocations:     revProp,
+		// §4.2 line 185: every tenant-claim rejection writes an
+		// auth_failure audit row alongside the INFO log line.
+		AuthFailureSink: authFailureAuditAdapter{sink: auditSink},
 	}
 	if !*multiTenant {
 		// Even in single-tenant mode, dev-header callers carry the
@@ -2117,6 +2120,42 @@ func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil 
 // §7.1 retention GC.
 type sessionArtifactDeleter interface {
 	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
+}
+
+// authFailureAuditAdapter bridges the §10.2 auth middleware to the
+// §11.7 audit chain so every §4.2 line 185 tenant-claim rejection
+// (TENANT_CLAIM_MISSING / TENANT_NOT_FOUND / TENANT_CLAIM_INVALID_FORMAT)
+// produces an `auth_failure` audit row. Rejections that infer a
+// tenant id from the JWT claim or dev header land on that inferred
+// tenant's chain; the TENANT_CLAIM_MISSING case (no claim presented)
+// falls back to the platform chain.
+type authFailureAuditAdapter struct {
+	sink admin.AuditSink
+}
+
+func (a authFailureAuditAdapter) EmitAuthFailure(ctx context.Context, ev authmw.AuthFailureEvent) {
+	if a.sink == nil {
+		return
+	}
+	actorTenant := ev.TenantID
+	if actorTenant == "" {
+		// §4.2: when no tenant could be inferred, land the row on the
+		// platform chain (admin.NewChainAuditSink defaults the empty
+		// ActorTenantID to "platform").
+		actorTenant = ""
+	}
+	a.sink.EmitAdminEvent(ctx, admin.AuditEvent{
+		Type:          authmw.AuthFailureEventType,
+		ActorSubject:  ev.UserID,
+		ActorTenantID: actorTenant,
+		Detail: map[string]any{
+			"reason":    ev.Reason,
+			"tenant_id": ev.TenantID,
+			"user_id":   ev.UserID,
+			"jti":       ev.JTI,
+		},
+		At: ev.At,
+	})
 }
 
 // experimentRejectionReporter bridges a §10.7 ExperimentRouter

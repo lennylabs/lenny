@@ -32,10 +32,14 @@ func TestEnvironmentRuntimeExposure(t *testing.T) {
 	})
 	connectors := connectorstore.NewMemory()
 	_ = connectors.Create(context.Background(), connectorstore.Connector{
-		ID: "sec-vault", Labels: map[string]string{"team": "security"},
+		TenantID: "acme", ID: "sec-vault",
+		MCPServerURL: "https://sec-vault.example.com",
+		Labels:       map[string]string{"team": "security"},
 	})
 	_ = connectors.Create(context.Background(), connectorstore.Connector{
-		ID: "research-db", Labels: map[string]string{"team": "research"},
+		TenantID: "acme", ID: "research-db",
+		MCPServerURL: "https://research-db.example.com",
+		Labels:       map[string]string{"team": "research"},
 	})
 	envs := environmentstore.NewMemory()
 	if err := envs.Create(context.Background(), environmentstore.Environment{

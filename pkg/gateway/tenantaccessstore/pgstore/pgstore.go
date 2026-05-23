@@ -18,9 +18,11 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 )
 
@@ -54,6 +56,12 @@ func joinTable(kind tenantaccessstore.ResourceKind) (table, resourceColumn strin
 // duplicate (kind, resource, tenant) collides on the primary key and
 // reports created=false rather than an error, mirroring
 // tenantaccessstore.Memory.
+//
+// spec: §4.2 line 177 — writes to runtime_tenant_access /
+// pool_tenant_access are guarded by the lenny_admin_mode_required
+// trigger. The write runs inside an InAdminMode transaction so the
+// trigger admits it; the platform-admin RBAC check at the admin-API
+// boundary is the caller's responsibility.
 func (s *Store) Grant(ctx context.Context, kind tenantaccessstore.ResourceKind, resource, tenantID, grantedBy string, at time.Time) (bool, error) {
 	table, resourceColumn, ok := joinTable(kind)
 	if !ok || resource == "" || tenantID == "" {
@@ -63,34 +71,58 @@ func (s *Store) Grant(ctx context.Context, kind tenantaccessstore.ResourceKind, 
 		at = time.Now().UTC()
 	}
 	at = at.UTC()
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO `+table+` (`+resourceColumn+`, tenant_id, granted_by, granted_at)
-		 VALUES ($1, $2, $3, $4)`,
-		resource, tenantID, grantedBy, at)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return false, nil
-	}
+	var created bool
+	err := pgtenant.InAdminMode(ctx, s.pool, func(tx pgx.Tx) error {
+		// Use ON CONFLICT DO NOTHING so a duplicate (kind, resource,
+		// tenant) does not abort the transaction. RowsAffected reports
+		// whether the row was newly inserted.
+		tag, ierr := tx.Exec(ctx,
+			`INSERT INTO `+table+` (`+resourceColumn+`, tenant_id, granted_by, granted_at)
+			 VALUES ($1, $2, $3, $4)
+			 ON CONFLICT DO NOTHING`,
+			resource, tenantID, grantedBy, at)
+		if ierr != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(ierr, &pgErr) && pgErr.Code == "23505" {
+				created = false
+				return nil
+			}
+			return ierr
+		}
+		created = tag.RowsAffected() > 0
+		return nil
+	})
 	if err != nil {
 		return false, err
 	}
-	return true, nil
+	return created, nil
 }
 
 // Revoke removes a grant. Returns ErrNotFound when no grant exists for
 // the (kind, resource, tenant).
+//
+// spec: §4.2 line 177 — runs inside an InAdminMode transaction so the
+// lenny_admin_mode_required trigger admits the DELETE.
 func (s *Store) Revoke(ctx context.Context, kind tenantaccessstore.ResourceKind, resource, tenantID string) error {
 	table, resourceColumn, ok := joinTable(kind)
 	if !ok || resource == "" || tenantID == "" {
 		return tenantaccessstore.ErrInvalidArg
 	}
-	tag, err := s.pool.Exec(ctx,
-		`DELETE FROM `+table+` WHERE `+resourceColumn+` = $1 AND tenant_id = $2`,
-		resource, tenantID)
+	var revoked bool
+	err := pgtenant.InAdminMode(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, ierr := tx.Exec(ctx,
+			`DELETE FROM `+table+` WHERE `+resourceColumn+` = $1 AND tenant_id = $2`,
+			resource, tenantID)
+		if ierr != nil {
+			return ierr
+		}
+		revoked = tag.RowsAffected() > 0
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if !revoked {
 		return tenantaccessstore.ErrNotFound
 	}
 	return nil

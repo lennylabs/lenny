@@ -92,6 +92,7 @@ func (f *oauthFixture) registerOAuthConnector(t *testing.T, public bool) {
 		auth.ClientSecretRef = "lenny-system/github-client-secret"
 	}
 	if err := f.connectors.Create(context.Background(), connectorstore.Connector{
+		TenantID:     "acme",
 		ID:           "github",
 		MCPServerURL: "https://mcp.github.com",
 		Transport:    "streamable_http",
@@ -200,7 +201,8 @@ func TestAuthorizeConnectorNotOAuth(t *testing.T) {
 	f := newOAuthFixture(t)
 	// A connector with no auth block is not an OAuth connector.
 	if err := f.connectors.Create(context.Background(), connectorstore.Connector{
-		ID: "github", MCPServerURL: "https://mcp.github.com", Transport: "streamable_http",
+		TenantID: "acme", ID: "github",
+		MCPServerURL: "https://mcp.github.com", Transport: "streamable_http",
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

@@ -57,7 +57,7 @@ func TestCreateDelegationPolicy(t *testing.T) {
 	if resp.Name != "orchestrator-policy" || len(resp.Rules) != 1 {
 		t.Errorf("response = %+v, want orchestrator-policy with 1 rule", resp)
 	}
-	row, err := store.Get(context.Background(), "orchestrator-policy")
+	row, err := store.Get(context.Background(), "platform", "orchestrator-policy")
 	if err != nil {
 		t.Fatalf("store missing policy: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestCreateDelegationPolicyAppliesContentDefaults(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
 	}
-	row, err := store.Get(context.Background(), "p1")
+	row, err := store.Get(context.Background(), "platform", "p1")
 	if err != nil {
 		t.Fatalf("store missing policy: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestCreateDelegationPolicyRejectsInvalidName(t *testing.T) {
 
 func TestGetDelegationPolicy(t *testing.T) {
 	router, store := newDelegationPolicyAdmin(t)
-	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/delegation-policies/p1",
@@ -162,8 +162,8 @@ func TestGetDelegationPolicyMissing(t *testing.T) {
 
 func TestListDelegationPolicies(t *testing.T) {
 	router, store := newDelegationPolicyAdmin(t)
-	_ = store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"})
-	_ = store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p2"})
+	_ = store.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"})
+	_ = store.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p2"})
 
 	rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/delegation-policies",
 		nil, withAdminPrincipal)
@@ -181,7 +181,7 @@ func TestListDelegationPolicies(t *testing.T) {
 
 func TestUpdateDelegationPolicyReplacesFields(t *testing.T) {
 	router, store := newDelegationPolicyAdmin(t)
-	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	body := validDelegationPolicy("p1")
@@ -191,7 +191,7 @@ func TestUpdateDelegationPolicyReplacesFields(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("update: status %d, body %s", rr.Code, rr.Body.String())
 	}
-	row, _ := store.Get(context.Background(), "p1")
+	row, _ := store.Get(context.Background(), "platform", "p1")
 	if !row.AllowSelfRecursion || len(row.Rules) != 1 {
 		t.Errorf("updated policy = %+v, want allowSelfRecursion=true with 1 rule", row)
 	}
@@ -199,7 +199,7 @@ func TestUpdateDelegationPolicyReplacesFields(t *testing.T) {
 
 func TestUpdateDelegationPolicyRejectsScanInvariant(t *testing.T) {
 	router, store := newDelegationPolicyAdmin(t)
-	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	body := validDelegationPolicy("p1")
@@ -216,7 +216,7 @@ func TestUpdateDelegationPolicyRejectsScanInvariant(t *testing.T) {
 
 func TestDeleteDelegationPolicy(t *testing.T) {
 	router, store := newDelegationPolicyAdmin(t)
-	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	rr := doAdminReq(t, router.Handler(), http.MethodDelete, "/v1/admin/delegation-policies/p1",
@@ -224,7 +224,7 @@ func TestDeleteDelegationPolicy(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("delete: status %d", rr.Code)
 	}
-	row, err := store.Get(context.Background(), "p1")
+	row, err := store.Get(context.Background(), "platform", "p1")
 	if err != nil {
 		t.Fatalf("Get after delete: %v", err)
 	}
@@ -248,7 +248,7 @@ func newDelegationPolicyWithRuntimesAdmin(t *testing.T) (*admin.Router, *delegat
 func TestDeleteDelegationPolicyBlockedByRuntimeDependent(t *testing.T) {
 	router, policies, runtimes := newDelegationPolicyWithRuntimesAdmin(t)
 	ctx := context.Background()
-	if err := policies.Create(ctx, delegationpolicystore.DelegationPolicy{Name: "orchestrator-policy"}); err != nil {
+	if err := policies.Create(ctx, delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "orchestrator-policy"}); err != nil {
 		t.Fatalf("seed policy: %v", err)
 	}
 	if err := runtimes.Create(ctx, runtimestore.Runtime{
@@ -283,7 +283,7 @@ func TestDeleteDelegationPolicyBlockedByRuntimeDependent(t *testing.T) {
 		t.Errorf("dependent type = %v, want runtime", entry["type"])
 	}
 	// §8.3: the blocked policy stays active.
-	row, _ := policies.Get(ctx, "orchestrator-policy")
+	row, _ := policies.Get(ctx, "platform", "orchestrator-policy")
 	if !row.IsActive() {
 		t.Error("a policy blocked by the deletion guard must remain active")
 	}
@@ -292,7 +292,7 @@ func TestDeleteDelegationPolicyBlockedByRuntimeDependent(t *testing.T) {
 func TestDeleteDelegationPolicyAllowedWhenNoDependents(t *testing.T) {
 	router, policies, runtimes := newDelegationPolicyWithRuntimesAdmin(t)
 	ctx := context.Background()
-	if err := policies.Create(ctx, delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+	if err := policies.Create(ctx, delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
 		t.Fatalf("seed policy: %v", err)
 	}
 	// A runtime referencing a different policy must not block the delete.
@@ -307,7 +307,7 @@ func TestDeleteDelegationPolicyAllowedWhenNoDependents(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("delete an unreferenced policy: status %d, want 204; body %s", rr.Code, rr.Body.String())
 	}
-	row, _ := policies.Get(ctx, "p1")
+	row, _ := policies.Get(ctx, "platform", "p1")
 	if row.IsActive() {
 		t.Error("an unreferenced policy must be soft-deleted")
 	}
@@ -329,7 +329,8 @@ func newAuditedDelegationPolicyAdmin(t *testing.T) (*admin.Router, *delegationpo
 func TestUpdateDelegationPolicyEmitsScanWeakenedEvent(t *testing.T) {
 	router, store, audit := newAuditedDelegationPolicyAdmin(t)
 	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{
-		Name: "p1",
+		TenantID: "platform",
+		Name:     "p1",
 		ContentPolicy: delegationpolicystore.ContentPolicy{
 			ScanExportedFiles: true, InterceptorRef: "pii-scanner",
 		},
@@ -358,7 +359,7 @@ func TestUpdateDelegationPolicyEmitsScanWeakenedEvent(t *testing.T) {
 
 func TestUpdateDelegationPolicyEmitsScanStrengthenedEvent(t *testing.T) {
 	router, store, audit := newAuditedDelegationPolicyAdmin(t)
-	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	// Update turns scanExportedFiles on — a §8.3 strengthening.
@@ -381,7 +382,7 @@ func TestUpdateDelegationPolicyEmitsScanStrengthenedEvent(t *testing.T) {
 
 func TestUpdateDelegationPolicyNoScanEventWhenUnchanged(t *testing.T) {
 	router, store, audit := newAuditedDelegationPolicyAdmin(t)
-	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	// validDelegationPolicy leaves scanExportedFiles false — unchanged.
@@ -445,7 +446,7 @@ func TestDelegationPolicyAuthorization(t *testing.T) {
 	} {
 		router, store := newDelegationPolicyAdmin(t)
 		if err := store.Create(context.Background(),
-			delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+			delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 		h := router.Handler()

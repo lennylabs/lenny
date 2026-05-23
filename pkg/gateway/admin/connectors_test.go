@@ -45,7 +45,9 @@ func connReq(t *testing.T, h http.Handler, method, path string, body any) *httpt
 
 func TestCreateConnectorHappyPath(t *testing.T) {
 	router, store, audit := newConnectorAdmin(t)
+	// platform-admin creates the connector under tenant `acme`.
 	rr := connReq(t, router.Handler(), http.MethodPost, "/v1/admin/connectors", admin.ConnectorPayload{
+		TenantID:     "acme",
 		ID:           "github",
 		DisplayName:  "GitHub",
 		MCPServerURL: "https://mcp.github.com",
@@ -58,12 +60,15 @@ func TestCreateConnectorHappyPath(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	row, err := store.Get(context.Background(), "github")
+	row, err := store.Get(context.Background(), "acme", "github")
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
 	if row.Transport != "streamable_http" {
 		t.Errorf("default transport: %q", row.Transport)
+	}
+	if row.TenantID != "acme" {
+		t.Errorf("TenantID: %q, want acme", row.TenantID)
 	}
 	if len(audit.snapshot()) != 1 || audit.snapshot()[0].Type != "admin.connector.created" {
 		t.Errorf("audit: %+v", audit.snapshot())
@@ -73,6 +78,7 @@ func TestCreateConnectorHappyPath(t *testing.T) {
 func TestCreateConnectorRejectsHTTPURL(t *testing.T) {
 	router, _, _ := newConnectorAdmin(t)
 	rr := connReq(t, router.Handler(), http.MethodPost, "/v1/admin/connectors", admin.ConnectorPayload{
+		TenantID:     "acme",
 		ID:           "evil",
 		MCPServerURL: "http://internal-metadata-server",
 	})
@@ -84,6 +90,7 @@ func TestCreateConnectorRejectsHTTPURL(t *testing.T) {
 func TestCreateConnectorRejectsInlineSecret(t *testing.T) {
 	router, _, _ := newConnectorAdmin(t)
 	rr := connReq(t, router.Handler(), http.MethodPost, "/v1/admin/connectors", admin.ConnectorPayload{
+		TenantID:     "acme",
 		ID:           "github",
 		MCPServerURL: "https://mcp.github.com",
 		Auth: &admin.ConnectorAuthPayload{
@@ -99,7 +106,7 @@ func TestCreateConnectorRejectsInlineSecret(t *testing.T) {
 func TestListConnectors(t *testing.T) {
 	router, store, _ := newConnectorAdmin(t)
 	_ = store.Create(context.Background(), connectorstore.Connector{
-		ID: "github", MCPServerURL: "https://mcp.github.com", Transport: "streamable_http",
+		TenantID: "acme", ID: "github", MCPServerURL: "https://mcp.github.com", Transport: "streamable_http",
 	})
 	rr := connReq(t, router.Handler(), http.MethodGet, "/v1/admin/connectors", nil)
 	if rr.Code != http.StatusOK {
@@ -117,15 +124,14 @@ func TestListConnectors(t *testing.T) {
 func TestUpdateConnector(t *testing.T) {
 	router, store, _ := newConnectorAdmin(t)
 	_ = store.Create(context.Background(), connectorstore.Connector{
-		ID: "github", MCPServerURL: "https://mcp.github.com", Transport: "streamable_http",
+		TenantID: "acme", ID: "github", MCPServerURL: "https://mcp.github.com", Transport: "streamable_http",
 	})
-	rr := connReq(t, router.Handler(), http.MethodPut, "/v1/admin/connectors/github", admin.ConnectorPayload{
-		DisplayName: "GitHub Enterprise",
-	})
+	rr := connReq(t, router.Handler(), http.MethodPut, "/v1/admin/connectors/github?tenant_id=acme",
+		admin.ConnectorPayload{DisplayName: "GitHub Enterprise"})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	row, _ := store.Get(context.Background(), "github")
+	row, _ := store.Get(context.Background(), "acme", "github")
 	if row.DisplayName != "GitHub Enterprise" {
 		t.Errorf("DisplayName: %q", row.DisplayName)
 	}
@@ -134,13 +140,13 @@ func TestUpdateConnector(t *testing.T) {
 func TestDeleteConnector(t *testing.T) {
 	router, store, audit := newConnectorAdmin(t)
 	_ = store.Create(context.Background(), connectorstore.Connector{
-		ID: "github", MCPServerURL: "https://mcp.github.com", Transport: "streamable_http",
+		TenantID: "acme", ID: "github", MCPServerURL: "https://mcp.github.com", Transport: "streamable_http",
 	})
-	rr := connReq(t, router.Handler(), http.MethodDelete, "/v1/admin/connectors/github", nil)
+	rr := connReq(t, router.Handler(), http.MethodDelete, "/v1/admin/connectors/github?tenant_id=acme", nil)
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("status: %d", rr.Code)
 	}
-	row, _ := store.Get(context.Background(), "github")
+	row, _ := store.Get(context.Background(), "acme", "github")
 	if row.DeletedAt.IsZero() {
 		t.Errorf("DeletedAt should be set")
 	}

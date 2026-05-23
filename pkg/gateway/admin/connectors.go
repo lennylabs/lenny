@@ -7,13 +7,18 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // ConnectorPayload is the §9.3 / §15.1 admin-connector wire shape.
 type ConnectorPayload struct {
-	ID           string                `json:"id"`
+	ID string `json:"id"`
+	// TenantID is read-only on the wire. The admin handler always
+	// resolves it from the calling principal (or, for a
+	// platform-admin ?tenant_id= override, from the query string).
+	TenantID     string                `json:"tenantId,omitempty"`
 	DisplayName  string                `json:"displayName,omitempty"`
 	MCPServerURL string                `json:"mcpServerUrl,omitempty"`
 	Transport    string                `json:"transport,omitempty"`
@@ -40,6 +45,7 @@ type ConnectorAuthPayload struct {
 func fromConnector(c connectorstore.Connector) ConnectorPayload {
 	out := ConnectorPayload{
 		ID:           c.ID,
+		TenantID:     c.TenantID,
 		DisplayName:  c.DisplayName,
 		MCPServerURL: c.MCPServerURL,
 		Transport:    c.Transport,
@@ -89,7 +95,19 @@ func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
 		return
 	}
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID, err := resolveTargetTenant(principal, req, body.TenantID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
 	c := connectorstore.Connector{
+		TenantID:     tenantID,
 		ID:           body.ID,
 		DisplayName:  body.DisplayName,
 		MCPServerURL: body.MCPServerURL,
@@ -115,14 +133,9 @@ func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
-	stored, _ := r.connectors.Get(req.Context(), body.ID)
-	principal, ok := authmw.FromContext(req.Context())
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"admin handler reached without authenticated principal", nil)
-		return
-	}
+	stored, _ := r.connectors.Get(req.Context(), tenantID, body.ID)
 	r.emit(req.Context(), principal, "admin.connector.created", body.ID, map[string]any{
+		"tenant_id":  tenantID,
 		"transport":  stored.Transport,
 		"visibility": stored.Visibility,
 	})
@@ -132,7 +145,14 @@ func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request)
 }
 
 func (r *Router) handleListConnectors(w http.ResponseWriter, req *http.Request) {
-	rows, err := r.connectors.List(req.Context(), connectorstore.ListFilter{
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID := listTenantScope(principal, req)
+	rows, err := r.connectors.List(req.Context(), tenantID, connectorstore.ListFilter{
 		IncludeDeleted: req.URL.Query().Get("includeDeleted") == "true",
 	})
 	if err != nil {
@@ -149,7 +169,14 @@ func (r *Router) handleListConnectors(w http.ResponseWriter, req *http.Request) 
 
 func (r *Router) handleGetConnector(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
-	row, err := r.connectors.Get(req.Context(), id)
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID := listTenantScope(principal, req)
+	row, err := r.connectors.Get(req.Context(), tenantID, id)
 	if err != nil {
 		if errors.Is(err, connectorstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "connector not found", nil)
@@ -169,7 +196,18 @@ func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
 		return
 	}
-	updated, err := r.connectors.Update(req.Context(), id, func(c *connectorstore.Connector) error {
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID, err := resolveTargetTenant(principal, req, body.TenantID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	updated, err := r.connectors.Update(req.Context(), tenantID, id, func(c *connectorstore.Connector) error {
 		if body.DisplayName != "" {
 			c.DisplayName = body.DisplayName
 		}
@@ -198,20 +236,27 @@ func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
-	principal, ok := authmw.FromContext(req.Context())
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"admin handler reached without authenticated principal", nil)
-		return
-	}
-	r.emit(req.Context(), principal, "admin.connector.updated", id, nil)
+	r.emit(req.Context(), principal, "admin.connector.updated", id, map[string]any{
+		"tenant_id": tenantID,
+	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromConnector(updated))
 }
 
 func (r *Router) handleDeleteConnector(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
-	if err := r.connectors.SoftDelete(req.Context(), id, r.clock()); err != nil {
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	tenantID, err := resolveTargetTenant(principal, req, "")
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	if err := r.connectors.SoftDelete(req.Context(), tenantID, id, r.clock()); err != nil {
 		if errors.Is(err, connectorstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "connector not found", nil)
 			return
@@ -219,12 +264,51 @@ func (r *Router) handleDeleteConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	principal, ok := authmw.FromContext(req.Context())
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"admin handler reached without authenticated principal", nil)
-		return
-	}
-	r.emit(req.Context(), principal, "admin.connector.soft_deleted", id, nil)
+	r.emit(req.Context(), principal, "admin.connector.soft_deleted", id, map[string]any{
+		"tenant_id": tenantID,
+	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// resolveTargetTenant determines which tenant a write should target.
+// For tenant-admin callers the answer is always their own tenant id
+// regardless of body or query — they cannot write outside their tenant.
+// For platform-admin callers the optional body.tenantId / ?tenant_id=
+// query parameter selects the target; an empty value defaults to the
+// caller's tenant (the platform tenant for the platform-admin role).
+//
+// spec: §4.2 line 173 — connectors are tenant-scoped; the admin API
+// enforces that a tenant-admin cannot write across tenants.
+func resolveTargetTenant(p authmw.Principal, req *http.Request, bodyTenantID string) (string, error) {
+	requested := bodyTenantID
+	if requested == "" {
+		requested = req.URL.Query().Get("tenant_id")
+	}
+	if !p.HasRole(auth.RolePlatformAdmin) {
+		if requested != "" && requested != p.TenantID {
+			return "", errors.New("only platform-admin may write across tenants")
+		}
+		return p.TenantID, nil
+	}
+	if requested == "" {
+		return p.TenantID, nil
+	}
+	return requested, nil
+}
+
+// listTenantScope determines the tenant scope for a list/read. A
+// tenant-admin reads only their own tenant. A platform-admin reads
+// across tenants by default (AllTenantsSentinel) and may narrow to a
+// specific tenant via ?tenant_id=.
+//
+// spec: §4.2 line 173 / §10.6: tenant-admins see only their own
+// tenant; platform-admins see all tenants with optional filter.
+func listTenantScope(p authmw.Principal, req *http.Request) string {
+	if !p.HasRole(auth.RolePlatformAdmin) {
+		return p.TenantID
+	}
+	if t := req.URL.Query().Get("tenant_id"); t != "" {
+		return t
+	}
+	return connectorstore.AllTenantsSentinel
 }

@@ -13,9 +13,15 @@ import (
 
 // spec: §8.3 DelegationPolicy as a first-class resource.
 
+// spec: §4.2 line 172 — delegation policies are tenant-scoped. Tests
+// use the built-in `acme` tenant; multi-tenant isolation is exercised
+// at the bottom of this file.
+const testTenantID = "acme"
+
 func samplePolicy(name string) delegationpolicystore.DelegationPolicy {
 	return delegationpolicystore.DelegationPolicy{
-		Name: name,
+		TenantID: testTenantID,
+		Name:     name,
 		Rules: []delegationpolicystore.Rule{
 			{
 				Target: delegationpolicystore.Target{
@@ -45,7 +51,7 @@ func TestCreateAndGet(t *testing.T) {
 	if err := store.Create(ctx, samplePolicy("orchestrator-policy")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	got, err := store.Get(ctx, "orchestrator-policy")
+	got, err := store.Get(ctx, testTenantID, "orchestrator-policy")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -144,7 +150,7 @@ func TestUpdateMutatesPolicy(t *testing.T) {
 	if err := store.Create(ctx, samplePolicy("p1")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	updated, err := store.Update(ctx, "p1", func(p *delegationpolicystore.DelegationPolicy) error {
+	updated, err := store.Update(ctx, testTenantID, "p1", func(p *delegationpolicystore.DelegationPolicy) error {
 		p.AllowSelfRecursion = true
 		p.ContentPolicy.MaxInputSize = 4096
 		return nil
@@ -168,7 +174,7 @@ func TestUpdateRejectsScanInvariantViolation(t *testing.T) {
 	}
 	// Turning on scanExportedFiles without an interceptor must be
 	// rejected by the same invariant the create path enforces.
-	_, err := store.Update(ctx, "p1", func(p *delegationpolicystore.DelegationPolicy) error {
+	_, err := store.Update(ctx, testTenantID, "p1", func(p *delegationpolicystore.DelegationPolicy) error {
 		p.ContentPolicy.ScanExportedFiles = true
 		return nil
 	})
@@ -179,7 +185,7 @@ func TestUpdateRejectsScanInvariantViolation(t *testing.T) {
 
 func TestUpdateMissing(t *testing.T) {
 	store := delegationpolicystore.NewMemory()
-	_, err := store.Update(context.Background(), "ghost", func(*delegationpolicystore.DelegationPolicy) error {
+	_, err := store.Update(context.Background(), testTenantID, "ghost", func(*delegationpolicystore.DelegationPolicy) error {
 		return nil
 	})
 	if !errors.Is(err, delegationpolicystore.ErrNotFound) {
@@ -193,20 +199,20 @@ func TestSoftDeleteHidesFromList(t *testing.T) {
 	if err := store.Create(ctx, samplePolicy("p1")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := store.SoftDelete(ctx, "p1", time.Now().UTC()); err != nil {
+	if err := store.SoftDelete(ctx, testTenantID, "p1", time.Now().UTC()); err != nil {
 		t.Fatalf("SoftDelete: %v", err)
 	}
 
-	active, _ := store.List(ctx, delegationpolicystore.ListFilter{})
+	active, _ := store.List(ctx, testTenantID, delegationpolicystore.ListFilter{})
 	if len(active) != 0 {
 		t.Errorf("List default: got %d policies, want 0 (soft-deleted excluded)", len(active))
 	}
-	all, _ := store.List(ctx, delegationpolicystore.ListFilter{IncludeDeleted: true})
+	all, _ := store.List(ctx, testTenantID, delegationpolicystore.ListFilter{IncludeDeleted: true})
 	if len(all) != 1 {
 		t.Errorf("List includeDeleted: got %d policies, want 1", len(all))
 	}
 	// Get still returns the soft-deleted row.
-	got, err := store.Get(ctx, "p1")
+	got, err := store.Get(ctx, testTenantID, "p1")
 	if err != nil {
 		t.Fatalf("Get after SoftDelete: %v", err)
 	}
@@ -217,7 +223,7 @@ func TestSoftDeleteHidesFromList(t *testing.T) {
 
 func TestSoftDeleteMissing(t *testing.T) {
 	store := delegationpolicystore.NewMemory()
-	if err := store.SoftDelete(context.Background(), "ghost", time.Now()); !errors.Is(err, delegationpolicystore.ErrNotFound) {
+	if err := store.SoftDelete(context.Background(), testTenantID, "ghost", time.Now()); !errors.Is(err, delegationpolicystore.ErrNotFound) {
 		t.Errorf("SoftDelete missing: got %v, want ErrNotFound", err)
 	}
 }
@@ -228,13 +234,73 @@ func TestStoredPolicyIsIsolatedFromCallerMutation(t *testing.T) {
 	if err := store.Create(ctx, samplePolicy("p1")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	got, _ := store.Get(ctx, "p1")
+	got, _ := store.Get(ctx, testTenantID, "p1")
 	// Mutating the returned copy must not reach the stored policy.
 	got.Rules[0].Target.MatchLabels["team"] = "tampered"
 	got.Rules[0].Allow = false
 
-	fresh, _ := store.Get(ctx, "p1")
+	fresh, _ := store.Get(ctx, testTenantID, "p1")
 	if fresh.Rules[0].Target.MatchLabels["team"] != "platform" || !fresh.Rules[0].Allow {
 		t.Errorf("stored policy was mutated through a returned copy: %+v", fresh.Rules[0])
+	}
+}
+
+// spec: §4.2 line 172 — two tenants may register a policy with the
+// same logical name without colliding, and one tenant cannot read
+// another tenant's policies through the per-tenant Get/List path.
+func TestTenantIsolationAndAllSentinel(t *testing.T) {
+	ctx := context.Background()
+	store := delegationpolicystore.NewMemory()
+
+	a := samplePolicy("orchestrator")
+	a.TenantID = "acme"
+	b := samplePolicy("orchestrator")
+	b.TenantID = "globex"
+	if err := store.Create(ctx, a); err != nil {
+		t.Fatalf("Create acme: %v", err)
+	}
+	if err := store.Create(ctx, b); err != nil {
+		t.Fatalf("Create globex: %v", err)
+	}
+
+	// acme sees only its row; globex too.
+	rowsA, _ := store.List(ctx, "acme", delegationpolicystore.ListFilter{})
+	if len(rowsA) != 1 || rowsA[0].TenantID != "acme" {
+		t.Errorf("acme list: %+v", rowsA)
+	}
+	rowsB, _ := store.List(ctx, "globex", delegationpolicystore.ListFilter{})
+	if len(rowsB) != 1 || rowsB[0].TenantID != "globex" {
+		t.Errorf("globex list: %+v", rowsB)
+	}
+
+	// AllTenantsSentinel returns both rows.
+	all, _ := store.List(ctx, delegationpolicystore.AllTenantsSentinel, delegationpolicystore.ListFilter{})
+	if len(all) != 2 {
+		t.Errorf("__all__ list: got %d, want 2", len(all))
+	}
+}
+
+// spec: §4.2 line 172 — Create rejects an empty TenantID.
+func TestCreateRejectsEmptyTenant(t *testing.T) {
+	store := delegationpolicystore.NewMemory()
+	p := samplePolicy("orchestrator")
+	p.TenantID = ""
+	if err := store.Create(context.Background(), p); err == nil {
+		t.Error("Create with empty TenantID should be rejected")
+	}
+}
+
+// spec: §4.2 line 172 — writes reject the AllTenantsSentinel value
+// (the sentinel is reads-only).
+func TestWritesRejectSentinel(t *testing.T) {
+	ctx := context.Background()
+	store := delegationpolicystore.NewMemory()
+	_ = store.Create(ctx, samplePolicy("p1"))
+	if _, err := store.Update(ctx, delegationpolicystore.AllTenantsSentinel, "p1",
+		func(p *delegationpolicystore.DelegationPolicy) error { return nil }); err == nil {
+		t.Error("Update with sentinel must be rejected")
+	}
+	if err := store.SoftDelete(ctx, delegationpolicystore.AllTenantsSentinel, "p1", time.Now()); err == nil {
+		t.Error("SoftDelete with sentinel must be rejected")
 	}
 }

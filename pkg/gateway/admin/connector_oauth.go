@@ -141,7 +141,9 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 		return
 	}
 	id := req.PathValue("id")
-	conn, err := r.connectors.Get(req.Context(), id)
+	// spec: §4.2 line 173 — connectors are tenant-scoped; OAuth
+	// authorize resolves the connector under the caller's tenant.
+	conn, err := r.connectors.Get(req.Context(), principal.TenantID, id)
 	if err != nil {
 		if errors.Is(err, connectorstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "connector not found", nil)
@@ -283,7 +285,9 @@ func (r *Router) handleConnectorOAuthCallback(w http.ResponseWriter, req *http.R
 		return
 	}
 
-	conn, err := r.connectors.Get(req.Context(), flow.ConnectorID)
+	// spec: §4.2 line 173 — the connector belongs to the tenant that
+	// initiated the OAuth flow; resolve under that tenant context.
+	conn, err := r.connectors.Get(req.Context(), flow.TenantID, flow.ConnectorID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "CONNECTOR_OAUTH_INVALID_CALLBACK",
 			"the connector for this OAuth flow no longer exists", nil)

@@ -23,8 +23,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
@@ -143,11 +145,54 @@ type Options struct {
 	// a token whose jti has been revoked is rejected even though its
 	// signature and expiry are still valid (§13.3 token revocation).
 	Revocations RevocationChecker
+
+	// AuthFailureSink, when set, receives §4.2 line 185 `auth_failure`
+	// audit events for every tenant-claim rejection
+	// (TENANT_CLAIM_MISSING, TENANT_NOT_FOUND, TENANT_CLAIM_INVALID_FORMAT).
+	// The middleware also writes an INFO log line carrying `user_id`
+	// and `jti` for traceability on every such rejection regardless of
+	// whether a sink is wired.
+	AuthFailureSink AuthFailureSink
+
+	// Clock returns the gateway clock instant the middleware stamps on
+	// `auth_failure` audit events. Defaults to time.Now when nil.
+	Clock func() time.Time
 }
 
 // RevocationChecker reports whether a token's jti has been revoked.
 type RevocationChecker interface {
 	IsRevoked(jti string) bool
+}
+
+// AuthFailureEvent captures the payload of an §4.2 line 185
+// `auth_failure` audit event emitted by the middleware on tenant-claim
+// rejection.
+type AuthFailureEvent struct {
+	// Reason is the §4.2 line 185 error envelope code:
+	// TENANT_CLAIM_MISSING, TENANT_NOT_FOUND, or
+	// TENANT_CLAIM_INVALID_FORMAT.
+	Reason string
+
+	// TenantID carries the inferred tenant identifier when present
+	// (the value of the OIDC claim before validation, or the resolved
+	// tenant for the dev-header path). Empty when no claim was carried.
+	TenantID string
+
+	// UserID is the JWT `sub` claim copied verbatim for traceability.
+	UserID string
+
+	// JTI is the JWT `jti` claim copied verbatim for traceability.
+	JTI string
+
+	// At is the gateway clock instant the rejection fired.
+	At time.Time
+}
+
+// AuthFailureSink receives an `auth_failure` audit event for every
+// tenant-claim rejection. Implementations must be non-blocking — the
+// middleware does not wait for delivery.
+type AuthFailureSink interface {
+	EmitAuthFailure(ctx context.Context, event AuthFailureEvent)
 }
 
 // Wrap returns the auth middleware around inner.
@@ -212,7 +257,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		Registry:    m.opts.Registry,
 	})
 	if terr != nil {
-		writeTenantError(w, terr)
+		m.writeTenantError(r.Context(), w, terr, claims.TenantID, claims.Subject, claims.JWTID)
 		return
 	}
 	// §25.1: parse the RFC 9068 scope claim into a typed Set. A
@@ -251,7 +296,12 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 		Registry:    m.opts.Registry,
 	})
 	if err != nil {
-		writeTenantError(w, err)
+		// Dev-header path: no JWT means no sub / jti claim. The
+		// rejection still produces an audit row + INFO log so the §4.2
+		// line 185 observability contract is honoured uniformly across
+		// transports; user_id falls back to the X-Lenny-User-ID header
+		// when present so dev integrations carry traceability too.
+		m.writeTenantError(r.Context(), w, err, tenantHeader, r.Header.Get("X-Lenny-User-ID"), "")
 		return
 	}
 	p := Principal{
@@ -317,23 +367,65 @@ func parseGroupsHeader(v string) []string {
 	return out
 }
 
-func writeTenantError(w http.ResponseWriter, err error) {
+// writeTenantError maps a §10.2 tenant-extraction error to the
+// HTTP envelope and, for the three §4.2 line 185 rejection reasons
+// (TENANT_CLAIM_MISSING / TENANT_NOT_FOUND / TENANT_CLAIM_INVALID_FORMAT),
+// emits an INFO log line with `user_id` and `jti` for traceability and
+// an `auth_failure` audit event via the configured sink. The audit
+// payload carries the inferred tenant identifier when one was
+// presented; for TENANT_CLAIM_MISSING the value is empty.
+//
+// spec: §4.2 line 185 ("Both rejection reasons are logged (INFO level,
+// with user_id and jti for traceability) and emitted as auth_failure
+// audit events.")
+func (m *middleware) writeTenantError(ctx context.Context, w http.ResponseWriter, err error, tenantID, userID, jti string) {
 	switch {
 	case errors.Is(err, auth.ErrTenantClaimMissing):
 		writeError(w, http.StatusUnauthorized, "TENANT_CLAIM_MISSING", err.Error(), nil)
+		m.recordAuthFailure(ctx, "TENANT_CLAIM_MISSING", tenantID, userID, jti)
 	case errors.Is(err, auth.ErrTenantNotFound):
 		writeError(w, http.StatusForbidden, "TENANT_NOT_FOUND", err.Error(), nil)
+		m.recordAuthFailure(ctx, "TENANT_NOT_FOUND", tenantID, userID, jti)
 	default:
 		var fe *auth.TenantIDFormatError
 		if errors.As(err, &fe) {
 			writeError(w, http.StatusUnauthorized, "TENANT_CLAIM_INVALID_FORMAT", err.Error(), map[string]any{
 				"value": fe.Value,
 			})
+			m.recordAuthFailure(ctx, "TENANT_CLAIM_INVALID_FORMAT", fe.Value, userID, jti)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 	}
 }
+
+// recordAuthFailure writes the §4.2 line 185 INFO log line and emits
+// the `auth_failure` audit event. Logging always fires; the audit
+// emission is a no-op when no sink is wired.
+func (m *middleware) recordAuthFailure(ctx context.Context, reason, tenantID, userID, jti string) {
+	log.Printf("auth: %s tenant_id=%q user_id=%q jti=%q",
+		reason, tenantID, userID, jti)
+	if m.opts.AuthFailureSink == nil {
+		return
+	}
+	clk := m.opts.Clock
+	if clk == nil {
+		clk = func() time.Time { return time.Now().UTC() }
+	}
+	m.opts.AuthFailureSink.EmitAuthFailure(ctx, AuthFailureEvent{
+		Reason:   reason,
+		TenantID: tenantID,
+		UserID:   userID,
+		JTI:      jti,
+		At:       clk(),
+	})
+}
+
+// AuthFailureEventType is the §4.2 line 185 event-type identifier the
+// middleware emits on tenant-claim rejection. The string is fixed by
+// the spec; the §16.7 catalog only enumerates §25-introduced events
+// so this constant is the source of truth for the auth-failure name.
+const AuthFailureEventType = "auth_failure"
 
 func writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
 	w.Header().Set("Content-Type", "application/json")
