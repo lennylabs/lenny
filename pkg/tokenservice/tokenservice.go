@@ -309,8 +309,36 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		actor := toExchangeToken(*actorClaims)
 		exchangeReq.Actor = &actor
 	}
-	if cap, ok := s.perDialect[req.Audience]; ok {
-		exchangeReq.PerDialectCap = cap
+	// §13.3 per-dialect lifetime cap. The cap key is one audience
+	// dialect (e.g. lenny-gateway, lenny-ops, llm-proxy). An exchange
+	// can request a multi-value audience (RFC 8693), so iterate the
+	// requested audiences and apply the tightest matching cap. This
+	// closes the F-13.3.12 lookup bug where a multi-value string was
+	// passed verbatim and never matched a single-key entry. Capture
+	// which cap fired so it can be recorded on the issued_tokens row
+	// for forensic reconstruction. spec: §4.3 line 193, §13.3 line
+	// 564.
+	var appliedDialectCap time.Duration
+	for _, aud := range exchangeReq.Requested.Audience {
+		if c, ok := s.perDialect[aud]; ok {
+			if appliedDialectCap == 0 || c < appliedDialectCap {
+				appliedDialectCap = c
+			}
+		}
+	}
+	if appliedDialectCap == 0 {
+		// Back-compat: callers that still pass a singleton through
+		// req.Audience (the raw form, before whitespace splitting) hit
+		// the original direct lookup. This preserves dialect cap
+		// enforcement on the singleton "lenny-gateway" path even when
+		// the exchange request carried no Audience list (e.g.
+		// non-RFC-8693 callers).
+		if c, ok := s.perDialect[req.Audience]; ok {
+			appliedDialectCap = c
+		}
+	}
+	if appliedDialectCap > 0 {
+		exchangeReq.PerDialectCap = appliedDialectCap
 	}
 
 	issued, verr := tokenexchange.Validate(exchangeReq)
@@ -385,9 +413,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		Subject:   issued.Subject,
 		TokenHash: hash[:],
 		Scope:     issued.Scope,
-		Audience:  strings.Join(issued.Audience, " "),
-		IssuedAt:  now,
-		ExpiresAt: issued.Exp,
+		// Audience: legacy space-joined form for back-compat with
+		// pre-0058 readers. Audiences carries the list form so a
+		// forensic reverse lookup can match individual audiences.
+		// spec: §4.3 line 193, migration 0058.
+		Audience:                 strings.Join(issued.Audience, " "),
+		Audiences:                append([]string{}, issued.Audience...),
+		DialectCapAppliedSeconds: int(appliedDialectCap.Seconds()),
+		IssuedAt:                 now,
+		ExpiresAt:                issued.Exp,
 	}
 	auditPayload := exchangeAuditPayload{
 		CallerSub:       callerClaims.Subject,

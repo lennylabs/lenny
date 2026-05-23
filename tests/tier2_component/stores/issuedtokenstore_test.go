@@ -166,6 +166,92 @@ func TestTokenIssuanceStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("audiences list and dialect cap round-trip", func(t *testing.T) {
+		// spec: §4.3 line 193, migration 0058.
+		// Multi-valued audience set MUST be stored on the audiences[]
+		// column so forensic queries can match individual audiences.
+		// The dialect cap applied to the issued exp MUST be stored on
+		// dialect_cap_applied_seconds so an operator can later answer
+		// "why did this token live exactly Nh".
+		tenant := freshTenant(t, ctx, pg)
+		ts := time.Now().UTC().Truncate(time.Microsecond)
+		want := issuedtokenstore.IssuedToken{
+			JTI:                      "jti-" + newUUID(t),
+			TenantID:                 tenant,
+			Subject:                  "alice@acme.com",
+			TokenHash:                []byte{0x10, 0x11},
+			Scope:                    []string{"sessions:read"},
+			Audience:                 "lenny-gateway lenny-ops",
+			Audiences:                []string{"lenny-gateway", "lenny-ops"},
+			DialectCapAppliedSeconds: 86400, // §13.3 lenny-gateway: 24h cap.
+			IssuedAt:                 ts,
+			ExpiresAt:                ts.Add(24 * time.Hour),
+		}
+		if err := store.Record(ctx, want); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, want.JTI)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !slices.Equal(got.Audiences, want.Audiences) {
+			t.Errorf("Audiences = %v, want %v", got.Audiences, want.Audiences)
+		}
+		if got.DialectCapAppliedSeconds != want.DialectCapAppliedSeconds {
+			t.Errorf("DialectCapAppliedSeconds = %d, want %d",
+				got.DialectCapAppliedSeconds, want.DialectCapAppliedSeconds)
+		}
+		// Forensic reverse lookup must work: a row written with
+		// "lenny-ops" in audiences[] must surface on a query that
+		// filters by that audience. The audiences[] column carries a
+		// GIN index from migration 0058.
+		var hits int
+		row := pg.Pool.QueryRow(ctx,
+			`SELECT count(*) FROM issued_tokens
+			 WHERE tenant_id = $1 AND $2 = ANY(audiences)`,
+			tenant, "lenny-ops")
+		if err := row.Scan(&hits); err != nil {
+			t.Fatalf("ANY(audiences) lookup: %v", err)
+		}
+		if hits != 1 {
+			t.Errorf("audiences ANY lookup hits = %d, want 1", hits)
+		}
+	})
+
+	t.Run("audiences list is back-filled from legacy single audience", func(t *testing.T) {
+		// spec: §4.3 line 193, migration 0058.
+		// A caller that supplies only the legacy single-valued
+		// Audience field still gets the audiences[] column populated
+		// from the writer-side fallback (audienceListArg). Single
+		// values like "lenny-gateway" land as ["lenny-gateway"].
+		tenant := freshTenant(t, ctx, pg)
+		ts := time.Now().UTC().Truncate(time.Microsecond)
+		tok := issuedtokenstore.IssuedToken{
+			JTI:       "jti-" + newUUID(t),
+			TenantID:  tenant,
+			Subject:   "alice@acme.com",
+			TokenHash: []byte{0x12},
+			Scope:     []string{"sessions:read"},
+			Audience:  "lenny-gateway",
+			// Audiences intentionally nil — the writer must populate
+			// it from the legacy single value.
+			IssuedAt:  ts,
+			ExpiresAt: ts.Add(time.Hour),
+		}
+		if err := store.Record(ctx, tok); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, tok.JTI)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		want := []string{"lenny-gateway"}
+		if !slices.Equal(got.Audiences, want) {
+			t.Errorf("Audiences = %v, want %v (back-filled from legacy Audience)",
+				got.Audiences, want)
+		}
+	})
+
 	t.Run("delete expired removes only past-expiry rows", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		now := time.Now().UTC().Truncate(time.Microsecond)

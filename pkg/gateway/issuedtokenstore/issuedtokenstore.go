@@ -48,8 +48,20 @@ type IssuedToken struct {
 	TokenHash []byte
 	// Scope is the granted scope set.
 	Scope []string
-	// Audience is the token's intended audience.
+	// Audience is the token's intended audience as a single
+	// space-joined string. Preserved for legacy readers; new code
+	// should prefer Audiences (the list form) when available.
 	Audience string
+	// Audiences is the multi-value audience set captured per RFC 8693.
+	// The writer always populates this from the original list so a
+	// forensic reverse lookup can match individual audiences without
+	// re-splitting Audience. spec: §4.3 line 193, migration 0058.
+	Audiences []string
+	// DialectCapAppliedSeconds records the §13.3 per-dialect lifetime
+	// cap that capped the issued exp. Zero means no per-dialect cap
+	// was configured for the audience. spec: §4.3 line 193, §13.3
+	// dialect-cap discipline.
+	DialectCapAppliedSeconds int
 	// IssuedAt and ExpiresAt bound the token's validity window.
 	IssuedAt  time.Time
 	ExpiresAt time.Time
@@ -77,6 +89,7 @@ type Store struct {
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 const selectList = `jti, tenant_id, sub, token_hash, scope, audience,
+	audiences, dialect_cap_applied_seconds,
 	issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti`
 
 // Record persists issued-token metadata. It returns ErrAlreadyExists
@@ -150,14 +163,21 @@ func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, auditEvent
 // insertIssued runs the issued_tokens INSERT on tx. It assumes the
 // caller has already opened a pgtenant.InTx and acquired the §11.7
 // audit advisory lock when binding to an audit row.
+//
+// spec: §4.3 line 193 — audiences and dialect_cap_applied_seconds are
+// recorded alongside the legacy single-valued audience column so
+// forensic reverse lookups by individual audience and "why was the
+// exp this value" both have a durable source.
 func insertIssued(ctx context.Context, tx pgx.Tx, tok IssuedToken) error {
 	const insertSQL = `INSERT INTO issued_tokens (
 		jti, tenant_id, sub, token_hash, scope, audience,
+		audiences, dialect_cap_applied_seconds,
 		issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	_, err := tx.Exec(ctx, insertSQL,
 		tok.JTI, tok.TenantID, tok.Subject, tok.TokenHash, scopeArg(tok.Scope),
-		tok.Audience, tok.IssuedAt, tok.ExpiresAt, pgtenant.NullTime(tok.RevokedAt),
+		tok.Audience, audienceListArg(tok.Audiences, tok.Audience), tok.DialectCapAppliedSeconds,
+		tok.IssuedAt, tok.ExpiresAt, pgtenant.NullTime(tok.RevokedAt),
 		pgtenant.NullString(tok.RevokedReason), pgtenant.NullString(tok.ActSubject), pgtenant.NullString(tok.ParentJTI))
 	return err
 }
@@ -299,6 +319,10 @@ func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.
 }
 
 // scanToken reads one row in selectList order into an IssuedToken.
+//
+// spec: §4.3 line 193 — Audiences and DialectCapAppliedSeconds are
+// populated alongside the legacy Audience column so callers prefer
+// the list form when present.
 func scanToken(row pgx.Row) (IssuedToken, error) {
 	var (
 		t                             IssuedToken
@@ -307,6 +331,7 @@ func scanToken(row pgx.Row) (IssuedToken, error) {
 	)
 	if err := row.Scan(
 		&t.JTI, &t.TenantID, &t.Subject, &t.TokenHash, &t.Scope, &t.Audience,
+		&t.Audiences, &t.DialectCapAppliedSeconds,
 		&t.IssuedAt, &t.ExpiresAt, &revokedAt, &revokedReason, &actSub, &parent,
 	); err != nil {
 		return IssuedToken{}, err
@@ -333,4 +358,59 @@ func scopeArg(scope []string) []string {
 		return []string{}
 	}
 	return scope
+}
+
+// audienceListArg normalizes the audience list for the audiences
+// text[] column. When the caller passes an explicit list it is used
+// verbatim. When the list is empty but the legacy single-valued
+// `audience` string is set, split on whitespace so a legacy single
+// audience like "lenny-gateway" arrives as ["lenny-gateway"] and a
+// joined value like "lenny-gateway lenny-ops" arrives as the matching
+// list. The text[] column is never written NULL.
+// spec: §4.3 line 193, migration 0058.
+func audienceListArg(audiences []string, legacy string) []string {
+	if len(audiences) > 0 {
+		out := make([]string, 0, len(audiences))
+		for _, a := range audiences {
+			if a == "" {
+				continue
+			}
+			out = append(out, a)
+		}
+		return out
+	}
+	if legacy == "" {
+		return []string{}
+	}
+	out := []string{}
+	for _, a := range splitAudienceFallback(legacy) {
+		if a == "" {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// splitAudienceFallback splits a legacy space-joined audience string
+// into its constituent values. It exists so callers that only set
+// IssuedToken.Audience (the pre-0058 form) still populate the
+// audiences[] column on the way to Postgres.
+func splitAudienceFallback(s string) []string {
+	out := []string{}
+	cur := ""
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' {
+			if cur != "" {
+				out = append(out, cur)
+				cur = ""
+			}
+			continue
+		}
+		cur += string(r)
+	}
+	if cur != "" {
+		out = append(out, cur)
+	}
+	return out
 }

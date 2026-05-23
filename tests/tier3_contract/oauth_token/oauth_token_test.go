@@ -366,3 +366,46 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 		t.Errorf("expires_in: want ≤ 24h, got %v", expiresIn)
 	}
 }
+
+// spec: 13.3 (per-dialect cap, F-13.3.12)
+// diagnosis: pre-fix the cap lookup used `req.Audience` verbatim as
+// the map key. A request with `audience: "lenny-gateway lenny-ops"`
+// never matched a single-key entry and the cap silently no-opped. The
+// fix iterates the requested audiences and applies the tightest cap.
+// With caps lenny-gateway=24h and lenny-ops=1h, a multi-value audience
+// must cap at 1h.
+func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
+	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
+	srv := tokenservice.NewServer(tokenservice.Options{
+		Signer: signer,
+		Issuer: "https://lenny.dev.test/token",
+		PerDialectCap: map[string]time.Duration{
+			"lenny-gateway": 24 * time.Hour,
+			"lenny-ops":     1 * time.Hour,
+		},
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	subject := mint(t, signer, jwt.Claims{
+		Subject: "alice", TenantID: "acme",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Audience: []string{"lenny-gateway", "lenny-ops"},
+		Expiry:   beyond24hExpiry,
+	})
+	resp, body := exchange(t, ts, subject, tokenservice.Request{
+		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
+		SubjectToken:     subject,
+		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+		Scope:            "sessions:read",
+		Audience:         "lenny-gateway lenny-ops",
+		ExpiresIn:        int64((48 * time.Hour).Seconds()),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("multi-value cap rotation: want 200, got %d (body %v)", resp.StatusCode, body)
+	}
+	expiresIn, _ := body["expires_in"].(float64)
+	// Tightest cap is lenny-ops at 1h (3600s); allow 5s skew.
+	if expiresIn > float64(60*60)+5 {
+		t.Errorf("expires_in for multi-value audience: want ≤ 1h, got %v", expiresIn)
+	}
+}
