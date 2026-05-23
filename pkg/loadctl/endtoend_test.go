@@ -24,8 +24,9 @@ func TestEndToEndRunMovesToPass(t *testing.T) {
 	mem := dispatch.NewInMem(30 * time.Second)
 	submitter := &dispatch.InMemSubmitter{Mem: mem}
 	server, err := NewServer(Config{
-		StorageURL: "s3://test",
-		Submitter:  submitter,
+		StorageURL:  "s3://test",
+		Submitter:   submitter,
+		RunDuration: 100 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -51,7 +52,7 @@ func TestEndToEndRunMovesToPass(t *testing.T) {
 				continue
 			}
 			cfg := exec.Config{
-				Runner:     exec.NoopRunner{},
+				Runner:     &exec.NoopRunner{},
 				LoadctlURL: srv.URL,
 			}
 			_, _ = exec.Execute(runnerCtx, cfg, job)
@@ -99,6 +100,127 @@ func TestEndToEndRunMovesToPass(t *testing.T) {
 	<-runnerDone
 }
 
+// TestProgressFlowPublishesViaHub exercises the runner → loadctl
+// progress callback and verifies the events fan out through the hub.
+// The test wires a real loadctl Server + InMem dispatcher + a runner
+// goroutine that calls exec.Execute with ProgressFn set. A subscriber
+// reads the hub backlog after the run completes and asserts that at
+// least one "progress" event was published.
+func TestProgressFlowPublishesViaHub(t *testing.T) {
+	mem := dispatch.NewInMem(30 * time.Second)
+	submitter := &dispatch.InMemSubmitter{Mem: mem}
+	server, err := NewServer(Config{
+		StorageURL:  "s3://test",
+		Submitter:   submitter,
+		RunDuration: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer server.Close()
+	srv := httptest.NewServer(server.Handler())
+	defer srv.Close()
+
+	// Spawn the runner with the ProgressFn that POSTs to the server.
+	runnerCtx, runnerCancel := context.WithCancel(context.Background())
+	defer runnerCancel()
+	go func() {
+		for {
+			recvCtx, cancel := context.WithTimeout(runnerCtx, 200*time.Millisecond)
+			job, err := mem.Receive(recvCtx)
+			cancel()
+			if err != nil {
+				if runnerCtx.Err() != nil {
+					return
+				}
+				continue
+			}
+			cfg := exec.Config{
+				Runner:      &exec.NoopRunner{},
+				LoadctlURL:  srv.URL,
+				ProgressFn:  makeProgressPoster(srv.URL),
+				ProgressInt: 100 * time.Millisecond,
+			}
+			_, _ = exec.Execute(runnerCtx, cfg, job)
+			_ = mem.Ack(runnerCtx, job)
+		}
+	}()
+
+	body := bytes.NewBufferString(`{"scale":"small","scenarios":["progress_demo"],"cluster_release":"r1"}`)
+	resp, _ := http.Post(srv.URL+"/api/v1/runs", "application/json", body)
+	var created Run
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+
+	// Subscribe immediately so we capture every event the run emits
+	// before hub.Close terminates the channel.
+	collectCh, _, unsub := server.hub.SubscribeForTest(created.ID)
+	defer unsub()
+
+	collected := make([]Event, 0, 32)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for e := range collectCh {
+			collected = append(collected, e)
+		}
+	}()
+
+	// Wait for the channel to close (terminal transition + hub.Close).
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for run to complete; collected: %s", eventTypes(collected))
+	}
+
+	progressCount := 0
+	for _, e := range collected {
+		if e.Type == "progress" {
+			progressCount++
+		}
+	}
+	if progressCount == 0 {
+		t.Errorf("no progress events received; got types: %s", eventTypes(collected))
+	}
+}
+
+func eventTypes(es []Event) string {
+	out := []string{}
+	for _, e := range es {
+		out = append(out, e.Type)
+	}
+	return strings.Join(out, ",")
+}
+
+// makeProgressPoster builds a runner-side ProgressFn that POSTs the
+// Progress payload to the loadctl /api/v1/progress endpoint.
+func makeProgressPoster(loadctlURL string) exec.ProgressFn {
+	client := &http.Client{Timeout: 5 * time.Second}
+	return func(ctx context.Context, j *dispatch.Job, p exec.Progress) error {
+		body, err := json.Marshal(map[string]any{
+			"run_id":          j.RunID,
+			"scenario":        j.Scenario,
+			"elapsed_seconds": p.ElapsedSeconds,
+			"iterations":      p.Iterations,
+			"metrics":         p.Metrics,
+		})
+		if err != nil {
+			return err
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", loadctlURL+"/api/v1/progress", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		return nil
+	}
+}
+
 // TestRunnerAckRejectsUnknownRun confirms the ack callback returns
 // 404 for unknown run IDs.
 func TestRunnerAckRejectsUnknownRun(t *testing.T) {
@@ -120,8 +242,9 @@ func TestMultiScenarioRunTracksCompletion(t *testing.T) {
 	mem := dispatch.NewInMem(30 * time.Second)
 	submitter := &dispatch.InMemSubmitter{Mem: mem}
 	server, _ := NewServer(Config{
-		StorageURL: "s3://test",
-		Submitter:  submitter,
+		StorageURL:  "s3://test",
+		Submitter:   submitter,
+		RunDuration: 100 * time.Millisecond,
 	})
 	defer server.Close()
 	srv := httptest.NewServer(server.Handler())
@@ -140,7 +263,7 @@ func TestMultiScenarioRunTracksCompletion(t *testing.T) {
 				}
 				continue
 			}
-			_, _ = exec.Execute(runnerCtx, exec.Config{Runner: exec.NoopRunner{}, LoadctlURL: srv.URL}, job)
+			_, _ = exec.Execute(runnerCtx, exec.Config{Runner: &exec.NoopRunner{}, LoadctlURL: srv.URL}, job)
 			_ = mem.Ack(runnerCtx, job)
 		}
 	}()

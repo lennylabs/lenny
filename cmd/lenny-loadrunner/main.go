@@ -11,11 +11,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -66,8 +70,47 @@ func run() error {
 			return d.Heartbeat(ctx, j)
 		},
 		HeartbeatInt: 30 * time.Second,
+		ProgressFn:   makeProgressFn(*loadctlURL),
+		ProgressInt:  time.Second,
 	}
 	return loop(ctx, d, cfg)
+}
+
+// makeProgressFn returns a ProgressFn that POSTs Progress to the
+// loadctl `/api/v1/progress` endpoint. Returns nil when loadctlURL
+// is empty so the unit-test path (no callback wired) keeps working.
+func makeProgressFn(loadctlURL string) exec.ProgressFn {
+	if loadctlURL == "" {
+		return nil
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	return func(ctx context.Context, j *dispatch.Job, p exec.Progress) error {
+		body, err := json.Marshal(map[string]any{
+			"run_id":          j.RunID,
+			"scenario":        j.Scenario,
+			"elapsed_seconds": p.ElapsedSeconds,
+			"iterations":      p.Iterations,
+			"metrics":         p.Metrics,
+		})
+		if err != nil {
+			return err
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", loadctlURL+"/api/v1/progress", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			return fmt.Errorf("progress: status=%d", resp.StatusCode)
+		}
+		return nil
+	}
 }
 
 func newDispatcher(kind, queueURL, region string, vis time.Duration) (dispatch.Dispatcher, error) {

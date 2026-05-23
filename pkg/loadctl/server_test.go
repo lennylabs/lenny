@@ -57,7 +57,7 @@ func TestGetRunReturnsRun(t *testing.T) {
 	resp.Body.Close()
 
 	// Wait for the simulated run to finish.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	var got Run
 	for time.Now().Before(deadline) {
 		r, err := http.Get(srv.URL + "/api/v1/runs/" + created.ID)

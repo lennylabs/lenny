@@ -99,6 +99,14 @@ func (h *Hub) openChannel(runID string) *runChannel {
 	return ch
 }
 
+// SubscribeForTest exposes the internal subscribe helper so tests
+// can collect every Event a run emits without going through the
+// WebSocket layer. Returns the live channel, the backlog snapshot,
+// and an unsubscribe func.
+func (h *Hub) SubscribeForTest(runID string) (<-chan Event, []Event, func()) {
+	return h.subscribe(runID)
+}
+
 func (h *Hub) subscribe(runID string) (<-chan Event, []Event, func()) {
 	ch := h.openChannel(runID)
 	ch.mu.Lock()

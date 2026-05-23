@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/loadrunner/dispatch"
@@ -37,6 +38,30 @@ type Summary struct {
 	Iterations int64              `json:"iterations,omitempty"`
 }
 
+// Progress is the mid-scenario telemetry snapshot Execute emits
+// every Config.ProgressInt while the Runner is in flight. It mirrors
+// the loadctl RunnerProgress wire payload.
+type Progress struct {
+	ElapsedSeconds float64            `json:"elapsed_seconds"`
+	Iterations     int64              `json:"iterations,omitempty"`
+	Metrics        map[string]float64 `json:"metrics,omitempty"`
+}
+
+// ProgressFn is the callback Execute invokes on every ProgressInt
+// tick. Wire it to a POST against the loadctl /api/v1/progress
+// endpoint or any other sink. A non-nil error is logged-and-dropped;
+// progress emission MUST NOT abort a scenario.
+type ProgressFn func(ctx context.Context, j *dispatch.Job, p Progress) error
+
+// ProgressReporter is the optional interface a Runner implements when
+// it has structured mid-flight counters to expose (k6's streaming
+// JSON output, for example). Execute calls Snapshot on every
+// ProgressInt tick. Runners that do not implement it emit
+// elapsed-time-only Progress samples.
+type ProgressReporter interface {
+	Snapshot() Progress
+}
+
 // Config configures Execute.
 type Config struct {
 	Runner       Runner
@@ -44,6 +69,8 @@ type Config struct {
 	HTTPClient   *http.Client
 	HeartbeatFn  func(ctx context.Context, j *dispatch.Job) error
 	HeartbeatInt time.Duration
+	ProgressFn   ProgressFn
+	ProgressInt  time.Duration
 }
 
 // Execute runs the scenario described by j, posts the ack callback
@@ -63,9 +90,14 @@ func Execute(ctx context.Context, cfg Config, j *dispatch.Job) (Summary, error) 
 	if cfg.HeartbeatInt == 0 {
 		cfg.HeartbeatInt = 30 * time.Second
 	}
+	if cfg.ProgressInt == 0 {
+		cfg.ProgressInt = time.Second
+	}
 
 	stop := startHeartbeat(ctx, cfg, j)
 	defer stop()
+	stopProgress := startProgress(ctx, cfg, j)
+	defer stopProgress()
 
 	summary, err := cfg.Runner.Run(ctx, j)
 	if err != nil {
@@ -99,6 +131,39 @@ func startHeartbeat(ctx context.Context, cfg Config, j *dispatch.Job) func() {
 				return
 			case <-ticker.C:
 				_ = cfg.HeartbeatFn(ctx, j)
+			}
+		}
+	}()
+	return func() { close(stop) }
+}
+
+// startProgress fires a Progress tick every cfg.ProgressInt. The
+// payload includes the runner's Snapshot if the Runner implements
+// ProgressReporter; otherwise the tick carries only elapsed time.
+func startProgress(ctx context.Context, cfg Config, j *dispatch.Job) func() {
+	if cfg.ProgressFn == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	start := time.Now()
+	reporter, _ := cfg.Runner.(ProgressReporter)
+	go func() {
+		ticker := time.NewTicker(cfg.ProgressInt)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				p := Progress{ElapsedSeconds: time.Since(start).Seconds()}
+				if reporter != nil {
+					snap := reporter.Snapshot()
+					p.Iterations = snap.Iterations
+					p.Metrics = snap.Metrics
+				}
+				_ = cfg.ProgressFn(ctx, j, p)
 			}
 		}
 	}()
@@ -157,7 +222,7 @@ func (r K6Runner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
 	if _, err := exec.LookPath(bin); err != nil {
 		// Fall back to the noop runner so the wiring is exercisable
 		// without k6 installed.
-		return NoopRunner{}.Run(ctx, j)
+		return (&NoopRunner{}).Run(ctx, j)
 	}
 	if j.ScriptURL == "" {
 		return Summary{Outcome: "FAIL", Error: "Job.ScriptURL is empty"}, errors.New("empty script url")
@@ -260,22 +325,76 @@ func readFileDefault(path string) ([]byte, error) {
 
 // --- noop runner ---------------------------------------------------
 
-// NoopRunner is the fallback used when k6 is not installed. It returns
-// a synthetic PASS summary so the wiring is exercisable from go test.
-type NoopRunner struct{}
+// NoopRunner is the fallback used when k6 is not installed. It runs
+// for Job.Duration (capped at noopMaxDuration; 50ms when Duration is
+// zero so unit tests stay fast), exposes a Snapshot() Progress for
+// the ProgressReporter interface, and returns a synthetic PASS
+// summary on completion.
+type NoopRunner struct {
+	mu         sync.Mutex
+	iterations int64
+	metrics    map[string]float64
+}
+
+const noopMaxDuration = 30 * time.Second
 
 // Run produces a synthetic summary based on the job's profile so the
-// loadctl side has plausible metrics to relay.
-func (NoopRunner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
-	deadline := time.Now().Add(50 * time.Millisecond)
-	select {
-	case <-ctx.Done():
-	case <-time.After(time.Until(deadline)):
+// loadctl side has plausible metrics to relay. While running, the
+// per-tick Snapshot reports a linear iteration ramp.
+func (n *NoopRunner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
+	dur := j.Duration
+	if dur <= 0 {
+		dur = 50 * time.Millisecond
 	}
-	iters := int64(j.VUs * 10)
-	if iters == 0 {
-		iters = 100
+	if dur > noopMaxDuration {
+		dur = noopMaxDuration
 	}
+	totalIters := int64(j.VUs * 100)
+	if totalIters == 0 {
+		totalIters = 100
+	}
+	start := time.Now()
+	deadline := start.Add(dur)
+	// Tick fast enough that Snapshot reflects mid-flight progress; the
+	// caller's ProgressInt is independent.
+	tickInterval := dur / 20
+	if tickInterval < 25*time.Millisecond {
+		tickInterval = 25 * time.Millisecond
+	}
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return n.finalSummary(totalIters), ctx.Err()
+		case <-ticker.C:
+		}
+		now := time.Now()
+		fraction := float64(now.Sub(start)) / float64(dur)
+		if fraction >= 1 {
+			n.update(totalIters, 0.045)
+			return n.finalSummary(totalIters), nil
+		}
+		n.update(int64(float64(totalIters)*fraction), 0.045)
+		if !now.Before(deadline) {
+			return n.finalSummary(totalIters), nil
+		}
+	}
+}
+
+func (n *NoopRunner) update(iters int64, p99 float64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.iterations = iters
+	n.metrics = map[string]float64{
+		"http_req_duration_avg": 0.012,
+		"http_req_duration_p99": p99,
+		"http_req_failed_rate":  0.001,
+	}
+}
+
+func (n *NoopRunner) finalSummary(iters int64) Summary {
+	n.update(iters, 0.045)
 	return Summary{
 		Outcome:    "PASS",
 		Iterations: iters,
@@ -284,5 +403,20 @@ func (NoopRunner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
 			"http_req_duration_p99": 0.045,
 			"http_req_failed_rate":  0.001,
 		},
-	}, nil
+	}
+}
+
+// Snapshot satisfies ProgressReporter so Execute's progress ticker
+// reports live iteration counts while NoopRunner is mid-flight.
+func (n *NoopRunner) Snapshot() Progress {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := Progress{Iterations: n.iterations}
+	if n.metrics != nil {
+		out.Metrics = make(map[string]float64, len(n.metrics))
+		for k, v := range n.metrics {
+			out.Metrics[k] = v
+		}
+	}
+	return out
 }

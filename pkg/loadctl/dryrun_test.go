@@ -43,8 +43,9 @@ func TestTier12LocalDryRun(t *testing.T) {
 	submitter := &dispatch.InMemSubmitter{Mem: mem}
 
 	server, err := NewServer(Config{
-		StorageURL: "s3://lenny-load-reports/dryrun",
-		Submitter:  submitter,
+		StorageURL:  "s3://lenny-load-reports/dryrun",
+		Submitter:   submitter,
+		RunDuration: 100 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -68,7 +69,7 @@ func TestTier12LocalDryRun(t *testing.T) {
 				continue
 			}
 			_, _ = exec.Execute(runnerCtx, exec.Config{
-				Runner:     exec.NoopRunner{},
+				Runner:     &exec.NoopRunner{},
 				LoadctlURL: srv.URL,
 			}, job)
 			_ = mem.Ack(runnerCtx, job)

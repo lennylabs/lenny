@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Lenny load-test run</title>
+<link rel="stylesheet" href="/assets/style.css" />
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>Run <span id="run-id" class="muted">…</span></h1>
+  <p class="subtitle">Live telemetry from the loadctl WebSocket channel</p>
+  <p><a href="/">&larr; back to runs</a></p>
+</header>
+
+<section>
+  <h2>Status</h2>
+  <div class="card">
+    <dl class="kv">
+      <dt>Status</dt><dd id="status" class="status-PENDING">PENDING</dd>
+      <dt>Scale</dt><dd id="scale">…</dd>
+      <dt>Cluster release</dt><dd id="cluster-release">…</dd>
+      <dt>Scenarios</dt><dd id="scenarios">…</dd>
+      <dt>Started at</dt><dd id="started-at">…</dd>
+      <dt>Completed at</dt><dd id="completed-at">—</dd>
+      <dt>Report</dt><dd id="report">—</dd>
+    </dl>
+  </div>
+  <p>
+    <button id="stop-btn" type="button">Stop run</button>
+    <span id="stop-status" class="muted"></span>
+  </p>
+</section>
+
+<section>
+  <h2>Per-scenario progress</h2>
+  <div id="scenarios-list">Waiting for events…</div>
+</section>
+
+<section>
+  <h2>Live iterations</h2>
+  <div id="chart-iters" class="chart"></div>
+</section>
+
+<section>
+  <h2>Live latency P99 (s)</h2>
+  <div id="chart-p99" class="chart"></div>
+</section>
+
+<section>
+  <h2>Event log</h2>
+  <div id="event-log" class="card" style="max-height: 200px; overflow-y: auto; font-family: SF Mono, Menlo, Consolas, monospace; font-size: 0.8em; white-space: pre-wrap;"></div>
+</section>
+
+<footer>
+  <p>API surface: <a id="api-self" href="#">run JSON</a> · <a id="api-stream" href="#">metrics:stream (WS)</a></p>
+  <p>See <code>TESTING.md §12.12</code> for the documented contract.</p>
+</footer>
+
+<script>
+(function() {
+  // Extract run ID from URL: /runs/{id}.
+  const path = window.location.pathname;
+  const runID = path.replace(/^\/runs\//, '').replace(/\/$/, '');
+  document.getElementById('run-id').textContent = runID || '(missing)';
+  if (!runID) return;
+
+  document.getElementById('api-self').href = '/api/v1/runs/' + runID;
+  document.getElementById('api-stream').href = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/v1/runs/' + runID + '/metrics:stream';
+
+  // Initial GET to populate the static fields.
+  fetch('/api/v1/runs/' + runID)
+    .then(r => r.json())
+    .then(run => {
+      if (run.error) {
+        document.getElementById('status').textContent = 'NOT FOUND';
+        return;
+      }
+      applyRun(run);
+    });
+
+  function applyRun(run) {
+    setStatus(run.status);
+    document.getElementById('scale').textContent = run.scale || '—';
+    document.getElementById('cluster-release').textContent = run.cluster_release || '—';
+    document.getElementById('scenarios').textContent = (run.scenarios || []).join(', ') || '—';
+    document.getElementById('started-at').textContent = run.started_at || '—';
+    const completed = run.completed_at && !run.completed_at.startsWith('0001-') ? run.completed_at : '—';
+    document.getElementById('completed-at').textContent = completed;
+    const r = document.getElementById('report');
+    if (run.report_url) {
+      r.innerHTML = '<a href="' + run.report_url + '">' + run.report_url + '</a>';
+    } else {
+      r.textContent = '—';
+    }
+  }
+
+  function setStatus(s) {
+    const el = document.getElementById('status');
+    el.textContent = s;
+    el.className = 'status-' + s;
+  }
+
+  // Per-scenario state map.
+  const scenarios = {};
+  function ensureScenarioRow(name) {
+    if (scenarios[name]) return scenarios[name];
+    const row = document.createElement('div');
+    row.className = 'scenario-row';
+    row.innerHTML =
+      '<span class="name">' + name + '</span>' +
+      '<span class="status muted">queued</span>' +
+      '<span class="iters muted">0 iters</span>' +
+      '<span class="elapsed muted">—</span>';
+    const list = document.getElementById('scenarios-list');
+    if (Object.keys(scenarios).length === 0) list.innerHTML = '';
+    list.appendChild(row);
+    scenarios[name] = { row, iters: 0 };
+    return scenarios[name];
+  }
+
+  function updateScenario(name, partial) {
+    const s = ensureScenarioRow(name);
+    if (partial.status) s.row.querySelector('.status').textContent = partial.status;
+    if (partial.iters !== undefined) {
+      s.iters = partial.iters;
+      s.row.querySelector('.iters').textContent = partial.iters.toLocaleString() + ' iters';
+    }
+    if (partial.elapsed !== undefined) {
+      s.row.querySelector('.elapsed').textContent = partial.elapsed.toFixed(1) + 's';
+    }
+  }
+
+  // Plotly charts: one trace per scenario.
+  const tracesIters = {};
+  const tracesP99 = {};
+  let chartsReady = false;
+  function initCharts() {
+    if (chartsReady || typeof Plotly === 'undefined') return;
+    Plotly.newPlot('chart-iters', [], {
+      margin: {l: 50, r: 20, t: 10, b: 40},
+      xaxis: {title: 'elapsed (s)'},
+      yaxis: {title: 'iterations'},
+    }, {displayModeBar: false, responsive: true});
+    Plotly.newPlot('chart-p99', [], {
+      margin: {l: 50, r: 20, t: 10, b: 40},
+      xaxis: {title: 'elapsed (s)'},
+      yaxis: {title: 'P99 (s)', rangemode: 'tozero'},
+    }, {displayModeBar: false, responsive: true});
+    chartsReady = true;
+  }
+
+  function extendTrace(chartID, traceMap, scenario, x, y) {
+    if (typeof Plotly === 'undefined') return;
+    initCharts();
+    if (!(scenario in traceMap)) {
+      Plotly.addTraces(chartID, [{x: [], y: [], mode: 'lines+markers', name: scenario}]);
+      traceMap[scenario] = Object.keys(traceMap).length;
+    }
+    Plotly.extendTraces(chartID, {x: [[x]], y: [[y]]}, [traceMap[scenario]]);
+  }
+
+  function logEvent(text) {
+    const log = document.getElementById('event-log');
+    const t = new Date().toISOString().substr(11, 12);
+    log.textContent += t + ' ' + text + '\n';
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // WebSocket subscription.
+  const wsURL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/v1/runs/' + runID + '/metrics:stream';
+  let ws;
+  function connect() {
+    ws = new WebSocket(wsURL);
+    ws.onopen = () => logEvent('WS connected');
+    ws.onclose = () => {
+      logEvent('WS closed; re-fetching run state');
+      fetch('/api/v1/runs/' + runID).then(r => r.json()).then(applyRun);
+    };
+    ws.onerror = (e) => logEvent('WS error: ' + e);
+    ws.onmessage = (ev) => {
+      let e;
+      try { e = JSON.parse(ev.data); } catch (err) { return; }
+      handleEvent(e);
+    };
+  }
+
+  function handleEvent(e) {
+    logEvent(e.type + ': ' + JSON.stringify(e.payload));
+    switch (e.type) {
+      case 'status':
+        setStatus(e.payload);
+        if (e.payload === 'PASS' || e.payload === 'FAIL') {
+          fetch('/api/v1/runs/' + runID).then(r => r.json()).then(applyRun);
+        }
+        break;
+      case 'scenario_dispatched':
+        updateScenario(e.payload, {status: 'running'});
+        break;
+      case 'progress': {
+        const p = e.payload;
+        updateScenario(p.scenario, {iters: p.iterations || 0, elapsed: p.elapsed_seconds});
+        extendTrace('chart-iters', tracesIters, p.scenario, p.elapsed_seconds, p.iterations || 0);
+        if (p.metrics && p.metrics.http_req_duration_p99 !== undefined) {
+          extendTrace('chart-p99', tracesP99, p.scenario, p.elapsed_seconds, p.metrics.http_req_duration_p99);
+        }
+        break;
+      }
+      case 'ack':
+        updateScenario(e.payload.scenario, {status: e.payload.outcome});
+        break;
+      case 'submit_error':
+      case 'error':
+        logEvent('!! ' + e.payload);
+        break;
+    }
+  }
+  connect();
+
+  // Stop button.
+  document.getElementById('stop-btn').addEventListener('click', () => {
+    fetch('/api/v1/runs/' + runID + ':stop', {method: 'POST'})
+      .then(r => r.json())
+      .then(j => {
+        document.getElementById('stop-status').textContent = 'stop requested';
+      })
+      .catch(e => {
+        document.getElementById('stop-status').textContent = 'stop failed: ' + e;
+      });
+  });
+})();
+</script>
+</body>
+</html>

@@ -33,7 +33,7 @@ func TestExecuteNoopRunsAndAcks(t *testing.T) {
 
 	j := &dispatch.Job{RunID: "r1", Scenario: "session_throughput", VUs: 5, Duration: 100 * time.Millisecond}
 	summary, err := Execute(context.Background(), Config{
-		Runner:     NoopRunner{},
+		Runner:     &NoopRunner{},
 		LoadctlURL: srv.URL,
 	}, j)
 	if err != nil {

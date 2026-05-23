@@ -32,6 +32,12 @@ type Config struct {
 	// tests. Production wiring supplies a per-cloud Submitter
 	// (SQS / Pub/Sub / Service Bus).
 	Submitter dispatch.Submitter
+
+	// RunDuration is the per-scenario duration stamped onto every
+	// Job the dispatcher sends to the runner pool. Zero selects the
+	// 60-second default. Tests override to a sub-second value so
+	// scenarios complete quickly.
+	RunDuration time.Duration
 }
 
 // Server is the HTTP control plane. It exposes the API described in
@@ -133,12 +139,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/scenarios", s.handleScenarios)
 	mux.HandleFunc("/api/v1/baselines/", s.handleBaselines)
 	mux.HandleFunc("/api/v1/ack", s.handleRunnerAck)
+	mux.HandleFunc("/api/v1/progress", s.handleRunnerProgress)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	// Serve the embedded web tree (HTMX UI + stylesheet). The
 	// embed lives in embed.go; the inlined indexHTML constant is
 	// the fallback when the embed is empty.
 	if assets, ok := embeddedAssets(); ok {
 		mux.Handle("/assets/", http.FileServer(http.FS(assets)))
+		mux.HandleFunc("/runs/", func(w http.ResponseWriter, r *http.Request) {
+			body, err := fs.ReadFile(assets, "runs/detail.html")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(body)
+		})
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/" {
 				http.NotFound(w, r)
@@ -168,6 +184,19 @@ type RunnerAck struct {
 	ReportURL string             `json:"report_url,omitempty"`
 	Metrics   map[string]float64 `json:"metrics,omitempty"`
 	Error     string             `json:"error,omitempty"`
+}
+
+// RunnerProgress is the mid-scenario telemetry the runner POSTs while
+// k6 is still running. Each tick carries the scenario's elapsed time
+// and a snapshot of whatever metrics the runner has parsed so far.
+// The server publishes every progress event through the run's
+// WebSocket channel so the UI can render live charts.
+type RunnerProgress struct {
+	RunID          string             `json:"run_id"`
+	Scenario       string             `json:"scenario"`
+	ElapsedSeconds float64            `json:"elapsed_seconds"`
+	Iterations     int64              `json:"iterations,omitempty"`
+	Metrics        map[string]float64 `json:"metrics,omitempty"`
 }
 
 // handleRunnerAck receives the runner → loadctl callback. When the
@@ -226,6 +255,37 @@ func (s *Server) handleRunnerAck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"received": true, "completed": completed, "total": total, "outcome": outcome,
 	})
+}
+
+// handleRunnerProgress receives the runner → loadctl mid-scenario
+// telemetry. Each call publishes a "progress" Event into the run's
+// hub channel so subscribed UIs render a live chart. The handler
+// does not mutate run state — the terminal transition still goes
+// through handleRunnerAck.
+func (s *Server) handleRunnerProgress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var p RunnerProgress
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
+		return
+	}
+	if p.RunID == "" || p.Scenario == "" {
+		writeError(w, http.StatusBadRequest, "MISSING_FIELDS", "run_id and scenario are required")
+		return
+	}
+	if _, err := s.store.GetRun(r.Context(), p.RunID); err != nil {
+		if err == ErrRunNotFound {
+			writeError(w, http.StatusNotFound, "RUN_NOT_FOUND", p.RunID)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
+		return
+	}
+	s.hub.Publish(p.RunID, Event{Type: "progress", Payload: p})
+	writeJSON(w, http.StatusOK, map[string]any{"received": true})
 }
 
 // recordAck appends scenario=outcome to run.CurrentMetrics and
@@ -339,9 +399,24 @@ func (s *Server) driveRun(id string) {
 	s.hub.Publish(id, Event{Type: "status", Payload: run.Status})
 
 	if s.submitter == nil {
-		// Scaffolding path: immediately complete the run so the
-		// developer surface is observable without a runner pool.
-		time.Sleep(50 * time.Millisecond)
+		// Scaffolding path: simulate one scenario worth of progress
+		// so the operator UI has live telemetry to render without a
+		// real runner pool. The simulation runs scaffoldDuration
+		// total and emits a progress tick every scaffoldTick with a
+		// growing iteration count. Each scenario in the run produces
+		// its own progress stream serially.
+		for _, scenario := range run.Scenarios {
+			s.hub.Publish(id, Event{Type: "scenario_dispatched", Payload: scenario})
+			s.simulateScenario(id, scenario)
+			s.hub.Publish(id, Event{Type: "ack", Payload: RunnerAck{
+				RunID: id, Scenario: scenario, Outcome: StatusPass,
+				Metrics: map[string]float64{
+					"http_req_duration_avg": 0.012,
+					"http_req_duration_p99": 0.045,
+					"http_req_failed_rate":  0.001,
+				},
+			}})
+		}
 		s.completeRun(ctx, id, StatusPass, nil)
 		return
 	}
@@ -353,7 +428,7 @@ func (s *Server) driveRun(id string) {
 			RunID:     id,
 			Scenario:  scenario,
 			TargetURL: s.config.StorageURL, // placeholder; overlay sets the real gateway URL
-			Duration:  defaultRunDuration,
+			Duration:  s.runDuration(),
 			VUs:       scaleVUs(run.Scale),
 			Rate:      scaleRate(run.Scale),
 		}
@@ -411,7 +486,48 @@ func (s *Server) completeRun(ctx context.Context, id, status string, ackErr erro
 const (
 	defaultRunDuration = 60 * time.Second
 	defaultRunTimeout  = 5 * time.Minute
+	scaffoldDuration   = 4 * time.Second
+	scaffoldTick       = 500 * time.Millisecond
 )
+
+// runDuration returns the configured per-scenario duration or the
+// 60-second default when none is set.
+func (s *Server) runDuration() time.Duration {
+	if s.config.RunDuration > 0 {
+		return s.config.RunDuration
+	}
+	return defaultRunDuration
+}
+
+// simulateScenario emits a sequence of RunnerProgress events through
+// the hub so the operator UI in scaffold mode (no real runner)
+// renders a live chart. The simulation models a linear iteration
+// ramp from 0 → ~scaleVUs*100 and a P99 latency that wobbles around
+// 45ms; numbers are illustrative, not load-bearing.
+func (s *Server) simulateScenario(runID, scenario string) {
+	start := time.Now()
+	deadline := start.Add(scaffoldDuration)
+	for now := time.Now(); now.Before(deadline); now = time.Now() {
+		elapsed := now.Sub(start)
+		fraction := float64(elapsed) / float64(scaffoldDuration)
+		if fraction > 1 {
+			fraction = 1
+		}
+		iters := int64(2000 * fraction)
+		jitter := 0.045 + 0.010*(fraction-0.5)
+		s.hub.Publish(runID, Event{Type: "progress", Payload: RunnerProgress{
+			RunID:          runID,
+			Scenario:       scenario,
+			ElapsedSeconds: elapsed.Seconds(),
+			Iterations:     iters,
+			Metrics: map[string]float64{
+				"http_req_duration_p99": jitter,
+				"http_req_failed_rate":  0.001 * (1 + fraction),
+			},
+		}})
+		time.Sleep(scaffoldTick)
+	}
+}
 
 // scaleVUs picks the worker count from the documented profile.
 func scaleVUs(scale string) int {
