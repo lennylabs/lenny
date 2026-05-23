@@ -757,3 +757,95 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 		t.Errorf("archived ParentSessionID = %q, want sess_parent", got.ParentSessionID)
 	}
 }
+
+// spec: §4.2 line 160 — the §4.2 pod-to-session binding is persisted on
+// the sessions row so a fresh gateway replica can recover the binding
+// from Postgres after a coordinator handoff. The in-memory Registry is
+// a cache; the row column is the source of truth across replicas.
+func TestSessionStartPersistsPodAssignment(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-persist", "echo-pool", "10.244.2.9"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess_persist_assign" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// The pod_assignment column on the sessions row must hold the bound
+	// sandbox's name; a fresh replica reading the row alone sees the
+	// binding without needing access to the in-memory Registry.
+	row, err := store.Get(context.Background(), "acme", "sess_persist_assign")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.PodAssignment != "sbx-persist" {
+		t.Errorf("row.PodAssignment = %q, want sbx-persist (§4.2 line 160)", row.PodAssignment)
+	}
+	// The Registry also holds the binding — the in-memory cache is
+	// authoritative for this replica's hot path.
+	if _, ok := registry.Get("sess_persist_assign"); !ok {
+		t.Error("registry holds no binding (cache should be populated alongside the persist)")
+	}
+}
+
+// spec: §4.2 line 156 — recovery_generation is incremented on each
+// pod recovery. The resume path bumps it by one and persists the new
+// pod assignment in the same Update.
+func TestResumeBumpsRecoveryGeneration(t *testing.T) {
+	srv, store, _, _ := podResumeServer(t, "sess_recovery_bump")
+	seedAwaitingSession(t, store, sessionstore.Session{
+		ID: "sess_recovery_bump",
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
+			Ref:    "ckpt-1",
+			Source: sessionstore.WorkspaceSnapshotCheckpoint,
+		},
+	})
+
+	// Baseline: a freshly created awaiting session has
+	// RecoveryGeneration=0.
+	row, _ := store.Get(context.Background(), "acme", "sess_recovery_bump")
+	if row.RecoveryGeneration != 0 {
+		t.Fatalf("baseline RecoveryGeneration = %d, want 0", row.RecoveryGeneration)
+	}
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_recovery_bump/resume", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// After one resume the counter advanced by exactly one and the
+	// pod assignment reflects the new bound sandbox.
+	row, _ = store.Get(context.Background(), "acme", "sess_recovery_bump")
+	if row.RecoveryGeneration != 1 {
+		t.Errorf("after resume, RecoveryGeneration = %d, want 1 (§4.2 line 156)",
+			row.RecoveryGeneration)
+	}
+	if row.PodAssignment != "sbx-1" {
+		t.Errorf("after resume, PodAssignment = %q, want sbx-1", row.PodAssignment)
+	}
+}

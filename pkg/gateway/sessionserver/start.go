@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -404,6 +405,11 @@ func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *ad
 // podBinder.BindSlot (§5.2). The pod's §4.7 adapter runs the
 // per-mode assignment sequence and the binding is recorded so the
 // message and teardown paths can reach the pod.
+//
+// On success the bound pod's SandboxName is persisted to
+// sessions.pod_assignment so a fresh gateway replica can recover the
+// binding after a coordinator handoff without losing the assignment.
+// spec: §4.2 line 160 — "Pod-to-session binding".
 func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) error {
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
@@ -427,6 +433,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			return err
 		}
 		s.podRegistry.Put(result)
+		s.persistPodAssignment(ctx, row.TenantID, row.ID, result.SandboxName)
 		return nil
 	}
 	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
@@ -443,7 +450,28 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		return err
 	}
 	s.podRegistry.Put(result)
+	s.persistPodAssignment(ctx, row.TenantID, row.ID, result.SandboxName)
 	return nil
+}
+
+// persistPodAssignment writes the bound pod's SandboxName back to the
+// session row so a fresh gateway replica can pick up the binding from
+// Postgres after a coordinator handoff. Best-effort: an update failure
+// is logged via the configured error handler but does not fail the
+// claim — the in-memory Registry remains authoritative for this
+// replica, and the next coordination sweep will re-publish the
+// assignment. spec: §4.2 line 160 — "Pod-to-session binding".
+func (s *Server) persistPodAssignment(ctx context.Context, tenantID, sessionID, podAssignment string) {
+	if podAssignment == "" {
+		return
+	}
+	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		row.PodAssignment = podAssignment
+		return nil
+	})
+	if err != nil {
+		log.Printf("sessionserver: persist pod_assignment for session %s: %v", sessionID, err)
+	}
 }
 
 // failSession marks a session row failed after a start-path error. The
@@ -606,5 +634,29 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) erro
 		return err
 	}
 	s.podRegistry.Put(result)
+	// spec: §4.2 line 156 — recovery_generation is incremented on each
+	// pod recovery. Persist the new pod assignment in the same update
+	// so a fresh replica picks up the recovered binding without
+	// re-running resume.
+	s.bumpRecoveryGeneration(ctx, row.TenantID, row.ID, result.SandboxName)
 	return nil
+}
+
+// bumpRecoveryGeneration increments the §4.2 recovery_generation
+// counter and persists the recovered pod assignment in the same
+// transaction. The store's monotonicity floor ensures the counter
+// only advances; the in-memory Registry already holds the new BindResult
+// on success.
+// spec: §4.2 line 156 — "incremented on each pod recovery".
+func (s *Server) bumpRecoveryGeneration(ctx context.Context, tenantID, sessionID, podAssignment string) {
+	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		row.RecoveryGeneration++
+		if podAssignment != "" {
+			row.PodAssignment = podAssignment
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("sessionserver: bump recovery_generation for session %s: %v", sessionID, err)
+	}
 }

@@ -153,4 +153,104 @@ func TestSweeperContract(t *testing.T) {
 			t.Errorf("empty Sweep: held=%d err=%v, want 0/nil", held, err)
 		}
 	})
+
+	// spec: §4.2 line 156 — coordination_generation is incremented on
+	// coordinator handoff across gateway replicas. The sweeper observes
+	// the prior holder before its Acquire; when the prior holder is a
+	// different replica, the sweeper records the handoff. The no-bump
+	// cases are: lease unheld (priorHolder == ""), self-renew
+	// (priorHolder == replicaID), and held-by-other (Acquire returns
+	// ErrHeld so no handoff occurred).
+	t.Run("RecordHandoff increments coordination_generation monotonically", func(t *testing.T) {
+		run := uniq(t)
+		sessions := memstore.New()
+		sessID := run + "-handoff"
+		seedSession(t, sessions, "acme", sessID, session.StateRunning)
+
+		// Confirm baseline counter is zero.
+		got, _ := sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 0 {
+			t.Fatalf("baseline CoordinationGeneration = %d, want 0", got.CoordinationGeneration)
+		}
+
+		sw := newSweeper(sessions, []string{"acme"}, "replica-B")
+		// One observed handoff bumps the counter by exactly one.
+		sw.RecordHandoff(ctx, "acme", sessID)
+		got, _ = sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 1 {
+			t.Errorf("after one handoff, CoordinationGeneration = %d, want 1",
+				got.CoordinationGeneration)
+		}
+
+		// Successive handoffs continue to advance.
+		sw.RecordHandoff(ctx, "acme", sessID)
+		sw.RecordHandoff(ctx, "acme", sessID)
+		got, _ = sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 3 {
+			t.Errorf("after three handoffs, CoordinationGeneration = %d, want 3",
+				got.CoordinationGeneration)
+		}
+	})
+
+	// spec: §4.2 line 156 — the sweeper does NOT bump
+	// coordination_generation on a self-renew (the prior holder is
+	// this same replica) or on a fresh acquisition of an unheld lease
+	// (no prior holder).
+	t.Run("Sweep self-renew does not bump counter", func(t *testing.T) {
+		run := uniq(t)
+		sessions := memstore.New()
+		sessID := run + "-self-renew"
+		seedSession(t, sessions, "acme", sessID, session.StateRunning)
+		sw := newSweeper(sessions, []string{"acme"}, "replica-1")
+
+		// First sweep: lease unheld, fresh acquisition by replica-1.
+		// No handoff (priorHolder is empty).
+		if _, err := sw.Sweep(ctx); err != nil {
+			t.Fatalf("first Sweep: %v", err)
+		}
+		got, _ := sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 0 {
+			t.Errorf("after fresh acquisition Sweep, CoordinationGeneration = %d, want 0",
+				got.CoordinationGeneration)
+		}
+
+		// Second sweep: lease held by replica-1, renewed by replica-1.
+		// No handoff (priorHolder == replicaID).
+		if _, err := sw.Sweep(ctx); err != nil {
+			t.Fatalf("second Sweep (renew): %v", err)
+		}
+		got, _ = sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 0 {
+			t.Errorf("after self-renew Sweep, CoordinationGeneration = %d, want 0",
+				got.CoordinationGeneration)
+		}
+	})
+
+	// spec: §4.2 line 156 — when the lease is held by another replica
+	// the sweeper's Acquire fails with ErrHeld; no handoff occurred so
+	// the counter must not bump.
+	t.Run("Sweep held-by-other does not bump counter", func(t *testing.T) {
+		run := uniq(t)
+		sessions := memstore.New()
+		sessID := run + "-held-by-other"
+		seedSession(t, sessions, "acme", sessID, session.StateRunning)
+
+		// Replica-A owns the lease.
+		if _, err := leases.Acquire(ctx, "acme", sessID, "replica-A", 30*time.Second); err != nil {
+			t.Fatalf("acquire replica-A: %v", err)
+		}
+
+		// Replica-B's sweep: Get sees replica-A as prior holder, but
+		// Acquire returns ErrHeld (replica-A still owns). No handoff.
+		swB := newSweeper(sessions, []string{"acme"}, "replica-B")
+		if _, err := swB.Sweep(ctx); err != nil {
+			t.Fatalf("held-by-other Sweep: %v", err)
+		}
+		got, _ := sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 0 {
+			t.Errorf("after held-by-other Sweep, CoordinationGeneration = %d, want 0 "+
+				"(Acquire returned ErrHeld; no handoff observed)",
+				got.CoordinationGeneration)
+		}
+	})
 }

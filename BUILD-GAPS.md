@@ -479,14 +479,14 @@ The gateway implementation covers the core externally-facing responsibilities (O
 - **Gap:** These alerts cannot evaluate without a recording rule or runtime gauge.
 - **Suggested resolution:** Either render Prometheus recording rules that compute these scalars from kube-state-metrics, or emit them from the gateway at startup with the configured HPA min replicas and per-replica stream ceiling.
 
-### - [ ] F-4.1.14 — LLM Proxy subsystem only conditionally enabled [Info] — OPEN
+### - [x] F-4.1.14 — LLM Proxy subsystem only conditionally enabled [Info] — CLOSED
 
 - **Spec:** Line 107: "LLM Proxy — Credential-injecting reverse proxy for LLM provider traffic. Validates lease tokens, injects real API keys, and forwards streaming requests to upstream LLM providers."
 - **Evidence:** `cmd/lenny-gateway/main.go:1527-1773` constructs the LLM proxy only when `--llm-proxy-addr` is set; `charts/lenny/templates/gateway-deployment.yaml:163-178` gates it on `features.llmProxy` and exposes it on a separate port. This is intentional per the §5.8 feature-flag rollout in `BUILD-PROGRESS.md:42`.
 - **Gap:** Not a regression — flagged for visibility because the spec describes the LLM Proxy as one of the four mandatory subsystems but the chart treats it as optional. Verify that this feature-flag posture is the desired v1 behavior.
 - **Suggested resolution:** None required; consider documenting the feature-flag posture explicitly in §4.1.
 
-### - [ ] F-4.1.15 — Phase 2 calibration deliverables (capacity budget + extraction thresholds) tracked outside the codebase [Info] — OPEN
+### - [x] F-4.1.15 — Phase 2 calibration deliverables (capacity budget + extraction thresholds) tracked outside the codebase [Info] — CLOSED
 
 - **Spec:** Lines 86-94 and 136-144 describe two Phase 2 calibration deliverables that must replace the provisional table values "before any Tier 2 production deployment."
 - **Evidence:** No benchmark harness, calibration script, or Phase 2 exit-criterion test was found under `tests/` or `scripts/`. The provisional values remain in `charts/lenny/presets/values-tier{1,2,3}.yaml`.
@@ -519,7 +519,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 
 ### Findings
 
-### - [ ] F-4.2.1 — Session record is missing cwd, pod assignment, recovery_generation, coordination_generation, schema_version [High] — OPEN
+### - [x] F-4.2.1 — Session record is missing cwd, pod assignment, recovery_generation, coordination_generation, schema_version [High] — CLOSED
 - **Spec:** Line 156 — "Session records (id, **tenant_id**, user_id, state, pool, pod assignment, cwd, recovery_generation, coordination_generation, **schema_version**)." Both generation counters are normatively defined: `recovery_generation` is incremented on each pod recovery (visible to clients via the session API and `session.resumed` events) and `coordination_generation` is incremented on coordinator handoff. Both are monotonically non-decreasing.
 - **Evidence:**
   - `migrations/0001_initial_schema.up.sql:74-98` — `sessions` table has no `cwd`, no `pod_*`, no `*_generation`, no `schema_version` column.
@@ -529,7 +529,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The five fields the spec lists as canonical session-record contents do not exist. Without them the spec's audit-reconstruction story (§4.2 line 156 last sentence) and the split-brain fencing semantics around `coordination_generation` cannot hold; the `session.resumed` event cannot surface `recovery_generation`; mid-resume terminal collapses cannot freeze / bump generations as specified.
 - **Suggested resolution:** Add a migration that adds `cwd`, `pod_assignment` (text), `recovery_generation` and `coordination_generation` (`BIGINT NOT NULL DEFAULT 0`, with `CHECK (... >= 0)`), and `schema_version` (`INT NOT NULL DEFAULT 1`); plumb the fields through `sessionstore.Session`, the create/update paths, the API envelope, and the §7.2 resume code path so generations bump under the documented edges.
 
-### - [ ] F-4.2.2 — Pod-to-session binding is per-replica in-memory only, not persisted [High] — OPEN
+### - [x] F-4.2.2 — Pod-to-session binding is per-replica in-memory only, not persisted [High] — CLOSED
 - **Spec:** Line 160 — Session Manager manages "Pod-to-session binding."
 - **Evidence:** `pkg/gateway/podsession/registry.go:1-69` — `Registry` is an in-memory `map[string]*BindResult` rebuilt per replica; comment at line 13 acknowledges "a coordinator handoff re-establishes the binding on the new coordinating replica." No `sessions.pod_id` or equivalent persisted column.
 - **Gap:** A gateway-replica restart loses the authoritative pod binding for every session it was driving. The §7.2 recovery story depends on the persisted binding to route a re-attached client back to the same pod.

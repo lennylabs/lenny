@@ -43,13 +43,19 @@ var _ sessionstore.Store = (*Store)(nil)
 // selectList is the column projection for reads. UUID columns are
 // rendered as text so they scan into the Session struct's string
 // fields; parent_session_id collapses NULL to the empty string.
+//
+// The trailing five columns (cwd, pod_assignment, recovery_generation,
+// coordination_generation, schema_version) are the §4.2 session-record
+// fields added in migration 0050. spec: §4.2 line 156.
 const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
 	workspace_snapshot_at, parent_workspace_ref, retention_expires_at,
 	upload_token_digest, upload_token_expiry, created_at, updated_at,
 	workspace_plan, legal_hold,
-	experiment_id, experiment_variant_id, experiment_inherited, environment`
+	experiment_id, experiment_variant_id, experiment_inherited, environment,
+	cwd, pod_assignment, recovery_generation, coordination_generation,
+	schema_version`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -63,21 +69,33 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	}
 	ref, src, at := snapshotCols(sess.WorkspaceSnapshot)
 
+	// The trailing five binds ($26-$30) cover the §4.2 session-record
+	// fields added in migration 0050: cwd, pod_assignment,
+	// recovery_generation, coordination_generation, schema_version.
+	// spec: §4.2 line 156.
 	const insertSQL = `INSERT INTO sessions (
 		id, tenant_id, user_id, state, runtime_ref, pool_ref, isolation_profile,
 		parent_session_id, root_session_id, failure_class, failure_reason,
 		workspace_snapshot_ref, workspace_snapshot_source, workspace_snapshot_at,
 		parent_workspace_ref, retention_expires_at, upload_token_digest,
 		upload_token_expiry, created_at, updated_at, workspace_plan, legal_hold,
-		experiment_id, experiment_variant_id, experiment_inherited, environment
+		experiment_id, experiment_variant_id, experiment_inherited, environment,
+		cwd, pod_assignment, recovery_generation, coordination_generation,
+		schema_version
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
 		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21,
-		$22, $23, $24, $25
+		$22, $23, $24, $25,
+		$26, $27, $28, $29, $30
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
+	schemaVersion := sess.SchemaVersion
+	if schemaVersion == 0 {
+		// spec: §4.2 line 156 — v1 sessions are written at schema_version=1.
+		schemaVersion = 1
+	}
 	err := pgtenant.InTx(ctx, s.pool, sess.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, insertSQL,
 			sess.ID, sess.TenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
@@ -87,7 +105,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			pgtenant.NullTime(sess.RetentionExpiresAt), sess.UploadTokenDigest,
 			pgtenant.NullTime(sess.UploadTokenExpiry), sess.CreatedAt, sess.UpdatedAt,
 			jsonbArg(sess.WorkspacePlan), sess.LegalHold,
-			expID, expVariant, expInherited, sess.Environment)
+			expID, expVariant, expInherited, sess.Environment,
+			sess.Cwd, sess.PodAssignment, sess.RecoveryGeneration,
+			sess.CoordinationGeneration, schemaVersion)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -123,6 +143,8 @@ func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Sess
 // Update (clamped to the prior value + 1µs, the Postgres timestamptz
 // resolution) so callers can rely on monotonicity.
 func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	// The trailing five SET clauses cover the §4.2 session-record
+	// fields added in migration 0050. spec: §4.2 line 156.
 	const updateSQL = `UPDATE sessions SET
 		user_id = $3, state = $4, runtime_ref = $5, pool_ref = $6,
 		isolation_profile = $7, parent_session_id = NULLIF($8, '')::uuid,
@@ -131,7 +153,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		parent_workspace_ref = $14, retention_expires_at = $15,
 		upload_token_digest = $16, upload_token_expiry = $17, updated_at = $18,
 		legal_hold = $19, experiment_id = $20, experiment_variant_id = $21,
-		experiment_inherited = $22, environment = $23
+		experiment_inherited = $22, environment = $23,
+		cwd = $24, pod_assignment = $25, recovery_generation = $26,
+		coordination_generation = $27, schema_version = $28
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -144,12 +168,29 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			return err
 		}
 		prevUpdated := sess.UpdatedAt
+		prevRecoveryGen := sess.RecoveryGeneration
+		prevCoordGen := sess.CoordinationGeneration
 		if err := mutate(&sess); err != nil {
 			return err
+		}
+		// spec: §4.2 line 156 — recovery_generation and
+		// coordination_generation are monotonically non-decreasing.
+		// Enforce the floor here so an accidental rollback in the
+		// mutate callback cannot violate the invariant; the DB CHECK
+		// constraint catches the impossible negative.
+		if sess.RecoveryGeneration < prevRecoveryGen {
+			sess.RecoveryGeneration = prevRecoveryGen
+		}
+		if sess.CoordinationGeneration < prevCoordGen {
+			sess.CoordinationGeneration = prevCoordGen
 		}
 		sess.UpdatedAt = pgtenant.MonotonicNext(prevUpdated, time.Now())
 		ref, src, at := snapshotCols(sess.WorkspaceSnapshot)
 		expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
+		schemaVersion := sess.SchemaVersion
+		if schemaVersion == 0 {
+			schemaVersion = 1
+		}
 		if _, err := tx.Exec(
 			ctx, updateSQL,
 			id, tenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
@@ -158,6 +199,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			sess.ParentWorkspaceRef, pgtenant.NullTime(sess.RetentionExpiresAt),
 			sess.UploadTokenDigest, pgtenant.NullTime(sess.UploadTokenExpiry), sess.UpdatedAt,
 			sess.LegalHold, expID, expVariant, expInherited, sess.Environment,
+			sess.Cwd, sess.PodAssignment, sess.RecoveryGeneration,
+			sess.CoordinationGeneration, schemaVersion,
 		); err != nil {
 			return err
 		}
@@ -260,6 +303,10 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		&wsRef, &wsSrc, &wsAt, &s.ParentWorkspaceRef, &retAt,
 		&s.UploadTokenDigest, &upExp, &s.CreatedAt, &s.UpdatedAt, &planJSON,
 		&s.LegalHold, &expID, &expVariant, &expInherited, &s.Environment,
+		// §4.2 session-record fields from migration 0050.
+		// spec: §4.2 line 156.
+		&s.Cwd, &s.PodAssignment, &s.RecoveryGeneration,
+		&s.CoordinationGeneration, &s.SchemaVersion,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

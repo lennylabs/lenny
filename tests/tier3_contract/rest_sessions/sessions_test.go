@@ -414,3 +414,54 @@ func assertInvalidStateTransition(t *testing.T, body map[string]any, wantCurrent
 		}
 	}
 }
+
+// spec: §4.2 line 156 — the session envelope carries the §4.2 record
+// fields the spec lists for client visibility: recoveryGeneration
+// (counter visible per spec line 156), schemaVersion, and the optional
+// cwd and podAssignment when present. The counter and the schema
+// version are emitted on every response so clients can read them
+// uniformly across created / running / terminal states.
+// diagnosis: the §4.2 wire-level fields are missing from the
+// SessionResponse envelope. Recheck pkg/gateway/sessionserver
+// SessionResponse and toResponse for the camelCase JSON tags
+// (recoveryGeneration, schemaVersion, cwd, podAssignment).
+func TestSessionEnvelopeCarriesSpec42Fields(t *testing.T) {
+	ts := newTestServer(t)
+	id := createSession(t, ts)
+
+	resp, body := do(t, ts, "GET", "/v1/sessions/"+id, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET: want 200, got %d", resp.StatusCode)
+	}
+
+	// recoveryGeneration starts at 0 and is always present (the
+	// counter is visible to clients per spec line 156 and the JSON
+	// tag omits the empty-flag so a fresh session reports zero).
+	got, ok := body["recoveryGeneration"]
+	if !ok {
+		t.Errorf("envelope missing 'recoveryGeneration' field (§4.2 line 156)")
+	}
+	// JSON numbers round-trip as float64 in map[string]any.
+	if f, _ := got.(float64); f != 0 {
+		t.Errorf("recoveryGeneration: want 0 on a fresh session, got %v", got)
+	}
+
+	// schemaVersion: v1 sessions report schema_version=1.
+	gotSV, ok := body["schemaVersion"]
+	if !ok {
+		t.Errorf("envelope missing 'schemaVersion' field (§4.2 line 156)")
+	}
+	if f, _ := gotSV.(float64); f != 1 {
+		t.Errorf("schemaVersion: want 1 on a v1 session, got %v", gotSV)
+	}
+
+	// cwd / podAssignment are omitempty (a fresh `created` session has
+	// neither). The envelope must not include them when empty so the
+	// minimal wire form stays compact.
+	if _, ok := body["cwd"]; ok {
+		t.Errorf("envelope must omit 'cwd' when empty (§4.2 omitempty contract)")
+	}
+	if _, ok := body["podAssignment"]; ok {
+		t.Errorf("envelope must omit 'podAssignment' when empty (§4.2 omitempty contract)")
+	}
+}

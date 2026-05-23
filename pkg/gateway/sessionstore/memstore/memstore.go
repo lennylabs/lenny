@@ -43,6 +43,10 @@ func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
 	if sess.UpdatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
 	}
+	// spec: §4.2 line 156 — v1 sessions are written at schema_version=1.
+	if sess.SchemaVersion == 0 {
+		sess.SchemaVersion = 1
+	}
 	s.sessions[sess.ID] = sess
 	return nil
 }
@@ -78,8 +82,25 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 		return sessionstore.Session{}, sessionstore.ErrNotFound
 	}
 	prevUpdatedAt := row.UpdatedAt
+	prevRecoveryGen := row.RecoveryGeneration
+	prevCoordGen := row.CoordinationGeneration
 	if err := mutate(&row); err != nil {
 		return sessionstore.Session{}, err
+	}
+	// spec: §4.2 line 156 — recovery_generation and
+	// coordination_generation are monotonically non-decreasing. Clamp
+	// the floor here so an accidental rollback in the mutate callback
+	// cannot violate the invariant; the pgstore enforces the same
+	// floor and the DB CHECK constraint catches the impossible
+	// negative.
+	if row.RecoveryGeneration < prevRecoveryGen {
+		row.RecoveryGeneration = prevRecoveryGen
+	}
+	if row.CoordinationGeneration < prevCoordGen {
+		row.CoordinationGeneration = prevCoordGen
+	}
+	if row.SchemaVersion == 0 {
+		row.SchemaVersion = 1
 	}
 	row.UpdatedAt = monotonicNext(prevUpdatedAt, time.Now().UTC())
 	s.sessions[id] = row

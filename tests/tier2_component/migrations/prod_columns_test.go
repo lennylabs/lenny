@@ -91,6 +91,13 @@ var prodMigrationSchema = []struct {
 	// every MinIO blob with its tenant, session, lifecycle state,
 	// SSE-KMS key alias, legal-hold flag, and tombstone deadline.
 	{migration: "0049", table: "artifact_store", create: true},
+	// 0050 adds the §4.2 session-record fields the spec lists: cwd,
+	// pod_assignment, recovery_generation, coordination_generation,
+	// and schema_version. spec: §4.2 line 156.
+	{migration: "0050", table: "sessions", columns: []string{
+		"cwd", "pod_assignment", "recovery_generation",
+		"coordination_generation", "schema_version",
+	}},
 }
 
 // spec: 12.2, 18.5

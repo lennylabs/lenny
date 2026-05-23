@@ -171,3 +171,160 @@ func TestDeleteByUserNoSessionsIsNoOp(t *testing.T) {
 		t.Errorf("deleted = %d, want 0", deleted)
 	}
 }
+
+// spec: §4.2 line 156 — newly created sessions are written at
+// schema_version=1 by default. Recovery and coordination generations
+// start at zero. Cwd and PodAssignment are empty.
+func TestCreateDefaultsSessionRecordFields(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	if err := s.Create(ctx, sessionstore.Session{ID: "sess_1", TenantID: "acme", State: session.StateCreated}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, _ := s.Get(ctx, "acme", "sess_1")
+	if got.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion: want 1, got %d", got.SchemaVersion)
+	}
+	if got.RecoveryGeneration != 0 {
+		t.Errorf("RecoveryGeneration: want 0, got %d", got.RecoveryGeneration)
+	}
+	if got.CoordinationGeneration != 0 {
+		t.Errorf("CoordinationGeneration: want 0, got %d", got.CoordinationGeneration)
+	}
+	if got.Cwd != "" {
+		t.Errorf("Cwd: want empty, got %q", got.Cwd)
+	}
+	if got.PodAssignment != "" {
+		t.Errorf("PodAssignment: want empty, got %q", got.PodAssignment)
+	}
+}
+
+// spec: §4.2 line 156 — recovery_generation and coordination_generation
+// are monotonically non-decreasing across every state transition; never
+// rolled back, never reset. The store clamps an accidental decrement
+// in the mutate callback back to the prior value.
+func TestUpdateClampsGenerationCountersMonotonically(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{
+		ID: "sess_1", TenantID: "acme", State: session.StateRunning,
+		RecoveryGeneration: 3, CoordinationGeneration: 5,
+	})
+	// Try to roll back both counters — the store must clamp them.
+	updated, err := s.Update(ctx, "acme", "sess_1", func(row *sessionstore.Session) error {
+		row.RecoveryGeneration = 1
+		row.CoordinationGeneration = 0
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.RecoveryGeneration != 3 {
+		t.Errorf("RecoveryGeneration: want 3 (clamped), got %d", updated.RecoveryGeneration)
+	}
+	if updated.CoordinationGeneration != 5 {
+		t.Errorf("CoordinationGeneration: want 5 (clamped), got %d", updated.CoordinationGeneration)
+	}
+}
+
+// spec: §4.2 line 156 — both counters advance monotonically on
+// legitimate increments.
+func TestUpdateAdvancesGenerationCounters(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_1", TenantID: "acme", State: session.StateRunning})
+	updated, err := s.Update(ctx, "acme", "sess_1", func(row *sessionstore.Session) error {
+		row.RecoveryGeneration++
+		row.CoordinationGeneration += 2
+		row.PodAssignment = "pod-xyz"
+		row.Cwd = "/workspace"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.RecoveryGeneration != 1 {
+		t.Errorf("RecoveryGeneration: want 1, got %d", updated.RecoveryGeneration)
+	}
+	if updated.CoordinationGeneration != 2 {
+		t.Errorf("CoordinationGeneration: want 2, got %d", updated.CoordinationGeneration)
+	}
+	if updated.PodAssignment != "pod-xyz" {
+		t.Errorf("PodAssignment: want pod-xyz, got %q", updated.PodAssignment)
+	}
+	if updated.Cwd != "/workspace" {
+		t.Errorf("Cwd: want /workspace, got %q", updated.Cwd)
+	}
+}
+
+// spec: §4.2 line 160 — the pod_assignment field is the cross-replica
+// source of truth for the pod-to-session binding. Get must read back
+// what Update wrote so a fresh replica observes the binding without
+// touching the in-memory Registry.
+func TestPodAssignmentReadBackAcrossReadAfterWrite(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_1", TenantID: "acme", State: session.StateRunning})
+	if _, err := s.Update(ctx, "acme", "sess_1", func(row *sessionstore.Session) error {
+		row.PodAssignment = "agent-pod-42"
+		return nil
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, err := s.Get(ctx, "acme", "sess_1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.PodAssignment != "agent-pod-42" {
+		t.Errorf("read-after-write PodAssignment: want agent-pod-42, got %q", got.PodAssignment)
+	}
+}
+
+// spec: §4.2 line 156 — concurrent Updates on the same row maintain
+// the monotonicity floor even when mutate callbacks race. The store's
+// mutex serializes the read-mutate-write so successive bumps preserve
+// the latest counter value.
+func TestUpdateConcurrentGenerationBumpsPreserveMonotonicity(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_1", TenantID: "acme", State: session.StateRunning})
+	const n = 50
+	done := make(chan struct{}, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			_, _ = s.Update(ctx, "acme", "sess_1", func(row *sessionstore.Session) error {
+				row.CoordinationGeneration++
+				return nil
+			})
+		}()
+	}
+	for i := 0; i < n; i++ {
+		<-done
+	}
+	got, err := s.Get(ctx, "acme", "sess_1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CoordinationGeneration != int64(n) {
+		t.Errorf("CoordinationGeneration: want %d, got %d", n, got.CoordinationGeneration)
+	}
+}
+
+// spec: §4.2 line 156 — a Create call carrying an explicit schema
+// version preserves it (so a forward-compat path can write a
+// non-default value without the store overriding it).
+func TestCreatePreservesExplicitSchemaVersion(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	if err := s.Create(ctx, sessionstore.Session{
+		ID: "sess_1", TenantID: "acme", State: session.StateCreated,
+		SchemaVersion: 7,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, _ := s.Get(ctx, "acme", "sess_1")
+	if got.SchemaVersion != 7 {
+		t.Errorf("SchemaVersion: want 7 (preserved), got %d", got.SchemaVersion)
+	}
+}

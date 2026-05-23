@@ -77,6 +77,15 @@ func NewSweeper(tenants TenantLister, sessions sessionstore.Store, leases *lease
 // this replica. Sessions whose lease is held by a different replica
 // are left alone. Returns the number of leases this replica holds
 // after the pass.
+//
+// When this replica acquires a lease that was previously held by a
+// different replica — the cross-replica coordinator-handoff case — the
+// sweeper increments the session row's `coordination_generation`
+// counter via the SessionStore Update path. The store enforces the §4.2
+// monotonicity floor so a handoff under racing writers still advances
+// the counter exactly once per observed handoff on this replica.
+// spec: §4.2 line 156 — "incremented on coordinator handoff across
+// gateway replicas".
 func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 	tenants, err := s.tenants.ListTenants(ctx)
 	if err != nil {
@@ -92,6 +101,18 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 			if session.IsTerminal(row.State) {
 				continue
 			}
+			// Inspect the current holder before Acquire so a successful
+			// Acquire that changed the holder can be detected as a
+			// handoff. ErrNotFound means the lease is unheld (fresh
+			// acquisition); any other error short-circuits the sweep
+			// the same way the prior code did.
+			var priorHolder string
+			existing, getErr := s.leases.Get(ctx, tenantID, row.ID)
+			if getErr == nil {
+				priorHolder = existing.Holder
+			} else if !errors.Is(getErr, leasestore.ErrNotFound) {
+				return held, getErr
+			}
 			if _, err := s.leases.Acquire(ctx, tenantID, row.ID, s.replicaID, s.ttl); err != nil {
 				if errors.Is(err, leasestore.ErrHeld) {
 					// Another replica owns this session; skip it.
@@ -99,10 +120,38 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 				}
 				return held, err
 			}
+			// A handoff occurred when the prior holder was a different
+			// replica. A self-renew (priorHolder == s.replicaID) and a
+			// fresh acquisition on an unheld lease (priorHolder == "")
+			// are not handoffs.
+			if priorHolder != "" && priorHolder != s.replicaID {
+				s.RecordHandoff(ctx, tenantID, row.ID)
+			}
 			held++
 		}
 	}
 	return held, nil
+}
+
+// RecordHandoff bumps the §4.2 coordination_generation counter on the
+// named session row. The SessionStore Update path enforces the §4.2
+// monotonicity floor; a transient store error is logged but does not
+// fail the sweep, because the next sweep cycle will reattempt the bump
+// from a fresh handoff observation.
+//
+// Exported so the sessionserver and component tests can verify the
+// bump-once-per-handoff contract directly without racing the sweeper's
+// internal Get→Acquire window. The sweeper invokes it internally on
+// every observed cross-replica handoff.
+// spec: §4.2 line 156.
+func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string) {
+	_, err := s.sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		row.CoordinationGeneration++
+		return nil
+	})
+	if err != nil {
+		log.Printf("coordination: bump coordination_generation for session %s: %v", sessionID, err)
+	}
 }
 
 // Run sweeps on Interval until ctx is cancelled. Sweep failures are

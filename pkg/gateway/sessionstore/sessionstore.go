@@ -134,6 +134,44 @@ type Session struct {
 	// ExperimentRouter assigned at session creation. Nil when the
 	// session is not enrolled in any experiment.
 	ExperimentContext *ExperimentContext
+
+	// Cwd is the §4.2 / §4.7 session working directory. Recorded for
+	// audit reconstruction; left empty until the runtime adapter
+	// materialises the workspace.
+	// spec: §4.2 line 156 — "Session records (..., cwd, ...)".
+	Cwd string
+
+	// PodAssignment is the §4.2 persistent pod-to-session binding.
+	// The gateway's in-memory Registry is a hot cache; this field is
+	// the cross-replica source of truth so a fresh replica can resume
+	// the binding after a coordinator handoff per §7.2. Empty when the
+	// session is not currently bound to a pod (created but not yet
+	// started, or already drained).
+	// spec: §4.2 line 160 — "Pod-to-session binding".
+	PodAssignment string
+
+	// RecoveryGeneration is the §4.2 recovery counter, incremented on
+	// each pod recovery. Visible to clients via the session API and the
+	// `session.resumed` events. Monotonically non-decreasing — never
+	// rolled back, never reset. A mid-resume terminal collapse freezes
+	// it at its current value per §7.2 snapshot-close semantics.
+	// spec: §4.2 line 156.
+	RecoveryGeneration int64
+
+	// CoordinationGeneration is the §4.2 coordinator-handoff counter,
+	// incremented when a different gateway replica becomes the
+	// authoritative coordinator for this session. Internal-only —
+	// used for split-brain fencing. Monotonically non-decreasing.
+	// Bumped under a mid-resume terminal write per §7.2 to fence any
+	// stale coordinator still attempting resume.
+	// spec: §4.2 line 156.
+	CoordinationGeneration int64
+
+	// SchemaVersion is the §4.2 row schema version. v1 sessions are
+	// written at schema version 1; later migrations may evolve the
+	// row layout while leaving the gateway's read path stable.
+	// spec: §4.2 line 156.
+	SchemaVersion int32
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a

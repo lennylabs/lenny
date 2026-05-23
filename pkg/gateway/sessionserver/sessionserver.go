@@ -539,6 +539,28 @@ type SessionResponse struct {
 	// creation, echoed per §15.1. Absent when the session was created
 	// without a plan.
 	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
+
+	// Cwd is the §4.2 session working directory. Empty until the
+	// runtime adapter materialises the workspace.
+	// spec: §4.2 line 156.
+	Cwd string `json:"cwd,omitempty"`
+
+	// PodAssignment is the §4.2 pod-to-session binding the session is
+	// currently bound to. Empty when the session has no live pod.
+	// spec: §4.2 line 160.
+	PodAssignment string `json:"podAssignment,omitempty"`
+
+	// RecoveryGeneration is the §4.2 pod-recovery counter, visible to
+	// clients per §4.2 line 156. Starts at zero and increments by one
+	// on each pod recovery.
+	// spec: §4.2 line 156 — "incremented on each pod recovery (visible
+	// to clients via the session API ...)".
+	RecoveryGeneration int64 `json:"recoveryGeneration"`
+
+	// SchemaVersion is the §4.2 session-row schema version. v1
+	// sessions report schema_version=1.
+	// spec: §4.2 line 156.
+	SchemaVersion int32 `json:"schemaVersion"`
 }
 
 // CreateSessionResponse is the §15.1 POST /v1/sessions response
@@ -1034,16 +1056,26 @@ func (s *Server) writePreconditionError(w http.ResponseWriter, err error) {
 }
 
 // toResponse converts a Session row into the §15.1 wire envelope.
+// spec: §4.2 line 156 (cwd, pod_assignment, recovery_generation,
+// schema_version).
 func toResponse(row sessionstore.Session) SessionResponse {
+	schemaVersion := row.SchemaVersion
+	if schemaVersion == 0 {
+		schemaVersion = 1
+	}
 	out := SessionResponse{
-		ID:          row.ID,
-		TenantID:    row.TenantID,
-		UserID:      row.UserID,
-		RuntimeRef:  row.RuntimeRef,
-		Environment: row.Environment,
-		State:       string(row.State),
-		CreatedAt:   row.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:   row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		ID:                 row.ID,
+		TenantID:           row.TenantID,
+		UserID:             row.UserID,
+		RuntimeRef:         row.RuntimeRef,
+		Environment:        row.Environment,
+		State:              string(row.State),
+		CreatedAt:          row.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:          row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		Cwd:                row.Cwd,
+		PodAssignment:      row.PodAssignment,
+		RecoveryGeneration: row.RecoveryGeneration,
+		SchemaVersion:      schemaVersion,
 	}
 	if row.FailureClass != "" {
 		out.FailureClass = string(row.FailureClass)
