@@ -196,6 +196,29 @@ func reconcile(t *testing.T, c client.Client, s *runtime.Scheme) {
 	}
 }
 
+// reconcilerWithEvents returns a Reconciler wired with em for the §4.0
+// pool_state_changed emit path.
+func reconcilerWithEvents(c client.Client, s *runtime.Scheme, em warmpool.EventEmitter) *warmpool.Reconciler {
+	return &warmpool.Reconciler{Client: c, Scheme: s, Events: em}
+}
+
+// reconcileWith advances a pre-built reconciler one pass.
+func reconcileWith(t *testing.T, r *warmpool.Reconciler) {
+	t.Helper()
+	if _, err := r.Reconcile(context.Background(), reconcileRequest()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+}
+
+// reconcileRequest is the canonical reconcile.Request for the test pool.
+func reconcileRequest() ctrl.Request {
+	return ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testPool}}
+}
+
+// testContext returns the background context the warmpool tests pass to
+// reconcile and client calls.
+func testContext() context.Context { return context.Background() }
+
 func poolSandboxes(t *testing.T, c client.Client) []lennyv1.Sandbox {
 	t.Helper()
 	var l lennyv1.SandboxList

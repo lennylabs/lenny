@@ -8,7 +8,12 @@
 // definition of the sequence.
 package upgrade
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+)
 
 // Phase is a §25.8 platform upgrade phase.
 type Phase string
@@ -96,4 +101,67 @@ func StepNumber(p Phase) (step int, ok bool) {
 		}
 	}
 	return 0, false
+}
+
+// Emitter is the §4.0 EventEmitter dependency the upgrade orchestrator
+// uses to publish §16.6 upgrade_progressed events. The opsevents.Emitter
+// type satisfies it. A nil Emitter passed to Advance is a no-op.
+type Emitter interface {
+	Emit(opsevents.OperationalEvent) uint64
+}
+
+// Advance progresses an upgrade from current to the next phase per the
+// §25.8 sequence, emitting a §16.6 upgrade_progressed CloudEvents
+// record carrying pool, oldPhase, newPhase, and imageDigest on success.
+// pool is the upgrade scope (a SandboxWarmPool name, or the platform
+// scope identifier for a platform-wide upgrade); imageDigest is the
+// target image digest the upgrade is converging on, captured for the
+// event payload per §4.0. A nil em emits nothing; the phase transition
+// is unchanged.
+func Advance(em Emitter, pool string, current Phase, imageDigest string) (Phase, error) {
+	next, err := Next(current)
+	if err != nil {
+		return "", err
+	}
+	emitProgressed(em, pool, current, next, imageDigest)
+	return next, nil
+}
+
+// AdvanceRollback transitions a rollbackable phase to RolledBack and
+// emits §16.6 upgrade_progressed with the new phase. Returns an error
+// for phases past SchemaMigration per §25.8 CanRollBack.
+func AdvanceRollback(em Emitter, pool string, current Phase, imageDigest string) (Phase, error) {
+	next, err := Rollback(current)
+	if err != nil {
+		return "", err
+	}
+	emitProgressed(em, pool, current, next, imageDigest)
+	return next, nil
+}
+
+// emitProgressed records the §16.6 upgrade_progressed event when an
+// Emitter is wired. The data payload carries the §4.0 fields: pool,
+// oldPhase, newPhase, and imageDigest.
+func emitProgressed(em Emitter, pool string, oldPhase, newPhase Phase, imageDigest string) {
+	if em == nil {
+		return
+	}
+	severity := "info"
+	if newPhase == RolledBack {
+		severity = "warning"
+	}
+	payload := map[string]any{
+		"pool":        pool,
+		"oldPhase":    string(oldPhase),
+		"newPhase":    string(newPhase),
+		"imageDigest": imageDigest,
+	}
+	data, _ := json.Marshal(payload)
+	em.Emit(opsevents.OperationalEvent{
+		Source:          "//lenny.dev/upgrade",
+		Type:            opsevents.EventUpgradeProgressed.CloudEventsType(),
+		Severity:        severity,
+		DataContentType: "application/json",
+		Data:            data,
+	})
 }

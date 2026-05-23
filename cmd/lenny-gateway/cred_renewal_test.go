@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -99,7 +101,7 @@ func TestRenewalWorkerPushesRotationToPod(t *testing.T) {
 	registry := podsession.NewRegistry()
 	registry.Put(&podsession.BindResult{SessionID: "run_a", Adapter: dialRecorder(t, rec)})
 
-	wiring := newCredRenewalWiring(assign, registry)
+	wiring := newCredRenewalWiring(assign, registry, nil)
 	if wiring == nil {
 		t.Fatal("newCredRenewalWiring returned nil for a wired credential service")
 	}
@@ -157,7 +159,7 @@ func TestRenewalWorkerSurvivesNoPodBinding(t *testing.T) {
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
 
 	// An empty registry: the session's pod is bound on another replica.
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry())
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil)
 	worker := credrenewal.New(wiring, credrenewal.Options{OnRenewed: wiring.onRenewed})
 	assign.OnAssigned(func(a credassign.LeaseAssignment) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
@@ -176,7 +178,7 @@ func TestRenewalWorkerSurvivesNoPodBinding(t *testing.T) {
 // when the gateway has no credential-assignment service, so a minimal
 // gateway runs no renewal worker.
 func TestNewCredRenewalWiringNilWithoutService(t *testing.T) {
-	if w := newCredRenewalWiring(nil, podsession.NewRegistry()); w != nil {
+	if w := newCredRenewalWiring(nil, podsession.NewRegistry(), nil); w != nil {
 		t.Errorf("newCredRenewalWiring(nil, ...) = %v, want nil", w)
 	}
 }
@@ -186,7 +188,7 @@ func TestNewCredRenewalWiringNilWithoutService(t *testing.T) {
 // cannot re-mint, and the worker falls through to fault rotation.
 func TestRenewWithoutPoolBindingFails(t *testing.T) {
 	assign := credassign.New(credleasestore.New(), credcache.New())
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry())
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil)
 
 	_, err := wiring.Renew(context.Background(), credrenewal.Lease{LeaseID: "untracked"})
 	if err == nil {
@@ -202,4 +204,131 @@ func TestRenewalWiringNilReceiverHooksAreNoops(t *testing.T) {
 	w.track(nil, "pool", "provider", credential.Lease{})
 	w.onRenewed(credrenewal.Lease{})
 	w.onExhausted(credrenewal.Lease{})
+}
+
+// spec §4.0, §16.6: credential pool manager emits credential_rotated on
+// lease rotation and credential_pool_exhausted on pool exhaustion.
+func TestRenewalEmitsCredentialRotatedOnSuccess(t *testing.T) {
+	buf := opsevents.NewEventBuffer(0)
+	em := opsevents.NewEmitter(buf, "test")
+
+	assign := credassign.New(credleasestore.New(), credcache.New())
+	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em)
+	worker := credrenewal.New(wiring, credrenewal.Options{OnRenewed: wiring.onRenewed})
+	assign.OnAssigned(func(a credassign.LeaseAssignment) {
+		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
+	})
+
+	lease, err := assign.Assign("claude-prod", "run_a", "")
+	if err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if renewed := worker.Tick(context.Background(), lease.RenewBefore.Add(time.Second)); renewed != 1 {
+		t.Fatalf("renewal sweep renewed %d leases, want 1", renewed)
+	}
+
+	page := buf.Query(0, opsevents.EventFilter{EventType: "credential_rotated"}, 100)
+	if len(page.Events) != 1 {
+		t.Fatalf("emitted %d credential_rotated events, want 1", len(page.Events))
+	}
+	ev := page.Events[0].Event
+	if ev.Type != "dev.lenny.credential_rotated" {
+		t.Errorf("event type = %q, want dev.lenny.credential_rotated", ev.Type)
+	}
+	if ev.Severity != "info" {
+		t.Errorf("event severity = %q, want info", ev.Severity)
+	}
+	var data struct {
+		Pool         string `json:"pool"`
+		CredentialID string `json:"credentialId"`
+		SessionID    string `json:"sessionId"`
+		LeaseID      string `json:"leaseId"`
+		Reason       string `json:"reason"`
+	}
+	if err := json.Unmarshal(ev.Data, &data); err != nil {
+		t.Fatalf("event data: %v", err)
+	}
+	if data.Pool != "claude-prod" {
+		t.Errorf("pool = %q, want claude-prod", data.Pool)
+	}
+	if data.SessionID != "run_a" {
+		t.Errorf("sessionId = %q, want run_a", data.SessionID)
+	}
+	if data.Reason != string(credential.TriggerProactiveRenewal) {
+		t.Errorf("reason = %q, want proactive_renewal", data.Reason)
+	}
+	if data.LeaseID == "" {
+		t.Error("event leaseId is empty")
+	}
+}
+
+// spec §4.0, §16.6: an exhausted lease — the §4.9 fall-through —
+// emits credential_pool_exhausted with the lease's pool binding.
+func TestRenewalEmitsCredentialPoolExhaustedOnExhaustion(t *testing.T) {
+	buf := opsevents.NewEventBuffer(0)
+	em := opsevents.NewEmitter(buf, "test")
+
+	assign := credassign.New(credleasestore.New(), credcache.New())
+	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em)
+	worker := credrenewal.New(wiring, credrenewal.Options{OnExhausted: wiring.onExhausted})
+	assign.OnAssigned(func(a credassign.LeaseAssignment) {
+		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
+	})
+
+	lease, err := assign.Assign("claude-prod", "run_a", "")
+	if err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	// Sweep after the lease has already expired — the worker drops it
+	// and onExhausted fires with the pool binding.
+	worker.Tick(context.Background(), lease.ExpiresAt.Add(time.Second))
+
+	page := buf.Query(0, opsevents.EventFilter{EventType: "credential_pool_exhausted"}, 100)
+	if len(page.Events) != 1 {
+		t.Fatalf("emitted %d credential_pool_exhausted events, want 1", len(page.Events))
+	}
+	ev := page.Events[0].Event
+	if ev.Severity != "warning" {
+		t.Errorf("event severity = %q, want warning", ev.Severity)
+	}
+	var data struct {
+		Pool      string `json:"pool"`
+		SessionID string `json:"sessionId"`
+		LeaseID   string `json:"leaseId"`
+	}
+	if err := json.Unmarshal(ev.Data, &data); err != nil {
+		t.Fatalf("event data: %v", err)
+	}
+	if data.Pool != "claude-prod" {
+		t.Errorf("pool = %q, want claude-prod", data.Pool)
+	}
+	if data.LeaseID != lease.LeaseID {
+		t.Errorf("leaseId = %q, want %q", data.LeaseID, lease.LeaseID)
+	}
+}
+
+// spec §4.0: a renewal wired without an emitter is a no-op for the
+// event side; the rotation lifecycle continues normally.
+func TestRenewalNoEmitterIsSilent(t *testing.T) {
+	assign := credassign.New(credleasestore.New(), credcache.New())
+	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil)
+	worker := credrenewal.New(wiring, credrenewal.Options{
+		OnRenewed:   wiring.onRenewed,
+		OnExhausted: wiring.onExhausted,
+	})
+	assign.OnAssigned(func(a credassign.LeaseAssignment) {
+		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
+	})
+
+	lease, err := assign.Assign("claude-prod", "run_a", "")
+	if err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if renewed := worker.Tick(context.Background(), lease.RenewBefore.Add(time.Second)); renewed != 1 {
+		t.Fatalf("renewal sweep renewed %d leases, want 1", renewed)
+	}
+	// No panic; the rotation completed without an emitter.
 }

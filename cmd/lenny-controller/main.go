@@ -45,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 )
 
 // buildScheme assembles the runtime scheme the manager uses: the
@@ -143,9 +144,22 @@ func main() {
 		mirror = agentpodstatepg.New(pool)
 	}
 
+	// §4.0 pool state manager: the controller emits §16.6
+	// pool_state_changed events on every derived PoolPhase transition.
+	// The emitter writes to the controller-local in-memory ring buffer;
+	// lenny-ops aggregates per-replica buffers per §25.3, so the buffer
+	// surface is sufficient for v1. Future commits route the writes onto
+	// the shared Redis stream alongside the gateway's writes.
+	controllerReplicaID := os.Getenv("HOSTNAME")
+	if controllerReplicaID == "" {
+		controllerReplicaID = "controller"
+	}
+	opsEmitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), controllerReplicaID)
+
 	warmPool := &warmpool.Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Events: opsEmitter,
 	}
 	// A nil *agentpodstatepg.Store assigned to the agentpodstate.Store
 	// interface field would be a non-nil interface; only assign when a

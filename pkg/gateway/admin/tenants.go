@@ -137,9 +137,10 @@ type Router struct {
 	platformConfig map[string]string
 	platformWired  bool
 
-	recommendations RecommendationService
-	eventBuffer     EventBufferQuerier
-	eventEmitter    *opsevents.Emitter
+	recommendations     RecommendationService
+	eventBuffer         EventBufferQuerier
+	eventEmitter        *opsevents.Emitter
+	operationsInventory OperationsInventory
 
 	kmsProbe         KMSProbe
 	elicitationFloor string
@@ -299,6 +300,13 @@ func (r *Router) Handler() http.Handler {
 	if r.eventBuffer != nil {
 		mux.Handle("GET /v1/admin/events/buffer",
 			r.requireAdmin(http.HandlerFunc(r.handleEventBuffer)))
+	}
+	if r.operationsInventory != nil {
+		// §4.0 / §25.4 unified Operations Inventory.
+		mux.Handle("GET /v1/admin/operations",
+			r.requireAdmin(http.HandlerFunc(r.handleListOperations)))
+		mux.Handle("GET /v1/admin/operations/{id}",
+			r.requireAdmin(http.HandlerFunc(r.handleGetOperation)))
 	}
 	if r.users != nil {
 		mux.Handle("POST /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleCreateUser)))

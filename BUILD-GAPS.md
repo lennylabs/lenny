@@ -234,28 +234,28 @@ are not yet deduplicated; treat related findings as a cluster.
 
 ### Findings
 
-### - [ ] F-4.0.1 — Pool upgrade state machine does not emit `upgrade_progressed` [High] — OPEN
+### - [ ] F-4.0.1 — Pool upgrade state machine does not emit `upgrade_progressed` [High] — CLOSED
 
 - **Spec:** "Pool upgrade state machine (§10.5) — emits `upgrade_progressed` on each phase transition with pool, old phase, new phase, and image digest." (line 31)
 - **Evidence:** `pkg/upgrade/upgrade.go` (the phase state machine) imports neither `opsevents` nor any event sink. A repo-wide grep for `EventUpgradeProgressed` or `"upgrade_progressed"` returns only the catalog declaration and tests (`pkg/gateway/opsevents/catalog.go:20`), the alerting-rule reference (`pkg/alerting/rules/rules.go`), and the catalog test. No call site emits the event. The `lenny-ops` cron loop (`pkg/ops/opsservice/cronloop.go`) names `platform_upgrade_check` only as a comment; there is no upgrade orchestrator that emits.
 - **Gap:** The event type is declared but never emitted; the upgrade state machine has no `EventEmitter` dependency.
 - **Suggested resolution:** Add an `EventEmitter` (`*opsevents.Emitter`) field to the pool upgrade orchestrator and emit `dev.lenny.upgrade_progressed` with `pool`, `oldPhase`, `newPhase`, and `imageDigest` data on each `upgrade.Next` transition.
 
-### - [ ] F-4.0.2 — Warm pool / pool state manager does not emit `pool_state_changed` [High] — OPEN
+### - [ ] F-4.0.2 — Warm pool / pool state manager does not emit `pool_state_changed` [High] — CLOSED
 
 - **Spec:** "Pool state manager (warm pool state: `draining`, `warming`, `exhausted`) — emits `pool_state_changed` on each transition; lives alongside the warm pool controller (§4.6.1)." (line 32)
 - **Evidence:** `pkg/controller/warmpool/controller.go` has no `opsevents` import. `cmd/lenny-controller/main.go` constructs `warmpool.Reconciler` (line 146) without an emitter — `grep "opsevents|OpsEmitter|EventBus" cmd/lenny-controller/main.go` returns no matches. The event type `EventPoolStateChanged` is referenced only in the catalog, in tests, and in webhook subscription tests (`pkg/ops/opsservice/webhookloop_test.go:138`).
 - **Gap:** The warm-pool reconciler transitions pods between `warming` / `ready` / `draining` (e.g., `pkg/sandbox/state/state.go:20-38`) without emitting `pool_state_changed`. No `EventEmitter` is wired into the controller process.
 - **Suggested resolution:** Wire an `opsevents.Emitter` into `cmd/lenny-controller/main.go` (sharing the gateway's Redis stream destination once it lands), pass it to the `WarmPoolReconciler`, and emit `dev.lenny.pool_state_changed` whenever the derived pool phase changes.
 
-### - [ ] F-4.0.3 — Credential pool manager does not emit `credential_rotated` or `credential_pool_exhausted` [High] — OPEN
+### - [ ] F-4.0.3 — Credential pool manager does not emit `credential_rotated` or `credential_pool_exhausted` [High] — CLOSED
 
 - **Spec:** "Credential pool manager (§4.9) — emits `credential_rotated` on lease rotation and `credential_pool_exhausted` on pool exhaustion." (line 35)
 - **Evidence:** `pkg/credential/credential.go` and `pkg/gateway/credrenewal/credrenewal.go` carry no `opsevents` import. The renewer exposes `OnRenewed` and `OnExhausted` callbacks (`pkg/gateway/credrenewal/credrenewal.go:55-69`), wired in `cmd/lenny-gateway/cred_renewal.go:155 onRenewed` and `cmd/lenny-gateway/cred_renewal.go:198 onExhausted`. Both callbacks push the credential to the pod or log a failure; neither calls `opsEmitter.Emit`. The event types `EventCredentialRotated` / `EventCredentialPoolExhausted` are declared only in `pkg/gateway/opsevents/catalog.go:24-25` and are referenced only by the catalog test.
 - **Gap:** Despite the operator-facing `/v1/admin/events/buffer` endpoint advertising both events, no runtime path emits them.
 - **Suggested resolution:** Extend the `credRenewalWiring.onRenewed` / `onExhausted` hooks (or the underlying credential-pool manager) to call `opsEmitter.Emit` with the matching `EventType` and the lease's pool / provider / session metadata.
 
-### - [ ] F-4.0.4 — Unified Operations Inventory and ETA computation are absent [High] — OPEN
+### - [ ] F-4.0.4 — Unified Operations Inventory and ETA computation are absent [High] — CLOSED
 
 - **Spec:** "`pkg/ops/operations/{inventory,eta}.go` — unified Operations Inventory and canonical Progress Envelope / ETA computation." (line 25)
 - **Evidence:** Directory `pkg/ops/operations/` does not exist. `grep -rln "OperationsInventory\|operationsInventory\|operationsService"` returns no matches. `grep "/v1/admin/operations\|/v1/admin/me/operations"` returns only the alerting rule description (`pkg/alerting/rules/rules.go:1498`) and the openapi.json contains no `/admin/operations` route. ETA-computation helpers (`ComputeETA`, `EtaCalc`) are not present — only the `EtaMethod` enum and the `Progress` struct in `pkg/ops/conventions/conventions.go:186-221`.

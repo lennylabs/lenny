@@ -149,6 +149,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
+	"github.com/lennylabs/lenny/pkg/ops/operations"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
@@ -1088,7 +1089,7 @@ func main() {
 	// pushes the rotated credential to via the §4.7 RotateCredentials
 	// RPC. credRenewal is nil when no credential pools are wired; a nil
 	// receiver leaves every renewal hook a no-op.
-	credRenewal := newCredRenewalWiring(credAssign, podRegistry)
+	credRenewal := newCredRenewalWiring(credAssign, podRegistry, opsEmitter)
 	// credRenewalProp carries a §4.9 credential-lease revocation across
 	// replicas: a Revoke updates the local deny list, drops the renewal
 	// worker's tracked leases bound to the credential, and fans out over
@@ -1153,7 +1154,8 @@ func main() {
 		))
 	adminRouter = adminRouter.
 		WithEventBuffer(opsEmitter.Buffer()).
-		WithEventEmitter(opsEmitter)
+		WithEventEmitter(opsEmitter).
+		WithOperationsInventory(operations.New())
 	if *elicitationFloor != "" {
 		adminRouter = adminRouter.WithElicitationFloor(*elicitationFloor)
 	}

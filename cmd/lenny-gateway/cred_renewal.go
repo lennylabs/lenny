@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -63,6 +65,11 @@ type credRenewalWiring struct {
 	// registry resolves a session's pod so a rotated credential can be
 	// pushed to it. Nil without warm-pod placement.
 	registry *podsession.Registry
+	// emitter, when set, publishes §16.6 credential_rotated and
+	// credential_pool_exhausted events on the renewal lifecycle. §4.0
+	// requires the credential pool manager to emit both events; a nil
+	// emitter is a no-op.
+	emitter *opsevents.Emitter
 
 	mu sync.Mutex
 	// pools maps a tracked lease ID to the pool/provider it was minted
@@ -73,14 +80,17 @@ type credRenewalWiring struct {
 // newCredRenewalWiring returns the renewal wiring, or nil when no
 // credential pools are registered. registry may be nil when the gateway
 // runs without warm-pod placement; a renewal then refreshes the lease
-// record without a RotateCredentials push.
-func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry) *credRenewalWiring {
+// record without a RotateCredentials push. emitter is the §4.0 events
+// sink for credential_rotated / credential_pool_exhausted; nil disables
+// emission without affecting the renewal lifecycle.
+func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry, emitter *opsevents.Emitter) *credRenewalWiring {
 	if assign == nil {
 		return nil
 	}
 	return &credRenewalWiring{
 		assign:   assign,
 		registry: registry,
+		emitter:  emitter,
 		pools:    make(map[string]renewalProvider),
 	}
 }
@@ -151,9 +161,14 @@ func (w *credRenewalWiring) Renew(_ context.Context, lease credrenewal.Lease) (c
 // standard RotateCredentials RPC"). The push targets the pod this
 // replica holds the binding for; a lease whose pod is bound on another
 // replica, or already released, is skipped. The rotated credential is
-// converted to the §4.7 wire form before the push.
+// converted to the §4.7 wire form before the push. The same call also
+// emits the §16.6 credential_rotated event for §4.0.
 func (w *credRenewalWiring) onRenewed(renewed credrenewal.Lease) {
-	if w == nil || w.registry == nil {
+	if w == nil {
+		return
+	}
+	w.emitCredentialRotated(renewed)
+	if w.registry == nil {
 		return
 	}
 	bind, ok := w.registry.Get(renewed.SessionID)
@@ -197,16 +212,71 @@ func (w *credRenewalWiring) onRenewed(renewed credrenewal.Lease) {
 
 // onExhausted handles a lease whose proactive renewal cannot proceed —
 // the lease expired, or the retry budget is exhausted, or its
-// credential was revoked. It drops the spent lease's pool binding. The
-// §4.9 fall-through to fault rotation and the cross-replica deny-list
-// fan-out are driven by the caller's OnExhausted composition in main.
+// credential was revoked. It drops the spent lease's pool binding and
+// emits §16.6 credential_pool_exhausted for §4.0. The §4.9 fall-through
+// to fault rotation and the cross-replica deny-list fan-out are driven
+// by the caller's OnExhausted composition in main.
 func (w *credRenewalWiring) onExhausted(lease credrenewal.Lease) {
 	if w == nil {
 		return
 	}
 	w.mu.Lock()
+	rp := w.pools[lease.LeaseID]
 	delete(w.pools, lease.LeaseID)
 	w.mu.Unlock()
+	w.emitCredentialPoolExhausted(lease, rp.pool, rp.provider)
+}
+
+// emitCredentialRotated publishes the §16.6 credential_rotated event
+// per §4.0 with pool, credentialId, sessionId, leaseId, and the
+// proactive_renewal trigger that drives the renewal worker.
+func (w *credRenewalWiring) emitCredentialRotated(renewed credrenewal.Lease) {
+	if w.emitter == nil {
+		return
+	}
+	w.mu.Lock()
+	rp := w.pools[renewed.LeaseID]
+	w.mu.Unlock()
+	data, _ := json.Marshal(map[string]any{
+		"pool":         rp.pool,
+		"credentialId": renewed.CredentialID,
+		"sessionId":    renewed.SessionID,
+		"leaseId":      renewed.LeaseID,
+		"provider":     rp.provider,
+		"reason":       string(credential.TriggerProactiveRenewal),
+	})
+	w.emitter.Emit(opsevents.OperationalEvent{
+		Source:          "//lenny.dev/credential-pool",
+		Type:            opsevents.EventCredentialRotated.CloudEventsType(),
+		Severity:        "info",
+		DataContentType: "application/json",
+		Data:            data,
+	})
+}
+
+// emitCredentialPoolExhausted publishes the §16.6
+// credential_pool_exhausted event per §4.0. pool and provider may be
+// empty when the lease was never registered through track (the pool
+// binding had already been dropped); the event still surfaces the lease
+// and session so an ops agent can correlate the fall-through.
+func (w *credRenewalWiring) emitCredentialPoolExhausted(lease credrenewal.Lease, pool, provider string) {
+	if w.emitter == nil {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{
+		"pool":         pool,
+		"credentialId": lease.CredentialID,
+		"sessionId":    lease.SessionID,
+		"leaseId":      lease.LeaseID,
+		"provider":     provider,
+	})
+	w.emitter.Emit(opsevents.OperationalEvent{
+		Source:          "//lenny.dev/credential-pool",
+		Type:            opsevents.EventCredentialPoolExhausted.CloudEventsType(),
+		Severity:        "warning",
+		DataContentType: "application/json",
+		Data:            data,
+	})
 }
 
 // errNoPoolBinding reports that a lease handed to Renew was never

@@ -13,9 +13,11 @@ package warmpool
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"strconv"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -78,6 +81,35 @@ const (
 	LabelManaged = "lenny.dev/managed"
 )
 
+// PoolPhase is the §4.0 warm-pool derived phase the pool state manager
+// surfaces as pool_state_changed event data. It collapses the per-pod
+// §6.2 phases into one of the four pool-level states from §4.0 plus the
+// healthy steady state ("ready").
+type PoolPhase string
+
+const (
+	// PoolPhaseReady is the steady-state phase: at least one idle pod is
+	// available to serve a claim.
+	PoolPhaseReady PoolPhase = "ready"
+	// PoolPhaseWarming is the bootstrap phase: no idle pods yet, but at
+	// least one warming pod is converging toward idle.
+	PoolPhaseWarming PoolPhase = "warming"
+	// PoolPhaseDraining is the shrinking phase: at least one idle pod
+	// has been transitioned to draining to shed warm capacity.
+	PoolPhaseDraining PoolPhase = "draining"
+	// PoolPhaseExhausted is the §4.0 exhausted phase: the pool has a
+	// positive minWarm target but no idle and no warming pods (e.g.,
+	// maxWarm caps creation at zero, or every pod failed to warm).
+	PoolPhaseExhausted PoolPhase = "exhausted"
+)
+
+// EventEmitter is the §4.0 events sink the WarmPoolController publishes
+// pool_state_changed events through. *opsevents.Emitter satisfies it. A
+// nil EventEmitter on Reconciler disables emission.
+type EventEmitter interface {
+	Emit(opsevents.OperationalEvent) uint64
+}
+
 // Reconciler is the §4.6.1 WarmPoolController. It reconciles one
 // SandboxWarmPool per pass.
 type Reconciler struct {
@@ -94,6 +126,18 @@ type Reconciler struct {
 	// a read-optimized copy for the gateway's fallback claim path, so a
 	// mirror write failure never fails the reconcile.
 	Mirror agentpodstate.Store
+	// Events, when set, publishes §16.6 pool_state_changed events on
+	// each derived PoolPhase transition per §4.0 pool state manager. A
+	// nil Events is a no-op; the reconcile is unaffected.
+	Events EventEmitter
+
+	// phaseMu guards lastPhase against concurrent reconciles. The
+	// controller-runtime queue serializes Reconcile per object, so the
+	// guard only matters across pools, but the mutex is cheap.
+	phaseMu sync.Mutex
+	// lastPhase records the previously observed pool phase per pool
+	// (keyed by namespace/name). Emission fires only on a phase change.
+	lastPhase map[string]PoolPhase
 }
 
 // Reconcile sizes one pool: it lists the pool's Sandboxes, computes
@@ -155,7 +199,85 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update template %s status: %w", tmpl.Name, err)
 	}
+	r.observePoolPhase(&pool, decision)
 	return ctrl.Result{}, nil
+}
+
+// DerivePoolPhase reduces one reconcile's plan output to the §4.0 pool
+// state manager's phase. The mapping (in priority order):
+//
+//   - draining when at least one idle pod was named for drain this pass.
+//   - exhausted when minWarm > 0 and the post-action pool has neither
+//     ready (idle) pods nor warming pods to back the floor.
+//   - warming when no idle pods are available yet but warming pods are
+//     converging toward idle.
+//   - ready otherwise (the steady state: at least one idle pod).
+//
+// This is the §4.0 closed enumeration plus the steady "ready" state,
+// derived per spec §4.0 from the warm pool's observed pod set.
+func DerivePoolPhase(minWarm int, decision plan.Plan) PoolPhase {
+	drained := len(decision.Drain)
+	warm := decision.WarmCount + decision.Create - drained
+	ready := decision.ReadyCount - drained
+	warming := warm - ready
+	switch {
+	case drained > 0:
+		return PoolPhaseDraining
+	case minWarm > 0 && ready == 0 && warming == 0:
+		return PoolPhaseExhausted
+	case ready == 0 && warming > 0:
+		return PoolPhaseWarming
+	default:
+		return PoolPhaseReady
+	}
+}
+
+// observePoolPhase derives the pool's current phase and emits a §16.6
+// pool_state_changed event when the phase differs from the prior pass.
+// Emission is per spec §4.0 pool state manager. A nil Events sink is a
+// no-op.
+func (r *Reconciler) observePoolPhase(pool *lennyv1.SandboxWarmPool, decision plan.Plan) {
+	current := DerivePoolPhase(int(pool.Spec.MinWarm), decision)
+	key := pool.Namespace + "/" + pool.Name
+
+	r.phaseMu.Lock()
+	if r.lastPhase == nil {
+		r.lastPhase = make(map[string]PoolPhase)
+	}
+	prev, seen := r.lastPhase[key]
+	r.lastPhase[key] = current
+	r.phaseMu.Unlock()
+
+	if !seen || prev == current {
+		// The first observation of a pool sets the baseline without
+		// emitting; spurious "ready→ready" notifications carry no signal.
+		return
+	}
+	r.emitPoolStateChanged(pool.Name, prev, current)
+}
+
+// emitPoolStateChanged publishes the §16.6 pool_state_changed event per
+// spec §4.0 with pool name, oldState, and newState.
+func (r *Reconciler) emitPoolStateChanged(pool string, oldPhase, newPhase PoolPhase) {
+	if r.Events == nil {
+		return
+	}
+	severity := "info"
+	if newPhase == PoolPhaseExhausted {
+		severity = "warning"
+	}
+	data, _ := json.Marshal(map[string]any{
+		"pool":     pool,
+		"oldState": string(oldPhase),
+		"newState": string(newPhase),
+	})
+	r.Events.Emit(opsevents.OperationalEvent{
+		Source:          "//lenny.dev/warmpool",
+		Type:            opsevents.EventPoolStateChanged.CloudEventsType(),
+		Severity:        severity,
+		DataContentType: "application/json",
+		Data:            data,
+	})
 }
 
 // observedPhase maps a Sandbox's reported phase to a state.State. A

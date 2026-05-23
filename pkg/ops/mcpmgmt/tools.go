@@ -150,6 +150,26 @@ func buildToolset() []Tool {
 			"GET", "/v1/admin/recommendations", "tools:recommendations:read",
 			map[string]any{"category": strProp("Optional recommendation-category filter.")}),
 
+		// §25.12 observation tools — Operations Inventory (§4.0, §25.4).
+		observationTool("lenny_operations_list",
+			"List in-flight operations across all subsystems.",
+			"GET", "/v1/admin/operations", "tools:operations:read",
+			map[string]any{
+				"actor":       strProp("Filter by caller identity: 'me', a specific sub, or '*'."),
+				"status":      strProp("CSV of operation statuses: in_progress, paused, held, awaiting_flush, failed, completed, all."),
+				"kind":        strProp("CSV of operation kinds: platform_upgrade, restore, backup, escalation_open, remediation_lock, etc."),
+				"since":       strProp("RFC 3339 lower bound on startedAt."),
+				"until":       strProp("RFC 3339 upper bound on startedAt."),
+				"tenantId":    strProp("Restrict to operations associated with a tenant."),
+				"operationId": strProp("Lookup by id; returns a single-element list when found."),
+				"limit":       map[string]any{"type": "integer", "minimum": 1, "description": "Page size; default 100, max 500."},
+				"cursor":      strProp("Opaque pagination cursor from a prior response."),
+			}),
+		observationTool("lenny_operation_get",
+			"Get a single operation by canonical operation ID.",
+			"GET", "/v1/admin/operations/{id}", "tools:operations:read",
+			map[string]any{"id": strProp("Canonical operation id, e.g. upgrade-abc or lock-xyz.")}),
+
 		// §25.12 observation tools — diagnostics.
 		observationTool("lenny_diagnostics_session", "Diagnose a session: structured cause chain.",
 			"GET", "/v1/admin/diagnostics/sessions/{id}", "tools:diagnostics:read",

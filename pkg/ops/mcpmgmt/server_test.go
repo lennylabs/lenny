@@ -69,11 +69,13 @@ func TestToolsListReturnsTheInventory(t *testing.T) {
 	if len(tools) == 0 {
 		t.Fatal("tools/list returned an empty inventory")
 	}
-	// The §25.12 operability tools are present.
+	// The §25.12 operability tools are present, including the §4.0 /
+	// §25.4 unified Operations Inventory tools.
 	names := toolNames(tools)
 	for _, want := range []string{
 		"lenny_health_get", "lenny_diagnostics_session", "lenny_drift_report",
 		"lenny_lock_acquire", "lenny_escalation_create",
+		"lenny_operations_list", "lenny_operation_get",
 	} {
 		if !names[want] {
 			t.Errorf("tools/list is missing %s", want)
