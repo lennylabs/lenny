@@ -31,6 +31,7 @@ type Metrics struct {
 	requestQueueDepth         prometheus.Gauge
 	rejectionRate             prometheus.Gauge
 	maxSessionsPerReplica     *prometheus.GaugeVec
+	extractionThreshold       *prometheus.GaugeVec
 	storageQuotaUsed          *prometheus.GaugeVec
 	storageQuotaLimit         *prometheus.GaugeVec
 	circuitBreakerOpen        *prometheus.GaugeVec
@@ -40,6 +41,7 @@ type Metrics struct {
 	elicitationTamperDetected *prometheus.CounterVec
 	experimentIsoRej          *prometheus.CounterVec
 	noEnvPolicyAllowAll       *prometheus.CounterVec
+	gcPauseP99Ms              prometheus.Gauge
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -116,6 +118,30 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.1: surface the configured per-subsystem extraction
+	// thresholds as a startup-set gauge so the values used for an
+	// extraction decision are auditable against /metrics and the
+	// Helm release history. The subsystem and metric labels match
+	// the gateway.extractionThresholds.<subsystem>.<metric> Helm
+	// keys.
+	extractionThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_extraction_threshold",
+		Help: "Configured §4.1 per-subsystem extraction threshold by metric.",
+	}, []string{"subsystem", "metric"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.1 shared-process GC pressure signal. Periodic collector
+	// reads runtime/debug.ReadGCStats and pushes the p99 over a
+	// sliding window into this gauge so the Tier3GCPressureHigh
+	// alert (and the Tier 3 promotion criterion) can evaluate.
+	gcPauseP99Ms, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_gc_pause_p99_ms",
+		Help: "Process-level GC pause p99 (ms) over the last sliding window (§4.1).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 	storageQuotaUsed, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_storage_quota_bytes_used",
 		Help: "Per-tenant artifact storage bytes reserved-plus-committed (§11.2).",
@@ -181,6 +207,7 @@ func New() (*Metrics, error) {
 	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
+		extractionThreshold,
 		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen, elicitationDropped,
 		elicitationTamperDetected, experimentIsoRej,
 		noEnvPolicyAllowAll)
@@ -190,8 +217,9 @@ func New() (*Metrics, error) {
 	rejections := rejectionRate.WithLabelValues()
 	cbStale := cbCacheStale.WithLabelValues()
 	cbInit := cbCacheInitialized.WithLabelValues()
+	gcPause := gcPauseP99Ms.WithLabelValues()
 	reg.MustRegister(activeSessions, activeStreams, requestQueueDepth,
-		rejectionRate, cbCacheStale, cbCacheInitialized)
+		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms)
 
 	return &Metrics{
 		reg:                       reg,
@@ -202,6 +230,7 @@ func New() (*Metrics, error) {
 		requestQueueDepth:         queueDepth,
 		rejectionRate:             rejections,
 		maxSessionsPerReplica:     maxSessionsPerReplica,
+		extractionThreshold:       extractionThreshold,
 		storageQuotaUsed:          storageQuotaUsed,
 		storageQuotaLimit:         storageQuotaLimit,
 		circuitBreakerOpen:        circuitBreakerOpen,
@@ -211,6 +240,7 @@ func New() (*Metrics, error) {
 		elicitationTamperDetected: elicitationTamperDetected,
 		experimentIsoRej:          experimentIsoRej,
 		noEnvPolicyAllowAll:       noEnvPolicyAllowAll,
+		gcPauseP99Ms:              gcPause,
 	}, nil
 }
 
@@ -329,6 +359,28 @@ func (m *Metrics) SetRejectionRate(perSecond float64) {
 // capacity-planning dashboard can compute the proxy/direct ratio.
 func (m *Metrics) SetMaxSessionsPerReplica(deliveryMode string, value int) {
 	m.maxSessionsPerReplica.WithLabelValues(deliveryMode).Set(float64(value))
+}
+
+// SetExtractionThreshold emits the §4.1 configured per-subsystem
+// extraction threshold on the lenny_gateway_extraction_threshold
+// gauge. The subsystem label must be one of `stream_proxy`,
+// `upload_handler`, `mcp_fabric`, `llm_proxy`; the metric label
+// matches the `gateway.extractionThresholds.<subsystem>.<metric>`
+// Helm key in snake_case form (e.g., `queue_depth`,
+// `active_concurrent`). The gateway calls this once per configured
+// threshold at startup so the values used for an extraction decision
+// are auditable against /metrics.
+func (m *Metrics) SetExtractionThreshold(subsystem, metric string, value float64) {
+	m.extractionThreshold.WithLabelValues(subsystem, metric).Set(value)
+}
+
+// SetGCPauseP99Ms updates the §4.1 process-level GC pause p99 gauge
+// (milliseconds). The periodic collector in cmd/lenny-gateway/main.go
+// reads runtime/debug.ReadGCStats, computes the p99 over a sliding
+// window, and pushes the value here so the §16.5 Tier3GCPressureHigh
+// alert can evaluate.
+func (m *Metrics) SetGCPauseP99Ms(value float64) {
+	m.gcPauseP99Ms.Set(value)
 }
 
 // Middleware returns an http.Handler that records the §16.1 request

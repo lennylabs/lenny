@@ -575,6 +575,41 @@ gateway:
   rollingUpdate:
     maxUnavailable: 1
     maxSurge: 25%
+  # extractionThresholds expose the §4.1 per-subsystem extraction
+  # threshold values as operator-tunable Helm values. The defaults are
+  # the provisional first-principles estimates from the §4.1
+  # extraction-trigger table; operators replace them with empirically
+  # calibrated values produced by the Phase 2 benchmark harness before
+  # any extraction decision is made. Each configured threshold is
+  # surfaced as an env var on the gateway Deployment and emitted at
+  # startup on the lenny_gateway_extraction_threshold{subsystem,metric}
+  # gauge so the values used for an extraction decision are auditable
+  # against /metrics.
+  extractionThresholds:
+    # streamProxy thresholds (§4.1):
+    #   queueDepth: sustained queue depth that signals extraction.
+    #   p99AttachLatencySeconds: sustained p99 session-attach latency.
+    streamProxy:
+      queueDepth: 500
+      p99AttachLatencySeconds: 0.8
+    # uploadHandler thresholds (§4.1):
+    #   activeConcurrent: sustained concurrent active uploads.
+    #   p99LatencySeconds: sustained p99 upload-handler latency.
+    uploadHandler:
+      activeConcurrent: 200
+      p99LatencySeconds: 2.0
+    # mcpFabric thresholds (§4.1):
+    #   activeDelegations: sustained concurrent active delegations.
+    #   p99OrchestrationLatencySeconds: sustained p99 orchestration latency.
+    mcpFabric:
+      activeDelegations: 1000
+      p99OrchestrationLatencySeconds: 2.0
+    # llmProxy thresholds (§4.1):
+    #   activeConnections: sustained concurrent upstream LLM connections.
+    #   p99TTFBSeconds: sustained p99 upstream time-to-first-byte.
+    llmProxy:
+      activeConnections: 2000
+      p99TTFBSeconds: 1.0
 
 # autoscaling configures the §10.1 gateway horizontal scaler. The chart
 # renders exactly one scaler resource, selected by autoscaling.provider:

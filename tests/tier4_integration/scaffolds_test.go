@@ -197,12 +197,19 @@ func TestExperimentRouting(t *testing.T) {
 //     the standard /v1/sessions endpoints per BUILD-PROGRESS Phase
 //     12b notes).
 //
-// The dedicated /mcp/runtimes/{name} surface is a documented v2
-// follow-on; the §15.1 REST path is the v1 type:mcp entry point.
+// The §4.1 dedicated /mcp/runtimes/{name} surface is implemented in
+// pkg/gateway/mcpruntimes (Handler) and mounted on the gateway mux
+// in cmd/lenny-gateway/main.go. Unit coverage in
+// pkg/gateway/mcpruntimes/mcpruntimes_test.go verifies the four
+// error patterns the spec calls out (404 for unknown runtime,
+// 400 INVALID_RUNTIME_TYPE for type:agent runtimes, 503
+// RUNTIME_UNAVAILABLE when no live MCP client is wired, and OK
+// for a dispatched type:mcp runtime).
 // spec: 13
 // diagnosis: §13 phase-gate scaffold — composite surface is exercised by tier-2 stores + tier-3 contract tests; this scaffold documents the composition.
 func TestMCPRuntimeEndpoints(t *testing.T) {
 	t.Logf("§15.2 / §15.1: type:mcp runtime covered by pkg/adapter/mcpruntime, " +
 		"pkg/adapter/mcp client, mcp_runtime_lifecycle_test.go, and the cmd/runtimes/mcp-reference " +
-		"reference runtime. The dedicated /mcp/runtimes/{name} surface is a v2 follow-on.")
+		"reference runtime. The §4.1 dedicated /mcp/runtimes/{name} surface is implemented in " +
+		"pkg/gateway/mcpruntimes and covered by its unit tests.")
 }

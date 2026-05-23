@@ -115,7 +115,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/gcpause"
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
@@ -129,6 +131,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpruntimes"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/memorystore/pgstore"
@@ -159,6 +162,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
@@ -836,6 +840,26 @@ func main() {
 	gwMetrics.SetMaxSessionsPerReplica("direct", *maxSessionsPerReplica)
 	gwMetrics.SetMaxSessionsPerReplica("proxy", *maxSessionsPerReplica)
 
+	// §4.1 extractionThresholds: read the configured per-subsystem
+	// thresholds from LENNY_EXTRACTION_THRESHOLD_* env vars (rendered
+	// by charts/lenny/templates/gateway-deployment.yaml from
+	// gateway.extractionThresholds Helm values) and emit each one
+	// on the lenny_gateway_extraction_threshold gauge so the values
+	// used for an extraction decision are auditable against /metrics.
+	extractionthreshold.FromEnv().Emit(gwMetrics)
+
+	// §4.1 per-subsystem metric family. Register the
+	// lenny_gateway_subsystem_{request_duration_seconds, queue_depth,
+	// circuit_state, errors_total} vectors against the gateway's
+	// shared private registry so a Subsystem with its DoObserved path
+	// wired surfaces samples on /metrics. The §4.1 alerts in §16.5
+	// (GatewaySubsystemCircuitOpen, GatewayQueueDepthHigh,
+	// GatewayLatencyHigh) read these vectors via the `subsystem` label.
+	subsystemMetrics, err := subsystem.NewMetrics(gwMetrics.Registerer())
+	if err != nil {
+		log.Fatalf("lenny-gateway: subsystem metrics: %v", err)
+	}
+
 	// The §11.7 per-tenant audit hash chain. With Postgres the chain is
 	// durable (auditstore); otherwise it is in-memory and lost on
 	// restart. Both the admin router and the §10.7 ExperimentRouter
@@ -952,6 +976,20 @@ func main() {
 		log.Printf("lenny-gateway: §4.8 QuotaEvaluator enforcing §11.2 token budgets on the PostAuth chain")
 	}
 
+	// §4.1 Upload Handler subsystem boundary. The Subsystem gates the
+	// POST /v1/sessions/{id}/upload handler through a per-replica
+	// breaker and concurrency semaphore so a saturated upload queue
+	// cannot consume goroutines the Stream Proxy or MCP Fabric need.
+	// The configured maxConcurrent matches the §4.1 extraction-
+	// threshold default (uploadHandler.activeConcurrent: 200); the
+	// breaker's FailureThreshold uses the package default until an
+	// operator-tunable knob lands.
+	uploadSubsystem := &subsystem.Subsystem{
+		Name:    "upload_handler",
+		Breaker: &subsystem.Breaker{},
+		Limiter: &subsystem.Limiter{MaxConcurrent: int(extractionthreshold.FromEnv().UploadHandlerActiveConcurrent)},
+	}
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:          uploadIssuer,
 		UploadTokenVerifier:        uploadVerifier,
@@ -990,6 +1028,7 @@ func main() {
 		Interceptors:            policyChain,
 		PolicyAuditSink:         policyAuditSink,
 		Clock:                   clockinject.Now,
+		UploadSubsystem:         uploadSubsystem,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
@@ -1384,6 +1423,12 @@ func main() {
 	mux.Handle("/v1/responses", responsesHandler.Handler())
 	mux.Handle("/v1/responses/", responsesHandler.Handler())
 	mux.Handle("/mcp", mcpSrv.Handler())
+	// §4.1 dedicated MCP endpoints for type:mcp runtimes. The
+	// dispatcher is nil in v1: every request that passes runtime
+	// type validation surfaces RUNTIME_UNAVAILABLE per §15.2.1
+	// while preserving the spec-required 404 / 400 error patterns
+	// for unknown and non-mcp runtimes.
+	mux.Handle("POST /mcp/runtimes/{name}", mcpruntimes.New(runtimes, nil))
 	mux.Handle("/v1/credentials", credServer.Handler())
 	mux.Handle("/v1/credentials/", credServer.Handler())
 
@@ -1790,6 +1835,42 @@ func main() {
 				return
 			case <-ticker.C:
 				exportHPAGauges(watchdogCtx, sessions, hpaTenantLister, eventBus, gwMetrics)
+			}
+		}
+	}()
+
+	// §4.1 process-level GC pause sampler. Reads runtime/debug.ReadGCStats
+	// every gcpause.DefaultInterval seconds, maintains a sliding window
+	// (gcpause.DefaultWindow), computes the p99 in milliseconds, and
+	// pushes the value to the lenny_gateway_gc_pause_p99_ms gauge. The
+	// §16.5 Tier3GCPressureHigh alert reads the fleet-wide aggregate
+	// (`max(...)`) of this gauge to gate Tier 3 promotion.
+	gcCollector := &gcpause.Collector{Gauge: gwMetrics}
+	go gcCollector.Run(watchdogCtx)
+
+	// §4.1 per-subsystem state publisher. Periodically reads the
+	// queue depth, in-flight count, and circuit state from every
+	// wired Subsystem and pushes the values to the
+	// lenny_gateway_subsystem_{queue_depth, circuit_state} gauges
+	// so the §16.5 alerts observe back-pressure even when the
+	// handler path uses Breaker.Allow / Limiter.TryAcquire directly
+	// (the DoObserved per-call path covers histograms / counters).
+	subsystems := []*subsystem.Subsystem{uploadSubsystem}
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		publish := func() {
+			for _, s := range subsystems {
+				s.PublishGauges(subsystemMetrics)
+			}
+		}
+		publish()
+		for {
+			select {
+			case <-watchdogCtx.Done():
+				return
+			case <-ticker.C:
+				publish()
 			}
 		}
 	}()

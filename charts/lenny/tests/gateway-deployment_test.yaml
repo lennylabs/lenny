@@ -265,14 +265,14 @@ tests:
           path: spec.clusterIP
           value: None
 
-  - it: renders POD_NAME and LENNY_MAX_SESSIONS_PER_REPLICA env with stock values (no data-store env)
+  - it: renders POD_NAME, LENNY_MAX_SESSIONS_PER_REPLICA, and §4.1 extraction-threshold env with stock values (no data-store env)
     documentSelector:
       path: kind
       value: Deployment
     asserts:
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 2
+          count: 10
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -282,6 +282,26 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[1].value
           value: "50"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EXTRACTION_THRESHOLD_STREAM_PROXY_QUEUE_DEPTH
+            value: "500"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EXTRACTION_THRESHOLD_UPLOAD_HANDLER_ACTIVE_CONCURRENT
+            value: "200"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EXTRACTION_THRESHOLD_MCP_FABRIC_ACTIVE_DELEGATIONS
+            value: "1000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_ACTIVE_CONNECTIONS
+            value: "2000"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
@@ -297,6 +317,37 @@ tests:
           content:
             name: LENNY_MINIO_ENDPOINT
           any: true
+
+  - it: renders the §4.1 extractionThresholds from a Helm-value override
+    set:
+      gateway.extractionThresholds.streamProxy.queueDepth: 750
+      gateway.extractionThresholds.uploadHandler.activeConcurrent: 350
+      gateway.extractionThresholds.mcpFabric.activeDelegations: 2500
+      gateway.extractionThresholds.llmProxy.activeConnections: 4000
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EXTRACTION_THRESHOLD_STREAM_PROXY_QUEUE_DEPTH
+            value: "750"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EXTRACTION_THRESHOLD_UPLOAD_HANDLER_ACTIVE_CONCURRENT
+            value: "350"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EXTRACTION_THRESHOLD_MCP_FABRIC_ACTIVE_DELEGATIONS
+            value: "2500"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_ACTIVE_CONNECTIONS
+            value: "4000"
 
   - it: renders the §4.1 maxSessionsPerReplica from the Helm value override
     set:

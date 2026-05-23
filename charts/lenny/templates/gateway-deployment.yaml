@@ -207,6 +207,37 @@ spec:
             # lenny_gateway_max_sessions_per_replica gauge at startup.
             - name: LENNY_MAX_SESSIONS_PER_REPLICA
               value: {{ .Values.gateway.maxSessionsPerReplica | quote }}
+            {{- with .Values.gateway.extractionThresholds }}
+            # §4.1 extractionThresholds — per-subsystem extraction
+            # thresholds surfaced from Helm so operators can calibrate
+            # them at deploy time. Each value is also emitted at startup
+            # on the lenny_gateway_extraction_threshold{subsystem,metric}
+            # gauge for auditability against /metrics.
+            {{- with .streamProxy }}
+            - name: LENNY_EXTRACTION_THRESHOLD_STREAM_PROXY_QUEUE_DEPTH
+              value: {{ .queueDepth | quote }}
+            - name: LENNY_EXTRACTION_THRESHOLD_STREAM_PROXY_P99_ATTACH_LATENCY_SECONDS
+              value: {{ .p99AttachLatencySeconds | quote }}
+            {{- end }}
+            {{- with .uploadHandler }}
+            - name: LENNY_EXTRACTION_THRESHOLD_UPLOAD_HANDLER_ACTIVE_CONCURRENT
+              value: {{ .activeConcurrent | quote }}
+            - name: LENNY_EXTRACTION_THRESHOLD_UPLOAD_HANDLER_P99_LATENCY_SECONDS
+              value: {{ .p99LatencySeconds | quote }}
+            {{- end }}
+            {{- with .mcpFabric }}
+            - name: LENNY_EXTRACTION_THRESHOLD_MCP_FABRIC_ACTIVE_DELEGATIONS
+              value: {{ .activeDelegations | quote }}
+            - name: LENNY_EXTRACTION_THRESHOLD_MCP_FABRIC_P99_ORCHESTRATION_LATENCY_SECONDS
+              value: {{ .p99OrchestrationLatencySeconds | quote }}
+            {{- end }}
+            {{- with .llmProxy }}
+            - name: LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_ACTIVE_CONNECTIONS
+              value: {{ .activeConnections | quote }}
+            - name: LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_P99_TTFB_SECONDS
+              value: {{ .p99TTFBSeconds | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.observability.otlpEndpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ . | quote }}

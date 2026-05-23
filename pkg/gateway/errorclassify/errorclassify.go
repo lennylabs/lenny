@@ -80,4 +80,8 @@ var table = map[string]entry{
 	"MCP_VERSION_UNSUPPORTED":        {CategoryPermanent, false},
 	"UPSTREAM_ERROR":                 {CategoryUpstream, true},
 	"UPSTREAM_TIMEOUT":               {CategoryUpstream, true},
+	// §4.1 dedicated /mcp/runtimes/{name} surface error codes.
+	"INVALID_RUNTIME_TYPE": {CategoryPermanent, false},
+	"RUNTIME_UNAVAILABLE":  {CategoryTransient, true},
+	"METHOD_NOT_ALLOWED":   {CategoryPermanent, false},
 }
