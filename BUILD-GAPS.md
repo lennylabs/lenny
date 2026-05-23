@@ -759,7 +759,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 
 **Resolution:** `cmd/lenny-gateway/main.go` now imports `connectorcredstore/pgstore` and constructs the Postgres-backed envelope-encrypted store with the existing `kmsProvider` whenever `pgPool != nil`, falling back to the in-memory store otherwise. The connector OAuth callback's `ConnectorOAuth.Credentials` field accepts the `connectorcredstore.Store` interface, so the wiring change is transparent to the admin handler. Migration 0048's `refresh_token_blob` and `rotated_at` columns are now written by `Put`, `RotateAccessToken`, and the §13.3 revocation hot path. The longer-term cleanup — routing connector credential reads/writes through a Token Service RPC so the gateway carries no KMS decrypt grant — is captured in F-4.3.1's deferred-cleanup note.
 
-### - [ ] F-4.3.7 — Write-before-issue not a single transaction; no audit row written [High] — OPEN
+### - [x] F-4.3.7 — Write-before-issue not a single transaction; no audit row written [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.3.2 — Both report that write-before-issue is not a single advisory-locked Postgres transaction binding issued-token and token.exchanged audit INSERTs.
 
@@ -768,7 +768,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The token is signed before any database write, so a crash after signing but before `Record` returns the token to the caller while leaving no Postgres record. There is no single transaction binding the issued-token INSERT to a `token.exchanged` audit INSERT; the latter is never produced.
 - **Suggested resolution:** Wrap both writes in one transaction inside the handler (signing can stay before the transaction since the JTI is allocated up front), acquire the per-tenant audit advisory lock §11.7 mandates, and append the `token.exchanged` audit row inside the same transaction. The handler must only return the signed token after `COMMIT` succeeds.
 
-### - [ ] F-4.3.8 — No `token.exchanged` / `token.revoked` / rate-limited audit emission [High] — OPEN
+**Resolution:** `pkg/gateway/auditstore.AppendInTx` exposes the per-tenant advisory-locked audit INSERT to callers that need to bind it to a sibling write. `pkg/gateway/issuedtokenstore.Store.RecordWithAudit` opens one `pgtenant.InTx`, acquires the §11.7 `pg_advisory_xact_lock(hashtext('audit:'+tenant))` via `AppendInTx`, INSERTs the audit_log row, then INSERTs the issued_tokens row — both COMMIT atomically. `pkg/tokenservice.Server.handle` calls the combined path when the IssuedTokenStore satisfies `IssuedTokenAuditStore`; the signed token is returned only after the COMMIT succeeds (tier-2 component test `TestRecordWithAuditWritesBothRowsAtomically` + `TestRecordWithAuditRollsBackOnDuplicateJTI` + tier-1 `TestHandlerTxFailureReturns500NoToken` cover the fail-closed behavior).
+
+### - [x] F-4.3.8 — No `token.exchanged` / `token.revoked` / rate-limited audit emission [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.3.1 — Both describe Token Service audit events (token.exchanged, plus revoked/rate-limited) being declared in the catalog but never emitted.
 
@@ -777,7 +779,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** SIEM-visible audit coverage for the Token Service surface is absent; brute-force evidence trails and revocation receipts are not produced. The §13.3 `policy_result: "rejected:tenant_mismatch"` rejection audit is also absent (the tokenexchange validator returns an `ExchangeError` that the handler renders as JSON only).
 - **Suggested resolution:** Add an `auditstore.Store` dependency to `tokenservice.Server`, append a `token.exchanged` event inside the write-before-issue transaction (F-4.3.7), and emit `token.revoked` on the rotation/revocation paths.
 
-### - [ ] F-4.3.9 — No rate limiting on `/v1/oauth/token` [Medium] — OPEN
+**Resolution:** `tokenservice.Options.Auditor` plumbs an `Auditor` interface satisfied by both the Postgres-backed `auditstore.Store` and the in-memory `policy.ChainSetAppender`. The handler emits `token.exchanged` on every accept (bound to the issued-token INSERT in one transaction via `RecordWithAudit`) and on every reject (with `policy_result: "rejected:<reason>"`). The handler emits `token.exchange_rate_limited` on sampled rate-limit rejections. The GRPC server emits `token.revoked` from `RotateCredentials`/`RevokeCredentials` via `Server.EmitRevocation`. Token contents never enter the audit payload (only `caller_sub`, `subject_sub`, `jti`, `scope`, `audience`, `delegation_depth`, `policy_result`). Tier-1 tests cover accept, reject (invalid_scope), and rate-limit audit emission.
+
+### - [x] F-4.3.9 — No rate limiting on `/v1/oauth/token` [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.3.3 — Both report that /v1/oauth/token has no per-(tenant,sub) rate limiter and the related counters are never incremented.
 
@@ -786,13 +790,17 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** A brute-force or runaway-automation client receives no `429 rate_limited`; the alert cannot fire because the counter is never incremented.
 - **Suggested resolution:** Add a rate-limiter middleware (re-use `pkg/gateway/middleware/ratelimit` or `pkg/gateway/ratelimit/redisstore`) keyed by `(tenant_id, sub)` and a global per-tenant bucket; emit the two declared counters from the sampled-rejection path.
 
-### - [ ] F-4.3.10 — Declared `lenny_token_service_*` metrics have no emit sites [Medium] — OPEN
+**Resolution:** `pkg/tokenservice.RateLimiter` enforces the §13.3 line 607 per-(tenant_id, sub) per-second + per-minute and per-tenant per-second budgets in per-replica memory with the §13.3 line 609 sampling discipline (one audit per (tenant, sub, tier) per rolling window). The `lenny-token-service` binary surfaces `--oauth-rate-limit-caller-per-second` / `-per-minute` / `--oauth-rate-limit-tenant-per-second` / `--oauth-rate-limit-sample-window` flags defaulted to the spec's 10/300/100/10s values. Excess requests return `429 rate_limited` with a `Retry-After` header. `lenny_oauth_token_rate_limited_total` and `lenny_oauth_token_rate_limited_sampled_total` are incremented on every rejection / sampled rejection through the `promemit.Emitter`.
+
+### - [x] F-4.3.10 — Declared `lenny_token_service_*` metrics have no emit sites [Medium] — CLOSED
 - **Spec:** §4.3 implies operability via the declared metrics (referenced by the §16.5 alert `TokenServiceUnavailable` at `pkg/alerting/rules/rules.go:268`).
 - **Evidence:** `pkg/observability/metrics/catalog.go:143-146` declares `lenny_token_service_request_duration_seconds`, `lenny_token_service_errors_total`, `lenny_token_service_circuit_state`, and `lenny_token_service_secret_reloads_total`. `grep -rn "lenny_token_service_request\|lenny_token_service_errors\|lenny_token_service_secret_reloads" --include="*.go"` returns only the catalog declarations and the catalog test. The Helm chart's `tokenService.metricsPort` (`charts/lenny/values.yaml:115`) is opened in the Service (`charts/lenny/templates/token-service-deployment.yaml:96-98`) and the `allow-token-service-metrics-scrape` NetworkPolicy (`charts/lenny/templates/system-network-policies.yaml:324-338`) but the binary registers no Prometheus handler on the gRPC port targeted by the Service.
 - **Gap:** Operators have no Prometheus signal for the Token Service surface. The metrics port is plumbed end to end but exposes nothing useful.
 - **Suggested resolution:** Add a `promhttp.Handler` listener to `cmd/lenny-token-service/main.go` on `metricsPort`, instrument `tokenservice.Server.handle` and `GRPCServer.Assign/Rotate/Revoke` with the declared histogram and counters, and emit `lenny_token_service_circuit_state` from the gateway-side breaker added per F-4.3.3.
 
-### - [ ] F-4.3.11 — Token Service binary cannot use cloud KMS [High] — OPEN
+**Resolution:** `pkg/tokenservice/promemit.Emitter` registers the §16.1 catalog (`lenny_token_service_request_duration_seconds`, `lenny_token_service_errors_total`, `lenny_token_service_secret_reloads_total`, `lenny_oauth_token_rate_limited_total`, `lenny_oauth_token_rate_limited_sampled_total`) against a private registry; the Token Service binary serves it on `--metrics-addr` (chart default `:9090`). The `/v1/oauth/token` handler and the gRPC `Assign/Rotate/Revoke` handlers record request_duration + errors through `tokenservice.Metrics`. `lenny_token_service_circuit_state` continues to emit from the gateway-side breaker (`cmd/lenny-gateway/main.go:1980` → `gatewaymetrics.SetTokenServiceCircuitState`, verified intact). The chart's token-service Service now exposes the metrics port on its own `metrics`/`http-token` target ports (the earlier bug where `metrics` aimed at `grpc` is fixed).
+
+### - [x] F-4.3.11 — Token Service binary cannot use cloud KMS [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.2.11, F-12.7.2, F-17.5.2 — These four describe the same defect: the cloud KMS adapters exist but main.go hard-codes kms.NewLocalRandom() with no provider-selection knob; the two Info members frame the same gap as an accepted seam.
 
@@ -801,17 +809,23 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The shipped Token Service binary holds an in-process random KEK that is regenerated on every restart; persisted ciphertext from a previous boot cannot be decrypted. The chart-shipped install is effectively dev-only, which is invisible to a deployer using the chart's `tier3-prod` answer file.
 - **Suggested resolution:** Add `--kms-provider=local|aws|gcp|azure` and provider-specific flags to `cmd/lenny-token-service/main.go`; surface the choice in `charts/lenny/values.yaml` (`tokenService.kms.provider`); reject `local` when `environment: prod` in the answer-file validator.
 
-### - [ ] F-4.3.12 — Token Service's `/v1/oauth/token` HTTP listener is unreachable from outside the pod [Medium] — OPEN
+**Resolution:** `pkg/kms/providerflags` exposes a shared `--kms-provider | --kms-aws-region | --kms-azure-vault-url | --kms-alias | --environment` flag surface used by both `cmd/lenny-token-service/main.go` and `cmd/lenny-gateway/main.go`. `providerflags.Resolve` constructs the matching `kms.Provider` from `pkg/kms/{aws,gcp,azure}` and rejects `--kms-provider=local` when `--environment=prod` (`ErrLocalForbidden`). Chart values `kms.provider | kms.aliases | kms.awsRegion | kms.azureVaultURL | environment` render onto both deployments. Helm-unittest covers the local default and the `aws | environment=prod | aliases` render path. Unit tests in `providerflags_test.go` cover the production gate and malformed-alias rejection.
+
+### - [x] F-4.3.12 — Token Service's `/v1/oauth/token` HTTP listener is unreachable from outside the pod [Medium] — CLOSED
 - **Spec:** "Canonical token endpoint — `POST /v1/oauth/token` ... All Lenny bearer tokens... are minted here (either via direct caller request or via internal Token Service calls from other gateway subsystems)" (line 193).
 - **Evidence:** `/Users/joan/projects/lenny/cmd/lenny-token-service/main.go:42-72` binds the HTTP token-exchange listener on `--addr=:8081`; the Service in `charts/lenny/templates/token-service-deployment.yaml:88-98` exposes only the gRPC and metrics ports; the `allow-token-service` NetworkPolicy (`charts/lenny/templates/system-network-policies.yaml:146-164`) admits only the gRPC port from the gateway. Meanwhile `cmd/lenny-gateway/main.go:1334` mounts the same `tokSvc.Handler()` on the gateway's own HTTP mux, so external callers reach `/v1/oauth/token` through the gateway, never the Token Service.
 - **Gap:** The §4.3 architecture has the Token Service serve the canonical endpoint and the gateway proxy to it. Today the gateway runs the handler itself and the Token Service's HTTP listener is dead code, which makes the §4.3 "separate process" framing aspirational and obscures the actual token-minting flow.
 - **Suggested resolution:** Pick one canonical surface and remove the other. Either move `mux.Handle("/v1/oauth/", tokSvc.Handler())` out of `cmd/lenny-gateway/main.go` and add an HTTP NetworkPolicy admitting gateway → Token Service `8081` plus a `/v1/oauth/*` proxy in the gateway, or remove the HTTP listener from `cmd/lenny-token-service/main.go` and rely on the gateway-resident handler (in which case §4.3 needs to be rewritten to reflect that).
 
-### - [ ] F-4.3.13 — Gateway hardcodes the issuer string [Medium] — OPEN
+**Resolution:** The in-process `tokenservice.NewServer(...)` plus `mux.Handle("/v1/oauth/", tokSvc.Handler())` are removed from `cmd/lenny-gateway/main.go`. `pkg/tokensvcproxy` is a new HTTP reverse-proxy package; the gateway mounts it at `/v1/oauth/` when `--token-service-http-url` (chart default `http://lenny-token-service.<ns>.svc:8081`) is set. The Token Service Service exposes the `http-token` port; the `allow-token-service` NetworkPolicy admits gateway → Token Service on both gRPC and HTTP. The Token Service is now the sole minter and the sole writer of the `issued_tokens` / `audit_log` rows. Tier-1 tokensvcproxy tests cover request forwarding and reject malformed URLs.
+
+### - [x] F-4.3.13 — Gateway hardcodes the issuer string [Medium] — CLOSED
 - **Spec:** "Canonical token endpoint" minting tokens with a stable `iss` claim that downstream verifiers (JWKS publication, federation) trust (line 193).
 - **Evidence:** `/Users/joan/projects/lenny/cmd/lenny-gateway/main.go:610` sets `Issuer: "https://lenny.dev.local/token"` as a literal; no flag, env var, or chart value drives it. `cmd/lenny-token-service/main.go:45` exposes `--issuer` and the chart sets `tokenService.issuer` (`charts/lenny/values.yaml:118`), so the in-process gateway path and the Token Service binary publish different issuers under the same install.
 - **Gap:** A deployer setting `tokenService.issuer: "https://lenny.acme.com/token"` would see the Token Service binary mint tokens with the new `iss` while the gateway-resident handler keeps minting the dev placeholder. Federation and JWKS configurations break silently.
 - **Suggested resolution:** Add a `--token-issuer` flag (env `LENNY_TOKEN_ISSUER`) to `cmd/lenny-gateway/main.go`, route it through `tokenservice.Options.Issuer`, and surface it in `charts/lenny/templates/gateway-deployment.yaml`.
+
+**Resolution:** Closed by F-4.3.12. The gateway no longer mints tokens in-process; `cmd/lenny-gateway/main.go` carries no `tokenservice.NewServer(...)` call and no `Issuer` literal. The Token Service binary's existing `--issuer` flag + `LENNY_TOKEN_ISSUER` env override + `tokenService.issuer` chart value are now the single source of truth for the `iss` claim.
 
 ### - [ ] F-4.3.14 — Issued-tokens table missing dialect/per-dialect-cap column for the §13.3 cap discipline [Low] — OPEN
 
@@ -834,11 +848,13 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** Clients cannot programmatically distinguish "Token Service down, try again in 5s" from "no pool configured." The retryable-error contract is unimplemented.
 - **Suggested resolution:** Add a sentinel `ErrTokenServiceUnavailable` to `pkg/gateway/credassign`, map `codes.Unavailable`/`codes.DeadlineExceeded` to it, surface it as an HTTP 503 with a `Retry-After` header from the session-start handler, and wire it through the circuit breaker added in F-4.3.3.
 
-### - [ ] F-4.3.17 — Token Service binary has no audit dependency [High] — OPEN
+### - [x] F-4.3.17 — Token Service binary has no audit dependency [High] — CLOSED
 - **Spec:** §4.3 wires the Token Service to "the gateway's claim-mapping table and scope-narrowing rules" of §13.3, which mandates `token.exchanged` audit on every exchange (line 587).
 - **Evidence:** `grep -n "audit\|Audit" cmd/lenny-token-service/main.go` returns no matches. `tokenservice.NewServer` and `tokenservice.NewGRPCServer` accept no audit-store or audit-emitter dependency.
 - **Gap:** Even if F-4.3.7 were fixed in the gateway-resident handler, the Token Service binary running the same handler still cannot audit because no auditor is plumbed through `tokenservice.Options`.
 - **Suggested resolution:** Add an `Auditor` field to `tokenservice.Options` and `NewGRPCServer`, plumb it through `cmd/lenny-token-service/main.go`, and emit the §13.3 audit events from both surfaces.
+
+**Resolution:** `tokenservice.Options.Auditor` and `GRPCServer.SetAuditor` plumb an Auditor through both surfaces. `cmd/lenny-token-service/main.go` constructs `auditstore.New(pgPool)` when Postgres is wired (which satisfies both `tokenservice.Auditor` and `tokenservice.IssuedTokenAuditStore` through the matching method sets) and falls back to `policy.NewChainSetAppender` on the dev path. Both surfaces (`/v1/oauth/token` and the gRPC RotateCredentials/RevokeCredentials handlers) now emit the §13.3 audit events.
 
 ### - [ ] F-4.3.18 — The "fully stateless" deployment claim is contradicted by an in-process JTI cache [Low] — OPEN
 - **Spec:** "The service is fully stateless — all persistent state lives in Postgres (encrypted tokens) and KMS, so any replica can handle any request with no affinity requirements" (line 209).
@@ -10544,13 +10560,15 @@ Spec L189–190: the boundary table specifies pod ↔ gateway uses "mTLS + proje
 
 Pod-identity enforcement in the codebase is mTLS + the `MCPNonce` (`pkg/adapter/manifest.go:17–18, 81–86`) plus the SPIFFE credential-lease binding (`pkg/credential/lease.go:82–84`). There is no Kubernetes TokenReview, no audience-claim check on pod-presented bearer JWTs, and no shared verifier wiring `global.saTokenAudience` into a per-request validator. `cmd/lenny-preflight/main.go:69–70` and `pkg/preflight/networkpolicy_identity.go:70–92` enforce the *uniqueness* of the audience at install time, but no runtime validator consumes the resulting `lenny.dev/sa-token-audience` annotation. The spec's "validates the signature on every pod→gateway request" invariant has no in-code counterpart for SA-token signatures; mTLS plus the nonce is the only enforcement.
 
-### - [ ] F-10.2.11 — KMS signer is locked to the in-process `kms.Local` provider — M [Medium] — OPEN
+### - [x] F-10.2.11 — KMS signer is locked to the in-process `kms.Local` provider — M [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.7.2, F-17.5.2, F-4.3.11 — These four describe the same defect: the cloud KMS adapters exist but main.go hard-codes kms.NewLocalRandom() with no provider-selection knob; the two Info members frame the same gap as an accepted seam.
 
 Spec L194: "Production: KMS-backed signing (AWS KMS, GCP Cloud KMS, HashiCorp Vault Transit). The signing key never exists in gateway memory."
 
 `pkg/kms/aws/`, `pkg/kms/gcp/`, and `pkg/kms/azure/` exist and implement the `kms.Provider` interface. `cmd/lenny-gateway/main.go:552` wires only `kms.NewLocalRandom()` regardless of `--dev-mode` or environment, and `pkg/auth/jwt/kmssigner.go:78` keeps the unwrapped HMAC key in process memory for the signing hot path ("KMS wraps the key at rest, it does not sit on the per-Sign code path"). The "signing key never exists in gateway memory" guarantee is structurally inverted: every replica unwraps the key once and signs locally. There is no cloud-KMS signing-call code path (no `KMS.Sign`/`AsymmetricSign` API integration), and no Vault Transit path. The implementation choice is documented in `kmssigner.go:27–31` but conflicts with the spec's promise.
+
+**Resolution:** Closed by F-4.3.11. `pkg/kms/providerflags` is now the binary-level selector for both the gateway and the Token Service; the chart renders `kms.provider | kms.aliases | kms.awsRegion | kms.azureVaultURL | environment` onto both deployments. `--kms-provider=local` is rejected when `--environment=prod` (`ErrLocalForbidden`). The signing-key-in-process concern is independent and remains tracked under the §10.2 kmssigner notes (F-10.2.13 is still about the dev HMAC posture); the wiring-level defect this finding names is resolved.
 
 ### - [ ] F-10.2.12 — Auth middleware emits no Bearer-rejection event when no token is presented — L [Medium] — OPEN
 
@@ -17739,7 +17757,7 @@ Files:
 - `pkg/storerouter/storerouter.go:77` (interface), `:131` (SingleShardRouter).
 - `cmd/lenny-gateway/main.go:367-413` (direct pool passing in store construction).
 
-### - [ ] F-12.7.2 — 2 — Cloud KMS adapters compiled but unreachable at the wiring boundary [Medium] — OPEN
+### - [x] F-12.7.2 — 2 — Cloud KMS adapters compiled but unreachable at the wiring boundary [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.2.11, F-17.5.2, F-4.3.11 — These four describe the same defect: the cloud KMS adapters exist but main.go hard-codes kms.NewLocalRandom() with no provider-selection knob; the two Info members frame the same gap as an accepted seam.
 
@@ -17757,6 +17775,8 @@ Files:
 - `pkg/kms/aws/aws.go:78` (`New`), `pkg/kms/azure/azure.go:79` (`New`), `pkg/kms/gcp/gcp.go:86` (`New`).
 - `cmd/lenny-gateway/main.go:552`, `cmd/lenny-token-service/main.go:51` (hard-coded Local).
 - `charts/lenny/values.yaml:175-180` (`kms:` block only describes the egress CIDR, no provider selector).
+
+**Resolution:** Closed by F-4.3.11. `pkg/kms/providerflags` is the shared `--kms-*` flag surface both binaries now consume; the chart's `kms.provider` value renders onto `--kms-provider` for both deployments. The cloud adapters under `pkg/kms/{aws,gcp,azure}` are now reachable through `providerflags.Resolve`.
 
 ### - [ ] F-12.7.3 — 3 — Cloud blob backends compiled but unreachable [Medium] — OPEN
 
@@ -19409,7 +19429,7 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ### Findings
 
-### - [ ] F-13.3.1 — CFL-001 — `token.exchanged` audit event is never emitted [High] — OPEN
+### - [x] F-13.3.1 — CFL-001 — `token.exchanged` audit event is never emitted [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.3.8 — Both describe Token Service audit events (token.exchanged, plus revoked/rate-limited) being declared in the catalog but never emitted.
 
@@ -19425,9 +19445,11 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 **Severity rationale.** High because (a) it is a §13.3 MUST that holds across every exchange path, (b) the audit row is the operator's only ground-truth for cross-tenant exchange attempts (§13.3 line 585: "any `tenant_mismatch` rejection is itself audited"), and (c) the alert path (`GatewayRateLimitStorm` at §16.5) depends on accompanying audit rows that operators correlate against the suppression counter.
 
+**Resolution:** Closed by F-4.3.8 (same fix). `tokenservice.Server` accepts an `Auditor`; the handler emits `token.exchanged` on every accept and reject. The accept path binds the audit row to the issued-token INSERT through `IssuedTokenAuditStore.RecordWithAudit` (one Postgres transaction with the §11.7 advisory lock). `token.revoked` emits from the gRPC server's revoke/rotate paths via `Server.EmitRevocation`; `token.exchange_rate_limited` emits from the §13.3-sampled rate-limit rejection path. Token contents are never written into the audit payload.
+
 ---
 
-### - [ ] F-13.3.2 — CFL-002 — Write-before-issue atomicity is not a Postgres advisory-locked transaction with audit row [High] — OPEN
+### - [x] F-13.3.2 — CFL-002 — Write-before-issue atomicity is not a Postgres advisory-locked transaction with audit row [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.3.7 — Both report that write-before-issue is not a single advisory-locked Postgres transaction binding issued-token and token.exchanged audit INSERTs.
 
@@ -19442,9 +19464,11 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 **Severity rationale.** High because (a) it is a §13.3 MUST tied to "fail-closed" discipline, (b) the failure mode is silent (no observable error from the caller's perspective when audit is missing), and (c) the broader §11.7 audit-chain integrity guarantee depends on this ordering for token issuance.
 
+**Resolution:** Closed by F-4.3.7 (same fix). `issuedtokenstore.Store.RecordWithAudit` opens one `pgtenant.InTx`, calls `auditstore.AppendInTx` (which acquires `pg_advisory_xact_lock(hashtext('audit:'+tenant))` and INSERTs the audit_log row), then INSERTs the issued_tokens row, then COMMITs. The handler returns the signed token only after the COMMIT; tier-2 component test `TestRecordWithAuditRollsBackOnDuplicateJTI` confirms a duplicate jti rolls both rows back.
+
 ---
 
-### - [ ] F-13.3.3 — CFL-003 — `/v1/oauth/token` has no §13.3 per-`(tenant, sub)` rate limiter [High] — OPEN
+### - [x] F-13.3.3 — CFL-003 — `/v1/oauth/token` has no §13.3 per-`(tenant, sub)` rate limiter [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.3.9 — Both report that /v1/oauth/token has no per-(tenant,sub) rate limiter and the related counters are never incremented.
 
@@ -19462,6 +19486,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 **Impact.** The OAuth endpoint accepts unbounded brute-force traffic against `subject_token` validation. A misbehaving automation loop or a deliberate brute-force attempt against the JWT verifier (whose error surface leaks token-shape information through error strings) is unbounded. Worse, the absence of rate-limit-aware sampling means that if a basic rate limiter were added later, every rejection would write a full audit row (defeating the per-tenant audit-write-path protection §11.7 item 3 guards).
 
 **Severity rationale.** High because the §13.3 rate limit is the explicit defense against subject-token brute force and audit-write saturation, and the alert + audit path operators rely on (`GatewayRateLimitStorm`) is broken by construction without the rate-limit emission.
+
+**Resolution:** Closed by F-4.3.9 (same fix). `pkg/tokenservice.RateLimiter` enforces the §13.3 line 607 limits in per-replica memory with the `caller_per_second | caller_per_minute | tenant_per_second` tier vocabulary. The handler returns `429 rate_limited` with `Retry-After`, increments `lenny_oauth_token_rate_limited_total` on every rejection, and emits a sampled `token.exchange_rate_limited` audit row (one per (tenant, sub, tier) per 10s rolling window). The §13.3 default 10/300/100 limits are the binary's flag defaults. Tier-1 `TestHandlerRateLimitedReturns429AndAudits` and the rate-limiter unit tests cover the bucket semantics and the sampling discipline.
 
 ---
 
@@ -27077,9 +27103,11 @@ The cloud-adapter test coverage stops at the package boundary: `pkg/blobstore/{s
 
 ---
 
-### - [ ] F-17.5.2 — 2 — Cloud KMS providers (AWS KMS / GCP Cloud KMS / Azure Key Vault) are zero-wired into the gateway and token service [High] — OPEN
+### - [x] F-17.5.2 — 2 — Cloud KMS providers (AWS KMS / GCP Cloud KMS / Azure Key Vault) are zero-wired into the gateway and token service [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.2.11, F-12.7.2, F-4.3.11 — These four describe the same defect: the cloud KMS adapters exist but main.go hard-codes kms.NewLocalRandom() with no provider-selection knob; the two Info members frame the same gap as an accepted seam.
+
+**Resolution:** Closed by F-4.3.11. `pkg/kms/providerflags.Resolve` constructs the matching `kms.Provider` from `--kms-provider=local|aws|gcp|azure` and rejects `local` when `--environment=prod`. Both binaries (`cmd/lenny-gateway`, `cmd/lenny-token-service`) call into the shared seam. Chart values `kms.provider | kms.aliases | kms.awsRegion | kms.azureVaultURL | environment` drive both deployments.
 
 **Spec basis.** §17.5 bullet 1 (pluggable storage extends to envelope-encryption KEK seam; the spec's §4.9.1 and §13.3 envelope-encryption text identifies the KMS provider as the "pluggable backend" for KEK material). The `pkg/kms/kms.go:CloudProviderSeam` doc-comment (lines 111-138) records that "§4 requires cloud-managed deployments to enable envelope encryption through the cloud provider's KMS (AWS KMS on EKS, GCP Cloud KMS on GKE, Azure Key Vault on AKS)" and that a cloud Provider satisfies the seam by implementing `kms.Provider`.
 
