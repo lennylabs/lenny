@@ -236,12 +236,16 @@ are not yet deduplicated; treat related findings as a cluster.
 
 ### - [ ] F-4.0.1 — Pool upgrade state machine does not emit `upgrade_progressed` [High] — CLOSED
 
+**Potential overlap** (confidence: medium) — F-10.5.7 — Both concern the §25.8/§10.5 platform-upgrade state machine in pkg/upgrade, but F-10.5.7 is the missing orchestrator consumer and F-4.0.1 is the missing upgrade_progressed event emission; F-4.0.1 is also CLOSED.
+
 - **Spec:** "Pool upgrade state machine (§10.5) — emits `upgrade_progressed` on each phase transition with pool, old phase, new phase, and image digest." (line 31)
 - **Evidence:** `pkg/upgrade/upgrade.go` (the phase state machine) imports neither `opsevents` nor any event sink. A repo-wide grep for `EventUpgradeProgressed` or `"upgrade_progressed"` returns only the catalog declaration and tests (`pkg/gateway/opsevents/catalog.go:20`), the alerting-rule reference (`pkg/alerting/rules/rules.go`), and the catalog test. No call site emits the event. The `lenny-ops` cron loop (`pkg/ops/opsservice/cronloop.go`) names `platform_upgrade_check` only as a comment; there is no upgrade orchestrator that emits.
 - **Gap:** The event type is declared but never emitted; the upgrade state machine has no `EventEmitter` dependency.
 - **Suggested resolution:** Add an `EventEmitter` (`*opsevents.Emitter`) field to the pool upgrade orchestrator and emit `dev.lenny.upgrade_progressed` with `pool`, `oldPhase`, `newPhase`, and `imageDigest` data on each `upgrade.Next` transition.
 
 ### - [ ] F-4.0.2 — Warm pool / pool state manager does not emit `pool_state_changed` [High] — CLOSED
+
+**Potential overlap** (confidence: medium) — F-4.0.11 — Both stem from no EventEmitter wired into the controller, but one is the warm-pool reconciler not emitting pool_state_changed and the other is the absent event transport between controller and gateway.
 
 - **Spec:** "Pool state manager (warm pool state: `draining`, `warming`, `exhausted`) — emits `pool_state_changed` on each transition; lives alongside the warm pool controller (§4.6.1)." (line 32)
 - **Evidence:** `pkg/controller/warmpool/controller.go` has no `opsevents` import. `cmd/lenny-controller/main.go` constructs `warmpool.Reconciler` (line 146) without an emitter — `grep "opsevents|OpsEmitter|EventBus" cmd/lenny-controller/main.go` returns no matches. The event type `EventPoolStateChanged` is referenced only in the catalog, in tests, and in webhook subscription tests (`pkg/ops/opsservice/webhookloop_test.go:138`).
@@ -299,12 +303,16 @@ are not yet deduplicated; treat related findings as a cluster.
 
 ### - [ ] F-4.0.10 — `EventEmitter` is a concrete struct rather than an interface [Medium] — CLOSED
 
+**Potential duplicate** (confidence: high) — F-25.3.14 — Both report that EventEmitter is a concrete struct with an Emit signature that drops ctx and returns uint64 instead of matching the spec interface.
+
 - **Spec:** "`EventEmitter` interface and in-memory ring buffer. Every subsystem that emits operational events depends on this package." (line 13) and "The subsystems below take `EventEmitter` as a constructor dependency and call `Emit(ctx, event)` at the documented state-change point." (line 29)
 - **Evidence:** `pkg/gateway/opsevents/emitter.go:19` declares `type Emitter struct` — no interface is exported. Every consumer takes the concrete `*opsevents.Emitter` (e.g., `pkg/gateway/sessionserver/sessionserver.go:328 OpsEmitter *opsevents.Emitter`, `pkg/gateway/admin/tenants.go:142 eventEmitter *opsevents.Emitter`). The `Emit` method signature is `Emit(event OperationalEvent) uint64` (`emitter.go:40`) — no `ctx` argument, contradicting the spec's `Emit(ctx, event)` contract.
 - **Gap:** Subsystems depend on a concrete type rather than an interface; the signature drops the ctx the spec calls for; substituting a Redis-backed emitter (the `§25.3` future destination noted at `emitter.go:17`) requires constructor type changes across every consumer.
 - **Suggested resolution:** Extract `EventEmitter` interface (`Emit(ctx context.Context, event OperationalEvent) (uint64, error)`) in `pkg/gateway/opsevents`, make the current struct satisfy it, and switch all consumers from `*opsevents.Emitter` to the interface. Thread `ctx` through emit sites so cancellation propagates.
 
 ### - [ ] F-4.0.11 — Pool-state and warm-pool emitters not threaded into controller binary [Medium] — CLOSED
+
+**Potential overlap** (confidence: medium) — F-4.0.2 — Both stem from no EventEmitter wired into the controller, but one is the warm-pool reconciler not emitting pool_state_changed and the other is the absent event transport between controller and gateway.
 
 - **Spec:** "The subsystems below take `EventEmitter` as a constructor dependency..." (line 29; warm-pool / pool-state row at line 32)
 - **Evidence:** `cmd/lenny-controller/main.go` carries no `opsevents` import (verified by `grep`). The warm-pool reconciler (`pkg/controller/warmpool/controller.go`) does not accept an emitter and there is no event bus shared with the gateway. The controllers and the gateway process emit on separate buses since the gateway's `opsEmitter` is instantiated in `cmd/lenny-gateway/main.go:877` only.
@@ -326,6 +334,8 @@ are not yet deduplicated; treat related findings as a cluster.
 - **Suggested resolution:** Rename `pkg/gateway/opsevents` to `pkg/gateway/events` (and rename the existing session-event `events` package to e.g. `sessionevents`), or update the spec to reference `pkg/gateway/opsevents`.
 
 ### - [ ] F-4.0.14 — `pkg/gateway/health/{service,runbook_links}.go` are at `health.go` / `handler.go` [Low] — CLOSED
+
+**Potential duplicate** (confidence: high) — F-17.7.1, F-25.7.4, F-4.0.19 — All four report the absent runbook_links.go / issueRunbooks central lookup table with runbook refs inlined per checker.
 
 - **Spec:** "`pkg/gateway/health/{service,runbook_links}.go` — the gateway health service and its runbook link table." (line 14)
 - **Evidence:** Files are `pkg/gateway/health/health.go` (service + types + aggregator) and `pkg/gateway/health/handler.go` (HTTP handler). No `runbook_links.go`; each `Checker` carries its own `RunbookRef` inline (e.g., `pkg/gateway/health/backends/backends.go:46 RunbookRef: "postgres-failover"`).
@@ -362,6 +372,8 @@ are not yet deduplicated; treat related findings as a cluster.
 
 ### - [ ] F-4.0.19 — Health Checker exposes inline `RunbookRef` rather than centralized table [Low] — CLOSED
 
+**Potential duplicate** (confidence: high) — F-17.7.1, F-25.7.4, F-4.0.14 — All four report the absent runbook_links.go / issueRunbooks central lookup table with runbook refs inlined per checker.
+
 - **Spec:** "the gateway health service and its runbook link table." (line 14)
 - **Evidence:** `pkg/gateway/health/health.go:65-67` defines `Component.RunbookRef`; checkers in `pkg/gateway/health/backends/backends.go` (lines 46, etc.) populate it inline per checker. No centralized component-to-runbook mapping exists.
 - **Gap:** Cosmetic — the runbook ref is computed per checker rather than from a shared table, so adding a new component requires editing the checker rather than a table.
@@ -390,12 +402,16 @@ The gateway implementation covers the core externally-facing responsibilities (O
 
 ### - [ ] F-4.1.1 — Gateway Deployment has no PodDisruptionBudget [High] — CLOSED
 
+**Potential duplicate** (confidence: high) — F-10.4.4, F-17.1.1, F-17.3.2 — Four members report the gateway Deployment renders no PodDisruptionBudget; F-4.1.12 covers only the separate topology-spread gap.
+
 - **Spec:** "PodDisruptionBudget to limit simultaneous disruptions" (line 61). §17.1 cross-reference mandates `maxUnavailable: 1 at every tier`.
 - **Evidence:** `charts/lenny/templates/gateway-deployment.yaml` renders ServiceAccount/ClusterRole/ClusterRoleBinding/Deployment/Service/headless-Service (lines 44, 56, 94, 109, 255, 286) but NO PodDisruptionBudget. `grep -rln "kind: PodDisruptionBudget" charts/lenny/templates/` returns only `token-service-deployment.yaml`, `admission-policies/cosign-verify-webhook.yaml`, `admission-policies/_webhook.tpl`. No `lenny-gateway` PDB resource exists. `charts/lenny/values.yaml:623` and `charts/lenny/templates/autoscaling-gateway.yaml:99` both reference "the §17.1 maxUnavailable:1 PDB" as the binding constraint, but the PDB itself is never rendered.
 - **Gap:** Without a PDB the gateway is exposed to mass concurrent evictions during `kubectl drain`, cluster-autoscaler node consolidation, or rollouts. The HPA scale-down policy (1 pod / 60s) was tuned around a PDB-bound floor that does not exist; the §16.5 `PDBBlockedEvictions` alert can never fire.
 - **Resolution:** `charts/lenny/templates/gateway-deployment.yaml` now renders a `PodDisruptionBudget` named `lenny-gateway` (`maxUnavailable: 1`) selecting the gateway labels, gated on the new `gateway.podDisruptionBudget.enabled` Helm value (default `true`). `charts/lenny/values.yaml` documents the value and its opt-out. `charts/lenny/tests/gateway-deployment_test.yaml` adds three helm-unittest assertions: the default render contains seven documents including the PDB; the PDB carries `maxUnavailable: 1` and the gateway selector; setting `gateway.podDisruptionBudget.enabled: false` drops the document count to six (the PDB is the only opt-outable document, so the count check pins the absence).
 
 ### - [ ] F-4.1.2 — Gateway Deployment has no rolling-update strategy [High] — CLOSED
+
+**Potential duplicate** (confidence: high) — F-10.5.9 — Both report the gateway Deployment declares no rolling-update strategy block, falling back to the K8s 25% default; F-10.5.9 covers gateway plus controller/token-service while F-4.1.2 is gateway-only and CLOSED.
 
 - **Spec:** §17.1 cross-reference linked from §4.1: "Rolling update strategy: `maxUnavailable: 1, maxSurge: 25%`."
 - **Evidence:** `charts/lenny/templates/gateway-deployment.yaml` (lines 109-252) defines `spec:` with replicas/selector/template only — no `strategy:` block. `grep -rn "strategy:\|maxSurge\|maxUnavailable" charts/lenny/templates/gateway-deployment.yaml` returns no matches.
@@ -404,12 +420,16 @@ The gateway implementation covers the core externally-facing responsibilities (O
 
 ### - [ ] F-4.1.3 — HPA scale-out gauges are registered but never updated [High] — CLOSED
 
+**Potential duplicate** (confidence: high) — F-10.1.1 — Both report the gateway HPA scale-out gauges are registered but never updated by any production code path; F-4.1.3 is marked CLOSED.
+
 - **Spec:** Line 71: "`lenny_gateway_request_queue_depth` — Primary HPA scale-out trigger." Line 72: "`lenny_gateway_active_streams` — Secondary HPA metric." Line 73: "`lenny_gateway_active_sessions / gateway.maxSessionsPerReplica` — Capacity ceiling alert."
 - **Evidence:** `pkg/gateway/gatewaymetrics/gatewaymetrics.go:64-96, 273-296` registers the gauges and defines `SetActiveSessions`, `SetActiveStreams`, `SetRequestQueueDepth`, `SetRejectionRate`. `grep -rn "SetActiveSessions\|SetActiveStreams\|SetRequestQueueDepth\|SetRejectionRate" pkg/ cmd/` returns ONLY the definitions in `gatewaymetrics.go` and matching `gatewaymetrics_test.go` calls. No production caller exists — neither `pkg/gateway/sessionserver`, `pkg/gateway/watchdog`, nor `cmd/lenny-gateway/main.go` invokes them.
 - **Gap:** The HPA primary trigger reports a constant `0` (the gauge's initial value), so the §4.1 SCL-026 autoscaling pipeline (`charts/lenny/templates/autoscaling-gateway.yaml`) cannot scale. The `GatewaySessionBudgetNearExhaustion` and `GatewayActiveStreamsHigh` alerts (`pkg/alerting/rules/rules.go:570-584`) can never fire.
 - **Resolution:** `cmd/lenny-gateway/main.go` adds `exportHPAGauges`, a 5-second periodic poller that updates the three gauges from live in-process state: request queue depth from `gatewaymetrics.Metrics.InflightRequests` (the new metrics Middleware counter, incremented on entry / decremented on exit via `atomic.AddInt64`), active streams from `sessionevents.Bus.ActiveSubscribers` (new helper that walks the bus's subscriber map and counts non-closed entries), and active sessions from a per-tenant `sessionstore.List` walk filtered by `!session.IsTerminal`. The poller is launched alongside the existing 30-second `exportGaugeMetrics` goroutine but ticks at 5s so the custom-metrics pipeline (Prometheus Adapter / KEDA) observes back-pressure quickly enough to scale before the saturation threshold. New tests: `pkg/gateway/gatewaymetrics/gatewaymetrics_test.go` — `TestMiddlewareTracksInflightRequests` (handler holds the request, exporter observes inflight=1, releases, inflight returns to 0); `cmd/lenny-gateway/main_test.go` — `TestExportHPAGaugesUpdatesAllGauges` (seeds 2 active + 1 terminal session, subscribes one SSE listener, drives an in-flight request, asserts the three gauges; second poll drops queue_depth to 0); `TestExportHPAGaugesContextCancellation` (cancelled context returns promptly without spurious updates).
 
 ### - [ ] F-4.1.4 — `gateway.maxSessionsPerReplica` Helm value is never plumbed into the gateway binary [High] — CLOSED
+
+**Potential duplicate** (confidence: high) — F-10.1.12 — Both report gateway.maxSessionsPerReplica is never plumbed into the gateway binary so the capacity-ceiling gauge/alert cannot function; F-4.1.4 is CLOSED but describes the identical defect.
 
 - **Spec:** Line 65: "this limit is expressed as `gateway.maxSessionsPerReplica`." Line 75: "defines the capacity ceiling used by the alert above". Lines 77-82 set per-tier provisional values (50/200/400/400).
 - **Evidence:** `charts/lenny/values.yaml:546` declares `gateway.maxSessionsPerReplica: 50`; `charts/lenny/presets/values-tier{1,2,3}.yaml` override per tier (50/200/400). `grep -rn "maxSessionsPerReplica" charts/lenny/templates/` returns no matches — no env var, no flag, no ConfigMap reads this value. `grep -rn "MaxSessionsPerReplica\|max-sessions" cmd/lenny-gateway/ pkg/gateway/` finds no consumer. The `lenny_gateway_max_sessions_per_replica` gauge in `pkg/observability/metrics/catalog.go:155` is catalog-only — `grep -rn "lenny_gateway_max_sessions_per_replica" pkg/ cmd/` returns only the catalog entry and the alert rule that references it as a `scalar()`.
@@ -446,6 +466,8 @@ The gateway implementation covers the core externally-facing responsibilities (O
 
 ### - [x] F-4.1.9 — `/mcp/runtimes/{name}` dedicated endpoint not implemented [Medium] — CLOSED
 
+**Potential duplicate** (confidence: high) — F-9.1.3 — Both report the dedicated /mcp/runtimes/{name} endpoint for type:mcp runtimes is not mounted; same gap (one marked CLOSED, one OPEN, but same defect).
+
 - **Spec:** Line 53: "Serve dedicated MCP endpoints for `type: mcp` runtimes at `/mcp/runtimes/{name}`."
 - **Evidence:** `tests/tier4_integration/scaffolds_test.go:200-207` and `mcp_runtime_lifecycle_test.go:14` mark this as "a documented v2 follow-on"; the comment in `pkg/ops/mcpmgmt/tools.go:10` is the only other mention. No `/mcp/runtimes` handler is mounted in `cmd/lenny-gateway/main.go:1349-1354` (only `/mcp`, `/v1/chat/completions`, `/v1/responses`). `type: mcp` runtimes today reuse the generic `POST /v1/sessions` REST path through `pkg/adapter/mcpruntime.go`.
 - **Gap:** Spec-required surface absent; clients expecting the dedicated per-runtime MCP endpoint receive 404. This is explicitly acknowledged in BUILD-PROGRESS but the spec line is a normative bullet, not an optional capability.
@@ -473,6 +495,8 @@ The gateway implementation covers the core externally-facing responsibilities (O
 - **Suggested resolution:** Add an opt-in `topologySpreadConstraints` block keyed off `gateway.topologySpread` and a Tier 3 preset that enables a hostname-level `preferredDuringSchedulingIgnoredDuringExecution` rule.
 
 ### - [x] F-4.1.13 — `lenny_gateway_replica_count` and `lenny_gateway_stream_ceiling` / `lenny_gateway_min_replicas` scalars not emitted [Low] — CLOSED
+
+**Potential duplicate** (confidence: high) — F-10.1.13 — Both report lenny_gateway_replica_count / lenny_gateway_min_replicas not being emitted, leaving the replica-floor alert inert.
 
 - **Spec:** Implicit from the `GatewayReplicasBelowMin` and `GatewayActiveStreamsHigh` alert expressions in §16.5 (referenced from §4.1 line 73).
 - **Evidence:** `pkg/alerting/rules/rules.go:181, 571` reference `scalar(lenny_gateway_min_replicas)` and `scalar(lenny_gateway_stream_ceiling)`. `pkg/observability/metrics/catalog.go` lists `lenny_gateway_replica_count`. `grep -rn "lenny_gateway_replica_count\|lenny_gateway_stream_ceiling\|lenny_gateway_min_replicas" pkg/ cmd/` returns only the catalog entries, the alert rule references, and the test catalog name list.
@@ -536,6 +560,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Persist the bound pod identity on the `sessions` row (alongside the F-4.2.1 fields) or surface it via a tenant-scoped session→pod lookup; the §6.2 `agent_pod_state.session_id` column gives a reverse-lookup but not a session-to-pod path under RLS.
 
 ### - [x] F-4.2.3 — No lenny.admin_mode trigger guarding runtime_tenant_access / pool_tenant_access [High] — CLOSED
+
+**Potential duplicate** (confidence: high) — F-24.3.2 — Both report the missing lenny.admin_mode defense-in-depth trigger on runtime_tenant_access and pool_tenant_access plus its integration test.
+
 - **Spec:** Lines 177 (and the §4.2 classification table) — "as defense-in-depth, a `BEFORE INSERT/UPDATE/DELETE` trigger on both tables validates that `current_setting('lenny.admin_mode', true) = 'true'` (set by the gateway only for `platform-admin` code paths via `SET LOCAL`) and rejects modifications otherwise. An integration test must verify that a `tenant-admin`-scoped request cannot modify these tables."
 - **Evidence:**
   - `migrations/0035_tenant_access_grants.up.sql:1-48` — defines `runtime_tenant_access` and `pool_tenant_access`; no trigger.
@@ -552,6 +579,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Resolution (closing batch):** Added migration `0051_rls_hard_error_form.up.sql` that rewrites every `lenny_tenant_isolation` policy on the tenant-scoped tables to use `current_setting('app.current_tenant', false)` on both halves of the OR-clause (Postgres custom GUCs return empty rather than raising on missing, so the read-side guarantee is realised through the PgBouncer `__unset__` sentinel making no row match). Tier-2 test `TestRLSHardErrorOnMissingContext` asserts the sentinel value filters every row and a concrete tenant context returns the expected row.
 
 ### - [x] F-4.2.5 — connectors table is platform-global, but §4.2 classification table says tenant-scoped [High] — CLOSED
+
+**Potential overlap** (confidence: high) — F-4.2.6 — F-4.2.5 and F-4.2.6 follow the same pattern but concern different tables (connectors vs delegation_policies) in different migrations, each needing its own fix.
+
 - **Spec:** Line 173 — "| Connectors | **Tenant-scoped** | `tenant_id` column + RLS. Connector definitions (endpoint URL, auth config) are per-tenant. |"
 - **Evidence:** `migrations/0004_connectors.up.sql:1-26` — comment "platform-global", no `tenant_id`, no `lenny_tenant_guard` trigger, no RLS.
 - **Gap:** Either the implementation or the spec classification is wrong. The migration explicitly disagrees with §4.2's classification table.
@@ -559,6 +589,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Resolution (closing batch):** Aligned implementation to the §4.2 line 173 normative classification. Added migration `0053_connectors_tenant_scoped.up.sql` introducing the `tenant_id` column (backfilled to `default`), changing the primary key to `(tenant_id, id)`, attaching the standard `lenny_tenant_guard` trigger, and adding the `lenny_tenant_isolation` RLS policy. Updated `connectorstore.Store` and `connectorstore/pgstore` to thread tenant context through every method (`Create`/`Get`/`Update`/`List`/`SoftDelete`), introduced `AllTenantsSentinel` for platform-admin reads, and updated the admin connector handlers + `connector_oauth` flow to resolve the owning tenant. Tier-2 contract tests in `tests/tier2_component/stores/connectorstore_test.go` cover the tenant round-trip and cross-tenant isolation; unit tests in `pkg/gateway/connectorstore` exercise the sentinel surface and write-rejection rules.
 
 ### - [x] F-4.2.6 — delegation_policies table is platform-global, but §4.2 classification table says tenant-scoped [High] — CLOSED
+
+**Potential overlap** (confidence: high) — F-4.2.5 — F-4.2.5 and F-4.2.6 follow the same pattern but concern different tables (connectors vs delegation_policies) in different migrations, each needing its own fix.
+
 - **Spec:** Line 172 — "| Delegation policies | **Tenant-scoped** | `tenant_id` column + RLS. Each policy belongs to exactly one tenant. `platform-admin` can read/write across tenants; `tenant-admin` sees only own tenant's policies. |"
 - **Evidence:** `migrations/0027_delegation_policies.up.sql:1-23` — comment "platform-global", no `tenant_id`, no trigger, no RLS, `name` is global primary key.
 - **Gap:** Same shape as F-4.2.5: implementation and spec contradict directly. The spec text mandates per-tenant separation of policies and tenant-admin visibility scoping.
@@ -566,6 +599,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Resolution (closing batch):** Aligned implementation to §4.2 line 172. Added migration `0054_delegation_policies_tenant_scoped.up.sql` introducing the `tenant_id` column (backfilled to `default`), changing the primary key to `(tenant_id, name)`, attaching the `lenny_tenant_guard` trigger, and adding the `lenny_tenant_isolation` RLS policy. Updated `delegationpolicystore.Store` and `delegationpolicystore/pgstore` to thread tenant context through every method, introduced `AllTenantsSentinel` for platform-admin reads, and updated admin delegation-policy handlers to resolve the owning tenant. Tier-2 contract tests in `tests/tier2_component/stores/delegationpolicystore_test.go` cover the per-tenant round-trip; unit tests in `pkg/gateway/delegationpolicystore` exercise the multi-tenant isolation + sentinel surface.
 
 ### - [x] F-4.2.7 — auth_failure audit event + INFO log for tenant-claim rejection not emitted [Medium] — CLOSED
+
+**Potential duplicate** (confidence: high) — F-10.2.7 — Both report the auth_failure audit event and INFO log not emitted on tenant-claim rejection in auth.go:293-309, same evidence and fix.
+
 - **Spec:** Line 185 — "Both rejection reasons are logged (INFO level, with `user_id` and `jti` for traceability) and emitted as `auth_failure` audit events."
 - **Evidence:**
   - `grep -rn "auth_failure" pkg cmd tests` → no matches.
@@ -575,6 +611,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Resolution (closing batch):** Reworked `writeTenantError` in `pkg/gateway/middleware/auth/auth.go` to emit an INFO `log.Printf` carrying `user_id` and `jti` plus an `auth_failure` audit row via a new `AuthFailureSink` Options field. `cmd/lenny-gateway/main.go` wires an `authFailureAuditAdapter` that lands rows on the inferred tenant chain when present and on the platform chain otherwise. The `auth_failure` string is exposed as `authmw.AuthFailureEventType`; the §16.7 audit catalog is not extended because §16.7 enumerates only §25-introduced events. Tier-1 tests in `pkg/gateway/middleware/auth/auth_failure_test.go` cover all three rejection reasons, the dev-header transport, the success case (no emission), and the registry-error case (no emission).
 
 ### - [x] F-4.2.8 — PgBouncer connect_query sentinel is not configured in charts [Medium] — CLOSED
+
+**Potential duplicate** (confidence: high) — F-12.3.12 — Both describe the PgBouncer connect_query __unset__ sentinel not being configured in charts/pooler.
+
 - **Spec:** Line 163 — "As defense-in-depth, PgBouncer's `connect_query` is configured to set a sentinel value (`SET app.current_tenant = '__unset__'`) on every fresh connection checkout; any query that reaches RLS evaluation with `__unset__` will be rejected by the policy."
 - **Evidence:**
   - `grep -rn "connect_query\|__unset__" charts deploy` → no matches (apart from the `__unset__` trigger handling in `migrations/0047_tenant_guard_platform_admin_bypass.up.sql:22`).
@@ -665,6 +704,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Remove `kmsProvider` from `cmd/lenny-gateway/main.go`; route the signer through the Token Service signer RPC (or a JWKS publication path), route credential-store reads/writes through Token Service RPCs, and have the gateway's ServiceAccount carry no `kms:Decrypt` IAM grant.
 
 ### - [ ] F-4.3.2 — Gateway↔Token Service link is plaintext, not mTLS [High] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-13.2.2 — Both describe the gateway-to-Token-Service link running plaintext instead of mTLS; F-10.3.10 is the broader chart gap of not mounting mTLS secrets into any deployment.
+
 - **Spec:** "Gateway replicas call the Token Service over mTLS — they cannot directly decrypt stored tokens" (line 195); "Each gateway replica has a distinct mTLS identity so compromise of one is attributable and revocable independently" (line 205).
 - **Evidence:** `/Users/joan/projects/lenny/cmd/lenny-gateway/main.go:2261-2290` (`dialTokenService`) falls through to `insecure.NewCredentials()` when `--token-service-tls-cert`, `--token-service-tls-key`, and `--token-service-ca` are all empty; `/Users/joan/projects/lenny/charts/lenny/templates/gateway-deployment.yaml:144` passes only `--token-service-grpc-addr=...` with no TLS flags; `/Users/joan/projects/lenny/cmd/lenny-token-service/main.go:95` constructs `grpc.NewServer()` with no `grpc.Creds(...)` option, accepting plaintext gRPC; `/Users/joan/projects/lenny/charts/lenny/templates/token-service-deployment.yaml` mounts no TLS Secret. The cert-manager Certificates rendered in `/Users/joan/projects/lenny/charts/lenny/templates/mtls-pki.yaml:97-102` (`lenny-gateway-tls`, `lenny-token-service-tls`) are issued but never mounted by any Deployment template.
 - **Gap:** The chart-default install runs the §4.3 trust-boundary RPC in cleartext, defeating the boundary at the wire level. The "distinct mTLS identity per replica" is also unsatisfied — the Certificate template renders one per Deployment, not per replica.
@@ -683,6 +725,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Add a Redis-backed envelope-encrypted access-token cache to `pkg/tokenservice`, or strike the line from §4.3 if the project's intent is to keep the cache strictly in-process.
 
 ### - [ ] F-4.3.5 — Refresh-token rotation is unimplemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-9.3.3 — Both describe the unimplemented connector refresh-token rotation grant against the same connector_credentials schema and store.
+
 - **Spec:** "Refresh tokens stored encrypted at rest (envelope encryption via KMS)" (line 200) and the §13.3 connector OAuth flow that depends on rotating an expiring access token via the refresh token.
 - **Evidence:** `pkg/connectoroauth/flow.go` exposes only `ExchangeCode` (authorization-code grant). `grep -rn "refresh.*grant_type\|grant_type.*refresh\|RefreshExchange" /Users/joan/projects/lenny` returns no matches. `pkg/gateway/connectorcredstore/pgstore/pgstore.go` documents a `RotateAccessToken` symbol in the constructor comment (line 42) but never defines the function. `pkg/gateway/connectorcredstore/connectorcredstore.go` (Store interface) has only `Put/Get/Delete/ListByConnector`.
 - **Gap:** When a connector access token expires, no code refreshes it; the only recovery path is a full re-authorization flow. The Postgres `connector_credentials` table carries `refresh_token_blob` and `rotated_at` columns (`migrations/0048_connector_credentials.up.sql:32-44`) that nothing writes.
@@ -695,18 +740,27 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Wire `connectorcredstore/pgstore.New(pgPool, kmsProvider, ...)` in `cmd/lenny-gateway/main.go` when `pgPool != nil`, replacing `connectorcredstore.NewMemory`. Long-term the same store should be reached via a Token Service RPC so the gateway loses its KMS decrypt grant (see F-4.3.1).
 
 ### - [ ] F-4.3.7 — Write-before-issue not a single transaction; no audit row written [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.3.2 — Both report that write-before-issue is not a single advisory-locked Postgres transaction binding issued-token and token.exchanged audit INSERTs.
+
 - **Spec:** "the Token Service commits the `token.exchanged` audit row to Postgres before returning the `access_token` to the caller. The ordering is a single Postgres transaction with three statements... (1) acquire the per-tenant audit advisory lock; (2) INSERT the issued-token row into `issued_tokens`...; (3) INSERT the `token.exchanged` row into `audit_log`." (§13.3 line 589, the §4.3 reference path).
 - **Evidence:** `/Users/joan/projects/lenny/pkg/tokenservice/tokenservice.go:238-254` calls `s.issuedTokens.Record(...)` after `s.signer.Sign(...)` produces the token; the Record call (`pkg/gateway/issuedtokenstore/issuedtokenstore.go:88`) opens its own `pgtenant.InTx` transaction. There is no advisory lock acquisition. No audit emit site for `EventTokenExchanged` exists: `grep -rn "EventTokenExchanged" --include="*.go"` returns only the constant declaration in `pkg/observability/audit/catalog.go:35` and a test on `IsKnownEventType`.
 - **Gap:** The token is signed before any database write, so a crash after signing but before `Record` returns the token to the caller while leaving no Postgres record. There is no single transaction binding the issued-token INSERT to a `token.exchanged` audit INSERT; the latter is never produced.
 - **Suggested resolution:** Wrap both writes in one transaction inside the handler (signing can stay before the transaction since the JTI is allocated up front), acquire the per-tenant audit advisory lock §11.7 mandates, and append the `token.exchanged` audit row inside the same transaction. The handler must only return the signed token after `COMMIT` succeeds.
 
 ### - [ ] F-4.3.8 — No `token.exchanged` / `token.revoked` / rate-limited audit emission [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.3.1 — Both describe Token Service audit events (token.exchanged, plus revoked/rate-limited) being declared in the catalog but never emitted.
+
 - **Spec:** "Every token exchange — external or internal, accepted or rejected — emits a `token.exchanged` audit event" (§13.3 line 587); rate-limit sampling emits `token.exchange_rate_limited` (line 609); rotation/revocation emits `token.revoked` (line 597).
 - **Evidence:** `pkg/observability/audit/catalog.go:35-37` declares `EventTokenExchanged`, `EventTokenRevoked`, and `EventTokenExchangeRateLimited`. `grep -rn "EventTokenExchanged\|EventTokenRevoked\|EventTokenExchangeRateLimited" --include="*.go"` returns no emit sites — only the constant declarations and a `catalog_test.go` membership test.
 - **Gap:** SIEM-visible audit coverage for the Token Service surface is absent; brute-force evidence trails and revocation receipts are not produced. The §13.3 `policy_result: "rejected:tenant_mismatch"` rejection audit is also absent (the tokenexchange validator returns an `ExchangeError` that the handler renders as JSON only).
 - **Suggested resolution:** Add an `auditstore.Store` dependency to `tokenservice.Server`, append a `token.exchanged` event inside the write-before-issue transaction (F-4.3.7), and emit `token.revoked` on the rotation/revocation paths.
 
 ### - [ ] F-4.3.9 — No rate limiting on `/v1/oauth/token` [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.3.3 — Both report that /v1/oauth/token has no per-(tenant,sub) rate limiter and the related counters are never incremented.
+
 - **Spec:** "The endpoint is rate-limited per caller identity... Default limits are 10 requests/second and 300 requests/minute per (tenant_id, sub) tuple" (§13.3 line 607, the §4.3 token-endpoint dependency).
 - **Evidence:** `/Users/joan/projects/lenny/pkg/tokenservice/tokenservice.go:102-106` registers `POST /v1/oauth/token` as a bare `http.HandlerFunc` with no rate-limit middleware. `grep -rn "/v1/oauth\|oauth/token" pkg/gateway/middleware` returns no matches. The metrics `lenny_oauth_token_rate_limited_total` and `lenny_oauth_token_rate_limited_sampled_total` exist in `pkg/observability/metrics/catalog.go:271-273` with no emit sites; the alert `TokenServiceOauthRateLimitStorm` references them anyway (`pkg/alerting/rules/rules.go:1333`).
 - **Gap:** A brute-force or runaway-automation client receives no `429 rate_limited`; the alert cannot fire because the counter is never incremented.
@@ -719,6 +773,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Add a `promhttp.Handler` listener to `cmd/lenny-token-service/main.go` on `metricsPort`, instrument `tokenservice.Server.handle` and `GRPCServer.Assign/Rotate/Revoke` with the declared histogram and counters, and emit `lenny_token_service_circuit_state` from the gateway-side breaker added per F-4.3.3.
 
 ### - [ ] F-4.3.11 — Token Service binary cannot use cloud KMS [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.2.11, F-12.7.2, F-17.5.2 — These four describe the same defect: the cloud KMS adapters exist but main.go hard-codes kms.NewLocalRandom() with no provider-selection knob; the two Info members frame the same gap as an accepted seam.
+
 - **Spec:** "this is the only component with KMS decrypt permissions for downstream OAuth tokens" (line 195) — the production posture requires a real KMS provider, not the in-process dev provider.
 - **Evidence:** `/Users/joan/projects/lenny/cmd/lenny-token-service/main.go:48-54` unconditionally calls `kms.NewLocalRandom()`. `grep -rn "kms.NewAWS\|kms.NewAzure\|kms.NewGCP" --include="*.go"` returns no matches. The cloud providers exist (`pkg/kms/aws/aws.go:80`, `pkg/kms/gcp/gcp.go:86`, `pkg/kms/azure/azure.go:80`) and implement `kms.Provider` but no binary wires them.
 - **Gap:** The shipped Token Service binary holds an in-process random KEK that is regenerated on every restart; persisted ciphertext from a previous boot cannot be decrypted. The chart-shipped install is effectively dev-only, which is invisible to a deployer using the chart's `tier3-prod` answer file.
@@ -737,6 +794,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Add a `--token-issuer` flag (env `LENNY_TOKEN_ISSUER`) to `cmd/lenny-gateway/main.go`, route it through `tokenservice.Options.Issuer`, and surface it in `charts/lenny/templates/gateway-deployment.yaml`.
 
 ### - [ ] F-4.3.14 — Issued-tokens table missing dialect/per-dialect-cap column for the §13.3 cap discipline [Low] — OPEN
+
+**Potential overlap** (confidence: high) — F-13.3.12 — Both concern §13.3 per-dialect lifetime caps but report different defects (multi-value audience lookup failure vs missing dialect/cap column in the issued-tokens table).
+
 - **Spec:** "exp = min(requested_exp, subject.exp, actor.exp, per-dialect cap)" with `lenny-gateway: 24h`, `lenny-ops: 1h`, `llm-proxy: 1h` (line 193 cross-ref to §13.3).
 - **Evidence:** `pkg/tokenexchange/tokenexchange.go` applies the cap per request and `pkg/tokenservice/tokenservice.go:193-195` configures the map, but `migrations/0001_initial_schema.up.sql:180-202` records no `audience`/dialect column on `issued_tokens` (the `audience TEXT` column is single-valued and never queried for dialect lookups). Operators cannot reconstruct which dialect cap applied to a historical token.
 - **Gap:** Forensic reconstruction of "why did this token live exactly Nh" is impossible after the fact. The audience column is one string, but `tokenservice` stores `strings.Join(issued.Audience, " ")` (`pkg/tokenservice/tokenservice.go:246`), so multi-audience tokens become opaque blobs.
@@ -805,6 +865,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Add a migration that introduces the missing columns (with sensible non-null defaults so the existing rows roll forward) and extend `evictionstatestore.Record` plus the pgstore reader/writer.
 
 ### - [ ] F-4.4.2 — No partial-manifest table, no partial-manifest code path [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.1.8, F-12.5.13 — All three describe the missing partial-manifest schema/table and code path (no checkpoint_manifest table, no partial_object_key_prefix, no writer/cleanup), same root cause and fix.
+
 - **Spec:** lines 234, 236 require a partial-checkpoint manifest record flagged `partial: true` with `partial_object_key_prefix`, `chunk_encoding`, and cleanup via per-key `DeleteObject` plus soft-delete of the Postgres row (`UPDATE ... SET deleted_at = now() ... WHERE deleted_at IS NULL`).
 - **Evidence:** No migration creates a partial-manifest table; `grep -rn "partial_object_key_prefix\|partial_manifest" pkg/ migrations/` returns only `pkg/checkpoint/checkpoint.go:153` (a doc comment naming `OutcomePartial`) and `pkg/observability/metrics/catalog.go:230-232` (catalog-only entries for `lenny_partial_manifest_cleanup_total` and `lenny_checkpoint_partial_manifests_superseded_total`).
 - **Gap:** No persistence, no writer, no cleanup, no soft-delete, no chunk-key deletion, and the supersede counter has no emitter. Partial-manifest workspace reconstruction (the §10.1 preStop-timeout fallback) cannot run.
@@ -853,12 +916,18 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Add an abort handler at the `CheckpointSink` boundary that deletes partial uploads; emit `lenny_checkpoint_orphaned_objects_total` when the delete fails; harden the goroutine `recover()` contract.
 
 ### - [ ] F-4.4.10 — Pre-checkpoint workspace-size probe is a pure function, never invoked [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-7.3.26 — Both concern the uninvoked WorkspaceSizePreCheck function but on different paths: F-4.4.10 the pre-checkpoint write path and F-7.3.26 the resume/restore read path.
+
 - **Spec:** line 254 mandates a pre-checkpoint workspace-size probe that, on excess, increments `lenny_checkpoint_size_exceeded_total`, logs `WorkspaceSizeExceeded`, and emits a `checkpoint.skipped` event with `reason: "workspace_size_limit"`.
 - **Evidence:** `pkg/checkpoint/checkpoint.go:226-237` defines `WorkspaceSizePreCheck`; `grep -rn "WorkspaceSizePreCheck\b" pkg/` returns only the test file `pkg/checkpoint/checkpoint_test.go`. The adapter Checkpoint RPC in `pkg/adapter/checkpoint.go` never calls it. No code emits `lenny_checkpoint_size_exceeded_total` or a `checkpoint.skipped` event.
 - **Gap:** The size cap relies entirely on the kubelet `emptyDir.sizeLimit` eviction; the spec's pre-checkpoint guard is unimplemented.
 - **Suggested resolution:** Wire `WorkspaceSizePreCheck` into the adapter Checkpoint RPC before quiescence; add the metric emit; publish the `checkpoint.skipped` event via the existing event bus.
 
 ### - [ ] F-4.4.11 — `checkpoint.skipped`, `session.resumed`, `session.lost` events never published [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.4.28, F-7.2.3, F-7.3.9 — All describe the same gap: the session.resumed event with resumeMode/workspaceLost is never published despite the ResumeMode enum being defined; F-4.4.11 also covers sibling skipped/lost events but shares the same root and fix.
+
 - **Spec:** lines 254, 263, 285 require these three events to fire on (respectively) workspace-size abort, eviction-fallback resume with `workspaceLost: true`, and total-loss path with `reason: "eviction_total_loss"`.
 - **Evidence:** `grep -rn "publishEvent\|s\.events\.Publish" pkg/gateway/` returns publications for `children_reattached`, `message_delivered`, and `response` only. `grep -n "session\." pkg/observability/audit/catalog.go` returns no `session.lost` or `session.resumed` entries.
 - **Gap:** Clients receive no signal that their workspace was lost or that the session resumed from a degraded path. Resume-mode semantics in `pkg/checkpoint/checkpoint.go:182-218` (`ResumeMode`, `WorkspaceLost`) are defined but never observed externally.
@@ -895,6 +964,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Add the `artifact_store` row insert to the eviction-fallback writer's transaction; bump the Redis `storage_bytes_used` counter on success; document `artifact_type = eviction_context` in the artifact-store schema.
 
 ### - [ ] F-4.4.17 — `/v1/admin/audit-events` returns canonical Postgres tuple, not OCSF [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.9.1 — Both report the audit-events list endpoint returns the canonical Postgres tuple instead of OCSF v1.1.0 via audit_query.go, same translator gap.
+
 - **Spec:** line 232: "the audit-egress path includes an OCSF translator that maps the canonical Postgres-stored tuple to OCSF v1.1.0 JSON for every consumer that sits outside the authoritative store: the SIEM forwarder, pgaudit sink consumers, the `/v1/admin/audit-events` query API, and the CloudEvents-wrapped audit events ... The translator version and OCSF wire version are surfaced on every response envelope."
 - **Evidence:** `pkg/gateway/admin/audit_query.go:16-25` defines `AuditEventPayload` as the canonical tuple (`Seq`, `TenantID`, `EventType`, `Payload`, `Timestamp`, `PrevHash`, `Hash`, `Redacted`). The handler at `pkg/gateway/admin/audit_query.go:86-126` returns the raw rows. No OCSF translation. No translator-version or wire-version header.
 - **Gap:** The `/v1/admin/audit-events` API violates the §11.7 / §4.4 audit-egress contract. Clients that expect OCSF (per `docs/operator-guide/security.md:401`) receive a different schema. Recomputing the chain hash from the response requires the canonical tuple, but the spec also requires the OCSF wire form on egress.
@@ -913,6 +985,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Add a Redis-backed implementation of `events.Bus` (likely via the existing `pkg/gateway/pubsub.Bus`); make it the production wiring; keep the in-memory bus for dev mode.
 
 ### - [ ] F-4.4.20 — pgaudit sink consumer not implemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-11.7.10 — Both report pgaudit is unimplemented (only the alert rule and metric exist, no sink consumer/forwarder); F-11.7.10 is the more complete statement including config enforcement.
+
 - **Spec:** line 232 explicitly names "pgaudit sink consumers" as one of the OCSF-egress targets.
 - **Evidence:** `grep -rn "pgaudit" pkg/` returns only the alert rule `PgAuditSinkDeliveryFailed` (`pkg/alerting/rules/rules.go:1272`), the metric catalog entry `lenny_pgaudit_grant_events_total` (`pkg/observability/metrics/catalog.go:260`), and doc comments. No log shipper, no pgaudit forwarder.
 - **Gap:** Compliance profiles (`soc2`, `fedramp`, `hipaa`) that require pgaudit cannot deliver; the alert never has anything to fire on.
@@ -925,6 +1000,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Either pipe runtime stderr to an MinIO object per session (under `/{tenant_id}/sessions/{session_id}/stderr.log`) with a corresponding `artifact_store` row, or document this entry as deferred / non-v1 and prune the spec line.
 
 ### - [ ] F-4.4.22 — `RLS coverage of session_eviction_state` lacks integration test [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-12.3.21 — Both reference the missing TestRLSTenantGuardMissingSetLocal test, but F-12.3.21 is about test naming with existing functional coverage while F-4.4.22 is about session_eviction_state lacking RLS coverage.
+
 - **Spec:** line 293 mandates "The `TestRLSTenantGuardMissingSetLocal` integration test covers `session_eviction_state` as part of its tenant-scoped table inventory."
 - **Evidence:** `grep -rn "TestRLSTenantGuardMissingSetLocal" pkg/ tests/` returns no matches. The RLS test at `tests/tier2_component/rls/rls_test.go` does not reference `session_eviction_state`.
 - **Gap:** RLS isolation on this table is unverified.
@@ -949,6 +1027,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Wire each metric to its emission site (checkpointer for duration / freshness, eviction writer for fallback / total-loss / partial-keys, abort cleanup for orphaned-objects, size pre-check for size-exceeded).
 
 ### - [ ] F-4.4.26 — preStop hook and tiered-cap selection not implemented in the gateway/adapter [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.1.6 — Both report the absent gateway preStop drain hook and tiered-cap selection that the eviction-checkpoint/rolling-update story depends on.
+
 - **Spec:** lines 234, 263 reference the preStop hook with a tiered checkpoint cap that drives eviction retry budgets and the partial-manifest fallback.
 - **Evidence:** `grep -rln "preStop\|prestop" pkg/gateway/` returns no matches. The only `preStop` references are in `pkg/checkpoint/checkpoint.go` (docs), `pkg/apis/lenny/v1/sandboxtemplate_types.go` (CRD field), `pkg/admission/pool_config_validator/validator.go` (validation), and `pkg/alerting/rules/rules.go` (alert). The `lenny_prestop_cap_selection_total` metric exists in the catalog (`pkg/observability/metrics/catalog.go:96`) but has no emitter.
 - **Gap:** Eviction checkpoints have no preStop entry point; the tiered cap selection is unimplemented; `PreStopCapFallbackRateHigh` cannot fire; the entire eviction-fallback story relies on a hook that does not exist.
@@ -961,6 +1042,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Create the test (drop MinIO mid-checkpoint, assert eviction fallback path) or remove the stale subset reference.
 
 ### - [ ] F-4.4.28 — Resume mode never reported on `session.resumed` (resumeOnPod is silent) [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.4.11, F-7.2.3, F-7.3.9 — All describe the same gap: the session.resumed event with resumeMode/workspaceLost is never published despite the ResumeMode enum being defined; F-4.4.11 also covers sibling skipped/lost events but shares the same root and fix.
+
 - **Spec:** line 263: "the client receives a `session.resumed` event with `resumeMode: \"conversation_only\"` and `workspaceLost: true`".
 - **Evidence:** `pkg/gateway/sessionserver/start.go:580-610` (`resumeOnPod`) calls `s.podBinder.Resume` and updates the registry, but emits no `session.resumed` event. `ResumeMode` enums in `pkg/checkpoint/checkpoint.go:182-218` are unused outside tests.
 - **Gap:** Clients cannot detect a degraded resume; the resume-mode contract is broken.
@@ -993,18 +1077,27 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 ### Findings
 
 ### - [ ] F-4.5.1 — ArtifactStore interface does not enforce per-tenant prefix at the interface boundary [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.2.15, F-12.5.8 — All three report that ArtifactStore does not enforce per-tenant prefix validation at the interface boundary and ErrCrossTenant is never returned.
+
 - **Spec:** §4.5 ll. 309: "The `ArtifactStore` interface enforces this: every method that reads, writes, lists, or deletes objects validates that the supplied `tenant_id` matches the path prefix before issuing the S3 call. Paths that fail prefix validation are rejected without reaching MinIO."
 - **Evidence:** `pkg/blobstore/blobstore.go:48-55` defines `ErrCrossTenant` but the sentinel is never returned from any Store implementation. `Store.Get/Stat/Put` take a `URI` value (the tenant ID is embedded) but do not accept a caller `tenant_id` and do not validate it. The actual prefix check sits one layer up at `pkg/gateway/sessionserver/upload.go:285` (`if uri.TenantID != callerTenant { ... }`). MinIO's `objectKey()` at `pkg/blobstore/miniostore/miniostore.go:111-120` derives the path from the URI directly without any caller-tenant comparison.
 - **Gap:** The §4.5 invariant that validation lives "at the interface level" so caller bugs cannot cross-tenant is not satisfied; a future caller that constructs a URI from foreign-tenant input and calls `blobs.Get(uri)` would succeed without rejection. The current ergonomic is "trust the upstream handler", which §4.5 explicitly disclaims.
 - **Suggested resolution:** Add a `callerTenant` parameter to the Store interface methods (or wrap the production stores with a tenant-checking decorator) and return `ErrCrossTenant` on mismatch; remove the upstream-only check.
 
 ### - [ ] F-4.5.2 — Object-key path does not carry the `{object_type}` segment [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.6, F-12.5.29 — All three describe the missing {object_type} segment in the blob object key path breaking eviction prefix scoping; F-12.5.29 is the parser-side facet of the same defect.
+
 - **Spec:** §4.5 ll. 309; §12.5 ll. 295: "All object keys use the path format `/{tenant_id}/{object_type}/{session_id}/{filename}`."
 - **Evidence:** `pkg/blobstore/miniostore/miniostore.go:111-120` `objectKey()` returns `tenantID + "/" + sessionID + "/" + partID`; `pkg/blobstore/s3/s3.go:100-102` does the same. `pkg/blobstore/blobstore.go:18` acknowledges in a comment that production "maps the URI to the §4.5 object path `/{tenant_id}/{object_type}/{session_id}/{part_id}`" but the package omits the segment.
 - **Gap:** The two-segment path collapses workspace snapshots, checkpoints, transcripts, uploaded files, and eviction context into a single namespace under the session prefix. §12.5 callers (e.g., the eviction-context cleanup path that selects rows with `last_message_context` storing a MinIO key by the `/{tenant_id}/eviction/` prefix) cannot match by prefix.
 - **Suggested resolution:** Extend `URI` with an `ObjectType` field (workspace / checkpoint / transcript / upload / eviction) and rewrite `objectKey()` to include it; migrate callers that currently encode the object type inside `partID`.
 
 ### - [ ] F-4.5.3 — `SSEKeyResolver` hook exists but is never wired in production [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.2 — Both report that the MinIO SSEKeyResolver hook is never wired in main.go, so T4 tenants fall back to bucket-default encryption.
+
 - **Spec:** §12.5 ll. 297: "**T4 tenant encryption:** For tenants with `workspaceTier: T4` ... workspace snapshots and session transcripts in object storage **must** use SSE-KMS with a tenant-specific KMS key — not the default shared encryption key. ... The `ArtifactStore` implementation selects the encryption key based on the tenant's `workspaceTier`: T3 uses the deployment-wide SSE key; T4 uses a KMS key scoped to `tenant:{tenant_id}`."
 - **Evidence:** `pkg/blobstore/miniostore/miniostore.go:43-50` and `pkg/blobstore/s3/s3.go:48-63` declare an `SSEKeyResolver` hook. `cmd/lenny-gateway/main.go:396-402` constructs `miniostore.New(miniostore.Config{...})` with `Endpoint, AccessKey, SecretKey, Bucket, UseSSL` only — no `SSEKeyResolver` is passed. Codebase-wide search confirms no production wiring (`grep -rn "SSEKeyResolver:" cmd/ pkg/`).
 - **Gap:** Every PutObject in production falls through `if s.sseResolver != nil { ... }` to the bucket default; T4 tenants do not get per-tenant SSE-KMS regardless of their `workspaceTier`. The cryptographic-erasure property §12.5 builds on is silently absent.
@@ -1017,6 +1110,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Have the resolver return an explicit `(keyID, requireKey, ok)` or split it into two hooks. On `requireKey=true && key unavailable`, return `CLASSIFICATION_CONTROL_VIOLATION` and increment `lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}`.
 
 ### - [ ] F-4.5.5 — Artifact catalog is built but never wired into the running gateway [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.1 — Both report that the artifact_store catalog (PgStore) is fully built but never wired into the running gateway, so GC sweep, soft-delete guard, hard-prune, and size accounting never execute.
+
 - **Spec:** §12.5 ll. 309 (Storage quota), 311-321 (retention policy + GC ordering), 331-339 (single-writer GC + soft-delete guards), 341 (tombstone hard-prune): all of these reference the `artifact_store` Postgres table and presuppose a working Postgres-backed catalog.
 - **Evidence:** `pkg/blobstore/artifactcatalog/catalog.go` defines `Insert`, `Get`, `SoftDelete`, `Tombstone`, `HardPruneExpired`, `ListBySession`, `SetLegalHold`; `migrations/0049_artifact_store.up.sql` creates the table. No callers — `grep -rn "artifactcatalog\b" cmd/ pkg/gateway/` yields only the package's own tests. `cmd/lenny-gateway/main.go` constructs the MinIO blob store without any catalog wiring.
 - **Gap:** The Postgres-side GC sweep, `WHERE deleted_at IS NULL` guard, tombstone hard-prune, and per-tenant size accounting (`artifact_size_bytes`) never execute. The retention GC (`pkg/gateway/retentiongc`) sweeps the session store directly and calls `DeleteBySession` on the MinIO blob store; nothing inserts rows into `artifact_store`, nothing soft-deletes them, nothing hard-prunes them. The `lenny_gc_tombstones_pruned_total` counter (the only one in the catalog) is never incremented.
@@ -1041,24 +1137,36 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Add a `Copy(src, dst URI) error` method to the Store interface (MinIO has native `CopyObject` / S3 has `CopyObject`), call it in the derive handler before persisting the derived session row.
 
 ### - [ ] F-4.5.9 — Spec-mandated GC metrics are not implemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.17 — Both report the §12.5 GC metrics (runs/artifacts_deleted/errors/duration) are absent from the catalog with only the tombstone-prune counter present.
+
 - **Spec:** §12.5 ll. 321: "**Monitoring:** `lenny_gc_runs_total` (counter), `lenny_gc_artifacts_deleted` (counter), `lenny_gc_errors_total` (counter), `lenny_gc_duration_seconds` (histogram)."
 - **Evidence:** `pkg/observability/metrics/catalog.go:233` declares only `lenny_gc_tombstones_pruned_total`. The other four are absent — `grep -rn "lenny_gc_runs_total\|lenny_gc_artifacts_deleted\|lenny_gc_errors_total\|lenny_gc_duration_seconds" pkg/ charts/` returns no hits.
 - **Gap:** Operators cannot observe GC throughput, error rate, latency, or sweep cadence. The `ArtifactGCBacklog` alert (`pkg/alerting/rules/rules.go:605`) reads `expired artifacts pending cleanup` from a different gauge.
 - **Suggested resolution:** Add the four metrics to `pkg/observability/metrics/catalog.go` and increment them inside `pkg/gateway/retentiongc/retentiongc.go` (`Tick` / `sweepTenant`).
 
 ### - [ ] F-4.5.10 — `lenny_checkpoint_storage_failure_total` is declared but never incremented [Medium] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-4.5.11 — Both report a declared-but-never-incremented storage error counter with an identical root cause and fix (increment in the blob Put failure paths), differing only in which metric.
+
 - **Spec:** §12.5 ll. 303: "this propagates through the `CheckpointStorageUnavailable` critical alert and the `lenny_checkpoint_storage_failure_total` metric (with `reason="kms_unavailable"`)."
 - **Evidence:** `pkg/observability/metrics/catalog.go:236` declares the counter; `pkg/alerting/rules/rules.go:211` reads it for `CheckpointStorageUnavailable`. No emitter — `grep -rn "lenny_checkpoint_storage_failure_total" pkg/checkpoint/ pkg/blobstore/ pkg/gateway/` returns no hits in the writer paths.
 - **Gap:** The alert can never fire because the counter is always zero. A MinIO outage or a missing T4 KMS key during checkpoint write goes unobserved.
 - **Suggested resolution:** Increment the counter (with the spec-specified `reason` label values `minio_unreachable`, `kms_unavailable`, `quota_exceeded`, ...) in the checkpoint/blob put failure path.
 
 ### - [ ] F-4.5.11 — `lenny_artifact_upload_error_total` is declared but never incremented [Medium] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-4.5.10 — Both report a declared-but-never-incremented storage error counter with an identical root cause and fix (increment in the blob Put failure paths), differing only in which metric.
+
 - **Spec:** Implicit in §12.5 + §16.5 alerting (`MinIOPutErrorRateHigh` reads `lenny_artifact_upload_error_total{error_type="minio_unreachable"}`).
 - **Evidence:** `pkg/observability/metrics/catalog.go:288` declares the counter. `pkg/alerting/rules/rules.go:220` reads it. No emitter — search across `pkg/blobstore/` and `pkg/gateway/` returns no hits.
 - **Gap:** Identical pattern to F-4.5.10. The alert is structurally inert.
 - **Suggested resolution:** Increment in the MinIO/S3/GCS/Azure `Put` failure paths with the `error_type` label distinguishing transport failure, auth failure, quota exhaustion.
 
 ### - [ ] F-4.5.12 — `lenny_drain_readiness_checks_total` counter is unimplemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.31 — Both describe the lenny_drain_readiness_checks_total counter being unimplemented while the webhook and endpoint exist.
+
 - **Spec:** §12.5 ll. 291: "Metric: `lenny_drain_readiness_checks_total` (counter, labeled by `outcome`: `allowed`, `blocked`, `forced`) tracks drain check outcomes."
 - **Evidence:** `grep -rn "lenny_drain_readiness_checks_total\|lenny_drain_readiness" pkg/ cmd/ charts/` returns no hits. The webhook `pkg/admission/webhook/drain_readiness.go` and the gateway endpoint `pkg/gateway/drainreadiness/drainreadiness.go` exist but emit no counter.
 - **Gap:** The drain-decision audit signal is missing; operators cannot dashboard allowed-vs-blocked drains.
@@ -1071,18 +1179,27 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Suggested resolution:** Register `node.drain.forced` in `pkg/observability/audit/catalog.go`, add an audit sink to the webhook, emit the event with `tenantId`, `nodeName`, `podName`, `evictedAt`, and the operator's identity (resolved from the eviction request user info).
 
 ### - [ ] F-4.5.14 — Legal-hold reconciler / `legal_hold.checkpoint_gap_detected` event is unimplemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.8.18 — Both report the unimplemented legal-hold checkpoint-gap reconciler and its missing event/counter, citing the same §12.8 line 739.
+
 - **Spec:** §12.8 ll. 739 "Legal hold reconciler": "A background reconciler (co-located with the GC goroutine, running every 15 minutes) scans for sessions where `legal_hold = true` and one or more checkpoints have already been rotated ... When such a session is found, the reconciler emits a `legal_hold.checkpoint_gap_detected` critical audit event and increments the `lenny_legal_hold_checkpoint_gaps_total` counter."
 - **Evidence:** `grep -rn "legal_hold.checkpoint_gap\|lenny_legal_hold_checkpoint_gaps_total" pkg/` returns no hits. No reconciler co-located with `pkg/gateway/retentiongc`. The audit event is not registered in `pkg/observability/audit/catalog.go`.
 - **Gap:** Pre-existing checkpoint rotation that occurred before a hold was applied is not surfaced. Compliance and legal teams cannot assess spoliation exposure.
 - **Suggested resolution:** Add a reconciler under the gateway leader lease, schedule it on the GC cadence, register the audit event + counter, surface the event in OCSF mapping.
 
 ### - [ ] F-4.5.15 — Blob-level legal hold is in-memory only [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.22 — Both report blob-level legal hold lives only in an in-process sync.Map that does not survive gateway restart.
+
 - **Spec:** §12.8 ll. 735: "Sessions and artifacts support a `legal_hold` boolean flag. When set, the artifact retention policy is suspended."
 - **Evidence:** `pkg/blobstore/miniostore/miniostore.go:60-99` stores the per-blob hold in a `sync.Map` (`legalHolds`) keyed on the object key; the comment in `pkg/blobstore/miniostore/sse_test.go:48-51` admits "The hold registry is in-memory and per-process; SetLegalHold ... does not survive a restart." The artifact catalog (F-4.5.5) has a `legal_hold` column and a `SetLegalHold` method but is unwired.
 - **Gap:** A gateway restart loses every blob-level hold. The catalog row's `legal_hold` field cannot influence MinIO's `DeleteBySession` because the catalog is not consulted in that path.
 - **Suggested resolution:** Resolve F-4.5.5 (wire the catalog); query the catalog at `DeleteBySession` time, refuse to remove blobs whose row carries `legal_hold = true`.
 
 ### - [ ] F-4.5.16 — Helm chart does not configure bucket versioning, lifecycle, or TLS-mandate posture [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.5 — Both describe the Helm chart failing to configure MinIO bucket versioning and delete-marker/noncurrent-version lifecycle via the mc ilm add post-install Job, with the same root cause and fix.
+
 - **Spec:** §12.5 ll. 277-280: "**Versioning:** Enable bucket versioning for checkpoint objects to prevent accidental overwrites ... **Delete-marker lifecycle:** ... expire delete markers after 24 hours, and expire noncurrent versions after 1 day (`NoncurrentVersionExpiration: Days: 1`) ... The Helm chart post-install Job configures this rule via `mc ilm add` with no prefix filter (bucket-wide scope)."
 - **Spec:** §12.5 ll. 279: "TLS may be disabled in local development mode via `minio.tls.enabled: false` in Helm values; this value defaults to `false` only when `backends: embedded`. All other backends enforce TLS."
 - **Evidence:** `charts/lenny/values.yaml:158-173` declares `minio.endpoint/accessKey/secretKey/bucket/useSSL` (not `minio.tls.enabled` and not gated on `backends`). The default is `useSSL: false`, applied unconditionally. `grep -rn "Versioning\|mc ilm\|NoncurrentVersion\|delete-marker" charts/ pkg/` returns no hits. `ls charts/lenny/templates/` contains no MinIO post-install Job.
@@ -1135,18 +1252,27 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 ### Findings
 
 ### - [ ] F-4.6.1 — PoolScalingController implemented but not wired into the controller binary [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.1.6, F-5.2.11 — All three describe the implemented PoolScalingController not being wired into the production controller binary.
+
 - **Spec:** §4.6.2 — "Reconcile pool configuration from Postgres (admin API source of truth) into `SandboxTemplate` and `SandboxWarmPool` CRDs"; "The PoolScalingController runs its own Lease-based leader election using a separate lease name (`lenny-pool-scaling-controller`)". The controller is normative.
 - **Evidence:** `cmd/lenny-controller/main.go:81-194` constructs the manager, wires `warmpool.Reconciler`, the `sandbox.Reconciler`, and the `cidrdrift.Detector` only. No reference to `pkg/controller/poolscaling` anywhere under `cmd/`; `grep` of `cmd/` returns no `poolscaling` import outside the unrelated `cmd/lenny-test/tiers.go:142` documentation row. The `LeaderElectionID` set to `lenny-warm-pool-controller` (line 120) is the only lease; no second lease for `lenny-pool-scaling-controller`. The Helm chart's `controller-rbac.yaml` has no PSC ServiceAccount; `grep -rn "lenny-pool-scaling-controller\b" charts/` returns no result.
 - **Gap:** The PoolScalingController's `Reconciler`, `Runnable`, admission-retry tracker, circuit-breaker evaluator, and variant-roles resolver are fully implemented in `pkg/controller/poolscaling/` and have unit tests, but the production binary never starts the PSC. Consequently `SandboxTemplate.spec.*` and `SandboxWarmPool.spec.{minWarm,maxWarm,scalePolicy,sdkWarmDisabled}` and the `status.sdkWarmCircuitBreaker.*` carve-out are not actually reconciled from Postgres — pools created via the admin API exist only as Postgres rows, with no Kubernetes-side derived state, so the WarmPoolController has nothing to reconcile against. The §4.6.2 leader-election lease (`lenny-pool-scaling-controller`) is never created. The §4.6.3 `lenny-pool-config-validator`'s rule-set-2 authorization "PoolScalingController SA" never appears in any request because there is no such SA.
 - **Suggested resolution:** Wire a second `poolscaling.Runnable` into `cmd/lenny-controller/main.go` (or a dedicated `cmd/lenny-pool-scaling-controller/main.go` with its own deployment), constructing the `PoolConfigSource` against Postgres, the `DemandSource` against Prometheus, and the `DemotionRateSource` against the in-memory rolling window. Add a separate ctrl-runtime Manager (or use a second `manager.LeaderElectionRunnable` with `LeaderElectionID: lenny-pool-scaling-controller`). Create the PSC ServiceAccount in `charts/lenny/templates/controller-rbac.yaml` with the §4.6.3 RBAC grants (`create`/`update`/`delete` on `SandboxTemplate` and `SandboxWarmPool`, `get`/`patch` on the `status` subresource of `SandboxWarmPool` for the carve-out, `get`/`create`/`update` on `Leases` in `lenny-system`). Add the PSC Deployment to the Helm chart.
 
 ### - [ ] F-4.6.2 — `lenny-pool-config-validator` does not enforce rule-set-2 userInfo authorization [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.2.10 — Both describe the pool-config-validator not applying the §4.6.3 userInfo authorization-denial rule on manual writes.
+
 - **Spec:** §4.6.3 "Validating webhook for Postgres-authoritative state" — "manual `kubectl edit` or `kubectl apply` updates to these fields are rejected UNLESS the request's `userInfo` maps to the PoolScalingController ServiceAccount (`system:serviceaccount:lenny-system:lenny-pool-scaling-controller`)". Quote: "PoolScalingController writes bypass only this second rule, not the first."
 - **Evidence:** `pkg/admission/pool_config_validator/validator.go` (full file) implements only the rule-set-1 semantic/budget invariants (minWarm/maxWarm, schedule windows, execution-mode acknowledgments). `grep -n "userInfo\|kubectl edit\|kubectl apply\|PoolScalingControllerSA" pkg/admission/pool_config_validator/` returns nothing. The webhook handler `pkg/admission/webhook/pool_config_validator.go` (per `cmd/lenny-webhook/main.go:84`) wraps this pure logic and inherits the same omission.
 - **Gap:** Any tenant or platform admin with `patch`/`update` RBAC on `SandboxTemplate.spec` or `SandboxWarmPool.spec` can manually edit those resources — their writes will be silently overwritten on the next PSC reconcile, but the spec mandates rejection at admission with a directive to use the admin API. This is the §4.6.3 defense-in-depth path that distinguishes "writes that must be ignored by PSC's overwrite-on-reconcile" from "writes that should never be admitted in the first place".
 - **Suggested resolution:** Add a rule-set-2 evaluator to `pool_config_validator.Decide` that takes the AdmissionRequest's `UserInfo.Username`, compares against the constant `PoolScalingControllerSA` (already defined in `pkg/admission/label_immutability/label_immutability.go:58`), and rejects any spec write that does not come from the PSC SA. Propagate the `UserInfo.Username` through the webhook adapter in `pkg/admission/webhook/pool_config_validator.go`. Add a test covering kubectl-style writes by other principals.
 
 ### - [ ] F-4.6.3 — No orphaned-SandboxClaim garbage-collection loop [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.2.23 — Both report the absent orphaned-SandboxClaim garbage-collection loop, with lenny_orphaned_claims_total declared but never emitted.
+
 - **Spec:** §4.6.1 "Orphaned `SandboxClaim` detection" — every 60s the WarmPoolController leader lists all `SandboxClaim` resources older than `claimOrphanTimeout` (default 5 minutes, configurable via `--claim-orphan-timeout`), queries Postgres for an active session, deletes the claim if no session references it, and transitions the underlying `Sandbox` back to `idle`. Increments `lenny_orphaned_claims_total{pool}`.
 - **Evidence:** `grep -rn "GarbageCollect\b\|claim-orphan-timeout\|claimOrphanTimeout" pkg/` returns no implementation. The metric `lenny_orphaned_claims_total` exists in `pkg/observability/metrics/catalog.go:192` and the `SandboxClaimOrphanRateHigh` alert in `pkg/alerting/rules/rules.go:1138` references it, but no code path emits it. `pkg/controller/warmpool/controller.go:99-159` Reconcile only handles per-pool sizing and never lists `SandboxClaim` resources.
 - **Gap:** A gateway crash between `SandboxClaim` CREATE and Postgres session-insert leaves an orphan claim that never returns the pod to the warm pool — the pod is stuck in phase `claimed`, the pool's idle count is permanently reduced, and `WarmPoolLow` will fire as the pool drains. The spec explicitly calls out this crash scenario as the rationale for the loop.
@@ -1294,6 +1420,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ### - [ ] F-4.7.1 — Adapter→Gateway control events (`RATE_LIMITED`, `AUTH_EXPIRED`, `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`) are not emitted [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-15.3.3 — Both report that the §4.7 Adapter-to-Gateway control events (RATE_LIMITED, AUTH_EXPIRED, PROVIDER_UNAVAILABLE, LEASE_REJECTED, etc.) are not implemented over the gRPC control channel.
+
 **Severity: High.** This is a normative §4.7 control surface and is required for the §4.9 credential fallback/rotation triggers to work end-to-end.
 
 **Spec:** `spec/04_system-components.md` lines 652-662 — "Adapter → Gateway events (sent over the gRPC control channel)" table lists `RATE_LIMITED`, `AUTH_EXPIRED`, `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`, `CheckpointBarrierAck`, `AdapterTerminating`, `FINAL_USAGE_REPORT` as adapter→gateway events.
@@ -1376,6 +1504,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ### - [ ] F-4.7.6 — Task-mode lifecycle messages not implemented in adapter [Medium] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-5.2.1 — F-4.7.6 and F-5.2.1 both report task-mode lifecycle messages (task_complete/task_ready/acknowledged) unimplemented; F-6.2.6 is a distinct defect about task_cleanup phase disposition branching not being implemented.
+
 **Severity: High** for task-mode runtimes, **Medium** if §5.2 task-mode is not in scope for the current build.
 
 **Spec:** `spec/04_system-components.md` lines 678-685 — the adapter→runtime channel must support `task_complete`, `task_ready`; the runtime→adapter direction must support `task_complete_acknowledged`, `llm_request_started`, `llm_request_completed`. The `lifecycle_capabilities` table line 694 lists `task_lifecycle` as a capability; lines 701-708 define the wire schemas.
@@ -1413,6 +1543,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ### - [ ] F-4.7.8 — `SO_PEERCRED` mandatory startup self-test missing [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.1.3, F-4.7.9 — F-13.1.3 spans both the SO_PEERCRED startup self-test and the nonce-only HMAC fallback; F-4.7.8 and F-4.7.9 each cover one half of that same missing §4.7 contract.
+
 **Severity: High** for security; this is the gating contract the §13 boundary depends on.
 
 **Spec:** `spec/04_system-components.md` lines 870-877 — adapter MUST perform a loopback `SO_PEERCRED` self-test before it signals READY; failure crash-loops the pod.
@@ -1430,6 +1562,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ### - [ ] F-4.7.9 — Nonce-only mode and HMAC challenge-response supplement missing [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.1.3, F-4.7.8 — F-13.1.3 spans both the SO_PEERCRED startup self-test and the nonce-only HMAC fallback; F-4.7.8 and F-4.7.9 each cover one half of that same missing §4.7 contract.
+
 **Severity: High** for security on container runtimes where SO_PEERCRED is unavailable (gVisor); **Medium** today because `requireSoPeercred` is hard-coded to "off" via the missing flag (F-4.7.8).
 
 **Spec:** `spec/04_system-components.md` lines 879-883 — when `requireSoPeercred: false`, every connection must complete an `HMAC-SHA256(key=manifestNonce, data=adapterChallenge)` exchange within 500 ms.
@@ -1445,6 +1579,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 ---
 
 ### - [ ] F-4.7.10 — `--staging-dir` flag missing from `cmd/lenny-adapter`; PrepareWorkspace permanently fails [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.4.5 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
 **Severity: High.** The §4.7 session-assignment sequence cannot complete its first RPC.
 
@@ -1727,6 +1863,8 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
 
 ### - [ ] F-4.8.2 — Built-in `AuthEvaluator` not registered on the chain (Divergent) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.8.10 — Both report the AuthEvaluator/PreAuth phase chain never being invoked or registered; F-4.8.10 explicitly ties itself to F-4.8.2.
+
 - **Spec:** §4.8 lines 968–974, 1022–1024, 1042–1046. `AuthEvaluator`
   is the built-in interceptor at `PreAuth`, priority 100; only
   `AuthEvaluator` runs at `PreAuth`; it may issue MODIFY to normalize
@@ -1929,6 +2067,8 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
 
 ### - [ ] F-4.8.10 — `PreAuth` phase chain not invoked (Missing) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.8.2 — Both report the AuthEvaluator/PreAuth phase chain never being invoked or registered; F-4.8.10 explicitly ties itself to F-4.8.2.
+
 - **Spec:** §4.8 lines 964, 1023. `PreAuth` runs exclusively in the
   priority 1–100 range; AuthEvaluator runs here.
 - **Evidence:** `PhasePreAuth` constant at `interceptor.go:36`; the
@@ -1944,6 +2084,8 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   document that PreAuth is realized as a single built-in middleware.
 
 ### - [ ] F-4.8.11 — `PreRoute`, `PostRoute` chains not invoked (Missing) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.2.17 — Both report the PreRoute interceptor chain is declared but never invoked; F-4.8.11 covers PreRoute/PostRoute generally and F-8.2.17 the child-delegation manifestation of the same gap.
 
 - **Spec:** §4.8 lines 964, 1048, 1052. `PreRoute` runs after
   authentication and before runtime selection over a serialized
@@ -2309,6 +2451,8 @@ What is present and substantive: the proxy hot path (lease resolution, deny list
 
 ### - [ ] F-4.9.1 — §4.9.2 audit-event emission is absent across all credential code paths [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-13.3.6 — Both report the credential.* lifecycle audit events are not implemented; the catalog declaration and the emission are two facets of the same missing surface.
+
 **Severity:** High (security/correctness — audit log is the §11.7 record of every credential lifecycle event, including security-salient `credential.lease_spiffe_mismatch`, `credential.revoked`, `credential.rotation_ceiling_hit`, and §11.7's hash-chain integrity).
 
 **Spec:** spec/04_system-components.md §4.9.2 (lines 1731-1750) lists 12 event types each with mandated key fields; `credential.leased` and `credential.revoked` are also written to the billing event stream (line 1750).
@@ -2335,6 +2479,8 @@ Confirmed sites that should emit but don't:
 
 ### - [ ] F-4.9.2 — Emergency revocation admin endpoints not implemented [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-11.8.1, F-13.3.7 — Three findings describe the missing emergency credential-revocation endpoints; F-24.5.1 and F-24.5.2 cover the broader credential-pool CLI/CRUD admin surface.
+
 **Severity:** High (security MUST — the §4.9 "Emergency Credential Revocation" subsection is the mechanism to pull a compromised key without waiting for natural lease TTL).
 
 **Spec:** spec/04_system-components.md lines 1624-1677. Defines:
@@ -2350,6 +2496,8 @@ Confirmed sites that should emit but don't:
 ---
 
 ### - [ ] F-4.9.3 — Admin-time Token-Service RBAC live-probe not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.5.3 — Both report the admin-time Token-Service RBAC live-probe is unimplemented on credential-pool create/add/update.
 
 **Severity:** High (the spec marks the probe as "required" and explicitly forbids fail-open behavior; an unprobed `secretRef` lands silently and surfaces as opaque `CREDENTIAL_POOL_EXHAUSTED` at lease-materialization time).
 
@@ -2403,6 +2551,8 @@ Confirmed sites that should emit but don't:
 ---
 
 ### - [ ] F-4.9.7 — Startup deny-list rebuild query not implemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.3.8 — Both report the §4.9 startup deny-list rebuild union query is not implemented (only doc comments reference it); F-13.3.8 additionally folds in the LISTEN/NOTIFY fallback but shares the core gap.
 
 **Severity:** Medium (a missed Redis pub/sub revocation propagation plus a replica restart leaves a revoked credential accepted on that replica until next pub/sub event; spec's startup-rebuild requirement closes that window).
 
@@ -2525,6 +2675,8 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 ---
 
 ### - [ ] F-4.9.17 — Direct-mode adapter timer for `anthropic_direct` lease expiry not implemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.3.14 — Both report the unimplemented adapter-side synthetic-TTL timer for anthropic_direct lease expiry that deletes credentials.json and reports AUTH_EXPIRED.
 
 **Severity:** Medium (spec line 1149 MUSTs the adapter set a local timer on each lease `expiresAt`, delete `/run/lenny/credentials.json` for that provider, and report `AUTH_EXPIRED` when the timer fires without a replacement).
 
@@ -2712,12 +2864,16 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 
 ### - [ ] F-5.1.1 — `allowedResourceClasses` field unmodeled in registry, admin, schema, and merge — High [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-5.1.2 — Both report a runtime CRD field unmodeled at the gateway boundary but for different fields (allowedResourceClasses vs supportedProviders).
+
 - **Spec:** §5.1 standalone-runtime YAML (line 67) names `allowedResourceClasses: [small, medium, large]` as a runtime-level field. The merge table (line 187) classifies it as **Prohibited** on derived runtimes, with the additional rule "Must be a subset of base; pool config constrains further." §5.1 derived-runtime instantiation (line 252) restates the constraint: "resource classes cannot exceed base runtime's configured classes."
 - **Evidence:** Only `pkg/apis/lenny/v1/runtime_types.go:53` (`AllowedResourceClasses []string`) carries the field, on the Runtime CRD shape. `runtimestore.Runtime` (`pkg/gateway/runtimestore/runtimestore.go:31`), the Postgres `runtime_definitions` table (`migrations/0001_initial_schema.up.sql:43`), every subsequent column-adding migration (`migrations/0013_...0023_...`), the admin payload (`pkg/gateway/admin/runtimes.go:48` `RuntimePayload`), and the merge implementation (`pkg/gateway/runtimestore/merge.go`) all omit it. `validateDerivedRuntime` (`pkg/gateway/admin/runtimes.go:132`) cannot reject `allowedResourceClasses` on a derived runtime because the field is not in the payload to inspect.
 - **Gap:** The gateway has no record of which resource classes a runtime permits, so it cannot enforce the §5.1 subset constraint for derived runtimes and cannot reject session-creation requests that ask for a class the runtime does not allow. The CRD field is dropped at the controller boundary (no Runtime CRD reconciler; see F-5.1.17). The §17.6 reference-runtime catalog (`charts/lenny/templates/reference-runtimes.yaml:35-37`) ships `allowedResourceClasses` on the Runtime resource, but the field has nowhere to land in the gateway.
 - **Suggested resolution:** Add `AllowedResourceClasses []string` to `runtimestore.Runtime`, persist via a new migration, accept on `RuntimePayload` and `UpdateRuntimeRequest`, add to `Merge` as Prohibited with subset validation against base, and add the §5.1 cross-field rejection ("derived must be a subset of base") under a new `INVALID_DERIVED_RUNTIME` clause. The session-creation path must then reject `resourceClass` requests outside the runtime's set.
 
 ### - [ ] F-5.1.2 — `supportedProviders` field unmodeled in registry, admin, schema, and merge — High [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-5.1.1 — Both report a runtime CRD field unmodeled at the gateway boundary but for different fields (allowedResourceClasses vs supportedProviders).
 
 - **Spec:** §5.1 standalone-runtime YAML (lines 70-72) requires `supportedProviders` (`anthropic_direct`, `aws_bedrock`, etc.). §5.1 minimal configuration (line 345) restates it as part of the absolute-minimum runtime registration. The merge table (line 191) classifies it as **Override** with the rule "Derived may restrict but not expand beyond base."
 - **Evidence:** Only `pkg/apis/lenny/v1/runtime_types.go:58` (`SupportedProviders []string`) carries it on the CRD spec. `runtimestore.Runtime`, the Postgres schema, the admin payload, the bootstrap upsert, and `Merge` all omit it.
@@ -2746,6 +2902,8 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Suggested resolution:** Add `SetupCommandPolicy` (with `Mode`, `Shell bool`, `Allowlist []string`, `MaxCommands int`) and the corresponding merge clause; the §6.4 pod-init path must read it before executing a setup command.
 
 ### - [ ] F-5.1.6 — `workspaceDefaults` (files, setupCommands) unmodeled — High [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.5.3 — Both report that workspaceDefaults (files and setupCommands) are unmodeled in the Runtime struct and never merged into execution, breaking the §5.1 append-merge.
 
 - **Spec:** §5.1 derived-runtime YAML (lines 121-126) declares `workspaceDefaults.files` (inline path/content) and `workspaceDefaults.setupCommands`. The merge table (lines 197-198) classifies them as **Append** ("derived files appended to base; conflicting paths replaced by derived" and "derived commands appended after base commands"). §5.1 derived-runtime-instantiation prose (line 250) restates the materialization order: "base defaults → derived defaults → client uploads → file exports from parent delegation."
 - **Evidence:** No `WorkspaceDefaults` field on `runtimestore.Runtime`, no JSONB column on `runtime_definitions`, no payload entry, no merge clause. The §14 workspace-plan path has nothing to read for the runtime-default layer.
@@ -2781,6 +2939,8 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Suggested resolution:** Add a `SharedAssets []SharedAsset` field with Append merge; wire into the §6.4 init flow gated on `executionMode: concurrent`.
 
 ### - [ ] F-5.1.11 — Declared-vs-observed integrationLevel admission not enforced — High [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-24.18.1 — Both concern declared-vs-observed integrationLevel but target different components: F-24.18.1 is the validate CLI probe missing, while F-5.1.11 is gateway admission enforcement (RUNTIME_LEVEL_UNDERPERFORMS) missing.
 
 - **Spec:** §5.1 lines 41-44 require the gateway to compare the declared `integrationLevel` against the observed level from the first `lifecycle_capabilities` / `lifecycle_support` exchange, and:
   - `observed < declared`: reject the first session assignment with `RUNTIME_LEVEL_UNDERPERFORMS` and log a structured error.
@@ -2890,6 +3050,8 @@ Classification: each finding is *Implemented*, *Partial*, *Missing*, *Deviates*,
 
 ### - [ ] F-5.2.1 — Task-mode lifecycle is entirely absent [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-4.7.6 — F-4.7.6 and F-5.2.1 both report task-mode lifecycle messages (task_complete/task_ready/acknowledged) unimplemented; F-6.2.6 is a distinct defect about task_cleanup phase disposition branching not being implemented.
+
 Spec §5.2 lines 415–423: a task-mode pod cycles
 `task_complete` → `task_complete_acknowledged` → credential purge (step 0) → `cleanupCommands` → Lenny scrub (steps 1–6) → `task_ready`. None of this is wired.
 
@@ -2918,6 +3080,8 @@ Consequence: the protection exists, but the spec's separate-webhook framing does
 
 ### - [ ] F-5.2.3 — Concurrent-stateless tenant-affinity routing is not implemented [High] — OPEN
 
+**Potential overlap** (confidence: high) — F-5.2.17 — Related stateless-pool gaps but distinct: F-5.2.17 is missing demand-signal metrics, F-5.2.3 is the missing tenant-affinity routing layer; F-5.2.17 references the routing layer as a separate finding.
+
 Spec §5.2 lines 500–502 specify a distinct stateless dispatch:
 - "Gateway routes through Kubernetes Service with tenant-affinity session routing"
 - "the gateway maintains an in-memory mapping of tenantId → set of pinned pod IPs"
@@ -2938,6 +3102,8 @@ The integration test `tests/tier4_integration/concurrent_stateless_test.go:19` e
 Consequence: in production the stateless mode collapses to "the same as workspace, minus workspace materialization and setup". Operators do not get the Service-routed elasticity the spec describes; the PoolScalingController has no stateless-specific demand signal.
 
 ### - [ ] F-5.2.4 — Post-recovery slot-counter rehydration is missing [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.4.19 — Both report that post-recovery slot-counter rehydration (rehydrated/rehydrating sentinels, GetActiveSlotsByPod seeding) is not implemented in slotcounter.go.
 
 Spec §5.2 lines 521–522: a Lua-script `rehydrated` flag blocks slot allocation until the gateway runs `SessionStore.GetActiveSlotsByPod` and seeds `lenny:pod:{pod_id}:active_slots`, with per-pod `SET NX` lock `lenny:pod:{pod_id}:rehydrating` and `slotRehydrationTimeoutMs` (default 2000ms).
 
@@ -3010,6 +3176,8 @@ Consequence: operators must inspect Kubernetes CR status directly rather than th
 
 ### - [ ] F-5.2.11 — PoolScalingController is implemented but not wired in the production controller binary [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.1.6, F-4.6.1 — All three describe the implemented PoolScalingController not being wired into the production controller binary.
+
 Spec §5.2 lines 538–573 (and §4.6.2 / §4.6.3) make the PoolScalingController authoritative for `SandboxTemplate.spec` and `SandboxWarmPool.spec` (sized by the mode-adjusted formula, written via SSA from a `PoolConfigSource`).
 
 Implementation:
@@ -3062,6 +3230,8 @@ Implementation: `pkg/controller/poolscaling/strategy/strategy.go:128` accepts `M
 Consequence: even if the PoolScalingController is wired, it has no way to converge `mode_factor` toward the spec's value. Task-mode pools will perpetually compute `mode_factor = 1.0` (session-mode sizing) once cold-start ends.
 
 ### - [ ] F-5.2.17 — Stateless-concurrent demand signals are not emitted [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-5.2.3 — Related stateless-pool gaps but distinct: F-5.2.17 is missing demand-signal metrics, F-5.2.3 is the missing tenant-affinity routing layer; F-5.2.17 references the routing layer as a separate finding.
 
 Spec §5.2 line 573: PoolScalingController derives stateless `base_demand_p95` from `rate(lenny_stateless_requests_total[5m])` and `burst_p99_claims` from `max_over_time(lenny_stateless_concurrent_active[5m])`.
 
@@ -3386,6 +3556,8 @@ Summary: the pod-warm path is largely implemented (state machine, sidecar/embedd
 
 ### - [ ] F-6.1.1 — SDK-warm path is entirely unimplemented end-to-end [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-6.2.3 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
+
 Spec §6.1 lines 22, 30–34, 40 (paraphrased): "SDK-warm (optional): The agent process IS pre-connected and waiting for its first prompt." "Pools referencing a `preConnect`-capable runtime warm **all** pods to SDK-warm state." "the warm pool controller starts the SDK process after the pod reaches `idle` state". "Demotion support is mandatory for `preConnect` runtimes."
 
 Implementation does not pre-connect any agent process at warm time.
@@ -3401,6 +3573,8 @@ Consequence: every pod in every pool warms strictly to pod-warm idle. Setting `c
 
 ### - [ ] F-6.1.2 — `/sessions`, `/artifacts`, and `/dev/shm` mounts are not in the pod spec [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.1.2, F-6.4.1 — F-13.1.2, F-6.1.2, and F-6.4.1 all report missing /sessions and /artifacts volumes/mounts in podspec.go; F-6.1.14 is a separate /dev/shm 64MB cap defect though F-6.1.2 also touches /dev/shm.
+
 Spec §6.1 line 13: "`/sessions` directory present for session files". Spec §6.4 (immediately downstream of §6.1) requires `/sessions/` and `/tmp/` as `emptyDir.medium: Memory` (tmpfs), `/artifacts/` as disk-backed emptyDir, and limits `/dev/shm` to 64MB.
 
 `pkg/controller/sandbox/podspec/podspec.go:355–391` (`podVolumes`, `basePod`) produces exactly three volumes:
@@ -3415,6 +3589,8 @@ Greps across `pkg/controller/`, `pkg/adapter/`, `pkg/podsecurity/`, `charts/lenn
 Consequence: the pod has no in-pod path for session transcripts, runtime state, agent logs, outputs, or checkpoints to land. A runtime that writes to `/sessions` or `/artifacts` writes onto the read-only root filesystem (`readOnlyRootFilesystem: true` is enforced — `podspec.go:401`) and fails with EROFS. The /dev/shm cap is not enforced; the §6.4 "Combined with the one-session-only invariant, sensitive data never persists on disk after pod termination" invariant is incomplete because /artifacts/ persistence path is absent altogether.
 
 ### - [ ] F-6.1.3 — No `sizeLimit` on tmpfs / emptyDir volumes; not accounted in resource requests [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.4.6 — Both report no sizeLimit set on the tmpfs/emptyDir volumes in podspec.go:358-368 against the §6.4 256Mi recommendation.
 
 Spec §6.4 (immediately downstream from §6.1): "tmpfs usage counts against pod memory limits and must be accounted for in resource requests. … Deployers should set `emptyDir.sizeLimit` on tmpfs volumes to cap usage and provide predictable OOM boundaries rather than silent memory pressure. Recommended size limits: `/sessions/` sizeLimit of 256Mi (session transcripts), `/tmp/` sizeLimit of 256Mi (scratch space)."
 
@@ -3474,6 +3650,8 @@ Consequence: a future SDK-warm path would leak the SDK process or its credential
 
 ### - [ ] F-6.1.8 — Pod has no `lenny.dev/state` or `lenny.dev/runtime` labels [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-6.2.9, F-6.2.11 — All three report the coarse pod labels are not stamped; F-6.1.8 covers both state and runtime, while F-6.2.9 and F-6.2.11 each isolate one of them.
+
 Spec §6.1 lines 307–311 (the table at the end of §6.2, owned by §6.1's "Marked 'idle and claimable' via readiness gate" sentence) requires three coarse pod labels:
 
 | Label               | Values                       | Purpose                                                       |
@@ -3502,6 +3680,8 @@ Consequence: another controller (`kubelet`, a service mesh, a CNI) cannot delay 
 
 ### - [ ] F-6.1.10 — `lenny.dev/host-schedulable` Node-driven label is unimplemented on the WarmPoolController [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-6.2.10 — F-6.1.10 and F-6.2.10 both report the WarmPoolController never maintains the lenny.dev/host-schedulable label from a Node informer; F-4.6.7 bundles that with preStop and cert-expiry replacement gaps.
+
 Spec §6.1 line 181: "the WarmPoolController maintains this label on every reconcile from its Node informer cache and re-labels all pods on an affected Node within a single reconcile cycle when the Node's cordon/uncordon state changes."
 
 - `pkg/controller/warmpool/controller.go` does not import `k8s.io/api/core/v1.Node`, has no Node informer, does not list/watch Node resources, and never writes the `lenny.dev/host-schedulable` label.
@@ -3511,6 +3691,8 @@ Spec §6.1 line 181: "the WarmPoolController maintains this label on every recon
 Consequence: the `task_cleanup → sdk_connecting` versus `task_cleanup → draining` decision based on host-node schedulability cannot run. Moot today because preConnect itself is unimplemented (H-1), but the prerequisite Node-informer plumbing is not in place.
 
 ### - [ ] F-6.1.11 — Per-slot concurrent-workspace directories `/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/` are not created [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.4.2 — F-6.1.11 and F-6.4.2 both report the per-slot concurrent-workspace directory tree is not built; F-6.4.10 covers the distinct per-slot credentials path.
 
 Spec §6.1 line 28 (Concurrent-mode credential lease lifecycle paragraph): "The adapter writes per-slot credential files at `/run/lenny/slots/{slotId}/credentials.json` (mode `0440`, tmpfs-backed, with the same adapter-owner + `lenny-cred-readers` group-ownership scheme as the single-slot file…)". Spec §6.4 (downstream): the per-slot `/workspace/slots/{slotId}/{current,staging}/`, `/sessions/{slotId}/`, and `/artifacts/{slotId}/` tree is the adapter's responsibility.
 
@@ -3557,11 +3739,15 @@ Consequence: the cap is not Lenny-enforced; deployers cannot reason about /dev/s
 
 ### - [ ] F-6.1.15 — `shareProcessNamespace: false` is left as a forbidden-by-omission default — `Implemented` but worth noting [Low] — OPEN
 
+**Potential overlap** (confidence: medium) — F-17.2.2, F-6.4.8 — F-6.4.8 and F-6.1.15 both note shareProcessNamespace:true is enforced only by the in-tree webhook with no Kyverno/Gatekeeper policy; F-17.2.2 is the broader PSS-enforcement-model gap (full Restricted/RuntimeClass-relaxed policies absent).
+
 Spec §6.4 references: "`shareProcessNamespace: false` when using sidecar containers. `shareProcessNamespace: false` is not enforceable via Pod Security Standards; a Kyverno or Gatekeeper policy must be deployed to reject pods in agent namespaces that set `shareProcessNamespace: true`."
 
 `pkg/controller/sandbox/podspec/podspec.go:29–30` documents: "The §13.1 host-sharing flags … are left unset, which is forbidden-by-omission." `pkg/podsecurity/podsecurity.go:114` rejects `shareProcessNamespace: true` at the admission webhook. Good defense in depth, but the §6.4 explicit call for a Kyverno/Gatekeeper policy is satisfied by the Lenny admission webhook only — operators who bypass the webhook see no out-of-band enforcement. This is consistent with the §13.1 model; flagged only because §6.4 specifically references third-party policy.
 
 ### - [ ] F-6.1.16 — `procfs` and `sysfs` are not explicitly masked/read-only in the pod spec [Low] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-6.4.7 — Both report that procfs/sysfs masking is not configured in the pod spec; F-6.4.7 additionally covers the /dev/shm 64MB cap but shares the core masking defect.
 
 Spec §6.4: "`procfs` and `sysfs` are masked/read-only."
 
@@ -3589,11 +3775,15 @@ Spec §6.1 line 9: "Runtime adapter listening and health-checked".
 
 ### - [ ] F-6.1.20 — RuntimeClass mapping is correct [Info] — OPEN
 
+**Potential overlap** (confidence: high) — F-17.5.7 — Same RuntimeClass mapping code, but F-17.5.7 flags the hard-coded names as a missing operator override while F-6.1.20 records the mapping as correct with no gap.
+
 Spec §6.1 line 8: "Selected `RuntimeClass` active (runc/gVisor/Kata)".
 
 `pkg/sandbox/isolation/runtimeclass.go:9–20` maps `standard → runc`, `sandboxed → gvisor`, `microvm → kata`. `pkg/controller/sandbox/podspec/podspec.go:170–172, 381` applies the mapping to `pod.Spec.RuntimeClassName`. Tested at `pkg/controller/sandbox/podspec/podspec_test.go:57–73`.
 
 ### - [ ] F-6.1.21 — `/workspace/current` and `/workspace/staging` exist but are produced by a single volume mounted at `/workspace` [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.4.13 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
 Spec §6.1 lines 11–12: "`/workspace/current` exists but is empty" and "`/workspace/staging` exists for upload staging".
 
@@ -3626,6 +3816,8 @@ Consequence: operators have no escape hatch to re-enable SDK-warm ahead of the g
 The gateway-side session-completion handler is the likely driver of pod replacement, but I did not find an explicit "set Sandbox.spec.phase to draining on session terminal transition" call. If absent, this is the same root cause flagged in M-5 above. This is significant for the §6.1 isolation guarantee and warrants a focused follow-up review of the gateway's session-completion handler.
 
 ### - [ ] F-6.1.26 — `lenny-cred-readers` membership boundary for ephemeral containers is enforced separately [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.1.22, F-13.3.17 — All describe the same positive finding that the four-condition ephemeral-container cred-guard webhook is correctly implemented; F-13.2.23 also covers label-immutability so it is overlapping rather than a clean duplicate.
 
 The spec's "lenny-cred-readers membership is deliberately narrow" invariant is enforced by `pkg/podsecurity/podsecurity.go:142–185` (rejects a non-adapter, non-agent container declaring the cred-readers GID in runAsGroup) and by the `lenny-ephemeral-container-cred-guard` webhook (`charts/lenny/templates/admission-policies/ephemeral-container-cred-guard-webhook.yaml`). Defense in depth is in place.
 
@@ -3717,6 +3909,9 @@ Implementation tree audited:
 - **Effect:** The Sandbox state machine collapses to four observable phases in practice (`warming → idle → claimed → draining → terminated`). Everything described in §6.2 lines 105–254 for the session lifetime is invisible at the CRD/status level, defeating the spec's stated single-source-of-truth contract.
 
 ### - [ ] F-6.2.3 — 2-03 SDK-warm path (`warming → sdk_connecting → idle`) entirely unimplemented [High] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-6.1.1 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
+
 - **Spec:** §6.1 lines 30–70 require all pods in a `preConnect: true` pool to warm to SDK-warm; §6.2 lines 89–93 list `warming → sdk_connecting → idle` and `sdk_connecting → {failed, terminated}` as live edges; §6.2 line 67 mandates SIGTERM handling during `sdk_connecting`; §6.2 line 69 mandates a `sdkConnectTimeoutSeconds` watchdog (default 60s) emitting `lenny_warmpool_sdk_connect_timeout_total`.
 - **Impl:** Neither the WarmPoolController (`pkg/controller/warmpool/controller.go`) nor the sandbox reconciler (`pkg/controller/sandbox/lifecycle/lifecycle.go:71-105`) ever transitions a pod to `sdk_connecting`. `lifecycle.Decide` only handles `warming → idle/failed` (lines 73–83). The planner counts `SDKConnecting` as warm (`pkg/controller/warmpool/plan/plan.go:87`) but nothing ever produces that phase. The pod-warm adapter explicitly returns `Unimplemented` for `DemoteSDK` (`pkg/adapter/lifecycle.go:99–102`). No `sdkConnectTimeoutSeconds` watchdog and no `lenny_warmpool_sdk_connect_timeout_total` increments exist in code (only declared in `pkg/observability/metrics/catalog.go:292`).
 - **Effect:** Setting `capabilities.preConnect: true` on a Runtime has no behavioural effect; the pod will warm to `idle` directly. The SDK-warm path documented across §6.1, §6.2, and §6.3's SLO discussion does not exist. Operators cannot rely on `preConnect` and the demotion/circuit-breaker observability (`lenny_warmpool_sdk_demotions_total`) cannot be exercised because no SDK-warm pods exist to demote.
@@ -3751,16 +3946,25 @@ Implementation tree audited:
 - **Effect:** Code that loops on `IsTerminal` (none yet in the WPC reconciler but the helper is part of the public state API) treats `Completed` as resumable, which contradicts the spec. Latent regression risk for downstream callers.
 
 ### - [ ] F-6.2.9 — 2-09 `lenny.dev/state` coarse label not maintained [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.1.8, F-6.2.11 — All three report the coarse pod labels are not stamped; F-6.1.8 covers both state and runtime, while F-6.2.9 and F-6.2.11 each isolate one of them.
+
 - **Spec:** §6.2 lines 305–313 mandate the `lenny.dev/state` pod label with values `idle`, `active`, `draining`, surfaced to selectors, monitoring, and NetworkPolicy. §6.1 (concurrent-mode pod lifecycle, line 197) and the §6.2 PDB references depend on this label.
 - **Impl:** No code writes the `lenny.dev/state` label. The Sandbox reconciler creates pods with only the labels propagated from the Sandbox object (`pkg/controller/sandbox/podspec/podspec.go:108–110`, `pkg/controller/sandbox/controller.go:177–186`), and the WarmPoolController only stamps `lenny.dev/pool` and `lenny.dev/managed` (`pkg/controller/warmpool/controller.go:76–79, 254–257`). There is no reconciler-driven label maintenance for state.
 - **Effect:** Any PDB or NetworkPolicy selector that depends on `lenny.dev/state` matches zero pods, exactly the K8S-002 regression that earlier review cycles flagged on the spec side. The 5s `active → idle` stabilization delay (§6.1 line 197) is also moot.
 
 ### - [ ] F-6.2.10 — 2-10 `lenny.dev/host-schedulable` label not maintained by WarmPoolController [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.1.10 — F-6.1.10 and F-6.2.10 both report the WarmPoolController never maintains the lenny.dev/host-schedulable label from a Node informer; F-4.6.7 bundles that with preStop and cert-expiry replacement gaps.
+
 - **Spec:** §6.2 line 181 + §4.6.1 require the WarmPoolController to maintain a per-pod label `lenny.dev/host-schedulable` (values `"true"` / `"false"`) from a Node informer, with cordon/uncordon re-labeling within a single reconcile cycle. The `task_cleanup` branching depends on this label.
 - **Impl:** No code writes `lenny.dev/host-schedulable` anywhere in `pkg/`. The WarmPoolController has no Node informer; `pkg/controller/warmpool/controller.go:482–488` only watches `SandboxWarmPool` and `Sandbox`.
 - **Effect:** With the label perpetually absent, §6.2's fail-safe interpretation (line 181: "absent, which is treated as unschedulable") would force every `task_cleanup` to drain even on healthy nodes if/when H-6.2-06 is implemented. Today the path is unreachable; gap will manifest as the rest of §6.2 is implemented.
 
 ### - [ ] F-6.2.11 — 2-11 `lenny.dev/runtime` pod label not stamped [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.1.8, F-6.2.9 — All three report the coarse pod labels are not stamped; F-6.1.8 covers both state and runtime, while F-6.2.9 and F-6.2.11 each isolate one of them.
+
 - **Spec:** §6.2 lines 305–312 list `lenny.dev/runtime` (runtime name) as one of the three coarse labels.
 - **Impl:** Not stamped (grep yields no writes). Only `lenny.dev/pool` and `lenny.dev/managed` are set.
 - **Effect:** Operators cannot select pods by runtime; aggregation queries that the spec encourages can't be built.
@@ -3776,6 +3980,9 @@ Implementation tree audited:
 - **Effect:** Interrupts surface to the adapter but do not produce the suspended-state semantics §6.2 describes. The `suspended → resume_pending` path (lines 220–228) is unreachable.
 
 ### - [ ] F-6.2.14 — 2-14 `resume_pending` wall-clock cap and `resuming` 300s watchdog not implemented [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-7.3.4 — Both concern the resume_pending flow but report different defects (missing resuming/resume_pending watchdog caps vs missing automatic transition into resume_pending).
+
 - **Spec:** §6.2 lines 246–254 require a 300-second watchdog on `resuming` and `maxResumeWindowSeconds` (default 900s) on `resume_pending` (line 292). On expiry the session must transition to `awaiting_client_action` and emit `session.awaiting_action`.
 - **Impl:** The gateway watchdog (`pkg/gateway/watchdog/watchdog.go`) sweeps `created`, `finalizing`, `ready`, `starting`, `awaiting_client_action`, and total `maxSessionAge` — but not `resuming` or `resume_pending`. `pkg/api/v1/session/session.go:46–59` defines the states but no sweep applies a 300s or 900s cap.
 - **Effect:** A wedged `resuming` session stays wedged; a `resume_pending` session that the warm pool can never satisfy never escalates to client action.
@@ -3801,6 +4008,9 @@ Implementation tree audited:
 - **Effect:** The spec-mandated `starting_session → resume_pending` (the sole post-attached visibility path per §6.2 line 303) cannot be expressed today.
 
 ### - [ ] F-6.2.19 — 2-19 Sandbox phase enum has no `input_required` value, even though the spec treats it as a sub-state of `running` [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.2.1 — F-6.2.19 and F-7.2.1 report the same defect: input_required missing from the externally-visible session state enum; F-7.2.23 is an Info note that the internal state package already encodes the sub-state, a distinct observation.
+
 - **Spec:** §6.2 lines 121–127, 200–212 describe `input_required` as a sub-state of `running` (pod live, agent blocked in `lenny/request_input`). The spec is explicit that it is logically sub-state, not a separate Sandbox phase.
 - **Impl:** Sandbox enum omits it (correct per spec). `pkg/task/state/state.go:18` defines `InputRequired` for the task-record state machine but never wires it to the Sandbox. `pkg/api/v1/session/session.go:46–59` also omits `input_required` from the externally-visible session state enum, though spec §6.2 describes session-level `input_required` transitions.
 - **Effect:** If a runtime calls `lenny/request_input`, the gateway has no state to report; the §6.2 sub-state model is non-observable. (Treated as Low because the spec itself notes this is "session-level visibility" with the canonical machine in §8.8.)
@@ -3821,6 +4031,9 @@ Implementation tree audited:
 - **Effect:** Low — the SandboxClaim creation already collides on the deterministic name. Worth tightening; not a primary §6.2 regression.
 
 ### - [ ] F-6.2.23 — 2-23 No orphan-SandboxClaim garbage collector exists [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.6.3 — Both report the absent orphaned-SandboxClaim garbage-collection loop, with lenny_orphaned_claims_total declared but never emitted.
+
 - **Spec:** §6.2 / §4.6.1 (referenced via `pkg/apis/lenny/v1/sandboxclaim_types.go:13`) and lines 108–110 in `claimer.go` both rely on an orphan-claim collection loop.
 - **Impl:** No controller in `pkg/controller/` scans SandboxClaims for orphans. The metric `lenny_orphaned_claims_total` is declared (`pkg/observability/metrics/catalog.go:192`) and the alert exists (`pkg/alerting/rules/rules.go:1138–1141`) but nothing emits to it.
 - **Effect:** Orphaned claims (created by a crashed gateway after the SSA claim but before the binding write) will leak. The spec's safety story is incomplete.
@@ -3854,6 +4067,8 @@ Classification: *Implemented*, *Partial*, *Missing*, *Deviates*, or *Info*. Seve
 Summary: §6.3 establishes (a) the P95 pod-warm session-start SLO (`< 2s` runc / `< 5s` gVisor), (b) the P95 TTFT SLO (`< 10s`), (c) the per-phase latency budget table spanning pod claim → first-token, and (d) a Tier 2 promotion gate that blocks promotion until a Phase 2 startup benchmark harness produces validated P50/P95/P99 measurements across runc, gVisor, and Kata, per-hot-path-phase, using the metric `lenny_session_startup_phase_duration_seconds{phase, runtime_class}`. **The per-phase histogram named by the spec does not exist** anywhere in the catalog, code, charts, or docs — neither emitted, declared, nor referenced (except inside spec source). The two end-to-end metrics that *are* cataloged (`lenny_session_startup_duration_seconds`, `lenny_session_time_to_first_token_seconds`) are declared but have zero production emitters; their alert rules reference recording-rule sentinels (`*_slow_ratio`) that are likewise undefined. The `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` operator guidance from §6.3 has no recording rule and no SLO/alert. The benchmark harness shipped as `tests/tier7_load/scenarios/startup_latency` measures only the echo adapter's heartbeat round-trip on the local Go process (median 2 ms, p99 3 ms recorded against an `echo` binary) — it does not measure any of the spec's six hot-path phases, does not split by runtime class, does not compare pod-warm vs SDK-warm, and does not produce P95 (only p50/p90/p99). The Tier 2 promotion gate's three preconditions are all unsatisfied; no Phase 2 exit ADR exists in `docs/adr/`.
 
 ### - [ ] F-6.3.1 — `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` is unimplemented across catalog, code, alerts, and docs [High] — OPEN
+
+**Potential overlap** (confidence: medium) — F-6.3.7 — Both concern session-startup phase metrics, but one is the unimplemented startup_phase_duration metric and the other is a phase-set mismatch in the existing creation_duration metric.
 
 Spec §6.3 line 370 (Tier 2 promotion gate condition (b)): "the per-phase histogram metrics (`lenny_session_startup_phase_duration_seconds{phase, runtime_class}`) are fully instrumented and producing data in the benchmark environment". Spec §6.3 line 372 (Per-phase measurement requirement): "Each hot-path phase (pod claim, credential assignment, workspace materialization, setup commands, agent session start, first prompt dispatch) must be independently instrumented with histogram metrics (`lenny_session_startup_phase_duration_seconds{phase, runtime_class}`)."
 
@@ -3920,6 +4135,8 @@ Consequence: the spec explicitly states the per-phase table is "indicative plann
 
 ### - [ ] F-6.3.5 — Startup benchmark harness does not measure any §6.3 phase, runtime class, or pod-warm vs SDK-warm split [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-6.3.10 — Both report the startup_latency harness measures only a local echo heartbeat round-trip and not the §6.3 pod-warm vs SDK-warm per-runtime-class split.
+
 Spec §6.3 line 372: "The startup benchmark harness (Phase 2) must measure pod-warm vs SDK-warm latency per runtime class to validate the complexity tradeoff of the SDK-warm model."
 
 A scenario named `startup_latency` exists at `tests/tier7_load/scenarios/startup_latency/main.go`. Examining its behavior:
@@ -3937,6 +4154,8 @@ Consequence: the artifact called "the Phase 2 startup benchmark harness" by both
 
 ### - [ ] F-6.3.6 — `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` operator-tracking guidance has no recording rule, no alert, and no production emitter [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-6.3.11 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
+
 Spec §6.3 line 352: "Deployers must track `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` per pool to verify that SDK-warm is delivering net benefit. See the 'Demotion rate threshold and circuit-breaker' guidance in [Section 6.1] for operator actions when demotion rates are high."
 
 Both inputs to the ratio are catalog-only.
@@ -3949,6 +4168,8 @@ Both inputs to the ratio are catalog-only.
 Consequence: §6.3's "verify that SDK-warm is delivering net benefit" workflow has no observable signal. Even if SDK-warm were enabled (it is not — see `6.1.md` H-1), an operator following the spec's instruction cannot construct the ratio from Prometheus because neither counter has a series. The "demotion rate threshold and circuit-breaker" cross-reference points to §6.1 guidance that itself depends on the same unemitted counter.
 
 ### - [ ] F-6.3.7 — `lenny_session_creation_duration_seconds{phase}` covers a different phase set than §6.3 requires; no normative mapping is provided [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-6.3.1 — Both concern session-startup phase metrics, but one is the unimplemented startup_phase_duration metric and the other is a phase-set mismatch in the existing creation_duration metric.
 
 Spec §6.3 line 372 names six hot-path phases: pod claim, credential assignment, workspace materialization, setup commands, agent session start, first prompt dispatch. Spec §16.1 line 16 names a different set of seven phases for `lenny_session_creation_duration_seconds`: `auth`, `policy`, `credential_precheck`, `pod_claim`, `postgres_persist`, `credential_assign`, `pod_assign`.
 
@@ -3981,6 +4202,8 @@ Consequence: an operator trying to follow the §6.3 note to disambiguate a slow-
 
 ### - [ ] F-6.3.10 — `BUILD-PROGRESS.md` claims Phase 2 startup benchmark is delivered, but the delivery does not match the §6.3 normative requirement [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-6.3.5 — Both report the startup_latency harness measures only a local echo heartbeat round-trip and not the §6.3 pod-warm vs SDK-warm per-runtime-class split.
+
 `TESTING.md` §13.3 line 1330: "`tests/tier7_load/scenarios/startup_latency/main.go` is the executable benchmark harness. It records the first baseline at `tests/tier7_load/baselines/startup_latency.json` (heartbeat round-trip P50=2 ms, P90=3 ms, P99=3 ms over 20 iterations on the development machine)."
 
 `spec/18_build-sequence.md:33`: "Phase 2 — Adapter protocol + `make run` + ImageResolver + startup benchmark — Phase 1 (agent-sandbox)".
@@ -3992,6 +4215,8 @@ The implementation's scope (echo heartbeat round-trip on the host) does not matc
 Consequence: the BUILD-PROGRESS / TESTING ledger claim that Phase 2 has shipped a startup benchmark hides the §6.3 gap. A reader scanning the ledger sees Phase 2 closed and may assume the §6.3 budget has been validated, when it has not. Per the [feedback_verify_against_spec_not_buildprogress] guidance, this audit treats §6.3's normative requirement as the source of truth.
 
 ### - [ ] F-6.3.11 — No alert on `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` exceeding a deployer-configured threshold [Medium] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-6.3.6 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
 
 Spec §6.3 line 352 instructs operators to track the ratio per pool. The §6.1 circuit-breaker fires at 90% demotion rate (`pkg/controller/poolscaling/circuitbreaker.go:39`), but that's a controller-internal decision; the spec's deployer-facing tracking has no corresponding alert in the chart.
 
@@ -4026,6 +4251,8 @@ Consequence: even within its limited scope, the baseline's tail metric is not a 
 
 ### - [ ] F-6.3.15 — Per-phase `runtime_class` label is also absent from `lenny_warmpool_pod_startup_duration_seconds` per §16.1 [Low] — OPEN
 
+**Potential overlap** (confidence: medium) — F-6.3.18 — Both concern startup-latency metric labels, but one is a missing runtime_class label on the warmpool metric and the other is a cardinality concern about carrying both isolation_profile and runtime_class.
+
 `spec/16_observability.md:117`: "`lenny_warmpool_pod_startup_duration_seconds`, by pool, by isolation profile — time from pod creation to `idle` state".
 
 §6.3 expects per-runtime-class measurement (the SLO targets are per-runtime-class: 2s runc, 5s gVisor). The pre-creation analog metric is labeled `pool` and `isolation_profile` per §16.1 line 117 — `isolation_profile` is in the same family as `runtime_class` but the two are distinct labels in §16.1 (`isolation_profile` ∈ {standard, sandboxed, microvm}; `runtime_class` ∈ {runc, gvisor, kata}). The runbook `docs/runbooks/slo-startup-latency.md:45` uses `groupBy=pool,runtime_class`, but the metric only emits `isolation_profile`. The runbook query returns "no data" on the `runtime_class` dimension.
@@ -4047,6 +4274,8 @@ Consequence: the diagnosis runbook for the §6.3 SLO has a step that returns no 
 This is a meta-observation rather than a code defect: the harness side is producing a real measurement that should fail the §6.3 budget check, but no part of the platform is checking the budget. Once H-2 and H-4 are addressed, the alert chain would fire on this baseline.
 
 ### - [ ] F-6.3.18 — The `lenny_session_startup_duration_seconds` metric labels in §16.1 include `isolation_profile` and `runtime_class` as separate dimensions — duplicate-ish [Info] — OPEN
+
+**Potential overlap** (confidence: medium) — F-6.3.15 — Both concern startup-latency metric labels, but one is a missing runtime_class label on the warmpool metric and the other is a cardinality concern about carrying both isolation_profile and runtime_class.
 
 `spec/16_observability.md:14` declares the metric labeled by `pool`, `runtime_class`, `isolation_profile`. These three labels are not orthogonal: `runtime_class` is the RuntimeClassName on the pod (runc/gvisor/kata) and `isolation_profile` is the Lenny abstraction over the same axis (standard/sandboxed/microvm). The 1:1 mapping is at `pkg/sandbox/isolation/runtimeclass.go:9–20`.
 
@@ -4121,6 +4350,8 @@ Summary: §6.4 mandates three concurrent layouts (single, per-slot, shared-read-
 
 ### - [ ] F-6.4.1 — `/sessions/` and `/artifacts/` mount paths are not provisioned [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.1.2, F-6.1.2 — F-13.1.2, F-6.1.2, and F-6.4.1 all report missing /sessions and /artifacts volumes/mounts in podspec.go; F-6.1.14 is a separate /dev/shm 64MB cap defect though F-6.1.2 also touches /dev/shm.
+
 Spec §6.4 lines 376–383 enumerate the default pod filesystem layout: `/workspace/current`, `/workspace/staging`, `/sessions/`, `/artifacts/`, and `/tmp/`. §6.4 line 380 marks `/sessions/` as `[tmpfs]` and §6.4 line 413 binds it to "`emptyDir.medium: Memory`". §6.4 line 414 binds `/artifacts/` to "disk-backed emptyDir". §6.1 line 13 restates the warm-time invariant: "`/sessions` directory present for session files".
 
 `pkg/controller/sandbox/podspec/podspec.go:358–368` is the sole pod volume list. It declares three volumes:
@@ -4136,6 +4367,8 @@ There is no `sessions` volume, no `artifacts` volume, and no `MountPath: "/sessi
 Consequence: §6.4's "Session files (e.g., conversation logs, runtime state)" and "Logs, outputs, checkpoints" surfaces have nowhere to live. The runtime sees no `/sessions` directory at warm time, breaking the §6.1 line 13 invariant. `Checkpoint` (`pkg/adapter/checkpoint.go:99`) archives `s.WorkspaceRoot` only — it never writes to `/artifacts/`. The §6.4 data-at-rest controls (sessions tmpfs vs artifacts disk) cannot be applied because the volumes do not exist; any runtime or local-tool that writes to `/sessions` or `/artifacts` writes onto the container's read-only root filesystem (`ReadOnlyRootFilesystem: true` at `pkg/controller/sandbox/podspec/podspec.go:401`) and is rejected by the kernel.
 
 ### - [ ] F-6.4.2 — Concurrent-workspace per-slot tree (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`) is not built [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.1.11 — F-6.1.11 and F-6.4.2 both report the per-slot concurrent-workspace directory tree is not built; F-6.4.10 covers the distinct per-slot credentials path.
 
 Spec §6.4 lines 385–399 normatively define the per-slot layout under `concurrent`+`workspace` mode: a pod hosts `/workspace/slots/{slotId}/current/`, `/workspace/slots/{slotId}/staging/`, `/sessions/{slotId}/`, and `/artifacts/{slotId}/` trees, one per active slot, plus the shared `/workspace/shared/` (see H-3). Spec §6.4 lines 401–405 assign responsibility: "Adapter — creates and removes per-slot directory trees (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`). The adapter creates the slot directory on `slotId` assignment and removes it during slot cleanup … The adapter sets each slot's `cwd` to `/workspace/slots/{slotId}/current/` when dispatching a task to the runtime." Spec §6.4 line 404 further requires: "Runtime — derives `cwd` per slot from `slotId` using the pattern `/workspace/slots/{slotId}/current/`. The runtime MUST NOT assume a global `/workspace/current` path in concurrent-workspace mode."
 
@@ -4154,6 +4387,8 @@ The `Runtime` CRD type (`pkg/apis/lenny/v1/runtime_types.go:12–59`) has no `Sh
 Consequence: the spec's `EROFS` kernel-level write boundary on shared assets does not exist. A concurrent-mode runtime expecting `/workspace/shared/` to exist sees `ENOENT`, and there is no operator path to populate cross-slot read-only assets. The "even empty, mount it read-only" defensive scrub-space prevention is also absent.
 
 ### - [ ] F-6.4.4 — T4 dedicated-node enforcement is webhook-only — pool controller does not inject `lenny.dev/workspace-tier: t4`, the T4 `nodeSelector`, or the T4 toleration; the `Runtime` CRD has no `workspaceTier` field [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.9.2 — Both report the pool controller not injecting lenny.dev/workspace-tier:t4, making the T4 node-isolation webhook predicate unreachable.
 
 Spec §6.4 lines 416–419 contain three enforcement clauses against T4 (the §12.9 highest-tier residency class):
 
@@ -4174,6 +4409,8 @@ The §6.4 STR-003 enforcement is also unreachable from the pool-config webhook s
 
 ### - [ ] F-6.4.5 — `lenny-adapter` has no `--staging-dir` flag; `PrepareWorkspace` returns `FailedPrecondition` in production [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.7.10 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
+
 Spec §6.4 line 379 enumerates `/workspace/staging/` as a normative mountpoint: "Upload staging area — files land here first". §6.4 line 405 commits the gateway to staging-then-finalize: "`FinalizeWorkspace` materializes files from `/workspace/slots/{slotId}/staging/` to `/workspace/slots/{slotId}/current/`." Spec §6.1 line 12 restates the warm-time invariant: "`/workspace/staging` exists for upload staging".
 
 `cmd/lenny-adapter/main.go:53–108` declares only `--addr`, `--tls-cert-file`, `--tls-key-file`, `--tls-client-ca-file`, `--workspace-root`, `--credentials-dir`, `--runtime-bin`, `--runtime-socket`, and `--lifecycle-socket`. There is no `--staging-dir` flag. The flag default for `--workspace-root` is `/workspace/current`; the staging path is therefore unset. `pkg/adapter/server.go:64–68` documents the `StagingDir` field: "Empty leaves `PrepareWorkspace` returning `FailedPrecondition`." `pkg/adapter/staging.go:26–28` confirms the runtime check: `if s.StagingDir == "" { return status.Error(codes.FailedPrecondition, "adapter is not configured with a staging directory") }`. A grep for `StagingDir` across `cmd/lenny-adapter/`, `cmd/runtimes/`, and `charts/lenny/templates/` returns no setter — production never wires it. The only production `StagingDir` setter outside tests is in `pkg/gateway/adapterclient/client_test.go`, a unit test fixture.
@@ -4184,6 +4421,8 @@ The fix is small (add a `--staging-dir` flag with a sensible default like `/work
 
 ### - [ ] F-6.4.6 — tmpfs `sizeLimit` of 256Mi on `/sessions/` and `/tmp/` is not set [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-6.1.3 — Both report no sizeLimit set on the tmpfs/emptyDir volumes in podspec.go:358-368 against the §6.4 256Mi recommendation.
+
 Spec §6.4 line 413: "Deployers should set `emptyDir.sizeLimit` on tmpfs volumes to cap usage and provide predictable OOM boundaries rather than silent memory pressure. Recommended size limits: `/sessions/` sizeLimit of 256Mi (session transcripts), `/tmp/` sizeLimit of 256Mi (scratch space)."
 
 `pkg/controller/sandbox/podspec/podspec.go:358–368` (`podVolumes`) declares the `credentials` and `tmp` tmpfs volumes with `&corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}` and no `SizeLimit` field. A grep for `SizeLimit` and `sizeLimit` across `pkg/controller/sandbox/podspec/`, `charts/lenny/values.yaml`, and `charts/lenny/templates/` returns no results that apply to the agent pod volumes (only the `restore-test-cronjob` template uses an emptyDir, but it sets no size cap either). The `/sessions/` volume does not exist (H-1), so its size cap is also absent.
@@ -4193,6 +4432,8 @@ Consequence: a runaway runtime that writes large blobs to `/tmp` cannot be cappe
 The wording is SHOULD ("Deployers should set"), so this is M severity rather than H.
 
 ### - [ ] F-6.4.7 — `/dev/shm` 64 MB ceiling and procfs/sysfs masking are not configured [Medium] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-6.1.16 — Both report that procfs/sysfs masking is not configured in the pod spec; F-6.4.7 additionally covers the /dev/shm 64MB cap but shares the core masking defect.
 
 Spec §6.4 line 420: "`/dev/shm` is limited to 64MB. `procfs` and `sysfs` are masked/read-only."
 
@@ -4205,6 +4446,8 @@ The §13.1 webhook (`lenny-pod-security`) covers host-sharing flags, credential 
 Consequence: the §6.4 spec's IPC- and information-leak controls are absent on the runc isolation profile. The 64 MB `/dev/shm` cap is not enforced, allowing a runtime to allocate a large tmpfs region for IPC and inflate the pod's memory footprint outside the visible memory accounting.
 
 ### - [ ] F-6.4.8 — `shareProcessNamespace: true` rejection policy is enforced only by the in-tree `lenny-pod-security` webhook; no Kyverno/Gatekeeper policy is shipped [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-17.2.2, F-6.1.15 — F-6.4.8 and F-6.1.15 both note shareProcessNamespace:true is enforced only by the in-tree webhook with no Kyverno/Gatekeeper policy; F-17.2.2 is the broader PSS-enforcement-model gap (full Restricted/RuntimeClass-relaxed policies absent).
 
 Spec §6.4 line 420: "`shareProcessNamespace: false` when using sidecar containers. `shareProcessNamespace: false` is not enforceable via Pod Security Standards; a Kyverno or Gatekeeper policy must be deployed to reject pods in agent namespaces that set `shareProcessNamespace: true`, as part of the RuntimeClass-aware admission policies described in [Section 17.2]."
 
@@ -4241,6 +4484,8 @@ Spec §6.4 references the §6.1 SDK-warm demotion guidance only obliquely; the m
 `pkg/controller/sandbox/podspec/podspec.go:271` and `cmd/runtimes/echo-embedded/main.go:66` both default `--workspace-root=/workspace/current`. This is correct for session and task modes; it becomes an actively wrong default the moment H-2 is built. Worth flagging as a follow-on coupling rather than a present-day defect.
 
 ### - [ ] F-6.4.13 — `/workspace/current` does not exist at warm time [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.1.21 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
 Spec §6.1 line 11: "`/workspace/current` exists but is empty". The pod-spec mounts the `workspace` emptyDir at `/workspace`, so `/workspace` exists but `/workspace/current` is created on the first `MkdirAll(filepath.Dir(path), 0o755)` inside `pkg/adapter/workspace/materialize.go:71,93,120` — at workspace finalization, not at warm time. A runtime listing `/workspace` on a freshly-warmed pod sees an empty directory rather than the spec's `current/` subdirectory. The functional consequence is small (the directory is created before the runtime reads from it) but the strict §6.1 invariant is violated. The same applies to `/workspace/staging` (H-5 covers the upstream cause).
 
@@ -4498,6 +4743,8 @@ security signal.
 
 ### - [ ] F-7.1.9 — `POST /v1/sessions/{id}/upload-archive` endpoint missing [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-7.4.5 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
+
 §7.1 step 9 / spec line 537–540 establish the `upload-archive`
 endpoint alongside `upload`, and the `uploadToken` documentation lists
 both. `sessionserver.go:476` registers only
@@ -4736,6 +4983,8 @@ Severity: High = MUST / correctness / security; Medium = SHOULD or capability un
 
 ### - [ ] F-7.2.1 — (High) — `input_required` sub-state missing from the externally-visible session state enum [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-6.2.19 — F-6.2.19 and F-7.2.1 report the same defect: input_required missing from the externally-visible session state enum; F-7.2.23 is an Info note that the internal state package already encodes the sub-state, a distinct observation.
+
 Spec §7.2 (line 137, 170, 176-181, 205) requires:
 - `status_change(state: "input_required")` emitted to clients when the session enters this sub-state.
 - `status_change(state: "running")` when it exits.
@@ -4767,6 +5016,8 @@ Effect: SSE consumers cannot observe lifecycle transitions live; they must poll 
 
 ### - [ ] F-7.2.3 — (High) — `session.resumed` event with resumeMode / workspaceLost / workspaceRecoveryFraction is never emitted [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.4.11, F-4.4.28, F-7.3.9 — All describe the same gap: the session.resumed event with resumeMode/workspaceLost is never published despite the ResumeMode enum being defined; F-4.4.11 also covers sibling skipped/lost events but shares the same root and fix.
+
 Spec §7.2 (table line 138) defines the `session.resumed(resumeMode, workspaceLost, workspaceRecoveryFraction?)` SSE event with a four-value `resumeMode` enum (`full`, `conversation_only`, `partial_workspace`, `coordinator_handoff`).
 
 Implementation:
@@ -4779,6 +5030,8 @@ Effect: clients reattaching after resume have no signal about the resume mode, n
 ---
 
 ### - [ ] F-7.2.4 — (High) — Session inbox + DLQ machinery is entirely unimplemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.4.6 — F-12.4.6 and F-7.2.4 both report the durable inbox and DLQ stores are entirely unimplemented; F-12.4.27 (dead enum note) and F-7.3.12 (DLQ drain on terminal transition) are related sub-aspects.
 
 Spec §7.2 (lines 274–311) defines the session inbox (in-memory default, Redis-list-backed durable mode) and the inbox-to-DLQ migration on `resume_pending`. It enumerates `maxInboxSize`, `message_dropped` receipts on overflow, `inbox_cleared` events on coordinator failover, per-message TTL on the durable inbox, durable-inbox ACK semantics, duplicate-suppression at the adapter, and the `messagesPreservedInDLQ` field.
 
@@ -4846,6 +5099,8 @@ Effect: who-approved-what / who-denied-what is not in the audit log. Post-incide
 
 ### - [ ] F-7.2.9 — (High) — No runtime/adapter code path creates `KindToolUse` interactions for the approve/deny REST endpoints [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-7.2.18 — Both concern §7.2 tool-use approve/deny but describe different defects: no code path creates KindToolUse interactions versus approve/deny not unblocking the runtime.
+
 Spec §7.2 (table line 134) defines the `tool_use_requested(tool_call_id, tool, args)` SSE event that the agent emits when approval is required; the client then resolves it via `POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve|deny`.
 
 Implementation:
@@ -4860,6 +5115,8 @@ Effect: the approve/deny REST endpoints have no producer. Any tool that should r
 
 ### - [ ] F-7.2.10 — (Medium) — `lenny/send_message` returns no `deliveryReceipt` [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.5.6 — Both report lenny/send_message does not return the deliveryReceipt envelope; F-8.5.6 additionally covers messagingScope and rate-limit gaps but shares the receipt root cause.
+
 Spec §7.2 (line 345) requires every `lenny/send_message` call to return a `deliveryReceipt` with status `delivered` | `queued` | `dropped` | `expired` | `rate_limited` | `error`.
 
 Implementation:
@@ -4871,6 +5128,8 @@ Effect: agents cannot distinguish a delivered message from a buffered one; sende
 ---
 
 ### - [ ] F-7.2.11 — (Medium) — `gap_detected` / `checkpoint_boundary` markers on cursor-eviction are not emitted [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.4.1 — Both report the gap_detected frame on cursor/replay eviction is not emitted (Subscribe silently filters the backlog); F-7.2.11 also adds checkpoint_boundary but shares the eviction-marker root cause.
 
 Spec §7.2:
 - Line 143: when a `resumeFromSeq` falls below the gateway's retained backlog, the adapter MUST emit a single protocol-level `gap_detected({"lastSeenSeq": N, "nextSeq": M})` frame before delivering the oldest retained event.
@@ -4898,6 +5157,8 @@ Effect: a sender that received `queued` from `lenny/send_message` has no signal 
 ---
 
 ### - [ ] F-7.2.13 — (Medium) — Coordinator-handoff `session.resumed` synthesis is unimplemented (no last_seq durability either) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.4.3, F-7.3.3 — All three report the missing durable sessions.last_seq column, with the per-session counter held only in process memory; the handoff-synthesis aspect shares the same root cause and fix.
 
 Spec §7.2 (lines 143–145) requires synthesized state frames on coordinator-handoff reattach using a per-session monotonic `SeqNum` counter (`sessions.last_seq`), with explicit guarantees that `session.resumed`, `status_change`, `children_reattached`, `session_complete` are replayed rather than dropped.
 
@@ -4959,6 +5220,8 @@ Effect: clients subscribed to the SSE stream filtering on the spec-documented ev
 ---
 
 ### - [ ] F-7.2.18 — (Medium) — Approve/deny resolution does not unblock the runtime [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-7.2.9 — Both concern §7.2 tool-use approve/deny but describe different defects: no code path creates KindToolUse interactions versus approve/deny not unblocking the runtime.
 
 Spec §7.2 (table lines 124-125): the approve/deny REST call must unblock the agent's blocked tool call so it can proceed (approved) or receive an error (denied).
 
@@ -5129,6 +5392,8 @@ Effect: no audit trail for which recovery attempt produced an outcome; partial-c
 
 ### - [ ] F-7.3.3 — `sessions.last_seq` durable counter is not persisted (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-10.4.3, F-7.2.13 — All three report the missing durable sessions.last_seq column, with the per-session counter held only in process memory; the handoff-synthesis aspect shares the same root cause and fix.
+
 Spec line 397: "`sessions.last_seq` … bigint column that is the authoritative per-session monotonic `SessionEvent.SeqNum` counter. The gateway advances `last_seq` atomically with each persisted event."
 
 Evidence: `pkg/gateway/events/events.go:42–104` `Bus.seq` is a per-replica `map[string]uint64`, lives in process memory; `Publish` increments under a mutex but never touches Postgres. `pkg/gateway/sessionstore/sessionstore.go:28–137` `Session` row has no `LastSeq` field. `pkg/gateway/sessionstore/pgstore/pgstore.go` does not persist a sequence. `grep -rn "last_seq\|LastSeq"` across `pkg/` and `migrations/` returns zero hits.
@@ -5136,6 +5401,8 @@ Evidence: `pkg/gateway/events/events.go:42–104` `Bus.seq` is a per-replica `ma
 Effect: a coordinator handoff or replica restart loses the counter, violating the "source of truth on any disagreement" rule and the "never rewinding or duplicating" guarantee §7.2 places on the synthesised reattach frames.
 
 ### - [ ] F-7.3.4 — No automatic transition into `resume_pending` (High) [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-6.2.14 — Both concern the resume_pending flow but report different defects (missing resuming/resume_pending watchdog caps vs missing automatic transition into resume_pending).
 
 Spec line 399–410 governs the resume flow after pod failure. Step 1 is "Gateway detects session failure"; step 3a transitions to `resume_pending`.
 
@@ -5152,6 +5419,8 @@ Evidence: `grep -rn "pod_evicted\|node_lost\|runtime_crash\|workspace_validation
 Effect: even if pod failure were detected, the gateway has no rule to choose `resume_pending` vs straight-to-`failed`.
 
 ### - [ ] F-7.3.6 — `maxResumeWindowSeconds` timer is not implemented (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-11.3.8 — Both report that maxResumeWindowSeconds is not implemented; the watchdog never sweeps StateResumePending with a dedicated timer.
 
 Spec line 404: "Transition to `resume_pending`; start `maxResumeWindowSeconds` wall-clock timer." Line 406: "If `maxResumeWindowSeconds` fires before pod is allocated → transition to `awaiting_client_action`."
 
@@ -5176,6 +5445,8 @@ Evidence: `pkg/gateway/sessionserver/sessionserver.go:949–952` `transitionResu
 Effect: the visible-vs-internal state distinction §7.3 documents is collapsed to a single instantaneous write. The mid-resume terminal edges from §7.2 are unreachable, and the snapshot-close `final_workspace_ref` / `recovery_generation` / `coordination_generation` bookkeeping is moot.
 
 ### - [ ] F-7.3.9 — `session.resumed` event is not emitted (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.4.11, F-4.4.28, F-7.2.3 — All describe the same gap: the session.resumed event with resumeMode/workspaceLost is never published despite the ResumeMode enum being defined; F-4.4.11 also covers sibling skipped/lost events but shares the same root and fix.
 
 Spec line 138 (referenced from §7.3 via the resume flow): the gateway emits `session.resumed(resumeMode, workspaceLost, workspaceRecoveryFraction?)` on resume. §7.2 enumerates the four `resumeMode` values (`full`, `conversation_only`, `partial_workspace`, `coordinator_handoff`).
 
@@ -5313,6 +5584,8 @@ Effect: SIEM / SOC dashboards cannot filter or alert on the §7.3 lifecycle. Clo
 
 ### - [ ] F-7.3.26 — Workspace size pre-check on resume is not invoked (Low) [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-4.4.10 — Both concern the uninvoked WorkspaceSizePreCheck function but on different paths: F-4.4.10 the pre-checkpoint write path and F-7.3.26 the resume/restore read path.
+
 `pkg/checkpoint/checkpoint.go:220–249` defines `WorkspaceSizePreCheck`. Spec §4.4 requires it before quiescing the runtime for a checkpoint; the resume path benefits from the symmetric check (to refuse a restore whose archive exceeds the limit). Adapter Resume (`pkg/adapter/resume.go:30–80`) extracts the archive without verifying size.
 
 Effect: a runaway restore can exhaust the pod's `emptyDir`. Minor because the kubelet guard backstops it, but spec invariants in §4.4 are not enforced on the read side.
@@ -5350,6 +5623,8 @@ Spec source: `spec/07_session-lifecycle.md:429-465`. Audit scope: gateway upload
 
 ### - [ ] F-7.4.1 — Archive extraction runs in the pod adapter, not in the gateway [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.4.1 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
+
 Spec: §7.4 line 448 — "All archive extraction runs inside the gateway's Upload Handler subsystem ([§4.1]) — it is never delegated to agent pods, and the Upload Handler is isolated from other gateway subsystems by its own goroutine pool, concurrency limits, and circuit breaker."
 
 Implementation: archive entries are decoded and written to disk by `pkg/adapter/workspace/uploadarchive.go` (`extractUploadTar`, `extractUploadZip`), invoked from `FinalizeWorkspace` (`pkg/adapter/staging.go:92`) — i.e., inside the pod adapter. The gateway streams raw archive bytes through `PrepareWorkspace` (`pkg/gateway/podsession/binder.go:268-313`) without parsing them.
@@ -5359,6 +5634,8 @@ There is no Upload Handler subsystem in the gateway. No goroutine pool, no concu
 This regresses the §13.4 trust model (`spec/13_security-model.md:652`: "Upload-side validation is enforced by the gateway's Upload Handler subsystem … pod binaries neither decompress archives nor canonicalize paths on untrusted input").
 
 ### - [ ] F-7.4.2 — §13.4 archive ceilings are not enforced at extraction [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.4.2 — Both describe the §13.4 archive ceilings being defined in pkg/upload but not enforced on the actual extraction path.
 
 Spec: §7.4 lines 448-457 — normative platform ceilings: 256 MiB decompressed, 100:1 ratio, 10 000 entries, 64 MiB per entry, 32 depth, 4096 path length.
 
@@ -5371,6 +5648,8 @@ $ grep -rn '"github.com/lennylabs/lenny/pkg/upload"' . — no hits outside the p
 The actual extractor (`pkg/adapter/workspace/uploadarchive.go`) applies only the `maxExtractBytes = 2 << 30` (2 GiB) total cap defined in `pkg/adapter/workspace/extract.go:17`. None of the per-entry size, decompression ratio, entry count, path depth, or path length caps are enforced. A 10 000 000-entry zip with 100 000:1 compression ratio extracts unchecked up to the 2 GiB cap.
 
 ### - [ ] F-7.4.3 — Non-regular archive entries are silently skipped instead of aborting [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.4.6 — Both report that non-regular archive entries (hardlink, char/block device, FIFO) are silently skipped instead of aborting with non_regular_entry.
 
 Spec: §7.4 line 457 — "`hardlink`, `character-device`, `block-device`, `FIFO`, and `socket` entry types are rejected outright (no option to allow them). Extraction aborts when any such entry is encountered."
 
@@ -5387,6 +5666,8 @@ Implementation: `pkg/adapter/workspace/uploadarchive.go` does not branch on `tar
 The `ValidateSymlinkTarget` function (`pkg/upload/upload.go:208-233`) does enforce the four forbidden-path-traversal targets, but, as in F2, it is never invoked.
 
 ### - [ ] F-7.4.5 — No `upload-archive` REST endpoint; uploadArchive sources cannot be supplied via the §15.1 surface [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.1.9 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
 Spec: §7.1 (`spec/07_session-lifecycle.md:56`) refers to the `uploadToken` as gating `/upload` and `/upload-archive`. §15.1 lists `POST /v1/sessions/{id}/upload` (line 599) as "Upload workspace files (pre-start or mid-session if enabled)" with no archive-specific endpoint, but the workspace plan accepts an `uploadArchive` source variant that requires a previously uploaded archive blob to materialize.
 
@@ -5436,11 +5717,15 @@ Implementation: `handleUpload` (`pkg/gateway/sessionserver/upload.go`) accepts n
 
 ### - [ ] F-7.4.11 — No archive-extraction abort metric is emitted [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.4.3 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
+
 Spec: §7.4 line 462 — "Abort causes are labeled and emitted via `lenny_upload_extraction_aborted_total{error_type}` … plus the pre-existing `size_limit`, `format_error`, and `path_traversal` categories retained for source compatibility."
 
 Implementation: `pkg/observability/metrics/catalog.go:74` declares the metric in the catalog. No production code increments it (`grep -rn "lenny_upload_extraction_aborted_total" pkg/` returns only the catalog and the catalog test). The same is true for `lenny_upload_bytes_total` (line 72) and `lenny_upload_queue_depth` (line 73), and the Upload Handler gauges (lines 161-163). The metrics catalog passes its own coverage test but no run-time counter ever moves.
 
 ### - [ ] F-7.4.12 — No atomic staging→current promotion; no per-§7.4 staging directory [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.4.5 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
 Spec: §7.4 line 433 — "Files are first written to `/workspace/staging`, validated (path traversal protection, size limits, hash verification), then atomically moved to `/workspace/current`."
 
@@ -5456,11 +5741,15 @@ Implementation: `extractUploadTar` and `extractUploadZip` (`pkg/adapter/workspac
 
 ### - [ ] F-7.4.14 — Spec invariant "bytes already written to staging are removed" on quota cap is unimplemented [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.4.18 — Both report that on a quota cap the partial staging bytes are left to age out on TTL instead of being removed at abort time.
+
 Spec: §7.4 line 443 — "If the cap is reached the upload is aborted with `STORAGE_QUOTA_EXCEEDED` and any bytes already written to staging are removed."
 
 Implementation: `pkg/gateway/sessionserver/upload.go:174-186` adjusts the quota reservation on over-stream but leaves the orphaned blob in MinIO (`pkg/gateway/sessionserver/upload.go:177-178`: "The orphaned blob ages out on its TTL."). The TTL is `UploadDefaultTTL = 7*24*time.Hour` (`upload.go:26`). For 7 days a tenant that wedges the gateway with overstream uploads parks (storage_quota_bytes − 1) bytes per attempted upload before they age out. The spec wording is explicit that the partial bytes are removed at abort time.
 
 ### - [ ] F-7.4.15 — `stripComponents` skip path emits no `workspace_plan_strip_components_skip` warning [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.4.10, F-14.1.8 — All three report that the workspace_plan_strip_components_skip warning event is never emitted from the strip-components skip path in uploadarchive.go.
 
 Spec: §7.4 line 459 — "Entries with fewer than N segments (or whose post-strip path is empty) are skipped without aborting extraction and emit a `workspace_plan_strip_components_skip` warning event per skipped entry."
 
@@ -5576,6 +5865,8 @@ Spec: `spec/07_session-lifecycle.md` lines 467–490.
 
 ### - [ ] F-7.5.1 — `setupCommandPolicy` is entirely unimplemented (High, security) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-26.2.7 — Both report that setupCommandPolicy (allowlist/blocklist/shell/maxCommands) is entirely unimplemented with no admission enforcement.
+
 Spec line 477, 481–490 require the gateway to validate every setup command against the runtime's `setupCommandPolicy` before forwarding to the pod and to reject invalid commands with the rejection reason included in the session's setup output. The policy carries `mode` (`allowlist` | `blocklist`), an `allowlist[]` / `blocklist[]` prefix list, `shell` (boolean), and `maxCommands`.
 
 Evidence:
@@ -5604,6 +5895,8 @@ Effect: the "most restrictive execution mode" promised by §7.5 cannot be select
 
 ### - [ ] F-7.5.3 — `workspaceDefaults.setupCommands` (base + derived runtime defaults) are never merged into the executed list (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-5.1.6 — Both report that workspaceDefaults (files and setupCommands) are unmodeled in the Runtime struct and never merged into execution, breaking the §5.1 append-merge.
+
 Spec §5.1 line 198 mandates **append** merge: "Execution order: base setup commands → derived setup commands → client-provided setup commands. Per-command `timeoutSeconds` is preserved from each source." §5.1 line 256 reiterates: "Setup commands run after workspace materialization and before runtime starts."
 
 Evidence:
@@ -5615,6 +5908,8 @@ Evidence:
 Effect: a derived runtime that declares `workspaceDefaults.setupCommands: [pip install -r requirements.txt]` (the very example in `spec/05_runtime-registry-and-pool-model.md:125-126`) does not actually install dependencies — the commands silently never run. The §26 reference-runtime catalog's documented `setupCommands` is dead weight. The deployer-set platform defaults that the spec positions as the strict, server-controlled portion of the setup phase are skipped, and only the (presumably less-trusted) client list is executed.
 
 ### - [ ] F-7.5.4 — Setup-command stdout/stderr are not captured or surfaced (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-16.4.5 — Both report that setup-command stdout/stderr from CombinedOutput is discarded on success and never persisted to EventStore.
 
 Spec line 475 mandates "Fully logged (stdout/stderr captured)." §7.5 line 488 mandates "the rejection reason is included in the session's setup output." §17.7 and the §7.3 `setup_command_failed` retryability classification both require a structured signal back to the gateway.
 
@@ -5636,6 +5931,8 @@ Evidence: `grep -rn "maxCommands\|MaxCommands\|len.*SetupCommand.*>" pkg cmd` re
 Effect: the worst-case input is the only bound — Go's slice limit. A malicious client (or a buggy CI integration) can DoS the setup phase by submitting thousands of trivial commands, each of which the adapter dutifully forks under `/bin/sh -c`. Combined with F4 (no aggregate output capture) the pod can spend hours running commands the operator cannot inspect.
 
 ### - [ ] F-7.5.6 — Per-command default timeout deviates from spec when `timeoutSeconds` is omitted (Medium) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-14.1.10 — Both report that setup.go's 5-minute SetupTimeoutDefault is applied unconditionally, contradicting §14's no-independent-limit behavior when timeoutSeconds is omitted.
 
 Spec §14 line 99: "Optional per-command timeout. **When omitted, the command has no independent time limit** and runs until the runtime's aggregate `setupPolicy.timeoutSeconds` cap … terminates the entire setup phase. If `setupPolicy.timeoutSeconds` is also absent the command runs until the pod is killed by an external deadline."
 
@@ -5842,6 +6139,8 @@ the gateway tree); `pkg/gateway/delegation/service.go::Delegate` body
 
 ### - [ ] F-8.1.2 — 1-F2 (High) — Token Service is not invoked on the delegation path (N3.b, N4) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.2.7 — Both report that the Token Service RFC 8693 child-token exchange leg is never invoked by the delegation path.
+
 §8.1 commits to enforcement living in "the gateway and the Token
 Service, not in the agent code". §8.2's `Child-token minting (internal
 RFC 8693 exchange)` paragraph (around line 59) makes this concrete: at
@@ -5903,6 +6202,8 @@ credential-lease path).
 
 ### - [ ] F-8.1.3 — 1-F3 (Medium) — Three-layer cycle gate hard-codes platform=false (N1, N3, follow-on §8.2) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.2.3 — Both report that delegation/service.go:192 passes only Mode, leaving the three AllowSelfRec layer booleans at false and collapsing the cycle gate's three-layer AND.
+
 §8.1 says the gateway provides the foundational operations; the
 three-layer self-recursion AND gate is one of them (§8.2 details
 platform / runtime / policy layers). §8.1's "platform primitive" claim
@@ -5935,6 +6236,8 @@ Evidence: `pkg/gateway/delegation/service.go` line 192:
 package itself; the gateway never sets these flags.
 
 ### - [ ] F-8.1.4 — 1-F4 (Medium) — `maxDepth` precedence chain is not resolved at admission (N1, follow-on §8.2.bis) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.2.6 — Both report the maxDepth precedence chain not being fully wired so maxDepth is taken verbatim from the caller rather than resolved/enforced.
 
 §8.1's "platform primitive" framing rests on §8.2.bis's normative
 invariant that every effective delegation lease MUST carry a positive
@@ -6045,6 +6348,8 @@ Classification: each finding is *Implemented*, *Partial*, *Missing*, *Deviates*,
 
 ### - [ ] F-8.2.1 — `lenny/delegate_task` MCP tool surface does not match the §8.2 contract [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-8.5.3, F-8.7.1 — All three report the delegate_task input schema omits the spec-mandated fields (target, LeaseSlice, fileExport), the same root cause and fix.
+
 Spec §8.2 lines 13–34 define the signature as:
 
 ```
@@ -6084,6 +6389,8 @@ Implementation:
 Consequence: §8.2's "the gateway rejects any `lease_slice` that exceeds the parent's remaining budget" is not enforced. A child session is admitted with no budget binding regardless of what the parent has remaining. The pure lease package exists but is dead code from the gateway path.
 
 ### - [ ] F-8.2.3 — `lease.PolicyAllowSelfRec` and `lease.RuntimeAllowSelfRec` are hard-coded `false` — cycle gate's three-layer AND is structurally collapsed to "reject every self-recursion under enforce" [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.1.3 — Both report that delegation/service.go:192 passes only Mode, leaving the three AllowSelfRec layer booleans at false and collapsing the cycle gate's three-layer AND.
 
 Spec §8.2 lines 66–79 specify a three-layer AND gate (`Layer 1 — Platform Helm`, `Layer 2 — Runtime.allowSelfRecursion`, `Layer 3 — DelegationPolicy.allowSelfRecursion`) evaluated under `mode: enforce`. A self-recursive hop is admitted iff all three layers are `true`.
 
@@ -6139,6 +6446,8 @@ Consequence: the operator-facing "where is my admission going?" surface is dark.
 
 ### - [ ] F-8.2.6 — Cycle-detection runs on the parent's lineage but `delegationLease.maxDepth` precedence chain is not fully wired; `maxDepth` is taken verbatim from the caller [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.1.4 — Both report the maxDepth precedence chain not being fully wired so maxDepth is taken verbatim from the caller rather than resolved/enforced.
+
 Spec §8.2.bis (lines 81-89) defines a five-layer precedence for `maxDepth`:
 
 1. Explicit client-supplied `delegationLease.maxDepth`.
@@ -6159,6 +6468,8 @@ Consequence: the §8.2.bis "no chain can grow without bound under any mode" inva
 
 ### - [ ] F-8.2.7 — Token Service token-exchange leg of child minting (§8.2 lines 59–63) is not invoked by the delegation path [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.1.2 — Both report that the Token Service RFC 8693 child-token exchange leg is never invoked by the delegation path.
+
 Spec §8.2 lines 59–61 specify that on validation pass the gateway mints the child session's token through an internal RFC 8693 token-exchange call to `POST /v1/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `subject_token` set to the user's JWT, `actor_token` set to the parent session token (populating the child's `act` claim), `scope` narrowed per `LeaseSlice`, and `audience` set to `lenny-gateway`. It further requires that:
 
 - `delegation_depth` is exactly `parent.delegation_depth + 1` (spec line 60).
@@ -6175,6 +6486,8 @@ Consequence: the actor-token freshness check that closes the "stale parent mints
 
 ### - [ ] F-8.2.8 — `target_not_an_agent` rejection of `type: mcp` targets is not enforced [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.5.4 — Both report that lenny/delegate_task does not reject type: mcp targets with target_not_an_agent, citing the same §8.2 line 50.
+
 Spec §8.2 line 50: "`lenny/delegate_task` rejects `type: mcp` targets with `target_not_an_agent`."
 
 Implementation:
@@ -6185,6 +6498,8 @@ Implementation:
 Consequence: a non-agent runtime (an MCP server registered for tool use only) can be coerced into being a delegation target. The error catalog code `target_not_an_agent` is never returned.
 
 ### - [ ] F-8.2.9 — `contentPolicy.maxInputSize` and `contentPolicy.interceptorRef` are not enforced on the delegation path [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.5.1, F-13.5.2 — All describe contentPolicy maxInputSize and interceptorRef being persisted but not enforced on the delegation path.
 
 Spec §8.3 lines 149-157 (referenced by §8.2 step 2b) define `contentPolicy.maxInputSize` as a hard byte cap on `TaskSpec.input` (default 128 KB) and `contentPolicy.interceptorRef` as the `PreDelegation` named interceptor for content scanning. Spec §8.3 enforces these on "every `delegate_task` call".
 
@@ -6284,6 +6599,8 @@ Consequence: a tree of depth N pays N+1 store lookups per delegation. The §8.2.
 
 ### - [ ] F-8.2.17 — PreRoute interceptor chain is not invoked on the child [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.8.11 — Both report the PreRoute interceptor chain is declared but never invoked; F-4.8.11 covers PreRoute/PostRoute generally and F-8.2.17 the child-delegation manifestation of the same gap.
+
 Spec §8.2 line 90: "The gateway runs the `PreRoute` interceptor chain (§4.8) on the child's augmented `TaskSpec`, the same chain that fires during top-level session creation."
 
 Implementation:
@@ -6349,6 +6666,8 @@ Implementation:
 Consequence: only the MCP surface can drive delegation. The §15.2.1 "REST and MCP surfaces stay in lockstep" comment in `mcptools.go:25-26` is aspirational for the delegation path.
 
 ### - [ ] F-8.2.24 — The `pkg/delegation/recovery/recovery.go` package is well-shaped against the §8.10 bottom-up traversal but is not exercised by §8.2 [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.10.1 — Both report that the pkg/delegation/recovery package implementing the §8.10 bottom-up traversal is built but never invoked from production code.
 
 Spec §8.2 cross-references §8.10 only for the virtual child interface storage. The pure recovery package (`pkg/delegation/recovery/recovery.go:115-152`) implements the §8.10 bottom-up traversal correctly, with per-level and tree-wide budgets. It is invoked from the recovery flow (out of scope here) but called out so the §8.2 audit reads it as supporting infrastructure.
 
@@ -6977,6 +7296,8 @@ Evidence collected from the implementation directories the audit was asked to co
 
 ### - [ ] F-8.4.1 — `approvalMode` field is not modelled, parsed, or enforced anywhere in v1 [High] — OPEN
 
+**Potential overlap** (confidence: high) — F-8.4.2, F-8.4.3 — All three concern approvalMode in §8.4 but describe distinct gaps: missing modeling/enforcement, missing ingest enum validation, and missing audit emission.
+
 **Spec requirement.** §8.4 defines `approvalMode` as a closed enum on the delegation lease (`policy` | `approval` | `deny`). §8.3 line 265 shows it as a lease field (`"approvalMode": "policy"`). The values are normative — each one carries a distinct behavioural contract.
 
 **Evidence — absent in the implementation.**
@@ -7010,6 +7331,8 @@ Evidence collected from the implementation directories the audit was asked to co
 
 ### - [ ] F-8.4.2 — No closed-enum validation at admin/API ingest for `approvalMode` [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-8.4.1, F-8.4.3 — All three concern approvalMode in §8.4 but describe distinct gaps: missing modeling/enforcement, missing ingest enum validation, and missing audit emission.
+
 **Spec requirement.** §8.4 defines a closed enum. The §8.4 row for `approval` says it "is accepted at policy registration time but the gateway treats it identically to `policy` mode in v1." This implies a registration-time validator that **accepts** the three documented values and **rejects** any other string. The v1 alias for `approval → policy` is a behavioural choice on top of acceptance, not a substitute for it.
 
 **Evidence.**
@@ -7024,6 +7347,8 @@ Evidence collected from the implementation directories the audit was asked to co
 ---
 
 ### - [ ] F-8.4.3 — Audit emissions for delegation do not record the (would-be) `approvalMode` [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-8.4.1, F-8.4.2 — All three concern approvalMode in §8.4 but describe distinct gaps: missing modeling/enforcement, missing ingest enum validation, and missing audit emission.
 
 **Spec requirement.** §8.4 establishes three distinct behavioural modes. The §8.6 lease-extension audit (line 743) records `approvalMode` for every extension request. By analogy, and as direct consequence of the §11.7 audit rule that every delegation decision be reconstructable from audit, every `delegation.created` / `delegation.rejected` event should record the effective `approvalMode` so an auditor can tell which mode authorised a given child session.
 
@@ -7097,6 +7422,8 @@ Extra (non-§8.5) tools registered alongside: `lenny/create_session` (§15.2.1 m
 
 ### - [ ] F-8.5.1 — `lenny/get_task_tree` omits per-node `runtimeRef` — High [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.9.5 — Both report the MCP get_task_tree treeNode omitting runtimeRef (and using sessionId instead of taskId) versus the correct REST TreeNode.
+
 **Severity: High** (spec MUST violation — wire-schema deviation visible to all callers)
 
 Spec §8.5 row for `get_task_tree`: "Each node includes `taskId`, `state`, and `runtimeRef`."
@@ -7110,6 +7437,8 @@ Evidence:
 - `pkg/gateway/sessionserver/tree.go:14-19` (REST `TreeNode` carries `RuntimeRef`)
 
 ### - [ ] F-8.5.2 — `lenny/get_task_tree` ignores `treeVisibility` — High [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.9.2 — F-8.5.2 and F-8.9.2 both report that get_task_tree applies no treeVisibility filtering; F-13.5.8 covers the separate delegate-time messaging-scope rejection check.
 
 **Severity: High** (security/correctness: spec MUST visibility boundary)
 
@@ -7128,6 +7457,8 @@ Evidence:
 - `grep "TREE_VISIBILITY" pkg/` returns no hits.
 
 ### - [ ] F-8.5.3 — `lenny/delegate_task` does not surface `LeaseSlice` or `fileExport` — High [Medium] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-8.2.1, F-8.7.1 — All three report the delegate_task input schema omits the spec-mandated fields (target, LeaseSlice, fileExport), the same root cause and fix.
 
 **Severity: High** (spec MUST: capability missing; §8.2/§8.7 unenforced via this surface)
 
@@ -7148,6 +7479,8 @@ Evidence:
 
 ### - [ ] F-8.5.4 — `lenny/delegate_task` does not reject `type: mcp` targets with `target_not_an_agent` — High [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.2.8 — Both report that lenny/delegate_task does not reject type: mcp targets with target_not_an_agent, citing the same §8.2 line 50.
+
 **Severity: High** (spec MUST normative behaviour)
 
 Spec §8.2 (line 50): "`lenny/delegate_task` rejects `type: mcp` targets with `target_not_an_agent`."
@@ -7162,6 +7495,8 @@ Evidence:
 - `pkg/gateway/delegation/service.go:156-232` (no `Type` check in `Delegate`)
 
 ### - [ ] F-8.5.5 — `lenny/await_children` is polling, not streaming, and does not yield `input_required` partials — High [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.8.5 — F-8.5.5 and F-8.8.5 both describe await_children not streaming input_required partials; F-11.3.4 is the narrower request_input_expired emission gap, related but a distinct defect.
 
 **Severity: High** (spec MUST: streaming contract; §8.8 multi-child handling pattern broken)
 
@@ -7185,6 +7520,8 @@ Evidence:
 - `pkg/gateway/mcp/mcp.go:1-22` (single-response transport)
 
 ### - [ ] F-8.5.6 — `lenny/send_message` does not return a `deliveryReceipt`, does not enforce `messagingScope`, does not rate-limit — High [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.2.10 — Both report lenny/send_message does not return the deliveryReceipt envelope; F-8.5.6 additionally covers messagingScope and rate-limit gaps but shares the receipt root cause.
 
 **Severity: High** (spec MUST: §7.2/§15.4 normative envelope; §7.2 normative security boundary)
 
@@ -7350,6 +7687,8 @@ Evidence:
 
 ### - [ ] F-8.5.15 — `lenny/cancel_child` schema deviates from spec — Medium [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-8.5.19 — Both concern the cancel_child MCP tool but describe different defects: F-8.5.15 is the schema deviation (extra parentSessionId arg) while F-8.5.19 is the ignored cascadeOnFailure policy in cancelSubtree.
+
 **Severity: Medium** (spec schema MUST)
 
 Spec §8.5: `lenny/cancel_child(child_id)` — single argument `child_id`.
@@ -7404,6 +7743,8 @@ Evidence:
 
 ### - [ ] F-8.5.19 — `cancel_child` cascade-on-failure policy not consulted — Medium [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-8.5.15 — Both concern the cancel_child MCP tool but describe different defects: F-8.5.15 is the schema deviation (extra parentSessionId arg) while F-8.5.19 is the ignored cascadeOnFailure policy in cancelSubtree.
+
 **Severity: Medium** (spec MUST: §8.10 `cascadeOnFailure` per-lease setting)
 
 Spec §8.5 row for `cancel_child`: "cascades to its descendants per policy". Spec §8.10 enumerates `cascadeOnFailure` modes (`cancel_all`, `await_completion`, `detach`).
@@ -7441,6 +7782,8 @@ Evidence:
 
 ### - [ ] F-8.5.22 — `lenny/await_children` does not honour `mode="any"` semantics — Low [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-8.8.12 — Both about lenny/await_children mode handling but target different defects: F-8.5.22 concerns mode=any not cancelling vs cascade interaction, F-8.8.12 concerns any returning first-listed rather than first-chronological child and settled-vs-all naming.
+
 **Severity: Low** (spec §8.8: `any` leaves remaining children running)
 
 Spec §8.8 (line 948): "`any` — return as soon as any child reaches a terminal state. Returns the first `TaskResult`. **Remaining children continue running** — they are not auto-cancelled."
@@ -7465,6 +7808,8 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:819-861`
 
 ### - [ ] F-8.5.24 — `lenny/await_children` does not surface `treeUsage`/`usage` from settled children — Low [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.8.3, F-8.9.4 — All three report that usage and treeUsage rollups on TaskResult are not aggregated or surfaced by the gateway.
 
 **Severity: Low** (spec §8.8 `TaskResult` envelope)
 
@@ -7565,6 +7910,8 @@ Each is mapped to the implementation below.
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:250–267`; `pkg/gateway/leasecontrol/membudget.go:223–237`; `pkg/delegation/lease/lease.go`.
 
 ### - [ ] F-8.6.4 — GatewayControl gRPC listener has no TLS and no auth [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-15.3.1 — Both report that the gateway-hosted GatewayControl gRPC listener uses bare grpc.NewServer() with no mTLS/auth despite the spec mandating mTLS.
 
 **Spec:** §4.7 (line 616) declares the gateway↔adapter contract as "internal gRPC/HTTP+mTLS API". §8.6 (line 627) names the channel as "the **adapter↔gateway gRPC lifecycle**", which is the same secured channel.
 
@@ -7798,6 +8145,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 ### - [ ] F-8.7.1 — `delegate_task` accepts no `fileExport` argument and the file-export materialization path does not exist [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-8.2.1, F-8.5.3 — All three report the delegate_task input schema omits the spec-mandated fields (target, LeaseSlice, fileExport), the same root cause and fix.
+
 **Spec:** §8.7 lines 749–783 — `fileExport` (single or array) is a normative part of `delegate_task`, with the rebasing rule, multi-entry ordering, and per-entry `source` + `destPrefix` semantics. §4.8 line 1049 (`PreDelegation` row) lists `fileExport` as an immutable interceptor-payload field, presupposing it is on the request.
 
 **Implementation evidence:**
@@ -7880,6 +8229,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 ### - [ ] F-8.7.9 — `delegation.export_file_scan_rejected` and `delegation.export_scan_failed_open` audit events are not emitted [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-13.5.12 — F-13.5.12 and F-8.7.9 both report the export-path audit events (notably delegation.export_scan_failed_open) are unemitted; the other members cover distinct export-path defects (error code, metrics, wiring, cycle-audit pair).
+
 **Spec:** §8.3 rule 5 (line 168) and §11.7 (lines 69–70) — every REJECT outcome MUST emit `delegation.export_file_scan_rejected` (with `policy_name`, `interceptor_ref`, `file_path`, `file_size`, `reason`); every fail-open admission MUST emit `delegation.export_scan_failed_open` (with `policy_name`, `interceptor_ref`, `file_path`, `file_size`, `reason ∈ {timeout, grpc_error, unreachable}`).
 
 **Implementation evidence:**
@@ -7911,6 +8262,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 ### - [ ] F-8.7.12 — `INTERCEPTOR_WEAKENING_COOLDOWN` is not enforced at `delegate_task` time [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.5.7 — Both describe INTERCEPTOR_WEAKENING_COOLDOWN not enforced at delegate_task after a scanExportedFiles flip; F-4.8.17 is the unrelated interceptor fail_policy audit event, which it explicitly disclaims.
+
 **Spec:** §8.3 line 181 — during the `gateway.interceptorWeakeningCooldownSeconds` (default 60s) window following a `scanExportedFiles: true → false` flip, `delegate_task` calls whose effective `DelegationPolicy` is the affected policy MUST reject with `INTERCEPTOR_WEAKENING_COOLDOWN` (TRANSIENT, HTTP 503).
 
 **Implementation evidence:**
@@ -7921,6 +8274,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 **Impact:** A stolen admin credential that flips `scanExportedFiles` off can use a wide window to push delegations past a now-disabled scanner. The audit emits, but the bulk-bypass window the cooldown was designed to close is open.
 
 ### - [ ] F-8.7.13 — Child→parent file delivery (`TaskResult.artifactRefs`) is unimplemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-8.8.2 — Both report unimplemented TaskResult.output artifactRefs (child-to-parent file delivery); F-8.8.2 is the broader description covering parts and artifactRefs.
 
 **Spec:** §8.7 audit-trail boundary cross-references the `TaskResult.output.artifactRefs` shape shown in §8.8 (line 896), where a completed child returns `lenny-blob://tenant_acme/session_xyz/part_ws001?ttl=...` references the parent can read.
 
@@ -8002,6 +8357,9 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 - **Suggested resolution:** Define a `pkg/task/record.go` (or equivalent) with the §8.8 envelope, gate every write through a `SchemaVersion: 1` constant, and decide whether the row is materialized in Postgres (new `task_records` table joined to `sessions`) or projected on-read from `sessions` + `transcripts` + `usage`. Either path must carry the canonical `messages[{role, parts, state}]` envelope so the §15.5 forward-read rule applies.
 
 ### - [ ] F-8.8.2 — TaskResult.output (parts + artifactRefs) is unimplemented [High] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-8.7.13 — Both report unimplemented TaskResult.output artifactRefs (child-to-parent file delivery); F-8.8.2 is the broader description covering parts and artifactRefs.
+
 - **Spec:** Lines 887–917 — `TaskResult.output = {parts: OutputPart[], artifactRefs: ["lenny-blob://..."]}`. The completed example carries a full `usage`, the failure example carries the same `usage` minus `treeUsage`, plus an `error` block.
 - **Evidence:**
   - `pkg/gateway/mcptools/mcptools.go:1306-1334` defines `taskResult{SchemaVersion, TaskID, State, Error}` with no `Output` field at all and a comment at line 1308 acknowledging "the §8.8 usage and treeUsage rollups are not yet tracked".
@@ -8011,6 +8369,9 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 - **Suggested resolution:** Wire the child's terminal output parts (collected from the executor / event stream) into the archive write at `pkg/gateway/sessionserver/usage.go:174-188`, and surface them in `toTaskResult` at `pkg/gateway/mcptools/mcptools.go:1323-1334`. Materialize `artifactRefs` from the §15.4.1 `lenny-blob://` URIs already produced by the blob store (`pkg/blobstore`).
 
 ### - [ ] F-8.8.3 — usage and treeUsage fields are not aggregated or surfaced [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.5.24, F-8.9.4 — All three report that usage and treeUsage rollups on TaskResult are not aggregated or surfaced by the gateway.
+
 - **Spec:** Lines 897–917 — `usage = {inputTokens, outputTokens, wallClockSeconds, podMinutes, credentialLeaseMinutes}` and `treeUsage = {inputTokens, outputTokens, wallClockSeconds, podMinutes, credentialLeaseMinutes, totalTasks}`. Line 917 — "`treeUsage` is populated by the gateway from the task tree and is only available after all descendants have settled. ... For in-progress tasks or tasks with unsettled descendants, `treeUsage` will be `null`."
 - **Evidence:**
   - `pkg/gateway/usagestore/usagestore.go:18-54` carries only `{Sessions, Tokens{Input,Output}, PodMinutes}` per record. It has no `wallClockSeconds`, no `credentialLeaseMinutes`, no `totalTasks`, and no per-task (vs per-session) rollup. `grep -rn "wallClockSeconds\|credentialLeaseMinutes" /Users/joan/projects/lenny/pkg` confirms neither field name appears anywhere outside the spec.
@@ -8028,6 +8389,9 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 - **Suggested resolution:** Add `Category` and `RetriesExhausted` to `taskError` and to the archived `error` block, sourcing `Category` from the existing taxonomy and `RetriesExhausted` from the session's recovery generation / retry-budget counter.
 
 ### - [ ] F-8.8.5 — lenny/await_children does not stream input_required partial yields or request_input_expired [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.5.5 — F-8.5.5 and F-8.8.5 both describe await_children not streaming input_required partials; F-11.3.4 is the narrower request_input_expired emission gap, related but a distinct defect.
+
 - **Spec:** Lines 945–979.
   - Line 951 — "When a child enters `input_required` state, the parent's `lenny/await_children` call yields a partial result carrying the child's question and `requestId`. The gRPC `AwaitChildren` call is a streaming response — it yields partial events before the final settled result."
   - Lines 953–971 define multi-child `input_required` re-await semantics: a single open stream can yield multiple `input_required` partial results without close/reopen.
@@ -8040,6 +8404,9 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 - **Suggested resolution:** Convert `lenny/await_children` to a streaming response (MCP supports SSE-style tool result streaming) and emit a partial-result frame when any awaited child enters `input_required`, plus a separate `request_input_expired` frame when the §11.3 `maxRequestInputWaitSeconds` fires.
 
 ### - [ ] F-8.8.6 — deadlock_detected event and DEADLOCK_TIMEOUT failure are not implemented [High] — OPEN
+
+**Potential overlap** (confidence: medium) — F-9.2.20 — Both stem from the absent deadlock detector, but F-8.8.6 reports the missing event/DEADLOCK_TIMEOUT while F-9.2.20 reports the moot elicitation-chain interaction.
+
 - **Spec:** Lines 981–997.
   - Line 981 defines the subtree heuristic, the per-pool `maxDeadlockWaitSeconds` (default 120), and the `DEADLOCK_TIMEOUT` failure code applied to "the deepest blocked tasks".
   - Lines 983–995 define the `deadlock_detected` event schema: `{type, deadlockedSubtreeRoot, blockedRequests: [{requestId, taskId, blockedSince}], detectedAt, willTimeoutAt}`.
@@ -8081,6 +8448,9 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 - **Suggested resolution:** When the `task_records` table is added (per F-8.8.1), add `schema_version INT NOT NULL DEFAULT 1` and make the create path the sole writer of the column. Update / read paths must SELECT and re-emit the value rather than re-deriving it.
 
 ### - [ ] F-8.8.12 — lenny/await_children mode "settled" is treated as a synonym for "all" with no separate semantics surfaced [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-8.5.22 — Both about lenny/await_children mode handling but target different defects: F-8.5.22 concerns mode=any not cancelling vs cascade interaction, F-8.8.12 concerns any returning first-listed rather than first-chronological child and settled-vs-all naming.
+
 - **Spec:** Lines 945–949 — `settled` is explicitly defined as "equivalent to `all`" but the spec keeps both names because external MCP / A2A clients may call either. `any` is normatively defined as "Remaining children continue running — they are not auto-cancelled."
 - **Evidence:** `pkg/gateway/mcptools/mcptools.go:425, 442-443` accept all three values. `collectChildResults` at `mcptools.go:1385-1411` collapses `settled` and `all` into the same path. The `any` branch returns `terminal[:1]` and the remaining unsettled children are left running. So far this matches the spec.
 - **Gap:** The narrower issue is that the `any` mode returns *the first child in childIDs order* (`mcptools.go:1402-1404`) rather than the first child to reach a terminal state (chronological). The spec says "return as soon as any child reaches a terminal state. Returns the first `TaskResult`". The current poll loop returns the *first-listed* terminal child, which can be the one that settled last, depending on poll interleaving.
@@ -8134,6 +8504,9 @@ Section §8.9 is a short normative declaration: the gateway maintains a complete
 - **Suggested resolution:** Extend both `TreeNode` (REST) and `treeNode` (MCP) with the spec-named fields. Source `pod` from `Session.PoolRef` (or a stronger pod identity if one is tracked elsewhere), `lease` from the lease record persisted alongside the session, `budget consumed` from the Redis delegation counters keyed by `root_session_id`, and `failure history` from a new per-session retry / recovery audit. `generation` requires a new monotonic counter incremented on each recovery reattach.
 
 ### - [ ] F-8.9.2 — `treeVisibility` filtering (full / parent-and-self / self-only) is not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.5.2 — F-8.5.2 and F-8.9.2 both report that get_task_tree applies no treeVisibility filtering; F-13.5.8 covers the separate delegate-time messaging-scope rejection check.
+
 - **Spec:** Lines 311–326 — `treeVisibility` controls the scope of the task tree visible via `lenny/get_task_tree`. Three values, ordered `full → parent-and-self → self-only`, default `"full"`. Line 540 ties this to the MCP tool: "Visibility is controlled by the `treeVisibility` field on the delegation lease". Line 623 — "Returns the task hierarchy visible to the calling session (scoped by `treeVisibility`)."
 - **Evidence:**
   - `grep -rn "treeVisibility\|TreeVisibility\|VisibilityFull\|VisibilityParent\|VisibilitySelf" /Users/joan/projects/lenny/pkg/` returns one hit at `pkg/gateway/sessionserver/tree.go:35` — a comment that acknowledges the `parent-and-self` / `self-only` scoping is "applied by the delegation-policy layer that ships with `lenny/delegate_task`" but no such filter exists.
@@ -8153,6 +8526,9 @@ Section §8.9 is a short normative declaration: the gateway maintains a complete
 - **Suggested resolution:** Add a `0050_session_tree_archive.up.sql` migration creating the table with columns `(tenant_id, root_session_id UUID, node_session_id UUID, parent_session_id UUID, state TEXT, result JSONB, settled_at TIMESTAMPTZ, archived_at TIMESTAMPTZ, completion_seq BIGINT)`, FKs to `sessions(id)`, and RLS by `tenant_id`. Implement `pkg/gateway/treearchive/pgstore` against the `treearchive.Store` interface and switch the gateway binary off `NewMemory()`. Add `completion_seq` so the §15.1 reattach test's `completion_seq > resumeFromSeq` predicate has a real column to read.
 
 ### - [ ] F-8.9.4 — `treeUsage` is not aggregated or surfaced; no tree-walk usage rollup exists [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.5.24, F-8.8.3 — All three report that usage and treeUsage rollups on TaskResult are not aggregated or surfaced by the gateway.
+
 - **Spec:** §8.8 lines 905–917 — `treeUsage = {inputTokens, outputTokens, wallClockSeconds, podMinutes, credentialLeaseMinutes, totalTasks}`. Line 917 — "`treeUsage` is populated by the gateway from the task tree and is only available after all descendants have settled. ... For in-progress tasks or tasks with unsettled descendants, `treeUsage` will be `null`."
 - **Evidence:**
   - `grep -rn "treeUsage\|TreeUsage" /Users/joan/projects/lenny/pkg/` returns one hit: the comment "the §8.8 usage and treeUsage rollups are not yet tracked" at `pkg/gateway/mcptools/mcptools.go:1308`.
@@ -8163,6 +8539,9 @@ Section §8.9 is a short normative declaration: the gateway maintains a complete
 - **Suggested resolution:** Add a `treeUsage` aggregator that walks the §8.9 tree (joining `sessions` and `session_tree_archive`), sums the canonical usage axes, returns `null` while any descendant is non-terminal, and threads the result into `toTaskResult` and the §15.1 `GET /v1/sessions/{id}/usage` surface. Extend the archive to record per-node usage when the node is archived.
 
 ### - [ ] F-8.9.5 — MCP `get_task_tree` response omits `runtimeRef` and uses `sessionId` instead of `taskId` [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.5.1 — Both report the MCP get_task_tree treeNode omitting runtimeRef (and using sessionId instead of taskId) versus the correct REST TreeNode.
+
 - **Spec:** Line 540 — "Each node includes `taskId`, `state`, and `runtimeRef`." (Describing the `lenny/get_task_tree` MCP result.)
 - **Evidence:**
   - `pkg/gateway/mcptools/mcptools.go:1111-1116` — `type treeNode struct { SessionID string json:"sessionId"; State string; Children []treeNode }`. No `runtimeRef`, no `taskId`.
@@ -8252,6 +8631,8 @@ guarantee, and the policy/orphan-cap audit events are all unimplemented.
 ### Findings
 
 ### - [ ] F-8.10.1 — 1 — `pkg/delegation/recovery` is never invoked [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-8.2.24 — Both report that the pkg/delegation/recovery package implementing the §8.10 bottom-up traversal is built but never invoked from production code.
 
 **Severity:** High (MUST gap; the §8.10 bottom-up traversal is the
 section's central correctness story.)
@@ -8781,12 +9162,16 @@ codebase, but that gap belongs to a §8.9 audit rather than this one.
 
 ### - [ ] F-9.1.2 — Per-connector intra-pod MCP servers are not implemented [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-9.3.2 — Both report that the per-connector intra-pod MCP server slot (ConnectorServers) in the adapter manifest is never populated by any production code path.
+
 - **Spec:** "Adapter ↔ Runtime (intra-pod) | MCP (local Unix socket servers) | Platform tools, per-connector tool servers." (line 8) and §9.3: "Each connector in a session's effective delegation policy gets its own independent MCP server in the adapter manifest." (line 142)
 - **Evidence:** `pkg/adapter/manifest.go:95-97` declares the `ConnectorServers []ManifestConnector` slot, and `writeSessionManifest` (`manifest.go:152-179`) writes it without ever populating it. A repo-wide `grep -rn "@lenny-connector\|lenny-connector-" /Users/joan/projects/lenny/pkg/` returns only the spec mention in the manifest doc and the empty-array test assertion (`manifest_test.go:173`). No adapter code resolves an authorized connector list, opens a Unix socket per connector, or registers MCP tools per connector. `cmd/lenny-adapter/main.go` carries no connector-MCP wiring; the connector-OAuth flow on the gateway (`pkg/gateway/admin/connector_oauth.go`) terminates at token storage in `connectorcredstore`, with no in-pod surface that consumes those tokens.
 - **Gap:** A `type: agent` runtime cannot invoke any external tool via the per-connector MCP servers §9.1 names. The connector registry → gateway OAuth flow → in-pod tool invocation chain is broken at the in-pod end. Sessions whose delegation policy permits a connector cannot exercise it.
 - **Suggested resolution:** Add a per-connector MCP-server factory in `pkg/adapter/` that (1) resolves the session's connector authorization from a manifest field populated by the gateway, (2) opens `@lenny-connector-<id>` sockets, (3) proxies `tools/list` and `tools/call` to the registered external MCP endpoint with the gateway-held OAuth token, and (4) populates the manifest's `ConnectorServers` slot accordingly. Add the corresponding gateway-side external MCP client (see F-9.1.5).
 
 ### - [ ] F-9.1.3 — Gateway-side `/mcp/runtimes/{name}` dedicated endpoints for `type:mcp` runtimes are absent [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.1.9 — Both report the dedicated /mcp/runtimes/{name} endpoint for type:mcp runtimes is not mounted; same gap (one marked CLOSED, one OPEN, but same defect).
 
 - **Spec:** "Gateway ↔ `type:mcp` runtimes | MCP (dedicated endpoints at `/mcp/runtimes/{name}`) | Direct MCP server access. Implicit session for audit/billing." (line 11). §15.1 line 583: "Each enabled `type: mcp` runtime gets a dedicated MCP endpoint at `/mcp/runtimes/{runtime-name}`. Standard MCP capability negotiation. Not aggregated. An implicit session record is created per connection for audit and billing."
 - **Evidence:** `cmd/lenny-gateway/main.go:1352` mounts `/mcp` only; no `/mcp/runtimes/...` mux pattern exists. `grep -rn "mcp/runtimes" /Users/joan/projects/lenny --include="*.go"` returns only test files and a deferral comment. `tests/tier4_integration/scaffolds_test.go:200-207` documents the decision: "The dedicated `/mcp/runtimes/{name}` surface is a documented v2 follow-on; the §15.1 REST path is the v1 type:mcp entry point." `BUILD-PROGRESS.md:53` echoes this — `type: mcp` sessions reuse the standard `POST /v1/sessions` REST path. No `runtimeRef`-keyed MCP handler exists; no "implicit session for audit/billing" creation path is wired.
@@ -8816,6 +9201,8 @@ codebase, but that gap belongs to a §8.9 audit rather than this one.
 
 ### - [ ] F-9.1.7 — Gateway `/mcp` adapter omits Streamable-HTTP SSE channel [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-15.2.2 — Both report the MCP surface is request/response JSON-RPC only and lacks the spec's Streamable HTTP / SSE channel and resume.
+
 - **Spec:** "Client ↔ Gateway | MCP (Streamable HTTP) via `ExternalAdapterRegistry`" (line 7). §15.1 line 1282-1335 details: "exposes the gateway as an MCP server over Streamable HTTP via the `MCPAdapter`", with mandatory event-stream resume (SSE `id:`), 20s keepalive, `Last-Event-ID` resume, and SSE `gap_detected` frames.
 - **Evidence:** `pkg/gateway/mcp/mcp.go:20-21` package doc: "Streaming (the MCP Streamable-HTTP SSE channel) is post-v1 in this minimal adapter — every method returns a single JSON-RPC response." The handler (`mcp.go:186-216`) only services `POST /mcp` with synchronous JSON-RPC; no SSE response path, no `text/event-stream` Content-Type, no keepalive timer, no replay buffer, no `resumeFromSeq` parameter on `initialize` or any other method, no `gap_detected` envelope. `ProtocolVersion = "2025-06-18"` is declared (line 35) but the Streamable-HTTP SSE half of that revision's transport contract is absent.
 - **Gap:** A spec-conformant MCP client that opens an SSE stream to `/mcp` after `initialize` receives nothing — the gateway's MCP surface is request/response-only, not bidirectional. The §15.1 line 1335 explicit override (`MCPAdapter.OutboundCapabilities()` non-empty) is the contract the implementation breaks. Interactive streaming sessions and the `attach_session` resume path the MCP adapter is supposed to anchor cannot function.
@@ -8836,6 +9223,8 @@ codebase, but that gap belongs to a §8.9 audit rather than this one.
 - **Suggested resolution:** Add `POST /v1/sessions/{id}/delegations` (delegate via REST) and `DELETE /v1/sessions/{id}/delegations/{child_id}` (cancel via REST) to the REST adapter, dispatching to `pkg/gateway/delegation.Service`. Flip `SupportsDelegation: true` in `restAdapterCapabilities()`. The MCP surface already does this; the REST surface should pull even.
 
 ### - [ ] F-9.1.10 — Gateway `/mcp` MCP protocol version declared as `2025-06-18` but intra-pod and `type:mcp` adapter use `2025-03-26` [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-15.2.1, F-15.5.4 — All three report absent MCP version negotiation with a hard-coded ProtocolVersion constant and missing two-version concurrency/deprecation handling.
 
 - **Spec:** §9.1 implies a single MCP version per boundary; §15.1 lines 1322-1326 list `2025-06-18` and `2025-03-26` as both supported, with deprecation rules.
 - **Evidence:** `pkg/gateway/mcp/mcp.go:35 ProtocolVersion = "2025-06-18"` (gateway-edge `/mcp`); `pkg/adapter/mcp/server.go:15 ProtocolVersion = "2025-03-26"` (intra-pod platform MCP); `pkg/adapter/mcp/client.go:79` (uses the same `2025-03-26` constant) sends it on the client-side `initialize`; `cmd/runtimes/mcp-reference/main.go:63 protocolVersion = "2025-03-26"`. The two versions are accepted by spec but the implementation hardcodes each — there is no per-connection negotiation against a peer's `protocolVersion` request field, and no `MCP_PROTOCOL_VERSION_RETIRED` handler.
@@ -9048,6 +9437,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 ### - [ ] F-9.2.17 — `respond_to_elicitation` MCP tool is not registered; only the REST endpoints exist [Low] — OPEN
 
+**Potential overlap** (confidence: high) — F-15.2.13 — Both concern §9.2 elicitation over MCP but report different gaps (missing per-kind wire-projection/elicitation-create dispatch vs the unregistered respond_to_elicitation MCP tool).
+
 - **Spec:** Line 108. The spec refers to `respond_to_elicitation(elicitation_id, response)` as a client-callable surface.
 - **Evidence:**
   - `pkg/gateway/sessionserver/interactions.go:42-69`: the REST endpoints `POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond|dismiss` are implemented and enforce the `(session_id, user_id, elicitation_id)` triple with `404 ELICITATION_NOT_FOUND` for any mismatch (`:122`).
@@ -9072,6 +9463,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 - **Gap:** An agent pod can self-declare `initiatorType: connector` and bypass the agent-initiated URL-mode controls. The §9.2 distinction between "gateway-initiated" connector and "agent-initiated" agent collapses into a self-asserted string at the tool surface.
 
 ### - [ ] F-9.2.20 — Subtree deadlock detector does not interact with elicitation chains [Info] — OPEN
+
+**Potential overlap** (confidence: medium) — F-8.8.6 — Both stem from the absent deadlock detector, but F-8.8.6 reports the missing event/DEADLOCK_TIMEOUT while F-9.2.20 reports the moot elicitation-chain interaction.
 
 - **Spec:** Line 110. "Elicitation chains and `input_required` chains are independent blocking mechanisms, but both participate in the gateway's subtree deadlock detection."
 - **Evidence:**
@@ -9230,6 +9623,8 @@ Files:
 
 ### - [ ] F-9.3.2 — Per-connector MCP server in adapter manifest never populated [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-9.1.2 — Both report that the per-connector intra-pod MCP server slot (ConnectorServers) in the adapter manifest is never populated by any production code path.
+
 Spec (§9.3, lines 142, 146–148): "Each connector in a session's
 effective delegation policy gets its own independent MCP server in
 the adapter manifest." Step 1 of the OAuth flow then requires: "Pod
@@ -9257,6 +9652,8 @@ Files:
 - `/Users/joan/projects/lenny/pkg/adapter/manifest.go:95-105, 152-`
 
 ### - [ ] F-9.3.3 — Refresh-token rotation grant unimplemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.3.5 — Both describe the unimplemented connector refresh-token rotation grant against the same connector_credentials schema and store.
 
 Spec (§9.3, line 152): "Gateway connector receives and stores
 resulting tokens (encrypted, never in pods)." Implicit in this is the
@@ -9688,6 +10085,8 @@ Verdict: **MISSING** — deployers shipping a custom MemoryStore (the explicit M
 
 ### - [ ] F-9.4.3 — (High) — §12.8 `ValidateMemoryStoreErasure` startup preflight is absent [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.1.4, F-12.2.10, F-12.8.9 — All four report the §12.8 ValidateMemoryStoreErasure startup and per-job preflight is absent, viewed from different referencing sections.
+
 Spec wording (§9.4 line 196): "The erasure job additionally performs the runtime preflight described in [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) ('MemoryStore erasure preflight') to detect no-op stub implementations that satisfy the signature without performing deletion."
 
 Cross-referenced spec (`spec/12_storage-architecture.md:746`): the gateway must run `ValidateMemoryStoreErasure(ctx, store MemoryStore)` at startup, write a synthetic `(tenantID=__preflight__, userID=__preflight_user__)` row, invoke `DeleteByUser`, requery, and **refuse to start** with `FATAL: MemoryStore preflight failed …` if the row survives. The preflight also covers `DeleteByTenant`.
@@ -9884,6 +10283,8 @@ Evidence was gathered via grep/find across `pkg/`, `cmd/lenny-gateway/`, `charts
 
 ### - [ ] F-10.1.1 — Gateway never updates the HPA scale-out gauges. (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.1.3 — Both report the gateway HPA scale-out gauges are registered but never updated by any production code path; F-4.1.3 is marked CLOSED.
+
 Spec: lines 63 ("Each gateway replica exposes `lenny_gateway_active_streams`…"), 93 (leading-indicator queue depth and rejection rate "surface both through the Prometheus Adapter or KEDA"), and 65 (queue depth is the **primary HPA scale-out trigger**).
 
 Implementation: `/Users/joan/projects/lenny/pkg/gateway/gatewaymetrics/gatewaymetrics.go` lines 76–96 declare the three gauges. Lines 277–296 define `SetActiveStreams`, `SetRequestQueueDepth`, `SetRejectionRate`. A full grep across `pkg/` and `cmd/` returns only `gatewaymetrics.go` and `gatewaymetrics_test.go`; no production code path calls any of the three setters. Result: every gateway replica exposes the three metrics with a constant 0 on `/metrics`. The HPA scale-out trigger (primary), the alternative secondary metric, and the second leading-indicator metric are all wired into the Helm autoscaler (`/Users/joan/projects/lenny/charts/lenny/templates/autoscaling-gateway.yaml` lines 56–82, 148–157) but the input signals are flat. The autoscaler will never observe queue pressure and will not scale out before CPU rises, which is the explicit mechanism (a) in §10.1 lines 77–78. `SetActiveSessions` (line 271) is in the same state — only `gatewaymetrics_test.go` calls it. The catalog declares but does not emit `lenny_gateway_replica_count`, `lenny_gateway_max_sessions_per_replica`, and `lenny_gateway_min_replicas` (referenced by `pkg/alerting/rules/rules.go:181` and `:579`); the `GatewaySessionBudgetNearExhaustion` and gateway-replica-count alerts are therefore inert.
@@ -9895,6 +10296,8 @@ Spec: line 27 ("**Fallback:** If Redis is unavailable, replicas acquire coordina
 Implementation: `/Users/joan/projects/lenny/pkg/gateway/leasestore/leasestore.go` lines 16–17 state explicitly "§12.4 specifies a Postgres advisory-lock fallback for the Redis outage window; that degraded-mode path is not yet implemented." Lease coordination in `/Users/joan/projects/lenny/pkg/gateway/coordination/coordination.go` is Redis-only — it calls `leasestore.Acquire` once per session per sweep with no fallback (lines 80–106). No `coordination_lease` table exists in `/Users/joan/projects/lenny/migrations/`; no `coordination_generation` column exists on `sessions`; `grep -rn "coordination_generation"` returns zero matches in `pkg/` and `migrations/`. No `CoordinatorFence` proto message or RPC exists; `grep -rn "CoordinatorFence"` returns zero matches across the repository. No fence-gap detection, no tenant-mismatch guard, no pre-CAS session read priming step exists. Result: a Redis outage produces uncoordinated sessions until Redis returns; the spec-mandated Postgres fallback that keeps coordination working through a Redis-only outage is absent.
 
 ### - [ ] F-10.1.3 — Dual-store unavailability degraded mode is not implemented. (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.4.17 — Both report dual-store degraded mode is unimplemented at the gateway (no PLATFORM_DEGRADED emission, no detection) despite the proto enum and alert rule existing.
 
 Spec: lines 39–45 (the full **Dual-store unavailability** subsection: 503 with `Retry-After: 10s` on `session.create`; coordinator hold timer; `dualStoreUnavailableMaxSeconds` countdown defaulting to 60s; `lenny_dual_store_unavailable` gauge fired immediately on detection; `DualStoreUnavailable` alert; `PLATFORM_DEGRADED` SSE event within 1s on every active client stream).
 
@@ -9914,6 +10317,8 @@ Implementation: `lenny_orphan_session_reconciliations_total` is declared in the 
 
 ### - [ ] F-10.1.6 — preStop drain hook absent on the gateway Deployment. (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.4.26 — Both report the absent gateway preStop drain hook and tiered-cap selection that the eviction-checkpoint/rolling-update story depends on.
+
 Spec: lines 97–161 — preStop staged drain is the §10.1 mandate for safe rolling updates and HPA-driven scale-down. Spec lines 116–124 add a CRD validation rule that requires `terminationGracePeriodSeconds ≥ max_tiered_checkpoint_cap + checkpointBarrierAckTimeoutSeconds + 30` (210s with defaults) and the Helm chart "sets `terminationGracePeriodSeconds: 240` by default to provide a 30s safety margin".
 
 Implementation: `/Users/joan/projects/lenny/charts/lenny/templates/gateway-deployment.yaml` lines 116–253 define the gateway PodSpec. The PodSpec sets no `lifecycle.preStop` hook, no `terminationGracePeriodSeconds`, and no staged readiness flip. `grep -rn "preStop\|terminationGracePeriodSeconds"` across `charts/lenny/templates/` returns zero matches for the gateway. `grep -rn "preStop\|PreStop\|terminationGrace"` across `pkg/gateway/` and `cmd/lenny-gateway/` returns zero relevant matches (only unrelated occurrences of `drain` in billing and audit packages). `cmd/lenny-gateway/main.go` lines 1740–1784 implement a basic SIGTERM handler that calls `httpSrv.Shutdown(ctx)` and `gatewayCtrlSrv.GracefulStop()` — no tiered checkpoint wait, no CheckpointBarrier fan-out, no active-stream drain loop. Kubernetes therefore applies its default `terminationGracePeriodSeconds: 30s` and SIGKILLs every gateway pod 30 seconds after SIGTERM, which is below the 90s tiered checkpoint cap and the 90s `checkpointBarrierAckTimeoutSeconds`. Every rolling update and HPA-driven scale-down is guaranteed to interrupt in-flight checkpoints and streams.
@@ -9925,6 +10330,8 @@ Spec: lines 163–181 (CheckpointBarrier protocol for rolling updates: barrier-t
 Implementation: `grep -rn "CheckpointBarrier"` matches only the catalog entries (`lenny_checkpoint_barrier_ack_total`, `lenny_checkpoint_barrier_ack_duration_seconds`) and the pool-config validator's package doc string mentioning `checkpointBarrierAckTimeoutSeconds`. No proto message exists for the barrier RPC; no `session_checkpoint_meta` Postgres table exists. `barrier_id` is not produced anywhere. `lenny_coordinator_resume_deduplicated_total`, `lenny_prestop_cap_selection_total`, `lenny_prestop_barrier_target_source_total`, and `lenny_gateway_sigkill_streams_total` are catalog-only entries; no emitter exists. The `PreStopCapFallbackRateHigh` alert (`pkg/alerting/rules/rules.go:755`) is consequently inert.
 
 ### - [ ] F-10.1.8 — Partial-manifest BarrierAck-timeout capture path (CPS-007) not implemented. (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.13, F-4.4.2 — All three describe the missing partial-manifest schema/table and code path (no checkpoint_manifest table, no partial_object_key_prefix, no writer/cleanup), same root cause and fix.
 
 Spec: lines 126–157 (the entire partial-manifest intent-row-first ordering, chunked-object storage model, reassembly on resume, supersede-on-write, and the `checkpoint_manifest` schema with `baseline_full_checkpoint_bytes`, `partial_object_key_prefix`, `coordination_generation`, etc.) and lines 169–181 (the BarrierAck-timeout partial-capture path that finalises an existing intent row).
 
@@ -9950,11 +10357,15 @@ Implementation: the chart does not deploy the Prometheus Adapter (it is an exter
 
 ### - [ ] F-10.1.12 — `gateway.maxSessionsPerReplica` is unenforced inside the binary. (Medium) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.1.4 — Both report gateway.maxSessionsPerReplica is never plumbed into the gateway binary so the capacity-ceiling gauge/alert cannot function; F-4.1.4 is CLOSED but describes the identical defect.
+
 Spec: line 65 ("`lenny_gateway_active_sessions / gateway.maxSessionsPerReplica` is a **capacity ceiling alert** (fires `GatewaySessionBudgetNearExhaustion`)").
 
 Implementation: `gateway.maxSessionsPerReplica` is defined in `/Users/joan/projects/lenny/charts/lenny/values.yaml:546` (default 50; tier 2 = 200; tier 3 = 400). `grep -rn "MaxSessionsPerReplica\|max-sessions-per-replica\|maxSessionsPerReplica"` in `cmd/lenny-gateway/` and `pkg/gateway/` returns zero matches. The binary has no flag bridge, no admission cap, and no metric emission for this ceiling. `lenny_gateway_max_sessions_per_replica` is referenced by `pkg/alerting/rules/rules.go:579` (`GatewaySessionBudgetNearExhaustion` alert) but is not in the metric catalog and is never emitted, so the alert will never fire on the configured ceiling.
 
 ### - [ ] F-10.1.13 — `lenny_gateway_replica_count` and `lenny_gateway_min_replicas` referenced by alerts are not emitted. (Medium) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.1.13 — Both report lenny_gateway_replica_count / lenny_gateway_min_replicas not being emitted, leaving the replica-floor alert inert.
 
 Spec: line 65 cross-references §4.1 metric roles; the §16.5 alert `pkg/alerting/rules/rules.go:181` expects `lenny_gateway_replica_count < scalar(lenny_gateway_min_replicas)`.
 
@@ -10087,6 +10498,8 @@ No JWTSigner circuit breaker is wired. `pkg/alerting/rules/rules.go:780–785` d
 
 ### - [ ] F-10.2.7 — Spec-mandated `auth_failure` audit event is not emitted on tenant-claim rejection — M [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.2.7 — Both report the auth_failure audit event and INFO log not emitted on tenant-claim rejection in auth.go:293-309, same evidence and fix.
+
 Spec L221: "Both rejection cases are logged at INFO level (including `user_id` and JWT `jti` for traceability) and emitted as `auth_failure` audit events."
 
 `pkg/gateway/middleware/auth/auth.go:293–309` returns the correct HTTP envelopes but emits no audit event. A grep for `auth_failure` across `pkg/` finds zero non-comment occurrences. The tenant-rejection paths produce neither the structured INFO log nor the catalogued audit row.
@@ -10110,6 +10523,8 @@ Spec L189–190: the boundary table specifies pod ↔ gateway uses "mTLS + proje
 Pod-identity enforcement in the codebase is mTLS + the `MCPNonce` (`pkg/adapter/manifest.go:17–18, 81–86`) plus the SPIFFE credential-lease binding (`pkg/credential/lease.go:82–84`). There is no Kubernetes TokenReview, no audience-claim check on pod-presented bearer JWTs, and no shared verifier wiring `global.saTokenAudience` into a per-request validator. `cmd/lenny-preflight/main.go:69–70` and `pkg/preflight/networkpolicy_identity.go:70–92` enforce the *uniqueness* of the audience at install time, but no runtime validator consumes the resulting `lenny.dev/sa-token-audience` annotation. The spec's "validates the signature on every pod→gateway request" invariant has no in-code counterpart for SA-token signatures; mTLS plus the nonce is the only enforcement.
 
 ### - [ ] F-10.2.11 — KMS signer is locked to the in-process `kms.Local` provider — M [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.7.2, F-17.5.2, F-4.3.11 — These four describe the same defect: the cloud KMS adapters exist but main.go hard-codes kms.NewLocalRandom() with no provider-selection knob; the two Info members frame the same gap as an accepted seam.
 
 Spec L194: "Production: KMS-backed signing (AWS KMS, GCP Cloud KMS, HashiCorp Vault Transit). The signing key never exists in gateway memory."
 
@@ -10494,6 +10909,8 @@ through `pkg/gateway/`, `cmd/lenny-gateway/main.go`, `pkg/alerting/rules/`,
 
 ### - [ ] F-10.4.1 — 01  Per-session `gap_detected` frame on SSE eviction is absent [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-7.2.11 — Both report the gap_detected frame on cursor/replay eviction is not emitted (Subscribe silently filters the backlog); F-7.2.11 also adds checkpoint_boundary but shares the eviction-marker root cause.
+
 **Spec:** §10.4 line 389 (Event replay buffer) — "When a requested
 `resumeFromSeq` points to an event that has been evicted, the adapter emits
 a single protocol-level `gap_detected` frame (`{"lastSeenSeq": N,
@@ -10568,6 +10985,8 @@ durable state it would read from.
 
 ### - [ ] F-10.4.3 — 03  `sessions.last_seq` durable counter does not exist [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-7.2.13, F-7.3.3 — All three report the missing durable sessions.last_seq column, with the per-session counter held only in process memory; the handoff-synthesis aspect shares the same root cause and fix.
+
 **Spec:** §10.4 line 399 — "The counter is durably tracked in Postgres as
 the `sessions.last_seq` column (bigint, advanced atomically with each
 persisted event)... The new coordinator's first read of `sessions.last_seq`
@@ -10592,6 +11011,8 @@ makes the spec's `gap_detected`/synthesis contract unenforceable even if
 the synthesis path is later wired.
 
 ### - [ ] F-10.4.4 — 04  PodDisruptionBudget for the gateway is not rendered [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.1.1, F-17.3.2, F-4.1.1 — Four members report the gateway Deployment renders no PodDisruptionBudget; F-4.1.12 covers only the separate topology-spread gap.
 
 **Spec:** §10.4 line 385 (Mechanisms bullet) — "PodDisruptionBudget limits
 voluntary disruptions."
@@ -10906,6 +11327,8 @@ Cross-cutting: the §10.5 expand-contract discipline (Phases 1/2/3 with the PL/p
 
 ### - [ ] F-10.5.3 — 03  `lenny-ctl migrate status` and `lenny-ctl migrate down` are unimplemented [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-24.13.1, F-24.13.2 — All three describe the unimplemented migrate status/down CLI commands; F-17.7.5 is a broader inventory of multiple missing lenny-ctl subcommands.
+
 §24.13 (cross-referenced from §10.5 line 417) requires `lenny-ctl migrate status` (mapped to `GET /v1/admin/schema/migrations/status`) and `lenny-ctl migrate down --version <N> --confirm` (mapped to `POST /v1/admin/schema/migrations/{version}/down`).
 
 Implementation:
@@ -10916,6 +11339,8 @@ Implementation:
 Concrete consequence: an operator cannot determine the expand-contract phase of any migration, cannot read `gateCheckResult`, and cannot roll back a dirty migration via the supported interface.
 
 ### - [ ] F-10.5.4 — 04  CRD upgrade procedure is undefended: no schema-version annotation, no `lenny-ctl preflight`, no `scripts/lenny-upgrade.sh`, no `make upgrade` target [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.6.4 — Both report the CRD upgrade-safety machinery (schema-version annotation, preflight check, upgrade/validate jobs) is absent.
 
 Spec (lines 439–462) requires:
 1. A `lenny.dev/schema-version` annotation on every Lenny CRD object (line 439).
@@ -10952,6 +11377,8 @@ EventPlatformRegistryUpdated, EventPlatformSchemaMigrationRolledBack
 
 ### - [ ] F-10.5.6 — 06  CRDs have no served/storage version conversion strategy; `lenny-crd-conversion` webhook is referenced but not packaged [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-15.5.2 — Missing conversion-webhook chart packaging/CRD wiring is one defect (F-10.5.6, F-15.5.2) and missing preflight verification of the webhook is another (F-15.5.3, F-17.2.4); F-15.5.20 is a positive note on the existing handler.
+
 §10.5 line 437 requires conversion webhooks to translate between CRD versions during a rolling deploy and `x-kubernetes-preserve-unknown-fields` on extensible sub-objects. §15.5 line 2435 references the `lenny-crd-conversion` deployment from `charts/lenny/templates/conversion-webhook.yaml`. §17.6 line 53 lists `lenny-crd-conversion` as a baseline admission policy.
 
 Implementation:
@@ -10963,6 +11390,8 @@ Implementation:
 The single-version state is acceptable in v1 (no migrations across CRD versions), but the §15.5 line 2435 graduation procedure that ships the webhook ahead of adding a second served version has no manifest, no Service, no Deployment, and no preflight check to land on.
 
 ### - [ ] F-10.5.7 — 07  §25.8 platform-upgrade phase state machine has no orchestrator consumer [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-4.0.1 — Both concern the §25.8/§10.5 platform-upgrade state machine in pkg/upgrade, but F-10.5.7 is the missing orchestrator consumer and F-4.0.1 is the missing upgrade_progressed event emission; F-4.0.1 is also CLOSED.
 
 `pkg/upgrade/upgrade.go` defines the eight-phase progression `Preflight → OpsRoll → CRDUpdate → SchemaMigration → GatewayRoll → ControllerRoll → Verification → Complete` plus `RolledBack`, the `CanRollBack` rule (rollback allowed only through `CRDUpdate`), and the seven-step progress reporter. The package doc on line 7 names `lenny-ops` as the consumer.
 
@@ -10986,6 +11415,8 @@ Implementation:
 This is a Medium because the platform has not landed a Phase 3 migration yet, so the gap has not produced a real failure. The risk is structural: the first DDL author whose Phase 1 column carries `NOT NULL` will hit a rolling-deploy outage with no CI defense.
 
 ### - [ ] F-10.5.9 — 09  No `Deployment.spec.strategy` declared on gateway/controller/token-service charts; defaults assumed [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.1.2 — Both report the gateway Deployment declares no rolling-update strategy block, falling back to the K8s 25% default; F-10.5.9 covers gateway plus controller/token-service while F-4.1.2 is gateway-only and CLOSED.
 
 Spec line 403: "Gateway: Rolling Deployment updates." Line 544: "Token Service: Rolling Deployment update."
 
@@ -11074,6 +11505,8 @@ corresponding `_test.go` files were inspected for coverage.
 ### Findings
 
 ### - [ ] F-10.6.1 — 01  Explicit-environment session endpoint does not check membership of the named environment [High] — OPEN
+
+**Potential overlap** (confidence: high) — F-10.6.5 — Both concern environment access control, but one is the missing membership check on the explicit endpoint and the other is the absence of role-level enforcement beyond membership.
 
 **Spec:** §10.6 lines 554–557 — explicit-environment endpoint is one of
 two access paths. §10.6 line 555 explicitly contrasts it with transparent
@@ -11183,6 +11616,8 @@ missing.
 
 ### - [ ] F-10.6.4 — 04  Bilateral cross-environment-delegation wire shape uses `environment`, spec defines `targetEnvironment`/`sourceEnvironment` [High] — OPEN
 
+**Potential overlap** (confidence: high) — F-10.6.13 — F-10.6.4 is the wire field-name deviation (environment vs targetEnvironment/sourceEnvironment) while F-10.6.13 is the outbound wildcard asymmetry; same subsystem, different defects.
+
 **Spec:** §10.6 lines 613–625 — the structured `crossEnvironmentDelegation`
 block has `outbound: [{targetEnvironment: ..., runtimes: ...}]` and
 `inbound: [{sourceEnvironment: ..., runtimes: ...}]`. The two field
@@ -11212,6 +11647,8 @@ lines 213–232 will never match. The result is that an admin POST in
 the spec's documented form silently creates no-op rules.
 
 ### - [ ] F-10.6.5 — 05  No environment `Role` enforcement gates beyond membership detection [High] — OPEN
+
+**Potential overlap** (confidence: high) — F-10.6.1 — Both concern environment access control, but one is the missing membership check on the explicit endpoint and the other is the absence of role-level enforcement beyond membership.
 
 **Spec:** §10.6 line 605 — "Member roles: `viewer`, `creator`,
 `operator`, `admin`." The names are load-bearing: a `viewer` reads, a
@@ -11423,6 +11860,8 @@ disagrees with the persisted row, but the API returned 201/200 without
 a warning). Description length is unbounded.
 
 ### - [ ] F-10.6.13 — 13  `targetEnvironment: "*"` wildcard semantics asymmetric with inbound `sourceEnvironment: "*"` [Low] — OPEN
+
+**Potential overlap** (confidence: high) — F-10.6.4 — F-10.6.4 is the wire field-name deviation (environment vs targetEnvironment/sourceEnvironment) while F-10.6.13 is the outbound wildcard asymmetry; same subsystem, different defects.
 
 **Spec:** §10.6 lines 613–625 — the inbound rule example uses
 `sourceEnvironment: "*"` to denote "any source environment". The
@@ -11779,6 +12218,8 @@ absence in the production write path.
 ---
 
 ### - [ ] F-10.7.6 — 06  Sticky-cache and its transition-time invalidation are absent [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.4.7 — Both report the experiment sticky-assignment Redis cache and its invalidation are absent, so assignment is recomputed on every session creation.
 
 **Spec:** §10.7 line 1096 — `sticky: user` "caches variant assignments in
 Redis keyed by `(user_id, experiment_id)` to avoid re-evaluating assignment
@@ -12460,6 +12901,8 @@ per-tenant cap does provide an upper bound on consumption.
 
 ### - [ ] F-11.1.7 — 07  No rate-limit observability counter; admission rejections are not metered [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-11.1.9 — Both about rate-limit middleware observability but distinct: F-11.1.7 is a missing rejection counter, F-11.1.9 is silent fail-open with no counter-failure metric or log.
+
 **Spec:** §11.1 frames the table as the admission-and-fairness
 surface; together with §15.1 (which mandates `RATE_LIMITED` /
 `QUOTA_EXCEEDED` responses) and §16.1 (the observability surface that
@@ -12519,6 +12962,8 @@ reconciled (either implement a token bucket or update §13.3 to match
 the fixed-window implementation).
 
 ### - [ ] F-11.1.9 — 09  Rate-limit middleware fails open silently with no observability of counter failures [Low] — OPEN
+
+**Potential overlap** (confidence: high) — F-11.1.7 — Both about rate-limit middleware observability but distinct: F-11.1.7 is a missing rejection counter, F-11.1.9 is silent fail-open with no counter-failure metric or log.
 
 **Spec:** §11.1 implies that admission failures must surface to
 operators. The doc-comment at the middleware acknowledges fail-open is
@@ -12713,6 +13158,8 @@ State of the code:
 The `budget_reserve.lua` script the spec names in §8.3 ("budget slices are reserved at delegation time via Redis atomic counters") is also absent (grep returned only the alert description). The §8.3 atomic reservation is implemented in `pkg/delegation/lease/lease.go` only as pure arithmetic (`ValidateChildSlice`); no Redis-backed reservation is wired.
 
 ### - [ ] F-11.2.6 — Fail-open per-replica accounting and cumulative timer are arithmetic helpers only; no production driver [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.4.9 — Both report that the bounded fail-open ceiling, per-user ceiling, and cumulative timer exist only as pure functions with no production driver detecting Redis outage.
 
 Spec §11.2 "Maximum Overshoot Formula" and §12.4 reference: during a Redis outage, each gateway replica must apply `effective_ceiling = min(tenant_limit / max(cached_replica_count, 1), per_replica_hard_cap)` against an in-memory session counter, cap a single user at `effective_ceiling * userFailOpenFraction`, and limit cumulative drift via `quotaFailOpenCumulativeMaxSeconds`.
 
@@ -13000,6 +13447,8 @@ Implementation:
 Consequence: a non-playground session can sit idle indefinitely (bounded only by `maxSessionAge` at 2h). The §11.3 control to reclaim warm pods from abandoned non-playground sessions is missing.
 
 ### - [ ] F-11.3.8 — `maxResumeWindowSeconds` is not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.3.6 — Both report that maxResumeWindowSeconds is not implemented; the watchdog never sweeps StateResumePending with a dedicated timer.
 
 Spec §11.3 line 200 lists `maxResumeWindow` (default 900s, "Yes" configurable). Resume window enforcement bounds how long a session may remain in `resume_pending`.
 
@@ -13328,6 +13777,8 @@ Severity definitions:
 
 ### - [ ] F-11.5.1 — MCP `idempotencyKey` field is unimplemented; idempotency over the MCP transport relies on a header MCP clients have no contract to set [High] — OPEN
 
+**Potential overlap** (confidence: medium) — F-11.5.5 — Both about §11.5 idempotencyKey but distinct: F-11.5.1 is the unimplemented MCP tool-input idempotencyKey field, F-11.5.5 is a doc/spec mismatch where REST docs describe it as a body field rather than a header.
+
 Spec §11.5 line 277: "Clients provide an idempotency key via the `Idempotency-Key` HTTP header (for REST) **or the `idempotencyKey` field in the MCP tool input (for MCP)**."
 
 Implementation reality:
@@ -13402,6 +13853,8 @@ The spec promises "without re-executing the operation"; in this failure mode the
 At a minimum the Put error should be logged at WARN with the tenant + key, surfaced as a metric (`lenny_idempotency_cache_write_failures_total`), and ideally retried before the response is written so the client sees a 5xx (causing a retry of the same operation, which the next Get would replay).
 
 ### - [ ] F-11.5.5 — `idempotencyKey` documented in REST docs as a request-body field, not as a header [High] — OPEN
+
+**Potential overlap** (confidence: medium) — F-11.5.1 — Both about §11.5 idempotencyKey but distinct: F-11.5.1 is the unimplemented MCP tool-input idempotencyKey field, F-11.5.5 is a doc/spec mismatch where REST docs describe it as a body field rather than a header.
 
 This is a doc/spec/impl three-way mismatch surfaced by the audit, not strictly an §11.5 enforcement gap, but it is severe enough that callers will not be able to reach the §11.5 surface in the most-documented way.
 
@@ -13886,6 +14339,8 @@ Each was traced through `/Users/joan/projects/lenny/pkg/audit/`,
 
 ### - [ ] F-11.7.1 — 01  OCSF translator, SIEM forwarder, and audit hash-chain verifier are not wired into the gateway binary [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-16.7.7 — OCSF translator and SIEM forwarder unwired into any binary (11.7.1/16.7.7) and the missing async outbox/CDC forwarder plus its lag metric/config (12.3.6/12.3.17) are two distinct defects; F-16.4.9 overlaps on missing audit.siem config wiring but is closer to the forwarder-unwired group.
+
 **Spec:** §11.7 mandates (1) item 4 startup SIEM connectivity validation
 (`audit.siem.endpoint` configured → "a test event is sent and the
 gateway refuses to start until acknowledgement is received"); (2) the
@@ -14243,6 +14698,8 @@ the residency boundary is porous.
 
 ### - [ ] F-11.7.10 — 10  No pgaudit DDL/ROLE capture wiring, no `audit.pgaudit.enabled` enforcement at startup or at regulated-tenant create/update [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-4.4.20 — Both report pgaudit is unimplemented (only the alert rule and metric exist, no sink consumer/forwarder); F-11.7.10 is the more complete statement including config enforcement.
+
 **Spec:** §11.7 item 5 lines 374–379:
 - `audit.pgaudit.enabled` (bool) and `audit.pgaudit.sinkEndpoint`
   (string).
@@ -14301,6 +14758,8 @@ Downgraded relative to F-11.7-01 because this finding is the
 state-machine sub-symptom and F-11.7-01 captures the root absence.
 
 ### - [ ] F-11.7.12 — 12  No `GET /v1/admin/audit-events/{id}?format=raw-canonical` or `POST /v1/admin/audit-events/{id}/retranslate` endpoint; no `?ocsf_translation_state=dead_lettered` filter [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.9.4 — Both report the missing POST /v1/admin/audit-events/{id}/retranslate endpoint (and related dead-letter query surface).
 
 **Spec:** §11.7 line 418 — "request the raw canonical tuple via
 `GET /v1/admin/audit-events/{id}?format=raw-canonical` (a
@@ -14623,6 +15082,8 @@ trigger that is not defined in the alerting rules file.
 
 ### - [ ] F-11.8.1 — Pool-credential emergency-revocation endpoint absent (HIGH) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.3.7, F-4.9.2 — Three findings describe the missing emergency credential-revocation endpoints; F-24.5.1 and F-24.5.2 cover the broader credential-pool CLI/CRUD admin surface.
+
 - **Spec:** §11.8 first-responder primitives, bullet 1: "`POST
   /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` immediately
   marks the credential as `revoked` and triggers active-lease propagation."
@@ -14732,6 +15193,8 @@ trigger that is not defined in the alerting rules file.
 
 ### - [ ] F-11.8.5 — Legal-hold endpoint does not accept artifact-scoped holds (LOW) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.8.7 — Both report the legal-hold admin endpoint accepts only session-level holds and rejects artifact (and other resource-type) scopes the spec requires.
+
 - **Spec:** §11.8 first-responder primitive 3: legal hold "suspends
   retention rotation for **any session or artifact** implicated in an
   incident." §12.8 line 735 expands: "Legal holds are set and cleared via
@@ -14830,6 +15293,9 @@ Findings count: 3 High, 4 Medium, 2 Low.
 - **Suggested resolution:** Two options. (a) Lift `DeleteByUser` and `DeleteByTenant` onto every §12.2 store's `Store interface`, normalize the return signature to `error` (or `(int, error)` and update the spec line to admit that variant), introduce an interface where one is currently missing (`LeaseStore`, `QuotaStore`, `EventStore`, `TokenIssuanceStore`, `ArtifactStore`), and add `var _ X = (*concrete)(nil)` checks in each concrete-backend package. (b) Rewrite §12.1 line 5 to scope the compile-time contract to the pluggable roles it actually applies to (the spec already calls out `MemoryStore` and `SemanticCache` as the pluggable cases) and explicitly excludes the platform-internal roles whose backends are not deployer-substitutable. Either way, code and spec must converge.
 
 ### - [ ] F-12.1.2 — sessionstore.Store interface declares non-conforming DeleteByUser signature and has no DeleteByTenant [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.2.9 — Both report that the SessionStore interface lacks DeleteByTenant (and the non-conforming DeleteByUser signature), blocking the tenant-deletion Phase 4 contract.
+
 - **Spec:** Line 5 — literal signatures are `DeleteByUser(ctx, tenantID, userID) error` and `DeleteByTenant(ctx, tenantID) error`. Both are "mandatory methods".
 - **Evidence:**
   - `pkg/gateway/sessionstore/sessionstore.go:220-224` — interface declares `DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)`. Return type `(int, error)`, not `error`.
@@ -14851,6 +15317,9 @@ Findings count: 3 High, 4 Medium, 2 Low.
 - **Suggested resolution:** Define `LeaseStore`, `QuotaStore` (or `RateLimitCounter`), `EventStore` (or `AuditLog`), `TokenIssuanceStore`, and `ArtifactStore` Go interfaces; have the existing concrete `*Store` types satisfy them via `var _ Interface = (*Store)(nil)` checks; add `DeleteByUser` and `DeleteByTenant` to each. For `LeaseStore` the erasure primitive can be a no-op (leases are TTL-bound) but the method must still be present to satisfy the §12.1 contract. For `EventStore`, the spec's §12.8 carve-out for `gdpr.*` event types must be encoded in the implementation, but the interface still exposes the primitives.
 
 ### - [ ] F-12.1.4 — ValidateMemoryStoreErasure startup preflight and per-job preflight are unimplemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.2.10, F-12.8.9, F-9.4.3 — All four report the §12.8 ValidateMemoryStoreErasure startup and per-job preflight is absent, viewed from different referencing sections.
+
 - **Spec:** Line 5 (refers to §12.8) — "this is enforced at compile time by Go interface satisfaction and at runtime by the startup/per-job preflight described in Section 12.8." §12.8 lines 743-758 specify a two-layer defense: a `ValidateMemoryStoreErasure(ctx, store MemoryStore)` startup helper that seeds a row, calls `DeleteByUser`, queries for the same scope, and asserts zero rows; a per-job preflight that re-runs the same check before `DeleteByUser` step 8; on failure, the gateway "refuses to start" with the fatal message `FATAL: MemoryStore preflight failed — configured backend ... does not honor DeleteByUser; GDPR erasure would silently succeed while leaving memories in place (Section 12.8)`.
 - **Evidence:**
   - `grep -rn "ValidateMemoryStoreErasure\|ValidateMemoryStoreIsolation\|MemoryStorePreflightFailed\|memory_store_preflight" pkg cmd` → no matches. The named helpers do not exist in the implementation.
@@ -15016,17 +15485,23 @@ Spec: §12.2 ("`QuotaStore` — Redis + Postgres — Rate limit counters, budget
 
 ### - [ ] F-12.2.8 — 08 — `LeaseStore` Postgres advisory-lock fallback unimplemented; no erasure adapters (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.4.10 — Both cite the same leasestore.go:16 admission that the §12.4 Postgres advisory-lock fallback for the Redis outage window is unimplemented, same root cause and fix.
+
 Spec: §12.2 ("`LeaseStore` — Redis (fallback: Postgres advisory locks)"); §12.1 (mandatory erasure); §12.8 step 1 ("`LeaseStore` — release active session coordination leases for the user's sessions (Redis). Must precede session deletion to avoid orphan lease references"); §12.3 "Coordination leases (Redis-primary) — Unaffected — Redis continues independently of Postgres — Postgres advisory lock fallback if Redis also fails".
 
 `pkg/gateway/leasestore/leasestore.go:16-17` admits the gap inline: "`§12.4 specifies a Postgres advisory-lock fallback for the Redis outage window; that degraded-mode path is not yet implemented.`" The store also exposes only `Acquire`, `Renew`, `Release`, `Get` — no `DeleteByUser` or `DeleteByTenant`. The §12.8 step-1 user-erasure adapter that releases the user's session leases has no callable method on the store; the erasure orchestrator wiring in `cmd/lenny-gateway/main.go:1166-1201` correspondingly does not include a LeaseStore eraser at all, so step 1 of the documented sequence is unexecuted.
 
 ### - [ ] F-12.2.9 — 09 — `SessionStore.DeleteByTenant` missing from production interface (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.1.2 — Both report that the SessionStore interface lacks DeleteByTenant (and the non-conforming DeleteByUser signature), blocking the tenant-deletion Phase 4 contract.
+
 Spec: §12.1 (mandatory `DeleteByTenant`); §12.8 (tenant-deletion Phase 4 driven by `TenantEraser.DeleteByTenant`).
 
 `pkg/gateway/sessionstore/sessionstore.go:194-225` declares `Store` with `DeleteByUser` but not `DeleteByTenant`. The in-memory `memstore` adds a private `DeleteByTenant(_ context.Context, tenantID string) (int, error)` method (memstore.go:151-160) but it is not on the interface, so the production `pkg/gateway/sessionstore/pgstore/pgstore.go` does not implement it. `tenantdeletion.TenantEraser` (Phase 4) requires a per-store `DeleteByTenant`; the missing interface method means the production sessionstore cannot be plugged into that contract. The §12.1 compile-time check (`var _ Store = (*pgstore.Store)(nil)`) does not catch the gap because `DeleteByTenant` is not part of the interface to satisfy.
 
 ### - [ ] F-12.2.10 — 10 — `MemoryStore` startup and per-job erasure preflight (§12.8) unimplemented (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.1.4, F-12.8.9, F-9.4.3 — All four report the §12.8 ValidateMemoryStoreErasure startup and per-job preflight is absent, viewed from different referencing sections.
 
 Spec: §12.8 "MemoryStore erasure preflight" — three layers required:
 1. Compile-time interface satisfaction (`var _ MemoryStore = (*CustomStore)(nil)`).
@@ -15064,6 +15539,8 @@ The spec's `spec/12_storage-architecture.md` has no `### 12.2.1` (or any other �
 
 ### - [ ] F-12.2.13 — 13 — `StoreRouter` (R-03) never wired into billing or audit write paths (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.3.4, F-12.6.1, F-12.7.1 — All four report that StoreRouter (R-03) is never imported and billing/audit writes take a raw pgxpool.Pool, the same defect and fix.
+
 Spec: §12.3 R-03 ("All billing event inserts and audit log inserts MUST be routed through the `StoreRouter` interface … An integration test (`TestBillingAuditRoutedThroughStoreRouter`) MUST verify that billing event inserts and audit log inserts call `StoreRouter` methods rather than accessing a Postgres pool directly").
 
 `pkg/storerouter/storerouter.go` defines `StoreRouter` and `SingleShardRouter` cleanly, but:
@@ -15075,11 +15552,15 @@ The §12.3 invariant that R-03 is meant to preserve (no direct pool handle in bi
 
 ### - [ ] F-12.2.14 — 14 — Cloud-managed-pooler `__unset__` guard and `TestRLSTenantGuardMissingSetLocal` absent (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.3.1, F-17.9.2 — Three findings describe the absent LENNY_POOLER_MODE startup-refusal and tenant-guard defense; F-17.5.8 is the separate missing chart connectionPooler value.
+
 Spec: §12.3 item 5 — "An integration test (`TestRLSTenantGuardMissingSetLocal`) **must** exist that … asserts that the query raises an exception …". Spec §12.3 item 4 — gateway "**refuses to start** and exits with a fatal error" when `LENNY_POOLER_MODE=external` and the `lenny_tenant_guard` trigger is absent.
 
 Repo-wide grep for `TestRLSTenantGuardMissingSetLocal` finds zero Go test files (only spec/review-findings markdown). Grep for `LENNY_POOLER_MODE` startup detection in `cmd/lenny-gateway/` also returns nothing. The CI-required negative test that asserts the trigger blocks a no-SET-LOCAL query, and the gateway-startup refusal path, are both unimplemented. The `lenny_tenant_guard` trigger itself (`migrations/0002_rls_immutability_roles.up.sql:36-62`) exists and is correctly attached to `sessions`, `session_messages`, `issued_tokens`, `audit_log`, `billing_events` (and via subsequent migrations to credential_pools, etc.), but the spec's secondary defense — that any binary lacking the trigger refuses to boot under cloud-managed pooler mode — is not in the binary.
 
 ### - [ ] F-12.2.15 — 15 — ArtifactStore interface-level `/{tenant_id}/` prefix validation not enforced (Medium) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.8, F-4.5.1 — All three report that ArtifactStore does not enforce per-tenant prefix validation at the interface boundary and ErrCrossTenant is never returned.
 
 Spec: §12.2 line 26 ("The `ArtifactStore` (MinIO) **must** use `/{tenant_id}/` path prefixes for all object keys, with mandatory prefix validation at the interface level").
 
@@ -15160,6 +15641,8 @@ noteworthy but non-blocking.
 ---
 
 ### - [ ] F-12.3.1 — `LENNY_POOLER_MODE` startup refusal is not implemented (§12.3 lines 49–56) [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.2.14, F-17.9.2 — Three findings describe the absent LENNY_POOLER_MODE startup-refusal and tenant-guard defense; F-17.5.8 is the separate missing chart connectionPooler value.
 
 The spec mandates (item 4) that on gateway startup, after Postgres
 connectivity is confirmed, the gateway inspects `LENNY_POOLER_MODE` (injected
@@ -15248,6 +15731,8 @@ that have `tenant_id` columns and post-date the §12.3 rule:
 
 ### - [ ] F-12.3.4 — Billing/audit write paths bypass `StoreRouter` (§12.3 lines 144 R-03) [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.2.13, F-12.6.1, F-12.7.1 — All four report that StoreRouter (R-03) is never imported and billing/audit writes take a raw pgxpool.Pool, the same defect and fix.
+
 R-03 mandates "All billing event inserts and audit log inserts MUST be routed
 through the `StoreRouter` interface." The contract test
 `TestBillingAuditRoutedThroughStoreRouter` MUST exist.
@@ -15290,6 +15775,8 @@ Evidence:
 - Tier-3 capacity headroom strategy as written cannot be activated.
 
 ### - [ ] F-12.3.6 — SIEM outbox / forwarder pattern is not implemented (§12.3 lines 93–97) [High] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-12.3.17 — OCSF translator and SIEM forwarder unwired into any binary (11.7.1/16.7.7) and the missing async outbox/CDC forwarder plus its lag metric/config (12.3.6/12.3.17) are two distinct defects; F-16.4.9 overlaps on missing audit.siem config wiring but is closer to the forwarder-unwired group.
 
 Spec mandates "Audit events are always written to Postgres synchronously
 first ... SIEM forwarding happens asynchronously via an outbox / change-data-
@@ -15380,6 +15867,8 @@ Evidence:
 
 ### - [ ] F-12.3.10 — PgBouncer Deployment, PDB, readiness probe, and exporter are not chart-managed (§12.3 lines 40–47) [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-12.3.11 — Both concern PgBouncer not being chart-managed, but one is the missing Deployment/PDB/probe topology and the other is the missing exporter metric feeding an alert.
+
 Spec dedicates seven bullets to PgBouncer Deployment topology:
 "PgBouncer runs as a separate Deployment (minimum 2 replicas)," "Transaction
 mode," "Sizing guidance," "HA via ClusterIP Service," "PodDisruptionBudget
@@ -15408,6 +15897,8 @@ the spec wording "PgBouncer Deployment ... MUST."
 
 ### - [ ] F-12.3.11 — `pgbouncer_exporter` metric `lenny_pgbouncer_client_waiting_seconds` is not emitted (§12.3 line 47) [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-12.3.10 — Both concern PgBouncer not being chart-managed, but one is the missing Deployment/PDB/probe topology and the other is the missing exporter metric feeding an alert.
+
 `PgBouncerPoolSaturated` alert in `pkg/alerting/rules/rules.go:1104`
 evaluates `lenny_pgbouncer_client_waiting_seconds > 1`.
 
@@ -15423,6 +15914,8 @@ Evidence:
   exits — the live saturation injector is on the ops backlog.
 
 ### - [ ] F-12.3.12 — `__unset__` sentinel via `connect_query` is not configured (§12.3 line 38) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.2.8 — Both describe the PgBouncer connect_query __unset__ sentinel not being configured in charts/pooler.
 
 "The pooler's `connect_query` ... must set a sentinel value (`SET
 app.current_tenant = '__unset__'`) on every fresh connection checkout."
@@ -15507,6 +16000,8 @@ no second DSN.
 
 ### - [ ] F-12.3.17 — SIEM lag metric, outbox state, `audit.siem.maxDeliveryLagSeconds` not wired (§12.3 line 97) [Medium] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-12.3.6 — OCSF translator and SIEM forwarder unwired into any binary (11.7.1/16.7.7) and the missing async outbox/CDC forwarder plus its lag metric/config (12.3.6/12.3.17) are two distinct defects; F-16.4.9 overlaps on missing audit.siem config wiring but is closer to the forwarder-unwired group.
+
 The outbox forwarder requirements ("must monitor
 `lenny_audit_siem_delivery_lag_seconds` ... the `AuditSIEMDeliveryLag` alert
 fires when lag exceeds the configured threshold
@@ -15558,6 +16053,8 @@ The configuration option named in the spec is absent from `values.yaml` and
 startup invocation.)
 
 ### - [ ] F-12.3.21 — RLS test naming differs from spec but functional coverage exists (§12.3 line 57) [Info] — OPEN
+
+**Potential overlap** (confidence: medium) — F-4.4.22 — Both reference the missing TestRLSTenantGuardMissingSetLocal test, but F-12.3.21 is about test naming with existing functional coverage while F-4.4.22 is about session_eviction_state lacking RLS coverage.
 
 Spec mandates an integration test named `TestRLSTenantGuardMissingSetLocal`
 that (a) opens a transaction without `SET LOCAL app.current_tenant`,
@@ -15789,6 +16286,8 @@ The cumulative effect is that the §12.4 table is no longer the authoritative ke
 
 ### - [ ] F-12.4.6 — Durable inbox and DLQ Redis stores are unimplemented [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-7.2.4 — F-12.4.6 and F-7.2.4 both report the durable inbox and DLQ stores are entirely unimplemented; F-12.4.27 (dead enum note) and F-7.3.12 (DLQ drain on terminal transition) are related sub-aspects.
+
 Spec §12.4 key-prefix table:
 - `t:{tenant_id}:session:{session_id}:dlq` — "Dead-letter queue for session messages. Sorted set scored by expiry"
 - `t:{tenant_id}:session:{session_id}:inbox` — "Durable session inbox (Redis list)" with `RPUSH`/`LREM`/`LRANGE`/`LPOP`/`LTRIM` operations
@@ -15798,6 +16297,8 @@ Neither store exists. The only artifacts that mention them are observability cou
 Consequence: sessions created with `messaging.durableInbox: true` have no Redis backing; messages enqueued via the §7.2 path will not survive a coordinator handoff because no `RPUSH` ever happens. The §16.5 `InboxDrainFailure` alert can never fire because the drain path does not exist.
 
 ### - [ ] F-12.4.7 — Experiment sticky-assignment Redis cache is absent [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.7.6 — Both report the experiment sticky-assignment Redis cache and its invalidation are absent, so assignment is recomputed on every session creation.
 
 Spec §12.4 row: `t:{tenant_id}:exp:{experiment_id}:sticky:{user_id}` — "Experiment sticky assignment cache. Flushed on experiment pause/conclude; see §10.7."
 
@@ -15824,6 +16325,8 @@ Consequence: a tenant can spawn delegation trees without any cross-replica Redis
 
 ### - [ ] F-12.4.9 — Bounded fail-open / cumulative fail-open timer / per-tenant fail-open budget are pure-formula only; the runtime enforcement is missing [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-11.2.6 — Both report that the bounded fail-open ceiling, per-user ceiling, and cumulative timer exist only as pure functions with no production driver detecting Redis outage.
+
 Spec §12.4 ("Bounded fail-open for rate limiting", "Per-user fail-open ceiling", "Per-tenant fail-open budget enforcement"):
 
 - "When Redis becomes unavailable, the gateway starts a fail-open timer per replica. During the fail-open window, requests are allowed, a `rate_limit_degraded` metric is incremented, and an alert fires. After the window expires, if Redis is still unavailable, rate limiting fails **closed** — new requests are rejected with 429 until Redis recovers."
@@ -15849,6 +16352,8 @@ Consequence: every Redis outage either crashes the rate-limit hot path or silent
 
 ### - [ ] F-12.4.10 — Postgres advisory-lock fallback for session leases is absent [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.2.8 — Both cite the same leasestore.go:16 admission that the §12.4 Postgres advisory-lock fallback for the Redis outage window is unimplemented, same root cause and fix.
+
 Spec §12.4 "Failure behavior" row: "Distributed session leases … Fall back to Postgres advisory locks (higher latency)".
 
 `pkg/gateway/leasestore/leasestore.go:16` explicitly acknowledges the gap: "§12.4 specifies a Postgres advisory-lock fallback for the Redis outage window; that degraded-mode path is not yet implemented." `tests/tier2_component/stores/scaffolds_test.go:32` carries the same acknowledgement on the test side.
@@ -15856,6 +16361,8 @@ Spec §12.4 "Failure behavior" row: "Distributed session leases … Fall back to
 Consequence: a Redis outage immediately breaks session-coordination lease acquisition; the gateway cannot drive any session whose lease is not already held in-memory by the same replica. There is no degraded-latency Postgres path the spec promises.
 
 ### - [ ] F-12.4.11 — Storage-quota Postgres rehydration on Redis outage is absent [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.14 — Both report the absent Postgres rehydration path for the storage-quota counter on Redis outage.
 
 Spec §12.4 "Failure behavior" row: "Storage quota counter (`storage_bytes_used`) … Postgres fallback, then fail closed — on Redis unavailability, the gateway rehydrates each tenant's `storage_bytes_used` counter from the sum of `artifact_size_bytes` across active artifacts in Postgres … If Postgres is also unavailable (dual-store outage), storage uploads are rejected with `503` (fail closed)."
 
@@ -15900,6 +16407,8 @@ The store interfaces are present (`leasestore.Store`, `quotastore.Counter`, `bre
 
 ### - [ ] F-12.4.17 — Dual-store degraded mode (PLATFORM_DEGRADED emission) is unimplemented at the gateway [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-10.1.3 — Both report dual-store degraded mode is unimplemented at the gateway (no PLATFORM_DEGRADED emission, no detection) despite the proto enum and alert rule existing.
+
 Spec §12.4 "Failure behavior" row: "Both stores down — Dual-store degraded mode — new sessions rejected (503), in-flight sessions continue on cached coordination state, `PLATFORM_DEGRADED` event emitted to clients, `DualStoreUnavailable` alert fires."
 
 The proto carries `ERROR_CODE_PLATFORM_DEGRADED` (`pkg/proto/adapter/v1/lenny-adapter.pb.go:128`) and the alert rule exists (`pkg/alerting/rules/rules.go:345`), but the gateway does not detect the dual-store outage and does not emit `PLATFORM_DEGRADED` events to active client streams (`grep -rn 'PLATFORM_DEGRADED\|platform_degraded'` returns only the proto enum and the alert description). The §10.1 "Dual-store unavailability" protocol the spec defers to is also unwired.
@@ -15911,6 +16420,8 @@ The proto carries `ERROR_CODE_PLATFORM_DEGRADED` (`pkg/proto/adapter/v1/lenny-ad
 `pkg/storerouter/storerouter.go:52` defines `RedisConcernDelegation = "delegation"` with the comment `budget keys ({root_session_id}:dlg:*)`. No caller invokes `RedisShard(ctx, tenantID, RedisConcernDelegation)` because there are no delegation budget Redis writes (see H8). The enum value is therefore dead; until the delegation budget Lua path lands, this constant is a forward declaration without a backing implementation.
 
 ### - [ ] F-12.4.19 — Slot-counter post-recovery rehydration is unbuilt and the rehydration sentinel keys are unused [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-5.2.4 — Both report that post-recovery slot-counter rehydration (rehydrated/rehydrating sentinels, GetActiveSlotsByPod seeding) is not implemented in slotcounter.go.
 
 Spec §12.4 key-prefix table rows for `lenny:pod:{pod_id}:rehydrated` and `lenny:pod:{pod_id}:rehydrating`:
 
@@ -15992,6 +16503,8 @@ tombstone hard-prune, and the `lenny_gc_*` metric family.
 
 ### - [ ] F-12.5.1 — `artifact_store` catalog is defined but completely unwired (§12.5 lines 295, 309, 313, 316–321, 331–339, 341) [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.5.5 — Both report that the artifact_store catalog (PgStore) is fully built but never wired into the running gateway, so GC sweep, soft-delete guard, hard-prune, and size accounting never execute.
+
 The `artifact_store` catalog is the source of truth for every spec'd
 artifact-store flow: tenant-prefix `DeleteByTenant` (line 295), the storage
 quota rehydration sum (line 309 — `artifact_size_bytes`), per-row legal-hold
@@ -16024,6 +16537,8 @@ creates the table and the package compiles, but no live code path inserts,
 queries, or sweeps it.
 
 ### - [ ] F-12.5.2 — gateway omits `SSEKeyResolver`; T4 tenants get bucket-default encryption (§12.5 lines 297, 299–303) [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.5.3 — Both report that the MinIO SSEKeyResolver hook is never wired in main.go, so T4 tenants fall back to bucket-default encryption.
 
 The spec mandates that for T4 tenants the `ArtifactStore` selects "an SSE-KMS
 key scoped to `tenant:{tenant_id}`" instead of the deployment-wide SSE key
@@ -16111,6 +16626,8 @@ lifecycle drift" line 307 names is the actual operating posture.
 
 ### - [ ] F-12.5.5 — MinIO bucket versioning + delete-marker / noncurrent lifecycle is unconfigured (§12.5 lines 277, 280) [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.5.16 — Both describe the Helm chart failing to configure MinIO bucket versioning and delete-marker/noncurrent-version lifecycle via the mc ilm add post-install Job, with the same root cause and fix.
+
 Line 277 ("Enable bucket versioning for checkpoint objects") and line 280
 (bucket-wide expire-delete-markers after 24h and `NoncurrentVersionExpiration: Days: 1`
 configured by the Helm chart post-install `mc ilm add` Job with no prefix
@@ -16134,6 +16651,8 @@ the spec's required configuration the chart should fail-loud on render if
 versioning is enabled without the lifecycle rule.
 
 ### - [ ] F-12.5.6 — checkpoint storage path uses no `{object_type}` segment, breaking eviction-context prefix scoping (§12.5 lines 295, 315) [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.5.2, F-12.5.29 — All three describe the missing {object_type} segment in the blob object key path breaking eviction prefix scoping; F-12.5.29 is the parser-side facet of the same defect.
 
 §12.5 line 295 mandates the path format `/{tenant_id}/{object_type}/{session_id}/{filename}`.
 Line 315 describes the GC sweep recognising eviction context objects via the
@@ -16184,6 +16703,8 @@ imposes the multi-minute "per-tenant" erasure SLO breach
 deadline into a function of session count.
 
 ### - [ ] F-12.5.8 — interface boundary does not enforce caller-tenant prefix; `ErrCrossTenant` is unused (§12.5 line 295) [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.2.15, F-4.5.1 — All three report that ArtifactStore does not enforce per-tenant prefix validation at the interface boundary and ErrCrossTenant is never returned.
 
 Line 295: "The `ArtifactStore` implementation validates the `tenant_id`
 prefix on every operation — no S3 call is issued unless the caller's
@@ -16303,6 +16824,8 @@ Consequence: checkpoint storage grows unbounded per session, blowing the
 
 ### - [ ] F-12.5.13 — partial-manifest schema and backstop sweep are absent (§12.5 lines 316, 337) [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-10.1.8, F-4.4.2 — All three describe the missing partial-manifest schema/table and code path (no checkpoint_manifest table, no partial_object_key_prefix, no writer/cleanup), same root cause and fix.
+
 The spec relies on a checkpoint-metadata table carrying `partial = true`, the
 `partial_manifest_active_uniq` partial unique index, and the
 `partial_object_key_prefix` column (line 316 + §10.1 cross-ref). The §12.5
@@ -16326,6 +16849,8 @@ written from a real cleanup path. The line 316 + line 337 backstop sweep that
 the spec calls a "true backstop" is functionally absent.
 
 ### - [ ] F-12.5.14 — storage quota counter has no rehydration-from-Postgres path (§12.5 line 309) [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.4.11 — Both report the absent Postgres rehydration path for the storage-quota counter on Redis outage.
 
 §12.5 line 309 (cross-referenced from §12.4 line 210 storage table) mandates:
 "the GC job uses [artifact_size_bytes] to decrement the Redis counter on
@@ -16367,6 +16892,8 @@ rehydration must accommodate the rename or migrate the column.
 
 ### - [ ] F-12.5.16 — fail-closed write rejection (`CLASSIFICATION_CONTROL_VIOLATION` / `kms_unavailable`) is not emitted (§12.5 line 303) [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.9.10 — Both report that the fail-closed CLASSIFICATION_CONTROL_VIOLATION/kms_unavailable write rejection is never emitted, the MinIO path silently falling back to default encryption.
+
 Line 303: "If the tenant-scoped KMS key is unavailable during a checkpoint or
 artifact write …, the gateway MUST reject the write with
 `CLASSIFICATION_CONTROL_VIOLATION`. The `ArtifactStore` does NOT fall back to
@@ -16398,6 +16925,8 @@ Consequence: the cryptographic-erasure invariant is silently downgraded
 exactly when the spec mandates fail-closed.
 
 ### - [ ] F-12.5.17 — `lenny_gc_runs_total / lenny_gc_artifacts_deleted / lenny_gc_errors_total / lenny_gc_duration_seconds` metrics are absent (§12.5 line 321) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.5.9 — Both report the §12.5 GC metrics (runs/artifacts_deleted/errors/duration) are absent from the catalog with only the tombstone-prune counter present.
 
 Line 321 enumerates the §12.5 monitoring surface as
 `lenny_gc_runs_total`, `lenny_gc_artifacts_deleted`, `lenny_gc_errors_total`,
@@ -16449,6 +16978,8 @@ Evidence:
 
 ### - [ ] F-12.5.20 — replication controller is unwired in any cmd entry point (§12.5 line 278 + §25.11) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-16.7.2, F-17.3.7, F-25.11.1, F-17.3.26, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
+
 Line 278: "For multi-zone deployments, configure MinIO site-to-site
 replication for near-zero RPO on artifact data."
 
@@ -16495,6 +17026,8 @@ applies via NetworkPolicy on the wire, but the spec's stricter
 backend-aware TLS-enforcement check is absent.
 
 ### - [ ] F-12.5.22 — per-blob legal-hold (`miniostore.SetLegalHold`) is never invoked (§12.5 line 313 + §12.8) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.5.15 — Both report blob-level legal hold lives only in an in-process sync.Map that does not survive gateway restart.
 
 Line 313 mandates that sessions with `legal_hold = true` are exempt from
 checkpoint rotation. The MinIO Store carries an in-process holds map
@@ -16624,6 +17157,8 @@ limited to test races.
 
 ### - [ ] F-12.5.29 — `lenny-blob` URI lacks the `{object_type}` segment in the parser (§12.5 line 295) [Low] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.5.6, F-4.5.2 — All three describe the missing {object_type} segment in the blob object key path breaking eviction prefix scoping; F-12.5.29 is the parser-side facet of the same defect.
+
 Even if callers added an `object_type` segment to the key path, the parser
 (`pkg/blobstore/blobstore.go:80-104`) reads exactly three components after the
 host. A fix for the eviction-context prefix scoping (high finding above)
@@ -16638,6 +17173,8 @@ default (line 279, "https://minio.lenny-system:9000") and the chart default
 diverge; the spec naming is informational so this is flagged as Info.
 
 ### - [ ] F-12.5.31 — drain-readiness webhook is correctly registered, gateway endpoint correctly handles GET, and the metric `lenny_drain_readiness_checks_total{outcome=…}` is absent [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.5.12 — Both describe the lenny_drain_readiness_checks_total counter being unimplemented while the webhook and endpoint exist.
 
 Spec line 291 mandates the metric. The webhook chart template
 (`charts/lenny/templates/admission-policies/drain-readiness-webhook.yaml:1-80`)
@@ -16711,6 +17248,8 @@ plus a Helm chart MinIO-side configuration pass.
 ### Findings
 
 ### - [ ] F-12.6.1 — production code bypasses `StoreRouter` (R-03 violation) [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.2.13, F-12.3.4, F-12.7.1 — All four report that StoreRouter (R-03) is never imported and billing/audit writes take a raw pgxpool.Pool, the same defect and fix.
 
 **Spec.** §12.6 line 488 and §12.3 R-03 (line 144): "All billing and audit writes MUST be routed through `StoreRouter.BillingShard` and `StoreRouter.AuditShard` even in v1." R-03 further mandates that an integration test `TestBillingAuditRoutedThroughStoreRouter` verify the call sites use `StoreRouter`.
 
@@ -16819,6 +17358,8 @@ plus a Helm chart MinIO-side configuration pass.
 ---
 
 ### - [ ] F-12.6.10 — `EventBus` is not exposed as an interface; production wiring is absent [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.7.4 — Both describe EventBus being only a concrete RedisEventBus struct with no interface declared for backend swaps.
 
 **Spec.** §12.6 line 658 defines `EventBus` as a Go interface with `Publish` and `Subscribe`. The narrative paragraph (line 639) states the entire point of the interface: "If the EventBus backend is later replaced with NATS JetStream or Kafka for scalability, the swap is a configuration-only change at the store-router level — no callers change."
 
@@ -16942,6 +17483,8 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 ---
 
 ### - [ ] F-12.6.18 — scatter-gather configuration knobs and execution helpers are missing [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-25.9.11 — F-12.6.18 covers the generic StoreRouter scatter-gather knobs and helpers, while F-25.9.11 covers the audit-specific scatter-gather plus Redis caching path; related subsystem, different specific gaps.
 
 **Spec.** §12.6 lines 554–560: `storeRouter.maxScatterGatherConcurrency` (default 16), `storeRouter.scatterGatherPerShardTimeoutSeconds` (default 10), `storeRouter.scatterGatherAggregateTimeoutSeconds` (default 120), the per-shard timeout structured event, the partial-result `partial: true` flag for reads, the retry-twice-then-fail policy for writes (GDPR erasure, tenant deletion), the `lenny_store_router_scatter_gather_duration_seconds{query_type}` histogram, and the `lenny_store_router_scatter_gather_shard_count{query_type}` gauge.
 
@@ -17162,6 +17705,8 @@ Likewise, §12.6 defines `type EventBus interface { Publish, Subscribe }` and §
 
 ### - [ ] F-12.7.1 — 1 — StoreRouter is not wired into gateway production paths [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.2.13, F-12.3.4, F-12.6.1 — All four report that StoreRouter (R-03) is never imported and billing/audit writes take a raw pgxpool.Pool, the same defect and fix.
+
 **Severity: Medium**
 
 §12.7 commits to "Define small role-based interfaces ... [so] adding a Tier 4 implementation requires no application code restructuring — the swap is a configuration-only change at the store-router level" (§12.6 lead-in). The `StoreRouter` interface and `SingleShardRouter` exist (`pkg/storerouter/storerouter.go`), but no production binary imports them. `cmd/lenny-gateway/main.go` passes the raw `*pgxpool.Pool` to billing (`billingpg.New(pool)`, line 377), audit (`auditstore.New(pgPool)`, line 831), sessions (`sessionpg.New(pool)`, line 371), tenants, runtimes, transcripts, users, connectors, and pools. The intended swap surface is dead at the wiring boundary, and §12.3 R-03 (billing/audit MUST go through StoreRouter) is not enforced by the running gateway.
@@ -17173,6 +17718,8 @@ Files:
 - `cmd/lenny-gateway/main.go:367-413` (direct pool passing in store construction).
 
 ### - [ ] F-12.7.2 — 2 — Cloud KMS adapters compiled but unreachable at the wiring boundary [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.2.11, F-17.5.2, F-4.3.11 — These four describe the same defect: the cloud KMS adapters exist but main.go hard-codes kms.NewLocalRandom() with no provider-selection knob; the two Info members frame the same gap as an accepted seam.
 
 **Severity: Medium**
 
@@ -17190,6 +17737,8 @@ Files:
 - `charts/lenny/values.yaml:175-180` (`kms:` block only describes the egress CIDR, no provider selector).
 
 ### - [ ] F-12.7.3 — 3 — Cloud blob backends compiled but unreachable [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.5.1 — Both report the S3/GCS/Azure blob backends are implemented but not wired into the gateway selector, which recognizes only memory and MinIO.
 
 **Severity: Medium**
 
@@ -17213,6 +17762,8 @@ Files:
 - `charts/lenny/values.yaml:157-173` (`minio:` block only).
 
 ### - [ ] F-12.7.4 — 4 — EventBus is a concrete struct, not an interface [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.6.10 — Both describe EventBus being only a concrete RedisEventBus struct with no interface declared for backend swaps.
 
 **Severity: Low**
 
@@ -17275,6 +17826,8 @@ The user-erasure orchestrator core path (DeleteByUser → store_deleting → pse
 
 ### - [ ] F-12.8.1 — Tenant-deletion lifecycle (§12.8 Phases 1–6) is not wired into any running process [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-24.10.3 — F-12.8.1 and F-24.10.3 both report the tenant-deletion lifecycle controller is not wired/initiated; F-24.10.4 is a distinct defect about GET tenant not surfacing deletion state.
+
 **Spec:** §12.8 "Tenant deletion lifecycle" mandates a multi-phase background controller that walks each tenant through `disabling → deleting → deleted` and runs Phases 1 (soft-disable), 2 (terminate sessions), 3 (revoke credentials), 3.5 (legal-hold segregation), 4 (DeleteByTenant), 4a (T4 KMS destroy), 5 (clean CRDs), 6 (produce receipt). Each phase is idempotent and resumes from a persisted Phase enum after restart.
 
 **Implementation:** `pkg/controller/tenantdeletion/{controller.go,lifecycle.go,runnable.go}` defines the full `Reconciler`, `Job` shape, phase order, and seam interfaces (`TenantEraser`, `SessionTerminator`, `CredentialRevoker`, `CRDCleaner`, `ReceiptSink`, `SoftDisabler`). The phases are correctly ordered and the KMS destroy path delegates to `pkg/tenantkms` with `Disable` then `Destroy`.
@@ -17291,6 +17844,8 @@ The user-erasure orchestrator core path (DeleteByUser → store_deleting → pse
 
 ### - [ ] F-12.8.2 — Phase 3.5 legal-hold segregation (force-delete, escrow KEK, region-scoped escrow) is unimplemented [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-24.10.2 — F-12.8.2 and F-24.10.2 both report the unimplemented Phase 3.5 legal-hold force-delete path (controller plus endpoint plus CLI); F-24.10.1 is the distinct plain tenants-delete CLI command.
+
 **Spec:** §12.8 lines 872, 878–889 introduce Phase 3.5: before Phase 4 destructive operations, the controller MUST enumerate active legal holds (sessions, artifacts, audit-range, workspace-snapshot); on holds present without override, abort with `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` (HTTP 409 POLICY); under `--acknowledgeHoldOverride` (platform-admin only, requires `justification`), re-encrypt under region-scoped `platform:legal_hold_escrow:<region>` KEK, migrate to region-scoped escrow bucket with `retain-until-hold-release`, write the `legal_hold.escrowed` event with the residency-resolved fields, and emit `gdpr.legal_hold_overridden_tenant`. The endpoint is `POST /v1/admin/tenants/{id}/force-delete`.
 
 **Implementation:** None. The audit-event catalog (`pkg/observability/audit/catalog.go:183`) declares `EventGDPRLegalHoldOverriddenTenant` and `EventLegalHoldEscrowed`/`EventLegalHoldEscrowReleased` (lines 185-186). The alert rules (`pkg/alerting/rules/rules.go:982-989`) declare `LegalHoldOverrideUsedTenant` keyed on a `lenny_gdpr_legal_hold_overridden_tenant_total` counter. The `LegalHoldEscrowResidencyViolation` alert (line 380-387) and `lenny_legal_hold_escrow_region_unresolvable_total` counter exist. But no handler, no controller code, no `legalHoldEscrow` config consumer, and no emitter of these audit events or counters exists.
@@ -17304,6 +17859,8 @@ The user-erasure orchestrator core path (DeleteByUser → store_deleting → pse
 **Impact:** A tenant-scope legal hold cannot be honored during deletion. The "destroying held evidence is spoliation" invariant the spec marks as mandatory and fail-closed has no enforcement path.
 
 ### - [ ] F-12.8.3 — Post-restore GDPR erasure reconciler is unimplemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.3.3, F-25.11.10 — All three describe the unimplemented post-restore GDPR erasure reconciler that should replay DeleteByUser/DeleteByTenant between restore_completed and gateway restart.
 
 **Spec:** §12.8 lines 897–907 ("Backups in erasure scope" + "Post-restore reconciler" Phases 1–4): between the `restore_completed` event and the gateway rolling restart, a reconciler enumerates `gdpr.*` receipts where `completed_at > backupTakenAt`, computes a legal-hold ledger watermark, blocks replay when stale, replays `DeleteByUser`/`DeleteByTenant` against restored stores, emits `gdpr.backup_reconcile_completed` or `gdpr.backup_reconcile_blocked`, and gates readiness fail-closed.
 
@@ -17364,6 +17921,8 @@ The audit_log schema (`migrations/0001_initial_schema.up.sql:130-156`) has no `u
 
 ### - [ ] F-12.8.7 — Legal-hold admin endpoint accepts only session-level holds; spec ledger covers artifact, audit_range, workspace_snapshot [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-11.8.5 — Both report the legal-hold admin endpoint accepts only session-level holds and rejects artifact (and other resource-type) scopes the spec requires.
+
 **Spec:** §12.8 line 735 ("Sessions and artifacts support a `legal_hold` boolean flag... set and cleared via the admin API (`POST /v1/admin/legal-hold`), which accepts a session ID or artifact ID and the desired hold state"). §12.8 step-0 preflight (line 794) and Phase 3.5 enumeration (line 878) require the ledger cover `resourceType` `session`, `artifact`, `audit_range`, and `workspace_snapshot`.
 
 **Implementation:** `pkg/gateway/admin/legalhold.go:22-80`:
@@ -17403,6 +17962,8 @@ and the equivalent admin-API calls `GET /v1/admin/audit-events?tenantId=...&acto
 
 ### - [ ] F-12.8.9 — MemoryStore erasure preflight (startup + per-job) is unimplemented [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.1.4, F-12.2.10, F-9.4.3 — All four report the §12.8 ValidateMemoryStoreErasure startup and per-job preflight is absent, viewed from different referencing sections.
+
 **Spec:** §12.8 lines 743–758 require (a) at gateway startup, `ValidateMemoryStoreErasure(ctx, store)` seeds a synthetic row, runs `DeleteByUser`, queries to assert 0 rows, refuses startup on failure with the documented fatal message, (b) per-job preflight re-runs the seeded-row check before step 8 of `DeleteByUser`, (c) deployment guidance documents the contract.
 
 **Implementation:** `grep -rn "ValidateMemoryStoreErasure\|ValidateMemoryStoreIsolation\|preflight"` in `pkg/gateway/memorystore` and `pkg/gateway/erasurejob` returns nothing. The `pkg/gateway/memorystore/memorystore.go` `Store` interface is correctly defined with `DeleteByUser` and `DeleteByTenant` rejecting empty IDs (lines 310-340), but no preflight harness invokes a synthetic write-delete-query cycle.
@@ -17411,6 +17972,8 @@ and the equivalent admin-API calls `GET /v1/admin/audit-events?tenantId=...&acto
 
 ### - [ ] F-12.8.10 — `processing_restricted` clear endpoint and erasure-job retry endpoint are unimplemented [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-24.12.3 — F-12.8.10 and F-24.12.3 both report the missing clear-processing-restriction endpoint (F-12.8.10 also covers retry, overlapping with the separate retry-endpoint finding F-24.12.2).
+
 **Spec:** §12.8 line 764 ("the job must be retried or cleared explicitly via `POST /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction` (requires `platform-admin`; this endpoint records the operator identity and justification in the audit trail)"). §12.8 line 766 ("retry via `POST /v1/admin/erasure-jobs/{job_id}/retry`").
 
 **Implementation:** `grep -rn "clear-processing-restriction\|/erasure-jobs/.*/retry\|/clear-processing-restriction"` in `pkg/gateway/admin` returns no handler. The migration 0042 trigger code (lines 88-93) does provision the `lenny.clear_processing_restriction = 'true'` session-local bypass; the handler that would set this is absent.
@@ -17418,6 +17981,8 @@ and the equivalent admin-API calls `GET /v1/admin/audit-events?tenantId=...&acto
 **Impact:** A failed erasure job permanently locks the affected user out of session creation (`ERASURE_IN_PROGRESS`). The only recovery path is a direct database write under the `lenny_erasure` role, defeating the spec's intent that operators have an auditable recovery surface.
 
 ### - [ ] F-12.8.11 — `--acknowledge-hold-override` recorded only in the gdpr.legal_hold_overridden event, not in the completion receipt's required fields [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-12.8.23 — Both concern the legal-hold-override receipt/event but report different missing fields (override_at timestamp vs job_id in the event payload).
 
 **Spec:** §12.8 line 796 requires the override-receipt fields: "the erasure job records the override in its receipt (`legal_hold_override: true`, `override_by`, `override_justification`, `override_at`, and the full list of holds that would otherwise have blocked it) and emits a `gdpr.legal_hold_overridden` critical audit event (separate event type from `gdpr.erasure_blocked_by_hold`) carrying the same fields plus `job_id`."
 
@@ -17482,6 +18047,8 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 ### - [ ] F-12.8.18 — Legal-hold reconciler for checkpoint gaps (§12.8 line 739) is unimplemented [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.5.14 — Both report the unimplemented legal-hold checkpoint-gap reconciler and its missing event/counter, citing the same §12.8 line 739.
+
 **Spec:** §12.8 line 739 ("A background reconciler (co-located with the GC goroutine, running every 15 minutes) scans for sessions where `legal_hold = true` and one or more checkpoints have already been rotated... When such a session is found, the reconciler emits a `legal_hold.checkpoint_gap_detected` critical audit event and increments the `lenny_legal_hold_checkpoint_gaps_total` counter.")
 
 **Implementation:** `grep -rn "LegalHoldReconciler\|legal_hold.checkpoint_gap\|lenny_legal_hold_checkpoint_gaps_total"` in `pkg/` returns no implementer; neither the audit-event catalog nor metrics catalog has `legal_hold.checkpoint_gap_detected` or `lenny_legal_hold_checkpoint_gaps_total`. The retentiongc (`pkg/gateway/retentiongc/retentiongc.go:89-90`) correctly exempts a held session from collection (`s.LegalHold` short-circuits eligibility), but does not retrospectively detect pre-hold rotation.
@@ -17524,6 +18091,8 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 **Impact:** Minor — the event survives at most `audit.retentionDays` (typically 30-90), shorter than the spec's 7-year floor for compliance receipts.
 
 ### - [ ] F-12.8.23 — Per-job legal-hold override emits but does not include `jobId` in the gdpr.legal_hold_overridden event [Info] — OPEN
+
+**Potential overlap** (confidence: high) — F-12.8.11 — Both concern the legal-hold-override receipt/event but report different missing fields (override_at timestamp vs job_id in the event payload).
 
 **Implementation detail:** `pkg/gateway/admin/erasure.go:131-138` — the emitted payload includes `tenantId`, `userId`, `overrideBy`, `justification`, `holdCount`, `heldSessions`. The spec line 796 says "carrying the same fields plus `job_id`". The `jobId` is not added to the event payload, only to the receipt.
 
@@ -17595,6 +18164,8 @@ intersect §12.9 control surfaces.
 ### - [ ] F-12.9.1 — severity [High] — OPEN
 
 ### - [ ] F-12.9.2 — 9-01 — Pool controller does not inject `lenny.dev/workspace-tier: t4`; T4 dedicated-node webhook predicate is effectively unreachable in production [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-6.4.4 — Both report the pool controller not injecting lenny.dev/workspace-tier:t4, making the T4 node-isolation webhook predicate unreachable.
 
 Spec line 1048 says enforcement is "at the storage interface boundary"
 and §6.4 (the cross-referenced upstream control) requires that "the
@@ -17784,6 +18355,8 @@ applies everywhere) is the safe default; the missing capability is a
 known shortcoming rather than a control bypass.
 
 ### - [ ] F-12.9.10 — 9-08 — `CLASSIFICATION_CONTROL_VIOLATION / kms_unavailable` is not emitted at write time when the T4 KMS key disappears between probes [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.16 — Both report that the fail-closed CLASSIFICATION_CONTROL_VIOLATION/kms_unavailable write rejection is never emitted, the MinIO path silently falling back to default encryption.
 
 The spec (line 303, the §12.5 cross-reference §12.9 inherits) requires:
 "If the tenant-scoped KMS key is unavailable during a checkpoint or
@@ -18074,6 +18647,8 @@ are only noted under Info.
 
 ### - [ ] F-13.1.2 — 1-01 — Agent pods omit `/sessions` and `/artifacts` writable paths the §13.1 "Writable paths" row mandates [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-6.1.2, F-6.4.1 — F-13.1.2, F-6.1.2, and F-6.4.1 all report missing /sessions and /artifacts volumes/mounts in podspec.go; F-6.1.14 is a separate /dev/shm 64MB cap defect though F-6.1.2 also touches /dev/shm.
+
 §13.1 line 10 declares "Writable paths: tmpfs (`/tmp`), workspace,
 sessions, artifacts" and §6.4 cross-references the same layout
 (`/sessions/` tmpfs, `/artifacts/` disk-backed emptyDir). The agent pod
@@ -18104,6 +18679,8 @@ Evidence:
 - spec/06_warm-pod-model.md:376-383, 394-397
 
 ### - [ ] F-13.1.3 — 1-02 — Adapter-agent boundary nonce-only fallback (HMAC challenge-response) and `SO_PEERCRED` self-test are unimplemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.7.8, F-4.7.9 — F-13.1.3 spans both the SO_PEERCRED startup self-test and the nonce-only HMAC fallback; F-4.7.8 and F-4.7.9 each cover one half of that same missing §4.7 contract.
 
 The §13.1 Adapter-agent boundary row (line 14) specifies "`SO_PEERCRED`
 UID check + manifest nonce (primary); if `SO_PEERCRED` unavailable
@@ -18374,6 +18951,8 @@ Evidence:
 
 ### - [ ] F-13.1.11 — 1-05 — Adapter and agent UIDs are not explicitly declared in `supplementalGroups`; spec's normative wording is not satisfied [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-13.1.15 — Both concern supplementalGroups, but one is the podspec producer not declaring the GIDs and the other is the validator API field never being consulted.
+
 §13.1 line 25: "Both the adapter UID and the agent UID are declared
 in the pod's `spec.securityContext.supplementalGroups` list (or,
 equivalently, `runAsGroup` for the adapter and `supplementalGroups`
@@ -18475,6 +19054,8 @@ Evidence:
 - No occurrence of `credReadersGID` in `charts/lenny/`
 
 ### - [ ] F-13.1.15 — 1-02 — `pkg/podsecurity.PodSpec.SupplementalGroups` is part of the validator API but never consulted [Low] — OPEN
+
+**Potential overlap** (confidence: high) — F-13.1.11 — Both concern supplementalGroups, but one is the podspec producer not declaring the GIDs and the other is the validator API field never being consulted.
 
 The `PodSpec` struct declares `SupplementalGroups []int64`
 (`pkg/podsecurity/podsecurity.go:49-52`) with a doc comment that says
@@ -18594,6 +19175,8 @@ absence of a sidecar-aware sweep for future pod templates.
 
 ### - [ ] F-13.1.22 — 1-05 — `lenny-cred-readers` ephemeral-container guard correctly enforces all four §13.1 conditions [Info] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.3.17, F-6.1.26 — All describe the same positive finding that the four-condition ephemeral-container cred-guard webhook is correctly implemented; F-13.2.23 also covers label-immutability so it is overlapping rather than a clean duplicate.
+
 `pkg/admission/ephemeral_container_cred_guard/guard.go:99-144`
 implements conditions (i) credential UID, (ii) cred-readers GID in
 runAsGroup or supplementalGroups, (iii) absent securityContext fields
@@ -18631,6 +19214,9 @@ Implementation:
 Effect: proxy-mode agent pods carry no `lenny.dev/delivery-mode: proxy`, so the supplemental NetworkPolicy matches zero pods. With the agent-namespace default-deny in force, every proxy-mode LLM request is dropped at the CNI; the §4.9 proxy mode is non-functional whenever NetworkPolicy enforcement is on. The `lenny.dev/egress-profile` label has the same issue (no controller writes it, so the `restricted`/`provider-direct`/`internet` profile policies have no targets).
 
 ### - [ ] F-13.2.2 — Token Service gRPC server runs plaintext; spec mandates mTLS on `tokenService.grpcPort` [High] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-4.3.2 — Both describe the gateway-to-Token-Service link running plaintext instead of mTLS; F-10.3.10 is the broader chart gap of not mounting mTLS secrets into any deployment.
+
 Spec (§13.2 line 217 Token Service row, §13.2 line 216 Gateway egress): "Token Service (`lenny.dev/component: token-service`) Ingress Allowed: Gateway pods only (TCP `{{ .Values.tokenService.grpcPort }}` — default 50052, **mTLS**)."
 
 Implementation:
@@ -18661,6 +19247,9 @@ Implementation:
 Effect (compounds with H3): when the agent-namespace default-deny is enforced, the pod's resolver targets `kube-system` `kube-dns` but the policy blocks that path; DNS fails entirely. Even after H3 is fixed, until this controller change lands pods will not query the dedicated instance.
 
 ### - [ ] F-13.2.5 — Gateway external-HTTPS egress (`allow-gateway-egress-llm-upstream`) is not rendered [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.2.18 — Both report the allow-gateway-egress-llm-upstream external-HTTPS egress policy is not rendered; F-13.2.18 just logs the deferral comment for the same gap.
+
 Spec (§13.2 lines 326–414): the chart MUST render `allow-gateway-egress-llm-upstream` in `lenny-system` whenever `credentialPools[*].deliveryMode: proxy` is present. The policy emits two parallel `ipBlock` peers (one `0.0.0.0/0`, one `::/0`) with `except` lists covering cluster CIDRs, RFC1918/ULA/link-local, and IMDS endpoints, partitioned by family (NET-062). This is the SSRF boundary for gateway-initiated outbound HTTPS.
 
 Implementation:
@@ -18760,6 +19349,9 @@ Implementation:
 `pkg/preflight/run.go` reads `cfg.SATokenAudience` and feeds it to `CheckSATokenAudienceUniqueness`; `cmd/lenny-preflight/main.go` would source it from chart values, but `values.yaml` declares only `global.spiffeTrustDomain` (line 440), not `global.saTokenAudience`. The check therefore short-circuits on empty (line 84 of `networkpolicy_identity.go`). Logged as Low because the SPIFFE-trust-domain half of NET-064 is implemented and the SA-token-audience half is a future-proofing collision guard.
 
 ### - [ ] F-13.2.18 — `lenny-system` `allow-gateway-egress` lacks the §13.2 external-HTTPS rule (rendered separately under the missing `allow-gateway-egress-llm-upstream`); the comment block at line 435 documents the deferral [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.2.5 — Both report the allow-gateway-egress-llm-upstream external-HTTPS egress policy is not rendered; F-13.2.18 just logs the deferral comment for the same gap.
+
 The `allow-gateway-egress` template (`charts/lenny/templates/system-network-policies.yaml` lines 442–528) explicitly defers external-HTTPS egress with the comment "The external-HTTPS egress with its §13.2 NET-062 dual-family IMDS/private-range exclusions is rendered with the LLM proxy." This rendering is unimplemented (see H5). Logged as Low because the comment surfaces the deferral; the operational impact is captured under H5.
 
 ### - [ ] F-13.2.19 — Preflight NetworkPolicy parity audits (NET-047/050, 057, 062, 065, 067, 068) are implemented and exercised [Info] — OPEN
@@ -18769,6 +19361,9 @@ The `allow-gateway-egress` template (`charts/lenny/templates/system-network-poli
 `charts/lenny/templates/agent-network-policies.yaml` renders the three baseline policies per namespace declared in `agentNamespaces`. `charts/lenny/tests/agent-network-policies_test.yaml` validates the baseline-with-and-without-OTLP cases and the in-cluster vs. external-CIDR OTLP target cases.
 
 ### - [ ] F-13.2.21 — Adapter mTLS (gateway → pod) is fully wired [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.4.23 — Both are positive findings that adapter mTLS (RequireAndVerifyClientCert in pkg/adapter/transport.go) is correctly wired.
+
 `pkg/adapter/transport.go` `TLSServerOption` and `TLSClientOption` (lines 43–100) implement the §4.7 gateway↔adapter mTLS link with `ClientAuth: RequireAndVerifyClientCert` on the server, a configurable client CA bundle, and an explicit plaintext path for local development. `pkg/gateway/adapterclient/client.go` documents the mTLS dial expectation. The mTLS deny-list propagator (`pkg/mtls/denylist/propagator/`) is wired into the gateway's security event bus.
 
 ### - [ ] F-13.2.22 — Data-residency validator webhook is built and fail-closed [Info] — OPEN
@@ -18792,6 +19387,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ### - [ ] F-13.3.1 — CFL-001 — `token.exchanged` audit event is never emitted [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.3.8 — Both describe Token Service audit events (token.exchanged, plus revoked/rate-limited) being declared in the catalog but never emitted.
+
 **Normative requirement (§13.3 lines 587, 589).** "Every token exchange — external or internal, accepted or rejected — emits a `token.exchanged` audit event." Rejected exchanges carry `policy_result: "rejected:<reason>"`; accepted exchanges carry `jti`. Token contents are never written; only claim identifiers and metadata. The "write-before-issue" paragraph at line 589 specifies a single Postgres transaction with three statements executed in order: (1) acquire the per-tenant audit advisory lock, (2) INSERT into `issued_tokens`, (3) INSERT into `audit_log`; only after COMMIT does the gateway return the `access_token`.
 
 **Evidence.**
@@ -18808,6 +19405,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ### - [ ] F-13.3.2 — CFL-002 — Write-before-issue atomicity is not a Postgres advisory-locked transaction with audit row [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.3.7 — Both report that write-before-issue is not a single advisory-locked Postgres transaction binding issued-token and token.exchanged audit INSERTs.
+
 **Normative requirement (§13.3 line 589).** "The Token Service commits the `token.exchanged` audit row to Postgres before returning the `access_token` to the caller. The ordering is a single Postgres transaction with three statements, executed in this order: (1) acquire the per-tenant audit advisory lock ([§11.7] item 3); (2) INSERT the issued-token row into `issued_tokens`; (3) INSERT the `token.exchanged` row into `audit_log`. The transaction is then COMMITted. Only after the COMMIT succeeds does the gateway return `access_token` to the caller. If any statement fails, the transaction rolls back and the token is never generated or returned." Rejected exchanges follow the same advisory-lock + COMMIT discipline.
 
 **Evidence.**
@@ -18822,6 +19421,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 ---
 
 ### - [ ] F-13.3.3 — CFL-003 — `/v1/oauth/token` has no §13.3 per-`(tenant, sub)` rate limiter [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.3.9 — Both report that /v1/oauth/token has no per-(tenant,sub) rate limiter and the related counters are never incremented.
 
 **Normative requirement (§13.3 line 607).** "The endpoint is rate-limited per caller identity to prevent brute force attacks against the `subject_token` validation and to contain runaway automation. Default limits are 10 requests/second and 300 requests/minute per `(tenant_id, sub)` tuple — excess requests return `429 rate_limited` with `Retry-After`. A separate global per-tenant limit (default 100/sec, configurable via `oauth.rateLimit.tenantPerSecond`) applies across all callers within a tenant."
 
@@ -18874,6 +19475,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ### - [ ] F-13.3.6 — CFL-006 — `credential.*` audit events not declared in the §16.7 catalog [Medium] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-4.9.1 — Both report the credential.* lifecycle audit events are not implemented; the catalog declaration and the emission are two facets of the same missing surface.
+
 **Normative requirement (§4.9.2 referenced by §13.3 line 648).** The §4.9 credential audit event catalog enumerates `credential.registered`, `credential.deleted`, `credential.rotated`, `credential.user_revoked`, `credential.leased`, `credential.revoked`, `credential.re_enabled`, `credential.renewed`, `credential.rotation_ceiling_hit`, `credential.fallback_exhausted`. §13.3 line 587 declares this audit coverage is "always emits." §13.3 line 587/648 also says the `credential.*` audit-stream pattern routes through §11.7 hash-chain + SIEM controls.
 
 **Evidence.**
@@ -18890,6 +19493,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ### - [ ] F-13.3.7 — CFL-007 — Emergency credential revocation endpoint does not exist [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-11.8.1, F-4.9.2 — Three findings describe the missing emergency credential-revocation endpoints; F-24.5.1 and F-24.5.2 cover the broader credential-pool CLI/CRUD admin surface.
+
 **Normative requirement (§4.9 line 1631 and §13.3 line 648 cross-reference).** "Revocation endpoint: `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke`" (and the pool-wide variant `POST /v1/admin/credential-pools/{name}/revoke`). The operation is synchronous and MUST: mark the credential revoked, terminate every active lease backed by it, add the credential to the in-memory credential deny list propagated via Redis pub/sub with Postgres `LISTEN/NOTIFY` as fallback, return `200 OK` with the active-lease termination count, and emit `credential.revoked`. §4.9 Emergency Revocation step 4: "For proxy mode: the LLM proxy checks the deny list on every upstream request ... Any request presenting a lease backed by a denied credential is immediately rejected with `CREDENTIAL_REVOKED`."
 
 **Evidence.**
@@ -18904,6 +19509,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 ---
 
 ### - [ ] F-13.3.8 — CFL-008 — Credential deny list lacks Postgres `LISTEN/NOTIFY` fallback and startup rebuild [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.9.7 — Both report the §4.9 startup deny-list rebuild union query is not implemented (only doc comments reference it); F-13.3.8 additionally folds in the LISTEN/NOTIFY fallback but shares the core gap.
 
 **Normative requirement (§4.9 line 1647 and §13.3 line 648 cross-reference).** "The credential ID is added to an in-memory credential deny list on every gateway replica, propagated via Redis pub/sub with Postgres `LISTEN/NOTIFY` as fallback." §4.9 line 1668: "Newly started gateway replicas rebuild their deny list by executing a union across both stores: from `CredentialPoolStore` ... from `TokenStore` (revoked + active lease)."
 
@@ -18968,6 +19575,8 @@ No finding — recorded as confirmation that one of the iter5/iter6 fixes is cor
 
 ### - [ ] F-13.3.12 — CFL-012 — Per-dialect lifetime cap lookup fails for multi-value audience [Low] — OPEN
 
+**Potential overlap** (confidence: high) — F-4.3.14 — Both concern §13.3 per-dialect lifetime caps but report different defects (multi-value audience lookup failure vs missing dialect/cap column in the issued-tokens table).
+
 **Normative requirement (§13.3 line 564).** "`audience` | The target audience: `lenny-gateway` (default), `lenny-ops` (operability-scope tokens), `llm-proxy` (credential-lease tokens)." The `PerDialectCap` table at `cmd/lenny-gateway/main.go:611` uses these three exact values as keys.
 
 **Evidence.**
@@ -18997,6 +19606,8 @@ This is documented/intentional for the dev path but worth flagging as Info: the 
 ---
 
 ### - [ ] F-13.3.14 — CFL-014 — `anthropic_direct` adapter-side synthetic-TTL timer not implemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.9.17 — Both report the unimplemented adapter-side synthetic-TTL timer for anthropic_direct lease expiry that deletes credentials.json and reports AUTH_EXPIRED.
 
 **Normative requirement (§4.9 line 1149 referenced by §13.3 line 648).** "[For `anthropic_direct` in direct delivery mode] the adapter MUST set a local timer for each credential lease's `expiresAt`. When the timer fires without a replacement lease having been delivered via `RotateCredentials`, the adapter deletes the credential file (`/run/lenny/credentials.json`) for that provider's entry and reports `AUTH_EXPIRED` on the control channel, triggering the standard fallback flow. This ensures that a long-lived `anthropic_direct` key cannot be used by the runtime beyond the lease boundary even though the key itself remains valid."
 
@@ -19039,6 +19650,8 @@ No finding — recorded as confirmation.
 ---
 
 ### - [ ] F-13.3.17 — CFL-017 — Ephemeral container credential guard (POSITIVE — four-condition fail-closed webhook) [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.1.22, F-6.1.26 — All describe the same positive finding that the four-condition ephemeral-container cred-guard webhook is correctly implemented; F-13.2.23 also covers label-immutability so it is overlapping rather than a clean duplicate.
 
 **Normative requirement (§13.1 line 27, applied by §13.3 to the credential-delivery surface).** The four conditions: (i) `runAsUser` is the adapter/agent UID, (ii) `runAsGroup` or `supplementalGroups` includes the `lenny-cred-readers` GID, (iii) any of those three fields is absent (inherits pod defaults), (iv) `volumeMounts` references the credential volume by name or at any `/run/lenny[/...]` path.
 
@@ -19093,6 +19706,9 @@ Implementation surveyed:
 - `pkg/audit/audit.go`, `pkg/audit/ocsf/`, `pkg/observability/metrics/catalog.go`
 
 ### - [ ] F-13.4.1 — Archive extraction runs in the pod adapter, not the gateway Upload Handler [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.4.1 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
+
 Spec §13.4 line 652: "Upload-side validation is enforced by the gateway's Upload
 Handler subsystem (§4.1) — pod binaries neither decompress archives nor
 canonicalize paths on untrusted input." Spec §7.4 line 448: "All archive
@@ -19128,6 +19744,9 @@ no isolation from the agent process. Cluster-wide DoS bounds are also lost
 because there is no per-gateway upload concurrency cap.
 
 ### - [ ] F-13.4.2 — None of the §13.4 normative archive ceilings are enforced on the extraction path [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.4.2 — Both describe the §13.4 archive ceilings being defined in pkg/upload but not enforced on the actual extraction path.
+
 Spec §13.4 lines 657–664: maximum decompressed size 256 MiB; maximum
 decompression ratio 100:1; maximum entry count 10 000; maximum per-entry size
 64 MiB; maximum path depth 32; maximum path length 4096 bytes UTF-8. Spec
@@ -19167,6 +19786,9 @@ exhaustion vector that §13.4 categorically forbids. The unit-tested ceilings
 in `pkg/upload` are dead code on the production path.
 
 ### - [ ] F-13.4.3 — `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` is never returned and `lenny_upload_extraction_aborted_total` is never emitted [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.4.11 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
+
 Spec §13.4 line 666: "Validator violations surface to clients as
 `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` with `details.reason` carrying the specific
 sub-code (see §15.1 error reference). Abort causes are counted in
@@ -19234,6 +19856,9 @@ extractor drops rather than rejects, so the runtime adapter cannot honour an
 `allowSymlinks: true` declaration even when added later).
 
 ### - [ ] F-13.4.5 — The staging → validation → promotion pattern is not implemented for uploadArchive extraction [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.4.12 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
+
 Spec §13.4 line 656 and §7.4 line 433: "Files are first written to
 `/workspace/staging`, validated (path traversal protection, size limits, hash
 verification), then atomically moved to `/workspace/current`. The runtime
@@ -19270,6 +19895,9 @@ are never accounted for in the §11.2 quota reservation reconciliation
 not on the post-materialisation footprint).
 
 ### - [ ] F-13.4.6 — `tar.TypeLink`, `tar.TypeChar`, `tar.TypeBlock`, `tar.TypeFifo` entries are silently dropped instead of being rejected with `non_regular_entry` [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.4.3 — Both report that non-regular archive entries (hardlink, char/block device, FIFO) are silently skipped instead of aborting with non_regular_entry.
+
 Spec §13.4 line 664: "`hardlink`, `character-device`, `block-device`, `FIFO`,
 and `socket` entries rejected outright." Spec §7.4 line 457: "Non-regular
 entries … are rejected outright (no option to allow them). Extraction aborts
@@ -19343,6 +19971,9 @@ Implementation:
   is in place, but the error coding is generic).
 
 ### - [ ] F-13.4.10 — The `workspace_plan_strip_components_skip` warning event is unimplemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-14.1.8, F-7.4.15 — All three report that the workspace_plan_strip_components_skip warning event is never emitted from the strip-components skip path in uploadarchive.go.
+
 Spec §7.4 line 459: "Entries with fewer than N segments (or whose post-strip
 path is empty) are skipped without aborting extraction and emit a
 `workspace_plan_strip_components_skip` warning event per skipped entry."
@@ -19452,6 +20083,9 @@ behaviour is correct but reached implicitly rather than via the named §14
 "setuid_setgid_prohibited" validation step.
 
 ### - [ ] F-13.4.18 — `pkg/gateway/sessionserver/upload.go` does not return a typed quota-stream-cap error code [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.4.14 — Both report that on a quota cap the partial staging bytes are left to age out on TTL instead of being removed at abort time.
+
 Spec §7.4 line 443: "If the cap is reached the upload is aborted with
 `STORAGE_QUOTA_EXCEEDED` and any bytes already written to staging are
 removed."
@@ -19503,6 +20137,9 @@ existence by returning `404` for tenant mismatches. The
 path.
 
 ### - [ ] F-13.4.23 — The §13.4 line 653 "pod trusts only the gateway" stance is enforced via mTLS on the adapter link [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.2.21 — Both are positive findings that adapter mTLS (RequireAndVerifyClientCert in pkg/adapter/transport.go) is correctly wired.
+
 `pkg/adapter/transport.go` `TLSServerOption` requires `ClientAuth:
 RequireAndVerifyClientCert` from gateway peers, and `pkg/gateway/adapterclient/
 client.go` documents the mTLS dial expectation. The pod's gRPC server admits
@@ -19539,6 +20176,8 @@ runtime gate, per-policy resolution of `interceptorRef` — are also missing.
 
 ### - [ ] F-13.5.1 — `contentPolicy.maxInputSize` is stored but never enforced [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-13.5.2, F-8.2.9 — All describe contentPolicy maxInputSize and interceptorRef being persisted but not enforced on the delegation path.
+
 §13.5 mitigation 1 and §8.3 line 157: "delegations exceeding it are rejected
 with `INPUT_TOO_LARGE` before pod allocation."
 
@@ -19562,6 +20201,8 @@ interceptor would refuse it (and only if the deployer wired one). The
 documented 128 KiB ceiling is structurally absent at runtime.
 
 ### - [ ] F-13.5.2 — `contentPolicy.interceptorRef` is not resolved at delegation/message time [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.5.1, F-8.2.9 — All describe contentPolicy maxInputSize and interceptorRef being persisted but not enforced on the delegation path.
 
 §13.5 mitigations 2 and 3 specify "`contentPolicy.interceptorRef` invokes a
 `RequestInterceptor` at the `PreDelegation` phase" and "applies to
@@ -19695,6 +20336,8 @@ for quota rejections at session create.
 
 ### - [ ] F-13.5.7 — `INTERCEPTOR_WEAKENING_COOLDOWN` runtime gate not enforced [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.7.12 — Both describe INTERCEPTOR_WEAKENING_COOLDOWN not enforced at delegate_task after a scanExportedFiles flip; F-4.8.17 is the unrelated interceptor fail_policy audit event, which it explicitly disclaims.
+
 §8.3 lines 181 and 218 require the gateway to reject `delegate_task` and
 `lenny/send_message` with `INTERCEPTOR_WEAKENING_COOLDOWN` (`TRANSIENT`,
 HTTP 503) for `gateway.interceptorWeakeningCooldownSeconds` (default 60s)
@@ -19795,6 +20438,8 @@ message, and the gateway cannot scope or rate-limit by sender because it
 never identifies the sender.
 
 ### - [ ] F-13.5.12 — `PreExportMaterialization` `fail-open` audit event not emitted [Low] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-8.7.9 — F-13.5.12 and F-8.7.9 both report the export-path audit events (notably delegation.export_scan_failed_open) are unemitted; the other members cover distinct export-path defects (error code, metrics, wiring, cycle-audit pair).
 
 Per export.go:127–131:
 
@@ -19920,6 +20565,9 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 ---
 
 ### - [ ] F-14.1.8 — The `workspace_plan_strip_components_skip` warning is never emitted [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-13.4.10, F-7.4.15 — All three report that the workspace_plan_strip_components_skip warning event is never emitted from the strip-components skip path in uploadarchive.go.
+
 - **Spec §14 line 100:** "Entries whose segment count... is less than `N` are skipped... and **the gateway emits a `workspace_plan_strip_components_skip` warning event per skipped entry** (fields: `sourceIndex`, `entryPath`, `segmentCount`, `stripComponents`)."
 - **Evidence:** `pkg/adapter/workspace/uploadarchive.go:71-104` and `pkg/adapter/workspace/uploadarchive.go:107-144` silently `continue` when `stripPath` returns `!ok` (line 84: `// §14: an entry with too few segments is skipped, not fatal.`). `stripPath` itself (lines 162-176) returns `(_, false)` without raising any warning callback. The `WarnStripComponentsSkip` constant exists at `pkg/workspaceplan/plan.go:149` but `grep -rn "WarnStripComponentsSkip" pkg/ | grep -v _test.go` shows it is only **declared**, never emitted. The spec-mandated fields `entryPath`, `segmentCount`, `stripComponents` are absent from the `Warning` struct at `pkg/workspaceplan/plan.go:153-159`.
 - **Impact:** Operators and clients cannot audit which archive entries got dropped by `stripComponents`; a too-high value silently extracts an empty archive with no diagnostic.
@@ -19931,6 +20579,9 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 - **Sub-issue:** The `Warning` field names diverge from the spec (`sourceIndex` instead of separate `winningSourceIndex`/`losingSourceIndex`; `path` is in `Field` instead of a dedicated `path`).
 
 ### - [ ] F-14.1.10 — Per-command setup timeout default contradicts §14 [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.5.6 — Both report that setup.go's 5-minute SetupTimeoutDefault is applied unconditionally, contradicting §14's no-independent-limit behavior when timeoutSeconds is omitted.
+
 - **Spec §14 line 99:** "`workspacePlan.setupCommands[].timeoutSeconds`: Optional per-command timeout. **When omitted, the command has no independent time limit and runs until the runtime's aggregate `setupPolicy.timeoutSeconds` cap... terminates the entire setup phase.** If `setupPolicy.timeoutSeconds` is also absent the command runs until the pod is killed by an external deadline."
 - **Evidence:** `pkg/adapter/workspace/setup.go:17` defines `SetupTimeoutDefault = 5 * time.Minute`; `runSetupCommand` (lines 82-105) applies it unconditionally when `c.GetTimeoutSeconds() == 0`. There is no path where the aggregate cap alone bounds the command.
 - **Impact:** A setup command without an explicit `timeoutSeconds` is killed at 5 min even when the runtime's `setupPolicy.timeoutSeconds` is set to 30 min. The spec's contract — "the command has no independent time limit" — is silently overridden.
@@ -20107,6 +20758,9 @@ omission also defeats the entire `dryRun + If-Match` pre-validation flow
 the spec promises (lines 1202–1203).
 
 ### - [ ] F-15.1.3 — ~65 §15.1 admin/session endpoints are unimplemented [High] — OPEN
+
+**Potential overlap** (confidence: medium) — F-24.4.2 — F-24.4.2's missing pool endpoints are a subset of F-15.1.3's broad ~65-endpoint sweep; related but different scopes and remediation lists.
+
 Mechanical diff of the §15.1 endpoint tables versus the actually-mounted
 routes (`grep -E "mux\.HandleFunc\(\"[A-Z]+|mux\.Handle\(\"[A-Z]+" ...`):
 
@@ -20225,6 +20879,9 @@ also breaks because the code is unknown to the classifier the spec
 references in §16.3.
 
 ### - [ ] F-15.1.5 — OpenAPI error envelope drops `category` and `retryable` [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-15.5.7 — Both report the published OpenAPI Error schema omits category and retryable while the Go handler emits them, same root cause and fix.
+
 Spec (§15.1 "Error response envelope", line 972): `code`, `category`,
 `message`, `retryable` are required; `details` is optional.
 
@@ -20380,6 +21037,9 @@ the request tenant), no `labels` filter, and no `includeDeriveFailures`.
 ### - [ ] F-15.1.16 — SHOULD / capability unimplemented [Medium] — OPEN
 
 ### - [ ] F-15.1.17 — OpenAPI document is at `/openapi.json` (spec) vs `/v1/openapi.json` (impl) [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-15.5.17, F-25.4.27 — Three related OpenAPI-route findings about different defects: gateway missing /openapi.json (15.1.17), lenny-ops missing /v1/openapi.json (25.4.27), and a 15.5.17 Info note affirming the convention is honored.
+
 Spec line 589: "served at `GET /openapi.yaml` ... at `GET /openapi.json`
 for clients that prefer JSON". Impl serves `/openapi.yaml` and
 `/v1/openapi.json` (`pkg/gateway/openapi/openapi.go:37-38`). The JSON
@@ -20583,6 +21243,9 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 ---
 
 ### - [ ] F-15.2.1 — MCP protocol version negotiation absent; gateway hard-codes the wrong version [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-15.5.4, F-9.1.10 — All three report absent MCP version negotiation with a hard-coded ProtocolVersion constant and missing two-version concurrency/deprecation handling.
+
 - **Spec §15.2 lines 1308–1315 (Target MCP spec version + Version negotiation):**
   - "**Target MCP spec version:** MCP 2025-03-26 (latest stable at time of writing). All MCP features used by Lenny are gated on this version or later."
   - "1. The client sends its supported MCP version in the `initialize` request (`protocolVersion` field per MCP spec). 2. The gateway responds with the highest mutually supported version. Lenny supports the **current** (`2025-03-26`) and **previous** (`2024-11-05`) MCP spec versions concurrently. 3. If the client's version is older than the oldest supported version, the gateway rejects the connection with a structured error (`MCP_VERSION_UNSUPPORTED`) including the list of supported versions. 4. Once negotiated, the connection is pinned to that version for its lifetime."
@@ -20595,6 +21258,9 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 - **Impact:** Any MCP client sending the spec's nominal version (`2025-03-26`) gets `2025-06-18` echoed back instead of negotiated; clients that present an unsupported older version are not rejected with `MCP_VERSION_UNSUPPORTED`. The 6-month deprecation policy (header warning, session-lifetime exception, retirement degradation annotation) has zero enforcement. A future deployment that lifts the constant to a newer version silently breaks every active client without the spec's promised compatibility window.
 
 ### - [ ] F-15.2.2 — MCP transport is plain JSON-RPC over POST; the spec's Streamable HTTP / SSE surface is absent [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-9.1.7 — Both report the MCP surface is request/response JSON-RPC only and lacks the spec's Streamable HTTP / SSE channel and resume.
+
 - **Spec §15.2 lines 1282, 1329, 1331, 1333, 1335:**
   - "It exposes the gateway as an MCP server over Streamable HTTP via the `MCPAdapter`."
   - "**MCP features used:** Tasks (for long-running session lifecycle and delegation); Elicitation (for user prompts, auth flows); Streamable HTTP transport"
@@ -20691,6 +21357,9 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 - **Impact:** The `handleToolCall` fallback at `pkg/gateway/mcp/mcp.go:248-258` then assigns these errors lenny code `INTERNAL_ERROR` and `(TRANSIENT, true)` by classifier default. So every validation rejection (missing required field), every state-transition failure (session is terminal), every not-found, every timeout (`ELICITATION_TIMEOUT`, `REQUEST_INPUT_TIMEOUT`), every authorization failure on MCP becomes `INTERNAL_ERROR/TRANSIENT/retryable=true`. The REST surface emits proper codes (`VALIDATION_ERROR`, `RESOURCE_NOT_FOUND`, `INVALID_STATE_TRANSITION`, `PERMISSION_DENIED`, `REQUEST_INPUT_TIMEOUT`, `ELICITATION_TIMEOUT`) with correct categories and `retryable: false`. Rule 5(d) parity is violated for nearly every error path in the MCP tool surface.
 
 ### - [ ] F-15.2.13 — Streaming/elicitation/tool-use wire-projection rows are unrealised; MCP cannot deliver the §9.2 elicitation chain natively [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-9.2.17 — Both concern §9.2 elicitation over MCP but report different gaps (missing per-kind wire-projection/elicitation-create dispatch vs the unregistered respond_to_elicitation MCP tool).
+
 - **Spec §15.2 lines 1358–1368 (Per-kind MCP wire projection):** each `SessionEventKind` MUST map to exactly one MCP wire frame (`notifications/tasks/statusUpdate`, streaming content frames on `attach_session`, `elicitation/create`, `notifications/lenny/toolCall`, `notifications/lenny/error`, MCP Tasks final-state frame).
 - **Spec §15.2 line 1370:** "`notifications/lenny/*` namespace is a Lenny-defined extension under the `notifications/` method-name convention established elsewhere in the spec."
 - **Evidence:**
@@ -20788,6 +21457,8 @@ extension, control-plane separation.
 
 ### - [ ] F-15.3.1 — GatewayControl gRPC server is plaintext; spec mandates mTLS [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-8.6.4 — Both report that the gateway-hosted GatewayControl gRPC listener uses bare grpc.NewServer() with no mTLS/auth despite the spec mandating mTLS.
+
 §15.3 requires "gRPC + mTLS" for Gateway ↔ Pod traffic. §4.7 step 4 of the
 startup sequence says "Adapter opens gRPC connection to gateway (mTLS)".
 §15.6 (line 2517) further reinforces that "mTLS is exclusively an
@@ -20861,6 +21532,8 @@ Severity: High (correctness; large capability gap). Files: missing across
 `schemas/lenny-adapter.proto` and `pkg/adapter/`.
 
 ### - [ ] F-15.3.3 — Adapter → Gateway events surface (§4.7 events table) is unimplemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.7.1 — Both report that the §4.7 Adapter-to-Gateway control events (RATE_LIMITED, AUTH_EXPIRED, PROVIDER_UNAVAILABLE, LEASE_REJECTED, etc.) are not implemented over the gRPC control channel.
 
 §4.7 defines a second wire contract on the gRPC control channel —
 "Adapter → Gateway events (sent over the gRPC control channel)" — listing
@@ -21320,6 +21993,8 @@ Either the spec must be reworked to permit a direct-to-`v1` initial publish (wit
 
 ### - [ ] F-15.5.2 — Conversion-webhook deployment procedure has no chart template, no Service, no CRD `spec.conversion.webhook` wiring [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-10.5.6 — Missing conversion-webhook chart packaging/CRD wiring is one defect (F-10.5.6, F-15.5.2) and missing preflight verification of the webhook is another (F-15.5.3, F-17.2.4); F-15.5.20 is a positive note on the existing handler.
+
 `spec/15_external-api-surface.md:2435-2443` lays out a step-by-step conversion-webhook deployment procedure that references `charts/lenny/templates/conversion-webhook.yaml`, a `lenny-crd-conversion` Service, and `spec.conversion.strategy: Webhook` on each CRD.
 
 - `charts/lenny/templates/conversion-webhook.yaml` — does not exist (`find` returns nothing under `charts/lenny/templates/admission-policies/` and `templates/`).
@@ -21331,11 +22006,15 @@ The chart-side wiring is absent because CRDs are single-version (H-1); promoting
 
 ### - [ ] F-15.5.3 — `lenny-preflight` does not verify CRD conversion webhook availability [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.2.4 — Missing conversion-webhook chart packaging/CRD wiring is one defect (F-10.5.6, F-15.5.2) and missing preflight verification of the webhook is another (F-15.5.3, F-17.2.4); F-15.5.20 is a positive note on the existing handler.
+
 `spec/15_external-api-surface.md:2438` requires: "The `lenny-preflight` Job validates conversion webhook availability as a preflight check and will fail the upgrade if the webhook Service is absent or not ready."
 
 `pkg/preflight/webhooks.go:9-11` includes a comment that `lenny-crd-conversion` "is a CRD conversion endpoint rather than a ValidatingWebhookConfiguration and is verified separately." No separate verification exists in the `pkg/preflight` package (`grep -rn conversion pkg/preflight/` returns only the comment). The `lenny-preflight` Job template (`charts/lenny/templates/preflight-job.yaml`) has no conversion-webhook check either. As shipped, an operator can run an upgrade with the conversion webhook missing and `lenny-preflight` will report PASS — exactly the failure mode §15.5 calls out: "a missing webhook causes all CRD operations to fail."
 
 ### - [ ] F-15.5.4 — MCP gateway exposes a single protocol version; two-version concurrency, version negotiation, and the deprecation header are absent [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-15.2.1, F-9.1.10 — All three report absent MCP version negotiation with a hard-coded ProtocolVersion constant and missing two-version concurrency/deprecation handling.
 
 `spec/15_external-api-surface.md:2429` (item 2): "The gateway supports two concurrent MCP spec versions (current + previous) with a 6-month deprecation window for the oldest." §15.2 (line 1317) elaborates: "The gateway emits a `X-Lenny-Mcp-Version-Deprecated` warning header on connections using the deprecated version." §15.2 also pins the supported set as `{2025-03-26, 2024-11-05}`.
 
@@ -21385,6 +22064,8 @@ Schema audit (`migrations/0001_initial_schema.up.sql` and downstream migrations)
 Spec text on the `MessageEnvelope` field at §15.4.1 (line 1694) explicitly says: "Every `MessageEnvelope` persisted to the `session_messages` table carries this field." The table does not carry it.
 
 ### - [ ] F-15.5.7 — REST error envelope OpenAPI schema is missing `category` and `retryable` [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-15.1.5 — Both report the published OpenAPI Error schema omits category and retryable while the Go handler emits them, same root cause and fix.
 
 §15.2.1 (line 1376) ratifies the REST↔MCP error envelope parity. The Go implementation honours this — `pkg/gateway/sessionserver/sessionserver.go:570-576` exposes `code`, `category`, `message`, `retryable`, `details` on every error response — and the MCP transport mirrors it (`pkg/gateway/mcp/mcp.go:65-71`).
 
@@ -21478,6 +22159,8 @@ Already covered as part of H-6, but worth calling out as a discrete migration it
 ---
 
 ### - [ ] F-15.5.17 — REST `/v1/` URL prefix is consistently applied; OpenAPI doc is served under the versioned path [Info] — OPEN
+
+**Potential overlap** (confidence: medium) — F-15.1.17, F-25.4.27 — Three related OpenAPI-route findings about different defects: gateway missing /openapi.json (15.1.17), lenny-ops missing /v1/openapi.json (25.4.27), and a 15.5.17 Info note affirming the convention is honored.
 
 Implementation evidence: `pkg/gateway/openapi/openapi.go:37-38` mounts `GET /openapi.yaml` and `GET /v1/openapi.json`. `pkg/gateway/openapi/openapi_test.go:60-120` enumerates every shipped path and asserts each appears under `/v1/...` (with the exceptions `/healthz`, `/metrics`, `/mcp`, `/internal/...`). §15.5 item 1 is honoured for the URL-prefix convention.
 
@@ -22673,6 +23356,8 @@ is the one half of §16.3 that ships.
 
 ### - [ ] F-16.3.12 — Spec-map records the gap as intentional but on the wrong wave [Info] — OPEN
 
+**Potential overlap** (confidence: medium) — F-16.4.16 — Same spec-map-deferral-aged-past-its-wave observation applied to different sections (§16.3 tracing vs §16.4 logging).
+
 `tests/spec-map.json` §16.3 entry notes: "Phase 2.5 ships the
 correlation context, the OTel tracer wrapper with the §16.3 span
 catalog, and the §16.3 error taxonomy. Trace propagation through
@@ -22904,6 +23589,8 @@ matching `time` receives values in the deployer's local timezone unless
 the deployer manually sets the gateway process to UTC.
 
 ### - [ ] F-16.4.5 — Setup command stdout/stderr is discarded; EventStore is never written to [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-7.5.4 — Both report that setup-command stdout/stderr from CombinedOutput is discarded on success and never persisted to EventStore.
 
 **High.** §16.4 requires "Setup command stdout/stderr captured and
 stored in EventStore." Implementation:
@@ -23207,6 +23894,8 @@ correctly; the gap is its non-use in production binaries.
 
 ### - [ ] F-16.4.16 — `tests/spec-map.json` explicitly carries the gap as a deferred per-component wiring [Info] — OPEN
 
+**Potential overlap** (confidence: medium) — F-16.3.12 — Same spec-map-deferral-aged-past-its-wave observation applied to different sections (§16.3 tracing vs §16.4 logging).
+
 `tests/spec-map.json` §16.4 `notes` field reads: "Phase 2.5 ships the
 slog handler that auto-attaches correlation fields. Per-component log
 emission (gateway, lenny-ops, etc.) lands with each component." The
@@ -23380,6 +24069,8 @@ Alerts (`AuditGrantDrift`, `NetworkPolicyCIDRDrift`, `DataResidencyViolationAtte
 `InboxDrainFailure` (`rules.go:1188`) uses `increase(lenny_inbox_drain_failure_total[5m]) > 0` — the right `increase()` pattern, matching spec. Confirms F10 is per-alert author choice, not a systematic miss.
 
 ### - [ ] F-16.5.12 — `monitoring.openslo.enabled` is documented in §16.10 but the Helm value and templates are absent (officially deferred). [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-16.10.1 — Both report the absent OpenSLO export surface (monitoring.openslo.enabled value and templates); F-16.5.12 records it as a deferred dependency of the same gap.
 
 §16.10 promises OpenSLO export when `monitoring.openslo.enabled: true`. `grep openslo charts/lenny/values.yaml` returns no match. `tests/spec-map-exceptions.yaml` records the deferral with `reason: deferred, justification: OpenSLO export is built in Wave 7 (Phase 14.5).` Out of scope for this §16.5 regression audit; record as informational so the dependency is visible alongside §16.5's burn-rate alerts (which are themselves blocked by F3).
 
@@ -23651,6 +24342,8 @@ Evidence:
 
 ### - [ ] F-16.7.2 — `pkg/blobstore/replication` emits two §16.7 events but is unreachable from the gateway binary. [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.5.20, F-17.3.7, F-25.11.1, F-17.3.26, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
+
 `pkg/blobstore/replication/controller.go` emits `artifact.cross_region_replication_verified` (line 394, sampled positive attestation), `artifact_replication.resumed` (line 316, operator-resume audit), and `DataResidencyViolationAttempt` (line 272, residency violation) through its `AuditSink func(AuditEvent)` field. The `Controller` is constructed only by its own unit tests:
 
 ```
@@ -23763,6 +24456,8 @@ Evidence:
 - `pkg/audit/ocsf/ocsf.go:345`: `var mappedPayloadKeys = map[string]bool{... "caller_kind": true, "operation_id": true, ...}` — these are declared as mapped keys but no producer ever sets them.
 
 ### - [ ] F-16.7.7 — The OCSF translator and SIEM forwarder are not wired into any deployed binary. [High] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-11.7.1 — OCSF translator and SIEM forwarder unwired into any binary (11.7.1/16.7.7) and the missing async outbox/CDC forwarder plus its lag metric/config (12.3.6/12.3.17) are two distinct defects; F-16.4.9 overlaps on missing audit.siem config wiring but is closer to the forwarder-unwired group.
 
 `pkg/audit/ocsf/translator.go` implements the §11.7 retry/dead-letter state machine. `pkg/audit/siem/siem.go` implements the §16.4 SIEM forwarder. Neither is imported by `cmd/lenny-gateway/`, `cmd/lenny-ops/`, `cmd/lenny-token-service/`, `cmd/lenny-controller/`, or `cmd/lenny-backup/`. The SIEM package is imported only by `tests/tier4_integration/audit_pipeline_test.go`. The translator is wired only inside `pkg/gateway/auditstore/retranscribe.go` (used by an EventBus retranscribe worker), but the worker itself is not wired into the gateway main:
 
@@ -24159,6 +24854,8 @@ Implementation:
 
 ### - [ ] F-16.9.6 — Spec text describes `monitoring.format: prometheusrule` as gating the ServiceMonitor and PodMonitor too; implementation splits the gate [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-17.1.14 — F-16.9.6 asserts a gap in how monitoring.format gates ServiceMonitor/PodMonitor, while F-17.1.14 concludes the same gating aligns with the spec and reports no gap, so they reach opposite conclusions about the same area.
+
 The §16.9 narrative reads: "Deployers who run the Prometheus Operator … should set `monitoring.format: prometheusrule` (the default when the operator's CRDs are detected). With this setting: The chart renders one `ServiceMonitor` … and one `PodMonitor` …". The plain reading is that `monitoring.format: prometheusrule` controls all three operator CRDs.
 
 Implementation:
@@ -24352,6 +25049,8 @@ independently testable. The normative requirements are:
 
 ### - [ ] F-16.10.1 — (High) — OpenSLO export not implemented; the entire §16.10 surface is absent [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-16.5.12 — Both report the absent OpenSLO export surface (monitoring.openslo.enabled value and templates); F-16.5.12 records it as a deferred dependency of the same gap.
+
 The §16.10 deliverable does not exist anywhere in the build. There is
 no `monitoring.openslo.enabled` Helm value (R-001 fails), no rendered
 ConfigMap or template (R-004 fails), no shared rendering code in
@@ -24523,6 +25222,8 @@ assertions to bound the rendered inventory per template.
 
 ### - [ ] F-17.1.1 — 01 — Gateway PodDisruptionBudget is not rendered [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-10.4.4, F-17.3.2, F-4.1.1 — Four members report the gateway Deployment renders no PodDisruptionBudget; F-4.1.12 covers only the separate topology-spread gap.
+
 Spec row 7 (`spec/17_deployment-topology.md:7`) is explicit:
 "**PodDisruptionBudget**: `maxUnavailable: 1` at **every tier** (hard
 ceiling of one concurrent voluntary eviction regardless of replica
@@ -24558,6 +25259,8 @@ returns no matches.
 
 ### - [ ] F-17.1.3 — 03 — `lenny-ops` Ingress and PDB are not rendered [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.16.1, F-25.2.11 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
+
 Spec row 15 is explicit: "Deployment + Service + Ingress + PDB" and
 "PDB `minAvailable: 1`". §17.8.5 (`spec/17_deployment-topology.md:1323`)
 restates that the canonical layout includes "the PodDisruptionBudget
@@ -24583,6 +25286,8 @@ leader election plus webhook delivery for the full
 `terminationGracePeriodSeconds`.
 
 ### - [ ] F-17.1.4 — 04 — Four `lenny-ops`/`lenny-backup` NetworkPolicies named in §17.1 do not render [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.2.16, F-25.4.12 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
 
 Spec row 18 enumerates four policies the chart MUST render:
 `lenny-ops-deny-all-ingress`, `lenny-ops-allow-ingress-from-ingress-controller`,
@@ -24627,6 +25332,8 @@ yet. The `lenny-backup` image is built (`cmd/lenny-backup` exists) but
 nothing wires it into the cluster.
 
 ### - [ ] F-17.1.6 — 06 — `PoolScalingController` is not deployed as a separate workload [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.6.1, F-5.2.11 — All three describe the implemented PoolScalingController not being wired into the production controller binary.
 
 Spec row 10: "PoolScalingController — Deployment (2+ replicas, leader
 election) — Reconciles pool config from Postgres into CRDs; manages
@@ -24747,6 +25454,8 @@ default and no operator installed must opt in to `configmap` manually.
 
 ### - [ ] F-17.1.14 — 14 — `monitoring.format` gating defaults [Info] — OPEN
 
+**Potential overlap** (confidence: high) — F-16.9.6 — F-16.9.6 asserts a gap in how monitoring.format gates ServiceMonitor/PodMonitor, while F-17.1.14 concludes the same gating aligns with the spec and reports no gap, so they reach opposite conclusions about the same area.
+
 The ServiceMonitor template gates on `monitoring.serviceMonitor.enabled`
 (default `false`, see `templates/servicemonitor.yaml` line 20),
 matching the spec's safety stance that a cluster without the operator
@@ -24838,6 +25547,9 @@ Cross-checked against:
 ---
 
 ### - [ ] F-17.2.2 — 2-2  PSS enforcement is in-tree webhook, not OPA/Gatekeeper or Kyverno [High] — OPEN
+
+**Potential overlap** (confidence: medium) — F-6.1.15, F-6.4.8 — F-6.4.8 and F-6.1.15 both note shareProcessNamespace:true is enforced only by the in-tree webhook with no Kyverno/Gatekeeper policy; F-17.2.2 is the broader PSS-enforcement-model gap (full Restricted/RuntimeClass-relaxed policies absent).
+
 **Spec requirement** (§17.2 lines 35–40, items 1–2 of the inventory): The split PSS enforcement model uses "OPA/Gatekeeper ConstraintTemplate or Kyverno ClusterPolicy" — full Restricted for runc, RuntimeClass-relaxed for gVisor and Kata. Item 4 ("Label-based namespace targeting via `.Values.agentNamespaces`") scopes those policies to Lenny-managed namespaces.
 
 **Implementation:** No Gatekeeper or Kyverno templates exist. `grep -rn "gatekeeper\|kyverno\|Constraint\|ClusterPolicy"` against `/Users/joan/projects/lenny/charts/lenny/templates/` returns no matches. The chart ships `lenny-pod-security` (an in-process Lenny-authored ValidatingAdmissionWebhook in `/Users/joan/projects/lenny/charts/lenny/templates/admission-policies/pod-security-webhook.yaml`) that wraps `pkg/podsecurity` and applies the §13.1 baseline regardless of RuntimeClass. The RuntimeClass-aware split (full Restricted on runc vs. relaxed on gVisor/Kata) is not implemented; the existing webhook applies the same rules to every pod, irrespective of RuntimeClass.
@@ -24860,6 +25572,9 @@ Cross-checked against:
 ---
 
 ### - [ ] F-17.2.4 — 2-4  lenny-crd-conversion baseline webhook not rendered [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-15.5.3 — Missing conversion-webhook chart packaging/CRD wiring is one defect (F-10.5.6, F-15.5.2) and missing preflight verification of the webhook is another (F-15.5.3, F-17.2.4); F-15.5.20 is a positive note on the existing handler.
+
 **Spec requirement** (§17.2 lines 53, 60, 67–68, 82): `lenny-crd-conversion` is part of the Phase 3.5 baseline (unconditional render). The preflight's expected set "is derived from the same Helm feature flags … so that 'expected' and 'rendered' are always in lockstep"; missing the conversion webhook should fail-close the install.
 
 **Implementation:**
@@ -24872,6 +25587,9 @@ Cross-checked against:
 ---
 
 ### - [ ] F-17.2.5 — 2-5  Phase-stamp ConfigMap labels do not match the alert's PromQL series [High] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-17.2.17 — Both report the phase-stamp ConfigMap renders camelCase flag labels rather than the slug/-enabled form the alert PromQL and docs expect.
+
 **Spec requirement** (§17.2 layer 4, lines 80, 86 and `docs/operator-guide/configuration.md` lines 525): The phase-stamp ConfigMap carries `lenny.dev/flag-<flag-slug>-enabled: "true"` (slug form, with `-enabled` suffix) for each enabled flag. With `kube-state-metrics --metric-labels-allowlist=configmaps=[lenny.dev/flag-*]`, these surface as Prometheus labels named `label_lenny_dev_flag_<flag>_enabled` on `kube_configmap_labels`.
 
 **Implementation:**
@@ -24924,6 +25642,9 @@ The label key rendered by the chart and the label key the alert queries cannot m
 ---
 
 ### - [ ] F-17.2.10 — 2-10  lenny-pool-config-validator does not apply the userInfo authorization-denial rule on manual writes [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.6.2 — Both describe the pool-config-validator not applying the §4.6.3 userInfo authorization-denial rule on manual writes.
+
 **Spec requirement** (§17.2 line 50, item 9): The pool-config-validator "additionally applies the `userInfo`-based authorization-denial rule to manual writes (see [§4.6.3])."
 
 **Implementation:** `/Users/joan/projects/lenny/pkg/admission/webhook/pool_config_validator.go` lines 35–55 dispatches on Kind only; it does not read `req.UserInfo` at all (`grep "UserInfo" /Users/joan/projects/lenny/pkg/admission/pool_config_validator/*.go` returns no matches). Manual `kubectl apply` writes against `SandboxWarmPool` or `SandboxTemplate` pass through the webhook with the same semantic-budget check the controllers themselves are subject to; the controller-vs-operator distinction is invisible.
@@ -24983,6 +25704,9 @@ The label key rendered by the chart and the label key the alert queries cannot m
 ---
 
 ### - [ ] F-17.2.16 — 2-16  lenny-ops-deny-all-ingress NetworkPolicy not rendered [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.1.4, F-25.4.12 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
+
 **Spec requirement** (§17.2 line 31): "the `lenny-ops-deny-all-ingress` NetworkPolicy and per-namespace egress defaults enforce" the agent-pod boundary against the operability control plane.
 
 **Implementation:** `/Users/joan/projects/lenny/charts/lenny/templates/system-network-policies.yaml` lines 664–725 renders `allow-ops` which permits Prometheus scrape ingress and gateway egress for `lenny-ops` pods. The lenny-system namespace-level `default-deny-all` (lines 12–20) blocks all ingress and egress by default, so lenny-ops inherits a deny. A dedicated NetworkPolicy named `lenny-ops-deny-all-ingress` is not rendered; `grep "lenny-ops-deny-all-ingress" /Users/joan/projects/lenny/charts` returns no matches.
@@ -24992,6 +25716,9 @@ The label key rendered by the chart and the label key the alert queries cannot m
 ---
 
 ### - [ ] F-17.2.17 — 2-17  Phase-stamp ConfigMap chart writes camelCase flag keys; spec uses slug form in alert / docs [Low] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-17.2.5 — Both report the phase-stamp ConfigMap renders camelCase flag labels rather than the slug/-enabled form the alert PromQL and docs expect.
+
 **Spec requirement** (§17.2 layer 1, line 74): "one data key per feature flag (`features.llmProxy`, `features.drainReadiness`, `features.compliance`)" — implying the data key matches the Helm value name (camelCase).
 
 **Implementation:** `/Users/joan/projects/lenny/charts/lenny/templates/phase-stamp-configmap.yaml` lines 26, 49 writes data keys `llmProxy`, `drainReadiness`, `compliance`. Consistent with spec. However the label rendered on the same ConfigMap (`lenny.dev/flag-{{ $flag }}: "true"` on line 41) is camelCase too, while the docs at `/Users/joan/projects/lenny/docs/operator-guide/configuration.md` line 525 and `/Users/joan/projects/lenny/docs/operator-guide/observability.md` line 188 reference slug forms `llm-proxy`, `drain-readiness`, `compliance` with an `-enabled` suffix.
@@ -25057,6 +25784,8 @@ post-restore reconcile blocked) do not exist.
 
 ### - [ ] F-17.3.2 — 3.1 — Gateway Deployment has no topology spread or PodDisruptionBudget [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-10.4.4, F-17.1.1, F-4.1.1 — Four members report the gateway Deployment renders no PodDisruptionBudget; F-4.1.12 covers only the separate topology-spread gap.
+
 Spec — §17.3 "Cross-zone requirements":
 > Gateway: replicas spread via topology spread constraints
 
@@ -25080,6 +25809,8 @@ down because no PDB caps simultaneous evictions. The §17.3
 ---
 
 ### - [ ] F-17.3.3 — 3.2 — Post-restore GDPR erasure reconciler is not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.8.3, F-25.11.10 — All three describe the unimplemented post-restore GDPR erasure reconciler that should replay DeleteByUser/DeleteByTenant between restore_completed and gateway restart.
 
 Spec — §17.3 line 140 anchors §25.11 as canonical. §25.11 "Restore
 Execution" step 6 (lines 4147–4149) requires lenny-ops to run a
@@ -25179,6 +25910,8 @@ backups are not real. A pre-restore safety backup created by
 ---
 
 ### - [ ] F-17.3.5 — 3.4 — Restore execution stops after launching the Job; events / gateway restart / step-8 lock-release are not wired [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.11.11 — Two distinct defects each duplicated cross-section: backup/restore audit events catalogued but never emitted (17.3.14/25.11.2), and restore lock-release plus gateway-restart steps unwired (17.3.5/25.11.11); F-17.3.6 is a separate lenny-backup CLI mode gap.
 
 Spec — §17.3 line 140 → §25.11 "Restore Execution" steps 5–8:
 
@@ -25288,6 +26021,8 @@ but cannot surface from a real restore path.
 
 ### - [ ] F-17.3.7 — 3.6 — ArtifactStore replication controller is not wired into lenny-ops [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.5.20, F-16.7.2, F-25.11.1, F-17.3.26, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
+
 Spec — §17.3 "Backup schedule" bullet 2:
 > MinIO ArtifactStore: continuous asynchronous bucket replication
 > to an off-cluster destination... RPO is expressed as replication
@@ -25346,6 +26081,8 @@ relevant artifacts (legal hold attachments, erasure receipts).
 ---
 
 ### - [ ] F-17.3.8 — 3.7 — Per-region backup dispatch (BACKUP_REGION_UNRESOLVABLE) is not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.11.8 — F-17.3.8 and F-25.11.8 are the same per-region backup dispatch / BACKUP_REGION_UNRESOLVABLE gap; F-11.7.9 is a different defect (platform-tenant audit residency routing).
 
 Spec — §25.11 step 1 (lines 3997–3998): when `backups.regions` is
 non-empty, lenny-ops MUST run one `pg_dump` per region against
@@ -25448,6 +26185,8 @@ not honored for the DR surface.
 
 ### - [ ] F-17.3.12 — 3.2 — `RestorePreview.artifactReplicationLagSeconds` and `estimatedOrphanArtifactRows` are declared but never populated [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.11.14 — Both report PreviewRestore declares artifactReplicationLagSeconds and estimatedOrphanArtifactRows but never populates them.
+
 Spec — §25.11 "Consistency rule — Postgres restore vs.
 ArtifactStore replication lag":
 > the `POST /v1/admin/restore/preview` response includes
@@ -25496,6 +26235,8 @@ the metric isn't emitted and because the value is undefined.
 ---
 
 ### - [ ] F-17.3.14 — 3.4 — Backup / restore audit events are catalogued but never written [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.11.2 — Two distinct defects each duplicated cross-section: backup/restore audit events catalogued but never emitted (17.3.14/25.11.2), and restore lock-release plus gateway-restart steps unwired (17.3.5/25.11.11); F-17.3.6 is a separate lenny-backup CLI mode gap.
 
 Spec — §25.11 "Audit Events" enumerates `backup.created`,
 `backup.completed`, `backup.failed`, `backup.verified`,
@@ -25639,6 +26380,8 @@ them either.)
 
 ### - [ ] F-17.3.21 — 3.1 — `BackupReconcileBlocked` alert references an unemitted counter [Low] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.11.16 — Both report that the BackupReconcileBlocked alert references lenny_backup_reconcile_blocked_total, which is absent from the catalog and has no emitter.
+
 Spec — §25.11 Alerting Rules row "BackupReconcileBlocked" cites
 `lenny_backup_reconcile_blocked_total{reason="legal_hold_ledger_stale"}`.
 
@@ -25713,6 +26456,8 @@ create them via the public endpoint.
 ### - [ ] F-17.3.25 — noteworthy [Info] — OPEN
 
 ### - [ ] F-17.3.26 — 3.1 — Replication controller is one of the most-complete §25.11 surfaces [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.20, F-16.7.2, F-17.3.7, F-25.11.1, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
 
 `pkg/blobstore/replication/` (1401 lines including tests) is a
 fully-implemented runtime residency preflight, fail-closed
@@ -25937,6 +26682,8 @@ backends are `MemoryStore`, MinIO, S3, Azure, GCS. Uploads via
 
 ### - [ ] F-17.4.9 — `lenny` and `lenny-ctl` are not the same executable [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-24.0.1 — Both report that lenny and lenny-ctl are separate binaries with disjoint command sets rather than one executable exposing every subcommand.
+
 Spec lines 188–189 (Binary-vs-symlink): "The `lenny` binary is the same executable as
 `lenny-ctl` (§24) installed under a short name. … Every command is available under
 both names."
@@ -25961,6 +26708,8 @@ The spec contract that "every command is available under both names" is not sati
 in either direction.
 
 ### - [ ] F-17.4.10 — `lenny session` covers only `new`; spec §24.17 lists eight verbs [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.17.2 — Both report lenny session implements only the new verb and the other §24.17 subcommands (attach/send/interrupt/cancel/list/get/logs) are missing in cmd/lenny/session.go.
 
 Spec line 180 routes `lenny session ...` to §24.17 (Session Operations). §24.17 (lines
 213–220) lists: `new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]`,
@@ -26004,6 +26753,8 @@ running, but no `SandboxClaim` or `Sandbox` is ever produced by a session start.
 pod adapter / mTLS path is dead in Embedded Mode.
 
 ### - [ ] F-17.4.13 — `lenny logs` cannot tail, cannot follow, and exposes fewer components than the spec [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.19.4 — Both describe lenny logs lacking --follow and exposing fewer components than the spec lists.
 
 Spec line 179: "Tails merged logs or filters to one component (`gateway`, `controller`,
 `ops`, `postgres`, etc.)."
@@ -26059,6 +26810,8 @@ secret never leaves localhost), but the spec's stated rejection of foreign audie
 at the gateway layer is not enforced.
 
 ### - [ ] F-17.4.17 — `lenny image import` from a host Docker daemon depends on a `docker` binary [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.19.6 — Both report that lenny image import shells out to docker save, introducing a docker-binary dependency the spec does not require.
 
 `cmd/lenny/image.go` lines 102–125 streams images via `exec.Command("docker", "save",
 reference)` piped to `ctr images import -`. Spec §17.4 line 290 ("docker build … &&
@@ -26268,6 +27021,8 @@ The spec-map entry (`tests/spec-map.json:2301-2310`) flags §17.5 as "Non-normat
 
 ### - [ ] F-17.5.1 — 1 — Cloud blob backends (S3/GCS/Azure) are zero-wired into the gateway [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.7.3 — Both report the S3/GCS/Azure blob backends are implemented but not wired into the gateway selector, which recognizes only memory and MinIO.
+
 **Spec basis.** §17.5 bullet 1 ("Storage backends are pluggable"). §17.9.3 "Cloud-Managed Backends" specifies `objectStorage.provider: s3 | gcs | azure | minio` as the canonical selector (`spec/17_deployment-topology.md:1402`); §17.1 row "MinIO" says "S3/GCS/Azure Blob for cloud-managed — see Section 17.9" (`spec/17_deployment-topology.md:14`).
 
 **Evidence — package layer.** The three cloud adapter packages exist as complete `blobstore.Store + blobstore.Tombstoner` implementations:
@@ -26299,6 +27054,8 @@ The cloud-adapter test coverage stops at the package boundary: `pkg/blobstore/{s
 ---
 
 ### - [ ] F-17.5.2 — 2 — Cloud KMS providers (AWS KMS / GCP Cloud KMS / Azure Key Vault) are zero-wired into the gateway and token service [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.2.11, F-12.7.2, F-4.3.11 — These four describe the same defect: the cloud KMS adapters exist but main.go hard-codes kms.NewLocalRandom() with no provider-selection knob; the two Info members frame the same gap as an accepted seam.
 
 **Spec basis.** §17.5 bullet 1 (pluggable storage extends to envelope-encryption KEK seam; the spec's §4.9.1 and §13.3 envelope-encryption text identifies the KMS provider as the "pluggable backend" for KEK material). The `pkg/kms/kms.go:CloudProviderSeam` doc-comment (lines 111-138) records that "§4 requires cloud-managed deployments to enable envelope encryption through the cloud provider's KMS (AWS KMS on EKS, GCP Cloud KMS on GKE, Azure Key Vault on AKS)" and that a cloud Provider satisfies the seam by implementing `kms.Provider`.
 
@@ -26411,6 +27168,8 @@ No `gke_platform_test.go`, `gcs_resources_test.go`, `aks_platform_test.go`, `azu
 ---
 
 ### - [ ] F-17.5.7 — 1 — RuntimeClass mapping is hard-coded to three Lenny isolation profile names (no operator override surface) [Low] — OPEN
+
+**Potential overlap** (confidence: high) — F-6.1.20 — Same RuntimeClass mapping code, but F-17.5.7 flags the hard-coded names as a missing operator override while F-6.1.20 records the mapping as correct with no gap.
 
 **Spec basis.** §17.5 bullet 3 ("RuntimeClass works with any conformant runtime"). §5.3 "Isolation profiles" maps profile → RuntimeClass: standard→runc, sandboxed→gVisor, microvm→Kata.
 
@@ -26614,6 +27373,8 @@ and the failure surfaces only after the gateway is in `CrashLoopBackOff`.
 
 ### - [ ] F-17.6.2 — Bootstrap seed accepts only tenants, runtimes, users; pools/credentialPools/delegationPolicies/environments are not seedable [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-24.1.4 — Both report the bootstrap seed supporting only tenants/runtimes/users while pools/credentialPools/delegationPolicies/environments are dropped.
+
 **Spec:** §17.6 lines 399–411 define the `bootstrap` values block schema:
 
 ```yaml
@@ -26699,6 +27460,8 @@ authenticating the bootstrap Job itself (lines 415–474).
 
 ### - [ ] F-17.6.4 — CRD upgrade safety machinery (schema-version annotation, `lenny-crd-validate` Job, recovery procedure) is absent [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-10.5.4 — Both report the CRD upgrade-safety machinery (schema-version annotation, preflight check, upgrade/validate jobs) is absent.
+
 **Spec:** §17.6 lines 377–393 lay out a defense-in-depth posture against
 stale CRDs:
 
@@ -26742,6 +27505,8 @@ controller crash-loops or runtime field-stripping behavior.
 
 ### - [ ] F-17.6.5 — Helm `values.schema.json` is not generated; chart accepts unknown / malformed values silently [High] — OPEN
 
+**Potential overlap** (confidence: high) — F-24.20.1 — F-17.6.5 is the missing build-time generation of values.schema.json while F-24.20.1 is the missing lenny-ctl values validate command; related schema-validation surface, different deliverables.
+
 **Spec:** §17.6 lines 651–665 require:
 
 - A canonical JSON Schema (Draft 2020-12) at
@@ -26779,6 +27544,8 @@ materialize as gateway crashes.
 ---
 
 ### - [ ] F-17.6.6 — `lenny-ctl preflight --config <values.yaml>` standalone CLI does not exist [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.2.1 — Both report the lenny-ctl preflight subcommand does not exist; F-24.2.8 is a distinct finding about name-collisions with lenny-test/scripts preflight.
 
 **Spec:** §17.6 line 537 names a CLI equivalent of the in-cluster preflight
 Job: "`lenny-ctl preflight --config <values.yaml>` runs the same checks
@@ -26989,6 +27756,8 @@ at the wrong archive, would surface only when a user attempts
 
 ### - [ ] F-17.6.13 — Standalone `lenny-ctl` archive is not published; Homebrew installs `lenny` (Embedded Mode), not `lenny-ctl` [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-24.0.2 — Both describe the standalone/Homebrew distribution installing lenny instead of the spec-named lenny-ctl.
+
 **Spec:** §17.6 line 358 — "Signed standalone binaries (`lenny-ctl`)." The
 spec names `lenny-ctl` as the standalone-binary identifier in two places.
 
@@ -27074,6 +27843,8 @@ following the spec verbatim would fail with `unknown flag`.
 ---
 
 ### - [ ] F-17.6.17 — `bootstrap.tenant` (singular, with `name` + `displayName`) vs `bootstrap.tenants[]` (plural, with `id`) [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.1.8 — Both report the singular bootstrap.tenant (with name) spec form versus the plural bootstrap.tenants[] (with id) implemented in chart and bootstrap.go.
 
 **Spec:** §17.6 lines 403–405:
 ```yaml
@@ -27263,6 +28034,8 @@ Implementation surveyed:
 
 ### - [ ] F-17.7.1 — (High). `pkg/gateway/health/runbook_links.go` not implemented — `issueRunbooks` lookup absent [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.7.4, F-4.0.14, F-4.0.19 — All four report the absent runbook_links.go / issueRunbooks central lookup table with runbook refs inlined per checker.
+
 §17.7 line 741 is normative: "The `issueRunbooks` lookup table (maintained
 in `pkg/gateway/health/runbook_links.go`) maps health-API issue codes to
 runbook names; the entries for `WARM_POOL_EXHAUSTED`, `WARM_POOL_LOW`,
@@ -27301,6 +28074,8 @@ enumerates. Path B is unwired.
 
 ### - [ ] F-17.7.2 — (High). `GET /v1/admin/runbooks/{name}` not registered [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.17.4, F-25.7.1 — All three report GET /v1/admin/runbooks/{name} (full markdown body) is not registered, with the same evidence at opsserver.go:153-154.
+
 §25.7 lines 3055–3057 (referenced by §17.7's machine-consumable-format
 clause at line 741) list two endpoints: `GET /v1/admin/runbooks/{name}`
 returning full markdown content, and `GET /v1/admin/runbooks/{name}/steps`
@@ -27326,6 +28101,8 @@ through the documented API. Discovery from `alert_fired` payload
 (§25.7 "Discovery Flow Summary") fails on the first step.
 
 ### - [ ] F-17.7.3 — (High). `drift-snapshot-refresh.md` runbook missing [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-24.15.11 — Related to drift-snapshot-refresh but distinct defects: F-17.7.3 is a missing operator runbook doc, F-24.15.11 is a missing lenny-ctl drift snapshot-refresh subcommand.
 
 §17.7 lines 830–833 define the "Drift snapshot stale after manual
 admin-API change" runbook at `docs/runbooks/drift-snapshot-refresh.md`.
@@ -27468,6 +28245,8 @@ runbook as a current deliverable.
 (broader rollback) has no document to escalate to.
 
 ### - [ ] F-17.7.7 — (Medium). 34 of 94 runbook files are stubs without `<!-- access: ... -->` markers; `/v1/admin/runbooks/{name}/steps` returns an empty step list for them [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.7.6 — Both report that ~34-35 of 94 runbooks lack <!-- access: --> markers so steps.go returns empty /steps responses for them.
 
 §17.7 line 741 mandates that runbooks "be treated as the canonical
 format — when authoring new runbooks or editing existing ones, add the
@@ -27849,6 +28628,8 @@ Evidence:
 
 ### - [ ] F-17.8.10 — 8-01 — Tier-promotion gate does not enforce KEDA mandatory for Tier 3 [Low] — OPEN
 
+**Potential overlap** (confidence: medium) — F-17.8.11 — Both concern missing §17.8.3 tier-promotion gate checks, but F-17.8.10 is specifically the KEDA-mandatory check while F-17.8.11 covers the LLM-Proxy extraction and GC-pressure checks; different specific checks within the same gate.
+
 §17.8.3 Step 2 "NO-GO" criterion (spec line 1285) and §17.8.2 Path A header (line 963) declare KEDA mandatory for Tier 3. The §17.8.3 gate at `pkg/tierpromotion/checks.go` covers chart-values-diff, replicas, persistent storage, secret encryption, audit retention, and admission posture — but no check inspects the `autoscaling.provider` value or queries the cluster for a `keda.sh/ScaledObject`. A Tier-3 promotion that left `autoscaling.provider: hpa` set would pass every existing check.
 
 Evidence:
@@ -27856,6 +28637,8 @@ Evidence:
 - `/Users/joan/projects/lenny/pkg/tierpromotion/tierpromotion.go:249–261` (ValidateInputs)
 
 ### - [ ] F-17.8.11 — 8-02 — Tier-promotion gate does not enforce LLM-Proxy extraction or GC pressure checks [Low] — OPEN
+
+**Potential overlap** (confidence: medium) — F-17.8.10 — Both concern missing §17.8.3 tier-promotion gate checks, but F-17.8.10 is specifically the KEDA-mandatory check while F-17.8.11 covers the LLM-Proxy extraction and GC-pressure checks; different specific checks within the same gate.
 
 §17.8.3 Step 1 (spec lines 1257–1267) defines four Phase 13.5 checks (LLM Proxy extraction ratio, gateway GC pause, `maxSessionsPerReplica` calibration, KEDA deployment) plus Step 2 NO-GO additions (etcd write latency, `maxSessionsPerReplica` provisional). The gate at `pkg/tierpromotion/checks.go` inspects none of these; it does not query Prometheus, does not read the gateway's `maxSessionsPerReplica` value, and has no notion of the LLM Proxy ratio. The operator runbook accordingly tells operators to "Run Phase 13.5 Load Tests" manually and then "run the validator" but the validator covers an orthogonal posture set (chart values + replicas + storage + secret + retention + webhooks).
 
@@ -28037,6 +28820,8 @@ choice is buried in deployer-written values overlays.
 ---
 
 ### - [ ] F-17.9.2 — §17.9.7 cloud-managed pooler defense (`LENNY_POOLER_MODE`, conditional trigger creation, preflight check) is entirely absent [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.2.14, F-12.3.1 — Three findings describe the absent LENNY_POOLER_MODE startup-refusal and tenant-guard defense; F-17.5.8 is the separate missing chart connectionPooler value.
 
 **Spec:** §17.9.7 (line 1541) and the cross-referenced §12.3 (lines 51–57)
 define a layered defense for cloud-managed Postgres pooler deployments
@@ -28312,6 +29097,8 @@ gets a chart render identical to one that answered both empty.
 
 ### - [ ] F-17.9.7 — No `values.schema.json`, so the spec's CI-lint claim "files cannot drift out of sync with the schema" cannot run [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.9.14 — Both report that the §17.9.2 CI lint of answer files against values.schema.json cannot run because no values.schema.json exists and the Go struct test is not equivalent.
+
 **Spec:** §17.9.2 line 1374: "The chart CI lints every shipped answer
 file against `values.schema.json` (§17.6) so that committed files
 cannot drift out of sync with the schema."
@@ -28447,6 +29234,8 @@ through `features.compliance`, which is a different axis.
 
 ### - [ ] F-17.9.11 — Airgap answer file requirements (`platform.registry.*` mirror, `preflight.skipNetworkProbes: true`) are not supported by the chart [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-17.9.19 — Both about airgap answer-file support but distinct: F-17.9.11 is the missing preflight.skipNetworkProbes value, F-17.9.19 is airgap not being a first-class composition value.
+
 **Spec:** §17.9.2 (line 1372) row for `airgap-self-managed.yaml`:
 "cluster=`vanilla`, backends=`self-managed`, `platform.registry.*` set
 to a private mirror, `preflight.skipNetworkProbes: true`."
@@ -28521,6 +29310,8 @@ operator-facing knob is missing either way.
 ---
 
 ### - [ ] F-17.9.14 — No CI lint enforcing answer-file schema validity beyond the three shipped files [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.9.7 — Both report that the §17.9.2 CI lint of answer files against values.schema.json cannot run because no values.schema.json exists and the Go struct test is not equivalent.
 
 **Spec:** §17.9.2 line 1374: "The chart CI lints every shipped answer
 file against `values.schema.json` (§17.6) so that committed files
@@ -28650,6 +29441,8 @@ test-time verification that the chart never drops them.
 ---
 
 ### - [ ] F-17.9.19 — `airgap` is referenced in the registry `requireDigest` comment but not as a first-class composition value [Low] — OPEN
+
+**Potential overlap** (confidence: high) — F-17.9.11 — Both about airgap answer-file support but distinct: F-17.9.11 is the missing preflight.skipNetworkProbes value, F-17.9.19 is airgap not being a first-class composition value.
 
 **Spec:** §17.9.2 line 1372: `airgap-self-managed.yaml` is an answer
 file in the catalog.
@@ -29017,6 +29810,8 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 
 ### - [ ] F-23.2.2 — 2-2 — Tier-11 TTHW Go test is not invoked by any CI workflow (Medium) [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-23.2.6 — F-23.2.2 reports the tier-11 TTHW test is not invoked by CI, while F-23.2.6 reports the named tier7b tthw.go benchmark file does not exist; related but different gaps.
+
 **Spec claim.** §23.2: "CI includes a TTHW smoke test that validates both paths on every merge." §18.38 names `tests/tier7b_load_kind/scenarios/tthw.go` as the Phase 17a benchmark deliverable, and TESTING.md §22.7 names the documentation gate.
 
 **Evidence.**
@@ -29064,6 +29859,8 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 **Classification.** Low. The publishing doc gives a runtime author the impression that a community registry submission is part of v1, while §23.2 (the spec) is explicit that v1 distribution is Go modules + container registries + Helm chart repositories only. The remediation is to either (a) label the publishing.md community-registry subsection as post-v1, or (b) update §23.2 if the registry has been pulled forward. Without one of those, the spec and the docs disagree.
 
 ### - [ ] F-23.2.6 — 2-6 — No `tests/tier7b_load_kind/scenarios/tthw.go` file despite §18.38 naming it as a Phase 17a deliverable (Info) [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-23.2.2 — F-23.2.2 reports the tier-11 TTHW test is not invoked by CI, while F-23.2.6 reports the named tier7b tthw.go benchmark file does not exist; related but different gaps.
 
 **Spec claim.** §18.38 line 774: "tests/tier7b_load_kind/scenarios/tthw.go time-to-hello-world benchmark validated against the < 5-minute target." Phase 17a is recorded as `Done` in BUILD-PROGRESS.md.
 
@@ -29128,6 +29925,8 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 
 ### - [ ] F-24.0.1 — 1 — `lenny` and `lenny-ctl` are separate binaries with disjoint command sets (R2 unmet) [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.4.9 — Both report that lenny and lenny-ctl are separate binaries with disjoint command sets rather than one executable exposing every subcommand.
+
 §24 preamble line 17 states: "The binary ships as both `lenny` (short name, Embedded Mode ergonomics) and `lenny-ctl` (long name, operator context). **Both names support every subcommand**".
 
 The implementation has two distinct Go packages with disjoint command surfaces:
@@ -29137,6 +29936,8 @@ The implementation has two distinct Go packages with disjoint command surfaces:
 Neither binary detects its invocation name (`os.Args[0]` / `filepath.Base`) to alias to the other surface. `lenny bootstrap`, `lenny admin tenants list`, `lenny-ctl up`, and `lenny-ctl session new` all exit non-zero with "unknown command". The release pipeline `release.yml:226-232` even builds the two from different packages (`./cmd/lenny` and `./cmd/lenny-ctl`).
 
 ### - [ ] F-24.0.2 — 2 — Standalone `lenny-ctl` archive and Homebrew formula install `lenny`, not `lenny-ctl` (R3, R4 unmet) [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.6.13 — Both describe the standalone/Homebrew distribution installing lenny instead of the spec-named lenny-ctl.
 
 Spec §24.0 line 23: "Installed via the project's Homebrew tap (`brew install lennylabs/tap/lenny-ctl`)" — the formula must be named `lenny-ctl` and the installed binary must be `lenny-ctl`.
 
@@ -29160,6 +29961,8 @@ R6 (direct download of a `lenny-ctl` binary) is also unmet — operators who fol
 
 ### - [ ] F-24.0.4 — 4 — `lenny-ctl --version` / `kubectl lenny --version` does not return a CLI binary version; the `-X main.version` ldflag is dropped (R7, R13 unmet) [High] — OPEN
 
+**Potential overlap** (confidence: high) — F-24.0.7 — Related lenny-ctl version defects with distinct remediations: F-24.0.4 the dropped version ldflag/--version flag, F-24.0.7 the version subcommand making a network call instead of printing the local build.
+
 §17.6 line 360 (referenced from §24.0): "CI verifies the invariant after every release by running `kubectl krew install lenny` against a disposable kind cluster and asserting that `kubectl lenny --version` succeeds and reports the release tag."
 
 Implementation:
@@ -29177,6 +29980,8 @@ The release-time CI check the spec mandates therefore cannot be implemented with
 
 ### - [ ] F-24.0.6 — 1 — CLI binaries do not read `LENNY_API_URL` / `LENNY_API_TOKEN` / `LENNY_OPS_URL` env vars (R9 unmet) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-24.16.1 — Both describe lenny-ctl not reading the LENNY_API_URL/LENNY_OPS_URL/LENNY_API_TOKEN environment variables.
+
 §24.0 line 26: "Both forms read `LENNY_API_URL` / `--api-url` to locate the Lenny gateway." §24 preamble line 8: "Every command requires `LENNY_API_URL` (or `--api-url` flag) and a valid admin token (`LENNY_API_TOKEN` or `--token` flag)". §24.16 line 197: "the `--ops-server` (or `LENNY_OPS_URL`) flag".
 
 Implementation:
@@ -29186,6 +29991,8 @@ Implementation:
 `kubectl-lenny` users who set `LENNY_API_URL` per the spec contract and never pass `--api-url` will hit `http://localhost:8080` (the hard-coded default at `main.go:182`). The spec's whole rationale for not auto-discovering from kubeconfig (R10) is that operators rely on `LENNY_API_URL`; today that variable is silently ignored. The companion `--token` flag is implemented as `--bearer`, so the spec's `LENNY_API_TOKEN` / `--token` contract is also unmet, but the flag-name mismatch falls in §24 preamble, not §24.0.
 
 ### - [ ] F-24.0.7 — 2 — `lenny-ctl version` command sends a network call rather than printing the local CLI version [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-24.0.4 — Related lenny-ctl version defects with distinct remediations: F-24.0.4 the dropped version ldflag/--version flag, F-24.0.7 the version subcommand making a network call instead of printing the local build.
 
 Closely related to HIGH-4 but distinct in remediation: even after a `var version` is declared, the `version` subcommand (`cmd/lenny-ctl/main.go:246-254`) currently calls `GET /v1/admin/platform/version` and prints the gateway's response. Operators expecting `lenny-ctl version` to print the local binary build (a standard CLI convention) get a connection-refused error when the gateway is unreachable. The current behavior is documented in the source comment ("Routing (§25.14): health and version target the gateway directly"), but it makes the binary unusable for local introspection — including the §17.6 CI check.
 
@@ -29336,6 +30143,8 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 ### - [ ] F-24.1.4 — (High) — Bootstrap surface only supports `tenants`, `runtimes`, `users`; pools, credentialPools, delegationPolicies, environments are silently dropped [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.6.2 — Both report the bootstrap seed supporting only tenants/runtimes/users while pools/credentialPools/delegationPolicies/environments are dropped.
+
 **Spec (R4, R5):** §24.1 row 1 explicitly lists "runtimes, pools, tenants, users" as the upsert classes. §17.6:399-411 names `tenant` (singular), `runtimes`, `pools`, `credentialPools`, `delegationPolicies`, `environments`.
 
 **Implementation:**
@@ -29394,6 +30203,8 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 ---
 
 ### - [ ] F-24.1.8 — (Low) — `tenant` (singular) vs `tenants` (plural) schema mismatch [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.6.17 — Both report the singular bootstrap.tenant (with name) spec form versus the plural bootstrap.tenants[] (with id) implemented in chart and bootstrap.go.
 
 **Spec (R5):** §17.6:403-405 declares `tenant:` (singular, single bootstrap tenant) in the Helm values block, e.g. `tenant.name: "default"`. The endpoint description at §15.1:863 says "same schema as `bootstrap` Helm values."
 
@@ -29504,6 +30315,8 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 ### - [ ] F-24.2.1 — (High) — `lenny-ctl preflight` subcommand does not exist [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.6.6 — Both report the lenny-ctl preflight subcommand does not exist; F-24.2.8 is a distinct finding about name-collisions with lenny-test/scripts preflight.
+
 **Spec (R1, R2, R3, R4, R6, R7, R8, R11):** §24.2 row 1 lists `lenny-ctl preflight --config <values.yaml>` as a first-class command supporting standalone and API-backed execution. §17.6:537 names it the "CLI equivalent" of the chart's preflight Job; §17.2:76 directs GitOps operators to invoke it as a pre-Sync hook; §17.6:392, 618, 813 reference it from the operational runbook and the migrate-down recovery procedure.
 
 **Implementation:**
@@ -29557,6 +30370,8 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 ---
 
 ### - [ ] F-24.2.5 — (High) — Install wizard does not invoke preflight [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.20.3 — F-24.2.5 and F-24.20.3 both report the install wizard missing the preflight phase; F-17.6.9 (no detection phase) and F-24.20.4 (no smoke-test phase) are distinct missing phases of the same wizard.
 
 **Spec (R13):** §24.20 line 295 lists the wizard flow as `cluster detection → question phase → preview → preflight → helm install → bootstrap seed → smoke test`. §17.6:696 (line 4) is normative: "The wizard runs `lenny-ctl preflight --config <rendered.yaml>` against the target cluster using the same checks as the Helm post-install preflight Job. Any hard failure aborts; warnings are displayed with the option to continue."
 
@@ -29690,6 +30505,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ### - [ ] F-24.3.2 — (High) — Defense-in-depth Postgres trigger on `runtime_tenant_access` is unimplemented [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.2.3 — Both report the missing lenny.admin_mode defense-in-depth trigger on runtime_tenant_access and pool_tenant_access plus its integration test.
+
 **Spec (R8):** §4.2 line 177: "as defense-in-depth, a `BEFORE INSERT/UPDATE/DELETE` trigger on both tables validates that `current_setting('lenny.admin_mode', true) = 'true'` (set by the gateway only for `platform-admin` code paths via `SET LOCAL`) and rejects modifications otherwise. An integration test must verify that a `tenant-admin`-scoped request cannot modify these tables."
 
 **Implementation:**
@@ -29703,6 +30520,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 ---
 
 ### - [ ] F-24.3.3 — (Medium) — Admin tool catalog omits `*_runtime_tenant_access` operations [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-24.4.4, F-24.5.5 — All three are gaps in the me.go authorized-tools catalog but each names a different missing operation set (runtime-tenant-access, pool lifecycle ops, credential-pool ops), so they are distinct entries rather than one defect.
 
 **Spec (R1-R3 + §24.15 / §25.14):** `lenny-ctl me` (§24.15) fetches `/v1/admin/me/authorized-tools`. The catalog backing that endpoint is the source of truth for agent-operability tool discovery and the §10.2 RBAC matrix surface.
 
@@ -29728,6 +30547,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 ---
 
 ### - [ ] F-24.3.5 — (Medium) — No `--output json` / `--quiet` plumbing in the CLI [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.15.14, F-24.16.3, F-24.20.8, F-24.4.5, F-24.5.6 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
 
 **Spec (R5):** §24.16 line 205: "All commands support `--output json` for machine-readable output and `--quiet` to suppress informational messages."
 
@@ -29885,6 +30706,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ### - [ ] F-24.4.2 — (High) — Of 18 pool REST endpoints normative to §24.4, only 8 exist; 10 are unimplemented [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-15.1.3 — F-24.4.2's missing pool endpoints are a subset of F-15.1.3's broad ~65-endpoint sweep; related but different scopes and remediation lists.
+
 **Spec (R1–R17 + §15.1):** §15.1 lines 792–804 and 869–875 enumerate the REST endpoints the §24.4 commands map to. §24.4 also references `pools/{name}/upgrade/{start,proceed,pause,resume,rollback}` and `pools/{name}/upgrade-status`.
 
 **Implementation (`pkg/gateway/admin/tenants.go:384-398, 463-465`, the only pool route mounts in the gateway):**
@@ -29941,6 +30764,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ### - [ ] F-24.4.4 — (Medium) — Admin tool catalog omits 13 §24.4 operations, breaking §25.14 agent discovery [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-24.3.3, F-24.5.5 — All three are gaps in the me.go authorized-tools catalog but each names a different missing operation set (runtime-tenant-access, pool lifecycle ops, credential-pool ops), so they are distinct entries rather than one defect.
+
 **Spec (R20):** §25.14 / §10.2: `GET /v1/admin/me/authorized-tools` enumerates the tools the caller is authorized for; the catalog is the source of truth for agent-operability tool discovery.
 
 **Implementation (`pkg/gateway/admin/me.go:103-127`):**
@@ -29952,6 +30777,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 ---
 
 ### - [ ] F-24.4.5 — (Medium) — `--output json` / `--quiet` flags from §24.16 are not parsed [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.15.14, F-24.16.3, F-24.20.8, F-24.3.5, F-24.5.6 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
 
 **Spec (R19):** §24.16 line 205: "All commands support `--output json` for machine-readable output and `--quiet` to suppress informational messages. Global flags: `--api-url`, `--ops-server`, `--token`, `--timeout`, `--insecure-skip-verify` (dev only)."
 
@@ -30185,6 +31012,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ### - [ ] F-24.5.3 — (High) — Admin-time RBAC live-probe is unimplemented on pool creation [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.9.3 — Both report the admin-time Token-Service RBAC live-probe is unimplemented on credential-pool create/add/update.
+
 **Spec (R12):** §15.1:1212 mandates that pool creation (`POST /v1/admin/credential-pools`), credential addition (`POST .../credentials`), and credential update (`PUT .../credentials/{credId}`) MUST execute a Token-Service-owned live-probe over the gateway↔Token-Service mTLS link before persisting any new/changed `secretRef`. `DENIED`/`NOT_FOUND` → `422 CREDENTIAL_SECRET_RBAC_MISSING`; transport failure → `503 CREDENTIAL_PROBE_UNAVAILABLE`. The handler MUST NOT fail open.
 
 **Implementation:**
@@ -30212,6 +31041,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ### - [ ] F-24.5.5 — (Medium) — Admin tool catalog (`me.go`) omits all credential-pool operations [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-24.3.3, F-24.4.4 — All three are gaps in the me.go authorized-tools catalog but each names a different missing operation set (runtime-tenant-access, pool lifecycle ops, credential-pool ops), so they are distinct entries rather than one defect.
+
 **Spec (R13):** §25.4 publishes `/v1/admin/me/authorized-tools` as the agent-discoverable enumeration of operations a principal can invoke; the OpenAPI surface backs this with `x-lenny-mcp-tool` declarations.
 
 **Implementation:**
@@ -30224,6 +31055,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 ---
 
 ### - [ ] F-24.5.6 — (Medium) — `--output json` / `--quiet` global flags are not parsed [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.15.14, F-24.16.3, F-24.20.8, F-24.3.5, F-24.4.5 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
 
 **Spec (R10):** §24.16 line 205: "All commands support `--output json` for machine-readable output and `--quiet` to suppress informational messages."
 
@@ -30481,6 +31314,9 @@ session/tenant counter set, and there is no on-demand operator path.
   from Postgres into Redis") is the substantive requirement.
 
 ### - [ ] F-24.6.4 — 6-4 — BUILD-GAPS does not track §24.6 as open [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-24.8.7 — Same meta-issue (BUILD docs do not track an open gap) applied to different sections (§24.6 vs §24.8).
+
 - Severity: Low
 - Spec: project convention captured in
   `feedback_verify_against_spec_not_buildprogress.md` (verify spec/build claims
@@ -30617,6 +31453,8 @@ confirms 403 for non-platform-admin principals on all four endpoints
 
 ### - [ ] F-24.7.1 — (Low) — `--reason` is documented as required in the §24.7 syntax but not enforced client-side [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-24.7.2 — Same client-side enforcement weakness in lenny-ctl but for two different flags (--reason and --scope) with different downstream behavior, so they are related rather than one defect.
+
 Spec §24.7 line 106 lists `--reason <text>` in the command syntax without
 brackets, signaling the flag is required. The CLI parser
 (`/Users/joan/projects/lenny/cmd/lenny-ctl/main.go:451-483`) does not require
@@ -30630,6 +31468,8 @@ This degrades the audit trail value of `circuit_breaker.opened` events
 (`breakers.go:125-129`), which copy the supplied reason verbatim.
 
 ### - [ ] F-24.7.2 — (Low) — `--scope` is documented as required in the §24.7 syntax but not enforced client-side [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-24.7.1 — Same client-side enforcement weakness in lenny-ctl but for two different flags (--reason and --scope) with different downstream behavior, so they are related rather than one defect.
 
 Same shape as F1. Spec §24.7 line 106 lists `--scope <key>=<value>` in the
 required-flag block. The CLI parser does not require `--scope`; if it is
@@ -30709,6 +31549,8 @@ invalid-scope state.
 
 ### - [ ] F-24.8.1 — 001 — `lenny-ctl admin external-adapters validate` is not implemented [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-24.8.5 — F-24.8.1 and F-24.8.5 both report the missing lenny-ctl external-adapters validate command (one adds the doc-drift angle); F-24.8.2 and F-24.8.6 both report the unimplemented admin external-adapters HTTP surface.
+
 **Spec:** §24.8 line 113 (the sole normative row).
 **Evidence (absence):**
 
@@ -30722,6 +31564,8 @@ invalid-scope state.
 **Required fix:** Add `cmdExternalAdapters` to `/Users/joan/projects/lenny/cmd/lenny-ctl/main.go` (alongside `cmdCircuitBreakers`) that issues `POST /v1/admin/external-adapters/{name}/validate` against the gateway, prints the validation report, and exits non-zero on `validation_failed`. The wire-side handler must exist first (see HIGH-002).
 
 ### - [ ] F-24.8.2 — 002 — `POST /v1/admin/external-adapters/{name}/validate` admin endpoint is not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.8.6 — F-24.8.1 and F-24.8.5 both report the missing lenny-ctl external-adapters validate command (one adds the doc-drift angle); F-24.8.2 and F-24.8.6 both report the unimplemented admin external-adapters HTTP surface.
 
 **Spec:** §15.1 line 854 (the wire contract §24.8 maps onto), reinforced by §15 line 1414 ("registration endpoint enforces this gate") and §18.13 line 275 (Phase 5 build sequence names this endpoint as in-scope).
 **Evidence (absence):**
@@ -30760,12 +31604,16 @@ invalid-scope state.
 
 ### - [ ] F-24.8.5 — MED-002 — `lenny-ctl admin external-adapters validate` is documented to operators in `docs/operator-guide/lenny-ctl.md` but the CLI rejects the invocation [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-24.8.1 — F-24.8.1 and F-24.8.5 both report the missing lenny-ctl external-adapters validate command (one adds the doc-drift angle); F-24.8.2 and F-24.8.6 both report the unimplemented admin external-adapters HTTP surface.
+
 **Spec:** §24.8 line 113; docs site rendered table at `/Users/joan/projects/lenny/docs/operator-guide/lenny-ctl.md` line 347.
 **Evidence:** the operator-guide row is unconditional ("Run compliance suite against an adapter") with no "planned" or "post-v1" qualifier, and the §24.8 row is similarly unqualified. The binary, however, fails the command at the `cmdAdmin` switch (`/Users/joan/projects/lenny/cmd/lenny-ctl/main.go:269`) with `"lenny-ctl: unknown admin resource \"external-adapters\""` and exit code 2.
 
 **Why Medium:** This is a doc-vs-implementation drift that a real operator would hit on first attempt. The fix is either implementation (HIGH-001) or, until then, removing the row from `docs/operator-guide/lenny-ctl.md` and adding the §24.8 entry to `BUILD-GAPS.md` so the gap is acknowledged in tree.
 
 ### - [ ] F-24.8.6 — MED-003 — §15.1 lines 850–855 declare the full external-adapter CRUD surface as in-scope for the admin API; none is implemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.8.2 — F-24.8.1 and F-24.8.5 both report the missing lenny-ctl external-adapters validate command (one adds the doc-drift angle); F-24.8.2 and F-24.8.6 both report the unimplemented admin external-adapters HTTP surface.
 
 **Spec:** §15.1 lines 850–853, 855 (POST/GET-list/GET-by-name/PUT/DELETE on `/v1/admin/external-adapters`); §15 line 569 ("Runtime registration via admin API: `POST /v1/admin/external-adapters` — takes effect immediately, no restart").
 **Evidence:** the admin router (`pkg/gateway/admin/tenants.go::Router.Handler`) wires CRUD for every other §15.1 resource (tenants, runtimes, connectors, environments, experiments, pools, billing-corrections, etc.) but registers nothing under `/v1/admin/external-adapters`. The OpenAPI document (`pkg/gateway/openapi/openapi.json`) contains no path entries for the resource. `BUILD-PROGRESS.md` line 37 marks Phase 5 ("ExternalAdapterRegistry, MCP/Completions/Open Responses") as `Done`, but the §15.1 admin CRUD that backs `POST /v1/admin/external-adapters` is missing; the Phase 5 status is overstated relative to §15.1 lines 850–855.
@@ -30775,6 +31623,8 @@ invalid-scope state.
 **Required fix:** Add the §15.1 lines 850–855 CRUD endpoints alongside HIGH-002, backed by an `externaladapterstore` package and Postgres persistence (per the same pattern as `connectorstore`, `environmentstore`). Update `BUILD-PROGRESS.md` line 37 to reflect what is actually built versus what remains.
 
 ### - [ ] F-24.8.7 — 001 — `BUILD-PROGRESS.md` and `BUILD-GAPS.md` do not currently acknowledge the §24.8 / §15.1-external-adapter gaps [Info] — OPEN
+
+**Potential overlap** (confidence: high) — F-24.6.4 — Same meta-issue (BUILD docs do not track an open gap) applied to different sections (§24.6 vs §24.8).
 
 **Evidence:** `grep -n "external-adapter\|24.8" BUILD-PROGRESS.md BUILD-PLAN.md BUILD-GAPS.md` returns no matches against the §24.8 command or its upstream CRUD; `BUILD-PROGRESS.md` line 37 marks Phase 5 as `Done` without flagging the missing admin gate. The only adjacent acknowledgement is `BUILD-GAPS.md` line 1393 noting that the `pkg/compliance.RegisterAdapterUnderTest` helper is wired into tier-10 tests.
 
@@ -30878,6 +31728,8 @@ The functional behavior is correct (mints a token in Embedded Mode, fails non-ze
 
 ### - [ ] F-24.9.3 — `lenny-ctl token print` alias is missing [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-24.19.2 — Both stem from the missing 'one binary, two names' lenny-ctl alias, but F-24.19.2 is about the up/down/status/logs local-command aliases while F-24.9.3 is specifically about token print; related root cause but different command surfaces.
+
 **Spec** (`spec/24_lenny-ctl-command-reference.md:120`, `:266`):
 
 > [`lenny token print`] exits `3 EMBEDDED_MODE_REQUIRED` when invoked outside Embedded Mode (e.g., … the binary is invoked as `lenny-ctl` against a remote `--api-url`).
@@ -30968,6 +31820,8 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:275-319`.
 
 ### - [ ] F-24.10.2 — `lenny-ctl admin tenants force-delete` is not implemented at any layer [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-12.8.2 — F-12.8.2 and F-24.10.2 both report the unimplemented Phase 3.5 legal-hold force-delete path (controller plus endpoint plus CLI); F-24.10.1 is the distinct plain tenants-delete CLI command.
+
 Spec §24.10 row 4 declares `lenny-ctl admin tenants force-delete <id> --acknowledge-hold-override --justification <text>` as a `platform-admin` normative command targeting `POST /v1/admin/tenants/{id}/force-delete`. None of the four required layers exist:
 
 1. CLI subcommand: absent (see F1 — `cmdTenants` has no `force-delete` case).
@@ -30980,6 +31834,8 @@ The error code `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` named by the spec does not 
 Locations: `cmd/lenny-ctl/main.go:275-319`; `pkg/gateway/admin/tenants.go:257-276`; `pkg/controller/tenantdeletion/lifecycle.go:99-107`; `pkg/observability/audit/catalog.go:183-184`; `pkg/alerting/rules/rules.go:382-389`, `:983-989`.
 
 ### - [ ] F-24.10.3 — `DELETE /v1/admin/tenants/{id}` does not initiate the §12.8 deletion lifecycle [High] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-12.8.1 — F-12.8.1 and F-24.10.3 both report the tenant-deletion lifecycle controller is not wired/initiated; F-24.10.4 is a distinct defect about GET tenant not surfacing deletion state.
 
 Spec §24.10 row 3 binds `lenny-ctl admin tenants delete` to `DELETE /v1/admin/tenants/{id}` with the explicit requirement: "Initiate tenant deletion lifecycle (transitions to `disabling` → `deleting` → `deleted`). The multi-phase deletion controller runs asynchronously."
 
@@ -31067,6 +31923,9 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 ### Findings
 
 ### - [ ] F-24.12.1 — `lenny-ctl admin erasure-jobs` group not implemented [High] — OPEN
+
+**Potential overlap** (confidence: high) — F-24.12.5 — Both concern the erasure-jobs CLI group, but one is the missing spec-defined subcommands and the other proposes an unspecified list command.
+
 - **Spec:** §24.12 lines 140–144 list three subcommands under `admin erasure-jobs`.
 - **Evidence:** `cmd/lenny-ctl/main.go` `cmdAdmin` accepts only `tenants|runtimes|circuit-breakers`. No `erasure-jobs`, `erasureJobs`, or `EraseUser` references in `cmd/lenny-ctl/`.
 - **Gap:** Operators cannot retrieve job status, retry stuck jobs, or clear an over-applied `processing_restricted` flag from the documented CLI surface.
@@ -31079,6 +31938,9 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 - **Suggested resolution:** Add `handleRetryErasureJob`, validate `state == failed`, clear transient error fields, transition phase back to the last persisted checkpoint, and re-enqueue on the `erasurejob.Runner`.
 
 ### - [ ] F-24.12.3 — `POST /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction` not registered [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.8.10 — F-12.8.10 and F-24.12.3 both report the missing clear-processing-restriction endpoint (F-12.8.10 also covers retry, overlapping with the separate retry-endpoint finding F-24.12.2).
+
 - **Spec:** §24.12 line 144 maps `clear-restriction` to the named POST and requires `--justification` audit capture.
 - **Evidence:** `pkg/gateway/admin/erasure.go` and `pkg/gateway/admin/tenants.go` do not register the route. There is no caller of `userstore.SetProcessingRestricted(false, ...)` outside the success path of the erasure runner.
 - **Gap:** A user whose erasure job failed remains `processing_restricted` (per migration 0042's DB-level trigger) with no operator override, blocking all session creation for that user indefinitely.
@@ -31091,6 +31953,9 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 - **Suggested resolution:** Add `EventGDPRErasureJobRetried` and `EventGDPRProcessingRestrictionCleared` to the catalog with OCSF severity Notice; wire emitters from the two new handlers.
 
 ### - [ ] F-24.12.5 — `lenny-ctl admin erasure-jobs list` is not specified but is operationally needed [Info] — OPEN
+
+**Potential overlap** (confidence: high) — F-24.12.1 — Both concern the erasure-jobs CLI group, but one is the missing spec-defined subcommands and the other proposes an unspecified list command.
+
 - **Spec:** §24.12 enumerates only `get`/`retry`/`clear-restriction` — no list command.
 - **Evidence:** No `LIST` route or CLI helper exists; only `GET /v1/admin/erasure-jobs/{job_id}` is registered.
 - **Gap:** None against the spec, but operators investigating a failing erasure backlog will need to query the DB directly to find job IDs to pass to `get`/`retry`.
@@ -31109,12 +31974,18 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 ### Findings
 
 ### - [ ] F-24.13.1 — `lenny-ctl migrate status` is not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.5.3, F-24.13.2 — All three describe the unimplemented migrate status/down CLI commands; F-17.7.5 is a broader inventory of multiple missing lenny-ctl subcommands.
+
 - **Spec:** §24.13 line 150 mandates `lenny-ctl migrate status` to report per-migration `version`, `phase` (`phase1_applied` | `phase2_deployed` | `phase3_applied` | `complete`), `appliedAt`, `gateCheckResult` (`pass` | `fail:<N>_rows` | `not_run`), and `migrationJobName`, mapped to `GET /v1/admin/schema/migrations/status`.
 - **Evidence:** `cmd/lenny-ctl/main.go` `run()` (line 73) dispatches only `health`, `version`, `bootstrap`, `install`, `runtime`, `admin`, `runbooks`, `locks`, `escalations`, `diagnose`, `drift`; no `migrate` case exists. The `usage` constant (lines 124–169) advertises no migration commands. Grep for `migrate`, `cmdMigrate`, `MigrationStatus`, `MigrationPhase`, or `schema/migrations` in `cmd/lenny-ctl/` and `pkg/ctl/` returns no hits. The separate `cmd/lenny-migrate/main.go version` subcommand reports only the `golang-migrate` version integer and `clean | dirty` flag (lines 100–114) — it does not surface phase, gate result, or Job name.
 - **Gap:** Operators have no CLI path to confirm Phase 1 deployment is complete before starting Phase 2, or to verify the Phase 3 enforcement-gate check passed before approving a Phase 3 deployment. The phase coordination workflow documented at §24.13 lines 153–164 and the runbook citations at §17.7 line 812 cannot be executed.
 - **Suggested resolution:** Add a `migrate` group to `cmd/lenny-ctl/main.go` with a `status` subcommand that calls `GET /v1/admin/schema/migrations/status`; implement the corresponding handler in `pkg/gateway/admin/` that reads the phase tracker (see F-24.13.4) and joins it against the `schema_migrations` table and the latest migration `Job` per version.
 
 ### - [ ] F-24.13.2 — `lenny-ctl migrate down --version <N> --confirm` is not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-10.5.3, F-24.13.1 — All three describe the unimplemented migrate status/down CLI commands; F-17.7.5 is a broader inventory of multiple missing lenny-ctl subcommands.
+
 - **Spec:** §24.13 line 151 mandates a destructive last-resort rollback that requires `--confirm`, launches the down-migration Job for a specific version, releases stale advisory locks, applies the `down.sql`, clears the dirty flag, and emits a `platform.schema_migration_rolled_back` audit event. Mapped to `POST /v1/admin/schema/migrations/{version}/down`.
 - **Evidence:** No `migrate down` dispatch in `cmd/lenny-ctl/main.go`. The standalone `cmd/lenny-migrate/main.go` `down` subcommand (lines 79–84) calls `m.Down()` from `golang-migrate`, which rolls back **every** applied migration in reverse order; it does not accept a `--version` argument, has no `--confirm` guard, runs in-process against the DSN passed via `--postgres-dsn`/`LENNY_POSTGRES_DSN` rather than launching a Kubernetes Job, does not explicitly release stale advisory locks, and emits no audit event. The advertised audit constant `EventPlatformSchemaMigrationRolledBack` exists in `pkg/observability/audit/catalog.go:122` but has no emitter (grep for the constant returns only its declaration and the catalog completeness test).
 - **Gap:** The only operator-facing recovery path for a dirty migration is `kubectl exec` into a `lenny-migrate` Job with a hand-written DSN, which (a) cannot target a single version, (b) provides no confirmation guard against accidental full rollback, (c) leaves no audit trail, and (d) cannot clear stale advisory locks that may have been left by the crashed migration. The §17.7 runbook step "(3) **Down-migration (last resort):** ... `lenny-ctl migrate down --version <N> --confirm`" cannot be executed.
@@ -31208,6 +32079,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 ### - [ ] F-24.15.1 — `lenny-ctl me` group is unimplemented [High] — OPEN
 
+**Potential overlap** (confidence: high) — F-24.15.2, F-24.15.3, F-24.15.5 — Each member is a different unimplemented lenny-ctl command group (me, operations, events, audit) with distinct backing endpoints, sharing only the §24.15 CLI surface.
+
 **Spec (§24.15 line 180):** `lenny-ctl me` must inspect caller identity, scope, role, and authorized tools via `/v1/admin/me`, `/v1/admin/me/authorized-tools`, `/v1/admin/me/operations`.
 
 **Impl:** Gateway handlers for `GET /v1/admin/me` and `GET /v1/admin/me/authorized-tools` exist (`pkg/gateway/admin/me.go:42,63`; registered in `pkg/gateway/admin/tenants.go:499-500`). No `lenny-ctl me` subcommand is registered in `cmd/lenny-ctl/main.go` (the switch on `rest[0]` has no `case "me"`). Endpoint `GET /v1/admin/me/operations` is not implemented anywhere in `pkg/`.
@@ -31216,6 +32089,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 ### - [ ] F-24.15.2 — `lenny-ctl operations` group is unimplemented [High] — OPEN
 
+**Potential overlap** (confidence: high) — F-24.15.1, F-24.15.3, F-24.15.5 — Each member is a different unimplemented lenny-ctl command group (me, operations, events, audit) with distinct backing endpoints, sharing only the §24.15 CLI surface.
+
 **Spec (§24.15 line 181):** `lenny-ctl operations` must list active long-running operations with Progress Envelope output and fetch a single operation via `/v1/admin/operations` and `/v1/admin/operations/{id}`.
 
 **Impl:** No `case "operations"` in `cmd/lenny-ctl/main.go`. No handler registers `/v1/admin/operations` anywhere under `pkg/` (only a doc comment in `pkg/alerting/rules/rules.go:1498` references the endpoint). Both the backing API and the CLI wrapper are absent.
@@ -31223,6 +32098,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 **Impact:** Progress-envelope tracking, the primary §25.2 long-running-operation interface, is unreachable.
 
 ### - [ ] F-24.15.3 — `lenny-ctl events` group is unimplemented [High] — OPEN
+
+**Potential overlap** (confidence: high) — F-24.15.1, F-24.15.2, F-24.15.5 — Each member is a different unimplemented lenny-ctl command group (me, operations, events, audit) with distinct backing endpoints, sharing only the §24.15 CLI surface.
 
 **Spec (§24.15 line 182):** `lenny-ctl events` must tail the SSE event stream, query the gateway buffer, and manage webhook subscriptions via `/v1/admin/events`, `/v1/admin/events/stream`, `/v1/admin/events/buffer`, `/v1/admin/event-subscriptions`.
 
@@ -31240,6 +32117,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 ### - [ ] F-24.15.5 — `lenny-ctl audit` group is unimplemented [High] — OPEN
 
+**Potential overlap** (confidence: high) — F-24.15.1, F-24.15.2, F-24.15.3 — Each member is a different unimplemented lenny-ctl command group (me, operations, events, audit) with distinct backing endpoints, sharing only the §24.15 CLI surface.
+
 **Spec (§24.15 line 186):** `lenny-ctl audit` must query audit events with scatter-gather, summarize, retry OCSF translation, re-queue EventBus publishes, and force-drop blocked partitions via `/v1/admin/audit-events`, `/v1/admin/audit-events/summary`, `/v1/admin/audit-events/{id}/retranslate`, `/v1/admin/audit-events/{id}/republish`, `/v1/admin/audit-partitions/{partition}/drop`.
 
 **Impl:** Gateway exposes `GET /v1/admin/audit-events` and `GET /v1/admin/audit-events/{seq}` (`pkg/gateway/admin/audit_query.go:84,128`, wired in `pkg/gateway/admin/tenants.go:484-486`). No `/audit-events/summary`, `/retranslate`, `/republish`, or `/audit-partitions/.../drop` handlers exist. No `case "audit"` in `cmd/lenny-ctl/main.go`.
@@ -31248,6 +32127,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 ### - [ ] F-24.15.6 — `lenny-ctl backup` group is unimplemented [High] — OPEN
 
+**Potential overlap** (confidence: high) — F-24.15.7 — F-24.15.6 and F-24.15.7 cover distinct lenny-ctl command groups (backup vs restore), each a separate missing CLI wrapper.
+
 **Spec (§24.15 line 188):** `lenny-ctl backup` must list backups, verify, manage schedule and retention policy via `/v1/admin/backups`, `/v1/admin/backups/{id}/verify`, `/v1/admin/backups/schedule`, `/v1/admin/backups/policy`.
 
 **Impl:** Full handler set is wired on `lenny-ops` (`pkg/ops/opsserver/backup.go:53-60`). No `case "backup"` in `cmd/lenny-ctl/main.go`. Backend exists; CLI wrapper does not.
@@ -31255,6 +32136,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 **Impact:** Agents must invoke `lenny-ops` HTTP directly; the documented `lenny-ctl backup` UX promised in §24.15 is unavailable.
 
 ### - [ ] F-24.15.7 — `lenny-ctl restore` group is unimplemented [High] — OPEN
+
+**Potential overlap** (confidence: high) — F-24.15.6 — F-24.15.6 and F-24.15.7 cover distinct lenny-ctl command groups (backup vs restore), each a separate missing CLI wrapper.
 
 **Spec (§24.15 line 189):** `lenny-ctl restore` must preview, safety-check, execute, monitor, and resume restore operations via `/v1/admin/restore/*`.
 
@@ -31288,6 +32171,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 ### - [ ] F-24.15.11 — `lenny-ctl drift` lacks the snapshot-refresh subcommand [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-17.7.3 — Related to drift-snapshot-refresh but distinct defects: F-17.7.3 is a missing operator runbook doc, F-24.15.11 is a missing lenny-ctl drift snapshot-refresh subcommand.
+
 **Spec (§24.15 line 187):** `lenny-ctl drift` must fetch the drift report, trigger reconciliation, validate, **and refresh the desired-state snapshot** via `/v1/admin/drift`, `/v1/admin/drift/validate`, `/v1/admin/drift/snapshot/refresh`.
 
 **Impl:** `cmdDrift` (`cmd/lenny-ctl/ops.go:199`) supports `report`, `validate`, `reconcile`. A `snapshot refresh` subcommand wrapping `/v1/admin/drift/snapshot/refresh` is not present.
@@ -31311,6 +32196,8 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 **Impact:** Discoverability degraded; operability spec drift is invisible from the CLI itself.
 
 ### - [ ] F-24.15.14 — Global `--output json` and `--quiet` flags [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.16.3, F-24.20.8, F-24.3.5, F-24.4.5, F-24.5.6 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
 
 **Spec (§24.16 line 205):** All commands support `--output json` for machine-readable output and `--quiet` for suppressing informational messages.
 
@@ -31353,12 +32240,18 @@ Implementation tree: `cmd/lenny-ctl/`, `pkg/ops/`, `pkg/gateway/admin/platform.g
 ### Findings
 
 ### - [ ] F-24.16.1 — `LENNY_OPS_URL` and `LENNY_API_URL` env vars are not honored [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.0.6 — Both describe lenny-ctl not reading the LENNY_API_URL/LENNY_OPS_URL/LENNY_API_TOKEN environment variables.
+
 Spec (§24.16, lines 197 and 199) requires that the `--ops-server` flag has an equivalent `LENNY_OPS_URL` environment variable and that `--api-url` has an equivalent `LENNY_API_URL` environment variable. `cmd/lenny-ctl/main.go:181–231` (`parseGlobalFlags`) reads neither variable; the only `os.Getenv` call in the package is `cmd/lenny-ctl/install.go:366` (unrelated, used by the install wizard). The flag parser defaults `apiURL` to `http://localhost:8080` unconditionally and `opsServer` to empty, with no env-var fallback. The runtime-scaffold templates reference `LENNY_API_URL` (as an instruction to users running their own commands) but the CLI binary itself ignores both variables. Operators who configure their shells with `LENNY_API_URL` / `LENNY_OPS_URL` (per §24's opening prose) will silently target `http://localhost:8080`.
 
 ### - [ ] F-24.16.2 — Routing rule 3 (gateway-host fallback) is not implemented; auto-discovery errors out instead [High] — OPEN
 Spec (§24.16 line 201) requires that when auto-discovery fails (gateway unreachable or `opsServiceURL` absent because the cluster is mid-upgrade), `lenny-ctl` falls back to the gateway host on the assumption that gateway-hosted §25.3 operability endpoints still serve the request, and surfaces a warning for any ops-exclusive command. `cmd/lenny-ctl/ops.go:52–63` returns an error in both failure paths and `withOps` (lines 26–30) exits 2 without invoking the command. The test `TestOpsAutoDiscoveryMissingURLErrors` (`cmd/lenny-ctl/ops_test.go:281–296`) asserts the error-and-exit-2 behavior, which is the opposite of the spec's fallback rule. No code path attempts to route ops calls to the gateway host when `opsServiceURL` is missing.
 
 ### - [ ] F-24.16.3 — Documented global flags `--token`, `--timeout`, `--insecure-skip-verify`, `--output`, `--quiet` are absent [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.15.14, F-24.20.8, F-24.3.5, F-24.4.5, F-24.5.6 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
+
 Spec (§24.16 line 205) lists `--api-url`, `--ops-server`, `--token`, `--timeout`, and `--insecure-skip-verify` as global flags and states "All commands support `--output json` for machine-readable output and `--quiet` to suppress informational messages." `cmd/lenny-ctl/main.go:181–231` (`parseGlobalFlags`) implements `--api-url`, `--ops-server`, `--bearer`, `--bearer-file`, `--dev-tenant`, `--dev-roles`. The auth flag is named `--bearer` rather than the spec's `--token`; `--timeout` is hard-coded to `30 * time.Second` (`cmd/lenny-ctl/main.go:69` and `ops.go:42`); `--insecure-skip-verify` has no representation in the parser, the `ctl.Options` struct, or the HTTP client. `--output` and `--quiet` are absent; output is always JSON via `printJSON` with no formatting alternatives or silencing flag, so the spec's "machine-readable" framing happens to match default behavior but is not selectable. Scripts written against the documented flag names will fail at parse time.
 
 ### - [ ] F-24.16.4 — §24.15 command groups `audit`, `backup`, `restore`, `logs`, `upgrade`, `mcp-management` are not wired [Medium] — OPEN
@@ -31408,6 +32301,8 @@ The lenny-ctl dispatcher (`/Users/joan/projects/lenny/cmd/lenny-ctl/main.go` lin
 §24, line 6 makes the `lenny-ctl session` form normative ("preferred in operator runbooks"). The dispatcher omission breaks that contract entirely; operators in clustered installs (the primary lenny-ctl audience) have no path to session operations.
 
 ### - [ ] F-24.17.2 — Seven of the eight subcommands are unimplemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.4.10 — Both report lenny session implements only the new verb and the other §24.17 subcommands (attach/send/interrupt/cancel/list/get/logs) are missing in cmd/lenny/session.go.
 
 The only subcommand implemented anywhere is `lenny session new`. `/Users/joan/projects/lenny/cmd/lenny/session.go` dispatch switch (lines 32-39) has a single arm:
 
@@ -31521,6 +32416,8 @@ The §24.18 surface is largely implemented. `lenny runtime init` faithfully real
 ### Findings
 
 ### - [ ] F-24.18.1 — `lenny runtime validate` does not perform the §24.18 / §15.4.6 declared-vs-observed probe [High] — OPEN
+
+**Potential overlap** (confidence: high) — F-5.1.11 — Both concern declared-vs-observed integrationLevel but target different components: F-24.18.1 is the validate CLI probe missing, while F-5.1.11 is gateway admission enforcement (RUNTIME_LEVEL_UNDERPERFORMS) missing.
 
 **Spec (§24.18, line 231).** "Reads the optional `integrationLevel` field from `runtime.yaml` ... as the **declared** level, then probes the running runtime for its **observed** level (lifecycle-channel connect, MCP nonce handshake) and reports declared vs. observed. ... Exits non-zero when `observed < declared`; exits zero with a WARN when `observed > declared`. Serves as the `lenny runtime validate` entry point for the Conformance Test Suite (§15.4.6)."
 
@@ -31642,6 +32539,9 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Suggested resolution:** Add `cmdRestart` that targets a single supervised process by name and re-execs it, leaving k3s and the other components running.
 
 ### - [ ] F-24.19.2 — `lenny-ctl <local-command>` alias unimplemented [High] — OPEN
+
+**Potential overlap** (confidence: medium) — F-24.9.3 — Both stem from the missing 'one binary, two names' lenny-ctl alias, but F-24.19.2 is about the up/down/status/logs local-command aliases while F-24.9.3 is specifically about token print; related root cause but different command surfaces.
+
 - **Spec:** §24.19 line 266 — "invoked as `lenny-ctl <same-command>` they behave identically."
 - **Evidence:** `cmd/lenny` and `cmd/lenny-ctl` are two independent Go `package main` binaries, built separately by the Makefile. `cmd/lenny-ctl/main.go` has no `up`/`down`/`status`/`logs`/`image` dispatch — these inputs fall into the unknown-command path.
 - **Gap:** Operators following the §24 preamble's "one binary, two names" contract see `unknown command "up"` errors. The alias path is undocumented as a deferral.
@@ -31654,6 +32554,9 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Suggested resolution:** Tracked under the §17.4 H4/H5 fixes; resolution must propagate the resulting port through the `lenny up` summary line.
 
 ### - [ ] F-24.19.4 — `lenny logs` lacks `--follow` and components list incomplete [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.4.13 — Both describe lenny logs lacking --follow and exposing fewer components than the spec lists.
+
 - **Spec:** §24.19 line 263 — "Tail merged logs … filter to one of `gateway`, `controller`, `ops`, `postgres`, `redis`, `kms`, `oidc`, `runtime-<name>`."
 - **Evidence:** Per §17.4 audit, `cmdLogs` reads to EOF and exits (no follow), and the supported component set excludes `ops`, `postgres`, `redis`, `kms`, `oidc`, `runtime-<name>`.
 - **Gap:** Operators cannot tail a live stream and cannot filter to the components the spec lists.
@@ -31666,6 +32569,9 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Suggested resolution:** Extend the `stack.Status` payload with `activeSessions` (queried against `GET /v1/admin/sessions?state=running`) and cgroup-derived CPU/memory usage per supervised process.
 
 ### - [ ] F-24.19.6 — `lenny image import` host-Docker path produces a tarball via `docker save` rather than calling containerd directly [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.4.17 — Both report that lenny image import shells out to docker save, introducing a docker-binary dependency the spec does not require.
+
 - **Spec:** §24.19.1 line 274 — "reads the image from the host Docker daemon by default; use `--file <tar>` to load from a `docker save` tarball instead."
 - **Evidence:** `cmd/lenny/image.go:cmdImageImport` (lines 105–116) implements the host-daemon path by shelling out to `docker save` then piping into `ctr images import`. The spec text suggests a direct containerd-namespace bridge but the actual mechanic is implicit `docker save`.
 - **Gap:** Functionally correct but conflates two paths in the spec table and introduces a Docker dependency the spec does not require. The "no automatic visibility from host docker to k3s" framing in §24.19.1 line 270 implies a direct copy rather than a tar round-trip.
@@ -31702,6 +32608,9 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 ### Findings
 
 ### - [ ] F-24.20.1 — `lenny-ctl values validate --config <values.yaml>` not implemented [High] — OPEN
+
+**Potential overlap** (confidence: high) — F-17.6.5 — F-17.6.5 is the missing build-time generation of values.schema.json while F-24.20.1 is the missing lenny-ctl values validate command; related schema-validation surface, different deliverables.
+
 - **Spec:** §24.20 line 303 — "Validate a `values.yaml` against the Helm `values.schema.json` published by the chart."
 - **Evidence:** `cmd/lenny-ctl/main.go` dispatch switch has no `values` case; grep for `cmdValuesValidate`/`valuesValidate` returns no matches. `charts/lenny/values.schema.json` is not generated.
 - **Gap:** No CI- or IaC-callable schema validation for chart values. The §17.6 invariant "Helm rejects malformed inputs at render time, before any state change" relies on this command.
@@ -31714,6 +32623,9 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Suggested resolution:** Add `cmdUpgrade` that reuses the install pipeline's compose-values + preflight phases, then renders `helm upgrade --dry-run --diff` before applying.
 
 ### - [ ] F-24.20.3 — Preflight phase missing from `lenny-ctl install` [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.2.5 — F-24.2.5 and F-24.20.3 both report the install wizard missing the preflight phase; F-17.6.9 (no detection phase) and F-24.20.4 (no smoke-test phase) are distinct missing phases of the same wizard.
+
 - **Spec:** §24.20 line 295 — "detection → question phase → preview → preflight → `helm install` → bootstrap seed → smoke test."
 - **Evidence:** `cmd/lenny-ctl/install.go` orchestrates parse → compose → preview → `helm install` → bootstrap. No invocation of `pkg/preflight/Run` or any of the runtime/datastore probes; grep for `preflight` in the file returns no calls into a validator.
 - **Gap:** Installs proceed against unreachable Postgres/Redis/MinIO and silently fail at first session creation. The §24.2 audit cross-references this gap.
@@ -31744,6 +32656,9 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Suggested resolution:** Pick one canonical name (the spec's `--answers`) and either remove the alias or document it explicitly in §24.20.
 
 ### - [ ] F-24.20.8 — No `--token` / `--timeout` / `--insecure-skip-verify` / `--output` / `--quiet` flags on `install` [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-24.15.14, F-24.16.3, F-24.3.5, F-24.4.5, F-24.5.6 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
+
 - **Spec:** §24.16 lists these as global flags applicable to every command.
 - **Evidence:** `cmd/lenny-ctl/install.go` does not parse the §24.16 globals.
 - **Gap:** Sibling §24.16 audit (F3) covers the root cause; surfaces on `install` as the inability to run unattended against a token-authenticated remote.
@@ -32011,6 +32926,8 @@ Evidence gathered via grep/find across `pkg/ops/`, `cmd/lenny-ops/`, `pkg/gatewa
 
 ### - [ ] F-25.2.1 — Gateway-side operational `EventEmitter` does not write to the Redis stream. (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.3.1, F-25.3.18, F-25.5.1 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
+
 Spec: lines 150–152 — "Internal: EventEmitter writes to **Redis stream** on state changes + in-memory ring buffer (fallback for Redis outage)". The ASCII diagram explicitly names the Redis stream as the primary destination and the in-memory buffer as the *fallback* the `lenny-ops` event stream reads "when Redis is down" (also reaffirmed at line 158: "reads Redis stream, falls back to gw buffer").
 
 Implementation: `/Users/joan/projects/lenny/pkg/gateway/opsevents/emitter.go` lines 15–18 and 40–51 — `Emit` writes only to the in-process `EventBuffer`. The Redis-stream destination is acknowledged as a documented seam ("v1 writes each event to the in-process EventBuffer; the §25.3 Redis-stream destination is added alongside the §10.1 Redis EventBus"). Confirmed by `grep -rn "ops:events:stream\|XAdd" /Users/joan/projects/lenny/pkg/gateway/opsevents/`: zero matches. Consequence: under §25.2's intended architecture the Redis stream is the *primary* destination and the in-memory ring buffer is a *fallback for Redis outage*; the implementation inverts this — every event lives only in the per-replica ring buffer (lost on restart, invisible across replicas). The `lenny-ops` operational event stream consumer (§25.5) currently has no Redis stream to read from; `cmd/lenny-ops/deps.go` lines 41–61 wires `emptyEventSource{}` / `emptySubscriptionSource{}` to the webhook delivery worker for exactly this reason. The split described at line 150 is not yet realised in either direction (the gateway does not publish, the ops consumer cannot subscribe).
@@ -32028,6 +32945,8 @@ Spec: lines 202–232 — the degradation envelope is the **canonical response-l
 Implementation: `grep -rn '"degradation"\|primarySource\|fallbackPath\|thresholdSource\|unavailableFields' /Users/joan/projects/lenny/pkg/` returns no hits in any handler that emits an admin/ops response (gateway health/recommendations, ops connectivity, drift, locks, escalations, backup, diagnostics, MCP management). No shared package (`pkg/ops/conventions`, `pkg/observability/degradation`, etc.) defines a `Degradation` struct or marshaller. The `lenny-ops` connectivity endpoint at `pkg/ops/opsserver/opsserver.go` lines 230–245 returns `{dependencies, healthy}` instead of a degradation envelope; the gateway health handler at `pkg/gateway/health/handler.go` likewise emits a flat per-component shape. Consequence: every degradation-eligible endpoint either omits the envelope or invents its own shape, which the rest of §25 (the §25.5 event stream, §25.6 diagnostics, §25.13 alerts) is then unable to interpret uniformly. Agents cannot use `degradation.confidence` to decide how much to trust a response, cannot follow `degradation.fallbackPath` for retry strategy, and cannot tell from `thresholdSource` whether health/recommendations rules are compiled-in defaults or operator-customised.
 
 ### - [ ] F-25.2.4 — Canonical pagination envelope, cursor/`gapDetected` semantics not implemented. (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-25.3.17 — Both describe the buffer endpoint lacking the canonical §25.2 pagination envelope, with gap fields emitted at the response root instead of under pagination.
 
 Spec: lines 234–275. List endpoints accept `cursor / limit / since / until / sortOrder`; responses carry `items + pagination.{cursor, hasMore, limit, cursorKind, headCursor}`; cursors are opaque; gap detection includes `gapDetected: true`, `gapReason`, `oldestAvailableCursor`, `suggestedAction:"resync"`.
 
@@ -32071,6 +32990,8 @@ Implementation: `cmd/lenny-ops/main.go` declares flags and wiring for Postgres (
 
 ### - [ ] F-25.2.11 — No Ingress template for `lenny-ops`; external-only access is documented but not rendered. (Medium) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.1.3, F-25.16.1 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
+
 Spec: line 43 — "lenny-ops accepts only external traffic via an Ingress — no internal cluster traffic is permitted (Section 25.4, NetworkPolicy)." The architecture diagram at lines 155–171 places `lenny-ops` as a top-level Deployment reachable from outside the cluster.
 
 Implementation: `find /Users/joan/projects/lenny/charts/lenny/templates -name "*ingress*" -o -name "*Ingress*"` returns nothing. `grep -rn "kind: Ingress" /Users/joan/projects/lenny/charts/lenny/templates/` returns nothing. The `system-network-policies.yaml` `allow-ops` policy at lines 653–725 admits only the monitoring-namespace metrics scrape on `ops.metricsPort` — there is no admit rule for an Ingress controller, and the `policyTypes: [Ingress, Egress]` block leaves Ingress denied for all other peers. The chart values block at `values.yaml` line 748–774 has no `ops.ingress` configuration sub-object. Consequence: a default `helm install` exposes `lenny-ops` only through its ClusterIP `Service` (lines 173–190 of `ops-deployment.yaml`) with no path to reach it from outside the cluster. The spec's central "agents operate from outside the installation" stance (line 3) requires an Ingress that the chart does not render. The architecture diagram does not contradict an operator-supplied Ingress, but the absence of any Ingress template (when every other operator-facing surface — gateway, token-service — relies on operator-supplied Ingress as well) is consistent with the documented seam approach but means a stock chart install has no external reachability for `lenny-ops`.
@@ -32082,6 +33003,8 @@ Spec: lines 215–223 — `thresholdSource: "operator-customized" | "compiled-in
 Implementation: `grep -rn 'thresholdSource\|operator-customized\|compiled-in-defaults' /Users/joan/projects/lenny/pkg/` returns no hits. The gateway health handler at `pkg/gateway/health/handler.go` and the recommendations handler at `pkg/gateway/admin/recommendations.go` lines 18–60 emit their reports without the degradation envelope at all (subsumed under F3 above), and consequently never report `thresholdSource`. Consequence: agents cannot tell whether the health/recommendations rule set they are seeing is operator-customised or compiled-in defaults — a category-of-trust signal §25 leans on later for severity arbitration (§25.13 reference).
 
 ### - [ ] F-25.2.13 — Operations Inventory (§25.4 cross-reference) carries no canonical progress envelope. (Medium) [Medium] — OPEN
+
+**Potential overlap** (confidence: high) — F-25.4.3 — Both concern the §25.4 Operations Inventory but F-25.2.13 is the missing progress envelope within the inventory while F-25.4.3 is the absence of the inventory endpoints themselves.
 
 Spec: line 357 — "Long-running operations include a `progress` object in their status endpoint responses **AND in the Operations Inventory (Section 25.4)**."
 
@@ -32134,11 +33057,15 @@ Evidence gathered via grep/find across `pkg/gateway/admin/`, `pkg/gateway/health
 
 ### - [ ] F-25.3.1 — `EventEmitter` does not write to the Redis stream. (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.2.1, F-25.3.18, F-25.5.1 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
+
 Spec: lines 654–667 — `Emit()` writes to both `(1) Redis stream ops:events:stream via XADD with MAXLEN ~ 10000` and `(2) In-memory ring buffer (500 events, ~250 KB). The buffer is always written, regardless of Redis availability.` Lines 703: `If Redis is unreachable, Emit() skips the Redis write, logs the event at WARN level, and increments lenny_ops_events_emit_failed_total. The in-memory ring buffer write always succeeds.` This is the load-bearing primary destination — the in-memory buffer is the fallback path.
 
 Implementation: `/Users/joan/projects/lenny/pkg/gateway/opsevents/emitter.go` lines 15–18, 40–51 — `Emit` only calls `e.buffer.Append(event)`. The Redis-stream destination is an acknowledged seam ("v1 writes each event to the in-process EventBuffer; the §25.3 Redis-stream destination is added alongside the §10.1 Redis EventBus"). `grep -rn "ops:events:stream\|XAdd" /Users/joan/projects/lenny/pkg/gateway/opsevents/` returns zero matches. `lenny-ops` consequently has no Redis stream to read from; the §25.5 / §25.2 fallback model is inverted (the ring buffer is the only source, not the fallback). The `lenny_ops_events_emit_failed_total` Redis-outage counter is also unimplemented (F11 below).
 
 ### - [ ] F-25.3.2 — `SuggestedAction` is a plain string, not the structured `{action, endpoint, body, reasoning, runbook, confidence, risk}` shape; `suggestedActions[]` ranked-alternatives form is absent. (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.7.3 — Both report SuggestedAction being a plain string instead of the structured {action,endpoint,body,reasoning,runbook,...} object.
 
 Spec: lines 459–501. The `SuggestedAction` struct carries `Action`, `Endpoint`, `Body` (raw JSON request body), `Reasoning`, `Runbook`, `Confidence`, `Risk`. Singular `suggestedAction` is used when one canonical response exists; the ranked-alternatives form `suggestedActions[]` is required for `WARM_POOL_EXHAUSTED`, `WARM_POOL_LOW`, `CREDENTIAL_POOL_EXHAUSTED`, `CIRCUIT_BREAKER_OPEN`. Example responses include `"endpoint": "PUT /v1/admin/pools/default-gvisor/warm-count"`, `"body": { "minWarm": 15 }`, `"confidence": 0.85`, `"risk": "low"`.
 
@@ -32206,11 +33133,15 @@ Implementation: `pkg/gateway/recommendations/service.go` `NewCapacityService` ac
 
 ### - [ ] F-25.3.13 — `OperationalEvent` is a local struct, not a `cloudevents.Event` alias; `subject` / extension attributes are absent. (Medium) [Medium] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-25.3.19 — F-25.3.13 and F-25.3.19 both report the absent subject attribute on OperationalEvent; F-12.6.21 concerns a different struct (eventbus Event) in another package.
+
 Spec: lines 654–663 — "OperationalEvent is a CloudEvents v1.0.2 Event — see §12.6. `type OperationalEvent = cloudevents.Event`." Lines 650–652 — "Every emitted event is a CloudEvents v1.0.2 JSON record" with `id`, `type` (`dev.lenny.<short_name>`), `datacontenttype` (`application/ocsf+json` for audit-bearing, `application/json` for non-audit), and a `subject` attribute referenced in §16.6.
 
 Implementation: `pkg/gateway/opsevents/buffer.go` lines 27–52 defines a local `OperationalEvent` struct with `ID`, `Source`, `SpecVersion`, `Type`, `Time`, `Severity`, `DataContentType`, `Data`. No `subject`, no extension-attribute map. `grep -rn "cloudevents/sdk-go\|cloudevents.Event" /Users/joan/projects/lenny/pkg/ /Users/joan/projects/lenny/cmd/` returns no hits — the CloudEvents SDK is not used. (A separate `pkg/gateway/eventbus/cloudevents.go` exists but is the audit-event pipeline, unrelated to `opsevents`.) Consequence: the wire format diverges from the §12.6 CloudEvents envelope contract `opsevents` claims to implement. A `lenny-ops` or external CloudEvents consumer cannot rely on standard CE attributes that aren't on the wire (`subject` in particular is documented as a §16.6 attribute and is missing).
 
 ### - [ ] F-25.3.14 — `EventEmitter` Go interface signature does not match the spec. (Medium) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-4.0.10 — Both report that EventEmitter is a concrete struct with an Emit signature that drops ctx and returns uint64 instead of matching the spec interface.
 
 Spec: lines 660–663 — `type EventEmitter interface { Emit(ctx context.Context, event OperationalEvent) error }`.
 
@@ -32230,17 +33161,23 @@ Implementation: `pkg/gateway/recommendations/service.go` line 94 — `if !e.Trig
 
 ### - [ ] F-25.3.17 — Buffer query response uses `gapDetected` at the response root, not under `pagination.gapDetected`. (Medium) [Medium] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-25.2.4 — Both describe the buffer endpoint lacking the canonical §25.2 pagination envelope, with gap fields emitted at the response root instead of under pagination.
+
 Spec: line 750 — "the response includes the canonical `pagination.gapDetected: true` envelope (Section 25.2) along with `pagination.oldestAvailableCursor`." §25.2 pagination envelope is `pagination.{cursor, hasMore, limit, cursorKind, headCursor, gapDetected, gapReason, oldestAvailableCursor, suggestedAction}`.
 
 Implementation: `pkg/gateway/opsevents/buffer.go` lines 73–88 — `BufferedEventPage` has top-level `Events`, `Cursor`, `HasMore`, `GapDetected`, `OldestAvailableCursor`, `BufferAge`. No `pagination` envelope wrapper, no `cursorKind`, no `headCursor`, no `gapReason`, no `suggestedAction: "resync"`. Consequence: agents following §25.2's canonical pagination read `pagination.gapDetected` and receive a missing field, even though the gateway computed the gap. This is the same regression class as F4 in §25.2 audit (no canonical pagination envelope), localised to §25.3's specifically-cited "canonical envelope" promise.
 
 ### - [ ] F-25.3.18 — `lenny-ops` Redis stream consumer wiring is absent (no producer at gateway, no consumer in opsservice). (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.2.1, F-25.3.1, F-25.5.1 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
+
 Spec: lines 665–667 and §25.5 (referenced from §25.3 line 703). The Redis stream `ops:events:stream` is the primary destination; `lenny-ops` reads it.
 
 Implementation: companion to F1. `/Users/joan/projects/lenny/pkg/ops/opsservice/webhookloop.go` line 58 comment: "The production implementation reads the Redis ops:events:stream (or local fallback)." `grep -rn "ops:events:stream" /Users/joan/projects/lenny/pkg/ops/` returns documentation references only. The gateway never writes to the stream; the ops consumer cannot read what isn't written. Consequence: the entire §25.5 operational-event delivery pipeline (Redis stream → webhook fan-out) is dark; the only consumer path that works is the buffer-fallback fan-out described in §25.3 line 752, which itself depends on the headless Service polling that the §25.5 dispatch loop has wired to `emptyEventSource{}` per §25.2 audit F1.
 
 ### - [ ] F-25.3.19 — `subject` attribute on `OperationalEvent`, mirroring the §16.6 event catalogue, is absent. (Low) [Medium] — OPEN
+
+**Potential duplicate** (confidence: medium) — F-25.3.13 — F-25.3.13 and F-25.3.19 both report the absent subject attribute on OperationalEvent; F-12.6.21 concerns a different struct (eventbus Event) in another package.
 
 Spec: §16.6 (referenced from line 650) — each operational event's `subject` identifies the resource the event is about (e.g., `pool/default-gvisor`, `session/abc123`). The CloudEvents `subject` is a normative discriminator agents use to filter related events without parsing payloads.
 
@@ -32259,6 +33196,8 @@ Spec: line 441 — "Probes run in parallel."
 Implementation: `pkg/gateway/health/health.go` `Aggregator.Report()` (lines 137–170) iterates checkers in a single goroutine: `for _, c := range checkers { comp := c.Check(ctx); ... }`. With the spec's full probe set (Postgres, Redis, MinIO, K8s API server, cert-manager, connectors) each at a 2-second timeout, a slow-or-down dependency serializes the response: worst-case ≥12 seconds vs the spec's "all probes wait at most 2 s". Consequence: a single unreachable backend stalls the whole `/v1/admin/health` response well beyond the spec's per-probe ceiling.
 
 ### - [ ] F-25.3.22 — `lenny_gateway-pods` headless Service exists and mounts correctly. (Info) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.16.6 — Both confirm the lenny-gateway-pods headless Service is correctly rendered (matching/no-gap observations of the same resource).
 
 Spec: line 754 — the Helm chart renders a headless Service (`lenny-gateway-pods`, `clusterIP: None`) alongside the standard ClusterIP Service for per-replica DNS SRV discovery.
 
@@ -32321,11 +33260,15 @@ Implementation: `grep -rn "/v1/admin/me\|me/authorized-tools\|me/operations\|ins
 
 ### - [ ] F-25.4.3 — `GET /v1/admin/operations` and `/operations/{id}` Operations Inventory are not implemented. (High) [Medium] — OPEN
 
+**Potential overlap** (confidence: high) — F-25.2.13 — Both concern the §25.4 Operations Inventory but F-25.2.13 is the missing progress envelope within the inventory while F-25.4.3 is the absence of the inventory endpoints themselves.
+
 Spec: lines 1646–1786. Paginated scatter-gather view across `platform_upgrade`, `restore`, `backup`, `backup_verification`, `escalation_open`, `escalation_buffered`, `remediation_lock`, `idempotency_in_progress`, `drift_reconciliation`, `webhook_delivery_pending`; filters `actor/status/kind/since/until/tenantId/operationId/limit/cursor`; canonical `operationId` format (`upgrade-...`, `lock-...`, `restore-...`, `esc-...`, etc.); per-operation `resources` block with discovery URLs; `OPERATION_NOT_FOUND` and `OPERATIONS_INVENTORY_PARTIAL` error codes; `operation_progressed` event subscription; metrics `lenny_ops_operations_inventory_requests_total`, `lenny_ops_operations_inventory_kinds_returned`; audit `operations.inventory_queried`.
 
 Implementation: `grep -rn "/v1/admin/operations\|operations_inventory\|inventory_queried\|OPERATIONS_INVENTORY_PARTIAL" /Users/joan/projects/lenny/pkg/ops /Users/joan/projects/lenny/cmd/lenny-ops` returns no matches. No package owns the unified inventory; each subsystem still answers its own status endpoint with no aggregation. Consequence: an agent asking "what is in flight platform-wide?" must query every subsystem individually (locks, escalations, restores, backups, etc.) and reconstruct the merge, defeating §25.4's design that "the Operations Inventory endpoint provides a unified, filterable view" (line 1647). Watchdog flows that depend on the canonical `operationId` form to decode subsystem URLs cannot work because no endpoint produces them.
 
 ### - [ ] F-25.4.4 — `Idempotency-Key` header, `ops_idempotency_keys` table, and `IDEMPOTENCY_KEY_REQUIRED`/`IDEMPOTENCY_STORE_UNAVAILABLE` enforcement are absent. (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.17.5 — Both report missing Idempotency-Key enforcement on lenny-ops mutating endpoints; F-25.4.4 is the more complete version covering the table and error codes.
 
 Spec: lines 1988–2057. `Idempotency-Key` is required at Tier 2/3 on `POST /v1/admin/platform/upgrade/start`, `POST /v1/admin/restore/execute`, and `POST /v1/admin/backups type=full`; the primary key is `(key, caller_id)` so callers cannot collide; standard 24h TTL, long-running 7d TTL; Postgres outage returns `IDEMPOTENCY_STORE_UNAVAILABLE` (503) on required endpoints and `degradation.warnings` on optional ones; error codes `OPERATION_IN_PROGRESS` (409), `IDEMPOTENCY_KEY_REQUIRED` (400), `IDEMPOTENCY_STORE_UNAVAILABLE` (503), `IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER` (403); SQL schema with `(key, caller_id)` PK and `expires_at` index.
 
@@ -32375,11 +33318,15 @@ Implementation: `/Users/joan/projects/lenny/charts/lenny/templates/ops-deploymen
 
 ### - [ ] F-25.4.12 — `lenny-ops`-specific NetworkPolicies (`lenny-ops-deny-all-ingress`, `lenny-ops-allow-ingress-from-ingress-controller`, `lenny-ops-egress`, `lenny-backup-job`) are not rendered. (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.1.4, F-17.2.16 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
+
 Spec: lines 1100–1373. Three NetworkPolicies are rendered for `lenny-ops`: a deny-all-ingress baseline; an explicit allow-ingress from the Ingress controller namespace+pod label; and `lenny-ops-egress` permitting egress to gateway (ClusterIP + headless, port rendering keyed to `ops.tls.internalEnabled` — 8443 or 8080), PgBouncer (Postgres tier), Redis (TLS 6380), MinIO (TLS 9443), Prometheus, K8s API (ipBlock-scoped per NET-040), DNS (UDP+TCP/53 with `k8s-app: kube-dns` selector per NET-067), and tenant-influenced webhook delivery to `0.0.0.0/0:443` and `::/0:443` with the dual-family `except` blocks covering cluster pod/service CIDRs (NET-022 + NET-065), `egressCIDRs.excludePrivate` (NET-057), and IMDS (NET-044). The `lenny-backup-job` policy (lines 1378–1428) covers Postgres + MinIO + K8s API + DNS for backup Jobs.
 
 Implementation: `grep -rn "lenny-ops-deny-all-ingress\|lenny-ops-allow-ingress-from-ingress-controller\|lenny-ops-egress\|lenny-backup-job" /Users/joan/projects/lenny/charts/lenny/templates/` returns no matches. The only rendered policy with a `app: lenny-ops` pod selector is `allow-ops` in `charts/lenny/templates/system-network-policies.yaml` lines 665–725, which combines ingress (monitoring scrape only) with egress (kube-apiserver, gateway, DNS) into a single policy. The webhook-internet egress with `excludePrivate`/`excludeClusterPodCIDR`/`excludeIMDS` `except` partitioning, the Postgres-via-PgBouncer egress, the Redis TLS rule, the MinIO TLS rule, the Prometheus rule, and the dedicated default-deny + allow-from-Ingress-controller pair are all absent. There is no `lenny-backup-job` NetworkPolicy at all (`grep -rn "app: lenny-backup\|lenny-backup-job" /Users/joan/projects/lenny/charts/lenny/templates/` returns nothing). Consequence: when `lenny-ops` is wired to a Postgres/Redis/MinIO/Prometheus deployment, the egress is blocked by the cluster's default-deny posture; the webhook SSRF symmetry guarantee (NET-057 + NET-065) does not apply to `lenny-ops`; and backup Jobs can talk to anything because no egress restriction is rendered for them.
 
 ### - [ ] F-25.4.13 — `ops_*` Postgres schemas are not migrated (only `ops_event_subscriptions` exists). (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.11.3 — F-25.11.3 and F-25.4.13 both report the ops_* Postgres tables never being migrated; F-17.3.4 is the related but distinct in-memory-fakes wiring defect for the backup service.
 
 Spec: lines 1455–1473 enumerates the platform-Postgres-scoped tables `ops_remediation_locks`, `ops_lock_epoch`, `ops_lock_conflicts`, `ops_idempotency_keys`, `ops_escalations`, `ops_backups`, `ops_backup_schedule`, `ops_retention_policy`, `ops_restore_state`, `ops_event_subscriptions`, `ops_event_deliveries`, `platform_upgrade_state`, `platform_upgrade_check_cache`, `bootstrap_seed_snapshot`, `audit_log_deferred_writes`. SQL DDL is given in the relevant sub-sections (locks at lines 2160–2175, lock_epoch + lock_conflicts at 2212–2225, idempotency at 2046–2057, escalation at 2433–2452).
 
@@ -32465,6 +33412,8 @@ Implementation: `pkg/ops/coordination/locks.go` ships only `MemStore`; there is 
 
 ### - [ ] F-25.4.27 — `lenny-ops` does not provide `/v1/openapi.json` even though `/v1/admin/me.capabilities.openApiAvailable` advertises it. (Low) [Medium] — OPEN
 
+**Potential overlap** (confidence: medium) — F-15.1.17, F-15.5.17 — Three related OpenAPI-route findings about different defects: gateway missing /openapi.json (15.1.17), lenny-ops missing /v1/openapi.json (25.4.27), and a 15.5.17 Info note affirming the convention is honored.
+
 Spec: lines 1604–1616 lists `openApiAvailable: true` as a capability the `/v1/admin/me` response carries; `links.openApi` points at `/v1/openapi.json`. The `AUTHORIZED_TOOLS_UNAVAILABLE` fallback path also depends on the OpenAPI document being reachable (line 1635).
 
 Implementation: `grep -rn "/v1/openapi\|openapi\\.json\|openApiAvailable" /Users/joan/projects/lenny/pkg/ops /Users/joan/projects/lenny/cmd/lenny-ops` returns no matches. The `lenny-ops` mux registers no `/v1/openapi.json` handler. Consequence: agents pointed at the OpenAPI fallback URL by an `AUTHORIZED_TOOLS_UNAVAILABLE` 503 (F2) hit a 404 — they cannot derive the tool surface locally as the spec promises. (Lower severity because both endpoints — `/me` and `/openapi.json` — are missing together; once F2 lands, this becomes a hard dependency.)
@@ -32527,11 +33476,15 @@ Evidence gathered via `grep`/`find` across `pkg/gateway/eventbus/`, `pkg/gateway
 
 ### - [ ] F-25.5.1 — The Redis `ops:events:stream` is not written or read. (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.2.1, F-25.3.1, F-25.3.18 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
+
 Spec: lines 2552, 2592–2611 ("Redis capped stream. Key: `ops:events:stream` (platform-scoped). Uses Redis Streams (`XADD` with `MAXLEN ~ {ops.events.streamMaxLen}`)"). The stream is the primary durable destination for operational events; the gateway in-memory buffer is the fallback only.
 
 Implementation: `grep -rn "ops:events:stream\|XADD.*ops:events\|streamMaxLen" /Users/joan/projects/lenny/pkg /Users/joan/projects/lenny/cmd` returns only doc-comment references (`cmd/lenny-ops/deps.go:42` "until the Redis ops:events:stream consumer is wired", `pkg/ops/opsservice/selfchecks.go:70` "lag supplies the current ops:events:stream consumer lag", `pkg/ops/opsservice/webhookloop.go:58` "production implementation reads the Redis ops:events:stream") — there is no `XADD` to `ops:events:stream` and no `XREAD`/`XRANGE` consumer for it anywhere in `pkg/gateway/`, `pkg/ops/`, or `cmd/lenny-ops/`. `pkg/gateway/opsevents/emitter.go` only writes the in-process `EventBuffer`; `cmd/lenny-ops/main.go` line 223 wires `emptyEventSource{}` as the `EventSource` for the webhook worker, and `deps.go` lines 41–50 documents this is the placeholder "until the Redis ops:events:stream consumer is wired". The only production-grade Redis-stream code in the repository targets `billingRedisStream` (`pkg/gateway/billingstore/failover/redisstream/`), not `ops:events:stream`. Consequence: every requirement in lines 2592–2611 is not met — the stream key is never created, `MAXLEN` trimming is absent, `streamMaxLen` is not honored, the stream-ID `eventId` is not produced, eviction-as-gap detection is impossible, and `lenny_ops_events_stream_length` cannot be a real gauge. The persistence-and-fan-out backbone of §25.5 is missing in v1.
 
 ### - [ ] F-25.5.2 — `GET /v1/admin/events/stream` (SSE) is not implemented. (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.17.1 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
 
 Spec: lines 2562, 2677–2685. The SSE handler holds an open response, `XREAD BLOCK 0` on a goroutine, frames each event as a CloudEvents JSON record on the `data:` line, sends the CloudEvents `id` on the SSE `id:` line so clients can resume with `Last-Event-ID`, applies canonical filters (`?eventType`, `?severity`, `?resourceType`, `?resourceId`, `?since`), per-connection independent read cursor (no consumer group), transparent buffer-poll fallback every 2 s when Redis is unreachable with `:degradation`/`:gap` comment lines.
 
@@ -32743,6 +33696,8 @@ Spec: `/Users/joan/projects/lenny/spec/25_agent-operability.md` lines 2986–327
 
 ### - [ ] F-25.7.1 — `GET /v1/admin/runbooks/{name}` route (full rendered markdown) is not registered (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.7.2, F-25.17.4 — All three report GET /v1/admin/runbooks/{name} (full markdown body) is not registered, with the same evidence at opsserver.go:153-154.
+
 Spec lines 3056 and 3133 require `GET /v1/admin/runbooks/{name}` to return the full markdown content; line 3266–3271 makes it the terminating step of every Path-A and Path-B discovery flow (`event.payload.runbook is set? → yes: GET /v1/admin/runbooks/{name} — done`). `pkg/ops/opsserver/opsserver.go:153–154` registers only `GET /v1/admin/runbooks` and `GET /v1/admin/runbooks/{name}/steps`. `DirRunbookSource.Markdown(name)` is implemented but only callable via the `/steps` handler, which parses the markdown into the structured form rather than returning the raw bytes. `lenny-ctl runbooks get <name>` calls the missing route (`cmd/lenny-ctl/ops.go:91`), so the operator-facing CLI command is broken — the request hits the lenny-ops mux, finds no match, and returns 404 with no `RUNBOOK_NOT_FOUND` body. The §25.14 CLI mapping table (line 4871) and the §25.7 discovery flow both depend on this endpoint.
 
 ### - [ ] F-25.7.2 — `requires` and `q` filter parameters are not implemented on `GET /v1/admin/runbooks` (Medium) [Medium] — OPEN
@@ -32751,17 +33706,25 @@ Spec lines 3140–3143 enumerate five filter parameters: `alert`, `component`, `
 
 ### - [ ] F-25.7.3 — `suggestedAction` is a free-form string; the structured `{action, endpoint, body, reasoning, runbook}` object spec'd at line 3201–3207 is not implemented (Medium) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.3.2 — Both report SuggestedAction being a plain string instead of the structured {action,endpoint,body,reasoning,runbook,...} object.
+
 Spec lines 3193–3213 define `suggestedAction` as a JSON object with five fields: `action` (machine code such as `SCALE_WARM_POOL`), `endpoint` (HTTP verb + path), `body` (JSON the agent should `PUT`/`POST`), `reasoning` (human-readable justification), and `runbook` (the runbook slug). `pkg/gateway/health/health.go:60–67` models the surface as two sibling top-level strings on `Component`: `SuggestedAction string` and `RunbookRef string`. The four backend checkers (`pkg/gateway/health/backends/backends.go:33–125`) populate `SuggestedAction` with prose like `"verify Postgres reachability, credentials, and the connection pool; the gateway rejects session writes until it recovers"` and set `RunbookRef` to a slug. No `action`, `endpoint`, `body`, or `reasoning` field exists, so an AI-DevOps agent cannot programmatically invoke the suggested remediation — it has to parse English prose. The spec's "closes the loop for the most common automated path" (line 3215) is unreachable from the gateway's current JSON.
 
 ### - [ ] F-25.7.4 — `pkg/gateway/health/runbook_links.go` and the `issueRunbooks` lookup table are absent (Medium) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.7.1, F-4.0.14, F-4.0.19 — All four report the absent runbook_links.go / issueRunbooks central lookup table with runbook refs inlined per checker.
 
 Spec lines 3217–3234 prescribe a gateway-side map from issue codes to runbook slugs (`WARM_POOL_EXHAUSTED → warm-pool-exhaustion`, `POSTGRES_UNREACHABLE → postgres-failover`, ...) at `pkg/gateway/health/runbook_links.go`, used by the health service to populate `suggestedAction.runbook`. The file does not exist. No `issueRunbooks` symbol exists anywhere in the repo. The current `RunbookRef` strings are inlined in each backend checker's body (`backends.go:46, 71, 106, 115`) without a central catalogue, so the eight issue codes listed at lines 3222–3231 cannot be uniformly resolved, and other §25.3 components that report `issue` strings have no mechanism to project to a runbook slug. The `docs/runbooks/index.md:139` text claims "The health API's `issueRunbooks` lookup returns the same mapping; `lenny-ops` populates it from this catalog" — that lookup does not exist.
 
 ### - [ ] F-25.7.5 — `alert_fired` event production is not wired; the `runbook` field on event payloads is never emitted (Medium) [Medium] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-25.17.2 — Both report that the alert_fired event payload's runbook/suggestedAction fields are not emitted because OnFired is never wired to an opsevents emitter; same root cause and fix.
+
 Spec lines 3236–3253 prescribe that an emitted `dev.lenny.alert_fired` event carries `data.runbook` set to the alerting rule's `runbook` annotation. `pkg/alerting/evaluator/evaluator.go:64–66` exposes an `OnFired(Alert)` callback; `Alert` carries `Rule, State, Since`. No production code subscribes `OnFired` to a `gateway/opsevents.Emitter`, so no `alert_fired` operational event is ever produced. The `Rule.RunbookURL` field at `pkg/alerting/rules/rules.go:81` carries a full `https://docs.lenny.dev/runbooks/<slug>` URL, which is emitted into the rendered PrometheusRule as a `runbook_url` annotation (`render.go:62–63`). When the OnFired-to-emitter wiring lands it will need to derive the spec's `runbook` field (a short slug) from the rule, not from the rendered annotation URL, or the agent contract at line 3251 will be inconsistent with line 3219. The OperationalEvent payload schema in `pkg/gateway/opsevents/buffer.go` accepts arbitrary `json.RawMessage` data, so the carrier is available; the emit-side path is not.
 
 ### - [ ] F-25.7.6 — 35 of 94 runbooks lack the `<!-- access: -->` step markers, so their `/steps` responses are empty (Medium) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.7.7 — Both report that ~34-35 of 94 runbooks lack <!-- access: --> markers so steps.go returns empty /steps responses for them.
 
 Spec lines 3032–3074 require each diagnosis and remediation step to carry one or more `<!-- access: -->` HTML comments naming the access path; the indexer extracts these into the `/steps` response. `pkg/ops/runbooks/steps.go:39–86` skips any `### `-prefixed heading that does not carry an access marker (`if cur != nil && len(cur.Paths) > 0` at line 57), so a runbook without markers returns `{"steps": []}`. 35 of the 94 bundled markdown files have no `<!-- access:` substring — examples include `certificate-expiry.md`, `agent-to-llm-partition.md`, `audit-chain-gap.md`, `cross-zone-partition.md`, `cred-guard-outage.md`, `crd-upgrade-immutable.md`, `delegation-budget-exhaustion.md`, `delegation-depth-deadlock.md`, `deny-list-under-redis-outage.md`, `double-claim-verification.md`, `elicitation-deadlock.md`, `emergency-credential-revocation.md`, `erasure-job-failure.md`, `gateway-to-pod-partition.md`, `kms-key-probe-stale.md`, `kms-unavailable.md`, `lease-extension-cool-off.md`, `legal-hold-override.md`, `minio-replication-lag.md`, `minio-unavailable.md`, `network-policy-config-drift.md`, `node-drain-during-minio-outage.md`, `parent-crash-await.md`, `pool-upgrade-rollback.md`, `redis-cluster-degraded.md`, `sandbox-claim-race.md`, `sandbox-finalizer-hang.md`, `schema-migration-dirty-flag.md`, `t3-t4-sla-breach.md`. An agent querying `/v1/admin/runbooks/<name>/steps` for any of these receives an empty list and falls back to LLM-parsing the markdown — which is acceptable as a graceful degradation but defeats the "machine consumers parse" promise at line 3054 for ~37 % of the bundled catalogue.
 
@@ -32927,6 +33890,8 @@ The release-channel publisher half of §25.8 (manifest, signer, rotation, mirror
 
 ### - [ ] F-25.9.1 — list endpoint returns Lenny-internal canonical tuple, not OCSF [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-4.4.17 — Both report the audit-events list endpoint returns the canonical Postgres tuple instead of OCSF v1.1.0 via audit_query.go, same translator gap.
+
 `§25.9` (lines 3653, 3659) states "all endpoints in this subsection return audit records as OCSF v1.1.0 JSON objects per the Wire Format in §11.7" and that "the `items[]` array in paginated responses is an array of OCSF records". The response envelope MUST carry top-level `ocsfVersion` ("1.1.0") and `chainIntegrityReport` ({verified, broken, gap_suspected, rechained_post_outage, redacted_gdpr}).
 
 Implementation at `pkg/gateway/admin/audit_query.go:111-126` returns
@@ -32958,6 +33923,8 @@ where `AuditEventPayload` (lines 15-25) carries `seq`, `tenantId`, `eventType`, 
 `handleListAuditEvents` performs `r.auditLog.Rows(req.Context(), tenant)` (line 91) which fetches all rows for the tenant via `auditstore.Rows` (`pkg/gateway/auditstore/auditstore.go:111-134`, `SELECT ... FROM audit_log WHERE tenant_id = $1 ORDER BY sequence_number`) before applying `afterSeq` and `limit` in-process. Unbounded queries are not disabled by policy, no time-range cap is enforced, and the spec'd `AUDIT_QUERY_TOO_BROAD` error code is unused in the repository. The full-table read pattern is also a scalability problem in its own right.
 
 ### - [ ] F-25.9.4 — `retranslate` endpoint not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-11.7.12 — Both report the missing POST /v1/admin/audit-events/{id}/retranslate endpoint (and related dead-letter query surface).
 
 `§25.9` line 3662 specifies `POST /v1/admin/audit-events/{id}/retranslate` with body `{"translatorVersion": "<semver>"}`, eligibility restricted to `ocsf_translation_state IN ('retry_pending', 'dead_lettered')`, `409 ocsf_translation_not_retryable` for other rows, `audit:retranslate` scope, and `audit.ocsf_retranslate_requested` emission.
 
@@ -32994,6 +33961,8 @@ Implementation inverts the default: the standard list response is already the ra
 §25.9 does not define a `GET /v1/admin/audit-events/verify` route; it expects the verifier verdict to be carried by the list-response `chainIntegrityReport` envelope (line 3653). The implementation provides a separate verify endpoint (`pkg/gateway/admin/audit_query.go:158-184`) bound to `mux.Handle("GET /v1/admin/audit-events/verify", ...)`. The endpoint accepts only one tenant per call (via `auditTenant`); the spec'd cross-shard verify report is computed across all shards into the single envelope. The work shipped here is useful but does not satisfy the spec's wire contract.
 
 ### - [ ] F-25.9.11 — scatter-gather and Redis cache absent [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-12.6.18 — F-12.6.18 covers the generic StoreRouter scatter-gather knobs and helpers, while F-25.9.11 covers the audit-specific scatter-gather plus Redis caching path; related subsystem, different specific gaps.
 
 §25.9 line 3668 requires reads to go through `StoreRouter.AuditShard()` for per-tenant queries and `StoreRouter.AllAuditShards()` for platform-admin cross-tenant queries; line 3709 requires Redis caching of cross-tenant scatter-gather results for 5 minutes keyed by query parameters, with `?fresh=true` bypass and `ops.audit.scatterGatherCacheEnabled` opt-out; line 3710 requires per-shard parallel fan-out with `ops.audit.scatterGatherMaxConcurrency` and per-shard timeouts.
 
@@ -33212,6 +34181,8 @@ The split is per the package docs: `pkg/drift` is a deterministic, sorted, recur
 
 ### - [ ] F-25.11.1 — `POST /v1/admin/artifact-replication/{region}/resume` and `GET /v1/admin/artifact-replication/{region}/status` endpoints not wired [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.5.20, F-16.7.2, F-17.3.7, F-17.3.26, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
+
 Spec lines 3898–3899 mandate two ArtifactStore-replication admin endpoints: `POST /v1/admin/artifact-replication/{region}/resume` (operator clearing of a `suspended_residency_violation`, requires `platform-admin`, audited with justification, emits `artifact_replication.resumed`) and `GET /v1/admin/artifact-replication/{region}/status` (returns the `RegionState` row plus replication-lag).
 
 Implementation status:
@@ -33220,6 +34191,8 @@ Implementation status:
 - Without the route, the operator-facing recovery path documented at §25.11 "Runtime residency preflight" ("Replication remains suspended until an operator … invokes `POST /v1/admin/artifact-replication/{region}/resume`") has no entry point. The fail-closed compliance control is therefore unreachable by an agent following the spec.
 
 ### - [ ] F-25.11.2 — Backup and restore audit events never emitted [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.3.14 — Two distinct defects each duplicated cross-section: backup/restore audit events catalogued but never emitted (17.3.14/25.11.2), and restore lock-release plus gateway-restart steps unwired (17.3.5/25.11.11); F-17.3.6 is a separate lenny-backup CLI mode gap.
 
 Spec line 4343 enumerates the required audit events on every state transition: `backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed`, plus the GDPR family and the residency-violation events.
 
@@ -33232,6 +34205,8 @@ Implementation status:
 This is a security/compliance gap: every backup, every restore, every retention deletion is silent in the audit log.
 
 ### - [ ] F-25.11.3 — `ops_*` Postgres tables for backup state never migrated [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.4.13 — F-25.11.3 and F-25.4.13 both report the ops_* Postgres tables never being migrated; F-17.3.4 is the related but distinct in-memory-fakes wiring defect for the backup service.
 
 Spec lines 4260–4296 specify the `ops_backups`, `ops_backup_schedule`, and `ops_retention_policy` schemas plus the §25.11 Storage block. Spec lines 4164–4178 specify `ops_restore_state`. Spec elsewhere (replication controller) references `ops_artifact_replication_state`.
 
@@ -33287,6 +34262,8 @@ Backups can fail silently in production; the alerting surface the spec promises 
 
 ### - [ ] F-25.11.8 — Per-region backup dispatch and `BACKUP_REGION_UNRESOLVABLE` not implemented [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.3.8 — F-17.3.8 and F-25.11.8 are the same per-region backup dispatch / BACKUP_REGION_UNRESOLVABLE gap; F-11.7.9 is a different defect (platform-tenant audit residency routing).
+
 Spec line 3997 mandates per-region `pg_dump` dispatch when `backups.regions` is non-empty, using `StorageRouter` to resolve each shard's region, writing to the region's MinIO endpoint and KMS key. A shard whose region has no `backups.regions.<region>` entry MUST abort with `BACKUP_REGION_UNRESOLVABLE` and emit a `DataResidencyViolationAttempt`. Spec line 4336 lists `BACKUP_REGION_UNRESOLVABLE` as a required error code.
 
 Implementation status:
@@ -33307,6 +34284,8 @@ Implementation status:
 
 ### - [ ] F-25.11.10 — Post-restore GDPR erasure reconciler not implemented [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-12.8.3, F-17.3.3 — All three describe the unimplemented post-restore GDPR erasure reconciler that should replay DeleteByUser/DeleteByTenant between restore_completed and gateway restart.
+
 Spec lines 4140–4149 (Restore Execution, step 6) require lenny-ops to run the post-restore erasure reconciler between `restore_completed` and the gateway restart: scan restored `audit_log` for `gdpr.%` rows with `completed_at > backupTakenAt`, run the legal-hold ledger freshness gate (blocking with `gdpr.backup_reconcile_blocked` when stale), replay `DeleteByUser`/`DeleteByTenant` in dependency order, emit `gdpr.backup_reconcile_completed`. Failure must abort restore with `RESTORE_ERASURE_RECONCILE_FAILED`, hold the lock, skip gateway restart.
 
 Implementation status:
@@ -33316,6 +34295,8 @@ Implementation status:
 - `ConfirmLegalHoldLedger` (orchestrator.go:547) records a synthetic ledger watermark on the restore row — but no reconciler reads it, so the workflow it is meant to unblock does not exist.
 
 ### - [ ] F-25.11.11 — Restore lock auto-release on success and gateway restart not implemented [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.3.5 — Two distinct defects each duplicated cross-section: backup/restore audit events catalogued but never emitted (17.3.14/25.11.2), and restore lock-release plus gateway-restart steps unwired (17.3.5/25.11.11); F-17.3.6 is a separate lenny-backup CLI mode gap.
 
 Spec lines 4148–4149 (steps 7 and 8) require lenny-ops to patch the gateway Deployment's annotations to trigger a rolling restart and then auto-release `restore:platform` after the rollout completes. Spec line 4191 reinforces that on failure the lock is retained.
 
@@ -33345,6 +34326,8 @@ Implementation status:
 
 ### - [ ] F-25.11.14 — `PreviewRestore` does not populate `artifactReplicationLagSeconds` / `estimatedOrphanArtifactRows` [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.3.12 — Both report PreviewRestore declares artifactReplicationLagSeconds and estimatedOrphanArtifactRows but never populates them.
+
 Spec line 4094 (Consistency rule) states `POST /v1/admin/restore/preview` MUST include `artifactReplicationLagSeconds` and `estimatedOrphanArtifactRows` drawn from the current replication-lag gauge so the operator can choose a Postgres restore point.
 
 Implementation status:
@@ -33362,6 +34345,8 @@ Implementation status:
 - Coupled with the lack of a real `JobLauncher`, the daily retention sweep also never actually runs in any built deployment.
 
 ### - [ ] F-25.11.16 — `lenny_backup_reconcile_blocked_total` metric referenced by alert but undefined [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-17.3.21 — Both report that the BackupReconcileBlocked alert references lenny_backup_reconcile_blocked_total, which is absent from the catalog and has no emitter.
 
 Spec line 4320 (BackupReconcileBlocked alert) reads `lenny_backup_reconcile_blocked_total{reason="legal_hold_ledger_stale"}` and is wired into `pkg/alerting/rules/rules.go:494`. Combined with the absent reconciler (see HIGH above), this means the alert is doubly dormant: the metric is not in the catalog and nothing would increment it even if it were. Listed Medium (not High) only because it duplicates the HIGH erasure-reconciler finding.
 
@@ -33386,6 +34371,8 @@ Implementation status:
 Spec line 4147 ("under `audit.gdprRetentionDays` (7y default)") and the linked §12.8 reference ("default 2555 days / 7 years") are consistent in intent but the unit is not stated on the §25.11 side. Not a build gap — flagging for spec consistency.
 
 ### - [ ] F-25.11.21 — `ArtifactStore replication` package shows good shape and is the strongest part of §25.11 [Info] — OPEN
+
+**Potential duplicate** (confidence: high) — F-12.5.20, F-16.7.2, F-17.3.7, F-25.11.1, F-17.3.26 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
 
 `pkg/blobstore/replication/` implements the runtime residency preflight, jurisdiction-tag probe, DNS-rebinding CIDR guard, sampled positive-audit event, suspend/resume state machine, idempotent rule management, and FakeDriver. The driver wraps `minio-go`'s replication and tagging APIs and is unit-tested at `replication_test.go`. The one missing piece is wiring: the controller is never instantiated in `cmd/lenny-ops`.
 
@@ -33977,6 +34964,8 @@ Spec: `/Users/joan/projects/lenny/spec/25_agent-operability.md` lines 5083–514
 
 ### - [ ] F-25.16.1 — 16-01 — Production `Ingress: ops.lenny.example.com → lenny-ops:8090 (TLS)` is not rendered by the chart [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.1.3, F-25.2.11 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
+
 **Spec:** §25.16 Production block, line 5115:
 
 > `Ingress: ops.lenny.example.com → lenny-ops:8090 (TLS)`
@@ -34081,6 +35070,8 @@ The Minimal block describes a single-instance deployment ("single-node / dev"); 
 
 ### - [ ] F-25.16.6 — 16-06 — `Service: lenny-gateway-pods (headless → 8080)` matches the spec [Info] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.3.22 — Both confirm the lenny-gateway-pods headless Service is correctly rendered (matching/no-gap observations of the same resource).
+
 **Spec:** §25.16 Production block, line 5110:
 
 > `Service: lenny-gateway-pods (headless → 8080, for ops event buffer polling)`
@@ -34123,6 +35114,8 @@ Spec: `/Users/joan/projects/lenny/spec/25_agent-operability.md` lines 5148–529
 
 ### - [ ] F-25.17.1 — 17-01 — `GET /v1/admin/events/stream` (SSE) is not implemented [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-25.5.2 — Four members describe the gateway EventEmitter never writing to the Redis ops:events:stream, and two describe the unimplemented SSE /v1/admin/events/stream endpoint; the lag gauge and CLOSED service findings are distinct.
+
 **Spec:** §25.17 Step 1 (lines 5158–5165):
 
 ```
@@ -34147,6 +35140,8 @@ Accept: text/event-stream
 
 ### - [ ] F-25.17.2 — 17-02 — The `alert_fired` event payload does not carry the §25.17 `runbook` and `suggestedAction` fields [High] — OPEN
 
+**Potential duplicate** (confidence: medium) — F-25.7.5 — Both report that the alert_fired event payload's runbook/suggestedAction fields are not emitted because OnFired is never wired to an opsevents emitter; same root cause and fix.
+
 **Spec:** §25.17 Step 1 (line 5172) shows the SSE payload the agent parses:
 
 ```json
@@ -34170,6 +35165,8 @@ Step 2 (line 5177) then has the agent read `severity: "critical"` and `runbook: 
 ---
 
 ### - [ ] F-25.17.3 — 17-03 — `PUT /v1/admin/pools/{name}/warm-count` is not implemented; the runbook and §25.17 example reference a path the gateway does not serve [High] — OPEN
+
+**Potential overlap** (confidence: high) — F-25.17.11 — Both concern warm-count mutation, but one is the missing lenny-ctl pool subcommand and the other is the missing PUT /v1/admin/pools/{name}/warm-count gateway route.
 
 **Spec:** §25.17 Step 5 (lines 5232–5239):
 
@@ -34196,6 +35193,8 @@ The same path is documented in `docs/runbooks/warm-pool-exhaustion.md` line 128 
 
 ### - [ ] F-25.17.4 — 17-04 — `GET /v1/admin/runbooks/{name}` is not implemented; lenny-ctl and the MCP management server both route to a missing endpoint [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-17.7.2, F-25.7.1 — All three report GET /v1/admin/runbooks/{name} (full markdown body) is not registered, with the same evidence at opsserver.go:153-154.
+
 **Spec:** §25.17 Step 3 (lines 5208–5212):
 
 ```
@@ -34218,6 +35217,8 @@ The agent reads the runbook body to confirm the diagnosis. The endpoint is also 
 ---
 
 ### - [ ] F-25.17.5 — 17-05 — The `Idempotency-Key` header is not enforced on lenny-ops mutating endpoints [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-25.4.4 — Both report missing Idempotency-Key enforcement on lenny-ops mutating endpoints; F-25.4.4 is the more complete version covering the table and error codes.
 
 **Spec:** §25.17 Step 5 (line 5236) shows the scale request carrying `Idempotency-Key: 7c9e6679-...`. §11.5 and the §25.2 envelope make idempotency-key replay protection mandatory for every mutating admin call so an agent that retries on transient failure does not double-apply.
 
@@ -34351,6 +35352,8 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 
 ### - [ ] F-25.17.11 — 17-11 — `lenny-ctl` has no pool-mutation commands; the runbook's `lenny-ctl admin pools set-warm-count` does not exist [Low] — OPEN
 
+**Potential overlap** (confidence: high) — F-25.17.3 — Both concern warm-count mutation, but one is the missing lenny-ctl pool subcommand and the other is the missing PUT /v1/admin/pools/{name}/warm-count gateway route.
+
 **Spec:** §25.17 itself is API-call-oriented (does not invoke `lenny-ctl`), but the warm-pool-exhaustion runbook §25.17 Step 3 reads (line 5212) is `docs/runbooks/warm-pool-exhaustion.md`, and that runbook's Step 3b lists `lenny-ctl admin pools set-warm-count --pool <pool> --min <current + 10>` as the primary access path. §24 makes `lenny-ctl` the operator-facing surface across every runbook.
 
 **Implementation:**
@@ -34466,6 +35469,8 @@ The §26.1 catalog overview itself does not require those fields, but §26.2–�
 ---
 
 ### - [ ] F-26.1.4 — 1-04 — Reference-runtime image references use a placeholder digest that fails image-pull on first use [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-26.3.6 — Both report the placeholder all-zero digest in catalog.go that fails image-pull on first use.
 
 **Spec:** §26.1 line 8 declares each reference runtime "ships a Dockerfile, adapter implementation, ... and CI that publishes OCI images to the canonical Lenny registry." §5.1 and §13.1 require runtime images to be digest-pinned.
 
@@ -34675,6 +35680,8 @@ This is a v1 platform deliverable: the built-in `github` provider, the HTTPS cre
 
 ### - [ ] F-26.2.7 — 2-07 — `setupCommandPolicy` allowlist enforcement is unimplemented and "mode: none MUST NOT" for multi-tenant deployments is not gated [Low] — OPEN
 
+**Potential duplicate** (confidence: high) — F-7.5.1 — Both report that setupCommandPolicy (allowlist/blocklist/shell/maxCommands) is entirely unimplemented with no admission enforcement.
+
 **Spec:** §26.2 line 53:
 
 > "Coding-agent runtimes ship with `mode: allowlist` and an allowlist covering the common package-manager prefixes … `shell: false` … Operators can override the policy per pool but MUST NOT set `mode: none` (unrestricted setup) for coding-agent runtimes in multi-tenant deployments."
@@ -34848,6 +35855,8 @@ maintainer/upstream labels (only the generic
 
 ### - [ ] F-26.3.6 — 6  Embedded-stack image is placeholder-digest-pinned and will fail on first pull [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-26.1.4 — Both report the placeholder all-zero digest in catalog.go that fails image-pull on first use.
+
 `pkg/embedded/stack/catalog.go:30` defines
 `placeholderDigest = "@sha256:0000...0000"` and concatenates it onto the
 tagged reference, yielding
@@ -34869,6 +35878,8 @@ flag-gate `claude-code` from the day-one Embedded catalog until the
 upstream image publishes.
 
 ### - [ ] F-26.3.7 — 7  `pkg/compliance/reference_catalog.yaml` lists an image reference that does not match §26.3 [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.4.1, F-26.5.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
 The compliance catalog at `pkg/compliance/reference_catalog.yaml:33`
 records `image: lennylabs/claude-code:v1`, while §26.3 (line 147) and
@@ -34961,6 +35972,8 @@ The `gemini-cli` runtime is registered in every catalog touchpoint with the corr
 
 ### - [ ] F-26.4.1 — Compliance reference-catalog image diverges from §26.4 [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.5.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
+
 `pkg/compliance/reference_catalog.yaml` line 39 and `cmd/lenny-compliance/reference-catalog.yaml` line 39 both declare:
 
 ```
@@ -34976,6 +35989,8 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:706-710`
 
 ### - [ ] F-26.4.2 — §26.4-specific fields (proxyDialect, runtimeOptionsSchema, adapter entrypoint, agentInterface.description) are not pre-applied [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-26.5.2, F-26.6.4 — All three report the same gap: runtimeOptionsSchema/proxyDialect/agentInterface.description not surfaced in the platform catalog, each for a different reference runtime.
 
 §26.4 enumerates four §26.4-specific values that differentiate `gemini-cli` from the §26.2 base profile:
 
@@ -35031,6 +36046,8 @@ The first-party runtime image, adapter binary, schema URL, and conformance suite
 
 ### - [ ] F-26.5.1 — `pkg/compliance/reference_catalog.yaml` codex entry uses the wrong image reference (Medium) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.4.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
+
 Spec §26.5 line 268 fixes the canonical image as `ghcr.io/lennylabs/runtime-codex:<release>`, matching §26.1's repository convention `github.com/lennylabs/runtime-<name>` and the registry path `ghcr.io/lennylabs/runtime-<name>`.
 
 `pkg/compliance/reference_catalog.yaml` line 45 records the codex image as:
@@ -35052,6 +36069,8 @@ Locations:
 - Compare: `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:51-56`
 
 ### - [ ] F-26.5.2 — `runtimeOptionsSchema` URL not registered in the platform catalog (Info) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-26.4.2, F-26.6.4 — All three report the same gap: runtimeOptionsSchema/proxyDialect/agentInterface.description not surfaced in the platform catalog, each for a different reference runtime.
 
 §26.5 line 277 requires the codex runtime to register `runtimeOptionsSchema` at `https://schemas.lenny.dev/runtime-options/codex/v1.json`. The platform-side `ReferenceRuntime` struct (`pkg/embedded/stack/catalog.go:7-17`) carries only `Name`, `Image`, `IntegrationLevel`, and `Description`; the schema URL, `supportedProviders`, `proxyDialect`, and `agentInterface.description` from §26.5 live inside the runtime's published `Runtime` manifest in the first-party `runtime-codex` repository, which is Wave 7. The Helm catalog at `charts/lenny/values.yaml:711-715` does record `supportedProviders: [openai_direct, azure_openai]` for codex, matching §26.5 line 274. No platform-side regression; recorded for traceability when the Wave 7 runtime ships.
 
@@ -35117,6 +36136,8 @@ Locations:
 
 ### - [ ] F-26.6.3 — `pkg/compliance/reference_catalog.yaml` cursor-cli entry uses the wrong image reference (Medium) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
+
 §26.6 line 290 fixes the canonical image as `ghcr.io/lennylabs/runtime-cursor-cli:<release>`, matching §26.1's repository convention `github.com/lennylabs/runtime-<name>` and the registry path `ghcr.io/lennylabs/runtime-<name>`. `pkg/compliance/reference_catalog.yaml:48-52` records the cursor-cli image as:
 
 ```yaml
@@ -35137,6 +36158,8 @@ Locations:
 - Compare: `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:57-62`
 
 ### - [ ] F-26.6.4 — `runtimeOptionsSchema`, `proxyDialect`, and `agentInterface.description` not surfaced in the platform catalog (Info) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-26.4.2, F-26.5.2 — All three report the same gap: runtimeOptionsSchema/proxyDialect/agentInterface.description not surfaced in the platform catalog, each for a different reference runtime.
 
 §26.6 lines 297-301 require the cursor-cli runtime to declare `credentialCapabilities.proxyDialect: [cursor]`, register `runtimeOptionsSchema` at `https://schemas.lenny.dev/runtime-options/cursor-cli/v1.json`, install entrypoint `/usr/local/bin/lenny-cursor-cli-adapter`, and set `agentInterface.description: "Cursor CLI — Cursor's agent CLI"`. The platform-side `ReferenceRuntime` struct (`pkg/embedded/stack/catalog.go:7-17`) carries only `Name`, `Image`, `IntegrationLevel`, and `Description`. The richer §26.6 fields live inside the runtime's published `Runtime` manifest in the first-party `runtime-cursor-cli` repository, which is Wave 6/Phase 11. The Helm catalog at `charts/lenny/values.yaml:716-720` records `supportedProviders: [cursor_direct]` and `allowedResourceClasses: [small, medium, large]`, matching §26.6 line 296 and the §26.2 shared coding-agent pattern, but does not surface the dialect, schema URL, entrypoint, or interface description. No platform-side regression; recorded for traceability when the Wave 6 runtime ships.
 
@@ -35189,6 +36212,9 @@ Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md` lines 30
 `ReferenceRuntime` carries only Name, Image, IntegrationLevel, and Description (`catalog.go` lines 7–17). The §26.7 YAML highlights (capabilities, allowedResourceClasses, supportedProviders, credentialCapabilities, limits, setupCommandPolicy, setupPolicy, runtimeOptionsSchema, defaultPoolConfig) are not represented in the embedded-stack seed. This is consistent across all nine §26 reference runtimes and matches the §26 model: full `Runtime` YAML lives in the per-runtime first-party repo; the embedded-stack seed only carries the bootstrap identity (name, image, level). Operators register the full record by deploying the runtime's published manifest. Not a §26.7-specific gap.
 
 ### - [ ] F-26.7.4 — (Info) — Compliance YAML uses non-canonical image path [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.6.3, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
+
 `pkg/compliance/reference_catalog.yaml` line 57 declares `image: lennylabs/chat:v1` while `catalog.go` line 65 uses `ghcr.io/lennylabs/runtime-chat:1.0.0@sha256:…`. The compliance YAML header (lines 16–24) documents that `image` here is "relative to the configured registry" and that "concrete `imageDigest` values land with the §17.5 image-pin rotation". This is consistent across all nine entries in the compliance file. Not a §26.7-specific gap, but noted because the two manifests use different image-naming conventions; an operator scanning both files will see two different image references for `chat`.
 
 ### Classification summary
@@ -35249,6 +36275,8 @@ capability flags, and `credentialCapabilities` are out of the chart's
 declared scope by design.
 
 ### - [ ] F-26.8.3 — Image reference in compliance catalog uses a different naming convention than §26.8 and the Helm/embedded catalogs [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.6.3, F-26.7.4 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
 `/Users/joan/projects/lenny/pkg/compliance/reference_catalog.yaml:63`
 records `image: lennylabs/langgraph:v1`, while §26.8 specifies
@@ -35445,6 +36473,8 @@ The runtime exists in the catalog *registration* surfaces (Embedded-Mode `refere
 
 ### - [ ] F-26.10.3 — `pkg/compliance/reference_catalog.yaml` image stem diverges from §26.10 (Low) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-26.11.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
+
 `pkg/compliance/reference_catalog.yaml:75` lists the runtime image as `lennylabs/openai-assistants:v1`. §26.10 specifies `ghcr.io/lennylabs/runtime-openai-assistants:<release>`, and `pkg/embedded/stack/catalog.go:83` plus `charts/lenny/values.yaml:735` use the spec-correct `ghcr.io/lennylabs/runtime-openai-assistants:1.0.0`. The compliance baseline drifts from both the spec and the other two registration sites; any audit job that compares published images against the compliance baseline would falsely accept (or falsely reject) the spec-conformant image.
 
 ### - [ ] F-26.10.4 — `code_interpreter` operator warning is undocumented at install time (Low) [Medium] — OPEN
@@ -35494,6 +36524,8 @@ The §26.11 entry mandates fields that are absent from every install path:
 - Evidence: `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:87-92`, `/Users/joan/projects/lenny/pkg/compliance/reference_catalog.yaml:78-82`, `/Users/joan/projects/lenny/charts/lenny/values.yaml:738-741`, `/Users/joan/projects/lenny/charts/lenny/templates/reference-runtimes.yaml`
 
 ### - [ ] F-26.11.3 — Embedded catalog and chart values use different image tags for the same reference runtime [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-26.10.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
 `pkg/embedded/stack/catalog.go:89` pins `ghcr.io/lennylabs/runtime-crewai:1.0.0` plus the placeholder digest (`@sha256:...`). `pkg/compliance/reference_catalog.yaml:81` lists `lennylabs/crewai:v1` (unscoped registry, different tag). `charts/lenny/values.yaml:739` lists `ghcr.io/lennylabs/runtime-crewai:1.0.0` (no digest). The §26.11 spec gives `ghcr.io/lennylabs/runtime-crewai:<release>` as the canonical image. The three call sites disagree on registry path, tag scheme, and whether a digest is pinned, which makes it ambiguous which image an operator should expect after `lenny-ctl install`. Same divergence exists for the other §26.x entries, so this finding is local to crewai but shared across the catalogue.
 
@@ -35761,6 +36793,8 @@ Enumerated the normative requirements from §27.3 and §27.3.1. The spec organiz
 
 ### - [ ] F-27.3.1 — `pg:revoked:{jti}` per-request revocation check is never consulted by the auth chain [High] — OPEN
 
+**Potential duplicate** (confidence: high) — F-27.6.3 — Both report that IsBearerRevoked exists but is never called by the auth chain, so the per-request playground bearer-revocation check never runs.
+
 Spec §27.3.1 "Per-request revocation check" (line 95):
 
 > Every authenticated request carrying a playground-origin bearer (identified by the `origin: "playground"` claim — §27.3) MUST consult `t:{tenant_id}:pg:revoked:{jti}` on the auth hot path before the bearer is honored. A hit produces `401 UNAUTHORIZED` with `details.reason: "bearer_revoked"` on REST/MCP requests and WebSocket close code `4401` on in-flight upgrades.
@@ -35807,6 +36841,8 @@ Consequences:
 
 ### - [ ] F-27.3.3 — Bearer mint does not stamp the `origin: "playground"` claim on a path that is enforced; §27.6 caps go unenforced [High] — OPEN
 
+**Potential overlap** (confidence: medium) — F-27.6.8 — Both concern the playground origin claim, but F-27.3.3 is that the origin=playground claim is not stamped on an enforced path leaving §27.6 caps unenforced, while F-27.6.8 is that the origin=playground label on session records is unverifiable for audit queries; related but distinct defects.
+
 Spec §27.3 "Mode-agnostic `origin: \"playground\"` JWT claim" (line 63), and §27.6 "Hard duration cap" + "Idle-timeout override" (lines 200–201):
 
 > Enforcement binds whenever the session-capability JWT carries the `origin: "playground"` claim (§27.3), so the cap applies uniformly to `oidc`, `apiKey`, and `dev` playground sessions.
@@ -35832,6 +36868,8 @@ Note this is a §27.6/§27.8 enforcement gap whose root cause is in §27.3's "mo
 **Severity rationale (High):** correctness regression on a quota cap. The duration and idle caps are stated as MUST in §27.6.
 
 ### - [ ] F-27.3.4 — MCP WebSocket upgrade is not implemented; `Sec-WebSocket-Protocol: lenny.bearer.<token>` carrier has no server-side handler [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-27.5.1, F-27.5.2 — All three stem from the absent MCP WebSocket server at /mcp/v1/ws, which also means the Sec-WebSocket-Protocol bearer carrier is unimplemented.
 
 Spec §27.3.1 step 3 "WebSocket upgrade" (line 142):
 
@@ -36034,6 +37072,9 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
 - Impact: the documented workspace-plan-upload affordance is non-functional. Users who select a tarball get no error and no upload; their session starts without the plan, silently dropping the input.
 
 ### - [ ] F-27.4.4 — SDK snippet emits Python only; spec requires Go/Python/TS [High] — OPEN
+
+**Potential duplicate** (confidence: high) — F-27.9.4 — Both report the playground SDK-snippet button hard-codes Python instead of emitting Go/Python/TS.
+
 - Spec: §27.4 item 3 ('a "Copy as client SDK snippet" button that emits equivalent code in Go/Python/TS').
 - Evidence:
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:478-496` (`copySnippet`) hard-codes a single Python snippet, copies it to clipboard, and alerts "SDK snippet copied to the clipboard (Python)." No language picker, no Go template, no TypeScript template.
@@ -36068,6 +37109,9 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
 - Conformance: the §27.4 closing constraint is satisfied.
 
 ### - [ ] F-27.4.10 — Implementation deviation from "React SPA" [Info] — OPEN
+
+**Potential overlap** (confidence: medium) — F-27.5.5 — Both reference the same React-SPA-vs-vanilla-JS deviation comment, but F-27.4.10 is the architectural-deviation note while F-27.5.5 flags that the comment misrepresents §27.5 protocol usage, a different concern.
+
 - Evidence: `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:10-13` notes "The §27.4 spec describes a React SPA; the playground screens and the §27.5 protocol usage are implemented here directly so the bundle is embeddable in the gateway binary without an npm toolchain." Plain ES2017 with no build step.
 - Conformance: the spec specifies React; the implementation chooses vanilla JS for embedding. This is a documented architectural deviation rather than a behavioral one; surfaced for visibility, not action.
 
@@ -36115,6 +37159,8 @@ R7. WebSocket close code `4401` MUST surface to the client on bearer revocation 
 
 ### - [ ] F-27.5.1 — (High, MUST, correctness) — MCP WebSocket endpoint `/mcp/v1/ws` is not implemented [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-27.3.4, F-27.5.2 — All three stem from the absent MCP WebSocket server at /mcp/v1/ws, which also means the Sec-WebSocket-Protocol bearer carrier is unimplemented.
+
 §27.5 R2 and §27.3.1 R4 require an MCP WebSocket at `/mcp/v1/ws`. The gateway mounts only `POST /mcp` (HTTP JSON-RPC). The MCP adapter package itself documents that streaming is post-v1 (`pkg/gateway/mcp/mcp.go` lines 20–21). The embedded SPA, in every authMode, dials `wss://<host>/mcp/v1/ws` and will fail upgrade against a stock build. Every chat interaction in the playground is non-functional end-to-end: connect screen succeeds (cookie, token mint, runtime list, session create all work), but the very first message dies on `WebSocket open failed`.
 
 Locations:
@@ -36124,6 +37170,8 @@ Locations:
 - `/Users/joan/projects/lenny/pkg/gateway/playground/assets.go:100` (advertises `wsPath: /mcp/v1/ws`).
 
 ### - [ ] F-27.5.2 — (High, MUST, correctness) — `Sec-WebSocket-Protocol` bearer carrier and `lenny.mcp.v1` echo are unimplemented [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-27.3.4, F-27.5.1 — All three stem from the absent MCP WebSocket server at /mcp/v1/ws, which also means the Sec-WebSocket-Protocol bearer carrier is unimplemented.
 
 §27.3.1 (line 142) explicitly mandates the sub-protocol carrier `lenny.mcp.v1, lenny.bearer.<token>` and the gateway-side echo of `lenny.mcp.v1`, plus the credential-treatment requirement (strip from audit logs). Because there is no WebSocket server (F1), there is also no implementation of the carrier protocol, no echo, no credential stripping for audit events. This is the only authentication codepath available to browsers and therefore the only path the playground itself can use; absence is a security-relevant correctness gap, not a future enhancement.
 
@@ -36142,6 +37190,8 @@ Locations:
 §27.3.1 + the §27 Failure modes summary (line 167) require WebSocket close code `4401` when a bearer is revoked mid-stream. The client handles it (`app.js:386-388`), but no server-side path emits it because the WebSocket server does not exist. Tracked separately from F1 because closing this requires explicit wiring of the revocation deny-list pub/sub (§27.3.1) into the WebSocket connection lifecycle, not merely accepting upgrades. Severity downgraded to Medium because once F1 is implemented, the `4401` wiring is a defined incremental step rather than an absent surface.
 
 ### - [ ] F-27.5.5 — (Low, Info) — SPA inline comment acknowledges the spec deviation in `app.js:11-13` [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-27.4.10 — Both reference the same React-SPA-vs-vanilla-JS deviation comment, but F-27.4.10 is the architectural-deviation note while F-27.5.5 flags that the comment misrepresents §27.5 protocol usage, a different concern.
 
 The bundle's preamble states: "The §27.4 spec describes a React SPA; the playground screens and the §27.5 protocol usage are implemented here directly so the bundle is embeddable in the gateway binary without an npm toolchain." The deviation from the React requirement in §27.4 is outside this §27.5 audit's scope, but the file frames the §27.5 protocol usage as implemented — which the F1–F3 evidence contradicts. Surfaced as Info so a follow-up edit can reword the comment after the WebSocket transport lands.
 
@@ -36179,17 +37229,23 @@ Evidence was gathered via grep/find across `pkg/gateway/playground/`, `pkg/gatew
 
 ### - [ ] F-27.6.1 — Playground idle-timeout override is never applied to session creation. (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-27.6.2 — Both report playground caps (idle-timeout override and duration cap) computed by effective* helpers that are never invoked from the session-creation path; same root cause and fix.
+
 Spec: line 201 — "The gateway enforces this value as a **hard override** of the runtime's `maxIdleTimeSeconds` … whenever the session was established through a `/playground/*` ingress path — detected via the `origin: "playground"` JWT claim … The effective idle cap is therefore `min(runtime.limits.maxIdleTimeSeconds, playground.maxIdleTimeSeconds)`."
 
 Evidence: `pkg/gateway/playground/playground.go:202` defines `(Config).effectiveIdleSeconds(runtimeIdleSeconds int) int`. Its only callers are the package's own unit tests (`pkg/gateway/playground/playground_test.go:122-127`). `grep -rn 'effectiveIdleSeconds' pkg/ cmd/` finds no caller in the session-creation path. `pkg/gateway/sessionserver/derive.go`, `pkg/gateway/sessionserver/start.go`, and `pkg/gateway/sessionserver/sessionserver.go` contain no reference to `playground`, `origin`, `Origin`, `Playground`, or `effectiveIdleSeconds`. As a result, a session minted with the `origin: "playground"` JWT claim runs against the runtime's own `maxIdleTimeSeconds` (typically 600s per the spec's stated runtime default of 10 min) instead of the playground cap (default 300s). The override is unimplemented end-to-end despite the helper being present.
 
 ### - [ ] F-27.6.2 — Playground hard duration cap is never applied to session creation. (High) [Medium] — OPEN
 
+**Potential duplicate** (confidence: high) — F-27.6.1 — Both report playground caps (idle-timeout override and duration cap) computed by effective* helpers that are never invoked from the session-creation path; same root cause and fix.
+
 Spec: line 200 — "**Hard duration cap.** `min(sandboxTemplate.spec.maxSessionMinutes, playground.maxSessionMinutes)`. Enforcement binds whenever the session-capability JWT carries the `origin: "playground"` claim."
 
 Evidence: `pkg/gateway/playground/playground.go:214` defines `(Config).effectiveSessionMinutes(runtimeMinutes int) int`. Its only callers are the package's own unit tests (`pkg/gateway/playground/playground_test.go:129-133`). `grep -rn 'effectiveSessionMinutes' pkg/ cmd/` finds no caller in the session-creation path. Neither `derive.go`, `start.go`, nor `sessionserver.go` inspects the JWT `Origin` claim or consults the playground `Config`. A playground-originated session is therefore bounded only by the sandbox-template `maxSessionMinutes`; the configured `playground.maxSessionMinutes` cap (default 30) is dead config.
 
 ### - [ ] F-27.6.3 — Per-request playground bearer-revocation check is not wired into the auth chain. (High) [Medium] — OPEN
+
+**Potential duplicate** (confidence: high) — F-27.3.1 — Both report that IsBearerRevoked exists but is never called by the auth chain, so the per-request playground bearer-revocation check never runs.
 
 Spec: line 204 — "The authoritative per-request revocation check runs on every playground-origin request (identified by the `origin: "playground"` claim) against `pg:revoked:{jti}`."
 
@@ -36220,6 +37276,8 @@ Spec: line 204 — "the in-process negative-cache warmed by pub/sub is a latency
 Evidence: `cmd/lenny-gateway/main.go:1400-1402` iterates `playgroundSubscribeTenants(pgCfg)` once at startup and spawns one `SubscribeRevocations` goroutine per tenant returned. There is no per-tenant subscription enrolment when a new tenant is provisioned post-startup. In multi-tenant deployments (`auth.multiTenant=true`) the pub/sub channel for a tenant created after gateway start is never consulted, so the negative cache for that tenant is never warmed. The Redis `EXISTS` fallback still gives correctness, but the cache-acceleration property the spec specifies as "warmed by pub/sub" is absent for those tenants. This compounds F6: the propagation SLO measurement, were it implemented, would degrade for late-bound tenants.
 
 ### - [ ] F-27.6.8 — Audit labelling guarantee for `origin=playground` on every session record is unverifiable. (Medium) [Medium] — OPEN
+
+**Potential overlap** (confidence: medium) — F-27.3.3 — Both concern the playground origin claim, but F-27.3.3 is that the origin=playground claim is not stamped on an enforced path leaving §27.6 caps unenforced, while F-27.6.8 is that the origin=playground label on session records is unverifiable for audit queries; related but distinct defects.
 
 Spec: line 203 — "Sessions are labeled with `origin=playground` and the authenticated principal for audit queries (§25.9). The label is applied for every `/playground/*`-originated session regardless of `authMode`."
 
@@ -36455,6 +37513,8 @@ Severity: High (MUST in §27.9; missing install-time gate the spec cross-referen
 Severity: Medium (SHOULD; documented capability not surfaced; not directly exploitable but blocks operators from completing the acknowledgement workflow when High-2 is fixed).
 
 ### - [ ] F-27.9.4 — 1 — UI clipboard snippet hard-codes Python; spec lists Go/Python/TS [Low] — OPEN
+
+**Potential duplicate** (confidence: high) — F-27.4.4 — Both report the playground SDK-snippet button hard-codes Python instead of emitting Go/Python/TS.
 
 §27.4 (line 178) describes "a 'Copy as client SDK snippet' button that emits equivalent code in Go/Python/TS". The §27.9 bullet (line 256) only mandates the no-credentials property of those snippets. The implementation at `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:478-496` (`copySnippet`) hard-codes a Python snippet and shows `alert("SDK snippet copied to the clipboard (Python).")`. The credential property is correct (the snippet reads `os.environ['LENNY_BEARER_TOKEN']` with a comment "from your OIDC flow" — no embedded token), so §27.9 itself is satisfied; the missing Go and TS variants are a §27.4 UX shortfall the parent §27.4 audit owns. Reported here as low-severity context because the audit brief enumerated this capability.
 
