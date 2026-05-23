@@ -173,3 +173,23 @@ func (b *Bus) History(sessionID string, afterSeq uint64) []Event {
 	}
 	return out
 }
+
+// ActiveSubscribers reports the total number of live SSE subscribers
+// across all sessions. The gateway uses this value as the source of
+// the §4.1 lenny_gateway_active_streams gauge — the secondary HPA
+// metric reflecting in-flight streaming connections on this replica.
+// Closed subscriptions are excluded; the count drops as soon as a
+// client disconnects and Close runs.
+func (b *Bus) ActiveSubscribers() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var n int
+	for _, subs := range b.subs {
+		for _, sub := range subs {
+			if !sub.closed {
+				n++
+			}
+		}
+	}
+	return n
+}

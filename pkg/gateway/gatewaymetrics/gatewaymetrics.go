@@ -11,6 +11,7 @@ package gatewaymetrics
 import (
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -29,6 +30,7 @@ type Metrics struct {
 	activeStreams             prometheus.Gauge
 	requestQueueDepth         prometheus.Gauge
 	rejectionRate             prometheus.Gauge
+	maxSessionsPerReplica     *prometheus.GaugeVec
 	storageQuotaUsed          *prometheus.GaugeVec
 	storageQuotaLimit         *prometheus.GaugeVec
 	circuitBreakerOpen        *prometheus.GaugeVec
@@ -38,6 +40,14 @@ type Metrics struct {
 	elicitationTamperDetected *prometheus.CounterVec
 	experimentIsoRej          *prometheus.CounterVec
 	noEnvPolicyAllowAll       *prometheus.CounterVec
+
+	// inflight tracks the number of HTTP requests currently being
+	// handled by the §16.1 Middleware-wrapped mux. It is the source of
+	// the lenny_gateway_request_queue_depth gauge (the §4.1 SCL-026
+	// primary HPA scale-out trigger): incremented on entry and
+	// decremented on exit so the watchdog poller's SetRequestQueueDepth
+	// call reflects the instantaneous concurrent-request count.
+	inflight int64
 }
 
 // New constructs and registers the gateway metric set against a
@@ -91,6 +101,18 @@ func New() (*Metrics, error) {
 		Name: "lenny_gateway_rejection_rate",
 		Help: "Gateway requests rejected with 429/503 per second on this replica.",
 	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §4.1 / §16.1: maxSessionsPerReplica is a startup-set gauge. It is
+	// the denominator of the §16.5 GatewaySessionBudgetNearExhaustion
+	// alert and the §17.8.2 burst-absorption minReplicas formula. The
+	// delivery_mode label distinguishes proxy from direct deliveryMode
+	// (per spec, two gauge values are always reported per replica).
+	maxSessionsPerReplica, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_max_sessions_per_replica",
+		Help: "Maximum concurrent sessions this replica can serve under the given delivery mode (§4.1).",
+	}, []string{"delivery_mode"})
 	if err != nil {
 		return nil, err
 	}
@@ -158,8 +180,8 @@ func New() (*Metrics, error) {
 		return nil, err
 	}
 
-	reg.MustRegister(requestsTotal, requestDuration, storageQuotaUsed,
-		storageQuotaLimit, circuitBreakerOpen, elicitationDropped,
+	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
+		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen, elicitationDropped,
 		elicitationTamperDetected, experimentIsoRej,
 		noEnvPolicyAllowAll)
 	gauge := activeSessions.WithLabelValues()
@@ -179,6 +201,7 @@ func New() (*Metrics, error) {
 		activeStreams:             streams,
 		requestQueueDepth:         queueDepth,
 		rejectionRate:             rejections,
+		maxSessionsPerReplica:     maxSessionsPerReplica,
 		storageQuotaUsed:          storageQuotaUsed,
 		storageQuotaLimit:         storageQuotaLimit,
 		circuitBreakerOpen:        circuitBreakerOpen,
@@ -295,21 +318,50 @@ func (m *Metrics) SetRejectionRate(perSecond float64) {
 	m.rejectionRate.Set(perSecond)
 }
 
+// SetMaxSessionsPerReplica emits the §4.1 capacity ceiling on the
+// lenny_gateway_max_sessions_per_replica gauge for the given
+// delivery_mode ("proxy" or "direct"). The §16.5
+// GatewaySessionBudgetNearExhaustion alert reads this value as the
+// denominator of `lenny_gateway_active_sessions / value > 0.90`. The
+// gateway calls this once at startup so the gauge is observable as
+// soon as the /metrics endpoint serves the first scrape; the spec
+// requires both delivery_mode values be reported per replica so a
+// capacity-planning dashboard can compute the proxy/direct ratio.
+func (m *Metrics) SetMaxSessionsPerReplica(deliveryMode string, value int) {
+	m.maxSessionsPerReplica.WithLabelValues(deliveryMode).Set(float64(value))
+}
+
 // Middleware returns an http.Handler that records the §16.1 request
 // metrics for every request to inner. The route label is taken from
 // the supplied routeOf function so high-cardinality path segments
 // (session ids, blob refs) collapse to a stable route template.
+//
+// The middleware also tracks the in-flight request count exposed via
+// InflightRequests so the §16.1 lenny_gateway_request_queue_depth
+// gauge — the §4.1 SCL-026 primary HPA scale-out trigger — reflects
+// the instantaneous concurrent-request count on this replica.
 func (m *Metrics) Middleware(inner http.Handler, routeOf func(*http.Request) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route := routeOf(r)
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		atomic.AddInt64(&m.inflight, 1)
+		defer atomic.AddInt64(&m.inflight, -1)
 		inner.ServeHTTP(rec, r)
 		elapsed := time.Since(start).Seconds()
 
 		m.requestsTotal.WithLabelValues(r.Method, route, statusClass(rec.status)).Inc()
 		m.requestDuration.WithLabelValues(r.Method, route).Observe(elapsed)
 	})
+}
+
+// InflightRequests returns the number of HTTP requests currently
+// being handled by the metrics Middleware. The watchdog poller in
+// cmd/lenny-gateway/main.go reads this value and pushes it through
+// SetRequestQueueDepth to surface it on the
+// lenny_gateway_request_queue_depth gauge (§4.1 SCL-026).
+func (m *Metrics) InflightRequests() int {
+	return int(atomic.LoadInt64(&m.inflight))
 }
 
 // statusRecorder captures the response status code so the metrics

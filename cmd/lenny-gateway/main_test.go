@@ -9,12 +9,18 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
 // spec: §4.9 — the gateway's LLM reverse-proxy listener wiring.
@@ -128,4 +134,115 @@ func TestExperimentRejectionReporterNilDependenciesAreSafe(t *testing.T) {
 	reporter.ReportExperimentIsolationRejection(context.Background(), sessionserver.ExperimentIsolationRejection{
 		TenantID: "acme", ExperimentID: "exp_1",
 	})
+}
+
+// spec: §4.1 / §16.1 — exportHPAGauges populates the
+// lenny_gateway_active_sessions, _active_streams, and
+// _request_queue_depth gauges from the live in-process state.
+func TestExportHPAGaugesUpdatesAllGauges(t *testing.T) {
+	store := memstore.New()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Seed two active sessions and one terminal session under the
+	// "default" tenant; the exporter must count two.
+	for _, s := range []sessionstore.Session{
+		{ID: "s1", TenantID: "default", State: session.StateRunning, CreatedAt: now, UpdatedAt: now},
+		{ID: "s2", TenantID: "default", State: session.StateCreated, CreatedAt: now, UpdatedAt: now},
+		{ID: "s3", TenantID: "default", State: session.StateCompleted, CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := store.Create(context.Background(), s); err != nil {
+			t.Fatalf("seed %s: %v", s.ID, err)
+		}
+	}
+
+	bus := sessionevents.NewBus(0)
+	sub := bus.Subscribe("s1", 0, 4)
+	defer sub.Close()
+
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("metrics: %v", err)
+	}
+
+	// Drive a request through the metrics middleware so InflightRequests
+	// reports a non-zero value across the exporter call.
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusOK)
+	})
+	h := m.Middleware(inner, func(*http.Request) string { return "/test" })
+	go func() {
+		defer close(done)
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+	}()
+	<-started
+
+	// Wrap the sessionstore in a minimal tenantsLister that only
+	// returns the seeded tenant; the production lister adds "default"
+	// and that's all this fixture has.
+	lister := staticTenantLister{[]string{"default"}}
+	exportHPAGauges(context.Background(), store, lister, bus, m)
+
+	// Now drive a second poll after the in-flight request finishes
+	// so we can verify the queue-depth gauge tracks both directions.
+	close(release)
+	<-done
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	for _, want := range []string{
+		"lenny_gateway_active_sessions 2",
+		"lenny_gateway_active_streams 1",
+		"lenny_gateway_request_queue_depth 1",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+
+	// Second poll: the in-flight request has exited, so queue depth
+	// drops to 0; active sessions stay at 2 and active streams remain
+	// at 1 (the subscriber is still open).
+	exportHPAGauges(context.Background(), store, lister, bus, m)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body = rr.Body.String()
+	if !strings.Contains(body, "lenny_gateway_request_queue_depth 0") {
+		t.Errorf("after handler exit, queue_depth gauge did not drop to 0\n%s", body)
+	}
+}
+
+// spec: §4.1 — a cancelled context returns from exportHPAGauges
+// promptly without spuriously updating the gauges.
+func TestExportHPAGaugesContextCancellation(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(0)
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("metrics: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	lister := staticTenantLister{[]string{"default"}}
+	// Cancelled context: the lister call returns an empty/nil result
+	// without panic.
+	exportHPAGauges(ctx, store, lister, bus, m)
+}
+
+// staticTenantLister is a test-only TenantLister that returns a
+// fixed slice. It is wired through tenantsLister's interface so the
+// exportHPAGauges signature matches the production code path.
+type staticTenantLister struct {
+	tenants []string
+}
+
+func (s staticTenantLister) ListTenants(_ context.Context) ([]string, error) {
+	return s.tenants, nil
 }

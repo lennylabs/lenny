@@ -52,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
@@ -134,6 +135,7 @@ type Server struct {
 	customRoles        customrolestore.Store
 	interceptors       *interceptor.Chain
 	policyAuditSink    *policy.AuditSink
+	uploadSubsystem    *subsystem.Subsystem
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -360,6 +362,16 @@ type Options struct {
 	// session create. The append is synchronous per §11.7. Nil disables
 	// the emission; the rejection still fires.
 	PolicyAuditSink *policy.AuditSink
+
+	// UploadSubsystem, when set, gates POST /v1/sessions/{id}/upload
+	// through the §4.1 Upload Handler subsystem (max-concurrent
+	// semaphore + per-replica circuit breaker). A saturated subsystem
+	// returns 503 SUBSYSTEM_UNAVAILABLE for new uploads while the
+	// Stream Proxy and MCP Fabric handlers continue serving normally —
+	// the §4.1 partial-degradation contract. When nil, uploads run
+	// without subsystem gating (tests and the minimal gateway do not
+	// configure a limit).
+	UploadSubsystem *subsystem.Subsystem
 }
 
 // New returns a Server bound to the supplied store.
@@ -403,6 +415,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		customRoles:        opts.CustomRoles,
 		interceptors:       opts.Interceptors,
 		policyAuditSink:    opts.PolicyAuditSink,
+		uploadSubsystem:    opts.UploadSubsystem,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }

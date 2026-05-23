@@ -115,6 +115,22 @@ metadata:
     lenny.dev/component: gateway
 spec:
   replicas: {{ .Values.gateway.replicas }}
+  # §4.1 / §17.1 rolling-update strategy. maxUnavailable: 1 caps the
+  # number of replicas Kubernetes drains concurrently during a
+  # Deployment-initiated rollout (image bump, spec change) at one — at
+  # Tier 3 (~20 replicas) the Kubernetes default of 25% would let up to
+  # 5 replicas drain at once, exceeding the §10.1 per-replica 400-pod
+  # CheckpointBarrier fan-out budget. maxSurge: 25% allows the
+  # replacement set to scale ahead of the drained set so a rollout is
+  # not bottlenecked behind the drain pace. This strategy is on an
+  # independent disruption axis from the PodDisruptionBudget below; the
+  # PDB bounds every other voluntary disruption (kubectl drain,
+  # autoscaler node consolidation, HPA scale-down).
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.gateway.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.gateway.rollingUpdate.maxSurge }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Chart.Name }}
@@ -181,6 +197,16 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # §4.1 gateway.maxSessionsPerReplica — per-replica capacity
+            # ceiling used as the denominator of the §16.5
+            # GatewaySessionBudgetNearExhaustion alert and the §17.8.2
+            # SCL-036 burst-absorption minReplicas formula. Rendered
+            # from the Helm value so a tier-preset override flows into
+            # the gateway binary without a code change. The gateway
+            # emits the configured value on the
+            # lenny_gateway_max_sessions_per_replica gauge at startup.
+            - name: LENNY_MAX_SESSIONS_PER_REPLICA
+              value: {{ .Values.gateway.maxSessionsPerReplica | quote }}
             {{- with .Values.observability.otlpEndpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ . | quote }}

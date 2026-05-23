@@ -79,6 +79,24 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			"gateway has no blob store configured", nil)
 		return
 	}
+	// §4.1 Upload Handler subsystem gate. The breaker may be open or
+	// the limiter saturated, in which case the handler returns 503
+	// SUBSYSTEM_UNAVAILABLE while the Stream Proxy and MCP Fabric keep
+	// serving. When no subsystem is configured (tests, minimal
+	// gateway), the call is a pass-through.
+	var breakerErr error
+	if s.uploadSubsystem != nil {
+		release, ok := s.acquireUploadSlot(r)
+		if !ok {
+			s.writeError(w, http.StatusServiceUnavailable, "SUBSYSTEM_UNAVAILABLE",
+				"upload handler is temporarily unavailable", nil)
+			return
+		}
+		defer func() {
+			release()
+			s.recordUploadOutcome(breakerErr)
+		}()
+	}
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
 
@@ -155,6 +173,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		// fallthrough.
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
+			// Client-side error: do NOT count against the breaker.
 			s.writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE",
 				"upload exceeds the per-blob size cap",
 				map[string]any{"maxBytes": UploadMaxBodyBytes})
@@ -162,11 +181,15 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, blobstore.ErrConflict) {
 			// part_id collision — exceptionally rare, but treated as
-			// retryable.
+			// retryable. Client-retriable, not a breaker failure.
 			s.writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
 				"blob already exists; retry the upload", nil)
 			return
 		}
+		// Downstream blob store failure — feed the §4.1 Upload Handler
+		// subsystem breaker so repeated MinIO outages trip it open and
+		// new uploads return 503 SUBSYSTEM_UNAVAILABLE.
+		breakerErr = err
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
@@ -193,6 +216,59 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// acquireUploadSlot reserves a slot in the §4.1 Upload Handler
+// subsystem. It returns a release function and true when the breaker
+// admitted and a limiter slot was free; otherwise it returns nil and
+// false so the caller surfaces a 503 SUBSYSTEM_UNAVAILABLE.
+//
+// The release function is the only path that touches the breaker's
+// outcome: callers track the in-handler error and pass it into the
+// returned release closure via s.recordUploadOutcome — a successful
+// handler leaves no error; a downstream error feeds the per-subsystem
+// breaker. A saturated limiter does NOT count as a downstream
+// failure: the limiter rejection is rolled back so the breaker's
+// half-open probe slot is not burned by back-pressure.
+func (s *Server) acquireUploadSlot(r *http.Request) (release func(), ok bool) {
+	if s.uploadSubsystem == nil {
+		return func() {}, true
+	}
+	if s.uploadSubsystem.Breaker != nil && !s.uploadSubsystem.Breaker.Allow() {
+		return nil, false
+	}
+	if s.uploadSubsystem.Limiter == nil {
+		// Breaker-only mode: no slot to release; the caller still
+		// records the outcome on the breaker via recordUploadOutcome.
+		return func() {}, true
+	}
+	slot, ok := s.uploadSubsystem.Limiter.TryAcquire()
+	if !ok {
+		// The breaker admitted but the limiter is saturated. Roll
+		// the half-open probe back so the limiter rejection does not
+		// burn the breaker's one probe slot.
+		if s.uploadSubsystem.Breaker != nil {
+			s.uploadSubsystem.Breaker.RecordSuccess()
+		}
+		return nil, false
+	}
+	return slot, true
+}
+
+// recordUploadOutcome feeds the §4.1 Upload Handler subsystem
+// breaker with the in-handler outcome. A non-nil err counts as a
+// failure; nil counts as a success. Pre-handler validation rejections
+// (404 RESOURCE_NOT_FOUND, 412 PRECONDITION_FAILED, 422 unprocessable)
+// pass nil so the breaker does not trip on client-side errors.
+func (s *Server) recordUploadOutcome(err error) {
+	if s.uploadSubsystem == nil || s.uploadSubsystem.Breaker == nil {
+		return
+	}
+	if err != nil {
+		s.uploadSubsystem.Breaker.RecordFailure()
+		return
+	}
+	s.uploadSubsystem.Breaker.RecordSuccess()
 }
 
 // quotaReservation records a held §11.2 storage-quota reservation: the

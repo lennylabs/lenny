@@ -562,6 +562,19 @@ gateway:
   podDisruptionBudget:
     enabled: true
     maxUnavailable: 1
+  # rollingUpdate configures the §4.1 / §17.1 Deployment.spec.strategy
+  # block. The §17.1 cross-reference mandates maxUnavailable: 1 at
+  # every tier so Deployment-initiated rollouts (image bump, spec
+  # change) drain one replica at a time; the Kubernetes default of 25%
+  # would let up to 5 of ~20 Tier 3 replicas drain concurrently and
+  # exceed the §10.1 per-replica CheckpointBarrier fan-out budget.
+  # maxSurge: 25% lets the replacement set scale ahead of the drain so
+  # a rollout is not bottlenecked behind the drain pace. The PDB
+  # (above) governs a separate axis (voluntary disruptions outside
+  # Deployment rollouts).
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 25%
 
 # autoscaling configures the §10.1 gateway horizontal scaler. The chart
 # renders exactly one scaler resource, selected by autoscaling.provider:

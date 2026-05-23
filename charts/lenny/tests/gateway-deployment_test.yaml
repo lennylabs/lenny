@@ -51,6 +51,36 @@ tests:
           path: metadata.labels["lenny.dev/component"]
           value: gateway
 
+  - it: renders the §4.1 / §17.1 RollingUpdate strategy with maxUnavailable 1 and maxSurge 25%
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 1
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 25%
+
+  - it: honors a custom rollingUpdate override
+    set:
+      gateway.rollingUpdate.maxUnavailable: 2
+      gateway.rollingUpdate.maxSurge: 50%
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 2
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 50%
+
   - it: runs two replicas by default
     documentSelector:
       path: kind
@@ -178,7 +208,7 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /healthz
 
-  - it: grants SandboxClaim create and Sandbox status RBAC
+  - it: grants SandboxClaim create+delete and Sandbox status RBAC
     documentSelector:
       path: kind
       value: ClusterRole
@@ -188,7 +218,7 @@ tests:
           content:
             apiGroups: ["lenny.dev"]
             resources: ["sandboxclaims"]
-            verbs: ["get", "list", "watch", "create"]
+            verbs: ["get", "list", "watch", "create", "delete"]
       - contains:
           path: rules
           content:
@@ -235,17 +265,23 @@ tests:
           path: spec.clusterIP
           value: None
 
-  - it: renders only POD_NAME env with stock values (no data-store env)
+  - it: renders POD_NAME and LENNY_MAX_SESSIONS_PER_REPLICA env with stock values (no data-store env)
     documentSelector:
       path: kind
       value: Deployment
     asserts:
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 1
+          count: 2
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
+      - equal:
+          path: spec.template.spec.containers[0].env[1].name
+          value: LENNY_MAX_SESSIONS_PER_REPLICA
+      - equal:
+          path: spec.template.spec.containers[0].env[1].value
+          value: "50"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
@@ -261,6 +297,19 @@ tests:
           content:
             name: LENNY_MINIO_ENDPOINT
           any: true
+
+  - it: renders the §4.1 maxSessionsPerReplica from the Helm value override
+    set:
+      gateway.maxSessionsPerReplica: 200
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MAX_SESSIONS_PER_REPLICA
+            value: "200"
 
   - it: wires LENNY_POSTGRES_DSN from the datastore Secret when postgres.dsn is set
     set:

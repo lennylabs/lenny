@@ -182,6 +182,69 @@ func TestSetActiveSessions(t *testing.T) {
 	}
 }
 
+// spec: §4.1 — lenny_gateway_max_sessions_per_replica is emitted at
+// startup with delivery_mode labels so the §16.5
+// GatewaySessionBudgetNearExhaustion alert has a denominator gauge.
+func TestSetMaxSessionsPerReplicaEmitsBothDeliveryModes(t *testing.T) {
+	m, _ := gatewaymetrics.New()
+	m.SetMaxSessionsPerReplica("direct", 50)
+	m.SetMaxSessionsPerReplica("proxy", 50)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_gateway_max_sessions_per_replica{delivery_mode="direct"} 50`,
+		`lenny_gateway_max_sessions_per_replica{delivery_mode="proxy"} 50`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// spec: §4.1 SCL-026 — the metrics Middleware tracks in-flight
+// requests so the HPA gauge exporter can read it through
+// InflightRequests and publish to lenny_gateway_request_queue_depth.
+func TestMiddlewareTracksInflightRequests(t *testing.T) {
+	m, _ := gatewaymetrics.New()
+	// While no handler is running, in-flight is 0.
+	if got := m.InflightRequests(); got != 0 {
+		t.Fatalf("InflightRequests() = %d at rest, want 0", got)
+	}
+	// Hold the handler so we can observe the in-flight count from
+	// outside. The handler signals when it has incremented; the test
+	// closes a channel to release it.
+	started := make(chan struct{})
+	release := make(chan struct{})
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusOK)
+	})
+	h := m.Middleware(inner, func(*http.Request) string { return "/v1/test" })
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+	}()
+	<-started
+	if got := m.InflightRequests(); got != 1 {
+		t.Fatalf("InflightRequests() = %d while handler running, want 1", got)
+	}
+	close(release)
+	<-done
+	if got := m.InflightRequests(); got != 0 {
+		t.Fatalf("InflightRequests() = %d after handler exit, want 0", got)
+	}
+}
+
 func TestRecordElicitationDropExposesCounter(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {

@@ -59,6 +59,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
@@ -309,6 +310,8 @@ func main() {
 		"§27.2 playground.bearerTtlSeconds: the TTL of MCP bearer tokens minted by POST /v1/playground/token (bounded 60..3600). Override via LENNY_PLAYGROUND_BEARER_TTL_SECONDS.")
 	playgroundGatewayHost := flag.String("playground-gateway-host", os.Getenv("LENNY_PLAYGROUND_GATEWAY_HOST"),
 		"§27.7 the public gateway host the playground UI connects to over the MCP WebSocket; interpolated into the playground connect-src CSP directive. Override via LENNY_PLAYGROUND_GATEWAY_HOST.")
+	maxSessionsPerReplica := flag.Int("max-sessions-per-replica", envInt("LENNY_MAX_SESSIONS_PER_REPLICA", 50),
+		"§4.1 gateway.maxSessionsPerReplica: per-replica capacity ceiling used as the denominator of the GatewaySessionBudgetNearExhaustion alert (§16.5) and the §17.8.2 SCL-036 burst-absorption minReplicas formula. Provisional Tier defaults: 50 (Tier 1), 200 (Tier 2), 400 (Tier 3). Emitted at startup on the lenny_gateway_max_sessions_per_replica gauge. Override via LENNY_MAX_SESSIONS_PER_REPLICA.")
 	flag.Parse()
 
 	// §12.8 clock-injection harness. Read LENNY_CLOCK_OFFSET_SECONDS
@@ -820,6 +823,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("lenny-gateway: metrics: %v", err)
 	}
+	// §4.1 / §16.1: emit the per-replica capacity ceiling as a startup-set
+	// gauge so the §16.5 GatewaySessionBudgetNearExhaustion alert can
+	// divide active sessions by it. The spec requires both delivery_mode
+	// values be reported per replica; until a separate
+	// maxSessionsPerReplicaProxyMode setting exists, both labels carry
+	// the same configured value so capacity-planning dashboards have a
+	// non-NaN value for either mode.
+	if *maxSessionsPerReplica <= 0 {
+		log.Fatalf("lenny-gateway: --max-sessions-per-replica must be > 0 (got %d) (§4.1)", *maxSessionsPerReplica)
+	}
+	gwMetrics.SetMaxSessionsPerReplica("direct", *maxSessionsPerReplica)
+	gwMetrics.SetMaxSessionsPerReplica("proxy", *maxSessionsPerReplica)
 
 	// The §11.7 per-tenant audit hash chain. With Postgres the chain is
 	// durable (auditstore); otherwise it is in-memory and lost on
@@ -1757,6 +1772,28 @@ func main() {
 		}
 	}()
 
+	// §4.1 SCL-026 HPA scale-out gauges. Polled on a 5s cadence so the
+	// custom-metrics pipeline (Prometheus Adapter / KEDA) observes
+	// back-pressure quickly enough to scale before the saturation
+	// threshold is reached. The primary trigger
+	// (lenny_gateway_request_queue_depth) is the dominant signal here;
+	// active streams and active sessions feed the secondary HPA metric
+	// and the §16.5 GatewaySessionBudgetNearExhaustion alert.
+	hpaTenantLister := tenantsLister{tenants}
+	exportHPAGauges(context.Background(), sessions, hpaTenantLister, eventBus, gwMetrics)
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchdogCtx.Done():
+				return
+			case <-ticker.C:
+				exportHPAGauges(watchdogCtx, sessions, hpaTenantLister, eventBus, gwMetrics)
+			}
+		}
+	}()
+
 	// §4.0 / §25.13: the per-replica in-process alert tracker drives the
 	// §16.5 catalog through inactive → pending → firing and emits
 	// alert_fired / alert_resolved through the shared EventEmitter. With
@@ -2128,6 +2165,66 @@ func exportStorageQuotaMetrics(ctx context.Context, tenants tenantstore.Store, c
 		}
 		m.SetStorageQuota(t.ID, used, t.StorageQuotaBytes)
 	}
+}
+
+// tenantListerForHPA is the narrow interface exportHPAGauges
+// requires. Both tenantsLister (production) and the test fake
+// staticTenantLister satisfy it.
+type tenantListerForHPA interface {
+	ListTenants(ctx context.Context) ([]string, error)
+}
+
+// exportHPAGauges refreshes the §4.1 / §16.1 horizontal-scaling
+// gauges: the primary scale-out trigger (request queue depth, the
+// in-flight HTTP request count on this replica), the secondary HPA
+// metric (active streaming connections), and the capacity-ceiling
+// numerator (non-terminal sessions tracked across tenants). Each
+// gauge is set unconditionally on every poll so a transient store
+// failure does not strand the gauge at a stale value — the next poll
+// retries. Errors are logged but never bubble: the exporter is a
+// best-effort signal and must not interrupt the watchdog loop.
+//
+// spec: §4.1 SCL-026 (HPA metric roles)
+// spec: §16.1 (gauge metric definitions)
+// spec: §16.5 GatewaySessionBudgetNearExhaustion (denominator gauge)
+func exportHPAGauges(ctx context.Context, sessions sessionstore.Store, lister tenantListerForHPA, bus *sessionevents.Bus, m *gatewaymetrics.Metrics) {
+	// Request queue depth — the §4.1 SCL-026 primary HPA scale-out
+	// trigger. The metric is the count of HTTP requests the metrics
+	// Middleware is currently servicing on this replica.
+	m.SetRequestQueueDepth(m.InflightRequests())
+
+	// Active streams — the §4.1 SCL-026 secondary HPA metric. Counts
+	// in-flight SSE subscribers on this replica's sessionevents bus.
+	if bus != nil {
+		m.SetActiveStreams(bus.ActiveSubscribers())
+	}
+
+	// Active sessions — the §16.5 GatewaySessionBudgetNearExhaustion
+	// alert numerator. Walks every tenant and counts non-terminal
+	// sessions. Production scale will replace the per-tenant list
+	// with a SessionStore.Count primitive; the per-tenant walk is
+	// adequate for current tier sizes.
+	tenants, err := lister.ListTenants(ctx)
+	if err != nil {
+		log.Printf("lenny-gateway: HPA gauge export: listing tenants failed: %v", err)
+		return
+	}
+	var active int
+	for _, tenant := range tenants {
+		rows, err := sessions.List(ctx, tenant, sessionstore.ListFilter{})
+		if err != nil {
+			if ctx.Err() == nil {
+				log.Printf("lenny-gateway: HPA gauge export: tenant %q list failed: %v", tenant, err)
+			}
+			continue
+		}
+		for _, row := range rows {
+			if !session.IsTerminal(row.State) {
+				active++
+			}
+		}
+	}
+	m.SetActiveSessions(active)
 }
 
 // exportCircuitBreakerMetrics refreshes the §16.1 circuit-breaker
