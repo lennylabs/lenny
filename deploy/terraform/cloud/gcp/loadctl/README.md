@@ -8,7 +8,27 @@ Provisions the tier-12 control plane on GCP:
 - Service account granting Pub/Sub publish on the loadgen topic and GCS object writes on the reports bucket.
 - Serverless VPC connector to the GKE cluster's network.
 
-Wave 6 cut: terraform scaffolding. The Cloud Run revision is sized for low concurrency since the WebSocket telemetry hub needs session affinity (one connection pins to one revision).
+## Inputs
+
+| Name | Type | Description |
+|:--|:--|:--|
+| `release` | string | Resource prefix. |
+| `project_id` | string | GCP project. |
+| `region` | string | Cloud Run + Cloud SQL region. |
+| `loadctl_image` | string | Artifact Registry image for `cmd/lenny-loadctl`. |
+| `loadgen_topic` | string | Pub/Sub topic the runner pool subscribes to; passed as `--queue-url`. |
+| `reports_bucket` | string | GCS bucket name for per-run reports. |
+| `vpc_connector_id` | string | Serverless VPC Access connector. |
+| `db_password` | string (sensitive) | Cloud SQL admin password. |
+| `operator_tokens` | string (sensitive) | Comma-separated operator bearer tokens. |
+| `runner_tokens` | string (sensitive) | Comma-separated runner bearer tokens. |
+| `progress_dir` | string | Optional persistent-sink URL (`gs://bucket/prefix` or `file:///…`). |
+| `run_duration` | string | Optional per-scenario duration override. |
+| `ratelimit_runs_per_min` | number | Optional cap on `POST /api/v1/runs`. 0 disables. |
+| `ratelimit_progress_per_sec` | number | Optional cap on `POST /api/v1/progress`. 0 disables. |
+| `ratelimit_ack_per_sec` | number | Optional cap on `POST /api/v1/ack`. 0 disables. |
+
+The tokens live in Secret Manager and are hydrated as env vars on the Cloud Run revision. The container `args` list is built from the configured flags.
 
 ## Outputs
 

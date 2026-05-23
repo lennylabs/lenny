@@ -28,6 +28,20 @@ variable "target_size" {
 }
 variable "runner_image" { type = string }
 variable "reports_bucket" { type = string }
+variable "loadctl_url" {
+  description = "Base URL the runner uses for ack/progress/registration callbacks."
+  type        = string
+}
+variable "runner_token" {
+  description = "Bearer token the runner sends with every loadctl callback."
+  type        = string
+  sensitive   = true
+}
+variable "report_storage_url" {
+  description = "Object-storage URL the runner uploads per-scenario k6 summaries to (gs://bucket/prefix)."
+  type        = string
+  default     = ""
+}
 variable "tags" {
   type    = map(string)
   default = {}
@@ -103,6 +117,10 @@ resource "google_compute_instance_template" "runner" {
     systemctl enable --now docker
     gcloud auth configure-docker ${var.region}-docker.pkg.dev --quiet
     docker pull "${var.runner_image}"
+    install -m 0600 /dev/null /etc/lenny-loadrunner.env
+    cat > /etc/lenny-loadrunner.env <<EOF
+LENNY_LOADRUNNER_TOKEN=${var.runner_token}
+EOF
     cat > /etc/systemd/system/lenny-loadrunner.service <<'UNIT'
 [Unit]
 Description=Lenny loadrunner agent
@@ -111,12 +129,18 @@ After=docker.service network-online.target
 Type=simple
 Restart=always
 RestartSec=5
+EnvironmentFile=/etc/lenny-loadrunner.env
 ExecStart=/usr/bin/docker run --rm --network host \
+  -e LENNY_LOADRUNNER_TOKEN \
   ${var.runner_image} \
   /usr/local/bin/lenny-loadrunner \
     --dispatcher=gcp \
     --queue-url=${google_pubsub_subscription.runner.id} \
-    --region=${var.region}
+    --region=${var.region} \
+    --loadctl-url=${var.loadctl_url} \
+    --cloud-label=gcp \
+    --capacity=1 \
+    --report-storage-url=${var.report_storage_url}
 [Install]
 WantedBy=multi-user.target
 UNIT

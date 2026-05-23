@@ -29,7 +29,7 @@
 #   LENNY_LOAD_SCALE     — small|medium|production (default small)
 #   LENNY_SCENARIOS      — comma-separated scenario list (default: tier-12 default set)
 #   LENNY_LOADCTL_URL    — override the loadctl URL discovery
-#   LENNY_OIDC_TOKEN     — bearer token for the loadctl API
+#   LENNY_LOADCTL_OPERATOR_TOKEN     — bearer token for the loadctl API
 #
 # Exit codes:
 #   0   — run completed PASS
@@ -107,8 +107,8 @@ fi
 echo "  loadctl: ${LOADCTL_URL}"
 
 # Pre-flight 5: bearer token.
-if [[ -z "${LENNY_OIDC_TOKEN:-}" ]]; then
-  echo "==[5/6] WARN: LENNY_OIDC_TOKEN not set; tier-12 API calls will be anonymous (Wave 6 will require auth)" >&2
+if [[ -z "${LENNY_LOADCTL_OPERATOR_TOKEN:-}" ]]; then
+  echo "==[5/6] WARN: LENNY_LOADCTL_OPERATOR_TOKEN not set; tier-12 API calls will be anonymous (Wave 6 will require auth)" >&2
 fi
 
 # Trigger run.
@@ -116,7 +116,7 @@ echo "==[6/6] triggering run scale=${SCALE} scenarios=${SCENARIOS}" >&2
 RUN_REQ=$(jq -n --arg scale "${SCALE}" --arg sc "${SCENARIOS}" --arg release "${LENNY_RELEASE}" \
   '{scale: $scale, scenarios: ($sc | split(",")), cluster_release: $release}')
 RUN_ID=$(curl -fsS -X POST "${LOADCTL_URL}/api/v1/runs" \
-  -H "Authorization: Bearer ${LENNY_OIDC_TOKEN:-}" \
+  -H "Authorization: Bearer ${LENNY_LOADCTL_OPERATOR_TOKEN:-}" \
   -H "Content-Type: application/json" \
   -d "${RUN_REQ}" \
   | jq -r '.id' 2>/dev/null || echo "")
@@ -128,10 +128,10 @@ echo "  run_id=${RUN_ID}"
 
 # Poll until terminal.
 while true; do
-  STATUS=$(curl -fsS "${LOADCTL_URL}/api/v1/runs/${RUN_ID}" -H "Authorization: Bearer ${LENNY_OIDC_TOKEN:-}" | jq -r '.status')
+  STATUS=$(curl -fsS "${LOADCTL_URL}/api/v1/runs/${RUN_ID}" -H "Authorization: Bearer ${LENNY_LOADCTL_OPERATOR_TOKEN:-}" | jq -r '.status')
   case "${STATUS}" in
     PASS)
-      REPORT_URL=$(curl -fsS "${LOADCTL_URL}/api/v1/runs/${RUN_ID}/report" -H "Authorization: Bearer ${LENNY_OIDC_TOKEN:-}" -o /dev/null -w '%{redirect_url}')
+      REPORT_URL=$(curl -fsS "${LOADCTL_URL}/api/v1/runs/${RUN_ID}/report" -H "Authorization: Bearer ${LENNY_LOADCTL_OPERATOR_TOKEN:-}" -o /dev/null -w '%{redirect_url}')
       echo "run-load.sh: PASS report=${REPORT_URL}"
       exit 0
       ;;

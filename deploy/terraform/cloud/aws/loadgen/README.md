@@ -22,6 +22,9 @@ Wave 5 cut: input/output shape and resource scaffolding. Wave 6 wires the real a
 | `max_size` | number | ASG maximum. Default 8. |
 | `runner_image_uri` | string | ECR URI of the `lenny-loadrunner` image. |
 | `reports_bucket` | string | S3 bucket the runners write per-runner k6 JSON to. |
+| `loadctl_url` | string | Base URL of the deployed loadctl (`https://…`); passed as `--loadctl-url`. |
+| `runner_token` | string (sensitive) | Bearer token the runner sends with every callback. Must appear in loadctl's `runner_tokens`. Injected as `LENNY_LOADRUNNER_TOKEN`. |
+| `report_storage_url` | string | Object-storage URL for per-scenario k6 summary uploads (`s3://bucket/prefix`). |
 
 ## Outputs
 

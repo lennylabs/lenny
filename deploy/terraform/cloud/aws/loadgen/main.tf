@@ -118,6 +118,12 @@ resource "aws_launch_template" "runner" {
     aws ecr get-login-password --region ${data.aws_region.current.name} \
       | docker login --username AWS --password-stdin "${split("/", var.runner_image_uri)[0]}"
     docker pull "${var.runner_image_uri}"
+    # The runner bearer token lives in a root-only env file so it is
+    # not visible in the systemd unit file or in cloud-init logs.
+    install -m 0600 /dev/null /etc/lenny-loadrunner.env
+    cat > /etc/lenny-loadrunner.env <<EOF
+LENNY_LOADRUNNER_TOKEN=${var.runner_token}
+EOF
     # systemd unit that runs lenny-loadrunner against the SQS queue.
     cat > /etc/systemd/system/lenny-loadrunner.service <<'UNIT'
 [Unit]
@@ -128,13 +134,19 @@ Wants=docker.service network-online.target
 Type=simple
 Restart=always
 RestartSec=5
+EnvironmentFile=/etc/lenny-loadrunner.env
 ExecStart=/usr/bin/docker run --rm --network host \
   -e AWS_REGION=${data.aws_region.current.name} \
+  -e LENNY_LOADRUNNER_TOKEN \
   ${var.runner_image_uri} \
   /usr/local/bin/lenny-loadrunner \
     --dispatcher=aws \
     --queue-url=${aws_sqs_queue.jobs.url} \
-    --region=${data.aws_region.current.name}
+    --region=${data.aws_region.current.name} \
+    --loadctl-url=${var.loadctl_url} \
+    --cloud-label=aws \
+    --capacity=1 \
+    --report-storage-url=${var.report_storage_url}
 [Install]
 WantedBy=multi-user.target
 UNIT

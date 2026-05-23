@@ -44,6 +44,23 @@ variable "reports_bucket" {
   type        = string
 }
 
+variable "loadctl_url" {
+  description = "Base URL the runner uses for ack/progress/registration callbacks (https://loadctl.example.com)."
+  type        = string
+}
+
+variable "runner_token" {
+  description = "Bearer token the runner sends with every loadctl callback. Must appear in loadctl's runner_tokens list."
+  type        = string
+  sensitive   = true
+}
+
+variable "report_storage_url" {
+  description = "Object-storage URL the runner uploads per-scenario k6 summaries to (s3://bucket/prefix)."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags applied to every resource."
   type        = map(string)

@@ -23,6 +23,10 @@ Wave 5 cut: input/output shape and resource scaffolding. Wave 6 wires the real a
 | `runner_image_id` | string | Compute Gallery image ID of the `lenny-loadrunner` image. |
 | `reports_container` | string | Blob Storage container the runners write per-runner k6 JSON to. |
 | `storage_account_name` | string | Blob Storage account hosting `reports_container`. |
+| `loadctl_url` | string | Base URL of the deployed loadctl; passed as `--loadctl-url`. |
+| `runner_token` | string (sensitive) | Bearer token the runner sends with every callback. Must appear in loadctl's `runner_tokens`. Injected as `LENNY_LOADRUNNER_TOKEN`. |
+| `report_storage_url` | string | Object-storage URL for per-scenario k6 summary uploads (`azureblob://<account>/<container>/<prefix>`). |
+| `admin_ssh_public_key` | string | ssh-rsa public key authorized for the runner VMs. Operators MUST set this in tfvars. |
 
 ## Outputs
 
@@ -32,3 +36,5 @@ Wave 5 cut: input/output shape and resource scaffolding. Wave 6 wires the real a
 | `servicebus_namespace_name` | Service Bus namespace; used by the loadctl module. |
 | `runner_identity_id` | Managed identity ID assigned to the VMSS. |
 | `vmss_name` | VMSS name; used by `down-loadgen.sh` to scale to zero. |
+| `servicebus_queue_id` | Queue resource ID; loadctl module needs it to grant Data Sender. |
+| `servicebus_queue_url` | Queue URL the loadctl `--queue-url` flag accepts. |
