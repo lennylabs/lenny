@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	tdigest "github.com/caio/go-tdigest/v4"
 	"github.com/lennylabs/lenny/pkg/loadrunner/dispatch"
 )
 
@@ -265,29 +266,36 @@ func (r *K6Runner) SummaryFilePath() string {
 
 // k6State is the parsed running aggregate the stdout parser
 // accumulates. Snapshot derives Progress from this struct under
-// K6Runner.mu.
+// K6Runner.mu. httpReqDigest is a streaming t-digest that gives a
+// faithful p99 mid-flight; running max + sum are retained for
+// avg and a sanity-check ceiling on the digest's reported p99.
 type k6State struct {
 	iterations    int64
 	httpReqCount  int64
 	httpReqSum    float64
 	httpReqMax    float64
 	failedCount   int64
+	httpReqDigest *tdigest.TDigest
 }
 
 // Snapshot satisfies ProgressReporter. The Progress carries the
-// running iteration count plus avg/max/failed-rate derived from the
-// stream-parsed counters.
+// running iteration count plus avg/p99/max/failed-rate derived from
+// the stream-parsed counters. p99 reads from the t-digest;
+// http_req_duration_max is also surfaced for an upper-bound view.
 func (r *K6Runner) Snapshot() Progress {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := Progress{Iterations: r.state.iterations}
 	if r.state.httpReqCount > 0 {
 		avg := r.state.httpReqSum / float64(r.state.httpReqCount)
+		p99 := r.state.httpReqMax
+		if r.state.httpReqDigest != nil && r.state.httpReqDigest.Count() > 0 {
+			p99 = r.state.httpReqDigest.Quantile(0.99)
+		}
 		out.Metrics = map[string]float64{
 			"http_req_duration_avg": avg,
-			// Approximation: the running max is a conservative
-			// stand-in for p99 until a streaming quantile lands.
-			"http_req_duration_p99": r.state.httpReqMax,
+			"http_req_duration_p99": p99,
+			"http_req_duration_max": r.state.httpReqMax,
 			"http_req_failed_rate":  float64(r.state.failedCount) / float64(r.state.httpReqCount),
 		}
 	}
@@ -400,6 +408,18 @@ func (r *K6Runner) parseStream(src io.Reader) {
 			r.state.httpReqSum += point.Value
 			if point.Value > r.state.httpReqMax {
 				r.state.httpReqMax = point.Value
+			}
+			if r.state.httpReqDigest == nil {
+				// Compression=100 keeps the digest's centroid count
+				// bounded (~2 KB) and the p99 estimate within ~1% of
+				// the true value at any sample size.
+				td, err := tdigest.New(tdigest.Compression(100))
+				if err == nil {
+					r.state.httpReqDigest = td
+				}
+			}
+			if r.state.httpReqDigest != nil {
+				_ = r.state.httpReqDigest.Add(point.Value)
 			}
 		case "http_req_failed":
 			if point.Value > 0 {

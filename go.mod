@@ -23,6 +23,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.7
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.27
+	github.com/caio/go-tdigest/v4 v4.1.0
 	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0

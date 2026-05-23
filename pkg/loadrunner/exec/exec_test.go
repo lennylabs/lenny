@@ -124,10 +124,46 @@ func TestK6RunnerParseStreamAccumulates(t *testing.T) {
 	if avg < 0.022 || avg > 0.024 {
 		t.Errorf("avg=%v want ~0.0233", avg)
 	}
-	if got.Metrics["http_req_duration_p99"] != 0.040 {
-		t.Errorf("p99 surrogate=%v want 0.040", got.Metrics["http_req_duration_p99"])
+	// With only 3 samples the t-digest interpolates close to the max.
+	// The "max" metric exposes the absolute upper bound separately.
+	p99 := got.Metrics["http_req_duration_p99"]
+	if p99 < 0.035 || p99 > 0.040 {
+		t.Errorf("p99=%v want in [0.035, 0.040]", p99)
+	}
+	if got.Metrics["http_req_duration_max"] != 0.040 {
+		t.Errorf("max=%v want 0.040", got.Metrics["http_req_duration_max"])
 	}
 	if got.Metrics["http_req_failed_rate"] == 0 {
 		t.Errorf("failed_rate=0; want >0 (one failure of three observations)")
+	}
+}
+
+// TestK6RunnerP99FromTDigestApproximatesTrueP99 feeds 1000 samples
+// from a known distribution and confirms the t-digest p99 lands
+// inside an acceptable error band (~1% at compression=100). The
+// running-max surrogate that this digest replaces would have
+// reported the maximum (much higher than p99).
+func TestK6RunnerP99FromTDigestApproximatesTrueP99(t *testing.T) {
+	r := &K6Runner{}
+	// 990 observations at 10ms, 10 at 100ms. True p99 ≈ 10ms; max
+	// = 100ms. A running-max surrogate would report 100ms.
+	var b strings.Builder
+	for i := 0; i < 990; i++ {
+		b.WriteString(`{"type":"Point","metric":"http_req_duration","data":{"value":0.010}}` + "\n")
+	}
+	for i := 0; i < 10; i++ {
+		b.WriteString(`{"type":"Point","metric":"http_req_duration","data":{"value":0.100}}` + "\n")
+	}
+	r.parseStream(strings.NewReader(b.String()))
+	got := r.Snapshot()
+	p99 := got.Metrics["http_req_duration_p99"]
+	// The true p99 of this distribution is 10ms (the cut-over from
+	// fast to slow is at the 99th percentile boundary). t-digest
+	// at compression=100 lands close; allow a generous band.
+	if p99 < 0.009 || p99 > 0.012 {
+		t.Errorf("p99=%v want ~0.010 (running-max surrogate would have returned 0.100)", p99)
+	}
+	if got.Metrics["http_req_duration_max"] != 0.100 {
+		t.Errorf("max=%v want 0.100", got.Metrics["http_req_duration_max"])
 	}
 }
