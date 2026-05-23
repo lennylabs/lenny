@@ -172,12 +172,41 @@ minio:
   bucket: ""
   useSSL: false
 
-# kms configures the external KMS endpoint the Token Service calls.
+# kms configures the §4 envelope-encryption KEK provider for both the
+# gateway and the Token Service. The gateway wraps §4.9 connector
+# credentials; the Token Service wraps its signing key. spec: §4 /
+# §17.5 / F-4.3.11 / F-10.2.11 / F-17.5.2.
 kms:
+  # provider selects the §4 KEK adapter: local | aws | gcp | azure.
+  # `local` uses the in-process random KEK (dev only; rejected when
+  # environment=prod). `aws`, `gcp`, and `azure` wrap DEKs through
+  # the named cloud KMS. The chart renders the value into the
+  # --kms-provider flag on both lenny-gateway and lenny-token-service.
+  provider: "local"
+  # awsRegion is the AWS region for provider=aws. Empty falls back
+  # to the AWS SDK default chain (AWS_REGION).
+  awsRegion: ""
+  # azureVaultURL is the Azure Key Vault URL for provider=azure
+  # (https://<vault>.vault.azure.net).
+  azureVaultURL: ""
+  # aliases is the comma-separated alias=key mapping the §4 KEK
+  # aliases map onto. AWS: alias=<key-id|ARN|alias/name>. GCP:
+  # alias=<full CryptoKey resource>. Azure: alias=<keyName>@<version>.
+  # The chart renders the value into --kms-alias on both binaries.
+  # Example: platform:token-service-signing=alias/lenny/token-service,
+  # tenant:acme=alias/lenny/tenant-acme.
+  aliases: ""
   # endpointCIDR is the destination CIDR for the KMS HTTPS endpoint
   # (§13.2). Operators should tighten this to the provider's range;
   # the broad default is bounded by the per-port (443) egress rule.
   endpointCIDR: "0.0.0.0/0"
+
+# environment names the deployment posture (dev | staging | prod).
+# Production refuses to start with kms.provider=local because the
+# in-process random KEK cannot survive a restart. spec: F-4.3.11 /
+# F-17.5.2. The chart renders the value into --environment on both
+# binaries.
+environment: "dev"
 
 # monitoring identifies the Prometheus monitoring namespace whose
 # scrape requests the §13.2 metrics-scrape NetworkPolicies admit, and

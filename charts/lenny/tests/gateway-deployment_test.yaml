@@ -193,6 +193,35 @@ tests:
     release:
       namespace: NAMESPACE
 
+  # spec: F-4.3.12 / §4.3 line 193 — the gateway reverse-proxies
+  # /v1/oauth/* to the Token Service HTTP listener so the §13.3
+  # canonical endpoint is served by the actual minter.
+  - it: wires the §4.3 canonical token endpoint to lenny-token-service over HTTP
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --token-service-http-url=http://lenny-token-service.NAMESPACE.svc:8081
+    release:
+      namespace: NAMESPACE
+
+  # spec: F-4.3.11 — the gateway receives its KMS provider selector
+  # from kms.provider so cloud installs can swap the in-process random
+  # KEK for an AWS/GCP/Azure KEK behind the same kms.Provider seam.
+  - it: renders the §4 / §17.5 KMS provider flags
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-provider=local
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --environment=dev
+
   - it: omits the LLM proxy listener when the feature flag is off
     documentSelector:
       path: kind

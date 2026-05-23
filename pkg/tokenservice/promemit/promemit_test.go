@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT
+
+package promemit
+
+import (
+	"io"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+// spec: §16.1 — the Token Service registers the four declared metric
+// vectors and surfaces them on /metrics. The catalog test in
+// pkg/observability/metrics already proves the names are registered;
+// here we prove the binary's metrics handler renders the catalog when
+// the emitter records a sample.
+func TestEmitterRegistersAndServesCatalog(t *testing.T) {
+	emitter, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	emitter.RecordRequestDuration("exchange", 50*time.Millisecond)
+	emitter.IncErrors("exchange", "invalid_grant")
+	emitter.IncRateLimited("caller_per_second")
+	emitter.IncRateLimitedSampled("caller_per_second")
+	emitter.IncSecretReload("success")
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	w := httptest.NewRecorder()
+	emitter.Handler().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("metrics handler status=%d, want 200", w.Code)
+	}
+	body, _ := io.ReadAll(w.Body)
+	bodyStr := string(body)
+	mustContain := []string{
+		"lenny_token_service_request_duration_seconds",
+		"lenny_token_service_errors_total",
+		"lenny_token_service_secret_reloads_total",
+		"lenny_oauth_token_rate_limited_total",
+		"lenny_oauth_token_rate_limited_sampled_total",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(bodyStr, want) {
+			t.Errorf("metrics body missing %q", want)
+		}
+	}
+}

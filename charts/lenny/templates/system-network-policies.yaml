@@ -162,6 +162,12 @@ spec:
       ports:
         - port: {{ .Values.tokenService.grpcPort }}
           protocol: TCP
+        # §4.3 canonical token endpoint (F-4.3.12). The gateway
+        # reverse-proxies /v1/oauth/* to the Token Service's HTTP
+        # listener, so the NetworkPolicy must admit the HTTP port
+        # alongside the gRPC port.
+        - port: {{ .Values.tokenService.httpPort }}
+          protocol: TCP
   egress:
     - to:
         - podSelector:

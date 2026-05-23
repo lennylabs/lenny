@@ -63,7 +63,22 @@ spec:
           args:
             - --addr=:{{ .Values.tokenService.httpPort }}
             - --grpc-addr=:{{ .Values.tokenService.grpcPort }}
+            - --metrics-addr=:{{ .Values.tokenService.metricsPort }}
             - --issuer={{ .Values.tokenService.issuer }}
+            # §4 KMS provider (F-4.3.11 / F-17.5.2). `local` is the
+            # dev default; cloud installs set kms.provider to
+            # aws | gcp | azure and supply the matching aliases.
+            - --kms-provider={{ .Values.kms.provider }}
+            - --environment={{ .Values.environment }}
+            {{- with .Values.kms.aliases }}
+            - --kms-alias={{ . }}
+            {{- end }}
+            {{- with .Values.kms.awsRegion }}
+            - --kms-aws-region={{ . }}
+            {{- end }}
+            {{- with .Values.kms.azureVaultURL }}
+            - --kms-azure-vault-url={{ . }}
+            {{- end }}
             {{- if .Values.mtls.enabled }}
             # §4.3 / §10.3 mTLS server material. The gRPC listener
             # requires every client (gateway replica) to present a
@@ -81,6 +96,8 @@ spec:
               containerPort: {{ .Values.tokenService.grpcPort }}
             - name: http-token
               containerPort: {{ .Values.tokenService.httpPort }}
+            - name: metrics
+              containerPort: {{ .Values.tokenService.metricsPort }}
           {{- if .Values.mtls.enabled }}
           volumeMounts:
             - name: lenny-token-service-tls
@@ -130,9 +147,12 @@ spec:
     - name: grpc
       port: {{ .Values.tokenService.grpcPort }}
       targetPort: grpc
+    - name: http-token
+      port: {{ .Values.tokenService.httpPort }}
+      targetPort: http-token
     - name: metrics
       port: {{ .Values.tokenService.metricsPort }}
-      targetPort: grpc
+      targetPort: metrics
 ---
 # PodDisruptionBudget for the lenny-token-service. The §4.3 trust
 # boundary requires the gateway to reach the Token Service for every

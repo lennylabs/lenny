@@ -230,6 +230,23 @@ spec:
             # credential lease through lenny-token-service over mTLS;
             # the in-process MintLease path is reserved for dev mode.
             - --token-service-grpc-addr=lenny-token-service.{{ .Release.Namespace }}.svc:{{ .Values.tokenService.grpcPort }}
+            # §4.3 canonical token endpoint (F-4.3.12). The gateway
+            # reverse-proxies /v1/oauth/* to the Token Service's HTTP
+            # listener so the Token Service is the sole minter.
+            - --token-service-http-url=http://lenny-token-service.{{ .Release.Namespace }}.svc:{{ .Values.tokenService.httpPort }}
+            # §4 KMS provider (F-4.3.11). The gateway wraps the §4.9
+            # connector-credential DEKs through this provider.
+            - --kms-provider={{ .Values.kms.provider }}
+            - --environment={{ .Values.environment }}
+            {{- with .Values.kms.aliases }}
+            - --kms-alias={{ . }}
+            {{- end }}
+            {{- with .Values.kms.awsRegion }}
+            - --kms-aws-region={{ . }}
+            {{- end }}
+            {{- with .Values.kms.azureVaultURL }}
+            - --kms-azure-vault-url={{ . }}
+            {{- end }}
             {{- if .Values.mtls.enabled }}
             # §4.3 line 195 / §10.3 mTLS client material. The gateway
             # presents the lenny-gateway-tls cert to the Token Service

@@ -4,16 +4,19 @@
 // two surfaces:
 //
 //   - HTTP `POST /v1/oauth/token` (RFC 8693 token exchange) for the
-//     external dialect-issuing path.
+//     external dialect-issuing path. The gateway reverse-proxies
+//     `/v1/oauth/*` here so the Token Service is the actual minter
+//     for every Lenny bearer token.
 //   - gRPC `lenny.tokenservice.v1.TokenService` for the §4.3 / §12.2.4
 //     credential-assignment trust boundary the gateway calls over mTLS
 //     to materialize, rotate, and revoke credential leases.
 //
 // Both surfaces sign with the §4 KMS-envelope-backed signer: the HMAC-
 // SHA256 signing key is sealed under a KMS key-encryption-key rather
-// than being a plaintext per-process secret. The in-process kms.Local
-// provider is the no-cloud development KEK; a cloud deployment swaps
-// in an AWS/GCP/Azure provider behind the same kms.Provider interface.
+// than being a plaintext per-process secret. The KMS provider is
+// pluggable: --kms-provider selects local | aws | gcp | azure; local
+// is the no-cloud development KEK and is rejected when
+// --environment=prod.
 package main
 
 import (
@@ -28,29 +31,46 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
+	"github.com/lennylabs/lenny/pkg/tokenservice/promemit"
+	pkgaudit "github.com/lennylabs/lenny/pkg/audit"
 )
 
 func main() {
 	addr := flag.String("addr", ":8081", "address to bind for the HTTP token-exchange surface (host:port)")
 	grpcAddr := flag.String("grpc-addr", "",
 		"address to bind for the §4.3 gRPC TokenService surface (host:port). Empty disables the gRPC listener.")
-	issuer := flag.String("issuer", "https://lenny.dev.local/token", "iss claim stamped on issued tokens")
+	metricsAddr := flag.String("metrics-addr", "",
+		"address to bind for the §16.1 Prometheus metrics surface (host:port). Empty disables the metrics listener. The chart renders :9090 to match tokenService.metricsPort.")
+	issuer := flag.String("issuer", "https://lenny.dev.local/token",
+		"iss claim stamped on issued tokens. Override via LENNY_TOKEN_ISSUER.")
+	if envIssuer := os.Getenv("LENNY_TOKEN_ISSUER"); envIssuer != "" {
+		*issuer = envIssuer
+	}
+	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
+		"Postgres connection string. When set, the §13.3 write-before-issue path persists issued-token metadata to the issued_tokens table and writes `token.exchanged` audit rows to audit_log under the §11.7 per-tenant advisory lock. When empty, the Token Service runs without durable issued-token or audit state (dev mode).")
 	redisURL := flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
 		"Redis connection URL for the §25.5 operational event stream. When set, the Token "+
 			"Service's EventEmitter writes to ops:events:stream alongside the gateway and the "+
@@ -58,6 +78,16 @@ func main() {
 			"LENNY_REDIS_URL.")
 	redisPassword := flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
 		"Redis AUTH password. Override via LENNY_REDIS_PASSWORD.")
+	// §13.3 line 607 rate limits on POST /v1/oauth/token. The
+	// defaults transcribe the §13.3 line 607 normative limits.
+	rlCallerPerSec := flag.Int("oauth-rate-limit-caller-per-second", envInt("LENNY_OAUTH_RL_CALLER_PER_SECOND", 10),
+		"§13.3 line 607 per-(tenant_id, sub) per-second cap on /v1/oauth/token. Zero disables the tier.")
+	rlCallerPerMin := flag.Int("oauth-rate-limit-caller-per-minute", envInt("LENNY_OAUTH_RL_CALLER_PER_MINUTE", 300),
+		"§13.3 line 607 per-(tenant_id, sub) per-minute cap on /v1/oauth/token. Zero disables the tier.")
+	rlTenantPerSec := flag.Int("oauth-rate-limit-tenant-per-second", envInt("LENNY_OAUTH_RL_TENANT_PER_SECOND", 100),
+		"§13.3 line 607 per-tenant per-second cap on /v1/oauth/token. Zero disables the tier.")
+	rlSampleWindow := flag.Duration("oauth-rate-limit-sample-window", envDuration("LENNY_OAUTH_RL_SAMPLE_WINDOW", 10*time.Second),
+		"§13.3 line 611 rolling-window for sampled audit emission on rate-limited requests (one audit row per (tenant_id, sub, limit_tier) per window per replica).")
 	// §4.3 / §10.3 mTLS material. The Token Service requires the
 	// gateway to present a client certificate signed by the same CA
 	// the chart's mtls-pki.yaml mints. spec: §4.3 line 195 "Gateway
@@ -69,19 +99,77 @@ func main() {
 		"path to the private key for --tls-cert.")
 	tlsCA := flag.String("tls-ca", os.Getenv("LENNY_TOKEN_SERVICE_CA"),
 		"path to the CA bundle that verifies gateway client certificates on the §4.3 / §10.3 mTLS gRPC link. Required when --tls-cert is set; the Token Service uses tls.RequireAndVerifyClientCert.")
+	// §4 / §17.5 KMS provider selector. The cloud adapters
+	// (pkg/kms/{aws,gcp,azure}) reach the binary through these flags;
+	// the chart renders tokenService.kms.* into them.
+	kmsOpts, kmsFinalize := providerflags.Bind(flag.CommandLine, os.Getenv, providerflags.Options{
+		Provider: providerflags.ProviderLocal,
+	})
 	flag.Parse()
+	if err := kmsFinalize(); err != nil {
+		log.Fatalf("lenny-token-service: %v", err)
+	}
 
-	// §4 KMS provider. The in-process kms.Local provider is the
-	// no-cloud development KEK; the signing key it wraps is sealed
-	// under a KMS KEK, so no plaintext signing key is persisted.
-	kmsProvider, err := kms.NewLocalRandom()
+	// §4 / §17.5 KMS provider. The in-process kms.Local provider is
+	// the no-cloud development KEK; cloud deployments swap in an
+	// AWS/GCP/Azure provider behind the same kms.Provider interface
+	// by setting --kms-provider. spec: F-4.3.11 / F-17.5.2.
+	ctx := context.Background()
+	kmsProvider, err := providerflags.Resolve(ctx, *kmsOpts)
 	if err != nil {
 		log.Fatalf("lenny-token-service: kms provider: %v", err)
 	}
-	signer, err := jwt.NewKMSSigner(context.Background(), kmsProvider, jwt.TokenServiceKEKAlias, "dev-1")
+	log.Printf("lenny-token-service: §4 KMS provider = %s (environment=%s)",
+		kmsOpts.Provider, kmsOpts.Environment)
+	signer, err := jwt.NewKMSSigner(ctx, kmsProvider, jwt.TokenServiceKEKAlias, "dev-1")
 	if err != nil {
 		log.Fatalf("lenny-token-service: kms-backed signer: %v", err)
 	}
+
+	// §16.1 Prometheus metric vectors. The §16.5
+	// TokenServiceUnavailable alert reads
+	// lenny_token_service_circuit_state from the gateway-side breaker
+	// (set in cmd/lenny-gateway/main.go); the metrics emitted here are
+	// the §16.1 request_duration, errors, secret_reloads, and the
+	// §13.3 rate-limit counters.
+	metricsEmitter, err := promemit.New()
+	if err != nil {
+		log.Fatalf("lenny-token-service: metrics emitter: %v", err)
+	}
+
+	// §13.3 line 589 durable write-before-issue state. With Postgres
+	// wired, every minted token is recorded in issued_tokens and
+	// every accepted/rejected exchange writes a token.exchanged audit
+	// row in the same transaction under the §11.7 advisory lock. With
+	// no Postgres, the Token Service runs without durable issued-
+	// token or audit state.
+	var (
+		pgPool       *pgxpool.Pool
+		issuedTokens tokenservice.IssuedTokenStore
+		auditor      tokenservice.Auditor
+	)
+	if *postgresDSN != "" {
+		pool, err := pgxpool.New(ctx, *postgresDSN)
+		if err != nil {
+			log.Fatalf("lenny-token-service: postgres: %v", err)
+		}
+		pgPool = pool
+		defer pool.Close()
+		// Postgres-backed issuedtokenstore.Store also satisfies
+		// IssuedTokenAuditStore, so the handler uses the combined
+		// write-before-issue tx. The in-memory auditor is wired
+		// alongside to cover the rate-limit and revocation paths.
+		issuedTokens = issuedtokenstore.New(pool)
+		auditor = auditstore.New(pool)
+	} else {
+		// Dev path: keep an in-memory chain so the rate-limit /
+		// revocation audit emits still produce rows (lost on restart).
+		// The /v1/oauth/token success path falls through to
+		// IssuedTokenStore.Record + Auditor.Append (no Postgres tx).
+		chains := audit.NewChainSet()
+		auditor = policy.NewChainSetAppender(chains, nil)
+	}
+	_ = pgPool
 
 	srv := tokenservice.NewServer(tokenservice.Options{
 		Signer: signer,
@@ -90,6 +178,15 @@ func main() {
 			"lenny-gateway": 24 * time.Hour,
 			"lenny-ops":     1 * time.Hour,
 			"llm-proxy":     1 * time.Hour,
+		},
+		IssuedTokens: issuedTokens,
+		Auditor:      auditor,
+		Metrics:      metricsEmitter,
+		RateLimit: tokenservice.RateLimitOptions{
+			CallerPerSecond: *rlCallerPerSec,
+			CallerPerMinute: *rlCallerPerMin,
+			TenantPerSecond: *rlTenantPerSec,
+			SampleWindow:    *rlSampleWindow,
 		},
 	})
 
@@ -149,6 +246,21 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// §16.1 metrics endpoint. The chart's
+	// allow-token-service-metrics-scrape NetworkPolicy admits the
+	// monitoring namespace on tokenService.metricsPort; the binary
+	// binds the metrics listener on --metrics-addr.
+	var metricsSrv *http.Server
+	if *metricsAddr != "" {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", metricsEmitter.Handler())
+		metricsSrv = &http.Server{
+			Addr:              *metricsAddr,
+			Handler:           metricsMux,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+	}
+
 	// §4.3 / §12.2.4 gRPC TokenService surface. The credential-
 	// assignment service is the same in-process credassign.Service
 	// pool-selection + lease-minting logic the gateway runs today;
@@ -165,6 +277,13 @@ func main() {
 	cache := credcache.New()
 	assignSvc := credassign.New(leases, cache)
 	tsGRPC := tokenservice.NewGRPCServer(assignSvc, leases)
+	tsGRPC.SetAuditor(auditor)
+	tsGRPC.SetMetrics(metricsEmitter)
+	// Sanity reference to pkgaudit so the import is used; the
+	// IssuedTokenAuditStore implementation in
+	// pkg/gateway/issuedtokenstore returns audit.Row values that the
+	// token service handler reads through this type.
+	_ = pkgaudit.Row{}
 
 	var grpcSrv *grpc.Server
 	if *grpcAddr != "" {
@@ -197,6 +316,14 @@ func main() {
 			log.Fatalf("listen http: %v", err)
 		}
 	}()
+	if metricsSrv != nil {
+		go func() {
+			log.Printf("lenny-token-service: §16.1 metrics listening on %s", *metricsAddr)
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("listen metrics: %v", err)
+			}
+		}()
+	}
 	if grpcSrv != nil {
 		lis, err := net.Listen("tcp", *grpcAddr)
 		if err != nil {
@@ -210,12 +337,44 @@ func main() {
 		}()
 	}
 	<-stop
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = httpSrv.Shutdown(ctx)
+	_ = httpSrv.Shutdown(shutdownCtx)
+	if metricsSrv != nil {
+		_ = metricsSrv.Shutdown(shutdownCtx)
+	}
 	if grpcSrv != nil {
 		grpcSrv.GracefulStop()
 	}
+}
+
+// envInt resolves an int from the named env var, falling back to def
+// when unset or unparseable.
+func envInt(name string, def int) int {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	var out int
+	_, err := fmt.Sscan(v, &out)
+	if err != nil {
+		return def
+	}
+	return out
+}
+
+// envDuration resolves a time.Duration from the named env var,
+// falling back to def when unset or unparseable.
+func envDuration(name string, def time.Duration) time.Duration {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+	return d
 }
 
 // tokenServiceCreds builds the §4.3 / §10.3 mTLS server credentials.
@@ -249,3 +408,11 @@ func tokenServiceCreds(certPath, keyPath, caPath string) (credentials.TransportC
 		MinVersion:   tls.VersionTLS13,
 	}), nil
 }
+
+// kms.Provider is implicitly referenced through the providerflags
+// package; keep the import live for code-search clarity.
+var _ kms.Provider = (*kms.Local)(nil)
+
+// Avoid unused-import error for strings (we may use it in future log
+// formatting).
+var _ = strings.TrimSpace

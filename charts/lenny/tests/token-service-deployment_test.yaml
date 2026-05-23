@@ -101,7 +101,7 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.tcpSocket.port
           value: grpc
 
-  - it: renders the lenny-token-service Service with gRPC and metrics ports
+  - it: renders the lenny-token-service Service with gRPC, http-token, and metrics ports
     documentSelector:
       path: kind
       value: Service
@@ -118,9 +118,71 @@ tests:
       - contains:
           path: spec.ports
           content:
+            name: http-token
+            port: 8081
+            targetPort: http-token
+      - contains:
+          path: spec.ports
+          content:
             name: metrics
             port: 9090
-            targetPort: grpc
+            targetPort: metrics
+
+  # spec: F-4.3.10 / §16.1 — the Token Service binds the Prometheus
+  # metrics listener on the configured tokenService.metricsPort so the
+  # §16.1 catalog (lenny_token_service_*, lenny_oauth_token_*) is
+  # scrapable. Without --metrics-addr the binary serves no /metrics.
+  - it: binds the §16.1 metrics listener on tokenService.metricsPort
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --metrics-addr=:9090
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 9090
+
+  # spec: F-4.3.11 / F-17.5.2 — the Token Service receives its KMS
+  # provider selector from kms.provider, defaulting to local for the
+  # dev install. environment carries the production-rejection gate.
+  - it: renders the §4 / §17.5 KMS provider flags
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-provider=local
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --environment=dev
+
+  - it: surfaces cloud KMS configuration when kms.provider != local
+    set:
+      kms.provider: aws
+      kms.awsRegion: us-east-1
+      kms.aliases: "platform:token-service-signing=alias/lenny/token-service"
+      environment: prod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-provider=aws
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-aws-region=us-east-1
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-alias=platform:token-service-signing=alias/lenny/token-service
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --environment=prod
 
   - it: protects the token-service with a PodDisruptionBudget
     documentSelector:

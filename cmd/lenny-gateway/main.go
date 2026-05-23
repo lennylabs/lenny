@@ -185,14 +185,14 @@ import (
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/idempotency"
-	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	"github.com/lennylabs/lenny/pkg/tokenservice"
+	"github.com/lennylabs/lenny/pkg/tokensvcproxy"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -258,6 +258,8 @@ func main() {
 		"path to the CA bundle that verifies a pod adapter's server certificate on the §4.7 mTLS link.")
 	tokenServiceAddr := flag.String("token-service-grpc-addr", os.Getenv("LENNY_TOKEN_SERVICE_GRPC_ADDR"),
 		"§4.3 lenny-token-service gRPC address (host:port). When set, the gateway materializes every §4.9 credential lease over mTLS against the Token Service instead of running pkg/credential.MintLease in-process, enforcing the §4.3 'gateway has no KMS decrypt rights' boundary. Empty falls back to the in-process credassign.Service for dev mode and self-contained tests.")
+	tokenServiceHTTPURL := flag.String("token-service-http-url", os.Getenv("LENNY_TOKEN_SERVICE_HTTP_URL"),
+		"§4.3 lenny-token-service HTTP token-exchange URL (scheme://host:port). When set, the gateway reverse-proxies /v1/oauth/* to the Token Service so the §13.3 canonical endpoint is served by the actual minter. Empty disables the /v1/oauth/ surface on the gateway entirely; deployments that wire a Token Service binary MUST set this to keep /v1/oauth/token reachable.")
 	tokenServiceCert := flag.String("token-service-tls-cert", os.Getenv("LENNY_TOKEN_SERVICE_TLS_CERT"),
 		"path to the gateway's client certificate for the §4.3 mTLS link to lenny-token-service. Empty dials the Token Service in plaintext (dev mode only).")
 	tokenServiceKey := flag.String("token-service-tls-key", os.Getenv("LENNY_TOKEN_SERVICE_TLS_KEY"),
@@ -337,7 +339,15 @@ func main() {
 	// the lenny.allow_all_sentinel session GUC.
 	poolerMode := flag.String("pooler-mode", envOr("LENNY_POOLER_MODE", "transactional"),
 		"§4.2 deployment posture for the Postgres pooler. `transactional` is the chart-managed in-cluster default; `external` names an out-of-process / managed pooler (RDS Proxy, Cloud SQL Auth Proxy with pgBouncer, etc.). The value is logged at startup; the underlying __all__ sentinel guard is enforced by the lenny_tenant_guard trigger via the lenny.allow_all_sentinel GUC.")
+	// §4 / §17.5 KMS provider selector. The cloud adapters
+	// (pkg/kms/{aws,gcp,azure}) reach the gateway through these
+	// flags. spec: F-4.3.11 / F-10.2.11 / F-17.5.2.
+	kmsOpts, kmsFinalize := providerflags.Bind(flag.CommandLine, os.Getenv,
+		providerflags.Options{Provider: providerflags.ProviderLocal})
 	flag.Parse()
+	if err := kmsFinalize(); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 
 	// §12.8 clock-injection harness. Read LENNY_CLOCK_OFFSET_SECONDS
 	// once at startup so the gateway and every clock-using subsystem
@@ -586,15 +596,18 @@ func main() {
 	uploadVerifier := uploadtoken.NewVerifier(ring, uploadTracker, nil)
 
 	// ----- §4 KMS provider -----
-	// The §4 / §12.9 envelope-encryption KEK seam. The minimal gateway
-	// uses the in-process kms.Local provider seeded from crypto/rand;
-	// a cloud deployment swaps in an AWS/GCP/Azure KEM provider behind
-	// the same kms.Provider interface. The provider wraps the Token
-	// Service signing key and the per-tenant credential-secret DEKs.
-	kmsProvider, err := kms.NewLocalRandom()
+	// The §4 / §12.9 envelope-encryption KEK seam. The gateway wraps
+	// the §4.9 connector-credential DEKs through this provider; the
+	// signing-key concern moved to the Token Service binary in
+	// F-4.3.12. --kms-provider selects local | aws | gcp | azure;
+	// `local` is rejected when --environment=prod.
+	// spec: F-4.3.11, F-10.2.11, F-17.5.2.
+	kmsProvider, err := providerflags.Resolve(context.Background(), *kmsOpts)
 	if err != nil {
 		log.Fatalf("lenny-gateway: kms provider: %v", err)
 	}
+	log.Printf("lenny-gateway: §4 KMS provider = %s (environment=%s)",
+		kmsOpts.Provider, kmsOpts.Environment)
 
 	// ----- §13.3 Token Service -----
 	// §4 KMS-envelope-backed JWT signer: the HMAC-SHA256 signing key is
@@ -640,23 +653,12 @@ func main() {
 		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s)",
 			*bearerTrustHMACKeyFile, trusted.KeyID())
 	}
-	// With Postgres the §13.3 write-before-issue record is durable in
-	// the issued_tokens table; otherwise the Token Service keeps only
-	// its in-memory jti set.
-	var issuedTokens tokenservice.IssuedTokenStore
-	if pgPool != nil {
-		issuedTokens = issuedtokenstore.New(pgPool)
-	}
-	tokSvc := tokenservice.NewServer(tokenservice.Options{
-		Signer: jwtSigner,
-		Issuer: "https://lenny.dev.local/token",
-		PerDialectCap: map[string]time.Duration{
-			"lenny-gateway": 24 * time.Hour,
-			"lenny-ops":     1 * time.Hour,
-			"llm-proxy":     1 * time.Hour,
-		},
-		IssuedTokens: issuedTokens,
-	})
+	// §13.3 canonical surface: the gateway does NOT mint tokens
+	// in-process. The /v1/oauth/* HTTP path is reverse-proxied to
+	// lenny-token-service per --token-service-http-url, so the
+	// Token Service is the only component holding the signing key
+	// and the only component writing token.exchanged audit rows.
+	// spec: §4.3 line 193 "Canonical token endpoint" / F-4.3.12.
 
 	// ----- Session API + Executor -----
 	// Default: the in-process echo executor. With --runtime-bin, the
@@ -1479,7 +1481,20 @@ func main() {
 	mux.Handle("/v1/admin/health/", healthHandler)
 	mux.Handle("/openapi.yaml", openapi.Handler())
 	mux.Handle("/v1/openapi.json", openapi.Handler())
-	mux.Handle("/v1/oauth/", tokSvc.Handler())
+	// §4.3 line 193 canonical token endpoint. The gateway reverse-
+	// proxies /v1/oauth/* to lenny-token-service so the Token Service
+	// is the actual minter for every Lenny bearer token. When the
+	// flag is empty (dev path without a Token Service binary), the
+	// /v1/oauth surface is unmounted; callers receive 404 from the
+	// gateway. spec: F-4.3.12.
+	if *tokenServiceHTTPURL != "" {
+		proxy, err := tokensvcproxy.New(*tokenServiceHTTPURL)
+		if err != nil {
+			log.Fatalf("lenny-gateway: §4.3 token-service reverse proxy: %v", err)
+		}
+		mux.Handle("/v1/oauth/", proxy.Handler())
+		log.Printf("lenny-gateway: §4.3 /v1/oauth/* reverse-proxied to %s", *tokenServiceHTTPURL)
+	}
 
 	// ----- §10.3 JWK Set publication -----
 	// The JWKS endpoint advertises the kid/alg of every key the
