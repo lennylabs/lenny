@@ -10,7 +10,7 @@
 // Publish / Subscribe surface. Each event carries a monotonic
 // per-session sequence so a reconnecting client can resume with a
 // cursor (the §15.1 streaming-reconnect contract).
-package events
+package sessionevents
 
 import (
 	"sync"

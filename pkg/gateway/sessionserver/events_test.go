@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -23,7 +23,7 @@ import (
 
 func TestEventsStreamReceivesMessageEvents(t *testing.T) {
 	store := memstore.New()
-	bus := events.NewBus(0)
+	bus := sessionevents.NewBus(0)
 	srv := sessionserver.New(store, sessionserver.Options{
 		Executor: executor.NewEchoExecutor(),
 		Events:   bus,
@@ -95,7 +95,7 @@ func TestEventsStreamReceivesMessageEvents(t *testing.T) {
 
 func TestEventsStreamMissingSession(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Events: events.NewBus(0)})
+	srv := sessionserver.New(store, sessionserver.Options{Events: sessionevents.NewBus(0)})
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_missing/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -124,7 +124,7 @@ func TestEventsStreamUnavailableWhenBusUnwired(t *testing.T) {
 
 func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 	store := memstore.New()
-	bus := events.NewBus(0)
+	bus := sessionevents.NewBus(0)
 	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{

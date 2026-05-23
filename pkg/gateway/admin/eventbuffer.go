@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 )
 
 // WithEventBuffer wires the §25.3 GET /v1/admin/events/buffer endpoint
@@ -21,7 +21,7 @@ func (r *Router) WithEventBuffer(buf EventBufferQuerier) *Router {
 // WithEventEmitter wires the §25.3 operational-event emitter onto the
 // Router so admin handlers record state-change events into the event
 // buffer. It is the emit counterpart of WithEventBuffer's query side.
-func (r *Router) WithEventEmitter(em opsevents.EventEmitter) *Router {
+func (r *Router) WithEventEmitter(em events.EventEmitter) *Router {
 	r.eventEmitter = em
 	return r
 }
@@ -30,7 +30,7 @@ func (r *Router) WithEventEmitter(em opsevents.EventEmitter) *Router {
 // wired. It is a no-op otherwise, so the admin handlers do not depend
 // on the event buffer being configured. eventType is a §16.6 catalogue
 // short name; its CloudEvents `type` is derived via CloudEventsType.
-func (r *Router) emitOpsEvent(ctx context.Context, eventType opsevents.EventType, severity string, data map[string]any) {
+func (r *Router) emitOpsEvent(ctx context.Context, eventType events.EventType, severity string, data map[string]any) {
 	if r.eventEmitter == nil {
 		return
 	}
@@ -40,7 +40,7 @@ func (r *Router) emitOpsEvent(ctx context.Context, eventType opsevents.EventType
 			payload = b
 		}
 	}
-	_, _ = r.eventEmitter.Emit(ctx, opsevents.OperationalEvent{
+	_, _ = r.eventEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/admin",
 		Type:            eventType.CloudEventsType(),
 		Severity:        severity,
@@ -69,10 +69,10 @@ func (r *Router) handleEventBuffer(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	// §25.3: the buffer endpoint caps limit at 500.
-	if limit > opsevents.DefaultBufferCapacity {
-		limit = opsevents.DefaultBufferCapacity
+	if limit > events.DefaultBufferCapacity {
+		limit = events.DefaultBufferCapacity
 	}
-	page := r.eventBuffer.Query(since, opsevents.EventFilter{
+	page := r.eventBuffer.Query(since, events.EventFilter{
 		EventType: q.Get("eventType"),
 		Severity:  q.Get("severity"),
 	}, limit)

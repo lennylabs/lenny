@@ -9,7 +9,7 @@
 // session event bus backing the §15.1 session SSE stream. Operational
 // events are platform-level (alerts, pool transitions, upgrades) and
 // follow the §25.3 / §12.6 CloudEvents envelope.
-package opsevents
+package events
 
 import (
 	"encoding/json"

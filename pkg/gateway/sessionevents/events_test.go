@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 
-package events_test
+package sessionevents_test
 
 import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 )
 
 func ts() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 func TestPublishAssignsMonotonicSeq(t *testing.T) {
-	b := events.NewBus(0)
+	b := sessionevents.NewBus(0)
 	e1 := b.Publish("sess_1", "message", `{}`, ts())
 	e2 := b.Publish("sess_1", "response", `{}`, ts())
 	if e1.Seq != 1 || e2.Seq != 2 {
@@ -26,7 +26,7 @@ func TestPublishAssignsMonotonicSeq(t *testing.T) {
 }
 
 func TestSubscribeReceivesLiveEvents(t *testing.T) {
-	b := events.NewBus(0)
+	b := sessionevents.NewBus(0)
 	sub := b.Subscribe("sess_1", 0, 8)
 	defer sub.Close()
 
@@ -42,7 +42,7 @@ func TestSubscribeReceivesLiveEvents(t *testing.T) {
 }
 
 func TestSubscribeBacklogReplaysHistory(t *testing.T) {
-	b := events.NewBus(0)
+	b := sessionevents.NewBus(0)
 	b.Publish("sess_1", "e1", `{}`, ts())
 	b.Publish("sess_1", "e2", `{}`, ts())
 	b.Publish("sess_1", "e3", `{}`, ts())
@@ -59,7 +59,7 @@ func TestSubscribeBacklogReplaysHistory(t *testing.T) {
 }
 
 func TestSubscribeNoBacklogWhenCaughtUp(t *testing.T) {
-	b := events.NewBus(0)
+	b := sessionevents.NewBus(0)
 	b.Publish("sess_1", "e1", `{}`, ts())
 	sub := b.Subscribe("sess_1", 1, 8)
 	defer sub.Close()
@@ -69,14 +69,14 @@ func TestSubscribeNoBacklogWhenCaughtUp(t *testing.T) {
 }
 
 func TestMultipleSubscribersAllReceive(t *testing.T) {
-	b := events.NewBus(0)
+	b := sessionevents.NewBus(0)
 	a := b.Subscribe("sess_1", 0, 8)
 	defer a.Close()
 	c := b.Subscribe("sess_1", 0, 8)
 	defer c.Close()
 
 	b.Publish("sess_1", "broadcast", `{}`, ts())
-	for i, sub := range []*events.Subscription{a, c} {
+	for i, sub := range []*sessionevents.Subscription{a, c} {
 		select {
 		case ev := <-sub.Events():
 			if ev.Type != "broadcast" {
@@ -89,7 +89,7 @@ func TestMultipleSubscribersAllReceive(t *testing.T) {
 }
 
 func TestCloseStopsDelivery(t *testing.T) {
-	b := events.NewBus(0)
+	b := sessionevents.NewBus(0)
 	sub := b.Subscribe("sess_1", 0, 8)
 	sub.Close()
 	// Channel should be closed.
@@ -101,14 +101,14 @@ func TestCloseStopsDelivery(t *testing.T) {
 }
 
 func TestCloseIsIdempotent(t *testing.T) {
-	b := events.NewBus(0)
+	b := sessionevents.NewBus(0)
 	sub := b.Subscribe("sess_1", 0, 8)
 	sub.Close()
 	sub.Close() // must not panic
 }
 
 func TestHistoryBoundedByMaxHistory(t *testing.T) {
-	b := events.NewBus(3)
+	b := sessionevents.NewBus(3)
 	for i := 0; i < 10; i++ {
 		b.Publish("sess_1", "e", `{}`, ts())
 	}
@@ -123,7 +123,7 @@ func TestHistoryBoundedByMaxHistory(t *testing.T) {
 }
 
 func TestHistoryCursor(t *testing.T) {
-	b := events.NewBus(0)
+	b := sessionevents.NewBus(0)
 	for i := 0; i < 5; i++ {
 		b.Publish("sess_1", "e", `{}`, ts())
 	}
@@ -134,7 +134,7 @@ func TestHistoryCursor(t *testing.T) {
 }
 
 func TestSlowSubscriberDoesNotBlockPublish(t *testing.T) {
-	b := events.NewBus(0)
+	b := sessionevents.NewBus(0)
 	// Buffer size 1 — fill it, then publish more.
 	sub := b.Subscribe("sess_1", 0, 1)
 	defer sub.Close()

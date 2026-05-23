@@ -12,7 +12,7 @@
 //     parsed Set from the validated JWT and compares each handler's
 //     declared x-lenny-scope against it.
 //   - The MCP Management Server (§25.1 enforcement point 2,
-//     pkg/ops/mcpmgmt) compares each tool's x-lenny-scope before
+//     pkg/ops/mcp) compares each tool's x-lenny-scope before
 //     dispatching tools/call.
 //   - `/v1/admin/me/authorized-tools` (§25.1 enforcement point 3) uses
 //     Set to pre-filter the tool inventory.

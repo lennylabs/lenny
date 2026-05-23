@@ -43,7 +43,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -139,7 +139,7 @@ type Router struct {
 
 	recommendations     RecommendationService
 	eventBuffer         EventBufferQuerier
-	eventEmitter        opsevents.EventEmitter
+	eventEmitter        events.EventEmitter
 	operationsInventory OperationsInventory
 
 	kmsProbe         KMSProbe
@@ -173,7 +173,7 @@ type RecommendationService interface {
 // EventBufferQuerier is the §25.3 event-buffer read surface the admin
 // Router exposes at GET /v1/admin/events/buffer.
 type EventBufferQuerier interface {
-	Query(since uint64, filter opsevents.EventFilter, limit int) opsevents.BufferedEventPage
+	Query(since uint64, filter events.EventFilter, limit int) events.BufferedEventPage
 }
 
 // RBACConfigMetrics records the §10.6 observability counters the RBAC

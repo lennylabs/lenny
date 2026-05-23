@@ -11,14 +11,14 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 )
 
 // spec §4.0, §16.6: a rule that fires emits alert_fired through the
 // shared EventEmitter; a firing rule that clears emits alert_resolved.
 func TestEmitCallbacksFireAndResolve(t *testing.T) {
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewEmitter(buf, "replica-1")
+	buf := events.NewEventBuffer(0)
+	em := events.NewEmitter(buf, "replica-1")
 	expr := "metric > 0"
 	fake := &fakeExpr{active: map[string]bool{expr: true}}
 	rule := rules.Rule{
@@ -37,7 +37,7 @@ func TestEmitCallbacksFireAndResolve(t *testing.T) {
 	})
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	ev.Tick(context.Background(), t0)
-	page := buf.Query(0, opsevents.EventFilter{EventType: "alert_fired"}, 100)
+	page := buf.Query(0, events.EventFilter{EventType: "alert_fired"}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("alert_fired emitted %d events, want 1", len(page.Events))
 	}
@@ -62,7 +62,7 @@ func TestEmitCallbacksFireAndResolve(t *testing.T) {
 	// Clear the expression and tick again — alert_resolved fires.
 	fake.active[expr] = false
 	ev.Tick(context.Background(), t0.Add(time.Minute))
-	page = buf.Query(0, opsevents.EventFilter{EventType: "alert_resolved"}, 100)
+	page = buf.Query(0, events.EventFilter{EventType: "alert_resolved"}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("alert_resolved emitted %d events, want 1", len(page.Events))
 	}
@@ -74,8 +74,8 @@ func TestEmitCallbacksFireAndResolve(t *testing.T) {
 
 // spec §16.6: a rule that never fires emits no operational events.
 func TestEmitCallbacksNoEventsWhileInactive(t *testing.T) {
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewEmitter(buf, "replica-1")
+	buf := events.NewEventBuffer(0)
+	em := events.NewEmitter(buf, "replica-1")
 	expr := "metric > 0"
 	fake := &fakeExpr{active: map[string]bool{expr: false}}
 	onFired, onResolved := evaluator.EmitCallbacks(evaluator.EventEmitOptions{Emitter: em})
@@ -87,7 +87,7 @@ func TestEmitCallbacksNoEventsWhileInactive(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		ev.Tick(context.Background(), time.Now().Add(time.Duration(i)*time.Minute))
 	}
-	if got := buf.Query(0, opsevents.EventFilter{}, 100); len(got.Events) != 0 {
+	if got := buf.Query(0, events.EventFilter{}, 100); len(got.Events) != 0 {
 		t.Errorf("an always-inactive rule emitted %d events, want 0", len(got.Events))
 	}
 }
@@ -119,8 +119,8 @@ func TestNoopExprEvaluator(t *testing.T) {
 // spec §25.13: with NoopExprEvaluator the evaluator runs its sweep
 // without firing or resolving anything.
 func TestEvaluatorWithNoopExprFiresNothing(t *testing.T) {
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewEmitter(buf, "replica-1")
+	buf := events.NewEventBuffer(0)
+	em := events.NewEmitter(buf, "replica-1")
 	ev := evaluator.NewWithEmitter(
 		[]rules.Rule{{Name: "Quiet", Expr: "metric > 0", Severity: rules.SeverityWarning, Summary: "quiet"}},
 		evaluator.NoopExprEvaluator{},
@@ -129,7 +129,7 @@ func TestEvaluatorWithNoopExprFiresNothing(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		ev.Tick(context.Background(), time.Now())
 	}
-	if got := buf.Query(0, opsevents.EventFilter{}, 100); len(got.Events) != 0 {
+	if got := buf.Query(0, events.EventFilter{}, 100); len(got.Events) != 0 {
 		t.Errorf("NoopExprEvaluator emitted %d events, want 0", len(got.Events))
 	}
 }
@@ -137,8 +137,8 @@ func TestEvaluatorWithNoopExprFiresNothing(t *testing.T) {
 // spec §4.0: NewWithEmitter defaults the catalog to rules.Catalog() and
 // builds an evaluator that drains the §16.5 default set.
 func TestNewWithEmitterDefaultsToCatalog(t *testing.T) {
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewEmitter(buf, "replica-1")
+	buf := events.NewEventBuffer(0)
+	em := events.NewEmitter(buf, "replica-1")
 	ev := evaluator.NewWithEmitter(nil, evaluator.NoopExprEvaluator{},
 		evaluator.EventEmitOptions{Emitter: em})
 	for _, r := range rules.Catalog() {

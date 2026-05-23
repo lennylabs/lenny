@@ -42,7 +42,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
@@ -115,7 +115,7 @@ type Deps struct {
 
 	// Events is the §15.1 session event bus. Optional — when nil, the
 	// lenny/output tool is not registered.
-	Events *events.Bus
+	Events *sessionevents.Bus
 
 	// InputWaits is the §8.5 lenny/request_input pending-call registry.
 	// Optional — when nil, lenny/request_input is not registered.

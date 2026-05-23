@@ -48,9 +48,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
-	"github.com/lennylabs/lenny/pkg/ops/events"
+	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
@@ -305,17 +305,17 @@ func main() {
 	// operation_progressed) into this service; subsystems take it as
 	// the §4.0 EventEmitter dependency. When Redis is wired the events
 	// also land on the platform-scoped ops:events:stream alongside the
-	// gateway-emitted events; until then the events.Service in-memory
+	// gateway-emitted events; until then the opsstream.Service in-memory
 	// buffer is the only delivery surface (per §25.5 cold-start).
-	eventStream := events.New(events.Options{})
+	eventStream := opsstream.New(opsstream.Options{})
 
 	// §4.0 EventEmitter for lenny-ops subsystems. With Redis configured
 	// every emit also writes to the §25.5 platform-scoped Redis stream;
-	// without Redis the local events.Service is the only destination.
-	var opsEmitter opsevents.EventEmitter = eventStream
+	// without Redis the local opsstream.Service is the only destination.
+	var opsEmitter events.EventEmitter = eventStream
 	if redisClient != nil {
 		opsEmitter = newRedisFanOutEmitter(redisClient, eventStream, replicaID)
-		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s", opsevents.DefaultStreamKey)
+		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
 	}
 
 	// §4.0 / §25.13: the in-process alert tracker. lenny-ops has no

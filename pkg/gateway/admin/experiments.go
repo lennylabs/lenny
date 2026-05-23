@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -208,7 +208,7 @@ func (r *Router) checkTenantIsolationFloor(ctx context.Context, principal authmw
 			// §16.6: surface the advisory on the operational-event buffer
 			// so ops agents observe it through GET /v1/admin/events/buffer.
 			// One event per offending variant per admission call.
-			r.emitOpsEvent(ctx, opsevents.EventExperimentVariantWeakerThanFloor, "warning", map[string]any{
+			r.emitOpsEvent(ctx, events.EventExperimentVariantWeakerThanFloor, "warning", map[string]any{
 				"tenant_id":              exp.TenantID,
 				"experiment_id":          exp.ID,
 				"variant_id":             v.ID,

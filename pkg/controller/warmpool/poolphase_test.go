@@ -8,7 +8,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 )
 
 // spec §4.0: the pool state manager derives one of {warming, draining,
@@ -73,12 +73,12 @@ func TestDerivePoolPhase(t *testing.T) {
 func TestReconcileEmitsPoolStateChangedOnTransition(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(3, 10))
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewEmitter(buf, "test")
+	buf := events.NewEventBuffer(0)
+	em := events.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
 
 	reconcileWith(t, r) // baseline: warming
-	if got := buf.Query(0, opsevents.EventFilter{EventType: "pool_state_changed"}, 100); len(got.Events) != 0 {
+	if got := buf.Query(0, events.EventFilter{EventType: "pool_state_changed"}, 100); len(got.Events) != 0 {
 		t.Errorf("baseline observation emitted %d events, want 0", len(got.Events))
 	}
 
@@ -94,7 +94,7 @@ func TestReconcileEmitsPoolStateChangedOnTransition(t *testing.T) {
 		t.Fatalf("Reconcile after pods became idle: %v", err)
 	}
 
-	page := buf.Query(0, opsevents.EventFilter{EventType: "pool_state_changed"}, 100)
+	page := buf.Query(0, events.EventFilter{EventType: "pool_state_changed"}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("after warming → ready transition, emitted %d events, want 1", len(page.Events))
 	}
@@ -121,8 +121,8 @@ func TestReconcileNoEmitOnStablePhase(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(3, 10),
 		idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"))
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewEmitter(buf, "test")
+	buf := events.NewEventBuffer(0)
+	em := events.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
 
 	reconcileWith(t, r) // baseline: ready
@@ -130,7 +130,7 @@ func TestReconcileNoEmitOnStablePhase(t *testing.T) {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 
-	if got := buf.Query(0, opsevents.EventFilter{EventType: "pool_state_changed"}, 100); len(got.Events) != 0 {
+	if got := buf.Query(0, events.EventFilter{EventType: "pool_state_changed"}, 100); len(got.Events) != 0 {
 		t.Errorf("stable pool emitted %d events, want 0", len(got.Events))
 	}
 }
@@ -140,8 +140,8 @@ func TestReconcileNoEmitOnStablePhase(t *testing.T) {
 func TestReconcileEmitsExhaustedWithWarningSeverity(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(3, 0))
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewEmitter(buf, "test")
+	buf := events.NewEventBuffer(0)
+	em := events.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
 
 	// Two reconciles: baseline records exhausted; second is a no-op
@@ -163,7 +163,7 @@ func TestReconcileEmitsExhaustedWithWarningSeverity(t *testing.T) {
 		t.Fatalf("Reconcile after maxWarm bump: %v", err)
 	}
 
-	page := buf.Query(0, opsevents.EventFilter{EventType: "pool_state_changed"}, 100)
+	page := buf.Query(0, events.EventFilter{EventType: "pool_state_changed"}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("emitted %d events, want 1 (exhausted → warming)", len(page.Events))
 	}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package mcpmgmt implements the §25.12 MCP Management Server: it
+// Package mcp implements the §25.12 MCP Management Server: it
 // exposes the §25 operability surface as an MCP tool server so any
 // MCP-capable agent can manage Lenny natively rather than only observe
 // it. An agent that speaks MCP discovers every tool, inspects its
@@ -17,7 +17,7 @@
 // drift, locks, escalations. The build-time OpenAPI → MCP generation
 // that §25.12 describes for the full admin surface reuses this
 // registry's contract.
-package mcpmgmt
+package mcp
 
 // §25.12 x-lenny-category tool classifications.
 const (

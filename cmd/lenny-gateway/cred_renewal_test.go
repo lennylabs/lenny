@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -209,8 +209,8 @@ func TestRenewalWiringNilReceiverHooksAreNoops(t *testing.T) {
 // spec §4.0, §16.6: credential pool manager emits credential_rotated on
 // lease rotation and credential_pool_exhausted on pool exhaustion.
 func TestRenewalEmitsCredentialRotatedOnSuccess(t *testing.T) {
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewEmitter(buf, "test")
+	buf := events.NewEventBuffer(0)
+	em := events.NewEmitter(buf, "test")
 
 	assign := credassign.New(credleasestore.New(), credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
@@ -228,7 +228,7 @@ func TestRenewalEmitsCredentialRotatedOnSuccess(t *testing.T) {
 		t.Fatalf("renewal sweep renewed %d leases, want 1", renewed)
 	}
 
-	page := buf.Query(0, opsevents.EventFilter{EventType: "credential_rotated"}, 100)
+	page := buf.Query(0, events.EventFilter{EventType: "credential_rotated"}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("emitted %d credential_rotated events, want 1", len(page.Events))
 	}
@@ -266,8 +266,8 @@ func TestRenewalEmitsCredentialRotatedOnSuccess(t *testing.T) {
 // spec §4.0, §16.6: an exhausted lease — the §4.9 fall-through —
 // emits credential_pool_exhausted with the lease's pool binding.
 func TestRenewalEmitsCredentialPoolExhaustedOnExhaustion(t *testing.T) {
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewEmitter(buf, "test")
+	buf := events.NewEventBuffer(0)
+	em := events.NewEmitter(buf, "test")
 
 	assign := credassign.New(credleasestore.New(), credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
@@ -285,7 +285,7 @@ func TestRenewalEmitsCredentialPoolExhaustedOnExhaustion(t *testing.T) {
 	// and onExhausted fires with the pool binding.
 	worker.Tick(context.Background(), lease.ExpiresAt.Add(time.Second))
 
-	page := buf.Query(0, opsevents.EventFilter{EventType: "credential_pool_exhausted"}, 100)
+	page := buf.Query(0, events.EventFilter{EventType: "credential_pool_exhausted"}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("emitted %d credential_pool_exhausted events, want 1", len(page.Events))
 	}

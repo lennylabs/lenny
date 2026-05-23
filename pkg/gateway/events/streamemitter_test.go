@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package opsevents_test
+package events_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 )
 
 // newMiniRedisClient returns a miniredis-backed *redis.Client. The
@@ -30,12 +30,12 @@ func newMiniRedisClient(t *testing.T) *redis.Client {
 // in-memory buffer carrying a tee'd copy.
 func TestStreamEmitterWritesToRedisAndBuffer(t *testing.T) {
 	client := newMiniRedisClient(t)
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+	buf := events.NewEventBuffer(0)
+	em := events.NewStreamEmitter(events.StreamEmitterOptions{
 		Client: client, Buffer: buf, ReplicaID: "replica-1",
 	})
 
-	id, err := em.Emit(context.Background(), opsevents.OperationalEvent{
+	id, err := em.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.alert_fired", Severity: "critical",
 	})
 	if err != nil {
@@ -46,15 +46,15 @@ func TestStreamEmitterWritesToRedisAndBuffer(t *testing.T) {
 	}
 
 	// The event made it to the local buffer.
-	page := buf.Query(0, opsevents.EventFilter{}, 100)
+	page := buf.Query(0, events.EventFilter{}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("local buffer holds %d events, want 1", len(page.Events))
 	}
 
 	// And to the Redis stream under the §25.5 default key.
-	entries, err := client.XRange(context.Background(), opsevents.DefaultStreamKey, "-", "+").Result()
+	entries, err := client.XRange(context.Background(), events.DefaultStreamKey, "-", "+").Result()
 	if err != nil {
-		t.Fatalf("XRange %s: %v", opsevents.DefaultStreamKey, err)
+		t.Fatalf("XRange %s: %v", events.DefaultStreamKey, err)
 	}
 	if len(entries) != 1 {
 		t.Fatalf("stream holds %d entries, want 1", len(entries))
@@ -63,7 +63,7 @@ func TestStreamEmitterWritesToRedisAndBuffer(t *testing.T) {
 	if !ok {
 		t.Fatalf("stream entry has no event field: %+v", entries[0].Values)
 	}
-	var got opsevents.OperationalEvent
+	var got events.OperationalEvent
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
 		t.Fatalf("decode stream payload: %v", err)
 	}
@@ -73,8 +73,8 @@ func TestStreamEmitterWritesToRedisAndBuffer(t *testing.T) {
 	if got.Severity != "critical" {
 		t.Errorf("stream event severity = %q, want critical", got.Severity)
 	}
-	if got.SpecVersion != opsevents.CloudEventsSpecVersion {
-		t.Errorf("stream event specversion = %q, want %q", got.SpecVersion, opsevents.CloudEventsSpecVersion)
+	if got.SpecVersion != events.CloudEventsSpecVersion {
+		t.Errorf("stream event specversion = %q, want %q", got.SpecVersion, events.CloudEventsSpecVersion)
 	}
 	if got.ID == "" {
 		t.Error("stream event eventKey is empty")
@@ -86,19 +86,19 @@ func TestStreamEmitterWritesToRedisAndBuffer(t *testing.T) {
 // write.
 func TestStreamEmitterCapsMaxLen(t *testing.T) {
 	client := newMiniRedisClient(t)
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+	buf := events.NewEventBuffer(0)
+	em := events.NewStreamEmitter(events.StreamEmitterOptions{
 		Client: client, Buffer: buf, MaxLen: 5,
 	})
 
 	for i := 0; i < 20; i++ {
-		if _, err := em.Emit(context.Background(), opsevents.OperationalEvent{
+		if _, err := em.Emit(context.Background(), events.OperationalEvent{
 			Type: "dev.lenny.alert_fired",
 		}); err != nil {
 			t.Fatalf("Emit %d: %v", i, err)
 		}
 	}
-	length, err := client.XLen(context.Background(), opsevents.DefaultStreamKey).Result()
+	length, err := client.XLen(context.Background(), events.DefaultStreamKey).Result()
 	if err != nil {
 		t.Fatalf("XLen: %v", err)
 	}
@@ -125,18 +125,18 @@ func (failingRedis) XAdd(ctx context.Context, args *redis.XAddArgs) *redis.Strin
 // operators see the regression. The event is preserved on the local
 // path so a watchdog reading the gateway buffer continues to function.
 func TestStreamEmitterFallsBackToLocalBufferOnRedisFailure(t *testing.T) {
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+	buf := events.NewEventBuffer(0)
+	em := events.NewStreamEmitter(events.StreamEmitterOptions{
 		Client: failingRedis{}, Buffer: buf,
 	})
-	id, err := em.Emit(context.Background(), opsevents.OperationalEvent{Type: "dev.lenny.alert_fired"})
+	id, err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.alert_fired"})
 	if err == nil {
 		t.Fatal("Emit on Redis failure returned nil error; want a non-nil error so the caller surfaces the regression")
 	}
 	if id != 1 {
 		t.Errorf("local id = %d, want 1 even on Redis failure (event must reach the local buffer)", id)
 	}
-	page := buf.Query(0, opsevents.EventFilter{}, 100)
+	page := buf.Query(0, events.EventFilter{}, 100)
 	if len(page.Events) != 1 {
 		t.Errorf("local buffer holds %d events, want 1 (fall-back path must preserve the event)", len(page.Events))
 	}
@@ -146,13 +146,13 @@ func TestStreamEmitterFallsBackToLocalBufferOnRedisFailure(t *testing.T) {
 // shutdown does not pin on a hung XADD.
 func TestStreamEmitterRespectsContextCancellation(t *testing.T) {
 	client := newMiniRedisClient(t)
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+	buf := events.NewEventBuffer(0)
+	em := events.NewStreamEmitter(events.StreamEmitterOptions{
 		Client: client, Buffer: buf,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := em.Emit(ctx, opsevents.OperationalEvent{Type: "dev.lenny.x"}); !errors.Is(err, context.Canceled) {
+	if _, err := em.Emit(ctx, events.OperationalEvent{Type: "dev.lenny.x"}); !errors.Is(err, context.Canceled) {
 		t.Errorf("Emit on cancelled ctx returned %v, want context.Canceled", err)
 	}
 }
@@ -161,19 +161,19 @@ func TestStreamEmitterRespectsContextCancellation(t *testing.T) {
 // the caller did not stamp one. A caller-set Source is preserved.
 func TestStreamEmitterStampsSource(t *testing.T) {
 	client := newMiniRedisClient(t)
-	buf := opsevents.NewEventBuffer(0)
-	em := opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+	buf := events.NewEventBuffer(0)
+	em := events.NewStreamEmitter(events.StreamEmitterOptions{
 		Client: client, Buffer: buf, Source: "//lenny.dev/gateway/test",
 	})
-	if _, err := em.Emit(context.Background(), opsevents.OperationalEvent{Type: "dev.lenny.x"}); err != nil {
+	if _, err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.x"}); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	if _, err := em.Emit(context.Background(), opsevents.OperationalEvent{
+	if _, err := em.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.x", Source: "//lenny.dev/explicit",
 	}); err != nil {
 		t.Fatalf("Emit with explicit source: %v", err)
 	}
-	page := buf.Query(0, opsevents.EventFilter{}, 100)
+	page := buf.Query(0, events.EventFilter{}, 100)
 	if len(page.Events) != 2 {
 		t.Fatalf("buffer holds %d events, want 2", len(page.Events))
 	}
@@ -193,7 +193,7 @@ func TestNewStreamEmitterRequiresClientAndBuffer(t *testing.T) {
 			t.Error("NewStreamEmitter(nil Client) did not panic")
 		}
 	}()
-	opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{Buffer: opsevents.NewEventBuffer(0)})
+	events.NewStreamEmitter(events.StreamEmitterOptions{Buffer: events.NewEventBuffer(0)})
 }
 
 func TestNewStreamEmitterRequiresBuffer(t *testing.T) {
@@ -203,5 +203,5 @@ func TestNewStreamEmitterRequiresBuffer(t *testing.T) {
 			t.Error("NewStreamEmitter(nil Buffer) did not panic")
 		}
 	}()
-	opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{Client: client})
+	events.NewStreamEmitter(events.StreamEmitterOptions{Client: client})
 }

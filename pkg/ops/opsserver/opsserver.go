@@ -24,7 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	opsevents "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
-	"github.com/lennylabs/lenny/pkg/ops/mcpmgmt"
+	"github.com/lennylabs/lenny/pkg/ops/mcp"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
@@ -70,7 +70,7 @@ type Server struct {
 	escalations        *escalation.Service
 	eventStream        *opsevents.Service
 	eventSubscriptions *eventsubscription.Service
-	mcp                *mcpmgmt.Server
+	mcp                *mcp.Server
 	releaseChannel     *releasechannel.Publisher
 	production         bool
 }
@@ -172,7 +172,7 @@ func New(opts Options) *Server {
 	// §25.12: the MCP management server exposes the §25 operability
 	// surface as MCP tools. It is built last so it can route to the
 	// services registered above.
-	s.mcp = mcpmgmt.NewServer(s.mcpInvoker())
+	s.mcp = mcp.NewServer(s.mcpInvoker())
 	s.mux.Handle("/mcp/management", s.mcp)
 	s.mux.Handle("/mcp/management/", s.mcp)
 	return s

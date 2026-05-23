@@ -318,28 +318,28 @@ are not yet deduplicated; treat related findings as a cluster.
 - **Gap:** File naming divergent from spec but functionally complete.
 - **Suggested resolution:** Either rename `runbooks.go` to `index.go` or update the spec to reference the actual filenames.
 
-### - [ ] F-4.0.13 — `pkg/gateway/events/{emitter,buffer}.go` are at `pkg/gateway/opsevents/` [Low] — OPEN
+### - [ ] F-4.0.13 — `pkg/gateway/events/{emitter,buffer}.go` are at `pkg/gateway/opsevents/` [Low] — CLOSED
 
 - **Spec:** "`pkg/gateway/events/{emitter,buffer}.go` — `EventEmitter` interface and in-memory ring buffer." (line 13)
 - **Evidence:** Package lives at `pkg/gateway/opsevents/{emitter,buffer}.go`. There is a separate `pkg/gateway/events/events.go` (session event bus) at `pkg/gateway/events/events.go:13` which is different from the operational-event bus the spec names.
 - **Gap:** Package path divergent. The collision risk is small (the session bus is named the same `events`), but spec readers will not find the operational-event package where it is referenced.
 - **Suggested resolution:** Rename `pkg/gateway/opsevents` to `pkg/gateway/events` (and rename the existing session-event `events` package to e.g. `sessionevents`), or update the spec to reference `pkg/gateway/opsevents`.
 
-### - [ ] F-4.0.14 — `pkg/gateway/health/{service,runbook_links}.go` are at `health.go` / `handler.go` [Low] — OPEN
+### - [ ] F-4.0.14 — `pkg/gateway/health/{service,runbook_links}.go` are at `health.go` / `handler.go` [Low] — CLOSED
 
 - **Spec:** "`pkg/gateway/health/{service,runbook_links}.go` — the gateway health service and its runbook link table." (line 14)
 - **Evidence:** Files are `pkg/gateway/health/health.go` (service + types + aggregator) and `pkg/gateway/health/handler.go` (HTTP handler). No `runbook_links.go`; each `Checker` carries its own `RunbookRef` inline (e.g., `pkg/gateway/health/backends/backends.go:46 RunbookRef: "postgres-failover"`).
 - **Gap:** No centralized compile-time runbook-link table; the runbook ref is duplicated per checker. File names also diverge from the spec.
 - **Suggested resolution:** Extract the (component → runbook) mapping into `pkg/gateway/health/runbook_links.go` and reference the central table from each `backends/*.go` checker, or update the spec to acknowledge the inline pattern.
 
-### - [ ] F-4.0.15 — `pkg/ops/me/service.go` lives at `pkg/gateway/admin/me.go` instead [Low] — OPEN
+### - [ ] F-4.0.15 — `pkg/ops/me/service.go` lives at `pkg/gateway/admin/me.go` instead [Low] — CLOSED
 
 - **Spec:** "`pkg/ops/me/service.go` — caller identity discovery (`/v1/admin/me` and sub-endpoints)." (line 24)
 - **Evidence:** `/v1/admin/me` is implemented at `pkg/gateway/admin/me.go:42 handleMe` and `:62 handleAuthorizedTools`. No `pkg/ops/me/` directory exists. Because the gateway is the admin-API host, locating the endpoint there is reasonable, but the spec assigns it to `lenny-ops`.
 - **Gap:** Either the spec expects `/v1/admin/me` on `lenny-ops` (in which case the endpoint is missing from the ops binary) or the location is descriptive in the gateway (in which case the spec is stale).
 - **Suggested resolution:** Decide whether `/v1/admin/me` is gateway-only or also exposed by `lenny-ops`. If gateway-only, update the §4.0 line; if dual-host, copy the implementation into `pkg/ops/me/service.go` reading the gateway's identity discovery via the (also missing) `GatewayClient`.
 
-### - [ ] F-4.0.16 — `pkg/ops/mcp/adapter.go` is at `pkg/ops/mcpmgmt/{server,tools,registry}.go` [Low] — OPEN
+### - [ ] F-4.0.16 — `pkg/ops/mcp/adapter.go` is at `pkg/ops/mcpmgmt/{server,tools,registry}.go` [Low] — CLOSED
 
 - **Spec:** "`pkg/ops/mcp/adapter.go` — MCP management adapter, including scope enforcement for the OAuth 2.0 `scope` claim." (line 23)
 - **Evidence:** Package lives at `pkg/ops/mcpmgmt/server.go` (server + scope enforcement at lines 213-225), `pkg/ops/mcpmgmt/tools.go`, `pkg/ops/mcpmgmt/registry.go`. The scope enforcement at `server.go:217-225` raises JSON-RPC error -32001 when the request's `X-Lenny-Scope` header does not contain the tool's `x-lenny-scope` annotation.

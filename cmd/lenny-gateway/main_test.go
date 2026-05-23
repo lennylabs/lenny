@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
@@ -79,7 +79,7 @@ func TestNewLLMProxyServerRejectsNonPost(t *testing.T) {
 // operational event.
 
 func TestExperimentRejectionReporterEmitsOperationalEvent(t *testing.T) {
-	emitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), "replica-test")
+	emitter := events.NewEmitter(events.NewEventBuffer(0), "replica-test")
 	reporter := experimentRejectionReporter{emitter: emitter}
 
 	reporter.ReportExperimentIsolationRejection(context.Background(), sessionserver.ExperimentIsolationRejection{
@@ -91,8 +91,8 @@ func TestExperimentRejectionReporterEmitsOperationalEvent(t *testing.T) {
 		VariantPoolIsolation: "sandboxed",
 	})
 
-	page := emitter.Buffer().Query(0, opsevents.EventFilter{
-		EventType: string(opsevents.EventExperimentIsolationMismatch),
+	page := emitter.Buffer().Query(0, events.EventFilter{
+		EventType: string(events.EventExperimentIsolationMismatch),
 	}, 0)
 	if len(page.Events) != 1 {
 		t.Fatalf("buffer holds %d isolation_mismatch events, want 1", len(page.Events))

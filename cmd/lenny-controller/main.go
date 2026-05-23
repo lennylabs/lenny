@@ -45,7 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
@@ -162,21 +162,21 @@ func main() {
 	if controllerReplicaID == "" {
 		controllerReplicaID = "controller"
 	}
-	opsEventBuffer := opsevents.NewEventBuffer(0)
-	var opsEmitter opsevents.EventEmitter = opsevents.NewEmitter(opsEventBuffer, controllerReplicaID)
+	opsEventBuffer := events.NewEventBuffer(0)
+	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, controllerReplicaID)
 	if redisURL != "" {
 		redisClient, err := redisconn.NewClient(redisconn.Config{URL: redisURL, Password: redisPassword})
 		if err != nil {
 			log.Fatalf("lenny-controller: redis client: %v", err)
 		}
 		defer func() { _ = redisClient.Close() }()
-		opsEmitter = opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
 			Client:    redisClient,
 			Buffer:    opsEventBuffer,
 			Source:    "//lenny.dev/controller/" + controllerReplicaID,
 			ReplicaID: controllerReplicaID,
 		})
-		log.Printf("lenny-controller: §25.5 operational events streaming to Redis %s", opsevents.DefaultStreamKey)
+		log.Printf("lenny-controller: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
 	}
 
 	warmPool := &warmpool.Reconciler{

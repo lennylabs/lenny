@@ -11,6 +11,7 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/ops/me"
 )
 
 func TestMeReturnsPrincipal(t *testing.T) {
@@ -21,7 +22,7 @@ func TestMeReturnsPrincipal(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var p admin.MePayload
+	var p me.Identity
 	_ = json.Unmarshal(rr.Body.Bytes(), &p)
 	if p.Subject != "admin@acme.com" {
 		t.Errorf("Subject: got %q", p.Subject)

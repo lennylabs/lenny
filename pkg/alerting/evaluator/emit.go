@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 )
 
 // EventEmitOptions wires the evaluator's firing-edge callbacks to a
@@ -19,7 +19,7 @@ import (
 type EventEmitOptions struct {
 	// Emitter is the §25.3 / §25.5 EventEmitter every gateway and
 	// lenny-ops subsystem shares. Required.
-	Emitter opsevents.EventEmitter
+	Emitter events.EventEmitter
 	// Source is the §25.5 CloudEvents `source` value (e.g.,
 	// "//lenny.dev/gateway/replica-1"). Empty leaves Source unset; the
 	// StreamEmitter stamps a default.
@@ -43,7 +43,7 @@ func EmitCallbacks(opts EventEmitOptions) (onFired, onResolved func(Alert)) {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	emit := func(a Alert, eventType opsevents.EventType, severity string) {
+	emit := func(a Alert, eventType events.EventType, severity string) {
 		payload := map[string]any{
 			"ruleName":   a.Rule.Name,
 			"severity":   string(a.Rule.Severity),
@@ -56,7 +56,7 @@ func EmitCallbacks(opts EventEmitOptions) (onFired, onResolved func(Alert)) {
 			payload["runbook"] = a.Rule.RunbookURL
 		}
 		data, _ := json.Marshal(payload)
-		event := opsevents.OperationalEvent{
+		event := events.OperationalEvent{
 			Source:          opts.Source,
 			Type:            eventType.CloudEventsType(),
 			Severity:        severity,
@@ -76,12 +76,12 @@ func EmitCallbacks(opts EventEmitOptions) (onFired, onResolved func(Alert)) {
 		if sev == "" {
 			sev = "warning"
 		}
-		emit(a, opsevents.EventAlertFired, sev)
+		emit(a, events.EventAlertFired, sev)
 	}
 	onResolved = func(a Alert) {
 		// §16.6: alert_resolved is informational regardless of the
 		// rule's firing severity — the resolution itself is good news.
-		emit(a, opsevents.EventAlertResolved, "info")
+		emit(a, events.EventAlertResolved, "info")
 	}
 	return onFired, onResolved
 }

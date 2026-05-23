@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	"github.com/lennylabs/lenny/pkg/ops/mcpmgmt"
+	"github.com/lennylabs/lenny/pkg/ops/mcp"
 )
 
 // mcpInvoker returns the §25.12 Invoker that routes an MCP management
@@ -19,7 +19,7 @@ import (
 // exposes the ops-owned operability tools, so the invoker dispatches
 // them in-process by replaying the tool's mapped request against this
 // Server's own mux.
-func (s *Server) mcpInvoker() mcpmgmt.Invoker {
+func (s *Server) mcpInvoker() mcp.Invoker {
 	return &opsInvoker{server: s}
 }
 
@@ -34,10 +34,10 @@ type opsInvoker struct {
 // the lenny-ops mux. The captured response becomes the tool result;
 // §25.2 dry-run previews (200 with dryRun:true) are surfaced so the
 // management server can apply the §25.12 dry-run mapping.
-func (i *opsInvoker) Invoke(tool mcpmgmt.Tool, args json.RawMessage) (mcpmgmt.ToolResult, error) {
+func (i *opsInvoker) Invoke(tool mcp.Tool, args json.RawMessage) (mcp.ToolResult, error) {
 	path, query, body, err := buildToolRequest(tool, args)
 	if err != nil {
-		return mcpmgmt.ToolResult{}, err
+		return mcp.ToolResult{}, err
 	}
 	url := path
 	if query != "" {
@@ -57,7 +57,7 @@ func (i *opsInvoker) Invoke(tool mcpmgmt.Tool, args json.RawMessage) (mcpmgmt.To
 	rec := httptest.NewRecorder()
 	i.server.ServeHTTP(rec, req)
 
-	result := mcpmgmt.ToolResult{
+	result := mcp.ToolResult{
 		Status: rec.Code,
 		Body:   append(json.RawMessage(nil), rec.Body.Bytes()...),
 	}
@@ -86,7 +86,7 @@ func (i *opsInvoker) Invoke(tool mcpmgmt.Tool, args json.RawMessage) (mcpmgmt.To
 // ({id}, {name}, {component}) are substituted from the arguments; for a
 // GET the remaining arguments become query parameters, and for a body
 // method they become the JSON request body.
-func buildToolRequest(tool mcpmgmt.Tool, args json.RawMessage) (path, query string, body []byte, err error) {
+func buildToolRequest(tool mcp.Tool, args json.RawMessage) (path, query string, body []byte, err error) {
 	var argMap map[string]any
 	if len(args) > 0 {
 		if err := json.Unmarshal(args, &argMap); err != nil {

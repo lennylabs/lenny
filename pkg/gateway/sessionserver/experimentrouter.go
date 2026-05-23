@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ofrep"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -148,9 +148,9 @@ func (s *Server) emitMultiEligibleSkipped(ctx context.Context, row *sessionstore
 		"enrolled_experiment_id": enrolledID,
 		"skipped_experiment_ids": skipped,
 	})
-	_, _ = s.opsEmitter.Emit(ctx, opsevents.OperationalEvent{
+	_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/sessions",
-		Type:            opsevents.EventExperimentMultiEligibleSkipped.CloudEventsType(),
+		Type:            events.EventExperimentMultiEligibleSkipped.CloudEventsType(),
 		Severity:        "info",
 		DataContentType: "application/json",
 		Data:            data,
@@ -245,9 +245,9 @@ func (s *Server) emitExperimentTargetingFailed(ctx context.Context, row *session
 		"provider":  provider,
 		"error":     evalErr.Error(),
 	})
-	_, _ = s.opsEmitter.Emit(ctx, opsevents.OperationalEvent{
+	_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/sessions",
-		Type:            opsevents.EventExperimentTargetingFailed.CloudEventsType(),
+		Type:            events.EventExperimentTargetingFailed.CloudEventsType(),
 		Severity:        "warning",
 		DataContentType: "application/json",
 		Data:            data,
@@ -269,9 +269,9 @@ func (s *Server) emitExperimentUnknownVariant(ctx context.Context, row *sessions
 		"provider":      provider,
 		"raw_variant":   rawVariant,
 	})
-	_, _ = s.opsEmitter.Emit(ctx, opsevents.OperationalEvent{
+	_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/sessions",
-		Type:            opsevents.EventExperimentUnknownVariantFromProvider.CloudEventsType(),
+		Type:            events.EventExperimentUnknownVariantFromProvider.CloudEventsType(),
 		Severity:        "warning",
 		DataContentType: "application/json",
 		Data:            data,

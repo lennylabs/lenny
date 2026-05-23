@@ -38,14 +38,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -105,7 +105,7 @@ type Server struct {
 	blobs              blobstore.Store
 	executor           executor.Executor
 	transcripts        transcriptstore.Store
-	events             *events.Bus
+	events             *sessionevents.Bus
 	interactions       interactionstore.Store
 	usage              usagestore.Store
 	users              userstore.Store
@@ -127,7 +127,7 @@ type Server struct {
 	runtimes           runtimestore.Store
 	environments       environmentstore.Store
 	tenantAccess       tenantaccessstore.Store
-	opsEmitter         opsevents.EventEmitter
+	opsEmitter         events.EventEmitter
 	refResolver        workspaceplan.RefResolver
 	credPools          credentialpoolstore.Store
 	defaultNoEnvPolicy string
@@ -208,7 +208,7 @@ type Options struct {
 	// When nil, `GET /v1/sessions/{id}/events` returns
 	// `503 EVENT_STREAM_UNAVAILABLE` and message injection skips
 	// event publication.
-	Events *events.Bus
+	Events *sessionevents.Bus
 
 	// Interactions is the §6/§9.2 pending tool-call + elicitation
 	// store backing the §15.1 tool-use and elicitation endpoints.
@@ -325,7 +325,7 @@ type Options struct {
 	// OpsEmitter records §25.3 operational events into the event
 	// buffer or §25.5 Redis stream. Optional — when nil, the gateway
 	// emits no operational events for session transitions.
-	OpsEmitter opsevents.EventEmitter
+	OpsEmitter events.EventEmitter
 
 	// RefResolver pins each §14 gitClone source's ref to an immutable
 	// commit SHA at session creation. Optional — when nil, the gateway

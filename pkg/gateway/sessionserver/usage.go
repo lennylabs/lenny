@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
@@ -85,16 +85,16 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 // operational-event type and severity. ok is false for a non-terminal
 // state. Terminate is modeled as StateCompleted, so no session state
 // maps to the session_terminated catalogue entry.
-func terminalSessionEvent(st session.State) (et opsevents.EventType, severity string, ok bool) {
+func terminalSessionEvent(st session.State) (et events.EventType, severity string, ok bool) {
 	switch st {
 	case session.StateCompleted:
-		return opsevents.EventSessionCompleted, "info", true
+		return events.EventSessionCompleted, "info", true
 	case session.StateFailed:
-		return opsevents.EventSessionFailed, "error", true
+		return events.EventSessionFailed, "error", true
 	case session.StateCancelled:
-		return opsevents.EventSessionCancelled, "info", true
+		return events.EventSessionCancelled, "info", true
 	case session.StateExpired:
-		return opsevents.EventSessionExpired, "warning", true
+		return events.EventSessionExpired, "warning", true
 	default:
 		return "", "", false
 	}
@@ -121,7 +121,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 				payload["failureClass"] = string(sess.FailureClass)
 			}
 			data, _ := json.Marshal(payload)
-			_, _ = s.opsEmitter.Emit(ctx, opsevents.OperationalEvent{
+			_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
 				Source:          "/v1/sessions",
 				Type:            et.CloudEventsType(),
 				Severity:        severity,

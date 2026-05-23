@@ -11,7 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -23,7 +23,7 @@ import (
 // newExperimentTenantFloorAdmin builds an experiment admin router with
 // tenant `acme` carrying the given minIsolationProfile floor, a
 // `sandboxed` base runtime, and pools at `sandboxed` and `microvm`.
-func newExperimentTenantFloorAdmin(t *testing.T, tenantFloor string) (*admin.Router, *recordingAudit, *opsevents.Emitter) {
+func newExperimentTenantFloorAdmin(t *testing.T, tenantFloor string) (*admin.Router, *recordingAudit, *events.Emitter) {
 	t.Helper()
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{
@@ -49,7 +49,7 @@ func newExperimentTenantFloorAdmin(t *testing.T, tenantFloor string) (*admin.Rou
 		t.Fatalf("seed microvm pool: %v", err)
 	}
 	audit := &recordingAudit{}
-	emitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), "replica-test")
+	emitter := events.NewEmitter(events.NewEventBuffer(0), "replica-test")
 	router := admin.NewRouter(tenants, admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) },
 		Audit: audit,
@@ -121,8 +121,8 @@ func TestCreateExperimentTenantFloorAdvisoryReachesEventBuffer(t *testing.T) {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
 	}
 
-	page := emitter.Buffer().Query(0, opsevents.EventFilter{
-		EventType: string(opsevents.EventExperimentVariantWeakerThanFloor),
+	page := emitter.Buffer().Query(0, events.EventFilter{
+		EventType: string(events.EventExperimentVariantWeakerThanFloor),
 	}, 0)
 	if len(page.Events) != 1 {
 		t.Fatalf("event buffer holds %d variant_weaker_than_tenant_floor events, want 1", len(page.Events))

@@ -32,7 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -104,11 +104,11 @@ const (
 )
 
 // EventEmitter is the §4.0 events sink the WarmPoolController publishes
-// pool_state_changed events through. Aliased to opsevents.EventEmitter
-// so the spec's single interface is reused; *opsevents.Emitter and the
+// pool_state_changed events through. Aliased to events.EventEmitter
+// so the spec's single interface is reused; *events.Emitter and the
 // §25.5 Redis-stream emitter both satisfy it. A nil EventEmitter on
 // Reconciler disables emission.
-type EventEmitter = opsevents.EventEmitter
+type EventEmitter = events.EventEmitter
 
 // Reconciler is the §4.6.1 WarmPoolController. It reconciles one
 // SandboxWarmPool per pass.
@@ -271,9 +271,9 @@ func (r *Reconciler) emitPoolStateChanged(ctx context.Context, pool string, oldP
 		"oldState": string(oldPhase),
 		"newState": string(newPhase),
 	})
-	if _, err := r.Events.Emit(ctx, opsevents.OperationalEvent{
+	if _, err := r.Events.Emit(ctx, events.OperationalEvent{
 		Source:          "//lenny.dev/warmpool",
-		Type:            opsevents.EventPoolStateChanged.CloudEventsType(),
+		Type:            events.EventPoolStateChanged.CloudEventsType(),
 		Severity:        severity,
 		DataContentType: "application/json",
 		Data:            data,

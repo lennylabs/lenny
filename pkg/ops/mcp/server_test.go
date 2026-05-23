@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package mcpmgmt_test
+package mcp_test
 
 import (
 	"bytes"
@@ -9,25 +9,25 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/ops/mcpmgmt"
+	"github.com/lennylabs/lenny/pkg/ops/mcp"
 )
 
 // fakeInvoker is a test Invoker returning a fixed ToolResult and
 // recording the tool it was asked to run.
 type fakeInvoker struct {
-	result mcpmgmt.ToolResult
+	result mcp.ToolResult
 	err    error
 	called string
 }
 
-func (f *fakeInvoker) Invoke(tool mcpmgmt.Tool, _ json.RawMessage) (mcpmgmt.ToolResult, error) {
+func (f *fakeInvoker) Invoke(tool mcp.Tool, _ json.RawMessage) (mcp.ToolResult, error) {
 	f.called = tool.Name
 	return f.result, f.err
 }
 
 // rpc posts a JSON-RPC request to the management server and decodes the
 // response.
-func rpc(t *testing.T, srv *mcpmgmt.Server, headers map[string]string, body map[string]any) (int, map[string]any) {
+func rpc(t *testing.T, srv *mcp.Server, headers map[string]string, body map[string]any) (int, map[string]any) {
 	t.Helper()
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/mcp/management", bytes.NewReader(raw))
@@ -45,22 +45,22 @@ func rpc(t *testing.T, srv *mcpmgmt.Server, headers map[string]string, body map[
 }
 
 func TestInitializeReportsProtocolAndServerInfo(t *testing.T) {
-	srv := mcpmgmt.NewServer(&fakeInvoker{})
+	srv := mcp.NewServer(&fakeInvoker{})
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
 	})
 	result, _ := resp["result"].(map[string]any)
-	if result["protocolVersion"] != mcpmgmt.ProtocolVersion {
-		t.Errorf("protocolVersion = %v, want %s", result["protocolVersion"], mcpmgmt.ProtocolVersion)
+	if result["protocolVersion"] != mcp.ProtocolVersion {
+		t.Errorf("protocolVersion = %v, want %s", result["protocolVersion"], mcp.ProtocolVersion)
 	}
 	info, _ := result["serverInfo"].(map[string]any)
-	if info["name"] != mcpmgmt.ServerName {
-		t.Errorf("serverInfo.name = %v, want %s", info["name"], mcpmgmt.ServerName)
+	if info["name"] != mcp.ServerName {
+		t.Errorf("serverInfo.name = %v, want %s", info["name"], mcp.ServerName)
 	}
 }
 
 func TestToolsListReturnsTheInventory(t *testing.T) {
-	srv := mcpmgmt.NewServer(&fakeInvoker{})
+	srv := mcp.NewServer(&fakeInvoker{})
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
 	})
@@ -89,7 +89,7 @@ func TestToolsListReturnsTheInventory(t *testing.T) {
 }
 
 func TestToolsListReadOnlyFilterExcludesMutatingTools(t *testing.T) {
-	srv := mcpmgmt.NewServer(&fakeInvoker{})
+	srv := mcp.NewServer(&fakeInvoker{})
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
 		"params": map[string]any{"capabilities": map[string]any{"readOnly": true}},
@@ -107,10 +107,10 @@ func TestToolsListReadOnlyFilterExcludesMutatingTools(t *testing.T) {
 }
 
 func TestToolsCallDispatchesThroughTheInvoker(t *testing.T) {
-	inv := &fakeInvoker{result: mcpmgmt.ToolResult{
+	inv := &fakeInvoker{result: mcp.ToolResult{
 		Status: 200, Body: json.RawMessage(`{"status":"healthy"}`),
 	}}
-	srv := mcpmgmt.NewServer(inv)
+	srv := mcp.NewServer(inv)
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{"name": "lenny_health_get", "arguments": map[string]any{}},
@@ -125,7 +125,7 @@ func TestToolsCallDispatchesThroughTheInvoker(t *testing.T) {
 }
 
 func TestToolsCallUnknownToolIsInvalidParams(t *testing.T) {
-	srv := mcpmgmt.NewServer(&fakeInvoker{})
+	srv := mcp.NewServer(&fakeInvoker{})
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{"name": "lenny_nonexistent_tool"},
@@ -137,7 +137,7 @@ func TestToolsCallUnknownToolIsInvalidParams(t *testing.T) {
 }
 
 func TestToolsCallScopeForbidden(t *testing.T) {
-	srv := mcpmgmt.NewServer(&fakeInvoker{})
+	srv := mcp.NewServer(&fakeInvoker{})
 	// §25.12 scope enforcement: a caller whose X-Lenny-Scope does not
 	// include the tool's x-lenny-scope receives -32001 SCOPE_FORBIDDEN
 	// before any REST call is issued.
@@ -163,8 +163,8 @@ func TestToolsCallScopeForbidden(t *testing.T) {
 }
 
 func TestToolsCallAllowedWhenScopeMatches(t *testing.T) {
-	inv := &fakeInvoker{result: mcpmgmt.ToolResult{Status: 201, Body: json.RawMessage(`{"id":"lock-1"}`)}}
-	srv := mcpmgmt.NewServer(inv)
+	inv := &fakeInvoker{result: mcp.ToolResult{Status: 201, Body: json.RawMessage(`{"id":"lock-1"}`)}}
+	srv := mcp.NewServer(inv)
 	// The caller's scope claim includes the tool's scope — the call
 	// passes the §25.12 scope layer.
 	_, resp := rpc(t, srv, map[string]string{"X-Lenny-Scope": "tools:locks:write tools:health:read"},
@@ -184,13 +184,13 @@ func TestToolsCallAllowedWhenScopeMatches(t *testing.T) {
 }
 
 func TestToolsCallDryRunMapsToMetaFlag(t *testing.T) {
-	inv := &fakeInvoker{result: mcpmgmt.ToolResult{
+	inv := &fakeInvoker{result: mcp.ToolResult{
 		Status:  200,
 		Body:    json.RawMessage(`{"dryRun":true,"preview":{"estimatedDowntime":"0s"}}`),
 		DryRun:  true,
 		Preview: json.RawMessage(`{"estimatedDowntime":"0s"}`),
 	}}
-	srv := mcpmgmt.NewServer(inv)
+	srv := mcp.NewServer(inv)
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{
@@ -211,8 +211,8 @@ func TestToolsCallDryRunMapsToMetaFlag(t *testing.T) {
 }
 
 func TestToolsCallEndpointUnavailable(t *testing.T) {
-	inv := &fakeInvoker{result: mcpmgmt.ToolResult{Unavailable: true}}
-	srv := mcpmgmt.NewServer(inv)
+	inv := &fakeInvoker{result: mcp.ToolResult{Unavailable: true}}
+	srv := mcp.NewServer(inv)
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{"name": "lenny_health_get"},
@@ -234,7 +234,7 @@ func TestToolsCallEndpointUnavailable(t *testing.T) {
 }
 
 func TestUnknownMethodIsMethodNotFound(t *testing.T) {
-	srv := mcpmgmt.NewServer(&fakeInvoker{})
+	srv := mcp.NewServer(&fakeInvoker{})
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/teleport",
 	})
@@ -245,7 +245,7 @@ func TestUnknownMethodIsMethodNotFound(t *testing.T) {
 }
 
 func TestServeHTTPRejectsNonPOST(t *testing.T) {
-	srv := mcpmgmt.NewServer(&fakeInvoker{})
+	srv := mcp.NewServer(&fakeInvoker{})
 	req := httptest.NewRequest(http.MethodGet, "/mcp/management", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)

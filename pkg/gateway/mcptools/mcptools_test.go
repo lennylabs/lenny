@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
@@ -46,7 +46,7 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 		Store:        store,
 		Executor:     executor.NewEchoExecutor(),
 		Runtimes:     runtimes,
-		Events:       events.NewBus(0),
+		Events:       sessionevents.NewBus(0),
 		InputWaits:   inputwait.NewRegistry(),
 		Interactions: interactionstore.NewMemory(),
 		Delegation: delegation.NewService(store, delegation.Options{
@@ -141,10 +141,10 @@ func waitPending(t *testing.T, reg *inputwait.Registry, sessionID, requestID str
 
 // newMCPForOutput builds the MCP server with a §15.1 event bus and
 // returns the bus so the lenny/output tests can read published events.
-func newMCPForOutput(t *testing.T) (*mcp.Server, sessionstore.Store, *events.Bus) {
+func newMCPForOutput(t *testing.T) (*mcp.Server, sessionstore.Store, *sessionevents.Bus) {
 	t.Helper()
 	store := memstore.New()
-	bus := events.NewBus(0)
+	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
 		Store:    store,

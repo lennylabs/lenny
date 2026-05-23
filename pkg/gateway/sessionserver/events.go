@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
 
@@ -104,7 +104,7 @@ func resumeCursor(r *http.Request) uint64 {
 }
 
 // writeSSEEvent writes one event as an SSE frame.
-func writeSSEEvent(w http.ResponseWriter, ev events.Event) {
+func writeSSEEvent(w http.ResponseWriter, ev sessionevents.Event) {
 	fmt.Fprintf(w, "id: %d\n", ev.Seq)
 	fmt.Fprintf(w, "event: %s\n", ev.Type)
 	fmt.Fprintf(w, "data: %s\n\n", ev.Data)

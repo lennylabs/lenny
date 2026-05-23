@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package opsevents
+package events
 
 // EventType is a §16.6 operational-event short name. The CloudEvents
 // `type` attribute of an emitted event is "dev.lenny." + EventType.

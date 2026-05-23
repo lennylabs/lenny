@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 )
 
 // Phase is a §25.8 platform upgrade phase.
@@ -106,9 +106,9 @@ func StepNumber(p Phase) (step int, ok bool) {
 
 // Emitter is the §4.0 EventEmitter dependency the upgrade orchestrator
 // uses to publish §16.6 upgrade_progressed events. Aliased to
-// opsevents.EventEmitter so the single interface from §4.0 is reused.
+// events.EventEmitter so the single interface from §4.0 is reused.
 // A nil Emitter passed to Advance is a no-op.
-type Emitter = opsevents.EventEmitter
+type Emitter = events.EventEmitter
 
 // Advance progresses an upgrade from current to the next phase per the
 // §25.8 sequence, emitting a §16.6 upgrade_progressed CloudEvents
@@ -159,9 +159,9 @@ func emitProgressed(ctx context.Context, em Emitter, pool string, oldPhase, newP
 		"imageDigest": imageDigest,
 	}
 	data, _ := json.Marshal(payload)
-	_, _ = em.Emit(ctx, opsevents.OperationalEvent{
+	_, _ = em.Emit(ctx, events.OperationalEvent{
 		Source:          "//lenny.dev/upgrade",
-		Type:            opsevents.EventUpgradeProgressed.CloudEventsType(),
+		Type:            events.EventUpgradeProgressed.CloudEventsType(),
 		Severity:        severity,
 		DataContentType: "application/json",
 		Data:            data,

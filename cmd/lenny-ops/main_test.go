@@ -11,8 +11,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
-	"github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
+	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
@@ -66,16 +66,16 @@ func TestEmptySourcesYieldNothing(t *testing.T) {
 
 // spec §25.5: an event published through the redisFanOutEmitter lands
 // on the platform-scoped ops:events:stream and also reaches the local
-// events.Service buffer so SSE subscribers and the polling cursor see
+// opsstream.Service buffer so SSE subscribers and the polling cursor see
 // it without a separate consumer loop.
 func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	local := events.New(events.Options{})
+	local := opsstream.New(opsstream.Options{})
 
 	em := newRedisFanOutEmitter(client, local, "ops-replica-1")
-	id, err := em.Emit(context.Background(), opsevents.OperationalEvent{
+	id, err := em.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.escalation_created", Severity: "critical",
 	})
 	if err != nil {
@@ -85,8 +85,8 @@ func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
 		t.Error("redisFanOutEmitter returned id=0; local Publish must assign a non-zero cursor")
 	}
 
-	// The local events.Service buffer holds the event.
-	page := local.Query(0, opsevents.EventFilter{}, 100)
+	// The local opsstream.Service buffer holds the event.
+	page := local.Query(0, events.EventFilter{}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("local buffer holds %d events, want 1", len(page.Events))
 	}
@@ -95,7 +95,7 @@ func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
 	}
 
 	// The Redis stream carries the same event.
-	entries, err := client.XRange(context.Background(), opsevents.DefaultStreamKey, "-", "+").Result()
+	entries, err := client.XRange(context.Background(), events.DefaultStreamKey, "-", "+").Result()
 	if err != nil {
 		t.Fatalf("XRange: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
 	if !ok {
 		t.Fatalf("stream entry missing event field: %+v", entries[0].Values)
 	}
-	var streamed opsevents.OperationalEvent
+	var streamed events.OperationalEvent
 	if err := json.Unmarshal([]byte(raw), &streamed); err != nil {
 		t.Fatalf("decode stream event: %v", err)
 	}

@@ -110,7 +110,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	evalpg "github.com/lennylabs/lenny/pkg/gateway/evalstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
@@ -138,7 +138,7 @@ import (
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -790,7 +790,7 @@ func main() {
 		sessionSealer = checkpointSvc
 	}
 
-	eventBus := events.NewBus(0)
+	eventBus := sessionevents.NewBus(0)
 	// One §8.10 tree archive shared by the sessionserver (which archives
 	// children on terminal transitions) and the platform MCP tools.
 	treeArchive := treearchive.NewMemory()
@@ -882,16 +882,16 @@ func main() {
 	// unreachable. When Redis is wired, every emit also lands on the
 	// §25.5 platform-scoped stream ops:events:stream so lenny-ops and
 	// the controllers share the same logical event source.
-	opsEventBuffer := opsevents.NewEventBuffer(0)
-	var opsEmitter opsevents.EventEmitter = opsevents.NewEmitter(opsEventBuffer, replica)
+	opsEventBuffer := events.NewEventBuffer(0)
+	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, replica)
 	if redisClient != nil {
-		opsEmitter = opsevents.NewStreamEmitter(opsevents.StreamEmitterOptions{
+		opsEmitter = events.NewStreamEmitter(events.StreamEmitterOptions{
 			Client:    redisClient,
 			Buffer:    opsEventBuffer,
 			Source:    "//lenny.dev/gateway/" + replica,
 			ReplicaID: replica,
 		})
-		log.Printf("lenny-gateway: §25.5 operational events streaming to Redis %s", opsevents.DefaultStreamKey)
+		log.Printf("lenny-gateway: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
 	}
 
 	// §4.9 credential-pool registry, shared by the admin credential-pool
@@ -1337,9 +1337,9 @@ func main() {
 		data, _ := json.Marshal(map[string]any{
 			"oldStatus": string(prev), "newStatus": string(curr),
 		})
-		_, _ = opsEmitter.Emit(context.Background(), opsevents.OperationalEvent{
+		_, _ = opsEmitter.Emit(context.Background(), events.OperationalEvent{
 			Source:          "/v1/admin/health",
-			Type:            opsevents.EventHealthStatusChanged.CloudEventsType(),
+			Type:            events.EventHealthStatusChanged.CloudEventsType(),
 			Severity:        "warning",
 			DataContentType: "application/json",
 			Data:            data,
@@ -1953,7 +1953,7 @@ type sessionArtifactDeleter interface {
 type experimentRejectionReporter struct {
 	audit   admin.AuditSink
 	metrics *gatewaymetrics.Metrics
-	emitter opsevents.EventEmitter
+	emitter events.EventEmitter
 }
 
 func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx context.Context, ev sessionserver.ExperimentIsolationRejection) {
@@ -1980,9 +1980,9 @@ func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx cont
 	// the §25.3 event buffer so ops agents observe it without log scraping.
 	if e.emitter != nil {
 		data, _ := json.Marshal(detail)
-		_, _ = e.emitter.Emit(ctx, opsevents.OperationalEvent{
+		_, _ = e.emitter.Emit(ctx, events.OperationalEvent{
 			Source:          "/v1/sessions",
-			Type:            opsevents.EventExperimentIsolationMismatch.CloudEventsType(),
+			Type:            events.EventExperimentIsolationMismatch.CloudEventsType(),
 			Severity:        "warning",
 			DataContentType: "application/json",
 			Data:            data,

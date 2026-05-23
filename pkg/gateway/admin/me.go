@@ -5,37 +5,22 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/ops/me"
 )
 
-// MePayload is the §25.4 GET /v1/admin/me response shape.
-type MePayload struct {
-	Subject    string      `json:"subject"`
-	TenantID   string      `json:"tenantId"`
-	SessionID  string      `json:"sessionId,omitempty"`
-	CallerType string      `json:"callerType,omitempty"`
-	Typ        string      `json:"typ,omitempty"`
-	Roles      []auth.Role `json:"roles"`
-}
-
 // AuthorizedToolsPayload is the §25.4 GET /v1/admin/me/authorized-tools
-// response — every admin tool the caller's roles grant access to. The
-// list is derived from the in-process route table and gated by the
-// same role checks the live handlers apply.
+// response — every admin tool the caller's roles grant access to.
 type AuthorizedToolsPayload struct {
-	Tools []AuthorizedTool `json:"tools"`
+	Tools []me.AuthorizedTool `json:"tools"`
 }
 
-// AuthorizedTool captures one §25.4 tool entry.
-type AuthorizedTool struct {
-	Tool        string `json:"tool"`
-	Scope       string `json:"scope"`
-	Category    string `json:"category"`
-	Description string `json:"description,omitempty"`
-}
+// meService caches the §4.0 caller-identity service over the in-process
+// admin-tool catalog. The catalog is constructed lazily on first use so
+// the package init order does not matter.
+var meService = me.NewService(adminToolCatalog())
 
 // handleMe implements GET /v1/admin/me — every authenticated caller
 // can read it, no role gate.
@@ -46,16 +31,8 @@ func (r *Router) handleMe(w http.ResponseWriter, req *http.Request) {
 			"endpoint requires authentication", nil)
 		return
 	}
-	resp := MePayload{
-		Subject:    p.Subject,
-		TenantID:   p.TenantID,
-		SessionID:  p.SessionID,
-		CallerType: p.CallerType,
-		Typ:        string(p.Typ),
-		Roles:      append([]auth.Role(nil), p.Roles...),
-	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(meService.Me(p))
 }
 
 // handleAuthorizedTools implements GET /v1/admin/me/authorized-tools.
@@ -67,32 +44,12 @@ func (r *Router) handleAuthorizedTools(w http.ResponseWriter, req *http.Request)
 			"endpoint requires authentication", nil)
 		return
 	}
-	all := adminToolCatalog()
-	out := make([]AuthorizedTool, 0, len(all))
-	for _, t := range all {
-		if !p.HasRole(t.MinRole) {
-			continue
-		}
-		out = append(out, AuthorizedTool{
-			Tool:        t.Tool,
-			Scope:       t.Scope,
-			Category:    t.Category,
-			Description: t.Description,
-		})
+	tools := meService.Authorized(p)
+	if tools == nil {
+		tools = []me.AuthorizedTool{}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Tool < out[j].Tool })
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(AuthorizedToolsPayload{Tools: out})
-}
-
-// adminTool is the in-process catalog entry. It mirrors the
-// `x-lenny-*` extensions on each OpenAPI admin endpoint.
-type adminTool struct {
-	Tool        string
-	Scope       string
-	Category    string
-	MinRole     auth.Role
-	Description string
+	_ = json.NewEncoder(w).Encode(AuthorizedToolsPayload{Tools: tools})
 }
 
 // adminToolCatalog returns the full set of admin tools the §13 MCP
@@ -100,8 +57,8 @@ type adminTool struct {
 // list is hand-maintained alongside the OpenAPI JSON so the two stay
 // in sync; an OpenAPI extractor that reflects the live document
 // against this catalog ships in a later commit.
-func adminToolCatalog() []adminTool {
-	return []adminTool{
+func adminToolCatalog() []me.AuthorizedTool {
+	return []me.AuthorizedTool{
 		{Tool: "admin.create_tenant", Scope: "admin.tenants.write", Category: "tenant-management", MinRole: auth.RolePlatformAdmin, Description: "Create a tenant"},
 		{Tool: "admin.list_tenants", Scope: "admin.tenants.read", Category: "tenant-management", MinRole: auth.RolePlatformAdmin, Description: "List tenants"},
 		{Tool: "admin.get_tenant", Scope: "admin.tenants.read", Category: "tenant-management", MinRole: auth.RolePlatformAdmin, Description: "Get a tenant"},

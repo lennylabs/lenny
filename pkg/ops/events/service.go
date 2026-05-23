@@ -14,7 +14,7 @@
 //
 // The Service is the single owner of the operational-event buffer on
 // the lenny-ops side. The gateway emits its events through the §25.3
-// pkg/gateway/opsevents.Emitter; the lenny-ops side has its own buffer
+// pkg/gateway/gwevents.Emitter; the lenny-ops side has its own buffer
 // for events that originate in lenny-ops (escalations, drift,
 // platform-upgrade lifecycle, ops self-health). Both feed the same
 // Redis stream (§25.5 "Both write to the same Redis stream"); the
@@ -32,24 +32,24 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	gwevents "github.com/lennylabs/lenny/pkg/gateway/events"
 )
 
 // DefaultBufferCapacity is the §25.5 in-memory cap for the Service's
 // own ring buffer. Matches the gateway-side default so the polling
 // envelope behaves identically regardless of which buffer the caller
 // landed on.
-const DefaultBufferCapacity = opsevents.DefaultBufferCapacity
+const DefaultBufferCapacity = gwevents.DefaultBufferCapacity
 
 // WebhookFanOut is the §25.5 callback the Service invokes after every
 // Publish so the existing webhook delivery worker fans out the same
 // event to its subscriptions. A nil callback disables webhook
 // integration; the SSE/polling sides still work.
-type WebhookFanOut func(context.Context, opsevents.OperationalEvent)
+type WebhookFanOut func(context.Context, gwevents.OperationalEvent)
 
 // Service is the §25.5 event-stream service.
 type Service struct {
-	buffer *opsevents.EventBuffer
+	buffer *gwevents.EventBuffer
 	now    func() time.Time
 
 	subsMu sync.Mutex
@@ -60,8 +60,8 @@ type Service struct {
 
 // subscription is one active SSE subscriber.
 type subscription struct {
-	ch     chan opsevents.BufferedEvent
-	filter opsevents.EventFilter
+	ch     chan gwevents.BufferedEvent
+	filter gwevents.EventFilter
 	closed bool
 }
 
@@ -84,7 +84,7 @@ func New(opts Options) *Service {
 		now = time.Now
 	}
 	return &Service{
-		buffer:  opsevents.NewEventBuffer(opts.Capacity),
+		buffer:  gwevents.NewEventBuffer(opts.Capacity),
 		now:     now,
 		webhook: opts.Webhook,
 	}
@@ -94,15 +94,15 @@ func New(opts Options) *Service {
 // event in the buffer, fans out to live SSE subscribers, and forwards
 // to the webhook callback when configured. Returns the assigned buffer
 // id (the polling cursor). The error returns satisfies the §4.0
-// opsevents.EventEmitter contract so the Service is a drop-in for any
+// gwevents.EventEmitter contract so the Service is a drop-in for any
 // subsystem that takes an EventEmitter; in v1 the in-memory write
 // never errors, so the error is always nil unless ctx is cancelled.
-func (s *Service) Publish(ctx context.Context, e opsevents.OperationalEvent) (uint64, error) {
+func (s *Service) Publish(ctx context.Context, e gwevents.OperationalEvent) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 	if e.SpecVersion == "" {
-		e.SpecVersion = opsevents.CloudEventsSpecVersion
+		e.SpecVersion = gwevents.CloudEventsSpecVersion
 	}
 	if e.Time.IsZero() {
 		e.Time = s.now().UTC()
@@ -111,28 +111,28 @@ func (s *Service) Publish(ctx context.Context, e opsevents.OperationalEvent) (ui
 		e.ID = fmt.Sprintf("ops:%d", e.Time.UnixNano())
 	}
 	id := s.buffer.Append(e)
-	s.fanOutToSubscribers(opsevents.BufferedEvent{ID: id, Event: e})
+	s.fanOutToSubscribers(gwevents.BufferedEvent{ID: id, Event: e})
 	if s.webhook != nil {
 		s.webhook(ctx, e)
 	}
 	return id, nil
 }
 
-// Emit satisfies the §4.0 opsevents.EventEmitter interface so the
+// Emit satisfies the §4.0 gwevents.EventEmitter interface so the
 // Service can be passed to any subsystem that takes an EventEmitter.
 // It is a one-line forward to Publish.
-func (s *Service) Emit(ctx context.Context, e opsevents.OperationalEvent) (uint64, error) {
+func (s *Service) Emit(ctx context.Context, e gwevents.OperationalEvent) (uint64, error) {
 	return s.Publish(ctx, e)
 }
 
-// Compile-time guard that *Service satisfies opsevents.EventEmitter.
-var _ opsevents.EventEmitter = (*Service)(nil)
+// Compile-time guard that *Service satisfies gwevents.EventEmitter.
+var _ gwevents.EventEmitter = (*Service)(nil)
 
 // fanOutToSubscribers delivers ev to every subscriber whose filter
 // matches. A slow subscriber whose channel is full is skipped — the
 // event remains in the ring buffer so the subscriber can recover via
 // the polling cursor on reconnect.
-func (s *Service) fanOutToSubscribers(ev opsevents.BufferedEvent) {
+func (s *Service) fanOutToSubscribers(ev gwevents.BufferedEvent) {
 	s.subsMu.Lock()
 	defer s.subsMu.Unlock()
 	for _, sub := range s.subs {
@@ -152,7 +152,7 @@ func (s *Service) fanOutToSubscribers(ev opsevents.BufferedEvent) {
 // matchFilter applies the same rules the gateway-side buffer uses
 // (§25.3): both empty-field passes are no-ops, and EventType matches
 // the full CloudEvents type or its short-name suffix.
-func matchFilter(e opsevents.OperationalEvent, f opsevents.EventFilter) bool {
+func matchFilter(e gwevents.OperationalEvent, f gwevents.EventFilter) bool {
 	if f.Severity != "" && e.Severity != f.Severity {
 		return false
 	}
@@ -166,18 +166,18 @@ func matchFilter(e opsevents.OperationalEvent, f opsevents.EventFilter) bool {
 // Query returns the §25.5 polling page: events after the cursor,
 // narrowed by filter, capped at limit. Uses the §25.2 pagination
 // envelope (Cursor + HasMore + GapDetected).
-func (s *Service) Query(since uint64, filter opsevents.EventFilter, limit int) opsevents.BufferedEventPage {
+func (s *Service) Query(since uint64, filter gwevents.EventFilter, limit int) gwevents.BufferedEventPage {
 	return s.buffer.Query(since, filter, limit)
 }
 
 // subscribe registers a new SSE subscriber. The returned channel
 // receives every matching event published after the subscription is
 // installed. The caller must call unsubscribe to release the slot.
-func (s *Service) subscribe(filter opsevents.EventFilter, buffer int) *subscription {
+func (s *Service) subscribe(filter gwevents.EventFilter, buffer int) *subscription {
 	if buffer <= 0 {
 		buffer = 64
 	}
-	sub := &subscription{ch: make(chan opsevents.BufferedEvent, buffer), filter: filter}
+	sub := &subscription{ch: make(chan gwevents.BufferedEvent, buffer), filter: filter}
 	s.subsMu.Lock()
 	s.subs = append(s.subs, sub)
 	s.subsMu.Unlock()
@@ -222,7 +222,7 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	filter := opsevents.EventFilter{
+	filter := gwevents.EventFilter{
 		EventType: r.URL.Query().Get("eventType"),
 		Severity:  r.URL.Query().Get("severity"),
 	}
@@ -279,7 +279,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	if limit > DefaultBufferCapacity {
 		limit = DefaultBufferCapacity
 	}
-	page := s.buffer.Query(since, opsevents.EventFilter{
+	page := s.buffer.Query(since, gwevents.EventFilter{
 		EventType: q.Get("eventType"),
 		Severity:  q.Get("severity"),
 	}, limit)
@@ -307,7 +307,7 @@ func resumeCursor(r *http.Request) uint64 {
 // writeSSEFrame writes one BufferedEvent as an SSE record per §25.5.
 // The id field is the buffer cursor so a client reconnecting with
 // Last-Event-ID picks up exactly where it left off.
-func writeSSEFrame(w http.ResponseWriter, ev opsevents.BufferedEvent) {
+func writeSSEFrame(w http.ResponseWriter, ev gwevents.BufferedEvent) {
 	body, err := json.Marshal(ev.Event)
 	if err != nil {
 		return

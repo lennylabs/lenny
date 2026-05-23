@@ -46,7 +46,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
@@ -234,7 +234,7 @@ func TestGoClientStreamingReconnect(t *testing.T) {
 	// JSON-line helper. The gateway is the in-process sessionserver
 	// wired with an event bus; events published to that bus are the
 	// stream the SDK consumes.
-	bus := events.NewBus(64)
+	bus := sessionevents.NewBus(64)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
 

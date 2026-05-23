@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -32,7 +32,7 @@ func seedAwaitingParent(t *testing.T, store sessionstore.Store, id string) {
 
 // childrenReattached returns the children_reattached event on a
 // session's stream, or nil when none was emitted.
-func childrenReattached(bus *events.Bus, sessionID string) *events.Event {
+func childrenReattached(bus *sessionevents.Bus, sessionID string) *sessionevents.Event {
 	for _, e := range bus.History(sessionID, 0) {
 		if e.Type == "children_reattached" {
 			ev := e
@@ -284,7 +284,7 @@ func TestCascadeArchivesCancelledChildren(t *testing.T) {
 
 func TestResumeEmitsChildrenReattached(t *testing.T) {
 	store := memstore.New()
-	bus := events.NewBus(0)
+	bus := sessionevents.NewBus(0)
 	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent") // running
@@ -304,7 +304,7 @@ func TestResumeEmitsChildrenReattached(t *testing.T) {
 
 func TestResumeSkipsChildrenReattachedWhenAllChildrenTerminal(t *testing.T) {
 	store := memstore.New()
-	bus := events.NewBus(0)
+	bus := sessionevents.NewBus(0)
 	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
 	seedAwaitingParent(t, store, "sess_parent")
 	now := time.Now()
@@ -326,7 +326,7 @@ func TestResumeSkipsChildrenReattachedWhenAllChildrenTerminal(t *testing.T) {
 
 func TestResumeSkipsChildrenReattachedWhenNoChildren(t *testing.T) {
 	store := memstore.New()
-	bus := events.NewBus(0)
+	bus := sessionevents.NewBus(0)
 	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
 	seedAwaitingParent(t, store, "sess_solo")
 

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
-	"github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
+	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 )
 
 func fixedNow() time.Time { return time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC) }
@@ -22,20 +22,20 @@ func fixedNow() time.Time { return time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC) 
 // spec: §25.5 — Publish assigns the §25.3 CloudEvents envelope
 // (specversion + time + id) and records the event in the buffer.
 func TestService_Publish_StampsEnvelope(t *testing.T) {
-	s := events.New(events.Options{Capacity: 16, Now: fixedNow})
-	id, err := s.Publish(context.Background(), opsevents.OperationalEvent{Type: "dev.lenny.alert_fired"})
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
+	id, err := s.Publish(context.Background(), events.OperationalEvent{Type: "dev.lenny.alert_fired"})
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 	if id == 0 {
 		t.Fatal("expected non-zero id")
 	}
-	page := s.Query(0, opsevents.EventFilter{}, 0)
+	page := s.Query(0, events.EventFilter{}, 0)
 	if len(page.Events) != 1 {
 		t.Fatalf("page events: %d", len(page.Events))
 	}
 	ev := page.Events[0].Event
-	if ev.SpecVersion != opsevents.CloudEventsSpecVersion {
+	if ev.SpecVersion != events.CloudEventsSpecVersion {
 		t.Errorf("specversion: %q", ev.SpecVersion)
 	}
 	if ev.Time.IsZero() {
@@ -49,9 +49,9 @@ func TestService_Publish_StampsEnvelope(t *testing.T) {
 // spec: §25.5 — the SSE endpoint replays buffered events whose id is
 // > the Last-Event-ID header before switching to live delivery.
 func TestService_Stream_ReplaysBacklog(t *testing.T) {
-	s := events.New(events.Options{Capacity: 16, Now: fixedNow})
-	s.Publish(context.Background(), opsevents.OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "warning"})
-	s.Publish(context.Background(), opsevents.OperationalEvent{Type: "dev.lenny.health_status_changed", Severity: "info"})
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
+	s.Publish(context.Background(), events.OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "warning"})
+	s.Publish(context.Background(), events.OperationalEvent{Type: "dev.lenny.health_status_changed", Severity: "info"})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil)
 	rec := newStreamingRecorder()
@@ -76,9 +76,9 @@ func TestService_Stream_ReplaysBacklog(t *testing.T) {
 
 // spec: §25.5 — Last-Event-ID skips already-seen events on reconnect.
 func TestService_Stream_ResumesAfterLastEventID(t *testing.T) {
-	s := events.New(events.Options{Capacity: 16, Now: fixedNow})
-	s.Publish(context.Background(), opsevents.OperationalEvent{Type: "first"})
-	s.Publish(context.Background(), opsevents.OperationalEvent{Type: "second"})
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
+	s.Publish(context.Background(), events.OperationalEvent{Type: "first"})
+	s.Publish(context.Background(), events.OperationalEvent{Type: "second"})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil)
 	req.Header.Set("Last-Event-ID", "1")
@@ -103,7 +103,7 @@ func TestService_Stream_ResumesAfterLastEventID(t *testing.T) {
 // via the synchronous SubscriberCount after a goroutine handles the
 // request.)
 func TestService_Stream_LiveDelivery(t *testing.T) {
-	s := events.New(events.Options{Capacity: 16, Now: fixedNow})
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
 
 	pipeR, pipeW := newPipeRecorder()
 	defer pipeW.Close()
@@ -121,7 +121,7 @@ func TestService_Stream_LiveDelivery(t *testing.T) {
 	// Wait for the handler to install its subscription.
 	waitFor(t, func() bool { return s.SubscriberCount() == 1 })
 
-	s.Publish(context.Background(), opsevents.OperationalEvent{Type: "live"})
+	s.Publish(context.Background(), events.OperationalEvent{Type: "live"})
 	frame := readOneSSEFrame(t, pipeR)
 	if frame.Type != "live" {
 		t.Errorf("live frame: %q", frame.Type)
@@ -133,9 +133,9 @@ func TestService_Stream_LiveDelivery(t *testing.T) {
 // spec: §25.5 — ?eventType= filters the SSE stream (matches the
 // polling endpoint).
 func TestService_Stream_FilterByEventType(t *testing.T) {
-	s := events.New(events.Options{Capacity: 16, Now: fixedNow})
-	s.Publish(context.Background(), opsevents.OperationalEvent{Type: "dev.lenny.alert_fired"})
-	s.Publish(context.Background(), opsevents.OperationalEvent{Type: "dev.lenny.upgrade_progressed"})
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
+	s.Publish(context.Background(), events.OperationalEvent{Type: "dev.lenny.alert_fired"})
+	s.Publish(context.Background(), events.OperationalEvent{Type: "dev.lenny.upgrade_progressed"})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream?eventType=alert_fired", nil)
 	rec := newStreamingRecorder()
@@ -155,15 +155,15 @@ func TestService_Stream_FilterByEventType(t *testing.T) {
 // spec: §25.5 / §25.2 — the polling endpoint returns the §25.2
 // pagination envelope (cursor + hasMore).
 func TestService_Poll_PaginationEnvelope(t *testing.T) {
-	s := events.New(events.Options{Capacity: 16, Now: fixedNow})
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
 	for i := 0; i < 5; i++ {
-		s.Publish(context.Background(), opsevents.OperationalEvent{Type: "ev"})
+		s.Publish(context.Background(), events.OperationalEvent{Type: "ev"})
 	}
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events?limit=3", nil)
 	rec := httptest.NewRecorder()
 	s.HandlePoll(rec, req)
 
-	var page opsevents.BufferedEventPage
+	var page events.BufferedEventPage
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestService_Poll_PaginationEnvelope(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/v1/admin/events?limit=3&since=3", nil)
 	rec = httptest.NewRecorder()
 	s.HandlePoll(rec, req)
-	page = opsevents.BufferedEventPage{}
+	page = events.BufferedEventPage{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode page2: %v", err)
 	}
@@ -197,17 +197,17 @@ func TestService_Poll_PaginationEnvelope(t *testing.T) {
 func TestService_Publish_FansOutToWebhook(t *testing.T) {
 	var got []string
 	var mu sync.Mutex
-	s := events.New(events.Options{
+	s := opsstream.New(opsstream.Options{
 		Capacity: 16,
 		Now:      fixedNow,
-		Webhook: func(_ context.Context, e opsevents.OperationalEvent) {
+		Webhook: func(_ context.Context, e events.OperationalEvent) {
 			mu.Lock()
 			got = append(got, e.Type)
 			mu.Unlock()
 		},
 	})
-	s.Publish(context.Background(), opsevents.OperationalEvent{Type: "a"})
-	s.Publish(context.Background(), opsevents.OperationalEvent{Type: "b"})
+	s.Publish(context.Background(), events.OperationalEvent{Type: "a"})
+	s.Publish(context.Background(), events.OperationalEvent{Type: "b"})
 	mu.Lock()
 	defer mu.Unlock()
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
@@ -218,7 +218,7 @@ func TestService_Publish_FansOutToWebhook(t *testing.T) {
 // spec: §25.5 — SubscriberCount drops to zero after the SSE client
 // disconnects.
 func TestService_Unsubscribe_OnClientDisconnect(t *testing.T) {
-	s := events.New(events.Options{Capacity: 16, Now: fixedNow})
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
 
 	pipeR, pipeW := newPipeRecorder()
 	defer pipeR.Close()

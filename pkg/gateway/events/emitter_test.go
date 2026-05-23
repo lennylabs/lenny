@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package opsevents
+package events
 
 import (
 	"context"

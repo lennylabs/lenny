@@ -11,26 +11,26 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
-func newEventBufferAdmin(t *testing.T, buf *opsevents.EventBuffer) *admin.Router {
+func newEventBufferAdmin(t *testing.T, buf *events.EventBuffer) *admin.Router {
 	t.Helper()
 	return admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 	}).WithEventBuffer(buf)
 }
 
-func opsEvent(typ, severity string) opsevents.OperationalEvent {
-	return opsevents.OperationalEvent{
+func opsEvent(typ, severity string) events.OperationalEvent {
+	return events.OperationalEvent{
 		ID: typ, SpecVersion: "1.0.2", Type: "dev.lenny." + typ,
 		Severity: severity, Time: time.Now(),
 	}
 }
 
 func TestEventBufferEndpointReturnsEvents(t *testing.T) {
-	buf := opsevents.NewEventBuffer(0)
+	buf := events.NewEventBuffer(0)
 	buf.Append(opsEvent("alert_fired", "critical"))
 	buf.Append(opsEvent("pool_state_changed", "info"))
 	router := newEventBufferAdmin(t, buf)
@@ -41,7 +41,7 @@ func TestEventBufferEndpointReturnsEvents(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var page opsevents.BufferedEventPage
+	var page events.BufferedEventPage
 	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestEventBufferEndpointReturnsEvents(t *testing.T) {
 }
 
 func TestEventBufferEndpointFiltersAndCursor(t *testing.T) {
-	buf := opsevents.NewEventBuffer(0)
+	buf := events.NewEventBuffer(0)
 	buf.Append(opsEvent("alert_fired", "critical"))
 	buf.Append(opsEvent("pool_state_changed", "info"))
 	buf.Append(opsEvent("alert_fired", "warning"))
@@ -62,7 +62,7 @@ func TestEventBufferEndpointFiltersAndCursor(t *testing.T) {
 		"/v1/admin/events/buffer?eventType=alert_fired", nil))
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
-	var page opsevents.BufferedEventPage
+	var page events.BufferedEventPage
 	_ = json.Unmarshal(rr.Body.Bytes(), &page)
 	if len(page.Events) != 2 {
 		t.Errorf("eventType filter: %d events, want 2", len(page.Events))
@@ -82,8 +82,8 @@ func TestEventBufferEndpointFiltersAndCursor(t *testing.T) {
 func TestEventBufferSurfacesCircuitBreakerEvent(t *testing.T) {
 	// §25.3: opening a circuit breaker via the admin API emits an
 	// operational event into the buffer the endpoint then surfaces.
-	buf := opsevents.NewEventBuffer(0)
-	emitter := opsevents.NewEmitter(buf, "test")
+	buf := events.NewEventBuffer(0)
+	emitter := events.NewEmitter(buf, "test")
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 	}).WithBreakers(breakerstore.NewMemory()).
@@ -103,7 +103,7 @@ func TestEventBufferSurfacesCircuitBreakerEvent(t *testing.T) {
 	q := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/events/buffer", nil))
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, q)
-	var page opsevents.BufferedEventPage
+	var page events.BufferedEventPage
 	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestEventBufferSurfacesCircuitBreakerEvent(t *testing.T) {
 }
 
 func TestEventBufferEndpointRequiresAdmin(t *testing.T) {
-	router := newEventBufferAdmin(t, opsevents.NewEventBuffer(0))
+	router := newEventBufferAdmin(t, events.NewEventBuffer(0))
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/buffer", nil)
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)

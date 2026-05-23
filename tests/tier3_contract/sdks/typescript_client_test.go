@@ -46,7 +46,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/tier3_contract/sdks/harness"
@@ -270,7 +270,7 @@ func runSDKStreamingReconnect(t *testing.T, name string, cmd []string) {
 	// The gateway is the in-process sessionserver wired with an event
 	// bus; events published to that bus are the stream the SDK
 	// consumes.
-	bus := events.NewBus(64)
+	bus := sessionevents.NewBus(64)
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{Events: bus})
 
 	// disconnector severs the SDK's first SSE connection mid-stream so

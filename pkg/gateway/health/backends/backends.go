@@ -43,7 +43,7 @@ func Postgres(pool *pgxpool.Pool, name string) health.Checker {
 					Status:          health.StatusUnhealthy,
 					Detail:          "postgres ping failed: " + err.Error(),
 					SuggestedAction: "verify Postgres reachability, credentials, and the connection pool; the gateway rejects session writes until it recovers",
-					RunbookRef:      "postgres-failover",
+					RunbookRef:      health.RunbookFor("postgres"),
 				}
 			}
 			return health.Component{
@@ -68,7 +68,7 @@ func Redis(client redis.UniversalClient, name string) health.Checker {
 					Status:          health.StatusUnhealthy,
 					Detail:          "redis ping failed: " + err.Error(),
 					SuggestedAction: "verify Redis reachability; circuit-breaker and coordination state degrade to per-replica behaviour until it recovers",
-					RunbookRef:      "redis-failure",
+					RunbookRef:      health.RunbookFor("redis"),
 				}
 			}
 			return health.Component{
@@ -103,7 +103,7 @@ func CircuitBreakerCache(cache BreakerCache, name string) health.Checker {
 					Status:          health.StatusDegraded,
 					Detail:          "circuit-breaker cache has not completed its first refresh",
 					SuggestedAction: "verify Redis reachability; the gateway admits requests against an empty breaker snapshot until the first refresh succeeds",
-					RunbookRef:      "redis-failure",
+					RunbookRef:      health.RunbookFor("redis"),
 				}
 			}
 			if age := time.Since(last); age > breakerCacheStaleAfter {
@@ -112,7 +112,7 @@ func CircuitBreakerCache(cache BreakerCache, name string) health.Checker {
 					Status:          health.StatusDegraded,
 					Detail:          fmt.Sprintf("circuit-breaker cache is %s stale; serving the last known snapshot", age.Round(time.Second)),
 					SuggestedAction: "verify Redis reachability; the gateway admits requests against a stale breaker snapshot until the cache refreshes",
-					RunbookRef:      "redis-failure",
+					RunbookRef:      health.RunbookFor("redis"),
 				}
 			}
 			return health.Component{

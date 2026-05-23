@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package mcpmgmt
+package mcp
 
 import (
 	"context"

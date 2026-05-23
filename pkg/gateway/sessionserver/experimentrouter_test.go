@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -203,7 +203,7 @@ func TestExperimentRouterOFREPFailureEmitsTargetingFailed(t *testing.T) {
 
 	exps := experimentstore.NewMemory()
 	externalExperiment(t, exps, "exp_ext", "claude-code-v2")
-	emitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), "test")
+	emitter := events.NewEmitter(events.NewEventBuffer(0), "test")
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		Experiments: exps,
@@ -220,8 +220,8 @@ func TestExperimentRouterOFREPFailureEmitsTargetingFailed(t *testing.T) {
 	if got.ExperimentContext != nil {
 		t.Errorf("session enrolled despite an OFREP failure: %+v", got.ExperimentContext)
 	}
-	page := emitter.Buffer().Query(0, opsevents.EventFilter{
-		EventType: string(opsevents.EventExperimentTargetingFailed),
+	page := emitter.Buffer().Query(0, events.EventFilter{
+		EventType: string(events.EventExperimentTargetingFailed),
 	}, 0)
 	if len(page.Events) != 1 {
 		t.Errorf("targeting_failed events = %d, want 1", len(page.Events))
@@ -237,7 +237,7 @@ func TestExperimentRouterEmitsMultiEligibleSkipped(t *testing.T) {
 	seedRoutableExperiment(t, exps, "exp_first", createdAt)
 	seedRoutableExperiment(t, exps, "exp_second", createdAt.Add(time.Hour))
 
-	emitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), "replica-test")
+	emitter := events.NewEmitter(events.NewEventBuffer(0), "replica-test")
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		Experiments: exps,
@@ -254,8 +254,8 @@ func TestExperimentRouterEmitsMultiEligibleSkipped(t *testing.T) {
 		t.Fatalf("session enrolled in %+v, want exp_first", got.ExperimentContext)
 	}
 
-	page := emitter.Buffer().Query(0, opsevents.EventFilter{
-		EventType: string(opsevents.EventExperimentMultiEligibleSkipped),
+	page := emitter.Buffer().Query(0, events.EventFilter{
+		EventType: string(events.EventExperimentMultiEligibleSkipped),
 	}, 0)
 	if len(page.Events) != 1 {
 		t.Fatalf("buffer holds %d multi_eligible_skipped events, want 1", len(page.Events))
@@ -290,7 +290,7 @@ func TestExperimentRouterNoSkipEmitsNothing(t *testing.T) {
 	exps := experimentstore.NewMemory()
 	seedRoutableExperiment(t, exps, "exp_only", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
-	emitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), "replica-test")
+	emitter := events.NewEmitter(events.NewEventBuffer(0), "replica-test")
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		Experiments: exps,
 		OpsEmitter:  emitter,
@@ -301,8 +301,8 @@ func TestExperimentRouterNoSkipEmitsNothing(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d", rr.Code)
 	}
-	page := emitter.Buffer().Query(0, opsevents.EventFilter{
-		EventType: string(opsevents.EventExperimentMultiEligibleSkipped),
+	page := emitter.Buffer().Query(0, events.EventFilter{
+		EventType: string(events.EventExperimentMultiEligibleSkipped),
 	}, 0)
 	if len(page.Events) != 0 {
 		t.Errorf("emitted %d events, want 0 — the session had no skipped experiments", len(page.Events))
