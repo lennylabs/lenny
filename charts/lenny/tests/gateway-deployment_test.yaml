@@ -272,7 +272,7 @@ tests:
     asserts:
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 10
+          count: 12
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -282,6 +282,20 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[1].value
           value: "50"
+      # §4.1 / §16.5 GatewayNoHealthyReplicas alert denominator gauge.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MIN_REPLICAS
+            value: "2"
+      # §4.1 / §16.5 GatewayActiveStreamsHigh alert denominator gauge.
+      # Falls back to gateway.maxSessionsPerReplica when streamCeiling
+      # is unset.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_STREAM_CEILING
+            value: "50"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -361,6 +375,37 @@ tests:
           content:
             name: LENNY_MAX_SESSIONS_PER_REPLICA
             value: "200"
+
+  # spec: §4.1 / §16.5 — the chart renders LENNY_MIN_REPLICAS from
+  # autoscaling.minReplicas so a tier-preset override flows into the
+  # GatewayNoHealthyReplicas alert.
+  - it: renders LENNY_MIN_REPLICAS from autoscaling.minReplicas
+    set:
+      autoscaling.minReplicas: 7
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MIN_REPLICAS
+            value: "7"
+
+  # spec: §4.1 / §16.5 — when gateway.streamCeiling is set explicitly
+  # it overrides the maxSessionsPerReplica fallback.
+  - it: renders LENNY_STREAM_CEILING from gateway.streamCeiling when set
+    set:
+      gateway.streamCeiling: 300
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_STREAM_CEILING
+            value: "300"
 
   - it: wires LENNY_POSTGRES_DSN from the datastore Secret when postgres.dsn is set
     set:
@@ -468,3 +513,75 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --playground-bearer-ttl-seconds=900
+
+  # spec: §4.1 / §17.1 — a stock render carries no
+  # topologySpreadConstraints and no podAntiAffinity so Tier 1
+  # single-zone installs work without extra schedulable nodes.
+  - it: omits topology spread and podAntiAffinity by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - isNull:
+          path: spec.template.spec.topologySpreadConstraints
+      - isNull:
+          path: spec.template.spec.affinity
+
+  # spec: §4.1 / §17.1 — when gateway.topologySpread.enabled is true
+  # the Deployment carries the operator-supplied constraints. The
+  # default zone constraint uses ScheduleAnyway so a brief zone
+  # capacity shortfall does not block scale-up.
+  - it: renders topology spread constraints when gateway.topologySpread.enabled is true
+    set:
+      gateway.topologySpread.enabled: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.topologySpreadConstraints
+          content:
+            maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: lenny
+                lenny.dev/component: gateway
+
+  # spec: §17.8.2 — the preferred podAntiAffinity form is the Tier 3
+  # default so it does not block scale-up when a zone temporarily
+  # runs short of nodes.
+  - it: renders preferred podAntiAffinity when gateway.podAntiAffinity.enabled is true
+    set:
+      gateway.podAntiAffinity.enabled: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight
+          value: 100
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey
+          value: kubernetes.io/hostname
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.labelSelector.matchLabels["lenny.dev/component"]
+          value: gateway
+
+  # spec: §17.8.2 — operators with a guaranteed gateway node pool >=
+  # maxReplicas may swap the preferred rule for required so the
+  # scheduler refuses to co-locate pods on the same node.
+  - it: renders required podAntiAffinity when schedulingRule is required
+    set:
+      gateway.podAntiAffinity.enabled: true
+      gateway.podAntiAffinity.schedulingRule: required
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey
+          value: kubernetes.io/hostname
+      - isNull:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution

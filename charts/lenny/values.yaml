@@ -544,6 +544,47 @@ gateway:
   # provisional values are 50 (Tier 1), 200 (Tier 2), and 400 (Tier 3);
   # the tier presets override this value.
   maxSessionsPerReplica: 50
+  # streamCeiling is the §4.1 / §16.5 per-replica streaming-connection
+  # ceiling read by the GatewayActiveStreamsHigh alert via
+  # scalar(lenny_gateway_stream_ceiling). When unset the chart falls
+  # back to gateway.maxSessionsPerReplica because each session may hold
+  # at most one active stream; operators with a different ratio should
+  # set this explicitly. Override via LENNY_STREAM_CEILING.
+  streamCeiling: ""
+  # topologySpread opt-in (§4.1 / §17.1). When enabled the chart emits
+  # spec.template.spec.topologySpreadConstraints on the gateway
+  # Deployment so the scheduler distributes replicas across failure
+  # domains. Disabled by default so a stock render produces a Tier 1
+  # single-zone Deployment with no extra scheduling constraints; the
+  # tier-3 preset enables a zone-level spread.
+  topologySpread:
+    enabled: false
+    constraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+  # podAntiAffinity opt-in (§17.8.2 Tier 3 node-drain expectation).
+  # When enabled the chart emits a podAntiAffinity rule keyed on
+  # topology.kubernetes.io/hostname so the scheduler prefers
+  # spreading gateway pods across distinct nodes — capping single-node
+  # drain time at one terminationGracePeriodSeconds even if a cluster
+  # autoscaler later co-locates pods on a single node. Disabled by
+  # default so Tier 1/2 single-zone installs do not require multiple
+  # schedulable nodes; the tier-3 preset enables the preferred form
+  # so it does not block scale-up when a zone temporarily runs short
+  # of nodes.
+  podAntiAffinity:
+    enabled: false
+    # schedulingRule is "preferred" or "required". Use "preferred" on
+    # clusters that may temporarily have fewer schedulable nodes than
+    # gateway.maxReplicas; "required" is acceptable when the gateway
+    # node pool always has at least maxReplicas nodes.
+    schedulingRule: preferred
+    # topologyKey defaults to kubernetes.io/hostname per §17.8.2.
+    topologyKey: kubernetes.io/hostname
+    # weight applies to the preferred form only. 100 is the maximum
+    # weight Kubernetes accepts.
+    weight: 100
   # serviceAccount.annotations are stamped onto the lenny-gateway
   # ServiceAccount. The §13 IRSA-on-EKS install sets
   # eks.amazonaws.com/role-arn here to bind the SA to the IAM role

@@ -182,6 +182,106 @@ func TestSetActiveSessions(t *testing.T) {
 	}
 }
 
+// spec: §4.1 / §16.5 — the scalar configuration gauges are
+// registered at construction so /metrics exposes them before the
+// gateway main has called the setters. The
+// `GatewayNoHealthyReplicas` and `GatewayActiveStreamsHigh` alert
+// expressions read these via scalar(...); a missing child series
+// resolves the scalar to NaN and the alert never fires.
+func TestScalarGaugesRegisteredAtStartup(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"lenny_gateway_min_replicas 0",
+		"lenny_gateway_stream_ceiling 0",
+		"lenny_gateway_replica_count 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// spec: §4.1 / §16.5 — SetMinReplicas / SetStreamCeiling /
+// SetReplicaCount drive the three scalar gauges referenced from the
+// §16.5 alert rules. Each value must round-trip through /metrics so
+// the scalar(...) lookups in the alert rules resolve to the
+// configured operator value.
+func TestSetScalarGaugesEmitsConfiguredValues(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetMinReplicas(5)
+	m.SetStreamCeiling(400)
+	m.SetReplicaCount(1)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"lenny_gateway_min_replicas 5",
+		"lenny_gateway_stream_ceiling 400",
+		"lenny_gateway_replica_count 1",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// spec: §4.1 / §16.5 — concurrent setter invocations from the
+// startup wiring path and a watchdog poller must not race or panic.
+// The scalar gauges are plain prometheus.Gauge values; this test
+// pins the no-panic property under concurrent writes.
+func TestScalarGaugesAreSafeUnderConcurrentSetters(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	done := make(chan struct{})
+	for i := 0; i < 16; i++ {
+		go func(v int) {
+			defer func() { done <- struct{}{} }()
+			for j := 0; j < 100; j++ {
+				m.SetMinReplicas(v + j)
+				m.SetStreamCeiling(v + j)
+				m.SetReplicaCount(1)
+			}
+		}(i)
+	}
+	for i := 0; i < 16; i++ {
+		<-done
+	}
+	// One terminal read; assert the gauges still emit cleanly.
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"lenny_gateway_min_replicas",
+		"lenny_gateway_stream_ceiling",
+		"lenny_gateway_replica_count",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q after concurrent writes", want)
+		}
+	}
+}
+
 // spec: §4.1 — lenny_gateway_max_sessions_per_replica is emitted at
 // startup with delivery_mode labels so the §16.5
 // GatewaySessionBudgetNearExhaustion alert has a denominator gauge.

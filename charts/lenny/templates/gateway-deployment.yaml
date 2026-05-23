@@ -146,6 +146,59 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      {{- /*
+          §4.1 / §17.1 cross-zone topology spread. The §17.1 narrative
+          calls for gateway replicas to spread via topology spread
+          constraints so a zone failure does not collapse capacity onto
+          a single replica set. The block is opt-in via
+          gateway.topologySpread so a stock single-zone install renders
+          without it; the tier-3 preset enables it.
+      */ -}}
+      {{- with .Values.gateway.topologySpread }}
+      {{- if .enabled }}
+      topologySpreadConstraints:
+        {{- range .constraints }}
+        - maxSkew: {{ .maxSkew }}
+          topologyKey: {{ .topologyKey }}
+          whenUnsatisfiable: {{ .whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Chart.Name }}
+              lenny.dev/component: gateway
+        {{- end }}
+      {{- end }}
+      {{- end }}
+      {{- /*
+          §17.8.2 Tier 3 node-drain expectation: a soft podAntiAffinity
+          rule on topologyKey: kubernetes.io/hostname so the scheduler
+          prefers spreading gateway pods across distinct nodes. The
+          block is opt-in via gateway.podAntiAffinity so it lights up
+          only when an operator (or the tier-3 preset) enables it; Tier
+          1/2 deployments MAY omit it per §17.8.2.
+      */ -}}
+      {{- with .Values.gateway.podAntiAffinity }}
+      {{- if .enabled }}
+      affinity:
+        podAntiAffinity:
+          {{- if eq .schedulingRule "preferred" }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .weight | default 100 }}
+              podAffinityTerm:
+                topologyKey: {{ .topologyKey | default "kubernetes.io/hostname" }}
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: {{ $.Chart.Name }}
+                    lenny.dev/component: gateway
+          {{- else if eq .schedulingRule "required" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: {{ .topologyKey | default "kubernetes.io/hostname" }}
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: {{ $.Chart.Name }}
+                  lenny.dev/component: gateway
+          {{- end }}
+      {{- end }}
+      {{- end }}
       containers:
         - name: gateway
           image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag | default .Chart.AppVersion }}"
@@ -207,6 +260,18 @@ spec:
             # lenny_gateway_max_sessions_per_replica gauge at startup.
             - name: LENNY_MAX_SESSIONS_PER_REPLICA
               value: {{ .Values.gateway.maxSessionsPerReplica | quote }}
+            # §4.1 / §16.5 GatewayNoHealthyReplicas alert denominator.
+            # Rendered from autoscaling.minReplicas so a tier-preset
+            # override flows into the lenny_gateway_min_replicas gauge.
+            - name: LENNY_MIN_REPLICAS
+              value: {{ .Values.autoscaling.minReplicas | quote }}
+            # §4.1 / §16.5 GatewayActiveStreamsHigh alert denominator.
+            # Defaults to gateway.streamCeiling when set; otherwise uses
+            # gateway.maxSessionsPerReplica so a stock render emits a
+            # non-zero ceiling consistent with the per-replica session
+            # capacity (each session may hold at most one active stream).
+            - name: LENNY_STREAM_CEILING
+              value: {{ .Values.gateway.streamCeiling | default .Values.gateway.maxSessionsPerReplica | quote }}
             {{- with .Values.gateway.extractionThresholds }}
             # §4.1 extractionThresholds — per-subsystem extraction
             # thresholds surfaced from Helm so operators can calibrate

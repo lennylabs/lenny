@@ -71,7 +71,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
+	gwadapter "github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/adapterregistry"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
@@ -316,6 +318,15 @@ func main() {
 		"§27.7 the public gateway host the playground UI connects to over the MCP WebSocket; interpolated into the playground connect-src CSP directive. Override via LENNY_PLAYGROUND_GATEWAY_HOST.")
 	maxSessionsPerReplica := flag.Int("max-sessions-per-replica", envInt("LENNY_MAX_SESSIONS_PER_REPLICA", 50),
 		"§4.1 gateway.maxSessionsPerReplica: per-replica capacity ceiling used as the denominator of the GatewaySessionBudgetNearExhaustion alert (§16.5) and the §17.8.2 SCL-036 burst-absorption minReplicas formula. Provisional Tier defaults: 50 (Tier 1), 200 (Tier 2), 400 (Tier 3). Emitted at startup on the lenny_gateway_max_sessions_per_replica gauge. Override via LENNY_MAX_SESSIONS_PER_REPLICA.")
+	// §4.1 / §16.5: scalar gauges read by the GatewayNoHealthyReplicas
+	// and GatewayActiveStreamsHigh alert expressions in
+	// pkg/alerting/rules/rules.go. The gateway emits them at startup so
+	// the scalar(...) lookups in the alert rules resolve to a real
+	// value instead of NaN.
+	minReplicas := flag.Int("min-replicas", envInt("LENNY_MIN_REPLICAS", 1),
+		"§4.1 / §16.5 gateway HPA minReplicas floor (§17.8.2 SCL-036). Emitted at startup on the lenny_gateway_min_replicas gauge so the GatewayNoHealthyReplicas alert (§16.5) can evaluate via scalar(lenny_gateway_min_replicas). Override via LENNY_MIN_REPLICAS.")
+	streamCeiling := flag.Int("stream-ceiling", envInt("LENNY_STREAM_CEILING", 100),
+		"§4.1 / §16.5 per-replica streaming-connection ceiling. Emitted at startup on the lenny_gateway_stream_ceiling gauge so the GatewayActiveStreamsHigh alert (§16.5) can evaluate via scalar(lenny_gateway_stream_ceiling). Override via LENNY_STREAM_CEILING.")
 	flag.Parse()
 
 	// §12.8 clock-injection harness. Read LENNY_CLOCK_OFFSET_SECONDS
@@ -839,6 +850,21 @@ func main() {
 	}
 	gwMetrics.SetMaxSessionsPerReplica("direct", *maxSessionsPerReplica)
 	gwMetrics.SetMaxSessionsPerReplica("proxy", *maxSessionsPerReplica)
+
+	// §4.1 / §16.5: emit the configuration scalars the §16.5
+	// GatewayNoHealthyReplicas and GatewayActiveStreamsHigh alert
+	// expressions read via scalar(...). Each gauge is emitted per
+	// replica; for replicaCount the spec recording rule sum() over
+	// the fleet yields the fleet-wide ready-replica numerator.
+	if *minReplicas <= 0 {
+		log.Fatalf("lenny-gateway: --min-replicas must be > 0 (got %d) (§4.1 / §16.5)", *minReplicas)
+	}
+	if *streamCeiling <= 0 {
+		log.Fatalf("lenny-gateway: --stream-ceiling must be > 0 (got %d) (§4.1 / §16.5)", *streamCeiling)
+	}
+	gwMetrics.SetMinReplicas(*minReplicas)
+	gwMetrics.SetStreamCeiling(*streamCeiling)
+	gwMetrics.SetReplicaCount(1)
 
 	// §4.1 extractionThresholds: read the configured per-subsystem
 	// thresholds from LENNY_EXTRACTION_THRESHOLD_* env vars (rendered
@@ -1419,10 +1445,40 @@ func main() {
 		log.Printf("lenny-gateway: §10.3 JWKS published at /.well-known/jwks.json (current kid %s)",
 			rotatingVerifier.CurrentKeyID())
 	}
-	mux.Handle("/v1/chat/completions", openaiHandler.Handler())
-	mux.Handle("/v1/responses", responsesHandler.Handler())
-	mux.Handle("/v1/responses/", responsesHandler.Handler())
-	mux.Handle("/mcp", mcpSrv.Handler())
+	// §15.0 ExternalAdapterRegistry. Each built-in adapter registers
+	// through the registry and the registry mounts its HTTPHandler on
+	// the shared mux. The §15.0 admin-API runtime-registration path
+	// uses the same registry so a third-party adapter takes effect
+	// without a gateway restart.
+	adapterReg := adapterregistry.New()
+	if err := adapterReg.Register(adapterregistry.NewSimpleAdapter(
+		"openai-completions",
+		openaiHandler.Handler(),
+		gwadapter.Capabilities{PathPrefix: "/v1/chat/completions", Protocol: "openai-completions"},
+	)); err != nil {
+		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
+	}
+	if err := adapterReg.Register(adapterregistry.NewSimpleAdapter(
+		"open-responses",
+		responsesHandler.Handler(),
+		gwadapter.Capabilities{PathPrefix: "/v1/responses", Protocol: "open-responses"},
+	)); err != nil {
+		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
+	}
+	if err := adapterReg.Register(adapterregistry.NewSimpleAdapter(
+		"mcp",
+		mcpSrv.Handler(),
+		gwadapter.Capabilities{PathPrefix: "/mcp", Protocol: "mcp", SupportsElicitation: true},
+	)); err != nil {
+		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
+	}
+	adapterReg.Mount(mux)
+	// §4.1 long-lived interactive streams: the MCP WebSocket transport
+	// is mounted alongside the POST /mcp single-shot handler so the
+	// playground UI (pkg/gateway/playground/assets.go WSPath
+	// /mcp/v1/ws) and any other MCP-over-WebSocket client land on the
+	// same dispatch logic. The Streamable HTTP path remains on /mcp.
+	mux.Handle("/mcp/v1/ws", mcpSrv.WebSocketHandler())
 	// §4.1 dedicated MCP endpoints for type:mcp runtimes. The
 	// dispatcher is nil in v1: every request that passes runtime
 	// type validation surfaces RUNTIME_UNAVAILABLE per §15.2.1

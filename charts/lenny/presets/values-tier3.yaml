@@ -31,6 +31,28 @@ capacityPlanning:
 gateway:
   replicas: 5
   maxSessionsPerReplica: 400
+  # §17.1 cross-zone topology spread for gateway replicas. The
+  # constraint distributes replicas across availability zones so a
+  # single-zone failure leaves at least floor(replicas / zone_count)
+  # replicas serving traffic. ScheduleAnyway preserves scale-up when a
+  # zone temporarily runs short of capacity.
+  topologySpread:
+    enabled: true
+    constraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+  # §17.8.2 Tier 3 node-drain expectation: a soft podAntiAffinity rule
+  # on hostname so kubectl drain of a node hosting more than one
+  # gateway pod does not serialize evictions through the PDB. The
+  # preferred form does not block scale-up if a zone is briefly short
+  # of nodes; operators with a guaranteed node pool size >= maxReplicas
+  # may set schedulingRule to "required".
+  podAntiAffinity:
+    enabled: true
+    schedulingRule: preferred
+    topologyKey: kubernetes.io/hostname
+    weight: 100
 
 # Gateway autoscaling at Tier 3 (§10.1, §17.8.2 gateway table). KEDA is
 # a mandatory platform requirement at Tier 3 (§10.1): the Prometheus

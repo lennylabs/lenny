@@ -159,3 +159,43 @@ tests:
       - documentIndex: 5
         isKind:
           of: CronJob
+
+  # spec: §4.1 / §17.1 — tier3 enables cross-zone topology spread on
+  # the gateway Deployment so a zone failure does not collapse capacity
+  # onto a single replica set.
+  - it: tier3 preset enables cross-zone topology spread on the gateway
+    values:
+      - ../presets/values-tier3.yaml
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.topologySpreadConstraints
+          content:
+            maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: lenny
+                lenny.dev/component: gateway
+
+  # spec: §17.8.2 — tier3 enables the preferred hostname-level
+  # podAntiAffinity so kubectl drain of a node hosting more than one
+  # gateway pod does not serialize evictions through the PDB.
+  - it: tier3 preset enables soft hostname podAntiAffinity on the gateway
+    values:
+      - ../presets/values-tier3.yaml
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey
+          value: kubernetes.io/hostname
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight
+          value: 100

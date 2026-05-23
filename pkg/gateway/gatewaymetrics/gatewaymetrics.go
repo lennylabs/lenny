@@ -31,6 +31,9 @@ type Metrics struct {
 	requestQueueDepth         prometheus.Gauge
 	rejectionRate             prometheus.Gauge
 	maxSessionsPerReplica     *prometheus.GaugeVec
+	minReplicas               prometheus.Gauge
+	streamCeiling             prometheus.Gauge
+	replicaCount              prometheus.Gauge
 	extractionThreshold       *prometheus.GaugeVec
 	storageQuotaUsed          *prometheus.GaugeVec
 	storageQuotaLimit         *prometheus.GaugeVec
@@ -115,6 +118,35 @@ func New() (*Metrics, error) {
 		Name: "lenny_gateway_max_sessions_per_replica",
 		Help: "Maximum concurrent sessions this replica can serve under the given delivery mode (§4.1).",
 	}, []string{"delivery_mode"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.1 / §16.5: emit the configured HPA-minimum replica count and
+	// the per-replica stream ceiling as startup-set scalar gauges so the
+	// `GatewayNoHealthyReplicas` and `GatewayActiveStreamsHigh` alert
+	// expressions in pkg/alerting/rules/rules.go can read them via
+	// scalar(...). The replicaCount gauge is emitted per-replica as the
+	// constant 1 so the Prometheus `sum()` recording rule yields the
+	// fleet-wide ready-replica count for the `lenny_gateway_replica_count`
+	// alert numerator.
+	minReplicas, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_min_replicas",
+		Help: "Configured HPA minReplicas floor for the gateway Deployment (§4.1 / §16.5).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	streamCeiling, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_stream_ceiling",
+		Help: "Configured per-replica streaming-connection ceiling used by the GatewayActiveStreamsHigh alert (§4.1 / §16.5).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	replicaCount, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_replica_count",
+		Help: "Per-replica ready indicator; the recording rule sum() yields the fleet-wide ready replica count (§4.1 / §16.1).",
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -218,8 +250,17 @@ func New() (*Metrics, error) {
 	cbStale := cbCacheStale.WithLabelValues()
 	cbInit := cbCacheInitialized.WithLabelValues()
 	gcPause := gcPauseP99Ms.WithLabelValues()
+	// §4.1 / §16.5: materialize the child series for the scalar gauges
+	// at construction so /metrics emits them even before
+	// SetMinReplicas / SetStreamCeiling are called; otherwise the
+	// scalar(...) expression in the alert rule evaluates to NaN until
+	// the gateway main has wired the configuration.
+	minReplicasChild := minReplicas.WithLabelValues()
+	streamCeilingChild := streamCeiling.WithLabelValues()
+	replicaCountChild := replicaCount.WithLabelValues()
 	reg.MustRegister(activeSessions, activeStreams, requestQueueDepth,
-		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms)
+		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms,
+		minReplicas, streamCeiling, replicaCount)
 
 	return &Metrics{
 		reg:                       reg,
@@ -230,6 +271,9 @@ func New() (*Metrics, error) {
 		requestQueueDepth:         queueDepth,
 		rejectionRate:             rejections,
 		maxSessionsPerReplica:     maxSessionsPerReplica,
+		minReplicas:               minReplicasChild,
+		streamCeiling:             streamCeilingChild,
+		replicaCount:              replicaCountChild,
 		extractionThreshold:       extractionThreshold,
 		storageQuotaUsed:          storageQuotaUsed,
 		storageQuotaLimit:         storageQuotaLimit,
@@ -359,6 +403,40 @@ func (m *Metrics) SetRejectionRate(perSecond float64) {
 // capacity-planning dashboard can compute the proxy/direct ratio.
 func (m *Metrics) SetMaxSessionsPerReplica(deliveryMode string, value int) {
 	m.maxSessionsPerReplica.WithLabelValues(deliveryMode).Set(float64(value))
+}
+
+// SetMinReplicas emits the §4.1 / §16.5 lenny_gateway_min_replicas
+// gauge. The value is the configured HPA minReplicas floor (per the
+// §17.8.2 SCL-036 burst-absorption formula); the
+// `GatewayNoHealthyReplicas` alert in pkg/alerting/rules/rules.go
+// reads it via scalar(lenny_gateway_min_replicas) and fires when the
+// fleet-wide ready replica count drops below this floor.
+func (m *Metrics) SetMinReplicas(value int) {
+	m.minReplicas.Set(float64(value))
+}
+
+// SetStreamCeiling emits the §4.1 / §16.5 lenny_gateway_stream_ceiling
+// gauge. The value is the per-replica configured ceiling on
+// simultaneous streaming connections; the `GatewayActiveStreamsHigh`
+// alert in pkg/alerting/rules/rules.go reads it via
+// scalar(lenny_gateway_stream_ceiling) and fires when
+// lenny_gateway_active_streams exceeds 80% of the ceiling on any
+// replica.
+func (m *Metrics) SetStreamCeiling(value int) {
+	m.streamCeiling.Set(float64(value))
+}
+
+// SetReplicaCount emits the §4.1 / §16.1
+// lenny_gateway_replica_count gauge. v1 sets the gauge to 1 per
+// replica at startup; the Prometheus recording rule
+// `sum(lenny_gateway_replica_count)` then yields the fleet-wide ready
+// replica count used by the `GatewayNoHealthyReplicas` alert numerator.
+// Production deployments may swap this constant for a controller-managed
+// value sourced from kube-state-metrics; the gateway still emits the
+// per-replica constant so the alert keeps a non-NaN reading on
+// installs without kube-state-metrics.
+func (m *Metrics) SetReplicaCount(value int) {
+	m.replicaCount.Set(float64(value))
 }
 
 // SetExtractionThreshold emits the §4.1 configured per-subsystem
