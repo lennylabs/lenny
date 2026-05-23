@@ -111,3 +111,65 @@ func TestUnsupportedDatabaseScheme(t *testing.T) {
 		t.Errorf("expected unsupported-scheme error, got %v", err)
 	}
 }
+
+func TestRunnerRegisterAndHeartbeat(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	// Register one runner.
+	body := bytes.NewBufferString(`{"id":"runner-1","cloud":"aws","capacity":4}`)
+	resp, err := http.Post(srv.URL+"/api/v1/runners/register", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("register status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Listing surfaces it as healthy.
+	resp, _ = http.Get(srv.URL + "/api/v1/runners")
+	var roster []Runner
+	_ = json.NewDecoder(resp.Body).Decode(&roster)
+	resp.Body.Close()
+	if len(roster) != 1 || roster[0].ID != "runner-1" || !roster[0].Healthy {
+		t.Fatalf("roster=%+v", roster)
+	}
+
+	// Heartbeat refreshes LastHeartbeat.
+	beforeHB := roster[0].LastHeartbeat
+	time.Sleep(20 * time.Millisecond)
+	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/runners/runner-1/heartbeat", nil)
+	resp, _ = http.DefaultClient.Do(req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("heartbeat status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp, _ = http.Get(srv.URL + "/api/v1/runners/runner-1")
+	var got Runner
+	_ = json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	if !got.LastHeartbeat.After(beforeHB) {
+		t.Errorf("LastHeartbeat did not advance: before=%v after=%v", beforeHB, got.LastHeartbeat)
+	}
+
+	// 404 on heartbeat for an unknown runner.
+	req, _ = http.NewRequest("POST", srv.URL+"/api/v1/runners/nobody/heartbeat", nil)
+	resp, _ = http.DefaultClient.Do(req)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("heartbeat unknown status=%d want 404", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// DELETE removes it.
+	req, _ = http.NewRequest("DELETE", srv.URL+"/api/v1/runners/runner-1", nil)
+	resp, _ = http.DefaultClient.Do(req)
+	resp.Body.Close()
+	resp, _ = http.Get(srv.URL + "/api/v1/runners")
+	roster = nil
+	_ = json.NewDecoder(resp.Body).Decode(&roster)
+	resp.Body.Close()
+	if len(roster) != 0 {
+		t.Errorf("roster after DELETE=%+v", roster)
+	}
+}

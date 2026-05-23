@@ -41,10 +41,20 @@ func run() error {
 		queueURL       = flag.String("queue-url", "", "queue identifier (SQS URL / Pub/Sub subscription / Service Bus path)")
 		region         = flag.String("region", "", "cloud region (for non-inmem dispatchers)")
 		visibility     = flag.Duration("visibility-timeout", 5*time.Minute, "visibility timeout for in-flight jobs (inmem only)")
-		loadctlURL     = flag.String("loadctl-url", "", "lenny-loadctl base URL for the ack callback")
+		loadctlURL     = flag.String("loadctl-url", "", "lenny-loadctl base URL for ack and registration callbacks")
+		runnerID       = flag.String("runner-id", "", "stable runner identifier; defaults to host:pid when empty")
+		capacity       = flag.Int("capacity", 1, "advertised concurrent-job capacity for the runner roster")
+		cloudLabel     = flag.String("cloud-label", "", "cloud descriptor exposed on the runner roster (aws|gcp|azure|local)")
+		registerHB     = flag.Duration("register-heartbeat", 30*time.Second, "how often to heartbeat to /api/v1/runners/{id}/heartbeat")
 		k6Binary       = flag.String("k6", "k6", "path to the k6 binary; falls back to a noop runner when missing")
 	)
 	flag.Parse()
+
+	id := *runnerID
+	if id == "" {
+		host, _ := os.Hostname()
+		id = fmt.Sprintf("%s-%d", host, os.Getpid())
+	}
 
 	d, err := newDispatcher(*dispatcherKind, *queueURL, *region, *visibility)
 	if err != nil {
@@ -63,8 +73,15 @@ func run() error {
 		cancel()
 	}()
 
+	if *loadctlURL != "" {
+		if err := registerRunner(ctx, *loadctlURL, id, *cloudLabel, *capacity); err != nil {
+			log.Printf("register: %v (continuing; will retry on next heartbeat)", err)
+		}
+		go heartbeatLoop(ctx, *loadctlURL, id, *registerHB)
+	}
+
 	cfg := exec.Config{
-		Runner:     exec.K6Runner{Binary: *k6Binary},
+		Runner:     &exec.K6Runner{Binary: *k6Binary},
 		LoadctlURL: *loadctlURL,
 		HeartbeatFn: func(ctx context.Context, j *dispatch.Job) error {
 			return d.Heartbeat(ctx, j)
@@ -74,6 +91,62 @@ func run() error {
 		ProgressInt:  time.Second,
 	}
 	return loop(ctx, d, cfg)
+}
+
+// registerRunner posts the runner's identity to loadctl. Idempotent
+// on (id); the server upserts the roster entry.
+func registerRunner(ctx context.Context, loadctlURL, id, cloud string, capacity int) error {
+	body, err := json.Marshal(map[string]any{
+		"id":       id,
+		"cloud":    cloud,
+		"capacity": capacity,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", loadctlURL+"/api/v1/runners/register", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("register: status=%d", resp.StatusCode)
+	}
+	log.Printf("registered runner %s at %s", id, loadctlURL)
+	return nil
+}
+
+// heartbeatLoop posts a heartbeat every interval until ctx cancels.
+// A 404 from the heartbeat (loadctl restarted and lost the roster)
+// triggers a re-registration on the next tick.
+func heartbeatLoop(ctx context.Context, loadctlURL, id string, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		req, _ := http.NewRequestWithContext(ctx, "POST", loadctlURL+"/api/v1/runners/"+id+"/heartbeat", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			log.Printf("heartbeat: %v", err)
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			// Roster lost the entry; re-register.
+			_ = registerRunner(ctx, loadctlURL, id, "", 0)
+		} else if resp.StatusCode >= 400 {
+			log.Printf("heartbeat: status=%d", resp.StatusCode)
+		}
+	}
 }
 
 // makeProgressFn returns a ProgressFn that POSTs Progress to the

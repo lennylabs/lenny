@@ -35,6 +35,8 @@ func run() error {
 		listenAddr     = flag.String("listen", ":8080", "HTTP listen address")
 		storageURL     = flag.String("storage-url", "s3://lenny-load-reports", "object storage URL for reports")
 		databaseURL    = flag.String("database-url", "memory://", "persistence backing (memory:// or postgres://...)")
+		progressDir    = flag.String("progress-dir", "", "persistent progress sink: empty disables, file://path or absolute path writes one JSONL per run")
+		runDuration    = flag.Duration("run-duration", 0, "per-scenario duration stamped onto every Job (zero selects the 60s default)")
 		dispatcherKind = flag.String("dispatcher", "scaffold", "dispatcher kind: scaffold|aws|gcp|azure (scaffold runs the simulated-state-machine dev path with no real runner)")
 		queueURL       = flag.String("queue-url", "", "queue identifier for non-scaffold dispatchers (SQS URL / Pub/Sub topic / Service Bus queue path)")
 		region         = flag.String("region", "", "cloud region (required when dispatcher is aws|gcp|azure)")
@@ -49,6 +51,8 @@ func run() error {
 	server, err := loadctl.NewServer(loadctl.Config{
 		StorageURL:  *storageURL,
 		DatabaseURL: *databaseURL,
+		ProgressDir: *progressDir,
+		RunDuration: *runDuration,
 		Submitter:   submitter,
 	})
 	if err != nil {

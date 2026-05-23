@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,6 +40,14 @@ type Config struct {
 	// 60-second default. Tests override to a sub-second value so
 	// scenarios complete quickly.
 	RunDuration time.Duration
+
+	// ProgressDir selects the persistent-progress sink: an empty
+	// value (default) keeps progress in the in-memory hub backlog
+	// only; "file://path" or a bare absolute path writes one JSONL
+	// file per run; cloud URIs (s3://, gs://, azureblob://) reserve
+	// the slot for cloud-storage sinks that ship alongside the
+	// report uploader.
+	ProgressDir string
 }
 
 // Server is the HTTP control plane. It exposes the API described in
@@ -47,6 +57,7 @@ type Server struct {
 	store     Store
 	hub       *Hub
 	submitter dispatch.Submitter
+	sink      ProgressSink
 
 	mu        sync.RWMutex
 	runners   map[string]*Runner
@@ -99,11 +110,17 @@ func NewServer(c Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	sink, err := newProgressSink(c.ProgressDir)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	return &Server{
 		config:    c,
 		store:     store,
 		hub:       NewHub(),
 		submitter: c.Submitter,
+		sink:      sink,
 		runners:   make(map[string]*Runner),
 		baselines: make(map[string]string),
 		scenarios: defaultScenarios(),
@@ -136,6 +153,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/runs", s.handleRuns)
 	mux.HandleFunc("/api/v1/runs/", s.handleRunDetail)
 	mux.HandleFunc("/api/v1/runners", s.handleRunners)
+	mux.HandleFunc("/api/v1/runners/", s.handleRunnerDetail)
 	mux.HandleFunc("/api/v1/scenarios", s.handleScenarios)
 	mux.HandleFunc("/api/v1/baselines/", s.handleBaselines)
 	mux.HandleFunc("/api/v1/ack", s.handleRunnerAck)
@@ -284,8 +302,21 @@ func (s *Server) handleRunnerProgress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "STORE_ERROR", err.Error())
 		return
 	}
-	s.hub.Publish(p.RunID, Event{Type: "progress", Payload: p})
+	s.publishProgress(p)
 	writeJSON(w, http.StatusOK, map[string]any{"received": true})
+}
+
+// publishProgress is the single fan-out point for progress events.
+// It writes to the persistent sink first (failure is logged and
+// dropped) and then fan-outs through the hub so live subscribers
+// receive the event in the same order it landed on disk.
+func (s *Server) publishProgress(p RunnerProgress) {
+	if err := s.sink.Append(p.RunID, p); err != nil {
+		// Sink errors are operational — don't fail the request, but
+		// record so an operator can debug a misconfigured sink.
+		log.Printf("loadctl: progress sink append: %v", err)
+	}
+	s.hub.Publish(p.RunID, Event{Type: "progress", Payload: p})
 }
 
 // recordAck appends scenario=outcome to run.CurrentMetrics and
@@ -515,7 +546,7 @@ func (s *Server) simulateScenario(runID, scenario string) {
 		}
 		iters := int64(2000 * fraction)
 		jitter := 0.045 + 0.010*(fraction-0.5)
-		s.hub.Publish(runID, Event{Type: "progress", Payload: RunnerProgress{
+		s.publishProgress(RunnerProgress{
 			RunID:          runID,
 			Scenario:       scenario,
 			ElapsedSeconds: elapsed.Seconds(),
@@ -524,7 +555,7 @@ func (s *Server) simulateScenario(runID, scenario string) {
 				"http_req_duration_p99": jitter,
 				"http_req_failed_rate":  0.001 * (1 + fraction),
 			},
-		}})
+		})
 		time.Sleep(scaffoldTick)
 	}
 }
@@ -606,9 +637,29 @@ func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, run.ReportURL, http.StatusFound)
 	case "metrics:stream":
 		s.hub.ServeWebSocket(w, r, run.ID)
+	case "progress.jsonl":
+		s.serveProgressJSONL(w, run.ID)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// serveProgressJSONL streams the run's persisted progress events as
+// application/x-ndjson. Returns 404 when no events were persisted
+// (the sink may be disabled, or the runner never emitted any).
+func (s *Server) serveProgressJSONL(w http.ResponseWriter, runID string) {
+	rc, err := s.sink.Open(runID)
+	if err != nil {
+		if errors.Is(err, ErrNoProgress) {
+			writeError(w, http.StatusNotFound, "NO_PROGRESS", "no persisted progress for run "+runID)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "SINK_ERROR", err.Error())
+		return
+	}
+	defer rc.Close()
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	_, _ = io.Copy(w, rc)
 }
 
 func (s *Server) stopRun(w http.ResponseWriter, run *Run) {
@@ -622,14 +673,117 @@ func (s *Server) stopRun(w http.ResponseWriter, run *Run) {
 	writeJSON(w, http.StatusOK, run)
 }
 
+// runnerHeartbeatStale is how long a runner can go without a
+// heartbeat before its Healthy flag flips false. Runners are pruned
+// from the roster after runnerExpiry.
+const (
+	runnerHeartbeatStale = 90 * time.Second
+	runnerExpiry         = 10 * time.Minute
+)
+
 func (s *Server) handleRunners(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	if r.Method == http.MethodPost {
+		// POST /api/v1/runners/register collapses to POST /api/v1/runners
+		// for clients that prefer a flat surface.
+		s.registerRunner(w, r)
+		return
+	}
+	s.mu.Lock()
+	now := time.Now().UTC()
+	for id, run := range s.runners {
+		if now.Sub(run.LastHeartbeat) > runnerExpiry {
+			delete(s.runners, id)
+			continue
+		}
+		run.Healthy = now.Sub(run.LastHeartbeat) <= runnerHeartbeatStale
+	}
 	out := make([]*Runner, 0, len(s.runners))
 	for _, run := range s.runners {
 		out = append(out, run)
 	}
+	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleRunnerDetail dispatches /api/v1/runners/{id}[/heartbeat].
+func (s *Server) handleRunnerDetail(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/runners/")
+	parts := strings.SplitN(rest, "/", 2)
+	id := parts[0]
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "RUNNER_ID_REQUIRED", "runner id is empty")
+		return
+	}
+	if id == "register" && r.Method == http.MethodPost {
+		s.registerRunner(w, r)
+		return
+	}
+	sub := ""
+	if len(parts) > 1 {
+		sub = parts[1]
+	}
+	switch {
+	case sub == "heartbeat" && r.Method == http.MethodPost:
+		s.heartbeatRunner(w, r, id)
+	case sub == "" && r.Method == http.MethodGet:
+		s.mu.RLock()
+		run, ok := s.runners[id]
+		s.mu.RUnlock()
+		if !ok {
+			writeError(w, http.StatusNotFound, "RUNNER_NOT_FOUND", id)
+			return
+		}
+		writeJSON(w, http.StatusOK, run)
+	case sub == "" && r.Method == http.MethodDelete:
+		s.mu.Lock()
+		delete(s.runners, id)
+		s.mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// registerRunner handles POST /api/v1/runners/register. Upserts the
+// runner record; the registration is idempotent on `id`.
+func (s *Server) registerRunner(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID       string `json:"id"`
+		Cloud    string `json:"cloud"`
+		Capacity int    `json:"capacity"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
+		return
+	}
+	if body.ID == "" {
+		writeError(w, http.StatusBadRequest, "RUNNER_ID_REQUIRED", "id field is empty")
+		return
+	}
+	s.mu.Lock()
+	s.runners[body.ID] = &Runner{
+		ID:            body.ID,
+		Cloud:         body.Cloud,
+		Capacity:      body.Capacity,
+		LastHeartbeat: time.Now().UTC(),
+		Healthy:       true,
+	}
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, s.runners[body.ID])
+}
+
+// heartbeatRunner refreshes the LastHeartbeat timestamp.
+func (s *Server) heartbeatRunner(w http.ResponseWriter, r *http.Request, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runners[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "RUNNER_NOT_FOUND", id)
+		return
+	}
+	run.LastHeartbeat = time.Now().UTC()
+	run.Healthy = true
+	writeJSON(w, http.StatusOK, run)
 }
 
 func (s *Server) handleScenarios(w http.ResponseWriter, r *http.Request) {

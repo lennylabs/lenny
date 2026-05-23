@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -96,5 +97,37 @@ func TestReadSummaryParsesK6Shape(t *testing.T) {
 	}
 	if s.Metrics["http_req_failed_rate"] != 0.001 {
 		t.Errorf("failed_rate=%v", s.Metrics["http_req_failed_rate"])
+	}
+}
+
+func TestK6RunnerParseStreamAccumulates(t *testing.T) {
+	r := &K6Runner{}
+	src := `{"type":"Metric","metric":"iterations","data":{"name":"iterations"}}
+{"type":"Point","metric":"iterations","data":{"value":1.0}}
+{"type":"Point","metric":"iterations","data":{"value":1.0}}
+{"type":"Point","metric":"http_req_duration","data":{"value":0.010}}
+{"type":"Point","metric":"http_req_duration","data":{"value":0.040}}
+{"type":"Point","metric":"http_req_duration","data":{"value":0.020}}
+{"type":"Point","metric":"http_req_failed","data":{"value":1}}
+{"type":"Point","metric":"http_req_failed","data":{"value":0}}
+{"type":"Point","metric":"http_req_failed","data":{"value":0}}
+`
+	r.parseStream(strings.NewReader(src))
+	got := r.Snapshot()
+	if got.Iterations != 2 {
+		t.Errorf("Iterations=%d want 2", got.Iterations)
+	}
+	if got.Metrics == nil {
+		t.Fatalf("Metrics nil")
+	}
+	avg := got.Metrics["http_req_duration_avg"]
+	if avg < 0.022 || avg > 0.024 {
+		t.Errorf("avg=%v want ~0.0233", avg)
+	}
+	if got.Metrics["http_req_duration_p99"] != 0.040 {
+		t.Errorf("p99 surrogate=%v want 0.040", got.Metrics["http_req_duration_p99"])
+	}
+	if got.Metrics["http_req_failed_rate"] == 0 {
+		t.Errorf("failed_rate=0; want >0 (one failure of three observations)")
 	}
 }

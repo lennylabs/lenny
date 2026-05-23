@@ -53,7 +53,7 @@
 </section>
 
 <footer>
-  <p>API surface: <a id="api-self" href="#">run JSON</a> · <a id="api-stream" href="#">metrics:stream (WS)</a></p>
+  <p>API surface: <a id="api-self" href="#">run JSON</a> · <a id="api-stream" href="#">metrics:stream (WS)</a> · <a id="api-progress" href="#">progress.jsonl</a></p>
   <p>See <code>TESTING.md §12.12</code> for the documented contract.</p>
 </footer>
 
@@ -67,6 +67,7 @@
 
   document.getElementById('api-self').href = '/api/v1/runs/' + runID;
   document.getElementById('api-stream').href = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/v1/runs/' + runID + '/metrics:stream';
+  document.getElementById('api-progress').href = '/api/v1/runs/' + runID + '/progress.jsonl';
 
   // Initial GET to populate the static fields.
   fetch('/api/v1/runs/' + runID)

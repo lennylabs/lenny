@@ -82,7 +82,7 @@ type Config struct {
 // timeout extends while k6 is running.
 func Execute(ctx context.Context, cfg Config, j *dispatch.Job) (Summary, error) {
 	if cfg.Runner == nil {
-		cfg.Runner = K6Runner{}
+		cfg.Runner = &K6Runner{}
 	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = http.DefaultClient
@@ -204,17 +204,55 @@ func postAck(ctx context.Context, cfg Config, j *dispatch.Job, summary Summary) 
 // K6Runner shells out to the `k6` binary. Falls back to a NoopRunner
 // when the binary is missing, which keeps tier-12 wiring testable
 // on machines without k6 installed.
+//
+// K6Runner implements ProgressReporter: a stdout parser goroutine
+// consumes k6's --out json=- stream and updates the in-flight
+// counters Snapshot returns to Execute.
 type K6Runner struct {
 	// Binary is the `k6` executable path. Empty means look up "k6"
 	// on $PATH.
 	Binary string
 	// SummaryPath overrides the default `--summary-export` location.
 	SummaryPath string
+
+	mu      sync.Mutex
+	state   k6State
+}
+
+// k6State is the parsed running aggregate the stdout parser
+// accumulates. Snapshot derives Progress from this struct under
+// K6Runner.mu.
+type k6State struct {
+	iterations    int64
+	httpReqCount  int64
+	httpReqSum    float64
+	httpReqMax    float64
+	failedCount   int64
+}
+
+// Snapshot satisfies ProgressReporter. The Progress carries the
+// running iteration count plus avg/max/failed-rate derived from the
+// stream-parsed counters.
+func (r *K6Runner) Snapshot() Progress {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := Progress{Iterations: r.state.iterations}
+	if r.state.httpReqCount > 0 {
+		avg := r.state.httpReqSum / float64(r.state.httpReqCount)
+		out.Metrics = map[string]float64{
+			"http_req_duration_avg": avg,
+			// Approximation: the running max is a conservative
+			// stand-in for p99 until a streaming quantile lands.
+			"http_req_duration_p99": r.state.httpReqMax,
+			"http_req_failed_rate":  float64(r.state.failedCount) / float64(r.state.httpReqCount),
+		}
+	}
+	return out
 }
 
 // Run resolves the k6 binary, builds the command, executes it, and
 // reads the summary export.
-func (r K6Runner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
+func (r *K6Runner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
 	bin := r.Binary
 	if bin == "" {
 		bin = "k6"
@@ -241,13 +279,32 @@ func (r K6Runner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
 		"--vus", fmt.Sprintf("%d", j.VUs),
 		"--duration", j.Duration.String(),
 		"--summary-export", summaryPath,
+		"--out", "json=-",
+		"--quiet",
 		scriptPath,
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = append(cmd.Env, "LENNY_BASE_URL="+j.TargetURL)
-	cmd.Stdout = io.Discard
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return Summary{Outcome: "FAIL", Error: err.Error()}, err
+	}
 	cmd.Stderr = io.Discard
-	runErr := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return Summary{Outcome: "FAIL", Error: err.Error()}, err
+	}
+	// Reset the per-run aggregate so a re-used Runner does not leak
+	// counts from a prior scenario.
+	r.mu.Lock()
+	r.state = k6State{}
+	r.mu.Unlock()
+	parseDone := make(chan struct{})
+	go func() {
+		defer close(parseDone)
+		r.parseStream(stdout)
+	}()
+	runErr := cmd.Wait()
+	<-parseDone
 	summary, parseErr := readSummary(summaryPath)
 	if runErr != nil {
 		summary.Outcome = "FAIL"
@@ -261,6 +318,49 @@ func (r K6Runner) Run(ctx context.Context, j *dispatch.Job) (Summary, error) {
 	}
 	summary.Outcome = "PASS"
 	return summary, nil
+}
+
+// parseStream reads k6's --out json=- NDJSON stream and accumulates
+// the per-metric counters Snapshot exposes. Parse errors on a single
+// line are ignored — a malformed line does not abort the stream.
+func (r *K6Runner) parseStream(src io.Reader) {
+	dec := json.NewDecoder(src)
+	for {
+		var env struct {
+			Type   string          `json:"type"`
+			Metric string          `json:"metric"`
+			Data   json.RawMessage `json:"data"`
+		}
+		if err := dec.Decode(&env); err != nil {
+			return
+		}
+		if env.Type != "Point" {
+			continue
+		}
+		var point struct {
+			Value float64           `json:"value"`
+			Tags  map[string]string `json:"tags"`
+		}
+		if err := json.Unmarshal(env.Data, &point); err != nil {
+			continue
+		}
+		r.mu.Lock()
+		switch env.Metric {
+		case "iterations":
+			r.state.iterations += int64(point.Value)
+		case "http_req_duration":
+			r.state.httpReqCount++
+			r.state.httpReqSum += point.Value
+			if point.Value > r.state.httpReqMax {
+				r.state.httpReqMax = point.Value
+			}
+		case "http_req_failed":
+			if point.Value > 0 {
+				r.state.failedCount++
+			}
+		}
+		r.mu.Unlock()
+	}
 }
 
 // materialiseScript fetches j.ScriptURL into a local file. For
