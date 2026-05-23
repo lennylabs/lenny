@@ -111,7 +111,7 @@
       "unit": ["pkg/delegation/..."],
       "component": ["tests/tier2_component/delegation/..."],
       "integration": ["tests/tier4_integration/delegation_test.go"],
-      "load": ["tests/tier7_load/scenarios/delegation_fanout.go"]
+      "load_kind": ["tests/tier7b_load_kind/scenarios/delegation_fanout.go"]
     },
     "pkg/delegation/cycle": {
       "unit": ["pkg/delegation/cycle/..."],
@@ -137,7 +137,7 @@
         "tests/tier4_integration/credential_rotation_test.go",
         "tests/tier4_integration/credential_revocation_test.go"
       ],
-      "load": ["tests/tier7_load/scenarios/credential_rotation_under_load.go"]
+      "load_kind": ["tests/tier7b_load_kind/scenarios/credential_rotation_under_load.go"]
     },
     "pkg/admission/sandboxclaim_guard": {
       "unit": ["pkg/admission/sandboxclaim_guard/..."],
@@ -228,7 +228,7 @@
       "unit": ["pkg/checkpoint/..."],
       "integration": ["tests/tier4_integration/checkpoint_resume_test.go"],
       "chaos": ["tests/tier8_chaos/minio_outage_during_checkpoint_test.go"],
-      "load": ["tests/tier7_load/scenarios/checkpoint_duration.go"]
+      "load_kind": ["tests/tier7b_load_kind/scenarios/checkpoint_duration.go"]
     },
     "pkg/observability/correlation": {
       "unit": ["pkg/observability/correlation/..."],
@@ -354,7 +354,7 @@
       "unit": ["cmd/runtimes/echo/..."],
       "contract": ["tests/tier3_contract/adapter_jsonl/..."],
       "conformance": ["tests/tier10_conformance/basic/...", "cmd/lenny-compliance/..."],
-      "load": ["tests/tier7_load/scenarios/startup_latency/..."]
+      "load_kind": ["tests/tier7b_load_kind/scenarios/startup_latency/..."]
     },
     "cmd/lenny-compliance/": {
       "unit": ["cmd/lenny-compliance/..."],
@@ -364,8 +364,8 @@
         "tests/tier10_conformance/full/..."
       ]
     },
-    "tests/tier7_load/scenarios/startup_latency/": {
-      "load": ["tests/tier7_load/scenarios/startup_latency/..."]
+    "tests/tier7b_load_kind/scenarios/startup_latency/": {
+      "load_kind": ["tests/tier7b_load_kind/scenarios/startup_latency/..."]
     },
     "cmd/runtimes/streaming-echo/": {
       "unit": ["cmd/runtimes/streaming-echo/..."],

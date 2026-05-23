@@ -14,15 +14,20 @@ const (
 	tierIntegration = "integration"
 	tierE2EKind     = "e2e_kind"
 	tierE2ECloud    = "e2e_cloud"
-	tierLoad        = "load"
+	tierLoadLocal   = "load_local"
+	tierLoadKind    = "load_kind"
 	tierChaos       = "chaos"
 	tierSecurity    = "security"
 	tierConformance = "conformance"
 	tierDocs        = "docs"
+	tierLoadCloud   = "load_cloud"
 )
 
 // allTiers returns the tier names in execution order. The order is the gate
 // hierarchy from TESTING.md §3: lower-numbered tiers gate higher ones.
+// Tier 7 is a two-stage gate (load_local then load_kind). Tier 12 (load_cloud)
+// sits after every other tier so cloud spend only fires once everything below
+// is green.
 func allTiers() []string {
 	return []string{
 		tierStatic,
@@ -32,11 +37,13 @@ func allTiers() []string {
 		tierIntegration,
 		tierE2EKind,
 		tierE2ECloud,
-		tierLoad,
+		tierLoadLocal,
+		tierLoadKind,
 		tierChaos,
 		tierSecurity,
 		tierConformance,
 		tierDocs,
+		tierLoadCloud,
 	}
 }
 
@@ -86,19 +93,20 @@ func tiersForGroup(name string) []tierPlan {
 	case "nightly":
 		return tiersAll(map[string][]string{
 			"e2e_cloud":   {"critical-path-rotated"},
-			"load":        {"per-phase-baseline"},
+			"load_kind":   {"per-phase-baseline"},
 			"conformance": {"reference-catalog"},
 		})
 	case "weekly":
 		return tiersAll(map[string][]string{
 			"e2e_cloud":   {"full-non-sandbox"},
-			"load":        {"full-system"},
+			"load_kind":   {"full-system"},
 			"conformance": {"reference-catalog"},
 		})
 	case "pre-release":
 		return tiersAll(map[string][]string{
 			"e2e_cloud":   {"full"},
-			"load":        {"full-system"},
+			"load_kind":   {"full-system"},
+			"load_cloud":  {"full-system"},
 			"chaos":       {"full"},
 			"security":    {"full", "pentest"},
 			"conformance": {"reference-catalog"},

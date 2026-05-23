@@ -348,11 +348,17 @@ func tierSteps() map[string]tierStep {
 				}
 			},
 		},
-		tierLoad: {
-			name: tierLoad, exec: func(_ []string) (string, string, *tierResult) {
-				return runTaggedTier("load", "./tests/tier7_load/...", tierLongTimeout)
+		tierLoadLocal: {
+			name: tierLoadLocal, exec: func(_ []string) (string, string, *tierResult) {
+				return runTaggedTier("load_local", "./tests/tier7a_load_local/...", tierLongTimeout)
 			},
-			nextActionHint: "Fix load-tier failures before moving to higher tiers.",
+			nextActionHint: "Fix load_local-tier failures before moving to higher tiers.",
+		},
+		tierLoadKind: {
+			name: tierLoadKind, exec: func(_ []string) (string, string, *tierResult) {
+				return runTaggedTier("load_kind", "./tests/tier7b_load_kind/...", tierLongTimeout)
+			},
+			nextActionHint: "Fix load_kind-tier failures before moving to higher tiers.",
 		},
 		tierChaos: {
 			name: tierChaos, exec: func(_ []string) (string, string, *tierResult) {
@@ -369,6 +375,12 @@ func tierSteps() map[string]tierStep {
 		tierDocs: {
 			name: tierDocs, exec: func(_ []string) (string, string, *tierResult) { return runDocsTier() },
 			nextActionHint: "Fix docs-tier failures before moving to higher tiers.",
+		},
+		tierLoadCloud: {
+			name: tierLoadCloud, exec: func(_ []string) (string, string, *tierResult) {
+				return runTaggedTier("load_cloud", "./tests/tier12_load_cloud/...", tierLongTimeout)
+			},
+			nextActionHint: "Fix load_cloud-tier failures; tier 12 sits after every other tier and gates pre-release.",
 		},
 		tierE2ECloud: {
 			name: tierE2ECloud, exec: func(_ []string) (string, string, *tierResult) { return runE2ECloudTier() },
@@ -793,11 +805,14 @@ func summarizeFailures(r *tierResult) string {
 }
 
 // planNeedsCompose reports whether any tier in r benefits from the
-// compose stack (component / contract / integration / load).
+// compose stack (component / contract / integration / load_kind).
+// Tier 7a (load_local) runs in-process and does not need compose.
+// Tier 12 (load_cloud) runs against a real cloud cluster and does
+// not need compose either.
 func planNeedsCompose(r resolvedSelector) bool {
 	for _, t := range r.tiers {
 		switch t.name {
-		case "component", "contract", "integration", "load":
+		case "component", "contract", "integration", "load_kind":
 			return true
 		}
 	}

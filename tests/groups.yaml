@@ -248,7 +248,7 @@ groups:
     selectors:
       tiers: [static]
       include:
-        - tier: load
+        - tier: load_kind
           subset: streaming-reconnect
 
   phase-7-gate:
@@ -282,7 +282,7 @@ groups:
     selectors:
       tiers: [static]
       include:
-        - tier: load
+        - tier: load_kind
           subset: delegation-fanout
 
   phase-10-gate:
@@ -302,7 +302,7 @@ groups:
     selectors:
       tiers: [static]
       include:
-        - tier: load
+        - tier: load_kind
           subset: credential-rotation
 
   phase-12a-gate:
@@ -361,7 +361,7 @@ groups:
     selectors:
       tiers: [static]
       include:
-        - tier: load
+        - tier: load_kind
           subset: full-system
 
   phase-14-gate:
@@ -379,7 +379,7 @@ groups:
     selectors:
       tiers: [static]
       include:
-        - tier: load
+        - tier: load_kind
           subset: full-system-with-hardening
 
   phase-15-gate:
@@ -402,7 +402,7 @@ groups:
     selectors:
       tiers: [static]
       include:
-        - tier: load
+        - tier: load_kind
           subset: experiment-active
 
   phase-17a-gate:
@@ -410,7 +410,7 @@ groups:
     selectors:
       tiers: [docs]
       include:
-        - tier: load
+        - tier: load_kind
           subset: tthw
       additional_checks:
         - validate-maps

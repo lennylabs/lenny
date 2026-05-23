@@ -371,8 +371,8 @@ func (v *verdict) finalize() {
 func (v *verdict) fillNotSelected() {
 	for _, name := range []string{
 		tierStatic, tierUnit, tierComponent, tierContract, tierIntegration,
-		tierE2EKind, tierE2ECloud, tierLoad, tierChaos, tierSecurity,
-		tierConformance, tierDocs,
+		tierE2EKind, tierE2ECloud, tierLoadLocal, tierLoadKind, tierChaos, tierSecurity,
+		tierConformance, tierDocs, tierLoadCloud,
 	} {
 		if _, already := v.Tiers[name]; already {
 			continue

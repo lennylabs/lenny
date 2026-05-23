@@ -53,7 +53,7 @@ Lenny's test surface follows a strict tier model. Tier 0 (static) runs first; ea
 
 ### Update a baseline
 
-Load-tier baselines under `tests/tier7_load/baselines/<scenario>.json` are pinned. When intentional change happens (a new scenario, an SLO loosening), regenerate:
+Load-tier baselines under `tests/tier7b_load_kind/baselines/<scenario>.json` are pinned. When intentional change happens (a new scenario, an SLO loosening), regenerate:
 
 ```bash
 LENNY_UPDATE_BASELINE=1 ./bin/lenny-test --tier load
@@ -100,7 +100,7 @@ Per §17.10 every test must pass 50 consecutive runs. Investigate via:
 | 4 | `tests/tier4_integration/` | `integration` |
 | 5 | `tests/tier5_e2e_kind/` | `e2e_kind` |
 | 6 | `tests/tier6_e2e_cloud/` | `e2e_cloud` |
-| 7 | `tests/tier7_load/scenarios/<name>/` | `load` |
+| 7 | `tests/tier7b_load_kind/scenarios/<name>/` | `load` |
 | 8 | `tests/tier8_chaos/` | `chaos` |
 | 9 | `tests/tier9_security/` | `security` |
 | 10 | `tests/tier10_conformance/` | `conformance` |

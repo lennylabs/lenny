@@ -420,7 +420,7 @@
         "pkg/sandbox/state/state_test.go::TestAllStatesIncludePhase1Additions",
         "pkg/sandbox/state/state_test.go::TestIsTerminal",
         "pkg/sandbox/state/state_test.go::TestIsValidCanonicalTransitions",
-        "tests/tier7_load/scenarios/startup_latency"
+        "tests/tier7b_load_kind/scenarios/startup_latency"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -463,7 +463,7 @@
       "title": "Startup Latency Analysis",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
-        "tests/tier7_load/scenarios/startup_latency"
+        "tests/tier7b_load_kind/scenarios/startup_latency"
       ],
       "packages": [
         "cmd/runtimes/echo"
@@ -488,8 +488,8 @@
       "title": "Phase 6.5 — Incremental load test (streaming)",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
-        "tests/tier7_load/streaming_test.go::TestStreamingThroughput",
-        "tests/tier7_load/scenarios/streaming_throughput"
+        "tests/tier7b_load_kind/streaming_test.go::TestStreamingThroughput",
+        "tests/tier7b_load_kind/scenarios/streaming_throughput"
       ],
       "packages": [
         "pkg/gateway/sessionserver"
@@ -807,8 +807,8 @@
       "title": "Phase 9.5 — Incremental load test (delegation)",
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
-        "tests/tier7_load/delegation_test.go::TestDelegationFanout",
-        "tests/tier7_load/scenarios/delegation_fanout_mcp"
+        "tests/tier7b_load_kind/delegation_test.go::TestDelegationFanout",
+        "tests/tier7b_load_kind/scenarios/delegation_fanout_mcp"
       ],
       "packages": [
         "pkg/gateway/mcptools",
@@ -1257,8 +1257,8 @@
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyOversizeKeyThroughBinary",
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyTenantScopedThroughBinary",
         "tests/tier2_component/stores/idempotencystore_test.go",
-        "tests/tier7_load/credential_lifecycle_test.go::TestCredentialLifecycle",
-        "tests/tier7_load/scenarios/credential_lifecycle"
+        "tests/tier7b_load_kind/credential_lifecycle_test.go::TestCredentialLifecycle",
+        "tests/tier7b_load_kind/scenarios/credential_lifecycle"
       ],
       "packages": [
         "pkg/idempotency",
@@ -1408,7 +1408,7 @@
         "tests/tier2_component/migrations/migrations_test.go::TestApplyAllMigrationsCreatesExpectedSchema",
         "tests/tier2_component/migrations/migrations_test.go::TestPostgresMeetsMinimumVersion",
         "tests/tier2_component/rls/...",
-        "tests/tier7_load/postgres_test.go::TestPostgresWriteBaseline"
+        "tests/tier7b_load_kind/postgres_test.go::TestPostgresWriteBaseline"
       ],
       "packages": [
         "pkg/store",
@@ -1750,8 +1750,8 @@
       "title": "Phase 14.5 — Post-hardening SLO re-validation",
       "spec_file": "spec/13_security-model.md",
       "tests": [
-        "tests/tier7_load/post_hardening_test.go::TestPostHardeningSLO",
-        "tests/tier7_load/scenarios/post_hardening_slo"
+        "tests/tier7b_load_kind/post_hardening_test.go::TestPostHardeningSLO",
+        "tests/tier7b_load_kind/scenarios/post_hardening_slo"
       ],
       "packages": [
         "pkg/gateway/sessionserver"
@@ -2154,8 +2154,8 @@
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleFieldsMatchCatalog",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestBundledAlertingRulesFragmentIsCurrent",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRenderedRuleGroupIsWellFormed",
-        "tests/tier7_load/experiment_test.go::TestExperimentLoad",
-        "tests/tier7_load/scenarios/experiment_load"
+        "tests/tier7b_load_kind/experiment_test.go::TestExperimentLoad",
+        "tests/tier7b_load_kind/scenarios/experiment_load"
       ],
       "packages": [
         "pkg/alerting/rules",

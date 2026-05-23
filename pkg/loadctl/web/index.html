@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Lenny load-test control plane</title>
+<link rel="stylesheet" href="/assets/style.css" />
+<script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+<script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/json-enc.js" defer></script>
+</head>
+<body hx-ext="json-enc">
+<header>
+  <h1>Lenny load-test control plane</h1>
+  <p class="subtitle">Tier 12 — cloud-load orchestration</p>
+</header>
+
+<section>
+  <h2>Recent runs</h2>
+  <div id="recent-runs">Loading recent runs…</div>
+</section>
+
+<section>
+  <h2>Trigger run</h2>
+  <form hx-post="/api/v1/runs"
+        hx-headers='{"Content-Type":"application/json"}'
+        hx-target="#last-submit"
+        hx-swap="innerHTML"
+        hx-on::after-request="if (event.detail.successful) { window.refreshRuns(); this.reset(); }">
+    <label>Scale:
+      <select name="scale">
+        <option value="small">small</option>
+        <option value="medium">medium</option>
+        <option value="production">production</option>
+      </select>
+    </label>
+    <label>Scenarios:
+      <select id="scenarios-select" name="scenarios" multiple size="4">
+        <option value="default" selected>default</option>
+      </select>
+    </label>
+    <label>Cluster release: <input type="text" name="cluster_release" value="lenny-load-small" /></label>
+    <button type="submit">Start run</button>
+  </form>
+  <div id="last-submit" aria-live="polite" class="muted"></div>
+</section>
+
+<section>
+  <h2>Runner pool</h2>
+  <div id="runners">Loading runners…</div>
+</section>
+
+<section>
+  <h2>Scenario catalogue</h2>
+  <div id="scenarios-catalogue">Loading…</div>
+</section>
+
+<footer>
+  <p>API surface: <a href="/api/v1/runs">/api/v1/runs</a> · <a href="/api/v1/runners">/api/v1/runners</a> · <a href="/api/v1/scenarios">/api/v1/scenarios</a></p>
+  <p>See <code>TESTING.md §12.12</code> for the documented contract.</p>
+</footer>
+
+<script>
+(function() {
+  function fmtTime(s) {
+    if (!s || s.startsWith('0001-')) return '—';
+    return s.replace('T', ' ').replace('Z', '');
+  }
+
+  function renderRuns(runs) {
+    const target = document.getElementById('recent-runs');
+    if (!runs || runs.length === 0) {
+      target.textContent = 'No runs yet.';
+      return;
+    }
+    let html = '<table><thead><tr><th>ID</th><th>Status</th><th>Scale</th><th>Scenarios</th><th>Started</th><th>Completed</th><th>Report</th></tr></thead><tbody>';
+    for (const r of runs) {
+      const scenarios = (r.scenarios || []).join(', ');
+      const completed = fmtTime(r.completed_at);
+      const report = r.report_url ? '<a href="' + r.report_url + '">link</a>' : '—';
+      html += '<tr>' +
+        '<td><a href="/runs/' + r.id + '">' + r.id + '</a></td>' +
+        '<td class="status-' + r.status + '">' + r.status + '</td>' +
+        '<td>' + (r.scale || '—') + '</td>' +
+        '<td>' + scenarios + '</td>' +
+        '<td>' + fmtTime(r.started_at) + '</td>' +
+        '<td>' + completed + '</td>' +
+        '<td>' + report + '</td>' +
+        '</tr>';
+    }
+    html += '</tbody></table>';
+    target.innerHTML = html;
+  }
+
+  function renderRunners(runners) {
+    const target = document.getElementById('runners');
+    if (!runners || runners.length === 0) {
+      target.innerHTML = '<p class="muted">No runners registered. Scaffold mode dispatches in-process; only matters once a lenny-loadrunner instance registers.</p>';
+      return;
+    }
+    let html = '<table><thead><tr><th>ID</th><th>Status</th><th>Last seen</th><th>Cloud</th></tr></thead><tbody>';
+    for (const r of runners) {
+      html += '<tr>' +
+        '<td><code>' + (r.id || '?') + '</code></td>' +
+        '<td>' + (r.status || '—') + '</td>' +
+        '<td>' + fmtTime(r.last_seen) + '</td>' +
+        '<td>' + (r.cloud || '—') + '</td>' +
+        '</tr>';
+    }
+    html += '</tbody></table>';
+    target.innerHTML = html;
+  }
+
+  function renderScenarios(scs) {
+    const target = document.getElementById('scenarios-catalogue');
+    const sel = document.getElementById('scenarios-select');
+    if (!scs || scs.length === 0) {
+      target.innerHTML = '<p class="muted">No scenarios registered.</p>';
+      return;
+    }
+    // Side-table.
+    let html = '<table><thead><tr><th>Name</th><th>Description</th></tr></thead><tbody>';
+    for (const s of scs) {
+      html += '<tr><td><code>' + s.name + '</code></td><td>' + (s.description || '—') + '</td></tr>';
+    }
+    html += '</tbody></table>';
+    target.innerHTML = html;
+    // Repopulate the form select, preserving "default" as selected on first load.
+    const previouslySelected = new Set(Array.from(sel.selectedOptions).map(o => o.value));
+    if (previouslySelected.size === 0) previouslySelected.add('default');
+    sel.innerHTML = '';
+    for (const s of scs) {
+      const opt = document.createElement('option');
+      opt.value = s.name;
+      opt.textContent = s.name;
+      if (previouslySelected.has(s.name)) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+
+  function refreshRuns() {
+    fetch('/api/v1/runs').then(r => r.json()).then(renderRuns).catch(() => {});
+  }
+  function refreshRunners() {
+    fetch('/api/v1/runners').then(r => r.json()).then(renderRunners).catch(() => {});
+  }
+  function refreshScenarios() {
+    fetch('/api/v1/scenarios').then(r => r.json()).then(renderScenarios).catch(() => {});
+  }
+  window.refreshRuns = refreshRuns;
+
+  refreshRuns();
+  refreshRunners();
+  refreshScenarios();
+  setInterval(refreshRuns, 3000);
+  setInterval(refreshRunners, 10000);
+})();
+</script>
+</body>
+</html>

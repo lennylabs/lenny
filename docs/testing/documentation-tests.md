@@ -93,4 +93,4 @@ Today the docs tier has no golden blocks; this hook is for future use.
 
 ## Time-to-Hello-World
 
-§22.7 ties the docs gate to `lenny-test stress --test TestTimeToHelloWorld --runs 50`. The TTHW test (in `tests/tier7_load/scenarios/`) measures how fast a fresh developer can run their first session. The 5-minute target is per the spec; CI exercises it under the §13.35 phase gate.
+§22.7 ties the docs gate to `lenny-test stress --test TestTimeToHelloWorld --runs 50`. The TTHW test (in `tests/tier7b_load_kind/scenarios/`) measures how fast a fresh developer can run their first session. The 5-minute target is per the spec; CI exercises it under the §13.35 phase gate.

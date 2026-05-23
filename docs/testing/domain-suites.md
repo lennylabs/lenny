@@ -22,21 +22,21 @@ The most important security suite. Every store, query path, API surface, and ada
 
 - **Tier 0 static**: schema validation of `schemas/workspaceplan-v1.json`.
 - **Tier 3 contract**: `tests/tier3_contract/workspaceplan/sources_test.go` — every source type with adversarial paths, modes, gitClone shapes.
-- **Tier 7 load**: `tests/tier7_load/scenarios/checkpoint_duration/` for archive-bomb scenarios.
+- **Tier 7 load**: `tests/tier7b_load_kind/scenarios/checkpoint_duration/` for archive-bomb scenarios.
 
 ## §14.3 Credential leasing lifecycle
 
 - **Tier 1 unit**: `pkg/credential/` ships every primitive.
 - **Tier 3 contract**: `tests/tier3_contract/oauth_token/` covers §13.3 RFC 8693.
 - **Tier 4 integration**: `tests/tier4_integration/scaffolds_test.go::TestCredentialLifecycle` (skip-bearing until Phase 12a wires the Token Service).
-- **Tier 7 load**: `tests/tier7_load/scenarios/credential_rotation_under_load/`.
+- **Tier 7 load**: `tests/tier7b_load_kind/scenarios/credential_rotation_under_load/`.
 
 ## §14.4 Delegation and the task tree
 
 - **Tier 1**: `pkg/delegation/cycle/` + `pkg/delegation/lease/`.
 - **Tier 4**: `TestDelegation`, `TestDelegationRecovery`, `TestDelegationSelfRecursion` (scaffolds today).
 - **Tier 5 e2e**: `tests/tier5_e2e_kind/scaffolds_test.go::TestCrossEnvironmentDelegation`.
-- **Tier 7**: `tests/tier7_load/scenarios/delegation_fanout/`.
+- **Tier 7**: `tests/tier7b_load_kind/scenarios/delegation_fanout/`.
 
 ## §14.5 MCP elicitation chain
 

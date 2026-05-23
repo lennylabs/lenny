@@ -27,6 +27,7 @@
 21. [Flakiness and reliability](#21-flakiness-and-reliability)
 22. [Quality gates and metrics](#22-quality-gates-and-metrics)
 23. [Open questions and forward compatibility](#23-open-questions-and-forward-compatibility)
+24. [Load-test platform components](#24-load-test-platform-components)
 
 ---
 
@@ -77,7 +78,7 @@ The infrastructure is also complete only when the operator and the runtime autho
 
 ## 3. Test layer model
 
-Lenny uses an eleven-layer model. Each layer has a scoped responsibility, a defined dependency set, an order in which it runs, and a position in the gate hierarchy.
+Lenny uses a thirteen-stage tier model. Tier 7 is a two-stage gate (7a local, 7b Kind). Tier 12 sits after every other tier. Each stage has a scoped responsibility, a defined dependency set, an order in which it runs, and a position in the gate hierarchy.
 
 | Tier | Name | Scope | Backing services | Runs in PR | Runs nightly | Runs pre-release |
 |:----:|:-----|:------|:-----------------|:----------:|:------------:|:----------------:|
@@ -88,15 +89,19 @@ Lenny uses an eleven-layer model. Each layer has a scoped responsibility, a defi
 | 4 | Integration | Multi-component flows via a local stack | Compose stack: gateway, controller-sim, agent pods, stores | Yes | Yes | Yes |
 | 5 | E2E (Kind) | Full deployment on local Kubernetes | Kind cluster, Helm install, agent-sandbox CRDs | Critical-path subset | Full | Full |
 | 6 | E2E (cloud) | Real managed Kubernetes with gVisor and Kata | GKE, EKS, and AKS, each with a sandbox-capable node pool | No | Subset | Full on all three |
-| 7 | Load and SLO | Sustained traffic at tier scale; SLO assertions | Dedicated cloud cluster | Smoke only | Path-specific | Full Tier 2 plus 3 sampling |
+| 7a | Load and SLO (local) | Hot-path concurrency, atomicity, error-propagation under load — every component exercised in-process | In-process Lenny, miniredis, embedded Postgres, fakekube | Yes | Yes | Yes |
+| 7b | Load and SLO (Kind) | Sustained traffic and SLO assertions on a Kind cluster; cases that require real Kubernetes primitives | Kind cluster, Helm install, real kubelet and scheduler | Smoke only | Path-specific | Full |
 | 8 | Chaos | Failure injection on a real cluster | Kind plus toxiproxy, plus cloud cluster for severe scenarios | Core scenarios | Most | All |
 | 9 | Security | Tenant isolation, RBAC, NetworkPolicy, mTLS, admission policy, fuzzing | Kind plus dedicated security cluster, OWASP ZAP, kube-bench | Critical subset | Full | Full plus external pen-test |
 | 10 | Conformance | Runtime adapter validation against the published contracts | `lenny-compliance` binary, sample images | Internal runtimes | All bundled | All bundled plus third-party |
 | 11 | Documentation | Doc samples, links, code blocks, ADR catalog | Local doc build | Yes | Yes | Yes |
+| 12 | Load and SLO (cloud) | Cloud-scale load envelope; load generated off-cluster from dedicated VMs against a real managed cluster | EKS / GKE / AKS, managed Postgres + cache, `lenny-loadctl` control plane, `lenny-loadrunner` pool, Prometheus snapshot, S3-resident HTML report | No | No | On-demand and pre-release |
 
 ### Gate hierarchy
 
 A failure in a lower tier short-circuits higher tiers within the same invocation. `lenny-test --changed --max-tier e2e_kind` runs tiers 0 through 5 and stops at the first failing tier. The CI orchestrator records the skipped tiers as `status: skipped, reason: <lower-tier-failure>` rather than as absent.
+
+Tier 7 is the only tier that runs as two sequential stages: `load_local` (7a) gates `load_kind` (7b). Tier 12 (`load_cloud`) sits after tier 11 because a tier-12 run is the most expensive part of the pipeline and should never fire while a lower-tier signal is missing.
 
 ### What "component" means
 
@@ -241,10 +246,10 @@ lenny/
     ├── tier4_integration/         # Flat *_test.go layout, one file per subject
     ├── tier5_e2e_kind/            # Flat *_test.go layout, one file per subject
     ├── tier6_e2e_cloud/           # Flat *_test.go layout + parity-matrix.yaml + README.md
-    ├── tier7_load/                # Kind smoke runs + per-scenario baselines
+    ├── tier7b_load_kind/                # Kind smoke runs + per-scenario baselines
     │   ├── scenarios/             # k6 scripts (one subdir per scenario)
     │   └── baselines/             # Per-scenario baseline JSON files
-    ├── tier7_load_cloud/          # Opt-in cloud-profile load runs
+    ├── tier12_load_cloud/          # Opt-in cloud-profile load runs
     │   └── scenarios/             # Cloud-only k6 scenarios
     ├── tier8_chaos/               # Flat *_test.go layout + runbook-map.yaml
     ├── tier9_security/            # Flat *_test.go layout
@@ -258,7 +263,7 @@ lenny/
 
 - Unit tests live next to the code they cover (`pkg/.../foo_test.go`). The `tests/tier1_unit/` directory is a convention marker, not a code location.
 - Every other tier has its own directory, its own build tag, and its own dependency set.
-- Tier 7 is split into `tier7_load/` (Kind-based smoke and the canonical baseline corpus) and `tier7_load_cloud/` (opt-in cloud-profile runs). The two share scenario definitions but bind to different harnesses and run cadences.
+- Tier 7 is split into `tier7b_load_kind/` (Kind-based smoke and the canonical baseline corpus) and `tier12_load_cloud/` (opt-in cloud-profile runs). The two share scenario definitions but bind to different harnesses and run cadences.
 - A few `testinfra/` subdirectories carry only YAML, fixtures, or a single subcommand (`runtimes/`, `k8s/`, `sdkhelper/`). They are listed as asset directories in `tests/testinfra/README.md` so a reader does not expect a Go package at the top of each path.
 - Shared infrastructure lives under `tests/testinfra/`. There is one canonical helper per concern (one container manager, one fixture loader, one verdict producer).
 - `cmd/lenny-test/` builds the harness binary. It is the only entry point developers and CI use to run tests.
@@ -546,6 +551,9 @@ groups:
       include:
         - tier: e2e_kind
           subset: critical-path     # warm-pool, sandbox-claim, pod-lifecycle, mtls
+        - tier: load_local          # full tier-7a catalogue under -race
+        - tier: load_kind
+          subset: smoke             # 20 VUs, ~25s per scenario
         - tier: security
           subset: tenant-isolation,tls,admission
         - tier: chaos
@@ -561,16 +569,18 @@ groups:
       max_tier: component
 
   nightly:
-    description: Nightly gate. Includes full e2e on Kind plus path-specific load.
+    description: Nightly gate. Includes full e2e on Kind plus path-specific load_kind. Tier 12 (load_cloud) is intentionally excluded.
     selectors:
-      include_all_tiers: true
+      include_tiers: [static, unit, component, contract, integration, e2e_kind, e2e_cloud, load_local, load_kind, chaos, security, conformance, docs]
       cloud_subset: critical-path
+      load_kind_subset: per-phase-baseline
 
   pre-release:
-    description: Release gate. Full e2e, full load, full chaos, security pentest driver.
+    description: Release gate. Full e2e, full load_local + load_kind + load_cloud, full chaos, security pentest driver.
     selectors:
       include_all_tiers: true
       cloud_subset: full
+      load_cloud_scale: production
       load_baselines:
         compare_against: prior-release
         regression_threshold_pct: 15
@@ -686,7 +696,7 @@ CI provisions credentials for each provider through OIDC federation rather than 
 
 ## 10. Service and cluster provisioning
 
-Tests need real backing services. Lenny defines four profiles for service provisioning, named in `tests/testinfra/`.
+Tests need real backing services. Lenny defines six profiles for service provisioning, named in `tests/testinfra/`. The first five back tiers 0 through 9; the last two (`loadgen` and `loadctl`) back tier 12.
 
 ### Profile: `inproc` (tier 1, parts of tier 0)
 
@@ -716,12 +726,29 @@ Tests need real backing services. Lenny defines four profiles for service provis
 - The harness applies the Helm chart with the test values file (`tests/testinfra/kind/values.yaml`). The values file sets `deploymentTier: tier1`, `global.devMode: false`, mounts test-specific TLS material, and enables the bootstrap Job.
 - Each e2e test suite gets a fresh namespace and tears it down on completion. The cluster is reused across suites.
 
-### Profile: `cloud` (tier 6, full tier 7, parts of tiers 8 and 9)
+### Profile: `cloud` (tier 6, tier 12 cluster surface, parts of tiers 8 and 9)
 
 - Three providers, two cluster shapes each: `cloud-small-<provider>` (3-node, runc only, no sandbox) and `cloud-sandbox-<provider>` (3-node with the provider's sandbox node pool: gVisor on GKE, gVisor-via-Bottlerocket or Firecracker-via-Fargate on EKS, gVisor-via-containerd-handler or Confidential Containers on AKS).
 - Cluster bring-up is automated via `scripts/cloud/<provider>/up.sh` and torn down via `scripts/cloud/<provider>/down.sh`. The full matrix detail lives in §12.6.
 - Cluster lifecycle is managed by CI for nightly and pre-release. Developers do not bring up cloud clusters from their laptops in routine work.
 - The cloud profile validates managed-K8s-specific behavior that no lower profile reproduces: external LB ingress, cloud-provider CSI, cert-manager with Let's Encrypt staging, provider-native KMS, and provider-native workload identity.
+- For tier 12, this profile provides the Lenny cluster plus managed datastores only. The load-generation surface lives in the `loadgen` profile and the control plane lives in the `loadctl` profile.
+
+### Profile: `loadgen` (tier 12 load-generation surface)
+
+- A pool of off-cluster VMs in the same cloud VPC, in private subnets: ASG of `c6i.2xlarge` on AWS, Managed Instance Group of `c2-standard-8` on GCP, VMSS of `Standard_F8s_v2` on Azure.
+- Each instance runs the `lenny-loadrunner` agent (`cmd/lenny-loadrunner/`) plus the `k6` binary. Instances pick up work from a per-cloud queue (SQS, Pub/Sub, Service Bus).
+- Provisioned by `scripts/cloud/<provider>/up-loadgen.sh` against the `deploy/terraform/cloud/<provider>/loadgen/` module. Torn down by `down-loadgen.sh`.
+- Traffic between the runner pool and the Lenny gateway stays inside the cloud network over a PrivateLink endpoint (AWS), Private Service Connect (GCP), or Azure Private Endpoint.
+- A `cloud-metrics-collector` instance in the same pool polls the provider's metrics API (CloudWatch, Cloud Monitoring, Azure Monitor) and exposes the results as Prometheus-format metrics.
+
+### Profile: `loadctl` (tier 12 control plane)
+
+- A managed-container deployment per cloud: ECS on Fargate behind an ALB (AWS), Cloud Run with Cloud Armor and a serverless VPC connector (GCP), Container Apps with managed certificate (Azure).
+- Backed by managed Postgres (RDS, Cloud SQL, Flexible Server) for run state, scenario library, and baseline pins.
+- Provisioned by `scripts/cloud/<provider>/up-loadctl.sh` against the `deploy/terraform/cloud/<provider>/loadctl/` module. Torn down by `down-loadctl.sh`.
+- Exposes the tier-12 control API (§12.12) and a WebSocket telemetry channel. Authenticates through the same OIDC and JWT path Lenny's gateway uses.
+- The HTTP UI (HTMX plus Plotly.js) and the API share the same listener. The HTML reports the API renders are uploaded to provider object storage (S3, GCS, Blob Storage) and surfaced through redirect.
 
 ### Service stubs and mocks
 
@@ -1102,22 +1129,59 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 
 ### 12.7 Tier 7 — Load and SLO
 
-**Scope.** Performance under sustained load. SLOs from spec §16.5 are asserted directly.
+Tier 7 is the two-stage load gate. Tier 7a (`load_local`) runs in-process and catches concurrency, ordering, atomicity, and error-propagation regressions before any cluster cost is incurred. Tier 7b (`load_kind`) runs the surviving scenarios on Kind to cover cases that genuinely require real Kubernetes primitives. The cloud-scale envelope is at §12.12 (tier 12, `load_cloud`).
 
-**Tooling.** `k6` is the primary load generator. `tests/testinfra/load/scenarios/` holds the Go-and-JavaScript scenarios.
+#### 12.7.a Tier 7a — Load and SLO (local)
 
-**Scenarios.**
+**Scope.** Hot-path concurrency under load with no cluster involved. Every component is exercised either as a per-package bench (`pkg/<package>/bench_load_test.go`) or through an in-process multi-component harness (`tests/testinfra/inproc`) that boots a single-binary Lenny with `miniredis`, an embedded Postgres adapter, and a fake Kubernetes API surface (`tests/testinfra/fakekube`). The race detector is on for every run.
+
+**Tooling.** A pure-Go load driver under `tests/testinfra/loadgen` with three profiles (constant-VU, constant-arrival-rate, ramping-VU). Each scenario implements:
+
+```go
+type Scenario interface {
+    Setup(ctx context.Context, env *Env) error
+    Run(ctx context.Context, vu int) error
+    Teardown(ctx context.Context) error
+}
+```
+
+Scenarios register through `loadgen.Register(name, factory)` and are driven by `tests/tier7a_load_local/scaffolds_test.go`. k6 is not used at this tier; the JSON summary format the driver emits matches k6's so baselines remain comparable across tiers 7a, 7b, and 12.
+
+**Catalogue.** Three groups of scenarios:
+
+*Regression scenarios* (derived from observed bugs): `slot_counter_race`, `claim_admission_ordering`, `terminate_path_branching`, `clientgo_throttle_floor`, `idempotency_replay_race`, `quota_decrement_race`, `audit_chain_concurrent`, `lease_extension_race`, `circuit_breaker_state_machine`, `pubsub_fanout`.
+
+*Component-isolated benches*: `tokenservice_issue_burst`, `webhook_admission_latency`, `controller_reconcile_rate`, `pgtenant_rls_isolation_load`, `auth_jwt_verify_throughput`, `credassign_lease_rotation`, `checkpointer_concurrent`, `experiment_bucket_determinism`, `pubsub_slow_consumer`, `sessionstore_write_amplification`.
+
+*Multi-component harness scenarios*: `tenant_isolation_load`, `mixed_workload`, `streaming_reconnect_storm`, `large_workspace_upload`, `delegation_depth_n`, `goroutine_leak_long_run`, `memory_leak_long_run`, `pg_pool_exhaustion`, `redis_disconnect_midflight`, `clock_skew_admission`, `webhook_tls_rotation_under_load`, `oversized_payload_rejection`, `idempotency_cache_eviction`, `audit_sink_backpressure`, `connector_oauth_refresh_race`, `runtime_adapter_slow_response`, `crd_watch_event_flood`, `error_injection_matrix`.
+
+**Wall-clock budget.** Each scenario completes within 15 seconds. The full tier completes within 5 minutes on a developer laptop.
+
+**Build tag and invocation.**
+
+```bash
+lenny-test --tier load_local
+go test -tags load_local -race -count=1 -timeout 10m ./tests/tier7a_load_local/...
+```
+
+Tier 7a runs on every PR.
+
+#### 12.7.b Tier 7b — Load and SLO (Kind)
+
+**Scope.** Cases that require Kind. Real `kubelet` pod-startup latency under concurrent SandboxClaim CREATE, real `kube-scheduler` placement under affinity and topology spread, real chart rollout under traffic, real `cert-manager` and webhook TLS rotation under load, real NetworkPolicy enforcement count, per-RuntimeClass startup-latency comparison (runc against gVisor).
+
+**Tooling.** `k6` is the primary load generator. `tests/tier7b_load_kind/scenarios/<name>/main.js` holds the scenario scripts; the Go wrapper port-forwards the gateway, invokes k6, and diffs the result against `tests/tier7b_load_kind/baselines/<scenario>.json`.
+
+**Scenarios that remain at this tier.**
 
 | Scenario | Load shape | SLO asserted |
 |:---------|:-----------|:-------------|
-| session_throughput | Ramp to 500 concurrent on Kind, 5000 on cloud, sustained 10 minutes | Session creation P99 < 500ms; pod startup P95 < 2s (runc) and < 5s (gVisor) |
+| session_throughput | Ramp to 500 concurrent on Kind, sustained 10 minutes | Session creation P99 < 500ms; pod startup P95 < 2s (runc) and < 5s (gVisor) |
 | streaming_reconnect_under_load | 500 concurrent streaming sessions, periodic disconnects | Streaming reconnect latency P95 < 500ms; zero event loss |
 | delegation_fanout | Single root with N=50 concurrent children, depth=10 | Tree completes within 30 seconds; budget enforcement correct |
 | credential_rotation_under_load | 200 concurrent sessions, rotate provider credentials | Rotation propagation P95 < 5 seconds; in-flight requests succeed |
 | checkpoint_duration | Workspaces at 10MB, 100MB, 500MB | ≤ 100MB checkpoint P95 < 2s with cooperative quiescence overhead included |
 | pod_claim_latency | 100 concurrent claims | P99 < 100ms cache-warm; SandboxClaim CAS under 50ms |
-| concurrent_workspace_slots | 8 slots per pod, N pods | Per-slot isolation maintained, no cross-slot credential bleed |
-| gateway_10k_sessions | 10000 sessions across replicas (cloud only) | No OOM, latency within SLO |
 | postgres_write_burst | Quota-flush burst pattern at Tier 3 | Sustained IOPS within `postgres.writeCeilingIops`; burst within 3× ceiling |
 | playground_revocation | 1000 active playground sessions; tenant-wide revoke | P99 propagation ≤ 500ms |
 | audit_lock | 1000 audit-event writes/sec at single-tenant burst | `pg_advisory_xact_lock` P95 < 50ms |
@@ -1126,9 +1190,17 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 **Baselines.** Each scenario produces a JSON artifact with latency histograms, P50/P90/P99/P99.9, error rates, throughput, and resource usage. The harness compares against the prior baseline. A regression > 15% in any percentile, or any SLO miss, fails the run.
 
 **Cadence.**
-- Smoke (Kind, 60 seconds, low load): PR.
-- Path-specific (cloud-small, 5–10 minutes per scenario): nightly per the spec's incremental load gates (Phase 6.5, 9.5, 11.5).
-- Full Tier 2 and Tier 3 sampling: pre-release. Phase 13.5 and 14.5 baselines applied.
+- Smoke (Kind, ~25 seconds, ~20 VUs): every PR.
+- Path-specific (Kind, 5–10 minutes per scenario): nightly per the spec's incremental load gates (Phase 6.5, 9.5, 11.5).
+
+**Build tag and invocation.**
+
+```bash
+lenny-test --tier load_kind
+go test -tags load_kind -count=1 -timeout 30m ./tests/tier7b_load_kind/...
+```
+
+The cloud-scale envelope (100+ concurrent claims, 50-child fan-out, 500 streaming sessions, the §12.12 catalogue) is phase-gated out of tier 7b and runs at tier 12.
 
 ### 12.8 Tier 8 — Chaos
 
@@ -1269,6 +1341,87 @@ lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json
 
 **Cadence.** PR.
 
+### 12.12 Tier 12 — Load and SLO (cloud)
+
+**Scope.** Cloud-scale load against a real managed Kubernetes cluster (EKS, GKE, or AKS) with managed datastores (RDS / Cloud SQL / Flexible Server, ElastiCache / Memorystore / Cache for Redis). Tier 12 ratifies a release. It does not surface design bugs; tier 7a and tier 7b are where those land.
+
+**Topology.** Three deployed surfaces in the same cloud account:
+
+| Surface | Purpose | Lifecycle |
+|:--|:--|:--|
+| Lenny cluster + datastores | The system under load | Provisioned by `scripts/cloud/<provider>/up.sh` plus `install-lenny.sh` |
+| Load runner pool (off-cluster) | Dedicated VMs that run `lenny-loadrunner` plus `k6` | Provisioned by `up-loadgen.sh` against `deploy/terraform/cloud/<provider>/loadgen/` |
+| `lenny-loadctl` control plane | HTTP API plus WebSocket plus persistence; dispatches scenarios, ingests metrics, renders reports | Provisioned by `up-loadctl.sh` against `deploy/terraform/cloud/<provider>/loadctl/` |
+
+Load travels from the runner pool to the Lenny gateway over a PrivateLink endpoint (AWS), a Private Service Connect endpoint (GCP), or an Azure Private Endpoint. No load traverses the public internet.
+
+**Off-cluster load generators.** `cmd/lenny-loadrunner` is a long-running agent on each runner instance. It registers with the control plane, receives a `RunScenario` instruction (scenario name, k6 script reference, VU and rate and duration, target URL, auth bundle, run ID), executes `k6` in a subprocess, streams k6 output metrics to the control plane in real time, and uploads the full k6 JSON report to object storage on completion. The work-dispatch driver behind `pkg/loadrunner/dispatch` has three implementations: SQS (AWS), Pub/Sub (GCP), and Service Bus (Azure).
+
+**Metrics pipeline.**
+
+| Source | Sink | Notes |
+|:--|:--|:--|
+| Lenny components (gateway, controller, token-service, `lenny-ops`) | Prometheus deployed alongside Lenny | Scrape interval 5–10s during a run. Targets per spec §16.9. |
+| Cloud provider metrics (node CPU and memory and disk, RDS connections and IOPS and replication lag, cache CPU and evictions and hit rate, load balancer request count and latencies) | `cloud-metrics-collector` exposes as Prometheus-format on the metrics-collector instance | One implementation per cloud (CloudWatch, Cloud Monitoring, Azure Monitor) |
+| k6 streaming output from every runner | Prometheus remote-write | Tagged with run ID, scenario, runner ID |
+
+After the run, the collector snapshots Prometheus to object storage (S3, GCS, or Blob Storage) and the snapshot is referenced by run ID.
+
+**Report.** `pkg/loadreport` produces a single self-contained HTML report per run with Plotly.js charts loaded from CDN and all data inlined as JSON in the page. Sections: header (run ID, branch, commit, image tag, scenario set, scale, start and end timestamps, total wall-clock), topology (cluster sizing, node counts, datastore class, runner count), per-scenario SLO assertions and pass or fail, latency percentiles (avg, p50, p90, p95, p99, p99.9, max), throughput, error rate, error code histogram, resource time-series, pod-lifecycle time-series, anomalies (alerts fired during the run), logs (links to gateway and controller log archives), comparison against a named baseline run.
+
+Object storage layout (AWS shown; GCP and Azure mirror it):
+
+```
+s3://lenny-load-reports/
+  runs/
+    <run-id>/
+      manifest.json
+      report.html
+      prometheus-snapshot.tar.gz
+      k6/<scenario>/<runner-id>.json
+      logs/{gateway,controller,...}.log.gz
+  baselines/
+    <named-baseline>/  → manifest pointing at a run-id
+  index.html
+```
+
+Bucket lifecycle: keep `report.html` and `manifest.json` indefinitely; expire raw artifacts after a configurable retention period.
+
+**Control plane (`lenny-loadctl`).** A managed-container service per cloud — ECS on Fargate (AWS), Cloud Run (GCP), Container Apps (Azure) — backed by managed Postgres (RDS, Cloud SQL, Flexible Server). It exposes:
+
+| Method | Path | Purpose |
+|:--|:--|:--|
+| `POST /api/v1/runs` | start a new run (scenario set, scale, cluster reference) |
+| `GET /api/v1/runs/{id}` | run status, scenario states, current metrics URL |
+| `POST /api/v1/runs/{id}:stop` | abort a running run |
+| `GET /api/v1/runs/{id}/metrics:stream` | WebSocket; live percentiles and throughput |
+| `GET /api/v1/runs/{id}/report` | redirect to the object-storage-hosted report.html |
+| `GET /api/v1/runners` | registered runners plus capacity |
+| `GET /api/v1/scenarios` | scenario library |
+| `POST /api/v1/baselines/{name}` | pin a run as the named baseline |
+
+Every endpoint authenticates through the same OIDC and JWT path Lenny's gateway uses. AI agents and CI pipelines drive the API programmatically.
+
+**Cadence.** On-demand and pre-release. A tier-12 run is the most expensive part of the pipeline; it gates the release rather than the PR.
+
+**Build tag and invocation.**
+
+```bash
+# Pre-flight + trigger; provisioning is in up-* scripts, not here.
+scripts/cloud/<provider>/run-load.sh --scenarios <set> --scale {small|medium|production}
+
+# Or, directly against an already-up loadctl:
+curl -X POST https://loadctl.<provider>.example.com/api/v1/runs \
+  -H "Authorization: Bearer ${OIDC_TOKEN}" \
+  -d @run.json
+```
+
+`scripts/cloud/<provider>/run-load.sh` does not provision or destroy infrastructure. Provisioning and tear-down live in `up.sh`, `install-lenny.sh`, `up-loadgen.sh`, `up-loadctl.sh`, and their `down-*` counterparts.
+
+**Scale profiles.** `small` (10–50 concurrent sessions, 5–10 child fan-out, 25–50 streaming sessions), `medium` (50–200 / 10–25 / 100–250), `production` (100+ / 50 / 500 — the full §12.7 envelope). The active scale selects the Terraform overlay under `deploy/terraform/cloud/<provider>/`.
+
+The detailed component layout, terraform module shapes, and operator runbooks for tier-12 are in §15 below.
+
 ---
 
 ## 13. Build-and-test sequence
@@ -1327,7 +1480,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `cmd/runtimes/echo/` built. The binary passes `lenny-compliance --level basic`.
 - `cmd/lenny-compliance/` is the conformance harness. The Basic-level battery covers binary execution, empty-stdin shutdown, message-to-response round-trip, heartbeat acknowledgement, unknown-type forward compatibility, shutdown deadline, and sequential-message handling.
 - `tests/tier3_contract/adapter_jsonl/messages_test.go` passes against the echo runtime for Basic-level expectations. Standard-level expectations (tool-call correlation, response-shorthand normalisation, adapter-local tool path-traversal guard) are skipped until the relevant runtimes and the gateway-side normaliser ship.
-- `tests/tier7_load/scenarios/startup_latency/main.go` is the executable benchmark harness. It records the first baseline at `tests/tier7_load/baselines/startup_latency.json` (heartbeat round-trip P50=2 ms, P90=3 ms, P99=3 ms over 20 iterations on the development machine).
+- `tests/tier7b_load_kind/scenarios/startup_latency/main.go` is the executable benchmark harness. It records the first baseline at `tests/tier7b_load_kind/baselines/startup_latency.json` (heartbeat round-trip P50=2 ms, P90=3 ms, P99=3 ms over 20 iterations on the development machine).
 - `pkg/common/registry/resolver.go` implements `ImageResolver` with override > url > default precedence and digest enforcement. Tests in `pkg/common/registry/resolver_test.go`.
 
 **Test infrastructure deferred to later phases.**
@@ -1507,7 +1660,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 ### 13.17 Phase 6.5 — Incremental load test (streaming)
 
 **Test infrastructure to land.**
-- `tests/tier7_load/scenarios/streaming_reconnect.go` operational.
+- `tests/tier7b_load_kind/scenarios/streaming_reconnect.go` operational.
 - Phase 6.5 baseline JSON committed.
 
 ### 13.18 Phase 7 — Policy engine (quotas, budgets, audit hooks)
@@ -1541,13 +1694,13 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Test infrastructure deferred to later phases.**
 - `cmd/runtimes/delegation-echo/` (Standard-level reference runtime that exercises `lenny/delegate_task` through the platform MCP server) is deferred. The Standard-level conformance battery in `cmd/lenny-compliance` is also deferred to the same phase; the cycle and lease packages above are the pure substrate.
 - `tests/tier4_integration/delegation_test.go` is deferred to the K8s-integration phase that ships the gateway's `lenny/delegate_task` handler and the Redis-backed delegation budget counters (`budget_reserve.lua`, `budget_return.lua`).
-- `tests/tier7_load/scenarios/delegation_fanout.go` (Phase 9.5 incremental load test) is deferred to the gateway-bearing phase.
+- `tests/tier7b_load_kind/scenarios/delegation_fanout.go` (Phase 9.5 incremental load test) is deferred to the gateway-bearing phase.
 - `tests/tier9_security/reviews/delegation-review.md` (the §9.1 security review) is a human activity, recorded by the documentation-only deliverable in Phase 17a.
 
 ### 13.21 Phase 9.5 — Incremental load test (delegation)
 
 **Test infrastructure to land.**
-- `tests/tier7_load/scenarios/delegation_fanout.go` operational.
+- `tests/tier7b_load_kind/scenarios/delegation_fanout.go` operational.
 - Phase 9.5 baseline JSON committed.
 
 ### 13.22 Phase 10 — MCP fabric (virtual child interfaces, elicitation chain)
@@ -1571,7 +1724,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 ### 13.24 Phase 11.5 — Incremental load test (credential lifecycle)
 
 **Test infrastructure to land.**
-- `tests/tier7_load/scenarios/credential_rotation_under_load.go` operational.
+- `tests/tier7b_load_kind/scenarios/credential_rotation_under_load.go` operational.
 - Phase 11.5 baseline JSON committed.
 
 ### 13.25 Phase 12a — Token Service hardening (KMS envelope + OAuth)
@@ -1631,7 +1784,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure to land.**
 - Re-run of every Phase 13.5 scenario with full security hardening.
-- Delta documentation in `tests/tier7_load/baselines/`.
+- Delta documentation in `tests/tier7b_load_kind/baselines/`.
 
 ### 13.32 Phase 15 — Environment resource + RBAC + cross-environment delegation
 
@@ -1651,7 +1804,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure deferred to later phases.**
 - `tests/tier4_integration/experiment_routing_test.go` is deferred. It needs the gateway, the ExperimentRouter interceptor wiring, and the PoolScalingController's variant-pool `minWarm` coupling.
-- `tests/tier7_load/scenarios/experiment_active_under_load.go` is deferred to the K8s-integration phase that ships the gateway and the load harness.
+- `tests/tier7b_load_kind/scenarios/experiment_active_under_load.go` is deferred to the K8s-integration phase that ships the gateway and the load harness.
 - The OpenFeature / OFREP external-targeting integration, the §10.7 PSC variant-pool sizing path, and the §10.7 admin API surface (`POST /v1/admin/experiments`, etc.) are deferred to the same phase.
 
 ### 13.34 Phase 16.5 — Experiment load test SLO re-validation
@@ -1663,7 +1816,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure to land.**
 - Tier 11 fully exercised: every doc page builds, every link resolves, the playground and `lenny up` quick-starts run end-to-end as advertised.
-- `time-to-hello-world` benchmark under `tests/tier7_load/scenarios/tthw.go` confirms the < 5-minute target.
+- `time-to-hello-world` benchmark under `tests/tier7b_load_kind/scenarios/tthw.go` confirms the < 5-minute target.
 
 ### 13.36 Phase 17b — Memory, semantic caching, eval hooks
 
@@ -2290,7 +2443,7 @@ Workflow file: `.github/workflows/nightly.yml`. Scheduled `0 5 * * *` UTC. Targe
 3. `lenny-test --tier e2e_cloud --subset critical-path` rotated across the three providers (so each provider runs at least every 48 hours).
 4. `lenny-test --tier chaos` (most scenarios; severe-cloud scenarios run on cloud).
 5. `lenny-test --tier security` (full suite minus pen-test).
-6. `lenny-test --tier load --scenario <per-phase-baseline>` per the spec's incremental gates (Phase 6.5, 9.5, 11.5).
+6. `lenny-test --tier load_kind --scenario <per-phase-baseline>` per the spec's incremental gates (Phase 6.5, 9.5, 11.5).
 7. `lenny-test --tier conformance --subset reference-catalog`.
 8. Dependency audit: `go mod verify`, `go list -m -u all`, `trivy fs`, `trivy image` against all built images.
 
@@ -2301,7 +2454,7 @@ A nightly failure pages the on-call rotation defined in `docs/runbooks/index.md`
 Workflow files: `.github/workflows/weekly.yml` and `.github/workflows/pre-release.yml`. Scheduled weekly on Sunday; pre-release triggered manually via `workflow_dispatch`. Target wall-clock: under 8 hours.
 
 1. Full nightly pipeline.
-2. `lenny-test --tier load` (full Tier 2 plus Tier 3 sampling). Phase 13.5 and 14.5 baselines.
+2. `lenny-test --tier load_kind` (full Tier 2 plus Tier 3 sampling). Phase 13.5 and 14.5 baselines.
 3. `lenny-test --tier chaos` (full suite).
 4. `lenny-test --tier e2e_cloud` (full suite on **all three providers — GKE, EKS, AKS** — each in both `cloud-small-<provider>` and `cloud-sandbox-<provider>` shapes; parity matrix asserted).
 5. External pen-test driver run against the prior pen-test's findings.
@@ -2497,6 +2650,79 @@ Bundled alerting rules and recommendation rules come from `pkg/alerting/rules` a
 ### 23.5 Cross-environment delegation
 
 Phase 15 ships basic per-environment rules. Richer controls and runtime-level exceptions are post-V1. The test infrastructure covers the v1 bilateral-declaration contract and leaves room for additional gates.
+
+---
+
+## 24. Load-test platform components
+
+This section catalogues the binaries, terraform modules, and operator runbooks that back tier 7a and tier 12. It is the operator-facing index; the per-tier scope and cadence live in §12.7 and §12.12.
+
+### 24.1 Binaries
+
+| Binary | Tier | Role | Status |
+|:--|:--|:--|:--|
+| `cmd/lenny-loadrunner/` | 12 | Long-running agent on each off-cluster runner instance. Receives `RunScenario`, runs `k6`, streams metrics. | Land in Wave 5. |
+| `cmd/lenny-loadctl/` | 12 | Control plane HTTP API plus WebSocket plus persistence. Dispatches scenarios, ingests metrics, renders reports. | Land in Wave 6. |
+| `pkg/loadreport/` | 12 | HTML report generator. Reads Prometheus snapshot plus k6 JSON, emits a self-contained Plotly.js report. | Land in Wave 6. |
+| `pkg/loadrunner/dispatch/` | 12 | Work-dispatch interface plus SQS, Pub/Sub, Service Bus implementations. | Land in Wave 5. |
+| `cmd/cloud-metrics-collector/` | 12 | Cloud provider metrics ingestion (CloudWatch, Cloud Monitoring, Azure Monitor) into Prometheus remote-write. | Land in Wave 6. |
+
+All five are build-time tooling. They are not shipped as part of the v1 production install.
+
+### 24.2 Terraform modules
+
+| Path | Provisions | Status |
+|:--|:--|:--|
+| `deploy/terraform/cloud/aws/loadgen/` | ASG of `c6i.2xlarge`, SQS queue, IAM role, PrivateLink endpoint | Wave 5 |
+| `deploy/terraform/cloud/gcp/loadgen/` | MIG of `c2-standard-8`, Pub/Sub topic, service account, Private Service Connect | Wave 5 |
+| `deploy/terraform/cloud/azure/loadgen/` | VMSS of `Standard_F8s_v2`, Service Bus queue, managed identity, Azure Private Endpoint | Wave 5 |
+| `deploy/terraform/cloud/aws/loadctl/` | ECS Fargate service, ALB, RDS Postgres, Secrets Manager, OIDC trust policy | Wave 6 |
+| `deploy/terraform/cloud/gcp/loadctl/` | Cloud Run service, Cloud SQL, Cloud Armor, Secret Manager, serverless VPC connector | Wave 6 |
+| `deploy/terraform/cloud/azure/loadctl/` | Container Apps environment, Flexible Server, Key Vault, managed certificate | Wave 6 |
+
+### 24.3 Scripts
+
+| Script | Wave | Idempotent | Destructive |
+|:--|:--|:--|:--|
+| `scripts/cloud/<p>/up.sh` | (existing) | Yes | No |
+| `scripts/cloud/<p>/install-lenny.sh` | 5 | Yes | No |
+| `scripts/cloud/<p>/up-loadgen.sh` | 5 | Yes | No |
+| `scripts/cloud/<p>/up-loadctl.sh` | 6 | Yes | No |
+| `scripts/cloud/<p>/run-load.sh` | 5 (rewritten in 6) | Yes | No |
+| `scripts/cloud/<p>/down-loadgen.sh` | 5 | Yes | Yes |
+| `scripts/cloud/<p>/down-loadctl.sh` | 6 | Yes | Yes |
+| `scripts/cloud/<p>/down.sh` | (existing) | Yes | Yes |
+
+`run-load.sh` performs pre-flight checks (cluster up, chart installed, loadgen pool healthy, loadctl reachable) and triggers a run through the loadctl API. It contains no terraform calls, no helm calls, no chart edits, and no port-forwards.
+
+### 24.4 Recorded decisions
+
+- Load is generated off-cluster from dedicated VMs.
+- `run-load.sh` does not provision or destroy infrastructure.
+- The cloud-load report is permanent and lives in object storage.
+- The control plane exposes a public API so AI agents and CI can drive runs.
+- `lenny-loadctl` deploys as a managed-container service per cloud (ECS / Cloud Run / Container Apps).
+- `lenny-loadrunner` deploys as a per-cloud VM pool (ASG / MIG / VMSS).
+- Tier-7a uses a pure-Go driver in `tests/testinfra/loadgen`; k6 stays in tier-7b and tier-12.
+- The documentation target for this overhaul is `TESTING.md`. The `/spec` files are untouched.
+
+### 24.5 Operator runbooks
+
+Operator runbooks for the load-test platform live alongside Lenny's other runbooks at `docs/runbooks/`. Waves 5 and 6 land:
+
+- `docs/runbooks/load-test-runner-pool-unhealthy.md`
+- `docs/runbooks/load-test-control-plane-unavailable.md`
+- `docs/runbooks/load-test-report-generation-failed.md`
+- `docs/runbooks/load-test-baseline-update.md`
+
+### 24.6 Status
+
+The load-test platform is delivered in two waves:
+
+- Wave 5: `lenny-loadrunner` binary, `loadgen/` terraform per cloud, `install-lenny.sh`, `up-loadgen.sh`, `down-loadgen.sh`, and the rewritten `run-load.sh`. After Wave 5, runs are driven through the existing harness against the new runner pool.
+- Wave 6: `lenny-loadctl` binary, `pkg/loadreport`, `cloud-metrics-collector`, `loadctl/` terraform per cloud, `up-loadctl.sh`, `down-loadctl.sh`. After Wave 6, the API surface and HTML report supersede the harness.
+
+Until Wave 6 ships, the API surface in §12.12 and the topology diagrams in §10 describe the target state; the live behaviour matches the wave-5 envelope.
 
 ---
 

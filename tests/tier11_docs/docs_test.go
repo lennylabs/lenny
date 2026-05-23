@@ -62,7 +62,8 @@ func TestTESTINGmdMentionsEveryTier(t *testing.T) {
 	content := string(b)
 	for _, name := range []string{
 		"static", "unit", "component", "contract", "integration",
-		"e2e_kind", "load", "chaos", "security", "conformance", "docs",
+		"e2e_kind", "e2e_cloud", "load_local", "load_kind", "chaos",
+		"security", "conformance", "docs", "load_cloud",
 	} {
 		if !strings.Contains(content, name) {
 			t.Errorf("TESTING.md missing reference to tier %q", name)

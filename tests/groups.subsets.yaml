@@ -133,42 +133,42 @@ subsets:
   # ---- Tier 7 load subsets ----
 
   streaming-reconnect:
-    tier: load
+    tier: load_kind
     scenarios:
-      - tests/tier7_load/scenarios/streaming_reconnect.go
+      - tests/tier7b_load_kind/scenarios/streaming_reconnect.go
 
   delegation-fanout:
-    tier: load
+    tier: load_kind
     scenarios:
-      - tests/tier7_load/scenarios/delegation_fanout.go
+      - tests/tier7b_load_kind/scenarios/delegation_fanout.go
 
   credential-rotation:
-    tier: load
+    tier: load_kind
     scenarios:
-      - tests/tier7_load/scenarios/credential_rotation_under_load.go
+      - tests/tier7b_load_kind/scenarios/credential_rotation_under_load.go
 
   full-system:
-    tier: load
+    tier: load_kind
     scenarios_mode: all-except
     scenarios:
-      - tests/tier7_load/scenarios/tthw.go
-      - tests/tier7_load/scenarios/experiment_active_under_load.go
+      - tests/tier7b_load_kind/scenarios/tthw.go
+      - tests/tier7b_load_kind/scenarios/experiment_active_under_load.go
 
   full-system-with-hardening:
-    tier: load
+    tier: load_kind
     scenarios_mode: same-as
     scenarios_ref: full-system
     cluster_profile: hardened
 
   experiment-active:
-    tier: load
+    tier: load_kind
     scenarios:
-      - tests/tier7_load/scenarios/experiment_active_under_load.go
+      - tests/tier7b_load_kind/scenarios/experiment_active_under_load.go
 
   tthw:
-    tier: load
+    tier: load_kind
     scenarios:
-      - tests/tier7_load/scenarios/tthw.go
+      - tests/tier7b_load_kind/scenarios/tthw.go
 
   # ---- Tier 8 chaos subsets ----
 

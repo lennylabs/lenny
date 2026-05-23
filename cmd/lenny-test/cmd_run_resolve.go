@@ -178,8 +178,10 @@ func inferTierFromPath(path string) string {
 		return "e2e_kind"
 	case strings.HasPrefix(path, "tests/tier6_e2e_cloud"):
 		return "e2e_cloud"
-	case strings.HasPrefix(path, "tests/tier7_load"):
-		return "load"
+	case strings.HasPrefix(path, "tests/tier7a_load_local"):
+		return "load_local"
+	case strings.HasPrefix(path, "tests/tier7b_load_kind"):
+		return "load_kind"
 	case strings.HasPrefix(path, "tests/tier8_chaos"):
 		return "chaos"
 	case strings.HasPrefix(path, "tests/tier9_security"):
@@ -188,6 +190,8 @@ func inferTierFromPath(path string) string {
 		return "conformance"
 	case strings.HasPrefix(path, "tests/tier11_docs"):
 		return "docs"
+	case strings.HasPrefix(path, "tests/tier12_load_cloud"):
+		return "load_cloud"
 	case strings.HasPrefix(path, "pkg/") || strings.HasSuffix(path, "_test.go"):
 		// A pkg/ unit test.
 		return "unit"

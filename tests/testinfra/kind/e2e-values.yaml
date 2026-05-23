@@ -63,7 +63,7 @@ gateway:
   # for a quiet control plane; a load run accumulates session and
   # billing state and OOM-kills the pod at that limit. The e2e cluster
   # has headroom, so the overlay raises the gateway limit for the
-  # benefit of tests/tier7_load.
+  # benefit of tests/tier7b_load_kind.
   resources:
     requests:
       cpu: 250m
