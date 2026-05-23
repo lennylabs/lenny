@@ -19,13 +19,15 @@ package tokenservice
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
@@ -71,6 +73,15 @@ type Auditor interface {
 }
 
 // Server is the §13.3 Token Service http handler.
+//
+// The Server is fully stateless across replicas: every minted token's
+// metadata lives in the configured IssuedTokenStore (Postgres in
+// production), and the jti primary key plus ErrAlreadyExists is the
+// duplicate-detection contract. There is no in-process jti cache, so
+// any replica can serve any request.
+// spec: §4.3 line 209 ("fully stateless — all persistent state lives
+// in Postgres ... so any replica can handle any request with no
+// affinity requirements").
 type Server struct {
 	signer       jwt.Signer
 	verifier     jwt.Verifier
@@ -81,9 +92,6 @@ type Server struct {
 	metrics      Metrics
 
 	rateLimiter *RateLimiter
-
-	mu     sync.Mutex
-	issued map[string]bool // jti seen
 }
 
 // Options configures the Server.
@@ -161,7 +169,6 @@ func NewServer(opts Options) *Server {
 		issuedTokens: opts.IssuedTokens,
 		auditor:      opts.Auditor,
 		metrics:      opts.Metrics,
-		issued:       map[string]bool{},
 	}
 	if !opts.RateLimit.IsZero() {
 		s.rateLimiter = NewRateLimiter(opts.RateLimit, opts.Now)
@@ -332,11 +339,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mint the issued token via the signer.
-	jti := newJTI(now)
-	s.mu.Lock()
-	s.issued[jti] = true
-	s.mu.Unlock()
+	// Mint the issued token via the signer. The jti is a
+	// crypto/rand-derived 128-bit identifier so two replicas minting
+	// at the same wall-clock instant do not collide on the
+	// issued_tokens primary key. spec: §4.3 line 209 (no affinity
+	// requirements / replicas serve interchangeably).
+	jti, err := newJTI()
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		finish("server_error")
+		return
+	}
 
 	out := jwt.Claims{
 		Issuer:          s.issuer,
@@ -603,33 +616,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // rearrange the types.
 var _ = auth.TokenUserBearer
 
-func newJTI(now time.Time) string {
-	// Monotonic-ish jti: nanoseconds + a short counter via sync/atomic
-	// would be ideal; sync.Mutex-guarded counter is fine for the
-	// minimal service.
-	jtiMu.Lock()
-	defer jtiMu.Unlock()
-	jtiCounter++
-	return "jti_" + strings.ReplaceAll(now.UTC().Format("20060102150405.000000"), ".", "_") + "_" +
-		strings.ToLower(intToHex(jtiCounter))
+// newJTI returns a fresh RFC 7519 token identifier. The identifier is a
+// hex-encoded 128-bit value drawn from crypto/rand so two simultaneously
+// started Token Service replicas cannot collide on the
+// `issued_tokens.jti` primary key. spec: §4.3 line 209 — replicas serve
+// any request with no affinity requirements, which requires
+// collision-safe identifiers across processes.
+//
+// The same pattern is used at pkg/credential/lease_mint.go for lease
+// IDs.
+func newJTI() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("tokenservice: generate jti: %w", err)
+	}
+	return "jti_" + hex.EncodeToString(b[:]), nil
 }
 
-var (
-	jtiMu      sync.Mutex
-	jtiCounter uint64
-)
-
-func intToHex(n uint64) string {
-	const hex = "0123456789abcdef"
-	if n == 0 {
-		return "0"
-	}
-	var buf [16]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = hex[n&0xf]
-		n >>= 4
-	}
-	return string(buf[i:])
-}
