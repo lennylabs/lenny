@@ -84,4 +84,9 @@ var table = map[string]entry{
 	"INVALID_RUNTIME_TYPE": {CategoryPermanent, false},
 	"RUNTIME_UNAVAILABLE":  {CategoryTransient, true},
 	"METHOD_NOT_ALLOWED":   {CategoryPermanent, false},
+	// §4.3 line 214: a session that requires LLM or OAuth credentials
+	// fails with a retryable error when the Token Service is
+	// unavailable, so clients can back off and retry. The session-start
+	// handler emits this code with HTTP 503 + Retry-After.
+	"TOKEN_SERVICE_UNAVAILABLE": {CategoryUpstream, true},
 }

@@ -18,6 +18,10 @@ func TestClassifyKnownCodes(t *testing.T) {
 		{"DELEGATION_CYCLE_DETECTED", CategoryPermanent, false},
 		{"RATE_LIMITED", CategoryPolicy, true},
 		{"UPSTREAM_ERROR", CategoryUpstream, true},
+		// spec: §4.3 line 214 — TOKEN_SERVICE_UNAVAILABLE is the
+		// session-start retryable failure when the Token Service
+		// circuit breaker is open.
+		{"TOKEN_SERVICE_UNAVAILABLE", CategoryUpstream, true},
 	}
 	for _, c := range cases {
 		t.Run(c.code, func(t *testing.T) {

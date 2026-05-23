@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -19,6 +20,26 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
+
+// tokenServiceUnavailableRetryAfterSeconds is the §4.3 Retry-After
+// header emitted with TOKEN_SERVICE_UNAVAILABLE: 5 seconds is the
+// circuit-breaker open-state cool-down in pkg/gateway/subsystem.
+// spec: §4.3 line 214.
+const tokenServiceUnavailableRetryAfterSeconds = 5
+
+// writeTokenServiceUnavailable writes the §4.3 retryable-503 envelope
+// when the Token Service circuit-breaker is open or the Token Service
+// is otherwise unavailable. The Retry-After header lets a client back
+// off with a deterministic budget rather than parsing the body.
+// spec: §4.3 line 214.
+func (s *Server) writeTokenServiceUnavailable(w http.ResponseWriter, cause error) {
+	w.Header().Set("Retry-After", "5")
+	msg := "Token Service is unavailable; retry in a few seconds"
+	if cause != nil {
+		msg = msg + ": " + cause.Error()
+	}
+	s.writeError(w, http.StatusServiceUnavailable, "TOKEN_SERVICE_UNAVAILABLE", msg, nil)
+}
 
 // CreateAndStartRequest is the §15.1 POST /v1/sessions/start body —
 // the convenience surface that bundles create + finalize + start.
@@ -135,10 +156,16 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// places the session on a Kubernetes warm pod before reporting it
 	// running. A claim failure marks the row failed and surfaces a
 	// retryable 503 rather than leaving a session stuck in running with
-	// no pod behind it.
+	// no pod behind it. A Token Service outage during credential
+	// assignment surfaces as TOKEN_SERVICE_UNAVAILABLE with Retry-After
+	// per §4.3 line 214.
 	if s.podBinder != nil {
 		if err := s.startOnPod(r.Context(), row, parsedPlan); err != nil {
 			s.failSession(r.Context(), tenantID, row.ID)
+			if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
+				s.writeTokenServiceUnavailable(w, err)
+				return
+			}
 			s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
 				"could not place the session on a warm pod: "+err.Error(), nil)
 			return
@@ -196,6 +223,10 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.startOnPod(r.Context(), row, plan); err != nil {
+			if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
+				s.writeTokenServiceUnavailable(w, err)
+				return
+			}
 			s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
 				"could not place the session on a warm pod: "+err.Error(), nil)
 			return
@@ -531,6 +562,10 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	if s.podBinder != nil {
 		if err := s.resumeOnPod(r.Context(), row); err != nil {
 			s.failSession(r.Context(), tenantID, id)
+			if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
+				s.writeTokenServiceUnavailable(w, err)
+				return
+			}
 			s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
 				"could not resume the session on a warm pod: "+err.Error(), nil)
 			return
