@@ -223,3 +223,101 @@ func TestTokenResponseExpiresAt(t *testing.T) {
 		t.Errorf("ExpiresAt with no expires_in = %v, want zero", got)
 	}
 }
+
+// spec: §4.3 line 200 — refresh-token grant happy path.
+func TestRefreshAccessTokenHappyPath(t *testing.T) {
+	srv, captured := fakeTokenEndpoint(t, http.StatusOK,
+		`{"access_token":"at-new","refresh_token":"rt-new","token_type":"Bearer","expires_in":3600,"scope":"repo"}`)
+
+	got, err := RefreshAccessToken(context.Background(), srv.Client(), RefreshTokenRequest{
+		TokenEndpoint: srv.URL,
+		ClientID:      "client-123",
+		ClientSecret:  "shh-secret",
+		RefreshToken:  "rt-old",
+		Scopes:        []string{"repo"},
+	})
+	if err != nil {
+		t.Fatalf("RefreshAccessToken: %v", err)
+	}
+	if got.AccessToken != "at-new" || got.RefreshToken != "rt-new" || got.TokenType != "Bearer" {
+		t.Fatalf("token response = %+v", got)
+	}
+	if v := captured.Get("grant_type"); v != "refresh_token" {
+		t.Errorf("grant_type = %q, want refresh_token", v)
+	}
+	if v := captured.Get("refresh_token"); v != "rt-old" {
+		t.Errorf("refresh_token = %q, want rt-old", v)
+	}
+	if v := captured.Get("client_secret"); v != "shh-secret" {
+		t.Errorf("client_secret = %q, want shh-secret", v)
+	}
+	if v := captured.Get("scope"); v != "repo" {
+		t.Errorf("scope = %q, want repo", v)
+	}
+}
+
+// spec: §4.3 line 200 — refresh-token grant rejected by provider.
+func TestRefreshAccessTokenProviderError(t *testing.T) {
+	srv, _ := fakeTokenEndpoint(t, http.StatusBadRequest,
+		`{"error":"invalid_grant","error_description":"refresh token expired"}`)
+
+	_, err := RefreshAccessToken(context.Background(), srv.Client(), RefreshTokenRequest{
+		TokenEndpoint: srv.URL,
+		ClientID:      "c",
+		RefreshToken:  "rt-stale",
+	})
+	if !errors.Is(err, ErrTokenExchangeFailed) {
+		t.Fatalf("RefreshAccessToken against 400: got %v, want ErrTokenExchangeFailed", err)
+	}
+}
+
+// spec: §4.3 line 200 — public-client refresh omits client_secret.
+func TestRefreshAccessTokenPublicClientOmitsSecret(t *testing.T) {
+	srv, captured := fakeTokenEndpoint(t, http.StatusOK,
+		`{"access_token":"at-new","token_type":"Bearer"}`)
+
+	_, err := RefreshAccessToken(context.Background(), srv.Client(), RefreshTokenRequest{
+		TokenEndpoint: srv.URL,
+		ClientID:      "public-client",
+		RefreshToken:  "rt-pub",
+	})
+	if err != nil {
+		t.Fatalf("RefreshAccessToken: %v", err)
+	}
+	if _, present := (*captured)["client_secret"]; present {
+		t.Errorf("public-client refresh sent a client_secret")
+	}
+}
+
+// spec: §4.3 line 200 — refresh grant rejects missing required fields.
+func TestRefreshAccessTokenRejectsMissingFields(t *testing.T) {
+	for i, r := range []RefreshTokenRequest{
+		{ClientID: "c", RefreshToken: "rt"},                              // no token endpoint
+		{TokenEndpoint: "https://t.example.com", ClientID: "c"},          // no refresh_token
+		{TokenEndpoint: "https://t.example.com", RefreshToken: "rt"},     // no client_id
+	} {
+		if _, err := RefreshAccessToken(context.Background(), http.DefaultClient, r); err == nil {
+			t.Errorf("case %d: RefreshAccessToken accepted an invalid request", i)
+		}
+	}
+}
+
+// spec: §4.3 line 200 — refresh grant where provider rotates only the
+// access token (no refresh_token in the response). The caller must keep
+// the previously stored refresh token in place.
+func TestRefreshAccessTokenNoRotation(t *testing.T) {
+	srv, _ := fakeTokenEndpoint(t, http.StatusOK,
+		`{"access_token":"at-new","token_type":"Bearer","expires_in":3600}`)
+
+	got, err := RefreshAccessToken(context.Background(), srv.Client(), RefreshTokenRequest{
+		TokenEndpoint: srv.URL,
+		ClientID:      "c",
+		RefreshToken:  "rt-old",
+	})
+	if err != nil {
+		t.Fatalf("RefreshAccessToken: %v", err)
+	}
+	if got.RefreshToken != "" {
+		t.Errorf("expected empty refresh_token on no-rotation response, got %q", got.RefreshToken)
+	}
+}

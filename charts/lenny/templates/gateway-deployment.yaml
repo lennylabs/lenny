@@ -147,6 +147,25 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       {{- /*
+          §4.3 / §10.3 mTLS material. The lenny-gateway-tls Secret is
+          rendered by mtls-pki.yaml (cert-manager-managed). cert-manager
+          stores tls.crt / tls.key (the gateway client cert) and ca.crt
+          (the issuing CA cert) inside the same Secret; mounting it at
+          /etc/lenny/mtls/ gives the binary all three files it needs to
+          present the gateway client cert to the Token Service and to
+          verify the Token Service server cert against the shared
+          cluster-internal CA. The mount is gated on mtls.enabled so a
+          no-mesh / external-mTLS deployment can opt out, but the chart
+          default is mtls.enabled=true.
+      */ -}}
+      {{- if .Values.mtls.enabled }}
+      volumes:
+        - name: lenny-gateway-tls
+          secret:
+            secretName: lenny-gateway-tls
+            defaultMode: 0400
+      {{- end }}
+      {{- /*
           §4.1 / §17.1 cross-zone topology spread. The §17.1 narrative
           calls for gateway replicas to spread via topology spread
           constraints so a zone failure does not collapse capacity onto
@@ -211,6 +230,16 @@ spec:
             # credential lease through lenny-token-service over mTLS;
             # the in-process MintLease path is reserved for dev mode.
             - --token-service-grpc-addr=lenny-token-service.{{ .Release.Namespace }}.svc:{{ .Values.tokenService.grpcPort }}
+            {{- if .Values.mtls.enabled }}
+            # §4.3 line 195 / §10.3 mTLS client material. The gateway
+            # presents the lenny-gateway-tls cert to the Token Service
+            # gRPC listener and verifies the Token Service server cert
+            # against the shared cluster-internal CA. cert-manager
+            # stores tls.crt/tls.key/ca.crt under the same Secret.
+            - --token-service-tls-cert=/etc/lenny/mtls/tls.crt
+            - --token-service-tls-key=/etc/lenny/mtls/tls.key
+            - --token-service-ca=/etc/lenny/mtls/ca.crt
+            {{- end }}
             # §9.2 platform-wide elicitation content-integrity floor.
             # The admin API's GET endpoint reports the effective mode
             # as max(floor, tenantStored); a PUT below the floor is
@@ -360,6 +389,12 @@ spec:
             - name: llm-proxy
               containerPort: {{ .Values.gateway.llmProxyPort }}
             {{- end }}
+          {{- if .Values.mtls.enabled }}
+          volumeMounts:
+            - name: lenny-gateway-tls
+              mountPath: /etc/lenny/mtls
+              readOnly: true
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

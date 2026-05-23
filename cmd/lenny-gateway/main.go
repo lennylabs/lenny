@@ -85,6 +85,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
+	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectorcredstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
@@ -707,6 +708,15 @@ func main() {
 		inProcessAssign   *credassign.Service
 		tokenServiceConn  *grpc.ClientConn
 	)
+	// §4.3 line 211 per-subsystem circuit breaker for Token Service
+	// calls. A degraded Token Service trips this breaker open after
+	// consecutive transient failures; the credassign client returns
+	// ErrTokenServiceUnavailable so the session-start path can surface
+	// the §4.3 retryable error.
+	tokenServiceSubsystem := &subsystem.Subsystem{
+		Name:    "token_service",
+		Breaker: &subsystem.Breaker{},
+	}
 	if *tokenServiceAddr != "" {
 		conn, err := dialTokenService(*tokenServiceAddr, *tokenServiceCert, *tokenServiceKey, *tokenServiceCA)
 		if err != nil {
@@ -714,10 +724,11 @@ func main() {
 		}
 		tokenServiceConn = conn
 		credAssign = credassign.NewClient(credassign.ClientOptions{
-			Stub:     tokensv1.NewTokenServiceClient(conn),
-			Leases:   llmLeases,
-			Creds:    credCache,
-			TenantID: *tokenServiceTenant,
+			Stub:      tokensv1.NewTokenServiceClient(conn),
+			Leases:    llmLeases,
+			Creds:     credCache,
+			TenantID:  *tokenServiceTenant,
+			Subsystem: tokenServiceSubsystem,
 		})
 		log.Printf("lenny-gateway: §4.3 credential materialization via lenny-token-service at %s", *tokenServiceAddr)
 	} else {
@@ -1102,7 +1113,25 @@ func main() {
 	// them under the same per-tenant KMS KEKs the credential store
 	// uses. The flow is wired only when --connector-oauth-callback-url
 	// is set: the OAuth provider needs an absolute redirect URI.
-	connectorCreds := connectorcredstore.NewMemory(nil)
+	// §4.3 line 200 / §13.3 connector OAuth tokens are T4 Restricted
+	// and must be envelope-encrypted at rest. The Postgres-backed store
+	// envelope-encrypts both access and refresh tokens under the
+	// per-tenant KMS KEK; the in-memory store is for tests and the
+	// minimal gateway. The §4.3 long-term trust-boundary tightening —
+	// routing connector credential reads/writes through a Token Service
+	// RPC so the gateway holds no KMS decrypt grant — is deferred (see
+	// F-4.3.1 resolution note); today the gateway holds the same KMS
+	// access for connector creds that it already holds for §4.9
+	// user-credential rows.
+	var connectorCreds connectorcredstore.Store = connectorcredstore.NewMemory(nil)
+	if pgPool != nil {
+		pgConnectorCreds, err := connectorcredpg.New(pgPool, kmsProvider, nil)
+		if err != nil {
+			log.Fatalf("lenny-gateway: connector-credential store: %v", err)
+		}
+		connectorCreds = pgConnectorCreds
+		log.Printf("lenny-gateway: §4.3 connector credentials backed by Postgres (envelope-encrypted)")
+	}
 	var connectorOAuth *admin.ConnectorOAuth
 	if *connectorOAuthCallbackURL != "" {
 		var stateSeed [32]byte
@@ -1934,7 +1963,7 @@ func main() {
 	// so the §16.5 alerts observe back-pressure even when the
 	// handler path uses Breaker.Allow / Limiter.TryAcquire directly
 	// (the DoObserved per-call path covers histograms / counters).
-	subsystems := []*subsystem.Subsystem{uploadSubsystem}
+	subsystems := []*subsystem.Subsystem{uploadSubsystem, tokenServiceSubsystem}
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -1942,6 +1971,13 @@ func main() {
 			for _, s := range subsystems {
 				s.PublishGauges(subsystemMetrics)
 			}
+			// §4.3 line 211: mirror the Token Service subsystem's
+			// breaker state onto the dedicated
+			// lenny_token_service_circuit_state gauge the §16.5
+			// TokenServiceUnavailable alert reads. The §4.1
+			// per-subsystem gauge already carries it; the dedicated
+			// gauge keeps the alert expression cleanly named.
+			gwMetrics.SetTokenServiceCircuitState(tokenServiceSubsystem.State().MetricValue())
 		}
 		publish()
 		for {

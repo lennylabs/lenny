@@ -103,6 +103,50 @@ type Store interface {
 	// within a tenant, ordered by user id. Token material is populated;
 	// callers that surface the result project it away.
 	ListByConnector(ctx context.Context, tenantID, connectorID string) ([]ConnectorCredential, error)
+
+	// RotateAccessToken records the result of an RFC 6749 §6
+	// refresh-token grant: the new access token replaces the stored
+	// blob, the rotated_at column stamps the wall-clock time of the
+	// rotation, and a non-empty RefreshToken on rot replaces the
+	// stored refresh token (providers that rotate the refresh token
+	// emit a new one; providers that do not leave RefreshToken empty
+	// and the previously stored refresh token survives). UpdatedAt
+	// advances. The (tenant, connector, user) triple is the lookup
+	// key; ErrNotFound is returned when the triple has no row.
+	//
+	// spec: §4.3 line 200 (refresh tokens stored encrypted),
+	// §9.3 lines 152–155 (connector token lifecycle).
+	RotateAccessToken(ctx context.Context, rot RotationRecord) error
+}
+
+// RotationRecord carries the new token material produced by an RFC 6749
+// §6 refresh-token grant. The (tenant, connector, user) triple is the
+// lookup key.
+type RotationRecord struct {
+	// TenantID, ConnectorID, and UserID identify the row to rotate.
+	TenantID    string
+	ConnectorID string
+	UserID      string
+
+	// AccessToken is the freshly obtained access token. Required.
+	AccessToken string
+
+	// RefreshToken is the rotated refresh token. Some providers
+	// rotate it on every refresh and others do not; pass empty to
+	// leave the previously stored refresh token in place.
+	RefreshToken string
+
+	// TokenType is the RFC 6749 token_type (typically "Bearer").
+	// Empty leaves the previously stored TokenType unchanged.
+	TokenType string
+
+	// Scopes is the granted scope set. Empty leaves the previously
+	// stored Scopes unchanged.
+	Scopes []string
+
+	// ExpiresAt is the absolute expiry of the new access token.
+	// Zero leaves the previously stored ExpiresAt unchanged.
+	ExpiresAt time.Time
 }
 
 // tripleKey is the in-memory map key for the (tenant, connector, user)
@@ -191,4 +235,42 @@ func (m *Memory) ListByConnector(_ context.Context, tenantID, connectorID string
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
 	return out, nil
+}
+
+// RotateAccessToken implements Store. spec: §4.3 line 200, §9.3.
+func (m *Memory) RotateAccessToken(_ context.Context, rot RotationRecord) error {
+	switch {
+	case rot.TenantID == "":
+		return errors.New("connectorcredstore: tenant id is required")
+	case rot.ConnectorID == "":
+		return errors.New("connectorcredstore: connector id is required")
+	case rot.UserID == "":
+		return errors.New("connectorcredstore: user id is required")
+	case rot.AccessToken == "":
+		return errors.New("connectorcredstore: access token is required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := tripleKey(rot.TenantID, rot.ConnectorID, rot.UserID)
+	cred, ok := m.creds[k]
+	if !ok {
+		return ErrNotFound
+	}
+	now := m.clock()
+	cred.AccessToken = rot.AccessToken
+	if rot.RefreshToken != "" {
+		cred.RefreshToken = rot.RefreshToken
+	}
+	if rot.TokenType != "" {
+		cred.TokenType = rot.TokenType
+	}
+	if len(rot.Scopes) > 0 {
+		cred.Scopes = append([]string(nil), rot.Scopes...)
+	}
+	if !rot.ExpiresAt.IsZero() {
+		cred.ExpiresAt = rot.ExpiresAt
+	}
+	cred.UpdatedAt = now
+	m.creds[k] = cred
+	return nil
 }

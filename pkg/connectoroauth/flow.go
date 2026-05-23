@@ -211,3 +211,94 @@ func ExchangeCode(ctx context.Context, httpClient HTTPDoer, r TokenExchangeReque
 	}
 	return tr, nil
 }
+
+// RefreshTokenRequest carries the inputs for the §9.3 / RFC 6749 §6
+// refresh-token grant against a provider's token endpoint.
+//
+// spec: §4.3 line 200 "Refresh tokens stored encrypted at rest";
+// §9.3 lines 152–155 (connector token lifecycle).
+type RefreshTokenRequest struct {
+	// TokenEndpoint is the connector's auth.tokenEndpoint.
+	TokenEndpoint string
+
+	// ClientID is the connector's auth.clientId.
+	ClientID string
+
+	// ClientSecret is the resolved confidential-client secret. Empty
+	// for a public client.
+	ClientSecret string
+
+	// RefreshToken is the previously stored refresh token. Required.
+	RefreshToken string
+
+	// Scopes optionally narrows the scopes on the refreshed access
+	// token. Empty leaves the granted scope set unchanged.
+	Scopes []string
+}
+
+// RefreshAccessToken drives the RFC 6749 §6 refresh-token grant:
+// `POST {token_endpoint}` with `grant_type=refresh_token` plus the
+// stored refresh_token. Returns the new TokenResponse (which may
+// include a rotated refresh_token per the provider's rotation policy).
+//
+// Returns ErrTokenExchangeFailed when the endpoint is non-2xx or the
+// body does not parse, and ErrNoAccessToken when a 2xx response carries
+// no access_token. Providers that rotate the refresh token return the
+// new value on the response's `refresh_token` field; callers MUST persist
+// it and the access token under one transaction.
+//
+// spec: §4.3 line 200, §9.3 connector OAuth flow.
+func RefreshAccessToken(ctx context.Context, httpClient HTTPDoer, r RefreshTokenRequest) (TokenResponse, error) {
+	switch {
+	case r.TokenEndpoint == "":
+		return TokenResponse{}, errors.New("connectoroauth: token endpoint is empty")
+	case r.RefreshToken == "":
+		return TokenResponse{}, errors.New("connectoroauth: refresh_token is empty")
+	case r.ClientID == "":
+		return TokenResponse{}, errors.New("connectoroauth: client id is empty")
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", r.RefreshToken)
+	form.Set("client_id", r.ClientID)
+	if r.ClientSecret != "" {
+		form.Set("client_secret", r.ClientSecret)
+	}
+	if len(r.Scopes) > 0 {
+		form.Set("scope", strings.Join(r.Scopes, " "))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.TokenEndpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return TokenResponse{}, fmt.Errorf("connectoroauth: build refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return TokenResponse{}, fmt.Errorf("%w: %v", ErrTokenExchangeFailed, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return TokenResponse{}, fmt.Errorf("%w: read body: %v", ErrTokenExchangeFailed, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return TokenResponse{}, fmt.Errorf("%w: provider returned HTTP %d: %s",
+			ErrTokenExchangeFailed, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var tr TokenResponse
+	if err := json.Unmarshal(body, &tr); err != nil {
+		return TokenResponse{}, fmt.Errorf("%w: response body is not JSON: %v",
+			ErrTokenExchangeFailed, err)
+	}
+	if tr.AccessToken == "" {
+		return TokenResponse{}, ErrNoAccessToken
+	}
+	return tr, nil
+}

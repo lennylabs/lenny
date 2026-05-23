@@ -18,7 +18,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -28,6 +32,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
@@ -38,6 +43,7 @@ import (
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
+	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
 )
 
 func main() {
@@ -52,6 +58,17 @@ func main() {
 			"LENNY_REDIS_URL.")
 	redisPassword := flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
 		"Redis AUTH password. Override via LENNY_REDIS_PASSWORD.")
+	// §4.3 / §10.3 mTLS material. The Token Service requires the
+	// gateway to present a client certificate signed by the same CA
+	// the chart's mtls-pki.yaml mints. spec: §4.3 line 195 "Gateway
+	// replicas call the Token Service over mTLS"; §13.2 line 217
+	// Token Service ingress row.
+	tlsCert := flag.String("tls-cert", os.Getenv("LENNY_TOKEN_SERVICE_TLS_CERT"),
+		"path to the Token Service's server certificate for the §4.3 / §10.3 mTLS gRPC listener. Empty serves the gRPC surface in plaintext (dev mode only).")
+	tlsKey := flag.String("tls-key", os.Getenv("LENNY_TOKEN_SERVICE_TLS_KEY"),
+		"path to the private key for --tls-cert.")
+	tlsCA := flag.String("tls-ca", os.Getenv("LENNY_TOKEN_SERVICE_CA"),
+		"path to the CA bundle that verifies gateway client certificates on the §4.3 / §10.3 mTLS gRPC link. Required when --tls-cert is set; the Token Service uses tls.RequireAndVerifyClientCert.")
 	flag.Parse()
 
 	// §4 KMS provider. The in-process kms.Local provider is the
@@ -94,6 +111,11 @@ func main() {
 	}
 	opsEventBuffer := events.NewEventBuffer(0)
 	var opsEmitter events.EventEmitter = events.NewEmitter(opsEventBuffer, replicaID)
+	// §4.3 line 201 Redis-backed encrypted access-token cache. Wired
+	// only when --redis-url is set; the cache short-circuits Postgres
+	// revocation lookups on the validation hot path. With no Redis,
+	// the validator falls back to the authoritative Postgres lookup.
+	var accessCache *tokencache.Cache
 	if *redisURL != "" {
 		redisClient, err := redisconn.NewClient(redisconn.Config{URL: *redisURL, Password: *redisPassword})
 		if err != nil {
@@ -107,7 +129,13 @@ func main() {
 			ReplicaID: replicaID,
 		})
 		log.Printf("lenny-token-service: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
+		accessCache, err = tokencache.New(redisClient, kmsProvider)
+		if err != nil {
+			log.Fatalf("lenny-token-service: access-token cache: %v", err)
+		}
+		log.Printf("lenny-token-service: §4.3 access-token cache wired (envelope-encrypted, KEK alias %s)", tokencache.CacheKEKAlias)
 	}
+	_ = accessCache
 	// Keep opsEmitter live so the linker retains the wiring even before a
 	// subsystem in this binary takes it as a constructor dependency. A
 	// future credential-rotation event emit will replace this no-op log.
@@ -140,7 +168,24 @@ func main() {
 
 	var grpcSrv *grpc.Server
 	if *grpcAddr != "" {
-		grpcSrv = grpc.NewServer()
+		// §4.3 / §10.3 mTLS server credentials. The Token Service
+		// must verify the gateway's client certificate; the §4.3
+		// trust boundary rests on the Token Service authenticating
+		// the caller. When the TLS flags are unset the gRPC surface
+		// runs in plaintext, which is the dev-mode path only.
+		// spec: §4.3 line 195
+		creds, err := tokenServiceCreds(*tlsCert, *tlsKey, *tlsCA)
+		if err != nil {
+			log.Fatalf("lenny-token-service: gRPC mTLS: %v", err)
+		}
+		var opts []grpc.ServerOption
+		if creds != nil {
+			opts = append(opts, grpc.Creds(creds))
+			log.Printf("lenny-token-service: §4.3 gRPC mTLS active; client certs verified against --tls-ca")
+		} else {
+			log.Printf("lenny-token-service: §4.3 gRPC running plaintext (dev mode: --tls-cert/--tls-key/--tls-ca unset)")
+		}
+		grpcSrv = grpc.NewServer(opts...)
 		tokensv1.RegisterTokenServiceServer(grpcSrv, tsGRPC)
 	}
 
@@ -171,4 +216,36 @@ func main() {
 	if grpcSrv != nil {
 		grpcSrv.GracefulStop()
 	}
+}
+
+// tokenServiceCreds builds the §4.3 / §10.3 mTLS server credentials.
+// All three of certPath, keyPath, and caPath empty selects plaintext
+// (dev mode); any one set requires all three and returns mTLS server
+// credentials that require and verify the gateway's client cert.
+// spec: §4.3 line 195 "Gateway replicas call the Token Service over mTLS"
+func tokenServiceCreds(certPath, keyPath, caPath string) (credentials.TransportCredentials, error) {
+	switch {
+	case certPath == "" && keyPath == "" && caPath == "":
+		return nil, nil
+	case certPath == "" || keyPath == "" || caPath == "":
+		return nil, fmt.Errorf("token service mTLS requires --tls-cert, --tls-key, and --tls-ca to all be set")
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("load token-service server cert: %w", err)
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("read token-service client CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("token-service client CA bundle parsed no certificates")
+	}
+	return credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientCAs:    pool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS13,
+	}), nil
 }

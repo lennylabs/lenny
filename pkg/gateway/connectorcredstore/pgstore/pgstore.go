@@ -323,6 +323,109 @@ func (s *Store) ListByConnector(ctx context.Context, tenantID, connectorID strin
 	return out, nil
 }
 
+// RotateAccessToken implements connectorcredstore.Store. The §9.3 /
+// RFC 6749 §6 refresh-token grant produces a fresh access token (and
+// optionally a rotated refresh token); this method writes both blobs
+// back under the same per-tenant KMS KEK, stamps `rotated_at` and
+// `updated_at`, and recomputes the SHA-256(access_token) revocation
+// index. The (tenant, connector, user) triple must already exist;
+// ErrNotFound is returned otherwise.
+//
+// spec: §4.3 line 200 ("Refresh tokens stored encrypted at rest"),
+// §9.3 (connector OAuth token lifecycle), migration 0048's
+// `rotated_at` column.
+func (s *Store) RotateAccessToken(ctx context.Context, rot connectorcredstore.RotationRecord) error {
+	switch {
+	case rot.TenantID == "":
+		return errors.New("connectorcredstore/pgstore: tenant id is required")
+	case rot.ConnectorID == "":
+		return errors.New("connectorcredstore/pgstore: connector id is required")
+	case rot.UserID == "":
+		return errors.New("connectorcredstore/pgstore: user id is required")
+	case rot.AccessToken == "":
+		return errors.New("connectorcredstore/pgstore: access token is required")
+	}
+	accBlob, accVer, err := s.seal(ctx, rot.TenantID, rot.AccessToken)
+	if err != nil {
+		return err
+	}
+	var refBlob []byte
+	var refVerPtr *int
+	if rot.RefreshToken != "" {
+		blob, ver, err := s.seal(ctx, rot.TenantID, rot.RefreshToken)
+		if err != nil {
+			return err
+		}
+		refBlob = blob
+		refVerPtr = &ver
+	}
+	hash := accessTokenHash(rot.AccessToken)
+	var scopesJSON []byte
+	if len(rot.Scopes) > 0 {
+		scopesJSON, err = json.Marshal(append([]string(nil), rot.Scopes...))
+		if err != nil {
+			return fmt.Errorf("connectorcredstore/pgstore: marshal scopes: %w", err)
+		}
+	}
+
+	return pgtenant.InTx(ctx, s.pool, rot.TenantID, func(tx pgx.Tx) error {
+		now := s.clock().UTC()
+		// Read prior updated_at to preserve monotonic ordering across
+		// rapid rotations.
+		var prevUpdated time.Time
+		row := tx.QueryRow(ctx,
+			`SELECT updated_at FROM connector_credentials
+			 WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
+			rot.TenantID, rot.ConnectorID, rot.UserID)
+		err := row.Scan(&prevUpdated)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return connectorcredstore.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		now = pgtenant.MonotonicNext(prevUpdated, now)
+
+		// Build the UPDATE with COALESCE-like preservation semantics so
+		// unset optional fields leave the prior value intact.
+		var (
+			tokenType *string
+			expires   any
+		)
+		if rot.TokenType != "" {
+			tokenType = &rot.TokenType
+		}
+		if !rot.ExpiresAt.IsZero() {
+			expires = pgtenant.NullTime(rot.ExpiresAt)
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE connector_credentials
+			SET access_token_blob = $4,
+				access_token_key_version = $5,
+				access_token_hash = $6,
+				refresh_token_blob = COALESCE($7, refresh_token_blob),
+				refresh_token_key_version = COALESCE($8, refresh_token_key_version),
+				token_type = COALESCE($9, token_type),
+				scopes = COALESCE($10::jsonb, scopes),
+				expires_at = COALESCE($11, expires_at),
+				updated_at = $12,
+				rotated_at = $12
+			WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
+			rot.TenantID, rot.ConnectorID, rot.UserID,
+			accBlob, accVer, hash,
+			refBlob, refVerPtr,
+			tokenType, scopesJSON, expires,
+			now)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return connectorcredstore.ErrNotFound
+		}
+		return nil
+	})
+}
+
 // FindByAccessTokenHash returns the credential whose access token
 // hashes to hash, or ErrNotFound. The §13.3 revocation hot path uses
 // it to resolve a presented bearer to a stored row without

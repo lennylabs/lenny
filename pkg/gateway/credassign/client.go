@@ -15,9 +15,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
+
+// ErrTokenServiceUnavailable is the sentinel a session-start path
+// reads to surface §4.3 "Token Service down, retryable" to the caller.
+// The session-start handler maps it to HTTP 503 with Retry-After.
+//
+// spec: §4.3 line 214 "New sessions that require LLM or OAuth
+// credentials cannot start and fail with a retryable error, allowing
+// clients to back off and retry."
+var ErrTokenServiceUnavailable = errors.New("credassign: Token Service unavailable")
 
 // Client is the §4.3 gateway-side Token Service client. It satisfies
 // Assigner over an mTLS gRPC connection to the Token Service Deployment
@@ -57,6 +67,13 @@ type Client struct {
 	// generous headroom.
 	timeout time.Duration
 
+	// subsystem is the §4.1 / §4.3 per-subsystem breaker the gateway
+	// wraps Token Service calls in. spec: §4.3 line 211. A nil value
+	// (zero-value Subsystem) admits every call: tests and dev mode
+	// run without the breaker, and the breaker is wired in by the
+	// gateway main package.
+	subsystem *subsystem.Subsystem
+
 	mu       sync.Mutex
 	observer func(LeaseAssignment)
 	// renewalPool records the pool a lease was minted from so the §4.9
@@ -82,6 +99,10 @@ type ClientOptions struct {
 	TenantID string
 	// Timeout bounds each gRPC call. Zero selects DefaultClientTimeout.
 	Timeout time.Duration
+	// Subsystem is the §4.1 / §4.3 per-subsystem breaker the gateway
+	// wraps Token Service calls in. spec: §4.3 line 211. A nil value
+	// keeps the breaker absent: every call is admitted (test/dev path).
+	Subsystem *subsystem.Subsystem
 }
 
 // DefaultClientTimeout bounds each gateway → Token Service gRPC call.
@@ -106,8 +127,25 @@ func NewClient(opts ClientOptions) *Client {
 		creds:       opts.Creds,
 		tenantID:    opts.TenantID,
 		timeout:     timeout,
+		subsystem:   opts.Subsystem,
 		renewalPool: make(map[string]string),
 	}
+}
+
+// callTokenService runs fn through the §4.3 / §4.1 per-subsystem
+// breaker. When the breaker is open it returns ErrTokenServiceUnavailable
+// so the session-start path can surface §4.3's retryable error.
+// transient gRPC codes (Unavailable, DeadlineExceeded) classified as
+// breaker-triggering. spec: §4.3 line 211, line 214.
+func (c *Client) callTokenService(ctx context.Context, fn func(context.Context) error) error {
+	if c.subsystem == nil {
+		return fn(ctx)
+	}
+	err := c.subsystem.Do(ctx, fn)
+	if errors.Is(err, subsystem.ErrCircuitOpen) {
+		return ErrTokenServiceUnavailable
+	}
+	return err
 }
 
 // OnAssigned mirrors Service.OnAssigned. The §4.9 Proactive Lease
@@ -137,14 +175,38 @@ func (c *Client) Assign(poolName, sessionID, spiffeURI string) (credential.Lease
 }
 
 func (c *Client) assign(poolName, sessionID, spiffeURI string) (credential.Lease, func(LeaseAssignment), error) {
-	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	parent, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
-	resp, err := c.stub.AssignCredentials(ctx, &tokensv1.AssignCredentialsRequest{
-		TenantId:     c.tenantID,
-		SessionId:    sessionID,
-		PodSpiffeUri: spiffeURI,
-		PoolIds:      []string{poolName},
+	var (
+		resp *tokensv1.AssignCredentialsResponse
+		err  error
+	)
+	// Route the gRPC through the §4.1 / §4.3 per-subsystem breaker so
+	// a degraded Token Service trips the breaker open after consecutive
+	// failures and the session-start path fails fast with
+	// ErrTokenServiceUnavailable.
+	callErr := c.callTokenService(parent, func(ctx context.Context) error {
+		resp, err = c.stub.AssignCredentials(ctx, &tokensv1.AssignCredentialsRequest{
+			TenantId:     c.tenantID,
+			SessionId:    sessionID,
+			PodSpiffeUri: spiffeURI,
+			PoolIds:      []string{poolName},
+		})
+		// Translate breaker-relevant transient errors so the breaker
+		// counts them as failures while user errors (NotFound,
+		// ResourceExhausted) do not.
+		return classifyTokenServiceError(err)
 	})
+	if callErr != nil {
+		if errors.Is(callErr, ErrTokenServiceUnavailable) {
+			return credential.Lease{}, nil, callErr
+		}
+		// Restore the original gRPC error mapping when the call ran
+		// and returned a non-transient gRPC error.
+		if err != nil {
+			return credential.Lease{}, nil, mapAssignError(poolName, err)
+		}
+	}
 	if err != nil {
 		return credential.Lease{}, nil, mapAssignError(poolName, err)
 	}
@@ -170,6 +232,37 @@ func (c *Client) assign(poolName, sessionID, spiffeURI string) (credential.Lease
 	observer := c.observer
 	c.mu.Unlock()
 	return lease, observer, nil
+}
+
+// classifyTokenServiceError filters which gRPC errors should count as
+// breaker-triggering. Only transient transport failures (Unavailable,
+// DeadlineExceeded, ResourceExhausted of the server itself,
+// Internal/Unknown) trip the breaker; logical errors (NotFound,
+// InvalidArgument) report user-level conditions that do not indicate
+// Token Service degradation. spec: §4.3 line 211 "automatic, in-memory
+// circuit breaker".
+func classifyTokenServiceError(err error) error {
+	if err == nil {
+		return nil
+	}
+	switch status.Code(err) {
+	case codes.OK,
+		codes.NotFound,
+		codes.InvalidArgument,
+		codes.PermissionDenied,
+		codes.Unauthenticated,
+		codes.AlreadyExists,
+		codes.FailedPrecondition,
+		codes.OutOfRange,
+		codes.Unimplemented:
+		// User-classified errors: do not count against the breaker.
+		return nil
+	default:
+		// Unavailable, DeadlineExceeded, Internal, Unknown,
+		// ResourceExhausted-of-the-server, etc.: count as failure so a
+		// degraded Token Service trips the breaker.
+		return err
+	}
 }
 
 // AssignProto mirrors Service.AssignProto: it issues AssignCredentials

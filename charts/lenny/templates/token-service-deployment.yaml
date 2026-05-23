@@ -37,6 +37,25 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      {{- /*
+          §4.3 / §10.3 mTLS material. The lenny-token-service-tls
+          Secret is rendered by mtls-pki.yaml (cert-manager-managed).
+          cert-manager stores the leaf cert under tls.crt / tls.key and
+          the issuing CA cert under ca.crt inside the same Secret;
+          mounting it at /etc/lenny/mtls/ gives the binary all three
+          files it needs to require and verify gateway client
+          certificates against the shared cluster-internal CA. The
+          mount is gated on mtls.enabled so a no-mesh / external-mTLS
+          deployment can opt out, but the chart default is
+          mtls.enabled=true.
+      */ -}}
+      {{- if .Values.mtls.enabled }}
+      volumes:
+        - name: lenny-token-service-tls
+          secret:
+            secretName: lenny-token-service-tls
+            defaultMode: 0400
+      {{- end }}
       containers:
         - name: token-service
           image: "{{ .Values.tokenService.image.repository }}:{{ .Values.tokenService.image.tag | default .Chart.AppVersion }}"
@@ -45,11 +64,29 @@ spec:
             - --addr=:{{ .Values.tokenService.httpPort }}
             - --grpc-addr=:{{ .Values.tokenService.grpcPort }}
             - --issuer={{ .Values.tokenService.issuer }}
+            {{- if .Values.mtls.enabled }}
+            # §4.3 / §10.3 mTLS server material. The gRPC listener
+            # requires every client (gateway replica) to present a
+            # cert signed by the chart's shared lenny-mtls-ca; the
+            # §4.3 "gateway has no KMS decrypt rights" boundary
+            # rests on the Token Service authenticating the caller.
+            # cert-manager stores tls.crt/tls.key/ca.crt under the
+            # same Secret, so all three paths share the same mount.
+            - --tls-cert=/etc/lenny/mtls/tls.crt
+            - --tls-key=/etc/lenny/mtls/tls.key
+            - --tls-ca=/etc/lenny/mtls/ca.crt
+            {{- end }}
           ports:
             - name: grpc
               containerPort: {{ .Values.tokenService.grpcPort }}
             - name: http-token
               containerPort: {{ .Values.tokenService.httpPort }}
+          {{- if .Values.mtls.enabled }}
+          volumeMounts:
+            - name: lenny-token-service-tls
+              mountPath: /etc/lenny/mtls
+              readOnly: true
+          {{- end }}
           livenessProbe:
             tcpSocket:
               port: grpc

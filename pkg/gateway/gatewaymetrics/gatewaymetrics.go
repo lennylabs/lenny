@@ -45,6 +45,11 @@ type Metrics struct {
 	experimentIsoRej          *prometheus.CounterVec
 	noEnvPolicyAllowAll       *prometheus.CounterVec
 	gcPauseP99Ms              prometheus.Gauge
+	// tokenServiceCircuitState reflects the §4.3 / §4.1 Token Service
+	// per-subsystem circuit-breaker state (0 closed, 1 half-open, 2
+	// open). The §16.5 TokenServiceUnavailable alert reads it via
+	// `lenny_token_service_circuit_state == 2`. spec: §4.3 line 211.
+	tokenServiceCircuitState prometheus.Gauge
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -237,12 +242,21 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.3 line 211 / §16.5 TokenServiceUnavailable alert reads this
+	// gauge. 0 = closed, 1 = half-open, 2 = open. spec: §4.3 line 211.
+	tokenServiceCircuitState, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_token_service_circuit_state",
+		Help: "§4.3 Token Service circuit breaker state: 0=closed, 1=half-open, 2=open.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
 		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen, elicitationDropped,
 		elicitationTamperDetected, experimentIsoRej,
-		noEnvPolicyAllowAll)
+		noEnvPolicyAllowAll, tokenServiceCircuitState)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -262,6 +276,7 @@ func New() (*Metrics, error) {
 		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms,
 		minReplicas, streamCeiling, replicaCount)
 
+	tokenServiceCircuitChild := tokenServiceCircuitState.WithLabelValues()
 	return &Metrics{
 		reg:                       reg,
 		requestsTotal:             requestsTotal,
@@ -285,7 +300,19 @@ func New() (*Metrics, error) {
 		experimentIsoRej:          experimentIsoRej,
 		noEnvPolicyAllowAll:       noEnvPolicyAllowAll,
 		gcPauseP99Ms:              gcPause,
+		tokenServiceCircuitState:  tokenServiceCircuitChild,
 	}, nil
+}
+
+// SetTokenServiceCircuitState updates the §4.3 / §4.1
+// lenny_token_service_circuit_state gauge. The §16.5
+// TokenServiceUnavailable alert fires when the value equals 2 (open).
+// spec: §4.3 line 211.
+func (m *Metrics) SetTokenServiceCircuitState(value int) {
+	if m == nil {
+		return
+	}
+	m.tokenServiceCircuitState.Set(float64(value))
 }
 
 // RecordElicitationDrop increments the §9.1 lenny_elicitation_dropped_total

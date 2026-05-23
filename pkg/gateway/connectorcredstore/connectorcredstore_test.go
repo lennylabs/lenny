@@ -122,6 +122,97 @@ func TestMemoryDelete(t *testing.T) {
 	}
 }
 
+// spec: §4.3 line 200 / §9.3 — RotateAccessToken replaces only the
+// access token and stamps UpdatedAt; the previously stored refresh
+// token survives when RotationRecord.RefreshToken is empty.
+func TestMemoryRotateAccessTokenKeepsPriorRefreshToken(t *testing.T) {
+	first := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	second := first.Add(time.Hour)
+	clk := first
+	store := connectorcredstore.NewMemory(func() time.Time { return clk })
+	if err := store.Put(context.Background(), connectorcredstore.ConnectorCredential{
+		TenantID: "acme", ConnectorID: "github", UserID: "alice@acme.com",
+		AccessToken: "at-old", RefreshToken: "rt-old", TokenType: "Bearer",
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	clk = second
+	if err := store.RotateAccessToken(context.Background(), connectorcredstore.RotationRecord{
+		TenantID: "acme", ConnectorID: "github", UserID: "alice@acme.com",
+		AccessToken: "at-new",
+		ExpiresAt:   second.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("RotateAccessToken: %v", err)
+	}
+	got, err := store.Get(context.Background(), "acme", "github", "alice@acme.com")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.AccessToken != "at-new" {
+		t.Errorf("AccessToken = %q, want at-new", got.AccessToken)
+	}
+	if got.RefreshToken != "rt-old" {
+		t.Errorf("RefreshToken = %q, want rt-old (no rotation)", got.RefreshToken)
+	}
+	if !got.UpdatedAt.Equal(second) {
+		t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, second)
+	}
+	if !got.CreatedAt.Equal(first) {
+		t.Errorf("CreatedAt = %v, want the original %v", got.CreatedAt, first)
+	}
+}
+
+// spec: §4.3 line 200 / §9.3 — RotateAccessToken accepts a rotated
+// refresh token and replaces the stored value.
+func TestMemoryRotateAccessTokenReplacesRotatedRefreshToken(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	store := connectorcredstore.NewMemory(fixedClock(now))
+	if err := store.Put(context.Background(), connectorcredstore.ConnectorCredential{
+		TenantID: "acme", ConnectorID: "github", UserID: "alice@acme.com",
+		AccessToken: "at-old", RefreshToken: "rt-old",
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := store.RotateAccessToken(context.Background(), connectorcredstore.RotationRecord{
+		TenantID: "acme", ConnectorID: "github", UserID: "alice@acme.com",
+		AccessToken: "at-new", RefreshToken: "rt-new",
+	}); err != nil {
+		t.Fatalf("RotateAccessToken: %v", err)
+	}
+	got, _ := store.Get(context.Background(), "acme", "github", "alice@acme.com")
+	if got.RefreshToken != "rt-new" {
+		t.Errorf("RefreshToken = %q, want rt-new (rotated)", got.RefreshToken)
+	}
+}
+
+// spec: §4.3 line 200 — RotateAccessToken on a missing triple returns
+// ErrNotFound; the caller must Put first.
+func TestMemoryRotateAccessTokenMissing(t *testing.T) {
+	store := connectorcredstore.NewMemory(nil)
+	err := store.RotateAccessToken(context.Background(), connectorcredstore.RotationRecord{
+		TenantID: "acme", ConnectorID: "github", UserID: "alice@acme.com",
+		AccessToken: "at-new",
+	})
+	if !errors.Is(err, connectorcredstore.ErrNotFound) {
+		t.Fatalf("RotateAccessToken on a missing triple: got %v, want ErrNotFound", err)
+	}
+}
+
+// spec: §4.3 line 200 — RotateAccessToken rejects incomplete inputs.
+func TestMemoryRotateAccessTokenRejectsIncompleteRecord(t *testing.T) {
+	store := connectorcredstore.NewMemory(nil)
+	for i, r := range []connectorcredstore.RotationRecord{
+		{ConnectorID: "github", UserID: "a", AccessToken: "t"},      // no tenant
+		{TenantID: "acme", UserID: "a", AccessToken: "t"},           // no connector
+		{TenantID: "acme", ConnectorID: "github", AccessToken: "t"}, // no user
+		{TenantID: "acme", ConnectorID: "github", UserID: "a"},      // no access token
+	} {
+		if err := store.RotateAccessToken(context.Background(), r); err == nil {
+			t.Errorf("case %d: RotateAccessToken accepted an incomplete record", i)
+		}
+	}
+}
+
 func TestMemoryListByConnector(t *testing.T) {
 	store := connectorcredstore.NewMemory(nil)
 	put := func(connector, user string) {

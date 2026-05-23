@@ -2,6 +2,52 @@ suite: lenny-gateway deployment
 templates:
   - gateway-deployment.yaml
 tests:
+  # spec: §4.3 line 195 / §10.3 — when mtls.enabled the gateway mounts
+  # the lenny-gateway-tls Secret and passes the --token-service-tls-*
+  # flags so the gRPC dial to the Token Service presents a client cert
+  # signed by the cluster-internal CA.
+  - it: mounts the lenny-gateway-tls Secret when mtls.enabled (default)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-gateway-tls
+            secret:
+              secretName: lenny-gateway-tls
+              defaultMode: 0400
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: lenny-gateway-tls
+            mountPath: /etc/lenny/mtls
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --token-service-tls-cert=/etc/lenny/mtls/tls.crt
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --token-service-tls-key=/etc/lenny/mtls/tls.key
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --token-service-ca=/etc/lenny/mtls/ca.crt
+
+  # spec: §4.3 line 195 / §10.3 — when mtls.enabled=false the chart
+  # skips the volume mount and the --token-service-tls-* flags so the
+  # gateway dials the Token Service in plaintext.
+  - it: omits token-service mTLS volume mounts and flags when mtls.enabled=false
+    set:
+      mtls.enabled: false
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --token-service-tls-cert=/etc/lenny/mtls/tls.crt
+
   - it: renders the service account, cluster role, binding, deployment, services, and the §4.1 PodDisruptionBudget by default
     asserts:
       - hasDocuments:

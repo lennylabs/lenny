@@ -5,7 +5,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -111,6 +119,123 @@ func TestBinaryServesGRPC(t *testing.T) {
 	if st.Code() != codes.NotFound {
 		t.Errorf("AssignCredentials code = %s, want NotFound (no pool registered)", st.Code())
 	}
+}
+
+// spec: §4.3 line 195 — tokenServiceCreds returns nil when all three
+// TLS paths are empty (dev mode), and an error when only some are set.
+// The §4.3 trust boundary requires mTLS in production, but the dev
+// path must still build the binary for local tests.
+func TestTokenServiceCredsPlaintextDevMode(t *testing.T) {
+	creds, err := tokenServiceCreds("", "", "")
+	if err != nil {
+		t.Fatalf("tokenServiceCreds(\"\", \"\", \"\"): %v", err)
+	}
+	if creds != nil {
+		t.Errorf("dev-mode creds = %v, want nil", creds)
+	}
+}
+
+// spec: §4.3 line 195 — tokenServiceCreds rejects a partial TLS
+// configuration (any one of cert/key/ca set requires all three).
+func TestTokenServiceCredsRejectsPartialConfig(t *testing.T) {
+	for i, args := range [][3]string{
+		{"/tmp/cert", "", ""},
+		{"", "/tmp/key", ""},
+		{"", "", "/tmp/ca"},
+		{"/tmp/cert", "/tmp/key", ""},
+	} {
+		if _, err := tokenServiceCreds(args[0], args[1], args[2]); err == nil {
+			t.Errorf("case %d: tokenServiceCreds accepted a partial config %v", i, args)
+		}
+	}
+}
+
+// spec: §4.3 line 195 — tokenServiceCreds with a complete TLS config
+// returns mTLS server credentials that require and verify the client
+// cert (tls.RequireAndVerifyClientCert).
+func TestTokenServiceCredsBuildsMTLS(t *testing.T) {
+	dir := t.TempDir()
+	caCert, caKey := generateTestCA(t)
+	leafCert, leafKey := generateTestLeafCert(t, caCert, caKey, "lenny-token-service.lenny-system.svc")
+	caPath := filepath.Join(dir, "ca.crt")
+	certPath := filepath.Join(dir, "tls.crt")
+	keyPath := filepath.Join(dir, "tls.key")
+	if err := os.WriteFile(caPath, caCert, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certPath, leafCert, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, leafKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	creds, err := tokenServiceCreds(certPath, keyPath, caPath)
+	if err != nil {
+		t.Fatalf("tokenServiceCreds: %v", err)
+	}
+	if creds == nil {
+		t.Fatal("expected non-nil creds for a complete TLS config")
+	}
+}
+
+// generateTestCA returns a CA cert+key suitable for the cred-creds
+// tests above. The CA's BasicConstraints set isCA=true so a leaf
+// signed by it chains correctly.
+func generateTestCA(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), key
+}
+
+// generateTestLeafCert signs a leaf cert/key pair with caKey for the
+// given commonName.
+func generateTestLeafCert(t *testing.T, caPEM []byte, caKey *ecdsa.PrivateKey, commonName string) ([]byte, []byte) {
+	t.Helper()
+	block, _ := pem.Decode(caPEM)
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: commonName},
+		DNSNames:     []string{commonName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	leafKeyDER, err := x509.MarshalECPrivateKey(leafKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: leafKeyDER})
+	return leafPEM, leafKeyPEM
 }
 
 // spec: 4.0 (line 13: "Every subsystem that emits operational events

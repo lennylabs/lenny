@@ -136,3 +136,52 @@ tests:
       - equal:
           path: spec.selector.matchLabels["lenny.dev/component"]
           value: token-service
+
+  # spec: §4.3 line 195 / §10.3 — when mtls.enabled the chart mounts
+  # the lenny-token-service-tls Secret and passes the --tls-* flags so
+  # the gRPC listener requires and verifies gateway client certs.
+  - it: mounts the lenny-token-service-tls Secret when mtls.enabled (default)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-token-service-tls
+            secret:
+              secretName: lenny-token-service-tls
+              defaultMode: 0400
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: lenny-token-service-tls
+            mountPath: /etc/lenny/mtls
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tls-cert=/etc/lenny/mtls/tls.crt
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tls-key=/etc/lenny/mtls/tls.key
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tls-ca=/etc/lenny/mtls/ca.crt
+
+  # spec: §4.3 line 195 / §10.3 — when mtls.enabled=false (mesh-managed
+  # mTLS) the chart skips the volume mounts and the --tls-* flags so
+  # the binary runs in dev mode.
+  - it: omits mTLS volume mounts and flags when mtls.enabled=false
+    set:
+      mtls.enabled: false
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --tls-cert=/etc/lenny/mtls/tls.crt
+      - isNull:
+          path: spec.template.spec.volumes
+      - isNull:
+          path: spec.template.spec.containers[0].volumeMounts
