@@ -262,28 +262,28 @@ are not yet deduplicated; treat related findings as a cluster.
 - **Gap:** The unified `/v1/admin/operations` and `/v1/admin/operations/{id}` endpoints from §25.4 / §15.1 (rows 1575, 4415-4416, 4904-4905 of the spec) are not implemented; the canonical ETA computation logic does not exist; the MCP `lenny_operations_list` and `lenny_operation_get` tools have no backing.
 - **Suggested resolution:** Create `pkg/ops/operations/inventory.go` (per-subsystem operation source aggregator) and `eta.go` (canonical ETA from rate/percent/historical-p50), register the `/v1/admin/operations[/{id}]` routes on the gateway admin router, and add the two MCP management tools.
 
-### - [ ] F-4.0.5 — `pkg/common/scopes` RFC 9068 scope parser does not exist [High] — OPEN
+### - [ ] F-4.0.5 — `pkg/common/scopes` RFC 9068 scope parser does not exist [High] — CLOSED
 
 - **Spec:** "`pkg/common/scopes/scopes.go` — RFC 9068 `scope` claim parser and matcher for `tools:<domain>:<action>` values. Consumed by the admin-API middleware and the MCP adapter." (line 26)
 - **Evidence:** Directory `pkg/common/scopes/` is absent (`ls /Users/joan/projects/lenny/pkg/common/` returns only `registry`). The JWT claims struct carries `Scope` (`pkg/auth/jwt/jwt.go:59`), but no shared parser exists. `pkg/gateway/middleware/auth/auth.go` does not reference `scope` at all. The MCP management server implements its own header-based parser (`pkg/ops/mcpmgmt/server.go:289 requestScopes`) that reads the `X-Lenny-Scope` request header rather than the validated JWT `scope` claim, and the comment at `server.go:280-288` acknowledges "until the JWT middleware lands."
 - **Gap:** No shared RFC 9068 parser / matcher. The admin-API middleware does not consume the scope claim; the MCP adapter consumes a stand-in header. Both consumers the spec names are missing or stubbed.
 - **Suggested resolution:** Create `pkg/common/scopes/scopes.go` exporting `ParseScope`, `Matches(required, granted)`, and the `tools:<domain>:<action>` form. Wire the admin-API middleware to populate the request scope set from the validated JWT and have `pkg/ops/mcpmgmt/server.go` consume the typed scope set instead of the header.
 
-### - [ ] F-4.0.6 — `pkg/ops/gateway/{client,discovery}.go` and headless-Service fan-out are missing [Medium] — OPEN
+### - [ ] F-4.0.6 — `pkg/ops/gateway/{client,discovery}.go` and headless-Service fan-out are missing [Medium] — CLOSED
 
 - **Spec:** "`pkg/ops/gateway/{client,discovery}.go` — `GatewayClient` plus headless-Service replica discovery." (line 16)
 - **Evidence:** No `pkg/ops/gateway/` directory exists. `cmd/lenny-ops/main.go:194` calls a single `gatewayURL` for `/healthz` only (`opsservice.GatewayProbe(gatewayHTTP, *gatewayURL+"/healthz")`). The chart renders the `lenny-gateway-pods` headless Service (`charts/lenny/templates/gateway-deployment.yaml:282-298`) advertising "per-replica DNS A record so lenny-ops can fan out §25.3 health, recommendation, and event queries to every replica", but no Go-side caller dials the per-replica addresses. `grep -rn "gateway-pods\|lenny-gateway-pods" pkg/ cmd/` finds no usage.
 - **Gap:** `lenny-ops` cannot fan out health / recommendation / event queries to individual gateway replicas; only the front-door Service is reachable. The MCP management server documents a `GatewayClient` route (`pkg/ops/mcpmgmt/server.go:52 "either a local lenny-ops handler or, via GatewayClient, a gateway admin-API endpoint"`) but no `GatewayClient` is implemented.
 - **Suggested resolution:** Add `pkg/ops/gateway/client.go` (an `http.Client` wrapper that authenticates to the gateway admin API via mTLS or service-account token) and `pkg/ops/gateway/discovery.go` (resolve `lenny-gateway-pods.<ns>.svc.cluster.local` via the in-cluster resolver and iterate per-replica). Wire both into the `lenny-ops` opsserver `MCP` invoker and the health / recommendation aggregators.
 
-### - [ ] F-4.0.7 — `pkg/ops/metrics/source.go` MetricSource + Prometheus reader missing [Medium] — OPEN
+### - [ ] F-4.0.7 — `pkg/ops/metrics/source.go` MetricSource + Prometheus reader missing [Medium] — CLOSED
 
 - **Spec:** "`pkg/ops/metrics/source.go` — Prometheus-with-fan-out-fallback `MetricSource` implementation and a Prometheus-backed `MetricReader`." (line 17)
 - **Evidence:** Directory `pkg/ops/metrics/` does not exist. `grep -rln "MetricSource"` returns zero results. The only `MetricReader` is the gateway-side `WindowStore` in `pkg/gateway/recommendations/metricreader.go:19-49`, which the package comment notes "the gateway backs it with the in-process WindowStore; lenny-ops backs it with a Prometheus-backed reader" — but no Prometheus-backed reader exists. `grep -rn "Prometheus" cmd/lenny-ops/` returns only the docstring (`main.go:6`). `pkg/ops/opsserver/opsserver.go:6` mentions Prometheus only in the package doc.
 - **Gap:** `lenny-ops` cannot read recommendation / capacity metrics from Prometheus; capacity-recommendation evaluation on the ops side has no metric source.
 - **Suggested resolution:** Implement `pkg/ops/metrics/source.go` with a Prometheus-API-backed `MetricSource` (instant queries + range queries for `WindowedRate`) and a `MetricReader` that satisfies the `pkg/gateway/recommendations.MetricReader` interface. Add a fan-out fallback that aggregates `/metrics` scrapes from each gateway replica when Prometheus is unavailable.
 
-### - [ ] F-4.0.8 — `pkg/ops/events/service.go` event-stream service (SSE) missing [Medium] — OPEN
+### - [ ] F-4.0.8 — `pkg/ops/events/service.go` event-stream service (SSE) missing [Medium] — CLOSED
 
 - **Spec:** "`pkg/ops/events/service.go` — event stream service (SSE, polling, webhooks)." (line 18)
 - **Evidence:** No `pkg/ops/events/` directory. The closest packages are `pkg/ops/eventsubscription/` (webhook subscription CRUD — `pkg/ops/eventsubscription/eventsubscription.go:1-25`) and `pkg/ops/opsservice/webhookloop.go` (webhook delivery worker). `grep -rn "text/event-stream" pkg/ops/` returns no matches; SSE on the gateway is only the session-event stream in `pkg/gateway/sessionserver/events.go:61`. `lenny-ops` does not expose an event SSE endpoint; the only ops-side query is the gateway-side `GET /v1/admin/events/buffer` (`pkg/gateway/admin/eventbuffer.go:51`), which is polling-only.

@@ -3,9 +3,11 @@
 package mcpmgmt
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
+
+	"github.com/lennylabs/lenny/pkg/common/scopes"
 )
 
 // ProtocolVersion is the MCP protocol version the §25.12 management
@@ -213,7 +215,7 @@ func (s *Server) handleToolsCall(r *http.Request, req rpcRequest) rpcResponse {
 	// §25.12 scope enforcement (the narrowing layer): a caller whose
 	// scope claim does not include the tool's x-lenny-scope receives
 	// -32001 SCOPE_FORBIDDEN before any REST call is issued.
-	if scopes, scoped := requestScopes(r); scoped && !scopes[tool.Scope] {
+	if set, scoped := requestScopes(r); scoped && !set.Matches(tool.Scope) {
 		return rpcResponse{Error: &rpcError{
 			Code:    errScopeForbidden,
 			Message: "tool " + tool.Name + " is outside the caller's scope claim",
@@ -221,7 +223,7 @@ func (s *Server) handleToolsCall(r *http.Request, req rpcRequest) rpcResponse {
 				"code":          "SCOPE_FORBIDDEN",
 				"retryable":     false,
 				"requiredScope": tool.Scope,
-				"activeScope":   r.Header.Get(scopeHeader),
+				"activeScope":   set.Raw,
 			},
 		}}
 	}
@@ -276,26 +278,50 @@ func endpointUnavailable(tool Tool) rpcResponse {
 	}}
 }
 
-// scopeHeader carries the §25.12 caller scope claim into the management
-// server. lenny-ops authenticates the caller upstream; until the JWT
-// middleware lands the X-Lenny-Scope header carries the space-separated
-// scope values.
-const scopeHeader = "X-Lenny-Scope"
+// ScopeHeader is the §25.1 / §25.12 fallback transport for the
+// caller's scope claim when the JWT middleware is not yet in front of
+// the management server (e.g. local development, tests). It carries
+// the same space-separated value the RFC 9068 JWT claim would.
+const ScopeHeader = "X-Lenny-Scope"
 
-// requestScopes returns the §25.12 caller scope set from the request.
-// scoped is false when no scope claim was supplied — in which case the
-// scope layer does not narrow (the v1 default before JWT middleware
-// lands; the REST-layer RBAC remains the role boundary).
-func requestScopes(r *http.Request) (scopes map[string]bool, scoped bool) {
-	raw := r.Header.Get(scopeHeader)
+type scopeCtxKey struct{}
+
+// WithScopes attaches the parsed §25.1 scope Set to ctx. The admin-
+// API middleware calls WithScopes after it validates a Bearer JWT so
+// downstream MCP requests inherit the authenticated scope claim from
+// the typed Principal — no header round-trip required.
+func WithScopes(ctx context.Context, s scopes.Set) context.Context {
+	return context.WithValue(ctx, scopeCtxKey{}, s)
+}
+
+// scopesFromContext returns the §25.1 scope Set the middleware
+// attached, plus a flag reporting whether one was present.
+func scopesFromContext(ctx context.Context) (scopes.Set, bool) {
+	s, ok := ctx.Value(scopeCtxKey{}).(scopes.Set)
+	return s, ok
+}
+
+// requestScopes returns the §25.12 caller scope set, preferring the
+// validated JWT claim (attached by WithScopes) and falling back to the
+// X-Lenny-Scope header for the local-development path. The returned
+// flag reports whether a scope claim was supplied; absent → no
+// narrowing per §25.1 ("the token's role ceiling applies unmodified").
+func requestScopes(r *http.Request) (set scopes.Set, present bool) {
+	if s, ok := scopesFromContext(r.Context()); ok {
+		return s, s.Present()
+	}
+	raw := r.Header.Get(ScopeHeader)
 	if raw == "" {
-		return nil, false
+		return scopes.Set{}, false
 	}
-	set := make(map[string]bool)
-	for _, s := range strings.Fields(raw) {
-		set[s] = true
+	parsed, err := scopes.Parse(raw)
+	if err != nil {
+		// A malformed header is treated as a maximally restrictive
+		// claim so a typo cannot accidentally elevate the caller; the
+		// §25.12 dispatch loop then returns SCOPE_FORBIDDEN.
+		return scopes.Set{Raw: raw}, true
 	}
-	return set, true
+	return parsed, parsed.Present()
 }
 
 // capabilitiesFromParams decodes the §25.12 initialize/tools-list

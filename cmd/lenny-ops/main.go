@@ -47,6 +47,7 @@ import (
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
+	"github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
@@ -312,6 +313,7 @@ func main() {
 			Drift:          driftSvc,
 			Locks:          lockStore,
 			Escalations:    escalationSvc,
+			EventStream:    events.New(events.Options{}),
 			ReleaseChannel: releaseChannelPub,
 			Production:     *production,
 		}),

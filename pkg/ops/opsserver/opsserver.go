@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
+	opsevents "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	"github.com/lennylabs/lenny/pkg/ops/mcpmgmt"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
@@ -67,6 +68,7 @@ type Server struct {
 	drift              *driftservice.Service
 	locks              coordination.RemediationLockService
 	escalations        *escalation.Service
+	eventStream        *opsevents.Service
 	eventSubscriptions *eventsubscription.Service
 	mcp                *mcpmgmt.Server
 	releaseChannel     *releasechannel.Publisher
@@ -105,6 +107,11 @@ type Options struct {
 	// Escalations is the §25.4 escalation service. A nil service reports
 	// the escalation endpoints as unavailable.
 	Escalations *escalation.Service
+	// EventStream is the §25.5 operational-event stream service. When
+	// non-nil the Server registers GET /v1/admin/events/stream (SSE) and
+	// GET /v1/admin/events (polling). A nil service leaves the routes
+	// unmapped (404), useful for deployments that disable the stream.
+	EventStream *opsevents.Service
 	// EventSubscriptions is the §25.5 webhook-subscription service.
 	// When non-nil the Server registers the
 	// /v1/admin/event-subscriptions CRUD routes; when nil the routes
@@ -143,6 +150,7 @@ func New(opts Options) *Server {
 		drift:              opts.Drift,
 		locks:              opts.Locks,
 		escalations:        opts.Escalations,
+		eventStream:        opts.EventStream,
 		eventSubscriptions: opts.EventSubscriptions,
 		releaseChannel:     opts.ReleaseChannel,
 		production:         opts.Production,
@@ -158,6 +166,7 @@ func New(opts Options) *Server {
 	s.registerDriftRoutes()
 	s.registerLockRoutes()
 	s.registerEscalationRoutes()
+	s.registerEventStreamRoutes()
 	s.registerEventSubscriptionRoutes()
 	s.registerReleaseChannelRoutes()
 	// §25.12: the MCP management server exposes the §25 operability

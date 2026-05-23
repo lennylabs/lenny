@@ -28,6 +28,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/common/scopes"
 )
 
 // Principal captures the resolved caller identity attached to the
@@ -50,6 +51,14 @@ type Principal struct {
 	// under AllowDevRoles). Environment membership is resolved against
 	// it.
 	Groups []string
+
+	// Scopes is the §25.1 RFC 9068 scope claim parsed off the JWT.
+	// Handlers and the MCP adapter call Scopes.Matches(required) to
+	// enforce the per-endpoint x-lenny-scope from §15.1. An absent
+	// claim yields a zero Set whose Matches always returns true, which
+	// the spec maps to "no scope restriction beyond role". The dev-
+	// header path leaves Scopes zero (no scope narrowing in dev mode).
+	Scopes scopes.Set
 }
 
 // HasRole reports whether p holds r. Endpoints that gate behaviour on
@@ -62,6 +71,14 @@ func (p Principal) HasRole(r auth.Role) bool {
 		}
 	}
 	return false
+}
+
+// HasScope reports whether p's §25.1 scope claim permits the given
+// required scope (e.g. the handler's x-lenny-scope from §15.1).
+// An absent scope claim defers to the role ceiling — HasScope
+// returns true so the standard RBAC check still runs.
+func (p Principal) HasScope(required string) bool {
+	return p.Scopes.Matches(required)
 }
 
 type principalCtxKey struct{}
@@ -198,6 +215,15 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		writeTenantError(w, terr)
 		return
 	}
+	// §25.1: parse the RFC 9068 scope claim into a typed Set. A
+	// malformed claim rejects the token with TOKEN_INVALID so a
+	// downstream handler never sees a half-parsed scope.
+	scopeSet, perr := scopes.Parse(claims.Scope)
+	if perr != nil {
+		writeError(w, http.StatusUnauthorized, "TOKEN_INVALID",
+			"scope claim malformed: "+perr.Error(), nil)
+		return
+	}
 	p := Principal{
 		Subject:    claims.Subject,
 		TenantID:   tenant.TenantID,
@@ -206,6 +232,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		Typ:        claims.Typ,
 		Roles:      append([]auth.Role(nil), claims.Roles...),
 		Groups:     append([]string(nil), claims.Groups...),
+		Scopes:     scopeSet,
 	}
 	ctx := WithPrincipal(r.Context(), p)
 	// Echo the resolved tenant via the dev header path so handlers
