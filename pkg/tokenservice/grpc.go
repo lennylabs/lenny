@@ -5,6 +5,7 @@ package tokenservice
 import (
 	"context"
 	"errors"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,15 +31,35 @@ import (
 // MintLease call to the gRPC client lands as a separate change.
 type GRPCServer struct {
 	tokensv1.UnimplementedTokenServiceServer
-	assign *credassign.Service
-	leases credleasestore.LeaseStore
+	assign  *credassign.Service
+	leases  credleasestore.LeaseStore
+	auditor Auditor
+	metrics Metrics
 }
 
 // NewGRPCServer returns a Token Service gRPC server backed by an
 // already-wired credential-assignment service. The caller registers
 // every available §4.9 credential pool on assign before serving.
 func NewGRPCServer(assign *credassign.Service, leases credleasestore.LeaseStore) *GRPCServer {
-	return &GRPCServer{assign: assign, leases: leases}
+	return &GRPCServer{assign: assign, leases: leases, metrics: NoMetrics{}}
+}
+
+// SetAuditor wires the §13.3 audit emitter onto the gRPC server. The
+// RevokeCredentials and RotateCredentials handlers emit
+// `token.revoked` rows through it on every successful revocation /
+// rotation. spec: §13.3 line 597.
+func (s *GRPCServer) SetAuditor(a Auditor) { s.auditor = a }
+
+// SetMetrics wires the §16.1 Token Service catalog onto the gRPC
+// server. The AssignCredentials, RotateCredentials, and
+// RevokeCredentials handlers record latency and error counts through
+// it. spec: §16.1 lenny_token_service_request_duration_seconds /
+// lenny_token_service_errors_total.
+func (s *GRPCServer) SetMetrics(m Metrics) {
+	if m == nil {
+		m = NoMetrics{}
+	}
+	s.metrics = m
 }
 
 // AssignCredentials materializes one §4.9 credential lease per
@@ -46,7 +67,8 @@ func NewGRPCServer(assign *credassign.Service, leases credleasestore.LeaseStore)
 // A request that names an unregistered pool fails the whole call;
 // the gateway is expected to validate pool membership in admission
 // before reaching this RPC.
-func (s *GRPCServer) AssignCredentials(ctx context.Context, req *tokensv1.AssignCredentialsRequest) (*tokensv1.AssignCredentialsResponse, error) {
+func (s *GRPCServer) AssignCredentials(ctx context.Context, req *tokensv1.AssignCredentialsRequest) (resp *tokensv1.AssignCredentialsResponse, err error) {
+	defer s.observe("assign", time.Now())(&err)
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
@@ -61,18 +83,18 @@ func (s *GRPCServer) AssignCredentials(ctx context.Context, req *tokensv1.Assign
 	}
 	out := make(map[string]*tokensv1.CredentialLease, len(req.PoolIds))
 	for _, poolID := range req.PoolIds {
-		lease, err := s.assign.Assign(poolID, req.SessionId, req.PodSpiffeUri)
-		if err != nil {
-			if errors.Is(err, credassign.ErrPoolNotFound) {
+		lease, lerr := s.assign.Assign(poolID, req.SessionId, req.PodSpiffeUri)
+		if lerr != nil {
+			if errors.Is(lerr, credassign.ErrPoolNotFound) {
 				return nil, status.Errorf(codes.NotFound,
 					"credential pool %q is not registered", poolID)
 			}
-			if errors.Is(err, credential.ErrPoolExhausted) {
+			if errors.Is(lerr, credential.ErrPoolExhausted) {
 				return nil, status.Errorf(codes.ResourceExhausted,
 					"credential pool %q is exhausted", poolID)
 			}
 			return nil, status.Errorf(codes.Internal,
-				"assign from pool %q: %v", poolID, err)
+				"assign from pool %q: %v", poolID, lerr)
 		}
 		out[string(lease.Provider)] = s.leaseToProtoWithSecret(lease)
 	}
@@ -83,7 +105,8 @@ func (s *GRPCServer) AssignCredentials(ctx context.Context, req *tokensv1.Assign
 // lease from the same pool, bound to the same session and SPIFFE
 // identity. User-backed lease rotation is a v2 follow-on; the RPC
 // returns Unimplemented when called on a SourceUser lease.
-func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.RotateCredentialsRequest) (*tokensv1.RotateCredentialsResponse, error) {
+func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.RotateCredentialsRequest) (resp *tokensv1.RotateCredentialsResponse, err error) {
+	defer s.observe("rotate", time.Now())(&err)
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
@@ -102,18 +125,21 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 			"user-backed lease rotation is a v2 follow-on (lease source: %q)", old.Source)
 	}
 	s.assign.Release(req.LeaseId)
-	fresh, err := s.assign.Assign(old.PoolID, old.SessionID, old.SpiffeURI)
-	if err != nil {
-		if errors.Is(err, credassign.ErrPoolNotFound) {
+	// §13.3 line 597: rotation revokes the previous lease's lease
+	// token. Emit token.revoked so SIEM has a revocation receipt.
+	s.emitRevocation(ctx, req.TenantId, "", req.LeaseId, "rotation")
+	fresh, rerr := s.assign.Assign(old.PoolID, old.SessionID, old.SpiffeURI)
+	if rerr != nil {
+		if errors.Is(rerr, credassign.ErrPoolNotFound) {
 			return nil, status.Errorf(codes.NotFound,
 				"credential pool %q is no longer registered", old.PoolID)
 		}
-		if errors.Is(err, credential.ErrPoolExhausted) {
+		if errors.Is(rerr, credential.ErrPoolExhausted) {
 			return nil, status.Errorf(codes.ResourceExhausted,
 				"credential pool %q is exhausted on rotate", old.PoolID)
 		}
 		return nil, status.Errorf(codes.Internal,
-			"rotate via pool %q: %v", old.PoolID, err)
+			"rotate via pool %q: %v", old.PoolID, rerr)
 	}
 	return &tokensv1.RotateCredentialsResponse{Lease: s.leaseToProtoWithSecret(fresh)}, nil
 }
@@ -121,7 +147,8 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 // RevokeCredentials releases a lease. The credential's session-slot
 // accounting is decremented and the lease store entry is removed so
 // the lease token can no longer authenticate a proxy request.
-func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.RevokeCredentialsRequest) (*tokensv1.RevokeCredentialsResponse, error) {
+func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.RevokeCredentialsRequest) (resp *tokensv1.RevokeCredentialsResponse, err error) {
+	defer s.observe("revoke", time.Now())(&err)
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
@@ -135,7 +162,40 @@ func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.Revoke
 		return nil, status.Errorf(codes.NotFound, "lease %q not found", req.LeaseId)
 	}
 	s.assign.Release(req.LeaseId)
+	// §13.3 line 597: emit `token.revoked` for every successful
+	// revocation so SIEM has a revocation receipt and operators can
+	// reconstruct when a lease token was deactivated.
+	s.emitRevocation(ctx, req.TenantId, "", req.LeaseId, req.Reason)
 	return &tokensv1.RevokeCredentialsResponse{}, nil
+}
+
+// observe records request duration and error class through the
+// configured Metrics. The returned closure is deferred by callers and
+// finalizes the histogram + error counter when the RPC returns.
+func (s *GRPCServer) observe(operation string, start time.Time) func(*error) {
+	return func(errp *error) {
+		s.metrics.RecordRequestDuration(operation, time.Since(start))
+		if errp != nil && *errp != nil {
+			s.metrics.IncErrors(operation, status.Code(*errp).String())
+		}
+	}
+}
+
+// emitRevocation writes `token.revoked` through the configured
+// Auditor. A nil auditor is a no-op (the dev path keeps no audit
+// chain).
+func (s *GRPCServer) emitRevocation(ctx context.Context, tenantID, sub, leaseID, reason string) {
+	if s.auditor == nil || tenantID == "" {
+		return
+	}
+	now := time.Now().UTC()
+	// Reuse the tokenservice.Server's payload shape for consistency
+	// with the http handler's `token.revoked` payload (sub, jti,
+	// reason, timestamp). For credential leases the jti slot carries
+	// the lease id; sub is empty because the lease is bound to a
+	// session, not an OIDC subject.
+	srv := &Server{auditor: s.auditor}
+	srv.EmitRevocation(ctx, tenantID, sub, leaseID, reason, now)
 }
 
 // leaseToProto encodes the in-process Lease record on the wire. It

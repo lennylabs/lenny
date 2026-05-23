@@ -52,50 +52,10 @@ const selectList = `sequence_number, event_type, payload, created_at, prev_hash`
 // lock so the tail read, the prev_hash computation, and the insert
 // are atomic with respect to other writers (§11.7 item 3).
 func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
-	if at.IsZero() {
-		at = time.Now()
-	}
-	at = at.UTC()
 	var committed audit.Row
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		// Serialize audit writes for this tenant; cross-tenant writes
-		// proceed in parallel (the lock key is per tenant).
-		if _, err := tx.Exec(ctx,
-			`SELECT pg_advisory_xact_lock(hashtext($1))`, "audit:"+tenantID); err != nil {
-			return err
-		}
-		tail, hasTail, err := scanTail(ctx, tx, tenantID)
+		row, err := AppendInTx(ctx, tx, tenantID, eventType, payload, at)
 		if err != nil {
-			return err
-		}
-		row := audit.Row{
-			Seq:       1,
-			TenantID:  tenantID,
-			EventType: eventType,
-			Payload:   payload,
-			Timestamp: at,
-			PrevHash:  audit.GenesisPrevHash,
-		}
-		if hasTail {
-			row.Seq = tail.Seq + 1
-			row.PrevHash = audit.LinkHash(tail)
-		}
-		row.Hash = audit.ComputeHash(row)
-
-		prevHashBytes, err := hex.DecodeString(row.PrevHash)
-		if err != nil {
-			return fmt.Errorf("auditstore: encode prev_hash: %w", err)
-		}
-		canonical := string(payload)
-		if canonical == "" {
-			canonical = "null"
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO audit_log (
-			tenant_id, sequence_number, prev_hash, event_type,
-			payload, payload_canonical_json, created_at
-		) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)`,
-			tenantID, int64(row.Seq), prevHashBytes, eventType,
-			canonical, canonical, at); err != nil {
 			return err
 		}
 		committed = row
@@ -165,6 +125,63 @@ func (s *Store) Get(ctx context.Context, tenantID string, seq uint64) (audit.Row
 		return audit.Row{}, err
 	}
 	return out, nil
+}
+
+// AppendInTx commits an audit event into the tenant's chain on tx and
+// returns the sealed row. The caller already owns the transaction —
+// pgtenant.InTx must have set app.current_tenant for tenantID. The
+// helper acquires the §11.7 per-tenant audit advisory lock, reads the
+// chain tail, seals the row with prev_hash + content hash, and INSERTs
+// the audit_log row. Callers that need to bind an external write to the
+// audit row in one transaction (the §13.3 write-before-issue Token
+// Service path that pairs an issued_tokens INSERT with the
+// token.exchanged audit INSERT) call AppendInTx from inside their own
+// pgtenant.InTx so the audit row and the bound write share one COMMIT.
+// spec: §11.7 (per-tenant advisory lock) and §13.3 line 589 (write-
+// before-issue single Postgres transaction).
+func AppendInTx(ctx context.Context, tx pgx.Tx, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	at = at.UTC()
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1))`, "audit:"+tenantID); err != nil {
+		return audit.Row{}, err
+	}
+	tail, hasTail, err := scanTail(ctx, tx, tenantID)
+	if err != nil {
+		return audit.Row{}, err
+	}
+	row := audit.Row{
+		Seq:       1,
+		TenantID:  tenantID,
+		EventType: eventType,
+		Payload:   payload,
+		Timestamp: at,
+		PrevHash:  audit.GenesisPrevHash,
+	}
+	if hasTail {
+		row.Seq = tail.Seq + 1
+		row.PrevHash = audit.LinkHash(tail)
+	}
+	row.Hash = audit.ComputeHash(row)
+	prevHashBytes, err := hex.DecodeString(row.PrevHash)
+	if err != nil {
+		return audit.Row{}, fmt.Errorf("auditstore: encode prev_hash: %w", err)
+	}
+	canonical := string(payload)
+	if canonical == "" {
+		canonical = "null"
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_log (
+		tenant_id, sequence_number, prev_hash, event_type,
+		payload, payload_canonical_json, created_at
+	) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)`,
+		tenantID, int64(row.Seq), prevHashBytes, eventType,
+		canonical, canonical, at); err != nil {
+		return audit.Row{}, err
+	}
+	return row, nil
 }
 
 // scanTail reads the highest-sequence row for the tenant. hasTail is

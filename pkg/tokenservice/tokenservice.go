@@ -23,13 +23,16 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/tokenexchange"
 )
 
@@ -41,6 +44,32 @@ type IssuedTokenStore interface {
 	Record(ctx context.Context, tok issuedtokenstore.IssuedToken) error
 }
 
+// IssuedTokenAuditStore extends IssuedTokenStore with the §13.3
+// write-before-issue combined transaction: the issued_tokens INSERT
+// and the token.exchanged audit_log INSERT happen in one Postgres
+// transaction under the §11.7 per-tenant advisory lock. When the
+// configured IssuedTokens dependency satisfies this interface (the
+// Postgres-backed issuedtokenstore.Store does), the Token Service
+// drives the combined path; otherwise it falls back to the in-memory
+// Auditor.
+// spec: §13.3 line 589.
+type IssuedTokenAuditStore interface {
+	IssuedTokenStore
+	RecordWithAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error)
+}
+
+// Auditor writes §16.7 audit rows on the Token Service's behalf. The
+// in-memory dev path uses an Auditor backed by audit.ChainSet (via
+// pkg/gateway/policy.ChainSetAppender), so a dev install still emits
+// `token.exchanged`, `token.revoked`, and `token.exchange_rate_limited`
+// rows even though the rows are lost on restart. The Postgres path
+// reaches the durable chain through IssuedTokenAuditStore so the audit
+// row and the issued-token INSERT share one COMMIT.
+// spec: §13.3 lines 587, 597, 609.
+type Auditor interface {
+	Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error)
+}
+
 // Server is the §13.3 Token Service http handler.
 type Server struct {
 	signer       jwt.Signer
@@ -48,6 +77,10 @@ type Server struct {
 	issuer       string
 	perDialect   map[string]time.Duration
 	issuedTokens IssuedTokenStore
+	auditor      Auditor
+	metrics      Metrics
+
+	rateLimiter *RateLimiter
 
 	mu     sync.Mutex
 	issued map[string]bool // jti seen
@@ -71,8 +104,37 @@ type Options struct {
 
 	// IssuedTokens, when set, records every minted token before it is
 	// returned (§13.3 write-before-issue). When nil, no durable
-	// issued-token record is kept.
+	// issued-token record is kept. The Postgres-backed
+	// issuedtokenstore.Store satisfies IssuedTokenAuditStore so the
+	// handler binds the issued_tokens INSERT and the token.exchanged
+	// audit INSERT in a single COMMIT (§13.3 line 589).
 	IssuedTokens IssuedTokenStore
+
+	// Auditor, when set, receives the §13.3 token-exchange audit
+	// events: `token.exchanged` on every accepted (and rejected)
+	// exchange, `token.exchange_rate_limited` on a sampled rate-limit
+	// rejection, and `token.revoked` from the GRPCServer revocation
+	// hot path. When IssuedTokens satisfies IssuedTokenAuditStore the
+	// Auditor is reached only for the rate-limit and revocation paths
+	// (the write-before-issue success path uses the combined
+	// IssuedTokenAuditStore.RecordWithAudit transaction).
+	//
+	// A nil Auditor disables emission, used by tests that do not
+	// exercise the §16.7 audit catalog assertions.
+	Auditor Auditor
+
+	// Metrics, when set, receives the §16.1 Token Service catalog
+	// emissions. Pass NoMetrics (or leave zero) for the test path.
+	Metrics Metrics
+
+	// RateLimit configures the §13.3 per-(tenant, sub) and global
+	// per-tenant rate limits on POST /v1/oauth/token. Zero means
+	// unlimited; production callers populate via flags.
+	RateLimit RateLimitOptions
+
+	// Now overrides time.Now for the handler and the rate limiter.
+	// Tests inject a fixed clock; production leaves this nil.
+	Now func() time.Time
 }
 
 // NewServer returns a Server. When Options.Verifier is nil and the
@@ -88,14 +150,23 @@ func NewServer(opts Options) *Server {
 	if opts.PerDialectCap == nil {
 		opts.PerDialectCap = map[string]time.Duration{}
 	}
-	return &Server{
+	if opts.Metrics == nil {
+		opts.Metrics = NoMetrics{}
+	}
+	s := &Server{
 		signer:       opts.Signer,
 		verifier:     opts.Verifier,
 		issuer:       opts.Issuer,
 		perDialect:   opts.PerDialectCap,
 		issuedTokens: opts.IssuedTokens,
+		auditor:      opts.Auditor,
+		metrics:      opts.Metrics,
 		issued:       map[string]bool{},
 	}
+	if !opts.RateLimit.IsZero() {
+		s.rateLimiter = NewRateLimiter(opts.RateLimit, opts.Now)
+	}
+	return s
 }
 
 // Handler returns the http.Handler that routes POST /v1/oauth/token.
@@ -133,35 +204,50 @@ const (
 )
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+	start := s.clockNow()
+	op := "exchange"
+	finish := func(errClass string) {
+		s.metrics.RecordRequestDuration(op, s.clockNow().Sub(start))
+		if errClass != "" {
+			s.metrics.IncErrors(op, errClass)
+		}
+	}
+
 	// Caller token is the Authorization: Bearer header per §13.3.
 	callerToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if callerToken == "" {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "missing Authorization: Bearer caller token")
+		finish("invalid_client")
 		return
 	}
 	callerClaims, err := s.verifier.Verify(callerToken)
 	if err != nil {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", err.Error())
+		finish("invalid_client")
 		return
 	}
 
 	req, err := parseRequest(r)
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		finish("invalid_request")
 		return
 	}
 	if req.GrantType != grantTypeExchange {
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", req.GrantType)
+		finish("unsupported_grant_type")
 		return
 	}
 	if req.SubjectToken == "" {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "subject_token is required")
+		finish("invalid_request")
 		return
 	}
 
 	subjectClaims, err := s.verifier.Verify(req.SubjectToken)
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
+		finish("invalid_grant")
 		return
 	}
 
@@ -170,12 +256,38 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		ac, err := s.verifier.Verify(req.ActorToken)
 		if err != nil {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
+			finish("invalid_grant")
 			return
 		}
 		actorClaims = &ac
 	}
 
-	now := time.Now().UTC()
+	now := s.clockNow()
+	// §13.3 line 607 / line 609: rate-limit per (tenant_id, sub) plus
+	// a global per-tenant bucket. The check fires before any signing
+	// or audit work so a brute-force attacker cannot consume signer
+	// cycles. The rate limiter samples its audit emission per §13.3
+	// line 609 to avoid saturating the per-tenant audit advisory lock.
+	if s.rateLimiter != nil {
+		dec := s.rateLimiter.Allow(now, callerClaims.TenantID, callerClaims.Subject)
+		if !dec.Allowed {
+			retryAfter := dec.RetryAfter
+			if retryAfter <= 0 {
+				retryAfter = time.Second
+			}
+			s.metrics.IncRateLimited(dec.LimitTier)
+			if dec.AuditSampled {
+				s.metrics.IncRateLimitedSampled(dec.LimitTier)
+				s.emitRateLimitAudit(r.Context(), callerClaims.TenantID, callerClaims.Subject, dec.LimitTier, now)
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+			writeOAuthError(w, http.StatusTooManyRequests, "rate_limited",
+				"§13.3 "+dec.LimitTier+" rate limit exceeded")
+			finish("rate_limited")
+			return
+		}
+	}
+
 	exchangeReq := tokenexchange.Request{
 		Subject: toExchangeToken(subjectClaims),
 		Caller:  toExchangeToken(callerClaims),
@@ -198,10 +310,25 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if verr != nil {
 		var ee *tokenexchange.ExchangeError
 		if errors.As(verr, &ee) {
+			// §13.3 line 585 / line 589: rejected exchanges still
+			// emit a `token.exchanged` audit row with the
+			// policy_result reason so the SIEM has cross-tenant
+			// probe evidence.
+			s.emitExchangeAudit(r.Context(), subjectClaims.TenantID, exchangeAuditPayload{
+				CallerSub:    callerClaims.Subject,
+				SubjectSub:   subjectClaims.Subject,
+				PolicyResult: "rejected:" + ee.Reason,
+				ErrorCode:    ee.Code,
+				Audience:     splitSpace(req.Audience),
+				Scope:        splitScope(req.Scope),
+				Now:          now,
+			})
 			writeOAuthError(w, mapStatus(ee.Code), ee.Code, ee.Reason)
+			finish(ee.Code)
 			return
 		}
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", verr.Error())
+		finish("server_error")
 		return
 	}
 
@@ -228,30 +355,62 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	signed, err := s.signer.Sign(out)
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		finish("server_error")
 		return
 	}
 
-	// §13.3 write-before-issue: the issued-token metadata is recorded
-	// before the token is handed to the caller. The token is not
-	// returned when the record fails, so every live token is
-	// matchable against its revocation state.
-	if s.issuedTokens != nil {
-		hash := sha256.Sum256([]byte(signed))
-		rec := issuedtokenstore.IssuedToken{
-			JTI:       jti,
-			TenantID:  issued.TenantID,
-			Subject:   issued.Subject,
-			TokenHash: hash[:],
-			Scope:     issued.Scope,
-			Audience:  strings.Join(issued.Audience, " "),
-			IssuedAt:  now,
-			ExpiresAt: issued.Exp,
+	// §13.3 write-before-issue: the issued-token row + the
+	// token.exchanged audit row commit in one Postgres transaction
+	// under the per-tenant audit advisory lock. The signed token is
+	// not handed to the caller until COMMIT succeeds, so every live
+	// token has a matching issued_tokens record and a matching
+	// audit_log row. spec: §13.3 line 589.
+	hash := sha256.Sum256([]byte(signed))
+	rec := issuedtokenstore.IssuedToken{
+		JTI:       jti,
+		TenantID:  issued.TenantID,
+		Subject:   issued.Subject,
+		TokenHash: hash[:],
+		Scope:     issued.Scope,
+		Audience:  strings.Join(issued.Audience, " "),
+		IssuedAt:  now,
+		ExpiresAt: issued.Exp,
+	}
+	auditPayload := exchangeAuditPayload{
+		CallerSub:       callerClaims.Subject,
+		SubjectSub:      issued.Subject,
+		JTI:             jti,
+		Scope:           issued.Scope,
+		Audience:        issued.Audience,
+		DelegationDepth: issued.DelegationDepth,
+		PolicyResult:    "accepted",
+		Now:             now,
+	}
+	if as, ok := s.issuedTokens.(IssuedTokenAuditStore); ok {
+		// Postgres path: one transaction binds the issued-token
+		// INSERT and the audit_log INSERT under the §11.7 lock.
+		if _, err := as.RecordWithAudit(r.Context(), rec, string(obsaudit.EventTokenExchanged),
+			auditPayload.JSON(), now); err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "server_error",
+				"§13.3 write-before-issue failed: "+err.Error())
+			finish("server_error")
+			return
 		}
+	} else if s.issuedTokens != nil {
+		// In-memory dev path: no advisory lock is needed because the
+		// issued-tokens record and the audit append share no Postgres
+		// state. We still write the issued record first so the
+		// audit row references a durable jti.
 		if err := s.issuedTokens.Record(r.Context(), rec); err != nil {
 			writeOAuthError(w, http.StatusInternalServerError, "server_error",
 				"issued-token record failed: "+err.Error())
+			finish("server_error")
 			return
 		}
+		s.emitExchangeAudit(r.Context(), issued.TenantID, auditPayload)
+	} else {
+		// Test-only path with no durable issued-token store.
+		s.emitExchangeAudit(r.Context(), issued.TenantID, auditPayload)
 	}
 
 	writeJSON(w, http.StatusOK, Response{
@@ -261,6 +420,100 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn:       issued.Exp.Unix() - now.Unix(),
 		Scope:           strings.Join(issued.Scope, " "),
 	})
+	finish("")
+}
+
+// exchangeAuditPayload is the §16.7 / §25.4 token.exchanged audit row
+// payload. The §13.3 record contains only claim identifiers and
+// metadata — never the raw token, the subject_token bytes, or the
+// actor_token bytes.
+// spec: §13.3 line 587 ("Token contents — access_token, subject_token,
+// actor_token — are NEVER written to audit payloads").
+type exchangeAuditPayload struct {
+	CallerSub       string    `json:"caller_sub,omitempty"`
+	SubjectSub      string    `json:"subject_sub,omitempty"`
+	JTI             string    `json:"jti,omitempty"`
+	Scope           []string  `json:"scope,omitempty"`
+	Audience        []string  `json:"audience,omitempty"`
+	DelegationDepth int       `json:"delegation_depth,omitempty"`
+	PolicyResult    string    `json:"policy_result"`
+	ErrorCode       string    `json:"error_code,omitempty"`
+	Now             time.Time `json:"timestamp"`
+}
+
+// JSON returns the audit payload as canonical JSON for the audit row.
+func (p exchangeAuditPayload) JSON() json.RawMessage {
+	b, _ := json.Marshal(p)
+	return json.RawMessage(b)
+}
+
+// emitExchangeAudit writes a token.exchanged audit row through the
+// configured Auditor (the in-memory dev path). When no Auditor is
+// configured the call is a no-op; the durable Postgres write-before-
+// issue path covers the success case via IssuedTokenAuditStore.
+// spec: §13.3 line 587.
+func (s *Server) emitExchangeAudit(ctx context.Context, tenantID string, payload exchangeAuditPayload) {
+	if s.auditor == nil || tenantID == "" {
+		return
+	}
+	_, _ = s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenExchanged), payload.JSON(), payload.Now)
+}
+
+// rateLimitAuditPayload is the §13.3 token.exchange_rate_limited audit
+// row body. Sampling guarantees one row per (tenant_id, sub,
+// limit_tier) per 10s window per replica (§13.3 line 611).
+type rateLimitAuditPayload struct {
+	TenantID  string    `json:"tenant_id"`
+	Sub       string    `json:"sub,omitempty"`
+	LimitTier string    `json:"limit_tier"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// JSON returns the audit payload as canonical JSON for the audit row.
+func (p rateLimitAuditPayload) JSON() json.RawMessage {
+	b, _ := json.Marshal(p)
+	return json.RawMessage(b)
+}
+
+// emitRateLimitAudit writes a token.exchange_rate_limited audit row on
+// a sampled rate-limit rejection (one row per (tenant, sub, tier) per
+// 10s window per replica, per §13.3 line 609 sampling discipline).
+// spec: §13.3 line 609.
+func (s *Server) emitRateLimitAudit(ctx context.Context, tenantID, sub, limitTier string, now time.Time) {
+	if s.auditor == nil || tenantID == "" {
+		return
+	}
+	payload := rateLimitAuditPayload{
+		TenantID:  tenantID,
+		Sub:       sub,
+		LimitTier: limitTier,
+		Timestamp: now,
+	}
+	_, _ = s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenExchangeRateLimited), payload.JSON(), now)
+}
+
+// EmitRevocation writes a token.revoked audit row for a Token Service-
+// driven revocation (the GRPCServer.RevokeCredentials path). spec:
+// §13.3 line 597.
+func (s *Server) EmitRevocation(ctx context.Context, tenantID, sub, jti, reason string, at time.Time) {
+	if s.auditor == nil || tenantID == "" {
+		return
+	}
+	body, _ := json.Marshal(struct {
+		Sub       string    `json:"sub,omitempty"`
+		JTI       string    `json:"jti,omitempty"`
+		Reason    string    `json:"reason,omitempty"`
+		Timestamp time.Time `json:"timestamp"`
+	}{Sub: sub, JTI: jti, Reason: reason, Timestamp: at})
+	_, _ = s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenRevoked), json.RawMessage(body), at)
+}
+
+// clockNow returns the configured clock or time.Now.
+func (s *Server) clockNow() time.Time {
+	if s.rateLimiter != nil {
+		return s.rateLimiter.Now()
+	}
+	return time.Now().UTC()
 }
 
 func parseRequest(r *http.Request) (Request, error) {

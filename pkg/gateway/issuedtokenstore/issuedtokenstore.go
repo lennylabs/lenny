@@ -15,6 +15,7 @@ package issuedtokenstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -22,6 +23,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 )
 
@@ -80,22 +83,82 @@ const selectList = `jti, tenant_id, sub, token_hash, scope, audience,
 // when the JTI is already recorded — the JTI primary key is what
 // makes write-before-issue idempotent under retry.
 func (s *Store) Record(ctx context.Context, tok IssuedToken) error {
-	const insertSQL = `INSERT INTO issued_tokens (
-		jti, tenant_id, sub, token_hash, scope, audience,
-		issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
-
 	err := pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, insertSQL,
-			tok.JTI, tok.TenantID, tok.Subject, tok.TokenHash, scopeArg(tok.Scope),
-			tok.Audience, tok.IssuedAt, tok.ExpiresAt, pgtenant.NullTime(tok.RevokedAt),
-			pgtenant.NullString(tok.RevokedReason), pgtenant.NullString(tok.ActSubject), pgtenant.NullString(tok.ParentJTI))
-		return err
+		return insertIssued(ctx, tx, tok)
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return ErrAlreadyExists
 	}
+	return err
+}
+
+// RecordWithAudit persists issued-token metadata and writes the §13.3
+// `token.exchanged` audit row in a single Postgres transaction.
+//
+// The §13.3 write-before-issue ordering is implemented here:
+//
+//  1. pgtenant.InTx opens one transaction and SETs app.current_tenant.
+//  2. The transaction acquires the §11.7 per-tenant audit advisory
+//     lock (via auditstore.AppendInTx).
+//  3. The issued_tokens row is INSERTed.
+//  4. The audit_log row is INSERTed under the same advisory lock.
+//
+// Only after COMMIT does the caller surface the signed token to the
+// client. If any step fails, the transaction rolls back and neither the
+// issued-token row nor the audit row is persisted — the Token Service
+// then never returns the minted token to the caller. The auditEventType
+// and auditPayload come from the caller (the Token Service handler)
+// because the audit payload schema is owned by §16.7 / §25.4 and the
+// store should not bake that vocabulary in.
+//
+// auditPayload is a JSON-encoded object. The sealed audit row is
+// returned to the caller for cross-checking and metric labelling; the
+// returned row carries the assigned sequence number and prev_hash so a
+// caller can trace the audit chain forward.
+//
+// spec: §13.3 line 589 — single Postgres transaction binding the
+// issued-token INSERT and the token.exchanged audit INSERT.
+func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error) {
+	var committed audit.Row
+	err := pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
+		// Step 1: acquire the §11.7 advisory lock + INSERT the audit
+		// row first so the chain prev_hash is stable; the issued_tokens
+		// INSERT below is bound to the same transaction and rolls back
+		// together on any failure.
+		row, err := auditstore.AppendInTx(ctx, tx, tok.TenantID, auditEventType, auditPayload, auditAt)
+		if err != nil {
+			return err
+		}
+		committed = row
+		// Step 2: INSERT the issued_tokens row.
+		if err := insertIssued(ctx, tx, tok); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return audit.Row{}, ErrAlreadyExists
+		}
+		return audit.Row{}, err
+	}
+	return committed, nil
+}
+
+// insertIssued runs the issued_tokens INSERT on tx. It assumes the
+// caller has already opened a pgtenant.InTx and acquired the §11.7
+// audit advisory lock when binding to an audit row.
+func insertIssued(ctx context.Context, tx pgx.Tx, tok IssuedToken) error {
+	const insertSQL = `INSERT INTO issued_tokens (
+		jti, tenant_id, sub, token_hash, scope, audience,
+		issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+	_, err := tx.Exec(ctx, insertSQL,
+		tok.JTI, tok.TenantID, tok.Subject, tok.TokenHash, scopeArg(tok.Scope),
+		tok.Audience, tok.IssuedAt, tok.ExpiresAt, pgtenant.NullTime(tok.RevokedAt),
+		pgtenant.NullString(tok.RevokedReason), pgtenant.NullString(tok.ActSubject), pgtenant.NullString(tok.ParentJTI))
 	return err
 }
 
