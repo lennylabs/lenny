@@ -1476,7 +1476,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Implement `Server.LifecycleChannel(grpc.BidiStreamingServer[...])` in `pkg/adapter/`, register a per-session event sink the credential and LLM-proxy modules emit into, and add a typed lifecycle-event envelope in `schemas/lenny-adapter.proto` (rather than the current opaque `bytes envelope_json`) for these enums.
 
-**Resolution:** `Server.LifecycleChannel` (new `pkg/adapter/controlchannel.go`) now implements the adapter→gateway control stream: it registers a per-pod event sink, drains inbound gateway frames for liveness/close detection, and streams JSON control-event envelopes inside the (deliberately opaque, per its proto comment) `LifecycleChannelResponse.envelope_json`. Exported emitters `EmitRateLimited`/`EmitAuthExpired`/`EmitProviderUnavailable`/`EmitLeaseRejected` cover the four credential-fault events; `RotateCredentials` now emits `LEASE_REJECTED` when the runtime fails to rebind a rotated credential. Drops (no stream attached or buffer full) increment `lenny_adapter_control_events_dropped_total`; deliveries increment `lenny_adapter_control_events_total`. A second concurrent stream is rejected `FailedPrecondition`. The stale `TestGRPCServerReportsUnimplementedForUnbuiltRPCs` was replaced. (commit <PENDING>)
+**Resolution:** `Server.LifecycleChannel` (new `pkg/adapter/controlchannel.go`) now implements the adapter→gateway control stream: it registers a per-pod event sink, drains inbound gateway frames for liveness/close detection, and streams JSON control-event envelopes inside the (deliberately opaque, per its proto comment) `LifecycleChannelResponse.envelope_json`. Exported emitters `EmitRateLimited`/`EmitAuthExpired`/`EmitProviderUnavailable`/`EmitLeaseRejected` cover the four credential-fault events; `RotateCredentials` now emits `LEASE_REJECTED` when the runtime fails to rebind a rotated credential. Drops (no stream attached or buffer full) increment `lenny_adapter_control_events_dropped_total`; deliveries increment `lenny_adapter_control_events_total`. A second concurrent stream is rejected `FailedPrecondition`. The stale `TestGRPCServerReportsUnimplementedForUnbuiltRPCs` was replaced. (commit 2569adeb)
 
 ---
 
@@ -1511,7 +1511,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Emit both events on the `LifecycleChannel` server stream once it is implemented (see F-4.7.1).
 
-**Resolution:** Both events are now emitted on the F-4.7.1 control stream. `Server.EmitFinalUsageReport` carries the session's token/wall-clock totals, and `Shutdown` calls `emitFinalUsage` to flush it before closing the runtime so the gateway can run `budget_return.lua` (§8.3); a nil usage meter or read error is a tolerated no-op. `Server.EmitAdapterTerminating(reason)` is implemented and ready for the self-initiated coordinator-loss trigger, which lands with the §10.1 coordinator-fence machinery tracked under F-4.7.2. (commit <PENDING>)
+**Resolution:** Both events are now emitted on the F-4.7.1 control stream. `Server.EmitFinalUsageReport` carries the session's token/wall-clock totals, and `Shutdown` calls `emitFinalUsage` to flush it before closing the runtime so the gateway can run `budget_return.lua` (§8.3); a nil usage meter or read error is a tolerated no-op. `Server.EmitAdapterTerminating(reason)` is implemented and ready for the self-initiated coordinator-loss trigger, which lands with the §10.1 coordinator-fence machinery tracked under F-4.7.2. (commit 2569adeb)
 
 ---
 
@@ -1721,7 +1721,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Make `Run` a loop that accepts repeatedly (one connection at a time, but rebound for each runtime). Reset `lc.ready`/`lc.supported` and re-perform the handshake on every accept. Alternatively, recreate the listener on Resume.
 
-**Resolution:** `LifecycleChannel.Run` is now an accept loop. `serveConn` binds each runtime connection with a fresh per-connection `ready` channel, completes the handshake, and serves frames; `resetConn` then drops the connection, re-arms an unclosed `ready` (so requests block until the next handshake), zeroes the per-provider in-flight counters, and fails any request still parked on the ended connection. The loop exits cleanly when `Close` is called or the listener closes. A resumed session's restarted runtime dials the same socket and re-handshakes. `request` reads the current `ready` under the lock via `currentReady`. (commit <PENDING>)
+**Resolution:** `LifecycleChannel.Run` is now an accept loop. `serveConn` binds each runtime connection with a fresh per-connection `ready` channel, completes the handshake, and serves frames; `resetConn` then drops the connection, re-arms an unclosed `ready` (so requests block until the next handshake), zeroes the per-provider in-flight counters, and fails any request still parked on the ended connection. The loop exits cleanly when `Close` is called or the listener closes. A resumed session's restarted runtime dials the same socket and re-handshakes. `request` reads the current `ready` under the lock via `currentReady`. (commit 2569adeb)
 
 ---
 
@@ -1799,7 +1799,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Combine with F-4.7.14 — accept-in-a-loop is the structurally correct change.
 
-**Resolution:** Closed by the F-4.7.14 accept-loop change. The single `lifecycle.Run` goroutine launched in `cmd/lenny-adapter/main.go` now survives across sessions and resumes by rebinding per runtime connection, so `StartSession`/`Resume` need not re-arm the channel. This resolves the structural coupling the finding flagged; the wiring stays at process boot, which matches the one-session-per-pod model (§6.1). (commit <PENDING>)
+**Resolution:** Closed by the F-4.7.14 accept-loop change. The single `lifecycle.Run` goroutine launched in `cmd/lenny-adapter/main.go` now survives across sessions and resumes by rebinding per runtime connection, so `StartSession`/`Resume` need not re-arm the channel. This resolves the structural coupling the finding flagged; the wiring stays at process boot, which matches the one-session-per-pod model (§6.1). (commit 2569adeb)
 
 ---
 
@@ -21599,7 +21599,7 @@ Severity: High (correctness; multiple capability gaps). Files:
 `schemas/lenny-adapter.proto:580–586`, `pkg/proto/adapter/v1/
 lenny-adapter_grpc.pb.go:491`, missing across `pkg/adapter/`.
 
-**Resolution:** Duplicate of F-4.7.1 / F-4.7.3. Closed by those: `Server.LifecycleChannel` now implements the adapter→gateway control stream and emits `RATE_LIMITED`, `AUTH_EXPIRED`, `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`, `AdapterTerminating`, and `FINAL_USAGE_REPORT` as JSON envelopes. `CheckpointBarrierAck` (the §10.1 graceful-drain event also listed in this finding) remains tracked under F-4.7.2, which adds the `CheckpointBarrier`/`CoordinatorFence` RPC pair. (commit <PENDING>)
+**Resolution:** Duplicate of F-4.7.1 / F-4.7.3. Closed by those: `Server.LifecycleChannel` now implements the adapter→gateway control stream and emits `RATE_LIMITED`, `AUTH_EXPIRED`, `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`, `AdapterTerminating`, and `FINAL_USAGE_REPORT` as JSON envelopes. `CheckpointBarrierAck` (the §10.1 graceful-drain event also listed in this finding) remains tracked under F-4.7.2, which adds the `CheckpointBarrier`/`CoordinatorFence` RPC pair. (commit 2569adeb)
 
 ### - [ ] F-15.3.4 — `ExtendLeaseRequest` is missing the §8.6 `extensions` block [Medium] — OPEN
 
