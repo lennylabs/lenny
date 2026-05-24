@@ -103,6 +103,15 @@ type Record struct {
 	// UpdatedAt is bumped on every subsequent Put.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// DeletedAt is the §4.4 line 281 / line 236 soft-delete
+	// tombstone. Zero while the row is active; set by Delete /
+	// DeleteByUser / DeleteByTenant to the cleanup wall-clock and
+	// never reset. The §12.5 hard-prune sweep (SweepDeletedBefore)
+	// removes rows whose DeletedAt is older than the artifact_store
+	// tombstone retention window.
+	// spec: §4.4 line 281.
+	DeletedAt time.Time
 }
 
 // Store persists §12.2.1 eviction-state records. The production
@@ -112,29 +121,51 @@ type Record struct {
 //
 // The DeleteByUser and DeleteByTenant methods carry the §12.8 GDPR
 // erasure contract. They are mandatory: the erasure orchestrator
-// drives them in the documented dependency order.
+// drives them in the documented dependency order. Per §4.4 line 281
+// every delete path is a soft-delete: it stamps `deleted_at = now()`
+// under a `deleted_at IS NULL` predicate so a stale-leader retry, a
+// crash-resumed terminal-cleanup, or the §12.5 GC backstop racing the
+// primary cleanup all observe `rows_affected == 0` on the second
+// writer and converge to a single state mutation. SweepDeletedBefore
+// is the §12.5 hard-prune surface the backstop sweep walks once the
+// tombstone retention window has elapsed.
 type Store interface {
 	// Put upserts the record. CreatedAt is set on first insert;
 	// UpdatedAt is bumped on every call.
 	Put(ctx context.Context, r Record) error
 
 	// Get returns the row for (tenant, session) or ErrNotFound.
+	// Soft-deleted rows are NOT returned — Get filters by
+	// `deleted_at IS NULL` so the §7.2 resume path never observes a
+	// tombstoned record.
 	Get(ctx context.Context, tenantID, sessionID string) (Record, error)
 
-	// Delete removes one row. A missing row is not an error so the
-	// terminal-state cleanup path is idempotent against partial
-	// failures.
+	// Delete stamps `deleted_at = now()` on the row under the
+	// `deleted_at IS NULL` predicate. A missing or already-tombstoned
+	// row is not an error so the terminal-state cleanup path is
+	// idempotent against partial failures, stale-leader retries, and
+	// the §12.5 GC backstop racing the primary cleanup.
+	// spec: §4.4 line 281.
 	Delete(ctx context.Context, tenantID, sessionID string) error
 
-	// DeleteByUser removes every eviction-state row for the user's
-	// sessions in the supplied tenant. The orchestrator looks up
-	// the user's session ids upstream; this method removes the rows
-	// that match.
+	// DeleteByUser soft-deletes every eviction-state row for the
+	// user's sessions in the supplied tenant. The orchestrator looks
+	// up the user's session ids upstream; this method tombstones the
+	// rows that match.
 	DeleteByUser(ctx context.Context, tenantID, userID string, sessionIDs []string) error
 
-	// DeleteByTenant removes every row scoped to the supplied
+	// DeleteByTenant soft-deletes every row scoped to the supplied
 	// tenant. Idempotent.
 	DeleteByTenant(ctx context.Context, tenantID string) error
+
+	// SweepDeletedBefore hard-deletes every soft-deleted row whose
+	// `deleted_at` is older than `cutoff` and returns the number of
+	// rows removed. The §12.5 GC backstop runs once per retention
+	// cycle after the tombstone retention window has elapsed so the
+	// row can be physically removed in tandem with the
+	// `artifact_store` row that mirrors it.
+	// spec: §4.4 line 281 / §12.5 GC concurrency model rule 6.
+	SweepDeletedBefore(ctx context.Context, cutoff time.Time) (int, error)
 }
 
 // MemoryStore is an in-memory Store backing the v1 developer-mode
@@ -154,7 +185,10 @@ func NewMemoryStore(now func() time.Time) *MemoryStore {
 	return &MemoryStore{rows: map[string]Record{}, now: now}
 }
 
-// Put upserts the record.
+// Put upserts the record. CreatedAt is set on first insert; UpdatedAt
+// is bumped on every call. Re-Put on a soft-deleted row clears the
+// tombstone so a session that re-enters the eviction-fallback path
+// after its prior terminal-state cleanup observes a live row again.
 func (m *MemoryStore) Put(_ context.Context, r Record) error {
 	if r.TenantID == "" || r.SessionID == "" {
 		return fmt.Errorf("evictionstatestore: tenant and session ids are required")
@@ -169,11 +203,17 @@ func (m *MemoryStore) Put(_ context.Context, r Record) error {
 	} else {
 		r.CreatedAt = now
 	}
+	// A new Put resurrects a tombstoned row — spec: §4.4 idempotent
+	// re-runs of the fallback writer must not surface the prior
+	// tombstone to the §7.2 resume path.
+	r.DeletedAt = time.Time{}
 	m.rows[key] = r
 	return nil
 }
 
-// Get returns the row or ErrNotFound.
+// Get returns the row or ErrNotFound. Soft-deleted rows are skipped
+// per §4.4 line 281 — the §7.2 resume path never observes a
+// tombstoned record.
 func (m *MemoryStore) Get(_ context.Context, tenantID, sessionID string) (Record, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -181,39 +221,90 @@ func (m *MemoryStore) Get(_ context.Context, tenantID, sessionID string) (Record
 	if !ok {
 		return Record{}, ErrNotFound
 	}
+	if !row.DeletedAt.IsZero() {
+		return Record{}, ErrNotFound
+	}
 	return row, nil
 }
 
-// Delete removes the row. A missing row is not an error.
+// Delete stamps `deleted_at = now()` on the row under the
+// `deleted_at IS NULL` predicate. A missing or already-tombstoned row
+// is a no-op so the terminal-state cleanup path is idempotent.
+// spec: §4.4 line 281.
 func (m *MemoryStore) Delete(_ context.Context, tenantID, sessionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.rows, compositeKey(tenantID, sessionID))
+	key := compositeKey(tenantID, sessionID)
+	row, ok := m.rows[key]
+	if !ok {
+		return nil
+	}
+	if !row.DeletedAt.IsZero() {
+		return nil
+	}
+	row.DeletedAt = m.now()
+	m.rows[key] = row
 	return nil
 }
 
-// DeleteByUser removes every row in tenantID whose session id is in
-// the supplied slice. The orchestrator owns the session-id lookup
+// DeleteByUser soft-deletes every row in tenantID whose session id is
+// in the supplied slice. The orchestrator owns the session-id lookup
 // because the EvictionStateStore does not carry a user_id column.
+// spec: §4.4 line 281.
 func (m *MemoryStore) DeleteByUser(_ context.Context, tenantID, _ string, sessionIDs []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := m.now()
 	for _, sessID := range sessionIDs {
-		delete(m.rows, compositeKey(tenantID, sessID))
+		key := compositeKey(tenantID, sessID)
+		row, ok := m.rows[key]
+		if !ok || !row.DeletedAt.IsZero() {
+			continue
+		}
+		row.DeletedAt = now
+		m.rows[key] = row
 	}
 	return nil
 }
 
-// DeleteByTenant removes every row scoped to tenantID. Idempotent.
+// DeleteByTenant soft-deletes every row scoped to tenantID.
+// Idempotent. spec: §4.4 line 281.
 func (m *MemoryStore) DeleteByTenant(_ context.Context, tenantID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := m.now()
 	for k, row := range m.rows {
-		if row.TenantID == tenantID {
-			delete(m.rows, k)
+		if row.TenantID != tenantID {
+			continue
 		}
+		if !row.DeletedAt.IsZero() {
+			continue
+		}
+		row.DeletedAt = now
+		m.rows[k] = row
 	}
 	return nil
+}
+
+// SweepDeletedBefore hard-deletes every soft-deleted row whose
+// `deleted_at` is strictly before `cutoff` and returns the number of
+// rows removed. The §12.5 GC backstop runs this once per retention
+// cycle after the tombstone window has elapsed.
+// spec: §4.4 line 281 / §12.5 GC concurrency model rule 6.
+func (m *MemoryStore) SweepDeletedBefore(_ context.Context, cutoff time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var removed int
+	for k, row := range m.rows {
+		if row.DeletedAt.IsZero() {
+			continue
+		}
+		if row.DeletedAt.Before(cutoff) {
+			delete(m.rows, k)
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 // compositeKey is the in-memory primary key: (tenant_id, session_id).
