@@ -130,6 +130,15 @@ var prodMigrationSchema = []struct {
 	// LOCAL by pgtenant.InAllTenants. The trigger and policy
 	// behavior are covered by
 	// tests/tier2_component/rls/all_tenants_test.go.
+	// 0060 extends session_eviction_state with the §4.4 lines 268–273
+	// columns the eviction fallback writer must populate so the §7.2
+	// resume path can fence coordinator handoffs and surface
+	// workspaceLost / context truncation to the runtime.
+	{migration: "0060", table: "session_eviction_state", columns: []string{
+		"recovery_generation", "coordination_generation",
+		"conversation_cursor", "evicted_at",
+		"workspace_lost", "context_truncated",
+	}},
 }
 
 // spec: 12.2, 18.5

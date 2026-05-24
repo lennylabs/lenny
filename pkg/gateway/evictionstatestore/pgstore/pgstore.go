@@ -40,12 +40,21 @@ func New(pool *pgxpool.Pool, now func() time.Time) *Store {
 
 var _ evictionstatestore.Store = (*Store)(nil)
 
+// selectList is the column projection for read paths. The trailing
+// six columns are the §4.4 lines 265–273 fields added in migration
+// 0060: recovery_generation, coordination_generation,
+// conversation_cursor, evicted_at, workspace_lost, context_truncated.
 const selectList = `tenant_id, session_id, last_message_context,
-	is_minio_key, created_at, updated_at`
+	is_minio_key, created_at, updated_at,
+	recovery_generation, coordination_generation, conversation_cursor,
+	evicted_at, workspace_lost, context_truncated`
 
 // Put upserts the eviction-state row. The created_at column is
 // preserved on update; updated_at is advanced under the §12.5
-// monotonic-now rule.
+// monotonic-now rule. The §4.4 lines 268–273 mandated columns are
+// written verbatim from the Record on both insert and update so the
+// §7.2 resume path observes the latest generation, cursor, and
+// truncation state.
 func (s *Store) Put(ctx context.Context, r evictionstatestore.Record) error {
 	if r.TenantID == "" || r.SessionID == "" {
 		return errors.New("evictionstatestore: tenant and session ids are required")
@@ -62,22 +71,45 @@ func (s *Store) Put(ctx context.Context, r evictionstatestore.Record) error {
 			_, err = tx.Exec(ctx,
 				`INSERT INTO session_eviction_state (
 					tenant_id, session_id, last_message_context,
-					is_minio_key, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $5)`,
+					is_minio_key, created_at, updated_at,
+					recovery_generation, coordination_generation,
+					conversation_cursor, evicted_at,
+					workspace_lost, context_truncated)
+				VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9, $10, $11)`,
 				r.TenantID, r.SessionID, r.LastMessageContext,
-				r.IsMinIOKey, now)
+				r.IsMinIOKey, now,
+				r.RecoveryGeneration, r.CoordinationGeneration,
+				r.ConversationCursor, nullTime(r.EvictedAt),
+				r.WorkspaceLost, r.ContextTruncated)
 			return err
 		case err != nil:
 			return err
 		}
 		_, err = tx.Exec(ctx,
 			`UPDATE session_eviction_state SET
-				last_message_context = $3, is_minio_key = $4, updated_at = $5
+				last_message_context = $3, is_minio_key = $4, updated_at = $5,
+				recovery_generation = $6, coordination_generation = $7,
+				conversation_cursor = $8, evicted_at = $9,
+				workspace_lost = $10, context_truncated = $11
 			WHERE tenant_id = $1 AND session_id = $2`,
 			r.TenantID, r.SessionID, r.LastMessageContext, r.IsMinIOKey,
-			pgtenant.MonotonicNext(existingUpdated, now))
+			pgtenant.MonotonicNext(existingUpdated, now),
+			r.RecoveryGeneration, r.CoordinationGeneration,
+			r.ConversationCursor, nullTime(r.EvictedAt),
+			r.WorkspaceLost, r.ContextTruncated)
 		return err
 	})
+}
+
+// nullTime returns a *time.Time so pgx writes a SQL NULL when t is
+// zero; non-zero values flow through unchanged. The §4.4 EvictedAt
+// column is nullable so callers that omit the timestamp keep the
+// distinction visible to read paths.
+func nullTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 // Get returns the eviction-state row or ErrNotFound. A cross-tenant
@@ -174,12 +206,21 @@ func (s *Store) ListMinIOKeys(ctx context.Context, tenantID string) ([]evictions
 }
 
 func scanRow(row pgx.Row) (evictionstatestore.Record, error) {
-	var r evictionstatestore.Record
+	var (
+		r         evictionstatestore.Record
+		evictedAt *time.Time
+	)
 	if err := row.Scan(
 		&r.TenantID, &r.SessionID, &r.LastMessageContext,
 		&r.IsMinIOKey, &r.CreatedAt, &r.UpdatedAt,
+		&r.RecoveryGeneration, &r.CoordinationGeneration,
+		&r.ConversationCursor, &evictedAt,
+		&r.WorkspaceLost, &r.ContextTruncated,
 	); err != nil {
 		return evictionstatestore.Record{}, err
+	}
+	if evictedAt != nil {
+		r.EvictedAt = *evictedAt
 	}
 	return r, nil
 }

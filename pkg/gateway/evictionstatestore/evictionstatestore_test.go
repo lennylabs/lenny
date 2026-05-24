@@ -169,3 +169,51 @@ func TestIsMinIOKeyRoundTrip(t *testing.T) {
 		t.Errorf("IsMinIOKey did not round-trip: %+v", got)
 	}
 }
+
+// spec: §4.4 lines 268–273 (eviction-state record carries the
+// §4.2 generations, conversation cursor, evicted_at timestamp, and the
+// workspace_lost / context_truncated flags so the §7.2 resume path
+// can fence coordinator handoffs and surface workspaceLost: true).
+// diagnosis: extending the Record without honoring the new fields in
+// the store would leave the §4.4 fallback writer silently dropping
+// generations and cursor data, breaking the §7.2 resume contract.
+func TestRecordCarriesEvictionFallbackFields(t *testing.T) {
+	store := evictionstatestore.NewMemoryStore(nil)
+	when := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
+	want := evictionstatestore.Record{
+		TenantID:               "acme",
+		SessionID:              "sess_42",
+		RecoveryGeneration:     7,
+		CoordinationGeneration: 3,
+		ConversationCursor:     "evt:42",
+		LastMessageContext:     []byte("inline-context"),
+		EvictedAt:              when,
+		WorkspaceLost:          true,
+		ContextTruncated:       true,
+	}
+	if err := store.Put(context.Background(), want); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := store.Get(context.Background(), "acme", "sess_42")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.RecoveryGeneration != 7 {
+		t.Errorf("RecoveryGeneration = %d, want 7", got.RecoveryGeneration)
+	}
+	if got.CoordinationGeneration != 3 {
+		t.Errorf("CoordinationGeneration = %d, want 3", got.CoordinationGeneration)
+	}
+	if got.ConversationCursor != "evt:42" {
+		t.Errorf("ConversationCursor = %q, want evt:42", got.ConversationCursor)
+	}
+	if !got.EvictedAt.Equal(when) {
+		t.Errorf("EvictedAt = %v, want %v", got.EvictedAt, when)
+	}
+	if !got.WorkspaceLost {
+		t.Error("WorkspaceLost did not round-trip")
+	}
+	if !got.ContextTruncated {
+		t.Error("ContextTruncated did not round-trip")
+	}
+}

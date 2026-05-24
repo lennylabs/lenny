@@ -34,12 +34,35 @@ import (
 // (tenant, session) pair has no eviction-state row.
 var ErrNotFound = errors.New("evictionstatestore: row not found")
 
-// Record is one eviction-state row.
+// Record is one eviction-state row. Fields mirror the §4.4
+// lines 265–273 columns the §4.4 fallback writer populates when MinIO
+// is unreachable mid-checkpoint and the gateway falls back to the
+// Postgres minimal-state path.
 type Record struct {
 	// TenantID and SessionID together identify the session whose
 	// eviction state this row carries.
 	TenantID  string
 	SessionID string
+
+	// RecoveryGeneration is the §4.2 pod-recovery counter at the
+	// moment of the eviction event. The §7.2 resume path reads it to
+	// identify which generation of the session this eviction state
+	// corresponds to.
+	// spec: §4.4 line 268.
+	RecoveryGeneration int64
+
+	// CoordinationGeneration is the §4.2 coordinator-handoff counter
+	// at the moment of the eviction event. The §7.2 resume path
+	// reads it for §10.1 coordinator fencing on resume.
+	// spec: §4.4 line 269.
+	CoordinationGeneration int64
+
+	// ConversationCursor is the last event cursor from the EventStore,
+	// allowing the §7.2 resume path to replay the conversation log
+	// from a known offset. Encoded as an opaque string the producer
+	// and consumer agree on (typically the EventStore offset id).
+	// spec: §4.4 line 270.
+	ConversationCursor string
 
 	// LastMessageContext is the inline JSON payload (when IsMinIOKey
 	// is false) or the MinIO object key (when IsMinIOKey is true).
@@ -52,6 +75,28 @@ type Record struct {
 	// this to decide whether to delete the MinIO object alongside
 	// the row.
 	IsMinIOKey bool
+
+	// EvictedAt is the wall-clock timestamp of the eviction event.
+	// Nil / zero when the row was written without an explicit
+	// eviction timestamp (legacy producers); production writers
+	// always set this.
+	// spec: §4.4 line 272.
+	EvictedAt time.Time
+
+	// WorkspaceLost reports whether the workspace bytes are gone for
+	// this session. Always true for the §4.4 minimal-state record by
+	// construction; the column is carried as the canonical signal so
+	// the §7.2 session.resumed event can echo `workspaceLost: true`
+	// directly from the row.
+	// spec: §4.4 line 273.
+	WorkspaceLost bool
+
+	// ContextTruncated reports whether the §4.4 fallback writer
+	// truncated the context to 2KB and stored it inline because
+	// MinIO was unavailable. The §7.2 resume path surfaces this to
+	// the runtime so it can detect partial context.
+	// spec: §4.4 line 271.
+	ContextTruncated bool
 
 	// CreatedAt and UpdatedAt are the row's lifecycle timestamps.
 	// CreatedAt is set on first Put for the (tenant, session);

@@ -239,4 +239,76 @@ func TestEvictionStateStoreContract(t *testing.T) {
 			t.Errorf("cross-tenant Get: got %v, want ErrNotFound (RLS isolation)", err)
 		}
 	})
+
+	// spec: §4.4 lines 268–273 — the §4.4 fallback writer populates
+	// recovery_generation, coordination_generation, conversation_cursor,
+	// evicted_at, workspace_lost, and context_truncated alongside the
+	// inline / MinIO-key payload. The §7.2 resume path reads them back
+	// to fence coordinator handoffs and surface workspaceLost / context
+	// truncation to the runtime; this round-trips the columns added in
+	// migration 0060 through the Postgres-backed pgstore.
+	t.Run("eviction fallback columns round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		sessID := newUUID(t)
+		when := time.Now().UTC().Truncate(time.Microsecond)
+		want := evictionstatestore.Record{
+			TenantID:               tenant,
+			SessionID:              sessID,
+			RecoveryGeneration:     11,
+			CoordinationGeneration: 4,
+			ConversationCursor:     "evt:1024",
+			LastMessageContext:     []byte("inline-context-bytes"),
+			IsMinIOKey:             false,
+			EvictedAt:              when,
+			WorkspaceLost:          true,
+			ContextTruncated:       true,
+		}
+		if err := store.Put(ctx, want); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, sessID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.RecoveryGeneration != 11 {
+			t.Errorf("RecoveryGeneration = %d, want 11", got.RecoveryGeneration)
+		}
+		if got.CoordinationGeneration != 4 {
+			t.Errorf("CoordinationGeneration = %d, want 4", got.CoordinationGeneration)
+		}
+		if got.ConversationCursor != "evt:1024" {
+			t.Errorf("ConversationCursor = %q, want evt:1024", got.ConversationCursor)
+		}
+		if !got.EvictedAt.Equal(when) {
+			t.Errorf("EvictedAt = %v, want %v", got.EvictedAt, when)
+		}
+		if !got.WorkspaceLost {
+			t.Error("WorkspaceLost did not round-trip from Postgres")
+		}
+		if !got.ContextTruncated {
+			t.Error("ContextTruncated did not round-trip from Postgres")
+		}
+	})
+
+	// spec: §4.4 line 272 — evicted_at is nullable on the row so a
+	// caller that omits the timestamp leaves the column SQL NULL
+	// rather than recording the UNIX epoch.
+	t.Run("zero EvictedAt stays NULL on the row", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		sessID := newUUID(t)
+		if err := store.Put(ctx, evictionstatestore.Record{
+			TenantID:           tenant,
+			SessionID:          sessID,
+			LastMessageContext: []byte("x"),
+		}); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, sessID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.EvictedAt.IsZero() {
+			t.Errorf("EvictedAt = %v, want zero", got.EvictedAt)
+		}
+	})
 }
