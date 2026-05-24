@@ -988,6 +988,42 @@ func Register(srv *mcp.Server, deps Deps) {
 					taskInput = string(res.ModifiedContent)
 				}
 			}
+			// §8.2 line 90: after PreDelegation passes, the gateway runs
+			// the PreRoute chain over the child's augmented TaskSpec — the
+			// same chain that fires during top-level session creation. A
+			// REJECT blocks the delegation; a MODIFY rewrites the input the
+			// child receives. The chain rejects any MODIFY that alters the
+			// authenticated identity (tenant_id/user_id) with
+			// INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION before it is seen here.
+			if deps.Interceptors != nil && deps.Interceptors.Len(interceptor.PhasePreRoute) > 0 {
+				spec := childRouteSpec{
+					TenantID:         tenant,
+					RequestedRuntime: in.RuntimeRef,
+					Input:            taskInput,
+				}
+				payload, merr := json.Marshal(spec)
+				if merr != nil {
+					return mcp.ToolResult{}, fmt.Errorf("child task spec serialization: %w", merr)
+				}
+				res := deps.Interceptors.Run(ctx, interceptor.Request{
+					Phase:     interceptor.PhasePreRoute,
+					SessionID: in.ParentSessionID,
+					TenantID:  tenant,
+					Content:   payload,
+					Metadata:  map[string]string{"tenant_id": tenant},
+				})
+				if res.Action == interceptor.ActionReject {
+					recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreRoute, res)
+					return mcp.ToolResult{}, fmt.Errorf("delegation rejected by policy: %s", res.Reason)
+				}
+				if res.Action == interceptor.ActionModify {
+					var modified childRouteSpec
+					if uerr := json.Unmarshal(res.ModifiedContent, &modified); uerr != nil {
+						return mcp.ToolResult{}, fmt.Errorf("child PreRoute MODIFY is not a valid task spec: %w", uerr)
+					}
+					taskInput = modified.Input
+				}
+			}
 			res, err := deps.Delegation.Delegate(ctx, tenant, delegation.Request{
 				ParentSessionID:  in.ParentSessionID,
 				RuntimeRef:       in.RuntimeRef,
@@ -1036,6 +1072,19 @@ func Register(srv *mcp.Server, deps Deps) {
 }
 
 // recordChainRejection emits the §16.7 interceptor.rejected audit row
+// childRouteSpec is the §8.2 line 90 PreRoute content payload for a
+// delegated child: the augmented TaskSpec the chain inspects before
+// runtime selection. The JSON field names match the PreRoute immutable
+// fields (tenant_id/user_id) the chain enforces on MODIFY (spec: §4.8
+// line 1048).
+type childRouteSpec struct {
+	TenantID         string `json:"tenant_id"`
+	UserID           string `json:"user_id,omitempty"`
+	RequestedRuntime string `json:"requested_runtime,omitempty"`
+	Input            string `json:"input,omitempty"`
+}
+
+// recordChainRejection emits the §16.7 `interceptor.rejected` audit row
 // when a §4.8 chain REJECTs at a phase run from the MCP fabric
 // (PreDelegation, PreMessageDelivery). The chain stamps Result.RejectedBy
 // with the rejecting interceptor so the audit row identifies it. It is

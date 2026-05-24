@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -108,11 +109,28 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// §4.8 PreRoute: run the interceptor chain over the TaskSpec after
+	// authentication and before runtime selection. A REJECT blocks the
+	// create; a MODIFY may rewrite runtime hints (the requested runtime)
+	// but not the authenticated identity, which the chain enforces.
+	preRoute, ok := s.runRouteChain(w, r, interceptor.PhasePreRoute, routeTaskSpec{
+		TenantID:         tenantID,
+		UserID:           req.UserID,
+		RequestedRuntime: req.RuntimeRef,
+	})
+	if !ok {
+		return
+	}
+	runtimeRef := req.RuntimeRef
+	if preRoute.RequestedRuntime != "" {
+		runtimeRef = preRoute.RequestedRuntime
+	}
+
 	row := sessionstore.Session{
 		ID:               s.idFn(),
 		TenantID:         tenantID,
 		UserID:           req.UserID,
-		RuntimeRef:       req.RuntimeRef,
+		RuntimeRef:       runtimeRef,
 		Environment:      req.Environment,
 		State:            session.StateRunning, // skip directly to running per §15.1
 		IsolationProfile: isoProf,
@@ -125,6 +143,17 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// the creation closed when the variant pool is less isolated than
 	// the session's profile.
 	if !s.routeExperiment(w, r, &row) {
+		return
+	}
+	// §4.8 PostRoute: run the interceptor chain after runtime selection
+	// with the resolved runtime metadata. A REJECT blocks the create; a
+	// MODIFY may rewrite runtime-specific parameters but not the resolved
+	// runtime or credential assignment, which the chain enforces.
+	if _, ok := s.runRouteChain(w, r, interceptor.PhasePostRoute, routeTaskSpec{
+		TenantID:            tenantID,
+		UserID:              req.UserID,
+		ResolvedRuntimeName: row.RuntimeRef,
+	}); !ok {
 		return
 	}
 	if err := s.store.Create(r.Context(), row); err != nil {

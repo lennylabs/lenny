@@ -2191,7 +2191,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   auth middleware (after JWT verification, before context attach), or
   document that PreAuth is realized as a single built-in middleware.
 
-### - [ ] F-4.8.11 — `PreRoute`, `PostRoute` chains not invoked (Missing) [Medium] — OPEN
+### - [x] F-4.8.11 — `PreRoute`, `PostRoute` chains not invoked (Missing) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.2.17 — Both report the PreRoute interceptor chain is declared but never invoked; F-4.8.11 covers PreRoute/PostRoute generally and F-8.2.17 the child-delegation manifestation of the same gap.
 
@@ -2208,6 +2208,17 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   the runtime is resolved in `sessionserver.startSession`, and a
   `Chain.Run(PostRoute)` after, with payloads matching the spec
   table. Severity Medium.
+- **Resolution:** New `sessionserver.runRouteChain` runs the chain over
+  a serialized `routeTaskSpec` (`tenant_id`/`user_id`/`requested_runtime`
+  at PreRoute; `resolved_runtime_name`/`credential_pool_id` at PostRoute,
+  matching the immutable-field paths the chain enforces). `handleCreateAndStart`
+  runs `PhasePreRoute` before `routeExperiment` (applying a MODIFY of the
+  runtime hint to `row.RuntimeRef`) and `PhasePostRoute` after, with the
+  resolved runtime. A deliberate REJECT → 403 `INTERCEPTOR_REJECTED`; a
+  fail-closed timeout → 503 `INTERCEPTOR_TIMEOUT` (interceptor_ref/phase/
+  timeout_ms); a MODIFY of an immutable field is rejected by the chain
+  with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. Every REJECT emits the
+  §16.7 `interceptor.rejected` audit row. Resolved in commit <pending>.
 
 ### - [ ] F-4.8.12 — `PreToolResult`, `PostAgentOutput` chains not invoked (Missing) [Medium] — OPEN
 
@@ -6771,7 +6782,7 @@ Implementation at `pkg/gateway/delegation/service.go:271-303`:
 
 Consequence: a tree of depth N pays N+1 store lookups per delegation. The §8.2.bis `maxDepth` ceiling (when wired — see H-6) effectively caps the cost, but the current behavior with `req.MaxDepth=0` falls through to the unbounded walk. A misbehaving session store (or a long-lived chain on a Postgres replica without proper indexing on `parent_session_id`) becomes a per-delegate-task fan-out of DB calls.
 
-### - [ ] F-8.2.17 — PreRoute interceptor chain is not invoked on the child [Medium] — OPEN
+### - [x] F-8.2.17 — PreRoute interceptor chain is not invoked on the child [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.8.11 — Both report the PreRoute interceptor chain is declared but never invoked; F-4.8.11 covers PreRoute/PostRoute generally and F-8.2.17 the child-delegation manifestation of the same gap.
 
@@ -6783,6 +6794,8 @@ Implementation:
 - The MCP shim invokes `PhasePreDelegation` (`pkg/gateway/mcptools/mcptools.go:969-981`) but not `PhasePreRoute`.
 
 Consequence: the same chain the spec says fires for top-level sessions does not fire for either top-level sessions or delegated children. The `ExperimentRouter` (priority 300) that §8.2 line 90 names as part of this chain is not driven by interceptor invocation at all — it runs as a side step inside `routeExperiment` only on REST `POST /v1/sessions`. A `PreRoute`-phase content interceptor will not fire on any session.
+
+**Resolution (closed by F-4.8.11):** The `lenny/delegate_task` handler now runs `Chain.Run(PhasePreRoute)` over the child's augmented `childRouteSpec` (`tenant_id`/`requested_runtime`/`input`) after PreDelegation passes and before `delegation.Service.Delegate`. A REJECT blocks the delegation (no child session created); a MODIFY rewrites the child's `input`; a MODIFY altering `tenant_id`/`user_id` is rejected with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. The top-level session-creation PreRoute/PostRoute wiring lands under F-4.8.11. Registering `ExperimentRouter` itself as a chain interceptor remains tracked under F-4.8.5. Resolved in commit <pending>.
 
 ### - [ ] F-8.2.18 — The Redis-backed budget counters that §8.2 step 2 names (`maxTreeSize`, `maxParallelChildren`, `maxTreeMemoryBytes`) are not the basis of admission decisions [Medium] — OPEN
 
