@@ -123,7 +123,7 @@ func TestLifecycleChannelHandshake(t *testing.T) {
 	// The runtime declares support for a subset; the channel records it.
 	fr.write(lifecycleFrame{Type: "lifecycle_support", Capabilities: []string{"checkpoint", "interrupt"}})
 	select {
-	case <-lc.ready:
+	case <-lc.currentReady():
 	case <-time.After(3 * time.Second):
 		t.Fatal("handshake did not complete")
 	}
@@ -395,4 +395,68 @@ func TestLifecycleChannelCloseFailsPendingRequest(t *testing.T) {
 	if err := <-errc; !errors.Is(err, errLifecycleClosed) {
 		t.Fatalf("RequestInterrupt err = %v, want errLifecycleClosed", err)
 	}
+}
+
+// spec: §4.7 lines 836-842 — the startup sequence (runtime connects to
+// the lifecycle channel) applies for both fresh sessions and resumes, so
+// after a runtime disconnects the channel must accept a fresh runtime's
+// connection and re-handshake. Closes F-4.7.14 / F-4.7.19.
+func TestLifecycleChannelAcceptsReconnect_spec_4_7(t *testing.T) {
+	dir, err := os.MkdirTemp("", "lc-reconnect-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "lifecycle.sock")
+
+	lc, err := NewLifecycleChannel(sock)
+	if err != nil {
+		t.Fatalf("NewLifecycleChannel: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	runErr := make(chan error, 1)
+	go func() { runErr <- lc.Run(ctx) }()
+	t.Cleanup(func() {
+		_ = lc.Close()
+		<-runErr
+	})
+
+	// First runtime: handshake, drive one request, then disconnect.
+	dial := func() *fakeRuntime {
+		conn, derr := net.Dial("unix", sock)
+		if derr != nil {
+			t.Fatalf("dial lifecycle socket: %v", derr)
+		}
+		return &fakeRuntime{t: t, conn: conn, r: bufio.NewReader(conn)}
+	}
+
+	roundTrip := func(fr *fakeRuntime, id string) {
+		errc := make(chan error, 1)
+		go func() { errc <- lc.RequestInterrupt(context.Background(), id, 2000) }()
+		req := fr.read()
+		if req.Type != "interrupt_request" || req.InterruptID != id {
+			t.Fatalf("runtime saw %q/%q, want interrupt_request/%s", req.Type, req.InterruptID, id)
+		}
+		fr.write(lifecycleFrame{Type: "interrupt_acknowledged", InterruptID: id})
+		if err := <-errc; err != nil {
+			t.Fatalf("RequestInterrupt(%s) = %v", id, err)
+		}
+	}
+
+	fr1 := dial()
+	fr1.handshake()
+	roundTrip(fr1, "int-1")
+	fr1.conn.Close()
+
+	// Second runtime dials the same socket (the Resume restart path) and
+	// must complete a fresh handshake and serve a new request.
+	fr2 := dial()
+	fr2.handshake()
+	select {
+	case <-lc.currentReady():
+	case <-time.After(3 * time.Second):
+		t.Fatal("second handshake did not complete")
+	}
+	roundTrip(fr2, "int-2")
 }

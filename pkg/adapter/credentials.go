@@ -71,6 +71,10 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 		path := filepath.Join(s.CredentialsDir, credfile.FileName)
 		for _, r := range rotated {
 			if err := s.Lifecycle.RotateCredentials(ctx, r.provider, path, r.leaseID); err != nil {
+				// §4.7 lines 652-662: the runtime could not rebind to the
+				// rotated credential, so surface LEASE_REJECTED to the gateway
+				// before failing the RPC.
+				s.EmitLeaseRejected(r.provider, r.leaseID, err.Error())
 				return nil, status.Errorf(codes.Internal, "lifecycle credential rotation: %v", err)
 			}
 		}

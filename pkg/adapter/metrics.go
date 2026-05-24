@@ -39,6 +39,23 @@ var (
 		Help: "Outbound LLM requests in flight per provider (§4.7 direct-mode " +
 			"in-flight gate), tracked from llm_request_started / completed.",
 	}, []string{"provider"})
+	// §4.7 lines 652-662: adapter→gateway control events surfaced over the
+	// gRPC LifecycleChannel stream (RATE_LIMITED, AUTH_EXPIRED,
+	// PROVIDER_UNAVAILABLE, LEASE_REJECTED, AdapterTerminating,
+	// FINAL_USAGE_REPORT). Sent counts the events delivered onto the stream.
+	controlEventsSent = mustCounterVec(prometheus.CounterOpts{
+		Name: "lenny_adapter_control_events_total",
+		Help: "Adapter→gateway control events queued onto the §4.7 " +
+			"LifecycleChannel stream, labelled by event type.",
+	}, []string{"event"})
+	// controlEventsDropped counts events emitted while no gateway stream is
+	// attached or the per-stream buffer is full. A non-zero value means a
+	// §4.9 fallback trigger or final usage report was lost.
+	controlEventsDropped = mustCounterVec(prometheus.CounterOpts{
+		Name: "lenny_adapter_control_events_dropped_total",
+		Help: "Adapter→gateway control events that could not be delivered " +
+			"(§4.7), labelled by event type and drop reason.",
+	}, []string{"event", "reason"})
 )
 
 // mustCounter builds and registers a label-free counter, panicking on a
@@ -46,6 +63,17 @@ var (
 // time series; callers use WithLabelValues() with no arguments.
 func mustCounter(opts prometheus.CounterOpts) *prometheus.CounterVec {
 	c, err := metrics.NewCounter(opts, nil)
+	if err != nil {
+		panic(err)
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, c)
+	return c
+}
+
+// mustCounterVec builds and registers a labeled counter, panicking on a
+// §16.1.1 naming violation.
+func mustCounterVec(opts prometheus.CounterOpts, labels []string) *prometheus.CounterVec {
+	c, err := metrics.NewCounter(opts, labels)
 	if err != nil {
 		panic(err)
 	}
@@ -82,3 +110,13 @@ func IncSoPeercredSelftestFailed() { soPeercredSelftestFailed.WithLabelValues().
 // adapter calls it once on every pod start when --require-so-peercred is
 // false.
 func IncSoPeercredDisabled() { soPeercredDisabled.WithLabelValues().Inc() }
+
+// incControlEventSent records a §4.7 control event queued onto the
+// LifecycleChannel stream.
+func incControlEventSent(event string) { controlEventsSent.WithLabelValues(event).Inc() }
+
+// incControlEventDropped records a §4.7 control event that could not be
+// delivered, tagging the drop reason ("no_stream" or "buffer_full").
+func incControlEventDropped(event, reason string) {
+	controlEventsDropped.WithLabelValues(event, reason).Inc()
+}

@@ -158,6 +158,13 @@ type Server struct {
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock
 
+	// controlMu guards controlSink.
+	controlMu sync.Mutex
+	// controlSink is the queue feeding the active §4.7 adapter→gateway
+	// LifecycleChannel stream. Non-nil only while a gateway stream is
+	// attached; emitControlEvent drops events when it is nil.
+	controlSink chan controlEvent
+
 	// mu guards sessionID, mcpCancel, and the credential fields.
 	mu sync.Mutex
 	// sessionID is the session currently assigned to the pod, empty

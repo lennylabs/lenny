@@ -155,21 +155,49 @@ func (lc *LifecycleChannel) SocketPath() string {
 	return lc.listener.Addr().String()
 }
 
-// Run accepts the runtime's connection, performs the
-// lifecycle_capabilities handshake, and serves lifecycle frames until
-// the connection ends or ctx is cancelled. It blocks; callers run it in
-// a goroutine. The request methods block until Run completes the
-// handshake.
+// Run serves the lifecycle channel until ctx is cancelled or the channel
+// is closed. It accepts one runtime connection at a time: for each, it
+// performs the lifecycle_capabilities handshake and serves frames until
+// the runtime disconnects, then resets per-connection state and accepts
+// the next connection. A resumed session (§4.7 lines 836-842 startup
+// sequence, applied for both fresh sessions and resumes) starts a fresh
+// runtime that dials the same socket and re-handshakes, so the channel
+// must outlive any single runtime process. Run blocks; callers run it in
+// a goroutine. The request methods block until the current connection
+// completes its handshake.
+//
+// spec: §4.7 lines 836-842 — the Full-level lifecycle channel is rebound
+// per runtime process rather than torn down after the first disconnect.
 func (lc *LifecycleChannel) Run(ctx context.Context) error {
 	defer close(lc.done)
 	stop := context.AfterFunc(ctx, func() { _ = lc.Close() })
 	defer stop()
 
-	conn, err := lc.listener.Accept()
-	if err != nil {
-		return fmt.Errorf("lifecycle channel accept: %w", err)
+	for {
+		conn, err := lc.listener.Accept()
+		if err != nil {
+			if lc.isClosed() || errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return fmt.Errorf("lifecycle channel accept: %w", err)
+		}
+		if err := lc.serveConn(conn); err != nil && !errors.Is(err, errLifecycleClosed) {
+			// A per-connection handshake or read error ends this runtime
+			// connection but not the channel: the next runtime (e.g. after
+			// Resume restarts the binary) dials again and re-handshakes.
+			log.Printf("lenny-adapter: lifecycle connection ended: %v", err)
+		}
+		lc.resetConn()
+		if lc.isClosed() {
+			return nil
+		}
 	}
+}
 
+// serveConn binds conn as the active runtime connection, completes the
+// handshake, and serves frames until the connection ends.
+func (lc *LifecycleChannel) serveConn(conn net.Conn) error {
+	ready := make(chan struct{})
 	lc.mu.Lock()
 	if lc.closed {
 		lc.mu.Unlock()
@@ -180,14 +208,58 @@ func (lc *LifecycleChannel) Run(ctx context.Context) error {
 	enc := json.NewEncoder(conn)
 	enc.SetEscapeHTML(false)
 	lc.enc = enc
+	lc.ready = ready
 	lc.mu.Unlock()
 
 	r := bufio.NewReader(conn)
 	if err := lc.handshake(r); err != nil {
 		return err
 	}
-	close(lc.ready)
+	close(ready)
 	return lc.readLoop(r)
+}
+
+// resetConn clears the state bound to a single runtime connection so the
+// channel can accept the next one. It drops the connection, re-arms a
+// fresh (unclosed) ready channel so requests block until the next
+// handshake, zeroes the per-provider in-flight counters, and fails every
+// request still waiting on the connection that just ended.
+func (lc *LifecycleChannel) resetConn() {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.conn != nil {
+		lc.conn.Close()
+		lc.conn = nil
+	}
+	lc.enc = nil
+	lc.supported = nil
+	lc.ready = make(chan struct{})
+	for provider, n := range lc.inflight {
+		if n != 0 {
+			SetLLMInflight(provider, 0)
+		}
+		delete(lc.inflight, provider)
+	}
+	for key, ch := range lc.pending {
+		ch <- errLifecycleClosed
+		delete(lc.pending, key)
+	}
+}
+
+// isClosed reports whether Close has been called.
+func (lc *LifecycleChannel) isClosed() bool {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.closed
+}
+
+// currentReady returns the channel that closes when the active
+// connection's handshake completes. It is recreated per connection, so
+// callers capture it under the lock before waiting.
+func (lc *LifecycleChannel) currentReady() chan struct{} {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.ready
 }
 
 // handshake sends the adapter's lifecycle_capabilities and reads the
@@ -411,7 +483,7 @@ func (lc *LifecycleChannel) Supports(capability string) bool {
 // and waits for the runtime's reply.
 func (lc *LifecycleChannel) request(ctx context.Context, key string, frame lifecycleFrame) error {
 	select {
-	case <-lc.ready:
+	case <-lc.currentReady():
 	case <-lc.done:
 		return errLifecycleClosed
 	case <-ctx.Done():

@@ -134,20 +134,31 @@ func TestGRPCServerReportsHealthy(t *testing.T) {
 	}
 }
 
-func TestGRPCServerReportsUnimplementedForUnbuiltRPCs(t *testing.T) {
+// spec: §4.7 lines 652-662 — the Adapter server implements the
+// LifecycleChannel control stream and pushes adapter→gateway events onto
+// it. The stream stays open until the gateway closes it or the context is
+// cancelled; it must not answer Unimplemented.
+func TestGRPCServerLifecycleChannelStaysOpen_spec_4_7(t *testing.T) {
 	client, _ := adapterClient(t, adapter.New("served"))
 
-	// The gRPC LifecycleChannel RPC is not yet implemented on the
-	// Adapter server; the embedded UnimplementedAdapterServer answers
-	// with codes.Unimplemented. For a streaming RPC the status
-	// surfaces on the first Recv.
-	stream, err := client.LifecycleChannel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.LifecycleChannel(ctx)
 	if err != nil {
 		t.Fatalf("open LifecycleChannel stream: %v", err)
 	}
+	// No event is queued, so a Recv with the stream cancelled returns the
+	// cancellation rather than codes.Unimplemented.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
 	_, err = stream.Recv()
-	if status.Code(err) != codes.Unimplemented {
-		t.Errorf("LifecycleChannel error code = %v, want Unimplemented", status.Code(err))
+	if status.Code(err) == codes.Unimplemented {
+		t.Fatalf("LifecycleChannel must be implemented, got Unimplemented")
+	}
+	if status.Code(err) != codes.Canceled {
+		t.Errorf("LifecycleChannel Recv after cancel = %v, want Canceled", status.Code(err))
 	}
 }
 

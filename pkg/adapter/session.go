@@ -132,9 +132,28 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	if err := s.checkSession(sessionID); err != nil {
 		return nil, err
 	}
+	// §4.7 lines 661-662: flush a final usage report onto the gateway
+	// control stream before the stream closes, so the gateway can run
+	// budget_return.lua (§8.3) with the session's complete token totals.
+	s.emitFinalUsage(ctx, sessionID)
 	closeErr := s.Runtime.Close(ctx, sessionID)
 	s.releaseSession()
 	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil
+}
+
+// emitFinalUsage reads the session's accumulated usage and pushes a
+// FINAL_USAGE_REPORT control event. It is best-effort: a nil usage meter
+// or a read error leaves the gateway to fall back to stream-close, which
+// the §8.3 contract already tolerates.
+func (s *Server) emitFinalUsage(ctx context.Context, sessionID string) {
+	if s.Usage == nil {
+		return
+	}
+	u, err := s.Usage.Usage(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	s.EmitFinalUsageReport(u)
 }
 
 // checkSession confirms sessionID is the session currently assigned to
