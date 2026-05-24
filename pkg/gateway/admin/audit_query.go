@@ -8,11 +8,16 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
-// AuditEventPayload is the §25.9 audit-event wire shape.
+// AuditEventPayload is the §25.9 audit-event canonical Postgres tuple.
+// The default response wire form is the OCSF translation per §4.4
+// line 232 / §11.7; the canonical tuple is retained for the future
+// `?format=raw-canonical` callers (chain auditors who recompute the
+// hash against the exact bytes Postgres hashed over).
 type AuditEventPayload struct {
 	Seq       uint64          `json:"seq"`
 	TenantID  string          `json:"tenantId"`
@@ -22,6 +27,19 @@ type AuditEventPayload struct {
 	PrevHash  string          `json:"prevHash"`
 	Hash      string          `json:"hash"`
 	Redacted  bool            `json:"redacted,omitempty"`
+}
+
+// AuditEventEnvelope is the §4.4 line 232 / §25.9 OCSF audit-egress
+// response envelope. Every paginated `/v1/admin/audit-events` response
+// carries the envelope; the `items[]` array holds the OCSF v1.1.0
+// records produced by `pkg/audit/ocsf.Translate`. `translatorVersion`
+// and `ocsfVersion` let a consumer correlate the wire form with the
+// exact translator implementation and OCSF version that produced it.
+type AuditEventEnvelope struct {
+	TenantID          string            `json:"tenantId"`
+	Items             []json.RawMessage `json:"items"`
+	OCSFVersion       string            `json:"ocsfVersion"`
+	TranslatorVersion string            `json:"translatorVersion"`
 }
 
 // AuditVerifyResponse is the §11.7 chain-verification response.
@@ -83,6 +101,22 @@ func (r *Router) auditTenant(w http.ResponseWriter, req *http.Request) (string, 
 
 // handleListAuditEvents implements GET /v1/admin/audit-events.
 // Supports ?tenantId=, ?limit=, and ?afterSeq= for pagination.
+//
+// The default response wire form is the §4.4 line 232 / §11.7 / §25.9
+// OCSF v1.1.0 translation: every row is run through
+// `pkg/audit/ocsf.Translate` and the resulting records are returned
+// inside the envelope (`items[]`, `ocsfVersion`, `translatorVersion`).
+// The `unmapped.lenny_chain` extension on each record carries the
+// hash-chain fields (prev_hash, integrity) so external auditors can
+// verify the chain from the OCSF wire form alone.
+//
+// spec: §4.4 line 232 — "the audit-egress path includes an OCSF
+// translator that maps the canonical Postgres-stored tuple to OCSF
+// v1.1.0 JSON for every consumer that sits outside the authoritative
+// store: the SIEM forwarder, pgaudit sink consumers, the
+// `/v1/admin/audit-events` query API, and the CloudEvents-wrapped
+// audit events ... The translator version and OCSF wire version are
+// surfaced on every response envelope."
 func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request) {
 	tenant, ok := r.auditTenant(w, req)
 	if !ok {
@@ -108,24 +142,37 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 		}
 	}
 
-	out := make([]AuditEventPayload, 0, limit)
+	items := make([]json.RawMessage, 0, limit)
 	for _, row := range rows {
 		if row.Seq <= afterSeq {
 			continue
 		}
-		out = append(out, auditRowPayload(row))
-		if len(out) >= limit {
+		ocsfBytes, terr := translateRowToOCSF(row)
+		if terr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"audit ocsf translation failed at seq "+strconv.FormatUint(row.Seq, 10)+": "+terr.Error(), nil)
+			return
+		}
+		items = append(items, ocsfBytes)
+		if len(items) >= limit {
 			break
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"tenantId":    tenant,
-		"auditEvents": out,
+	_ = json.NewEncoder(w).Encode(AuditEventEnvelope{
+		TenantID:          tenant,
+		Items:             items,
+		OCSFVersion:       ocsf.Version,
+		TranslatorVersion: ocsf.TranslatorVersion,
 	})
 }
 
 // handleGetAuditEvent implements GET /v1/admin/audit-events/{seq}.
+// The response wire form is the §4.4 line 232 OCSF v1.1.0 translation
+// of the row; the response is envelope-wrapped so the
+// `translatorVersion` and `ocsfVersion` accompany the record.
+//
+// spec: §4.4 line 232.
 func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 	tenant, ok := r.auditTenant(w, req)
 	if !ok {
@@ -144,12 +191,55 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 	}
 	for _, row := range rows {
 		if row.Seq == seq {
+			ocsfBytes, terr := translateRowToOCSF(row)
+			if terr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+					"audit ocsf translation failed: "+terr.Error(), nil)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(auditRowPayload(row))
+			_ = json.NewEncoder(w).Encode(AuditEventEnvelope{
+				TenantID:          tenant,
+				Items:             []json.RawMessage{ocsfBytes},
+				OCSFVersion:       ocsf.Version,
+				TranslatorVersion: ocsf.TranslatorVersion,
+			})
 			return
 		}
 	}
 	writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "audit event not found", nil)
+}
+
+// translateRowToOCSF runs one canonical audit row through the §11.7
+// OCSF translator and returns the JSON-encoded record. A translation
+// failure is surfaced as an error so the handler returns 500 with the
+// failed-seq detail; the spec's dead-letter path (DeadLetterReceipt)
+// is reserved for the SIEM-forwarder/EventBus consumers where
+// blocking on a single bad row would halt the per-tenant stream.
+//
+// spec: §4.4 line 232 — OCSF translator at the audit-egress boundary.
+func translateRowToOCSF(row audit.Row) (json.RawMessage, error) {
+	// The in-memory audit chain does not persist a row UUID (the
+	// Postgres-backed auditstore does). Synthesize a stable UID from
+	// (tenant_id, seq) so the OCSF metadata.uid is deterministic per
+	// row even on the in-memory backend; the Postgres path overrides
+	// this when row.ID is non-empty in a later batch.
+	uid := row.TenantID + ":" + strconv.FormatUint(row.Seq, 10)
+	in := ocsf.Input{
+		ID:              uid,
+		Sequence:        row.Seq,
+		TenantID:        row.TenantID,
+		EventType:       row.EventType,
+		CreatedAtUnixMs: row.Timestamp.UTC().UnixMilli(),
+		Payload:         row.Payload,
+		PrevHash:        row.PrevHash,
+		ChainIntegrity:  audit.ChainUnchecked,
+	}
+	rec, err := ocsf.Translate(in)
+	if err != nil {
+		return nil, err
+	}
+	return ocsf.MarshalRecord(rec)
 }
 
 // handleVerifyAuditChain implements
@@ -183,15 +273,3 @@ func (r *Router) handleVerifyAuditChain(w http.ResponseWriter, req *http.Request
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func auditRowPayload(row audit.Row) AuditEventPayload {
-	return AuditEventPayload{
-		Seq:       row.Seq,
-		TenantID:  row.TenantID,
-		EventType: row.EventType,
-		Payload:   row.Payload,
-		Timestamp: rfc3339Nano(row.Timestamp),
-		PrevHash:  row.PrevHash,
-		Hash:      row.Hash,
-		Redacted:  row.Redacted,
-	}
-}

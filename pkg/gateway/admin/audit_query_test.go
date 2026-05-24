@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // spec: §25.9 Audit Log Query API.
+// spec: §4.4 line 232 — OCSF audit-egress translator.
 
 func newAuditQueryRouter(t *testing.T) (*admin.Router, *audit.ChainSet) {
 	t.Helper()
@@ -30,7 +32,11 @@ func newAuditQueryRouter(t *testing.T) (*admin.Router, *audit.ChainSet) {
 	return router, chains
 }
 
-func TestListAuditEvents(t *testing.T) {
+// TestListAuditEventsReturnsOCSFEnvelope confirms the §4.4 line 232
+// audit-egress contract: the list endpoint returns OCSF v1.1.0
+// records wrapped in the envelope with `ocsfVersion` and
+// `translatorVersion`.
+func TestListAuditEventsReturnsOCSFEnvelope(t *testing.T) {
 	router, _ := newAuditQueryRouter(t)
 	// Generate some audit rows by creating tenants.
 	for _, id := range []string{"acme", "globex"} {
@@ -51,20 +57,52 @@ func TestListAuditEvents(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var resp struct {
-		TenantID    string                    `json:"tenantId"`
-		AuditEvents []admin.AuditEventPayload `json:"auditEvents"`
+	var resp admin.AuditEventEnvelope
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode envelope: %v", err)
 	}
-	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if len(resp.AuditEvents) != 2 {
-		t.Fatalf("audit events: got %d, want 2", len(resp.AuditEvents))
+	if resp.OCSFVersion != ocsf.Version {
+		t.Errorf("ocsfVersion = %q, want %q", resp.OCSFVersion, ocsf.Version)
 	}
-	if resp.AuditEvents[0].Seq != 1 || resp.AuditEvents[0].EventType != "admin.tenant.created" {
-		t.Errorf("event[0]: %+v", resp.AuditEvents[0])
+	if resp.TranslatorVersion != ocsf.TranslatorVersion {
+		t.Errorf("translatorVersion = %q, want %q", resp.TranslatorVersion, ocsf.TranslatorVersion)
+	}
+	if resp.TenantID != "platform" {
+		t.Errorf("tenantId = %q, want platform", resp.TenantID)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("items: got %d, want 2", len(resp.Items))
+	}
+	// Each item is a JSON OCSF record with the required keys.
+	var first map[string]any
+	if err := json.Unmarshal(resp.Items[0], &first); err != nil {
+		t.Fatalf("items[0] is not JSON: %v", err)
+	}
+	for _, key := range []string{"class_uid", "category_uid", "activity_id", "type_uid", "time", "severity_id", "metadata", "unmapped"} {
+		if _, ok := first[key]; !ok {
+			t.Errorf("items[0] missing required OCSF key %q", key)
+		}
+	}
+	// metadata.version matches the OCSF wire version pin.
+	meta, _ := first["metadata"].(map[string]any)
+	if meta["version"] != ocsf.Version {
+		t.Errorf("items[0].metadata.version = %v, want %q", meta["version"], ocsf.Version)
+	}
+	// unmapped.lenny_chain carries the chain extension fields so an
+	// external auditor can verify the chain from the OCSF record alone.
+	unmapped, _ := first["unmapped"].(map[string]any)
+	chain, _ := unmapped["lenny_chain"].(map[string]any)
+	if chain == nil {
+		t.Errorf("items[0].unmapped.lenny_chain missing")
+	}
+	if _, hasPrev := chain["prev_hash"]; !hasPrev {
+		t.Errorf("items[0].unmapped.lenny_chain.prev_hash missing")
 	}
 }
 
-func TestGetAuditEvent(t *testing.T) {
+// TestGetAuditEventReturnsOCSFEnvelope confirms the single-event
+// endpoint also returns the OCSF envelope.
+func TestGetAuditEventReturnsOCSFEnvelope(t *testing.T) {
 	router, _ := newAuditQueryRouter(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
 	rr := httptest.NewRecorder()
@@ -82,10 +120,18 @@ func TestGetAuditEvent(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var ev admin.AuditEventPayload
-	_ = json.Unmarshal(rr.Body.Bytes(), &ev)
-	if ev.Seq != 1 {
-		t.Errorf("seq: %d", ev.Seq)
+	var resp admin.AuditEventEnvelope
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if resp.OCSFVersion != ocsf.Version {
+		t.Errorf("ocsfVersion = %q, want %q", resp.OCSFVersion, ocsf.Version)
+	}
+	if resp.TranslatorVersion != ocsf.TranslatorVersion {
+		t.Errorf("translatorVersion = %q, want %q", resp.TranslatorVersion, ocsf.TranslatorVersion)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("items: got %d, want 1", len(resp.Items))
 	}
 }
 

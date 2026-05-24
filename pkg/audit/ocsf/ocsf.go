@@ -39,6 +39,19 @@ import (
 // ocsfVersion. There is no runtime-selectable dual-version emission.
 const Version = "1.1.0"
 
+// TranslatorVersion is the §4.4 line 232 / §11.7 / §25.9 OCSF
+// translator-implementation version surfaced on every audit-egress
+// response envelope as `translatorVersion`. The pair
+// (TranslatorVersion, Version) lets a consumer correlate a given
+// record's wire form with the exact mapping code that produced it; an
+// off-by-one in the mapping table would otherwise be invisible to a
+// SIEM whose records validate against the wire version alone. The
+// constant moves only when the mapping code changes its observable
+// output (a new payload-key route, a class_uid reassignment, a
+// severity bump); a refactor with byte-identical output keeps the
+// version pinned.
+const TranslatorVersion = "1"
+
 // productName / vendorName identify the emitting product in every
 // OCSF record's metadata.product block.
 const (
