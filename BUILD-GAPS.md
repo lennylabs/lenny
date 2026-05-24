@@ -1062,7 +1062,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** Eviction checkpoints have no preStop entry point; the tiered cap selection is unimplemented; `PreStopCapFallbackRateHigh` cannot fire; the entire eviction-fallback story relies on a hook that does not exist.
 - **Suggested resolution:** Add a `/internal/prestop` endpoint on the gateway, wire it into the gateway Pod spec's `lifecycle.preStop.httpGet`, implement tiered-cap selection per §10.1, and emit the catalog metrics.
 
-### - [ ] F-4.4.27 — `minio_outage_during_checkpoint_test.go` referenced but missing [Low] — OPEN
+### - [ ] F-4.4.27 — `minio_outage_during_checkpoint_test.go` referenced but missing [Low] — CLOSED
 - **Spec:** §4.4 contracts (eviction MinIO failure, partial manifest, total-loss) are listed in test groups.
 - **Evidence:** `tests/groups.subsets.yaml:192` declares `- tests/tier8_chaos/minio_outage_during_checkpoint_test.go`. `find tests -name "minio_outage*"` returns no file.
 - **Gap:** The Tier-8 chaos contract test for MinIO-outage-during-checkpoint never runs.
