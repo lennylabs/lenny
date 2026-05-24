@@ -1228,13 +1228,13 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** A deployer can install Lenny against a MinIO without SSE-S3 or SSE-KMS enabled, and the preflight does not catch it. The first T4 artifact write fails at runtime instead of at install time.
 - **Suggested resolution:** Add an `EncryptionAtRest` preflight that calls MinIO's `GetBucketEncryption` and asserts SSE is configured; fail the install when `complianceProfile` is regulated and SSE is not.
 
-### - [ ] F-4.5.18 — `Stat` after `SoftDelete` returns `ErrNotFound` — no `state` surface [Low] — OPEN
+### - [ ] F-4.5.18 — `Stat` after `SoftDelete` returns `ErrNotFound` — no `state` surface [Low] — CLOSED
 - **Spec:** §12.5 ll. 333-339 (the soft-delete + tombstone state machine).
 - **Evidence:** `pkg/blobstore/blobstore.go:253-267` `Stat` returns `ErrNotFound` for soft-deleted blobs, identical to the not-found path.
 - **Gap:** Callers cannot distinguish "tombstoned, retention not yet elapsed" from "never existed" via `Stat`. The catalog (F-4.5.5) carries the state explicitly but the blob-store interface does not surface it.
 - **Suggested resolution:** Optional: add a `StatIncludingTombstones(u URI) (BlobInfo, State, error)` method on the `Tombstoner` interface so the GC orchestrator can disambiguate.
 
-### - [ ] F-4.5.19 — No exponential-backoff retry on MinIO Put failures inside the blob store [Low] — OPEN
+### - [ ] F-4.5.19 — No exponential-backoff retry on MinIO Put failures inside the blob store [Low] — CLOSED
 - **Spec:** §12.5 ll. 282: "**MinIO unavailability during checkpoint:** If MinIO is unreachable during a checkpoint upload, the adapter retries with exponential backoff as described in [Section 4.4]."
 - **Evidence:** `pkg/blobstore/miniostore/miniostore.go:127-150` `Put` issues a single `PutObject` and returns the error directly on failure. `grep -rn "backoff\|retry" pkg/blobstore/` returns no hits.
 - **Gap:** The blob store has no retry; the spec assigns the retry responsibility to "the adapter" (the adapter side does carry retry, per §4.4), so the gap is on the seam between the gateway's checkpoint emitter and the blob store. If the gateway directly calls `Put` (e.g., during a session seal), no retry runs.
