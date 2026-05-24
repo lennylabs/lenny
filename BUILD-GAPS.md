@@ -3047,7 +3047,7 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 
 ### Findings
 
-### - [ ] F-5.1.1 — `allowedResourceClasses` field unmodeled in registry, admin, schema, and merge — High [Medium] — OPEN
+### - [x] F-5.1.1 — `allowedResourceClasses` field unmodeled in registry, admin, schema, and merge — High [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-5.1.2 — Both report a runtime CRD field unmodeled at the gateway boundary but for different fields (allowedResourceClasses vs supportedProviders).
 
@@ -3055,8 +3055,9 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Evidence:** Only `pkg/apis/lenny/v1/runtime_types.go:53` (`AllowedResourceClasses []string`) carries the field, on the Runtime CRD shape. `runtimestore.Runtime` (`pkg/gateway/runtimestore/runtimestore.go:31`), the Postgres `runtime_definitions` table (`migrations/0001_initial_schema.up.sql:43`), every subsequent column-adding migration (`migrations/0013_...0023_...`), the admin payload (`pkg/gateway/admin/runtimes.go:48` `RuntimePayload`), and the merge implementation (`pkg/gateway/runtimestore/merge.go`) all omit it. `validateDerivedRuntime` (`pkg/gateway/admin/runtimes.go:132`) cannot reject `allowedResourceClasses` on a derived runtime because the field is not in the payload to inspect.
 - **Gap:** The gateway has no record of which resource classes a runtime permits, so it cannot enforce the §5.1 subset constraint for derived runtimes and cannot reject session-creation requests that ask for a class the runtime does not allow. The CRD field is dropped at the controller boundary (no Runtime CRD reconciler; see F-5.1.17). The §17.6 reference-runtime catalog (`charts/lenny/templates/reference-runtimes.yaml:35-37`) ships `allowedResourceClasses` on the Runtime resource, but the field has nowhere to land in the gateway.
 - **Suggested resolution:** Add `AllowedResourceClasses []string` to `runtimestore.Runtime`, persist via a new migration, accept on `RuntimePayload` and `UpdateRuntimeRequest`, add to `Merge` as Prohibited with subset validation against base, and add the §5.1 cross-field rejection ("derived must be a subset of base") under a new `INVALID_DERIVED_RUNTIME` clause. The session-creation path must then reject `resourceClass` requests outside the runtime's set.
+- **Resolution:** Added `AllowedResourceClasses []string` to `runtimestore.Runtime` (cloned, merged as Prohibited so a derived runtime inherits the base set), persisted via migration 0069 (`allowed_resource_classes JSONB`), accepted on `RuntimePayload`/`UpdateRuntimeRequest`/OpenAPI runtime schema, and `validateDerivedRuntime`/`validateDerivedRuntimeUpdate` now reject a derived payload that sets it with `INVALID_DERIVED_RUNTIME`. The §5.1 pool-config subset constraint and a session-create `resourceClass` request field remain forward work (no `resourceClass` request surface exists on session creation yet). Resolved in commit 35d8fc4e.
 
-### - [ ] F-5.1.2 — `supportedProviders` field unmodeled in registry, admin, schema, and merge — High [Medium] — OPEN
+### - [x] F-5.1.2 — `supportedProviders` field unmodeled in registry, admin, schema, and merge — High [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-5.1.1 — Both report a runtime CRD field unmodeled at the gateway boundary but for different fields (allowedResourceClasses vs supportedProviders).
 
@@ -3064,6 +3065,7 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Evidence:** Only `pkg/apis/lenny/v1/runtime_types.go:58` (`SupportedProviders []string`) carries it on the CRD spec. `runtimestore.Runtime`, the Postgres schema, the admin payload, the bootstrap upsert, and `Merge` all omit it.
 - **Gap:** The §4.9 credential-leasing service has no runtime-side declared provider set to match against on session creation. The §5.1 minimum-configuration example (which explicitly lists `supportedProviders` as required) cannot be honored — the field silently disappears at the admin-API boundary. The §5.1 restrict-only merge rule cannot fire on derived runtimes.
 - **Suggested resolution:** Add `SupportedProviders []string` to the store, migration, payload, and merge (Override + derived-subset check). The §4.9 lease path must consult this field when matching a session's requested provider.
+- **Resolution:** Added `SupportedProviders []string` to `runtimestore.Runtime` (cloned, merged as Override so the base set applies when the derived runtime declares none), persisted via migration 0069 (`supported_providers JSONB`), accepted on `RuntimePayload`/`UpdateRuntimeRequest`/OpenAPI runtime schema, and flowed through the bootstrap upsert via the shared `runtimeFromPayload`. `validateDerivedRuntime`/`validateDerivedRuntimeUpdate` enforce the restrict-only subset rule (a derived entry absent from the base set is rejected with `INVALID_DERIVED_RUNTIME`). The §4.9 lease-path provider match is forward work (no provider-match path is wired on session creation yet). Resolved in commit 35d8fc4e.
 
 ### - [ ] F-5.1.3 — `credentialCapabilities` field unmodeled — High [Medium] — OPEN
 
@@ -3109,12 +3111,13 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Gap:** Operators cannot ship a runtime with sensible default pool sizing. The §5.2 fallback hierarchy is broken: there is no "runtime defaults" tier between platform defaults and pool overrides.
 - **Suggested resolution:** Add `DefaultPoolConfig` to the store with Override merge; the §5.2 pool resolver must consult it before falling back to platform defaults.
 
-### - [ ] F-5.1.9 — `allowSelfRecursion` field unmodeled in runtime registry — High [Medium] — OPEN
+### - [x] F-5.1.9 — `allowSelfRecursion` field unmodeled in runtime registry — High [Medium] — CLOSED
 
 - **Spec:** §5.1 standalone-runtime YAML (line 69) declares `allowSelfRecursion: false` and cross-references the §8.2 cycle-detection rule: "when true AND platform+DelegationPolicy agree, this runtime's `(runtime_name, pool_name)` identity may repeat in its own delegation lineage." The merge table (line 202) classifies it as **Override (restrict-only)**: "derived may set `false` when base is `true`; a derived value of `true` is rejected when the base is `false`. Security boundary. Gateway rejects registration with `INVALID_DERIVED_RUNTIME: allowSelfRecursion cannot widen base value` if derived `true` while base `false`."
 - **Evidence:** `pkg/delegation/cycle/cycle.go:111` defines `Settings.RuntimeAllowSelfRec bool` as the runtime-layer input to the §8.2 three-layer AND gate, and `pkg/delegation/cycle/cycle.go:212` evaluates `LayerRuntime` against it. There is no field on `runtimestore.Runtime`, no migration column, no admin payload entry, and `validateDerivedRuntime` does not implement the restrict-only check.
 - **Gap:** The §8.2 cycle-detection gate always sees `RuntimeAllowSelfRec = false` (the Go zero value) because there is no place to declare otherwise. Self-recursive runtimes cannot be configured. The §5.1 restrict-only merge cannot fire because there is no value to merge.
 - **Suggested resolution:** Add `AllowSelfRecursion bool` to `runtimestore.Runtime`, persist via migration, accept on the admin payload, implement the restrict-only merge rule (derived `true` rejected when base `false`), and wire the value into the §8.2 `Settings.RuntimeAllowSelfRec` evaluator.
+- **Resolution:** Added `AllowSelfRecursion bool` to `runtimestore.Runtime` (Override restrict-only in `Merge`), persisted via migration 0069 (`allow_self_recursion BOOLEAN`), accepted on `RuntimePayload`/`UpdateRuntimeRequest`/OpenAPI runtime schema, and `validateDerivedRuntime`/`validateDerivedRuntimeUpdate` reject a derived value of `true` when the base is `false` (`INVALID_DERIVED_RUNTIME: allowSelfRecursion cannot widen base value`). `delegation.Service` now resolves the target runtime via `runtimestore.Resolve` and feeds `AllowSelfRecursion` into `cycle.Settings.RuntimeAllowSelfRec`, wired through the gateway's `delegation.Options.Runtimes`. The platform/policy layers of the three-layer gate remain separately wired. Resolved in commit 35d8fc4e.
 
 ### - [ ] F-5.1.10 — `sharedAssets` field unmodeled — Medium [Medium] — OPEN
 
