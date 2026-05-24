@@ -440,3 +440,68 @@ func TestAgentPodStateClaimIdle(t *testing.T) {
 		}
 	})
 }
+
+// spec: 4.6.1
+// diagnosis: the §4.6.1 "mirror reconciliation on recovery" ReconcileAll
+// in pkg/agentpodstate/pgstore must converge the entire mirror in one
+// transaction across all pools: bulk-UPSERT every observed row keyed on
+// pod_id, and delete every row whose pod_id is absent from observed —
+// including rows for pools that no longer have any live Sandbox. An
+// empty observed set must clear the whole table.
+func TestAgentPodStateReconcileAll(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := agentpodstatepg.New(pg.Pool)
+	ctx := context.Background()
+
+	poolA := "pool-" + newUUID(t)[:8]
+	poolB := "pool-" + newUUID(t)[:8]
+
+	// Seed two pools via the per-pool Sync, the steady-state write path.
+	if err := store.Sync(ctx, poolA, []agentpodstate.PodState{
+		{PodID: poolA + "-1", PoolID: poolA, State: "idle"},
+		{PodID: poolA + "-2", PoolID: poolA, State: "warming"},
+	}); err != nil {
+		t.Fatalf("seed poolA: %v", err)
+	}
+	if err := store.Sync(ctx, poolB, []agentpodstate.PodState{
+		{PodID: poolB + "-1", PoolID: poolB, State: "idle"},
+	}); err != nil {
+		t.Fatalf("seed poolB: %v", err)
+	}
+
+	t.Run("converges every pool to the observed set", func(t *testing.T) {
+		// The authoritative Sandbox set after a failover: poolA-1 changed
+		// state, poolA-2 vanished, poolB has no live pods at all, and a new
+		// poolA-3 appeared.
+		observed := []agentpodstate.PodState{
+			{PodID: poolA + "-1", PoolID: poolA, State: "claimed"},
+			{PodID: poolA + "-3", PoolID: poolA, State: "idle"},
+		}
+		if err := store.ReconcileAll(ctx, observed); err != nil {
+			t.Fatalf("ReconcileAll: %v", err)
+		}
+
+		if row, ok := getPodRow(t, ctx, pg, poolA+"-1"); !ok || row.state != "claimed" {
+			t.Errorf("poolA-1 = (%+v, %v), want state claimed", row, ok)
+		}
+		if _, ok := getPodRow(t, ctx, pg, poolA+"-3"); !ok {
+			t.Error("poolA-3 (new) must be inserted")
+		}
+		if _, ok := getPodRow(t, ctx, pg, poolA+"-2"); ok {
+			t.Error("poolA-2 (vanished) must be pruned")
+		}
+		if n := poolRowCount(t, ctx, pg, poolB); n != 0 {
+			t.Errorf("poolB rows = %d, want 0 (no live Sandbox; cross-pool prune)", n)
+		}
+	})
+
+	t.Run("empty observed clears the whole table", func(t *testing.T) {
+		if err := store.ReconcileAll(ctx, nil); err != nil {
+			t.Fatalf("ReconcileAll(nil): %v", err)
+		}
+		if n := poolRowCount(t, ctx, pg, poolA); n != 0 {
+			t.Errorf("poolA rows after empty ReconcileAll = %d, want 0", n)
+		}
+	})
+}
