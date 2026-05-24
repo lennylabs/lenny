@@ -136,16 +136,17 @@ func (s *Store) openSecret(ctx context.Context, tenantID string, blob []byte, ke
 // last: scanCredential reads it into a local so the strictly-advancing
 // value is available without a Credential field for it. secret holds
 // the envelope ciphertext blob and secret_key_version the §4.9.1 KEK
-// version.
-const selectList = `tenant_id, ref, user_id, provider, secret, secret_key_version,
+// version. environment is the §4.3 line 202 scoping column.
+const selectList = `tenant_id, ref, user_id, provider, environment, secret, secret_key_version,
 	status, created_at, rotated_at, revoked_at, updated_at`
 
 // Register stores (or replaces) the credential for the
-// (tenant, user, provider) triple, returning the credential_ref.
-// Re-registering the same triple replaces the secret, refreshes
-// RotatedAt, and clears the revoked state per §15.1, mirroring
-// credentialstore.Memory.
-func (s *Store) Register(ctx context.Context, tenantID, userID string, provider credential.Provider, secret string) (credentialstore.Credential, error) {
+// (tenant, user, provider, environment) four-tuple, returning the
+// credential_ref. Re-registering the same four-tuple replaces the
+// secret, refreshes RotatedAt, and clears the revoked state per §15.1,
+// mirroring credentialstore.Memory.
+// spec: §4.3 line 202.
+func (s *Store) Register(ctx context.Context, tenantID, userID string, provider credential.Provider, environment, secret string) (credentialstore.Credential, error) {
 	if !provider.IsValid() {
 		return credentialstore.Credential{}, errors.New("credentialstore: unknown provider " + string(provider))
 	}
@@ -159,13 +160,14 @@ func (s *Store) Register(ctx context.Context, tenantID, userID string, provider 
 	txErr := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		now := time.Now().UTC().Truncate(time.Microsecond)
 
-		// Replace path: the (tenant, user, provider) triple already
-		// holds a credential. Lock the row, refresh the secret, and
-		// clear the revoked state, exactly like the in-memory store.
+		// Replace path: the (tenant, user, provider, environment)
+		// four-tuple already holds a credential. Lock the row, refresh
+		// the secret, and clear the revoked state, exactly like the
+		// in-memory store.
 		existing := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM credentials
-			 WHERE tenant_id = $1 AND user_id = $2 AND provider = $3 FOR UPDATE`,
-			tenantID, userID, string(provider))
+			 WHERE tenant_id = $1 AND user_id = $2 AND provider = $3 AND environment = $4 FOR UPDATE`,
+			tenantID, userID, string(provider), environment)
 		c, _, _, prevUpdated, err := scanCredential(existing)
 		if err == nil {
 			c.Secret = secret
@@ -190,19 +192,20 @@ func (s *Store) Register(ctx context.Context, tenantID, userID string, provider 
 
 		// Insert path: mint a fresh opaque ref and persist a new row.
 		c = credentialstore.Credential{
-			Ref:       "cred_" + randomHex(8),
-			TenantID:  tenantID,
-			UserID:    userID,
-			Provider:  provider,
-			Secret:    secret,
-			Status:    credentialstore.StatusActive,
-			CreatedAt: now,
+			Ref:         "cred_" + randomHex(8),
+			TenantID:    tenantID,
+			UserID:      userID,
+			Environment: environment,
+			Provider:    provider,
+			Secret:      secret,
+			Status:      credentialstore.StatusActive,
+			CreatedAt:   now,
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO credentials (
-			tenant_id, ref, user_id, provider, secret, secret_key_version, status,
+			tenant_id, ref, user_id, provider, environment, secret, secret_key_version, status,
 			created_at, rotated_at, revoked_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-			c.TenantID, c.Ref, c.UserID, string(c.Provider), secretBlob, keyVersion, string(c.Status),
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			c.TenantID, c.Ref, c.UserID, string(c.Provider), c.Environment, secretBlob, keyVersion, string(c.Status),
 			c.CreatedAt, pgtenant.NullTime(c.RotatedAt),
 			pgtenant.NullTime(c.RevokedAt), now); err != nil {
 			return err
@@ -418,7 +421,7 @@ func scanCredential(row pgx.Row) (cred credentialstore.Credential, secretBlob []
 		updated              time.Time
 	)
 	if err := row.Scan(
-		&c.TenantID, &c.Ref, &c.UserID, &provider, &blob, &version, &status,
+		&c.TenantID, &c.Ref, &c.UserID, &provider, &c.Environment, &blob, &version, &status,
 		&c.CreatedAt, &rotatedAt, &revokedAt, &updated,
 	); err != nil {
 		return credentialstore.Credential{}, nil, 0, time.Time{}, err

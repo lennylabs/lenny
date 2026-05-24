@@ -95,7 +95,7 @@ func TestRegisterRejectsBadProvider(t *testing.T) {
 
 func TestRotate(t *testing.T) {
 	srv, store := newCredServer(t)
-	c, _ := store.Register(nil, "acme", "alice", credential.ProviderGitHub, "old")
+	c, _ := store.Register(nil, "acme", "alice", credential.ProviderGitHub, "", "old")
 	body, _ := json.Marshal(credentialserver.RotateRequest{Secret: "new-secret"})
 	req := asUser(httptest.NewRequest(http.MethodPut, "/v1/credentials/"+c.Ref, bytes.NewReader(body)), "acme", "alice")
 	rr := httptest.NewRecorder()
@@ -111,7 +111,7 @@ func TestRotate(t *testing.T) {
 
 func TestRevoke(t *testing.T) {
 	srv, store := newCredServer(t)
-	c, _ := store.Register(nil, "acme", "alice", credential.ProviderGitHub, "x")
+	c, _ := store.Register(nil, "acme", "alice", credential.ProviderGitHub, "", "x")
 	req := asUser(httptest.NewRequest(http.MethodPost, "/v1/credentials/"+c.Ref+"/revoke", nil), "acme", "alice")
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
@@ -126,7 +126,7 @@ func TestRevoke(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	srv, store := newCredServer(t)
-	c, _ := store.Register(nil, "acme", "alice", credential.ProviderGitHub, "x")
+	c, _ := store.Register(nil, "acme", "alice", credential.ProviderGitHub, "", "x")
 	req := asUser(httptest.NewRequest(http.MethodDelete, "/v1/credentials/"+c.Ref, nil), "acme", "alice")
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
@@ -138,7 +138,7 @@ func TestDelete(t *testing.T) {
 func TestUserCannotTouchAnotherUsersCredential(t *testing.T) {
 	srv, store := newCredServer(t)
 	// alice registers a credential.
-	c, _ := store.Register(nil, "acme", "alice", credential.ProviderGitHub, "alice-secret")
+	c, _ := store.Register(nil, "acme", "alice", credential.ProviderGitHub, "", "alice-secret")
 	// bob (same tenant) tries to rotate / revoke / delete it.
 	for _, op := range []struct {
 		method, path string

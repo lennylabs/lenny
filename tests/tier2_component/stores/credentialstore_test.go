@@ -60,7 +60,7 @@ func TestCredentialStoreContract(t *testing.T) {
 
 	t.Run("register and get round-trip", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		c, err := store.Register(ctx, tenant, "alice", credential.ProviderAnthropicDirect, "sk-secret")
+		c, err := store.Register(ctx, tenant, "alice", credential.ProviderAnthropicDirect, "", "sk-secret")
 		if err != nil {
 			t.Fatalf("Register: %v", err)
 		}
@@ -89,18 +89,18 @@ func TestCredentialStoreContract(t *testing.T) {
 
 	t.Run("register rejects an unknown provider", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		if _, err := store.Register(ctx, tenant, "alice", credential.Provider("made-up"), "x"); err == nil {
+		if _, err := store.Register(ctx, tenant, "alice", credential.Provider("made-up"), "", "x"); err == nil {
 			t.Error("Register with an unknown provider should be rejected")
 		}
 	})
 
 	t.Run("re-register reuses the ref and replaces the secret", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		c1, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "secret-v1")
+		c1, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "secret-v1")
 		if err != nil {
 			t.Fatalf("first Register: %v", err)
 		}
-		c2, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "secret-v2")
+		c2, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "secret-v2")
 		if err != nil {
 			t.Fatalf("re-Register: %v", err)
 		}
@@ -122,14 +122,14 @@ func TestCredentialStoreContract(t *testing.T) {
 
 	t.Run("re-register reactivates a revoked credential", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "x")
+		c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "x")
 		if err != nil {
 			t.Fatalf("Register: %v", err)
 		}
 		if _, err := store.Revoke(ctx, tenant, c.Ref); err != nil {
 			t.Fatalf("Revoke: %v", err)
 		}
-		again, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "y")
+		again, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "y")
 		if err != nil {
 			t.Fatalf("re-Register: %v", err)
 		}
@@ -147,7 +147,7 @@ func TestCredentialStoreContract(t *testing.T) {
 		if _, err := store.Get(ctx, owner, "cred_missing"); !errors.Is(err, credentialstore.ErrNotFound) {
 			t.Errorf("Get missing: got %v, want ErrNotFound", err)
 		}
-		c, err := store.Register(ctx, owner, "alice", credential.ProviderGitHub, "x")
+		c, err := store.Register(ctx, owner, "alice", credential.ProviderGitHub, "", "x")
 		if err != nil {
 			t.Fatalf("Register: %v", err)
 		}
@@ -155,14 +155,14 @@ func TestCredentialStoreContract(t *testing.T) {
 			t.Errorf("cross-tenant Get: got %v, want ErrNotFound", err)
 		}
 		// The same triple under another tenant is independent.
-		if _, err := store.Register(ctx, intruder, "alice", credential.ProviderGitHub, "y"); err != nil {
+		if _, err := store.Register(ctx, intruder, "alice", credential.ProviderGitHub, "", "y"); err != nil {
 			t.Errorf("same triple, different tenant: got %v, want nil", err)
 		}
 	})
 
 	t.Run("rotate replaces the secret and refreshes RotatedAt", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "old")
+		c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "old")
 		if err != nil {
 			t.Fatalf("Register: %v", err)
 		}
@@ -187,7 +187,7 @@ func TestCredentialStoreContract(t *testing.T) {
 
 	t.Run("revoke marks the credential revoked", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "x")
+		c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "x")
 		if err != nil {
 			t.Fatalf("Register: %v", err)
 		}
@@ -209,7 +209,7 @@ func TestCredentialStoreContract(t *testing.T) {
 
 	t.Run("delete removes the row and frees the triple", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "x")
+		c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "x")
 		if err != nil {
 			t.Fatalf("Register: %v", err)
 		}
@@ -223,7 +223,7 @@ func TestCredentialStoreContract(t *testing.T) {
 			t.Errorf("Delete missing: got %v, want ErrNotFound", err)
 		}
 		// After delete the triple is free: re-register mints a fresh ref.
-		c2, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "y")
+		c2, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "y")
 		if err != nil {
 			t.Fatalf("re-Register after delete: %v", err)
 		}
@@ -234,13 +234,13 @@ func TestCredentialStoreContract(t *testing.T) {
 
 	t.Run("list is user-scoped and ref-ordered", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		if _, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "x"); err != nil {
+		if _, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", "x"); err != nil {
 			t.Fatalf("Register alice/github: %v", err)
 		}
-		if _, err := store.Register(ctx, tenant, "alice", credential.ProviderAWSBedrock, "y"); err != nil {
+		if _, err := store.Register(ctx, tenant, "alice", credential.ProviderAWSBedrock, "", "y"); err != nil {
 			t.Fatalf("Register alice/bedrock: %v", err)
 		}
-		if _, err := store.Register(ctx, tenant, "bob", credential.ProviderGitHub, "z"); err != nil {
+		if _, err := store.Register(ctx, tenant, "bob", credential.ProviderGitHub, "", "z"); err != nil {
 			t.Fatalf("Register bob/github: %v", err)
 		}
 		aliceCreds, err := store.List(ctx, tenant, "alice")
@@ -273,7 +273,7 @@ func TestCredentialStoreContract(t *testing.T) {
 	t.Run("list is tenant-scoped", func(t *testing.T) {
 		owner := freshTenant(t, ctx, pg)
 		intruder := freshTenant(t, ctx, pg)
-		if _, err := store.Register(ctx, owner, "alice", credential.ProviderGitHub, "x"); err != nil {
+		if _, err := store.Register(ctx, owner, "alice", credential.ProviderGitHub, "", "x"); err != nil {
 			t.Fatalf("Register: %v", err)
 		}
 		isolated, err := store.List(ctx, intruder, "alice")
@@ -326,7 +326,7 @@ func TestCredentialSecretCiphertextAtRest(t *testing.T) {
 	tenant := freshTenant(t, ctx, pg)
 
 	const plaintext = "sk-ant-PLAINTEXT-upstream-api-key-DO-NOT-LEAK"
-	c, err := store.Register(ctx, tenant, "alice", credential.ProviderAnthropicDirect, plaintext)
+	c, err := store.Register(ctx, tenant, "alice", credential.ProviderAnthropicDirect, "", plaintext)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -402,11 +402,11 @@ func TestCredentialSecretPerTenantKEK(t *testing.T) {
 	acme := freshTenant(t, ctx, pg)
 	globex := freshTenant(t, ctx, pg)
 
-	acmeCred, err := store.Register(ctx, acme, "alice", credential.ProviderGitHub, "acme-secret")
+	acmeCred, err := store.Register(ctx, acme, "alice", credential.ProviderGitHub, "", "acme-secret")
 	if err != nil {
 		t.Fatalf("Register acme: %v", err)
 	}
-	globexCred, err := store.Register(ctx, globex, "alice", credential.ProviderGitHub, "globex-secret")
+	globexCred, err := store.Register(ctx, globex, "alice", credential.ProviderGitHub, "", "globex-secret")
 	if err != nil {
 		t.Fatalf("Register globex: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestCredentialSecretWithStubKMS(t *testing.T) {
 	tenant := freshTenant(t, ctx, pg)
 
 	const plaintext = "sk-stub-kms-secret"
-	c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, plaintext)
+	c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, "", plaintext)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}

@@ -234,7 +234,7 @@ func TestConnectorOAuthCallbackHappyPath(t *testing.T) {
 	}
 
 	// The exchanged tokens must be stored for (acme, github, alice).
-	cred, err := f.creds.Get(context.Background(), "acme", "github", "alice@acme.com")
+	cred, err := f.creds.Get(context.Background(), "acme", "github", "alice@acme.com", "")
 	if err != nil {
 		t.Fatalf("connector credential not stored: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestConnectorOAuthCallbackPublicClient(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("public-client callback status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	if _, err := f.creds.Get(context.Background(), "acme", "github", "alice@acme.com"); err != nil {
+	if _, err := f.creds.Get(context.Background(), "acme", "github", "alice@acme.com", ""); err != nil {
 		t.Fatalf("public-client credential not stored: %v", err)
 	}
 }

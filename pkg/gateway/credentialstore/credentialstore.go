@@ -47,9 +47,12 @@ type Credential struct {
 	// credential by.
 	Ref string
 
-	// TenantID + UserID scope the credential.
-	TenantID string
-	UserID   string
+	// TenantID + UserID + Environment scope the credential per §4.3
+	// line 202. Environment is the §10.6 environment name; the empty
+	// string selects the no-environment scope (the default).
+	TenantID    string
+	UserID      string
+	Environment string
 
 	// Provider is the §4.9 credential provider.
 	Provider credential.Provider
@@ -72,12 +75,18 @@ var (
 )
 
 // Store is the §4.9 user-credential registry contract.
+//
+// spec: §4.3 line 202 — credentials are scoped by (tenant, user,
+// provider, environment). Register takes the environment as a
+// distinct argument; the unique constraint widens to (tenant, user,
+// provider, environment) so the same triple can hold one credential
+// per environment.
 type Store interface {
 	// Register stores (or replaces) the credential for the
-	// (tenant, user, provider) triple, returning the credential_ref.
-	// Re-registering the same triple replaces the secret and
-	// refreshes RotatedAt per §15.1.
-	Register(ctx context.Context, tenantID, userID string, provider credential.Provider, secret string) (Credential, error)
+	// (tenant, user, provider, environment) four-tuple, returning the
+	// credential_ref. Re-registering the same four-tuple replaces the
+	// secret and refreshes RotatedAt per §15.1.
+	Register(ctx context.Context, tenantID, userID string, provider credential.Provider, environment, secret string) (Credential, error)
 
 	// Get returns the credential by ref, scoped to the tenant.
 	Get(ctx context.Context, tenantID, ref string) (Credential, error)
@@ -117,19 +126,23 @@ func NewMemory(clock func() time.Time) *Memory {
 }
 
 func refKey(tenantID, ref string) string { return tenantID + "/" + ref }
-func tripleKey(tenantID, userID string, p credential.Provider) string {
-	return tenantID + "/" + userID + "/" + string(p)
+
+// scopeKey is the in-memory map key for the §4.3 line 202
+// (tenant, user, provider, environment) scope four-tuple.
+func scopeKey(tenantID, userID string, p credential.Provider, environment string) string {
+	return tenantID + "/" + userID + "/" + string(p) + "/" + environment
 }
 
 // Register implements Store.
-func (m *Memory) Register(_ context.Context, tenantID, userID string, provider credential.Provider, secret string) (Credential, error) {
+// spec: §4.3 line 202.
+func (m *Memory) Register(_ context.Context, tenantID, userID string, provider credential.Provider, environment, secret string) (Credential, error) {
 	if !provider.IsValid() {
 		return Credential{}, errors.New("credentialstore: unknown provider " + string(provider))
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.clock()
-	tk := tripleKey(tenantID, userID, provider)
+	tk := scopeKey(tenantID, userID, provider, environment)
 	if existingRef, ok := m.refByTriple[tk]; ok {
 		// Replace — re-register refreshes the secret + RotatedAt.
 		c := m.byRef[refKey(tenantID, existingRef)]
@@ -142,13 +155,14 @@ func (m *Memory) Register(_ context.Context, tenantID, userID string, provider c
 	}
 	ref := "cred_" + randomHex(8)
 	c := Credential{
-		Ref:       ref,
-		TenantID:  tenantID,
-		UserID:    userID,
-		Provider:  provider,
-		Secret:    secret,
-		Status:    StatusActive,
-		CreatedAt: now,
+		Ref:         ref,
+		TenantID:    tenantID,
+		UserID:      userID,
+		Environment: environment,
+		Provider:    provider,
+		Secret:      secret,
+		Status:      StatusActive,
+		CreatedAt:   now,
 	}
 	m.byRef[refKey(tenantID, ref)] = c
 	m.refByTriple[tk] = ref
@@ -222,7 +236,7 @@ func (m *Memory) Delete(_ context.Context, tenantID, ref string) error {
 		return ErrNotFound
 	}
 	delete(m.byRef, k)
-	delete(m.refByTriple, tripleKey(tenantID, c.UserID, c.Provider))
+	delete(m.refByTriple, scopeKey(tenantID, c.UserID, c.Provider, c.Environment))
 	return nil
 }
 

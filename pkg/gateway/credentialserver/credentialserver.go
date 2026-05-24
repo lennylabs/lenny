@@ -42,18 +42,24 @@ func (s *Server) Handler() http.Handler {
 
 // CredentialPayload is the §15.1 wire shape — secret-free.
 type CredentialPayload struct {
-	Ref       string `json:"ref"`
-	Provider  string `json:"provider"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt,omitempty"`
-	RotatedAt string `json:"rotatedAt,omitempty"`
-	RevokedAt string `json:"revokedAt,omitempty"`
+	Ref         string `json:"ref"`
+	Provider    string `json:"provider"`
+	Environment string `json:"environment,omitempty"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"createdAt,omitempty"`
+	RotatedAt   string `json:"rotatedAt,omitempty"`
+	RevokedAt   string `json:"revokedAt,omitempty"`
 }
 
 // RegisterRequest is the §15.1 POST /v1/credentials body.
+//
+// Environment is the §4.3 line 202 environment scoping field. An empty
+// value selects the no-environment scope; a non-empty value scopes the
+// credential to that §10.6 environment.
 type RegisterRequest struct {
-	Provider string `json:"provider"`
-	Secret   string `json:"secret"`
+	Provider    string `json:"provider"`
+	Environment string `json:"environment,omitempty"`
+	Secret      string `json:"secret"`
 }
 
 // RotateRequest is the §15.1 PUT /v1/credentials/{ref} body.
@@ -63,9 +69,10 @@ type RotateRequest struct {
 
 func toPayload(c credentialstore.Credential) CredentialPayload {
 	out := CredentialPayload{
-		Ref:      c.Ref,
-		Provider: string(c.Provider),
-		Status:   string(c.Status),
+		Ref:         c.Ref,
+		Provider:    string(c.Provider),
+		Environment: c.Environment,
+		Status:      string(c.Status),
 	}
 	if !c.CreatedAt.IsZero() {
 		out.CreatedAt = c.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
@@ -109,7 +116,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", "provider is not a recognised §4.9 provider")
 		return
 	}
-	c, err := s.store.Register(r.Context(), tenant, user, provider, req.Secret)
+	c, err := s.store.Register(r.Context(), tenant, user, provider, req.Environment, req.Secret)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return

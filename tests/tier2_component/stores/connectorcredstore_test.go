@@ -81,7 +81,7 @@ func TestTokenStoreContract(t *testing.T) {
 		if err := store.Put(ctx, cred); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		got, err := store.Get(ctx, "acme", "github", "alice@acme.com")
+		got, err := store.Get(ctx, "acme", "github", "alice@acme.com", "")
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -178,12 +178,12 @@ func TestTokenStoreContract(t *testing.T) {
 		if err := store.Put(ctx, cred); err != nil {
 			t.Fatalf("first Put: %v", err)
 		}
-		got1, _ := store.Get(ctx, "acme", "github", "dave@acme.com")
+		got1, _ := store.Get(ctx, "acme", "github", "dave@acme.com", "")
 		cred.AccessToken = "gho_DaveV2"
 		if err := store.Put(ctx, cred); err != nil {
 			t.Fatalf("second Put: %v", err)
 		}
-		got2, _ := store.Get(ctx, "acme", "github", "dave@acme.com")
+		got2, _ := store.Get(ctx, "acme", "github", "dave@acme.com", "")
 		if got2.AccessToken != "gho_DaveV2" {
 			t.Errorf("AccessToken after re-Put = %q, want gho_DaveV2", got2.AccessToken)
 		}
@@ -207,7 +207,7 @@ func TestTokenStoreContract(t *testing.T) {
 			t.Fatalf("Put: %v", err)
 		}
 		// Reading eve under acme's tenant must miss.
-		_, err := store.Get(ctx, "acme", "github", "eve@globex.com")
+		_, err := store.Get(ctx, "acme", "github", "eve@globex.com", "")
 		if !errors.Is(err, connectorcredstore.ErrNotFound) {
 			t.Errorf("cross-tenant Get = %v, want ErrNotFound", err)
 		}
@@ -224,10 +224,10 @@ func TestTokenStoreContract(t *testing.T) {
 		if err := store.Put(ctx, cred); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		if err := store.Delete(ctx, "acme", "github", "frank@acme.com"); err != nil {
+		if err := store.Delete(ctx, "acme", "github", "frank@acme.com", ""); err != nil {
 			t.Errorf("Delete: %v", err)
 		}
-		if err := store.Delete(ctx, "acme", "github", "frank@acme.com"); !errors.Is(err, connectorcredstore.ErrNotFound) {
+		if err := store.Delete(ctx, "acme", "github", "frank@acme.com", ""); !errors.Is(err, connectorcredstore.ErrNotFound) {
 			t.Errorf("second Delete = %v, want ErrNotFound", err)
 		}
 	})

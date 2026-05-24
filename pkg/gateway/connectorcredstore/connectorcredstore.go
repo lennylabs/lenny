@@ -49,12 +49,16 @@ var (
 // marshalled to the wire — handlers project ConnectorCredential into a
 // token-free payload.
 type ConnectorCredential struct {
-	// TenantID, ConnectorID, and UserID are the §9.3 triple the
-	// credential is keyed by. ConnectorID is the connectorstore
-	// registry id; UserID is the OAuth-completing user.
+	// TenantID, ConnectorID, UserID, and Environment are the §4.3
+	// line 202 four-tuple the credential is keyed by. ConnectorID is
+	// the connectorstore registry id; UserID is the OAuth-completing
+	// user; Environment is the §10.6 environment name (empty string
+	// scopes the row to "no environment" / the default access path).
+	// spec: §4.3 line 202.
 	TenantID    string
 	ConnectorID string
 	UserID      string
+	Environment string
 
 	// AccessToken is the OAuth access token. NEVER serialised.
 	AccessToken string
@@ -85,19 +89,24 @@ type ConnectorCredential struct {
 func (c ConnectorCredential) HasToken() bool { return c.AccessToken != "" }
 
 // Store is the §9.3 connector-credential registry contract.
+//
+// spec: §4.3 line 202 — credentials are scoped by (tenant, connector,
+// user, environment). The Environment argument carries the §10.6
+// environment name; the empty string selects the no-environment scope.
 type Store interface {
-	// Put stores (or replaces) the credential for the
-	// (tenant, connector, user) triple. A second Put for the same
-	// triple replaces the token material and advances UpdatedAt — the
-	// path a re-authorization or a refreshed token takes.
+	// Put stores (or replaces) the credential for the four-tuple
+	// (tenant, connector, user, environment). A second Put for the
+	// same four-tuple replaces the token material and advances
+	// UpdatedAt — the path a re-authorization or a refreshed token
+	// takes.
 	Put(ctx context.Context, cred ConnectorCredential) error
 
-	// Get returns the credential for the triple, or ErrNotFound.
-	Get(ctx context.Context, tenantID, connectorID, userID string) (ConnectorCredential, error)
+	// Get returns the credential for the four-tuple, or ErrNotFound.
+	Get(ctx context.Context, tenantID, connectorID, userID, environment string) (ConnectorCredential, error)
 
-	// Delete removes the credential for the triple. Deleting an absent
-	// triple returns ErrNotFound.
-	Delete(ctx context.Context, tenantID, connectorID, userID string) error
+	// Delete removes the credential for the four-tuple. Deleting an
+	// absent four-tuple returns ErrNotFound.
+	Delete(ctx context.Context, tenantID, connectorID, userID, environment string) error
 
 	// ListByConnector returns every stored credential for one connector
 	// within a tenant, ordered by user id. Token material is populated;
@@ -111,22 +120,28 @@ type Store interface {
 	// stored refresh token (providers that rotate the refresh token
 	// emit a new one; providers that do not leave RefreshToken empty
 	// and the previously stored refresh token survives). UpdatedAt
-	// advances. The (tenant, connector, user) triple is the lookup
-	// key; ErrNotFound is returned when the triple has no row.
+	// advances. The four-tuple (tenant, connector, user, environment)
+	// is the lookup key; ErrNotFound is returned when the row is
+	// absent.
 	//
 	// spec: §4.3 line 200 (refresh tokens stored encrypted),
+	// §4.3 line 202 (environment-scoped credentials),
 	// §9.3 lines 152–155 (connector token lifecycle).
 	RotateAccessToken(ctx context.Context, rot RotationRecord) error
 }
 
 // RotationRecord carries the new token material produced by an RFC 6749
-// §6 refresh-token grant. The (tenant, connector, user) triple is the
-// lookup key.
+// §6 refresh-token grant. The four-tuple (tenant, connector, user,
+// environment) is the lookup key.
+// spec: §4.3 line 202.
 type RotationRecord struct {
-	// TenantID, ConnectorID, and UserID identify the row to rotate.
+	// TenantID, ConnectorID, UserID, and Environment identify the row
+	// to rotate. Environment is the §10.6 environment name; empty
+	// scopes to "no environment".
 	TenantID    string
 	ConnectorID string
 	UserID      string
+	Environment string
 
 	// AccessToken is the freshly obtained access token. Required.
 	AccessToken string
@@ -149,10 +164,10 @@ type RotationRecord struct {
 	ExpiresAt time.Time
 }
 
-// tripleKey is the in-memory map key for the (tenant, connector, user)
-// triple.
-func tripleKey(tenantID, connectorID, userID string) string {
-	return tenantID + "\x00" + connectorID + "\x00" + userID
+// fourKey is the in-memory map key for the (tenant, connector, user,
+// environment) four-tuple. spec: §4.3 line 202.
+func fourKey(tenantID, connectorID, userID, environment string) string {
+	return tenantID + "\x00" + connectorID + "\x00" + userID + "\x00" + environment
 }
 
 // Memory is the in-memory Store implementation. It is safe for
@@ -189,7 +204,7 @@ func (m *Memory) Put(_ context.Context, cred ConnectorCredential) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.clock()
-	k := tripleKey(cred.TenantID, cred.ConnectorID, cred.UserID)
+	k := fourKey(cred.TenantID, cred.ConnectorID, cred.UserID, cred.Environment)
 	if prev, ok := m.creds[k]; ok {
 		cred.CreatedAt = prev.CreatedAt
 	} else if cred.CreatedAt.IsZero() {
@@ -201,10 +216,10 @@ func (m *Memory) Put(_ context.Context, cred ConnectorCredential) error {
 }
 
 // Get implements Store.
-func (m *Memory) Get(_ context.Context, tenantID, connectorID, userID string) (ConnectorCredential, error) {
+func (m *Memory) Get(_ context.Context, tenantID, connectorID, userID, environment string) (ConnectorCredential, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	c, ok := m.creds[tripleKey(tenantID, connectorID, userID)]
+	c, ok := m.creds[fourKey(tenantID, connectorID, userID, environment)]
 	if !ok {
 		return ConnectorCredential{}, ErrNotFound
 	}
@@ -212,10 +227,10 @@ func (m *Memory) Get(_ context.Context, tenantID, connectorID, userID string) (C
 }
 
 // Delete implements Store.
-func (m *Memory) Delete(_ context.Context, tenantID, connectorID, userID string) error {
+func (m *Memory) Delete(_ context.Context, tenantID, connectorID, userID, environment string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k := tripleKey(tenantID, connectorID, userID)
+	k := fourKey(tenantID, connectorID, userID, environment)
 	if _, ok := m.creds[k]; !ok {
 		return ErrNotFound
 	}
@@ -233,11 +248,17 @@ func (m *Memory) ListByConnector(_ context.Context, tenantID, connectorID string
 			out = append(out, c)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UserID != out[j].UserID {
+			return out[i].UserID < out[j].UserID
+		}
+		return out[i].Environment < out[j].Environment
+	})
 	return out, nil
 }
 
-// RotateAccessToken implements Store. spec: §4.3 line 200, §9.3.
+// RotateAccessToken implements Store. spec: §4.3 line 200, §4.3 line
+// 202, §9.3.
 func (m *Memory) RotateAccessToken(_ context.Context, rot RotationRecord) error {
 	switch {
 	case rot.TenantID == "":
@@ -251,7 +272,7 @@ func (m *Memory) RotateAccessToken(_ context.Context, rot RotationRecord) error 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k := tripleKey(rot.TenantID, rot.ConnectorID, rot.UserID)
+	k := fourKey(rot.TenantID, rot.ConnectorID, rot.UserID, rot.Environment)
 	cred, ok := m.creds[k]
 	if !ok {
 		return ErrNotFound

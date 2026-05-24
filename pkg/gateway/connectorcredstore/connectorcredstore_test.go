@@ -31,7 +31,7 @@ func TestMemoryPutAndGet(t *testing.T) {
 	if err := store.Put(context.Background(), cred); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	got, err := store.Get(context.Background(), "acme", "github", "alice@acme.com")
+	got, err := store.Get(context.Background(), "acme", "github", "alice@acme.com", "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestMemoryPutAndGet(t *testing.T) {
 
 func TestMemoryGetMissing(t *testing.T) {
 	store := connectorcredstore.NewMemory(nil)
-	_, err := store.Get(context.Background(), "acme", "github", "nobody@acme.com")
+	_, err := store.Get(context.Background(), "acme", "github", "nobody@acme.com", "")
 	if !errors.Is(err, connectorcredstore.ErrNotFound) {
 		t.Fatalf("Get of a missing triple: got %v, want ErrNotFound", err)
 	}
@@ -74,7 +74,7 @@ func TestMemoryPutReplacesAndPreservesCreatedAt(t *testing.T) {
 	if err := store.Put(context.Background(), base); err != nil {
 		t.Fatalf("second Put: %v", err)
 	}
-	got, err := store.Get(context.Background(), "acme", "github", "alice@acme.com")
+	got, err := store.Get(context.Background(), "acme", "github", "alice@acme.com", "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -111,13 +111,13 @@ func TestMemoryDelete(t *testing.T) {
 	if err := store.Put(context.Background(), cred); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if err := store.Delete(context.Background(), "acme", "github", "alice@acme.com"); err != nil {
+	if err := store.Delete(context.Background(), "acme", "github", "alice@acme.com", ""); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := store.Get(context.Background(), "acme", "github", "alice@acme.com"); !errors.Is(err, connectorcredstore.ErrNotFound) {
+	if _, err := store.Get(context.Background(), "acme", "github", "alice@acme.com", ""); !errors.Is(err, connectorcredstore.ErrNotFound) {
 		t.Fatalf("Get after Delete: got %v, want ErrNotFound", err)
 	}
-	if err := store.Delete(context.Background(), "acme", "github", "alice@acme.com"); !errors.Is(err, connectorcredstore.ErrNotFound) {
+	if err := store.Delete(context.Background(), "acme", "github", "alice@acme.com", ""); !errors.Is(err, connectorcredstore.ErrNotFound) {
 		t.Fatalf("Delete of an absent triple: got %v, want ErrNotFound", err)
 	}
 }
@@ -144,7 +144,7 @@ func TestMemoryRotateAccessTokenKeepsPriorRefreshToken(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RotateAccessToken: %v", err)
 	}
-	got, err := store.Get(context.Background(), "acme", "github", "alice@acme.com")
+	got, err := store.Get(context.Background(), "acme", "github", "alice@acme.com", "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestMemoryRotateAccessTokenReplacesRotatedRefreshToken(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RotateAccessToken: %v", err)
 	}
-	got, _ := store.Get(context.Background(), "acme", "github", "alice@acme.com")
+	got, _ := store.Get(context.Background(), "acme", "github", "alice@acme.com", "")
 	if got.RefreshToken != "rt-new" {
 		t.Errorf("RefreshToken = %q, want rt-new (rotated)", got.RefreshToken)
 	}
@@ -242,5 +242,61 @@ func TestMemoryListByConnector(t *testing.T) {
 	// Ordered by user id.
 	if rows[0].UserID != "alice@acme.com" || rows[1].UserID != "bob@acme.com" {
 		t.Fatalf("ListByConnector order: %q, %q", rows[0].UserID, rows[1].UserID)
+	}
+}
+
+// spec: §4.3 line 202 — environment is part of the credential scoping
+// four-tuple. The same (tenant, connector, user) can hold one
+// credential per environment; lookup by another environment misses.
+func TestMemoryEnvironmentScopedCredentials(t *testing.T) {
+	store := connectorcredstore.NewMemory(nil)
+	ctx := context.Background()
+	makePut := func(env, token string) connectorcredstore.ConnectorCredential {
+		return connectorcredstore.ConnectorCredential{
+			TenantID: "acme", ConnectorID: "github", UserID: "alice@acme.com",
+			Environment: env,
+			AccessToken: token,
+			TokenType:   "Bearer",
+		}
+	}
+	if err := store.Put(ctx, makePut("", "at-noenv")); err != nil {
+		t.Fatalf("Put noenv: %v", err)
+	}
+	if err := store.Put(ctx, makePut("staging", "at-staging")); err != nil {
+		t.Fatalf("Put staging: %v", err)
+	}
+	if err := store.Put(ctx, makePut("production", "at-prod")); err != nil {
+		t.Fatalf("Put production: %v", err)
+	}
+	for _, want := range []struct {
+		env, token string
+	}{
+		{"", "at-noenv"},
+		{"staging", "at-staging"},
+		{"production", "at-prod"},
+	} {
+		got, err := store.Get(ctx, "acme", "github", "alice@acme.com", want.env)
+		if err != nil {
+			t.Fatalf("Get env=%q: %v", want.env, err)
+		}
+		if got.AccessToken != want.token || got.Environment != want.env {
+			t.Errorf("Get env=%q = %+v, want token=%q env=%q",
+				want.env, got, want.token, want.env)
+		}
+	}
+	// Lookup of a non-registered environment misses cleanly.
+	if _, err := store.Get(ctx, "acme", "github", "alice@acme.com", "review"); !errors.Is(err, connectorcredstore.ErrNotFound) {
+		t.Errorf("Get of unregistered env: got %v, want ErrNotFound", err)
+	}
+	// Delete is environment-scoped: deleting "staging" leaves the
+	// other rows intact.
+	if err := store.Delete(ctx, "acme", "github", "alice@acme.com", "staging"); err != nil {
+		t.Fatalf("Delete staging: %v", err)
+	}
+	if _, err := store.Get(ctx, "acme", "github", "alice@acme.com", "staging"); !errors.Is(err, connectorcredstore.ErrNotFound) {
+		t.Errorf("Get staging after Delete: got %v, want ErrNotFound", err)
+	}
+	if _, err := store.Get(ctx, "acme", "github", "alice@acme.com", "production"); err != nil {
+		t.Errorf("production credential survived Delete staging: %v", err)
 	}
 }

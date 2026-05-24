@@ -64,11 +64,12 @@ type FlowContext struct {
 	// ConnectorID is the §9.3 ConnectorDefinition the flow authorizes.
 	ConnectorID string
 
-	// TenantID + UserID scope the resulting connector credential. §9.3
-	// stores tokens "for that connector+user"; the tenant scopes the
-	// credential row.
-	TenantID string
-	UserID   string
+	// TenantID + UserID + Environment scope the resulting connector
+	// credential per §4.3 line 202. The empty Environment selects the
+	// no-environment scope.
+	TenantID    string
+	UserID      string
+	Environment string
 
 	// SessionID is the §9.3 "initiating session ID" the state is bound
 	// to. May be empty when the flow is initiated outside a session.

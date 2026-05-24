@@ -199,10 +199,19 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 	if ttl <= 0 {
 		ttl = connectoroauth.DefaultStateTTL
 	}
+	// §4.3 line 202 environment scoping. The caller names the active
+	// environment via the `environment` query parameter; an empty value
+	// stores the credential under the no-environment scope (the default
+	// access path). The credential row's environment column is bound to
+	// the flow context here and re-read on the callback so the
+	// (tenant, connector, user, environment) four-tuple is consistent
+	// across the authorize/callback boundary.
+	environment := strings.TrimSpace(req.URL.Query().Get("environment"))
 	flow := connectoroauth.FlowContext{
 		ConnectorID:  conn.ID,
 		TenantID:     principal.TenantID,
 		UserID:       principal.Subject,
+		Environment:  environment,
 		SessionID:    principal.SessionID,
 		CodeVerifier: pkce.Verifier,
 		RedirectURI:  r.connectorOAuth.CallbackURL,
@@ -348,6 +357,7 @@ func (r *Router) handleConnectorOAuthCallback(w http.ResponseWriter, req *http.R
 		TenantID:     flow.TenantID,
 		ConnectorID:  flow.ConnectorID,
 		UserID:       flow.UserID,
+		Environment:  flow.Environment,
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
 		TokenType:    tok.TokenType,

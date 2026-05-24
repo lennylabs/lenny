@@ -113,8 +113,9 @@ func accessTokenHash(token string) []byte {
 }
 
 // Put implements connectorcredstore.Store. The (tenant, connector,
-// user) triple is the upsert key; a re-store advances UpdatedAt and
-// rewrites the token blobs and the hash.
+// user, environment) four-tuple is the upsert key per §4.3 line 202;
+// a re-store advances UpdatedAt and rewrites the token blobs and the
+// hash.
 func (s *Store) Put(ctx context.Context, cred connectorcredstore.ConnectorCredential) error {
 	if err := validate(cred); err != nil {
 		return err
@@ -144,8 +145,8 @@ func (s *Store) Put(ctx context.Context, cred connectorcredstore.ConnectorCreden
 		var prevCreated, prevUpdated time.Time
 		row := tx.QueryRow(ctx,
 			`SELECT created_at, updated_at FROM connector_credentials
-			 WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
-			cred.TenantID, cred.ConnectorID, cred.UserID)
+			 WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3 AND environment = $4`,
+			cred.TenantID, cred.ConnectorID, cred.UserID, cred.Environment)
 		err := row.Scan(&prevCreated, &prevUpdated)
 		var created time.Time
 		switch {
@@ -160,13 +161,13 @@ func (s *Store) Put(ctx context.Context, cred connectorcredstore.ConnectorCreden
 		expires := pgtenant.NullTime(cred.ExpiresAt)
 		_, err = tx.Exec(ctx, `
 			INSERT INTO connector_credentials (
-				tenant_id, connector_id, user_id,
+				tenant_id, connector_id, user_id, environment,
 				access_token_blob, access_token_key_version, access_token_hash,
 				refresh_token_blob, refresh_token_key_version,
 				token_type, scopes, expires_at,
 				created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13)
-			ON CONFLICT (tenant_id, connector_id, user_id) DO UPDATE SET
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
+			ON CONFLICT (tenant_id, connector_id, user_id, environment) DO UPDATE SET
 				access_token_blob = EXCLUDED.access_token_blob,
 				access_token_key_version = EXCLUDED.access_token_key_version,
 				access_token_hash = EXCLUDED.access_token_hash,
@@ -176,7 +177,7 @@ func (s *Store) Put(ctx context.Context, cred connectorcredstore.ConnectorCreden
 				scopes = EXCLUDED.scopes,
 				expires_at = EXCLUDED.expires_at,
 				updated_at = EXCLUDED.updated_at`,
-			cred.TenantID, cred.ConnectorID, cred.UserID,
+			cred.TenantID, cred.ConnectorID, cred.UserID, cred.Environment,
 			accBlob, accVer, hash,
 			refBlob, refVerPtr,
 			cred.TokenType, string(scopesJSON), expires,
@@ -186,7 +187,8 @@ func (s *Store) Put(ctx context.Context, cred connectorcredstore.ConnectorCreden
 }
 
 // Get implements connectorcredstore.Store.
-func (s *Store) Get(ctx context.Context, tenantID, connectorID, userID string) (connectorcredstore.ConnectorCredential, error) {
+// spec: §4.3 line 202.
+func (s *Store) Get(ctx context.Context, tenantID, connectorID, userID, environment string) (connectorcredstore.ConnectorCredential, error) {
 	var out connectorcredstore.ConnectorCredential
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		var (
@@ -201,8 +203,8 @@ func (s *Store) Get(ctx context.Context, tenantID, connectorID, userID string) (
 			       refresh_token_blob, refresh_token_key_version,
 			       token_type, scopes, expires_at, created_at, updated_at
 			FROM connector_credentials
-			WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
-			tenantID, connectorID, userID)
+			WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3 AND environment = $4`,
+			tenantID, connectorID, userID, environment)
 		err := row.Scan(&accBlob, &accVer, &hash,
 			&refBlob, &refVer,
 			&out.TokenType, &scopesJSON, &expiresAt, &out.CreatedAt, &out.UpdatedAt)
@@ -215,6 +217,7 @@ func (s *Store) Get(ctx context.Context, tenantID, connectorID, userID string) (
 		out.TenantID = tenantID
 		out.ConnectorID = connectorID
 		out.UserID = userID
+		out.Environment = environment
 		access, err := s.open(ctx, tenantID, accBlob, accVer)
 		if err != nil {
 			return err
@@ -244,12 +247,13 @@ func (s *Store) Get(ctx context.Context, tenantID, connectorID, userID string) (
 }
 
 // Delete implements connectorcredstore.Store.
-func (s *Store) Delete(ctx context.Context, tenantID, connectorID, userID string) error {
+// spec: §4.3 line 202.
+func (s *Store) Delete(ctx context.Context, tenantID, connectorID, userID, environment string) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			DELETE FROM connector_credentials
-			WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
-			tenantID, connectorID, userID)
+			WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3 AND environment = $4`,
+			tenantID, connectorID, userID, environment)
 		if err != nil {
 			return err
 		}
@@ -261,17 +265,18 @@ func (s *Store) Delete(ctx context.Context, tenantID, connectorID, userID string
 }
 
 // ListByConnector implements connectorcredstore.Store.
+// spec: §4.3 line 202.
 func (s *Store) ListByConnector(ctx context.Context, tenantID, connectorID string) ([]connectorcredstore.ConnectorCredential, error) {
 	var out []connectorcredstore.ConnectorCredential
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT user_id,
+			SELECT user_id, environment,
 			       access_token_blob, access_token_key_version,
 			       refresh_token_blob, refresh_token_key_version,
 			       token_type, scopes, expires_at, created_at, updated_at
 			FROM connector_credentials
 			WHERE tenant_id = $1 AND connector_id = $2
-			ORDER BY user_id`, tenantID, connectorID)
+			ORDER BY user_id, environment`, tenantID, connectorID)
 		if err != nil {
 			return err
 		}
@@ -285,7 +290,7 @@ func (s *Store) ListByConnector(ctx context.Context, tenantID, connectorID strin
 				scopesJSON       []byte
 				expiresAt        *time.Time
 			)
-			if err := rows.Scan(&cred.UserID,
+			if err := rows.Scan(&cred.UserID, &cred.Environment,
 				&accBlob, &accVer,
 				&refBlob, &refVer,
 				&cred.TokenType, &scopesJSON, &expiresAt, &cred.CreatedAt, &cred.UpdatedAt); err != nil {
@@ -375,8 +380,8 @@ func (s *Store) RotateAccessToken(ctx context.Context, rot connectorcredstore.Ro
 		var prevUpdated time.Time
 		row := tx.QueryRow(ctx,
 			`SELECT updated_at FROM connector_credentials
-			 WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
-			rot.TenantID, rot.ConnectorID, rot.UserID)
+			 WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3 AND environment = $4`,
+			rot.TenantID, rot.ConnectorID, rot.UserID, rot.Environment)
 		err := row.Scan(&prevUpdated)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return connectorcredstore.ErrNotFound
@@ -400,18 +405,18 @@ func (s *Store) RotateAccessToken(ctx context.Context, rot connectorcredstore.Ro
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE connector_credentials
-			SET access_token_blob = $4,
-				access_token_key_version = $5,
-				access_token_hash = $6,
-				refresh_token_blob = COALESCE($7, refresh_token_blob),
-				refresh_token_key_version = COALESCE($8, refresh_token_key_version),
-				token_type = COALESCE($9, token_type),
-				scopes = COALESCE($10::jsonb, scopes),
-				expires_at = COALESCE($11, expires_at),
-				updated_at = $12,
-				rotated_at = $12
-			WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3`,
-			rot.TenantID, rot.ConnectorID, rot.UserID,
+			SET access_token_blob = $5,
+				access_token_key_version = $6,
+				access_token_hash = $7,
+				refresh_token_blob = COALESCE($8, refresh_token_blob),
+				refresh_token_key_version = COALESCE($9, refresh_token_key_version),
+				token_type = COALESCE($10, token_type),
+				scopes = COALESCE($11::jsonb, scopes),
+				expires_at = COALESCE($12, expires_at),
+				updated_at = $13,
+				rotated_at = $13
+			WHERE tenant_id = $1 AND connector_id = $2 AND user_id = $3 AND environment = $4`,
+			rot.TenantID, rot.ConnectorID, rot.UserID, rot.Environment,
 			accBlob, accVer, hash,
 			refBlob, refVerPtr,
 			tokenType, scopesJSON, expires,
@@ -429,10 +434,13 @@ func (s *Store) RotateAccessToken(ctx context.Context, rot connectorcredstore.Ro
 // FindByAccessTokenHash returns the credential whose access token
 // hashes to hash, or ErrNotFound. The §13.3 revocation hot path uses
 // it to resolve a presented bearer to a stored row without
-// decrypting every credential under the tenant.
+// decrypting every credential under the tenant. The matched row's
+// Environment is populated on the result so callers can audit the
+// scope the credential belongs to. spec: §4.3 line 202.
 func (s *Store) FindByAccessTokenHash(ctx context.Context, tenantID string, hash []byte) (connectorcredstore.ConnectorCredential, error) {
 	var (
 		connectorID, userID  string
+		environment          string
 		accBlob, refBlob     []byte
 		accVer               int
 		refVer               *int
@@ -443,14 +451,14 @@ func (s *Store) FindByAccessTokenHash(ctx context.Context, tenantID string, hash
 	)
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
-			SELECT connector_id, user_id,
+			SELECT connector_id, user_id, environment,
 			       access_token_blob, access_token_key_version,
 			       refresh_token_blob, refresh_token_key_version,
 			       token_type, scopes, expires_at, created_at, updated_at
 			FROM connector_credentials
 			WHERE tenant_id = $1 AND access_token_hash = $2
 			LIMIT 1`, tenantID, hash)
-		err := row.Scan(&connectorID, &userID,
+		err := row.Scan(&connectorID, &userID, &environment,
 			&accBlob, &accVer,
 			&refBlob, &refVer,
 			&tokenType, &scopesJSON, &expiresAt, &createdAt, &updatedAt)
@@ -466,6 +474,7 @@ func (s *Store) FindByAccessTokenHash(ctx context.Context, tenantID string, hash
 		TenantID:    tenantID,
 		ConnectorID: connectorID,
 		UserID:      userID,
+		Environment: environment,
 		TokenType:   tokenType,
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,

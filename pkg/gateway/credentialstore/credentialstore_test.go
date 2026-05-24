@@ -20,7 +20,7 @@ func newStore() *credentialstore.Memory {
 
 func TestRegisterAndGet(t *testing.T) {
 	s := newStore()
-	c, err := s.Register(context.Background(), "acme", "alice", credential.ProviderAnthropicDirect, "sk-secret")
+	c, err := s.Register(context.Background(), "acme", "alice", credential.ProviderAnthropicDirect, "", "sk-secret")
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestRegisterAndGet(t *testing.T) {
 
 func TestRegisterRejectsUnknownProvider(t *testing.T) {
 	s := newStore()
-	_, err := s.Register(context.Background(), "acme", "alice", credential.Provider("made-up"), "x")
+	_, err := s.Register(context.Background(), "acme", "alice", credential.Provider("made-up"), "", "x")
 	if err == nil {
 		t.Error("unknown provider should be rejected")
 	}
@@ -46,8 +46,8 @@ func TestRegisterRejectsUnknownProvider(t *testing.T) {
 
 func TestReRegisterReplacesSecret(t *testing.T) {
 	s := newStore()
-	c1, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "secret-v1")
-	c2, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "secret-v2")
+	c1, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "secret-v1")
+	c2, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "secret-v2")
 	// Same triple → same ref, new secret.
 	if c1.Ref != c2.Ref {
 		t.Errorf("re-register should reuse ref: %q vs %q", c1.Ref, c2.Ref)
@@ -60,9 +60,9 @@ func TestReRegisterReplacesSecret(t *testing.T) {
 
 func TestListUserScoped(t *testing.T) {
 	s := newStore()
-	_, _ = s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "x")
-	_, _ = s.Register(context.Background(), "acme", "alice", credential.ProviderAWSBedrock, "y")
-	_, _ = s.Register(context.Background(), "acme", "bob", credential.ProviderGitHub, "z")
+	_, _ = s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "x")
+	_, _ = s.Register(context.Background(), "acme", "alice", credential.ProviderAWSBedrock, "", "y")
+	_, _ = s.Register(context.Background(), "acme", "bob", credential.ProviderGitHub, "", "z")
 
 	aliceCreds, _ := s.List(context.Background(), "acme", "alice")
 	if len(aliceCreds) != 2 {
@@ -76,7 +76,7 @@ func TestListUserScoped(t *testing.T) {
 
 func TestRotate(t *testing.T) {
 	s := newStore()
-	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "old")
+	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "old")
 	rotated, err := s.Rotate(context.Background(), "acme", c.Ref, "new")
 	if err != nil {
 		t.Fatalf("Rotate: %v", err)
@@ -88,7 +88,7 @@ func TestRotate(t *testing.T) {
 
 func TestRevoke(t *testing.T) {
 	s := newStore()
-	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "x")
+	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "x")
 	revoked, err := s.Revoke(context.Background(), "acme", c.Ref)
 	if err != nil {
 		t.Fatalf("Revoke: %v", err)
@@ -100,7 +100,7 @@ func TestRevoke(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	s := newStore()
-	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "x")
+	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "x")
 	if err := s.Delete(context.Background(), "acme", c.Ref); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestDelete(t *testing.T) {
 		t.Errorf("Get after Delete: %v", err)
 	}
 	// After delete, re-register creates a fresh ref (triple freed).
-	c2, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "y")
+	c2, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "y")
 	if c2.Ref == c.Ref {
 		t.Error("re-register after delete should mint a fresh ref")
 	}
@@ -116,7 +116,7 @@ func TestDelete(t *testing.T) {
 
 func TestGetCrossTenantIsolation(t *testing.T) {
 	s := newStore()
-	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "x")
+	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "x")
 	if _, err := s.Get(context.Background(), "globex", c.Ref); !errors.Is(err, credentialstore.ErrNotFound) {
 		t.Errorf("cross-tenant Get should be ErrNotFound: %v", err)
 	}
@@ -126,5 +126,42 @@ func TestGetMissing(t *testing.T) {
 	s := newStore()
 	if _, err := s.Get(context.Background(), "acme", "cred_missing"); !errors.Is(err, credentialstore.ErrNotFound) {
 		t.Errorf("Get missing: %v", err)
+	}
+}
+
+// TestRegisterEnvironmentScopedCredentials covers the §4.3 line 202
+// environment scoping: the same (tenant, user, provider) triple can
+// hold one credential per environment. Registering with environment
+// "staging" and again with environment "production" yields two
+// independent refs and secrets; the "" no-environment scope is also
+// independent.
+// spec: §4.3 line 202.
+func TestRegisterEnvironmentScopedCredentials(t *testing.T) {
+	s := newStore()
+	ctx := context.Background()
+	noEnv, _ := s.Register(ctx, "acme", "alice", credential.ProviderGitHub, "", "no-env-secret")
+	staging, _ := s.Register(ctx, "acme", "alice", credential.ProviderGitHub, "staging", "staging-secret")
+	prod, _ := s.Register(ctx, "acme", "alice", credential.ProviderGitHub, "production", "prod-secret")
+	if noEnv.Ref == staging.Ref || staging.Ref == prod.Ref || noEnv.Ref == prod.Ref {
+		t.Fatalf("environment-scoped Register collapsed to one ref: noEnv=%q staging=%q prod=%q",
+			noEnv.Ref, staging.Ref, prod.Ref)
+	}
+	gotStaging, _ := s.Get(ctx, "acme", staging.Ref)
+	if gotStaging.Environment != "staging" || gotStaging.Secret != "staging-secret" {
+		t.Errorf("staging credential = %+v, want environment=staging secret=staging-secret", gotStaging)
+	}
+	gotProd, _ := s.Get(ctx, "acme", prod.Ref)
+	if gotProd.Environment != "production" || gotProd.Secret != "prod-secret" {
+		t.Errorf("production credential = %+v, want environment=production secret=prod-secret", gotProd)
+	}
+	// Re-registering the same (tenant, user, provider, environment)
+	// four-tuple replaces the secret and reuses the ref.
+	staging2, _ := s.Register(ctx, "acme", "alice", credential.ProviderGitHub, "staging", "staging-v2")
+	if staging2.Ref != staging.Ref {
+		t.Errorf("re-register reused: got ref %q, want %q", staging2.Ref, staging.Ref)
+	}
+	got2, _ := s.Get(ctx, "acme", staging2.Ref)
+	if got2.Secret != "staging-v2" {
+		t.Errorf("re-registered secret = %q, want staging-v2", got2.Secret)
 	}
 }
