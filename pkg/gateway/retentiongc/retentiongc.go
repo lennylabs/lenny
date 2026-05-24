@@ -35,6 +35,20 @@ type Artifact struct {
 	Delete ArtifactDeleter
 }
 
+// MetricsSink receives the §12.5 ll. 321 retention-GC metric signals
+// (`lenny_gc_runs_total`, `lenny_gc_artifacts_deleted`,
+// `lenny_gc_errors_total`, `lenny_gc_duration_seconds`). The gateway
+// wires it to the corresponding `gatewaymetrics.Metrics` emitters; the
+// minimal/in-memory gateway leaves it nil and the sweep keeps working.
+//
+// spec: §12.5 line 321.
+type MetricsSink interface {
+	IncGCRun(outcome string)
+	AddGCArtifactsDeleted(store string, n int)
+	IncGCError(store string)
+	ObserveGCDuration(seconds float64)
+}
+
 // TenantLister enumerates the tenants the sweep covers.
 type TenantLister interface {
 	ListTenants(ctx context.Context) ([]string, error)
@@ -54,6 +68,7 @@ type Collector struct {
 	artifacts []Artifact
 	interval  time.Duration
 	clock     func() time.Time
+	metrics   MetricsSink
 }
 
 // Options configures a Collector. A zero field selects its default.
@@ -62,6 +77,9 @@ type Options struct {
 	Interval time.Duration
 	// Clock overrides time.Now.
 	Clock func() time.Time
+	// Metrics, when set, receives the §12.5 ll. 321 retention-GC
+	// observability signals (runs/artifacts/errors/duration).
+	Metrics MetricsSink
 }
 
 // New returns a Collector. artifacts is the ordered set of per-session
@@ -73,6 +91,7 @@ func New(store sessionstore.Store, tenants TenantLister, artifacts []Artifact, o
 		artifacts: append([]Artifact(nil), artifacts...),
 		interval:  opts.Interval,
 		clock:     opts.Clock,
+		metrics:   opts.Metrics,
 	}
 	if c.interval <= 0 {
 		c.interval = DefaultSweepInterval
@@ -95,9 +114,27 @@ func eligible(s sessionstore.Session, now time.Time) bool {
 
 // Tick runs one sweep at now and returns the count of sessions whose
 // artifacts it collected.
+//
+// On entry and exit the Collector emits the §12.5 ll. 321 retention-GC
+// observability signals when a MetricsSink is configured:
+//   - `lenny_gc_duration_seconds` observes wall-clock sweep duration.
+//   - `lenny_gc_runs_total` increments with outcome `success` or `error`.
+//   - `lenny_gc_artifacts_deleted` increments per per-store success,
+//     `lenny_gc_errors_total` increments per per-store failure.
+//
+// spec: §12.5 line 321.
 func (c *Collector) Tick(ctx context.Context, now time.Time) (int, error) {
+	start := c.clock()
+	defer func() {
+		if c.metrics != nil {
+			c.metrics.ObserveGCDuration(c.clock().Sub(start).Seconds())
+		}
+	}()
 	tenants, err := c.tenants.ListTenants(ctx)
 	if err != nil {
+		if c.metrics != nil {
+			c.metrics.IncGCRun("error")
+		}
 		return 0, err
 	}
 	collected := 0
@@ -105,8 +142,14 @@ func (c *Collector) Tick(ctx context.Context, now time.Time) (int, error) {
 		n, err := c.sweepTenant(ctx, tenant, now)
 		collected += n
 		if err != nil {
+			if c.metrics != nil {
+				c.metrics.IncGCRun("error")
+			}
 			return collected, err
 		}
+	}
+	if c.metrics != nil {
+		c.metrics.IncGCRun("success")
 	}
 	return collected, nil
 }
@@ -132,8 +175,15 @@ func (c *Collector) sweepTenant(ctx context.Context, tenant string, now time.Tim
 			continue
 		}
 		for _, a := range c.artifacts {
-			if _, err := a.Delete(ctx, tenant, row.ID); err != nil {
+			removed, err := a.Delete(ctx, tenant, row.ID)
+			if err != nil {
+				if c.metrics != nil {
+					c.metrics.IncGCError(a.Name)
+				}
 				return collected, fmt.Errorf("retentiongc: %s DeleteBySession(%s): %w", a.Name, row.ID, err)
+			}
+			if c.metrics != nil && removed > 0 {
+				c.metrics.AddGCArtifactsDeleted(a.Name, removed)
 			}
 		}
 		// Clear the snapshot reference and retention deadline so the

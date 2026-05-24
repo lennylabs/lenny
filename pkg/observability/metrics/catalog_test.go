@@ -126,6 +126,13 @@ var spec161Metrics = []string{
 	"lenny_session_eviction_total_loss_total", "lenny_network_policy_cidr_drift_total",
 	"lenny_billing_redis_stream_oldest_entry_age_seconds", "lenny_otlp_export_tls_handshake_total",
 	"lenny_ops_admin_api_tls_handshake_total",
+	// §12.5 line 321 — retention GC metrics.
+	"lenny_gc_runs_total", "lenny_gc_artifacts_deleted", "lenny_gc_errors_total",
+	"lenny_gc_duration_seconds",
+	// §12.5 line 291 — drain readiness check counter.
+	"lenny_drain_readiness_checks_total",
+	// §12.8 line 739 — legal-hold checkpoint-gap reconciler counter.
+	"lenny_legal_hold_checkpoint_gaps_total",
 }
 
 func TestMetricCatalogIsNonEmpty(t *testing.T) {

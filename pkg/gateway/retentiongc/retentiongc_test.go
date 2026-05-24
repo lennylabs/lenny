@@ -172,3 +172,99 @@ func TestTickPropagatesDeleterError(t *testing.T) {
 		t.Error("Tick should propagate an artifact-deleter error")
 	}
 }
+
+// fakeMetricsSink records every §12.5 line 321 retention-GC metric
+// signal the Collector emits so tests can assert wiring.
+type fakeMetricsSink struct {
+	runs      []string
+	deleted   map[string]int
+	errors    []string
+	durations []float64
+}
+
+func (s *fakeMetricsSink) IncGCRun(outcome string) {
+	s.runs = append(s.runs, outcome)
+}
+
+func (s *fakeMetricsSink) AddGCArtifactsDeleted(store string, n int) {
+	if s.deleted == nil {
+		s.deleted = map[string]int{}
+	}
+	s.deleted[store] += n
+}
+
+func (s *fakeMetricsSink) IncGCError(store string) {
+	s.errors = append(s.errors, store)
+}
+
+func (s *fakeMetricsSink) ObserveGCDuration(seconds float64) {
+	s.durations = append(s.durations, seconds)
+}
+
+// TestTickEmitsSuccessMetrics asserts a clean sweep increments
+// `lenny_gc_runs_total{outcome="success"}` once, attributes deleted
+// artifacts to each per-store adapter, and observes a non-negative
+// duration.
+//
+// spec: §12.5 line 321.
+func TestTickEmitsSuccessMetrics(t *testing.T) {
+	store := memstore.New()
+	seed(t, store, sessionstore.Session{ID: "sess_old", RetentionExpiresAt: gcClock.Add(-time.Hour)})
+	transcripts := &recordingArtifact{name: "transcripts"}
+	blobs := &recordingArtifact{name: "artifacts"}
+	sink := &fakeMetricsSink{}
+	c := retentiongc.New(store, retentiongc.StaticTenants{"acme"},
+		[]retentiongc.Artifact{transcripts.artifact(), blobs.artifact()},
+		retentiongc.Options{Metrics: sink})
+
+	if _, err := c.Tick(context.Background(), gcClock); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got := sink.runs; len(got) != 1 || got[0] != "success" {
+		t.Errorf("runs = %v, want [success]", got)
+	}
+	if got := sink.deleted["transcripts"]; got != 1 {
+		t.Errorf("transcripts deleted = %d, want 1", got)
+	}
+	if got := sink.deleted["artifacts"]; got != 1 {
+		t.Errorf("artifacts deleted = %d, want 1", got)
+	}
+	if len(sink.errors) != 0 {
+		t.Errorf("errors = %v, want []", sink.errors)
+	}
+	if len(sink.durations) != 1 {
+		t.Errorf("duration observations = %d, want 1", len(sink.durations))
+	}
+}
+
+// TestTickEmitsErrorMetrics asserts a per-store deleter failure flips
+// the sweep outcome to `error` and increments
+// `lenny_gc_errors_total{store=...}` for the failing adapter.
+//
+// spec: §12.5 line 321.
+func TestTickEmitsErrorMetrics(t *testing.T) {
+	store := memstore.New()
+	seed(t, store, sessionstore.Session{ID: "sess_e", RetentionExpiresAt: gcClock.Add(-time.Hour)})
+	failing := retentiongc.Artifact{
+		Name: "broken",
+		Delete: func(context.Context, string, string) (int, error) {
+			return 0, errors.New("store down")
+		},
+	}
+	sink := &fakeMetricsSink{}
+	c := retentiongc.New(store, retentiongc.StaticTenants{"acme"},
+		[]retentiongc.Artifact{failing}, retentiongc.Options{Metrics: sink})
+
+	if _, err := c.Tick(context.Background(), gcClock); err == nil {
+		t.Fatal("Tick should propagate an artifact-deleter error")
+	}
+	if got := sink.runs; len(got) != 1 || got[0] != "error" {
+		t.Errorf("runs = %v, want [error]", got)
+	}
+	if got := sink.errors; len(got) != 1 || got[0] != "broken" {
+		t.Errorf("errors = %v, want [broken]", got)
+	}
+	if len(sink.durations) != 1 {
+		t.Errorf("duration observations = %d, want 1", len(sink.durations))
+	}
+}

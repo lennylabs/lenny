@@ -2014,7 +2014,10 @@ func main() {
 		} else if be, ok := blobs.(sessionArtifactDeleter); ok {
 			arts = append(arts, retentiongc.Artifact{Name: "artifacts", Delete: be.DeleteBySession})
 		}
-		retGC := retentiongc.New(sessions, tenantsLister{tenants}, arts, retentiongc.Options{Clock: clockinject.Now})
+		retGC := retentiongc.New(sessions, tenantsLister{tenants}, arts, retentiongc.Options{
+			Clock:   clockinject.Now,
+			Metrics: gwMetrics,
+		})
 		go retGC.Run(watchdogCtx, func(collected int, err error) {
 			if err != nil {
 				log.Printf("lenny-gateway: retention-GC sweep error: %v", err)

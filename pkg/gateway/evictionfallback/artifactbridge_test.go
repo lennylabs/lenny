@@ -42,6 +42,12 @@ func (r *recordingCatalog) ListBySession(context.Context, string, string) ([]art
 	return nil, nil
 }
 func (r *recordingCatalog) SetLegalHold(context.Context, string, bool) error { return nil }
+func (r *recordingCatalog) IsLegalHeldAt(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (r *recordingCatalog) SessionsWithLegalHoldAndCheckpoints(context.Context) ([]artifactcatalog.SessionRef, error) {
+	return nil, nil
+}
 
 // TestCatalogBridgeRecordsEvictionContextRow verifies the bridge
 // stamps `artifact_type = eviction_context` and forwards the URI /
