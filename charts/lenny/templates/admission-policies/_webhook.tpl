@@ -52,6 +52,7 @@ spec:
             - --tenancy-mode={{ $.Values.tenancy.mode }}
             - --dev-mode={{ $.Values.global.devMode }}
             - --gateway-drain-readiness-url=http://lenny-gateway.{{ $.Release.Namespace }}.svc:{{ $.Values.gateway.internalPort }}/internal/drain-readiness
+            - --gateway-drain-audit-url=http://lenny-gateway.{{ $.Release.Namespace }}.svc:{{ $.Values.gateway.internalPort }}/internal/audit/node-drain-forced
             - --registry-require-digest={{ $.Values.platform.registry.requireDigest }}
           ports:
             - name: https

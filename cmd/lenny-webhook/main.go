@@ -45,6 +45,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -55,6 +57,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	obsmetrics "github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
 // buildScheme assembles the scheme the admission client uses to decode
@@ -76,7 +79,33 @@ func buildScheme() *runtime.Scheme {
 // Decider, nil when cosign verification is disabled in the chart;
 // requireDigest is the §13.1 platform.registry.requireDigest flag the
 // registry-digest route enforces.
-func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool) *http.ServeMux {
+// newWebhookMetrics constructs a private Prometheus registry holding
+// the metric vectors the lenny-webhook binary owns. The
+// lenny_drain_readiness_checks_total counter lands here so the §12.5
+// line 291 metric surfaces on the webhook's own /metrics scrape target
+// even before any traffic reaches the gateway.
+func newWebhookMetrics() (*prometheus.Registry, *prometheus.CounterVec, error) {
+	reg := prometheus.NewRegistry()
+	drain, err := obsmetrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_drain_readiness_checks_total",
+		Help: "Drain readiness admission decisions (§12.5 line 291) by outcome.",
+	}, []string{"outcome"})
+	if err != nil {
+		return nil, nil, err
+	}
+	reg.MustRegister(drain)
+	return reg, drain, nil
+}
+
+// drainCounterSink adapts a Prometheus CounterVec to the
+// DrainReadinessMetricsSink interface.
+type drainCounterSink struct{ vec *prometheus.CounterVec }
+
+func (s drainCounterSink) IncDrainReadinessCheck(outcome string) {
+	s.vec.WithLabelValues(outcome).Inc()
+}
+
+func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
@@ -89,8 +118,16 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 		podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName,
 	)))
 	mux.Handle("/direct-mode-isolation", webhook.Handler(webhook.DirectModeIsolation(tenancyMode, devMode)))
+	// §12.5 line 291 — every drain-readiness decision increments the
+	// per-outcome counter, and a drain-force override fires a
+	// synchronous §16.7 node.drain.forced audit append via the gateway
+	// audit endpoint. If the audit POST fails the webhook denies the
+	// eviction (fail-closed §11.7).
 	mux.Handle("/drain-readiness", webhook.Handler(webhook.DrainReadiness(
-		reader, webhook.HTTPDrainProbe{URL: drainReadinessURL}, logForcedDrain,
+		reader,
+		webhook.HTTPDrainProbe{URL: drainReadinessURL},
+		drainSink,
+		webhook.HTTPForcedDrainAuditSink{URL: drainAuditURL},
 	)))
 	// §12.8 data-residency-validator: a nil TenantRegionResolver leaves
 	// inheritance to the gateway path; the webhook then validates each
@@ -127,6 +164,11 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	if metricsReg != nil {
+		// §12.5 line 291 — expose lenny_drain_readiness_checks_total on
+		// the webhook's own /metrics scrape target.
+		mux.Handle("/metrics", promhttp.HandlerFor(metricsReg, promhttp.HandlerOpts{}))
+	}
 	return mux
 }
 
@@ -147,15 +189,6 @@ func parseRegions(csv string) []string {
 	return out
 }
 
-// logForcedDrain records a §12.5 forced node drain. The drain-readiness
-// webhook admits the eviction because the node carries the
-// lenny.dev/drain-force override; §12.5 calls for a node.drain.forced
-// critical audit event, surfaced here as a log line until the webhook
-// gains an audit sink.
-func logForcedDrain(podNamespace, podName string) {
-	log.Printf("lenny-drain-readiness: forced drain admitted for pod %s/%s — node carries lenny.dev/drain-force",
-		podNamespace, podName)
-}
 
 // buildCosignDecider constructs the §5.2 cosign image-signature
 // Decider. It returns nil when cosign verification is disabled, leaving
@@ -209,6 +242,8 @@ func main() {
 		"platform global.devMode. When true the direct-mode-isolation webhook admits every template, matching the §4.9 development-mode allowance.")
 	drainReadinessURL := flag.String("gateway-drain-readiness-url", os.Getenv("LENNY_GATEWAY_DRAIN_READINESS_URL"),
 		"gateway GET /internal/drain-readiness endpoint the §12.5 drain-readiness webhook probes before admitting a node-drain pod eviction.")
+	drainAuditURL := flag.String("gateway-drain-audit-url", os.Getenv("LENNY_GATEWAY_DRAIN_AUDIT_URL"),
+		"gateway POST /internal/audit/node-drain-forced endpoint the §12.5 drain-readiness webhook calls on a drain-force override admission.")
 	storageRegions := flag.String("storage-regions", os.Getenv("LENNY_STORAGE_REGIONS"),
 		"comma-separated list of regions declared in the storage.regions Helm map. The §12.8 data-residency-validator webhook rejects, fail-closed, any resource whose resolved dataResidencyRegion is not in this set.")
 	cosignEnabled := flag.Bool("cosign-verify", os.Getenv("LENNY_COSIGN_VERIFY") == "true",
@@ -239,9 +274,13 @@ func main() {
 		log.Fatalf("lenny-webhook: build cluster client: %v", err)
 	}
 
+	metricsReg, drainCounter, err := newWebhookMetrics()
+	if err != nil {
+		log.Fatalf("lenny-webhook: build metrics: %v", err)
+	}
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, declaredRegions, cosignDecider, *requireDigest),
+		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, *drainAuditURL, declaredRegions, cosignDecider, *requireDigest, metricsReg, drainCounterSink{vec: drainCounter}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

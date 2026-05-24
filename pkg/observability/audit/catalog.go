@@ -73,6 +73,12 @@ const (
 
 	// §17.2 — admission-plane feature-flag downgrade acknowledgement.
 	EventDeploymentFeatureFlagDowngradeAcknowledged EventType = "deployment.feature_flag_downgrade_acknowledged"
+
+	// §12.5 line 291 / §16.7 — drain-force override audit. The
+	// lenny-drain-readiness webhook emits this event when a node
+	// carries the lenny.dev/drain-force: "true" override and the
+	// eviction is admitted despite a degraded artifact store.
+	EventNodeDrainForced EventType = "node.drain.forced"
 )
 
 // The §16.7 / §25.4 lenny-ops remediation-lock and escalation audit
@@ -204,6 +210,7 @@ var catalog = []EventType{
 	EventAdminImpersonationStarted, EventAdminImpersonationEnded,
 	EventComplianceProfileDecommissioned,
 	EventDeploymentFeatureFlagDowngradeAcknowledged,
+	EventNodeDrainForced,
 
 	EventRemediationLockAcquired, EventRemediationLockExtended, EventRemediationLockReleased,
 	EventRemediationLockExpired, EventRemediationLockStolen, EventRemediationLockSplitBrainDetected,

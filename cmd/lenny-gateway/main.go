@@ -1809,6 +1809,21 @@ func main() {
 	// for the process-local in-memory store.
 	mux.Handle("GET /internal/drain-readiness", &drainreadiness.Handler{Prober: blobProbe})
 
+	// ----- §12.5 line 291 node.drain.forced audit endpoint (unauthenticated) -----
+	// The webhook POSTs here on a drain-force override admission so the
+	// §16.7 audit event lands in the per-tenant §11.7 hash chain. The
+	// endpoint sits on the gateway's internal port (same NetworkPolicy
+	// scope as drain-readiness) and is unauthenticated at the HTTP layer
+	// because the webhook's egress NetworkPolicy is the only path that
+	// can reach it.
+	if auditAppender != nil {
+		mux.Handle("POST /internal/audit/node-drain-forced", &drainreadiness.ForcedDrainHandler{
+			Appender:       auditAppender,
+			Metrics:        gwMetrics,
+			PlatformTenant: "platform",
+		})
+	}
+
 	// ----- §4.4 / §10.1 preStop drain hook (unauthenticated) -----
 	// Kubernetes invokes this via lifecycle.preStop.httpGet when a
 	// gateway pod is scheduled for termination. The hook reads the

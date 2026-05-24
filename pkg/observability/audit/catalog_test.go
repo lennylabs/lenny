@@ -37,6 +37,8 @@ var spec167AuditEvents = []string{
 	"admin.impersonation_ended",
 	"compliance.profile_decommissioned",
 	"deployment.feature_flag_downgrade_acknowledged",
+	// §12.5 line 291 — drain-force override audit event.
+	"node.drain.forced",
 	"remediation.lock_acquired",
 	"remediation.lock_extended",
 	"remediation.lock_released",

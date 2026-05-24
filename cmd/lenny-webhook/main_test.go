@@ -30,7 +30,7 @@ func TestBuildSchemeRegistersWebhookTypes(t *testing.T) {
 }
 
 func TestMuxHealthEndpoints(t *testing.T) {
-	mux := newMux(nil, "multi", false, "", nil, nil, false)
+	mux := newMux(nil, "multi", false, "", "", nil, nil, false, nil, nil)
 	for _, path := range []string{"/healthz", "/readyz"} {
 		rr := httptest.NewRecorder()
 		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
@@ -64,7 +64,7 @@ func TestMuxServesLabelImmutability(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/label-immutability", bytes.NewReader(body)))
+	newMux(nil, "multi", false, "", "", nil, nil, false, nil, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/label-immutability", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /label-immutability = %d, want 200", rr.Code)
 	}
@@ -111,7 +111,7 @@ func TestMuxServesDirectModeIsolation(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", "", nil, nil, false, nil, nil).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/direct-mode-isolation", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /direct-mode-isolation = %d, want 200", rr.Code)
@@ -149,7 +149,7 @@ func TestMuxServesDrainReadiness(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", "", nil, nil, false, nil, nil).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/drain-readiness", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /drain-readiness = %d, want 200", rr.Code)
@@ -169,7 +169,7 @@ func TestMuxServesDrainReadiness(t *testing.T) {
 
 func TestMuxRejectsUnknownRoute(t *testing.T) {
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/no-such-webhook", nil))
+	newMux(nil, "multi", false, "", "", nil, nil, false, nil, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/no-such-webhook", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("POST /no-such-webhook = %d, want 404", rr.Code)
 	}
@@ -203,7 +203,7 @@ func TestMuxServesDataResidencyValidator(t *testing.T) {
 	rr := httptest.NewRecorder()
 	// storage.regions declares only eu-west-1, so ap-south-1 is
 	// unresolvable and rejected.
-	newMux(nil, "multi", false, "", []string{"eu-west-1"}, nil, false).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", "", []string{"eu-west-1"}, nil, false, nil, nil).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/data-residency-validator", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /data-residency-validator = %d, want 200", rr.Code)
@@ -249,7 +249,7 @@ func TestMuxServesT4NodeIsolation(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", "", nil, nil, false, nil, nil).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/t4-node-isolation", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /t4-node-isolation = %d, want 200", rr.Code)
@@ -297,7 +297,7 @@ func TestMuxServesRegistryDigest(t *testing.T) {
 	}
 	rr := httptest.NewRecorder()
 	// requireDigest=true enables the §13.1 check.
-	newMux(nil, "multi", false, "", nil, nil, true).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", "", nil, nil, true, nil, nil).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/registry-digest", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /registry-digest = %d, want 200", rr.Code)
@@ -336,7 +336,7 @@ func TestMuxRegistryDigestPassThroughWhenDisabled(t *testing.T) {
 		},
 	})
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", "", nil, nil, false, nil, nil).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/registry-digest", bytes.NewReader(body)))
 	var out admissionv1.AdmissionReview
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
