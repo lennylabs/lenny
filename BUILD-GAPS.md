@@ -1116,14 +1116,12 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The two-segment path collapses workspace snapshots, checkpoints, transcripts, uploaded files, and eviction context into a single namespace under the session prefix. §12.5 callers (e.g., the eviction-context cleanup path that selects rows with `last_message_context` storing a MinIO key by the `/{tenant_id}/eviction/` prefix) cannot match by prefix.
 - **Suggested resolution:** Extend `URI` with an `ObjectType` field (workspace / checkpoint / transcript / upload / eviction) and rewrite `objectKey()` to include it; migrate callers that currently encode the object type inside `partID`.
 
-### - [ ] F-4.5.3 — `SSEKeyResolver` hook exists but is never wired in production [High] — OPEN
+### - [x] F-4.5.3 — `SSEKeyResolver` hook exists but is never wired in production [High] — CLOSED
 
-**Potential duplicate** (confidence: high) — F-12.5.2 — Both report that the MinIO SSEKeyResolver hook is never wired in main.go, so T4 tenants fall back to bucket-default encryption.
+**Potential duplicate** (confidence: high) — F-12.5.2 — Both report that the MinIO SSEKeyResolver hook is never wired in main.go, so T4 tenants fall back to bucket-default encryption. Closed together with this finding.
 
 - **Spec:** §12.5 ll. 297: "**T4 tenant encryption:** For tenants with `workspaceTier: T4` ... workspace snapshots and session transcripts in object storage **must** use SSE-KMS with a tenant-specific KMS key — not the default shared encryption key. ... The `ArtifactStore` implementation selects the encryption key based on the tenant's `workspaceTier`: T3 uses the deployment-wide SSE key; T4 uses a KMS key scoped to `tenant:{tenant_id}`."
-- **Evidence:** `pkg/blobstore/miniostore/miniostore.go:43-50` and `pkg/blobstore/s3/s3.go:48-63` declare an `SSEKeyResolver` hook. `cmd/lenny-gateway/main.go:396-402` constructs `miniostore.New(miniostore.Config{...})` with `Endpoint, AccessKey, SecretKey, Bucket, UseSSL` only — no `SSEKeyResolver` is passed. Codebase-wide search confirms no production wiring (`grep -rn "SSEKeyResolver:" cmd/ pkg/`).
-- **Gap:** Every PutObject in production falls through `if s.sseResolver != nil { ... }` to the bucket default; T4 tenants do not get per-tenant SSE-KMS regardless of their `workspaceTier`. The cryptographic-erasure property §12.5 builds on is silently absent.
-- **Suggested resolution:** Wire `SSEKeyResolver` in the gateway main: look up the writing tenant's `workspaceTier`, return `(tenantkms.AliasFor(tenantID), true)` when T4, return `("", false)` otherwise (falling back to bucket-default SSE-S3). Validate at startup that a T4 tenant's KMS alias is reachable.
+- **Resolution:** `cmd/lenny-gateway/main.go` now wires the resolver. `newSSEKeyResolver(tenants)` returns `(tenantkms.AliasFor(tenantID), true, nil)` for a T4 tenant, `("", false, nil)` for a non-T4 tenant, and `("", true, err)` for a tenant-lookup failure (fail-closed posture). The MinIO `SetOnKMSUnavailable` callback bumps `lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}` via `gwMetrics.IncCheckpointKMSUnavailable`. A startup-time `kmsProvider.CurrentKEKVersion` probe on a sample T4 tenant logs a warning without failing startup so the gateway can come up before every alias is provisioned. Unit tests in `cmd/lenny-gateway/main_test.go` (`TestNewSSEKeyResolverPicksT4AliasOrFallsBack`) cover all four branches.
 
 ### - [ ] F-4.5.4 — MinIO `Put` silently falls back to bucket-default SSE when resolver returns `ok=false` [High] — CLOSED
 - **Spec:** §12.5 ll. 303 (Failure behavior when the KMS key is unavailable at write time): "If the tenant-scoped KMS key is unavailable during a checkpoint or artifact write ... the gateway MUST reject the write with `CLASSIFICATION_CONTROL_VIOLATION`. The `ArtifactStore` does **not** fall back to the deployment-wide SSE key, because that would silently downgrade the tenant's classification controls and violate the cryptographic-erasure property."
@@ -1131,20 +1129,16 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** Even if F-4.5.3 were resolved, the current contract does not distinguish "T3 — fall back to bucket default" from "T4 — fail closed if my key is unreachable". A misconfigured resolver returning `ok=false` for a T4 tenant silently downgrades the write.
 - **Suggested resolution:** Have the resolver return an explicit `(keyID, requireKey, ok)` or split it into two hooks. On `requireKey=true && key unavailable`, return `CLASSIFICATION_CONTROL_VIOLATION` and increment `lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}`.
 
-### - [ ] F-4.5.5 — Artifact catalog is built but never wired into the running gateway [High] — OPEN
+### - [x] F-4.5.5 — Artifact catalog is built but never wired into the running gateway [High] — CLOSED
 
-**Potential duplicate** (confidence: high) — F-12.5.1 — Both report that the artifact_store catalog (PgStore) is fully built but never wired into the running gateway, so GC sweep, soft-delete guard, hard-prune, and size accounting never execute.
+**Potential duplicate** (confidence: high) — F-12.5.1 — Both report that the artifact_store catalog (PgStore) is fully built but never wired into the running gateway, so GC sweep, soft-delete guard, hard-prune, and size accounting never execute. Closed together with this finding.
 
 - **Spec:** §12.5 ll. 309 (Storage quota), 311-321 (retention policy + GC ordering), 331-339 (single-writer GC + soft-delete guards), 341 (tombstone hard-prune): all of these reference the `artifact_store` Postgres table and presuppose a working Postgres-backed catalog.
-- **Evidence:** `pkg/blobstore/artifactcatalog/catalog.go` defines `Insert`, `Get`, `SoftDelete`, `Tombstone`, `HardPruneExpired`, `ListBySession`, `SetLegalHold`; `migrations/0049_artifact_store.up.sql` creates the table. No callers — `grep -rn "artifactcatalog\b" cmd/ pkg/gateway/` yields only the package's own tests. `cmd/lenny-gateway/main.go` constructs the MinIO blob store without any catalog wiring.
-- **Gap:** The Postgres-side GC sweep, `WHERE deleted_at IS NULL` guard, tombstone hard-prune, and per-tenant size accounting (`artifact_size_bytes`) never execute. The retention GC (`pkg/gateway/retentiongc`) sweeps the session store directly and calls `DeleteBySession` on the MinIO blob store; nothing inserts rows into `artifact_store`, nothing soft-deletes them, nothing hard-prunes them. The `lenny_gc_tombstones_pruned_total` counter (the only one in the catalog) is never incremented.
-- **Suggested resolution:** Wire `artifactcatalog.PgStore` into the gateway: insert a row on every blob write; replace the retention GC's direct `DeleteBySession` call with a soft-delete-then-tombstone sweep; run the hard-prune pass under the leader lease on `gc.cycleIntervalSeconds`. The BUILD-GAPS Phase 11 entry acknowledges this gap.
+- **Resolution:** Added `pkg/blobstore/cataloging`, a `blobstore.Store` decorator that mirrors every successful Put into an `artifact_store` row. `cmd/lenny-gateway/main.go` constructs `artifactcatalog.New(pgPool, nil)` when Postgres is configured and wraps the MinIO Store in `cataloging.New`. The §7.1 retention GC's per-session deleter now calls `cataloging.SoftDeleteSession` (transitioning catalog rows to `soft_deleted` with the §12.5 tombstone retention deadline) instead of deleting outright; a new background goroutine runs the §12.5 ll. 341 hard-prune sweep on the same cadence and bumps `lenny_gc_tombstones_pruned_total` via `gwMetrics.AddGCTombstonesPruned`. The decorator also reconciles catalog rows on the §12.8 `DeleteBySession` erasure path. Unit tests in `pkg/blobstore/cataloging/cataloging_test.go` cover Put / Copy / SoftDelete / SoftDeleteSession / DeleteBySession / HardPrune and the ObjectType → ArtifactType mapping.
 
-### - [ ] F-4.5.6 — MinIO Store does not implement `Tombstoner` [Medium] — OPEN
+### - [x] F-4.5.6 — MinIO Store does not implement `Tombstoner` [Medium] — CLOSED
 - **Spec:** §12.5 ll. 311-313 (soft-delete on GC, expiry triggers, tombstone retention) and §4.5 reliance on §12.5.
-- **Evidence:** `pkg/blobstore/miniostore/miniostore.go` does not have `SoftDelete` or `HardPrune` methods; `var _ blobstore.Tombstoner = (*Store)(nil)` is present only in the S3 and memory backends (`pkg/blobstore/s3/s3.go:75`, `pkg/blobstore/blobstore.go:274-308`). `grep -rn "Tombstoner" pkg/blobstore/miniostore/` returns no matches.
-- **Gap:** The §12.5 tombstone-by-tag soft-delete contract that S3 satisfies is missing on MinIO. A deployment using MinIO (the spec-default self-managed backend) cannot exercise the soft-delete / hard-prune machinery the spec mandates.
-- **Suggested resolution:** Mirror the `pkg/blobstore/s3` `SoftDelete`/`HardPrune` implementations against MinIO's tag and lifecycle APIs (MinIO supports the S3 tagging surface), or rely on the catalog (F-4.5.5) once wired.
+- **Resolution:** `pkg/blobstore/miniostore/miniostore.go` now implements the `Tombstoner` interface (Option A from the finding). `SoftDelete` stamps a `lenny-deleted-at` object tag carrying the RFC 3339 UTC instant via `PutObjectTagging`; `HardPrune` lists the bucket and `RemoveObject`s any object whose tag is past the retention window. The compile-time `var _ blobstore.Tombstoner = (*Store)(nil)` assertion is in place; `Get` and `Stat` now consult the tag set so a tombstoned object reads as `ErrNotFound` until the hard-prune sweep removes it. The tag name and timestamp encoding match `pkg/blobstore/s3` for cross-backend consistency. Unit tests in `pkg/blobstore/miniostore/miniostore_test.go` (`TestStoreImplementsTombstoner`, `TestReadTombstone`, `TestReadTombstoneNilSafe`) cover the interface assertion and the tag-parsing helper.
 
 ### - [ ] F-4.5.7 — Workspace snapshot is identified by an opaque object path, not the SHA-256 content hash spec mandates [Medium] — CLOSED
 - **Spec:** §4.5 ll. 311: "Each workspace snapshot is immutable and identified by a **content-addressed hash (SHA-256 of the tar archive)**."
@@ -16512,69 +16506,37 @@ tombstone hard-prune, and the `lenny_gc_*` metric family.
 
 ---
 
-### - [ ] F-12.5.1 — `artifact_store` catalog is defined but completely unwired (§12.5 lines 295, 309, 313, 316–321, 331–339, 341) [High] — OPEN
+### - [x] F-12.5.1 — `artifact_store` catalog is defined but completely unwired (§12.5 lines 295, 309, 313, 316–321, 331–339, 341) [High] — CLOSED
 
-**Potential duplicate** (confidence: high) — F-4.5.5 — Both report that the artifact_store catalog (PgStore) is fully built but never wired into the running gateway, so GC sweep, soft-delete guard, hard-prune, and size accounting never execute.
+**Potential duplicate** (confidence: high) — F-4.5.5 — Both report that the artifact_store catalog (PgStore) is fully built but never wired into the running gateway, so GC sweep, soft-delete guard, hard-prune, and size accounting never execute. Closed alongside F-4.5.5.
 
-The `artifact_store` catalog is the source of truth for every spec'd
-artifact-store flow: tenant-prefix `DeleteByTenant` (line 295), the storage
-quota rehydration sum (line 309 — `artifact_size_bytes`), per-row legal-hold
-exemption (line 313), the partial-manifest backstop sweep (line 316), the
-TTL+rotation GC SELECT/UPDATE under `WHERE deleted_at IS NULL` (lines
-318, 333, 335), the GC concurrency model (lines 331–339), and the tombstone
-hard-prune (line 341).
+**Resolution.** See F-4.5.5. `pkg/blobstore/cataloging` now decorates the
+production MinIO Store and mirrors every Put into an `artifact_store` row.
+The §12.5 ll. 341 hard-prune sweep runs as a background goroutine on
+`retentiongc.DefaultSweepInterval` and emits to
+`lenny_gc_tombstones_pruned_total` via `gwMetrics.AddGCTombstonesPruned`.
+The §7.1 retention GC's per-session deleter calls `SoftDeleteSession` so
+the soft-delete → tombstone → hard-prune transition runs through the
+catalog instead of the legacy direct DeleteBySession path. The §12.8
+erasure path's DeleteBySession entry also reconciles catalog rows
+(soft-delete + tombstone) so the next hard-prune cycle removes the rows.
 
-Evidence:
+### - [x] F-12.5.2 — gateway omits `SSEKeyResolver`; T4 tenants get bucket-default encryption (§12.5 lines 297, 299–303) [High] — CLOSED
 
-- `pkg/blobstore/artifactcatalog/catalog.go:1-273` implements `PgStore` with
-  `Insert`, `Get`, `SoftDelete`, `Tombstone`, `HardPruneExpired`,
-  `ListBySession`, and `SetLegalHold`.
-- `grep -rn "artifactcatalog" cmd/ pkg/gateway/` returns zero hits. No
-  importer of the package outside its own test exists.
-- `cmd/lenny-gateway/main.go:396-409` (the MinIO Store construction) does not
-  build a `PgStore`, does not pass an inserter into the blob `Put` path, and
-  does not register the catalog with any GC orchestrator.
-- `cmd/lenny-gateway/main.go:1588-1612` registers `retentiongc`
-  (§7.1 session-retention) but no §12.5 catalog-driven GC, no
-  `HardPruneExpired` scheduler, no leader-elected gateway-level singleton.
+**Potential duplicate** (confidence: high) — F-4.5.3 — Both report that the MinIO SSEKeyResolver hook is never wired in main.go, so T4 tenants fall back to bucket-default encryption. Closed alongside F-4.5.3.
 
-Consequence: every spec'd behavior keyed on the `artifact_store` row is
-non-functional. Storage-quota counters cannot rehydrate from Postgres after a
-Redis restart (no row to sum), tenant deletion cannot prefix-delete artifacts
-through the catalog, the legal-hold flag the spec records per row is never
-written, the tombstone hard-prune sweep never runs, and the partial-manifest
-backstop sweep has no row schema to scan. The migration `0049_artifact_store`
-creates the table and the package compiles, but no live code path inserts,
-queries, or sweeps it.
-
-### - [ ] F-12.5.2 — gateway omits `SSEKeyResolver`; T4 tenants get bucket-default encryption (§12.5 lines 297, 299–303) [High] — OPEN
-
-**Potential duplicate** (confidence: high) — F-4.5.3 — Both report that the MinIO SSEKeyResolver hook is never wired in main.go, so T4 tenants fall back to bucket-default encryption.
-
-The spec mandates that for T4 tenants the `ArtifactStore` selects "an SSE-KMS
-key scoped to `tenant:{tenant_id}`" instead of the deployment-wide SSE key
-(line 297) and that writes fail-closed with `CLASSIFICATION_CONTROL_VIOLATION`
-when the tenant key is unavailable (line 303).
-
-Evidence:
-
-- `pkg/blobstore/miniostore/miniostore.go:43-51` defines an `SSEKeyResolver`
-  hook on `Config`. The hook is functional and lookups in `Put` apply SSE-KMS
-  with the returned alias.
-- `cmd/lenny-gateway/main.go:396-402` constructs the production MinIO Store
-  with `miniostore.Config{Endpoint, AccessKey, SecretKey, Bucket, UseSSL}` —
-  it does not set `SSEKeyResolver`.
-- Consequence: `s.sseResolver` is nil on the live `*Store`, so
-  `Put` (`pkg/blobstore/miniostore/miniostore.go:127-150`) never sets
-  `ServerSideEncryption`. Every T4 tenant write goes through bucket-default
-  SSE-S3, defeating the cryptographic-erasure property §12.5 line 297 calls out
-  ("revoking the tenant's KMS key renders all their stored artifacts
-  unreadable"). The §12.5 line 303 fail-closed write semantics are unenforced
-  because the resolver that would surface the unavailable key is never invoked.
-- The fail-closed write path metric label `reason="kms_unavailable"` (line
-  303) appears only in the alert description
-  (`pkg/alerting/rules/rules.go:233`); `grep -rn "kms_unavailable" pkg/`
-  returns no emit site.
+**Resolution.** See F-4.5.3. `cmd/lenny-gateway/main.go` now wires
+`newSSEKeyResolver(tenants)` into `miniostore.Config.SSEKeyResolver`.
+T4 tenants get `(tenantkms.AliasFor(tenantID), true, nil)`; non-T4 tenants
+get `("", false, nil)`; tenant-lookup failures get `("", true, err)` so
+the blobstore fails closed under
+`ErrClassificationControlViolation`. The `SetOnKMSUnavailable` callback
+bumps `lenny_checkpoint_storage_failure_total` with
+`reason="kms_unavailable"` via `gwMetrics.IncCheckpointKMSUnavailable`,
+giving the §12.5 ll. 303 fail-closed metric an emit site. A startup-time
+KMS probe via `kmsProvider.CurrentKEKVersion` on a sample T4 alias logs
+warnings without failing startup. Unit tests in
+`cmd/lenny-gateway/main_test.go` cover all four resolver branches.
 
 ### - [ ] F-12.5.3 — admin-time T4 KMS availability probe is unwired (§12.5 line 301) [High] — OPEN
 
