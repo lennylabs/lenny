@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -353,5 +354,69 @@ func TestDelegatePropagatesTracingContext(t *testing.T) {
 	res.Child.TracingContext["trace-id"] = "mutated"
 	if parentCtx["trace-id"] != "t-root" {
 		t.Error("child tracingContext aliases the parent's map")
+	}
+}
+
+// spec: §5.1 line 69 / §8.2 — the resolved target runtime's
+// allowSelfRecursion flows into the cycle gate's LayerRuntime input. The
+// rejection's EffectiveSettings reflects the runtime's declared value
+// when a runtime registry is wired into the service.
+func TestDelegateCycleReadsRuntimeAllowSelfRecursion(t *testing.T) {
+	newSvc := func(rtAllow bool, withRegistry bool) *delegation.Service {
+		store := memstore.New()
+		seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
+		seedParent(t, store, "sess_parent", "sess_root", "gemini", "pool-b", isolation.ProfileSandboxed)
+		opts := delegation.Options{
+			Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+			IDFunc: func() string { return "sess_child" },
+		}
+		if withRegistry {
+			runtimes := runtimestore.NewMemory()
+			if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+				Name: "claude", Image: "lenny/claude@sha256:abc", AllowSelfRecursion: rtAllow,
+			}); err != nil {
+				t.Fatalf("seed runtime: %v", err)
+			}
+			opts.Runtimes = runtimes
+		}
+		return delegation.NewService(store, opts)
+	}
+
+	selfRecursive := delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "claude",
+		PoolRef:          "pool-a",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}
+
+	// Runtime declares allowSelfRecursion: true — the gate still rejects
+	// (platform/policy layers remain false), but EffectiveSettings shows
+	// the runtime layer was read from the registry as true.
+	_, err := newSvc(true, true).Delegate(context.Background(), "acme", selfRecursive)
+	var rej *cycle.Rejection
+	if !errors.As(err, &rej) {
+		t.Fatalf("got %v, want cycle.Rejection", err)
+	}
+	if !rej.EffectiveSettings.RuntimeAllowSelfRec {
+		t.Errorf("RuntimeAllowSelfRec must reflect the registry value true, got %+v", rej.EffectiveSettings)
+	}
+
+	// Runtime declares false — the runtime layer is false.
+	_, err = newSvc(false, true).Delegate(context.Background(), "acme", selfRecursive)
+	if !errors.As(err, &rej) {
+		t.Fatalf("got %v, want cycle.Rejection", err)
+	}
+	if rej.EffectiveSettings.RuntimeAllowSelfRec {
+		t.Error("RuntimeAllowSelfRec must be false when the runtime declares false")
+	}
+
+	// No registry wired — the runtime layer falls back to the
+	// conservative false default.
+	_, err = newSvc(true, false).Delegate(context.Background(), "acme", selfRecursive)
+	if !errors.As(err, &rej) {
+		t.Fatalf("got %v, want cycle.Rejection", err)
+	}
+	if rej.EffectiveSettings.RuntimeAllowSelfRec {
+		t.Error("RuntimeAllowSelfRec must default false with no runtime registry")
 	}
 }

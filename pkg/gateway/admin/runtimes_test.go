@@ -1193,3 +1193,79 @@ func TestRuntimeMutationAuthorization(t *testing.T) {
 		}
 	}
 }
+
+// spec: §5.1 — allowedResourceClasses is Prohibited on derived runtimes;
+// supportedProviders and allowSelfRecursion are restrict-only on derived.
+func TestCreateDerivedRuntimeRestrictsClassesProvidersRecursion(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	// A standalone base declaring providers and self-recursion.
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:               "base-rt",
+		Image:              "lenny/base-rt@sha256:abc",
+		SupportedProviders: []string{"anthropic_direct", "aws_bedrock"},
+		AllowSelfRecursion: true,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create base: status %d body %s", rr.Code, rr.Body.String())
+	}
+
+	cases := []struct {
+		name    string
+		payload admin.RuntimePayload
+	}{
+		{"allowedResourceClasses prohibited", admin.RuntimePayload{
+			Name: "d-classes", BaseRuntime: "base-rt", AllowedResourceClasses: []string{"small"}}},
+		{"supportedProviders expand", admin.RuntimePayload{
+			Name: "d-prov", BaseRuntime: "base-rt", SupportedProviders: []string{"anthropic_direct", "vault_transit"}}},
+	}
+	for _, tc := range cases {
+		rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", tc.payload)
+		if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "INVALID_DERIVED_RUNTIME") {
+			t.Errorf("%s: status %d body %s, want 400 INVALID_DERIVED_RUNTIME", tc.name, rr.Code, rr.Body.String())
+		}
+	}
+
+	// A restricting derived runtime (subset providers, recursion off) is accepted.
+	ok := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name: "d-ok", BaseRuntime: "base-rt",
+		SupportedProviders: []string{"anthropic_direct"},
+		AllowSelfRecursion: false,
+	})
+	if ok.Code != http.StatusCreated {
+		t.Errorf("restricting derived runtime: status %d body %s, want 201", ok.Code, ok.Body.String())
+	}
+}
+
+// spec: §5.1 — a derived runtime declaring allowSelfRecursion:true when
+// its base is false is rejected (security boundary, restrict-only).
+func TestCreateDerivedRuntimeRejectsRecursionWiden(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	createBaseRuntime(t, router.Handler(), "base-noselfrec") // AllowSelfRecursion defaults false
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name: "d-widen", BaseRuntime: "base-noselfrec", AllowSelfRecursion: true,
+	})
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "INVALID_DERIVED_RUNTIME") {
+		t.Errorf("widening allowSelfRecursion: status %d body %s, want 400 INVALID_DERIVED_RUNTIME", rr.Code, rr.Body.String())
+	}
+}
+
+// spec: §5.1 — the admin API round-trips the three new registry fields
+// on a standalone runtime.
+func TestStandaloneRuntimeRoundTripsNewFields(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:                   "full-rt",
+		Image:                  "lenny/full-rt@sha256:abc",
+		AllowedResourceClasses: []string{"small", "medium", "large"},
+		SupportedProviders:     []string{"anthropic_direct"},
+		AllowSelfRecursion:     true,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d body %s", rr.Code, rr.Body.String())
+	}
+	var got admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	if len(got.AllowedResourceClasses) != 3 || len(got.SupportedProviders) != 1 || !got.AllowSelfRecursion {
+		t.Errorf("round-trip lost new fields: %+v", got)
+	}
+}

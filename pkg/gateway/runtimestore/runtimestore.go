@@ -51,6 +51,29 @@ type Runtime struct {
 	// `standard`, or `full`.
 	IntegrationLevel IntegrationLevel
 
+	// AllowedResourceClasses is the §5.1 set of resource classes the
+	// runtime permits (for example small, medium, large). The §5.1 merge
+	// table classifies it Prohibited on derived runtimes: a derived
+	// runtime inherits its base's set and may not declare its own. A nil
+	// or empty slice means the runtime declares no class set.
+	AllowedResourceClasses []string
+
+	// SupportedProviders is the §5.1 set of credential-provider
+	// identifiers the runtime's SDK supports (for example
+	// anthropic_direct, aws_bedrock). The §4.9 lease path matches a
+	// session's requested provider against it. The §5.1 merge table
+	// classifies it Override with the restrict-only rule that a derived
+	// runtime may restrict but not expand beyond its base set.
+	SupportedProviders []string
+
+	// AllowSelfRecursion is the §5.1 line 69 runtime-layer opt-in for the
+	// §8.2 cycle-detection three-layer AND gate (LayerRuntime). When
+	// false this runtime rejects every self-recursive delegation hop. The
+	// §5.1 merge table classifies it Override (restrict-only): a derived
+	// runtime may set false when the base is true, but a derived value of
+	// true is rejected when the base is false.
+	AllowSelfRecursion bool
+
 	// Description is an admin-facing description.
 	Description string
 
@@ -695,6 +718,8 @@ func cloneRuntime(r Runtime) Runtime {
 		}
 		r.Labels = labels
 	}
+	r.AllowedResourceClasses = append([]string(nil), r.AllowedResourceClasses...)
+	r.SupportedProviders = append([]string(nil), r.SupportedProviders...)
 	r.AgentInterface = r.AgentInterface.Clone()
 	if r.PublishedMetadata != nil {
 		r.PublishedMetadata = append([]PublishedMetadataEntry(nil), r.PublishedMetadata...)

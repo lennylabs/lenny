@@ -245,6 +245,9 @@
             }
           },
           "minPlatformVersion": { "type": "string" },
+          "allowedResourceClasses": { "type": "array", "items": { "type": "string" } },
+          "supportedProviders": { "type": "array", "items": { "type": "string" } },
+          "allowSelfRecursion": { "type": "boolean" },
           "baseRuntime": { "type": "string" },
           "taskPolicy": {
             "type": "object",

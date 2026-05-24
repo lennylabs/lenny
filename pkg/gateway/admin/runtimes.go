@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -52,6 +53,9 @@ type RuntimePayload struct {
 	ExecutionMode           string                                      `json:"executionMode,omitempty"`
 	IsolationProfile        string                                      `json:"isolationProfile,omitempty"`
 	IntegrationLevel        string                                      `json:"integrationLevel,omitempty"`
+	AllowedResourceClasses  []string                                    `json:"allowedResourceClasses,omitempty"`
+	SupportedProviders      []string                                    `json:"supportedProviders,omitempty"`
+	AllowSelfRecursion      bool                                        `json:"allowSelfRecursion,omitempty"`
 	Description             string                                      `json:"description,omitempty"`
 	DelegationPolicyRef     string                                      `json:"delegationPolicyRef,omitempty"`
 	Labels                  map[string]string                           `json:"labels,omitempty"`
@@ -81,6 +85,9 @@ func runtimeFromPayload(p RuntimePayload, createdAt time.Time) runtimestore.Runt
 		ExecutionMode:           runtimestore.ExecutionMode(p.ExecutionMode),
 		IsolationProfile:        isolation.Profile(p.IsolationProfile),
 		IntegrationLevel:        runtimestore.IntegrationLevel(p.IntegrationLevel),
+		AllowedResourceClasses:  p.AllowedResourceClasses,
+		SupportedProviders:      p.SupportedProviders,
+		AllowSelfRecursion:      p.AllowSelfRecursion,
 		Description:             p.Description,
 		DelegationPolicyRef:     p.DelegationPolicyRef,
 		Labels:                  p.Labels,
@@ -107,6 +114,9 @@ type UpdateRuntimeRequest struct {
 	ExecutionMode           *string                                      `json:"executionMode,omitempty"`
 	IsolationProfile        *string                                      `json:"isolationProfile,omitempty"`
 	IntegrationLevel        *string                                      `json:"integrationLevel,omitempty"`
+	AllowedResourceClasses  *[]string                                    `json:"allowedResourceClasses,omitempty"`
+	SupportedProviders      *[]string                                    `json:"supportedProviders,omitempty"`
+	AllowSelfRecursion      *bool                                        `json:"allowSelfRecursion,omitempty"`
 	Description             *string                                      `json:"description,omitempty"`
 	DelegationPolicyRef     *string                                      `json:"delegationPolicyRef,omitempty"`
 	Labels                  *map[string]string                           `json:"labels,omitempty"`
@@ -146,6 +156,10 @@ func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) e
 		return errors.New("integrationLevel is prohibited on derived runtimes")
 	case p.Capabilities != nil:
 		return errors.New("capabilities is prohibited on derived runtimes")
+	case len(p.AllowedResourceClasses) > 0:
+		// §5.1 merge table: allowedResourceClasses is Prohibited on
+		// derived runtimes — the derived runtime inherits the base set.
+		return errors.New("allowedResourceClasses is prohibited on derived runtimes")
 	}
 	base, err := r.runtimes.Get(ctx, p.BaseRuntime)
 	if err != nil {
@@ -154,7 +168,37 @@ func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) e
 	if base.IsDerived() {
 		return errors.New("baseRuntime must reference a standalone runtime, not another derived runtime")
 	}
+	// §5.1 supportedProviders is Override (restrict-only): a derived
+	// runtime may restrict but not expand beyond its base set.
+	if extra := providersNotInBase(p.SupportedProviders, base.SupportedProviders); extra != "" {
+		return fmt.Errorf("supportedProviders cannot expand beyond base: %q is not in the base runtime's set", extra)
+	}
+	// §5.1 allowSelfRecursion is Override (restrict-only): a derived
+	// value of true is rejected when the base is false (security
+	// boundary — a derived runtime may only narrow recursion).
+	if p.AllowSelfRecursion && !base.AllowSelfRecursion {
+		return errors.New("allowSelfRecursion cannot widen base value")
+	}
 	return nil
+}
+
+// providersNotInBase returns the first entry of derived that is not in
+// base, or "" when derived is a subset of base. An empty base set means
+// the base supports no providers, so any derived entry is out of range.
+func providersNotInBase(derived, base []string) string {
+	if len(derived) == 0 {
+		return ""
+	}
+	allowed := make(map[string]bool, len(base))
+	for _, p := range base {
+		allowed[p] = true
+	}
+	for _, p := range derived {
+		if !allowed[p] {
+			return p
+		}
+	}
+	return ""
 }
 
 // validateDerivedRuntimeUpdate applies the §5.1 derived-runtime rules
@@ -163,7 +207,7 @@ func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) e
 // already-derived runtime may not set the inherited or prohibited
 // fields (image, executionMode, isolationProfile, integrationLevel,
 // capabilities) — they are always taken from the base.
-func validateDerivedRuntimeUpdate(current runtimestore.Runtime, body UpdateRuntimeRequest) error {
+func validateDerivedRuntimeUpdate(current, base runtimestore.Runtime, body UpdateRuntimeRequest) error {
 	if body.BaseRuntime != nil && *body.BaseRuntime != current.BaseRuntime {
 		return errors.New("baseRuntime cannot be changed after registration")
 	}
@@ -181,6 +225,19 @@ func validateDerivedRuntimeUpdate(current runtimestore.Runtime, body UpdateRunti
 		return errors.New("integrationLevel is prohibited on derived runtimes")
 	case body.Capabilities != nil:
 		return errors.New("capabilities is prohibited on derived runtimes")
+	case body.AllowedResourceClasses != nil && len(*body.AllowedResourceClasses) > 0:
+		// §5.1 merge table: allowedResourceClasses is Prohibited on derived.
+		return errors.New("allowedResourceClasses is prohibited on derived runtimes")
+	}
+	// §5.1 supportedProviders restrict-only and allowSelfRecursion
+	// restrict-only invariants are evaluated against the resolved base set.
+	if body.SupportedProviders != nil {
+		if extra := providersNotInBase(*body.SupportedProviders, base.SupportedProviders); extra != "" {
+			return fmt.Errorf("supportedProviders cannot expand beyond base: %q is not in the base runtime's set", extra)
+		}
+	}
+	if body.AllowSelfRecursion != nil && *body.AllowSelfRecursion && !base.AllowSelfRecursion {
+		return errors.New("allowSelfRecursion cannot widen base value")
 	}
 	return nil
 }
@@ -277,6 +334,9 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		ExecutionMode:           string(r.ExecutionMode),
 		IsolationProfile:        string(r.IsolationProfile),
 		IntegrationLevel:        string(r.IntegrationLevel),
+		AllowedResourceClasses:  r.AllowedResourceClasses,
+		SupportedProviders:      r.SupportedProviders,
+		AllowSelfRecursion:      r.AllowSelfRecursion,
 		Description:             r.Description,
 		DelegationPolicyRef:     r.DelegationPolicyRef,
 		Labels:                  r.Labels,
@@ -555,7 +615,13 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	if current, err := r.runtimes.Get(req.Context(), name); err == nil {
-		if derr := validateDerivedRuntimeUpdate(current, body); derr != nil {
+		// §5.1 restrict-only invariants on supportedProviders /
+		// allowSelfRecursion are evaluated against the resolved base.
+		var base runtimestore.Runtime
+		if current.IsDerived() {
+			base, _ = r.runtimes.Get(req.Context(), current.BaseRuntime)
+		}
+		if derr := validateDerivedRuntimeUpdate(current, base, body); derr != nil {
 			writeError(w, http.StatusBadRequest, "INVALID_DERIVED_RUNTIME", derr.Error(), nil)
 			return
 		}
@@ -572,6 +638,15 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.IntegrationLevel != nil {
 			rt.IntegrationLevel = runtimestore.IntegrationLevel(*body.IntegrationLevel)
+		}
+		if body.AllowedResourceClasses != nil {
+			rt.AllowedResourceClasses = *body.AllowedResourceClasses
+		}
+		if body.SupportedProviders != nil {
+			rt.SupportedProviders = *body.SupportedProviders
+		}
+		if body.AllowSelfRecursion != nil {
+			rt.AllowSelfRecursion = *body.AllowSelfRecursion
 		}
 		if body.Description != nil {
 			rt.Description = *body.Description
@@ -676,6 +751,15 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.IntegrationLevel != nil {
 		out = append(out, "integrationLevel")
+	}
+	if b.AllowedResourceClasses != nil {
+		out = append(out, "allowedResourceClasses")
+	}
+	if b.SupportedProviders != nil {
+		out = append(out, "supportedProviders")
+	}
+	if b.AllowSelfRecursion != nil {
+		out = append(out, "allowSelfRecursion")
 	}
 	if b.Description != nil {
 		out = append(out, "description")

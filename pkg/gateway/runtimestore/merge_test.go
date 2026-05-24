@@ -228,3 +228,59 @@ func TestMergeDoesNotAliasInputs(t *testing.T) {
 		t.Error("Merge result aliases the base publishedMetadata slice")
 	}
 }
+
+// spec: §5.1 merge table — allowedResourceClasses is Prohibited on
+// derived runtimes, so the effective runtime inherits the base set, and
+// supportedProviders is Override (base applies when the derived runtime
+// declares none).
+func TestMergeInheritsResourceClassesAndProviders(t *testing.T) {
+	base := runtimestore.Runtime{
+		Name:                   "base",
+		AllowedResourceClasses: []string{"small", "medium", "large"},
+		SupportedProviders:     []string{"anthropic_direct", "aws_bedrock"},
+		AllowSelfRecursion:     true,
+	}
+	// A derived runtime that declares none of the three fields.
+	derived := runtimestore.Runtime{Name: "derived", BaseRuntime: "base"}
+	eff := runtimestore.Merge(base, derived)
+
+	if len(eff.AllowedResourceClasses) != 3 {
+		t.Errorf("derived must inherit base allowedResourceClasses: %v", eff.AllowedResourceClasses)
+	}
+	if len(eff.SupportedProviders) != 2 {
+		t.Errorf("derived must inherit base supportedProviders when unset: %v", eff.SupportedProviders)
+	}
+	// allowSelfRecursion is Override; an unset derived value (false)
+	// restricts the base. This is the conservative restrict-only direction.
+	if eff.AllowSelfRecursion {
+		t.Error("an unset derived allowSelfRecursion must not inherit the base true value")
+	}
+}
+
+// spec: §5.1 merge table — supportedProviders Override: a derived set
+// replaces the base set; allowSelfRecursion Override: derived true is
+// kept when the base permits it.
+func TestMergeOverridesProvidersAndRecursion(t *testing.T) {
+	base := runtimestore.Runtime{
+		Name:               "base",
+		SupportedProviders: []string{"anthropic_direct", "aws_bedrock"},
+		AllowSelfRecursion: true,
+	}
+	derived := runtimestore.Runtime{
+		Name: "derived", BaseRuntime: "base",
+		SupportedProviders: []string{"anthropic_direct"},
+		AllowSelfRecursion: true,
+	}
+	eff := runtimestore.Merge(base, derived)
+	if len(eff.SupportedProviders) != 1 || eff.SupportedProviders[0] != "anthropic_direct" {
+		t.Errorf("derived supportedProviders must replace base: %v", eff.SupportedProviders)
+	}
+	if !eff.AllowSelfRecursion {
+		t.Error("derived allowSelfRecursion true must be kept when base is true")
+	}
+	// The effective runtime must not alias the base provider slice.
+	eff.SupportedProviders[0] = "tampered"
+	if base.SupportedProviders[0] != "anthropic_direct" {
+		t.Error("Merge result aliases the base supportedProviders slice")
+	}
+}

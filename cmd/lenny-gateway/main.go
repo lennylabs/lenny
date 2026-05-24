@@ -1457,7 +1457,7 @@ func main() {
 	}
 
 	// ----- MCP adapter -----
-	delegationSvc := delegation.NewService(sessions, delegation.Options{Experiments: experiments, Clock: clockinject.Now})
+	delegationSvc := delegation.NewService(sessions, delegation.Options{Experiments: experiments, Runtimes: runtimes, Clock: clockinject.Now})
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store:                      sessions,

@@ -25,6 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -71,6 +72,7 @@ type Result struct {
 type Service struct {
 	store       sessionstore.Store
 	experiments experimentstore.Store
+	runtimes    runtimestore.Store
 	clock       func() time.Time
 	idFn        func() string
 	mode        cycle.Mode
@@ -94,6 +96,13 @@ type Options struct {
 	// mode. Nil disables propagation — a child is created with no
 	// experiment context.
 	Experiments experimentstore.Store
+
+	// Runtimes, when set, supplies the §5.1 runtime registry so the §8.2
+	// cycle-detection gate reads the resolved target runtime's
+	// allowSelfRecursion (the LayerRuntime input). Nil leaves the runtime
+	// layer at its conservative false default, rejecting self-recursive
+	// hops regardless of the target runtime's declared value.
+	Runtimes runtimestore.Store
 }
 
 // NewService returns a delegation Service.
@@ -113,6 +122,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 	return &Service{
 		store:       store,
 		experiments: opts.Experiments,
+		runtimes:    opts.Runtimes,
 		clock:       clock,
 		idFn:        idFn,
 		mode:        mode,
@@ -189,7 +199,17 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 	}
 
 	target := cycle.Identity{RuntimeName: req.RuntimeRef, PoolName: req.PoolRef}
-	decision := cycle.Decide(lineage, target, cycle.Settings{Mode: s.mode})
+	// §5.1 / §8.2: the runtime layer of the three-layer cycle gate reads
+	// the resolved target runtime's allowSelfRecursion. A missing
+	// registry or an unresolvable runtime leaves the layer false (the
+	// conservative default that rejects self-recursive hops).
+	settings := cycle.Settings{Mode: s.mode}
+	if s.runtimes != nil {
+		if rt, err := runtimestore.Resolve(ctx, s.runtimes, req.RuntimeRef); err == nil {
+			settings.RuntimeAllowSelfRec = rt.AllowSelfRecursion
+		}
+	}
+	decision := cycle.Decide(lineage, target, settings)
 	if decision.Outcome == cycle.OutcomeRejected {
 		return Result{}, cycle.ToError(decision, target)
 	}

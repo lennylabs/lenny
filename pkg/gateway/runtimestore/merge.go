@@ -31,13 +31,16 @@ func Resolve(ctx context.Context, s Store, name string) (Runtime, error) {
 // effective runtime the gateway uses for pod scheduling and session
 // validation. It applies the §5.1 normative per-field merge rules:
 //
-//   - Inherited fields (image, type, executionMode, isolationProfile,
-//     integrationLevel, capabilities) are always taken from the base; a
-//     derived runtime may not set them.
+//   - Inherited / Prohibited fields (image, type, executionMode,
+//     isolationProfile, integrationLevel, capabilities,
+//     allowedResourceClasses) are always taken from the base; a derived
+//     runtime may not set them.
 //   - Override fields (description, delegationPolicyRef, agentInterface,
 //     taskPolicy, capabilityInferenceMode, toolCapabilityOverrides,
-//     minPlatformVersion) take the derived value when it is set and the
-//     base value otherwise.
+//     minPlatformVersion, supportedProviders) take the derived value
+//     when it is set and the base value otherwise.
+//   - allowSelfRecursion is Override (restrict-only): the derived value
+//     wins, and the restrict-only invariant is enforced at registration.
 //   - publishedMetadata appends the derived entries onto the base list,
 //     with a duplicate key won by the derived entry.
 //   - labels overlay the derived keys onto the base map.
@@ -51,13 +54,22 @@ func Merge(base, derived Runtime) Runtime {
 	cb := cloneRuntime(base)
 	eff.BaseRuntime = ""
 
-	// Inherited — always from base.
+	// Inherited / Prohibited — always from base; a derived runtime may
+	// not declare these (the admin registration validator rejects a
+	// derived payload that sets one). allowedResourceClasses is the §5.1
+	// Prohibited row: derived inherits the base set.
 	eff.Image = cb.Image
 	eff.Type = cb.Type
 	eff.ExecutionMode = cb.ExecutionMode
 	eff.IsolationProfile = cb.IsolationProfile
 	eff.IntegrationLevel = cb.IntegrationLevel
 	eff.Capabilities = cb.Capabilities
+	eff.AllowedResourceClasses = append([]string(nil), cb.AllowedResourceClasses...)
+
+	// §5.1 allowSelfRecursion is Override (restrict-only). The derived
+	// value wins; the restrict-only invariant (derived true rejected when
+	// base false) is enforced at registration.
+	eff.AllowSelfRecursion = derived.AllowSelfRecursion
 
 	// Override — derived wins when set, base otherwise.
 	if derived.Description == "" {
@@ -80,6 +92,13 @@ func Merge(base, derived Runtime) Runtime {
 	}
 	if derived.MinPlatformVersion == "" {
 		eff.MinPlatformVersion = cb.MinPlatformVersion
+	}
+	// §5.1 supportedProviders is Override: the derived set replaces the
+	// base set when present, and the base set applies when the derived
+	// runtime declares none. The restrict-only subset invariant (derived
+	// must not expand beyond base) is enforced at registration.
+	if len(derived.SupportedProviders) == 0 {
+		eff.SupportedProviders = append([]string(nil), cb.SupportedProviders...)
 	}
 
 	// Collection merges.
