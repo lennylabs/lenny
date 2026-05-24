@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
@@ -594,6 +595,11 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 			log.Printf("sessionserver: partial-manifest cleanup for session %s failed: %v", id, cerr)
 		}
 	}
+	// spec: §7.2 line 138 — `session.resumed` precedes
+	// `children_reattached`. The event fires from the resume handler
+	// (rather than from resumeOnPod) so dev-mode / unit-test
+	// deployments without a pod binder still emit the event.
+	s.emitResumedEvent(r.Context(), updated, s.classifyResume(r.Context(), updated))
 	s.emitChildrenReattached(r.Context(), tenantID, id)
 	s.writeSession(w, http.StatusOK, updated)
 }
@@ -657,6 +663,14 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 // checkpoint via the adapter Resume RPC. A session that never
 // checkpointed has no snapshot to restore; it is rebuilt from the §14
 // WorkspacePlan recorded at create by reusing the start path.
+//
+// On a successful resume the gateway publishes a §7.2 / §4.4
+// `session.resumed` event with the derived `resumeMode` (full,
+// partial_workspace, or conversation_only) and `workspaceLost`
+// (derived from the resume mode) so clients can detect a degraded
+// resume.
+//
+// spec: §4.4 line 263, §7.2 line 138, §10.1 partial-manifest path.
 func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) error {
 	if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
 		plan, err := storedWorkspacePlan(row)
@@ -689,6 +703,74 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) erro
 	// re-running resume.
 	s.bumpRecoveryGeneration(ctx, row.TenantID, row.ID, result.SandboxName)
 	return nil
+}
+
+// classifyResume picks the §4.4 / §7.2 ResumeMode for a resume of the
+// given session by combining (a) the workspace snapshot source, (b)
+// the eviction-state-store lookup (conversation-only fallback), and
+// (c) the partial-manifest lookup (partial-workspace reassembly). The
+// precedence is:
+//
+//   - eviction-state record present → ResumeConversationOnly (the
+//     workspace bytes are gone; the §4.4 fallback writer recorded
+//     conversation cursor + last-message context only).
+//   - active partial manifest present → ResumePartialWorkspace (the
+//     §10.1 reassembly path applies; recovery fraction is carried on
+//     the event when the manifest had a baseline full checkpoint
+//     size).
+//   - workspace snapshot present, no eviction / partial state →
+//     ResumeFull.
+//
+// A nil lookup (production without the store wired, or dev mode)
+// degrades to ResumeFull. A lookup error degrades to ResumeFull as
+// well — the resume itself succeeded, so a transient store outage
+// must not block the session from coming back online; the operator
+// observes the degraded classification only by inspecting the gauge
+// rather than by the event.
+//
+// spec: §4.4 line 263; §7.2 line 138; §10.1 partial-manifest path.
+func (s *Server) classifyResume(ctx context.Context, row sessionstore.Session) checkpoint.ResumeMode {
+	if s.evictionStateLookup != nil {
+		has, err := s.evictionStateLookup.HasEvictionState(ctx, row.TenantID, row.ID)
+		if err == nil && has {
+			return checkpoint.ResumeConversationOnly
+		}
+	}
+	if s.partialManifestLookup != nil {
+		has, err := s.partialManifestLookup.HasActivePartialManifest(ctx, row.TenantID, row.ID)
+		if err == nil && has {
+			return checkpoint.ResumePartialWorkspace
+		}
+	}
+	return checkpoint.ResumeFull
+}
+
+// resumedEventPayload is the §7.2 line 138 `session.resumed` event
+// schema: `resumeMode`, `workspaceLost`, and an optional
+// `workspaceRecoveryFraction` (populated by the §10.1 partial-manifest
+// path; omitted on full and conversation-only resumes per the
+// optional-fraction rule).
+type resumedEventPayload struct {
+	ResumeMode                 string   `json:"resumeMode"`
+	WorkspaceLost              bool     `json:"workspaceLost"`
+	WorkspaceRecoveryFraction  *float64 `json:"workspaceRecoveryFraction,omitempty"`
+}
+
+// emitResumedEvent publishes the §7.2 line 138 `session.resumed` event
+// onto the session's event stream. Best-effort: when the gateway is
+// not wired with an event bus (dev mode / unit tests without one) the
+// emission is a no-op.
+//
+// spec: §7.2 line 138, §4.4 line 263, §10.1 partial-manifest path.
+func (s *Server) emitResumedEvent(_ context.Context, row sessionstore.Session, mode checkpoint.ResumeMode) {
+	if s.events == nil {
+		return
+	}
+	payload := resumedEventPayload{
+		ResumeMode:    string(mode),
+		WorkspaceLost: mode.WorkspaceLost(),
+	}
+	s.publishEvent(row.ID, "session.resumed", payload)
 }
 
 // bumpRecoveryGeneration increments the §4.2 recovery_generation

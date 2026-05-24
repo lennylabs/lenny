@@ -123,6 +123,16 @@ type Server struct {
 	// Nil leaves the resume path unchanged (cleanup is deferred to
 	// the §12.5 backstop sweep).
 	partialManifestCleaner PartialManifestCleaner
+	// evictionStateLookup, when set, classifies a resume as
+	// conversation-only (workspace lost during eviction) so the
+	// session.resumed event surfaces the correct ResumeMode per
+	// §4.4 line 263.
+	evictionStateLookup EvictionStateLookup
+	// partialManifestLookup, when set, classifies a resume as
+	// partial-workspace (reassembled from chunk objects) so the
+	// session.resumed event surfaces the correct ResumeMode per
+	// §10.1 partial-manifest path.
+	partialManifestLookup PartialManifestLookup
 	treeArchive        treearchive.Store
 	maxOrphanTasks     int
 	evals              evalstore.Store
@@ -186,6 +196,43 @@ type PartialManifestCleaner interface {
 	// active partial manifest. A no-op (returns nil) when no active
 	// manifest exists.
 	CleanupAfterResume(ctx context.Context, tenantID, sessionID string) error
+}
+
+// EvictionStateLookup reports whether the (tenant, session) carries
+// the §4.4 minimal-state record written during the eviction-fallback
+// path. The §7.2 resume path uses it to derive the
+// `resumeMode: "conversation_only"` value carried on the
+// `session.resumed` event when the workspace was lost during
+// eviction.
+//
+// spec: §4.4 line 263 — "the client receives a session.resumed event
+// with resumeMode: \"conversation_only\" and workspaceLost: true".
+type EvictionStateLookup interface {
+	// HasEvictionState returns true when the session has a
+	// minimal-state record (workspace was lost during eviction).
+	// Returns false when no record exists; an error reading the store
+	// returns the error so the resume path can degrade gracefully
+	// (the gateway falls back to ResumeFull rather than block on a
+	// transient lookup failure).
+	HasEvictionState(ctx context.Context, tenantID, sessionID string) (bool, error)
+}
+
+// PartialManifestLookup reports whether the (tenant, session) carries
+// an active §4.4 / §10.1 partial-checkpoint manifest. The §7.2 resume
+// path uses it to derive the `resumeMode: "partial_workspace"` value
+// carried on the `session.resumed` event when the resume reassembled
+// the workspace from partial chunks rather than from a full
+// checkpoint.
+//
+// spec: §10.1 partial-manifest path — `session.resumed` carries
+// `resumeMode: "partial_workspace"` when the manifest selected by
+// MAX(coordination_generation) yielded a reassembled workspace.
+type PartialManifestLookup interface {
+	// HasActivePartialManifest returns true when an active partial
+	// manifest exists for (tenant, session). Returns false when none
+	// exists; a store error returns the error so the resume path can
+	// degrade gracefully (falls back to ResumeFull).
+	HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error)
 }
 
 // Options configures the Server at construction.
@@ -340,6 +387,20 @@ type Options struct {
 	// remains the only cleanup path.
 	PartialManifestCleaner PartialManifestCleaner
 
+	// EvictionStateLookup, when set, lets the resume path classify a
+	// resume as conversation-only (workspace lost during eviction)
+	// per §4.4 line 263, so the session.resumed event carries
+	// resumeMode: "conversation_only" and workspaceLost: true. Nil
+	// leaves the resume defaulting to the snapshot-source-derived
+	// ResumeMode (ResumeFull when a workspace snapshot is present).
+	EvictionStateLookup EvictionStateLookup
+
+	// PartialManifestLookup, when set, lets the resume path classify
+	// a resume as partial-workspace (reassembled from chunk objects)
+	// per §10.1 partial-manifest path. Nil leaves the resume
+	// defaulting to ResumeFull when a workspace snapshot is present.
+	PartialManifestLookup PartialManifestLookup
+
 	// TreeArchive, when set, receives a §8.10 archive record for every
 	// child session (a session with a parent) that reaches a terminal
 	// state, so a resumed parent can replay the outcome. Nil disables
@@ -454,6 +515,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		agentNamespace:     opts.AgentNamespace,
 		sealer:             opts.Sealer,
 		partialManifestCleaner: opts.PartialManifestCleaner,
+		evictionStateLookup:    opts.EvictionStateLookup,
+		partialManifestLookup:  opts.PartialManifestLookup,
 		treeArchive:        opts.TreeArchive,
 		maxOrphanTasks:     opts.MaxOrphanTasksPerTenant,
 		runtimes:           opts.Runtimes,
