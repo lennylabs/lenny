@@ -1,0 +1,110 @@
+{{- /*
+§12.5 lines 277-280 — MinIO bucket configuration Job.
+
+Configures the MinIO artifact bucket the gateway writes to:
+
+  - `mc mb` — create the bucket idempotently when it does not exist
+  - `mc anonymous set none` — pin the bucket private
+  - `mc version enable` — enable bucket versioning (§12.5 line 277)
+  - `mc ilm add` — install the bucket-wide delete-marker and
+    noncurrent-version lifecycle rules (§12.5 line 280)
+
+Runs as a post-install/post-upgrade Helm hook so the bucket lifecycle
+is applied the first time the chart points at a fresh MinIO; the rule
+overlay is idempotent so re-runs are safe.
+
+The Job is enabled when:
+  - the chart points at a real MinIO (minio.endpoint set),
+  - and minio.lifecycle.enabled is true (default).
+*/ -}}
+{{- $minio := .Values.minio | default dict -}}
+{{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") -}}
+{{- $lifecycle := $minio.lifecycle | default dict -}}
+{{- $enabled := true -}}
+{{- if hasKey ($lifecycle | default dict) "enabled" -}}
+{{- $enabled = $lifecycle.enabled -}}
+{{- end -}}
+{{- if and $hasMinio $enabled }}
+{{- $tls := $minio.tls | default dict -}}
+{{- $useSSL := true -}}
+{{- if hasKey ($tls | default dict) "enabled" -}}
+{{- $useSSL = $tls.enabled -}}
+{{- end -}}
+{{- $scheme := "https" -}}
+{{- if not $useSSL -}}
+{{- $scheme = "http" -}}
+{{- end -}}
+{{- $noncurrentDays := default 1 $lifecycle.noncurrentExpirationDays -}}
+{{- $mcImage := default "minio/mc:latest" $lifecycle.image -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-minio-bucket-lifecycle
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: minio-bucket-lifecycle
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: minio-bucket-lifecycle
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mc
+          image: {{ $mcImage | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MC_HOST_lenny
+              value: "{{ $scheme }}://$(MINIO_ACCESS_KEY):$(MINIO_SECRET_KEY)@{{ $minio.endpoint }}"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: minio-access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: minio-secret-key
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              # §12.5 line 277 — versioning enable.
+              # §12.5 line 280 — bucket-wide delete-marker + noncurrent
+              # version expiration via `mc ilm add`.
+              mc mb --ignore-existing lenny/{{ $minio.bucket }}
+              mc anonymous set none lenny/{{ $minio.bucket }}
+              mc version enable lenny/{{ $minio.bucket }}
+              mc ilm add lenny/{{ $minio.bucket }} \
+                --expired-object-delete-marker \
+                --noncurrentversion-expiration-days {{ $noncurrentDays }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+{{- end }}

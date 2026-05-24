@@ -346,11 +346,12 @@ tests:
       value: Deployment
     asserts:
       # POD_NAME + LENNY_MAX_SESSIONS_PER_REPLICA + LENNY_MIN_REPLICAS
-      # + LENNY_STREAM_CEILING + 8 extraction-threshold gauges
-      # + LENNY_POOLER_MODE (§4.2 line 165) = 13.
+      # + LENNY_STREAM_CEILING + LENNY_TERMINATION_GRACE_SECONDS
+      # + 8 extraction-threshold gauges + LENNY_POOLER_MODE
+      # (§4.2 line 165) = 14.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 13
+          count: 14
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -548,11 +549,12 @@ tests:
 
   - it: wires the MinIO env from values and Secret when minio.endpoint is set
     set:
+      backends: "embedded"
       minio.endpoint: "minio.svc:9000"
       minio.accessKey: "ak"
       minio.secretKey: "sk"
       minio.bucket: "lenny-artifacts"
-      minio.useSSL: false
+      minio.tls.enabled: false
     documentSelector:
       path: kind
       value: Deployment

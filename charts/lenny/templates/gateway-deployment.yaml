@@ -30,7 +30,7 @@ When postgres.dsn, redis.url, or minio.endpoint is set, the env var
 for that store is rendered: the credential-bearing values
 (LENNY_POSTGRES_DSN, LENNY_MINIO_ACCESS_KEY, LENNY_MINIO_SECRET_KEY)
 are read from the lenny-datastore-conn Secret with secretKeyRef, and
-the non-secret values (endpoint, bucket, useSSL) are plain env. Each
+the non-secret values (endpoint, bucket, tls.enabled) are plain env. Each
 env var is gated on its own value, so a partial configuration renders
 only the env vars it can satisfy.
 */ -}}
@@ -40,6 +40,28 @@ only the env vars it can satisfy.
 {{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
 {{- $hasRedis := and $redis $redis.url (ne $redis.url "") -}}
 {{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") -}}
+{{- /* §12.5 line 279 — TLS-mandate posture. tls.enabled selects HTTPS
+   to the MinIO endpoint. The spec requires `true` on every
+   non-embedded deployment; the chart enforces the posture below.
+   Default tls.enabled is true; an explicit `false` is honored. */ -}}
+{{- $minioUseSSL := true -}}
+{{- if and $minio (hasKey ($minio | default dict) "tls") -}}
+{{- $minioTLS := $minio.tls -}}
+{{- if hasKey ($minioTLS | default dict) "enabled" -}}
+{{- $minioUseSSL = $minioTLS.enabled -}}
+{{- end -}}
+{{- end -}}
+{{- $backends := .Values.backends | default "" -}}
+{{- $complianceProfile := .Values.complianceProfile | default "" -}}
+{{- /* Regulated profiles MUST run with TLS. Embedded mode is the only
+   posture where TLS may be disabled (§12.5 line 279). */ -}}
+{{- $regulated := or (eq $complianceProfile "soc2") (eq $complianceProfile "fedramp") (eq $complianceProfile "hipaa") -}}
+{{- if and (not $minioUseSSL) $regulated -}}
+{{- fail (printf "§12.5 line 279: minio.tls.enabled MUST be true when complianceProfile is %q (regulated)." $complianceProfile) -}}
+{{- end -}}
+{{- if and (not $minioUseSSL) (ne $backends "embedded") -}}
+{{- fail "§12.5 line 279: minio.tls.enabled may default to false only when backends: embedded; set tls.enabled: true on any other backends value." -}}
+{{- end -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -425,7 +447,7 @@ spec:
             - name: LENNY_MINIO_BUCKET
               value: {{ $minio.bucket | quote }}
             - name: LENNY_MINIO_USE_SSL
-              value: {{ $minio.useSSL | quote }}
+              value: {{ $minioUseSSL | quote }}
             {{- end }}
           ports:
             - name: http

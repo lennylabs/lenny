@@ -1,0 +1,134 @@
+suite: lenny-minio-bucket-lifecycle Job and TLS-mandate guards
+release:
+  name: lenny
+  namespace: lenny-system
+tests:
+  - it: skips the lifecycle Job when MinIO is unconfigured (stock dev render)
+    template: minio-bucket-lifecycle-job.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the lifecycle Job when MinIO endpoint is set
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.name
+          value: lenny-minio-bucket-lifecycle
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: post-install,post-upgrade
+
+  - it: emits the post-install hook with the §12.5 versioning + lifecycle commands
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "mc mb --ignore-existing"
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "mc version enable"
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "mc ilm add lenny/lenny-artifacts"
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--expired-object-delete-marker"
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--noncurrentversion-expiration-days 1"
+
+  - it: honors minio.lifecycle.noncurrentExpirationDays override
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          noncurrentExpirationDays: 7
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--noncurrentversion-expiration-days 7"
+
+  - it: skips when minio.lifecycle.enabled is explicitly false
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: §12.5 line 279 — render fails when minio.tls.enabled=false with a regulated complianceProfile
+    template: gateway-deployment.yaml
+    set:
+      complianceProfile: "soc2"
+      postgres:
+        dsn: "postgres://lenny:lenny@pg.lenny-system:5432/lenny?sslmode=require"
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "§12.5 line 279: minio.tls.enabled MUST be true when complianceProfile is \"soc2\" (regulated)."
+
+  - it: §12.5 line 279 — render fails when minio.tls.enabled=false outside embedded mode
+    template: gateway-deployment.yaml
+    set:
+      backends: "selfManaged"
+      postgres:
+        dsn: "postgres://lenny:lenny@pg.lenny-system:5432/lenny?sslmode=require"
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "§12.5 line 279: minio.tls.enabled may default to false only when backends: embedded; set tls.enabled: true on any other backends value."
+
+  - it: §12.5 line 279 — embedded backends permits minio.tls.enabled=false
+    template: gateway-deployment.yaml
+    set:
+      backends: "embedded"
+      postgres:
+        dsn: "postgres://lenny:lenny@pg.lenny-system:5432/lenny?sslmode=require"
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          enabled: false
+    asserts:
+      - notFailedTemplate: {}

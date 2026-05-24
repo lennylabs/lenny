@@ -154,6 +154,18 @@ redis:
   # Memorystore, 6380 for Azure Cache for Redis.
   gatewayEgressPort: 6379
 
+# backends selects the §17.4 / §17.9 deployment topology. The
+# `embedded` value is the `lenny up` developer mode; every other value
+# enforces the production posture (TLS required, regulated-profile
+# guards). spec: §12.5 line 279.
+backends: ""
+
+# complianceProfile names the §11.7 / §12.5 regulated posture the
+# deployment runs under. Empty selects no profile. Regulated values
+# (`soc2`, `fedramp`, `hipaa`) gate the chart-time checks the §12.5
+# bucket lifecycle and TLS-mandate posture rely on.
+complianceProfile: ""
+
 # minio configures the MinIO object store (self-managed profile).
 minio:
   # tlsPort is the TLS port the gateway reaches MinIO on (§13.2).
@@ -164,13 +176,36 @@ minio:
   # gateway uses its in-memory blob store. Set endpoint together with
   # accessKey, secretKey, and bucket to point the §4.5 artifact store at
   # an external MinIO. accessKey and secretKey are rendered into the
-  # lenny-datastore-conn Secret; endpoint, bucket, and useSSL are wired
-  # as plain env. useSSL selects HTTPS to the MinIO endpoint.
+  # lenny-datastore-conn Secret; endpoint, bucket, and tls.enabled are
+  # wired as plain env. tls.enabled selects HTTPS to the MinIO endpoint.
   endpoint: ""
   accessKey: ""
   secretKey: ""
   bucket: ""
-  useSSL: false
+  # tls bundles the §12.5 line 279 TLS-mandate posture. tls.enabled
+  # selects HTTPS to the MinIO endpoint. The spec requires `true` on
+  # every non-embedded deployment; it defaults to `false` only when
+  # `backends: embedded` (the `lenny up` developer mode). Setting
+  # `tls.enabled: false` on any other backends value, or with a
+  # regulated `complianceProfile`, fails the helm render.
+  tls:
+    enabled: true
+  # lifecycle gates the §12.5 lines 277-280 post-install bucket
+  # configuration Job (mc mb, versioning enable, delete-marker and
+  # noncurrent-version expiration via `mc ilm add`). The Job runs
+  # post-install/post-upgrade so the bucket is configured the first
+  # time the chart points at a fresh MinIO. Disable on installs that
+  # manage MinIO out of band.
+  lifecycle:
+    enabled: true
+    # noncurrentExpirationDays bounds how long expired-noncurrent
+    # versions live before the bucket-wide lifecycle rule deletes them.
+    # spec: §12.5 line 280 default is 1.
+    noncurrentExpirationDays: 1
+    # mc image runs the configuration Job. The default tracks the
+    # latest stable mc release; pin to a digest in answers for
+    # reproducible installs.
+    image: "minio/mc:latest"
 
 # kms configures the §4 envelope-encryption KEK provider for both the
 # gateway and the Token Service. The gateway wraps §4.9 connector
