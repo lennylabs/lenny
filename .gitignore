@@ -47,3 +47,4 @@ deploy/terraform/cloud/*/*.tfvars.json
 # the renderer script + the chart's values.yaml; the rendered file
 # carries per-release URLs / digests and stays out of git.
 scripts/cloud/*/values-cloud-*.yaml
+.claude/scheduled_tasks.lock
