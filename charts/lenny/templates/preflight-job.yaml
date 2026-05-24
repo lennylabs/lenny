@@ -112,6 +112,13 @@ subjects:
 {{- range $flag, $on := .Values.acceptFeatureFlagDowngrade }}
 {{-   if $on }}{{ $accepted = append $accepted $flag }}{{ end }}
 {{- end }}
+{{- $minio := .Values.minio | default dict -}}
+{{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") -}}
+{{- $tls := $minio.tls | default dict -}}
+{{- $useSSL := true -}}
+{{- if hasKey ($tls | default dict) "enabled" -}}
+{{- $useSSL = $tls.enabled -}}
+{{- end -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -146,6 +153,25 @@ spec:
             - --feature-drain-readiness={{ .Values.features.drainReadiness }}
             - --feature-compliance={{ .Values.features.compliance }}
             - --accept-downgrade={{ join "," $accepted }}
+            - --compliance-profile={{ .Values.complianceProfile | default "" }}
+            {{- if $hasMinio }}
+            - --minio-endpoint={{ $minio.endpoint }}
+            - --minio-bucket={{ $minio.bucket }}
+            - --minio-use-ssl={{ $useSSL }}
+            {{- end }}
+          {{- if $hasMinio }}
+          env:
+            - name: MINIO_ACCESS_KEY_ENV
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: minio-access-key
+            - name: MINIO_SECRET_KEY_ENV
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: minio-secret-key
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

@@ -28,10 +28,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
+	"os"
 	"strings"
 
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -41,6 +45,47 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
+
+// minioGetBucketEncryption builds a MinIOEncryptionProber that calls
+// the §12.5 MinIO server-side encryption configuration API. Empty
+// algorithm with nil error means SSE is unconfigured; a non-nil error
+// means the SDK could not read the configuration (regulated profiles
+// fail closed; others surface as advisory).
+//
+// spec: §12.5 line 297.
+func minioGetBucketEncryption(endpoint, accessKey, secretKey string, useSSL bool) preflight.MinIOEncryptionProber {
+	if endpoint == "" {
+		return nil
+	}
+	return preflight.MinIOEncryptionProbeFunc(func(ctx context.Context, bucket string) (string, error) {
+		c, err := minio.New(endpoint, &minio.Options{
+			Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+			Secure: useSSL,
+		})
+		if err != nil {
+			return "", err
+		}
+		conf, err := c.GetBucketEncryption(ctx, bucket)
+		if err != nil {
+			// minio-go returns "ServerSideEncryptionConfigurationNotFoundError"
+			// when no SSE is configured. Map that to (empty, nil) so
+			// the preflight decision logic treats it as absent
+			// rather than unreachable.
+			if minio.ToErrorResponse(err).Code == "ServerSideEncryptionConfigurationNotFoundError" {
+				return "", nil
+			}
+			return "", err
+		}
+		if conf == nil || len(conf.Rules) == 0 {
+			return "", nil
+		}
+		algo := conf.Rules[0].Apply.SSEAlgorithm
+		if algo == "" {
+			return "", errors.New("preflight: GetBucketEncryption returned a rule with no algorithm")
+		}
+		return algo, nil
+	})
+}
 
 // parseAcceptDowngrade splits the comma-separated --accept-downgrade
 // value into the set of feature flags whose admission-plane downgrade
@@ -68,7 +113,21 @@ func main() {
 		"value of the global.spiffeTrustDomain chart value (NET-064 uniqueness check)")
 	saTokenAudience := flag.String("sa-token-audience", "",
 		"value of the global.saTokenAudience chart value (NET-064 uniqueness check)")
+	complianceProfile := flag.String("compliance-profile", "",
+		"value of the complianceProfile chart value (regulated values fail closed on absent MinIO SSE; §12.5 line 297)")
+	minioEndpoint := flag.String("minio-endpoint", "",
+		"MinIO endpoint host:port for the §12.5 line 297 SSE audit. Empty skips the check.")
+	minioBucket := flag.String("minio-bucket", "",
+		"MinIO artifact bucket name for the §12.5 line 297 SSE audit. Empty skips the check.")
+	minioUseSSL := flag.Bool("minio-use-ssl", true,
+		"use TLS when probing MinIO for the §12.5 line 297 SSE audit.")
 	flag.Parse()
+
+	// MinIO credentials for the §12.5 line 297 SSE preflight are read
+	// from env vars so a Helm template can mount them via a secretKeyRef
+	// without embedding the secret value in the Job spec.
+	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY_ENV")
+	minioSecretKey := os.Getenv("MINIO_SECRET_KEY_ENV")
 
 	// §12.8 clock-injection harness production-default gate. A
 	// production install that carries a non-zero
@@ -98,9 +157,12 @@ func main() {
 			DrainReadiness: *drainReadiness,
 			Compliance:     *compliance,
 		},
-		AcceptDowngrade:   parseAcceptDowngrade(*acceptDowngrade),
-		SPIFFETrustDomain: *spiffeTrustDomain,
-		SATokenAudience:   *saTokenAudience,
+		AcceptDowngrade:       parseAcceptDowngrade(*acceptDowngrade),
+		SPIFFETrustDomain:     *spiffeTrustDomain,
+		SATokenAudience:       *saTokenAudience,
+		ComplianceProfile:     *complianceProfile,
+		MinIOBucket:           *minioBucket,
+		MinIOEncryptionProber: minioGetBucketEncryption(*minioEndpoint, minioAccessKey, minioSecretKey, *minioUseSSL),
 	})
 
 	for _, r := range report {

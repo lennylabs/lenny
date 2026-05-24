@@ -47,6 +47,18 @@ type Config struct {
 	// installation, checked for §13.2 NET-064 uniqueness against the
 	// audiences already in use cluster-wide.
 	SATokenAudience string
+	// ComplianceProfile names the §11.7 / §12.5 regulated posture
+	// (soc2 | fedramp | hipaa) the chart is being installed under.
+	// Empty selects no profile.
+	ComplianceProfile string
+	// MinIOBucket is the artifact bucket the §12.5 line 297 SSE
+	// preflight check audits. Empty skips the check.
+	MinIOBucket string
+	// MinIOEncryptionProber, when non-nil and a bucket name is
+	// configured, runs the §12.5 line 297 SSE check against the
+	// artifact bucket. The lenny-preflight Job constructs a real
+	// prober against MinIO; tests pass a fake.
+	MinIOEncryptionProber MinIOEncryptionProber
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -164,6 +176,22 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 				Decision: CheckSATokenAudienceUniqueness(cfg.SATokenAudience, cfg.Namespace, gws),
 			},
 		)
+	}
+
+	// §12.5 line 297 — MinIO server-side encryption posture audit.
+	// Runs only when a bucket is configured and the chart wires the
+	// prober. A regulated complianceProfile (soc2 | fedramp | hipaa)
+	// fails closed on absent SSE; non-regulated installs surface the
+	// posture as advisory and pass.
+	if cfg.MinIOBucket != "" && cfg.MinIOEncryptionProber != nil {
+		report = append(report, CheckResult{
+			Name: "minio-server-side-encryption",
+			Decision: MinIOEncryptionCheck{
+				Bucket:            cfg.MinIOBucket,
+				ComplianceProfile: cfg.ComplianceProfile,
+				Prober:            cfg.MinIOEncryptionProber,
+			}.Decide(ctx),
+		})
 	}
 	return report
 }
