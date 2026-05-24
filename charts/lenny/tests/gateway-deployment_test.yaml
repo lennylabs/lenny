@@ -687,3 +687,55 @@ tests:
           value: kubernetes.io/hostname
       - isNull:
           path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
+
+  # spec: §4.3 line 205 — when gateway.spiffe.enabled the chart mounts
+  # a cert-manager-csi-driver-spiffe volume instead of the shared
+  # lenny-gateway-tls Secret so each replica presents a per-replica
+  # SPIFFE identity. Compromising one replica yields a per-pod key
+  # whose SPIFFE URI is attributable independently.
+  - it: mounts a per-replica SPIFFE CSI volume when gateway.spiffe.enabled
+    set:
+      gateway.spiffe.enabled: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-gateway-tls
+            secret:
+              secretName: lenny-gateway-tls
+              defaultMode: 0400
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-gateway-tls
+            csi:
+              driver: csi.cert-manager.io
+              readOnly: true
+              volumeAttributes:
+                spiffe.csi.cert-manager.io/trust-domain: cluster.local
+                spiffe.csi.cert-manager.io/identity-template: "spiffe://cluster.local/gateway/{{ .PodName }}"
+
+  # spec: §4.3 line 205 — the SPIFFE trust domain can be overridden
+  # per-deployment so multi-tenant clusters can scope identities to a
+  # known trust anchor (e.g. spiffe://acme.com/...).
+  - it: honors gateway.spiffe.trustDomain override
+    set:
+      gateway.spiffe.enabled: true
+      gateway.spiffe.trustDomain: lenny.acme.com
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-gateway-tls
+            csi:
+              driver: csi.cert-manager.io
+              readOnly: true
+              volumeAttributes:
+                spiffe.csi.cert-manager.io/trust-domain: lenny.acme.com
+                spiffe.csi.cert-manager.io/identity-template: "spiffe://lenny.acme.com/gateway/{{ .PodName }}"

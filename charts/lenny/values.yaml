@@ -601,6 +601,25 @@ gateway:
   # session names no environment. It MUST be "deny-all" or "allow-all";
   # the gateway refuses to start when it is unset (LENNY_CONFIG_MISSING).
   noEnvironmentPolicy: deny-all
+  # spiffe configures the §4.3 line 205 per-replica mTLS identity.
+  # When `enabled: false` (the default) every gateway replica mounts
+  # the shared `lenny-gateway-tls` Secret rendered by mtls-pki.yaml;
+  # compromising one replica yields a key shared by every other
+  # replica. When `enabled: true` the chart instead mounts a
+  # cert-manager-csi-driver-spiffe volume that delivers a per-replica
+  # SPIFFE-ID URI SAN, so each pod presents a distinct mTLS identity
+  # whose path encodes the replica name. The Token Service's gRPC
+  # interceptor extracts the SPIFFE ID and passes it through to audit.
+  # See the chart README for the operator wiring under SPIRE / cert-
+  # manager-csi-driver-spiffe.
+  spiffe:
+    enabled: false
+    # trustDomain controls the SPIFFE trust domain stamped into the
+    # CSR. Empty falls back to global.spiffeTrustDomain.
+    trustDomain: ""
+    # csiDriverName is the CSI driver delivering the per-replica
+    # identity. Defaults to the cert-manager-csi-driver-spiffe shape.
+    csiDriverName: "csi.cert-manager.io"
   # grpcPort is the pod-to-gateway gRPC control-channel port (§13.2),
   # admitted by the agent-namespace allow-pod-egress-base NetworkPolicy.
   # The gateway serves the §8.6 GatewayControl listener on this port.

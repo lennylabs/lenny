@@ -160,10 +160,28 @@ spec:
       */ -}}
       {{- if .Values.mtls.enabled }}
       volumes:
+        {{- if .Values.gateway.spiffe.enabled }}
+        # §4.3 line 205 per-replica mTLS identity. The
+        # cert-manager-csi-driver-spiffe (or equivalent SPIFFE CSI
+        # driver) injects a per-pod certificate whose SAN carries a
+        # distinct spiffe:// URI for each replica. The Token Service's
+        # gRPC interceptor extracts the SPIFFE ID and threads it
+        # through to audit so per-replica attribution is possible.
+        # The shared lenny-gateway-tls Secret is not mounted on this
+        # path — every replica gets its own CSR-driven identity.
+        - name: lenny-gateway-tls
+          csi:
+            driver: {{ .Values.gateway.spiffe.csiDriverName | quote }}
+            readOnly: true
+            volumeAttributes:
+              spiffe.csi.cert-manager.io/trust-domain: {{ default .Values.global.spiffeTrustDomain .Values.gateway.spiffe.trustDomain | quote }}
+              spiffe.csi.cert-manager.io/identity-template: "spiffe://{{ default .Values.global.spiffeTrustDomain .Values.gateway.spiffe.trustDomain }}/gateway/{{`{{ .PodName }}`}}"
+        {{- else }}
         - name: lenny-gateway-tls
           secret:
             secretName: lenny-gateway-tls
             defaultMode: 0400
+        {{- end }}
       {{- end }}
       {{- /*
           §4.1 / §17.1 cross-zone topology spread. The §17.1 narrative
