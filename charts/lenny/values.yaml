@@ -771,6 +771,23 @@ gateway:
     llmProxy:
       activeConnections: 2000
       p99TTFBSeconds: 1.0
+  # periodicCheckpointIntervalSeconds is the §4.4 line 256 cadence the
+  # gateway uses for periodic workspace checkpoints. The spec default is
+  # 600 (10 minutes); the freshness SLO bounds workspace loss on
+  # eviction to ≤ one interval. Deployers with stricter durability
+  # requirements may lower this at the cost of additional MinIO
+  # bandwidth and gateway CPU. The chart renders this via the
+  # --checkpoint-interval flag on the gateway binary.
+  periodicCheckpointIntervalSeconds: 600
+  # periodicCheckpointJitterFraction is the §4.4 line 258 jitter the
+  # gateway applies to each session's first periodic checkpoint to
+  # prevent thundering-herd checkpoint storms at Tier 3 scale. Range
+  # [0.0, 1.0]; default 0.2 spreads the first periodic checkpoint
+  # uniformly across a 120-second window at the default 600-second
+  # interval. Subsequent checkpoints fire at the fixed interval (no
+  # additional jitter), so sessions naturally desynchronise after the
+  # first cycle. Rendered via the --checkpoint-jitter-fraction flag.
+  periodicCheckpointJitterFraction: 0.2
 
 # autoscaling configures the §10.1 gateway horizontal scaler. The chart
 # renders exactly one scaler resource, selected by autoscaling.provider:

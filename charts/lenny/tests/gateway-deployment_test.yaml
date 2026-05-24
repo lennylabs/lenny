@@ -739,3 +739,54 @@ tests:
               volumeAttributes:
                 spiffe.csi.cert-manager.io/trust-domain: lenny.acme.com
                 spiffe.csi.cert-manager.io/identity-template: "spiffe://lenny.acme.com/gateway/{{ .PodName }}"
+
+  # spec: §4.4 line 256 — `periodicCheckpointIntervalSeconds` default
+  # is 600 s (10 minutes). The chart renders the value as the
+  # --checkpoint-interval flag so a tier preset can override it from
+  # Helm without a binary change.
+  - it: renders --checkpoint-interval from gateway.periodicCheckpointIntervalSeconds
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --checkpoint-interval=600s
+
+  # spec: §4.4 line 258 — `periodicCheckpointJitterFraction` default is
+  # 0.2. The chart renders the value as the --checkpoint-jitter-fraction
+  # flag.
+  - it: renders --checkpoint-jitter-fraction from gateway.periodicCheckpointJitterFraction
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --checkpoint-jitter-fraction=0.2
+
+  # spec: §4.4 line 256 — operators may override the periodic checkpoint
+  # cadence via Helm; the rendered flag matches the value.
+  - it: honors gateway.periodicCheckpointIntervalSeconds override
+    set:
+      gateway.periodicCheckpointIntervalSeconds: 300
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --checkpoint-interval=300s
+
+  # spec: §4.4 line 258 — operators may override the periodic checkpoint
+  # jitter fraction via Helm; the rendered flag matches the value.
+  - it: honors gateway.periodicCheckpointJitterFraction override
+    set:
+      gateway.periodicCheckpointJitterFraction: 0.5
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --checkpoint-jitter-fraction=0.5

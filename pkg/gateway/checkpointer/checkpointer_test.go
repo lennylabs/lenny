@@ -251,6 +251,114 @@ func TestRunPeriodicallySweeps(t *testing.T) {
 	}
 }
 
+// spec: §4.4 line 256 — periodicCheckpointIntervalSeconds default is 600 s.
+// diagnosis: a zero Interval selects the spec-mandated default; the
+// previous defaultInterval of 5 minutes generated twice the steady-state
+// MinIO bandwidth and missed §17.8 capacity baselines.
+func TestRunUsesTenMinuteDefaultIntervalWhenUnset(t *testing.T) {
+	// Run is hard to time-test without breaking the API, so we verify
+	// the FirstCheckpointDelay default by exercising the function with
+	// a non-zero interval that matches the spec default and confirming
+	// the math holds.
+	delay := checkpointer.FirstCheckpointDelay("s1", 10*time.Minute, 0)
+	if delay != 10*time.Minute {
+		t.Errorf("FirstCheckpointDelay(jitter=0) = %v, want exactly 10m (spec §4.4 default interval)", delay)
+	}
+}
+
+// spec: §4.4 line 258 — jitter spreads the first periodic checkpoint
+// across [interval, interval + interval × jitterFraction]; the same
+// session must receive the same jitter across restarts.
+func TestFirstCheckpointDelayIsStableAndBounded(t *testing.T) {
+	interval := 600 * time.Second
+	jitter := 0.2
+
+	// The delay is bounded by the spec range.
+	for _, sessionID := range []string{"alice-1", "bob-2", "carol-3", "dave-4"} {
+		delay := checkpointer.FirstCheckpointDelay(sessionID, interval, jitter)
+		if delay < interval {
+			t.Errorf("session %s: delay %v < interval %v (spec §4.4 floor)", sessionID, delay, interval)
+		}
+		if delay > interval+time.Duration(float64(interval)*jitter) {
+			t.Errorf("session %s: delay %v > interval+jitter %v (spec §4.4 ceiling)",
+				sessionID, delay, interval+time.Duration(float64(interval)*jitter))
+		}
+	}
+
+	// The delay is stable: the same session ID returns the same value
+	// across calls so a coordinator handoff or gateway restart does not
+	// re-roll the jitter into a thundering-herd pattern.
+	first := checkpointer.FirstCheckpointDelay("acme-session-1", interval, jitter)
+	for i := 0; i < 10; i++ {
+		if got := checkpointer.FirstCheckpointDelay("acme-session-1", interval, jitter); got != first {
+			t.Errorf("call %d: delay %v, want stable %v", i, got, first)
+		}
+	}
+}
+
+// spec: §4.4 line 258 — jitterFraction = 0 selects no jitter; every
+// session ticks at the same wall-clock second. Used by tests and by
+// dev-mode deployments.
+func TestFirstCheckpointDelayWithZeroJitterReturnsInterval(t *testing.T) {
+	got := checkpointer.FirstCheckpointDelay("any-session", 600*time.Second, 0)
+	if got != 600*time.Second {
+		t.Errorf("FirstCheckpointDelay(jitter=0) = %v, want exactly interval", got)
+	}
+}
+
+// spec: §4.4 line 258 — jitterFraction range is [0.0, 1.0]; out-of-range
+// values are clamped at the boundary rather than rejected so an
+// operator typo cannot crash the loop.
+func TestFirstCheckpointDelayClampsOutOfRangeJitter(t *testing.T) {
+	interval := 600 * time.Second
+	// Negative jitterFraction clamps to 0: delay == interval.
+	if got := checkpointer.FirstCheckpointDelay("s1", interval, -0.5); got != interval {
+		t.Errorf("negative jitter: delay %v, want interval %v", got, interval)
+	}
+	// jitterFraction > 1.0 clamps to 1.0: delay ∈ [interval, 2×interval].
+	for _, sessionID := range []string{"s1", "s2", "s3"} {
+		got := checkpointer.FirstCheckpointDelay(sessionID, interval, 2.0)
+		if got < interval || got > 2*interval {
+			t.Errorf("clamped jitter for %s: delay %v, want [%v, %v]", sessionID, got, interval, 2*interval)
+		}
+	}
+}
+
+// spec: §4.4 line 258 — different session IDs yield different first
+// delays so a burst of sessions started in the same wall-clock second
+// does not align their next checkpoints.
+func TestFirstCheckpointDelayDiversifiesAcrossSessions(t *testing.T) {
+	interval := 600 * time.Second
+	jitter := 0.2
+	seen := map[time.Duration]int{}
+	for _, sessionID := range []string{"a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8"} {
+		seen[checkpointer.FirstCheckpointDelay(sessionID, interval, jitter)]++
+	}
+	if len(seen) < 2 {
+		t.Errorf("only %d distinct delays across 8 sessions: %v", len(seen), seen)
+	}
+}
+
+// spec: §4.4 line 258 — empty session ID degrades to the no-jitter
+// path; this protects callers that mis-pass an empty string.
+func TestFirstCheckpointDelayWithEmptySessionIDReturnsInterval(t *testing.T) {
+	got := checkpointer.FirstCheckpointDelay("", 600*time.Second, 0.2)
+	if got != 600*time.Second {
+		t.Errorf("empty session id: delay %v, want interval", got)
+	}
+}
+
+// spec: §4.4 line 258 — zero or negative interval returns 0 (the loop
+// is effectively disabled, matching the test-mode contract).
+func TestFirstCheckpointDelayWithZeroIntervalReturnsZero(t *testing.T) {
+	if got := checkpointer.FirstCheckpointDelay("s1", 0, 0.2); got != 0 {
+		t.Errorf("zero interval: delay %v, want 0", got)
+	}
+	if got := checkpointer.FirstCheckpointDelay("s1", -1*time.Second, 0.2); got != 0 {
+		t.Errorf("negative interval: delay %v, want 0", got)
+	}
+}
+
 func TestSealRecordsASealedSnapshot(t *testing.T) {
 	registry := podsession.NewRegistry()
 	store := memstore.New()

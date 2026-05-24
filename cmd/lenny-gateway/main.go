@@ -286,8 +286,10 @@ func main() {
 		"MinIO bucket for §4.5 artifacts. Required when --minio-endpoint is set.")
 	minioUseSSL := flag.Bool("minio-use-ssl", envFlag("LENNY_MINIO_USE_SSL"),
 		"connect to MinIO over HTTPS. Override via LENNY_MINIO_USE_SSL.")
-	checkpointInterval := flag.Duration("checkpoint-interval", 5*time.Minute,
-		"§4.4 periodic-checkpoint cadence. The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace.")
+	checkpointInterval := flag.Duration("checkpoint-interval", 10*time.Minute,
+		"§4.4 line 256 periodic-checkpoint cadence (`periodicCheckpointIntervalSeconds`). The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace. Default 10m (600s) matches the §4.4 spec value; the freshness SLO bounds workspace loss on eviction to ≤ one interval.")
+	checkpointJitterFraction := flag.Float64("checkpoint-jitter-fraction", envFloat("LENNY_CHECKPOINT_JITTER_FRACTION", checkpointer.DefaultJitterFraction),
+		"§4.4 line 258 `periodicCheckpointJitterFraction`. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
 	noEnvPolicy := flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
 		"§10.6 platform-wide noEnvironmentPolicy (deny-all or allow-all). Required outside --dev-mode.")
 	connectorOAuthCallbackURL := flag.String("connector-oauth-callback-url", os.Getenv("LENNY_CONNECTOR_OAUTH_CALLBACK_URL"),
@@ -824,9 +826,10 @@ func main() {
 		}
 		exec = executor.NewPodExecutor(podRegistry, podBinder)
 		checkpointSvc = &checkpointer.Checkpointer{
-			Sessions: sessions,
-			Registry: podRegistry,
-			Interval: *checkpointInterval,
+			Sessions:       sessions,
+			Registry:       podRegistry,
+			Interval:       *checkpointInterval,
+			JitterFraction: *checkpointJitterFraction,
 			OnError: func(sessionID string, err error) {
 				log.Printf("lenny-gateway: checkpoint of session %s failed: %v", sessionID, err)
 			},

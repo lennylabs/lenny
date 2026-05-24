@@ -287,6 +287,12 @@ spec:
             {{- with (first .Values.agentNamespaces) }}
             - --agent-namespace={{ .name }}
             {{- end }}
+            {{/* §4.4 line 256 / line 258 — periodic-checkpoint
+                  cadence and per-session first-checkpoint jitter
+                  fraction. The gateway honors these flags only when
+                  --agent-namespace is set. */}}
+            - --checkpoint-interval={{ .Values.gateway.periodicCheckpointIntervalSeconds }}s
+            - --checkpoint-jitter-fraction={{ .Values.gateway.periodicCheckpointJitterFraction }}
             {{- with .Values.sandbox.defaultIsolationProfile }}
             - --default-isolation-profile={{ . }}
             {{- end }}
