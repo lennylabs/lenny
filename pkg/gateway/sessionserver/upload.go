@@ -154,11 +154,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		src = &io.LimitedReader{R: body, N: reservation.headroom + 1}
 	}
 
+	// spec: §12.5 ll. 295 — every URI carries the {object_type}
+	// segment; the upload handler emits ObjectTypeUpload so the
+	// resulting MinIO key sits under `/{tenant}/upload/{session}/{part}`,
+	// the §12.5 prefix-scoped GC sweep recognises it as an uploaded
+	// file, and the eviction-context prefix (`/{tenant}/eviction/...`)
+	// stays distinct.
 	uri := blobstore.URI{
-		TenantID:  tenantID,
-		SessionID: row.ID,
-		PartID:    blobstore.NewPartID(),
-		TTL:       UploadDefaultTTL,
+		TenantID:   tenantID,
+		ObjectType: blobstore.ObjectTypeUpload,
+		SessionID:  row.ID,
+		PartID:     blobstore.NewPartID(),
+		TTL:        UploadDefaultTTL,
 	}
 	bytesRead := &countingReader{r: src}
 	ref, err := s.blobs.Put(uri, mimeType, bytesRead)

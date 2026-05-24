@@ -105,18 +105,31 @@ func (s *Store) hasLegalHold(key string) bool {
 	return ok
 }
 
-// objectKey maps a §4.5 blob URI to its MinIO object key. It mirrors
-// the in-memory store's key so the two implementations address a blob
-// identically.
+// objectKey maps a §4.5 blob URI to its MinIO object key. The key
+// follows the §12.5 ll. 295 canonical layout
+// `{tenant_id}/{object_type}/{session_id}/{part_id}` so the §12.5
+// GC sweep can prefix-scope by object class (e.g.,
+// `{tenant_id}/eviction/` for the §4.4 line 291 eviction-context
+// cleanup path).
+//
+// spec: §12.5 ll. 295, 315.
 func objectKey(u blobstore.URI) string {
-	return sessionPrefix(u.TenantID, u.SessionID) + u.PartID
+	objType := u.ObjectType
+	if objType == "" {
+		objType = blobstore.ObjectTypeUpload
+	}
+	return sessionPrefix(u.TenantID, objType, u.SessionID) + u.PartID
 }
 
-// sessionPrefix is the MinIO object-key prefix shared by every blob of
-// a session. The trailing slash keeps the prefix from matching a
-// longer session id (sess_1 must not match sess_10).
-func sessionPrefix(tenantID, sessionID string) string {
-	return tenantID + "/" + sessionID + "/"
+// sessionPrefix is the MinIO object-key prefix shared by every blob
+// of a (tenant, object_type, session) tuple. The trailing slash keeps
+// the prefix from matching a longer session id (sess_1 must not
+// match sess_10) and lets the §12.5 line 315 prefix-scoped GC sweep
+// target the right object class.
+//
+// spec: §12.5 ll. 295, 315.
+func sessionPrefix(tenantID string, objectType blobstore.ObjectType, sessionID string) string {
+	return tenantID + "/" + string(objectType) + "/" + sessionID + "/"
 }
 
 // Put implements blobstore.Store. §4.5 blobs are write-once: a key
@@ -208,17 +221,36 @@ func (s *Store) Probe(ctx context.Context) error {
 // are removed regardless of their §4.5 TTL, since an unswept expired
 // object still holds the user's data. The signature matches the
 // orchestrator's DeleteBySessionFunc so the adapter plugs in directly.
+//
+// Under the §12.5 ll. 295 4-segment key layout
+// `{tenant}/{object_type}/{session}/{part}`, the sweep enumerates
+// every spec'd object_type because a session's bytes are spread
+// across the per-class prefixes (workspace, checkpoint, transcript,
+// upload, eviction, export, sessions).
+//
+// spec: §12.5 ll. 295, 315.
 func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error) {
-	prefix := sessionPrefix(tenantID, sessionID)
+	objectTypes := []blobstore.ObjectType{
+		blobstore.ObjectTypeWorkspace,
+		blobstore.ObjectTypeCheckpoint,
+		blobstore.ObjectTypeTranscript,
+		blobstore.ObjectTypeUpload,
+		blobstore.ObjectTypeEviction,
+		blobstore.ObjectTypeExport,
+		blobstore.ObjectTypeSessionLog,
+	}
 	var objects []minio.ObjectInfo
-	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
-		Prefix:    prefix,
-		Recursive: true,
-	}) {
-		if obj.Err != nil {
-			return 0, fmt.Errorf("miniostore: list %s: %w", prefix, obj.Err)
+	for _, ot := range objectTypes {
+		prefix := sessionPrefix(tenantID, ot, sessionID)
+		for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+			Prefix:    prefix,
+			Recursive: true,
+		}) {
+			if obj.Err != nil {
+				return 0, fmt.Errorf("miniostore: list %s: %w", prefix, obj.Err)
+			}
+			objects = append(objects, obj)
 		}
-		objects = append(objects, obj)
 	}
 	if len(objects) == 0 {
 		return 0, nil

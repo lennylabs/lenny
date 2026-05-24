@@ -60,11 +60,40 @@ func TestParseURIRejectsMalformed(t *testing.T) {
 	}
 }
 
-func TestURIRoundTrip(t *testing.T) {
-	original := "lenny-blob://acme/sess_1/part_xyz?ttl=300&enc=aes256gcm"
+// TestURIRoundTrip_LegacyForm asserts the §12.5 ll. 295 4-segment
+// serialiser accepts the pre-{object_type} 3-segment form and
+// re-emits it in the canonical 4-segment shape (stamping the
+// default ObjectTypeUpload on the parsed URI).
+//
+// spec: §12.5 ll. 295.
+func TestURIRoundTrip_LegacyForm(t *testing.T) {
+	in := "lenny-blob://acme/sess_1/part_xyz?ttl=300&enc=aes256gcm"
+	u, err := blobstore.ParseURI(in)
+	if err != nil {
+		t.Fatalf("ParseURI: %v", err)
+	}
+	if u.ObjectType != blobstore.ObjectTypeUpload {
+		t.Errorf("ObjectType: got %q, want %q (legacy default)",
+			u.ObjectType, blobstore.ObjectTypeUpload)
+	}
+	canonical := "lenny-blob://acme/upload/sess_1/part_xyz?ttl=300&enc=aes256gcm"
+	if u.String() != canonical {
+		t.Errorf("round-trip: got %q, want %q", u.String(), canonical)
+	}
+}
+
+// TestURIRoundTrip_CanonicalForm asserts the §12.5 ll. 295 4-segment
+// canonical form round-trips identically.
+//
+// spec: §12.5 ll. 295.
+func TestURIRoundTrip_CanonicalForm(t *testing.T) {
+	original := "lenny-blob://acme/checkpoint/sess_1/part_xyz?ttl=300&enc=aes256gcm"
 	u, err := blobstore.ParseURI(original)
 	if err != nil {
 		t.Fatalf("ParseURI: %v", err)
+	}
+	if u.ObjectType != blobstore.ObjectTypeCheckpoint {
+		t.Errorf("ObjectType: got %q, want checkpoint", u.ObjectType)
 	}
 	if u.String() != original {
 		t.Errorf("round-trip: got %q, want %q", u.String(), original)
@@ -348,5 +377,224 @@ func TestMemoryStoreDeleteBySessionUnknownSessionIsNoOp(t *testing.T) {
 	}
 	if deleted != 0 {
 		t.Errorf("deleted = %d, want 0 for a session with no blobs", deleted)
+	}
+}
+
+// TestObjectTypeEnumIsClosed asserts every spec-defined §12.5 line
+// 295 object_type segment is recognised by the parser, and a
+// typo is rejected.
+//
+// spec: §12.5 ll. 295, 315.
+func TestObjectTypeEnumIsClosed(t *testing.T) {
+	cases := []blobstore.ObjectType{
+		blobstore.ObjectTypeWorkspace,
+		blobstore.ObjectTypeCheckpoint,
+		blobstore.ObjectTypeTranscript,
+		blobstore.ObjectTypeUpload,
+		blobstore.ObjectTypeEviction,
+		blobstore.ObjectTypeExport,
+		blobstore.ObjectTypeSessionLog,
+	}
+	for _, ot := range cases {
+		if !blobstore.IsValidObjectType(ot) {
+			t.Errorf("IsValidObjectType(%q) = false; spec §12.5 ll. 295 names this segment", ot)
+		}
+	}
+	if blobstore.IsValidObjectType("not_a_type") {
+		t.Error("IsValidObjectType: unknown segment must be rejected")
+	}
+}
+
+// TestParseURIRejectsUnknownObjectType asserts the parser refuses
+// a URI whose object_type segment is not in the spec's closed
+// enum.
+//
+// spec: §12.5 ll. 295.
+func TestParseURIRejectsUnknownObjectType(t *testing.T) {
+	_, err := blobstore.ParseURI("lenny-blob://acme/totally_not_an_object_type/sess/p?ttl=60")
+	if !errors.Is(err, blobstore.ErrInvalidURI) {
+		t.Errorf("ParseURI: got %v, want ErrInvalidURI for an unknown object_type", err)
+	}
+}
+
+// TestMemoryStoreCopyHappyPath asserts Copier on the in-memory
+// store: a Copy duplicates the source bytes under the destination
+// URI, and a delete of the source does not affect the dest.
+//
+// spec: §4.5 ll. 311 — derive copies parent bytes so GC of the
+// parent has no effect on the derived session's workspace.
+func TestMemoryStoreCopyHappyPath(t *testing.T) {
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	s := blobstore.NewMemoryStore(clock)
+	src := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID:  "parent",
+		PartID:     "snap",
+		TTL:        time.Hour,
+	}
+	if _, err := s.Put(src, "application/x-tar", strings.NewReader("workspace-bytes")); err != nil {
+		t.Fatalf("Put src: %v", err)
+	}
+	dst := src
+	dst.SessionID = "derived"
+	if err := s.Copy(src, dst); err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	if _, _, err := s.Get(dst); err != nil {
+		t.Fatalf("Get dst: %v", err)
+	}
+	// Erase the parent; derived must survive.
+	if _, err := s.DeleteBySession(context.Background(), "acme", "parent"); err != nil {
+		t.Fatalf("DeleteBySession parent: %v", err)
+	}
+	if _, _, err := s.Get(dst); err != nil {
+		t.Errorf("Get dst after parent erase: %v (spec §4.5 ll. 311 says derived bytes must survive)", err)
+	}
+}
+
+// TestMemoryStoreCopyRejectsCrossTenant asserts the §4.5 ll. 309
+// tenant-isolation guard fires on Copy.
+func TestMemoryStoreCopyRejectsCrossTenant(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	src := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID:  "p",
+		PartID:     "x",
+		TTL:        time.Hour,
+	}
+	dst := src
+	dst.TenantID = "globex"
+	if _, err := s.Put(src, "text/plain", strings.NewReader("x")); err != nil {
+		t.Fatalf("Put src: %v", err)
+	}
+	if err := s.Copy(src, dst); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("Copy across tenants: got %v, want ErrCrossTenant", err)
+	}
+}
+
+// TestMemoryStoreCopySrcAbsentIsErrNotFound asserts the Copy
+// surface for an absent source.
+func TestMemoryStoreCopySrcAbsentIsErrNotFound(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	src := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID:  "absent",
+		PartID:     "x",
+		TTL:        time.Hour,
+	}
+	dst := src
+	dst.SessionID = "derived"
+	if err := s.Copy(src, dst); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("Copy absent src: got %v, want ErrNotFound", err)
+	}
+}
+
+// TestMemoryStoreCopyConflictsOnLiveDst asserts Copy refuses to
+// overwrite a live destination (§4.5 write-once).
+func TestMemoryStoreCopyConflictsOnLiveDst(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	src := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID:  "p",
+		PartID:     "x",
+		TTL:        time.Hour,
+	}
+	dst := src
+	dst.SessionID = "derived"
+	for _, u := range []blobstore.URI{src, dst} {
+		if _, err := s.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+	}
+	if err := s.Copy(src, dst); !errors.Is(err, blobstore.ErrConflict) {
+		t.Errorf("Copy onto a live dst: got %v, want ErrConflict", err)
+	}
+}
+
+// TestTenantScopedRejectsCrossTenant asserts the §4.5 ll. 309
+// interface-level tenant-prefix validation: a URI whose tenant
+// does not match the decorator's caller tenant is rejected with
+// ErrCrossTenant from every read/write entry point, without ever
+// reaching the underlying store.
+//
+// spec: §4.5 ll. 309; §12.5 ll. 295.
+func TestTenantScopedRejectsCrossTenant(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	scoped := blobstore.NewTenantScoped("acme", inner)
+	foreign := blobstore.URI{
+		TenantID:   "globex",
+		ObjectType: blobstore.ObjectTypeUpload,
+		SessionID:  "s",
+		PartID:     "p",
+		TTL:        time.Hour,
+	}
+	if _, err := scoped.Put(foreign, "text/plain", strings.NewReader("x")); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("Put cross-tenant: got %v, want ErrCrossTenant", err)
+	}
+	if _, _, err := scoped.Get(foreign); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("Get cross-tenant: got %v, want ErrCrossTenant", err)
+	}
+	if _, err := scoped.Stat(foreign); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("Stat cross-tenant: got %v, want ErrCrossTenant", err)
+	}
+	// Confirm the underlying store stayed clean — the wrapper
+	// rejects before reaching it.
+	if _, err := inner.Stat(foreign); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("inner Stat foreign: got %v, want ErrNotFound (wrapper must reject before delegate)", err)
+	}
+}
+
+// TestTenantScopedAdmitsMatchingTenant confirms a same-tenant URI
+// passes through and the underlying Store is invoked normally.
+//
+// spec: §4.5 ll. 309.
+func TestTenantScopedAdmitsMatchingTenant(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	scoped := blobstore.NewTenantScoped("acme", inner)
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeUpload,
+		SessionID:  "s",
+		PartID:     "p",
+		TTL:        time.Hour,
+	}
+	if _, err := scoped.Put(u, "text/plain", strings.NewReader("ok")); err != nil {
+		t.Fatalf("Put same-tenant: %v", err)
+	}
+	if _, _, err := scoped.Get(u); err != nil {
+		t.Fatalf("Get same-tenant: %v", err)
+	}
+}
+
+// TestTenantScopedCopyRejectsCrossTenantBetweenURIs asserts that
+// even when src and dst pass the wrapper's caller-tenant gate
+// individually, the Copy is rejected when src.TenantID and
+// dst.TenantID differ — the §4.5 ll. 311 derive-copy invariant
+// requires same-tenant byte ownership.
+//
+// spec: §4.5 ll. 309, 311.
+func TestTenantScopedCopyRejectsCrossTenantBetweenURIs(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	// Empty caller-tenant disables the per-call gate so the
+	// underlying same-tenant check on Copy can run.
+	scoped := blobstore.NewTenantScoped("", inner)
+	src := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID:  "p",
+		PartID:     "x",
+		TTL:        time.Hour,
+	}
+	dst := src
+	dst.TenantID = "globex"
+	if _, err := scoped.Put(src, "text/plain", strings.NewReader("x")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := scoped.Copy(src, dst); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("Copy cross-tenant src/dst: got %v, want ErrCrossTenant", err)
 	}
 }

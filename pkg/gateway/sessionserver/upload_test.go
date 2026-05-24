@@ -96,7 +96,9 @@ func TestUploadHappyPath(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !strings.HasPrefix(resp.UploadRef, "lenny-blob://acme/sess_upload/") {
+	// spec: §12.5 ll. 295 — upload emits a 4-segment URI with the
+	// canonical `upload` object_type segment.
+	if !strings.HasPrefix(resp.UploadRef, "lenny-blob://acme/upload/sess_upload/") {
 		t.Errorf("uploadRef: got %q", resp.UploadRef)
 	}
 	if resp.Size != 11 {

@@ -5,11 +5,11 @@
 // snapshots, transcripts, and the upload pipeline.
 //
 // The blob-uri scheme is canonical: a blob is addressed by
-// `(tenant_id, session_id, part_id)` and carries a per-blob TTL plus
-// a fixed encryption marker. The package exposes:
+// `(tenant_id, object_type, session_id, part_id)` and carries a
+// per-blob TTL plus a fixed encryption marker. The package exposes:
 //
 //   - URI: parser + serialiser for `lenny-blob://` references
-//   - Store: small CRUD interface (Put / Get / Stat)
+//   - Store: small CRUD interface (Put / Get / Stat / Copy)
 //   - MemoryStore: in-memory implementation suitable for tests + the
 //     minimal gateway
 //
@@ -17,6 +17,9 @@
 // that maps the URI to the §4.5 object path
 // `/{tenant_id}/{object_type}/{session_id}/{part_id}` and applies
 // at-rest envelope encryption per §13.x. The wire surface is unchanged.
+//
+// spec: §4.5 ll. 309; §12.5 ll. 295 — path format
+// `/{tenant_id}/{object_type}/{session_id}/{filename}`.
 package blobstore
 
 import (
@@ -54,19 +57,84 @@ var (
 	ErrInvalidURI = errors.New("blobstore: invalid lenny-blob URI")
 )
 
-// URI is a parsed `lenny-blob://` reference.
-type URI struct {
-	TenantID  string
-	SessionID string
-	PartID    string
-	TTL       time.Duration
-	Encoding  string
+// ObjectType is the §12.5 line 295 / §4.5 line 309 object-class tag
+// embedded into every blob URI and into every object key (path
+// segment between {tenant_id} and {session_id}). The closed enum
+// matches the spec's §4.5 artifact-kinds list.
+//
+// spec: §4.5 ll. 309; §12.5 ll. 295, 315.
+type ObjectType string
+
+const (
+	// ObjectTypeWorkspace — workspace snapshots (sealed bundles, derive
+	// copies) per §4.5 ll. 301-303.
+	ObjectTypeWorkspace ObjectType = "workspace"
+	// ObjectTypeCheckpoint — periodic / eviction / pre-drain
+	// checkpoints per §4.4 line 234, §12.5 ll. 311-313.
+	ObjectTypeCheckpoint ObjectType = "checkpoint"
+	// ObjectTypeTranscript — session conversation transcripts per
+	// §4.4 line 226.
+	ObjectTypeTranscript ObjectType = "transcript"
+	// ObjectTypeUpload — uploaded files (POST
+	// /v1/sessions/{id}/upload), the canonical initial workspace per
+	// §4.5 ll. 301.
+	ObjectTypeUpload ObjectType = "upload"
+	// ObjectTypeEviction — eviction fallback context objects keyed
+	// at `/{tenant_id}/eviction/{session_id}/context` per §4.4 line
+	// 291 and §12.5 line 315.
+	ObjectTypeEviction ObjectType = "eviction"
+	// ObjectTypeExport — exported file subsets for delegation per
+	// §4.5 ll. 303, §8.7.
+	ObjectTypeExport ObjectType = "export"
+	// ObjectTypeSessionLog — runtime stderr session logs at
+	// `/{tenant_id}/sessions/{session_id}/stderr.log` per §4.4
+	// line 226.
+	ObjectTypeSessionLog ObjectType = "sessions"
+)
+
+// IsValidObjectType reports whether t is a recognised §4.5/§12.5
+// object-type segment. The §12.5 line 295 path format requires
+// every object key to embed one of these values.
+func IsValidObjectType(t ObjectType) bool {
+	switch t {
+	case ObjectTypeWorkspace, ObjectTypeCheckpoint, ObjectTypeTranscript,
+		ObjectTypeUpload, ObjectTypeEviction, ObjectTypeExport,
+		ObjectTypeSessionLog:
+		return true
+	default:
+		return false
+	}
 }
 
-// ParseURI decodes the §4.5 `lenny-blob://{tenant_id}/{session_id}/{part_id}`
-// reference. URL-decoding is performed on each path segment. The
-// `ttl` query parameter (seconds) is required; `enc` defaults to
-// `aes256gcm`.
+// URI is a parsed `lenny-blob://` reference.
+//
+// spec: §4.5 ll. 309 / §12.5 ll. 295 — path format
+// `/{tenant_id}/{object_type}/{session_id}/{filename}`.
+type URI struct {
+	TenantID   string
+	ObjectType ObjectType
+	SessionID  string
+	PartID     string
+	TTL        time.Duration
+	Encoding   string
+}
+
+// ParseURI decodes a `lenny-blob://` reference. Both wire formats
+// are accepted:
+//
+//   - `lenny-blob://{tenant_id}/{object_type}/{session_id}/{part_id}?ttl=...`
+//     — the §12.5 line 295 canonical 4-segment path that carries the
+//     object-type tag.
+//   - `lenny-blob://{tenant_id}/{session_id}/{part_id}?ttl=...` — the
+//     pre-{object_type} 3-segment legacy form. The parser stamps
+//     ObjectTypeUpload (the most common emit path) on the parsed URI
+//     so the result still round-trips. Production code should always
+//     populate ObjectType explicitly; the legacy form exists only so
+//     callers that already mint 3-segment URIs do not have to be
+//     rewritten before this change lands.
+//
+// URL-decoding is performed on each path segment. The `ttl` query
+// parameter (seconds) is required; `enc` defaults to `aes256gcm`.
 func ParseURI(raw string) (URI, error) {
 	if !strings.HasPrefix(raw, Scheme+"://") {
 		return URI{}, fmt.Errorf("%w: missing %s:// scheme", ErrInvalidURI, Scheme)
@@ -79,9 +147,34 @@ func ParseURI(raw string) (URI, error) {
 		return URI{}, fmt.Errorf("%w: scheme %q", ErrInvalidURI, u.Scheme)
 	}
 	tenant := u.Host
+	if tenant == "" {
+		return URI{}, fmt.Errorf("%w: missing tenant segment", ErrInvalidURI)
+	}
 	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-	if tenant == "" || len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return URI{}, fmt.Errorf("%w: expected lenny-blob://<tenant>/<session>/<part>", ErrInvalidURI)
+	var objType ObjectType
+	var session, part string
+	switch len(parts) {
+	case 3:
+		// §12.5 ll. 295 canonical 4-segment form
+		// (`/tenant/object_type/session/part`).
+		objType = ObjectType(parts[0])
+		session = parts[1]
+		part = parts[2]
+		if !IsValidObjectType(objType) {
+			return URI{}, fmt.Errorf("%w: unknown object_type %q", ErrInvalidURI, parts[0])
+		}
+	case 2:
+		// Pre-{object_type} legacy form (`/tenant/session/part`).
+		// Default to `upload` because the upload handler is the
+		// dominant emit path under the legacy shape.
+		objType = ObjectTypeUpload
+		session = parts[0]
+		part = parts[1]
+	default:
+		return URI{}, fmt.Errorf("%w: expected lenny-blob://<tenant>/<object_type>/<session>/<part>", ErrInvalidURI)
+	}
+	if session == "" || part == "" {
+		return URI{}, fmt.Errorf("%w: empty path segment", ErrInvalidURI)
 	}
 	ttlStr := u.Query().Get("ttl")
 	if ttlStr == "" {
@@ -96,24 +189,33 @@ func ParseURI(raw string) (URI, error) {
 		enc = Encoding
 	}
 	return URI{
-		TenantID:  tenant,
-		SessionID: parts[0],
-		PartID:    parts[1],
-		TTL:       time.Duration(ttlSecs) * time.Second,
-		Encoding:  enc,
+		TenantID:   tenant,
+		ObjectType: objType,
+		SessionID:  session,
+		PartID:     part,
+		TTL:        time.Duration(ttlSecs) * time.Second,
+		Encoding:   enc,
 	}, nil
 }
 
-// String serialises u back to the §4.5 wire format.
+// String serialises u back to the §12.5 line 295 4-segment wire
+// format. A URI with an empty ObjectType is stamped with
+// ObjectTypeUpload before serialisation so the wire output stays
+// well-formed; callers should always set ObjectType explicitly.
 func (u URI) String() string {
 	enc := u.Encoding
 	if enc == "" {
 		enc = Encoding
 	}
+	objType := u.ObjectType
+	if objType == "" {
+		objType = ObjectTypeUpload
+	}
 	return fmt.Sprintf(
-		"%s://%s/%s/%s?ttl=%d&enc=%s",
+		"%s://%s/%s/%s/%s?ttl=%d&enc=%s",
 		Scheme,
 		url.PathEscape(u.TenantID),
+		url.PathEscape(string(objType)),
 		url.PathEscape(u.SessionID),
 		url.PathEscape(u.PartID),
 		int(u.TTL.Seconds()),
@@ -137,6 +239,27 @@ type Store interface {
 	// Stat returns metadata about the blob without reading its body.
 	// Returns ErrNotFound when the blob has expired or never existed.
 	Stat(u URI) (BlobInfo, error)
+}
+
+// Copier extends Store with the §4.5 line 311 / §7.1 derive
+// byte-copy primitive. The gateway invokes Copy when a derived
+// session must own its workspace snapshot bytes independently of
+// the parent (so the §12.5 GC of the parent's artifacts cannot
+// dangle the derived session's ref).
+//
+// Backends that implement the S3 CopyObject (MinIO, AWS S3, GCS,
+// Azure Blob) satisfy Copier natively; the in-memory store
+// satisfies it by duplicating the buffered bytes.
+//
+// spec: §4.5 ll. 311 — "the gateway copies the parent's workspace
+// snapshot bytes into a new MinIO object scoped to the derived
+// session's own path".
+type Copier interface {
+	// Copy copies src to dst. Returns ErrNotFound when src is
+	// absent; returns ErrConflict when dst already names a live
+	// blob (§4.5 write-once). The two URIs must point at the same
+	// tenant; a cross-tenant Copy returns ErrCrossTenant.
+	Copy(src, dst URI) error
 }
 
 // Tombstoner extends Store with the §12.5 soft-delete + hard-prune
@@ -202,8 +325,18 @@ func NewMemoryStore(clock func() time.Time) *MemoryStore {
 	return &MemoryStore{blobs: map[string]memBlob{}, clock: clock}
 }
 
+// key returns the §12.5 line 295 4-segment object key
+// `{tenant_id}/{object_type}/{session_id}/{part_id}`. An empty
+// ObjectType is normalised to ObjectTypeUpload so callers under the
+// legacy 3-segment URI form keep working until they are rewritten.
+//
+// spec: §12.5 ll. 295.
 func (s *MemoryStore) key(u URI) string {
-	return fmt.Sprintf("%s/%s/%s", u.TenantID, u.SessionID, u.PartID)
+	objType := u.ObjectType
+	if objType == "" {
+		objType = ObjectTypeUpload
+	}
+	return fmt.Sprintf("%s/%s/%s/%s", u.TenantID, objType, u.SessionID, u.PartID)
 }
 
 // Put implements Store.
@@ -353,10 +486,135 @@ func (s *MemoryStore) DeleteBySession(_ context.Context, tenantID, sessionID str
 	return deleted, nil
 }
 
+// Copy implements Copier. It duplicates src into a new in-memory
+// blob at dst with a freshly minted ExpiresAt; returns
+// ErrCrossTenant when src and dst name different tenants,
+// ErrNotFound when src is absent or tombstoned, and ErrConflict
+// when dst already names a live blob.
+//
+// spec: §4.5 ll. 311 — derive copies parent bytes.
+func (s *MemoryStore) Copy(src, dst URI) error {
+	if src.TenantID != dst.TenantID {
+		return ErrCrossTenant
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	from, ok := s.blobs[s.key(src)]
+	if !ok || !from.deletedAt.IsZero() {
+		return ErrNotFound
+	}
+	if s.clock().After(from.info.ExpiresAt) {
+		return ErrNotFound
+	}
+	if existing, ok := s.blobs[s.key(dst)]; ok && existing.deletedAt.IsZero() {
+		return ErrConflict
+	}
+	now := s.clock()
+	body := append([]byte(nil), from.body...)
+	s.blobs[s.key(dst)] = memBlob{
+		info: BlobInfo{
+			URI:       dst,
+			MimeType:  from.info.MimeType,
+			Size:      int64(len(body)),
+			StoredAt:  now,
+			ExpiresAt: now.Add(dst.TTL),
+		},
+		body: body,
+	}
+	return nil
+}
+
 // NewPartID returns a fresh §4.5 part identifier — 16 random bytes
 // hex-encoded with a `part_` prefix.
 func NewPartID() string {
 	var buf [8]byte
 	_, _ = rand.Read(buf[:])
 	return "part_" + hex.EncodeToString(buf[:])
+}
+
+// TenantScoped wraps a Store with the §4.5 ll. 309 / §12.5 ll. 295
+// interface-level tenant-prefix validation. Every method validates
+// that the caller-supplied URI's TenantID matches the configured
+// caller-tenant before delegating to the underlying Store; a
+// mismatch returns ErrCrossTenant.
+//
+// The decorator is what the spec text describes as validation
+// living "at the interface boundary, not in individual callers":
+// the gateway constructs the wrapper from the resolved request
+// tenant and forwards calls through it, so a future caller that
+// constructs a URI from foreign-tenant input cannot reach the
+// underlying Store. The pre-validation hop is what guarantees the
+// tenant-isolation invariant the spec relies on.
+//
+// spec: §4.5 ll. 309; §12.5 ll. 295.
+type TenantScoped struct {
+	tenant string
+	inner  Store
+}
+
+// NewTenantScoped wraps inner so every URI operation is checked
+// against tenant. tenant must be non-empty; an empty tenant
+// disables the check (used for tests + internal background jobs
+// that legitimately span tenants).
+func NewTenantScoped(tenant string, inner Store) *TenantScoped {
+	return &TenantScoped{tenant: tenant, inner: inner}
+}
+
+// CallerTenant returns the tenant the decorator validates against.
+func (s *TenantScoped) CallerTenant() string { return s.tenant }
+
+// check enforces the §12.5 ll. 295 tenant-prefix invariant.
+func (s *TenantScoped) check(u URI) error {
+	if s.tenant == "" {
+		return nil
+	}
+	if u.TenantID != s.tenant {
+		return ErrCrossTenant
+	}
+	return nil
+}
+
+// Put implements Store with §12.5 ll. 295 tenant-prefix validation.
+func (s *TenantScoped) Put(u URI, mimeType string, data io.Reader) (string, error) {
+	if err := s.check(u); err != nil {
+		return "", err
+	}
+	return s.inner.Put(u, mimeType, data)
+}
+
+// Get implements Store with §12.5 ll. 295 tenant-prefix validation.
+func (s *TenantScoped) Get(u URI) (BlobInfo, io.ReadCloser, error) {
+	if err := s.check(u); err != nil {
+		return BlobInfo{}, nil, err
+	}
+	return s.inner.Get(u)
+}
+
+// Stat implements Store with §12.5 ll. 295 tenant-prefix validation.
+func (s *TenantScoped) Stat(u URI) (BlobInfo, error) {
+	if err := s.check(u); err != nil {
+		return BlobInfo{}, err
+	}
+	return s.inner.Stat(u)
+}
+
+// Copy implements Copier with §12.5 ll. 295 tenant-prefix
+// validation. Both src and dst are checked, and a Copy across
+// tenants is rejected even when src and dst pass the
+// caller-tenant gate individually.
+func (s *TenantScoped) Copy(src, dst URI) error {
+	if err := s.check(src); err != nil {
+		return err
+	}
+	if err := s.check(dst); err != nil {
+		return err
+	}
+	if src.TenantID != dst.TenantID {
+		return ErrCrossTenant
+	}
+	cop, ok := s.inner.(Copier)
+	if !ok {
+		return fmt.Errorf("blobstore: underlying store %T does not implement Copier", s.inner)
+	}
+	return cop.Copy(src, dst)
 }

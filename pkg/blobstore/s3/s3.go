@@ -96,9 +96,18 @@ func newWithClient(c objectClient, bucket string, resolver SSEKeyResolver) *Stor
 	return &Store{client: c, bucket: bucket, resolver: resolver}
 }
 
-// objectKey maps a blobstore.URI to the S3 object key.
+// objectKey maps a blobstore.URI to the S3 object key. The key
+// follows the §12.5 ll. 295 canonical layout
+// `{tenant_id}/{object_type}/{session_id}/{part_id}` so the §12.5
+// GC sweep can prefix-scope by object class.
+//
+// spec: §12.5 ll. 295, 315.
 func objectKey(u blobstore.URI) string {
-	return fmt.Sprintf("%s/%s/%s", u.TenantID, u.SessionID, u.PartID)
+	objType := u.ObjectType
+	if objType == "" {
+		objType = blobstore.ObjectTypeUpload
+	}
+	return fmt.Sprintf("%s/%s/%s/%s", u.TenantID, objType, u.SessionID, u.PartID)
 }
 
 // tombstoneTag is the object-tag the Store sets on SoftDelete. The

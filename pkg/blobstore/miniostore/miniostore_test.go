@@ -37,17 +37,58 @@ func TestNewValidatesConfig(t *testing.T) {
 }
 
 func TestObjectKeyMirrorsTheInMemoryStore(t *testing.T) {
-	u := blobstore.URI{TenantID: "acme", SessionID: "s_1", PartID: "part_ab"}
-	if got := objectKey(u); got != "acme/s_1/part_ab" {
-		t.Errorf("objectKey = %q, want acme/s_1/part_ab", got)
+	// spec: §12.5 ll. 295 — path format
+	// `{tenant}/{object_type}/{session}/{part}`.
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeUpload,
+		SessionID:  "s_1",
+		PartID:     "part_ab",
+	}
+	if got := objectKey(u); got != "acme/upload/s_1/part_ab" {
+		t.Errorf("objectKey = %q, want acme/upload/s_1/part_ab", got)
+	}
+}
+
+func TestObjectKeyHonoursObjectType(t *testing.T) {
+	// spec: §12.5 ll. 295, 315 — the object_type segment lets the
+	// §12.5 GC sweep prefix-scope by artifact class (eviction,
+	// checkpoint, workspace, etc.).
+	cases := []struct {
+		ot   blobstore.ObjectType
+		want string
+	}{
+		{blobstore.ObjectTypeWorkspace, "acme/workspace/s_1/p"},
+		{blobstore.ObjectTypeCheckpoint, "acme/checkpoint/s_1/p"},
+		{blobstore.ObjectTypeTranscript, "acme/transcript/s_1/p"},
+		{blobstore.ObjectTypeUpload, "acme/upload/s_1/p"},
+		{blobstore.ObjectTypeEviction, "acme/eviction/s_1/p"},
+		{blobstore.ObjectTypeExport, "acme/export/s_1/p"},
+		{blobstore.ObjectTypeSessionLog, "acme/sessions/s_1/p"},
+	}
+	for _, tc := range cases {
+		got := objectKey(blobstore.URI{
+			TenantID:   "acme",
+			ObjectType: tc.ot,
+			SessionID:  "s_1",
+			PartID:     "p",
+		})
+		if got != tc.want {
+			t.Errorf("objectKey(%q) = %q, want %q", tc.ot, got, tc.want)
+		}
 	}
 }
 
 func TestSessionPrefixMirrorsObjectKey(t *testing.T) {
-	u := blobstore.URI{TenantID: "acme", SessionID: "s_1", PartID: "part_ab"}
-	prefix := sessionPrefix(u.TenantID, u.SessionID)
-	if prefix != "acme/s_1/" {
-		t.Errorf("sessionPrefix = %q, want acme/s_1/", prefix)
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID:  "s_1",
+		PartID:     "part_ab",
+	}
+	prefix := sessionPrefix(u.TenantID, u.ObjectType, u.SessionID)
+	if prefix != "acme/workspace/s_1/" {
+		t.Errorf("sessionPrefix = %q, want acme/workspace/s_1/", prefix)
 	}
 	key := objectKey(u)
 	if len(key) <= len(prefix) || key[:len(prefix)] != prefix {
@@ -57,8 +98,13 @@ func TestSessionPrefixMirrorsObjectKey(t *testing.T) {
 
 func TestSessionPrefixTrailingSlashAvoidsCollision(t *testing.T) {
 	// The §12.8 erasure of s_1 must not list objects belonging to s_10.
-	short := sessionPrefix("acme", "s_1")
-	siblingKey := objectKey(blobstore.URI{TenantID: "acme", SessionID: "s_10", PartID: "p"})
+	short := sessionPrefix("acme", blobstore.ObjectTypeUpload, "s_1")
+	siblingKey := objectKey(blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeUpload,
+		SessionID:  "s_10",
+		PartID:     "p",
+	})
 	if len(siblingKey) >= len(short) && siblingKey[:len(short)] == short {
 		t.Errorf("prefix %q matches sibling session key %q — erasure would over-delete", short, siblingKey)
 	}
