@@ -342,6 +342,12 @@ spec:
             # capacity (each session may hold at most one active stream).
             - name: LENNY_STREAM_CEILING
               value: {{ .Values.gateway.streamCeiling | default .Values.gateway.maxSessionsPerReplica | quote }}
+            # §4.4 line 263 / §10.1 — preStop hook reads this to bound
+            # the staged drain budget. The chart-default 240s matches
+            # the terminationGracePeriodSeconds set below so the
+            # gateway honors the same deadline Kubernetes enforces.
+            - name: LENNY_TERMINATION_GRACE_SECONDS
+              value: {{ .Values.gateway.terminationGracePeriodSeconds | default 240 | quote }}
             {{- with .Values.gateway.extractionThresholds }}
             # §4.1 extractionThresholds — per-subsystem extraction
             # thresholds surfaced from Helm so operators can calibrate
@@ -448,6 +454,17 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+          # §4.4 line 234, 263 / §10.1 preStop staged drain. Kubernetes
+          # invokes the hook before SIGTERM; the gateway selects the
+          # tiered checkpoint cap per session, triggers a synchronous
+          # eviction checkpoint per session, and emits the
+          # lenny_prestop_cap_selection_total counter for the §16.5
+          # PreStopCapFallbackRateHigh alert.
+          lifecycle:
+            preStop:
+              httpGet:
+                path: /internal/prestop
+                port: http
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -456,6 +473,13 @@ spec:
                 - ALL
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
+      # spec: §17.8.2 — Tier 1/2 terminationGracePeriodSeconds defaults
+      # to 240s, which leaves a 30s safety margin above the 210s preStop
+      # budget (90s tier cap + 90s BarrierAck + 30s stream drain). The
+      # gateway binary reads the same value from
+      # LENNY_TERMINATION_GRACE_SECONDS so the preStop hook honors the
+      # chart-set deadline.
+      terminationGracePeriodSeconds: {{ .Values.gateway.terminationGracePeriodSeconds | default 240 }}
 ---
 apiVersion: v1
 kind: Service

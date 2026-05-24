@@ -151,6 +151,7 @@ import (
 	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpointretention/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -1719,6 +1720,34 @@ func main() {
 	// for the process-local in-memory store.
 	mux.Handle("GET /internal/drain-readiness", &drainreadiness.Handler{Prober: blobProbe})
 
+	// ----- §4.4 / §10.1 preStop drain hook (unauthenticated) -----
+	// Kubernetes invokes this via lifecycle.preStop.httpGet when a
+	// gateway pod is scheduled for termination. The hook reads the
+	// terminationGracePeriodSeconds budget, selects the §10.1 tiered
+	// checkpoint cap per coordinated session, and triggers a
+	// synchronous eviction checkpoint per session. Each cap selection
+	// bumps lenny_prestop_cap_selection_total labeled by source so
+	// the §16.5 PreStopCapFallbackRateHigh alert can fire.
+	//
+	// spec: §4.4 line 234, 263 / §10.1 preStop staged drain.
+	var prestopCheckpointer prestop.CheckpointTrigger
+	if checkpointSvc != nil {
+		prestopCheckpointer = checkpointSvc
+	}
+	prestopHook := &prestop.Hook{
+		Sessions: &prestop.RegistryEnumerator{
+			Registry:    podRegistry,
+			DefaultPool: "default",
+		},
+		Checkpoint:        prestop.CheckpointFnFor(prestopCheckpointer),
+		Metrics:           gwMetrics,
+		ServiceInstanceID: replica,
+		GracePeriod:       parseTerminationGrace(),
+		Logf:              func(format string, args ...any) { log.Printf(format, args...) },
+	}
+	mux.Handle("POST /internal/prestop", prestopHook)
+	mux.Handle("GET /internal/prestop", prestopHook)
+
 	// ----- Middleware stack -----
 	var handler http.Handler = mux
 
@@ -2721,6 +2750,20 @@ func envInt(name string, def int) int {
 		return def
 	}
 	return n
+}
+
+// parseTerminationGrace returns the §4.4 line 263 termination grace
+// period the preStop hook uses to bound the staged drain. It reads
+// LENNY_TERMINATION_GRACE_SECONDS first; the chart-default 240s
+// applies when the env is unset or invalid.
+//
+// spec: §17.8.2 — terminationGracePeriodSeconds: 240 default.
+func parseTerminationGrace() time.Duration {
+	seconds := envInt("LENNY_TERMINATION_GRACE_SECONDS", prestop.DefaultTerminationGraceSeconds)
+	if seconds <= 0 {
+		seconds = prestop.DefaultTerminationGraceSeconds
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // splitAndTrim splits a comma-separated string and drops empty entries

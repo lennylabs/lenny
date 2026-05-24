@@ -671,6 +671,13 @@ gateway:
   # at most one active stream; operators with a different ratio should
   # set this explicitly. Override via LENNY_STREAM_CEILING.
   streamCeiling: ""
+  # terminationGracePeriodSeconds bounds the §4.4 line 263 / §10.1
+  # preStop drain. The default 240s leaves a 30s safety margin above
+  # the 210s worst-case preStop budget (90s tier cap + 90s BarrierAck
+  # + 30s stream drain). The gateway reads the same value from
+  # LENNY_TERMINATION_GRACE_SECONDS so the hook honors the
+  # chart-set deadline.
+  terminationGracePeriodSeconds: 240
   # topologySpread opt-in (§4.1 / §17.1). When enabled the chart emits
   # spec.template.spec.topologySpreadConstraints on the gateway
   # Deployment so the scheduler distributes replicas across failure
