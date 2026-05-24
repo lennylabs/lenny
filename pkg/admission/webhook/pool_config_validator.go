@@ -34,24 +34,38 @@ import (
 // (spec/04_system-components.md §4.6.3 line 603).
 func PoolConfigValidator() Decider {
 	return func(_ context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+		// Rule set 1: semantic budget invariants, applied to every write
+		// including the PoolScalingController's own SSA applies
+		// (spec/04_system-components.md §4.6.3 line 600).
+		var ruleSet1 pcv.Decision
 		switch pcv.Kind(req.Kind.Kind) {
 		case pcv.KindSandboxWarmPool:
 			var pool lennyv1.SandboxWarmPool
 			if err := json.Unmarshal(req.Object.Raw, &pool); err != nil {
 				return Deny(http.StatusBadRequest, "decode SandboxWarmPool object: "+err.Error())
 			}
-			return poolConfigResponse(pcv.DecideWarmPool(&pool))
+			ruleSet1 = pcv.DecideWarmPool(&pool)
 		case pcv.KindSandboxTemplate:
 			var tpl lennyv1.SandboxTemplate
 			if err := json.Unmarshal(req.Object.Raw, &tpl); err != nil {
 				return Deny(http.StatusBadRequest, "decode SandboxTemplate object: "+err.Error())
 			}
-			return poolConfigResponse(pcv.DecideTemplate(&tpl))
+			ruleSet1 = pcv.DecideTemplate(&tpl)
 		default:
 			return Deny(http.StatusBadRequest, fmt.Sprintf(
 				"pool-config-validator does not handle resource kind %q", req.Kind.Kind,
 			))
 		}
+		if !ruleSet1.Allowed {
+			return poolConfigResponse(ruleSet1)
+		}
+
+		// Rule set 2: userInfo authorization backstop, applied
+		// additionally to non-PoolScalingController writers
+		// (spec/04_system-components.md §4.6.3 line 601). userInfo is
+		// populated by the API server from the authenticated principal and
+		// cannot be spoofed by the caller.
+		return poolConfigResponse(pcv.DecideAuthorization(req.UserInfo.Username))
 	}
 }
 

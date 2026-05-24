@@ -395,3 +395,41 @@ func TestTemplate(t *testing.T) {
 		})
 	}
 }
+
+// spec: §4.6.3 line 601 (spec/04_system-components.md) — rule set 2:
+// the userInfo authorization backstop admits only the
+// PoolScalingController SA and rejects every other principal with HTTP
+// 403 and the UNAUTHORIZED_POOL_CONFIG_WRITE reason code.
+func TestDecideAuthorization(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		allow    bool
+	}{
+		{"pool scaling controller SA is admitted", pcv.PoolScalingControllerSA, true},
+		{"platform admin is rejected", "system:serviceaccount:acme:platform-admin", false},
+		{"kubernetes-admin is rejected", "kubernetes-admin", false},
+		{"warm pool controller SA is rejected", "system:serviceaccount:lenny-system:lenny-controller", false},
+		{"empty principal is rejected", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := pcv.DecideAuthorization(tc.username)
+			if tc.allow {
+				if !d.Allowed {
+					t.Fatalf("expected admit for %q, got %+v", tc.username, d)
+				}
+				return
+			}
+			if d.Allowed {
+				t.Fatalf("expected rejection for %q, got admit", tc.username)
+			}
+			if d.Code != 403 {
+				t.Errorf("code = %d, want 403", d.Code)
+			}
+			if !strings.HasPrefix(d.Reason, pcv.ReasonUnauthorizedPoolConfigWrite+":") {
+				t.Errorf("reason = %q, want %s prefix", d.Reason, pcv.ReasonUnauthorizedPoolConfigWrite)
+			}
+		})
+	}
+}

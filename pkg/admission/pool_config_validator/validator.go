@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/lennylabs/lenny/pkg/admission/label_immutability"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 )
 
@@ -51,6 +52,28 @@ const ReasonInvalidPoolConfiguration = "INVALID_POOL_CONFIGURATION"
 // malformed admission request the webhook cannot map to a known CRD
 // kind is rejected fail-closed with HTTP 400 by the webhook adapter.
 const codeInvalidPoolConfiguration = 422
+
+// ReasonUnauthorizedPoolConfigWrite is the machine-readable failure
+// code the webhook attaches to a rule-set-2 (authorization) rejection.
+// A write to a SandboxTemplate or SandboxWarmPool spec from any
+// principal other than the PoolScalingController ServiceAccount is
+// rejected with this code (spec/04_system-components.md §4.6.3 line
+// 601).
+const ReasonUnauthorizedPoolConfigWrite = "UNAUTHORIZED_POOL_CONFIG_WRITE"
+
+// codeUnauthorizedPoolConfigWrite is the HTTP status the webhook
+// returns for a rule-set-2 rejection: 403 Forbidden. This mirrors the
+// lenny-label-immutability webhook, which the spec names as the model
+// for this userInfo-based authorization path
+// (spec/04_system-components.md §4.6.3 line 601).
+const codeUnauthorizedPoolConfigWrite = 403
+
+// PoolScalingControllerSA is the only principal whose writes to a
+// SandboxTemplate or SandboxWarmPool spec are admitted under rule set
+// 2. It is the same ServiceAccount username the lenny-label-immutability
+// webhook references, kept in one place so the two webhooks cannot
+// drift (spec/04_system-components.md §4.6.3 line 601).
+const PoolScalingControllerSA = label_immutability.PoolScalingControllerSA
 
 // clockPattern matches a 24-hour HH:MM schedule-window boundary, the
 // same pattern the SandboxWarmPool CRD OpenAPI schema pins on
@@ -97,6 +120,44 @@ func reject(msg string) Decision {
 		Allowed: false,
 		Reason:  ReasonInvalidPoolConfiguration + ": " + msg,
 		Code:    codeInvalidPoolConfiguration,
+	}
+}
+
+// DecideAuthorization implements rule set 2 of §4.6.3: the
+// userInfo-based authorization backstop. Manual `kubectl edit` or
+// `kubectl apply` writes to a SandboxTemplate or SandboxWarmPool spec
+// are rejected UNLESS the request's userInfo maps to the
+// PoolScalingController ServiceAccount. The API server populates
+// userInfo from the authenticated principal, which cannot be spoofed
+// by the caller, so this is a sound authorization boundary
+// (spec/04_system-components.md §4.6.3 line 601).
+//
+// The PoolScalingController is the sole writer of these spec fields;
+// every other write is a manual edit that the PoolScalingController
+// would silently overwrite on its next reconciliation. Rejecting the
+// write at admission directs operators to the admin API instead. This
+// rule applies in addition to rule set 1, which validates the semantic
+// budget invariants of every write including the PoolScalingController's
+// own (spec/04_system-components.md §4.6.3 line 600); the webhook adapter
+// runs rule set 1 first and rule set 2 only when rule set 1 admits.
+//
+// username is the AdmissionRequest's userInfo.username. The webhook is
+// scoped to the sandboxwarmpools and sandboxtemplates resources (not the
+// `/status` subresource), so every request DecideAuthorization sees is a
+// spec write.
+func DecideAuthorization(username string) Decision {
+	if username == PoolScalingControllerSA {
+		return allow()
+	}
+	return Decision{
+		Allowed: false,
+		Reason: fmt.Sprintf(
+			"%s: manual writes to SandboxTemplate/SandboxWarmPool spec are not permitted (got user %q); only the "+
+				"PoolScalingController (%s) may write these fields. Pool configuration is Postgres-authoritative — use "+
+				"the admin API to change a pool; a manual edit would be silently overwritten on the next reconciliation.",
+			ReasonUnauthorizedPoolConfigWrite, username, PoolScalingControllerSA,
+		),
+		Code: codeUnauthorizedPoolConfigWrite,
 	}
 }
 
