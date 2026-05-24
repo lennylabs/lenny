@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -116,8 +117,37 @@ const (
 const ReservedPriorityCeiling = 100
 
 // DefaultTimeout is the per-interceptor deadline applied when an
-// interceptor declares a non-positive timeout.
+// interceptor declares a non-positive timeout at a phase with no tighter
+// phase-specific default.
 const DefaultTimeout = 500 * time.Millisecond
+
+// DefaultLLMTimeout is the per-interceptor deadline for the LLM proxy
+// phases (PreLLMRequest, PostLLMResponse). These run on the LLM call
+// hot path where every millisecond of interceptor latency adds directly
+// to request latency, so the default is tighter than DefaultTimeout
+// (spec: §4.8 line 1075).
+const DefaultLLMTimeout = 100 * time.Millisecond
+
+// DefaultConnectorTimeout is the per-interceptor deadline for the
+// connector proxy phases (PreConnectorRequest, PostConnectorResponse).
+// The tool-call path is latency-sensitive but less extreme than
+// streaming LLM calls (spec: §4.8 line 1077).
+const DefaultConnectorTimeout = 200 * time.Millisecond
+
+// phaseDefaultTimeout returns the per-phase default per-interceptor
+// deadline selected when an interceptor declares a non-positive
+// Timeout(). The LLM and connector phases carry tighter budgets; every
+// other phase uses DefaultTimeout (spec: §4.8 lines 1075, 1077).
+func phaseDefaultTimeout(phase Phase) time.Duration {
+	switch phase {
+	case PhasePreLLMRequest, PhasePostLLMResponse:
+		return DefaultLLMTimeout
+	case PhasePreConnectorRequest, PhasePostConnectorResponse:
+		return DefaultConnectorTimeout
+	default:
+		return DefaultTimeout
+	}
+}
 
 // CodeInterceptorTimeout is the §15.1 error code a fail-closed chain
 // returns when an interceptor errors or times out.
@@ -306,7 +336,7 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 						Reason:          fmt.Sprintf("interceptor %q failed and was auto-escalated to fail-closed after exceeding the fail-open error ceiling: %v", ic.Name(), err),
 						ModifiedContent: content,
 						RejectedBy:      ic.Name(),
-						TimeoutMs:       effectiveTimeout(ic).Milliseconds(),
+						TimeoutMs:       effectiveTimeout(ic, req.Phase).Milliseconds(),
 					}
 				}
 				continue
@@ -317,7 +347,7 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 				Reason:          fmt.Sprintf("interceptor %q failed and is fail-closed: %v", ic.Name(), err),
 				ModifiedContent: content,
 				RejectedBy:      ic.Name(),
-				TimeoutMs:       effectiveTimeout(ic).Milliseconds(),
+				TimeoutMs:       effectiveTimeout(ic, req.Phase).Milliseconds(),
 			}
 		}
 		// spec: §4.8 line 1030 — an error-free call by a fail-open
@@ -338,6 +368,21 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 			}
 			return res
 		case ActionModify:
+			// spec: §4.8 line 1060 — validate the MODIFY against the
+			// phase's immutable fields before applying it. A MODIFY that
+			// alters an identity/scope/routing field is rejected with
+			// INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION, the chain
+			// short-circuits, and the pre-modification payload is preserved
+			// so no subsequent interceptor sees the illegal modification.
+			if violations := checkModifyImmutability(req.Phase, content, res.ModifiedContent); len(violations) > 0 {
+				return Result{
+					Action:          ActionReject,
+					Code:            CodeInterceptorImmutableFieldViolation,
+					Reason:          fmt.Sprintf("interceptor %q MODIFY altered immutable %s field(s): %s", ic.Name(), req.Phase, strings.Join(violations, ", ")),
+					ModifiedContent: content,
+					RejectedBy:      ic.Name(),
+				}
+			}
 			content = res.ModifiedContent
 			modified = true
 		case ActionAllow:
@@ -350,18 +395,19 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 	return Result{Action: ActionAllow, ModifiedContent: content}
 }
 
-// effectiveTimeout returns the per-interceptor deadline, selecting
-// DefaultTimeout when the interceptor declares a non-positive value.
-func effectiveTimeout(ic Interceptor) time.Duration {
+// effectiveTimeout returns the per-interceptor deadline, selecting the
+// phase-specific default when the interceptor declares a non-positive
+// value (spec: §4.8 lines 1075, 1077).
+func effectiveTimeout(ic Interceptor, phase Phase) time.Duration {
 	if t := ic.Timeout(); t > 0 {
 		return t
 	}
-	return DefaultTimeout
+	return phaseDefaultTimeout(phase)
 }
 
 // invoke runs one interceptor under its per-interceptor deadline.
 func invoke(ctx context.Context, ic Interceptor, req Request) (Result, error) {
-	cctx, cancel := context.WithTimeout(ctx, effectiveTimeout(ic))
+	cctx, cancel := context.WithTimeout(ctx, effectiveTimeout(ic, req.Phase))
 	defer cancel()
 	return ic.Intercept(cctx, req)
 }

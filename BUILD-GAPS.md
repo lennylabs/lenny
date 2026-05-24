@@ -2387,7 +2387,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `interceptor_name`/`interceptor_ref`, with `QuotaEvaluatorName` only as
   a fallback when the chain names no rejector. Verified in commit 4d655c81.
 
-### - [ ] F-4.8.19 — Per-phase MODIFY immutability enforced only at PreExportMaterialization (Missing) [Medium] — OPEN
+### - [x] F-4.8.19 — Per-phase MODIFY immutability enforced only at PreExportMaterialization (Missing) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 1042–1060 (phase payload table) and 1060
   (Immutable field enforcement on MODIFY paragraph). Each MODIFY is
@@ -2415,8 +2415,23 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   Severity High — without per-phase enforcement, a malicious or buggy
   external interceptor can bypass policy by smuggling identity/scope
   fields through MODIFY.
+- **Resolution:** New `pkg/gateway/interceptor/immutability.go` defines
+  `phaseImmutableFields` (the §4.8 per-phase immutable dot-paths:
+  `metadata.user_id`/`metadata.tenant_id` at PostAuth; `tenant_id`/`user_id`
+  at PreRoute; `resolved_runtime_name`/`credential_pool_id` at PostRoute;
+  `id` at PreToolResult; `tool_name`/`connector_id` at the connector
+  phases) and `checkModifyImmutability`, which snapshots the
+  pre-modification object and rejects a MODIFY that alters, removes, or
+  introduces an immutable field. `Chain.Run`'s MODIFY case calls it after
+  each MODIFY and returns `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION` with the
+  original payload preserved and the chain short-circuited; a non-object
+  modified payload at a protected phase is also rejected. Phases whose
+  content is fully mutable (PreDelegation input, PreMessageDelivery,
+  PostAgentOutput, the LLM phases) declare no immutable fields and are not
+  inspected. PreExportMaterialization stays under export.go's richer
+  per-file size/sha256 enforcement. Resolved in commit <pending>.
 
-### - [ ] F-4.8.20 — LLM (100 ms) and connector (200 ms) phase-specific timeouts not applied (Missing) [Medium] — OPEN
+### - [x] F-4.8.20 — LLM (100 ms) and connector (200 ms) phase-specific timeouts not applied (Missing) [Medium] — CLOSED
 
 - **Spec:** §4.8 line 1075 (LLM 100 ms) and line 1077 (connector
   200 ms). Phase-specific default timeouts overriding the generic
@@ -2434,6 +2449,15 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   apply a phase-specific minimum when the interceptor's own
   `Timeout()` is unset. Severity Low until the consuming phases are
   wired; track as part of F-4.8.13/F-4.8.14.
+- **Resolution:** `interceptor.go` now defines `DefaultLLMTimeout` (100 ms)
+  and `DefaultConnectorTimeout` (200 ms) and a `phaseDefaultTimeout(phase)`
+  helper; `effectiveTimeout(ic, phase)` selects the phase-specific default
+  when the interceptor declares a non-positive `Timeout()`. The LLM phases
+  (PreLLMRequest/PostLLMResponse) get 100 ms, the connector phases
+  (PreConnectorRequest/PostConnectorResponse) get 200 ms, every other phase
+  keeps the 500 ms `DefaultTimeout`; an explicit positive `Timeout()` still
+  overrides. The budgets apply automatically once F-4.8.13/F-4.8.14 wire
+  those phases. Resolved in commit <pending>.
 
 ### - [x] F-4.8.21 — Default external priority documented but no production caller (Info) [Medium] — CLOSED
 
