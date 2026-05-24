@@ -1562,7 +1562,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Extend `lifecycleCapabilities` with `task_lifecycle`; add `task_complete`, `task_ready` sender methods to `LifecycleChannel`; handle `task_complete_acknowledged`, `llm_request_started`, `llm_request_completed` in `readLoop`. Maintain the per-provider in-flight counter the §4.7 Full-level rotation protocol requires (spec line 820). Reconcile `schemas/lenny-adapter-jsonl.schema.json` and `schemas/lifecycle-events.schema.json` so each frame lives on the correct surface.
 
-**Resolution:** `LifecycleChannel` now advertises `task_lifecycle` only on task-mode pods (new `WithTaskLifecycle()` option, `--task-mode` adapter flag, `capabilities()`). Added `RequestTaskComplete` (sends `task_complete`, waits for `task_complete_acknowledged`) and `SignalTaskReady` senders; `readLoop` handles `task_complete_acknowledged`, `llm_request_started`, and `llm_request_completed`, maintaining a per-provider in-flight counter (`InflightCount`, `lenny_llm_inflight_requests` gauge) for the §4.7 line 820 rotation gate. Frame struct gained `taskId`/`requestId`; `schemas/lifecycle-events.schema.json` already carries these frames on the lifecycle surface. (commit b7000711)
+**Resolution:** `LifecycleChannel` now advertises `task_lifecycle` only on task-mode pods (new `WithTaskLifecycle()` option, `--task-mode` adapter flag, `capabilities()`). Added `RequestTaskComplete` (sends `task_complete`, waits for `task_complete_acknowledged`) and `SignalTaskReady` senders; `readLoop` handles `task_complete_acknowledged`, `llm_request_started`, and `llm_request_completed`, maintaining a per-provider in-flight counter (`InflightCount`, `lenny_llm_inflight_requests` gauge) for the §4.7 line 820 rotation gate. Frame struct gained `taskId`/`requestId`; `schemas/lifecycle-events.schema.json` already carries these frames on the lifecycle surface. (commit 79ae124a)
 
 ---
 
@@ -1743,7 +1743,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Bundle with F-4.7.6.
 
-**Resolution:** `RequestTaskComplete` bounds the wait for `task_complete_acknowledged` with `taskCompleteAckTimeout` (default 30s, spec line 708). On timeout with a still-live caller context it logs `task_complete_ack_timeout`, increments `lenny_adapter_task_complete_ack_timeout_total`, and returns nil so the caller proceeds with cleanup. Closed with F-4.7.6. (commit b7000711)
+**Resolution:** `RequestTaskComplete` bounds the wait for `task_complete_acknowledged` with `taskCompleteAckTimeout` (default 30s, spec line 708). On timeout with a still-live caller context it logs `task_complete_ack_timeout`, increments `lenny_adapter_task_complete_ack_timeout_total`, and returns nil so the caller proceeds with cleanup. Closed with F-4.7.6. (commit 79ae124a)
 
 ---
 
@@ -1777,7 +1777,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Add a regression test for the "interrupt arrives during checkpoint with no queue contents" case (queue, deliver after checkpoint completes) and the "second interrupt during running-interrupt" case (drop with BUSY).
 
-**Resolution:** Implementation confirmed correct against spec lines 646-650. Added `TestOpLockInterruptDuringCheckpointDeliversAfterComplete` (interrupt queued behind a running checkpoint is delivered on release) and `TestOpLockSecondInterruptDuringRunningInterruptBusy` (third interrupt behind a running + queued interrupt is dropped with `errOpBusy`). No production change. (commit b7000711)
+**Resolution:** Implementation confirmed correct against spec lines 646-650. Added `TestOpLockInterruptDuringCheckpointDeliversAfterComplete` (interrupt queued behind a running checkpoint is delivered on release) and `TestOpLockSecondInterruptDuringRunningInterruptBusy` (third interrupt behind a running + queued interrupt is dropped with `errOpBusy`). No production change. (commit 79ae124a)
 
 ---
 
