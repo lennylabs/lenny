@@ -2218,7 +2218,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   fail-closed timeout → 503 `INTERCEPTOR_TIMEOUT` (interceptor_ref/phase/
   timeout_ms); a MODIFY of an immutable field is rejected by the chain
   with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. Every REJECT emits the
-  §16.7 `interceptor.rejected` audit row. Resolved in commit <pending>.
+  §16.7 `interceptor.rejected` audit row. Resolved in commit d9d7de77.
 
 ### - [ ] F-4.8.12 — `PreToolResult`, `PostAgentOutput` chains not invoked (Missing) [Medium] — OPEN
 
@@ -6795,7 +6795,7 @@ Implementation:
 
 Consequence: the same chain the spec says fires for top-level sessions does not fire for either top-level sessions or delegated children. The `ExperimentRouter` (priority 300) that §8.2 line 90 names as part of this chain is not driven by interceptor invocation at all — it runs as a side step inside `routeExperiment` only on REST `POST /v1/sessions`. A `PreRoute`-phase content interceptor will not fire on any session.
 
-**Resolution (closed by F-4.8.11):** The `lenny/delegate_task` handler now runs `Chain.Run(PhasePreRoute)` over the child's augmented `childRouteSpec` (`tenant_id`/`requested_runtime`/`input`) after PreDelegation passes and before `delegation.Service.Delegate`. A REJECT blocks the delegation (no child session created); a MODIFY rewrites the child's `input`; a MODIFY altering `tenant_id`/`user_id` is rejected with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. The top-level session-creation PreRoute/PostRoute wiring lands under F-4.8.11. Registering `ExperimentRouter` itself as a chain interceptor remains tracked under F-4.8.5. Resolved in commit <pending>.
+**Resolution (closed by F-4.8.11):** The `lenny/delegate_task` handler now runs `Chain.Run(PhasePreRoute)` over the child's augmented `childRouteSpec` (`tenant_id`/`requested_runtime`/`input`) after PreDelegation passes and before `delegation.Service.Delegate`. A REJECT blocks the delegation (no child session created); a MODIFY rewrites the child's `input`; a MODIFY altering `tenant_id`/`user_id` is rejected with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. The top-level session-creation PreRoute/PostRoute wiring lands under F-4.8.11. Registering `ExperimentRouter` itself as a chain interceptor remains tracked under F-4.8.5. Resolved in commit d9d7de77.
 
 ### - [ ] F-8.2.18 — The Redis-backed budget counters that §8.2 step 2 names (`maxTreeSize`, `maxParallelChildren`, `maxTreeMemoryBytes`) are not the basis of admission decisions [Medium] — OPEN
 
