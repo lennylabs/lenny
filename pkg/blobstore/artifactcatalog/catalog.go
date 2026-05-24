@@ -36,6 +36,29 @@ const (
 	StateTombstoned  State = "tombstoned"
 )
 
+// ArtifactType is the §4.4 / §12.5 artifact-kind tag. The §4.4 line 291
+// eviction-context accounting path writes rows with
+// ArtifactTypeEvictionContext so the §12.5 GC sweep can drive the
+// matching MinIO delete on the session-level cleanup boundary.
+type ArtifactType string
+
+const (
+	// ArtifactTypeWorkspace: the canonical workspace tar / sealed
+	// bundle. Default for every catalog row prior to migration 0063.
+	ArtifactTypeWorkspace ArtifactType = "workspace"
+	// ArtifactTypeEvictionContext: the §4.4 eviction-fallback
+	// last-message context object (> 2 KB) at the canonical key
+	// `/{tenant_id}/eviction/{session_id}/context`.
+	// spec: §4.4 line 291.
+	ArtifactTypeEvictionContext ArtifactType = "eviction_context"
+	// ArtifactTypeCheckpoint: a workspace-checkpoint blob (full or
+	// partial-manifest chunks). Reserved for the §10.1 wiring.
+	ArtifactTypeCheckpoint ArtifactType = "checkpoint"
+	// ArtifactTypeExport: an exported file subset for delegation
+	// (§8.7).
+	ArtifactTypeExport ArtifactType = "export"
+)
+
 // Record is one row in the §12.5 artifact_store catalog.
 type Record struct {
 	URI               string
@@ -45,6 +68,10 @@ type Record struct {
 	MimeType          string
 	SizeBytes         int64
 	State             State
+	// ArtifactType is the §4.4 / §12.5 artifact-kind tag. Empty maps
+	// to ArtifactTypeWorkspace (the default the migration 0063 column
+	// stamps onto pre-existing rows).
+	ArtifactType ArtifactType
 	KMSKeyAlias       string
 	LegalHold         bool
 	SoftDeletedAt     time.Time
@@ -99,15 +126,18 @@ func (s *PgStore) Insert(ctx context.Context, r Record) error {
 	if r.State == "" {
 		r.State = StateLive
 	}
+	if r.ArtifactType == "" {
+		r.ArtifactType = ArtifactTypeWorkspace
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO artifact_store (
 			uri, tenant_id, session_id, part_id,
 			mime_type, size_bytes, state, kms_key_alias,
-			legal_hold, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			legal_hold, artifact_type, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		r.URI, r.TenantID, r.SessionID, r.PartID,
 		r.MimeType, r.SizeBytes, string(r.State), nullableString(r.KMSKeyAlias),
-		r.LegalHold, r.CreatedAt, now)
+		r.LegalHold, string(r.ArtifactType), r.CreatedAt, now)
 	if err != nil {
 		return fmt.Errorf("artifactcatalog: insert %s: %w", r.URI, err)
 	}
@@ -125,13 +155,13 @@ func (s *PgStore) Get(ctx context.Context, uri string) (Record, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT uri, tenant_id, session_id, part_id,
 		       mime_type, size_bytes, state, kms_key_alias,
-		       legal_hold, soft_deleted_at, tombstone_deadline,
+		       legal_hold, artifact_type, soft_deleted_at, tombstone_deadline,
 		       created_at, updated_at
 		FROM artifact_store WHERE uri = $1`, uri)
-	var state string
+	var state, artifactType string
 	err := row.Scan(&out.URI, &out.TenantID, &out.SessionID, &out.PartID,
 		&out.MimeType, &out.SizeBytes, &state, &kms,
-		&out.LegalHold, &sd, &td,
+		&out.LegalHold, &artifactType, &sd, &td,
 		&out.CreatedAt, &out.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrNotFound
@@ -140,6 +170,7 @@ func (s *PgStore) Get(ctx context.Context, uri string) (Record, error) {
 		return Record{}, err
 	}
 	out.State = State(state)
+	out.ArtifactType = ArtifactType(artifactType)
 	if kms != nil {
 		out.KMSKeyAlias = *kms
 	}
@@ -212,7 +243,7 @@ func (s *PgStore) ListBySession(ctx context.Context, tenantID, sessionID string)
 	rows, err := s.pool.Query(ctx, `
 		SELECT uri, tenant_id, session_id, part_id,
 		       mime_type, size_bytes, state, kms_key_alias,
-		       legal_hold, soft_deleted_at, tombstone_deadline,
+		       legal_hold, artifact_type, soft_deleted_at, tombstone_deadline,
 		       created_at, updated_at
 		FROM artifact_store WHERE tenant_id = $1 AND session_id = $2
 		ORDER BY uri`, tenantID, sessionID)
@@ -223,19 +254,21 @@ func (s *PgStore) ListBySession(ctx context.Context, tenantID, sessionID string)
 	var out []Record
 	for rows.Next() {
 		var (
-			r     Record
-			state string
-			kms   *string
-			sd    *time.Time
-			td    *time.Time
+			r            Record
+			state        string
+			artifactType string
+			kms          *string
+			sd           *time.Time
+			td           *time.Time
 		)
 		if err := rows.Scan(&r.URI, &r.TenantID, &r.SessionID, &r.PartID,
 			&r.MimeType, &r.SizeBytes, &state, &kms,
-			&r.LegalHold, &sd, &td,
+			&r.LegalHold, &artifactType, &sd, &td,
 			&r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		r.State = State(state)
+		r.ArtifactType = ArtifactType(artifactType)
 		if kms != nil {
 			r.KMSKeyAlias = *kms
 		}

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/evictionfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/evictionstatestore"
 	evictionpg "github.com/lennylabs/lenny/pkg/gateway/evictionstatestore/pgstore"
@@ -195,6 +196,88 @@ func TestEvictionFallbackWriterPostgresTruncatesOnMinIOFailure(t *testing.T) {
 	if len(got.LastMessageContext) != evictionfallback.MaxTruncatedContextBytes {
 		t.Errorf("LastMessageContext len = %d, want %d truncation cap",
 			len(got.LastMessageContext), evictionfallback.MaxTruncatedContextBytes)
+	}
+}
+
+// recordingQuotaCounterTier2 is a minimal storage-quota counter for the
+// tier-2 test. The eviction-fallback writer's quota path bumps the
+// delta verbatim; the recording fixture lets the test assert the
+// delta without standing up a Redis container.
+type recordingQuotaCounterTier2 struct {
+	deltas []int64
+}
+
+func (r *recordingQuotaCounterTier2) Adjust(_ context.Context, _ string, delta int64) error {
+	r.deltas = append(r.deltas, delta)
+	return nil
+}
+
+// TestEvictionFallbackWriterRecordsArtifactStoreRow drives the §4.4
+// line 291 path against the production artifact_store catalog so the
+// `artifact_type = eviction_context` row is committed end-to-end. The
+// quota counter is a recording fake — the spec calls for a Redis bump
+// after both rows commit, and the bump is exercised by the unit tests
+// in pkg/gateway/evictionfallback. This test exists to catch a SQL
+// schema regression that would only surface against the real pgx
+// driver (e.g., a NULL constraint on the new column).
+//
+// spec: §4.4 line 291.
+func TestEvictionFallbackWriterRecordsArtifactStoreRow(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := evictionpg.New(pg.Pool, nil)
+	catalog := artifactcatalog.New(pg.Pool, func() time.Time { return time.Now().UTC() })
+	ctx := context.Background()
+
+	tenant := freshTenant(t, ctx, pg)
+	sessID := newUUID(t)
+	uploader := &collectingUploader{}
+	quota := &recordingQuotaCounterTier2{}
+
+	w := &evictionfallback.Writer{
+		Store:           store,
+		ContextUploader: uploader,
+		Catalog:         &evictionfallback.CatalogBridge{Catalog: catalog},
+		Quota:           &evictionfallback.QuotaBridge{Counter: quota},
+	}
+	big := strings.Repeat("x", evictionfallback.MaxInlineContextBytes+200)
+	res, err := w.Write(ctx, evictionfallback.WriteParams{
+		Record: evictionstatestore.Record{
+			TenantID:  tenant,
+			SessionID: sessID,
+		},
+		Context: []byte(big),
+	})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if res.Outcome != evictionfallback.OutcomeMinIOKey {
+		t.Fatalf("Outcome = %q, want minio_key", res.Outcome)
+	}
+
+	// Confirm the artifact_store row landed with artifact_type =
+	// eviction_context.
+	rows, err := catalog.ListBySession(ctx, tenant, sessID)
+	if err != nil {
+		t.Fatalf("ListBySession: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("artifact_store rows = %d, want 1", len(rows))
+	}
+	if rows[0].ArtifactType != artifactcatalog.ArtifactTypeEvictionContext {
+		t.Errorf("artifact_type = %q, want %q",
+			rows[0].ArtifactType, artifactcatalog.ArtifactTypeEvictionContext)
+	}
+	wantURI := evictionfallback.EvictionContextObjectKey(tenant, sessID)
+	if rows[0].URI != wantURI {
+		t.Errorf("URI = %q, want %q", rows[0].URI, wantURI)
+	}
+	if rows[0].SizeBytes != int64(len(big)) {
+		t.Errorf("SizeBytes = %d, want %d", rows[0].SizeBytes, len(big))
+	}
+	// Quota counter received the post-upload increment.
+	if len(quota.deltas) != 1 || quota.deltas[0] != int64(len(big)) {
+		t.Errorf("quota deltas = %v, want [%d]", quota.deltas, len(big))
 	}
 }
 
