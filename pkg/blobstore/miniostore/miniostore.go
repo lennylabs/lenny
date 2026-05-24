@@ -24,6 +24,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/encrypt"
+	"github.com/minio/minio-go/v7/pkg/tags"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 )
@@ -91,8 +92,9 @@ type Store struct {
 }
 
 var (
-	_ blobstore.Store  = (*Store)(nil)
-	_ blobstore.Copier = (*Store)(nil)
+	_ blobstore.Store      = (*Store)(nil)
+	_ blobstore.Copier     = (*Store)(nil)
+	_ blobstore.Tombstoner = (*Store)(nil)
 )
 
 // New builds a MinIO-backed Store. It validates the configuration and
@@ -247,6 +249,9 @@ func (s *Store) fireKMSUnavailable(tenantID string) {
 }
 
 // Get implements blobstore.Store. The caller closes the returned reader.
+// A tombstoned blob — §12.5 soft-deleted but not yet hard-pruned —
+// reads as ErrNotFound so soft-delete behaves identically to physical
+// removal until the retention window elapses.
 func (s *Store) Get(u blobstore.URI) (blobstore.BlobInfo, io.ReadCloser, error) {
 	ctx := context.Background()
 	info, err := s.statBlob(ctx, u)
@@ -267,13 +272,24 @@ func (s *Store) Stat(u blobstore.URI) (blobstore.BlobInfo, error) {
 
 // statBlob fetches object metadata and applies the §4.5 TTL: a blob
 // past its expiry reads as ErrNotFound, matching the in-memory store.
+// A §12.5 tombstoned object (lenny-deleted-at tag present) also reads
+// as ErrNotFound so soft-deleted blobs behave identically to absent
+// ones for callers until the HardPrune sweep physically removes them.
 func (s *Store) statBlob(ctx context.Context, u blobstore.URI) (blobstore.BlobInfo, error) {
-	obj, err := s.client.StatObject(ctx, s.bucket, objectKey(u), minio.StatObjectOptions{})
+	key := objectKey(u)
+	obj, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
 	if err != nil {
 		if isNotFound(err) {
 			return blobstore.BlobInfo{}, blobstore.ErrNotFound
 		}
-		return blobstore.BlobInfo{}, fmt.Errorf("miniostore: stat %s: %w", objectKey(u), err)
+		return blobstore.BlobInfo{}, fmt.Errorf("miniostore: stat %s: %w", key, err)
+	}
+	tombstoned, terr := s.isTombstoned(ctx, key)
+	if terr != nil {
+		return blobstore.BlobInfo{}, terr
+	}
+	if tombstoned {
+		return blobstore.BlobInfo{}, blobstore.ErrNotFound
 	}
 	info := blobInfo(u, obj.ContentType, obj.Size, obj.LastModified)
 	if s.clock().After(info.ExpiresAt) {
@@ -420,6 +436,114 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 		}
 	}
 	return len(objects), nil
+}
+
+// tombstoneTag is the §12.5 soft-delete tag key the Store stamps on
+// SoftDelete. The value is the RFC 3339 UTC timestamp the object was
+// deleted at. MinIO exposes the same object-tag surface as S3, so the
+// tag name is shared with pkg/blobstore/s3 — a deployment that mirrors
+// to S3 sees the same tag.
+const tombstoneTag = "lenny-deleted-at"
+
+// SoftDelete implements blobstore.Tombstoner. It marks the object as
+// tombstoned by setting the §12.5 lenny-deleted-at tag carrying the
+// current UTC instant. Subsequent Get / Stat return ErrNotFound so the
+// soft-deleted blob behaves identically to an absent one until the
+// HardPrune sweep physically removes it.
+//
+// A blob that does not exist is a no-op (returns nil); a blob already
+// carrying the tag has its timestamp refreshed, so a repeat SoftDelete
+// keeps the contract idempotent (mirroring the in-memory store and the
+// S3 backend).
+//
+// spec: §12.5 ll. 311-313 — soft-delete on GC; tombstone retention.
+func (s *Store) SoftDelete(u blobstore.URI) error {
+	ctx := context.Background()
+	key := objectKey(u)
+	// Idempotent: a missing object is a no-op.
+	if _, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{}); err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("miniostore: stat before SoftDelete %s: %w", key, err)
+	}
+	tag, err := tags.MapToObjectTags(map[string]string{
+		tombstoneTag: s.clock().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return fmt.Errorf("miniostore: build tombstone tag: %w", err)
+	}
+	if err := s.client.PutObjectTagging(ctx, s.bucket, key, tag, minio.PutObjectTaggingOptions{}); err != nil {
+		return fmt.Errorf("miniostore: PutObjectTagging %s: %w", key, err)
+	}
+	return nil
+}
+
+// HardPrune implements blobstore.Tombstoner. It lists every object in
+// the bucket whose §12.5 tombstone tag is older than the retention
+// window and DeleteObject's each. Returns the count physically removed.
+//
+// HardPrune is a background sweep: a listing or tagging failure short-
+// circuits the sweep without surfacing an error to the caller. Per-
+// object failures are skipped silently — the next sweep cycle picks
+// them up.
+//
+// spec: §12.5 ll. 311-313 — tombstone retention; hard-prune sweep.
+func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
+	ctx := context.Background()
+	cutoff := now.Add(-retention).UTC()
+	count := 0
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Recursive: true}) {
+		if obj.Err != nil {
+			// Mirror s3.HardPrune: a listing failure short-circuits the
+			// sweep without surfacing an error.
+			return count
+		}
+		tagOut, err := s.client.GetObjectTagging(ctx, s.bucket, obj.Key, minio.GetObjectTaggingOptions{})
+		if err != nil {
+			continue
+		}
+		deletedAt, ok := readTombstone(tagOut)
+		if !ok || deletedAt.After(cutoff) {
+			continue
+		}
+		if err := s.client.RemoveObject(ctx, s.bucket, obj.Key, minio.RemoveObjectOptions{}); err == nil {
+			count++
+		}
+	}
+	return count
+}
+
+// isTombstoned reports whether the object at key carries the §12.5
+// lenny-deleted-at tag.
+func (s *Store) isTombstoned(ctx context.Context, key string) (bool, error) {
+	tagOut, err := s.client.GetObjectTagging(ctx, s.bucket, key, minio.GetObjectTaggingOptions{})
+	if err != nil {
+		if isNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("miniostore: GetObjectTagging %s: %w", key, err)
+	}
+	_, ok := readTombstone(tagOut)
+	return ok, nil
+}
+
+// readTombstone extracts the §12.5 lenny-deleted-at timestamp from an
+// object's tag set. Returns (zero, false) when the tag is absent or its
+// value does not parse as RFC 3339.
+func readTombstone(t *tags.Tags) (time.Time, bool) {
+	if t == nil {
+		return time.Time{}, false
+	}
+	for k, v := range t.ToMap() {
+		if k == tombstoneTag {
+			ts, err := time.Parse(time.RFC3339, v)
+			if err == nil {
+				return ts.UTC(), true
+			}
+		}
+	}
+	return time.Time{}, false
 }
 
 // blobInfo assembles a BlobInfo from a URI and object metadata. The

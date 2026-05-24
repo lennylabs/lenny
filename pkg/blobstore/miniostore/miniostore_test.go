@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/tags"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
@@ -135,5 +136,80 @@ func TestIsNotFound(t *testing.T) {
 	}
 	if isNotFound(nil) {
 		t.Error("a nil error was misread as not-found")
+	}
+}
+
+// spec: §12.5 ll. 311-313 — the MinIO Store satisfies the §12.5
+// soft-delete + hard-prune Tombstoner contract. The interface
+// assertion at construction time means a deployment that mirrors the
+// S3 path against MinIO exercises the same tombstone flow rather
+// than the unwired no-op fallback.
+func TestStoreImplementsTombstoner(t *testing.T) {
+	var _ blobstore.Tombstoner = (*Store)(nil)
+}
+
+// spec: §12.5 ll. 311-313 — readTombstone parses the
+// lenny-deleted-at object tag the SoftDelete sweep stamps. A
+// well-formed RFC 3339 value comes back as the deletion instant;
+// missing, malformed, or extraneous tags do not.
+func TestReadTombstone(t *testing.T) {
+	cases := []struct {
+		name    string
+		tagMap  map[string]string
+		wantOK  bool
+		wantUTC string
+	}{
+		{
+			name:    "well-formed tag returns the parsed instant",
+			tagMap:  map[string]string{tombstoneTag: "2026-05-23T12:00:00Z"},
+			wantOK:  true,
+			wantUTC: "2026-05-23T12:00:00Z",
+		},
+		{
+			name:   "missing tag is not a tombstone",
+			tagMap: map[string]string{"other": "v"},
+			wantOK: false,
+		},
+		{
+			name:   "malformed tag value reads as no tombstone",
+			tagMap: map[string]string{tombstoneTag: "not-a-timestamp"},
+			wantOK: false,
+		},
+		{
+			name:   "empty tag set is not a tombstone",
+			tagMap: map[string]string{},
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tagSet, err := tags.MapToObjectTags(tc.tagMap)
+			if err != nil {
+				t.Fatalf("MapToObjectTags: %v", err)
+			}
+			got, ok := readTombstone(tagSet)
+			if ok != tc.wantOK {
+				t.Errorf("readTombstone ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !tc.wantOK {
+				return
+			}
+			wantTime, err := time.Parse(time.RFC3339, tc.wantUTC)
+			if err != nil {
+				t.Fatalf("parse expected: %v", err)
+			}
+			if !got.Equal(wantTime) {
+				t.Errorf("readTombstone time = %v, want %v", got, wantTime)
+			}
+		})
+	}
+}
+
+// spec: §12.5 ll. 311-313 — readTombstone handles a nil tag set
+// (the empty XML body MinIO can return) without panicking, matching
+// the "no tombstone" branch.
+func TestReadTombstoneNilSafe(t *testing.T) {
+	if _, ok := readTombstone(nil); ok {
+		t.Error("readTombstone(nil) reported a tombstone")
 	}
 }
