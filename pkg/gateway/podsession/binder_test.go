@@ -135,6 +135,10 @@ func (m *fakeMirror) Sync(context.Context, string, []agentpodstate.PodState) err
 	return nil
 }
 
+func (m *fakeMirror) ReconcileAll(context.Context, []agentpodstate.PodState) error {
+	return nil
+}
+
 func (m *fakeMirror) MirrorLagSeconds(context.Context, string) (float64, error) {
 	return m.lag, nil
 }

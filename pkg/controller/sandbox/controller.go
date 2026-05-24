@@ -24,11 +24,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/lifecycle"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
@@ -85,6 +87,16 @@ type Reconciler struct {
 	// SandboxTemplate carries the egress-capture annotation
 	// (EgressCaptureUpstreamAnnotation).
 	EgressCaptureImage string
+	// StatusDedup is the §4.6.1 statusUpdateDeduplicationWindow gate. When
+	// set, a Sandbox status write within the window of the previous write
+	// for the same Sandbox is deferred and the reconcile requeued so the
+	// trailing status lands once the window expires. A nil gate disables
+	// deduplication.
+	StatusDedup *statusdedup.Gate
+	// MaxConcurrentReconciles is the §4.6.1 worker count
+	// (--max-concurrent-reconciles, default 1). Zero or negative selects
+	// the controller-runtime default of 1.
+	MaxConcurrentReconciles int
 }
 
 // EgressCaptureUpstreamAnnotation is the §12.9.8 opt-in annotation an
@@ -137,7 +149,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	if err := r.syncStatus(ctx, &sb, decision, &pod, obs); err != nil {
+	deferFor, err := r.syncStatus(ctx, &sb, decision, &pod, obs)
+	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("update sandbox %s status: %w", sb.Name, err)
 	}
 
@@ -147,6 +160,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	if err := r.syncPodStateLabel(ctx, desiredPhase, &pod, obs); err != nil {
 		return ctrl.Result{}, err
+	}
+	// §4.6.1 statusUpdateDeduplicationWindow: when the status write was
+	// deferred, requeue after the remaining window so the trailing
+	// (latest) status is written once the window expires.
+	if deferFor > 0 {
+		return ctrl.Result{RequeueAfter: deferFor}, nil
 	}
 	return ctrl.Result{}, nil
 }
@@ -276,8 +295,24 @@ func (r *Reconciler) syncPodStateLabel(ctx context.Context, desiredPhase string,
 // retry policy applies: re-read, re-compute the patch against the
 // freshly-read state, never force-conflicts, bounded retry with
 // jittered backoff up to 5 attempts.
-func (r *Reconciler) syncStatus(ctx context.Context, sb *lennyv1.Sandbox, decision lifecycle.Decision, pod *corev1.Pod, obs lifecycle.PodObservation) error {
-	return retryOnConflictSSA(ctx, func(attempt int) error {
+// syncStatus writes the controller-owned Sandbox.status fields, subject to
+// the §4.6.1 statusUpdateDeduplicationWindow. It returns the duration the
+// reconcile should requeue after when the write was deferred (zero when
+// the write happened or no change was needed).
+func (r *Reconciler) syncStatus(ctx context.Context, sb *lennyv1.Sandbox, decision lifecycle.Decision, pod *corev1.Pod, obs lifecycle.PodObservation) (time.Duration, error) {
+	// Nothing to write: skip the dedup gate so a no-op reconcile never
+	// consumes the window or requeues.
+	if buildSandboxStatusPatch(sb, decision, pod, obs) == nil {
+		return 0, nil
+	}
+	// A status change is pending. Consult the dedup gate once (outside the
+	// conflict-retry loop, so a 409 retry within this reconcile does not
+	// re-arm the window) and defer the write when within the window.
+	key := "Sandbox/" + sb.Namespace + "/" + sb.Name
+	if ok, remaining := r.StatusDedup.Allow(key); !ok {
+		return remaining, nil
+	}
+	err := retryOnConflictSSA(ctx, func(attempt int) error {
 		var live lennyv1.Sandbox
 		if attempt == 0 {
 			live = *sb
@@ -290,6 +325,7 @@ func (r *Reconciler) syncStatus(ctx context.Context, sb *lennyv1.Sandbox, decisi
 		}
 		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
 	})
+	return 0, err
 }
 
 // buildSandboxStatusPatch returns an SSA Apply patch object carrying
@@ -373,10 +409,15 @@ type sandboxStatusFields struct {
 // SetupWithManager registers the reconciler. It reconciles Sandbox
 // resources and wakes on changes to any Pod it owns.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	opts := controller.Options{}
+	if r.MaxConcurrentReconciles > 0 {
+		opts.MaxConcurrentReconciles = r.MaxConcurrentReconciles
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lennyv1.Sandbox{}).
 		Owns(&corev1.Pod{}).
 		Named("sandbox").
+		WithOptions(opts).
 		Complete(r)
 }
 

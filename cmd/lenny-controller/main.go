@@ -25,6 +25,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"os"
@@ -43,9 +44,14 @@ import (
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
+	"github.com/lennylabs/lenny/pkg/controller/ratelimit"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
+	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
+	sessionstore "github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
@@ -93,6 +99,14 @@ func main() {
 		redisURL           string
 		redisPassword      string
 		initialFillGrace   time.Duration
+
+		createQPS               float64
+		createBurst             int
+		statusQPS               float64
+		statusBurst             int
+		maxConcurrentReconciles int
+		statusDedupWindow       time.Duration
+		claimOrphanTimeout      time.Duration
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -116,14 +130,40 @@ func main() {
 		"Redis AUTH password.")
 	flag.DurationVar(&initialFillGrace, "initial-fill-grace-period", 120*time.Second,
 		"§4.6.1 cold-start fill grace period. The WarmPoolExhausted and WarmPoolLow alerts are suppressed for a pool during this window from pool creation, controller startup, or a minWarm 0→positive re-activation, to avoid false positives while the pool fills toward minWarm.")
+	flag.Float64Var(&createQPS, "create-qps", ratelimit.DefaultCreateQPS,
+		"§4.6.1 pod-creation rate-limiter bucket QPS. Create calls for new Sandbox pods route through this bucket so scale-up is never starved by status-update traffic.")
+	flag.IntVar(&createBurst, "create-burst", ratelimit.DefaultCreateBurst,
+		"§4.6.1 pod-creation rate-limiter bucket burst.")
+	flag.Float64Var(&statusQPS, "status-qps", ratelimit.DefaultStatusQPS,
+		"§4.6.1 status-update rate-limiter bucket QPS. UpdateStatus calls on Sandbox and SandboxWarmPool route through this bucket.")
+	flag.IntVar(&statusBurst, "status-burst", ratelimit.DefaultStatusBurst,
+		"§4.6.1 status-update rate-limiter bucket burst.")
+	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 1,
+		"§4.6.1 number of concurrent reconciliation workers per controller. Increase for cold-start fill and cluster-restart recovery; the rate limiter remains the throughput ceiling regardless of worker count.")
+	flag.DurationVar(&statusDedupWindow, "status-update-dedup-window", 500*time.Millisecond,
+		"§4.6.1 statusUpdateDeduplicationWindow: the minimum interval between consecutive UpdateStatus writes for the same Sandbox. Status changes within the window are coalesced (trailing write wins), reducing etcd write pressure.")
+	flag.DurationVar(&claimOrphanTimeout, "claim-orphan-timeout", 5*time.Minute,
+		"§4.6.1 SandboxClaim orphan timeout: a SandboxClaim older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 
+	// §4.6.1 API server rate limiting: route Create calls for Sandbox
+	// pods and UpdateStatus calls for Sandbox/SandboxWarmPool through two
+	// dedicated client-side token buckets so pod creation is never starved
+	// by status-update traffic; all other requests share the default
+	// limiter.
+	restCfg := ratelimit.WrapConfig(ctrl.GetConfigOrDie(), ratelimit.Config{
+		CreateQPS:   createQPS,
+		CreateBurst: createBurst,
+		StatusQPS:   statusQPS,
+		StatusBurst: statusBurst,
+	})
+
 	ld, rd, rp := leaseDuration, renewDeadline, retryPeriod
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                        buildScheme(),
 		Metrics:                       metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress:        probeAddr,
@@ -145,13 +185,17 @@ func main() {
 	// is empty the mirror store is left nil and the controller skips
 	// mirroring.
 	var mirror *agentpodstatepg.Store
+	var sessionLookup warmpool.SessionLookup
 	if postgresDSN != "" {
-		pool, err := pgxpool.New(context.Background(), postgresDSN)
+		pgPool, err := pgxpool.New(context.Background(), postgresDSN)
 		if err != nil {
 			log.Fatalf("lenny-controller: postgres: %v", err)
 		}
-		defer pool.Close()
-		mirror = agentpodstatepg.New(pool)
+		defer pgPool.Close()
+		mirror = agentpodstatepg.New(pgPool)
+		// The §4.6.1 orphan-claim GC checks Postgres for an active session
+		// backing each candidate claim before reclaiming it.
+		sessionLookup = &sessionActiveLookup{store: sessionstorepg.New(pgPool)}
 	}
 
 	// §4.0 pool state manager: the controller emits §16.6
@@ -183,10 +227,11 @@ func main() {
 	}
 
 	warmPool := &warmpool.Reconciler{
-		Client:                 mgr.GetClient(),
-		Scheme:                 mgr.GetScheme(),
-		Events:                 opsEmitter,
-		InitialFillGracePeriod: initialFillGrace,
+		Client:                  mgr.GetClient(),
+		Scheme:                  mgr.GetScheme(),
+		Events:                  opsEmitter,
+		InitialFillGracePeriod:  initialFillGrace,
+		MaxConcurrentReconciles: maxConcurrentReconciles,
 	}
 	// A nil *agentpodstatepg.Store assigned to the agentpodstate.Store
 	// interface field would be a non-nil interface; only assign when a
@@ -199,12 +244,39 @@ func main() {
 	}
 
 	if err := (&sandbox.Reconciler{
-		Client:             mgr.GetClient(),
-		Scheme:             mgr.GetScheme(),
-		AdapterImage:       adapterImage,
-		EgressCaptureImage: egressCaptureImage,
+		Client:                  mgr.GetClient(),
+		Scheme:                  mgr.GetScheme(),
+		AdapterImage:            adapterImage,
+		EgressCaptureImage:      egressCaptureImage,
+		StatusDedup:             statusdedup.New(statusDedupWindow),
+		MaxConcurrentReconciles: maxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
+	}
+
+	// §4.6.1 mirror reconciliation on recovery and orphan-claim GC are
+	// leader-elected runnables scoped to the agent namespaces. Both
+	// require Postgres: mirror recovery converges the agent_pod_state
+	// table, and the GC loop checks the session store before reclaiming a
+	// claim. They are registered only when both --postgres-dsn and
+	// --agent-namespaces are set.
+	agentNamespaces := splitNamespaces(agentNSList)
+	if mirror != nil && len(agentNamespaces) > 0 {
+		if err := mgr.Add(&warmpool.MirrorReconciler{
+			Client:     mgr.GetClient(),
+			Mirror:     mirror,
+			Namespaces: agentNamespaces,
+		}); err != nil {
+			log.Fatalf("lenny-controller: set up mirror reconciler: %v", err)
+		}
+		if err := mgr.Add(&warmpool.ClaimGarbageCollector{
+			Client:        mgr.GetClient(),
+			Sessions:      sessionLookup,
+			Namespaces:    agentNamespaces,
+			OrphanTimeout: claimOrphanTimeout,
+		}); err != nil {
+			log.Fatalf("lenny-controller: set up orphan-claim GC: %v", err)
+		}
 	}
 
 	// The §13.2 NET-022 cluster-CIDR drift detector is a leader-elected
@@ -212,7 +284,7 @@ func main() {
 	// CIDRs against the broad-internet egress NetworkPolicies in the
 	// agent namespaces and increments lenny_network_policy_cidr_drift_total
 	// on drift. It runs only when --agent-namespaces is set.
-	if agentNamespaces := splitNamespaces(agentNSList); len(agentNamespaces) > 0 {
+	if len(agentNamespaces) > 0 {
 		if err := mgr.Add(&cidrdrift.Detector{
 			Client:          mgr.GetClient(),
 			AgentNamespaces: agentNamespaces,
@@ -232,4 +304,24 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		log.Fatalf("lenny-controller: manager exited: %v", err)
 	}
+}
+
+// sessionActiveLookup adapts the session store to the §4.6.1 orphan-claim
+// GC's warmpool.SessionLookup contract: a claim is reclaimable when no
+// non-terminal session backs it. A missing session row (the gateway
+// crashed before persisting the session) and a terminal session both
+// report inactive.
+type sessionActiveLookup struct {
+	store sessionstore.Store
+}
+
+func (l *sessionActiveLookup) SessionActive(ctx context.Context, tenantID, sessionID string) (bool, error) {
+	sess, err := l.store.Get(ctx, tenantID, sessionID)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !apisession.IsTerminal(sess.State), nil
 }

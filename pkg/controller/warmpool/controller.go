@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
@@ -141,6 +142,11 @@ type Reconciler struct {
 	// the WarmPoolExhausted and WarmPoolLow alerts are suppressed for a
 	// filling pool. Zero selects defaultInitialFillGracePeriod (120s).
 	InitialFillGracePeriod time.Duration
+
+	// MaxConcurrentReconciles is the §4.6.1 worker count for this
+	// controller's reconcile loop (--max-concurrent-reconciles, default
+	// 1). Zero or negative selects the controller-runtime default of 1.
+	MaxConcurrentReconciles int
 
 	// phaseMu guards lastPhase against concurrent reconciles. The
 	// controller-runtime queue serializes Reconcile per object, so the
@@ -665,10 +671,15 @@ func poolWarmingUpCondition(minWarm, warm, ready int) metav1.Condition {
 // changes to any Sandbox it owns, so a pod phase change re-sizes the
 // pool.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	opts := controller.Options{}
+	if r.MaxConcurrentReconciles > 0 {
+		opts.MaxConcurrentReconciles = r.MaxConcurrentReconciles
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lennyv1.SandboxWarmPool{}).
 		Owns(&lennyv1.Sandbox{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Named("warmpool").
+		WithOptions(opts).
 		Complete(r)
 }

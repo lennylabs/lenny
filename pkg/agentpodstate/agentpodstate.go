@@ -66,6 +66,17 @@ type Store interface {
 	// to another pool.
 	Sync(ctx context.Context, poolID string, observed []PodState) error
 
+	// ReconcileAll converges the entire mirror to observed in one
+	// transaction: every row is bulk-UPSERTed keyed on pod_id, and every
+	// agent_pod_state row whose pod_id is absent from observed is
+	// deleted. This is the §4.6.1 "mirror reconciliation on recovery"
+	// path the WarmPoolController runs on startup and on every
+	// leader-election acquisition, re-deriving the full row set from the
+	// authoritative Sandbox CRDs across all agent namespaces. Unlike
+	// Sync, ReconcileAll is global: it prunes rows for every pool,
+	// including pods whose pool no longer has any live Sandbox.
+	ReconcileAll(ctx context.Context, observed []PodState) error
+
 	// MirrorLagSeconds returns now() - max(updated_at) across the rows
 	// for poolID, the staleness of the mirror for that pool. It returns
 	// 0 when the pool has no rows.

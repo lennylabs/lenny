@@ -108,6 +108,57 @@ func (s *Store) Sync(ctx context.Context, poolID string, observed []agentpodstat
 	return nil
 }
 
+// ReconcileAll converges the entire mirror to observed in one
+// transaction: every observed row is UPSERTed keyed on pod_id, then any
+// agent_pod_state row whose pod_id is not in observed is deleted. This
+// is the §4.6.1 mirror reconciliation on leader-election acquisition; it
+// re-establishes the steady-state invariant that the mirror matches the
+// authoritative Sandbox set across all pools before the controller
+// resumes incremental writes. With no observed rows, every row is stale
+// and the table is emptied.
+func (s *Store) ReconcileAll(ctx context.Context, observed []agentpodstate.PodState) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("agentpodstate: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	keep := make([]string, 0, len(observed))
+	if len(observed) > 0 {
+		batch := &pgx.Batch{}
+		for _, p := range observed {
+			batch.Queue(upsertSQL,
+				p.PodID, p.PoolID, p.State,
+				nullable(p.TenantID), nullable(p.SessionID),
+				p.IsolationProfile, p.ExecutionMode, p.ResourceVersion,
+				nullable(p.NodeName))
+			keep = append(keep, p.PodID)
+		}
+		br := tx.SendBatch(ctx, batch)
+		for range observed {
+			if _, err := br.Exec(); err != nil {
+				_ = br.Close()
+				return fmt.Errorf("agentpodstate: upsert: %w", err)
+			}
+		}
+		if err := br.Close(); err != nil {
+			return fmt.Errorf("agentpodstate: upsert: %w", err)
+		}
+	}
+
+	// Delete every row no longer observed, across all pools. With no
+	// observed rows the predicate matches every row.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM agent_pod_state WHERE pod_id <> ALL($1)`, keep); err != nil {
+		return fmt.Errorf("agentpodstate: prune: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("agentpodstate: commit: %w", err)
+	}
+	return nil
+}
+
 // MirrorLagSeconds returns now() - max(updated_at) for poolID's rows,
 // the staleness of the mirror for that pool. A pool with no rows has no
 // lag, so the result is 0.
