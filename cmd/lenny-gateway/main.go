@@ -861,6 +861,15 @@ func main() {
 	}
 
 	eventBus := sessionevents.NewBus(0)
+	// §4.4 line 225 / §12.3.7: when Redis is wired, attach the
+	// cross-replica relay so a client reconnecting via Last-Event-ID
+	// to a different replica sees prior events (the §15.1 streaming-
+	// reconnect contract). Single-replica dev mode keeps the Bus's
+	// in-memory-only behaviour.
+	if redisClient != nil {
+		eventBus = eventBus.WithRedisRelay(sessionevents.NewRedisRelay(redisClient))
+		log.Printf("lenny-gateway: §4.4 session SSE event bus relay attached to Redis (cross-replica replay enabled)")
+	}
 	// One §8.10 tree archive shared by the sessionserver (which archives
 	// children on terminal transitions) and the platform MCP tools.
 	treeArchive := treearchive.NewMemory()

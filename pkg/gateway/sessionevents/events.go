@@ -1,18 +1,26 @@
 // SPDX-License-Identifier: MIT
 
-// Package events is the gateway's in-process session event bus. It
-// backs the §15.1 `GET /v1/sessions/{id}/events` SSE stream: session
-// activity (message delivered, response produced, state transition)
-// is published to the bus and relayed to every subscribed client.
+// Package events is the gateway's session event bus. It backs the
+// §15.1 `GET /v1/sessions/{id}/events` SSE stream: session activity
+// (message delivered, response produced, state transition) is
+// published to the bus and relayed to every subscribed client. Each
+// event carries a monotonic per-session sequence so a reconnecting
+// client can resume with a cursor (the §15.1 streaming-reconnect
+// contract).
 //
-// The bus is in-memory and single-replica — production swaps in the
-// §10.1 Redis-backed cross-replica EventBus behind the same
-// Publish / Subscribe surface. Each event carries a monotonic
-// per-session sequence so a reconnecting client can resume with a
-// cursor (the §15.1 streaming-reconnect contract).
+// In single-replica deployments the Bus uses its in-memory state
+// alone. In multi-replica deployments the Bus pairs with the §4.4
+// line 225 / §12.3.7 RedisRelay (see redisrelay.go): every Publish
+// fans out to Redis Streams via `XADD`, and every Subscribe pulls
+// the cross-replica history via `XRANGE` so a client that reconnects
+// to a different replica sees the prior events.
+//
+// spec: §4.4 line 225 — durable event cursors / stream offsets across
+// replicas.
 package sessionevents
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -36,7 +44,12 @@ type Event struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// Bus is the in-memory session event bus.
+// Bus is the session event bus. The in-memory state (per-session
+// sequence counter, replay history, live subscriber list) is the
+// authoritative source on the publishing replica. When the optional
+// RedisRelay is wired the Bus also fans out every publish to Redis
+// Streams so reading replicas can serve a reconnect-with-cursor
+// against the cross-replica stream.
 type Bus struct {
 	mu sync.Mutex
 	// seq tracks the next sequence per session.
@@ -47,6 +60,9 @@ type Bus struct {
 	subs map[string][]*subscription
 	// maxHistory bounds the per-session retained event count.
 	maxHistory int
+	// relay is the §4.4 / §12.3.7 cross-replica Redis fan-out. A nil
+	// relay reduces the Bus to the single-replica path.
+	relay *RedisRelay
 }
 
 // subscription is one active SSE client.
@@ -56,7 +72,9 @@ type subscription struct {
 }
 
 // NewBus returns an empty Bus. maxHistory bounds the per-session
-// replay buffer; pass 0 for the default of 256.
+// in-memory replay buffer; pass 0 for the default of 256. The Bus
+// runs single-replica until WithRedisRelay attaches the cross-replica
+// fan-out.
 func NewBus(maxHistory int) *Bus {
 	if maxHistory <= 0 {
 		maxHistory = 256
@@ -69,13 +87,34 @@ func NewBus(maxHistory int) *Bus {
 	}
 }
 
+// WithRedisRelay attaches the §4.4 / §12.3.7 cross-replica relay so
+// every Publish fans out to Redis Streams and every Subscribe
+// consults the cross-replica history. A nil relay disables the
+// cross-replica path (the default single-replica behaviour).
+//
+// The relay attaches at construction time; later changes require a
+// fresh Bus so the publish path and history path stay consistent.
+//
+// spec: §4.4 line 225.
+func (b *Bus) WithRedisRelay(relay *RedisRelay) *Bus {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.relay = relay
+	return b
+}
+
 // Publish appends an event to a session's stream, assigns its Seq,
 // retains it for cursor replay, and fans it out to every live
 // subscriber. A slow subscriber whose channel is full is skipped
 // (the event remains in history for a reconnect-with-cursor).
+//
+// When the §4.4 / §12.3.7 RedisRelay is wired the published event is
+// also XADDed onto the Redis stream so reading replicas can serve a
+// reconnect from another replica against the cross-replica history.
+// The Redis fan-out is best-effort: a Redis failure logs but does
+// not roll back the in-memory publish.
 func (b *Bus) Publish(sessionID, eventType, data string, now time.Time) Event {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.seq[sessionID]++
 	ev := Event{
 		Seq:       b.seq[sessionID],
@@ -99,6 +138,13 @@ func (b *Bus) Publish(sessionID, eventType, data string, now time.Time) Event {
 			// Slow consumer — drop the live delivery; the event is
 			// in history for a reconnect-with-cursor.
 		}
+	}
+	relay := b.relay
+	b.mu.Unlock()
+	if relay != nil {
+		// Fan-out outside the lock so a slow Redis client does not
+		// stall in-memory subscribers on the same replica.
+		relay.PublishEvent(context.Background(), ev)
 	}
 	return ev
 }
@@ -142,12 +188,16 @@ func (s *Subscription) Close() {
 // Seq > afterSeq already in history are returned in Backlog so a
 // reconnecting client resumes exactly where it left off; live
 // events arrive on Events(). bufferSize bounds the live channel.
+//
+// When the §4.4 / §12.3.7 RedisRelay is wired the Backlog merges the
+// local in-memory history with the Redis stream history so a client
+// reconnecting to this replica also sees events originally published
+// on a sibling replica.
 func (b *Bus) Subscribe(sessionID string, afterSeq uint64, bufferSize int) *Subscription {
 	if bufferSize <= 0 {
 		bufferSize = 64
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	sub := &subscription{ch: make(chan Event, bufferSize)}
 	b.subs[sessionID] = append(b.subs[sessionID], sub)
 
@@ -157,7 +207,61 @@ func (b *Bus) Subscribe(sessionID string, afterSeq uint64, bufferSize int) *Subs
 			backlog = append(backlog, ev)
 		}
 	}
+	relay := b.relay
+	b.mu.Unlock()
+
+	// When the cross-replica relay is wired and the local history
+	// either has not seen this session yet or starts past the
+	// requested cursor, fetch the Redis stream history and merge it
+	// in (deduping by Seq).
+	if relay != nil {
+		remote, err := relay.History(context.Background(), sessionID, afterSeq)
+		if err == nil {
+			backlog = mergeByCursor(backlog, remote, afterSeq)
+		}
+	}
 	return &Subscription{bus: b, sessionID: sessionID, sub: sub, Backlog: backlog}
+}
+
+// mergeByCursor combines a local history slice with a remote history
+// slice, returning a single slice sorted by Seq with no duplicates
+// (a Seq present in both lists keeps the local copy). The output
+// excludes any Seq ≤ afterSeq.
+func mergeByCursor(local, remote []Event, afterSeq uint64) []Event {
+	// Deduplicate by Seq, preferring local entries (they carry the
+	// authoritative payload from the publishing replica before the
+	// relay re-encode).
+	bySeq := make(map[uint64]Event, len(local)+len(remote))
+	for _, ev := range local {
+		if ev.Seq > afterSeq {
+			bySeq[ev.Seq] = ev
+		}
+	}
+	for _, ev := range remote {
+		if ev.Seq <= afterSeq {
+			continue
+		}
+		if _, has := bySeq[ev.Seq]; !has {
+			bySeq[ev.Seq] = ev
+		}
+	}
+	out := make([]Event, 0, len(bySeq))
+	for _, ev := range bySeq {
+		out = append(out, ev)
+	}
+	sortBySeq(out)
+	return out
+}
+
+// sortBySeq sorts a slice of Event in ascending Seq order. Used by
+// the cross-replica history-merge path so the backlog arrives in
+// monotonic-cursor order.
+func sortBySeq(out []Event) {
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j-1].Seq > out[j].Seq; j-- {
+			out[j-1], out[j] = out[j], out[j-1]
+		}
+	}
 }
 
 // History returns the retained events for a session with Seq >
