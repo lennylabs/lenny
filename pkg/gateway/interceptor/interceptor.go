@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -231,6 +232,18 @@ type entry struct {
 type Chain struct {
 	byPhase map[Phase][]entry
 	count   int
+
+	// §4.8 line 1030 cumulative fail-open escalation state. Configured
+	// via SetFailOpenEscalation; the zero value disables escalation
+	// (a fail-open error is always skipped). failMu guards failStates,
+	// the escalation config, and the observer so Run is concurrency-safe.
+	failMu         sync.Mutex
+	failEnabled    bool
+	failOpenMax    int
+	failOpenWindow time.Duration
+	failClock      func() time.Time
+	failObserver   FailOpenObserver
+	failStates     map[string]*failOpenState
 }
 
 // NewChain returns an empty Chain.
@@ -281,6 +294,21 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 		res, err := invoke(ctx, ic, call)
 		if err != nil {
 			if ic.FailPolicy() == FailOpen {
+				// spec: §4.8 line 1030 — track fail-open errors in a
+				// rolling window; once the interceptor crosses the
+				// escalation ceiling it is auto-promoted to fail-closed so
+				// a persistently broken content filter cannot bypass
+				// policy indefinitely.
+				if c.recordFailOpenError(ctx, ic, call) {
+					return Result{
+						Action:          ActionReject,
+						Code:            CodeInterceptorTimeout,
+						Reason:          fmt.Sprintf("interceptor %q failed and was auto-escalated to fail-closed after exceeding the fail-open error ceiling: %v", ic.Name(), err),
+						ModifiedContent: content,
+						RejectedBy:      ic.Name(),
+						TimeoutMs:       effectiveTimeout(ic).Milliseconds(),
+					}
+				}
 				continue
 			}
 			return Result{
@@ -291,6 +319,11 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 				RejectedBy:      ic.Name(),
 				TimeoutMs:       effectiveTimeout(ic).Milliseconds(),
 			}
+		}
+		// spec: §4.8 line 1030 — an error-free call by a fail-open
+		// interceptor that had been escalated restores it to fail-open.
+		if ic.FailPolicy() == FailOpen {
+			c.recordFailOpenSuccess(ctx, ic, call)
 		}
 		switch res.Action {
 		case ActionReject:

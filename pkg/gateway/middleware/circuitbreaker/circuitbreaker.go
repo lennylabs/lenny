@@ -64,9 +64,24 @@ func (r *MemoryRegistry) Snapshot(_ context.Context) ([]circuitbreaker.Breaker, 
 // pool / connector / operation_type.
 type RequestExtractor func(*http.Request) circuitbreaker.Request
 
+// SnapshotExtractor returns the §16.7 admission-time request snapshot
+// recorded on the `admission.circuit_breaker_rejected` audit row. It
+// resolves the authenticated caller identity (attached by the auth
+// middleware, which runs before this pre-chain gate) and the requested
+// runtime/pool. A nil extractor records only what the breaker carries.
+type SnapshotExtractor func(*http.Request) RejectionSnapshot
+
 // Options configures a Middleware.
 type Options struct {
 	Extract RequestExtractor
+	// Audit, when set, emits the §16.7 `admission.circuit_breaker_rejected`
+	// audit event on a breaker match, applying the §11.6 per-replica
+	// sampling discipline. When nil the middleware still rejects but
+	// writes no audit row.
+	Audit *AuditReporter
+	// Snapshot resolves the audit row's request snapshot from the
+	// request. Ignored when Audit is nil.
+	Snapshot SnapshotExtractor
 }
 
 // Wrap returns an http.Handler that consults the Registry on every
@@ -93,6 +108,16 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if match := circuitbreaker.FirstMatch(breakers, m.opts.Extract(r)); match != nil {
+		// spec: §11.6 line 327 — the gate runs after AuthEvaluator, so
+		// the audit row carries the authenticated caller identity even
+		// though the breaker match criteria do not reference the tenant.
+		if m.opts.Audit != nil {
+			var snap RejectionSnapshot
+			if m.opts.Snapshot != nil {
+				snap = m.opts.Snapshot(r)
+			}
+			m.opts.Audit.Report(r.Context(), *match, snap)
+		}
 		writeBreakerRejection(w, *match)
 		return
 	}

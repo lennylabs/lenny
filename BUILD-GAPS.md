@@ -2080,7 +2080,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   on `PhasePostRoute` at priority 600. Add a `PostRoute` chain
   invocation in the runtime-selection path.
 
-### - [ ] F-4.8.8 — `AdmissionController` pre-chain gate present but emits no audit row (Partial) [Medium] — OPEN
+### - [x] F-4.8.8 — `AdmissionController` pre-chain gate present but emits no audit row (Partial) [Medium] — CLOSED
 
 - **Spec:** §4.8 line 979 (POL-014). `AdmissionController` is a
   pre-chain gate evaluated after `AuthEvaluator` completes at
@@ -2115,8 +2115,20 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   catalogued event on a match, with the spec's mandatory payload
   fields and the per-replica 10-second sampling key. Severity High
   — security audit gap.
+- **Resolution:** New `cbmw.AuditReporter` emits
+  `admission.circuit_breaker_rejected` on a breaker match with the §16.7
+  payload (`circuit_name`, `reason`, `opened_at`, `limit_tier`,
+  `replica_service_instance_id`, request snapshot, `caller_sub`,
+  `caller_tenant_id`), sampling the first row per `(tenant_id,
+  circuit_name, caller_sub)` per 10s in per-replica memory; suppressed
+  rejections increment the new
+  `lenny_circuit_breaker_rejections_suppressed_total` while every
+  rejection increments `lenny_circuit_breaker_rejections_total` (both
+  added to gatewaymetrics). Wired into `cbmw.Wrap` via Options, reading
+  the authenticated principal in the snapshot extractor. See commit SHA
+  below.
 
-### - [ ] F-4.8.9 — External interceptor `endpoint` not in registration shape (Partial) [Medium] — OPEN
+### - [x] F-4.8.9 — External interceptor `endpoint` not in registration shape (Partial) [Medium] — CLOSED
 
 - **Spec:** §4.8 line 1019, registration table. `endpoint` (string,
   required): the gRPC address of the interceptor service.
@@ -2141,8 +2153,16 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `gateway.interceptorNamespaces` value. Severity Medium — the SPI is
   implemented end-to-end through tests, only the production wire-up
   is missing.
-
-### - [ ] F-4.8.10 — `PreAuth` phase chain not invoked (Missing) [Medium] — OPEN
+- **Resolution:** Added `Endpoint` to `interceptor.ExternalConfig` and a
+  new `interceptor.ParseExternalSpec` parsing the repeatable
+  `--external-interceptor` gateway flag
+  (`name=,endpoint=,phase=[,priority=][,failPolicy=][,timeout=]`). The
+  gateway dials each endpoint via the new `dialInterceptor` helper
+  (mTLS via `--external-interceptor-tls-cert/-key/-ca`, plaintext for
+  dev), builds the generated `RequestInterceptorClient`, and registers
+  an External on the named phase at startup; a bad priority/phase fails
+  fast. The Helm `interceptorNamespaces` egress NetworkPolicy is left as
+  a separate chart task (NET-058). See commit SHA below.
 
 **Potential duplicate** (confidence: high) — F-4.8.2 — Both report the AuthEvaluator/PreAuth phase chain never being invoked or registered; F-4.8.10 explicitly ties itself to F-4.8.2.
 
@@ -2262,7 +2282,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   fail-open skip. Severity Medium — the policy primitive exists, the
   consumer does not.
 
-### - [ ] F-4.8.16 — `interceptor.fail_open_escalated` / `_restored` not implemented (Missing) [Medium] — OPEN
+### - [x] F-4.8.16 — `interceptor.fail_open_escalated` / `_restored` not implemented (Missing) [Medium] — CLOSED
 
 - **Spec:** §4.8 line 1030. Cumulative fail-open escalation: when a
   fail-open interceptor errors more than `interceptorFailOpenMaxConsecutive`
@@ -2282,6 +2302,17 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   exceeded, emit the two events to the per-tenant audit chain. Add
   a `--interceptor-fail-open-max-consecutive` flag with the spec
   default. Severity High — security control bypass.
+- **Resolution:** `interceptor.Chain.SetFailOpenEscalation` arms a
+  per-interceptor rolling-window error tracker (default ceiling 10 via
+  the new `--interceptor-fail-open-max-consecutive` flag, default
+  5-minute window). `Chain.Run`'s fail-open path now records each error;
+  once the count exceeds the ceiling the interceptor is auto-escalated
+  to fail-closed (the error returns `INTERCEPTOR_TIMEOUT` REJECT instead
+  of being skipped), and an error-free call restores it. The new
+  `policy.FailOpenObserver` writes `interceptor.fail_open_escalated`
+  (`interceptor_ref`, `failure_count`, `window_seconds`) and
+  `interceptor.fail_open_restored` to the per-tenant §11.7 chain. The
+  zero-value chain keeps plain fail-open semantics. See commit SHA below.
 
 ### - [ ] F-4.8.17 — `interceptor.fail_policy_weakened` / `_strengthened` not implemented (Missing) [Medium] — OPEN
 

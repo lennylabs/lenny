@@ -38,6 +38,8 @@ type Metrics struct {
 	storageQuotaUsed          *prometheus.GaugeVec
 	storageQuotaLimit         *prometheus.GaugeVec
 	circuitBreakerOpen        *prometheus.GaugeVec
+	cbRejections              *prometheus.CounterVec
+	cbRejectionsSuppressed    *prometheus.CounterVec
 	cbCacheStale              prometheus.Gauge
 	cbCacheInitialized        prometheus.Gauge
 	elicitationDropped        *prometheus.CounterVec
@@ -287,6 +289,26 @@ func New() (*Metrics, error) {
 		Name: "lenny_circuit_breaker_open",
 		Help: "1 when the named §11.6 circuit breaker is open, 0 when closed.",
 	}, []string{"circuit_name"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §11.6 line 333 — every breaker-caused admission rejection
+	// increments rejections_total (including those whose audit row is
+	// elided by sampling); the sampled-away subset increments
+	// rejections_suppressed_total. The limit_tier label carries the
+	// breaker scope vocabulary so a metric spike correlates 1:1 with
+	// its sampled `admission.circuit_breaker_rejected` audit rows.
+	cbRejections, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_circuit_breaker_rejections_total",
+		Help: "Total §11.6 admission rejections caused by a tripped circuit breaker, labelled by tenant_id, circuit_name, and limit_tier.",
+	}, []string{"tenant_id", "circuit_name", "limit_tier"})
+	if err != nil {
+		return nil, err
+	}
+	cbRejectionsSuppressed, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_circuit_breaker_rejections_suppressed_total",
+		Help: "§11.6 breaker rejections whose audit row was elided by per-(tenant_id, circuit_name, caller_sub) 10s sampling, labelled by tenant_id, circuit_name, and limit_tier.",
+	}, []string{"tenant_id", "circuit_name", "limit_tier"})
 	if err != nil {
 		return nil, err
 	}
@@ -590,7 +612,8 @@ func New() (*Metrics, error) {
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
-		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen, elicitationDropped,
+		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen,
+		cbRejections, cbRejectionsSuppressed, elicitationDropped,
 		elicitationTamperDetected, experimentIsoRej,
 		noEnvPolicyAllowAll, tokenServiceCircuitState,
 		checkpointStaleSessions,
@@ -639,6 +662,8 @@ func New() (*Metrics, error) {
 		storageQuotaUsed:          storageQuotaUsed,
 		storageQuotaLimit:         storageQuotaLimit,
 		circuitBreakerOpen:        circuitBreakerOpen,
+		cbRejections:              cbRejections,
+		cbRejectionsSuppressed:    cbRejectionsSuppressed,
 		cbCacheStale:              cbStale,
 		cbCacheInitialized:        cbInit,
 		elicitationDropped:        elicitationDropped,
@@ -1020,6 +1045,22 @@ func (m *Metrics) SetCircuitBreakerOpen(name string, open bool) {
 		v = 1
 	}
 	m.circuitBreakerOpen.WithLabelValues(name).Set(v)
+}
+
+// RecordCircuitBreakerRejection increments the §11.6
+// lenny_circuit_breaker_rejections_total counter for one admission
+// rejection caused by a tripped breaker. Every rejection is counted,
+// including those whose audit row is elided by sampling.
+func (m *Metrics) RecordCircuitBreakerRejection(tenantID, circuitName, limitTier string) {
+	m.cbRejections.WithLabelValues(tenantID, circuitName, limitTier).Inc()
+}
+
+// RecordCircuitBreakerRejectionSuppressed increments the §11.6
+// lenny_circuit_breaker_rejections_suppressed_total counter for a
+// rejection whose audit row was elided by the per-(tenant_id,
+// circuit_name, caller_sub) 10-second sampling window.
+func (m *Metrics) RecordCircuitBreakerRejectionSuppressed(tenantID, circuitName, limitTier string) {
+	m.cbRejectionsSuppressed.WithLabelValues(tenantID, circuitName, limitTier).Inc()
 }
 
 // SetCircuitBreakerCache updates the §16.1 circuit-breaker cache

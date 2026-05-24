@@ -199,6 +199,7 @@ import (
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -252,6 +253,23 @@ func main() {
 		"§11.2 platform-wide LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the global scope. Zero disables the global token cap. Only active when --redis-url is set.")
 	userTokenQuota := flag.Int64("user-token-quota-per-window", 0,
 		"§11.2 per-user LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the user scope. Zero disables the per-user token cap. Only active when --redis-url is set.")
+	// §4.8 line 1019: deployer-supplied external interceptors. Each
+	// --external-interceptor value registers one §4 RequestInterceptor
+	// service on the policy chain. Repeatable. Form:
+	// name=<n>,endpoint=<host:port>,phase=<phase>[,priority=<n>]
+	// [,failPolicy=fail-open|fail-closed][,timeout=<dur>].
+	var externalInterceptors []string
+	flag.Func("external-interceptor",
+		"§4.8 external RequestInterceptor registration (repeatable): name=<n>,endpoint=<host:port>,phase=<phase>[,priority=<n>][,failPolicy=fail-open|fail-closed][,timeout=<dur>]",
+		func(v string) error { externalInterceptors = append(externalInterceptors, v); return nil })
+	externalInterceptorTLSCert := flag.String("external-interceptor-tls-cert", os.Getenv("LENNY_EXTERNAL_INTERCEPTOR_TLS_CERT"),
+		"client certificate for mTLS to external interceptor services. When empty (with key/ca also empty) the gateway dials plaintext.")
+	externalInterceptorTLSKey := flag.String("external-interceptor-tls-key", os.Getenv("LENNY_EXTERNAL_INTERCEPTOR_TLS_KEY"),
+		"client private key for mTLS to external interceptor services.")
+	externalInterceptorCA := flag.String("external-interceptor-ca", os.Getenv("LENNY_EXTERNAL_INTERCEPTOR_CA"),
+		"CA bundle verifying external interceptor server certificates.")
+	interceptorFailOpenMax := flag.Int("interceptor-fail-open-max-consecutive", envInt("LENNY_INTERCEPTOR_FAIL_OPEN_MAX_CONSECUTIVE", 10),
+		"§4.8 cumulative fail-open escalation ceiling: when a fail-open interceptor errors more than this many times in a rolling 5-minute window, the gateway auto-escalates it to fail-closed and emits interceptor.fail_open_escalated.")
 	agentNamespace := flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	clusterQPS := flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
@@ -1201,6 +1219,12 @@ func main() {
 	// counter, so it is registered only when --redis-url is set; without
 	// Redis there is no §11.2 token counter and the chain stays empty.
 	policyChain := interceptor.NewChain()
+	// §4.8 line 1030: arm cumulative fail-open escalation on every chain.
+	// A fail-open interceptor that crosses the ceiling within the rolling
+	// 5-minute window is auto-promoted to fail-closed; the transition
+	// writes interceptor.fail_open_escalated to the tenant's audit chain.
+	policyChain.SetFailOpenEscalation(*interceptorFailOpenMax, 0,
+		policy.NewFailOpenObserver(auditAppender, nil), nil)
 	var policyAuditSink *policy.AuditSink
 	if redisClient != nil {
 		quotaCounter := quotastore.New(redisClient)
@@ -1214,6 +1238,35 @@ func main() {
 		}
 		policyAuditSink = policy.NewAuditSink(auditAppender, nil)
 		log.Printf("lenny-gateway: §4.8 QuotaEvaluator enforcing §11.2 token budgets on the PostAuth chain")
+	}
+
+	// §4.8 line 1019: register each deployer-supplied external
+	// interceptor. The gateway dials the service's endpoint, builds the
+	// generated RequestInterceptor client, and registers an External on
+	// the named phase. Registration applies the reserved-priority
+	// ceiling and the PreAuth restriction, so a misconfigured priority or
+	// phase fails fast at startup rather than silently bypassing policy.
+	for _, raw := range externalInterceptors {
+		spec, err := interceptor.ParseExternalSpec(raw)
+		if err != nil {
+			log.Fatalf("lenny-gateway: --external-interceptor: %v", err)
+		}
+		conn, err := dialInterceptor(spec.Endpoint, *externalInterceptorTLSCert, *externalInterceptorTLSKey, *externalInterceptorCA)
+		if err != nil {
+			log.Fatalf("lenny-gateway: dial external interceptor %q at %s: %v", spec.Name, spec.Endpoint, err)
+		}
+		if _, err := policyChain.RegisterExternal(spec.Phase, interceptor.ExternalConfig{
+			Name:       spec.Name,
+			Endpoint:   spec.Endpoint,
+			Priority:   spec.Priority,
+			FailPolicy: spec.FailPolicy,
+			Timeout:    spec.Timeout,
+			Client:     interceptorv1.NewRequestInterceptorClient(conn),
+		}); err != nil {
+			log.Fatalf("lenny-gateway: register external interceptor %q on %s: %v", spec.Name, spec.Phase, err)
+		}
+		log.Printf("lenny-gateway: §4.8 external interceptor %q registered on %s (endpoint %s, priority %d)",
+			spec.Name, spec.Phase, spec.Endpoint, spec.Priority)
 	}
 
 	// §4.1 Upload Handler subsystem boundary. The Subsystem gates the
@@ -1896,7 +1949,24 @@ func main() {
 	// matches. The shared breakerstore.Memory satisfies cbmw.Registry
 	// so the admin /v1/admin/circuit-breakers endpoints share state
 	// with the request-path middleware.
-	handler = cbmw.Wrap(handler, breakers, cbmw.Options{})
+	// spec: §11.6 line 327 / §16.7 — on a breaker match the gate emits
+	// the `admission.circuit_breaker_rejected` audit row carrying the
+	// authenticated caller identity (resolved by the auth middleware,
+	// which wraps outside this gate), sampled per-(tenant, circuit,
+	// caller) over a 10s window per replica.
+	cbAudit := cbmw.NewAuditReporter(auditAppender, gwMetrics, replica, nil)
+	handler = cbmw.Wrap(handler, breakers, cbmw.Options{
+		Audit: cbAudit,
+		Snapshot: func(r *http.Request) cbmw.RejectionSnapshot {
+			snap := cbmw.RejectionSnapshot{}
+			if p, ok := authmw.FromContext(r.Context()); ok {
+				snap.CallerSub = p.Subject
+				snap.CallerTenantID = p.TenantID
+				snap.SessionID = p.SessionID
+			}
+			return snap
+		},
+	})
 
 	// §11.1 rate limiting next — runs just after auth so the per-user
 	// scope sees the authenticated principal. Limits default to zero
@@ -3048,6 +3118,44 @@ func dialTokenService(addr, certPath, keyPath, caPath string) (*grpc.ClientConn,
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caPEM) {
 			return nil, fmt.Errorf("token-service CA bundle %q parsed no certificates", caPath)
+		}
+		transport = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{cert},
+			RootCAs:      pool,
+			MinVersion:   tls.VersionTLS13,
+		}))
+	}
+	return grpc.NewClient(addr, transport)
+}
+
+// dialInterceptor dials a §4.8 external RequestInterceptor service. mTLS
+// is used when cert/key/ca are all set; with all three empty the dial
+// falls through to plaintext for dev mode. The §13.2 NET-058
+// NetworkPolicy that scopes egress to the interceptor namespace is
+// templated by the Helm chart; this dial assumes that egress is
+// permitted.
+func dialInterceptor(addr, certPath, keyPath, caPath string) (*grpc.ClientConn, error) {
+	if addr == "" {
+		return nil, fmt.Errorf("interceptor endpoint is empty")
+	}
+	var transport grpc.DialOption
+	switch {
+	case certPath == "" && keyPath == "" && caPath == "":
+		transport = grpc.WithTransportCredentials(insecure.NewCredentials())
+	case certPath == "" || keyPath == "" || caPath == "":
+		return nil, fmt.Errorf("external interceptor mTLS requires --external-interceptor-tls-cert, --external-interceptor-tls-key, and --external-interceptor-ca to all be set")
+	default:
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load external-interceptor client cert: %w", err)
+		}
+		caPEM, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("read external-interceptor CA bundle: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("external-interceptor CA bundle %q parsed no certificates", caPath)
 		}
 		transport = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
 			Certificates: []tls.Certificate{cert},
