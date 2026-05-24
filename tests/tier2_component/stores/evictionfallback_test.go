@@ -44,6 +44,7 @@ func (c *collectingUploader) Upload(_ context.Context, _, _ string, body io.Read
 type captureMetrics struct {
 	calls           []string
 	partialKeyCalls []string
+	fallbackCalls   []string
 }
 
 func (c *captureMetrics) IncSessionEvictionTotalLoss(pool string, hadPrior bool) {
@@ -56,6 +57,19 @@ func (c *captureMetrics) IncSessionEvictionTotalLoss(pool string, hadPrior bool)
 
 func (c *captureMetrics) IncCheckpointEvictionPartialKeysLogged(pool, keys string) {
 	c.partialKeyCalls = append(c.partialKeyCalls, pool+"|"+keys)
+}
+
+// IncCheckpointEvictionFallback satisfies the
+// pkg/gateway/evictionfallback.MetricsSink contract. The captureMetrics
+// fake records every fallback-entry call so the test can assert on the
+// §4.4 line 263 counter alongside the existing total-loss and
+// partial-keys assertions.
+func (c *captureMetrics) IncCheckpointEvictionFallback(pool string, hadPrior bool) {
+	tag := "no"
+	if hadPrior {
+		tag = "yes"
+	}
+	c.fallbackCalls = append(c.fallbackCalls, pool+"|"+tag)
 }
 
 type captureEvents struct {
