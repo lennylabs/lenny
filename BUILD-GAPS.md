@@ -827,7 +827,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 
 **Resolution:** Closed by F-4.3.12. The gateway no longer mints tokens in-process; `cmd/lenny-gateway/main.go` carries no `tokenservice.NewServer(...)` call and no `Issuer` literal. The Token Service binary's existing `--issuer` flag + `LENNY_TOKEN_ISSUER` env override + `tokenService.issuer` chart value are now the single source of truth for the `iss` claim.
 
-### - [ ] F-4.3.14 — Issued-tokens table missing dialect/per-dialect-cap column for the §13.3 cap discipline [Low] — OPEN
+### - [x] F-4.3.14 — Issued-tokens table missing dialect/per-dialect-cap column for the §13.3 cap discipline [Low] — CLOSED
 
 **Potential overlap** (confidence: high) — F-13.3.12 — Both concern §13.3 per-dialect lifetime caps but report different defects (multi-value audience lookup failure vs missing dialect/cap column in the issued-tokens table).
 
@@ -836,17 +836,23 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** Forensic reconstruction of "why did this token live exactly Nh" is impossible after the fact. The audience column is one string, but `tokenservice` stores `strings.Join(issued.Audience, " ")` (`pkg/tokenservice/tokenservice.go:246`), so multi-audience tokens become opaque blobs.
 - **Suggested resolution:** Either split `audience` into `audience TEXT[]` and add an explicit `dialect_cap_applied_seconds INT` column, or document that the cap is reconstructable from `exp - issued_at` plus the runtime configuration.
 
-### - [ ] F-4.3.15 — No "scoped by ... environment" enforcement in credential or connector tables [Medium] — OPEN
+**Resolution (commit b412950):** Migration 0058 adds `audiences TEXT[] NOT NULL DEFAULT '{}'::text[]` (with a GIN index) and `dialect_cap_applied_seconds INTEGER NOT NULL DEFAULT 0 CHECK >= 0` to `issued_tokens`. The writer captures the applied cap in seconds and the list-form audience on every accepted exchange; the legacy single-valued `audience` column is preserved for back-compat. `pkg/gateway/issuedtokenstore.audienceListArg` normalizes the writer-side input (explicit list, legacy single, legacy joined). The tokenservice handler iterates the requested audiences to find the tightest per-dialect cap, closing F-13.3.12 as a side effect: the pre-fix `s.perDialect[req.Audience]` lookup never matched a multi-value string and silently bypassed the ceiling. Tier-2 component tests (`TestTokenIssuanceStoreContract/audiences list and dialect cap round-trip`) and tier-3 contract test (`TestPerDialectCapCapsExpForMultiValueAudience`) cover both surfaces.
+
+### - [x] F-4.3.15 — No "scoped by ... environment" enforcement in credential or connector tables [Medium] — CLOSED
 - **Spec:** "Scoped by user + connector + tenant + environment" (line 202).
 - **Evidence:** `migrations/0048_connector_credentials.up.sql:16-47` keys connector credentials on `(tenant_id, connector_id, user_id)` only; `migrations/0036_credentials.up.sql:14-40` keys user LLM credentials on `(tenant_id, ref)` with no environment column. The `environments` table (migration 0028) exists but `connector_credentials` carries no `environment_id` column or foreign key.
 - **Gap:** A connector OAuth token granted in `staging` is the same row a `production` session would draw. The §4.3 explicit scope set is not enforced by the schema.
 - **Suggested resolution:** Add an `environment_id` column to `connector_credentials` and `credentials`, make it part of the primary key (or unique constraint), and propagate the active environment through the connector OAuth start path and the credential-lease selection path.
 
-### - [ ] F-4.3.16 — No graceful-degrade error classification for "Token Service unavailable" sessions [Medium] — OPEN
+**Resolution (commit 738217d):** Migration 0059 adds `environment TEXT NOT NULL DEFAULT ''` (with a `[A-Za-z0-9_-]{0,128}` CHECK) to both tables, widens `credentials`'s unique constraint to `(tenant_id, user_id, provider, environment)`, and widens `connector_credentials`'s primary key to `(tenant_id, connector_id, user_id, environment)`. The Go-side stores gain matching Environment fields on `Credential`, `ConnectorCredential`, `RotationRecord`, and `connectoroauth.FlowContext`. `credentialstore.Store.Register` takes the environment as an explicit argument; `connectorcredstore.Store.{Get,Delete,RotateAccessToken}` widen their signatures to include it. The admin connector OAuth flow reads `?environment=` on authorize and propagates it through callback into the stored credential; the credential REST surface accepts an Environment field on POST and returns it on every Get/List. The `FindByAccessTokenHash` hot path remains hash-only — the SHA256(access_token) hash is unique enough to identify a row regardless of environment, and the matched row's Environment is populated on the result for audit. Tier-1 unit tests (`TestRegisterEnvironmentScopedCredentials`, `TestMemoryEnvironmentScopedCredentials`) cover three-environment independence and Delete scoping. The empty string represents the no-environment (default) scope; sessions that omit environment still register and read cleanly.
+
+### - [x] F-4.3.16 — No graceful-degrade error classification for "Token Service unavailable" sessions [Medium] — CLOSED
 - **Spec:** "New sessions that require LLM or OAuth credentials cannot start and fail with a retryable error, allowing clients to back off and retry" (line 214).
 - **Evidence:** `pkg/gateway/credassign/client.go:302-311` (`mapAssignError`) translates `codes.NotFound` to `ErrPoolNotFound` and `codes.ResourceExhausted` to `credential.ErrPoolExhausted`, then wraps every other gRPC error with `fmt.Errorf(...)`. There is no distinct sentinel for `codes.Unavailable` and no client-visible "retryable" classification. The session-start path receives a raw error string.
 - **Gap:** Clients cannot programmatically distinguish "Token Service down, try again in 5s" from "no pool configured." The retryable-error contract is unimplemented.
 - **Suggested resolution:** Add a sentinel `ErrTokenServiceUnavailable` to `pkg/gateway/credassign`, map `codes.Unavailable`/`codes.DeadlineExceeded` to it, surface it as an HTTP 503 with a `Retry-After` header from the session-start handler, and wire it through the circuit breaker added in F-4.3.3.
+
+**Resolution (commit 8d055db):** Verified the `ErrTokenServiceUnavailable` sentinel landed in F-4.3.3 (`pkg/gateway/credassign/client.go:30`): when the per-subsystem breaker is open `callTokenService` returns the sentinel, and `classifyTokenServiceError` counts only transient gRPC codes (`Unavailable`, `DeadlineExceeded`, `Internal`, etc.) as breaker-triggering. Added the missing API-surface mapping: the §15.2.1 `errorclassify` table now carries `TOKEN_SERVICE_UNAVAILABLE` as UPSTREAM + retryable, and `sessionserver.Server.writeTokenServiceUnavailable` writes HTTP 503 with `Retry-After: 5` (matching the subsystem breaker cool-down) on every session-start handler (`/v1/sessions/start`, `/v1/sessions/{id}/start`, `/v1/sessions/{id}/resume`). The session-start paths check `errors.Is(err, credassign.ErrTokenServiceUnavailable)` before falling through to the generic `POD_CLAIM_FAILED`. Tier-1 unit tests (`TestWriteTokenServiceUnavailableShape`, `TestWriteTokenServiceUnavailableNilCause`, `TestTokenServiceUnavailableRetryAfterConstant`) and the `errorclassify` table row test cover the response envelope and the retryable classification.
 
 ### - [x] F-4.3.17 — Token Service binary has no audit dependency [High] — CLOSED
 - **Spec:** §4.3 wires the Token Service to "the gateway's claim-mapping table and scope-narrowing rules" of §13.3, which mandates `token.exchanged` audit on every exchange (line 587).
@@ -856,23 +862,29 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 
 **Resolution:** `tokenservice.Options.Auditor` and `GRPCServer.SetAuditor` plumb an Auditor through both surfaces. `cmd/lenny-token-service/main.go` constructs `auditstore.New(pgPool)` when Postgres is wired (which satisfies both `tokenservice.Auditor` and `tokenservice.IssuedTokenAuditStore` through the matching method sets) and falls back to `policy.NewChainSetAppender` on the dev path. Both surfaces (`/v1/oauth/token` and the gRPC RotateCredentials/RevokeCredentials handlers) now emit the §13.3 audit events.
 
-### - [ ] F-4.3.18 — The "fully stateless" deployment claim is contradicted by an in-process JTI cache [Low] — OPEN
+### - [x] F-4.3.18 — The "fully stateless" deployment claim is contradicted by an in-process JTI cache [Low] — CLOSED
 - **Spec:** "The service is fully stateless — all persistent state lives in Postgres (encrypted tokens) and KMS, so any replica can handle any request with no affinity requirements" (line 209).
 - **Evidence:** `pkg/tokenservice/tokenservice.go:52-54, 209-212` keeps `issued map[string]bool` in process and writes every JTI into it. When `Options.IssuedTokens` is nil (the dev path), this is the only record of issued tokens.
 - **Gap:** A second replica sees no overlap, so dev-mode multi-replica installs (the chart default replica count is 2) can issue duplicate JTIs across replicas with no collision detection. With Postgres wired, the in-memory map is harmless but accumulates without bound for the process lifetime.
 - **Suggested resolution:** Remove the in-process `issued` map; rely on the Postgres `issued_tokens.jti PRIMARY KEY` for duplicate detection and on `ErrAlreadyExists` to retry with a fresh JTI.
 
-### - [ ] F-4.3.19 — JTI generator is not collision-safe across replicas [Low] — OPEN
+**Resolution (commit 89105a4):** Dropped the `issued map[string]bool` field and its `sync.Mutex` guard from `tokenservice.Server`. Duplicate detection rests on the `issued_tokens.jti PRIMARY KEY` and `issuedtokenstore.ErrAlreadyExists` in the durable path; the dev/test path (no Postgres wired) has no duplicate detection at all and relies on the collision-safe JTI from F-4.3.19. `TestServerHasNoInProcessJTICache` guards reintroduction at the type-system level. The §4.3 statelessness invariant now holds: any replica serves any request without affinity, and the F-4.3.7 `RecordWithAudit` Postgres write-before-issue path still works because it never touched the dropped in-memory map.
+
+### - [x] F-4.3.19 — JTI generator is not collision-safe across replicas [Low] — CLOSED
 - **Spec:** §4.3 calls out "no affinity requirements" (line 209) implying replicas can serve interchangeably; collision-safe identifiers are a precondition.
 - **Evidence:** `pkg/tokenservice/tokenservice.go:353-367` builds the JTI from a microsecond timestamp plus a `sync.Mutex`-guarded counter that starts at zero on every process start. `tests/tier9_security/reviews/credential-review.md:71` flags this: "two replicas started at the same instant can mint the same JTI prefix, which would collide the `issued_tokens` primary key."
 - **Gap:** Two simultaneously started replicas issuing at the same wall-clock microsecond produce identical JTIs and trigger `ErrAlreadyExists`, surfacing as a 500 to the caller.
 - **Suggested resolution:** Replace the timestamp+counter construction with a `crypto/rand` 128-bit identifier encoded as base32 or hex (the existing pattern used for credential leases at `pkg/credential/lease_mint.go`).
 
-### - [ ] F-4.3.20 — mTLS PKI issues per-Service certs, not per-replica [Medium] — OPEN
+**Resolution (commit 89105a4):** `newJTI` reads 16 bytes from `crypto/rand` and hex-encodes them, producing `jti_` + 32 lowercase hex characters (128 random bits). The signature also returns an error so a random-source failure surfaces cleanly as a 500 to the caller. Tier-1 unit tests cover 100,000 sequential mints with no collision (`TestNewJTICollisionSafeAcrossInvocations`), 32×4,096 concurrent mints with no collision (`TestNewJTICollisionSafeAcrossGoroutines`), and the format guarantee (`TestNewJTIPrefixAndShape`). The pattern matches `pkg/credential/lease_mint.go`.
+
+### - [x] F-4.3.20 — mTLS PKI issues per-Service certs, not per-replica [Medium] — CLOSED
 - **Spec:** "Each gateway replica has a distinct mTLS identity so compromise of one is attributable and revocable independently" (line 205).
 - **Evidence:** `charts/lenny/templates/mtls-pki.yaml:97-102` and `charts/lenny/templates/_helpers.tpl:51-83` render exactly one `lenny-gateway-tls` Certificate Secret consumed by every gateway replica.
 - **Gap:** Compromising one replica yields a key shared by every other replica. Per-replica attributability is impossible.
 - **Suggested resolution:** Adopt per-replica identities (a CSI driver like SPIRE/cert-manager-csi-driver-spiffe, or a StatefulSet with per-replica Secret), drop the shared `lenny-gateway-tls` Secret from the Helm chart, and add a CA-bundle/SPIFFE-trust-domain validator on the Token Service so each presented client cert has a distinct DN/SPIFFE ID.
+
+**Resolution (commit 20d0bc1):** New `gateway.spiffe.enabled` Helm value (default false for back-compat) switches the gateway-deployment volume from the shared `lenny-gateway-tls` Secret to a cert-manager-csi-driver-spiffe (or equivalent SPIFFE CSI driver) mount. The CSI volume's `identity-template` stamps `spiffe://<trust-domain>/gateway/<pod-name>` into the SAN so each replica presents a distinct mTLS identity. Operators can override the trust domain via `gateway.spiffe.trustDomain` (falls back to `global.spiffeTrustDomain`) and the CSI driver name via `gateway.spiffe.csiDriverName`. A new `pkg/spiffeid` package parses SPIFFE-ID URI SANs out of x509 certificates with strict format checks (rejects non-spiffe schemes, empty hosts, user info, ports, queries, fragments, and dot path segments). The Token Service installs a gRPC `UnaryInterceptor` that extracts the peer SPIFFE ID via `spiffeid.FromCert` and logs it on every call; the ID is attached to the request context via `WithSPIFFEID` so future per-handler audit emits can record it. Tier-1 unit tests (8 cases in `pkg/spiffeid`) and 2 new Helm unit tests (CSI mount renders when `gateway.spiffe.enabled=true`; trust-domain override propagates to the identity template) cover both surfaces.
 
 ### Coverage notes
 
@@ -19623,9 +19635,11 @@ No finding — recorded as confirmation that one of the iter5/iter6 fixes is cor
 
 ---
 
-### - [ ] F-13.3.12 — CFL-012 — Per-dialect lifetime cap lookup fails for multi-value audience [Low] — OPEN
+### - [x] F-13.3.12 — CFL-012 — Per-dialect lifetime cap lookup fails for multi-value audience [Low] — CLOSED
 
 **Potential overlap** (confidence: high) — F-4.3.14 — Both concern §13.3 per-dialect lifetime caps but report different defects (multi-value audience lookup failure vs missing dialect/cap column in the issued-tokens table).
+
+**Resolution (commit b412950):** Closed together with F-4.3.14. The tokenservice handler now iterates `exchangeReq.Requested.Audience` to find the tightest matching cap and only falls back to the single-key `req.Audience` lookup when no member matched. A request asking for `audience: "lenny-gateway lenny-ops"` now caps at the tighter of the two configured caps (e.g., the §13.3 `lenny-ops` 1h ceiling). The applied cap is recorded in `dialect_cap_applied_seconds` on the issued_tokens row (F-4.3.14). Tier-3 contract test `TestPerDialectCapCapsExpForMultiValueAudience` proves the bypass is closed: with caps `lenny-gateway=24h` and `lenny-ops=1h`, an exchange requesting both audiences caps at 1h.
 
 **Normative requirement (§13.3 line 564).** "`audience` | The target audience: `lenny-gateway` (default), `lenny-ops` (operability-scope tokens), `llm-proxy` (credential-lease tokens)." The `PerDialectCap` table at `cmd/lenny-gateway/main.go:611` uses these three exact values as keys.
 
