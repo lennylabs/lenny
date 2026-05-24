@@ -104,6 +104,13 @@ func TestUploadHappyPath(t *testing.T) {
 	if resp.Size != 11 {
 		t.Errorf("size: got %d, want 11", resp.Size)
 	}
+	// spec: §4.5 ll. 311 — content-addressed identity (SHA-256 of
+	// the uploaded bytes). The hash of "hello world" is the
+	// well-known value:
+	const wantHash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+	if resp.ContentHash != wantHash {
+		t.Errorf("contentHash: got %q, want %q (spec §4.5 line 311)", resp.ContentHash, wantHash)
+	}
 
 	// Blob should be retrievable from the store.
 	uri, err := blobstore.ParseURI(resp.UploadRef)

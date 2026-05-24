@@ -3,8 +3,11 @@
 package sessionserver
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"hash"
 	"io"
 	"net/http"
 	"strconv"
@@ -49,6 +52,16 @@ type UploadResponse struct {
 
 	// Size is the byte count the gateway received and stored.
 	Size int64 `json:"size"`
+
+	// ContentHash is the §4.5 ll. 311 content-addressed identity of
+	// the uploaded blob — hex-encoded SHA-256 of the streamed bytes.
+	// Clients verify storage integrity by comparing this against
+	// their locally-computed hash before finalize. Workspace
+	// lineage queries also surface this hash via the §15.1 derive
+	// response's `workspaceSnapshotContentHash` field.
+	//
+	// spec: §4.5 line 311.
+	ContentHash string `json:"contentHash,omitempty"`
 }
 
 // handleUpload implements POST /v1/sessions/{id}/upload per §15.1.
@@ -167,7 +180,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		PartID:     blobstore.NewPartID(),
 		TTL:        UploadDefaultTTL,
 	}
-	bytesRead := &countingReader{r: src}
+	bytesRead := newCountingReader(src)
 	ref, err := s.blobs.Put(uri, mimeType, bytesRead)
 	if err != nil {
 		if reservation != nil {
@@ -216,9 +229,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := UploadResponse{
-		UploadRef: ref,
-		MimeType:  mimeType,
-		Size:      bytesRead.n,
+		UploadRef:   ref,
+		MimeType:    mimeType,
+		Size:        bytesRead.n,
+		ContentHash: bytesRead.ContentHash(),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -421,18 +435,39 @@ func (s *Server) writeUploadTokenError(w http.ResponseWriter, err error) {
 	}
 }
 
-// countingReader counts bytes read off r so the upload handler can
-// echo the body length in the response without buffering the whole
-// body in memory.
+// countingReader counts bytes read off r and accumulates the SHA-256
+// of the streamed body so the upload handler can echo the body
+// length and the §4.5 ll. 311 content-addressed hash without
+// buffering the whole body in memory.
+//
+// spec: §4.5 line 311 — "Each workspace snapshot is immutable and
+// identified by a content-addressed hash (SHA-256 of the tar
+// archive)".
 type countingReader struct {
 	r io.Reader
 	n int64
+	h hash.Hash
+}
+
+func newCountingReader(r io.Reader) *countingReader {
+	return &countingReader{r: r, h: sha256.New()}
 }
 
 func (c *countingReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
-	c.n += int64(n)
+	if n > 0 {
+		c.n += int64(n)
+		// hash.Hash.Write never returns a non-nil error per the
+		// standard-library contract.
+		_, _ = c.h.Write(p[:n])
+	}
 	return n, err
+}
+
+// ContentHash returns the hex-encoded SHA-256 of the streamed bytes
+// so far. The caller MUST drain the reader before calling.
+func (c *countingReader) ContentHash() string {
+	return hex.EncodeToString(c.h.Sum(nil))
 }
 
 func formatInt64(n int64) string {

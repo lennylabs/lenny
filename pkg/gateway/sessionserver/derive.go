@@ -74,6 +74,17 @@ type DeriveResponse struct {
 	// originally committed to object storage, RFC3339Nano.
 	WorkspaceSnapshotTimestamp string `json:"workspaceSnapshotTimestamp,omitempty"`
 
+	// WorkspaceSnapshotContentHash is the §4.5 ll. 311
+	// content-addressed identity of the snapshot — SHA-256 of the
+	// tar archive, hex-encoded. Empty when the snapshot predates
+	// the hash column or no archive content was available at the
+	// originating write. Clients verify the derived session owns
+	// the same parent bytes by comparing this hash with the
+	// parent session's published hash.
+	//
+	// spec: §4.5 line 311.
+	WorkspaceSnapshotContentHash string `json:"workspaceSnapshotContentHash,omitempty"`
+
 	// ParentSessionID echoes the source session id for client-side
 	// audit / lineage display.
 	ParentSessionID string `json:"parentSessionId,omitempty"`
@@ -251,10 +262,11 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := DeriveResponse{
-		SessionResponse:            toResponse(derived),
-		WorkspaceSnapshotSource:    string(derived.WorkspaceSnapshot.Source),
-		WorkspaceSnapshotTimestamp: derived.WorkspaceSnapshot.Timestamp.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
-		ParentSessionID:            derived.ParentSessionID,
+		SessionResponse:              toResponse(derived),
+		WorkspaceSnapshotSource:      string(derived.WorkspaceSnapshot.Source),
+		WorkspaceSnapshotTimestamp:   derived.WorkspaceSnapshot.Timestamp.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+		WorkspaceSnapshotContentHash: derived.WorkspaceSnapshot.ContentHash,
+		ParentSessionID:              derived.ParentSessionID,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -262,16 +274,22 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 }
 
 // copySnapshotRef returns a §7.1 derived-snapshot reference at the
-// derived session's path. The minimal gateway elides the MinIO copy
-// and simply rewrites the ref; production swaps in a real `Copier`.
+// derived session's path, preserving the §4.5 ll. 311
+// content-addressed hash so the derived session can identify the
+// inherited workspace bytes. The minimal gateway elides the MinIO
+// copy and simply rewrites the ref; production wires the §4.5 ll.
+// 311 byte-copy via blobstore.Copier (see Server.deriveCopier).
+//
+// spec: §4.5 ll. 311; §7.1 derive copy semantics.
 func copySnapshotRef(src *sessionstore.WorkspaceSnapshot, newRef string) *sessionstore.WorkspaceSnapshot {
 	if src == nil {
 		return nil
 	}
 	return &sessionstore.WorkspaceSnapshot{
-		Ref:       newRef,
-		Source:    src.Source,
-		Timestamp: src.Timestamp,
+		Ref:         newRef,
+		Source:      src.Source,
+		Timestamp:   src.Timestamp,
+		ContentHash: src.ContentHash,
 	}
 }
 

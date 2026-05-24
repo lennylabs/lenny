@@ -228,9 +228,10 @@ type ExperimentContext struct {
 
 // WorkspaceSnapshot describes a stored workspace artifact attached to
 // a session. Mirrors the §7.1 derive response fields
-// (`workspaceSnapshotSource`, `workspaceSnapshotTimestamp`) plus the
-// underlying object reference the gateway uses to materialise the
-// snapshot onto a new pod.
+// (`workspaceSnapshotSource`, `workspaceSnapshotTimestamp`,
+// `workspaceSnapshotContentHash`) plus the underlying object
+// reference the gateway uses to materialise the snapshot onto a new
+// pod.
 type WorkspaceSnapshot struct {
 	// Ref is the object-store key (§4.5 MinIO path
 	// `/{tenant_id}/{object_type}/{session_id}/...`) the snapshot
@@ -246,6 +247,19 @@ type WorkspaceSnapshot struct {
 	// storage. The §7.1 derive response echoes this as
 	// `workspaceSnapshotTimestamp`.
 	Timestamp time.Time
+
+	// ContentHash is the §4.5 ll. 311 content-addressed identity of
+	// the snapshot — SHA-256 of the workspace tar archive, hex-
+	// encoded with no `sha256:` prefix. Empty when the snapshot
+	// predates the hash column or no archive content is available.
+	// The §15.1 derive response surfaces it as
+	// `workspaceSnapshotContentHash` so clients can verify the
+	// derived session owns the parent bytes.
+	//
+	// spec: §4.5 line 311 — "Each workspace snapshot is immutable
+	// and identified by a content-addressed hash (SHA-256 of the
+	// tar archive)".
+	ContentHash string
 }
 
 // WorkspaceSnapshotSource is the closed §7.1 enum recording how a

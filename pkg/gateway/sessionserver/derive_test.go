@@ -44,9 +44,10 @@ func newSourceSession(t *testing.T, store sessionstore.Store, mods ...func(*sess
 		PoolRef:          "default-pool",
 		IsolationProfile: isolation.ProfileSandboxed,
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
-			Ref:       "/acme/workspace/sess_source/snap.tar.zst",
-			Source:    sessionstore.WorkspaceSnapshotSealed,
-			Timestamp: time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC),
+			Ref:         "/acme/workspace/sess_source/snap.tar.zst",
+			Source:      sessionstore.WorkspaceSnapshotSealed,
+			Timestamp:   time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC),
+			ContentHash: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
 		},
 	}
 	for _, m := range mods {
@@ -114,6 +115,14 @@ func TestDeriveHappyPathFromTerminal(t *testing.T) {
 	}
 	if resp.WorkspaceSnapshotSource != "sealed" {
 		t.Errorf("workspaceSnapshotSource: got %q, want sealed", resp.WorkspaceSnapshotSource)
+	}
+	// spec: §4.5 line 311 — the derive response surfaces the
+	// content-addressed identity so a client can verify the
+	// derived session owns the inherited workspace bytes.
+	if resp.WorkspaceSnapshotContentHash !=
+		"b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" {
+		t.Errorf("workspaceSnapshotContentHash: got %q, want the parent's SHA-256 (spec §4.5 line 311)",
+			resp.WorkspaceSnapshotContentHash)
 	}
 	if resp.ParentSessionID != "sess_source" {
 		t.Errorf("parentSessionId: got %q, want sess_source", resp.ParentSessionID)

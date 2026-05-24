@@ -54,6 +54,8 @@ var _ sessionstore.Store = (*Store)(nil)
 // `last_successful_checkpoint_at` — the §4.4 line 258 freshness
 // timestamp the gauge / `lenny_checkpoint_stale_sessions` reaper keys
 // off.
+// The final column (workspace_snapshot_hash) is the §4.5 line 311
+// content-addressed snapshot hash added in migration 0068.
 const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
@@ -64,7 +66,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	cwd, pod_assignment, recovery_generation, coordination_generation,
 	schema_version,
 	retry_count, policy_enforcement_state, resume_eligible_until,
-	last_successful_checkpoint_at`
+	last_successful_checkpoint_at,
+	COALESCE(workspace_snapshot_hash, '')`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -76,15 +79,17 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	if sess.UpdatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
 	}
-	ref, src, at := snapshotCols(sess.WorkspaceSnapshot)
+	ref, src, at, hash := snapshotCols(sess.WorkspaceSnapshot)
 
 	// The trailing five binds ($26-$30) cover the §4.2 session-record
 	// fields added in migration 0050: cwd, pod_assignment,
 	// recovery_generation, coordination_generation, schema_version.
 	// The next three binds ($31-$33) cover the §4.2 line 158-159
 	// retry counter, policy enforcement state, and resume window
-	// added in migration 0055. The final bind ($34) is the §4.4
-	// freshness timestamp added in migration 0061.
+	// added in migration 0055. Bind $34 is the §4.4 freshness
+	// timestamp added in migration 0061. Bind $35 is the §4.5
+	// line 311 content-addressed snapshot hash added in
+	// migration 0068.
 	const insertSQL = `INSERT INTO sessions (
 		id, tenant_id, user_id, state, runtime_ref, pool_ref, isolation_profile,
 		parent_session_id, root_session_id, failure_class, failure_reason,
@@ -95,7 +100,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		cwd, pod_assignment, recovery_generation, coordination_generation,
 		schema_version,
 		retry_count, policy_enforcement_state, resume_eligible_until,
-		last_successful_checkpoint_at
+		last_successful_checkpoint_at,
+		workspace_snapshot_hash
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
@@ -103,7 +109,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$22, $23, $24, $25,
 		$26, $27, $28, $29, $30,
 		$31, $32::jsonb, $33,
-		$34
+		$34,
+		NULLIF($35, '')
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -126,7 +133,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			sess.CoordinationGeneration, schemaVersion,
 			sess.RetryCount, policyEnforcementArg(sess.PolicyEnforcementState),
 			pgtenant.NullTime(sess.ResumeEligibleUntil),
-			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt))
+			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt),
+			hash)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -165,8 +173,10 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 	// The trailing five SET clauses cover the §4.2 session-record
 	// fields added in migration 0050; the next three cover the §4.2
 	// line 158-159 retry counter, policy enforcement state, and
-	// resume window added in migration 0055. The final clause is the
-	// §4.4 line 258 freshness timestamp added in migration 0061.
+	// resume window added in migration 0055. Clause $32 is the §4.4
+	// line 258 freshness timestamp added in migration 0061. Clause
+	// $33 is the §4.5 line 311 content-addressed snapshot hash
+	// added in migration 0068.
 	const updateSQL = `UPDATE sessions SET
 		user_id = $3, state = $4, runtime_ref = $5, pool_ref = $6,
 		isolation_profile = $7, parent_session_id = NULLIF($8, '')::uuid,
@@ -180,7 +190,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		coordination_generation = $27, schema_version = $28,
 		retry_count = $29, policy_enforcement_state = $30::jsonb,
 		resume_eligible_until = $31,
-		last_successful_checkpoint_at = $32
+		last_successful_checkpoint_at = $32,
+		workspace_snapshot_hash = NULLIF($33, '')
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -215,7 +226,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			sess.RetryCount = prevRetryCount
 		}
 		sess.UpdatedAt = pgtenant.MonotonicNext(prevUpdated, time.Now())
-		ref, src, at := snapshotCols(sess.WorkspaceSnapshot)
+		ref, src, at, hash := snapshotCols(sess.WorkspaceSnapshot)
 		expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
 		schemaVersion := sess.SchemaVersion
 		if schemaVersion == 0 {
@@ -234,6 +245,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			sess.RetryCount, policyEnforcementArg(sess.PolicyEnforcementState),
 			pgtenant.NullTime(sess.ResumeEligibleUntil),
 			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt),
+			hash,
 		); err != nil {
 			return err
 		}
@@ -335,6 +347,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		resumeUntil *time.Time
 		// §4.4 line 258 freshness timestamp from migration 0061.
 		lastCheckpointAt *time.Time
+		// §4.5 line 311 content-addressed snapshot hash from
+		// migration 0068.
+		wsHash string
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -352,6 +367,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §4.4 freshness timestamp from migration 0061.
 		// spec: §4.4 line 258.
 		&lastCheckpointAt,
+		// §4.5 line 311 content-addressed snapshot hash from
+		// migration 0068.
+		&wsHash,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
@@ -381,10 +399,11 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	if upExp != nil {
 		s.UploadTokenExpiry = *upExp
 	}
-	if wsRef != "" || wsSrc != "" || wsAt != nil {
+	if wsRef != "" || wsSrc != "" || wsAt != nil || wsHash != "" {
 		ws := &sessionstore.WorkspaceSnapshot{
-			Ref:    wsRef,
-			Source: sessionstore.WorkspaceSnapshotSource(wsSrc),
+			Ref:         wsRef,
+			Source:      sessionstore.WorkspaceSnapshotSource(wsSrc),
+			ContentHash: wsHash,
 		}
 		if wsAt != nil {
 			ws.Timestamp = *wsAt
@@ -394,13 +413,14 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	return s, nil
 }
 
-// snapshotCols flattens an optional WorkspaceSnapshot into its three
-// column values.
-func snapshotCols(ws *sessionstore.WorkspaceSnapshot) (ref, src string, at time.Time) {
+// snapshotCols flattens an optional WorkspaceSnapshot into its four
+// column values: ref, source, timestamp, and the §4.5 line 311
+// content-addressed hash.
+func snapshotCols(ws *sessionstore.WorkspaceSnapshot) (ref, src string, at time.Time, hash string) {
 	if ws == nil {
-		return "", "", time.Time{}
+		return "", "", time.Time{}, ""
 	}
-	return ws.Ref, string(ws.Source), ws.Timestamp
+	return ws.Ref, string(ws.Source), ws.Timestamp, ws.ContentHash
 }
 
 // experimentCols flattens an optional §10.7 ExperimentContext into its
