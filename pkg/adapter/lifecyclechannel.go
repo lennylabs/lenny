@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 // newLifecycleID returns a short random identifier for correlating a
@@ -28,10 +30,23 @@ func newLifecycleID() string {
 const lifecycleProtocolVersion = "1.0"
 
 // lifecycleCapabilities are the §4.7 lifecycle signals the adapter can
-// drive. The adapter advertises them in the lifecycle_capabilities
-// handshake; the runtime replies with lifecycle_support naming the
-// subset it implements.
+// drive on any pod. The adapter advertises them in the
+// lifecycle_capabilities handshake; the runtime replies with
+// lifecycle_support naming the subset it implements.
+//
+// spec: §4.7 lines 686-694 — "task_lifecycle" is offered only on
+// task-mode pods (see capabilities()), so it is not in this base set.
 var lifecycleCapabilities = []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"}
+
+// taskLifecycleCapability is the §4.7 capability that governs the
+// task_complete / task_complete_acknowledged / task_ready exchange. It
+// is appended to the advertised set only on task-mode pods.
+const taskLifecycleCapability = "task_lifecycle"
+
+// defaultTaskCompleteAckTimeout is the §4.7 line 708 ceiling: if the
+// runtime does not reply task_complete_acknowledged within this window
+// the adapter logs task_complete_ack_timeout and proceeds with cleanup.
+const defaultTaskCompleteAckTimeout = 30 * time.Second
 
 var (
 	errLifecycleClosed       = errors.New("lifecycle channel is closed")
@@ -56,6 +71,8 @@ type lifecycleFrame struct {
 	CredentialsPath string   `json:"credentialsPath,omitempty"`
 	LeaseID         string   `json:"leaseId,omitempty"`
 	Trigger         string   `json:"trigger,omitempty"`
+	TaskID          string   `json:"taskId,omitempty"`
+	RequestID       string   `json:"requestId,omitempty"`
 }
 
 // LifecycleChannel is the adapter side of the §4.7 lifecycle channel:
@@ -71,28 +88,66 @@ type LifecycleChannel struct {
 	ready chan struct{} // closed once the handshake completes
 	done  chan struct{} // closed once Run returns
 
+	// taskMode advertises the §4.7 task_lifecycle capability when set.
+	taskMode bool
+	// taskCompleteAckTimeout bounds the wait for
+	// task_complete_acknowledged (§4.7 line 708, default 30s).
+	taskCompleteAckTimeout time.Duration
+
 	mu        sync.Mutex
 	conn      net.Conn
 	enc       *json.Encoder
 	supported map[string]bool
 	pending   map[string]chan error
-	closed    bool
+	// inflight is the §4.7 line 820 per-provider count of outbound LLM
+	// requests the runtime reported via llm_request_started without a
+	// matching llm_request_completed. The Full-level credential-rotation
+	// gate reads it through InflightCount.
+	inflight map[string]int
+	closed   bool
+}
+
+// LifecycleOption configures a LifecycleChannel at construction.
+type LifecycleOption func(*LifecycleChannel)
+
+// WithTaskLifecycle makes the channel advertise the §4.7 task_lifecycle
+// capability and enables the task_complete / task_ready exchange. The
+// controller sets it on task-mode pods only (§5.2 execution modes).
+func WithTaskLifecycle() LifecycleOption {
+	return func(lc *LifecycleChannel) { lc.taskMode = true }
 }
 
 // NewLifecycleChannel listens on socketPath for the runtime's lifecycle
 // connection. socketPath is a filesystem path or, on Linux, an abstract
 // socket name beginning with `@`.
-func NewLifecycleChannel(socketPath string) (*LifecycleChannel, error) {
+func NewLifecycleChannel(socketPath string, opts ...LifecycleOption) (*LifecycleChannel, error) {
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle channel listen %s: %w", socketPath, err)
 	}
-	return &LifecycleChannel{
-		listener: l,
-		ready:    make(chan struct{}),
-		done:     make(chan struct{}),
-		pending:  map[string]chan error{},
-	}, nil
+	lc := &LifecycleChannel{
+		listener:               l,
+		ready:                  make(chan struct{}),
+		done:                   make(chan struct{}),
+		pending:                map[string]chan error{},
+		inflight:               map[string]int{},
+		taskCompleteAckTimeout: defaultTaskCompleteAckTimeout,
+	}
+	for _, opt := range opts {
+		opt(lc)
+	}
+	return lc, nil
+}
+
+// capabilities returns the §4.7 capability set the adapter advertises in
+// the handshake, appending task_lifecycle on task-mode pods.
+func (lc *LifecycleChannel) capabilities() []string {
+	if !lc.taskMode {
+		return lifecycleCapabilities
+	}
+	caps := make([]string, 0, len(lifecycleCapabilities)+1)
+	caps = append(caps, lifecycleCapabilities...)
+	return append(caps, taskLifecycleCapability)
 }
 
 // SocketPath is the address the runtime dials to reach the channel.
@@ -142,7 +197,7 @@ func (lc *LifecycleChannel) handshake(r *bufio.Reader) error {
 	if err := lc.writeFrame(lifecycleFrame{
 		Type:            "lifecycle_capabilities",
 		ProtocolVersion: lifecycleProtocolVersion,
-		Capabilities:    lifecycleCapabilities,
+		Capabilities:    lc.capabilities(),
 	}); err != nil {
 		return fmt.Errorf("lifecycle handshake send: %w", err)
 	}
@@ -163,10 +218,12 @@ func (lc *LifecycleChannel) handshake(r *bufio.Reader) error {
 	return nil
 }
 
-// readLoop dispatches inbound frames until the connection closes. Only
-// the runtime's acknowledgements (checkpoint_ready, interrupt_-
-// acknowledged, credentials_acknowledged) carry meaning to the adapter;
-// other frame types are ignored for forward compatibility.
+// readLoop dispatches inbound frames until the connection closes. The
+// runtime's acknowledgements (checkpoint_ready, interrupt_acknowledged,
+// credentials_acknowledged, task_complete_acknowledged) wake the
+// matching request; llm_request_started / llm_request_completed adjust
+// the per-provider in-flight counter (§4.7 line 820). Unknown frame
+// types are ignored for forward compatibility.
 func (lc *LifecycleChannel) readLoop(r *bufio.Reader) error {
 	for {
 		frame, err := readLifecycleFrame(r)
@@ -183,8 +240,41 @@ func (lc *LifecycleChannel) readLoop(r *bufio.Reader) error {
 			lc.deliver("int:" + frame.InterruptID)
 		case "credentials_acknowledged":
 			lc.deliver("cred:" + frame.LeaseID)
+		case "task_complete_acknowledged":
+			lc.deliver("task:" + frame.TaskID)
+		case "llm_request_started":
+			lc.adjustInflight(frame.Provider, 1)
+		case "llm_request_completed":
+			lc.adjustInflight(frame.Provider, -1)
 		}
 	}
+}
+
+// adjustInflight changes the per-provider in-flight LLM-request counter
+// by delta and mirrors the value to the lenny_llm_inflight_requests
+// gauge. The count never goes below zero, so a spurious
+// llm_request_completed (no matching start) is a no-op (§4.7 line 820).
+func (lc *LifecycleChannel) adjustInflight(provider string, delta int) {
+	if provider == "" {
+		return
+	}
+	lc.mu.Lock()
+	n := lc.inflight[provider] + delta
+	if n < 0 {
+		n = 0
+	}
+	lc.inflight[provider] = n
+	lc.mu.Unlock()
+	SetLLMInflight(provider, n)
+}
+
+// InflightCount reports the number of outbound LLM requests the runtime
+// has reported started without a matching completion for provider. The
+// Full-level credential-rotation gate (§4.7) waits for it to reach zero.
+func (lc *LifecycleChannel) InflightCount(provider string) int {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.inflight[provider]
 }
 
 // deliver wakes the request waiting on key with a successful result.
@@ -268,6 +358,44 @@ func (lc *LifecycleChannel) Terminate(deadlineMs int32, reason string) error {
 		Type:       "terminate",
 		DeadlineMs: deadlineMs,
 		Reason:     reason,
+	})
+}
+
+// RequestTaskComplete sends a task_complete between-task signal in task
+// mode and blocks until the runtime replies task_complete_acknowledged
+// for the same task or the §4.7 line 708 ack timeout elapses. The
+// runtime does not exit; it releases task-specific resources and
+// prepares for scrub. On ack timeout the adapter logs a
+// task_complete_ack_timeout warning, increments the timeout counter, and
+// returns nil so the caller proceeds with cleanup anyway (spec line 708).
+// A cancellation of ctx, or the channel closing, is returned as an error.
+func (lc *LifecycleChannel) RequestTaskComplete(ctx context.Context, taskID string) error {
+	ackCtx, cancel := context.WithTimeout(ctx, lc.taskCompleteAckTimeout)
+	defer cancel()
+	err := lc.request(ackCtx, "task:"+taskID, lifecycleFrame{
+		Type:   "task_complete",
+		TaskID: taskID,
+	})
+	if err == nil {
+		return nil
+	}
+	// The ack window elapsed while ctx itself is still live: proceed with
+	// cleanup per spec line 708 rather than surfacing the timeout.
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		log.Printf("lenny-adapter: task_complete_ack_timeout taskId=%s after %s; proceeding with cleanup", taskID, lc.taskCompleteAckTimeout)
+		IncTaskCompleteAckTimeout()
+		return nil
+	}
+	return err
+}
+
+// SignalTaskReady tells the runtime the scrub completed and the next
+// task's workspace is materialized, so it re-reads the adapter manifest
+// and prepares for the next message (§4.7 task mode).
+func (lc *LifecycleChannel) SignalTaskReady(taskID string) error {
+	return lc.writeFrame(lifecycleFrame{
+		Type:   "task_ready",
+		TaskID: taskID,
 	})
 }
 

@@ -1543,7 +1543,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.6 — Task-mode lifecycle messages not implemented in adapter [Medium] — OPEN
+### - [x] F-4.7.6 — Task-mode lifecycle messages not implemented in adapter [Medium] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-5.2.1 — F-4.7.6 and F-5.2.1 both report task-mode lifecycle messages (task_complete/task_ready/acknowledged) unimplemented; F-6.2.6 is a distinct defect about task_cleanup phase disposition branching not being implemented.
 
@@ -1561,6 +1561,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** Task-mode pods cannot be driven through their inter-task lifecycle. The §4.7 in-flight LLM request gate that depends on `llm_request_started/completed` counters (spec line 820) cannot function.
 
 **Suggested resolution:** Extend `lifecycleCapabilities` with `task_lifecycle`; add `task_complete`, `task_ready` sender methods to `LifecycleChannel`; handle `task_complete_acknowledged`, `llm_request_started`, `llm_request_completed` in `readLoop`. Maintain the per-provider in-flight counter the §4.7 Full-level rotation protocol requires (spec line 820). Reconcile `schemas/lenny-adapter-jsonl.schema.json` and `schemas/lifecycle-events.schema.json` so each frame lives on the correct surface.
+
+**Resolution:** `LifecycleChannel` now advertises `task_lifecycle` only on task-mode pods (new `WithTaskLifecycle()` option, `--task-mode` adapter flag, `capabilities()`). Added `RequestTaskComplete` (sends `task_complete`, waits for `task_complete_acknowledged`) and `SignalTaskReady` senders; `readLoop` handles `task_complete_acknowledged`, `llm_request_started`, and `llm_request_completed`, maintaining a per-provider in-flight counter (`InflightCount`, `lenny_llm_inflight_requests` gauge) for the §4.7 line 820 rotation gate. Frame struct gained `taskId`/`requestId`; `schemas/lifecycle-events.schema.json` already carries these frames on the lifecycle surface. (commit b7000711)
 
 ---
 
@@ -1731,7 +1733,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.16 — `task_complete_ack_timeout` (30 s) not enforced [Medium] — OPEN
+### - [x] F-4.7.16 — `task_complete_ack_timeout` (30 s) not enforced [Medium] — CLOSED
 
 **Severity: Medium** (covered partially by F-4.7.6 — the entire task-mode lifecycle is absent).
 
@@ -1740,6 +1742,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Evidence:** No `task_complete` sender in `pkg/adapter/lifecyclechannel.go` — no acknowledgement to time out.
 
 **Suggested resolution:** Bundle with F-4.7.6.
+
+**Resolution:** `RequestTaskComplete` bounds the wait for `task_complete_acknowledged` with `taskCompleteAckTimeout` (default 30s, spec line 708). On timeout with a still-live caller context it logs `task_complete_ack_timeout`, increments `lenny_adapter_task_complete_ack_timeout_total`, and returns nil so the caller proceeds with cleanup. Closed with F-4.7.6. (commit b7000711)
 
 ---
 
@@ -1761,7 +1765,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.18 — `Checkpoint` and `Interrupt` operation lock queue depth tested but priority handling under contention is unverified [Medium] — OPEN
+### - [x] F-4.7.18 — `Checkpoint` and `Interrupt` operation lock queue depth tested but priority handling under contention is unverified [Medium] — CLOSED
 
 **Severity: Low.** Implementation looks correct; the spec is silent on a specific edge case.
 
@@ -1772,6 +1776,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 - One detail: the spec says "interrupt during checkpoint: The interrupt is queued until the checkpoint completes". The current `Begin` rejects `errOpBusy` if the queue slot holds anything (a queued checkpoint coexists with an interrupt request as BUSY). Reading the spec strictly, a single interrupt arriving behind a running-checkpoint plus zero queued ops should be queued, but a second arriving behind a running-checkpoint + queued-interrupt is dropped. The code matches.
 
 **Suggested resolution:** Add a regression test for the "interrupt arrives during checkpoint with no queue contents" case (queue, deliver after checkpoint completes) and the "second interrupt during running-interrupt" case (drop with BUSY).
+
+**Resolution:** Implementation confirmed correct against spec lines 646-650. Added `TestOpLockInterruptDuringCheckpointDeliversAfterComplete` (interrupt queued behind a running checkpoint is delivered on release) and `TestOpLockSecondInterruptDuringRunningInterruptBusy` (third interrupt behind a running + queued interrupt is dropped with `errOpBusy`). No production change. (commit b7000711)
 
 ---
 

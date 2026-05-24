@@ -98,6 +98,9 @@ func main() {
 			"the runtime container dials it")
 	lifecycleSocket := flag.String("lifecycle-socket", "",
 		"Unix socket path for the §15.4.6 runtime lifecycle channel; empty disables it")
+	taskMode := flag.Bool("task-mode", false,
+		"§4.7/§5.2: advertise the task_lifecycle capability on the lifecycle channel; "+
+			"set on task-mode pods so the runtime is driven through task_complete / task_ready")
 	flag.Parse()
 
 	if *runtimeBin != "" && *runtimeSocket != "" {
@@ -164,7 +167,11 @@ func main() {
 	// advertises it in the session manifest.
 	var lifecycle *adapter.LifecycleChannel
 	if *lifecycleSocket != "" {
-		lifecycle, err = adapter.NewLifecycleChannel(*lifecycleSocket)
+		var lcOpts []adapter.LifecycleOption
+		if *taskMode {
+			lcOpts = append(lcOpts, adapter.WithTaskLifecycle())
+		}
+		lifecycle, err = adapter.NewLifecycleChannel(*lifecycleSocket, lcOpts...)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}

@@ -23,6 +23,22 @@ var (
 		Help: "Pod starts in nonce-only mode with --require-so-peercred=false " +
 			"(§4.7). Deployers MUST alert on a non-zero value.",
 	})
+	// §4.7 line 708: the runtime did not acknowledge a task_complete
+	// within the 30s window and the adapter proceeded with cleanup anyway.
+	taskCompleteAckTimeout = mustCounter(prometheus.CounterOpts{
+		Name: "lenny_adapter_task_complete_ack_timeout_total",
+		Help: "Task-mode task_complete acknowledgements that timed out (§4.7); " +
+			"the adapter proceeded with scrub without the runtime's ack.",
+	})
+	// §4.7 line 820: per-provider count of outbound LLM requests the
+	// runtime reported via llm_request_started without a matching
+	// llm_request_completed. The Full-level rotation gate clears when it
+	// reaches zero.
+	llmInflightRequests = mustGauge(prometheus.GaugeOpts{
+		Name: "lenny_llm_inflight_requests",
+		Help: "Outbound LLM requests in flight per provider (§4.7 direct-mode " +
+			"in-flight gate), tracked from llm_request_started / completed.",
+	}, []string{"provider"})
 )
 
 // mustCounter builds and registers a label-free counter, panicking on a
@@ -35,6 +51,27 @@ func mustCounter(opts prometheus.CounterOpts) *prometheus.CounterVec {
 	}
 	metrics.MustRegister(prometheus.DefaultRegisterer, c)
 	return c
+}
+
+// mustGauge builds and registers a labeled gauge, panicking on a
+// §16.1.1 naming violation.
+func mustGauge(opts prometheus.GaugeOpts, labels []string) *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(opts, labels)
+	if err != nil {
+		panic(err)
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, g)
+	return g
+}
+
+// IncTaskCompleteAckTimeout increments the §4.7 line 708 task-complete
+// acknowledgement timeout counter.
+func IncTaskCompleteAckTimeout() { taskCompleteAckTimeout.WithLabelValues().Inc() }
+
+// SetLLMInflight publishes the current per-provider in-flight LLM
+// request count to the §4.7 gauge.
+func SetLLMInflight(provider string, n int) {
+	llmInflightRequests.WithLabelValues(provider).Set(float64(n))
 }
 
 // IncSoPeercredSelftestFailed increments the §4.7 self-test failure

@@ -140,6 +140,64 @@ func TestOpLockBusyWhenSlotFullDifferentKind(t *testing.T) {
 	}
 }
 
+// TestOpLockSecondInterruptDuringRunningInterruptBusy covers the §4.7
+// edge from F-4.7.18: while an interrupt runs and a second interrupt
+// occupies the single queue slot, a third interrupt is dropped with
+// BUSY (the slot is full and same-kind coalescing applies only to
+// checkpoints, spec lines 646-650).
+func TestOpLockSecondInterruptDuringRunningInterruptBusy(t *testing.T) {
+	var l opLock
+	rel1, err := l.Begin(context.Background(), opInterrupt)
+	if err != nil {
+		t.Fatalf("Begin interrupt: %v", err)
+	}
+	defer rel1()
+
+	go func() { _, _ = l.Begin(context.Background(), opInterrupt) }()
+	waitQueued(t, &l)
+
+	if _, err := l.Begin(context.Background(), opInterrupt); !errors.Is(err, errOpBusy) {
+		t.Fatalf("third interrupt err = %v, want errOpBusy", err)
+	}
+}
+
+// TestOpLockInterruptDuringCheckpointDeliversAfterComplete covers the
+// §4.7 spec line 648 case from F-4.7.18: an interrupt arriving during a
+// running checkpoint with an empty queue is queued and delivered once
+// the checkpoint releases the lock.
+func TestOpLockInterruptDuringCheckpointDeliversAfterComplete(t *testing.T) {
+	var l opLock
+	rel1, err := l.Begin(context.Background(), opCheckpoint)
+	if err != nil {
+		t.Fatalf("Begin checkpoint: %v", err)
+	}
+
+	delivered := make(chan struct{})
+	go func() {
+		rel2, err := l.Begin(context.Background(), opInterrupt)
+		if err != nil {
+			t.Errorf("queued interrupt Begin: %v", err)
+			return
+		}
+		close(delivered)
+		rel2()
+	}()
+
+	waitQueued(t, &l)
+	select {
+	case <-delivered:
+		t.Fatal("interrupt ran before the checkpoint released the lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	rel1()
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued interrupt was not delivered after checkpoint completed")
+	}
+}
+
 func TestOpLockContextCancelWhileQueued(t *testing.T) {
 	var l opLock
 	rel1, err := l.Begin(context.Background(), opCheckpoint)
