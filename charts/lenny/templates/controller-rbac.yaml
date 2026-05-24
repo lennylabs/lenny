@@ -30,12 +30,28 @@ rules:
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxtemplates", "sandboxwarmpools", "runtimes"]
     verbs: ["get", "list", "watch"]
+  # Sandboxes: the WarmPoolController creates idle pods, drains and
+  # recreates pods near cert expiry, and retires pod-failed Sandboxes;
+  # the §4.6.1 cert-expiry replacement and pod-failed retire paths
+  # require delete (§4.6.3 RBAC backstop grants create/update/delete).
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxes"]
-    verbs: ["get", "list", "watch", "create"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # SandboxClaims: the §4.6.1 orphaned-claim garbage-collection loop
+  # lists all claims and deletes those that no live session references
+  # (§4.6.3 RBAC backstop grants list/delete).
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxclaims"]
+    verbs: ["get", "list", "watch", "delete"]
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status"]
     verbs: ["get", "update", "patch"]
+  # PodDisruptionBudgets: the §4.6.1 per-SandboxTemplate warm-pod PDB
+  # management owns one PDB per pool (maxUnavailable: 1) and tears it
+  # down when the pool is deleted or scaled to zero.
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "delete"]

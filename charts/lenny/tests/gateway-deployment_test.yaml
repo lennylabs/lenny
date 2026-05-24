@@ -300,6 +300,12 @@ tests:
             apiGroups: ["lenny.dev"]
             resources: ["sandboxes/status"]
             verbs: ["get", "update", "patch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["get", "list", "watch", "patch"]
 
   - it: renders the lenny-gateway ClusterIP Service with HTTP, gRPC, and metrics ports
     documentIndex: 4

@@ -108,9 +108,12 @@ rules:
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxclaims"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # Pods: read to resolve the claimed pod's IP for the adapter dial,
+  # and patch for the §4.6.3 gateway-SA grant covering tenant-id and
+  # state label mutations on agent pods.
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

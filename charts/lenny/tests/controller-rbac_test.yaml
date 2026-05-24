@@ -40,6 +40,32 @@ tests:
             resources: ["networkpolicies"]
             verbs: ["get", "list", "watch"]
 
+  - it: grants Sandbox create/update/delete and SandboxClaim list/delete for §4.6.1 cert-expiry replacement and orphan-claim GC
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxes"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxclaims"]
+            verbs: ["get", "list", "watch", "delete"]
+
+  - it: grants PodDisruptionBudget management for per-pool warm-pod PDBs (§4.6.1)
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+
   - it: binds the cluster role to the controller service account
     documentIndex: 2
     asserts:
