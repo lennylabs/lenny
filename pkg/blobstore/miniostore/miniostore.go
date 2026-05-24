@@ -327,7 +327,7 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 		}
 	}
 	if s.onArtifactUploadError != nil {
-		s.onArtifactUploadError(u.TenantID, "transport")
+		s.onArtifactUploadError(u.TenantID, "minio_unreachable")
 	}
 	return "", fmt.Errorf("miniostore: put %s after %d retries: %w", key, len(backoffs), lastErr)
 }
@@ -391,22 +391,24 @@ func isTransientPutError(err error) bool {
 
 // classifyPutError maps a non-transient PutObject error onto the
 // §16.5 lenny_artifact_upload_error_total `error_type` label. The
-// label values are bounded so the metric does not explode.
+// label values are bounded so the metric does not explode and match
+// the §16.5 MinIOUnavailable alert's `error_type="minio_unreachable"`
+// selector for the retry-exhausted transport case.
 //
-// spec: §16.5 ArtifactUploadError.
+// spec: §16.5 ArtifactUploadError; §12.5 line 282.
 func classifyPutError(err error) string {
 	resp := minio.ToErrorResponse(err)
 	switch resp.StatusCode {
 	case http.StatusForbidden, http.StatusUnauthorized:
 		return "auth"
 	case http.StatusInsufficientStorage, http.StatusPaymentRequired:
-		return "quota"
+		return "quota_exceeded"
 	}
 	switch resp.Code {
 	case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch":
 		return "auth"
 	case "QuotaExceeded", "EntityTooLarge", "StorageQuotaExceeded":
-		return "quota"
+		return "quota_exceeded"
 	}
 	return "other"
 }

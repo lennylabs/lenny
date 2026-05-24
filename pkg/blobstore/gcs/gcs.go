@@ -85,9 +85,11 @@ func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 }
 
 // classifyGCSPutError maps a GCS write error onto the §16.5 error_type
-// label.
+// label. Transport-class failures emit `minio_unreachable` so the
+// §16.5 MinIOUnavailable alert fires uniformly across self-managed
+// MinIO and managed-cloud backends.
 //
-// spec: §16.5 ArtifactUploadError.
+// spec: §16.5 ArtifactUploadError; §12.5 line 282.
 func classifyGCSPutError(err error) string {
 	s := err.Error()
 	switch {
@@ -98,9 +100,9 @@ func classifyGCSPutError(err error) string {
 	case containsAny(s, "PermissionDenied", "Unauthenticated", "401", "403"):
 		return "auth"
 	case containsAny(s, "QuotaExceeded", "ResourceExhausted", "Insufficient"):
-		return "quota"
+		return "quota_exceeded"
 	case containsAny(s, "Timeout", "DeadlineExceeded", "Unavailable", "connection", "500", "502", "503", "504"):
-		return "transport"
+		return "minio_unreachable"
 	}
 	return "other"
 }

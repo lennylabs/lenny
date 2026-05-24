@@ -1003,6 +1003,14 @@ func main() {
 			gwMetrics.IncCheckpointKMSUnavailable()
 			log.Printf("lenny-gateway: §12.5 ll. 303 CLASSIFICATION_CONTROL_VIOLATION: tenant=%s KMS key unavailable", tenantID)
 		})
+		// §12.5 line 282 — surface every retry-exhausted MinIO PUT
+		// failure on lenny_artifact_upload_error_total and roll the
+		// same signal into lenny_checkpoint_storage_failure_total so
+		// the §16.5 MinIOUnavailable and CheckpointStorageUnavailable
+		// alerts fire from one source of truth.
+		minioStore.SetOnArtifactUploadError(func(tenantID, errorType string) {
+			gwMetrics.IncArtifactUploadError(tenantID, errorType)
+		})
 
 		// §12.5 ll. 297 startup KMS probe: when at least one T4 tenant
 		// is configured, probe a sample alias so a chronic

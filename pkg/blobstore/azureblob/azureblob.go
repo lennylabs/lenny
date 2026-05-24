@@ -81,9 +81,11 @@ func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 }
 
 // classifyAzurePutError maps an Azure Blob write error onto the §16.5
-// error_type label.
+// error_type label. The transport-class branches emit
+// `minio_unreachable` so the §16.5 MinIOUnavailable alert fires
+// uniformly across self-managed MinIO and managed-cloud backends.
 //
-// spec: §16.5 ArtifactUploadError.
+// spec: §16.5 ArtifactUploadError; §12.5 line 282.
 func classifyAzurePutError(err error) string {
 	switch {
 	case bloberror.HasCode(err, "AuthenticationFailed"),
@@ -96,11 +98,12 @@ func classifyAzurePutError(err error) string {
 		bloberror.HasCode(err, "ServerBusy"),
 		bloberror.HasCode(err, "RequestBodyTooLarge"):
 		// Treat capacity-style limits as quota; ServerBusy is
-		// transient throttling.
+		// transient throttling that surfaces as backend
+		// unreachability after retry exhaustion.
 		if bloberror.HasCode(err, "ServerBusy") {
-			return "transport"
+			return "minio_unreachable"
 		}
-		return "quota"
+		return "quota_exceeded"
 	}
 	s := err.Error()
 	switch {
@@ -111,7 +114,7 @@ func classifyAzurePutError(err error) string {
 		strings.Contains(s, "502"),
 		strings.Contains(s, "503"),
 		strings.Contains(s, "504"):
-		return "transport"
+		return "minio_unreachable"
 	case strings.Contains(s, "Unauthorized"),
 		strings.Contains(s, "Forbidden"),
 		strings.Contains(s, "401"),

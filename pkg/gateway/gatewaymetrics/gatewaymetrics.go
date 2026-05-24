@@ -130,6 +130,12 @@ type Metrics struct {
 	// in which the reconciler detected a checkpoint gap. Labelled by
 	// tenant so per-tenant attribution lands in the alert.
 	legalHoldCheckpointGaps *prometheus.CounterVec
+	// artifactUploadError counts §12.5 ll. 282 ArtifactStore PUT
+	// failures after the retry budget. Labels: `tenant_id` (caller
+	// tenant) and `error_type` (`minio_unreachable | auth |
+	// quota_exceeded | other`). The §16.5 MinIOUnavailable alert reads
+	// the `minio_unreachable` label.
+	artifactUploadError *prometheus.CounterVec
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -553,6 +559,20 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §12.5 ll. 282 — `lenny_artifact_upload_error_total` counts
+	// ArtifactStore PUT failures after the retry budget. Labels:
+	// `tenant_id` and `error_type` (bounded to
+	// `minio_unreachable | auth | quota_exceeded | other` so the
+	// metric does not explode under high tenancy + diverse errors).
+	// The §16.5 MinIOUnavailable alert keys on the `minio_unreachable`
+	// label value.
+	artifactUploadError, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_artifact_upload_error_total",
+		Help: "ArtifactStore PUT failures after the retry budget (§12.5 line 282) by error type.",
+	}, []string{"tenant_id", "error_type"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -567,7 +587,8 @@ func New() (*Metrics, error) {
 		checkpointEvictionFallback, checkpointPartialTotal, prestopCapSelection,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
-		drainReadinessChecks, legalHoldCheckpointGaps)
+		drainReadinessChecks, legalHoldCheckpointGaps,
+		artifactUploadError)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -631,6 +652,7 @@ func New() (*Metrics, error) {
 		gcDuration:                           gcDuration.WithLabelValues(),
 		drainReadinessChecks:                 drainReadinessChecks,
 		legalHoldCheckpointGaps:              legalHoldCheckpointGaps,
+		artifactUploadError:                  artifactUploadError,
 	}, nil
 }
 
@@ -838,6 +860,30 @@ func (m *Metrics) IncLegalHoldCheckpointGap(tenantID string) {
 		return
 	}
 	m.legalHoldCheckpointGaps.WithLabelValues(tenantID).Inc()
+}
+
+// IncArtifactUploadError bumps the §12.5 ll. 282
+// `lenny_artifact_upload_error_total` counter on every
+// ArtifactStore PUT that exhausts its retry budget (the storage
+// backend's onArtifactUploadError callback). errorType is one of
+// `minio_unreachable`, `auth`, `quota_exceeded`, `other`, matching
+// the §16.5 alert's selector vocabulary; the
+// `minio_unreachable` value also drives the
+// `lenny_checkpoint_storage_failure_total{reason="minio_unreachable"}`
+// rollup so the CheckpointStorageUnavailable alert fires from the
+// same signal.
+//
+// spec: §12.5 line 282; §16.5 ArtifactUploadError.
+func (m *Metrics) IncArtifactUploadError(tenantID, errorType string) {
+	if m == nil {
+		return
+	}
+	m.artifactUploadError.WithLabelValues(tenantID, errorType).Inc()
+	// Roll the upload-error class into the checkpoint storage
+	// failure rollup so a single counter feeds both alerts. The pool/
+	// level/trigger labels are blank since the failure originates in
+	// the blob store before the higher-level context is available.
+	m.checkpointStorageFailure.WithLabelValues("", "", "", errorType).Inc()
 }
 
 // IncCheckpointEvictionFallback increments the §4.4 line 263

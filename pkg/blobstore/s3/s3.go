@@ -83,9 +83,12 @@ func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 }
 
 // classifyS3PutError maps an AWS S3 error onto the §16.5 error_type
-// label.
+// label. The transport branch returns `minio_unreachable` so the
+// §16.5 MinIOUnavailable alert (which keys on that label value)
+// fires on S3-backed deployments under the same outage semantics
+// as the self-managed MinIO backend.
 //
-// spec: §16.5 ArtifactUploadError.
+// spec: §16.5 ArtifactUploadError; §12.5 line 282.
 func classifyS3PutError(err error) string {
 	s := err.Error()
 	switch {
@@ -99,7 +102,7 @@ func classifyS3PutError(err error) string {
 		strings.Contains(s, "EntityTooLarge"),
 		strings.Contains(s, "StorageQuotaExceeded"),
 		strings.Contains(s, "BucketFull"):
-		return "quota"
+		return "quota_exceeded"
 	case strings.Contains(s, "Timeout"),
 		strings.Contains(s, "connection"),
 		strings.Contains(s, "no such host"),
@@ -107,7 +110,7 @@ func classifyS3PutError(err error) string {
 		strings.Contains(s, "502"),
 		strings.Contains(s, "503"),
 		strings.Contains(s, "504"):
-		return "transport"
+		return "minio_unreachable"
 	}
 	return "other"
 }

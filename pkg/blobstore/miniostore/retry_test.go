@@ -45,7 +45,9 @@ func TestIsTransientPutError(t *testing.T) {
 }
 
 // spec: §16.5 ArtifactUploadError — error_type label values are
-// bounded: auth, quota, transport, other.
+// bounded: auth, quota_exceeded, minio_unreachable, other. The
+// `minio_unreachable` value is the retry-exhausted transport branch
+// the MinIOUnavailable alert keys on.
 func TestClassifyPutError(t *testing.T) {
 	cases := []struct {
 		err  error
@@ -55,9 +57,9 @@ func TestClassifyPutError(t *testing.T) {
 		{minio.ErrorResponse{StatusCode: http.StatusUnauthorized}, "auth"},
 		{minio.ErrorResponse{Code: "AccessDenied"}, "auth"},
 		{minio.ErrorResponse{Code: "InvalidAccessKeyId"}, "auth"},
-		{minio.ErrorResponse{Code: "QuotaExceeded"}, "quota"},
-		{minio.ErrorResponse{Code: "EntityTooLarge"}, "quota"},
-		{minio.ErrorResponse{StatusCode: http.StatusInsufficientStorage}, "quota"},
+		{minio.ErrorResponse{Code: "QuotaExceeded"}, "quota_exceeded"},
+		{minio.ErrorResponse{Code: "EntityTooLarge"}, "quota_exceeded"},
+		{minio.ErrorResponse{StatusCode: http.StatusInsufficientStorage}, "quota_exceeded"},
 		{minio.ErrorResponse{Code: "Unknown"}, "other"},
 	}
 	for _, tc := range cases {

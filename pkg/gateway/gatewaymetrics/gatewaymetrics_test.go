@@ -497,3 +497,124 @@ func TestGCTombstonesPrunedCounter(t *testing.T) {
 		t.Errorf("/metrics missing the expected counter value 6\n---\n%s", body)
 	}
 }
+
+// spec: §12.5 line 321 — `lenny_gc_runs_total`,
+// `lenny_gc_artifacts_deleted`, `lenny_gc_errors_total`, and
+// `lenny_gc_duration_seconds` are emitted by the retention-GC sweep.
+func TestGCRetentionMetricsEmit(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncGCRun("success")
+	m.IncGCRun("error")
+	m.AddGCArtifactsDeleted("artifacts", 3)
+	m.AddGCArtifactsDeleted("transcripts", 2)
+	m.IncGCError("artifacts")
+	m.ObserveGCDuration(0.5)
+	m.ObserveGCDuration(1.5)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_gc_runs_total{outcome="success"} 1`,
+		`lenny_gc_runs_total{outcome="error"} 1`,
+		`lenny_gc_artifacts_deleted{store="artifacts"} 3`,
+		`lenny_gc_artifacts_deleted{store="transcripts"} 2`,
+		`lenny_gc_errors_total{store="artifacts"} 1`,
+		"lenny_gc_duration_seconds_count 2",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// spec: §12.5 line 291 — `lenny_drain_readiness_checks_total` records
+// the webhook decision by outcome (allowed|blocked|forced).
+func TestDrainReadinessCheckCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncDrainReadinessCheck("allowed")
+	m.IncDrainReadinessCheck("blocked")
+	m.IncDrainReadinessCheck("forced")
+	m.IncDrainReadinessCheck("allowed")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_drain_readiness_checks_total{outcome="allowed"} 2`,
+		`lenny_drain_readiness_checks_total{outcome="blocked"} 1`,
+		`lenny_drain_readiness_checks_total{outcome="forced"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// spec: §12.8 line 739 — `lenny_legal_hold_checkpoint_gaps_total`
+// counts held sessions where the reconciler detects a checkpoint gap.
+func TestLegalHoldCheckpointGapCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncLegalHoldCheckpointGap("acme")
+	m.IncLegalHoldCheckpointGap("acme")
+	m.IncLegalHoldCheckpointGap("globex")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_legal_hold_checkpoint_gaps_total{tenant_id="acme"} 2`,
+		`lenny_legal_hold_checkpoint_gaps_total{tenant_id="globex"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// spec: §12.5 line 282 — `lenny_artifact_upload_error_total` counts
+// retry-exhausted PUT failures, labelled by tenant_id and error_type.
+// The same call rolls into
+// `lenny_checkpoint_storage_failure_total{reason=...}` so the
+// MinIOUnavailable and CheckpointStorageUnavailable alerts fire from
+// one source.
+func TestArtifactUploadErrorCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncArtifactUploadError("acme", "minio_unreachable")
+	m.IncArtifactUploadError("acme", "auth")
+	m.IncArtifactUploadError("acme", "quota_exceeded")
+	m.IncArtifactUploadError("globex", "minio_unreachable")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_artifact_upload_error_total{error_type="minio_unreachable",tenant_id="acme"} 1`,
+		`lenny_artifact_upload_error_total{error_type="auth",tenant_id="acme"} 1`,
+		`lenny_artifact_upload_error_total{error_type="quota_exceeded",tenant_id="acme"} 1`,
+		`lenny_artifact_upload_error_total{error_type="minio_unreachable",tenant_id="globex"} 1`,
+		`lenny_checkpoint_storage_failure_total{level="",pool="",reason="minio_unreachable",trigger=""} 2`,
+		`lenny_checkpoint_storage_failure_total{level="",pool="",reason="auth",trigger=""} 1`,
+		`lenny_checkpoint_storage_failure_total{level="",pool="",reason="quota_exceeded",trigger=""} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
