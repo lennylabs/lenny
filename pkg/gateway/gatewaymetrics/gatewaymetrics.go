@@ -102,6 +102,13 @@ type Metrics struct {
 	// and `source` (postgres | postgres_null | cache_hit |
 	// cache_miss_max_tier).
 	prestopCapSelection *prometheus.CounterVec
+	// gcTombstonesPruned counts the §12.5 ll. 341 hard-prune
+	// removals: catalog rows whose tombstone deadline has elapsed and
+	// were physically removed from the artifact_store table together
+	// with the matching bucket object. No labels — the counter rolls up
+	// across all tenants and artifact classes because the §12.5
+	// monitoring contract treats hard-prune as a single rollup metric.
+	gcTombstonesPruned prometheus.Counter
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -403,14 +410,22 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
-	// §4.4 line 262 — `lenny_checkpoint_storage_failure_total`
-	// counts non-eviction MinIO-upload failures (all retries
-	// exhausted, the failed checkpoint is discarded). Labels are
-	// bounded.
+	// §4.4 line 262 / §12.5 ll. 303 —
+	// `lenny_checkpoint_storage_failure_total` counts non-eviction
+	// MinIO-upload failures (all retries exhausted, the failed
+	// checkpoint is discarded) AND the §12.5 fail-closed T4 KMS-
+	// unavailable rejections. Labels: `pool`, `level`, `trigger`,
+	// and `reason` — the §12.5 ll. 303 `{reason="kms_unavailable"}`
+	// filter that the CheckpointStorageUnavailable alert reads.
+	// Existing retry-exhaustion callers stamp `reason="retry_exhausted"`;
+	// the blobstore's T4 fail-closed branch stamps
+	// `reason="kms_unavailable"` and leaves `pool`/`level`/`trigger`
+	// empty because the rejection fires before the adapter has the
+	// wider context.
 	checkpointStorageFailure, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_checkpoint_storage_failure_total",
-		Help: "Non-eviction checkpoint uploads failed after all retries (§4.4 line 262).",
-	}, []string{"pool", "level", "trigger"})
+		Help: "Checkpoint or artifact writes failed (§4.4 line 262 retry-exhausted, §12.5 ll. 303 kms_unavailable).",
+	}, []string{"pool", "level", "trigger", "reason"})
 	if err != nil {
 		return nil, err
 	}
@@ -450,6 +465,15 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §12.5 ll. 341 — `lenny_gc_tombstones_pruned_total` counts the
+	// soft-deleted catalog rows physically removed by the hard-prune
+	// sweep once the tombstone retention window has elapsed. No
+	// labels — the §12.5 monitoring contract treats hard-prune as a
+	// single rollup metric across tenants and artifact classes.
+	gcTombstonesPruned := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_gc_tombstones_pruned_total",
+		Help: "Soft-deleted artifact_store rows physically removed by the §12.5 hard-prune sweep.",
+	})
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -461,7 +485,8 @@ func New() (*Metrics, error) {
 		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, checkpointStorageFailure,
-		checkpointEvictionFallback, checkpointPartialTotal, prestopCapSelection)
+		checkpointEvictionFallback, checkpointPartialTotal, prestopCapSelection,
+		gcTombstonesPruned)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -518,6 +543,7 @@ func New() (*Metrics, error) {
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
+		gcTombstonesPruned:                   gcTombstonesPruned,
 	}, nil
 }
 
@@ -615,13 +641,47 @@ func (m *Metrics) ObserveCheckpointDuration(pool, level, trigger string, seconds
 // `lenny_checkpoint_storage_failure_total` counter labeled by pool,
 // level, and trigger. Called from the non-eviction MinIO-upload path
 // when all retries are exhausted and the failed checkpoint is
-// discarded.
+// discarded. The fourth (`reason`) label is stamped
+// `retry_exhausted` so the wider counter rolls up consistently with
+// the §12.5 ll. 303 kms_unavailable rejection counted by
+// IncCheckpointKMSUnavailable below.
 // spec: §4.4 line 262.
 func (m *Metrics) IncCheckpointStorageFailure(pool, level, trigger string) {
 	if m == nil {
 		return
 	}
-	m.checkpointStorageFailure.WithLabelValues(pool, level, trigger).Inc()
+	m.checkpointStorageFailure.WithLabelValues(pool, level, trigger, "retry_exhausted").Inc()
+}
+
+// IncCheckpointKMSUnavailable increments the §12.5 ll. 303
+// `lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}`
+// counter on a T4 fail-closed write rejection. The MinIO blobstore
+// fires its SetOnKMSUnavailable callback whenever a Put rejects under
+// ErrClassificationControlViolation; the gateway main wires the
+// callback to this method so every rejection drives the
+// CheckpointStorageUnavailable alert. The pool / level / trigger
+// labels are left empty because the rejection happens before the
+// adapter has the wider context.
+//
+// spec: §12.5 ll. 303.
+func (m *Metrics) IncCheckpointKMSUnavailable() {
+	if m == nil {
+		return
+	}
+	m.checkpointStorageFailure.WithLabelValues("", "", "", "kms_unavailable").Inc()
+}
+
+// AddGCTombstonesPruned bumps the §12.5 ll. 341
+// `lenny_gc_tombstones_pruned_total` counter by n. The §12.5 hard-prune
+// sweep emits the count of catalog rows it removed; passing it through
+// the gateway-side accessor keeps the metric registration centralised.
+//
+// spec: §12.5 ll. 341.
+func (m *Metrics) AddGCTombstonesPruned(n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.gcTombstonesPruned.Add(float64(n))
 }
 
 // IncCheckpointEvictionFallback increments the §4.4 line 263

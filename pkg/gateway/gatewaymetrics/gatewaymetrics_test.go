@@ -448,3 +448,52 @@ func TestMiddlewareForwardsFlusher(t *testing.T) {
 		t.Error("recorder reports the response was not flushed")
 	}
 }
+
+// spec: §12.5 ll. 303 — the T4 fail-closed KMS-unavailable
+// rejection emits to `lenny_checkpoint_storage_failure_total` with
+// `reason="kms_unavailable"`. Existing retry-exhaustion calls stamp
+// `reason="retry_exhausted"` so both flows aggregate into the same
+// counter the `CheckpointStorageUnavailable` alert reads.
+func TestCheckpointStorageFailureReasonLabel(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncCheckpointStorageFailure("pool-a", "full", "periodic")
+	m.IncCheckpointKMSUnavailable()
+	m.IncCheckpointKMSUnavailable()
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_checkpoint_storage_failure_total{level="full",pool="pool-a",reason="retry_exhausted",trigger="periodic"} 1`,
+		`lenny_checkpoint_storage_failure_total{level="",pool="",reason="kms_unavailable",trigger=""} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// spec: §12.5 ll. 341 — the hard-prune sweep increments the
+// `lenny_gc_tombstones_pruned_total` counter once per row removed.
+func TestGCTombstonesPrunedCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.AddGCTombstonesPruned(0) // no-op guard
+	m.AddGCTombstonesPruned(-3) // no-op guard for negative input
+	m.AddGCTombstonesPruned(4)
+	m.AddGCTombstonesPruned(2)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "lenny_gc_tombstones_pruned_total 6") {
+		t.Errorf("/metrics missing the expected counter value 6\n---\n%s", body)
+	}
+}
