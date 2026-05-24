@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
 // spec: §4.9 — the gateway's LLM reverse-proxy listener wiring.
@@ -245,4 +248,85 @@ type staticTenantLister struct {
 
 func (s staticTenantLister) ListTenants(_ context.Context) ([]string, error) {
 	return s.tenants, nil
+}
+
+// spec: §12.5 ll. 297-303 — the SSEKeyResolver returns
+// (alias, requireKey=true, nil) for a T4 tenant, ("", false, nil) for
+// any other tier, and ("", true, err) for a tenant lookup failure
+// (fail-closed posture). The blobstore consumes the three branches
+// and the gateway's MinIO Put dispatch wraps a T4 object under the
+// per-tenant alias.
+func TestNewSSEKeyResolverPicksT4AliasOrFallsBack(t *testing.T) {
+	store := tenantstore.NewMemory()
+	ctx := context.Background()
+	if err := store.Create(ctx, tenantstore.Tenant{ID: "acme-t4", WorkspaceTier: "T4"}); err != nil {
+		t.Fatalf("Create T4 tenant: %v", err)
+	}
+	if err := store.Create(ctx, tenantstore.Tenant{ID: "globex-t3", WorkspaceTier: "T3"}); err != nil {
+		t.Fatalf("Create T3 tenant: %v", err)
+	}
+	if err := store.Create(ctx, tenantstore.Tenant{ID: "initech-untiered"}); err != nil {
+		t.Fatalf("Create untiered tenant: %v", err)
+	}
+
+	resolver := newSSEKeyResolver(store)
+
+	cases := []struct {
+		name       string
+		tenantID   string
+		wantAlias  string
+		wantNeed   bool
+		wantErrMsg string // substring; empty means no error
+	}{
+		{
+			name:      "T4 tenant returns per-tenant alias and requireKey=true",
+			tenantID:  "acme-t4",
+			wantAlias: tenantkms.AliasFor("acme-t4"),
+			wantNeed:  true,
+		},
+		{
+			name:      "T3 tenant returns empty alias and requireKey=false",
+			tenantID:  "globex-t3",
+			wantAlias: "",
+			wantNeed:  false,
+		},
+		{
+			name:      "untiered tenant returns empty alias and requireKey=false",
+			tenantID:  "initech-untiered",
+			wantAlias: "",
+			wantNeed:  false,
+		},
+		{
+			name:       "missing tenant returns error and requireKey=true (fail-closed)",
+			tenantID:   "ghost",
+			wantAlias:  "",
+			wantNeed:   true,
+			wantErrMsg: "tenant not found",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			alias, need, err := resolver(tc.tenantID)
+			if alias != tc.wantAlias {
+				t.Errorf("alias = %q, want %q", alias, tc.wantAlias)
+			}
+			if need != tc.wantNeed {
+				t.Errorf("requireKey = %v, want %v", need, tc.wantNeed)
+			}
+			if tc.wantErrMsg == "" {
+				if err != nil {
+					t.Errorf("err = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErrMsg) {
+				t.Errorf("err = %v, want containing %q", err, tc.wantErrMsg)
+			}
+			// And the error wraps tenantstore.ErrNotFound so callers
+			// can match on errors.Is.
+			if err != nil && !errors.Is(err, tenantstore.ErrNotFound) {
+				t.Errorf("err = %v, want errors.Is(tenantstore.ErrNotFound)", err)
+			}
+		})
+	}
 }

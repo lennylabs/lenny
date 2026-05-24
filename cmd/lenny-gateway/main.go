@@ -65,7 +65,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/pkg/tenantkms"
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
@@ -487,22 +490,55 @@ func main() {
 	// is the §12.5 drain-readiness liveness probe — a real MinIO
 	// bucket check with MinIO, an always-ready stub for the in-memory
 	// store, which is process-local and cannot degrade.
+	//
+	// minioStore retains the concrete *miniostore.Store so the §12.5
+	// ll. 303 fail-closed KMS-unavailable callback can be wired against
+	// it once gwMetrics is constructed below. minioStore is nil when
+	// the in-memory backend is selected (the in-memory path has no
+	// per-tenant SSE-KMS surface).
 	var blobs blobstore.Store = blobstore.NewMemoryStore(nil)
 	var blobProbe drainreadiness.Prober = drainreadiness.ProberFunc(func(context.Context) error { return nil })
+	var minioStore *miniostore.Store
 	if *minioEndpoint != "" {
+		// §12.5 ll. 297-303 SSEKeyResolver: the production gateway must
+		// look up the writing tenant's workspaceTier on every Put and
+		// hand MinIO the per-tenant SSE-KMS alias for T4 tenants.
+		sseResolver := newSSEKeyResolver(tenants)
 		ms, err := miniostore.New(miniostore.Config{
-			Endpoint:  *minioEndpoint,
-			AccessKey: *minioAccessKey,
-			SecretKey: *minioSecretKey,
-			Bucket:    *minioBucket,
-			UseSSL:    *minioUseSSL,
+			Endpoint:       *minioEndpoint,
+			AccessKey:      *minioAccessKey,
+			SecretKey:      *minioSecretKey,
+			Bucket:         *minioBucket,
+			UseSSL:         *minioUseSSL,
+			SSEKeyResolver: sseResolver,
 		})
 		if err != nil {
 			log.Fatalf("lenny-gateway: minio: %v", err)
 		}
+		minioStore = ms
 		blobs = ms
 		blobProbe = ms
-		log.Printf("lenny-gateway: §4.5 artifact store is MinIO at %s (bucket %q)", *minioEndpoint, *minioBucket)
+		log.Printf("lenny-gateway: §4.5 artifact store is MinIO at %s (bucket %q); §12.5 SSEKeyResolver wired (T4 tenant-scoped SSE-KMS)",
+			*minioEndpoint, *minioBucket)
+	}
+
+	// §12.5 ll. 309-321 artifact_store catalog. The Postgres-backed
+	// catalog is the surface the §12.5 GC sweep, the §11.2 size
+	// accounting, the §12.8 erasure orchestrator, and the §12.5 legal-
+	// hold checks all read against. A nil pgPool yields a noop wrapper
+	// — the in-memory deployment runs without the catalog, which is
+	// the dev-mode posture: production paths require Postgres.
+	var artifactCatalog artifactcatalog.Store
+	var blobsCataloged *cataloging.Store
+	if pgPool != nil {
+		artifactCatalog = artifactcatalog.New(pgPool, nil)
+		blobsCataloged = cataloging.New(blobs, artifactCatalog, cataloging.Options{
+			LogOnCatalogFailure: func(uri string, err error) {
+				log.Printf("lenny-gateway: §12.5 artifact_store catalog insert failed for %s: %v", uri, err)
+			},
+		})
+		blobs = blobsCataloged
+		log.Printf("lenny-gateway: §12.5 artifact_store catalog wired (Postgres-backed)")
 	}
 	var pools poolstore.Store = poolstore.NewMemory()
 	if pgPool != nil {
@@ -952,6 +988,51 @@ func main() {
 	// here once the registry is live.
 	if checkpointSvc != nil {
 		checkpointSvc.Metrics = gwMetrics
+	}
+
+	// §12.5 ll. 303 — wire the MinIO blob store's fail-closed T4
+	// KMS-unavailable callback to the gateway metrics emitter. Every
+	// ErrClassificationControlViolation the blob store raises bumps
+	// `lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}`
+	// so the CheckpointStorageUnavailable alert fires under the
+	// outage. The handler also logs the rejection at INFO so operators
+	// see the tenant id without spelunking through the bucket-side
+	// access logs.
+	if minioStore != nil {
+		minioStore.SetOnKMSUnavailable(func(tenantID string) {
+			gwMetrics.IncCheckpointKMSUnavailable()
+			log.Printf("lenny-gateway: §12.5 ll. 303 CLASSIFICATION_CONTROL_VIOLATION: tenant=%s KMS key unavailable", tenantID)
+		})
+
+		// §12.5 ll. 297 startup KMS probe: when at least one T4 tenant
+		// is configured, probe a sample alias so a chronic
+		// misconfiguration surfaces in startup logs. The gateway does
+		// NOT fail startup — production may bring the gateway up before
+		// every KMS alias is provisioned; the warning is the operator
+		// signal.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			rows, err := tenants.List(ctx, tenantstore.ListFilter{})
+			if err != nil {
+				log.Printf("lenny-gateway: §12.5 startup T4 KMS probe: list tenants: %v", err)
+				return
+			}
+			for _, t := range rows {
+				if t.WorkspaceTier != tenantkms.WorkspaceTierT4 {
+					continue
+				}
+				alias := tenantkms.AliasFor(t.ID)
+				if _, perr := kmsProvider.CurrentKEKVersion(ctx, alias); perr != nil {
+					log.Printf("lenny-gateway: §12.5 startup T4 KMS probe WARN: tenant=%s alias=%s unreachable: %v",
+						t.ID, alias, perr)
+				} else {
+					log.Printf("lenny-gateway: §12.5 startup T4 KMS probe OK: tenant=%s alias=%s",
+						t.ID, alias)
+				}
+				return // probe a single sample tenant only
+			}
+		}()
 	}
 
 	// §4.1 / §16.5: emit the configuration scalars the §16.5
@@ -1904,12 +1985,33 @@ func main() {
 	// Collects the workspace snapshot, transcript, and blobs of every
 	// terminal session past its retention TTL; a §12.8 legal hold
 	// exempts the session.
+	//
+	// When the §12.5 artifact_store catalog is wired (Postgres path),
+	// the blobs deleter transitions catalog rows to `soft_deleted` with
+	// the §12.5 tombstone retention deadline rather than deleting them
+	// outright. A background goroutine runs the §12.5 ll. 341 hard-prune
+	// sweep on the same cadence so rows past their deadline (and their
+	// matching bucket objects) are physically removed. In-memory dev
+	// mode, where no catalog is wired, retains the legacy direct-delete
+	// path.
 	{
 		var arts []retentiongc.Artifact
 		if te, ok := transcripts.(sessionArtifactDeleter); ok {
 			arts = append(arts, retentiongc.Artifact{Name: "transcripts", Delete: te.DeleteBySession})
 		}
-		if be, ok := blobs.(sessionArtifactDeleter); ok {
+		if blobsCataloged != nil {
+			// §12.5 ll. 311-313: soft-delete the catalog rows + bucket
+			// objects through the cataloging decorator instead of
+			// removing them outright. The hard-prune pass below runs on
+			// the same Run loop and bumps lenny_gc_tombstones_pruned_total.
+			tombstoneRetention := blobstore.DerivedSnapshotTTL // 7 days, matches §12.5 default
+			arts = append(arts, retentiongc.Artifact{
+				Name: "artifacts",
+				Delete: func(ctx context.Context, tenantID, sessionID string) (int, error) {
+					return blobsCataloged.SoftDeleteSession(ctx, tenantID, sessionID, tombstoneRetention)
+				},
+			})
+		} else if be, ok := blobs.(sessionArtifactDeleter); ok {
 			arts = append(arts, retentiongc.Artifact{Name: "artifacts", Delete: be.DeleteBySession})
 		}
 		retGC := retentiongc.New(sessions, tenantsLister{tenants}, arts, retentiongc.Options{Clock: clockinject.Now})
@@ -1923,6 +2025,36 @@ func main() {
 					collected)
 			}
 		})
+
+		// §12.5 ll. 341 hard-prune sweep: every retentiongc.DefaultSweepInterval
+		// the catalog removes rows whose tombstone deadline has elapsed
+		// and emits the count to lenny_gc_tombstones_pruned_total.
+		// Production runs this under the §10.1 leader lease; the dev-
+		// mode in-memory deployment has no Postgres catalog and skips
+		// the sweep entirely.
+		if blobsCataloged != nil {
+			go func() {
+				ticker := time.NewTicker(retentiongc.DefaultSweepInterval)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-watchdogCtx.Done():
+						return
+					case <-ticker.C:
+						count, err := blobsCataloged.HardPrune(watchdogCtx, clockinject.Now())
+						if err != nil {
+							log.Printf("lenny-gateway: §12.5 hard-prune sweep error: %v", err)
+							continue
+						}
+						gwMetrics.AddGCTombstonesPruned(count)
+						if count > 0 {
+							log.Printf("lenny-gateway: §12.5 hard-prune removed %d tombstoned artifacts past retention",
+								count)
+						}
+					}
+				}
+			}()
+		}
 	}
 
 	// ----- §10.1 session-coordination lease sweeper -----
@@ -2327,6 +2459,37 @@ func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil 
 // §7.1 retention GC.
 type sessionArtifactDeleter interface {
 	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
+}
+
+// newSSEKeyResolver builds the §12.5 ll. 297-303 SSEKeyResolver the
+// MinIO blob store calls on every Put. The closure:
+//
+//   - Returns (tenantkms.AliasFor(tenantID), true, nil) for a T4
+//     tenant: MinIO MUST wrap under the per-tenant alias so the §12.5
+//     cryptographic-erasure property holds.
+//   - Returns ("", false, nil) for a non-T4 tenant: fall through to
+//     the bucket-default SSE-S3 / SSE-KMS key.
+//   - Returns ("", true, err) for a T4 tenant whose registry row is
+//     unreachable: the blobstore maps it onto
+//     CLASSIFICATION_CONTROL_VIOLATION and fires the KMS-unavailable
+//     callback. Returning requireKey=true on a lookup failure is the
+//     fail-closed posture: we cannot infer the tier from a missing
+//     row, and a requireKey=false return would silently downgrade an
+//     unknown tenant to the bucket-default key.
+//
+// spec: §12.5 ll. 297-303 — T4 SSE-KMS resolution and fail-closed
+// rejection.
+func newSSEKeyResolver(tenants tenantstore.Store) func(string) (string, bool, error) {
+	return func(tenantID string) (string, bool, error) {
+		row, err := tenants.Get(context.Background(), tenantID)
+		if err != nil {
+			return "", true, fmt.Errorf("lookup tenant %s: %w", tenantID, err)
+		}
+		if row.WorkspaceTier == tenantkms.WorkspaceTierT4 {
+			return tenantkms.AliasFor(tenantID), true, nil
+		}
+		return "", false, nil
+	}
 }
 
 // authFailureAuditAdapter bridges the §10.2 auth middleware to the
