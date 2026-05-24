@@ -124,6 +124,36 @@ func (f *fakeCatalog) SetLegalHold(_ context.Context, uri string, hold bool) err
 	return nil
 }
 
+func (f *fakeCatalog) IsLegalHeldAt(_ context.Context, tenantID, sessionID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range f.rows {
+		if r.TenantID == tenantID && r.SessionID == sessionID && r.LegalHold {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeCatalog) SessionsWithLegalHoldAndCheckpoints(_ context.Context) ([]artifactcatalog.SessionRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	seen := map[string]struct{}{}
+	var out []artifactcatalog.SessionRef
+	for _, r := range f.rows {
+		if !r.LegalHold || r.ArtifactType != artifactcatalog.ArtifactTypeCheckpoint {
+			continue
+		}
+		key := r.TenantID + "|" + r.SessionID
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, artifactcatalog.SessionRef{TenantID: r.TenantID, SessionID: r.SessionID})
+	}
+	return out, nil
+}
+
 // spec: §12.5 ll. 309 — every artifact_store row is inserted alongside
 // the bucket object. A successful Put through the decorator both
 // stores the bytes and creates the matching catalog row.

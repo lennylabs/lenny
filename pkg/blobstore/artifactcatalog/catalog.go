@@ -97,6 +97,29 @@ type Store interface {
 	HardPruneExpired(ctx context.Context, now time.Time) (int, error)
 	ListBySession(ctx context.Context, tenantID, sessionID string) ([]Record, error)
 	SetLegalHold(ctx context.Context, uri string, hold bool) error
+	// IsLegalHeldAt reports whether any row scoped to (tenant, session)
+	// carries legal_hold=true. The MinIO blob store calls it at
+	// DeleteBySession time so a blob whose §12.5 catalog row records a
+	// §12.8 hold survives the per-session sweep.
+	//
+	// spec: §12.8 line 735.
+	IsLegalHeldAt(ctx context.Context, tenantID, sessionID string) (bool, error)
+	// SessionsWithLegalHoldAndCheckpoints returns the §12.8 line 739
+	// legal-hold reconciler's candidate set: every (tenant, session)
+	// pair where legal_hold=true and the session has at least one
+	// recorded checkpoint row in the catalog. The reconciler then
+	// asks for the per-session row set via ListBySession to detect
+	// rotation gaps.
+	//
+	// spec: §12.8 line 739.
+	SessionsWithLegalHoldAndCheckpoints(ctx context.Context) ([]SessionRef, error)
+}
+
+// SessionRef is the (tenant, session) projection
+// SessionsWithLegalHoldAndCheckpoints returns.
+type SessionRef struct {
+	TenantID  string
+	SessionID string
 }
 
 // ErrNotFound is returned by Get when no row matches uri.
@@ -303,6 +326,51 @@ func (s *PgStore) SetLegalHold(ctx context.Context, uri string, hold bool) error
 		return ErrNotFound
 	}
 	return nil
+}
+
+// IsLegalHeldAt implements Store. Returns true when any catalog row
+// scoped to (tenantID, sessionID) carries legal_hold=true.
+//
+// spec: §12.8 line 735.
+func (s *PgStore) IsLegalHeldAt(ctx context.Context, tenantID, sessionID string) (bool, error) {
+	var held bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1 FROM artifact_store
+		     WHERE tenant_id = $1 AND session_id = $2 AND legal_hold = true
+		)`, tenantID, sessionID).Scan(&held)
+	if err != nil {
+		return false, err
+	}
+	return held, nil
+}
+
+// SessionsWithLegalHoldAndCheckpoints implements Store. Returns every
+// (tenant, session) pair with legal_hold=true and at least one
+// checkpoint row in the catalog. The §12.8 line 739 reconciler walks
+// the result set looking for gaps in each session's checkpoint
+// sequence.
+//
+// spec: §12.8 line 739.
+func (s *PgStore) SessionsWithLegalHoldAndCheckpoints(ctx context.Context) ([]SessionRef, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT tenant_id, session_id
+		  FROM artifact_store
+		 WHERE legal_hold = true
+		   AND artifact_type = $1`, string(ArtifactTypeCheckpoint))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionRef
+	for rows.Next() {
+		var r SessionRef
+		if err := rows.Scan(&r.TenantID, &r.SessionID); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func nullableString(s string) any {

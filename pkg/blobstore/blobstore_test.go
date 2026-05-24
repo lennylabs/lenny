@@ -292,6 +292,94 @@ func TestMemoryStoreHardPrunePreservesLiveBlobs(t *testing.T) {
 	}
 }
 
+// spec: §12.5 ll. 333-339 — StatIncludingTombstones distinguishes a
+// soft-deleted (still discoverable) blob from one that is absent.
+// Stat collapses both into ErrNotFound; this surface lets the GC
+// sweep and observability paths tell the two terminal states apart.
+func TestMemoryStoreStatIncludingTombstonesActive(t *testing.T) {
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	s := blobstore.NewMemoryStore(clock)
+	u := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "p", TTL: time.Hour}
+	if _, err := s.Put(u, "text/plain", strings.NewReader("payload")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	info, state, err := s.StatIncludingTombstones(u)
+	if err != nil {
+		t.Fatalf("StatIncludingTombstones: %v", err)
+	}
+	if state != blobstore.BlobStateActive {
+		t.Errorf("state = %q, want active", state)
+	}
+	if info.Size != int64(len("payload")) {
+		t.Errorf("size = %d, want 7", info.Size)
+	}
+}
+
+// spec: §12.5 ll. 333-339 — a soft-deleted blob surfaces as
+// SoftDeleted with metadata intact, distinguishing it from a
+// physically absent blob.
+func TestMemoryStoreStatIncludingTombstonesSoftDeleted(t *testing.T) {
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	s := blobstore.NewMemoryStore(clock)
+	u := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "p", TTL: time.Hour}
+	if _, err := s.Put(u, "text/plain", strings.NewReader("payload")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := s.SoftDelete(u); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+
+	_, state, err := s.StatIncludingTombstones(u)
+	if err != nil {
+		t.Fatalf("StatIncludingTombstones: %v", err)
+	}
+	if state != blobstore.BlobStateSoftDeleted {
+		t.Errorf("state = %q, want soft_deleted", state)
+	}
+
+	// Stat still returns ErrNotFound — the soft-delete is opaque to
+	// non-GC callers.
+	if _, err := s.Stat(u); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("Stat post-SoftDelete: got %v, want ErrNotFound", err)
+	}
+}
+
+// spec: §12.5 ll. 333-339 — a blob that never existed surfaces as
+// NotFound, paired with ErrNotFound.
+func TestMemoryStoreStatIncludingTombstonesAbsent(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	u := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "missing", TTL: time.Hour}
+	_, state, err := s.StatIncludingTombstones(u)
+	if !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+	if state != blobstore.BlobStateNotFound {
+		t.Errorf("state = %q, want not_found", state)
+	}
+}
+
+// spec: §12.5 ll. 333-339 — an expired blob (past TTL but never
+// soft-deleted) surfaces as NotFound, matching the §4.5 TTL contract.
+func TestMemoryStoreStatIncludingTombstonesExpired(t *testing.T) {
+	var now time.Time
+	clock := func() time.Time { return now }
+	s := blobstore.NewMemoryStore(clock)
+	u := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "p", TTL: time.Hour}
+	now = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := s.Put(u, "text/plain", strings.NewReader("payload")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	now = now.Add(2 * time.Hour) // past TTL
+	_, state, err := s.StatIncludingTombstones(u)
+	if !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound for an expired blob", err)
+	}
+	if state != blobstore.BlobStateNotFound {
+		t.Errorf("state = %q, want not_found for an expired blob", state)
+	}
+}
+
 func TestNewPartIDFormat(t *testing.T) {
 	got := blobstore.NewPartID()
 	if !strings.HasPrefix(got, "part_") || len(got) != 5+16 {

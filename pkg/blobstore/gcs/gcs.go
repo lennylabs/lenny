@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -67,9 +68,50 @@ type Config struct {
 
 // Store implements blobstore.Store + blobstore.Tombstoner over GCS.
 type Store struct {
-	client   objectClient
-	bucket   string
-	resolver KMSKeyResolver
+	client                objectClient
+	bucket                string
+	resolver              KMSKeyResolver
+	onArtifactUploadError func(tenantID, errorType string)
+}
+
+// SetOnArtifactUploadError registers the §12.5 / §16.5 callback the
+// gateway uses to drive lenny_artifact_upload_error_total. errorType
+// is the bounded §16.5 label value (`transport`, `auth`, `quota`,
+// `other`).
+//
+// spec: §16.5 ArtifactUploadError.
+func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
+	s.onArtifactUploadError = fn
+}
+
+// classifyGCSPutError maps a GCS write error onto the §16.5 error_type
+// label.
+//
+// spec: §16.5 ArtifactUploadError.
+func classifyGCSPutError(err error) string {
+	s := err.Error()
+	switch {
+	case errors.Is(err, storage.ErrObjectNotExist):
+		return "other"
+	}
+	switch {
+	case containsAny(s, "PermissionDenied", "Unauthenticated", "401", "403"):
+		return "auth"
+	case containsAny(s, "QuotaExceeded", "ResourceExhausted", "Insufficient"):
+		return "quota"
+	case containsAny(s, "Timeout", "DeadlineExceeded", "Unavailable", "connection", "500", "502", "503", "504"):
+		return "transport"
+	}
+	return "other"
+}
+
+func containsAny(s string, needles ...string) bool {
+	for _, n := range needles {
+		if len(n) > 0 && strings.Contains(s, n) {
+			return true
+		}
+	}
+	return false
 }
 
 var (
@@ -133,9 +175,15 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 	w := s.client.NewWriter(ctx, key, mimeType, kmsKey)
 	if _, err := io.Copy(w, data); err != nil {
 		_ = w.Close()
+		if s.onArtifactUploadError != nil {
+			s.onArtifactUploadError(u.TenantID, classifyGCSPutError(err))
+		}
 		return "", fmt.Errorf("blobstore/gcs: write body: %w", err)
 	}
 	if err := w.Close(); err != nil {
+		if s.onArtifactUploadError != nil {
+			s.onArtifactUploadError(u.TenantID, classifyGCSPutError(err))
+		}
 		return "", fmt.Errorf("blobstore/gcs: writer close: %w", err)
 	}
 	return u.String(), nil
@@ -206,6 +254,36 @@ func (s *Store) SoftDelete(u blobstore.URI) error {
 		return fmt.Errorf("blobstore/gcs: Update metadata: %w", err)
 	}
 	return nil
+}
+
+// StatIncludingTombstones implements blobstore.Tombstoner. Returns
+// the blob's metadata and its §12.5 lifecycle state: Active for a live
+// object, SoftDeleted for one carrying the lenny-deleted-at metadata
+// key, NotFound when the object is absent. Lets the GC sweep
+// distinguish "soft-deleted, awaiting hard-prune" from "physically
+// absent".
+//
+// spec: §12.5 ll. 333-339.
+func (s *Store) StatIncludingTombstones(u blobstore.URI) (blobstore.BlobInfo, blobstore.BlobState, error) {
+	ctx := context.Background()
+	key := objectKey(u)
+	attrs, err := s.client.Attrs(ctx, key)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, blobstore.ErrNotFound
+		}
+		return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, fmt.Errorf("blobstore/gcs: Attrs: %w", err)
+	}
+	info := blobstore.BlobInfo{
+		URI:      u,
+		MimeType: attrs.ContentType,
+		Size:     attrs.Size,
+		StoredAt: attrs.Updated.UTC(),
+	}
+	if _, tombstoned := attrs.Metadata[tombstoneMeta]; tombstoned {
+		return info, blobstore.BlobStateSoftDeleted, nil
+	}
+	return info, blobstore.BlobStateActive, nil
 }
 
 // HardPrune implements blobstore.Tombstoner.

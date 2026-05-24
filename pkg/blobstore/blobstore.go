@@ -294,7 +294,38 @@ type Tombstoner interface {
 	// physically removed. Callers run HardPrune periodically as the
 	// §12.5 tombstone hard-prune sweep.
 	HardPrune(now time.Time, retention time.Duration) int
+
+	// StatIncludingTombstones returns the blob's metadata and its
+	// lifecycle State (Active, SoftDeleted, NotFound). Unlike Stat,
+	// which surfaces a soft-deleted blob as ErrNotFound to mirror
+	// the §12.5 contract, StatIncludingTombstones lets the GC sweep
+	// distinguish "soft-deleted, awaiting hard-prune" from
+	// "physically absent". Returns ErrNotFound only when the blob
+	// has never been written or has already been hard-pruned.
+	//
+	// spec: §12.5 ll. 333-339 — soft-delete vs hard-prune state
+	// surface.
+	StatIncludingTombstones(u URI) (BlobInfo, BlobState, error)
 }
+
+// BlobState is the §12.5 lifecycle classification surfaced by
+// StatIncludingTombstones. The GC sweep and observability paths use
+// it to distinguish a soft-deleted blob (still discoverable for the
+// retention window) from one that has been physically removed.
+//
+// spec: §12.5 ll. 333-339.
+type BlobState string
+
+const (
+	// BlobStateActive is the live state: the blob is readable.
+	BlobStateActive BlobState = "active"
+	// BlobStateSoftDeleted is the §12.5 tombstoned state: bytes are
+	// removed but the row / metadata stays for the retention window.
+	BlobStateSoftDeleted BlobState = "soft_deleted"
+	// BlobStateNotFound is the post-hard-prune (or never-existed)
+	// state. StatIncludingTombstones pairs this with ErrNotFound.
+	BlobStateNotFound BlobState = "not_found"
+)
 
 // BlobInfo carries the metadata fields surfaced to callers.
 type BlobInfo struct {
@@ -448,6 +479,31 @@ func (s *MemoryStore) HardPrune(now time.Time, retention time.Duration) int {
 		}
 	}
 	return removed
+}
+
+// StatIncludingTombstones implements Tombstoner. It returns the blob's
+// metadata along with the §12.5 lifecycle state: Active for a live
+// blob, SoftDeleted for one carrying a tombstone, NotFound when the
+// blob has never been written or has been hard-pruned. Unlike Stat,
+// this method does not collapse SoftDeleted into ErrNotFound — callers
+// that need to distinguish the two (the GC sweep, observability)
+// use this surface.
+//
+// spec: §12.5 ll. 333-339.
+func (s *MemoryStore) StatIncludingTombstones(u URI) (BlobInfo, BlobState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, ok := s.blobs[s.key(u)]
+	if !ok {
+		return BlobInfo{}, BlobStateNotFound, ErrNotFound
+	}
+	if !b.deletedAt.IsZero() {
+		return b.info, BlobStateSoftDeleted, nil
+	}
+	if s.clock().After(b.info.ExpiresAt) {
+		return BlobInfo{}, BlobStateNotFound, ErrNotFound
+	}
+	return b.info, BlobStateActive, nil
 }
 
 // Tombstoned reports whether the blob is currently soft-deleted.

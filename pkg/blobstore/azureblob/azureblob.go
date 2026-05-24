@@ -64,9 +64,61 @@ type Config struct {
 // Store implements blobstore.Store + blobstore.Tombstoner over Azure
 // Blob Storage.
 type Store struct {
-	client    objectClient
-	container string
-	resolver  CPKResolver
+	client                objectClient
+	container             string
+	resolver              CPKResolver
+	onArtifactUploadError func(tenantID, errorType string)
+}
+
+// SetOnArtifactUploadError registers the §12.5 / §16.5 callback the
+// gateway uses to drive lenny_artifact_upload_error_total. errorType
+// is the bounded §16.5 label value (`transport`, `auth`, `quota`,
+// `other`).
+//
+// spec: §16.5 ArtifactUploadError.
+func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
+	s.onArtifactUploadError = fn
+}
+
+// classifyAzurePutError maps an Azure Blob write error onto the §16.5
+// error_type label.
+//
+// spec: §16.5 ArtifactUploadError.
+func classifyAzurePutError(err error) string {
+	switch {
+	case bloberror.HasCode(err, "AuthenticationFailed"),
+		bloberror.HasCode(err, "AuthorizationFailure"),
+		bloberror.HasCode(err, "AuthorizationPermissionMismatch"),
+		bloberror.HasCode(err, "InvalidAuthenticationInfo"):
+		return "auth"
+	case bloberror.HasCode(err, "AccountIsDisabled"),
+		bloberror.HasCode(err, "InsufficientAccountPermissions"),
+		bloberror.HasCode(err, "ServerBusy"),
+		bloberror.HasCode(err, "RequestBodyTooLarge"):
+		// Treat capacity-style limits as quota; ServerBusy is
+		// transient throttling.
+		if bloberror.HasCode(err, "ServerBusy") {
+			return "transport"
+		}
+		return "quota"
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "Timeout"),
+		strings.Contains(s, "DeadlineExceeded"),
+		strings.Contains(s, "connection"),
+		strings.Contains(s, "500"),
+		strings.Contains(s, "502"),
+		strings.Contains(s, "503"),
+		strings.Contains(s, "504"):
+		return "transport"
+	case strings.Contains(s, "Unauthorized"),
+		strings.Contains(s, "Forbidden"),
+		strings.Contains(s, "401"),
+		strings.Contains(s, "403"):
+		return "auth"
+	}
+	return "other"
 }
 
 var (
@@ -144,6 +196,9 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 		}
 	}
 	if err := s.client.UploadBuffer(ctx, key, body, opts); err != nil {
+		if s.onArtifactUploadError != nil {
+			s.onArtifactUploadError(u.TenantID, classifyAzurePutError(err))
+		}
 		return "", fmt.Errorf("blobstore/azureblob: UploadBuffer: %w", err)
 	}
 	return u.String(), nil
@@ -219,6 +274,38 @@ func (s *Store) SoftDelete(u blobstore.URI) error {
 		return fmt.Errorf("blobstore/azureblob: SetMetadata: %w", err)
 	}
 	return nil
+}
+
+// StatIncludingTombstones implements blobstore.Tombstoner. It returns
+// the blob's metadata and §12.5 lifecycle state: Active for a live
+// object, SoftDeleted when the lenny_deleted_at metadata key is
+// present, NotFound when the blob is absent. The GC sweep uses this
+// surface to tell "soft-deleted, awaiting hard-prune" apart from
+// "physically absent".
+//
+// spec: §12.5 ll. 333-339.
+func (s *Store) StatIncludingTombstones(u blobstore.URI) (blobstore.BlobInfo, blobstore.BlobState, error) {
+	ctx := context.Background()
+	key := objectKey(u)
+	props, err := s.client.GetProperties(ctx, key, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, blobstore.ErrNotFound
+		}
+		return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, fmt.Errorf("blobstore/azureblob: GetProperties: %w", err)
+	}
+	info := blobstore.BlobInfo{
+		URI:      u,
+		MimeType: ptrStr(props.ContentType),
+		Size:     ptrInt64(props.ContentLength),
+	}
+	if props.LastModified != nil {
+		info.StoredAt = props.LastModified.UTC()
+	}
+	if _, tombstoned := props.Metadata[tombstoneMeta]; tombstoned {
+		return info, blobstore.BlobStateSoftDeleted, nil
+	}
+	return info, blobstore.BlobStateActive, nil
 }
 
 // HardPrune implements blobstore.Tombstoner.

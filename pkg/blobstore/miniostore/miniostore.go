@@ -13,10 +13,12 @@
 package miniostore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -28,6 +30,17 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 )
+
+// putRetryBackoffs is the §12.5 ll. 282 exponential-backoff schedule
+// the MinIO Store applies on transient transport-class failures: 1s,
+// 5s, 30s — three retry attempts after the initial try. Total budget
+// (initial + 3 retries) caps the effective Put latency at 36s under
+// repeated transient failures, matching the §4.4 line 262 retry-
+// exhausted contract that increments
+// lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}.
+//
+// spec: §12.5 line 282.
+var putRetryBackoffs = []time.Duration{1 * time.Second, 5 * time.Second, 30 * time.Second}
 
 // Config configures a MinIO-backed blob store.
 type Config struct {
@@ -88,7 +101,43 @@ type Store struct {
 	//
 	// spec: §12.5 ll. 303.
 	onKMSUnavailable func(tenantID string)
-	legalHolds       sync.Map // keyed on objectKey; protects §12.8 holds from DeleteBySession
+	// onArtifactUploadError, when set, fires on every Put that fails
+	// after retries are exhausted. The gateway wires it to
+	// lenny_artifact_upload_error_total and the §12.5 ll. 282 retry-
+	// exhausted reason of lenny_checkpoint_storage_failure_total
+	// without coupling the blob store to the metrics registry.
+	//
+	// errorType carries one of `transport`, `auth`, `quota`, `other`
+	// so the metric's `error_type` label is bounded.
+	//
+	// spec: §12.5 ll. 282 + §16.5 ArtifactUploadError alert.
+	onArtifactUploadError func(tenantID, errorType string)
+	// retryBackoffs override putRetryBackoffs for tests; production
+	// uses the package default.
+	retryBackoffs []time.Duration
+	// retrySleep overrides time.Sleep for tests; production uses the
+	// real sleep.
+	retrySleep func(time.Duration)
+	legalHolds sync.Map // keyed on objectKey; protects §12.8 holds from DeleteBySession
+	// catalog, when wired, reads the §12.5 artifact_store row at
+	// DeleteBySession time so a blob whose row carries legal_hold=true
+	// survives the per-session sweep. The decorator wiring in
+	// pkg/blobstore/cataloging holds the catalog handle; the store
+	// here uses the seam for the durable §12.8 hold path that
+	// previously lived only in the in-memory legalHolds sync.Map.
+	//
+	// spec: §12.8 line 735.
+	catalog legalHoldCatalog
+}
+
+// legalHoldCatalog narrows the artifactcatalog.Store surface the MinIO
+// blob store reaches for at DeleteBySession time. The interface is
+// declared here so the miniostore package does not import the
+// catalog package directly, and so tests can swap a fake.
+//
+// spec: §12.8 line 735.
+type legalHoldCatalog interface {
+	IsLegalHeldAt(ctx context.Context, tenantID, sessionID string) (bool, error)
 }
 
 var (
@@ -193,7 +242,17 @@ func sessionPrefix(tenantID string, objectType blobstore.ObjectType, sessionID s
 //     error and fires
 //     lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}.
 //
-// spec: §12.5 ll. 297, 299-303.
+// Retry behaviour (§12.5 line 282): a transient transport-class
+// PutObject failure is retried on the putRetryBackoffs schedule
+// (1s, 5s, 30s — three retries after the initial attempt). Non-
+// transient failures (auth, quota, malformed body, conflict) return
+// immediately with the wrapped error and no retry. After the retry
+// budget is exhausted the configured onArtifactUploadError callback
+// fires with the §16.5 error_type classification so the gateway
+// emits lenny_artifact_upload_error_total and
+// lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}.
+//
+// spec: §12.5 ll. 297, 299-303, 282.
 func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, error) {
 	ctx := context.Background()
 	key := objectKey(u)
@@ -232,10 +291,124 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 			opts.ServerSideEncryption = sse
 		}
 	}
-	if _, err := s.client.PutObject(ctx, s.bucket, key, data, -1, opts); err != nil {
-		return "", fmt.Errorf("miniostore: put %s: %w", key, err)
+	// Buffer the body so retries can replay the bytes. PutObject with
+	// a -1 size accepts any io.Reader; once we know the bytes we use
+	// a *bytes.Reader to keep memory bounded and avoid the SDK's
+	// internal multipart upload (which would also consume the reader).
+	body, err := io.ReadAll(data)
+	if err != nil {
+		return "", fmt.Errorf("miniostore: read body for put %s: %w", key, err)
 	}
-	return u.String(), nil
+	backoffs := s.retryBackoffs
+	if backoffs == nil {
+		backoffs = putRetryBackoffs
+	}
+	sleep := s.retrySleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	var lastErr error
+	for attempt := 0; attempt <= len(backoffs); attempt++ {
+		if _, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(body), int64(len(body)), opts); err == nil {
+			return u.String(), nil
+		} else {
+			lastErr = err
+			if !isTransientPutError(err) {
+				et := classifyPutError(err)
+				if s.onArtifactUploadError != nil {
+					s.onArtifactUploadError(u.TenantID, et)
+				}
+				return "", fmt.Errorf("miniostore: put %s: %w", key, err)
+			}
+			if attempt == len(backoffs) {
+				break
+			}
+			sleep(backoffs[attempt])
+		}
+	}
+	if s.onArtifactUploadError != nil {
+		s.onArtifactUploadError(u.TenantID, "transport")
+	}
+	return "", fmt.Errorf("miniostore: put %s after %d retries: %w", key, len(backoffs), lastErr)
+}
+
+// SetOnArtifactUploadError registers the §12.5 / §16.5 callback the
+// gateway uses to drive lenny_artifact_upload_error_total. The
+// callback fires once per Put that fails after every retry attempt
+// (or on a non-transient failure that skips the retry budget). The
+// errorType argument is the §16.5 label value: `transport`, `auth`,
+// `quota`, or `other`.
+//
+// spec: §12.5 line 282; §16.5 ArtifactUploadError.
+func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
+	s.onArtifactUploadError = fn
+}
+
+// SetCatalog wires the §12.8 durable legal-hold reader so the per-
+// session sweep (DeleteBySession) refuses to remove blobs whose
+// session row carries legal_hold=true.
+//
+// spec: §12.8 line 735.
+func (s *Store) SetCatalog(c legalHoldCatalog) {
+	s.catalog = c
+}
+
+// isTransientPutError classifies a MinIO PutObject error as
+// transport-class (worth retrying) or terminal (an immediate failure
+// like auth, quota, or a malformed request). Transport-class covers
+// network DNS / dial / timeout / 5xx responses; terminal covers 4xx
+// responses except 408 Request Timeout (which is also transient).
+//
+// spec: §12.5 line 282.
+func isTransientPutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// net.Error covers DNS resolution, dial, and stream-level
+	// timeouts. The minio-go SDK wraps such errors so errors.As is
+	// reliable.
+	var nerr net.Error
+	if errors.As(err, &nerr) && nerr.Timeout() {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	resp := minio.ToErrorResponse(err)
+	switch resp.StatusCode {
+	case 0:
+		// No HTTP response — a transport failure (refused, reset,
+		// dial timeout). Treat as transient.
+		return true
+	case http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return true
+	case http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// classifyPutError maps a non-transient PutObject error onto the
+// §16.5 lenny_artifact_upload_error_total `error_type` label. The
+// label values are bounded so the metric does not explode.
+//
+// spec: §16.5 ArtifactUploadError.
+func classifyPutError(err error) string {
+	resp := minio.ToErrorResponse(err)
+	switch resp.StatusCode {
+	case http.StatusForbidden, http.StatusUnauthorized:
+		return "auth"
+	case http.StatusInsufficientStorage, http.StatusPaymentRequired:
+		return "quota"
+	}
+	switch resp.Code {
+	case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch":
+		return "auth"
+	case "QuotaExceeded", "EntityTooLarge", "StorageQuotaExceeded":
+		return "quota"
+	}
+	return "other"
 }
 
 // fireKMSUnavailable invokes the gateway-registered hook on a
@@ -418,8 +591,24 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 		return 0, nil
 	}
 	// §12.8 legal hold: refuse to remove any blob in the session
-	// when at least one object is held. The orchestrator surfaces
-	// the refusal as ERASURE_BLOCKED_BY_LEGAL_HOLD upstream.
+	// when the durable catalog row signals a hold or the legacy
+	// in-process hash mirrors one. The catalog row is the durable
+	// source of truth wired by the gateway (artifactcatalog.Store);
+	// the in-process map is the v1 fallback for deployments without
+	// a Postgres catalog (in-memory dev mode). Either signal aborts
+	// the sweep so the §12.8 orchestrator surfaces
+	// ERASURE_BLOCKED_BY_LEGAL_HOLD upstream.
+	//
+	// spec: §12.8 line 735.
+	if s.catalog != nil {
+		held, lerr := s.catalog.IsLegalHeldAt(ctx, tenantID, sessionID)
+		if lerr != nil {
+			return 0, fmt.Errorf("miniostore: legal-hold lookup for %s/%s: %w", tenantID, sessionID, lerr)
+		}
+		if held {
+			return 0, fmt.Errorf("miniostore: session %s/%s is under a §12.8 legal hold (durable catalog)", tenantID, sessionID)
+		}
+	}
 	for _, obj := range objects {
 		if s.hasLegalHold(obj.Key) {
 			return 0, fmt.Errorf("miniostore: %s is under a §12.8 legal hold", obj.Key)
@@ -477,6 +666,38 @@ func (s *Store) SoftDelete(u blobstore.URI) error {
 		return fmt.Errorf("miniostore: PutObjectTagging %s: %w", key, err)
 	}
 	return nil
+}
+
+// StatIncludingTombstones implements blobstore.Tombstoner. It returns
+// the blob's metadata and its §12.5 lifecycle state (Active,
+// SoftDeleted, NotFound). Unlike Stat (which collapses a soft-deleted
+// blob to ErrNotFound) this surface lets the GC sweep and
+// observability paths distinguish "tombstoned, awaiting hard-prune"
+// from "never existed or hard-pruned".
+//
+// spec: §12.5 ll. 333-339.
+func (s *Store) StatIncludingTombstones(u blobstore.URI) (blobstore.BlobInfo, blobstore.BlobState, error) {
+	ctx := context.Background()
+	key := objectKey(u)
+	obj, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		if isNotFound(err) {
+			return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, blobstore.ErrNotFound
+		}
+		return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, fmt.Errorf("miniostore: stat %s: %w", key, err)
+	}
+	tombstoned, terr := s.isTombstoned(ctx, key)
+	if terr != nil {
+		return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, terr
+	}
+	info := blobInfo(u, obj.ContentType, obj.Size, obj.LastModified)
+	if tombstoned {
+		return info, blobstore.BlobStateSoftDeleted, nil
+	}
+	if s.clock().After(info.ExpiresAt) {
+		return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, blobstore.ErrNotFound
+	}
+	return info, blobstore.BlobStateActive, nil
 }
 
 // HardPrune implements blobstore.Tombstoner. It lists every object in

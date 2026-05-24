@@ -66,9 +66,50 @@ type Config struct {
 
 // Store implements blobstore.Store + blobstore.Tombstoner over S3.
 type Store struct {
-	client   objectClient
-	bucket   string
-	resolver SSEKeyResolver
+	client                objectClient
+	bucket                string
+	resolver              SSEKeyResolver
+	onArtifactUploadError func(tenantID, errorType string)
+}
+
+// SetOnArtifactUploadError registers the §12.5 / §16.5 callback the
+// gateway uses to drive lenny_artifact_upload_error_total. errorType
+// is the bounded §16.5 label value (`transport`, `auth`, `quota`,
+// `other`).
+//
+// spec: §16.5 ArtifactUploadError.
+func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
+	s.onArtifactUploadError = fn
+}
+
+// classifyS3PutError maps an AWS S3 error onto the §16.5 error_type
+// label.
+//
+// spec: §16.5 ArtifactUploadError.
+func classifyS3PutError(err error) string {
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "AccessDenied"),
+		strings.Contains(s, "InvalidAccessKeyId"),
+		strings.Contains(s, "SignatureDoesNotMatch"),
+		strings.Contains(s, "ExpiredToken"),
+		strings.Contains(s, "403"):
+		return "auth"
+	case strings.Contains(s, "QuotaExceeded"),
+		strings.Contains(s, "EntityTooLarge"),
+		strings.Contains(s, "StorageQuotaExceeded"),
+		strings.Contains(s, "BucketFull"):
+		return "quota"
+	case strings.Contains(s, "Timeout"),
+		strings.Contains(s, "connection"),
+		strings.Contains(s, "no such host"),
+		strings.Contains(s, "500"),
+		strings.Contains(s, "502"),
+		strings.Contains(s, "503"),
+		strings.Contains(s, "504"):
+		return "transport"
+	}
+	return "other"
 }
 
 var (
@@ -143,6 +184,9 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 		}
 	}
 	if _, err := s.client.PutObject(ctx, in); err != nil {
+		if s.onArtifactUploadError != nil {
+			s.onArtifactUploadError(u.TenantID, classifyS3PutError(err))
+		}
 		return "", fmt.Errorf("blobstore/s3: PutObject: %w", err)
 	}
 	return u.String(), nil
@@ -279,6 +323,46 @@ func (s *Store) SoftDelete(u blobstore.URI) error {
 		return fmt.Errorf("blobstore/s3: PutObjectTagging: %w", err)
 	}
 	return nil
+}
+
+// StatIncludingTombstones implements blobstore.Tombstoner. It returns
+// the blob's metadata and §12.5 lifecycle state: Active when the
+// object is live, SoftDeleted when it carries the
+// lenny-deleted-at tombstone tag, NotFound when the object is absent.
+// Unlike Stat (which collapses a tombstoned object to ErrNotFound),
+// this surface lets the GC sweep and observability code distinguish
+// the two terminal states.
+//
+// spec: §12.5 ll. 333-339.
+func (s *Store) StatIncludingTombstones(u blobstore.URI) (blobstore.BlobInfo, blobstore.BlobState, error) {
+	ctx := context.Background()
+	key := objectKey(u)
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: awssdk.String(s.bucket),
+		Key:    awssdk.String(key),
+	})
+	if err != nil {
+		if isNoSuchKey(err) {
+			return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, blobstore.ErrNotFound
+		}
+		return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, fmt.Errorf("blobstore/s3: HeadObject: %w", err)
+	}
+	info := blobstore.BlobInfo{
+		URI:      u,
+		MimeType: awssdk.ToString(out.ContentType),
+		Size:     awssdk.ToInt64(out.ContentLength),
+	}
+	if out.LastModified != nil {
+		info.StoredAt = out.LastModified.UTC()
+	}
+	tombstoned, terr := s.isTombstoned(ctx, key)
+	if terr != nil {
+		return blobstore.BlobInfo{}, blobstore.BlobStateNotFound, terr
+	}
+	if tombstoned {
+		return info, blobstore.BlobStateSoftDeleted, nil
+	}
+	return info, blobstore.BlobStateActive, nil
 }
 
 // HardPrune implements blobstore.Tombstoner. Lists every object in
