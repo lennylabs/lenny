@@ -2051,7 +2051,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   built-in interceptor at priority 300, or amend §4.8 to remove
   `ExperimentRouter` from the built-in priority table.
 
-### - [ ] F-4.8.6 — `GuardrailsInterceptor` not implemented (Missing) [Medium] — OPEN
+### - [x] F-4.8.6 — `GuardrailsInterceptor` not implemented (Missing) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 968–976, 1070. Built-in at `PreDelegation`,
   `PreLLMRequest`, `PostLLMResponse`, `PostAgentOutput`, priority 400;
@@ -2065,6 +2065,15 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   models it as an external classifier adapter), or mark §4.8 row as
   "post-v1" and remove it from the v1 built-in table until the
   classifier integration lands.
+- **Resolution:** New `policy.GuardrailsInterceptor` built-in at the
+  fixed priority 400, disabled by default (a nil classifier returns
+  ActionAllow). When the deployer sets `--guardrails-classifier`, the
+  gateway dials the external classifier and wraps it; the guardrail
+  inherits the classifier's FailPolicy and Timeout and delegates every
+  decision to it. `policy.RegisterGuardrails` registers it across
+  PreDelegation, PreLLMRequest, PostLLMResponse, and PostAgentOutput
+  (the PostAgentOutput chain stays dormant until F-4.8.12 wires it).
+  Resolved in commit a382f873.
 
 ### - [ ] F-4.8.7 — `RetryPolicyEvaluator` not implemented (Missing) [Medium] — OPEN
 
@@ -2211,7 +2220,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
 - **Suggested resolution:** Wire these into the adapter→gateway message
   delivery path and the agent-output stream. Severity Medium.
 
-### - [ ] F-4.8.13 — `PreLLMRequest`, `PostLLMResponse` chains not invoked (Missing) [Medium] — OPEN
+### - [x] F-4.8.13 — `PreLLMRequest`, `PostLLMResponse` chains not invoked (Missing) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 964, 1055, 1056, 1075. Phases on the LLM proxy
   path. Default per-phase timeout is **100 ms** (not the chain default
@@ -2234,6 +2243,17 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   Medium for the missing facility; the LLM proxy already short-circuits
   via credential leases and a CircuitBreaker so the absence does not
   cause undetected policy bypass today.
+- **Resolution:** `llmproxy.Handler` gained an `Interceptors` chain.
+  ServeHTTP runs `Chain.Run(PreLLMRequest)` over the request body before
+  credential injection (a MODIFY rewrites the forwarded body) and
+  `Chain.Run(PostLLMResponse)` over the translated response; the
+  streaming path runs PostLLMResponse over the initial response metadata
+  before the SSE headers commit so a REJECT still converts to an error.
+  A REJECT returns `LLM_REQUEST_REJECTED` (403) or `LLM_RESPONSE_REJECTED`
+  (502); a fail-closed interceptor error returns `INTERCEPTOR_TIMEOUT`
+  (503). Both new codes added to `errorclassify` (PERMANENT,
+  non-retryable). The 100ms phase default was already in the chain
+  (`phaseDefaultTimeout`). Resolved in commit a382f873.
 
 ### - [ ] F-4.8.14 — `PreConnectorRequest`, `PostConnectorResponse` chains not invoked (Missing) [Medium] — OPEN
 
