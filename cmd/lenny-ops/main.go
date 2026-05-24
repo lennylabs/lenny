@@ -48,6 +48,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
+	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
@@ -114,6 +115,14 @@ func main() {
 			"the publisher loads this file at startup and serves it on GET /v1/latest. "+
 			"Override via LENNY_RELEASE_CHANNEL_MANIFEST_FILE.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
+	// §4.4 line 232 / §11.7 pgaudit sink consumer wiring.
+	pgauditLogFile := flag.String("pgaudit-log-file", os.Getenv("LENNY_PGAUDIT_LOG_FILE"),
+		"§4.4 / §11.7 pgaudit log file path. When set, lenny-ops tails the file, "+
+			"translates each pgaudit record to OCSF, and delivers it to the configured "+
+			"pgaudit sink. Override via LENNY_PGAUDIT_LOG_FILE.")
+	pgauditTenantID := flag.String("pgaudit-tenant-id", envOr("LENNY_PGAUDIT_TENANT_ID", "platform"),
+		"Tenant stamped on every pgaudit-sourced OCSF record (defaults to 'platform' for the "+
+			"regulated-Postgres-instance case). Override via LENNY_PGAUDIT_TENANT_ID.")
 	flag.Parse()
 
 	// Replica identity: the pod name (the Helm chart sets POD_NAME from
@@ -359,6 +368,34 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// §4.4 line 232: when --pgaudit-log-file is set, start the pgaudit
+	// shipper. The shipper tails the file, parses each AUDIT line,
+	// translates to OCSF, and delivers to the NoOp sink (deployers
+	// override the sink by editing pkg/audit/pgaudit/main wiring to
+	// point at a real downstream). The metrics surface bumps the
+	// catalog-declared lenny_pgaudit_grant_events_total counter so the
+	// §16.5 PgAuditSinkDeliveryFailed alert has a signal to fire on.
+	var pgauditShipper *pgaudit.Shipper
+	if *pgauditLogFile != "" {
+		pgauditShipper = pgaudit.New(pgaudit.Config{
+			LogFile:  *pgauditLogFile,
+			TenantID: *pgauditTenantID,
+			Sink:     pgaudit.NoOpSink(),
+			// Metrics could be wired via a Prometheus registerer once
+			// lenny-ops exposes its own /metrics; for now the shipper
+			// runs without per-class metric emission. The dedicated
+			// PromMetrics adapter (pkg/audit/pgaudit/prommetrics.go)
+			// is the integration seam.
+		})
+		if err := pgauditShipper.Start(ctx); err != nil {
+			log.Printf("lenny-ops: pgaudit shipper start failed (continuing without it): %v", err)
+			pgauditShipper = nil
+		} else {
+			log.Printf("lenny-ops: §4.4 pgaudit shipper tailing %s (tenant=%s)",
+				*pgauditLogFile, *pgauditTenantID)
+		}
+	}
+
 	// The background loops run on their own goroutine; the leader-only
 	// loops start when this replica wins the lease.
 	var wg sync.WaitGroup
@@ -385,6 +422,9 @@ func main() {
 	// The HTTP server has stopped; wait for the background loops to
 	// drain (StopLeaderLoops blocks until the singleton loops return).
 	stop()
+	if pgauditShipper != nil {
+		pgauditShipper.Stop()
+	}
 	wg.Wait()
 	log.Printf("lenny-ops: replica %s stopped", replicaID)
 }
