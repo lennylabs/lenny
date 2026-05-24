@@ -52,9 +52,10 @@ type CheckpointAborter interface {
 // gatewaymetrics.Metrics; tests substitute fakes through the same
 // interface. A nil implementation makes every metric call a no-op.
 //
-// spec: §4.4 lines 248, 254 — `lenny_checkpoint_orphaned_objects_total`
+// spec: §4.4 lines 248, 254, 262 — `lenny_checkpoint_orphaned_objects_total`
 // on abort-cleanup failure; `lenny_checkpoint_size_exceeded_total` on
-// pre-checkpoint workspace-size probe exceed.
+// pre-checkpoint workspace-size probe exceed; `lenny_checkpoint_storage_failure_total`
+// on MinIO upload failure for non-eviction triggers.
 type CheckpointMetrics interface {
 	// IncCheckpointOrphanedObjects bumps
 	// `lenny_checkpoint_orphaned_objects_total` per §4.4 line 248
@@ -67,6 +68,14 @@ type CheckpointMetrics interface {
 	// and level label values are advisory; pass empty strings when
 	// unknown.
 	IncCheckpointSizeExceeded(pool, level string)
+	// IncCheckpointStorageFailure bumps
+	// `lenny_checkpoint_storage_failure_total` per §4.4 line 262 when
+	// a non-eviction checkpoint upload fails after all retries (the
+	// adapter discards the failed checkpoint and resumes the agent).
+	// Pool, level, and trigger label values are advisory; pass empty
+	// strings when unknown.
+	// spec: §4.4 line 262.
+	IncCheckpointStorageFailure(pool, level, trigger string)
 }
 
 // CheckpointEventEmitter is the §4.4 session-event surface the adapter
@@ -291,12 +300,43 @@ func (s *Server) archiveAndStore(ctx context.Context, sessionID string) (string,
 	_ = pr.Close()
 	res := <-archived
 	if res.err != nil {
+		// §4.4 line 262 — archive failure is treated as a non-eviction
+		// checkpoint upload failure for telemetry purposes: the agent
+		// resumes, the failed checkpoint is discarded, the next
+		// scheduled checkpoint retries normally. Eviction triggers
+		// bypass this counter (their fallback writer emits
+		// lenny_checkpoint_eviction_fallback_total instead).
+		s.recordStorageFailure()
 		return "", 0, status.Errorf(codes.Internal, "archive workspace: %v", res.err)
 	}
 	if saveErr != nil {
+		// spec: §4.4 line 262 — non-eviction MinIO upload failure.
+		s.recordStorageFailure()
 		return "", 0, status.Errorf(codes.Internal, "store checkpoint: %v", saveErr)
 	}
 	return id, res.n, nil
+}
+
+// recordStorageFailure emits the §4.4 line 262
+// `lenny_checkpoint_storage_failure_total` counter. Eviction
+// triggers skip this counter — they bump
+// `lenny_checkpoint_eviction_fallback_total` instead through the
+// fallback writer — so the emission is gated on the trigger label
+// being non-eviction.
+// spec: §4.4 line 262.
+func (s *Server) recordStorageFailure() {
+	if s.CheckpointMetrics == nil {
+		return
+	}
+	trigger := s.CheckpointTriggerLabel
+	// Eviction-trigger failures are accounted by the
+	// evictionfallback writer's IncCheckpointEvictionFallback so
+	// every fallback attempt counts once.
+	if trigger == string(checkpoint.TriggerEviction) {
+		return
+	}
+	s.CheckpointMetrics.IncCheckpointStorageFailure(s.CheckpointPoolLabel,
+		s.CheckpointLevelLabel, trigger)
 }
 
 // checkpointViaLifecycle runs the §4.7 cooperative checkpoint: it asks

@@ -93,14 +93,17 @@ type ContextObjectUploader interface {
 }
 
 // MetricsSink receives the §4.4 lines 283–289 total-loss counter
-// increment, the §4.4 line 279 partial-keys-logged counter, and the
-// §4.4 line 291 storage-quota counter. The gatewaymetrics.Metrics
-// satisfies it. Nil is permitted; the writer still runs.
+// increment, the §4.4 line 279 partial-keys-logged counter, the §4.4
+// line 263 fallback-entry counter, and the §4.4 line 291 storage-
+// quota counter. The gatewaymetrics.Metrics satisfies it. Nil is
+// permitted; the writer still runs.
 //
 // spec: §4.4 line 286 — `lenny_session_eviction_total_loss_total`
 // counter, labels (`pool`, `had_prior_checkpoint`).
 // spec: §4.4 line 279 — `lenny_checkpoint_eviction_partial_keys_logged_total`
 // counter, labels (`pool`, `keys_committed`).
+// spec: §4.4 line 263 — `lenny_checkpoint_eviction_fallback_total`
+// counter, labels (`pool`, `had_prior_checkpoint`).
 type MetricsSink interface {
 	// IncSessionEvictionTotalLoss bumps the
 	// `lenny_session_eviction_total_loss_total` counter labeled by
@@ -115,6 +118,13 @@ type MetricsSink interface {
 	// eviction so operators can distinguish total-MinIO-failure from
 	// partial-upload scenarios.
 	IncCheckpointEvictionPartialKeysLogged(pool, keysCommitted string)
+
+	// IncCheckpointEvictionFallback bumps the §4.4 line 263
+	// `lenny_checkpoint_eviction_fallback_total` counter labeled by
+	// pool and had_prior_checkpoint. Called at the entry to the
+	// eviction Postgres-fallback writer so operators can count
+	// every fallback attempt (success and failure alike).
+	IncCheckpointEvictionFallback(pool string, hadPriorCheckpoint bool)
 }
 
 // StorageQuotaSink is the §4.4 line 291 per-tenant storage-byte
@@ -371,6 +381,14 @@ func (w *Writer) Write(ctx context.Context, p WriteParams) (Result, error) {
 	}
 	if p.Record.TenantID == "" || p.Record.SessionID == "" {
 		return Result{}, errors.New("evictionfallback: tenant and session ids are required")
+	}
+	// spec: §4.4 line 263 — every entry into the eviction-fallback
+	// writer bumps lenny_checkpoint_eviction_fallback_total, labeled
+	// by pool and had_prior_checkpoint. The counter fires before the
+	// MinIO-or-truncation chooser runs so operators see every fallback
+	// attempt (success and failure alike).
+	if w.Metrics != nil {
+		w.Metrics.IncCheckpointEvictionFallback(p.Pool, p.HadPriorCheckpoint)
 	}
 	template := p.Record
 	template.WorkspaceLost = true

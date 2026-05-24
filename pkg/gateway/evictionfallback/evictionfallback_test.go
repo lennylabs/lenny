@@ -55,6 +55,7 @@ func (f *fakeUploader) Upload(_ context.Context, tenantID, sessionID string, bod
 type fakeMetrics struct {
 	calls           []string
 	partialKeyCalls []string
+	fallbackCalls   []string
 }
 
 func (f *fakeMetrics) IncSessionEvictionTotalLoss(pool string, hadPriorCheckpoint bool) {
@@ -67,6 +68,16 @@ func (f *fakeMetrics) IncSessionEvictionTotalLoss(pool string, hadPriorCheckpoin
 
 func (f *fakeMetrics) IncCheckpointEvictionPartialKeysLogged(pool, keysCommitted string) {
 	f.partialKeyCalls = append(f.partialKeyCalls, pool+"|"+keysCommitted)
+}
+
+// spec: §4.4 line 263 — counts every entry to the eviction-fallback
+// writer.
+func (f *fakeMetrics) IncCheckpointEvictionFallback(pool string, hadPriorCheckpoint bool) {
+	tag := "no_prior"
+	if hadPriorCheckpoint {
+		tag = "with_prior"
+	}
+	f.fallbackCalls = append(f.fallbackCalls, pool+"|"+tag)
 }
 
 // fakeEvents records every session.lost emission.
@@ -98,6 +109,7 @@ func (failingStore) Get(context.Context, string, string) (evictionstatestore.Rec
 func (failingStore) Delete(context.Context, string, string) error                  { return nil }
 func (failingStore) DeleteByUser(context.Context, string, string, []string) error  { return nil }
 func (failingStore) DeleteByTenant(context.Context, string) error                  { return nil }
+func (failingStore) SweepDeletedBefore(context.Context, time.Time) (int, error)    { return 0, nil }
 
 func newMemStore() *evictionstatestore.MemoryStore {
 	return evictionstatestore.NewMemoryStore(func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) })
@@ -141,6 +153,31 @@ func TestWriteInlineForSmallContext(t *testing.T) {
 	}
 	if string(got.LastMessageContext) != "conversation up to here" {
 		t.Errorf("stored context = %q, want %q", got.LastMessageContext, "conversation up to here")
+	}
+}
+
+// spec: §4.4 line 263 — every entry to the eviction-fallback writer
+// bumps lenny_checkpoint_eviction_fallback_total. The counter fires
+// on success and failure alike so operators can count every fallback
+// attempt regardless of the chooser outcome.
+func TestWriteIncrementsFallbackEntryCounter(t *testing.T) {
+	store := newMemStore()
+	metrics := &fakeMetrics{}
+	w := &evictionfallback.Writer{Store: store, Metrics: metrics}
+
+	if _, err := w.Write(context.Background(), evictionfallback.WriteParams{
+		Record:             baseTemplate(),
+		Context:            []byte("small payload"),
+		Pool:               "default-pool",
+		HadPriorCheckpoint: true,
+	}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(metrics.fallbackCalls) != 1 {
+		t.Fatalf("eviction_fallback emissions = %d, want 1", len(metrics.fallbackCalls))
+	}
+	if metrics.fallbackCalls[0] != "default-pool|with_prior" {
+		t.Fatalf("eviction_fallback label = %q, want default-pool|with_prior", metrics.fallbackCalls[0])
 	}
 }
 
@@ -377,6 +414,7 @@ func (f *flakyStore) Get(context.Context, string, string) (evictionstatestore.Re
 func (f *flakyStore) Delete(context.Context, string, string) error                 { return nil }
 func (f *flakyStore) DeleteByUser(context.Context, string, string, []string) error { return nil }
 func (f *flakyStore) DeleteByTenant(context.Context, string) error                 { return nil }
+func (f *flakyStore) SweepDeletedBefore(context.Context, time.Time) (int, error)   { return 0, nil }
 
 // TestWriteRetriesPostgresFailover exercises the §4.4 line 277 retry
 // loop. The flakyStore fails twice then succeeds; the writer must

@@ -34,10 +34,11 @@ func (f *fakeAborter) AbortPartial(_ context.Context, sessionID string) error {
 }
 
 // fakeCheckpointMetrics records every metric increment so tests can
-// assert the §4.4 line 248 / 254 counters fire on the expected paths.
+// assert the §4.4 line 248 / 254 / 262 counters fire on the expected paths.
 type fakeCheckpointMetrics struct {
-	orphaned []string
-	exceeded []string
+	orphaned       []string
+	exceeded       []string
+	storageFailure []string
 }
 
 func (f *fakeCheckpointMetrics) IncCheckpointOrphanedObjects(pool, trigger string) {
@@ -46,6 +47,11 @@ func (f *fakeCheckpointMetrics) IncCheckpointOrphanedObjects(pool, trigger strin
 
 func (f *fakeCheckpointMetrics) IncCheckpointSizeExceeded(pool, level string) {
 	f.exceeded = append(f.exceeded, pool+"|"+level)
+}
+
+// spec: §4.4 line 262 — non-eviction MinIO upload failure.
+func (f *fakeCheckpointMetrics) IncCheckpointStorageFailure(pool, level, trigger string) {
+	f.storageFailure = append(f.storageFailure, pool+"|"+level+"|"+trigger)
 }
 
 // fakeCheckpointEvents records every checkpoint.skipped publish so
@@ -242,6 +248,51 @@ func TestCheckpointAbortCleanupRunsOnSinkFailure(t *testing.T) {
 	}
 	if len(aborter.calls) != 1 || aborter.calls[0] != "sess-1" {
 		t.Errorf("AbortPartial calls = %v, want [sess-1]", aborter.calls)
+	}
+}
+
+// TestCheckpointBumpsStorageFailureCounterOnSaveFailure asserts the
+// §4.4 line 262 lenny_checkpoint_storage_failure_total counter fires
+// when the non-eviction MinIO upload fails. Eviction triggers bypass
+// this counter (see TestCheckpointSkipsStorageFailureForEviction).
+//
+// spec: §4.4 line 262 — "If all upload retries fail, the adapter
+// resumes the agent immediately ... The adapter logs the failure and
+// increments the lenny_checkpoint_storage_failure_total metric
+// (counter, labeled by pool, level, and trigger)".
+func TestCheckpointBumpsStorageFailureCounterOnSaveFailure(t *testing.T) {
+	s, _ := startedServer(t)
+	s.Checkpoints = &fakeCheckpointSink{err: errors.New("minio unreachable")}
+	metrics := &fakeCheckpointMetrics{}
+	s.CheckpointMetrics = metrics
+	s.CheckpointPoolLabel = "default"
+	s.CheckpointLevelLabel = "full"
+	s.CheckpointTriggerLabel = "periodic"
+
+	_, _ = s.Checkpoint(context.Background(), checkpointReq("sess-1"))
+	if len(metrics.storageFailure) != 1 {
+		t.Fatalf("storage_failure counter fired %d times, want 1", len(metrics.storageFailure))
+	}
+	want := "default|full|periodic"
+	if metrics.storageFailure[0] != want {
+		t.Fatalf("storage_failure label = %q, want %q", metrics.storageFailure[0], want)
+	}
+}
+
+// spec: §4.4 line 262 — eviction triggers skip the storage_failure
+// counter; their failures are accounted in the eviction-fallback
+// writer's IncCheckpointEvictionFallback so every fallback attempt
+// counts exactly once.
+func TestCheckpointSkipsStorageFailureForEviction(t *testing.T) {
+	s, _ := startedServer(t)
+	s.Checkpoints = &fakeCheckpointSink{err: errors.New("minio unreachable")}
+	metrics := &fakeCheckpointMetrics{}
+	s.CheckpointMetrics = metrics
+	s.CheckpointTriggerLabel = "eviction"
+
+	_, _ = s.Checkpoint(context.Background(), checkpointReq("sess-1"))
+	if len(metrics.storageFailure) != 0 {
+		t.Fatalf("storage_failure counter fired on eviction trigger: %v", metrics.storageFailure)
 	}
 }
 
