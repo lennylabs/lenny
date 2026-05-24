@@ -428,6 +428,80 @@ func TestEventBusContract(t *testing.T) {
 	})
 }
 
+// spec: §4.4 line 232 — audit-bearing CloudEvents on the EventBus.
+// diagnosis: the §4.4 line 232 contract names "the CloudEvents-wrapped
+// audit events published on the EventBus" as one of the OCSF-egress
+// targets. The PublishingAppender wraps Store.Append with a
+// first-publish that emits the OCSF record on
+// TopicSessionLifecycle and transitions the row's
+// eventbus_publish_state to `published`. This test exercises the
+// end-to-end path against real Postgres + Redis.
+func TestPublishingAppenderAuditBearingPublish(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	store := auditstore.New(pg.Pool)
+	bus := eventbus.NewRedisEventBus(pubsub.New(rd.Client), eventbus.NewCountingBusMetrics())
+	app := auditstore.NewPublishingAppender(store, bus, "gw-test")
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	// Subscribe before publishing so the at-most-once Redis path
+	// reliably delivers.
+	received := make(chan eventbus.Event, 4)
+	sub, err := bus.Subscribe(ctx, tenant, eventbus.TopicSessionLifecycle,
+		func(_ context.Context, ev eventbus.Event) error {
+			received <- ev
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer sub.Close()
+
+	// publishUntilReceived loop: at-most-once delivery means we may
+	// need to call Append more than once to win the subscriber attach
+	// race.
+	var lastSeq uint64
+	for attempt := 0; attempt < 20; attempt++ {
+		row, aerr := app.Append(ctx, tenant, "session.created",
+			json.RawMessage(`{"user_id":"alice@acme.com","session_id":"sess-1"}`),
+			time.Now())
+		if aerr != nil {
+			t.Fatalf("Append attempt %d: %v", attempt, aerr)
+		}
+		lastSeq = row.Seq
+		select {
+		case ev := <-received:
+			// Subscriber attached; assert envelope shape.
+			if ev.DataContentType != eventbus.ContentTypeOCSF {
+				t.Errorf("envelope datacontenttype = %q, want %q",
+					ev.DataContentType, eventbus.ContentTypeOCSF)
+			}
+			if ev.Extensions[eventbus.ExtTenantID] != tenant {
+				t.Errorf("envelope tenant ext = %q, want %q",
+					ev.Extensions[eventbus.ExtTenantID], tenant)
+			}
+			if err := ev.Validate(); err != nil {
+				t.Errorf("envelope not valid CloudEvents v1.0.2: %v", err)
+			}
+			// The published state must reflect the successful publish.
+			st, _, perr := store.PublishState(ctx, tenant, row.Seq)
+			if perr != nil {
+				t.Errorf("PublishState lookup: %v", perr)
+			}
+			if st != eventbus.PublishPublished {
+				t.Errorf("publish state = %q, want %q (published)", st, eventbus.PublishPublished)
+			}
+			return
+		case <-time.After(200 * time.Millisecond):
+			// Try again — at-most-once delivery, subscriber may not
+			// have attached yet.
+		}
+	}
+	t.Fatalf("subscriber never received audit-bearing envelope after 20 publish attempts (lastSeq=%d)", lastSeq)
+}
+
 // capturingSink is an in-memory ocsf.Sink for the EventStore test.
 type capturingSink struct {
 	records []ocsf.Record
