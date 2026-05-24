@@ -61,6 +61,18 @@ type Metrics struct {
 	// checkpointPartialManifestsSuperseded counts the §10.1
 	// supersede-on-write transactions for prior partial manifests.
 	checkpointPartialManifestsSuperseded *prometheus.CounterVec
+	// checkpointOrphanedObjects counts the §4.4 line 248 abort-cleanup
+	// failures: a `DeleteObject` that could not remove a partially-
+	// uploaded checkpoint chunk. Labeled by pool and trigger.
+	checkpointOrphanedObjects *prometheus.CounterVec
+	// checkpointSizeExceeded counts the §4.4 line 254 pre-checkpoint
+	// workspace-size probe rejections. Labeled by pool and level.
+	checkpointSizeExceeded *prometheus.CounterVec
+	// sessionEvictionTotalLoss counts the §4.4 lines 283–289 total-loss
+	// events: both MinIO and Postgres failed for an eviction checkpoint
+	// and the session is unrecoverable. Labeled by pool and
+	// `had_prior_checkpoint`.
+	sessionEvictionTotalLoss *prometheus.CounterVec
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -301,6 +313,41 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.4 line 248 — `lenny_checkpoint_orphaned_objects_total` is
+	// incremented when a checkpoint abort-cleanup DeleteObject call
+	// failed (the orphan persists in MinIO until the §12.5 backstop
+	// sweeps it). Labels are bounded: `pool` is finite (warm-pool
+	// registry); `trigger` is one of `periodic`, `pre_scale_down`,
+	// `eviction`.
+	checkpointOrphanedObjects, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_checkpoint_orphaned_objects_total",
+		Help: "Checkpoint abort cleanup failed to delete partial objects (§4.4 line 248).",
+	}, []string{"pool", "trigger"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.4 line 254 — `lenny_checkpoint_size_exceeded_total` is
+	// incremented when the pre-checkpoint workspace-size probe
+	// rejects the run. Labels are bounded: `pool` is finite;
+	// `level` is one of the four §4.4 runtime-integration levels.
+	checkpointSizeExceeded, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_checkpoint_size_exceeded_total",
+		Help: "Pre-checkpoint workspace-size probe exceeded the limit (§4.4 line 254).",
+	}, []string{"pool", "level"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.4 lines 283–289 — `lenny_session_eviction_total_loss_total` is
+	// incremented when both MinIO and Postgres failed for an eviction
+	// checkpoint and the session is unrecoverable. Labels are bounded:
+	// `pool` is finite; `had_prior_checkpoint` is "true"|"false".
+	sessionEvictionTotalLoss, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_eviction_total_loss_total",
+		Help: "Session eviction total-loss events (§4.4 lines 283-289).",
+	}, []string{"pool", "had_prior_checkpoint"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -308,7 +355,8 @@ func New() (*Metrics, error) {
 		elicitationTamperDetected, experimentIsoRej,
 		noEnvPolicyAllowAll, tokenServiceCircuitState,
 		checkpointStaleSessions,
-		partialManifestCleanup, checkpointPartialManifestsSuperseded)
+		partialManifestCleanup, checkpointPartialManifestsSuperseded,
+		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -356,7 +404,51 @@ func New() (*Metrics, error) {
 		checkpointStaleSessions:              checkpointStaleSessions,
 		partialManifestCleanup:               partialManifestCleanup,
 		checkpointPartialManifestsSuperseded: checkpointPartialManifestsSuperseded,
+		checkpointOrphanedObjects:            checkpointOrphanedObjects,
+		checkpointSizeExceeded:               checkpointSizeExceeded,
+		sessionEvictionTotalLoss:             sessionEvictionTotalLoss,
 	}, nil
+}
+
+// IncCheckpointOrphanedObjects increments the §4.4 line 248
+// `lenny_checkpoint_orphaned_objects_total` counter labeled by pool
+// and trigger. Called from the adapter Checkpoint RPC when a
+// CheckpointAborter.AbortPartial call failed to delete a partially
+// uploaded chunk object.
+// spec: §4.4 line 248.
+func (m *Metrics) IncCheckpointOrphanedObjects(pool, trigger string) {
+	if m == nil {
+		return
+	}
+	m.checkpointOrphanedObjects.WithLabelValues(pool, trigger).Inc()
+}
+
+// IncCheckpointSizeExceeded increments the §4.4 line 254
+// `lenny_checkpoint_size_exceeded_total` counter labeled by pool and
+// level. Called from the adapter Checkpoint RPC when the
+// pre-checkpoint workspace-size probe rejects the run.
+// spec: §4.4 line 254.
+func (m *Metrics) IncCheckpointSizeExceeded(pool, level string) {
+	if m == nil {
+		return
+	}
+	m.checkpointSizeExceeded.WithLabelValues(pool, level).Inc()
+}
+
+// IncSessionEvictionTotalLoss increments the §4.4 lines 283–289
+// `lenny_session_eviction_total_loss_total` counter labeled by pool
+// and had_prior_checkpoint. Called from the eviction-fallback writer
+// when both MinIO and Postgres failed for an eviction checkpoint.
+// spec: §4.4 line 286.
+func (m *Metrics) IncSessionEvictionTotalLoss(pool string, hadPriorCheckpoint bool) {
+	if m == nil {
+		return
+	}
+	label := "false"
+	if hadPriorCheckpoint {
+		label = "true"
+	}
+	m.sessionEvictionTotalLoss.WithLabelValues(pool, label).Inc()
 }
 
 // IncPartialManifestCleanup increments the §4.4 line 236
