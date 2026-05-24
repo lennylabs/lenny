@@ -66,6 +66,29 @@ tests:
           path: webhooks[0].rules[0].resources[0]
           value: pods
 
+  # spec §4.6.1: the sandboxclaim-guard webhook is deployed with
+  # replicas: 2 and a PodDisruptionBudget (minAvailable: 1) matching the
+  # §17.2 admission-controller HA requirements.
+  - it: runs the sandboxclaim-guard webhook with two replicas
+    template: admission-policies/sandboxclaim-guard-webhook.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: protects the sandboxclaim-guard webhook with a PodDisruptionBudget
+    template: admission-policies/sandboxclaim-guard-webhook.yaml
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: spec.minAvailable
+          value: 1
+
   - it: targets sandboxclaims from the sandboxclaim-guard webhook
     template: admission-policies/sandboxclaim-guard-webhook.yaml
     documentIndex: 4
