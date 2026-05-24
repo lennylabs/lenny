@@ -1985,7 +1985,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   metadata normalization the §4.8 phase table attributes to its MODIFY
   is performed by the middleware as it builds the principal. External
   interceptors remain barred from PreAuth at registration. Resolved in
-  commit <pending>.
+  commit 4916d354.
 
 ### - [x] F-4.8.3 — `QuotaEvaluator` (Implemented) [Medium] — CLOSED
 
@@ -2023,7 +2023,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   payload is the delegation input), closed by F-4.8.4. The
   tenant/global-scope counter collapse remains a documented limitation
   (the finding flagged it for completeness, not as a correctness bug).
-  Resolved in commit <pending>.
+  Resolved in commit 4916d354.
 
 ### - [x] F-4.8.4 — `DelegationPolicyEvaluator` not implemented (Missing) [Medium] — CLOSED
 
@@ -2059,7 +2059,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   supplies the per-lease effective cap when wired. The §8.3 depth/
   fan-out/cycle/tag enforcement stays canonical inside
   `delegation.Service` (per the finding's alternative framing).
-  Resolved in commit <pending>.
+  Resolved in commit 4916d354.
 
 ### - [ ] F-4.8.5 — `ExperimentRouter` not registered as an interceptor (Divergent) [Medium] — OPEN
 
@@ -2225,7 +2225,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   now runs `Chain.Run(PhasePreAuth)` after JWT verification and before
   the inner handler via `auth.Options.Interceptors`/`runPreAuth`, with
   `policy.AuthEvaluator` as the sole built-in at priority 100. Resolved
-  in commit <pending>.
+  in commit 4916d354.
 
 ### - [x] F-4.8.11 — `PreRoute`, `PostRoute` chains not invoked (Missing) [Medium] — CLOSED
 
