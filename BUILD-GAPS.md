@@ -1022,7 +1022,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** Operational diagnostics for past sessions are unavailable; the §16 observability story requires log retrieval per session.
 - **Suggested resolution:** Either pipe runtime stderr to an MinIO object per session (under `/{tenant_id}/sessions/{session_id}/stderr.log`) with a corresponding `artifact_store` row, or document this entry as deferred / non-v1 and prune the spec line.
 
-### - [ ] F-4.4.22 — `RLS coverage of session_eviction_state` lacks integration test [Medium] — OPEN
+### - [ ] F-4.4.22 — `RLS coverage of session_eviction_state` lacks integration test [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-12.3.21 — Both reference the missing TestRLSTenantGuardMissingSetLocal test, but F-12.3.21 is about test naming with existing functional coverage while F-4.4.22 is about session_eviction_state lacking RLS coverage.
 
@@ -1031,11 +1031,15 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** RLS isolation on this table is unverified.
 - **Suggested resolution:** Extend the RLS coverage test to enumerate every tenant-scoped table (including `session_eviction_state`) and assert that a `SET LOCAL`-absent transaction is rejected by the `lenny_tenant_guard` trigger.
 
-### - [ ] F-4.4.23 — Eviction-state cleanup uses hard DELETE instead of soft-delete [Medium] — OPEN
+**Resolution:** Migration 0065 adds the `lenny_tenant_guard` trigger to `session_eviction_state` (the table previously had RLS but no BEFORE-INSERT/UPDATE/DELETE trigger). F-12.3.21 (about the named test) is left open for a §12.3 batch.
+
+### - [ ] F-4.4.23 — Eviction-state cleanup uses hard DELETE instead of soft-delete [Medium] — CLOSED
 - **Spec:** line 236 (partial manifest) and line 281 (terminal-state cleanup) both require soft-delete via `UPDATE ... SET deleted_at = now() ... WHERE deleted_at IS NULL` for idempotent re-runs.
 - **Evidence:** `pkg/gateway/evictionstatestore/pgstore/pgstore.go:110-118` issues `DELETE FROM session_eviction_state`; lines 124-133 and 137-143 do the same for user / tenant erasure. No soft-delete column on the table (`migrations/0045_session_eviction_state.up.sql:22-30`).
 - **Gap:** An idempotent re-run (stale-leader retry, GC backstop racing primary cleanup) re-runs side effects (MinIO delete). The spec's monotonicity guard is violated.
 - **Suggested resolution:** Add a `deleted_at TIMESTAMPTZ` column; convert the Delete paths to soft-delete with the spec's `WHERE deleted_at IS NULL` guard; have the GC sweep prune rows whose `deleted_at` exceeds the tombstone retention window.
+
+**Resolution:** Migration 0064 adds the `deleted_at TIMESTAMPTZ` column + sweep-supporting index. `pgstore.Delete`, `DeleteByUser`, `DeleteByTenant` now issue `UPDATE … SET deleted_at = now() WHERE deleted_at IS NULL` so the second writer sees `rows_affected == 0`. New `SweepDeletedBefore(ctx, retentionWindow)` method exposes the §12.5 hard-prune surface.
 
 ### - [ ] F-4.4.24 — No retention rotation for checkpoints (latest-2 policy) [Medium] — OPEN
 - **Spec:** §12.5 reference at line 234 mandates "latest 2 checkpoints" retention; line 256 ties this to the checkpoint-freshness SLO.
