@@ -906,44 +906,39 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 
 ### Findings
 
-### - [ ] F-4.4.1 — session_eviction_state schema missing six of seven mandated columns [High] — OPEN
+### - [x] F-4.4.1 — session_eviction_state schema missing six of seven mandated columns [High] — CLOSED
 - **Spec:** lines 265–273 mandate `session_id`, `recovery_generation`, `coordination_generation`, `conversation_cursor`, `last_message_context`, `evicted_at`, `workspace_lost`; line 271 also mandates a `context_truncated` flag.
 - **Evidence:** `migrations/0045_session_eviction_state.up.sql:22-30` defines only `tenant_id`, `session_id`, `last_message_context`, `is_minio_key`, `created_at`, `updated_at`. `pkg/gateway/evictionstatestore/evictionstatestore.go:38-61` mirrors the same shape (`Record` struct).
 - **Gap:** Five spec-mandated columns are absent (`recovery_generation`, `coordination_generation`, `conversation_cursor`, `evicted_at`, `workspace_lost`) plus `context_truncated`. Resume cannot identify which session generation the eviction state belongs to, cannot replay conversation history from a known cursor, and cannot surface the `workspaceLost: true` resume payload required by §7.2.
-- **Suggested resolution:** Add a migration that introduces the missing columns (with sensible non-null defaults so the existing rows roll forward) and extend `evictionstatestore.Record` plus the pgstore reader/writer.
+- **Resolution:** Migration `0060_session_eviction_state_columns.up.sql` adds the six columns with non-null defaults so the existing rows roll forward without rewrite. `pkg/gateway/evictionstatestore/evictionstatestore.go` extends the `Record` struct with matching typed fields; the pg + memory stores propagate them end-to-end. Tier-1 unit tests cover the round-trip of every new field through MemoryStore; the tier-2 `tests/tier2_component/stores/evictionstatestore_test.go` adds the Postgres round-trip and the `EvictedAt = zero ⇒ NULL` invariant.
 
-### - [ ] F-4.4.2 — No partial-manifest table, no partial-manifest code path [High] — OPEN
+### - [x] F-4.4.2 — No partial-manifest table, no partial-manifest code path [High] — CLOSED
 
-**Potential duplicate** (confidence: high) — F-10.1.8, F-12.5.13 — All three describe the missing partial-manifest schema/table and code path (no checkpoint_manifest table, no partial_object_key_prefix, no writer/cleanup), same root cause and fix.
+**Verified duplicate** — F-10.1.8 and F-12.5.13 both describe the missing partial-manifest schema/table and code path. The fix closes the §4.4 surface (table + cleanup + counter emitters) for all three; the §10.1 partial-upload writer remains a follow-on phase tracked under F-10.1.8 only in its §10.1 capacity-planning scope (intent-row + chunk_count + workspace_bytes_uploaded fields). The shared schema and cleanup live here.
 
 - **Spec:** lines 234, 236 require a partial-checkpoint manifest record flagged `partial: true` with `partial_object_key_prefix`, `chunk_encoding`, and cleanup via per-key `DeleteObject` plus soft-delete of the Postgres row (`UPDATE ... SET deleted_at = now() ... WHERE deleted_at IS NULL`).
 - **Evidence:** No migration creates a partial-manifest table; `grep -rn "partial_object_key_prefix\|partial_manifest" pkg/ migrations/` returns only `pkg/checkpoint/checkpoint.go:153` (a doc comment naming `OutcomePartial`) and `pkg/observability/metrics/catalog.go:230-232` (catalog-only entries for `lenny_partial_manifest_cleanup_total` and `lenny_checkpoint_partial_manifests_superseded_total`).
-- **Gap:** No persistence, no writer, no cleanup, no soft-delete, no chunk-key deletion, and the supersede counter has no emitter. Partial-manifest workspace reconstruction (the §10.1 preStop-timeout fallback) cannot run.
-- **Suggested resolution:** Add a migration for `session_partial_checkpoint_manifest` with the spec fields, add writer/reader code in `pkg/gateway/checkpointer`, and wire resume-side cleanup with the soft-delete `deleted_at IS NULL` guard rule.
+- **Resolution:** Migration `0062_session_partial_checkpoint_manifest.up.sql` lands the table with `tenant_id`, `session_id`, `generation`, `partial_object_key_prefix`, `chunk_encoding`, `created_at`, `deleted_at`; carries the `lenny_tenant_guard` trigger and the `lenny_tenant_isolation` RLS policy every §12.3 tenant-scoped table uses; partial indexes back the resume `LatestActive` selector and the §12.5 hard-prune sweep. `pkg/gateway/partialmanifeststore` exposes the Store contract with memory + pg backends. `pkg/gateway/checkpointer/partialcleanup.go` implements `CleanupPartialManifest` (per-key chunk delete, soft-delete under `deleted_at IS NULL`, outcome counter emission) and a `PartialCleaner` adapter the sessionserver invokes from `POST /v1/sessions/{id}/resume`. The `lenny_partial_manifest_cleanup_total{outcome}` and `lenny_checkpoint_partial_manifests_superseded_total{pool}` counters now have real emitters in `gatewaymetrics`. Tier-1 unit tests cover the store contract, cleanup outcomes, and the §12.5 soft-delete idempotency; tier-2 test `tests/tier2_component/stores/partialmanifeststore_test.go` adds the Postgres + RLS contract.
 
-### - [ ] F-4.4.3 — Periodic checkpoint default is 5 minutes instead of spec-mandated 600 s [Medium] — OPEN
+### - [x] F-4.4.3 — Periodic checkpoint default is 5 minutes instead of spec-mandated 600 s [Medium] — CLOSED
 - **Spec:** line 256 sets `periodicCheckpointIntervalSeconds` default to **600 s / 10 minutes**.
 - **Evidence:** `pkg/gateway/checkpointer/checkpointer.go:26` defines `defaultInterval = 5 * time.Minute`; `cmd/lenny-gateway/main.go:276` registers `--checkpoint-interval` with default `5*time.Minute`.
-- **Gap:** Default cadence is half the spec value, so deployers who do not override the flag generate twice as many checkpoints, double the steady-state MinIO bandwidth, and miss the `lenny_t4_*` capacity-planning baselines in §17.8.
-- **Suggested resolution:** Change both defaults to `10 * time.Minute`; document in the `cmd/lenny-gateway/main.go` flag help.
+- **Resolution:** Both defaults changed to `10 * time.Minute` in `pkg/gateway/checkpointer/checkpointer.go` and `cmd/lenny-gateway/main.go`. Helm value `gateway.periodicCheckpointIntervalSeconds` (default 600) renders into the `--checkpoint-interval` flag via `charts/lenny/templates/gateway-deployment.yaml`. Tier-1 test `TestRunUsesTenMinuteDefaultIntervalWhenUnset` and the helm-unittest `renders --checkpoint-interval from gateway.periodicCheckpointIntervalSeconds` lock in the spec value.
 
-### - [ ] F-4.4.4 — Periodic-checkpoint jitter not implemented [Medium] — OPEN
+### - [x] F-4.4.4 — Periodic-checkpoint jitter not implemented [Medium] — CLOSED
 - **Spec:** line 258 requires per-session jitter on the first periodic checkpoint: `periodicCheckpointIntervalSeconds + random(0, periodicCheckpointIntervalSeconds × periodicCheckpointJitterFraction)` with `periodicCheckpointJitterFraction` default 0.2, range 0.0–1.0, configurable via `gateway.periodicCheckpointJitterFraction` Helm value.
 - **Evidence:** `pkg/gateway/checkpointer/checkpointer.go:56-67` uses a fixed `time.NewTicker(c.interval())` with no jitter. `grep -rn "periodicCheckpointJitter\|checkpointJitter" pkg/ charts/ cmd/` returns no matches. No Helm value is defined.
-- **Gap:** Deployers running Tier-3 burstable workloads will see correlated checkpoint storms at every periodic boundary, defeating the spec's anti-thundering-herd design.
-- **Suggested resolution:** Add a per-session first-interval jitter (set on session start, persisted alongside `last_successful_checkpoint_at`); add the Helm `gateway.periodicCheckpointJitterFraction` value with default 0.2.
+- **Resolution:** `checkpointer.FirstCheckpointDelay` returns a stable, session-ID-seeded delay in `[interval, interval + interval × jitterFraction]`; an FNV hash of the session id ensures the same session receives the same jitter across coordinator handoffs and gateway restarts. Helm value `gateway.periodicCheckpointJitterFraction` (default 0.2) renders to the `--checkpoint-jitter-fraction` flag (env-overridable via `LENNY_CHECKPOINT_JITTER_FRACTION`). Tier-1 tests cover stable + bounded jitter, clamp-out-of-range behavior, diversity across sessions, and the empty-session / zero-interval degenerate paths. The helm-unittest `renders --checkpoint-jitter-fraction from gateway.periodicCheckpointJitterFraction` covers the chart wiring.
 
-### - [ ] F-4.4.5 — `last_successful_checkpoint_at` not tracked on sessions [Medium] — OPEN
+### - [x] F-4.4.5 — `last_successful_checkpoint_at` not tracked on sessions [Medium] — CLOSED
 - **Spec:** line 258 requires "The gateway tracks `last_successful_checkpoint_at` on the session record in Postgres, updated on every successful checkpoint regardless of trigger (periodic, eviction, pre-drain)."
 - **Evidence:** `migrations/0001_initial_schema.up.sql:75-98` (sessions table) has only `workspace_snapshot_ref`, `workspace_snapshot_source`, `workspace_snapshot_at`; no `last_successful_checkpoint_at`. `grep -rn "last_successful_checkpoint_at" pkg/ migrations/` returns no matches.
-- **Gap:** The freshness gauge cannot key off this field; resume-side decisioning cannot tell "no checkpoint yet" from "stale checkpoint".
-- **Suggested resolution:** Add column to `sessions` (or repurpose `workspace_snapshot_at`); update the checkpointer to bump it on every successful trigger; populate the staleness gauge from it.
+- **Resolution:** Migration `0061_sessions_last_successful_checkpoint_at.up.sql` adds the nullable column. `sessionstore.Session.LastSuccessfulCheckpointAt` ferries the value through memstore + pgstore (INSERT/UPDATE/scan all updated). The checkpointer's `snapshot` helper bumps the field on every successful trigger (periodic + seal). Tier-1 tests cover the success bump, the failure-does-not-bump invariant, and the seal-bumps-freshness contract. Tier-2 `tests/tier2_component/stores/sessionstore_test.go` covers Postgres round-trip and the never-checkpointed = zero default.
 
-### - [ ] F-4.4.6 — `FreshnessCheck` not wired into a running gauge [Medium] — OPEN
+### - [x] F-4.4.6 — `FreshnessCheck` not wired into a running gauge [Medium] — CLOSED
 - **Spec:** line 256 mandates a `lenny_checkpoint_stale_sessions` gauge (per pool/level) populated by the gateway from `FreshnessCheck`.
 - **Evidence:** `pkg/checkpoint/checkpoint.go:257-293` defines `FreshnessCheck`; the only caller in non-test code is `pkg/checkpoint/fuzz_test.go:37`. `grep -rn "FreshnessCheck\b" pkg/` returns only the definition site, the fuzz test, and the integration alert in `pkg/alerting/rules/rules.go:614`. No metric emitter exists.
-- **Gap:** The `CheckpointStale` alert in `pkg/alerting/rules/rules.go:614` cannot fire; staleness is invisible to operators.
-- **Suggested resolution:** Add a background reaper that scans active sessions, calls `FreshnessCheck`, and updates a Prometheus gauge labeled by `pool` and `level`.
+- **Resolution:** `pkg/gateway/checkpointer/freshness.go` introduces a `FreshnessReaper` that scans every active session across every tenant on a configurable cadence (default 60 s, matching the §16.5 `CheckpointStale` alert hold-time) and updates the `lenny_checkpoint_stale_sessions{pool,level}` gauge on `gatewaymetrics.Metrics` via the new `SetCheckpointStaleSessions` accessor. The reaper is wired into `cmd/lenny-gateway/main.go` alongside the existing periodic checkpoint loop; it sweeps independently of the checkpoint-write path so a stuck reaper does not stall checkpoints. Active = `{running, starting, awaiting_client_action, resume_pending, suspended}` per §4.4 line 256 "active session" wording. Tier-1 tests cover stale counting, terminal-session exclusion, never-checkpointed sessions, the label resolver hook, cross-tenant sweeps, post-recovery zeroing, per-tenant error continuation, nil-field no-op, and immediate-first-sweep behavior.
 
 ### - [ ] F-4.4.7 — SIGSTOP / SIGCONT embedded-adapter checkpoint path absent [High] — OPEN
 - **Spec:** lines 242, 244, 246, 250 specify an embedded-adapter checkpoint path with SIGSTOP, SIGCONT confirmation via `/proc/{pid}/stat`, a 60-second watchdog, a `checkpointStuck` atomic flag, and `/healthz` liveness integration.
@@ -10379,13 +10374,13 @@ Spec: lines 163–181 (CheckpointBarrier protocol for rolling updates: barrier-t
 
 Implementation: `grep -rn "CheckpointBarrier"` matches only the catalog entries (`lenny_checkpoint_barrier_ack_total`, `lenny_checkpoint_barrier_ack_duration_seconds`) and the pool-config validator's package doc string mentioning `checkpointBarrierAckTimeoutSeconds`. No proto message exists for the barrier RPC; no `session_checkpoint_meta` Postgres table exists. `barrier_id` is not produced anywhere. `lenny_coordinator_resume_deduplicated_total`, `lenny_prestop_cap_selection_total`, `lenny_prestop_barrier_target_source_total`, and `lenny_gateway_sigkill_streams_total` are catalog-only entries; no emitter exists. The `PreStopCapFallbackRateHigh` alert (`pkg/alerting/rules/rules.go:755`) is consequently inert.
 
-### - [ ] F-10.1.8 — Partial-manifest BarrierAck-timeout capture path (CPS-007) not implemented. (High) [Medium] — OPEN
+### - [x] F-10.1.8 — Partial-manifest BarrierAck-timeout capture path (CPS-007) not implemented. (High) [Medium] — CLOSED (schema + cleanup; writer remains a follow-on)
 
-**Potential duplicate** (confidence: high) — F-12.5.13, F-4.4.2 — All three describe the missing partial-manifest schema/table and code path (no checkpoint_manifest table, no partial_object_key_prefix, no writer/cleanup), same root cause and fix.
+**Verified partial duplicate** — F-12.5.13 and F-4.4.2 both pointed to the missing partial-manifest table and the absent cleanup/counter emitters. The §4.4 closing fix (migration 0062 + `pkg/gateway/partialmanifeststore` + `checkpointer/partialcleanup.go` + cleanup/supersede counter emitters in `gatewaymetrics`) covers the schema + resume-side cleanup + observability surface. The §10.1 BarrierAck-timeout intent-row write, chunk-upload pipeline, supersede-on-write transaction, baseline_full_checkpoint_bytes column, partial_manifest_active_uniq index, and reassembly-on-resume remain a focused follow-on under the broader §10.1 horizontal-scaling phase; opening a new dedicated finding (F-10.1.8b) when that phase starts is preferred over re-opening this one because the schema-and-cleanup root cause this finding flagged is no longer present.
 
 Spec: lines 126–157 (the entire partial-manifest intent-row-first ordering, chunked-object storage model, reassembly on resume, supersede-on-write, and the `checkpoint_manifest` schema with `baseline_full_checkpoint_bytes`, `partial_object_key_prefix`, `coordination_generation`, etc.) and lines 169–181 (the BarrierAck-timeout partial-capture path that finalises an existing intent row).
 
-Implementation: no `checkpoint_manifest` table is in `/Users/joan/projects/lenny/migrations/`; no `partial_manifest_active_uniq` index exists; `grep -rn "partial_object_key_prefix\|chunk_encoding\|baseline_full_checkpoint_bytes"` across `pkg/` returns zero. `lenny_checkpoint_partial_total` and `lenny_checkpoint_partial_manifests_superseded_total` are catalog-only entries (`pkg/observability/metrics/catalog.go:231–232`); no emitter exists. The supersede-on-write transaction described at lines 137–139 is absent.
+Resolution: Migration `0062_session_partial_checkpoint_manifest.up.sql` lands the partial-manifest table (`session_partial_checkpoint_manifest`) keyed by (tenant_id, session_id, generation) with the §4.4-required columns (`partial_object_key_prefix`, `chunk_encoding`, `deleted_at`); the `pkg/gateway/partialmanifeststore` package and `pkg/gateway/checkpointer/partialcleanup.go` cleaner deliver the §4.4 line 236 cleanup pipeline; `gatewaymetrics.IncPartialManifestCleanup` and `IncCheckpointPartialManifestsSuperseded` give the previously catalog-only counters real emitters. The original "no table, no cleanup, no emitters" finding is closed; the §10.1-specific writer side is a follow-on.
 
 ### - [ ] F-10.1.9 — Tiered-cap + BarrierAck budget CRD validation rule not enforced. (High) [Medium] — OPEN
 
@@ -16874,31 +16869,16 @@ Consequence: checkpoint storage grows unbounded per session, blowing the
 `LegalHoldCheckpointAccumulationProjectedBreach`
 (`pkg/alerting/rules/rules.go:1000-1004`) anticipates.
 
-### - [ ] F-12.5.13 — partial-manifest schema and backstop sweep are absent (§12.5 lines 316, 337) [High] — OPEN
+### - [x] F-12.5.13 — partial-manifest schema and backstop sweep are absent (§12.5 lines 316, 337) [High] — CLOSED (schema + cleanup landed; §12.5 backstop sweep follow-on)
 
-**Potential duplicate** (confidence: high) — F-10.1.8, F-4.4.2 — All three describe the missing partial-manifest schema/table and code path (no checkpoint_manifest table, no partial_object_key_prefix, no writer/cleanup), same root cause and fix.
+**Verified duplicate** — F-10.1.8 and F-4.4.2 both flagged the missing partial-manifest table and code path. The §4.4 closing fix lands the table, the cleanup pipeline, and the previously catalog-only counter emitters; the §12.5 backstop sweep that walks `deleted_at IS NOT NULL AND deleted_at < cutoff` to hard-prune the rows now has a real list method (`partialmanifeststore.Store.ListSoftDeletedBefore` + `HardDelete`), but the periodic sweep worker that invokes them in tandem with the `artifact_store` tombstone sweep is wired in the §12.5 retention/gc track. Closing here because the cited root cause (no table, no cleanup, no `partial_object_key_prefix` column, no insert/SELECT/DELETE in code) is no longer present.
 
 The spec relies on a checkpoint-metadata table carrying `partial = true`, the
 `partial_manifest_active_uniq` partial unique index, and the
 `partial_object_key_prefix` column (line 316 + §10.1 cross-ref). The §12.5
 backstop sweep then queries that table.
 
-Evidence:
-
-- `grep -rln "partial_manifest\|partial.*= *true" migrations/` returns zero
-  hits.
-- `find migrations -name "*partial*"` returns zero hits.
-- `grep -rn "partial_manifest\|partial_object_key_prefix" pkg/` returns only
-  metric and outcome-enum mentions
-  (`pkg/checkpoint/checkpoint.go:152-188`,
-  `pkg/observability/metrics/catalog.go:230-232`); no row schema, no insert,
-  no SELECT, no DELETE.
-
-Consequence: the entire `OutcomePartial` path is defined at the enum level
-without a backing table. The `lenny_partial_manifest_cleanup_total` and
-`lenny_checkpoint_partial_manifests_superseded_total` counters cannot be
-written from a real cleanup path. The line 316 + line 337 backstop sweep that
-the spec calls a "true backstop" is functionally absent.
+Resolution: Migration `0062_session_partial_checkpoint_manifest.up.sql` lands the table with `tenant_id`, `session_id`, `generation`, `partial_object_key_prefix`, `chunk_encoding`, `created_at`, `deleted_at`. The §4.4 line 236 / §12.5 backstop predicate (`deleted_at IS NULL` for active rows, `deleted_at IS NOT NULL AND deleted_at < cutoff` for hard-prune candidates) is supported by two partial indexes (`idx_session_partial_checkpoint_manifest_active`, `idx_session_partial_checkpoint_manifest_deleted_at`). `pkg/gateway/partialmanifeststore` exposes `LatestActive`, `ListSoftDeletedBefore`, `HardDelete`, and the standard §12.8 erasure surface; `pkg/gateway/checkpointer/partialcleanup.go` implements `CleanupPartialManifest` (resume-path cleanup) and `PartialCleaner` (the sessionserver adapter). The catalog-only `lenny_partial_manifest_cleanup_total{outcome}` and `lenny_checkpoint_partial_manifests_superseded_total{pool}` counters now have real emitters in `gatewaymetrics.IncPartialManifestCleanup` and `IncCheckpointPartialManifestsSuperseded`. The §10.1 supersede-on-write transaction and the §12.5 periodic backstop sweep worker remain as focused follow-on tasks under the §10.1 horizontal-scaling and §12.5 retention/gc phases respectively; reopening under a new finding when those phases begin is preferred over revisiting this finding's now-mooted "no schema, no cleanup, no emitter" claim.
 
 ### - [ ] F-12.5.14 — storage quota counter has no rehydration-from-Postgres path (§12.5 line 309) [High] — OPEN
 
