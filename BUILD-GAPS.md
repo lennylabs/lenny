@@ -1936,7 +1936,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   tie break, REJECT short-circuit, MODIFY carry-through, ALLOW
   pass-through, and the REJECT-carries-accumulated-MODIFY rule; the
   Phase enum covers every §4.8 phase. No code change required. Verified
-  in commit HEAD.
+  in commit 4d655c81.
 
 ### - [ ] F-4.8.2 — Built-in `AuthEvaluator` not registered on the chain (Divergent) [Medium] — OPEN
 
@@ -2352,7 +2352,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `Chain.Run` with the rejecting interceptor's `Name()` on the REJECT and
   fail-closed paths; `AuditSink.RecordRejection` uses it for
   `interceptor_name`/`interceptor_ref`, with `QuotaEvaluatorName` only as
-  a fallback when the chain names no rejector. Verified in commit HEAD.
+  a fallback when the chain names no rejector. Verified in commit 4d655c81.
 
 ### - [ ] F-4.8.19 — Per-phase MODIFY immutability enforced only at PreExportMaterialization (Missing) [Medium] — OPEN
 
@@ -2416,7 +2416,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
 - **Resolution:** Re-verified: `DefaultExternalPriority = 500` is applied
   by `NewExternal` and the reserved-priority ceiling is enforced and
   tested. No functional gap; the production registration caller remains
-  tracked under F-4.8.9. No code change. Verified in commit HEAD.
+  tracked under F-4.8.9. No code change. Verified in commit 4d655c81.
 
 ### - [x] F-4.8.22 — `INVALID_INTERCEPTOR_PHASE` / `INVALID_INTERCEPTOR_PRIORITY` error mapping at registration (Implemented) [Medium] — CLOSED
 
@@ -2439,7 +2439,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `ErrInvalidPhase`→`INVALID_INTERCEPTOR_PHASE` (both HTTP 400) via
   `errors.Is`, with the new `CodeInvalidInterceptorPriority`/`...Phase`
   constants. The sentinel→§15.1-code mapping is now a tested helper the
-  F-4.8.9 registration handler will call. Verified in commit HEAD.
+  F-4.8.9 registration handler will call. Verified in commit 4d655c81.
 
 ### - [x] F-4.8.23 — `INTERCEPTOR_TIMEOUT` rejection envelope vs `LLM_REQUEST_REJECTED` distinction (Partial) [Medium] — CLOSED
 
@@ -2481,8 +2481,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   category/retryable match §15.1 line 1008. The audit row carries
   `timeout_ms` (the interceptor's effective deadline, set by `Chain.Run`
   on `Result.TimeoutMs`) and a real `interceptor_ref` (`RejectedBy`).
-  A deliberate REJECT still maps to 429 `QUOTA_EXCEEDED`. Verified in
-  commit HEAD.
+  A deliberate REJECT still maps to 429 `QUOTA_EXCEEDED`. Verified in commit 4d655c81.
 
 ### - [x] F-4.8.24 — RequestInterceptor gRPC proto matches spec (Implemented) [Medium] — CLOSED
 
@@ -2499,7 +2498,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
 - **Resolution:** Re-verified the generated bindings and the
   `External.Intercept` mapping against §4.8 lines 987–1010 (RPC,
   request/response field set, ALLOW/REJECT/MODIFY enum). Conformant; no
-  code change. Verified in commit HEAD.
+  code change. Verified in commit 4d655c81.
 
 ### Coverage notes
 
