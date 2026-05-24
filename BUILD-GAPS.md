@@ -2125,8 +2125,8 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `lenny_circuit_breaker_rejections_suppressed_total` while every
   rejection increments `lenny_circuit_breaker_rejections_total` (both
   added to gatewaymetrics). Wired into `cbmw.Wrap` via Options, reading
-  the authenticated principal in the snapshot extractor. See commit SHA
-  below.
+  the authenticated principal in the snapshot extractor. Resolved in
+  commit 19273cb6.
 
 ### - [x] F-4.8.9 — External interceptor `endpoint` not in registration shape (Partial) [Medium] — CLOSED
 
@@ -2162,7 +2162,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   dev), builds the generated `RequestInterceptorClient`, and registers
   an External on the named phase at startup; a bad priority/phase fails
   fast. The Helm `interceptorNamespaces` egress NetworkPolicy is left as
-  a separate chart task (NET-058). See commit SHA below.
+  a separate chart task (NET-058). Resolved in commit 19273cb6.
 
 **Potential duplicate** (confidence: high) — F-4.8.2 — Both report the AuthEvaluator/PreAuth phase chain never being invoked or registered; F-4.8.10 explicitly ties itself to F-4.8.2.
 
@@ -2312,7 +2312,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `policy.FailOpenObserver` writes `interceptor.fail_open_escalated`
   (`interceptor_ref`, `failure_count`, `window_seconds`) and
   `interceptor.fail_open_restored` to the per-tenant §11.7 chain. The
-  zero-value chain keeps plain fail-open semantics. See commit SHA below.
+  zero-value chain keeps plain fail-open semantics. Resolved in commit 19273cb6.
 
 ### - [ ] F-4.8.17 — `interceptor.fail_policy_weakened` / `_strengthened` not implemented (Missing) [Medium] — OPEN
 
