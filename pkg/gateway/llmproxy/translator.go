@@ -157,6 +157,33 @@ type Translator interface {
 	TranslateResponse(dialect Dialect, resp UpstreamResponse) (*Response, error)
 }
 
+// TranslatorRegistry maps a §4.9 upstream provider identifier to the
+// translator that serves it. The LLM proxy resolves a request's
+// translator from the lease's Provider, so a single proxy endpoint
+// fronts every provider a deployment registers.
+type TranslatorRegistry map[string]Translator
+
+// NewTranslatorRegistry builds a registry keyed by each translator's
+// Provider(). A later translator for the same provider replaces an
+// earlier one, so the caller controls precedence by argument order.
+func NewTranslatorRegistry(translators ...Translator) TranslatorRegistry {
+	reg := make(TranslatorRegistry, len(translators))
+	for _, t := range translators {
+		if t == nil {
+			continue
+		}
+		reg[t.Provider()] = t
+	}
+	return reg
+}
+
+// For returns the translator registered for provider and whether one
+// exists.
+func (r TranslatorRegistry) For(provider string) (Translator, bool) {
+	t, ok := r[provider]
+	return t, ok
+}
+
 // AnthropicDirectTranslator is the §4.9 translator for the
 // anthropic_direct upstream provider. The Anthropic Messages dialect
 // and the anthropic_direct provider share the Anthropic Messages wire

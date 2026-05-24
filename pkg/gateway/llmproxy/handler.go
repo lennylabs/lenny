@@ -79,8 +79,16 @@ type Handler struct {
 	// interface admits both the in-memory store and the Postgres
 	// backend.
 	Leases credleasestore.LeaseStore
-	// Translator converts the proxy-dialect request and response to and
-	// from the upstream provider's wire format.
+	// Translators dispatches each request to the translator for the
+	// lease's resolved §4.9 provider (spec: §4.9 lines 1525-1526 —
+	// Phase 11 extends the proxy to anthropic_direct, aws_bedrock,
+	// vertex_ai, azure_openai, and openai_direct). When the registry
+	// is non-nil and carries no entry for the lease provider, the
+	// request is rejected with UPSTREAM_PROVIDER_UNSUPPORTED. When it
+	// is nil the handler falls back to the single Translator below.
+	Translators TranslatorRegistry
+	// Translator is the default translator used when Translators is
+	// nil. It serves the anthropic_direct single-provider deployment.
 	Translator Translator
 	// Forwarder sends the translated request upstream behind the
 	// circuit breaker.
@@ -165,6 +173,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tr, ok := h.translatorFor(lease.Provider)
+	if !ok {
+		h.writeError(w, http.StatusBadGateway, "UPSTREAM_PROVIDER_UNSUPPORTED",
+			"no translator is registered for the lease's resolved provider")
+		return
+	}
+
 	apiKey, ok := h.Credentials.UpstreamCredential(lease)
 	if !ok {
 		h.writeError(w, http.StatusBadGateway, "UPSTREAM_CREDENTIAL_UNAVAILABLE",
@@ -172,7 +187,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upstreamReq, err := h.Translator.TranslateRequest(Request{
+	upstreamReq, err := tr.TranslateRequest(Request{
 		Dialect:          DialectAnthropic,
 		Body:             body,
 		AnthropicVersion: r.Header.Get("anthropic-version"),
@@ -198,7 +213,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.Translator.TranslateResponse(DialectAnthropic, *upstreamResp)
+	resp, err := tr.TranslateResponse(DialectAnthropic, *upstreamResp)
 	if err != nil {
 		h.writeTranslationError(w, err)
 		return
@@ -339,6 +354,20 @@ func (h *Handler) now() time.Time {
 		return h.Now()
 	}
 	return time.Now()
+}
+
+// translatorFor resolves the §4.9 translator for a lease's provider.
+// When the Translators registry is set it dispatches on the provider
+// and reports false for an unregistered provider. When the registry is
+// nil it falls back to the single default Translator.
+func (h *Handler) translatorFor(provider credential.Provider) (Translator, bool) {
+	if h.Translators != nil {
+		return h.Translators.For(string(provider))
+	}
+	if h.Translator != nil {
+		return h.Translator, true
+	}
+	return nil, false
 }
 
 // leaseToken extracts the bearer lease token an Anthropic-dialect agent

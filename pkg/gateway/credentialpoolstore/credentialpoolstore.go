@@ -83,6 +83,13 @@ type CredentialPool struct {
 	// otherwise.
 	HostPatterns []string
 
+	// CacheScope is the §4.9 semantic-cache cacheScope for the pool
+	// (`per-user`, `per-session`, `tenant`). Empty selects the
+	// per-user default. `tenant` is the deployer opt-in to cross-user
+	// cache sharing within the tenant; the admin layer rejects it for
+	// a tenant with a regulated complianceProfile.
+	CacheScope string
+
 	// CreatedAt / UpdatedAt / DeletedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -132,6 +139,19 @@ func ValidateName(name string) error {
 	return nil
 }
 
+// validCacheScope reports whether s is an accepted §4.9 cacheScope.
+// Empty is accepted and selects the per-user default at consumption
+// time. The values mirror semanticcache.CacheScope; they are checked
+// here as plain strings to keep the store free of a cache dependency.
+func validCacheScope(s string) bool {
+	switch s {
+	case "", "per-user", "per-session", "tenant":
+		return true
+	default:
+		return false
+	}
+}
+
 // Validate reports the §4.9 structural invariants of a pool: a tenant
 // id, a valid name, a provider, non-negative limits, and a credential
 // set whose entries each carry a unique non-empty id.
@@ -156,6 +176,9 @@ func Validate(p CredentialPool) error {
 	}
 	if p.RenewBeforeBufferSeconds < 0 {
 		return errors.New("credentialpoolstore: renewBeforeBufferSeconds must be >= 0")
+	}
+	if !validCacheScope(p.CacheScope) {
+		return errors.New("credentialpoolstore: cacheScope must be per-user, per-session, or tenant")
 	}
 	seen := map[string]bool{}
 	for _, c := range p.Credentials {

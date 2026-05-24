@@ -24,6 +24,7 @@ type CredentialPoolPayload struct {
 	LeaseTTLSeconds            int                      `json:"leaseTTLSeconds,omitempty"`
 	RenewBeforeBufferSeconds   int                      `json:"renewBeforeBufferSeconds,omitempty"`
 	HostPatterns               []string                 `json:"hostPatterns,omitempty"`
+	CacheScope                 string                   `json:"cacheScope,omitempty"`
 	CreatedAt                  string                   `json:"createdAt,omitempty"`
 	UpdatedAt                  string                   `json:"updatedAt,omitempty"`
 	DeletedAt                  string                   `json:"deletedAt,omitempty"`
@@ -46,6 +47,61 @@ var validAssignmentStrategies = map[string]bool{
 	"sticky-until-failure": true,
 }
 
+// validCacheScopes is the §4.9 cacheScope closed enum. Empty selects
+// the per-user default.
+var validCacheScopes = map[string]bool{
+	"":            true,
+	"per-user":    true,
+	"per-session": true,
+	"tenant":      true,
+}
+
+// crossUserCacheRegulatedProfiles names the §4.9 compliance profiles
+// for which `cacheScope: tenant` is rejected at pool registration.
+// The spec names hipaa and fedramp specifically; soc2 is not on the
+// list (it is on the broader §12.8 audit-signal set).
+var crossUserCacheRegulatedProfiles = map[string]bool{
+	"hipaa":   true,
+	"fedramp": true,
+}
+
+// validateCacheScope enforces the §4.9 cacheScope contract for a pool
+// registration. It returns false and writes the error response when
+// the scope is outside the enum, or when `cacheScope: tenant` is set on
+// a tenant carrying a regulated complianceProfile.
+//
+// spec: §4.9 lines 1554-1556 — `cacheScope: tenant` on a pool whose
+// tenant has a regulated complianceProfile (hipaa, fedramp) is rejected
+// with 400 COMPLIANCE_CROSS_USER_CACHE_PROHIBITED. The rejection also
+// mitigates a cross-user timing side-channel.
+func (r *Router) validateCacheScope(w http.ResponseWriter, req *http.Request, tenant, scope string) bool {
+	if !validCacheScopes[scope] {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"cacheScope must be per-user, per-session, or tenant",
+			map[string]any{"field": "cacheScope"})
+		return false
+	}
+	if scope != "tenant" {
+		return true
+	}
+	row, err := r.tenants.Get(req.Context(), tenant)
+	if err != nil {
+		// A missing tenant cannot be confirmed non-regulated; fail
+		// closed rather than admit a cross-user cache for an unknown
+		// compliance posture.
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"cacheScope tenant requires a known tenant", map[string]any{"field": "cacheScope"})
+		return false
+	}
+	if crossUserCacheRegulatedProfiles[row.ComplianceProfile] {
+		writeError(w, http.StatusBadRequest, "COMPLIANCE_CROSS_USER_CACHE_PROHIBITED",
+			"cacheScope tenant is prohibited for a tenant with a regulated complianceProfile",
+			map[string]any{"complianceProfile": row.ComplianceProfile})
+		return false
+	}
+	return true
+}
+
 // fromCredentialPool maps a stored pool to the wire payload.
 func fromCredentialPool(p credentialpoolstore.CredentialPool) CredentialPoolPayload {
 	out := CredentialPoolPayload{
@@ -58,6 +114,7 @@ func fromCredentialPool(p credentialpoolstore.CredentialPool) CredentialPoolPayl
 		LeaseTTLSeconds:            p.LeaseTTLSeconds,
 		RenewBeforeBufferSeconds:   p.RenewBeforeBufferSeconds,
 		HostPatterns:               p.HostPatterns,
+		CacheScope:                 p.CacheScope,
 		CreatedAt:                  rfc3339Nano(p.CreatedAt),
 		UpdatedAt:                  rfc3339Nano(p.UpdatedAt),
 		DeletedAt:                  rfc3339Nano(p.DeletedAt),
@@ -115,6 +172,9 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 			map[string]any{"field": "assignmentStrategy"})
 		return
 	}
+	if !r.validateCacheScope(w, req, tenant, body.CacheScope) {
+		return
+	}
 	pool := credentialpoolstore.CredentialPool{
 		TenantID:                   tenant,
 		Name:                       body.Name,
@@ -126,6 +186,7 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 		LeaseTTLSeconds:            body.LeaseTTLSeconds,
 		RenewBeforeBufferSeconds:   body.RenewBeforeBufferSeconds,
 		HostPatterns:               body.HostPatterns,
+		CacheScope:                 body.CacheScope,
 		CreatedAt:                  r.clock(),
 	}
 	pool.UpdatedAt = pool.CreatedAt
@@ -211,6 +272,9 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 			map[string]any{"field": "assignmentStrategy"})
 		return
 	}
+	if !r.validateCacheScope(w, req, tenant, body.CacheScope) {
+		return
+	}
 	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
 		p.Provider = body.Provider
 		p.Credentials = toCredentials(body.Credentials)
@@ -220,6 +284,7 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 		p.LeaseTTLSeconds = body.LeaseTTLSeconds
 		p.RenewBeforeBufferSeconds = body.RenewBeforeBufferSeconds
 		p.HostPatterns = body.HostPatterns
+		p.CacheScope = body.CacheScope
 		return nil
 	})
 	if err != nil {

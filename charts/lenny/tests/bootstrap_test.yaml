@@ -47,6 +47,11 @@ tests:
         users:
           - subject: alice@acme.com
             tenantId: acme
+        credentialPools:
+          - tenantId: acme
+            name: anthropic-shared
+            provider: anthropic_direct
+            cacheScope: per-user
     asserts:
       - matchRegex:
           path: data["bootstrap-values.yaml"]
@@ -57,6 +62,12 @@ tests:
       - matchRegex:
           path: data["bootstrap-values.yaml"]
           pattern: "subject: alice@acme.com"
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "name: anthropic-shared"
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "cacheScope: per-user"
 
   - it: annotates the ConfigMap as a post-install,post-upgrade hook before the Job
     template: bootstrap-configmap.yaml

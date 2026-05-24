@@ -13,6 +13,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -31,6 +32,50 @@ func newBootstrapRouter(t *testing.T) (*admin.Router, *tenantstore.Memory, *runt
 		Audit: audit,
 	}).WithRuntimes(runtimes).WithUsers(users)
 	return router, tenants, runtimes, users, audit
+}
+
+// TestBootstrapCredentialPools covers the §4.9 bootstrap.credentialPools
+// seed surface: a pool is created from the seed list, and a
+// cacheScope-tenant entry for a regulated tenant is rejected per-entry
+// without blocking the rest of the batch.
+func TestBootstrapCredentialPools(t *testing.T) {
+	tenants := tenantstore.NewMemory()
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme", ComplianceProfile: "none"})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "globex", ComplianceProfile: "hipaa"})
+	pools := credentialpoolstore.NewMemory()
+	router := admin.NewRouter(tenants, admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithCredentialPools(pools)
+
+	body := admin.BootstrapRequest{
+		CredentialPools: []admin.CredentialPoolPayload{
+			{TenantID: "acme", Name: "anthropic-shared", Provider: "anthropic_direct",
+				AssignmentStrategy: "least-loaded", CacheScope: "per-user"},
+			// Rejected: cacheScope tenant on a hipaa tenant.
+			{TenantID: "globex", Name: "bad-cache", Provider: "anthropic_direct", CacheScope: "tenant"},
+		},
+	}
+	buf, _ := json.Marshal(body)
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/bootstrap", bytes.NewReader(buf)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusMultiStatus {
+		t.Fatalf("status: got %d, want 207 (partial); body=%s", rr.Code, rr.Body.String())
+	}
+	var resp admin.BootstrapResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.CredentialPools.CreatedCount != 1 {
+		t.Errorf("createdCount = %d, want 1", resp.CredentialPools.CreatedCount)
+	}
+	if len(resp.CredentialPools.Errors) != 1 {
+		t.Errorf("errors = %+v, want one (the regulated cacheScope rejection)", resp.CredentialPools.Errors)
+	}
+	if _, err := pools.Get(context.Background(), "acme", "anthropic-shared"); err != nil {
+		t.Errorf("seeded pool not stored: %v", err)
+	}
+	if _, err := pools.Get(context.Background(), "globex", "bad-cache"); err == nil {
+		t.Error("rejected pool must not be persisted")
+	}
 }
 
 func TestBootstrapHappyPath(t *testing.T) {

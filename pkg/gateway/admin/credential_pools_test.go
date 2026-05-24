@@ -41,6 +41,83 @@ func validCredentialPool(tenant, name string) admin.CredentialPoolPayload {
 	}
 }
 
+// newCredentialPoolAdminWithTenants builds a pool admin router over a
+// tenant store seeded with the given (tenantID → complianceProfile)
+// map, so the §4.9 cacheScope compliance check has a tenant to read.
+func newCredentialPoolAdminWithTenants(t *testing.T, profiles map[string]string) (*admin.Router, *credentialpoolstore.Memory) {
+	t.Helper()
+	tenants := tenantstore.NewMemory()
+	for id, profile := range profiles {
+		if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: id, ComplianceProfile: profile}); err != nil {
+			t.Fatalf("seed tenant %q: %v", id, err)
+		}
+	}
+	store := credentialpoolstore.NewMemory()
+	router := admin.NewRouter(tenants, admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithCredentialPools(store)
+	return router, store
+}
+
+// TestCreateCredentialPoolRejectsTenantCacheScopeForRegulatedTenant is
+// the §4.9 cross-user-cache prohibition: cacheScope tenant on a hipaa /
+// fedramp tenant is rejected with COMPLIANCE_CROSS_USER_CACHE_PROHIBITED.
+func TestCreateCredentialPoolRejectsTenantCacheScopeForRegulatedTenant(t *testing.T) {
+	for _, profile := range []string{"hipaa", "fedramp"} {
+		router, store := newCredentialPoolAdminWithTenants(t, map[string]string{"acme": profile})
+		body := validCredentialPool("acme", "p-regulated")
+		body.CacheScope = "tenant"
+		rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools", body, withAdminPrincipal)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status %d, want 400; body %s", profile, rr.Code, rr.Body.String())
+		}
+		var env struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(rr.Body.Bytes(), &env)
+		if env.Error.Code != "COMPLIANCE_CROSS_USER_CACHE_PROHIBITED" {
+			t.Errorf("%s: error code = %q, want COMPLIANCE_CROSS_USER_CACHE_PROHIBITED", profile, env.Error.Code)
+		}
+		if _, err := store.Get(context.Background(), "acme", "p-regulated"); err == nil {
+			t.Errorf("%s: rejected pool must not be persisted", profile)
+		}
+	}
+}
+
+// TestCreateCredentialPoolAllowsTenantCacheScopeForUnregulatedTenant
+// confirms cacheScope tenant is accepted for a non-regulated tenant
+// (soc2 is not on the §4.9 cross-user-cache prohibition list).
+func TestCreateCredentialPoolAllowsTenantCacheScopeForUnregulatedTenant(t *testing.T) {
+	router, store := newCredentialPoolAdminWithTenants(t, map[string]string{"acme": "soc2"})
+	body := validCredentialPool("acme", "p-ok")
+	body.CacheScope = "tenant"
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools", body, withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status %d, want 201; body %s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "acme", "p-ok")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if row.CacheScope != "tenant" {
+		t.Errorf("stored cacheScope = %q, want tenant", row.CacheScope)
+	}
+}
+
+// TestCreateCredentialPoolRejectsInvalidCacheScope covers the §4.9
+// cacheScope enum at the admin layer.
+func TestCreateCredentialPoolRejectsInvalidCacheScope(t *testing.T) {
+	router, _ := newCredentialPoolAdminWithTenants(t, map[string]string{"acme": "none"})
+	body := validCredentialPool("acme", "p-bad")
+	body.CacheScope = "global"
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools", body, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400; body %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestCreateCredentialPool(t *testing.T) {
 	router, store := newCredentialPoolAdmin(t)
 	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools",

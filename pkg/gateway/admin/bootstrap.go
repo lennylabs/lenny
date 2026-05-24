@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -23,9 +24,10 @@ import (
 // existing one. Operations are best-effort — the handler returns an
 // aggregate result with per-section counts and per-entry errors.
 type BootstrapRequest struct {
-	Tenants  []TenantPayload  `json:"tenants,omitempty"`
-	Runtimes []RuntimePayload `json:"runtimes,omitempty"`
-	Users    []UserPayload    `json:"users,omitempty"`
+	Tenants         []TenantPayload         `json:"tenants,omitempty"`
+	Runtimes        []RuntimePayload        `json:"runtimes,omitempty"`
+	Users           []UserPayload           `json:"users,omitempty"`
+	CredentialPools []CredentialPoolPayload `json:"credentialPools,omitempty"`
 }
 
 // BootstrapResponse is the response envelope. CreatedCount tracks
@@ -33,9 +35,10 @@ type BootstrapRequest struct {
 // Errors carries per-entry failures (the handler does NOT stop on
 // the first error per §24.1 "all-or-nothing is not required").
 type BootstrapResponse struct {
-	Tenants  BootstrapSection `json:"tenants,omitempty"`
-	Runtimes BootstrapSection `json:"runtimes,omitempty"`
-	Users    BootstrapSection `json:"users,omitempty"`
+	Tenants         BootstrapSection `json:"tenants,omitempty"`
+	Runtimes        BootstrapSection `json:"runtimes,omitempty"`
+	Users           BootstrapSection `json:"users,omitempty"`
+	CredentialPools BootstrapSection `json:"credentialPools,omitempty"`
 }
 
 // BootstrapSection is the per-resource result.
@@ -78,11 +81,15 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 	if r.users != nil {
 		out.Users = r.upsertUsers(req, body.Users)
 	}
+	if r.credentialPools != nil {
+		out.CredentialPools = r.upsertCredentialPools(req, body.CredentialPools)
+	}
 
 	r.emit(req.Context(), principal, "admin.bootstrap.applied", "platform", map[string]any{
-		"tenants":  map[string]any{"created": out.Tenants.CreatedCount, "updated": out.Tenants.UpdatedCount, "errors": len(out.Tenants.Errors)},
-		"runtimes": map[string]any{"created": out.Runtimes.CreatedCount, "updated": out.Runtimes.UpdatedCount, "errors": len(out.Runtimes.Errors)},
-		"users":    map[string]any{"created": out.Users.CreatedCount, "updated": out.Users.UpdatedCount, "errors": len(out.Users.Errors)},
+		"tenants":         map[string]any{"created": out.Tenants.CreatedCount, "updated": out.Tenants.UpdatedCount, "errors": len(out.Tenants.Errors)},
+		"runtimes":        map[string]any{"created": out.Runtimes.CreatedCount, "updated": out.Runtimes.UpdatedCount, "errors": len(out.Runtimes.Errors)},
+		"users":           map[string]any{"created": out.Users.CreatedCount, "updated": out.Users.UpdatedCount, "errors": len(out.Users.Errors)},
+		"credentialPools": map[string]any{"created": out.CredentialPools.CreatedCount, "updated": out.CredentialPools.UpdatedCount, "errors": len(out.CredentialPools.Errors)},
 	})
 
 	status := http.StatusOK
@@ -100,7 +107,104 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 func anyFailures(out BootstrapResponse) bool {
 	return len(out.Tenants.Errors) > 0 ||
 		len(out.Runtimes.Errors) > 0 ||
-		len(out.Users.Errors) > 0
+		len(out.Users.Errors) > 0 ||
+		len(out.CredentialPools.Errors) > 0
+}
+
+// upsertCredentialPools applies the §4.9 bootstrap.credentialPools seed
+// list (§24.1 upsert semantics, keyed by (tenantId, name)). It enforces
+// the same §4.9 cacheScope contract the admin POST/PUT path enforces:
+// `cacheScope: tenant` is rejected for a regulated complianceProfile.
+//
+// spec: §4.9 lines 1697, 1711 — credential pools are part of the Helm
+// bootstrap seed surface, not only the live admin API.
+func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPayload) BootstrapSection {
+	out := BootstrapSection{}
+	for i, p := range in {
+		tenant := p.TenantID
+		if tenant == "" {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: "tenantId is required"})
+			continue
+		}
+		if !validAssignmentStrategies[p.AssignmentStrategy] {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name,
+				Message: "assignmentStrategy must be least-loaded, round-robin, or sticky-until-failure"})
+			continue
+		}
+		if err := r.bootstrapCacheScope(req, tenant, p.CacheScope); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
+		_, err := r.credentialPools.Get(req.Context(), tenant, p.Name)
+		if errors.Is(err, credentialpoolstore.ErrNotFound) {
+			pool := credentialpoolstore.CredentialPool{
+				TenantID:                   tenant,
+				Name:                       p.Name,
+				Provider:                   p.Provider,
+				Credentials:                toCredentials(p.Credentials),
+				AssignmentStrategy:         p.AssignmentStrategy,
+				MaxConcurrentSessions:      p.MaxConcurrentSessions,
+				CooldownOnRateLimitSeconds: p.CooldownOnRateLimitSeconds,
+				LeaseTTLSeconds:            p.LeaseTTLSeconds,
+				RenewBeforeBufferSeconds:   p.RenewBeforeBufferSeconds,
+				HostPatterns:               p.HostPatterns,
+				CacheScope:                 p.CacheScope,
+				CreatedAt:                  r.clock(),
+			}
+			pool.UpdatedAt = pool.CreatedAt
+			if err := r.credentialPools.Create(req.Context(), pool); err != nil {
+				out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+				continue
+			}
+			out.CreatedCount++
+			out.Applied = append(out.Applied, p.Name)
+			continue
+		}
+		if err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
+		_, err = r.credentialPools.Update(req.Context(), tenant, p.Name, func(pool *credentialpoolstore.CredentialPool) error {
+			pool.Provider = p.Provider
+			pool.Credentials = toCredentials(p.Credentials)
+			pool.AssignmentStrategy = p.AssignmentStrategy
+			pool.MaxConcurrentSessions = p.MaxConcurrentSessions
+			pool.CooldownOnRateLimitSeconds = p.CooldownOnRateLimitSeconds
+			pool.LeaseTTLSeconds = p.LeaseTTLSeconds
+			pool.RenewBeforeBufferSeconds = p.RenewBeforeBufferSeconds
+			pool.HostPatterns = p.HostPatterns
+			pool.CacheScope = p.CacheScope
+			pool.DeletedAt = time.Time{}
+			return nil
+		})
+		if err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
+		out.UpdatedCount++
+		out.Applied = append(out.Applied, p.Name)
+	}
+	return out
+}
+
+// bootstrapCacheScope enforces the §4.9 cacheScope contract outside the
+// HTTP response path so the bootstrap loop can record a per-entry error
+// instead of writing a status code. It mirrors validateCacheScope.
+func (r *Router) bootstrapCacheScope(req *http.Request, tenant, scope string) error {
+	if !validCacheScopes[scope] {
+		return errors.New("cacheScope must be per-user, per-session, or tenant")
+	}
+	if scope != "tenant" {
+		return nil
+	}
+	row, err := r.tenants.Get(req.Context(), tenant)
+	if err != nil {
+		return errors.New("cacheScope tenant requires a known tenant")
+	}
+	if crossUserCacheRegulatedProfiles[row.ComplianceProfile] {
+		return errors.New("cacheScope tenant is prohibited for a tenant with a regulated complianceProfile (COMPLIANCE_CROSS_USER_CACHE_PROHIBITED)")
+	}
+	return nil
 }
 
 func (r *Router) upsertTenants(req *http.Request, in []TenantPayload) BootstrapSection {

@@ -208,6 +208,12 @@ type Entry struct {
 	Similarity float64
 }
 
+// SemanticCache is the §4.9 / §12.2.1 contract name for a pluggable
+// semantic cache. It aliases Store so the spec's
+// ValidateSemanticCacheErasure(t, cache SemanticCache) signature reads
+// against the spec name while the package keeps Store internally.
+type SemanticCache = Store
+
 // Store is the §12.2.1 SemanticCache contract. Every method is
 // tenant-scoped: the tenant id in the Key (or the explicit tenantID
 // argument) is the §12.4 key-prefix isolation boundary.

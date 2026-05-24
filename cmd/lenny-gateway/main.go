@@ -308,6 +308,27 @@ func main() {
 		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
 	anthropicVersion := flag.String("anthropic-version", os.Getenv("LENNY_ANTHROPIC_VERSION"),
 		"default anthropic-version header the §4.9 LLM proxy injects when a request omits it. Empty rejects a request that omits the header.")
+	// §4.9 lines 1525-1526: the proxy dispatches each lease to the
+	// translator for its resolved provider. anthropic_direct and
+	// openai_direct carry safe global defaults and are always
+	// registered. aws_bedrock, vertex_ai, and azure_openai need
+	// per-deployment region/project/endpoint config, so each registers
+	// only when its config flag is set; a lease for an unconfigured
+	// provider is rejected with UPSTREAM_PROVIDER_UNSUPPORTED.
+	openaiBaseURL := flag.String("llm-openai-base-url", os.Getenv("LENNY_LLM_OPENAI_BASE_URL"),
+		"§4.9 openai_direct upstream base URL the LLM proxy targets. Empty selects https://api.openai.com.")
+	openaiOrg := flag.String("llm-openai-organization", os.Getenv("LENNY_LLM_OPENAI_ORGANIZATION"),
+		"§4.9 optional OpenAI-Organization header the LLM proxy adds to openai_direct requests.")
+	bedrockRegion := flag.String("llm-bedrock-region", os.Getenv("LENNY_LLM_BEDROCK_REGION"),
+		"§4.9 AWS region for the aws_bedrock translator (e.g. us-east-1). Empty leaves aws_bedrock out of the proxy translator registry.")
+	vertexRegion := flag.String("llm-vertex-region", os.Getenv("LENNY_LLM_VERTEX_REGION"),
+		"§4.9 Vertex AI region for the vertex_ai translator (e.g. us-east5). Required with --llm-vertex-project to register vertex_ai.")
+	vertexProject := flag.String("llm-vertex-project", os.Getenv("LENNY_LLM_VERTEX_PROJECT"),
+		"§4.9 GCP project id for the vertex_ai translator. Required with --llm-vertex-region to register vertex_ai.")
+	azureEndpoint := flag.String("llm-azure-endpoint", os.Getenv("LENNY_LLM_AZURE_ENDPOINT"),
+		"§4.9 Azure OpenAI resource base URL for the azure_openai translator. Required with --llm-azure-api-version to register azure_openai.")
+	azureAPIVersion := flag.String("llm-azure-api-version", os.Getenv("LENNY_LLM_AZURE_API_VERSION"),
+		"§4.9 Azure OpenAI api-version query value. Required with --llm-azure-endpoint to register azure_openai.")
 	minioEndpoint := flag.String("minio-endpoint", os.Getenv("LENNY_MINIO_ENDPOINT"),
 		"MinIO endpoint (host:port). When set, the §4.5 artifact store is the MinIO-backed blob store; the drain-readiness endpoint runs a real §12.5 bucket probe. When empty, an in-memory blob store is used.")
 	minioAccessKey := flag.String("minio-access-key", os.Getenv("LENNY_MINIO_ACCESS_KEY"),
@@ -2101,7 +2122,17 @@ func main() {
 	// propagator, so the admin router's §11.4 full_revoke fan-out and
 	// the emergency-revocation path revoke a user's leases onto the same
 	// list the proxy reads here.
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credCache, credDeny, policyChain)
+	llmTranslators := buildLLMTranslatorRegistry(llmTranslatorConfig{
+		anthropicVersion: *anthropicVersion,
+		openaiBaseURL:    *openaiBaseURL,
+		openaiOrg:        *openaiOrg,
+		bedrockRegion:    *bedrockRegion,
+		vertexRegion:     *vertexRegion,
+		vertexProject:    *vertexProject,
+		azureEndpoint:    *azureEndpoint,
+		azureAPIVersion:  *azureAPIVersion,
+	})
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain)
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control
@@ -2557,14 +2588,14 @@ type breakerRegistry interface {
 // the same instance the assignment wrote it to. denyList is the
 // per-replica credential deny list, owned by a propagator the caller
 // drives so revocations converge across replicas.
-func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain) *http.Server {
+func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain) *http.Server {
 	if addr == "" {
 		return nil
 	}
 	proxyMux := http.NewServeMux()
 	proxyMux.Handle("POST /llm-proxy/v1/messages", &llmproxy.Handler{
 		Leases:       leases,
-		Translator:   &llmproxy.AnthropicDirectTranslator{DefaultAnthropicVersion: anthropicVersion},
+		Translators:  translators,
 		Forwarder:    &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
 		Credentials:  creds,
 		DenyList:     denyList,
@@ -2575,6 +2606,41 @@ func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.Leas
 		Handler:           proxyMux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+}
+
+// llmTranslatorConfig carries the §4.9 per-provider translator config
+// the gateway reads from flags. anthropic_direct and openai_direct
+// register unconditionally with their defaults; the provider-config
+// dependent translators register only when their required fields are
+// set.
+type llmTranslatorConfig struct {
+	anthropicVersion string
+	openaiBaseURL    string
+	openaiOrg        string
+	bedrockRegion    string
+	vertexRegion     string
+	vertexProject    string
+	azureEndpoint    string
+	azureAPIVersion  string
+}
+
+// buildLLMTranslatorRegistry assembles the §4.9 provider→translator
+// registry the proxy dispatches on. spec: §4.9 lines 1525-1526.
+func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegistry {
+	translators := []llmproxy.Translator{
+		&llmproxy.AnthropicDirectTranslator{DefaultAnthropicVersion: c.anthropicVersion},
+		&llmproxy.OpenAIDirectTranslator{BaseURL: c.openaiBaseURL, Organization: c.openaiOrg},
+	}
+	if c.bedrockRegion != "" {
+		translators = append(translators, &llmproxy.AWSBedrockTranslator{Region: c.bedrockRegion})
+	}
+	if c.vertexRegion != "" && c.vertexProject != "" {
+		translators = append(translators, &llmproxy.VertexAITranslator{Region: c.vertexRegion, Project: c.vertexProject})
+	}
+	if c.azureEndpoint != "" && c.azureAPIVersion != "" {
+		translators = append(translators, &llmproxy.AzureOpenAITranslator{Endpoint: c.azureEndpoint, APIVersion: c.azureAPIVersion})
+	}
+	return llmproxy.NewTranslatorRegistry(translators...)
 }
 
 // newGatewayControlServer builds the §8.6 GatewayControl gRPC server

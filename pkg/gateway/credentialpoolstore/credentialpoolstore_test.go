@@ -28,6 +28,41 @@ func samplePool(tenant, name string) credentialpoolstore.CredentialPool {
 	}
 }
 
+// TestValidateCacheScope covers the §4.9 cacheScope enum on the pool
+// model: empty and the three named scopes are accepted, anything else
+// is rejected by Validate (and so by Create/Update on every backend).
+func TestValidateCacheScope(t *testing.T) {
+	for _, scope := range []string{"", "per-user", "per-session", "tenant"} {
+		p := samplePool("acme", "pool-cs")
+		p.CacheScope = scope
+		if err := credentialpoolstore.Validate(p); err != nil {
+			t.Errorf("Validate cacheScope %q: %v, want nil", scope, err)
+		}
+	}
+	p := samplePool("acme", "pool-bad")
+	p.CacheScope = "global"
+	if err := credentialpoolstore.Validate(p); err == nil {
+		t.Error("Validate accepted an out-of-enum cacheScope")
+	}
+}
+
+func TestCacheScopeRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	store := credentialpoolstore.NewMemory()
+	p := samplePool("acme", "pool-rt")
+	p.CacheScope = "tenant"
+	if err := store.Create(ctx, p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, "acme", "pool-rt")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CacheScope != "tenant" {
+		t.Errorf("CacheScope = %q, want tenant", got.CacheScope)
+	}
+}
+
 func TestCreateAndGet(t *testing.T) {
 	ctx := context.Background()
 	store := credentialpoolstore.NewMemory()

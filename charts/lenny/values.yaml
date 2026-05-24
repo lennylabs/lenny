@@ -1278,9 +1278,10 @@ bootstrap:
     # operatorTokenSecret is set and global.devMode is true.
     devTenant: platform
     devRoles: platform-admin
-  # tenants, runtimes, and users are the seed resources. Each list
-  # matches the POST /v1/admin/bootstrap BootstrapRequest schema. All
-  # three are optional and idempotent (upsert by name).
+  # tenants, runtimes, users, and credentialPools are the seed
+  # resources. Each list matches the POST /v1/admin/bootstrap
+  # BootstrapRequest schema. All are optional and idempotent (upsert by
+  # name; credentialPools by tenantId+name).
   #
   # Example seed (uncomment and adapt for a Day-1 install):
   #
@@ -1299,6 +1300,19 @@ bootstrap:
   #     email: alice@acme.com
   #     roles:
   #       - user
+  # credentialPools:
+  #   - tenantId: acme
+  #     name: anthropic-shared
+  #     provider: anthropic_direct
+  #     assignmentStrategy: least-loaded
+  #     # cacheScope opts the pool's semantic cache into a granularity.
+  #     # `tenant` (cross-user sharing) is rejected for a tenant with a
+  #     # regulated complianceProfile (hipaa, fedramp).
+  #     cacheScope: per-user
+  #     credentials:
+  #       - id: primary
+  #         secretRef: anthropic-api-key
   tenants: []
   runtimes: []
   users: []
+  credentialPools: []

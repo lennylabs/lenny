@@ -280,6 +280,14 @@ func TestPerSessionScopeIsolatesSessions(t *testing.T) {
 	}
 }
 
+// TestExportedErasureContractHelper proves the §4.9 exported
+// ValidateSemanticCacheErasure helper passes against the default
+// in-memory implementation. Pluggable implementations call the same
+// helper from their own test packages.
+func TestExportedErasureContractHelper(t *testing.T) {
+	semanticcache.ValidateSemanticCacheErasure(t, newCache())
+}
+
 func TestInvalidScopeRejected(t *testing.T) {
 	c := newCache()
 	ctx := context.Background()
