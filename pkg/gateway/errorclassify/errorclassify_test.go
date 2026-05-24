@@ -27,6 +27,11 @@ func TestClassifyKnownCodes(t *testing.T) {
 		// deliberate interceptor REJECT produces.
 		{"INTERCEPTOR_TIMEOUT", CategoryTransient, true},
 		{"INTERCEPTOR_REJECTED", CategoryPolicy, false},
+		// spec: §15.1 lines 1012-1013 — a deliberate LLM proxy
+		// interceptor REJECT is PERMANENT and non-retryable, distinct
+		// from the TRANSIENT INTERCEPTOR_TIMEOUT.
+		{"LLM_REQUEST_REJECTED", CategoryPermanent, false},
+		{"LLM_RESPONSE_REJECTED", CategoryPermanent, false},
 	}
 	for _, c := range cases {
 		t.Run(c.code, func(t *testing.T) {

@@ -59,6 +59,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
+	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/audit"
@@ -68,9 +70,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
-	"github.com/lennylabs/lenny/pkg/tenantkms"
-	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
-	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
@@ -87,6 +86,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
+	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpointretention/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectorcredstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
@@ -117,7 +118,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	evalpg "github.com/lennylabs/lenny/pkg/gateway/evalstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
@@ -135,6 +136,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/legalholdreconciler"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpruntimes"
@@ -148,39 +150,35 @@ import (
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
-	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpointretention/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/prestop"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
-	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
-	"github.com/lennylabs/lenny/pkg/ops/operations"
-	"github.com/lennylabs/lenny/pkg/gateway/legalholdreconciler"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/storagequota/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -198,11 +196,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
+	"github.com/lennylabs/lenny/pkg/ops/operations"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/tenantkms"
 	"github.com/lennylabs/lenny/pkg/tokensvcproxy"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -268,6 +268,8 @@ func main() {
 		"client private key for mTLS to external interceptor services.")
 	externalInterceptorCA := flag.String("external-interceptor-ca", os.Getenv("LENNY_EXTERNAL_INTERCEPTOR_CA"),
 		"CA bundle verifying external interceptor server certificates.")
+	guardrailsClassifier := flag.String("guardrails-classifier", os.Getenv("LENNY_GUARDRAILS_CLASSIFIER"),
+		"§4.8 GuardrailsInterceptor classifier registration (external RequestInterceptor spec: name=<n>,endpoint=<host:port>[,failPolicy=fail-open|fail-closed][,timeout=<dur>]). When empty the GuardrailsInterceptor is disabled. The priority is fixed at 400 and the phases at PreDelegation, PreLLMRequest, PostLLMResponse, and PostAgentOutput; any phase=/priority= in the spec is ignored.")
 	interceptorFailOpenMax := flag.Int("interceptor-fail-open-max-consecutive", envInt("LENNY_INTERCEPTOR_FAIL_OPEN_MAX_CONSECUTIVE", 10),
 		"§4.8 cumulative fail-open escalation ceiling: when a fail-open interceptor errors more than this many times in a rolling 5-minute window, the gateway auto-escalates it to fail-closed and emits interceptor.fail_open_escalated.")
 	agentNamespace := flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
@@ -806,9 +808,9 @@ func main() {
 	// via the adapter's AssignCredentials RPC and the §4.9 renewal
 	// worker tracks them for proactive rotation.
 	var (
-		credAssign        credassign.Assigner
-		inProcessAssign   *credassign.Service
-		tokenServiceConn  *grpc.ClientConn
+		credAssign       credassign.Assigner
+		inProcessAssign  *credassign.Service
+		tokenServiceConn *grpc.ClientConn
 	)
 	// §4.3 line 211 per-subsystem circuit breaker for Token Service
 	// calls. A degraded Token Service trips this breaker open after
@@ -1269,6 +1271,39 @@ func main() {
 			spec.Name, spec.Phase, spec.Endpoint, spec.Priority)
 	}
 
+	// §4.8 line 1070: the GuardrailsInterceptor is the built-in hook for
+	// a deployer-wired external content classifier, disabled by default.
+	// When --guardrails-classifier is set the gateway dials the
+	// classifier, wraps it at the fixed priority 400 across the guardrails
+	// phases, and registers it; the spec's phase/priority fields are
+	// ignored because §4.8 fixes them for this built-in.
+	if *guardrailsClassifier != "" {
+		spec, err := interceptor.ParseExternalSpec(*guardrailsClassifier + ",phase=" + string(interceptor.PhasePreLLMRequest))
+		if err != nil {
+			log.Fatalf("lenny-gateway: --guardrails-classifier: %v", err)
+		}
+		conn, err := dialInterceptor(spec.Endpoint, *externalInterceptorTLSCert, *externalInterceptorTLSKey, *externalInterceptorCA)
+		if err != nil {
+			log.Fatalf("lenny-gateway: dial guardrails classifier %q at %s: %v", spec.Name, spec.Endpoint, err)
+		}
+		classifier, err := interceptor.NewExternal(interceptor.ExternalConfig{
+			Name:       spec.Name,
+			Endpoint:   spec.Endpoint,
+			Priority:   policy.GuardrailsInterceptorPriority,
+			FailPolicy: spec.FailPolicy,
+			Timeout:    spec.Timeout,
+			Client:     interceptorv1.NewRequestInterceptorClient(conn),
+		})
+		if err != nil {
+			log.Fatalf("lenny-gateway: build guardrails classifier %q: %v", spec.Name, err)
+		}
+		if err := policy.RegisterGuardrails(policyChain, policy.NewGuardrailsInterceptor(classifier)); err != nil {
+			log.Fatalf("lenny-gateway: register GuardrailsInterceptor: %v", err)
+		}
+		log.Printf("lenny-gateway: §4.8 GuardrailsInterceptor enabled (classifier %q at %s, priority %d)",
+			spec.Name, spec.Endpoint, policy.GuardrailsInterceptorPriority)
+	}
+
 	// §4.1 Upload Handler subsystem boundary. The Subsystem gates the
 	// POST /v1/sessions/{id}/upload handler through a per-replica
 	// breaker and concurrency semaphore so a saturated upload queue
@@ -1307,10 +1342,10 @@ func main() {
 			metrics: gwMetrics,
 			emitter: opsEmitter,
 		},
-		Usage:           usage,
-		Users:           users,
-		Billing:         billing,
-		Tenants:         tenants,
+		Usage:                   usage,
+		Users:                   users,
+		Billing:                 billing,
+		Tenants:                 tenants,
 		StorageQuota:            storageCounter,
 		PodBinder:               podBinder,
 		PodRegistry:             podRegistry,
@@ -1330,12 +1365,12 @@ func main() {
 		// the §4.5 follow-on wiring lands a MinIO uploader). The
 		// close-hook fires from the gateway's session-completion path;
 		// the SessionLogStore drops or persists best-effort.
-		SessionLogHook: &sessionlogstore.CloseHook{Store: sessionLogs},
-		TreeArchive:             treeArchive,
-		Interceptors:            policyChain,
-		PolicyAuditSink:         policyAuditSink,
-		Clock:                   clockinject.Now,
-		UploadSubsystem:         uploadSubsystem,
+		SessionLogHook:  &sessionlogstore.CloseHook{Store: sessionLogs},
+		TreeArchive:     treeArchive,
+		Interceptors:    policyChain,
+		PolicyAuditSink: policyAuditSink,
+		Clock:           clockinject.Now,
+		UploadSubsystem: uploadSubsystem,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
@@ -2044,7 +2079,7 @@ func main() {
 	// propagator, so the admin router's §11.4 full_revoke fan-out and
 	// the emergency-revocation path revoke a user's leases onto the same
 	// list the proxy reads here.
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credCache, credDeny)
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credCache, credDeny, policyChain)
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control
@@ -2500,17 +2535,18 @@ type breakerRegistry interface {
 // the same instance the assignment wrote it to. denyList is the
 // per-replica credential deny list, owned by a propagator the caller
 // drives so revocations converge across replicas.
-func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList) *http.Server {
+func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain) *http.Server {
 	if addr == "" {
 		return nil
 	}
 	proxyMux := http.NewServeMux()
 	proxyMux.Handle("POST /llm-proxy/v1/messages", &llmproxy.Handler{
-		Leases:      leases,
-		Translator:  &llmproxy.AnthropicDirectTranslator{DefaultAnthropicVersion: anthropicVersion},
-		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
-		Credentials: creds,
-		DenyList:    denyList,
+		Leases:       leases,
+		Translator:   &llmproxy.AnthropicDirectTranslator{DefaultAnthropicVersion: anthropicVersion},
+		Forwarder:    &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
+		Credentials:  creds,
+		DenyList:     denyList,
+		Interceptors: chain,
 	})
 	return &http.Server{
 		Addr:              addr,

@@ -3,6 +3,7 @@
 package llmproxy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,12 +13,31 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 )
 
 // maxRequestBytes caps an inbound proxy request body. An LLM request
 // carries a prompt and conversation history; 8 MiB is generous and
 // bounds memory against a hostile or buggy agent pod.
 const maxRequestBytes = 8 << 20
+
+// §4.8 lines 1055-1056, §15.1 lines 1012-1013. A deliberate REJECT by
+// a PreLLMRequest interceptor returns LLM_REQUEST_REJECTED (HTTP 403);
+// a PostLLMResponse REJECT returns LLM_RESPONSE_REJECTED (HTTP 502).
+// Both are distinct from INTERCEPTOR_TIMEOUT (HTTP 503), which a
+// fail-closed interceptor error or timeout produces.
+const (
+	CodeLLMRequestRejected  = "LLM_REQUEST_REJECTED"
+	CodeLLMResponseRejected = "LLM_RESPONSE_REJECTED"
+)
+
+// PolicyChain is the §4.8 interceptor chain the proxy runs at the
+// PreLLMRequest and PostLLMResponse phases. *interceptor.Chain
+// satisfies it; a nil PolicyChain disables the LLM interceptor phases.
+type PolicyChain interface {
+	Run(ctx context.Context, req interceptor.Request) interceptor.Result
+	Len(phase interceptor.Phase) int
+}
 
 // CredentialResolver resolves a §4.9 credential lease to the real
 // upstream credential the proxy injects. §4.9 keeps real upstream keys
@@ -73,6 +93,12 @@ type Handler struct {
 	// Usage records the authoritative token usage of each proxied
 	// request. A nil Usage discards the counts.
 	Usage UsageRecorder
+	// Interceptors is the §4.8 policy chain run at the PreLLMRequest and
+	// PostLLMResponse phases (spec: §4.8 lines 1055-1056, 1075). A nil
+	// chain, or a phase with no registered interceptors, is a no-op:
+	// these phases fire only in proxy mode and only when interceptors
+	// are registered.
+	Interceptors PolicyChain
 	// Now returns the current time, checked against lease expiry. A nil
 	// Now selects time.Now.
 	Now func() time.Time
@@ -130,6 +156,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §4.8 line 1055 — run the PreLLMRequest chain over the request
+	// body before credential headers are injected. A REJECT returns
+	// LLM_REQUEST_REJECTED; a MODIFY rewrites the body the proxy then
+	// translates and forwards.
+	body, ok = h.runLLMPhase(r.Context(), w, lease, interceptor.PhasePreLLMRequest, body)
+	if !ok {
+		return
+	}
+
 	apiKey, ok := h.Credentials.UpstreamCredential(lease)
 	if !ok {
 		h.writeError(w, http.StatusBadGateway, "UPSTREAM_CREDENTIAL_UNAVAILABLE",
@@ -168,10 +203,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeTranslationError(w, err)
 		return
 	}
+
+	// spec: §4.8 line 1056 — run the PostLLMResponse chain over the
+	// translated response before it reaches the pod. A REJECT returns
+	// LLM_RESPONSE_REJECTED; a MODIFY rewrites the response body.
+	respBody, ok := h.runLLMPhase(r.Context(), w, lease, interceptor.PhasePostLLMResponse, resp.Body)
+	if !ok {
+		return
+	}
+
 	h.recordUsage(lease, resp.Usage)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(resp.Body)
+	_, _ = w.Write(respBody)
 }
 
 // serveStream runs the §4.9 streaming proxy path: it forwards the
@@ -192,6 +236,16 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, lease cred
 	}
 	defer resp.Body.Close()
 
+	// spec: §4.8 line 1056, 1075 — for a streaming response the
+	// PostLLMResponse chain fires once on the initial response metadata
+	// before any chunk is relayed; individual stream chunks are not
+	// intercepted. A REJECT before the headers are committed converts the
+	// stream into an LLM_RESPONSE_REJECTED error. A MODIFY does not apply
+	// to the streamed chunks (they pass through unmodified per spec).
+	if _, ok := h.runLLMPhase(r.Context(), w, lease, interceptor.PhasePostLLMResponse, streamMetadata(resp)); !ok {
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
@@ -202,6 +256,63 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, lease cred
 	}
 	usage, _ := RelayStream(w, resp.Body, flush)
 	h.recordUsage(lease, usage)
+}
+
+// runLLMPhase runs the §4.8 interceptor chain for an LLM proxy phase
+// over content. It returns the chain's (possibly MODIFY-rewritten)
+// content and ok == true when the chain admits the request. On a chain
+// REJECT it writes the phase's pod-facing error envelope and returns
+// ok == false so the caller stops. A nil chain or an empty phase chain
+// is a no-op that returns content unchanged.
+func (h *Handler) runLLMPhase(ctx context.Context, w http.ResponseWriter, lease credential.Lease, phase interceptor.Phase, content []byte) ([]byte, bool) {
+	if h.Interceptors == nil || h.Interceptors.Len(phase) == 0 {
+		return content, true
+	}
+	res := h.Interceptors.Run(ctx, interceptor.Request{
+		Phase:     phase,
+		SessionID: lease.SessionID,
+		TenantID:  lease.TenantID,
+		Content:   content,
+	})
+	switch res.Action {
+	case interceptor.ActionReject:
+		h.writeLLMRejection(w, phase, res)
+		return nil, false
+	case interceptor.ActionModify:
+		return res.ModifiedContent, true
+	default:
+		return content, true
+	}
+}
+
+// writeLLMRejection maps a REJECT from an LLM proxy phase to its
+// pod-facing HTTP status and error code (spec: §4.8 line 1056, §15.1
+// lines 1012-1013). A fail-closed interceptor timeout or error carries
+// CodeInterceptorTimeout and returns 503 INTERCEPTOR_TIMEOUT; a
+// deliberate PreLLMRequest REJECT returns 403 LLM_REQUEST_REJECTED and
+// a PostLLMResponse REJECT returns 502 LLM_RESPONSE_REJECTED.
+func (h *Handler) writeLLMRejection(w http.ResponseWriter, phase interceptor.Phase, res interceptor.Result) {
+	if res.Code == interceptor.CodeInterceptorTimeout {
+		h.writeError(w, http.StatusServiceUnavailable, interceptor.CodeInterceptorTimeout, res.Reason)
+		return
+	}
+	if phase == interceptor.PhasePreLLMRequest {
+		h.writeError(w, http.StatusForbidden, CodeLLMRequestRejected, res.Reason)
+		return
+	}
+	h.writeError(w, http.StatusBadGateway, CodeLLMResponseRejected, res.Reason)
+}
+
+// streamMetadata serializes the initial upstream streaming-response
+// metadata the PostLLMResponse chain inspects: the upstream HTTP status
+// and response headers. The full SSE stream is never buffered (spec:
+// §4.8 line 1075).
+func streamMetadata(resp *http.Response) []byte {
+	b, _ := json.Marshal(struct {
+		Status  int         `json:"status"`
+		Headers http.Header `json:"headers"`
+	}{Status: resp.StatusCode, Headers: resp.Header})
+	return b
 }
 
 // requestWantsStream reports whether an Anthropic Messages request body
