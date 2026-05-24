@@ -1286,7 +1286,7 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 - **Gap:** The PoolScalingController's `Reconciler`, `Runnable`, admission-retry tracker, circuit-breaker evaluator, and variant-roles resolver are fully implemented in `pkg/controller/poolscaling/` and have unit tests, but the production binary never starts the PSC. Consequently `SandboxTemplate.spec.*` and `SandboxWarmPool.spec.{minWarm,maxWarm,scalePolicy,sdkWarmDisabled}` and the `status.sdkWarmCircuitBreaker.*` carve-out are not actually reconciled from Postgres — pools created via the admin API exist only as Postgres rows, with no Kubernetes-side derived state, so the WarmPoolController has nothing to reconcile against. The §4.6.2 leader-election lease (`lenny-pool-scaling-controller`) is never created. The §4.6.3 `lenny-pool-config-validator`'s rule-set-2 authorization "PoolScalingController SA" never appears in any request because there is no such SA.
 - **Suggested resolution:** Wire a second `poolscaling.Runnable` into `cmd/lenny-controller/main.go` (or a dedicated `cmd/lenny-pool-scaling-controller/main.go` with its own deployment), constructing the `PoolConfigSource` against Postgres, the `DemandSource` against Prometheus, and the `DemotionRateSource` against the in-memory rolling window. Add a separate ctrl-runtime Manager (or use a second `manager.LeaderElectionRunnable` with `LeaderElectionID: lenny-pool-scaling-controller`). Create the PSC ServiceAccount in `charts/lenny/templates/controller-rbac.yaml` with the §4.6.3 RBAC grants (`create`/`update`/`delete` on `SandboxTemplate` and `SandboxWarmPool`, `get`/`patch` on the `status` subresource of `SandboxWarmPool` for the carve-out, `get`/`create`/`update` on `Leases` in `lenny-system`). Add the PSC Deployment to the Helm chart.
 
-### - [ ] F-4.6.2 — `lenny-pool-config-validator` does not enforce rule-set-2 userInfo authorization [High] — OPEN
+### - [x] F-4.6.2 — `lenny-pool-config-validator` does not enforce rule-set-2 userInfo authorization [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.2.10 — Both describe the pool-config-validator not applying the §4.6.3 userInfo authorization-denial rule on manual writes.
 
@@ -1294,6 +1294,7 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 - **Evidence:** `pkg/admission/pool_config_validator/validator.go` (full file) implements only the rule-set-1 semantic/budget invariants (minWarm/maxWarm, schedule windows, execution-mode acknowledgments). `grep -n "userInfo\|kubectl edit\|kubectl apply\|PoolScalingControllerSA" pkg/admission/pool_config_validator/` returns nothing. The webhook handler `pkg/admission/webhook/pool_config_validator.go` (per `cmd/lenny-webhook/main.go:84`) wraps this pure logic and inherits the same omission.
 - **Gap:** Any tenant or platform admin with `patch`/`update` RBAC on `SandboxTemplate.spec` or `SandboxWarmPool.spec` can manually edit those resources — their writes will be silently overwritten on the next PSC reconcile, but the spec mandates rejection at admission with a directive to use the admin API. This is the §4.6.3 defense-in-depth path that distinguishes "writes that must be ignored by PSC's overwrite-on-reconcile" from "writes that should never be admitted in the first place".
 - **Suggested resolution:** Add a rule-set-2 evaluator to `pool_config_validator.Decide` that takes the AdmissionRequest's `UserInfo.Username`, compares against the constant `PoolScalingControllerSA` (already defined in `pkg/admission/label_immutability/label_immutability.go:58`), and rejects any spec write that does not come from the PSC SA. Propagate the `UserInfo.Username` through the webhook adapter in `pkg/admission/webhook/pool_config_validator.go`. Add a test covering kubectl-style writes by other principals.
+- **Resolution:** Added `pcv.DecideAuthorization(username)` implementing rule set 2 (reusing `label_immutability.PoolScalingControllerSA`); rejects non-PSC writers with HTTP 403 `UNAUTHORIZED_POOL_CONFIG_WRITE` directing them to the admin API. The webhook adapter now runs rule set 1 first and rule set 2 (against `req.UserInfo.Username`) only on admit. Commit 9d100e44.
 
 ### - [ ] F-4.6.3 — No orphaned-SandboxClaim garbage-collection loop [High] — OPEN
 
@@ -25632,7 +25633,7 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.10 — 2-10  lenny-pool-config-validator does not apply the userInfo authorization-denial rule on manual writes [High] — OPEN
+### - [x] F-17.2.10 — 2-10  lenny-pool-config-validator does not apply the userInfo authorization-denial rule on manual writes [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.6.2 — Both describe the pool-config-validator not applying the §4.6.3 userInfo authorization-denial rule on manual writes.
 
@@ -25641,6 +25642,8 @@ The label key rendered by the chart and the label key the alert queries cannot m
 **Implementation:** `/Users/joan/projects/lenny/pkg/admission/webhook/pool_config_validator.go` lines 35–55 dispatches on Kind only; it does not read `req.UserInfo` at all (`grep "UserInfo" /Users/joan/projects/lenny/pkg/admission/pool_config_validator/*.go` returns no matches). Manual `kubectl apply` writes against `SandboxWarmPool` or `SandboxTemplate` pass through the webhook with the same semantic-budget check the controllers themselves are subject to; the controller-vs-operator distinction is invisible.
 
 **Impact:** The §4.6.3 field-ownership boundary the spec explicitly delegates to this webhook is unenforced. An operator with the right RBAC can write controller-owned fields, defeating the multi-writer ownership model.
+
+**Resolution:** Closed by F-4.6.2 (commit 9d100e44). The webhook adapter now reads `req.UserInfo.Username` and applies the rule-set-2 authorization-denial via `pcv.DecideAuthorization`.
 
 ---
 
