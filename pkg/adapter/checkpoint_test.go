@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -19,6 +20,49 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
+
+// fakeAborter records every AbortPartial invocation and optionally
+// fails so the adapter exercises the §4.4 line 248 orphan counter.
+type fakeAborter struct {
+	calls []string
+	err   error
+}
+
+func (f *fakeAborter) AbortPartial(_ context.Context, sessionID string) error {
+	f.calls = append(f.calls, sessionID)
+	return f.err
+}
+
+// fakeCheckpointMetrics records every metric increment so tests can
+// assert the §4.4 line 248 / 254 counters fire on the expected paths.
+type fakeCheckpointMetrics struct {
+	orphaned []string
+	exceeded []string
+}
+
+func (f *fakeCheckpointMetrics) IncCheckpointOrphanedObjects(pool, trigger string) {
+	f.orphaned = append(f.orphaned, pool+"|"+trigger)
+}
+
+func (f *fakeCheckpointMetrics) IncCheckpointSizeExceeded(pool, level string) {
+	f.exceeded = append(f.exceeded, pool+"|"+level)
+}
+
+// fakeCheckpointEvents records every checkpoint.skipped publish so
+// tests can assert the §4.4 line 254 event-emit contract.
+type fakeCheckpointEvents struct {
+	sessionID string
+	reason    string
+	fields    map[string]any
+	calls     int32
+}
+
+func (f *fakeCheckpointEvents) EmitCheckpointSkipped(_ context.Context, sessionID, reason string, fields map[string]any) {
+	atomic.AddInt32(&f.calls, 1)
+	f.sessionID = sessionID
+	f.reason = reason
+	f.fields = fields
+}
 
 // spec: §4.4 / §4.7 — the adapter Checkpoint RPC snapshots the session
 // workspace and stores it in the artifact store.
@@ -179,6 +223,174 @@ func TestCheckpointSurfacesSinkError(t *testing.T) {
 	_, err := s.Checkpoint(context.Background(), checkpointReq("sess-1"))
 	if status.Code(err) != codes.Internal {
 		t.Errorf("code = %v, want Internal when the checkpoint sink fails", status.Code(err))
+	}
+}
+
+// TestCheckpointAbortCleanupRunsOnSinkFailure asserts the §4.4 line
+// 248 abort-cleanup invocation: every failed checkpoint MUST trigger
+// the configured CheckpointAborter so partially-uploaded MinIO
+// objects are removed for the session.
+func TestCheckpointAbortCleanupRunsOnSinkFailure(t *testing.T) {
+	s, _ := startedServer(t)
+	s.Checkpoints = &fakeCheckpointSink{err: errors.New("minio unreachable")}
+	aborter := &fakeAborter{}
+	s.CheckpointAborter = aborter
+
+	_, err := s.Checkpoint(context.Background(), checkpointReq("sess-1"))
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("Checkpoint code = %v, want Internal on sink failure", status.Code(err))
+	}
+	if len(aborter.calls) != 1 || aborter.calls[0] != "sess-1" {
+		t.Errorf("AbortPartial calls = %v, want [sess-1]", aborter.calls)
+	}
+}
+
+// TestCheckpointAbortCleanupBumpsOrphanedCounterOnDeleteFailure asserts
+// the §4.4 line 248 orphan-counter increment when AbortPartial cannot
+// remove the partial objects (e.g., MinIO is unreachable).
+func TestCheckpointAbortCleanupBumpsOrphanedCounterOnDeleteFailure(t *testing.T) {
+	s, _ := startedServer(t)
+	s.Checkpoints = &fakeCheckpointSink{err: errors.New("minio unreachable")}
+	s.CheckpointAborter = &fakeAborter{err: errors.New("delete refused")}
+	metrics := &fakeCheckpointMetrics{}
+	s.CheckpointMetrics = metrics
+	s.CheckpointPoolLabel = "claude-code-pool"
+	s.CheckpointTriggerLabel = "periodic"
+
+	_, _ = s.Checkpoint(context.Background(), checkpointReq("sess-1"))
+	if len(metrics.orphaned) != 1 || metrics.orphaned[0] != "claude-code-pool|periodic" {
+		t.Errorf("orphaned counter = %v, want [claude-code-pool|periodic]", metrics.orphaned)
+	}
+}
+
+// TestCheckpointAbortCleanupSkippedOnSuccess asserts the abort
+// pathway only fires on failure — a successful checkpoint never
+// invokes AbortPartial.
+func TestCheckpointAbortCleanupSkippedOnSuccess(t *testing.T) {
+	s, _ := startedServer(t)
+	s.Checkpoints = &fakeCheckpointSink{id: "ckpt-ok"}
+	aborter := &fakeAborter{}
+	s.CheckpointAborter = aborter
+
+	if _, err := s.Checkpoint(context.Background(), checkpointReq("sess-1")); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(aborter.calls) != 0 {
+		t.Errorf("AbortPartial called %d times on success, want 0", len(aborter.calls))
+	}
+}
+
+// TestCheckpointSizePreCheckRejectsOversizedWorkspace asserts the
+// §4.4 line 254 pre-checkpoint workspace-size probe: an oversized
+// workspace returns FailedPrecondition without quiescing the runtime.
+func TestCheckpointSizePreCheckRejectsOversizedWorkspace(t *testing.T) {
+	s, _ := startedServer(t)
+	s.Checkpoints = &fakeCheckpointSink{id: "ckpt-1"}
+	s.WorkspaceSizeLimitBytes = 100
+	s.WorkspaceSize = func(string) (int64, error) { return 200, nil }
+	metrics := &fakeCheckpointMetrics{}
+	s.CheckpointMetrics = metrics
+	events := &fakeCheckpointEvents{}
+	s.CheckpointEvents = events
+	s.CheckpointPoolLabel = "test-pool"
+	s.CheckpointLevelLabel = "full"
+
+	_, err := s.Checkpoint(context.Background(), checkpointReq("sess-1"))
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("Checkpoint code = %v, want FailedPrecondition for size_exceeded", status.Code(err))
+	}
+	if len(metrics.exceeded) != 1 || metrics.exceeded[0] != "test-pool|full" {
+		t.Errorf("size_exceeded counter = %v, want [test-pool|full]", metrics.exceeded)
+	}
+	if events.reason != "workspace_size_limit" {
+		t.Errorf("event reason = %q, want workspace_size_limit", events.reason)
+	}
+	if events.sessionID != "sess-1" {
+		t.Errorf("event sessionID = %q, want sess-1", events.sessionID)
+	}
+	if events.fields["workspace_bytes"] != int64(200) || events.fields["limit_bytes"] != int64(100) {
+		t.Errorf("event fields = %+v, want workspace_bytes=200, limit_bytes=100", events.fields)
+	}
+}
+
+// TestCheckpointSizePreCheckPassesWithinLimit asserts that a
+// workspace within the limit proceeds through the normal
+// archive-and-store path.
+func TestCheckpointSizePreCheckPassesWithinLimit(t *testing.T) {
+	s, _ := startedServer(t)
+	sink := &fakeCheckpointSink{id: "ckpt-ok"}
+	s.Checkpoints = sink
+	s.WorkspaceSizeLimitBytes = 1 << 30
+	s.WorkspaceSize = func(string) (int64, error) { return 256, nil }
+	metrics := &fakeCheckpointMetrics{}
+	s.CheckpointMetrics = metrics
+	events := &fakeCheckpointEvents{}
+	s.CheckpointEvents = events
+
+	resp, err := s.Checkpoint(context.Background(), checkpointReq("sess-1"))
+	if err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if resp.GetCheckpointId() != "ckpt-ok" {
+		t.Errorf("checkpoint id = %q, want ckpt-ok", resp.GetCheckpointId())
+	}
+	if len(metrics.exceeded) != 0 {
+		t.Errorf("size_exceeded counter fired %d times, want 0", len(metrics.exceeded))
+	}
+	if atomic.LoadInt32(&events.calls) != 0 {
+		t.Errorf("checkpoint.skipped event emitted %d times, want 0", events.calls)
+	}
+}
+
+// TestCheckpointSizePreCheckSkippedWhenUnconfigured asserts the probe
+// is a no-op when no limit or no size function is set — the kubelet
+// emptyDir.sizeLimit is the backstop in that case.
+func TestCheckpointSizePreCheckSkippedWhenUnconfigured(t *testing.T) {
+	s, _ := startedServer(t)
+	s.Checkpoints = &fakeCheckpointSink{id: "ckpt-ok"}
+	// No WorkspaceSize, no WorkspaceSizeLimitBytes — probe disabled.
+	metrics := &fakeCheckpointMetrics{}
+	s.CheckpointMetrics = metrics
+
+	if _, err := s.Checkpoint(context.Background(), checkpointReq("sess-1")); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(metrics.exceeded) != 0 {
+		t.Errorf("size_exceeded fired with no limit configured = %v", metrics.exceeded)
+	}
+}
+
+// TestCheckpointSizePreCheckIgnoresStatError asserts a probe stat
+// failure does not block the checkpoint — the workspace is checkpointed
+// anyway, with the kubelet emptyDir.sizeLimit as the backstop.
+func TestCheckpointSizePreCheckIgnoresStatError(t *testing.T) {
+	s, _ := startedServer(t)
+	s.Checkpoints = &fakeCheckpointSink{id: "ckpt-ok"}
+	s.WorkspaceSizeLimitBytes = 100
+	s.WorkspaceSize = func(string) (int64, error) {
+		return 0, errors.New("stat refused")
+	}
+	if _, err := s.Checkpoint(context.Background(), checkpointReq("sess-1")); err != nil {
+		t.Errorf("Checkpoint: %v, want stat error to be ignored", err)
+	}
+}
+
+// TestCheckpointAbortNotInvokedOnSizeExceededReject asserts the abort
+// path is NOT invoked on a size_exceeded reject — there were never
+// any partial uploads to clean up because quiescence never ran.
+func TestCheckpointAbortNotInvokedOnSizeExceededReject(t *testing.T) {
+	s, _ := startedServer(t)
+	s.Checkpoints = &fakeCheckpointSink{id: "ckpt-1"}
+	s.WorkspaceSizeLimitBytes = 100
+	s.WorkspaceSize = func(string) (int64, error) { return 200, nil }
+	aborter := &fakeAborter{}
+	s.CheckpointAborter = aborter
+	s.CheckpointEvents = &fakeCheckpointEvents{}
+	s.CheckpointMetrics = &fakeCheckpointMetrics{}
+
+	_, _ = s.Checkpoint(context.Background(), checkpointReq("sess-1"))
+	if len(aborter.calls) != 0 {
+		t.Errorf("AbortPartial called %d times on size-reject, want 0 (no quiescence ran)", len(aborter.calls))
 	}
 }
 
