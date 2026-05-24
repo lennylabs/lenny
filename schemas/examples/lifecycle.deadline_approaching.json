@@ -1,0 +1,5 @@
+{
+  "type": "deadline_approaching",
+  "remainingMs": 30000,
+  "trigger": "session_age"
+}

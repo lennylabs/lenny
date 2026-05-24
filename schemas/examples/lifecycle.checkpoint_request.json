@@ -1,6 +1,5 @@
 {
   "type": "checkpoint_request",
-  "checkpoint_id": "ckpt_01HX9F0YWXKK0V7QZ7G6P3R5JM",
-  "deadline_ms": 5000,
-  "level": "full"
+  "checkpointId": "ckpt_01HX9F0YWXKK0V7QZ7G6P3R5JM",
+  "deadlineMs": 5000
 }

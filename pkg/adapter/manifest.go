@@ -115,9 +115,18 @@ func newMCPNonce() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// WriteManifest writes m as adapter-manifest.json into dir. The file is
-// created mode 0644 so the agent-container runtime, which runs as a
-// different user, can read it.
+// ManifestFileMode is the adapter-manifest permission bits: read/write
+// for the owning adapter UID and read for the lenny-cred-readers group,
+// no access for other UIDs. The agent-container runtime runs as a
+// distinct UID (§13.1) but shares the lenny-cred-readers supplementary
+// group via the pod fsGroup, so 0o640 lets the runtime read the manifest
+// over its /run/lenny read-only mount (spec: §4.7 line 846) without
+// exposing the §15.4.3 mcpNonce to any other UID in the pod. The mode
+// mirrors the credential file's group-read boundary (credfile.FileMode).
+const ManifestFileMode = 0o640
+
+// WriteManifest writes m as adapter-manifest.json into dir at
+// ManifestFileMode.
 func WriteManifest(dir string, m Manifest) error {
 	// §4.7 / §15: connectorServers, runtimeMcpServers, and
 	// adapterLocalTools are "never absent" — a nil slice must serialize
@@ -135,8 +144,16 @@ func WriteManifest(dir string, m Manifest) error {
 	if err != nil {
 		return fmt.Errorf("adapter: encode manifest: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ManifestFilename), b, 0o644); err != nil {
+	path := filepath.Join(dir, ManifestFilename)
+	if err := os.WriteFile(path, b, ManifestFileMode); err != nil {
 		return fmt.Errorf("adapter: write manifest: %w", err)
+	}
+	// os.WriteFile honors the process umask, so an inherited umask could
+	// strip the group-read bit the agent runtime needs. Chmod the file to
+	// the exact mode to guarantee the §13.1 group-read boundary regardless
+	// of umask.
+	if err := os.Chmod(path, ManifestFileMode); err != nil {
+		return fmt.Errorf("adapter: chmod manifest: %w", err)
 	}
 	return nil
 }

@@ -28,6 +28,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/lifecycle"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
@@ -97,6 +98,10 @@ type Reconciler struct {
 	// (--max-concurrent-reconciles, default 1). Zero or negative selects
 	// the controller-runtime default of 1.
 	MaxConcurrentReconciles int
+	// QueueFactory, when set, supplies the §4.6.1 bounded,
+	// depth-instrumented reconciliation work queue (--workqueue-max-depth).
+	// A nil factory uses the controller-runtime default queue.
+	QueueFactory controllermetrics.QueueFactory
 }
 
 // EgressCaptureUpstreamAnnotation is the §12.9.8 opt-in annotation an
@@ -412,6 +417,9 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	opts := controller.Options{}
 	if r.MaxConcurrentReconciles > 0 {
 		opts.MaxConcurrentReconciles = r.MaxConcurrentReconciles
+	}
+	if r.QueueFactory != nil {
+		opts.NewQueue = r.QueueFactory
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lennyv1.Sandbox{}).

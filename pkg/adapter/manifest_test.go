@@ -30,6 +30,30 @@ func TestNewMCPNonce(t *testing.T) {
 	}
 }
 
+// spec: §4.7 line 846 — the manifest is mounted read-only into the
+// agent container; the file must be group-readable (so the runtime's
+// distinct UID can read it via the shared lenny-cred-readers fsGroup)
+// but never world-readable, since it carries the §15.4.3 mcpNonce.
+func TestWriteManifestModeIsGroupReadableNotWorldReadable(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, SessionID: "sess-mode"}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(dir, ManifestFilename))
+	if err != nil {
+		t.Fatalf("stat manifest: %v", err)
+	}
+	if got := info.Mode().Perm(); got != ManifestFileMode {
+		t.Fatalf("manifest mode = %#o, want %#o", got, ManifestFileMode)
+	}
+	if info.Mode().Perm()&0o004 != 0 {
+		t.Errorf("manifest is world-readable (%#o); the mcpNonce must not be exposed to other UIDs", info.Mode().Perm())
+	}
+	if info.Mode().Perm()&0o040 == 0 {
+		t.Errorf("manifest is not group-readable (%#o); the agent runtime reads it via the shared fsGroup", info.Mode().Perm())
+	}
+}
+
 func TestWriteSessionManifestAdvertisesLocalTools(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}

@@ -1,6 +1,5 @@
 {
   "type": "lifecycle_capabilities",
-  "capabilities": ["checkpoint", "interrupt", "credential_rotation", "deadline_signal"],
-  "checkpoint_quiesce_deadline_ms": 5000,
-  "interrupt_deadline_ms": 2000
+  "protocolVersion": "1.0",
+  "capabilities": ["checkpoint", "interrupt", "credential_rotation", "deadline_signal"]
 }

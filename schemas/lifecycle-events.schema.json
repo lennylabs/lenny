@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lenny.dev/schemas/lifecycle-events.json",
   "title": "Lenny runtime lifecycle events",
-  "description": "JSON envelopes exchanged on the gateway↔adapter lifecycle channel. The channel itself is the LifecycleChannel bidirectional stream defined in lenny-adapter.proto; the proto carries each envelope as opaque bytes. This schema is the source of truth for the envelope payloads. See spec/15_external-api-surface.md §15.4 and spec/4_system-components.md §4.7.",
+  "description": "JSON envelopes exchanged on the §4.7 adapter↔runtime lifecycle channel, a Unix socket distinct from the stdin/stdout JSONL message channel (schemas/lenny-adapter-jsonl.schema.json). Field names are camelCase to match the §4.7 message-schema table and the adapter wire (pkg/adapter/lifecyclechannel.go). The task_complete, task_ready, and task_complete_acknowledged envelopes here are the intra-pod task-lifecycle signals; the same-named envelopes in the JSONL schema are the separate adapter→gateway control surface. See spec/04_system-components.md §4.7 and spec/15_external-api-surface.md §15.4.",
   "oneOf": [
     { "$ref": "#/$defs/lifecycle_capabilities" },
     { "$ref": "#/$defs/lifecycle_support" },
@@ -12,17 +12,23 @@
     { "$ref": "#/$defs/interrupt_request" },
     { "$ref": "#/$defs/interrupt_acknowledged" },
     { "$ref": "#/$defs/credentials_rotated" },
-    { "$ref": "#/$defs/deadline_signal" },
+    { "$ref": "#/$defs/credentials_acknowledged" },
     { "$ref": "#/$defs/deadline_approaching" },
-    { "$ref": "#/$defs/draining" }
+    { "$ref": "#/$defs/terminate" },
+    { "$ref": "#/$defs/task_complete" },
+    { "$ref": "#/$defs/task_ready" },
+    { "$ref": "#/$defs/task_complete_acknowledged" },
+    { "$ref": "#/$defs/llm_request_started" },
+    { "$ref": "#/$defs/llm_request_completed" }
   ],
   "$defs": {
     "lifecycle_capabilities": {
       "title": "lifecycle_capabilities",
-      "description": "Inbound (adapter → runtime), first message after the lifecycle channel opens. Advertises the set of lifecycle event types the adapter supports for this session. The runtime replies with lifecycle_support naming the subset it implements.",
+      "description": "Adapter → runtime, first message after the lifecycle channel opens. Advertises the lifecycle capabilities the adapter supports for this session. The runtime replies with lifecycle_support. task_lifecycle is offered only on task-mode pods.",
       "type": "object",
       "properties": {
         "type": { "const": "lifecycle_capabilities" },
+        "protocolVersion": { "type": "string", "minLength": 1 },
         "capabilities": {
           "type": "array",
           "items": {
@@ -31,33 +37,22 @@
               "interrupt",
               "credential_rotation",
               "deadline_signal",
-              "task_complete",
-              "draining"
+              "task_lifecycle"
             ]
           },
           "uniqueItems": true
-        },
-        "checkpoint_quiesce_deadline_ms": {
-          "type": "integer",
-          "minimum": 100,
-          "description": "Time the adapter will wait between checkpoint_request and checkpoint_ready before treating the runtime as unresponsive."
-        },
-        "interrupt_deadline_ms": {
-          "type": "integer",
-          "minimum": 100,
-          "description": "Time the adapter will wait between interrupt_request and interrupt_acknowledged before escalating to SIGTERM."
         }
       },
-      "required": ["type", "capabilities"],
+      "required": ["type", "protocolVersion", "capabilities"],
       "additionalProperties": false
     },
     "lifecycle_support": {
       "title": "lifecycle_support",
-      "description": "Outbound (runtime → adapter), reply to lifecycle_capabilities. The runtime declares the subset of advertised capabilities it implements. The adapter records this on the LifecycleChannel handshake (§15.4.6 Full-level test: lifecycle channel opening).",
+      "description": "Runtime → adapter, reply to lifecycle_capabilities. The runtime declares the subset of advertised capabilities it implements.",
       "type": "object",
       "properties": {
         "type": { "const": "lifecycle_support" },
-        "supported": {
+        "capabilities": {
           "type": "array",
           "items": {
             "enum": [
@@ -65,133 +60,179 @@
               "interrupt",
               "credential_rotation",
               "deadline_signal",
-              "task_complete",
-              "draining"
+              "task_lifecycle"
             ]
           },
           "uniqueItems": true
-        },
-        "runtime_version": {
-          "type": "string",
-          "description": "Free-form version string used in the §16.4 runtime_version log field and the §15.4.6 conformance report."
         }
       },
-      "required": ["type", "supported"],
+      "required": ["type", "capabilities"],
       "additionalProperties": false
     },
     "checkpoint_request": {
       "title": "checkpoint_request",
-      "description": "Inbound (adapter → runtime). Asks the runtime to reach a quiescent state so the adapter can take a consistent snapshot. The runtime replies with checkpoint_ready when output has been flushed and no in-flight tool calls are pending. See spec §15.4.3 Full level checkpoint/restore.",
+      "description": "Adapter → runtime. Asks the runtime to quiesce so the adapter can take a consistent snapshot. The runtime must reply with checkpoint_ready within deadlineMs.",
       "type": "object",
       "properties": {
         "type": { "const": "checkpoint_request" },
-        "checkpoint_id": { "type": "string", "minLength": 1 },
-        "deadline_ms": { "type": "integer", "minimum": 100 },
-        "level": { "enum": ["basic", "standard", "full"] }
+        "checkpointId": { "type": "string", "minLength": 1 },
+        "deadlineMs": { "type": "integer", "minimum": 100 }
       },
-      "required": ["type", "checkpoint_id", "deadline_ms"],
+      "required": ["type", "checkpointId", "deadlineMs"],
       "additionalProperties": false
     },
     "checkpoint_ready": {
       "title": "checkpoint_ready",
-      "description": "Outbound (runtime → adapter). The runtime has quiesced and is holding new work until checkpoint_complete arrives.",
+      "description": "Runtime → adapter. The runtime has quiesced and is ready for the snapshot.",
       "type": "object",
       "properties": {
         "type": { "const": "checkpoint_ready" },
-        "checkpoint_id": { "type": "string", "minLength": 1 }
+        "checkpointId": { "type": "string", "minLength": 1 }
       },
-      "required": ["type", "checkpoint_id"],
+      "required": ["type", "checkpointId"],
       "additionalProperties": false
     },
     "checkpoint_complete": {
       "title": "checkpoint_complete",
-      "description": "Inbound (adapter → runtime). Releases the runtime from quiescence. The runtime resumes normal processing.",
+      "description": "Adapter → runtime. Confirms the snapshot upload result and releases the runtime from quiescence. reason is present when status is failed.",
       "type": "object",
       "properties": {
         "type": { "const": "checkpoint_complete" },
-        "checkpoint_id": { "type": "string", "minLength": 1 },
-        "outcome": { "enum": ["success", "failed", "aborted"] }
+        "checkpointId": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["ok", "failed"] },
+        "reason": { "type": "string" }
       },
-      "required": ["type", "checkpoint_id", "outcome"],
+      "required": ["type", "checkpointId", "status"],
       "additionalProperties": false
     },
     "interrupt_request": {
       "title": "interrupt_request",
-      "description": "Inbound (adapter → runtime). Asks the runtime to reach a safe stop point and acknowledge with interrupt_acknowledged within the deadline. The runtime SHOULD stop producing new output and flush any pending output before acknowledging.",
+      "description": "Adapter → runtime. Asks the runtime to reach a safe stop point and acknowledge with interrupt_acknowledged within deadlineMs.",
       "type": "object",
       "properties": {
         "type": { "const": "interrupt_request" },
-        "interrupt_id": { "type": "string", "minLength": 1 },
-        "deadline_ms": { "type": "integer", "minimum": 100 },
-        "reason": { "type": "string" }
+        "interruptId": { "type": "string", "minLength": 1 },
+        "deadlineMs": { "type": "integer", "minimum": 100 }
       },
-      "required": ["type", "interrupt_id", "deadline_ms"],
+      "required": ["type", "interruptId", "deadlineMs"],
       "additionalProperties": false
     },
     "interrupt_acknowledged": {
       "title": "interrupt_acknowledged",
-      "description": "Outbound (runtime → adapter). The runtime has reached a safe stop point. The original interrupt_id is echoed.",
+      "description": "Runtime → adapter. The runtime has reached a safe stop point. The original interruptId is echoed.",
       "type": "object",
       "properties": {
         "type": { "const": "interrupt_acknowledged" },
-        "interrupt_id": { "type": "string", "minLength": 1 }
+        "interruptId": { "type": "string", "minLength": 1 }
       },
-      "required": ["type", "interrupt_id"],
+      "required": ["type", "interruptId"],
       "additionalProperties": false
     },
     "credentials_rotated": {
       "title": "credentials_rotated",
-      "description": "Inbound (adapter → runtime). The adapter has updated the credentials available to the runtime (typically by rewriting the adapter manifest). Runtimes that declared credential_rotation in lifecycle_support MUST re-read credentials from the manifest path or env before serving the next request.",
+      "description": "Adapter → runtime. New credentials have been written to credentialsPath. The runtime must rebind and reply with credentials_acknowledged.",
       "type": "object",
       "properties": {
         "type": { "const": "credentials_rotated" },
-        "lease_id": { "type": "string", "minLength": 1 },
-        "trigger": {
-          "enum": [
-            "proactive_renewal",
-            "fault_rate_limited",
-            "fault_auth_expired",
-            "fault_provider_unavailable",
-            "emergency_revocation",
-            "user_credential_rotated",
-            "user_credential_revoked"
-          ]
-        }
+        "provider": { "type": "string", "minLength": 1 },
+        "credentialsPath": { "type": "string", "minLength": 1 },
+        "leaseId": { "type": "string", "minLength": 1 }
       },
-      "required": ["type", "lease_id", "trigger"],
+      "required": ["type", "provider", "credentialsPath", "leaseId"],
       "additionalProperties": false
     },
-    "deadline_signal": {
-      "title": "deadline_signal",
-      "description": "Inbound (adapter → runtime). The session deadline has been reached. The runtime SHOULD emit a final response (possibly with error.code=\"DEADLINE_EXCEEDED\") and exit cleanly before deadline_ms elapses.",
+    "credentials_acknowledged": {
+      "title": "credentials_acknowledged",
+      "description": "Runtime → adapter. The runtime has rebound to the new credential. The adapter releases queued LLM requests with the new credential.",
       "type": "object",
       "properties": {
-        "type": { "const": "deadline_signal" },
-        "deadline_ms": { "type": "integer", "minimum": 100 }
+        "type": { "const": "credentials_acknowledged" },
+        "leaseId": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 }
       },
-      "required": ["type", "deadline_ms"],
+      "required": ["type", "leaseId", "provider"],
       "additionalProperties": false
     },
     "deadline_approaching": {
       "title": "deadline_approaching",
-      "description": "Inbound (adapter → runtime). The session deadline is within deadline_warning_ms of expiry. The runtime SHOULD wrap up in-flight work and prepare a final response.",
+      "description": "Adapter → runtime. Advance warning before forced termination. remainingMs is the time left until session expiry or budget exhaustion.",
       "type": "object",
       "properties": {
         "type": { "const": "deadline_approaching" },
-        "remaining_ms": { "type": "integer", "minimum": 0 }
+        "remainingMs": { "type": "integer", "minimum": 0 },
+        "trigger": { "enum": ["session_age", "budget", "idle"] }
       },
-      "required": ["type", "remaining_ms"],
+      "required": ["type", "remainingMs", "trigger"],
       "additionalProperties": false
     },
-    "draining": {
-      "title": "draining",
-      "description": "Inbound (adapter → runtime). The pod is entering a graceful drain. The runtime SHOULD complete in-flight work and avoid starting new tool calls. A shutdown stdin message follows when the drain budget expires.",
+    "terminate": {
+      "title": "terminate",
+      "description": "Adapter → runtime. Graceful shutdown signal. The runtime must exit within deadlineMs; the adapter sends SIGTERM on timeout. Always means process exit, never between-task signaling.",
       "type": "object",
       "properties": {
-        "type": { "const": "draining" },
-        "drain_budget_ms": { "type": "integer", "minimum": 100 }
+        "type": { "const": "terminate" },
+        "deadlineMs": { "type": "integer", "minimum": 100 },
+        "reason": { "enum": ["session_complete", "budget_exhausted", "eviction", "operator"] }
       },
-      "required": ["type", "drain_budget_ms"],
+      "required": ["type", "deadlineMs", "reason"],
+      "additionalProperties": false
+    },
+    "task_complete": {
+      "title": "task_complete",
+      "description": "Adapter → runtime, task-mode lifecycle signal. The current task is finished; the runtime releases task-specific resources and replies with task_complete_acknowledged. The runtime does not exit.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "task_complete" },
+        "taskId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "taskId"],
+      "additionalProperties": false
+    },
+    "task_ready": {
+      "title": "task_ready",
+      "description": "Adapter → runtime, task-mode lifecycle signal. Sent after scrub completes and the new workspace is materialized. The runtime re-reads the adapter manifest and prepares for the next message.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "task_ready" },
+        "taskId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "taskId"],
+      "additionalProperties": false
+    },
+    "task_complete_acknowledged": {
+      "title": "task_complete_acknowledged",
+      "description": "Runtime → adapter, reply to task_complete. The runtime has released task-specific resources and is ready for scrub.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "task_complete_acknowledged" },
+        "taskId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "taskId"],
+      "additionalProperties": false
+    },
+    "llm_request_started": {
+      "title": "llm_request_started",
+      "description": "Runtime → adapter. The runtime is about to send an outbound LLM request directly to the provider (direct mode). The adapter increments the in-flight counter for this provider.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "llm_request_started" },
+        "requestId": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "requestId", "provider"],
+      "additionalProperties": false
+    },
+    "llm_request_completed": {
+      "title": "llm_request_completed",
+      "description": "Runtime → adapter. The runtime's outbound LLM request has completed or errored. The adapter decrements the in-flight counter; when it reaches zero and a rotation is pending, the adapter sends credentials_rotated.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "llm_request_completed" },
+        "requestId": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["ok", "error"] }
+      },
+      "required": ["type", "requestId", "provider", "status"],
       "additionalProperties": false
     }
   }

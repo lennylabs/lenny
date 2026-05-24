@@ -44,6 +44,7 @@ import (
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
+	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/ratelimit"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
@@ -107,6 +108,7 @@ func main() {
 		maxConcurrentReconciles int
 		statusDedupWindow       time.Duration
 		claimOrphanTimeout      time.Duration
+		workqueueMaxDepth       int
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -144,6 +146,8 @@ func main() {
 		"§4.6.1 statusUpdateDeduplicationWindow: the minimum interval between consecutive UpdateStatus writes for the same Sandbox. Status changes within the window are coalesced (trailing write wins), reducing etcd write pressure.")
 	flag.DurationVar(&claimOrphanTimeout, "claim-orphan-timeout", 5*time.Minute,
 		"§4.6.1 SandboxClaim orphan timeout: a SandboxClaim older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup.")
+	flag.IntVar(&workqueueMaxDepth, "workqueue-max-depth", 500,
+		"§4.6.1 controller work-queue max depth. When a controller's reconciliation queue is at this depth, new reconciliation events are dropped and lenny_controller_queue_overflow_total is incremented (requeues are never shed). A non-positive value disables work-shedding. Per-tier recommendations: 500 / 2,000 / 10,000.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -226,12 +230,19 @@ func main() {
 		log.Printf("lenny-controller: §25.5 operational events streaming to Redis %s", events.DefaultStreamKey)
 	}
 
+	// §4.6.1 bounded, depth-instrumented reconciliation work queue. The
+	// same factory is shared by both controllers; each queue is named after
+	// its controller, so the lenny_controller_workqueue_depth gauge is
+	// labeled per controller.
+	queueFactory := controllermetrics.NewQueueFactory(workqueueMaxDepth)
+
 	warmPool := &warmpool.Reconciler{
 		Client:                  mgr.GetClient(),
 		Scheme:                  mgr.GetScheme(),
 		Events:                  opsEmitter,
 		InitialFillGracePeriod:  initialFillGrace,
 		MaxConcurrentReconciles: maxConcurrentReconciles,
+		QueueFactory:            queueFactory,
 	}
 	// A nil *agentpodstatepg.Store assigned to the agentpodstate.Store
 	// interface field would be a non-nil interface; only assign when a
@@ -250,6 +261,7 @@ func main() {
 		EgressCaptureImage:      egressCaptureImage,
 		StatusDedup:             statusdedup.New(statusDedupWindow),
 		MaxConcurrentReconciles: maxConcurrentReconciles,
+		QueueFactory:            queueFactory,
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
 	}
@@ -290,6 +302,23 @@ func main() {
 			AgentNamespaces: agentNamespaces,
 		}); err != nil {
 			log.Fatalf("lenny-controller: set up cluster-CIDR drift detector: %v", err)
+		}
+	}
+
+	// §4.6.1 controller leader-election monitoring: publish the
+	// lenny_controller_leader_lease_renewal_age_seconds gauge so the §16.5
+	// ControllerLeaderElectionFailed alert can detect a renewal stall. The
+	// lease exists only under leader election, so the monitor is registered
+	// only then. The monitor uses the manager's uncached API reader so the
+	// Lease read needs only the `get` verb the §4.6.3 RBAC grants.
+	if leaderElect {
+		if err := mgr.Add(&controllermetrics.LeaseRenewalMonitor{
+			Reader:     mgr.GetAPIReader(),
+			Namespace:  leaderElectNS,
+			Name:       "lenny-warm-pool-controller",
+			Controller: "lenny-warm-pool-controller",
+		}); err != nil {
+			log.Fatalf("lenny-controller: set up leader-lease monitor: %v", err)
 		}
 	}
 

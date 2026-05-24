@@ -1,5 +1,5 @@
 {
   "type": "checkpoint_complete",
-  "checkpoint_id": "ckpt_01HX9F0YWXKK0V7QZ7G6P3R5JM",
-  "outcome": "success"
+  "checkpointId": "ckpt_01HX9F0YWXKK0V7QZ7G6P3R5JM",
+  "status": "ok"
 }

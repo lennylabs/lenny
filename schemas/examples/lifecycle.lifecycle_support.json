@@ -1,5 +1,4 @@
 {
   "type": "lifecycle_support",
-  "supported": ["checkpoint", "interrupt", "deadline_signal"],
-  "runtime_version": "streaming-echo/0.1.0"
+  "capabilities": ["checkpoint", "interrupt", "deadline_signal"]
 }

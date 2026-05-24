@@ -1372,11 +1372,12 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 - **Suggested resolution:** In the WarmPoolController, persist the first-creation timestamp per pool (e.g., a `fillStartedAt` field on `SandboxWarmPool.status` plus a re-set on `minWarm 0 → positive` transitions). Add `--initial-fill-grace-period` with default 120s. Wire the gauge to suppress `WarmPoolLow`/`WarmPoolExhausted` (which currently fire from the alerting rules in `pkg/alerting/rules/rules.go`). Record the elapsed fill time into the histogram once `WarmCount >= MinWarm` is first observed.
 - **Resolution:** Added `pkg/controller/warmpool/fill_meter.go`: a per-pool fill tracker that records `lenny_warmpool_fill_duration_seconds` once ready first reaches `minWarm` (re-opening the window on a `minWarm 0→positive` transition) and publishes a `lenny_warmpool_fill_grace_active{pool}` gauge. The `--initial-fill-grace-period` flag (default 120s) feeds the window, and the `WarmPoolExhausted`/`WarmPoolLow` exprs now `unless` the grace gauge. Commit a4529eae.
 
-### - [ ] F-4.6.14 — `lenny_controller_leader_lease_renewal_age_seconds` and queue depth/overflow metrics not emitted [Medium] — OPEN
+### - [x] F-4.6.14 — `lenny_controller_leader_lease_renewal_age_seconds` and queue depth/overflow metrics not emitted [Medium] — CLOSED
 - **Spec:** §4.6.1 "Controller leader election monitoring" — "A `ControllerLeaderElectionFailed` critical alert fires when any controller's Lease has not been renewed within `leaseDuration` (15s) — detectable via the `lenny_controller_leader_lease_renewal_age_seconds` gauge (one per controller)." Also §4.6.1 "the `lenny_controller_workqueue_depth` metric ... tracks the instantaneous depth of the controller work queues" and `lenny_controller_queue_overflow_total`.
 - **Evidence:** `pkg/observability/metrics/catalog.go:189-191` lists `lenny_controller_leader_lease_renewal_age_seconds`, `lenny_controller_workqueue_depth`, and `lenny_controller_queue_overflow_total` in the catalog. `grep -rn "lenny_controller_leader_lease_renewal_age_seconds\|lenny_controller_workqueue_depth\|lenny_controller_queue_overflow_total" pkg/ cmd/` returns only the catalog and the alerts — no code path emits any of the three.
 - **Gap:** The `ControllerLeaderElectionFailed` and `ControllerWorkQueueDepthHigh` alerts will never fire because their data sources do not exist.
 - **Suggested resolution:** Wire `controller-runtime`'s built-in lease leader-election hook to publish renewal age (it exposes the lease's `RenewTime` on the `coordination.k8s.io.Lease` and provides callbacks). Wire the controller-runtime workqueue metrics (the framework's metricsserver already exposes `workqueue_depth` / `workqueue_adds_total` — they may just need re-labeling to the spec-defined names or aliased via a registration rule). Implement the work-queue overflow counter by either using the controller-runtime `MaxConcurrentReconciles` plus a bounded queue, or implementing an explicit work-shedding wrapper.
+- **Resolution:** Added `pkg/controller/controllermetrics`. `LeaseRenewalMonitor` is a non-leader-elected `manager.Runnable` that samples the leader-election Lease via the manager's uncached API reader every 2s and sets `lenny_controller_leader_lease_renewal_age_seconds{controller}`; it is registered for both controllers when `--leader-elect` is on. `NewQueueFactory` returns a `controller.Options.NewQueue` factory whose bounded queue sheds new informer `Add`s once `Len() >= --workqueue-max-depth` (default 500), incrementing `lenny_controller_queue_overflow_total{controller}`, while requeues (AddAfter/AddRateLimited) bypass the bound; it publishes `lenny_controller_workqueue_depth{controller,queue}` on every Add/Get/Done and the unlabeled `lenny_controller_workqueue_max_depth` gauge the §16.5 alert's `scalar()` threshold reads. Wired into both reconcilers' `controller.Options`. Commit pending.
 
 ### - [x] F-4.6.15 — No Postgres-fallback API-server reachability probe or `lenny_pod_claim_fallback_skipped_total` [Medium] — CLOSED
 - **Spec:** §4.6.1 "Fallback preconditions (mirror freshness and admission reachability)" — precondition 2: "The gateway probes API server reachability before initiating the fallback (a lightweight `GET /readyz` or equivalent); if the probe fails, the fallback is skipped. ... The `lenny_pod_claim_fallback_skipped_total{reason}` counter tracks skip events with `reason` labels `mirror_stale` and `apiserver_unreachable`".
@@ -1673,7 +1674,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.13 — Lifecycle-events JSON schema uses snake_case while spec and adapter use camelCase [Medium] — OPEN
+### - [x] F-4.7.13 — Lifecycle-events JSON schema uses snake_case while spec and adapter use camelCase [Medium] — CLOSED
 
 **Severity: Medium.** Both surfaces compile, but a runtime author who validates against the schema file will produce frames the adapter rejects.
 
@@ -1688,6 +1689,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** Schema authors and runtime SDK authors validating against `schemas/lifecycle-events.schema.json` get incorrect contract guidance.
 
 **Suggested resolution:** Replace snake_case with camelCase in `schemas/lifecycle-events.schema.json` to match the spec and the adapter wire. Rename `checkpoint_complete.outcome` to `status` (`ok`/`failed`). Add the missing `terminate` envelope. Reconcile `task_complete`/`task_ready` between `schemas/lifecycle-events.schema.json` and `schemas/lenny-adapter-jsonl.schema.json` so task-mode messages live on the lifecycle surface (per spec line 681).
+
+**Resolution:** Rewrote `schemas/lifecycle-events.schema.json` to the §4.7 message-schema table verbatim in camelCase: every adapter↔runtime frame (`checkpointId`/`deadlineMs`/`interruptId`/`remainingMs`/`leaseId`/`credentialsPath`/`protocolVersion`), `checkpoint_complete.status` (`ok`/`failed`) + `reason`, `lifecycle_support.capabilities` (was `supported`), and the previously-absent envelopes `terminate`, `credentials_acknowledged`, `llm_request_started`, `llm_request_completed`, and the task-lifecycle signals `task_complete`/`task_ready`/`task_complete_acknowledged` on the intra-pod lifecycle surface. The example files were converted to camelCase; `lifecycle.deadline_signal.json` was replaced by `lifecycle.deadline_approaching.json` (the spec/adapter name) and `lifecycle.terminate.json` + `lifecycle.task_complete.json` were added, all wired into the tier-0 `TestLifecycleEventExamplesValidate` list. The same-named task messages in `lenny-adapter-jsonl.schema.json` are the distinct adapter→gateway control surface and are left in place; both schemas now document which surface they describe. Commit pending.
 
 ---
 
@@ -1776,7 +1779,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.20 — Adapter manifest is mode 0o644 (world-readable); spec mandates read-only-to-agent via mount, but the file should not be world-readable [Medium] — OPEN
+### - [x] F-4.7.20 — Adapter manifest is mode 0o644 (world-readable); spec mandates read-only-to-agent via mount, but the file should not be world-readable [Medium] — CLOSED
 
 **Severity: Low.**
 
@@ -1788,9 +1791,11 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Lower the manifest mode to 0o640 once the adapter and agent share a supplementary group.
 
+**Resolution:** `WriteManifest` now writes the manifest at `ManifestFileMode = 0o640` and `Chmod`s it to that mode (so an inherited umask cannot strip the group-read bit). The agent runtime reads it over its `/run/lenny` read-only mount via the shared `lenny-cred-readers` fsGroup (mirroring `credfile.FileMode`); no other UID in the pod can read the mcpNonce. A unit test asserts the mode is group-readable and not world-readable. Commit pending.
+
 ---
 
-### - [ ] F-4.7.21 — `runtimeMcpServers` array is reserved but unused; `RuntimeKindMCP` writes nothing into it [Medium] — OPEN
+### - [x] F-4.7.21 — `runtimeMcpServers` array is reserved but unused; `RuntimeKindMCP` writes nothing into it [Medium] — CLOSED
 
 **Severity: Low — Info.**
 
@@ -1801,6 +1806,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 - `pkg/adapter/mcpruntime.go` drives the runtime as an MCP client but does not populate `runtimeMcpServers` (consistent with "empty in v1").
 
 **Suggested resolution:** No action; this is conformant. Note for future versions that the field plumbing exists.
+
+**Resolution:** Verified conformant. `manifest.go` declares `RuntimeMcpServers` and `WriteManifest` defaults a nil value to `[]ManifestConnector{}`, so the field serializes as the empty array §4.7 line 773 mandates for v1; leaving it unpopulated is the spec-required behavior. No code change.
 
 ---
 

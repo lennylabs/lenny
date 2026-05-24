@@ -1,6 +1,5 @@
 {
   "type": "interrupt_request",
-  "interrupt_id": "int_01HX9F1Z9G0KCQNVT2RDPYHR3X",
-  "deadline_ms": 2000,
-  "reason": "client_cancelled"
+  "interruptId": "int_01HX9F1Z9G0KCQNVT2RDPYHR3X",
+  "deadlineMs": 2000
 }

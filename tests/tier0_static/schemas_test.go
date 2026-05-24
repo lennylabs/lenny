@@ -140,7 +140,9 @@ func TestLifecycleEventExamplesValidate(t *testing.T) {
 		"schemas/examples/lifecycle.interrupt_request.json",
 		"schemas/examples/lifecycle.interrupt_acknowledged.json",
 		"schemas/examples/lifecycle.credentials_rotated.json",
-		"schemas/examples/lifecycle.deadline_signal.json",
+		"schemas/examples/lifecycle.deadline_approaching.json",
+		"schemas/examples/lifecycle.terminate.json",
+		"schemas/examples/lifecycle.task_complete.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {
