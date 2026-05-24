@@ -43,12 +43,34 @@ type Config struct {
 	// SSEKeyResolver, when set, supplies the §12.5 SSE-KMS key
 	// identifier for the writing tenant on every Put. Production
 	// T4 tenants require a tenant-scoped key (`tenant:{tenant_id}`);
-	// T3 may share the deployment-wide key. Return ("", false) to
-	// fall back to bucket-level encryption (SSE-S3) or no
-	// encryption. The resolver is the caller's responsibility to
-	// cache if KMS lookups are expensive.
-	SSEKeyResolver func(tenantID string) (keyID string, ok bool)
+	// T3 may share the deployment-wide key.
+	//
+	// Return semantics:
+	//   - (keyID, requireKey=false, nil) — use keyID when available,
+	//     otherwise fall back to bucket-level SSE (the T3 path).
+	//   - (keyID, requireKey=true, nil) — T4 tenant. The Put MUST
+	//     wrap under keyID. A subsequent KMS lookup failure on
+	//     the MinIO side returns CLASSIFICATION_CONTROL_VIOLATION
+	//     and increments lenny_checkpoint_storage_failure_total
+	//     {reason="kms_unavailable"}.
+	//   - ("", false, nil) — no per-tenant key applies; fall
+	//     through to bucket-default encryption (SSE-S3).
+	//   - ("", true, error) — T4 tenant whose key is unreachable
+	//     at the resolver level. The Put fails fast with
+	//     CLASSIFICATION_CONTROL_VIOLATION.
+	//
+	// spec: §12.5 ll. 297, 299-303 — T4 fail-closed write
+	// semantics.
+	SSEKeyResolver func(tenantID string) (keyID string, requireKey bool, err error)
 }
+
+// ErrClassificationControlViolation is the §12.5 ll. 303 fail-closed
+// write sentinel: a T4 tenant whose per-tenant SSE-KMS key is
+// unavailable at Put time. The §15.1 error catalog maps it to the
+// `CLASSIFICATION_CONTROL_VIOLATION` error code.
+//
+// spec: §12.5 ll. 303.
+var ErrClassificationControlViolation = errors.New("miniostore: T4 tenant SSE-KMS key unavailable; CLASSIFICATION_CONTROL_VIOLATION")
 
 // Store is the MinIO-backed §4.5 blobstore.Store. It is goroutine-safe;
 // the underlying MinIO client is safe for concurrent use.
@@ -56,8 +78,16 @@ type Store struct {
 	client      *minio.Client
 	bucket      string
 	clock       func() time.Time
-	sseResolver func(tenantID string) (string, bool)
-	legalHolds  sync.Map // keyed on objectKey; protects §12.8 holds from DeleteBySession
+	sseResolver func(tenantID string) (string, bool, error)
+	// onKMSUnavailable, when set, fires on every fail-closed T4 write
+	// rejection so the gateway can emit
+	// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
+	// without coupling the blob store directly to the metrics
+	// registry.
+	//
+	// spec: §12.5 ll. 303.
+	onKMSUnavailable func(tenantID string)
+	legalHolds       sync.Map // keyed on objectKey; protects §12.8 holds from DeleteBySession
 }
 
 var (
@@ -88,6 +118,17 @@ func New(cfg Config) (*Store, error) {
 		clock:       func() time.Time { return time.Now().UTC() },
 		sseResolver: cfg.SSEKeyResolver,
 	}, nil
+}
+
+// SetOnKMSUnavailable registers the §12.5 ll. 303 fail-closed write
+// callback. The gateway wires it to the
+// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
+// emitter so every CLASSIFICATION_CONTROL_VIOLATION the blob store
+// raises propagates into the CheckpointStorageUnavailable alert.
+//
+// spec: §12.5 ll. 303.
+func (s *Store) SetOnKMSUnavailable(fn func(tenantID string)) {
+	s.onKMSUnavailable = fn
 }
 
 // SetLegalHold marks the blob under u as protected by a §12.8
@@ -136,10 +177,21 @@ func sessionPrefix(tenantID string, objectType blobstore.ObjectType, sessionID s
 }
 
 // Put implements blobstore.Store. §4.5 blobs are write-once: a key
-// that already names an object yields ErrConflict. When an
-// SSEKeyResolver is configured and returns a key id for the writing
-// tenant the Put requests §12.5 SSE-KMS with that key; otherwise
-// the bucket's default encryption (SSE-S3) applies.
+// that already names an object yields ErrConflict.
+//
+// SSE-KMS resolution (§12.5 ll. 297-303):
+//   - When the resolver returns `requireKey=false` (T3 path or no
+//     per-tenant key), the Put applies the keyID when one is
+//     given, otherwise falls back to bucket-default SSE-S3.
+//   - When the resolver returns `requireKey=true` (T4 path), the
+//     Put MUST wrap under the resolver's keyID. A resolver-side
+//     error or a downstream KMS lookup failure surfaces
+//     ErrClassificationControlViolation; the gateway maps the
+//     sentinel onto the §15.1 CLASSIFICATION_CONTROL_VIOLATION
+//     error and fires
+//     lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}.
+//
+// spec: §12.5 ll. 297, 299-303.
 func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, error) {
 	ctx := context.Background()
 	key := objectKey(u)
@@ -151,10 +203,29 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 	}
 	opts := minio.PutObjectOptions{ContentType: mimeType}
 	if s.sseResolver != nil {
-		if keyID, ok := s.sseResolver(u.TenantID); ok {
-			sse, err := encrypt.NewSSEKMS(keyID, nil)
-			if err != nil {
-				return "", fmt.Errorf("miniostore: build SSE-KMS option for tenant %s: %w", u.TenantID, err)
+		keyID, requireKey, err := s.sseResolver(u.TenantID)
+		switch {
+		case err != nil && requireKey:
+			// §12.5 ll. 303: T4 tenant whose key is unreachable at
+			// the resolver level. Fail closed.
+			s.fireKMSUnavailable(u.TenantID)
+			return "", fmt.Errorf("%w: tenant=%s: %v", ErrClassificationControlViolation, u.TenantID, err)
+		case err != nil:
+			return "", fmt.Errorf("miniostore: SSE key resolver for tenant %s: %w", u.TenantID, err)
+		case requireKey && keyID == "":
+			// Resolver says "this tenant requires a per-tenant key"
+			// but returned no key id — fail closed.
+			s.fireKMSUnavailable(u.TenantID)
+			return "", fmt.Errorf("%w: tenant=%s: resolver returned empty keyID", ErrClassificationControlViolation, u.TenantID)
+		case keyID != "":
+			sse, sseErr := encrypt.NewSSEKMS(keyID, nil)
+			if sseErr != nil {
+				if requireKey {
+					s.fireKMSUnavailable(u.TenantID)
+					return "", fmt.Errorf("%w: tenant=%s: build SSE-KMS: %v",
+						ErrClassificationControlViolation, u.TenantID, sseErr)
+				}
+				return "", fmt.Errorf("miniostore: build SSE-KMS option for tenant %s: %w", u.TenantID, sseErr)
 			}
 			opts.ServerSideEncryption = sse
 		}
@@ -163,6 +234,16 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 		return "", fmt.Errorf("miniostore: put %s: %w", key, err)
 	}
 	return u.String(), nil
+}
+
+// fireKMSUnavailable invokes the gateway-registered hook on a
+// fail-closed T4 write rejection.
+//
+// spec: §12.5 ll. 303.
+func (s *Store) fireKMSUnavailable(tenantID string) {
+	if s.onKMSUnavailable != nil {
+		s.onKMSUnavailable(tenantID)
+	}
 }
 
 // Get implements blobstore.Store. The caller closes the returned reader.
@@ -248,10 +329,25 @@ func (s *Store) Copy(src, dst blobstore.URI) error {
 	srcOpts := minio.CopySrcOptions{Bucket: s.bucket, Object: srcKey}
 	dstOpts := minio.CopyDestOptions{Bucket: s.bucket, Object: dstKey}
 	if s.sseResolver != nil {
-		if keyID, ok := s.sseResolver(dst.TenantID); ok {
-			sse, err := encrypt.NewSSEKMS(keyID, nil)
-			if err != nil {
-				return fmt.Errorf("miniostore: build SSE-KMS option for tenant %s: %w", dst.TenantID, err)
+		keyID, requireKey, err := s.sseResolver(dst.TenantID)
+		switch {
+		case err != nil && requireKey:
+			s.fireKMSUnavailable(dst.TenantID)
+			return fmt.Errorf("%w: tenant=%s: %v", ErrClassificationControlViolation, dst.TenantID, err)
+		case err != nil:
+			return fmt.Errorf("miniostore: SSE key resolver for tenant %s: %w", dst.TenantID, err)
+		case requireKey && keyID == "":
+			s.fireKMSUnavailable(dst.TenantID)
+			return fmt.Errorf("%w: tenant=%s: resolver returned empty keyID", ErrClassificationControlViolation, dst.TenantID)
+		case keyID != "":
+			sse, sseErr := encrypt.NewSSEKMS(keyID, nil)
+			if sseErr != nil {
+				if requireKey {
+					s.fireKMSUnavailable(dst.TenantID)
+					return fmt.Errorf("%w: tenant=%s: build SSE-KMS: %v",
+						ErrClassificationControlViolation, dst.TenantID, sseErr)
+				}
+				return fmt.Errorf("miniostore: build SSE-KMS option for tenant %s: %w", dst.TenantID, sseErr)
 			}
 			dstOpts.Encryption = sse
 		}
