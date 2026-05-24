@@ -60,7 +60,10 @@ type Store struct {
 	legalHolds  sync.Map // keyed on objectKey; protects §12.8 holds from DeleteBySession
 }
 
-var _ blobstore.Store = (*Store)(nil)
+var (
+	_ blobstore.Store  = (*Store)(nil)
+	_ blobstore.Copier = (*Store)(nil)
+)
 
 // New builds a MinIO-backed Store. It validates the configuration and
 // constructs the client; the client connects lazily, so New does not
@@ -208,6 +211,53 @@ func (s *Store) Probe(ctx context.Context) error {
 	}
 	if !ok {
 		return fmt.Errorf("miniostore: bucket %q does not exist", s.bucket)
+	}
+	return nil
+}
+
+// Copy implements blobstore.Copier. It uses MinIO's native
+// CopyObject to duplicate src to dst without round-tripping the
+// bytes through the gateway. The destination's tenant must match
+// src's tenant (§12.5 ll. 295 tenant-prefix invariant). When an
+// SSEKeyResolver is configured the destination is rewrapped under
+// the same per-tenant SSE-KMS key the original Put would have used.
+//
+// spec: §4.5 ll. 311 — derive copies parent bytes so the derived
+// session owns the workspace independent of the parent's GC.
+func (s *Store) Copy(src, dst blobstore.URI) error {
+	if src.TenantID != dst.TenantID {
+		return blobstore.ErrCrossTenant
+	}
+	ctx := context.Background()
+	srcKey := objectKey(src)
+	dstKey := objectKey(dst)
+	// §4.5 write-once: refuse to overwrite a live dst.
+	switch _, err := s.client.StatObject(ctx, s.bucket, dstKey, minio.StatObjectOptions{}); {
+	case err == nil:
+		return blobstore.ErrConflict
+	case !isNotFound(err):
+		return fmt.Errorf("miniostore: stat dst %s before copy: %w", dstKey, err)
+	}
+	// Source must exist.
+	if _, err := s.client.StatObject(ctx, s.bucket, srcKey, minio.StatObjectOptions{}); err != nil {
+		if isNotFound(err) {
+			return blobstore.ErrNotFound
+		}
+		return fmt.Errorf("miniostore: stat src %s before copy: %w", srcKey, err)
+	}
+	srcOpts := minio.CopySrcOptions{Bucket: s.bucket, Object: srcKey}
+	dstOpts := minio.CopyDestOptions{Bucket: s.bucket, Object: dstKey}
+	if s.sseResolver != nil {
+		if keyID, ok := s.sseResolver(dst.TenantID); ok {
+			sse, err := encrypt.NewSSEKMS(keyID, nil)
+			if err != nil {
+				return fmt.Errorf("miniostore: build SSE-KMS option for tenant %s: %w", dst.TenantID, err)
+			}
+			dstOpts.Encryption = sse
+		}
+	}
+	if _, err := s.client.CopyObject(ctx, dstOpts, srcOpts); err != nil {
+		return fmt.Errorf("miniostore: copy %s -> %s: %w", srcKey, dstKey, err)
 	}
 	return nil
 }

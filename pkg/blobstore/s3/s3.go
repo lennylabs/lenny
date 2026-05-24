@@ -43,6 +43,7 @@ type objectClient interface {
 	GetObjectTagging(ctx context.Context, in *s3.GetObjectTaggingInput, opts ...func(*s3.Options)) (*s3.GetObjectTaggingOutput, error)
 	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, opts ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	ListObjectsV2(ctx context.Context, in *s3.ListObjectsV2Input, opts ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+	CopyObject(ctx context.Context, in *s3.CopyObjectInput, opts ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
 }
 
 // SSEKeyResolver returns the per-tenant SSE-KMS key id for an object.
@@ -73,6 +74,7 @@ type Store struct {
 var (
 	_ blobstore.Store      = (*Store)(nil)
 	_ blobstore.Tombstoner = (*Store)(nil)
+	_ blobstore.Copier     = (*Store)(nil)
 )
 
 // New returns a Store. Returns an error when cfg.Bucket is empty or
@@ -144,6 +146,52 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 		return "", fmt.Errorf("blobstore/s3: PutObject: %w", err)
 	}
 	return u.String(), nil
+}
+
+// Copy implements blobstore.Copier. It uses S3's native CopyObject
+// to duplicate src to dst without round-tripping the bytes through
+// the gateway.
+//
+// spec: §4.5 ll. 311 — derive copies parent bytes so the derived
+// session's workspace survives parent GC.
+func (s *Store) Copy(src, dst blobstore.URI) error {
+	if src.TenantID != dst.TenantID {
+		return blobstore.ErrCrossTenant
+	}
+	ctx := context.Background()
+	srcKey := objectKey(src)
+	dstKey := objectKey(dst)
+	// §4.5 write-once: refuse to overwrite a live dst.
+	if exists, err := s.headLive(ctx, dstKey); err != nil {
+		return err
+	} else if exists {
+		return blobstore.ErrConflict
+	}
+	// Source must exist.
+	if _, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: awssdk.String(s.bucket),
+		Key:    awssdk.String(srcKey),
+	}); err != nil {
+		if isNoSuchKey(err) {
+			return blobstore.ErrNotFound
+		}
+		return fmt.Errorf("blobstore/s3: HeadObject src: %w", err)
+	}
+	in := &s3.CopyObjectInput{
+		Bucket:     awssdk.String(s.bucket),
+		Key:        awssdk.String(dstKey),
+		CopySource: awssdk.String(s.bucket + "/" + srcKey),
+	}
+	if s.resolver != nil {
+		if kmsID := s.resolver(dst); kmsID != "" {
+			in.ServerSideEncryption = types.ServerSideEncryptionAwsKms
+			in.SSEKMSKeyId = awssdk.String(kmsID)
+		}
+	}
+	if _, err := s.client.CopyObject(ctx, in); err != nil {
+		return fmt.Errorf("blobstore/s3: CopyObject: %w", err)
+	}
+	return nil
 }
 
 // Get implements blobstore.Store.

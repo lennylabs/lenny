@@ -112,6 +112,28 @@ func (f *fakeS3) ListObjectsV2(_ context.Context, _ *s3.ListObjectsV2Input, _ ..
 	return out, nil
 }
 
+func (f *fakeS3) CopyObject(_ context.Context, in *s3.CopyObjectInput, _ ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	src := awssdk.ToString(in.CopySource)
+	// CopySource is "{bucket}/{key}" — strip the leading bucket
+	// segment to recover the source key.
+	if i := strings.Index(src, "/"); i >= 0 {
+		src = src[i+1:]
+	}
+	srcObj, ok := f.objects[src]
+	if !ok {
+		return nil, &types.NoSuchKey{}
+	}
+	dstKey := awssdk.ToString(in.Key)
+	dstBody := append([]byte(nil), srcObj.body...)
+	f.objects[dstKey] = &fakeObject{
+		body:         dstBody,
+		mimeType:     srcObj.mimeType,
+		lastModified: time.Now().UTC(),
+		sseKMSKeyID:  awssdk.ToString(in.SSEKMSKeyId),
+	}
+	return &s3.CopyObjectOutput{}, nil
+}
+
 func newStore(t *testing.T) (*Store, *fakeS3) {
 	t.Helper()
 	f := newFakeS3()

@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -242,8 +244,33 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.clock()
+	derivedID := s.idFn()
+	derivedRef := derivedSnapshotRef(tenantID, derivedID)
+	// spec: §4.5 ll. 311 — derive copies the parent's workspace
+	// snapshot bytes into a new object scoped to the derived
+	// session's prefix so the derived session owns its workspace
+	// independent of the parent's GC. When the blob store
+	// implements Copier (production MinIO/S3/GCS), the copy runs
+	// natively; otherwise we keep the previous ref-rewrite
+	// behavior (tests + the minimal gateway).
+	if cop, ok := s.blobs.(blobstore.Copier); ok && source.WorkspaceSnapshot != nil && source.WorkspaceSnapshot.Ref != "" {
+		srcURI, dstURI, ok := parseDeriveURIs(source.WorkspaceSnapshot.Ref, derivedRef, tenantID, source.ID, derivedID)
+		if ok {
+			if err := cop.Copy(srcURI, dstURI); err != nil && !errors.Is(err, blobstore.ErrConflict) {
+				if errors.Is(err, blobstore.ErrNotFound) {
+					s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
+						"parent workspace snapshot object is absent in storage",
+						map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
+					return
+				}
+				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+					"workspace snapshot copy failed: "+err.Error(), nil)
+				return
+			}
+		}
+	}
 	derived := sessionstore.Session{
-		ID:                 s.idFn(),
+		ID:                 derivedID,
 		TenantID:           tenantID,
 		UserID:             userID,
 		State:              session.StateCreated,
@@ -252,7 +279,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		RuntimeRef:         runtimeRef,
 		PoolRef:            pool,
 		IsolationProfile:   target,
-		WorkspaceSnapshot:  copySnapshotRef(source.WorkspaceSnapshot, derivedSnapshotRef(tenantID, source.ID)),
+		WorkspaceSnapshot:  copySnapshotRef(source.WorkspaceSnapshot, derivedRef),
 		ParentSessionID:    source.ID,
 		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
 	}
@@ -297,4 +324,56 @@ func copySnapshotRef(src *sessionstore.WorkspaceSnapshot, newRef string) *sessio
 // snapshot under the derived session's own object prefix.
 func derivedSnapshotRef(tenantID, sourceSessionID string) string {
 	return fmt.Sprintf("/%s/workspace/derived-from-%s", tenantID, sourceSessionID)
+}
+
+// parseDeriveURIs builds the blobstore.URI pair the §4.5 ll. 311
+// Copy call needs. The parent's `Ref` may carry either a stored
+// `lenny-blob://...` URI or the historical MinIO path; this helper
+// resolves whichever form is present. Returns ok=false when the
+// reference can't be normalised to a workspace URI (an in-memory
+// gateway with no real object storage uses the path form and falls
+// through to the legacy ref-rewrite behavior).
+//
+// spec: §4.5 ll. 311; §7.1 derive copy semantics.
+func parseDeriveURIs(parentRef, derivedRef, tenantID, sourceSessionID, derivedSessionID string) (src, dst blobstore.URI, ok bool) {
+	if strings.HasPrefix(parentRef, blobstore.Scheme+"://") {
+		parsed, err := blobstore.ParseURI(parentRef)
+		if err != nil {
+			return blobstore.URI{}, blobstore.URI{}, false
+		}
+		src = parsed
+	} else {
+		// Path-style reference (e.g. "/acme/workspace/sess/snap.tar").
+		// Strip the leading slash if present and pull out the part_id.
+		trimmed := strings.TrimPrefix(parentRef, "/")
+		parts := strings.SplitN(trimmed, "/", 4)
+		if len(parts) < 4 {
+			return blobstore.URI{}, blobstore.URI{}, false
+		}
+		src = blobstore.URI{
+			TenantID:   parts[0],
+			ObjectType: blobstore.ObjectType(parts[1]),
+			SessionID:  parts[2],
+			PartID:     parts[3],
+			TTL:        blobstore.DerivedSnapshotTTL,
+		}
+	}
+	if src.TenantID != tenantID {
+		return blobstore.URI{}, blobstore.URI{}, false
+	}
+	dst = src
+	dst.SessionID = derivedSessionID
+	dst.PartID = derivedSnapshotPart(sourceSessionID)
+	if dst.TTL == 0 {
+		dst.TTL = blobstore.DerivedSnapshotTTL
+	}
+	return src, dst, true
+}
+
+// derivedSnapshotPart is the §4.5 part-id stamp on the derived
+// workspace object — a stable identifier so the same source +
+// derived pair always names the same object, making the §7.1
+// derive idempotent under retry.
+func derivedSnapshotPart(sourceSessionID string) string {
+	return "derived-from-" + sourceSessionID
 }

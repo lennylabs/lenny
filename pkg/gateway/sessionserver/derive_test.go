@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -423,5 +425,70 @@ func TestDeriveStrictlyStricterIsolationSucceeds(t *testing.T) {
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestDeriveCopiesParentBytesIntoDerivedURI asserts the §4.5 ll. 311
+// byte-copy semantics: when the gateway's blob store implements
+// blobstore.Copier (production MinIO/S3/GCS), derive uses Copy to
+// duplicate the parent's workspace snapshot into a new object
+// scoped to the derived session's prefix, and then the derived
+// session's blob survives the parent's session-scoped erasure.
+//
+// spec: §4.5 line 311 — "the gateway copies the parent's workspace
+// snapshot bytes into a new MinIO object scoped to the derived
+// session's own path. The derived session owns its artifact
+// independently; GC on the parent's artifacts has no effect on the
+// derived session's workspace".
+func TestDeriveCopiesParentBytesIntoDerivedURI(t *testing.T) {
+	store := memstore.New()
+	blobs := blobstore.NewMemoryStore(nil)
+	// Seed a parent session + a parent workspace blob.
+	const (
+		parentTenant  = "acme"
+		parentSession = "sess_source"
+	)
+	parentURI := blobstore.URI{
+		TenantID:   parentTenant,
+		ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID:  parentSession,
+		PartID:     "snap",
+		TTL:        time.Hour,
+	}
+	if _, err := blobs.Put(parentURI, "application/x-tar", strings.NewReader("workspace-bytes")); err != nil {
+		t.Fatalf("seed parent blob: %v", err)
+	}
+	newSourceSession(t, store, func(s *sessionstore.Session) {
+		s.WorkspaceSnapshot.Ref = parentURI.String()
+	})
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc: func() string { return "sess_derived" },
+		Blobs:  blobs,
+	})
+	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("derive: %d; body=%s", rr.Code, rr.Body.String())
+	}
+	// The derived session's bytes must exist independent of the
+	// parent: erase the parent and read the derived URI.
+	if _, err := blobs.DeleteBySession(context.Background(), parentTenant, parentSession); err != nil {
+		t.Fatalf("erase parent: %v", err)
+	}
+	derived, err := store.Get(context.Background(), parentTenant, "sess_derived")
+	if err != nil {
+		t.Fatalf("fetch derived: %v", err)
+	}
+	if derived.WorkspaceSnapshot == nil {
+		t.Fatal("derived has no workspace snapshot")
+	}
+	derivedURI := blobstore.URI{
+		TenantID:   parentTenant,
+		ObjectType: blobstore.ObjectTypeWorkspace,
+		SessionID:  "sess_derived",
+		PartID:     "derived-from-" + parentSession,
+		TTL:        time.Hour,
+	}
+	if _, _, err := blobs.Get(derivedURI); err != nil {
+		t.Errorf("derived blob missing after parent erasure: %v (spec §4.5 ll. 311)", err)
 	}
 }

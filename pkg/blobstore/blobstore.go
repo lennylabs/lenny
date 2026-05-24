@@ -43,6 +43,16 @@ const Scheme = "lenny-blob"
 // Encoding is the only encryption marker §4.5 v1 understands.
 const Encoding = "aes256gcm"
 
+// DerivedSnapshotTTL is the §4.5 ll. 311 TTL stamped on a derived
+// session's workspace-snapshot copy. The derive handler reuses the
+// 7-day default that the §7.1 retention window applies to a
+// completed session: the derived session owns its workspace
+// independent of the parent, so 7 days lines up with the §7.1
+// `extend-retention` adjustable budget.
+//
+// spec: §4.5 ll. 311; §7.1 retention.
+const DerivedSnapshotTTL = 7 * 24 * time.Hour
+
 // Sentinel errors.
 var (
 	// ErrNotFound — the blob does not exist or has expired.
