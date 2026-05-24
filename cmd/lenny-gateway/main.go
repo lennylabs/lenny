@@ -272,6 +272,8 @@ func main() {
 		"§4.8 GuardrailsInterceptor classifier registration (external RequestInterceptor spec: name=<n>,endpoint=<host:port>[,failPolicy=fail-open|fail-closed][,timeout=<dur>]). When empty the GuardrailsInterceptor is disabled. The priority is fixed at 400 and the phases at PreDelegation, PreLLMRequest, PostLLMResponse, and PostAgentOutput; any phase=/priority= in the spec is ignored.")
 	interceptorFailOpenMax := flag.Int("interceptor-fail-open-max-consecutive", envInt("LENNY_INTERCEPTOR_FAIL_OPEN_MAX_CONSECUTIVE", 10),
 		"§4.8 cumulative fail-open escalation ceiling: when a fail-open interceptor errors more than this many times in a rolling 5-minute window, the gateway auto-escalates it to fail-closed and emits interceptor.fail_open_escalated.")
+	delegationMaxInputSize := flag.Int("delegation-max-input-size", envInt("LENNY_DELEGATION_MAX_INPUT_SIZE", delegationpolicystore.DefaultMaxInputSize),
+		"§8.3 default contentPolicy.maxInputSize: the hard byte cap on TaskSpec.input the §4.8 DelegationPolicyEvaluator (PreDelegation, priority 250) enforces. A delegation exceeding it is rejected with INPUT_TOO_LARGE before pod allocation. Defaults to the §8.3 128 KiB. Override via LENNY_DELEGATION_MAX_INPUT_SIZE.")
 	agentNamespace := flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	clusterQPS := flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
@@ -1227,6 +1229,23 @@ func main() {
 	// writes interceptor.fail_open_escalated to the tenant's audit chain.
 	policyChain.SetFailOpenEscalation(*interceptorFailOpenMax, 0,
 		policy.NewFailOpenObserver(auditAppender, nil), nil)
+	// §4.8 line 972: AuthEvaluator (priority 100) is the sole built-in at
+	// PreAuth. It runs in the auth middleware after the principal is
+	// resolved as the fail-closed identity gate every later phase relies
+	// on. "Always active" — registered unconditionally.
+	if err := policyChain.Register(interceptor.PhasePreAuth, policy.NewAuthEvaluator()); err != nil {
+		log.Fatalf("lenny-gateway: register AuthEvaluator: %v", err)
+	}
+	// §4.8 line 974: DelegationPolicyEvaluator (priority 250) fires at
+	// PreDelegation only. It enforces the §8.3 contentPolicy.maxInputSize
+	// cap on TaskSpec.input (INPUT_TOO_LARGE); the §8.3 depth/fan-out/
+	// cycle/tag enforcement stays canonical in delegation.Service. The
+	// default cap is operator-tunable via --delegation-max-input-size.
+	if err := policyChain.Register(interceptor.PhasePreDelegation,
+		policy.NewDelegationPolicyEvaluator(nil, *delegationMaxInputSize)); err != nil {
+		log.Fatalf("lenny-gateway: register DelegationPolicyEvaluator: %v", err)
+	}
+	log.Printf("lenny-gateway: §4.8 AuthEvaluator (PreAuth) and DelegationPolicyEvaluator (PreDelegation, maxInputSize=%d) registered", *delegationMaxInputSize)
 	var policyAuditSink *policy.AuditSink
 	if redisClient != nil {
 		quotaCounter := quotastore.New(redisClient)
@@ -2048,6 +2067,9 @@ func main() {
 		// §4.2 line 185: every tenant-claim rejection writes an
 		// auth_failure audit row alongside the INFO log line.
 		AuthFailureSink: authFailureAuditAdapter{sink: auditSink},
+		// §4.8 line 1046: run the PreAuth chain (AuthEvaluator) after the
+		// principal resolves and before the request reaches the handler.
+		Interceptors: policyChain,
 	}
 	if !*multiTenant {
 		// Even in single-tenant mode, dev-header callers carry the

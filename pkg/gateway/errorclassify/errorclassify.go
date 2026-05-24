@@ -86,6 +86,11 @@ var table = map[string]entry{
 	// INTERCEPTOR_TIMEOUT a fail-closed interceptor error produces.
 	"LLM_REQUEST_REJECTED":         {CategoryPermanent, false},
 	"LLM_RESPONSE_REJECTED":        {CategoryPermanent, false},
+	// spec: §15.1 line 1067, §8.3 line 157 — a delegation whose
+	// TaskSpec.input exceeds the effective contentPolicy.maxInputSize is
+	// rejected by the §4.8 DelegationPolicyEvaluator at PreDelegation.
+	// PERMANENT and not retryable: the caller must reduce the input size.
+	"INPUT_TOO_LARGE":              {CategoryPermanent, false},
 	"MCP_PROTOCOL_VERSION_RETIRED": {CategoryPermanent, false},
 	"MCP_VERSION_UNSUPPORTED":      {CategoryPermanent, false},
 	"UPSTREAM_ERROR":               {CategoryUpstream, true},

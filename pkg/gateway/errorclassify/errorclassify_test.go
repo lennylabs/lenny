@@ -32,6 +32,9 @@ func TestClassifyKnownCodes(t *testing.T) {
 		// from the TRANSIENT INTERCEPTOR_TIMEOUT.
 		{"LLM_REQUEST_REJECTED", CategoryPermanent, false},
 		{"LLM_RESPONSE_REJECTED", CategoryPermanent, false},
+		// spec: §15.1 line 1067, §8.3 line 157 — INPUT_TOO_LARGE is
+		// PERMANENT and not retryable; the caller must reduce the input.
+		{"INPUT_TOO_LARGE", CategoryPermanent, false},
 	}
 	for _, c := range cases {
 		t.Run(c.code, func(t *testing.T) {

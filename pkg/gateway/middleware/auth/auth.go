@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/common/scopes"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 )
 
 // Principal captures the resolved caller identity attached to the
@@ -157,6 +158,15 @@ type Options struct {
 	// Clock returns the gateway clock instant the middleware stamps on
 	// `auth_failure` audit events. Defaults to time.Now when nil.
 	Clock func() time.Time
+
+	// Interceptors, when set, runs the §4.8 PreAuth interceptor chain
+	// after the principal is resolved and before the request reaches the
+	// inner handler. The built-in AuthEvaluator (priority 100) runs as
+	// the sole interceptor at this phase; external interceptors are
+	// rejected from PreAuth at registration (§4.8 line 1023). A chain
+	// REJECT blocks the request with 403 INTERCEPTOR_REJECTED. nil skips
+	// the phase. spec: §4.8 lines 972, 1023, 1046.
+	Interceptors *interceptor.Chain
 }
 
 // RevocationChecker reports whether a token's jti has been revoked.
@@ -285,6 +295,9 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 	// authenticated tenant without depending on the context key.
 	r = r.WithContext(ctx)
 	r.Header.Set("X-Lenny-Tenant-ID", p.TenantID)
+	if !m.runPreAuth(w, r, p) {
+		return
+	}
 	m.inner.ServeHTTP(w, r)
 }
 
@@ -315,7 +328,52 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 	ctx := WithPrincipal(r.Context(), p)
 	r = r.WithContext(ctx)
 	r.Header.Set("X-Lenny-Tenant-ID", p.TenantID)
+	if !m.runPreAuth(w, r, p) {
+		return
+	}
 	m.inner.ServeHTTP(w, r)
+}
+
+// runPreAuth runs the §4.8 PreAuth interceptor chain over the resolved
+// principal. It returns true when the request may proceed (the chain
+// admitted it, or no chain is wired); on a REJECT it writes the error
+// envelope and returns false. The PreAuth content payload is the
+// authenticated identity, carried as metadata so AuthEvaluator and any
+// later phase read the same tenant_id / user_id keys.
+//
+// spec: §4.8 line 1046 (the PreAuth immutability row) and lines
+// 1025–1028 (authenticated identity available to the chain).
+func (m *middleware) runPreAuth(w http.ResponseWriter, r *http.Request, p Principal) bool {
+	if m.opts.Interceptors == nil {
+		return true
+	}
+	res := m.opts.Interceptors.Run(r.Context(), interceptor.Request{
+		Phase:     interceptor.PhasePreAuth,
+		SessionID: p.SessionID,
+		TenantID:  p.TenantID,
+		Metadata: map[string]string{
+			"tenant_id": p.TenantID,
+			"user_id":   p.Subject,
+		},
+	})
+	if res.Action != interceptor.ActionReject {
+		return true
+	}
+	// spec: §15.1 — a fail-closed interceptor timeout/error is surfaced
+	// as 503 INTERCEPTOR_TIMEOUT (TRANSIENT, retryable); a deliberate
+	// REJECT is 403 INTERCEPTOR_REJECTED.
+	if res.Code == interceptor.CodeInterceptorTimeout {
+		writeError(w, http.StatusServiceUnavailable, interceptor.CodeInterceptorTimeout, res.Reason,
+			map[string]any{
+				"interceptor_ref": res.RejectedBy,
+				"phase":           string(interceptor.PhasePreAuth),
+				"timeout_ms":      res.TimeoutMs,
+			})
+		return false
+	}
+	writeError(w, http.StatusForbidden, "INTERCEPTOR_REJECTED", res.Reason,
+		map[string]any{"interceptor_ref": res.RejectedBy, "phase": string(interceptor.PhasePreAuth)})
+	return false
 }
 
 // parseRolesHeader parses the comma-separated X-Lenny-Roles dev header

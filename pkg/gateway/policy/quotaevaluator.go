@@ -107,6 +107,14 @@ var _ UsageReader = (*quotastore.Counter)(nil)
 // reserved priority 200, and is fail-closed: a limit-lookup or
 // usage-read error rejects the request rather than admitting it
 // unmetered. The gateway registers it on the PostAuth phase chain.
+//
+// QuotaEvaluator is token-budget-only. The §8.3 contentPolicy.maxInputSize
+// byte cap on TaskSpec.input is owned by DelegationPolicyEvaluator at
+// PreDelegation (the phase whose payload is the delegation input);
+// QuotaEvaluator does not measure input size. The §11.2 tenant-scope
+// and global-scope usage are read from the same per-(tenant, user)
+// counter window until a dedicated per-tenant rollup counter lands; that
+// collapse is a documented limitation, not a bypass.
 type QuotaEvaluator struct {
 	limits TenantLimitLookup
 	usage  UsageReader

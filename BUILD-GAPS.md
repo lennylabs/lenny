@@ -1938,7 +1938,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   Phase enum covers every §4.8 phase. No code change required. Verified
   in commit 4d655c81.
 
-### - [ ] F-4.8.2 — Built-in `AuthEvaluator` not registered on the chain (Divergent) [Medium] — OPEN
+### - [x] F-4.8.2 — Built-in `AuthEvaluator` not registered on the chain (Divergent) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.8.10 — Both report the AuthEvaluator/PreAuth phase chain never being invoked or registered; F-4.8.10 explicitly ties itself to F-4.8.2.
 
@@ -1975,8 +1975,19 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   middleware (so the SPI is uniform across phases), or amend §4.8 to
   document that PreAuth is realized as a built-in middleware rather
   than a chain — the current code only matches the latter framing.
+- **Resolution:** New `policy.AuthEvaluator` built-in implements
+  `interceptor.Interceptor` at the reserved priority 100, registered on
+  `PhasePreAuth`. The auth middleware (`auth.Options.Interceptors`,
+  `runPreAuth`) runs the PreAuth chain after the principal resolves and
+  before the inner handler, passing the authenticated `tenant_id`/
+  `user_id` as metadata. AuthEvaluator is the fail-closed identity gate
+  (REJECT `AUTH_REQUIRED` when no tenant reaches the chain); the
+  metadata normalization the §4.8 phase table attributes to its MODIFY
+  is performed by the middleware as it builds the principal. External
+  interceptors remain barred from PreAuth at registration. Resolved in
+  commit <pending>.
 
-### - [ ] F-4.8.3 — `QuotaEvaluator` (Implemented) [Medium] — OPEN
+### - [x] F-4.8.3 — `QuotaEvaluator` (Implemented) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 968–974, 1066–1067. `QuotaEvaluator` is a
   built-in interceptor at `PostAuth`, priority 200. It reads
@@ -2005,8 +2016,16 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   it into a separate built-in if the spec model is that QuotaEvaluator
   is token-budget-only and `DelegationPolicyEvaluator` owns
   `maxInputSize`. Severity Medium.
+- **Resolution:** Adopted the split: `QuotaEvaluator` stays
+  token-budget-only (doc comment updated) and the §8.3
+  `contentPolicy.maxInputSize` byte-length cap is owned by the new
+  `DelegationPolicyEvaluator` at `PreDelegation` (the phase whose
+  payload is the delegation input), closed by F-4.8.4. The
+  tenant/global-scope counter collapse remains a documented limitation
+  (the finding flagged it for completeness, not as a correctness bug).
+  Resolved in commit <pending>.
 
-### - [ ] F-4.8.4 — `DelegationPolicyEvaluator` not implemented (Missing) [Medium] — OPEN
+### - [x] F-4.8.4 — `DelegationPolicyEvaluator` not implemented (Missing) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 968–974, 1068. Built-in at `PreDelegation`,
   priority 250. Enforces §8.3 DelegationPolicy tag matching, depth
@@ -2029,6 +2048,18 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `pkg/gateway/delegationpolicystore`, or amend §4.8 to acknowledge
   that the §8.3 enforcement happens inside `delegation.Service` rather
   than the policy chain.
+- **Resolution:** New `policy.DelegationPolicyEvaluator` built-in at the
+  reserved priority 250, registered on `PhasePreDelegation` and run on
+  the `delegate_task` PreDelegation chain. It enforces the §8.3
+  `contentPolicy.maxInputSize` cap on `TaskSpec.input` (`len(req.Content)`
+  > limit → REJECT `INPUT_TOO_LARGE`, HTTP 413, PERMANENT in
+  `errorclassify`), a cap that no code path enforced before. The default
+  limit is the §8.3 128 KiB, operator-tunable via
+  `--delegation-max-input-size`; an optional `MaxInputSizeResolver`
+  supplies the per-lease effective cap when wired. The §8.3 depth/
+  fan-out/cycle/tag enforcement stays canonical inside
+  `delegation.Service` (per the finding's alternative framing).
+  Resolved in commit <pending>.
 
 ### - [ ] F-4.8.5 — `ExperimentRouter` not registered as an interceptor (Divergent) [Medium] — OPEN
 
@@ -2173,7 +2204,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   fast. The Helm `interceptorNamespaces` egress NetworkPolicy is left as
   a separate chart task (NET-058). Resolved in commit 19273cb6.
 
-### - [ ] F-4.8.10 — `PreAuth` phase chain not invoked (Missing) [Medium] — OPEN
+### - [x] F-4.8.10 — `PreAuth` phase chain not invoked (Missing) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.8.2 — Both report the AuthEvaluator/PreAuth phase chain never being invoked or registered; F-4.8.10 explicitly ties itself to F-4.8.2.
 
@@ -2190,6 +2221,11 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
 - **Suggested resolution:** Either wire `Chain.Run(PreAuth)` into the
   auth middleware (after JWT verification, before context attach), or
   document that PreAuth is realized as a single built-in middleware.
+- **Resolution:** Closed by F-4.8.2 (same defect). The auth middleware
+  now runs `Chain.Run(PhasePreAuth)` after JWT verification and before
+  the inner handler via `auth.Options.Interceptors`/`runPreAuth`, with
+  `policy.AuthEvaluator` as the sole built-in at priority 100. Resolved
+  in commit <pending>.
 
 ### - [x] F-4.8.11 — `PreRoute`, `PostRoute` chains not invoked (Missing) [Medium] — CLOSED
 
