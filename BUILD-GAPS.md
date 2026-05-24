@@ -2827,7 +2827,7 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.10 — Only `AnthropicDirectTranslator` is wired in the live gateway; Bedrock/Vertex/Azure/OpenAI-direct translators are unused by the proxy [Medium] — OPEN
+### - [ ] F-4.9.10 — Only `AnthropicDirectTranslator` is wired in the live gateway; Bedrock/Vertex/Azure/OpenAI-direct translators are unused by the proxy [Medium] — CLOSED
 
 **Severity:** Medium (capability unimplemented at runtime; the translator code itself exists and is unit-tested, so this is wiring).
 
@@ -2835,15 +2835,19 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 **Evidence:** `cmd/lenny-gateway/main.go:1811-1817` `newLLMProxyServer` mounts a single handler at `POST /llm-proxy/v1/messages` with `Translator: &llmproxy.AnthropicDirectTranslator{...}`. No dispatch on the lease's resolved provider, no registry of translators by `(provider, dialect)`, no route for `/v1/chat/completions` or `/v1/responses` (the OpenAI dialect endpoints from spec lines 1473-1474). The Bedrock, Vertex, Azure, and OpenAI translators (`pkg/gateway/llmproxy/*_translator.go`) are present, exercised by unit tests, and have no production caller.
 
+**Resolution (0b1c7047):** Added `llmproxy.TranslatorRegistry` (provider→translator) and `Handler.translatorFor(lease.Provider)`; the proxy dispatches on the lease's resolved provider and rejects an unregistered provider with `UPSTREAM_PROVIDER_UNSUPPORTED`. `buildLLMTranslatorRegistry` registers `anthropic_direct` and `openai_direct` unconditionally and `aws_bedrock`/`vertex_ai`/`azure_openai` when their region/project/endpoint flags (`--llm-bedrock-region`, `--llm-vertex-region/-project`, `--llm-azure-endpoint/-api-version`) are set, so every translator is reachable. The OpenAI dialect endpoints `/v1/chat/completions` / `/v1/responses` are served by their own §15.0 adapters and are out of scope for this provider-dispatch fix.
+
 ---
 
-### - [ ] F-4.9.11 — Helm chart has no `credentialPools` configuration surface [Medium] — OPEN
+### - [ ] F-4.9.11 — Helm chart has no `credentialPools` configuration surface [Medium] — CLOSED
 
 **Severity:** Medium (deployers cannot register a pool through bootstrap or `helm install`; the `POST /v1/admin/credential-pools` admin endpoint is the only path, which violates the spec's "bootstrap.credentialPools in Helm values" path at lines 1697, 1711).
 
 **Spec:** spec/04_system-components.md lines 1107-1141 example, line 1697 (`bootstrap.credentialPools`), line 1711 (`bootstrap.credentialPools` in Helm values).
 
 **Evidence:** `grep -rn "credentialPools\|credentialPolicy" charts/lenny/` returns no matches. `charts/lenny/values.yaml` exposes only `features.llmProxy: false` flag and `gateway.llmProxyPort`. No bootstrap section for pool seeding.
+
+**Resolution (0b1c7047):** Added `credentialPools` to `BootstrapRequest`/`BootstrapResponse` and an `upsertCredentialPools` handler (upsert by tenantId+name, per-entry errors, §4.9 cacheScope compliance enforced). The Helm `bootstrap-configmap.yaml` renders `.Values.bootstrap.credentialPools` into `bootstrap-values.yaml`; `values.yaml` documents the list and `lenny-ctl bootstrap --from-values` POSTs it to `/v1/admin/bootstrap`.
 
 ---
 
@@ -2857,7 +2861,7 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.13 — Semantic cache: `cacheScope: tenant` + regulated `complianceProfile` rejection not enforced; `ValidateSemanticCacheErasure` is not an exported helper [Medium] — OPEN
+### - [ ] F-4.9.13 — Semantic cache: `cacheScope: tenant` + regulated `complianceProfile` rejection not enforced; `ValidateSemanticCacheErasure` is not an exported helper [Medium] — CLOSED
 
 **Severity:** Medium (spec MUSTs the cacheScope rejection at pool registration with `400 COMPLIANCE_CROSS_USER_CACHE_PROHIBITED`; the contract validator was specifically required so pluggable implementations can opt in).
 
@@ -2867,6 +2871,8 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 - `pkg/gateway/semanticcache/semanticcache.go:59` notes the constraint in a comment but `Valid()` (line 64) accepts `ScopeTenant` unconditionally. No `complianceProfile` field is consulted at pool registration; `pkg/gateway/admin/credential_pools.go` validates `assignmentStrategy` but does not validate any `cachePolicy` or `cacheScope`.
 - No `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED` error code emitted anywhere (`grep -rn "COMPLIANCE_CROSS_USER" pkg/ cmd/` returns no matches).
 - `ValidateSemanticCacheErasure(t *testing.T, cache SemanticCache)` is described in the spec as a contract validation helper provided for pluggable implementations. `pkg/gateway/semanticcache/semanticcache_test.go:166-192` has a `TestDeleteByUserErasesUserEntries` that exercises the equivalent assertions but is a local test, not an exported helper. Pluggable implementations cannot import it.
+
+**Resolution (0b1c7047):** Added a persisted `cacheScope` to the credential pool (store field, migration 0070, pgstore columns, admin payload). `Router.validateCacheScope` (and the bootstrap analog) rejects `cacheScope: tenant` for a tenant with a regulated `complianceProfile` (`hipaa`, `fedramp`) with `400 COMPLIANCE_CROSS_USER_CACHE_PROHIBITED` at create/update/bootstrap. `semanticcache.ValidateSemanticCacheErasure` is now an exported helper in `contract.go` (with a `SemanticCache = Store` alias) that pluggable implementations import. `CacheScope.Valid()` remains the enum check; the compliance rejection lives at registration time per the spec.
 
 ---
 
