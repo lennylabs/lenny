@@ -69,6 +69,34 @@ WORKING DIRECTORY: the current working directory (the Lenny repo root). All file
 
 CONTINUITY: the running log of every prior iteration's short summary is at the path in `LENNY_RUNNING_LOG`. Start by reading its tail (`tail -300 "$LENNY_RUNNING_LOG"`) when it exists and is non-empty, so you know which findings were just closed, what was deferred, and what each prior batch reported. Use it to avoid re-attempting work and to extend rather than duplicate prior batches.
 
+RULES (apply to every action this invocation)
+
+A. **Re-read the spec and re-verify before fixing.** Before addressing any gap, re-read the cited spec section and check that the gap is not a false alarm and has not already been addressed by a prior batch. If a finding is already resolved, mark CLOSED with a one-line resolution note pointing at the commit that resolved it and move on.
+
+B. **All code MUST comply with the spec.** Cite the relevant spec section (e.g. `// spec: §X.Y line N`) in code comments and test names. If a fix would require changing the spec, stop and report — never modify files under `spec/` (the spec is the source of truth; a hook will block writes).
+
+C. **Always write tests for code you modify or create.** See `TESTING.md` for the tier model. Achieve good unit-test coverage first (tier-1), then add higher-level tests where appropriate — component (tier 2), contract (tier 3), integration (tier 4), e2e (tier 5), chaos (tier 8), security (tier 9), all the way up to load tests (tier 7/12) when warranted.
+
+D. **Test scenarios cover all corner cases and eventualities mentioned in the spec.** Happy path is not enough — exercise the empty / error / concurrent / boundary / spec-named-failure paths.
+
+E. **Code and tests reference the relevant spec sections.** Same citation form as rule B; include the spec reference in test function names or `// spec:` comments.
+
+F. **Commit after each batch — or more frequently when appropriate.** Prefer one logical group per commit. Between commits, run `go build ./...` so a disconnect leaves the working tree buildable.
+
+G. **Run regression tests — focus on tiers relevant to the change.** Always include tier-0 (static: `go build`, `go vet`) and tier-1 (unit: `go test ./pkg/...` scoped to the packages you touched). Add higher tiers only when the contract you changed warrants them; running every tier on every batch is too slow.
+
+H. **Best practices.** Modular code, reuse over duplication, sensible package structure, comments only when they explain *why* (not what), small functions, small modules.
+
+I. **Reuse existing packages.** Before creating a new package or module, search the codebase for an existing one that should be reused or extended. Cross-reference with the §4-§17 component layout in the spec.
+
+J. **Mark every fixed finding CLOSED in BUILD-GAPS.md.** Replace `— OPEN` with `— CLOSED` on the heading and add a one or two sentence Resolution note (citing the commit SHA) at the bottom of the finding block. If you deliberately defer a fix, replace `— OPEN` with `— DEFERRED` and note why.
+
+K. **Potential duplicates.** When a finding's text flags a "Potential duplicate" or "Potential overlap", verify the cross-reference; when you confirm overlap, close the duplicate in the same batch with a "Closed by F-X.Y.Z" resolution note.
+
+L. **No backward-compatibility shims.** The codebase is pre-deployment; change interfaces freely.
+
+M. **Tread carefully — this is a large codebase.** Search broadly (do not restrict yourself to the file/line pointers in the finding text — they may be stale) and read enough surrounding context before each change.
+
 YOUR TASK THIS INVOCATION
 
 1. Pick the next 4–8 OPEN findings from BUILD-GAPS.md. Prefer clustering on a shared §X.Y section or on text-flagged duplicates so one fix can close several. Start with:
@@ -77,37 +105,15 @@ YOUR TASK THIS INVOCATION
 
    Read the full text of each candidate (the heading plus the bulleted Spec/Evidence/Gap/Suggested-resolution lines) before committing to the batch.
 
-2. Re-verify each finding against the current code and spec. The codebase has been changing rapidly; a finding may already be addressed by a prior batch (a false alarm, or fixed in passing). If so, mark CLOSED with a one-line resolution note pointing at the commit that resolved it and move on.
+2. Apply the RULES above to each finding in the batch.
 
-3. For each genuine finding, make the spec-compliant fix:
-   - Search the codebase broadly — do not restrict yourself to the file/line pointers cited in the finding text. The codebase is large and the cited paths may be stale.
-   - Cite spec sections in code comments (e.g. `// spec: §X.Y line N`) and in test names.
-
-4. Tests are mandatory:
-   - Tier-1 unit tests for every change.
-   - Add higher-tier tests (component tier 2, contract tier 3, integration tier 4, e2e tier 5, chaos tier 8, security tier 9) when the contract you're changing warrants them. See TESTING.md.
-   - Cover happy path + edge cases (empty / error / concurrent / boundary).
-
-5. Commit in stages — one logical group per commit. Run `go build ./...` and the relevant `go test ./pkg/...` between commits so a disconnect leaves the working tree in a buildable state.
-
-6. After each finding is fixed, edit BUILD-GAPS.md:
-   - Change `— OPEN` to `— CLOSED` on the heading.
-   - Add a one or two sentence Resolution note at the bottom of the finding block, citing the commit SHA when helpful.
-
-7. Output a TIGHT summary (≤200 words; the loop appends it to a running log, so brevity matters). Format:
+3. Output a TIGHT summary (≤200 words; the loop appends it to a running log, so brevity matters). Format:
    - Findings closed: bullet list of IDs with a half-line each.
    - Duplicates also closed (one bullet each).
+   - Findings deferred: ID + half-line reason (or "none").
    - Commits: SHAs only.
    - Tests added: count + tier (one line).
-   - Deferred: ID + half-line reason (or "none").
    Do NOT restate the rules, the spec, file paths, or per-finding diffs in the summary.
-
-HARD RULES
-
-- NEVER modify any file under `spec/`. The spec is read-only by project policy (a hook will block the write).
-- No backward-compatibility shims. The codebase is pre-deployment; change interfaces freely.
-- If a finding text flags a "Potential duplicate" or "Potential overlap", verify the cross-reference; when you confirm overlap, close the dup in the same batch with a "Closed by F-X.Y.Z" note.
-- Tread carefully — large codebase. Read enough surrounding context before each change.
 
 WHEN DONE
 
