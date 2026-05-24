@@ -3,6 +3,7 @@
 package podspec_test
 
 import (
+	"fmt"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -242,6 +243,37 @@ func TestBuildSidecarPassesTheRuntimeSocket(t *testing.T) {
 	// §13.1: the sidecar model keeps the process-isolation boundary.
 	if pod.Spec.ShareProcessNamespace != nil && *pod.Spec.ShareProcessNamespace {
 		t.Error("the sidecar model must leave shareProcessNamespace unset (§4.7, §13.1)")
+	}
+}
+
+// TestBuildSidecarWiresStagingAndRuntimeUID asserts the §4.7 adapter
+// receives --staging-dir (so PrepareWorkspace succeeds, F-4.7.10) and
+// --runtime-uid set to the runtime container's runAsUser (so the
+// SO_PEERCRED MCP peer check is active in production, F-4.7.11).
+func TestBuildSidecarWiresStagingAndRuntimeUID(t *testing.T) {
+	in := inputs()
+	in.DeploymentModel = "sidecar"
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	adapterArgs := container(t, pod, "adapter").Args
+	wantUID := fmt.Sprintf("--runtime-uid=%d", podspec.AgentUID)
+	var sawStaging, sawUID bool
+	for _, a := range adapterArgs {
+		switch a {
+		case "--staging-dir=/workspace/.staging":
+			sawStaging = true
+		case wantUID:
+			sawUID = true
+		}
+	}
+	if !sawStaging {
+		t.Errorf("adapter args %v must set --staging-dir (§4.7)", adapterArgs)
+	}
+	if !sawUID {
+		t.Errorf("adapter args %v must set %q (§4.7/§13)", adapterArgs, wantUID)
 	}
 }
 

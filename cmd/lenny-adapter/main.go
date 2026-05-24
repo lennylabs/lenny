@@ -38,6 +38,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"google.golang.org/grpc"
@@ -50,6 +51,24 @@ import (
 // version negotiation.
 var version = "0.1.0"
 
+// resolveRuntimeUID returns the agent runtime UID for the §4.7/§13
+// SO_PEERCRED MCP peer check. The --runtime-uid flag takes precedence; a
+// zero flag falls back to the LENNY_RUNTIME_UID environment variable the
+// pod spec injects from the runtime container's runAsUser. A value that
+// is zero or unparseable leaves the peer check disabled.
+func resolveRuntimeUID(flagUID uint) uint32 {
+	if flagUID != 0 {
+		return uint32(flagUID)
+	}
+	if env := os.Getenv("LENNY_RUNTIME_UID"); env != "" {
+		if uid, err := strconv.ParseUint(env, 10, 32); err == nil {
+			return uint32(uid)
+		}
+		log.Printf("lenny-adapter: ignoring unparseable LENNY_RUNTIME_UID=%q", env)
+	}
+	return 0
+}
+
 func main() {
 	addr := flag.String("addr", ":50051", "address the adapter gRPC server binds to")
 	certFile := flag.String("tls-cert-file", "", "path to the adapter server certificate")
@@ -58,8 +77,20 @@ func main() {
 		"path to the CA bundle that verifies gateway client certificates")
 	workspaceRoot := flag.String("workspace-root", "/workspace/current",
 		"directory the session workspace is materialized into")
+	stagingDir := flag.String("staging-dir", "/workspace/.staging",
+		"directory PrepareWorkspace streams uploaded files into before "+
+			"FinalizeWorkspace materializes them; empty leaves PrepareWorkspace "+
+			"returning FailedPrecondition")
 	credentialsDir := flag.String("credentials-dir", "/run/lenny",
 		"directory the §4.7 credential file is materialized into")
+	runtimeUID := flag.Uint("runtime-uid", 0,
+		"UID the agent runtime process runs as (the pod spec runAsUser); "+
+			"the adapter applies the §4.7/§13 SO_PEERCRED MCP peer check against "+
+			"it. 0 falls back to LENNY_RUNTIME_UID; still 0 disables the check")
+	requireSoPeercred := flag.Bool("require-so-peercred", true,
+		"run the mandatory §4.7 SO_PEERCRED startup self-test and crash-loop on "+
+			"failure; set false only when gVisor SO_PEERCRED divergence is "+
+			"confirmed and nonce-only mode is explicitly accepted")
 	runtimeBin := flag.String("runtime-bin", "",
 		"path to the runtime binary the adapter execs and drives over stdin/stdout (developer loop)")
 	runtimeSocket := flag.String("runtime-socket", "",
@@ -73,6 +104,25 @@ func main() {
 		log.Fatalf("lenny-adapter: --runtime-bin and --runtime-socket are mutually exclusive")
 	}
 
+	// §4.7 lines 870-877: run the mandatory SO_PEERCRED startup self-test
+	// before any other setup. On failure, crash-loop the pod so it never
+	// enters the warm pool with a non-functional security boundary; when
+	// --require-so-peercred is false (confirmed gVisor divergence), the
+	// failure is suppressed and the adapter runs in nonce-only mode.
+	if err := adapter.PeercredSelftest(); err != nil && *requireSoPeercred {
+		adapter.IncSoPeercredSelftestFailed()
+		log.Fatalf("lenny-adapter: FATAL: SO_PEERCRED self-test failed — UID mismatch or "+
+			"syscall error; adapter security boundary cannot be enforced: %v", err)
+	}
+	if !*requireSoPeercred {
+		// §4.7 lines 885-888: nonce-only mode is an auditable escalation,
+		// not a silent steady state.
+		adapter.IncSoPeercredDisabled()
+		log.Printf("lenny-adapter: WARNING: --require-so-peercred=false; running in " +
+			"nonce-only mode (§4.7). Deployers MUST alert on " +
+			"lenny_adapter_sopeercred_disabled_total > 0")
+	}
+
 	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
 	if err != nil {
 		log.Fatalf("lenny-adapter: %v", err)
@@ -84,6 +134,8 @@ func main() {
 
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
+	adapterSrv.StagingDir = *stagingDir
+	adapterSrv.RuntimeUID = resolveRuntimeUID(*runtimeUID)
 	adapterSrv.CredentialsDir = *credentialsDir
 	// §15.4: the adapter manifest is written into /run/lenny alongside
 	// the credential file.

@@ -3,6 +3,8 @@
 package adapter
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 
@@ -68,7 +70,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 				}
 				continue
 			}
-			if err := stream.Send(&adapterv1.AttachResponse{EnvelopeJson: line}); err != nil {
+			if err := stream.Send(&adapterv1.AttachResponse{EnvelopeJson: stripRuntimeFrom(line)}); err != nil {
 				return err
 			}
 		case err := <-recvErr:
@@ -84,6 +86,35 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			return ctx.Err()
 		}
 	}
+}
+
+// stripRuntimeFrom removes a runtime-set `from` field from an outbound
+// JSONL frame before the adapter relays it to the gateway. Per
+// schemas/lenny-adapter-jsonl.schema.json line 74 the `from` field is
+// adapter-injected and runtimes MUST NOT set it; the gateway re-stamps
+// the authoritative sender context. Stripping it here prevents a
+// misbehaving runtime from spoofing a sender (e.g., appearing as a
+// `client`). A frame without a top-level `from` object, or one that does
+// not parse as a JSON object, is returned unchanged so non-envelope
+// frames and malformed output pass through to the gateway's own
+// validation untouched.
+func stripRuntimeFrom(line []byte) []byte {
+	if !bytes.Contains(line, []byte(`"from"`)) {
+		return line
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(line, &obj); err != nil {
+		return line
+	}
+	if _, ok := obj["from"]; !ok {
+		return line
+	}
+	delete(obj, "from")
+	sanitized, err := json.Marshal(obj)
+	if err != nil {
+		return line
+	}
+	return sanitized
 }
 
 // attachRecvLoop forwards each client envelope on the Attach stream to

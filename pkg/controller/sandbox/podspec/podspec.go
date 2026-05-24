@@ -71,6 +71,12 @@ const (
 	credentialMount = "/run/lenny"
 	tmpMount        = "/tmp"
 
+	// stagingPath is the §4.7 PrepareWorkspace staging directory. It sits
+	// under the shared workspace emptyDir so the adapter can promote
+	// staged content into /workspace/current without crossing a volume
+	// boundary.
+	stagingPath = workspaceMount + "/.staging"
+
 	// RuntimeSocketName is the §4.7 sidecar-model abstract Unix socket
 	// the adapter binds and the runtime container dials. A Linux
 	// abstract address begins with "@" and occupies the kernel
@@ -219,6 +225,12 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			Args: []string{
 				fmt.Sprintf("--addr=:%d", adapterPort),
 				"--workspace-root=" + workspaceMount + "/current",
+				// §4.7: PrepareWorkspace stages uploads here before
+				// FinalizeWorkspace promotes them into /workspace/current.
+				"--staging-dir=" + stagingPath,
+				// §4.7/§13: enforce the SO_PEERCRED MCP peer check against
+				// the runtime container's runAsUser.
+				fmt.Sprintf("--runtime-uid=%d", AgentUID),
 				// §4.7 sidecar transport: the adapter binds the abstract
 				// runtime socket the runtime container dials.
 				"--runtime-socket=" + RuntimeSocketName,
@@ -269,6 +281,9 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			Args: []string{
 				fmt.Sprintf("--addr=:%d", adapterPort),
 				"--workspace-root=" + workspaceMount + "/current",
+				// §4.7: the embedded runtime is the adapter, so it stages
+				// uploads the same way the sidecar adapter does.
+				"--staging-dir=" + stagingPath,
 			},
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    runtimeMounts,
