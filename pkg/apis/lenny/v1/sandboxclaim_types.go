@@ -41,9 +41,11 @@ type SandboxClaimSpec struct {
 // binding — distinct from the Sandbox pod lifecycle state machine.
 type SandboxClaimStatus struct {
 	// Phase is the §4.6.3 session-binding state: `bound` once the
-	// claim is bound to a claimed Sandbox, `released` once the pod is
-	// returned to the pool, `failed` on a binding failure.
-	// +kubebuilder:validation:Enum=bound;released;failed
+	// claim is bound to a claimed Sandbox, `active` once the session has
+	// reached `attached` and is actively running work on the claimed pod,
+	// `released` once the pod is returned to the pool, `failed` on a
+	// binding failure. Per §4.6.3 only `released` and `failed` are terminal.
+	// +kubebuilder:validation:Enum=bound;active;released;failed
 	// +optional
 	Phase string `json:"phase,omitempty"`
 

@@ -4,6 +4,8 @@ package sandboxclaim_guard
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -242,6 +244,25 @@ func TestDecideRejectsUnsupportedOperation(t *testing.T) {
 	_, err := Decide(Request{Operation: "DELETE", SandboxRef: "sandbox-1"})
 	if err == nil {
 		t.Errorf("unsupported operation should return an error")
+	}
+}
+
+// TestSandboxClaimCRDEnumCoversEveryClaimStatus guards against the
+// F-4.6.10 drift: the guard recognizes `active` but the CRD OpenAPI
+// enum must admit it too, otherwise the API server rejects any write
+// setting status.phase: active. spec: §4.6.3 — the SandboxClaim
+// status.phase enumeration lists bound, active, released, failed.
+func TestSandboxClaimCRDEnumCoversEveryClaimStatus(t *testing.T) {
+	crdPath := filepath.Join("..", "..", "..", "charts", "lenny", "crds", "lenny.dev_sandboxclaims.yaml")
+	data, err := os.ReadFile(crdPath)
+	if err != nil {
+		t.Fatalf("read CRD %s: %v", crdPath, err)
+	}
+	crd := string(data)
+	for _, s := range []ClaimStatus{ClaimBound, ClaimActive, ClaimReleased, ClaimFailed} {
+		if !strings.Contains(crd, "- "+string(s)) {
+			t.Errorf("SandboxClaim CRD phase enum is missing %q; the API server will reject writes setting that value", s)
+		}
 	}
 }
 
