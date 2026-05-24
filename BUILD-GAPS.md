@@ -1582,7 +1582,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.8 — `SO_PEERCRED` mandatory startup self-test missing [Medium] — OPEN
+### - [x] F-4.7.8 — `SO_PEERCRED` mandatory startup self-test missing [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.1.3, F-4.7.9 — F-13.1.3 spans both the SO_PEERCRED startup self-test and the nonce-only HMAC fallback; F-4.7.8 and F-4.7.9 each cover one half of that same missing §4.7 contract.
 
@@ -1598,6 +1598,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** Pods can enter the warm pool on a container runtime where `SO_PEERCRED` is silently broken, defeating the boundary.
 
 **Suggested resolution:** Add a `peercredSelftest()` step before `srv.Serve` in `cmd/lenny-adapter/main.go` that binds `@lenny-sopeercred-selftest`, loopback-connects, asserts `Ucred.Uid == os.Getuid()`, increments `lenny_adapter_sopeercred_selftest_failed_total` on failure, and exits non-zero. Add the `adapter.requireSoPeercred` flag (default `true`).
+
+**Resolution (131a5107):** Added `adapter.PeercredSelftest` (Linux build-tag binds `@lenny-sopeercred-selftest`, loopback-connects, asserts the SO_PEERCRED peer UID equals `os.Getuid()`; non-Linux is a no-op) sharing the new `peerCredUID` helper with `checkPeerUID`. `cmd/lenny-adapter` runs it before `srv.Serve` behind the `--require-so-peercred` flag (default `true`): on failure it increments `lenny_adapter_sopeercred_selftest_failed_total` and `log.Fatalf`s the spec FATAL message. The counter is registered in `pkg/adapter/metrics.go` via the §16.1.1-validating constructor.
 
 ---
 
@@ -1619,7 +1621,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.10 — `--staging-dir` flag missing from `cmd/lenny-adapter`; PrepareWorkspace permanently fails [Medium] — OPEN
+### - [x] F-4.7.10 — `--staging-dir` flag missing from `cmd/lenny-adapter`; PrepareWorkspace permanently fails [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.4.5 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
@@ -1636,9 +1638,11 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Add `--staging-dir` (default `/run/lenny/staging` or `/workspace/.staging`) and assign `adapterSrv.StagingDir = *stagingDir`. Wire the directory into the pod spec (emptyDir mount) in the controller.
 
+**Resolution (131a5107):** Added `--staging-dir` (default `/workspace/.staging`) to `cmd/lenny-adapter` assigning `adapterSrv.StagingDir`. The controller pod spec (`pkg/controller/sandbox/podspec/podspec.go`) passes `--staging-dir=/workspace/.staging` to both the sidecar adapter and the embedded runtime; the path sits under the existing shared `workspace` emptyDir so promotion into `/workspace/current` stays within one volume.
+
 ---
 
-### - [ ] F-4.7.11 — `--runtime-uid` flag missing; SO_PEERCRED peer check is dormant in production [Medium] — OPEN
+### - [x] F-4.7.11 — `--runtime-uid` flag missing; SO_PEERCRED peer check is dormant in production [Medium] — CLOSED
 
 **Severity: High.** `RuntimeUID == 0` disables the SO_PEERCRED MCP peer check entirely.
 
@@ -1652,6 +1656,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** The §13 boundary control is effectively off in deployments.
 
 **Suggested resolution:** Add `--runtime-uid` (default reading from `LENNY_RUNTIME_UID` env injected from the pod spec's `runAsUser`); assign `adapterSrv.RuntimeUID = uid`.
+
+**Resolution (131a5107):** Added `--runtime-uid` to `cmd/lenny-adapter` resolved by `resolveRuntimeUID` (flag wins; zero falls back to `LENNY_RUNTIME_UID`; unparseable/missing leaves the check disabled) and assigned to `adapterSrv.RuntimeUID`. The controller pod spec passes `--runtime-uid=<AgentUID>` (the runtime container's `runAsUser`) to the sidecar adapter, so the SO_PEERCRED MCP peer check is active in production.
 
 ---
 
@@ -1711,7 +1717,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — OPEN
+### - [ ] F-4.7.15 — `lenny_adapter_sopeercred_disabled_total` counter and `SOPeercredDisabled` Kubernetes condition not emitted [Medium] — DEFERRED
 
 **Severity: Medium.** Operability gap; the nonce-only mode is not surfaced.
 
@@ -1720,6 +1726,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Evidence:** No code references these metric or condition names in `pkg/adapter/` or `cmd/lenny-adapter/`.
 
 **Suggested resolution:** Emit the counter on pod start when the flag is `false`; set the pod condition through the local kubelet downward-API or a controller-owned reconciler.
+
+**Deferred (131a5107):** The counter half is done — `cmd/lenny-adapter` increments `lenny_adapter_sopeercred_disabled_total` (registered in `pkg/adapter/metrics.go`) on every start when `--require-so-peercred=false`. The `SOPeercredDisabled=True` pod condition and its propagation to `SecurityDegradedMode=True` on the `SandboxTemplate` is deferred: the adapter has no Kubernetes client today, and the downward API cannot write conditions, so this needs an adapter in-cluster client plus RBAC and a controller reconciler — a standalone effort tracked separately.
 
 ---
 
@@ -1735,7 +1743,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.17 — Adapter↔runtime stdin/stdout framing path missing the `from` injection rule [Medium] — OPEN
+### - [x] F-4.7.17 — Adapter↔runtime stdin/stdout framing path missing the `from` injection rule [Medium] — CLOSED
 
 **Severity: Low.** The schema file documents the contract but the adapter does not enforce it.
 
@@ -1748,6 +1756,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** A misbehaving runtime can spoof a `from` field on outbound messages (e.g., to appear as a `client` source). This is bounded by §13 (the adapter-to-gateway hop is mTLS and the gateway re-stamps the field), so the risk is contained but not zero.
 
 **Suggested resolution:** Strip or override the `from` field on inbound and outbound paths the adapter touches. Validate against the spec's closed enum.
+
+**Resolution (131a5107):** `pkg/adapter/attach.go` now passes every outbound runtime frame through `stripRuntimeFrom`, which deletes a runtime-set top-level `from` field before relaying to the gateway (the gateway re-stamps the authoritative sender context). Frames without a `from`, non-object frames, and malformed JSON pass through unchanged so non-envelope output reaches the gateway's own validation.
 
 ---
 
