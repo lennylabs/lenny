@@ -31,6 +31,7 @@ package embeddedcheckpoint
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync/atomic"
 	"time"
 )
@@ -211,4 +212,32 @@ func (h *Helper) now() time.Time {
 		return h.clock()
 	}
 	return time.Now().UTC()
+}
+
+// LivenessHandler returns an HTTP handler that implements the §4.4
+// line 250 `/healthz` integration: it returns HTTP 503 with
+// `{"status":"unhealthy","reason":"checkpoint_stuck"}` when the shared
+// `Stuck` flag is set and HTTP 200 with
+// `{"status":"healthy"}` otherwise. The adapter wires this handler
+// against its `/healthz` route so a stuck checkpoint triggers a
+// Kubernetes pod restart.
+//
+// The handler is goroutine-safe — it only reads the atomic flag and
+// writes a fixed-size response body — and stateless, so the same
+// handler can be mounted under multiple HTTP servers.
+//
+// spec: §4.4 line 250 — "When `checkpointStuck` is set, the /healthz
+// endpoint returns HTTP 503 with `{"status": "unhealthy", "reason":
+// "checkpoint_stuck"}`".
+func LivenessHandler(stuck *StuckFlag) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if stuck != nil && stuck.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"unhealthy","reason":"checkpoint_stuck"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"healthy"}`))
+	})
 }
