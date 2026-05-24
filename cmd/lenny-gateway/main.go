@@ -147,6 +147,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
+	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
@@ -438,6 +440,20 @@ func main() {
 		users = userstore.NewMemory()
 		connectors = connectorstore.NewMemory()
 		billing = billingstore.NewMemory()
+	}
+	// §4.4 line 236 partial-manifest store: persists the recovery-aid
+	// row written when an eviction checkpoint exceeds the preStop
+	// tiered cap and the workspace upload is incomplete. The store is
+	// always initialized; the writer is dormant until the §10.1
+	// partial-upload pipeline is wired, but the resume-side cleanup
+	// path is plumbed unconditionally so a row written by a
+	// follow-on release is cleaned up correctly the first time a
+	// session resumes.
+	var partialManifests partialmanifeststore.Store
+	if pgPool != nil {
+		partialManifests = partialmanifestpg.New(pgPool, nil)
+	} else {
+		partialManifests = partialmanifeststore.NewMemoryStore(nil)
 	}
 	// §4.5 artifact store: MinIO-backed when --minio-endpoint is set,
 	// otherwise an in-memory store for the minimal gateway. blobProbe
@@ -1086,6 +1102,14 @@ func main() {
 		AgentNamespace:          *agentNamespace,
 		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
 		Sealer:                  sessionSealer,
+		// §4.4 line 236 — the resume path delegates partial-manifest
+		// cleanup to this adapter. Deleter is nil for v1 (no chunk
+		// uploader yet); when the §10.1 writer ships the chunk
+		// deleter should be wired here.
+		PartialManifestCleaner: &checkpointer.PartialCleaner{
+			Store:   partialManifests,
+			Metrics: gwMetrics,
+		},
 		TreeArchive:             treeArchive,
 		Interceptors:            policyChain,
 		PolicyAuditSink:         policyAuditSink,

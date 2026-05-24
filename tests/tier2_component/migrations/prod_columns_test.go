@@ -147,6 +147,12 @@ var prodMigrationSchema = []struct {
 	{migration: "0061", table: "sessions", columns: []string{
 		"last_successful_checkpoint_at",
 	}},
+	// 0062 creates the §4.4 lines 234 / 236 partial-checkpoint
+	// manifest table. The row is the recovery-aid the gateway writes
+	// when an eviction checkpoint exceeds the preStop tiered cap and
+	// the workspace upload is incomplete; the resume path uses it to
+	// drive the §10.1 partial-workspace reconstruction.
+	{migration: "0062", table: "session_partial_checkpoint_manifest", create: true},
 }
 
 // spec: 12.2, 18.5

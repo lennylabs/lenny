@@ -55,6 +55,12 @@ type Metrics struct {
 	// alert fires when any label combination reports a non-zero value
 	// for > 60 s.
 	checkpointStaleSessions *prometheus.GaugeVec
+	// partialManifestCleanup counts the §4.4 line 236 partial-manifest
+	// cleanup outcomes (success | failed_deleted | gc_collected).
+	partialManifestCleanup *prometheus.CounterVec
+	// checkpointPartialManifestsSuperseded counts the §10.1
+	// supersede-on-write transactions for prior partial manifests.
+	checkpointPartialManifestsSuperseded *prometheus.CounterVec
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -270,13 +276,39 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.4 line 236 — `lenny_partial_manifest_cleanup_total` records
+	// the outcome of every partial-manifest cleanup invocation:
+	// `success` (chunks deleted + row soft-deleted by the primary
+	// resume path), `failed_deleted` (cleanup encountered a MinIO
+	// delete error and will be retried), `gc_collected` (the §12.5
+	// backstop sweep ran after the resume window expired).
+	partialManifestCleanup, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_partial_manifest_cleanup_total",
+		Help: "Partial checkpoint manifest cleanup outcomes (§4.4 line 236).",
+	}, []string{"outcome"})
+	if err != nil {
+		return nil, err
+	}
+	// §10.1 — `lenny_checkpoint_partial_manifests_superseded_total`
+	// counts every prior partial manifest that was soft-deleted by a
+	// supersede-on-write transaction. Repeated drain-timeout patterns
+	// on the same session bump this counter so operators can detect
+	// tenant or pool-specific instabilities.
+	checkpointPartialManifestsSuperseded, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_checkpoint_partial_manifests_superseded_total",
+		Help: "Prior partial manifests soft-deleted on supersede (§10.1).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
 		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen, elicitationDropped,
 		elicitationTamperDetected, experimentIsoRej,
 		noEnvPolicyAllowAll, tokenServiceCircuitState,
-		checkpointStaleSessions)
+		checkpointStaleSessions,
+		partialManifestCleanup, checkpointPartialManifestsSuperseded)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -320,9 +352,34 @@ func New() (*Metrics, error) {
 		experimentIsoRej:          experimentIsoRej,
 		noEnvPolicyAllowAll:       noEnvPolicyAllowAll,
 		gcPauseP99Ms:              gcPause,
-		tokenServiceCircuitState:  tokenServiceCircuitChild,
-		checkpointStaleSessions:   checkpointStaleSessions,
+		tokenServiceCircuitState:             tokenServiceCircuitChild,
+		checkpointStaleSessions:              checkpointStaleSessions,
+		partialManifestCleanup:               partialManifestCleanup,
+		checkpointPartialManifestsSuperseded: checkpointPartialManifestsSuperseded,
 	}, nil
+}
+
+// IncPartialManifestCleanup increments the §4.4 line 236
+// `lenny_partial_manifest_cleanup_total` counter labeled by outcome
+// (`success`, `failed_deleted`, or `gc_collected`).
+// spec: §4.4 line 236.
+func (m *Metrics) IncPartialManifestCleanup(outcome string) {
+	if m == nil {
+		return
+	}
+	m.partialManifestCleanup.WithLabelValues(outcome).Inc()
+}
+
+// IncCheckpointPartialManifestsSuperseded increments the §10.1
+// `lenny_checkpoint_partial_manifests_superseded_total` counter
+// labeled by pool. Called once per prior partial manifest soft-deleted
+// inside a supersede-on-write transaction.
+// spec: §10.1 supersede-on-write.
+func (m *Metrics) IncCheckpointPartialManifestsSuperseded(pool string) {
+	if m == nil {
+		return
+	}
+	m.checkpointPartialManifestsSuperseded.WithLabelValues(pool).Inc()
 }
 
 // SetCheckpointStaleSessions sets the per-pool/level

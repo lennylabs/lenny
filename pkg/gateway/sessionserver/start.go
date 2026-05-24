@@ -580,6 +580,20 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §4.4 line 236 — partial-manifest cleanup runs on every
+	// resume regardless of whether the underlying reassembly
+	// succeeded. The cleaner deletes the chunk objects and
+	// soft-deletes the manifest row under the `deleted_at IS NULL`
+	// guard; failures leave the row active for the §12.5 backstop
+	// sweep to retry.
+	if s.partialManifestCleaner != nil {
+		if cerr := s.partialManifestCleaner.CleanupAfterResume(r.Context(), tenantID, id); cerr != nil {
+			// Cleanup failure is non-fatal: the resume already
+			// completed and the row stays active for the
+			// backstop sweep. Surface the error in logs only.
+			log.Printf("sessionserver: partial-manifest cleanup for session %s failed: %v", id, cerr)
+		}
+	}
 	s.emitChildrenReattached(r.Context(), tenantID, id)
 	s.writeSession(w, http.StatusOK, updated)
 }

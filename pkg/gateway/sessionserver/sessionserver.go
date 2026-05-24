@@ -118,6 +118,11 @@ type Server struct {
 	podRegistry        *podsession.Registry
 	agentNamespace     string
 	sealer             Sealer
+	// partialManifestCleaner, when set, executes the §4.4 line 236
+	// partial-manifest cleanup after the resume path completes.
+	// Nil leaves the resume path unchanged (cleanup is deferred to
+	// the §12.5 backstop sweep).
+	partialManifestCleaner PartialManifestCleaner
 	treeArchive        treearchive.Store
 	maxOrphanTasks     int
 	evals              evalstore.Store
@@ -167,6 +172,20 @@ type Sealer interface {
 	// Seal snapshots the session's final workspace. An implementation
 	// is expected to no-op for a session that never ran on a pod.
 	Seal(ctx context.Context, tenantID, sessionID string) error
+}
+
+// PartialManifestCleaner executes the §4.4 line 236 partial-manifest
+// cleanup after the resume path completes, regardless of whether the
+// reassembly succeeded or failed. An implementation walks the latest
+// active partial manifest for (tenant, session), deletes the chunks
+// under its `partial_object_key_prefix`, and soft-deletes the row.
+// Best-effort: a failure leaves the row active for the §12.5
+// backstop sweep to clean up on the next cycle.
+type PartialManifestCleaner interface {
+	// CleanupAfterResume runs the cleanup for the session's latest
+	// active partial manifest. A no-op (returns nil) when no active
+	// manifest exists.
+	CleanupAfterResume(ctx context.Context, tenantID, sessionID string) error
 }
 
 // Options configures the Server at construction.
@@ -315,6 +334,12 @@ type Options struct {
 	// session reaches a terminal state. Nil disables seal-and-export.
 	Sealer Sealer
 
+	// PartialManifestCleaner, when set, executes the §4.4 line 236
+	// partial-manifest cleanup after the resume path completes. Nil
+	// leaves the resume path unchanged; the §12.5 backstop sweep
+	// remains the only cleanup path.
+	PartialManifestCleaner PartialManifestCleaner
+
 	// TreeArchive, when set, receives a §8.10 archive record for every
 	// child session (a session with a parent) that reaches a terminal
 	// state, so a resumed parent can replay the outcome. Nil disables
@@ -428,6 +453,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		podRegistry:        opts.PodRegistry,
 		agentNamespace:     opts.AgentNamespace,
 		sealer:             opts.Sealer,
+		partialManifestCleaner: opts.PartialManifestCleaner,
 		treeArchive:        opts.TreeArchive,
 		maxOrphanTasks:     opts.MaxOrphanTasksPerTenant,
 		runtimes:           opts.Runtimes,
