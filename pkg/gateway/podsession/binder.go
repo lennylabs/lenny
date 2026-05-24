@@ -80,7 +80,31 @@ type Binder struct {
 	// across gateway replicas. Nil when no Redis is wired; the
 	// SlotClaimer then falls back to its race-prone SSA-only path.
 	SlotCounter *slotcounter.Counter
+	// APIServerReachable is the §4.6.1 admission-reachability precondition
+	// (precondition 2): before initiating the Postgres-backed fallback,
+	// the gateway probes API server reachability (a lightweight GET
+	// /readyz). When it returns an error the fallback is skipped, because
+	// the lenny-sandboxclaim-guard CREATE check the fallback relies on
+	// traverses the API server. Nil disables the probe and the fallback
+	// proceeds; production wires it from the cluster rest config.
+	APIServerReachable func(ctx context.Context) error
+	// FallbackSkipped records a §4.6.1 fallback skip event by reason
+	// (FallbackSkipReasonMirrorStale or
+	// FallbackSkipReasonAPIServerUnreachable), backing the
+	// lenny_pod_claim_fallback_skipped_total counter. Nil is a no-op.
+	FallbackSkipped func(reason string)
 }
+
+// §4.6.1 lenny_pod_claim_fallback_skipped_total reason labels: the two
+// fallback preconditions whose failure skips the Postgres-backed claim.
+const (
+	// FallbackSkipReasonMirrorStale is recorded when the agent_pod_state
+	// mirror lag exceeds the freshness precondition (precondition 1).
+	FallbackSkipReasonMirrorStale = "mirror_stale"
+	// FallbackSkipReasonAPIServerUnreachable is recorded when the API
+	// server readiness probe fails (precondition 2).
+	FallbackSkipReasonAPIServerUnreachable = "apiserver_unreachable"
+)
 
 // CredentialAssigner mints a session's §4.9 credential leases. The
 // gateway's credassign.Service satisfies it; binder tests substitute a
@@ -419,6 +443,8 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest) (string, error) {
 	if b.Fallback == nil {
 		// No Postgres mirror is configured; the no-idle-pod result stands.
+		// This is the absence of a fallback path, not a skip of a
+		// configured one, so it is not counted.
 		return "", podclaim.ErrNoIdlePod
 	}
 
@@ -434,9 +460,25 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest) (
 		return "", fmt.Errorf("podsession: read mirror lag for pool %s: %w", req.Pool, err)
 	}
 	if lag > maxLag {
-		// The mirror is too stale to trust; defer to the no-idle-pod
-		// result rather than risk claiming an already-claimed pod.
+		// Precondition 1 (mirror freshness): the mirror is too stale to
+		// trust; defer to the no-idle-pod result rather than risk claiming
+		// an already-claimed pod.
+		b.recordFallbackSkip(FallbackSkipReasonMirrorStale)
 		return "", podclaim.ErrNoIdlePod
+	}
+
+	// Precondition 2 (admission reachability): the fallback's
+	// lenny-sandboxclaim-guard CREATE check traverses the API server, so
+	// probe reachability before locking a mirror row. A failed probe
+	// means full API-server unavailability (distinct from watch-stream
+	// degradation, which the fallback is designed for), so skip rather
+	// than waste a SELECT ... FOR UPDATE SKIP LOCKED that would fail on
+	// the subsequent CRD CREATE anyway.
+	if b.APIServerReachable != nil {
+		if err := b.APIServerReachable(ctx); err != nil {
+			b.recordFallbackSkip(FallbackSkipReasonAPIServerUnreachable)
+			return "", podclaim.ErrNoIdlePod
+		}
 	}
 
 	pod, claimed, err := b.Fallback.ClaimIdle(ctx, req.Pool, req.SessionID, req.TenantID)
@@ -471,6 +513,15 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest) (
 		}
 	}
 	return pod.PodID, nil
+}
+
+// recordFallbackSkip increments the §4.6.1
+// lenny_pod_claim_fallback_skipped_total counter for reason when a
+// counter hook is wired. A nil hook is a no-op.
+func (b *Binder) recordFallbackSkip(reason string) {
+	if b.FallbackSkipped != nil {
+		b.FallbackSkipped(reason)
+	}
 }
 
 // Release tears down a session that Bind placed on a pod: it shuts the

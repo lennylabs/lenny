@@ -157,8 +157,12 @@ func Catalog() []Rule {
 func criticalAlerts() []Rule {
 	return []Rule{
 		{
-			Name:        "WarmPoolExhausted",
-			Expr:        `min by (pool) (lenny_warmpool_idle_pods) == 0`,
+			Name: "WarmPoolExhausted",
+			// §4.6.1 cold-start fill: suppress while the pool is inside its
+			// initial-fill grace period (lenny_warmpool_fill_grace_active == 1),
+			// so a fresh or re-activated pool does not page during expected
+			// fill time.
+			Expr:        `(min by (pool) (lenny_warmpool_idle_pods) == 0) unless on (pool) (lenny_warmpool_fill_grace_active == 1)`,
 			For:         60 * time.Second,
 			Severity:    SeverityCritical,
 			Summary:     "Warm pool has no available pods",
@@ -527,8 +531,11 @@ func criticalAlerts() []Rule {
 func warningAlerts() []Rule {
 	return []Rule{
 		{
-			Name:        "WarmPoolLow",
-			Expr:        `lenny_warmpool_idle_pods / on(pool) group_left lenny_warmpool_min_warm < 0.25`,
+			Name: "WarmPoolLow",
+			// §4.6.1 re-activation grace period: suppress while the pool is
+			// inside its initial-fill grace window, covering scale-from-zero
+			// resumes and minWarm 0→positive re-activations.
+			Expr:        `(lenny_warmpool_idle_pods / on(pool) group_left lenny_warmpool_min_warm < 0.25) unless on (pool) (lenny_warmpool_fill_grace_active == 1)`,
 			Severity:    SeverityWarning,
 			Summary:     "Warm pool below 25 percent of minWarm",
 			Description: "Available warm pods are below 25 percent of the pool's minWarm setting. Pool replenishment is lagging behind session arrival rate.",

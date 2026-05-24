@@ -902,6 +902,13 @@ func main() {
 		// result surfaces directly.
 		if pgPool != nil {
 			podBinder.Fallback = agentpodstatepg.New(pgPool)
+			// §4.6.1 precondition 2: probe API-server reachability (GET
+			// /readyz) before each fallback claim and skip when it fails.
+			probe, err := podsession.NewReadyzProbe(cfg)
+			if err != nil {
+				log.Fatalf("lenny-gateway: build pod-claim fallback readyz probe: %v", err)
+			}
+			podBinder.APIServerReachable = probe
 			log.Printf("lenny-gateway: §4.6.1 Postgres-backed pod-claim fallback enabled")
 		}
 		exec = executor.NewPodExecutor(podRegistry, podBinder)
@@ -968,6 +975,12 @@ func main() {
 	gwMetrics, err := gatewaymetrics.New()
 	if err != nil {
 		log.Fatalf("lenny-gateway: metrics: %v", err)
+	}
+	// §4.6.1: record fallback-claim skips on the gateway metrics registry.
+	// Wired after gatewaymetrics.New() because the binder is constructed
+	// earlier in the agent-namespace block.
+	if podBinder != nil {
+		podBinder.FallbackSkipped = gwMetrics.IncPodClaimFallbackSkipped
 	}
 	// §4.1 / §16.1: emit the per-replica capacity ceiling as a startup-set
 	// gauge so the §16.5 GatewaySessionBudgetNearExhaustion alert can

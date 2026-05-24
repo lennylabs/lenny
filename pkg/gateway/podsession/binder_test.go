@@ -848,6 +848,65 @@ func TestBindWithoutFallbackReturnsErrNoIdlePod(t *testing.T) {
 	}
 }
 
+// spec: §4.6.1 "Fallback preconditions" precondition 1 — a stale mirror
+// skips the fallback and records lenny_pod_claim_fallback_skipped_total
+// with reason mirror_stale.
+func TestBindFallbackSkipRecordsMirrorStale(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	mirror := &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 99}
+	binder.Fallback = mirror
+	var skips []string
+	binder.FallbackSkipped = func(reason string) { skips = append(skips, reason) }
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
+	})
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("error = %v, want ErrNoIdlePod when the mirror is stale", err)
+	}
+	if len(skips) != 1 || skips[0] != podsession.FallbackSkipReasonMirrorStale {
+		t.Errorf("skips = %v, want [%q]", skips, podsession.FallbackSkipReasonMirrorStale)
+	}
+	if len(mirror.claims) != 0 {
+		t.Errorf("the fallback claimed despite a stale mirror")
+	}
+}
+
+// spec: §4.6.1 "Fallback preconditions" precondition 2 — a failed API
+// server reachability probe skips the fallback before locking a mirror
+// row and records reason apiserver_unreachable.
+func TestBindFallbackSkipRecordsAPIServerUnreachable(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	mirror := &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 1}
+	binder.Fallback = mirror
+	binder.APIServerReachable = func(context.Context) error { return errors.New("apiserver down") }
+	var skips []string
+	binder.FallbackSkipped = func(reason string) { skips = append(skips, reason) }
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
+	})
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("error = %v, want ErrNoIdlePod when the API server probe fails", err)
+	}
+	if len(skips) != 1 || skips[0] != podsession.FallbackSkipReasonAPIServerUnreachable {
+		t.Errorf("skips = %v, want [%q]", skips, podsession.FallbackSkipReasonAPIServerUnreachable)
+	}
+	if len(mirror.claims) != 0 {
+		t.Errorf("the fallback locked a mirror row despite an unreachable API server")
+	}
+}
+
 // spec: §4.7 / §4.9 — the binder's session-assignment sequence runs
 // AssignCredentials before StartSession: when a BindRequest names
 // credential pools the binder mints a lease per pool and pushes the set

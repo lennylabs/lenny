@@ -101,7 +101,20 @@ const EgressCaptureUpstreamAnnotation = "lenny.dev/test-egress-capture-upstream"
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var sb lennyv1.Sandbox
 	if err := r.Client.Get(ctx, req.NamespacedName, &sb); err != nil {
+		// The Sandbox is gone; its terminating-seconds gauge (if any) is
+		// stale, so drop the series.
+		if apierrors.IsNotFound(err) {
+			finalizerTerminatingSeconds.DeleteLabelValues(req.Namespace, req.Name)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// §4.6.1 Sandbox finalizers: a Sandbox under deletion stays in
+	// Terminating until no active SandboxClaim references it, at which
+	// point the session-cleanup finalizer is removed and Kubernetes
+	// garbage-collects the backing pod.
+	if !sb.DeletionTimestamp.IsZero() {
+		return r.reconcileFinalizer(ctx, &sb)
 	}
 
 	var pod corev1.Pod
@@ -126,6 +139,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	if err := r.syncStatus(ctx, &sb, decision, &pod, obs); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update sandbox %s status: %w", sb.Name, err)
+	}
+
+	desiredPhase := sb.Status.Phase
+	if decision.Action == lifecycle.ActionSetPhase {
+		desiredPhase = string(decision.NextPhase)
+	}
+	if err := r.syncPodStateLabel(ctx, desiredPhase, &pod, obs); err != nil {
+		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
 }
@@ -187,11 +208,57 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)
 	}
+	// §4.6.1 disruption protection: stamp the live §6.2 phase as the
+	// lenny.dev/state pod label so the per-pool PodDisruptionBudget can
+	// select warm (idle) pods. The reconciler keeps the label in sync on
+	// every subsequent phase transition.
+	if pod.Labels == nil {
+		pod.Labels = map[string]string{}
+	}
+	pod.Labels[state.LabelState] = podStateLabel(sb)
 	if err := ctrl.SetControllerReference(sb, pod, r.Scheme); err != nil {
 		return fmt.Errorf("set controller reference: %w", err)
 	}
 	if err := r.Client.Create(ctx, pod); err != nil {
 		return fmt.Errorf("create pod: %w", err)
+	}
+	return nil
+}
+
+// podStateLabel returns the lenny.dev/state label value for a Sandbox:
+// its §6.2 phase, or warming when the phase has not been set yet (a
+// freshly-created Sandbox whose pod is being materialized).
+func podStateLabel(sb *lennyv1.Sandbox) string {
+	if sb.Status.Phase == "" {
+		return string(state.Warming)
+	}
+	return sb.Status.Phase
+}
+
+// syncPodStateLabel keeps the backing pod's lenny.dev/state label in
+// sync with the Sandbox's §6.2 phase so the §4.6.1 warm-pool
+// PodDisruptionBudget's idle selector tracks pod lifecycle. desiredPhase
+// is the phase syncStatus wrote this pass. The patch is skipped when the
+// pod is absent or the label already matches. spec: §4.6.1 "Disruption
+// protection for agent pods".
+func (r *Reconciler) syncPodStateLabel(ctx context.Context, desiredPhase string, pod *corev1.Pod, obs lifecycle.PodObservation) error {
+	if obs == lifecycle.PodAbsent || pod == nil || pod.Name == "" {
+		return nil
+	}
+	want := desiredPhase
+	if want == "" {
+		want = string(state.Warming)
+	}
+	if pod.Labels[state.LabelState] == want {
+		return nil
+	}
+	patch := client.MergeFrom(pod.DeepCopy())
+	if pod.Labels == nil {
+		pod.Labels = map[string]string{}
+	}
+	pod.Labels[state.LabelState] = want
+	if err := r.Client.Patch(ctx, pod, patch); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("patch pod %s state label: %w", pod.Name, err)
 	}
 	return nil
 }

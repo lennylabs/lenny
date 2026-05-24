@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,6 +33,9 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	}
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme corev1: %v", err)
+	}
+	if err := policyv1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme policyv1: %v", err)
 	}
 	return s
 }

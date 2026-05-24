@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -136,6 +137,11 @@ type Reconciler struct {
 	// pod event has fired. Zero selects defaultIdleMeterInterval (60s).
 	IdleMeterInterval time.Duration
 
+	// InitialFillGracePeriod is the §4.6.1 cold-start window during which
+	// the WarmPoolExhausted and WarmPoolLow alerts are suppressed for a
+	// filling pool. Zero selects defaultInitialFillGracePeriod (120s).
+	InitialFillGracePeriod time.Duration
+
 	// phaseMu guards lastPhase against concurrent reconciles. The
 	// controller-runtime queue serializes Reconcile per object, so the
 	// guard only matters across pools, but the mutex is cheap.
@@ -146,6 +152,13 @@ type Reconciler struct {
 
 	// idle accumulates §4.6.1 idle-pod-minutes per pool across reconciles.
 	idle idleMeter
+
+	// fill tracks §4.6.1 cold-start fill durations and the per-pool
+	// initial-fill grace window across reconciles.
+	fill fillMeter
+	// fillOnce lazily seeds the fill meter's grace period from
+	// InitialFillGracePeriod on the first reconcile.
+	fillOnce sync.Once
 }
 
 // Reconcile sizes one pool: it lists the pool's Sandboxes, computes
@@ -158,9 +171,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// idle-pod-minutes accrual state so a recreated pool re-baselines.
 		if apierrors.IsNotFound(err) {
 			r.idle.forget(req.NamespacedName.String())
+			r.fill.forget(req.NamespacedName.String(), req.NamespacedName.Name)
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	r.fillOnce.Do(func() { r.fill.period = r.InitialFillGracePeriod })
 
 	// The SandboxTemplate is required: it supplies the pod spec for
 	// created Sandboxes and hosts the PoolWarmingUp condition.
@@ -211,6 +226,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update template %s status: %w", tmpl.Name, err)
 	}
+	if err := r.reconcilePDB(ctx, &pool); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile pdb for pool %s: %w", pool.Name, err)
+	}
 	r.observePoolPhase(ctx, &pool, decision)
 
 	// Accrue §4.6.1 idle-pod-minutes for the pool's currently-idle
@@ -222,6 +240,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		resourceClass = "unspecified"
 	}
 	r.idle.observe(req.NamespacedName.String(), pool.Name, resourceClass, decision.ReadyCount)
+
+	// Track §4.6.1 cold-start fill: record the fill duration once the
+	// pool first reaches minWarm ready pods, and publish the grace-active
+	// gauge the WarmPoolExhausted/WarmPoolLow alerts join against. The
+	// post-action ready count is decision.ReadyCount minus any pods just
+	// drained this pass.
+	readyAfter := decision.ReadyCount - len(decision.Drain)
+	r.fill.observe(req.NamespacedName.String(), pool.Name, int(pool.Spec.MinWarm), readyAfter)
 
 	// Re-queue on a fixed interval so the idle-pod-minutes integral keeps
 	// advancing for pools whose idle pods sit unchanged (no pod event).
@@ -409,6 +435,12 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 				LabelManaged: "true",
 			},
 			Annotations: propagatedAnnotations(tmpl),
+			// spec: §4.6.1 "Sandbox finalizers" — every Sandbox carries
+			// the session-cleanup finalizer so a node drain or accidental
+			// deletion never silently orphans an active session; the
+			// Sandbox-to-Pod reconciler removes it once no active claim
+			// references the pod.
+			Finalizers: []string{lennyv1.FinalizerSessionCleanup},
 		},
 		Spec: lennyv1.SandboxSpec{
 			RuntimeRef:       tmpl.Spec.RuntimeRef,
@@ -636,6 +668,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lennyv1.SandboxWarmPool{}).
 		Owns(&lennyv1.Sandbox{}).
+		Owns(&policyv1.PodDisruptionBudget{}).
 		Named("warmpool").
 		Complete(r)
 }

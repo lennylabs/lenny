@@ -6,6 +6,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// FinalizerSessionCleanup is the §4.6.1 finalizer every Sandbox carries
+// to prevent Kubernetes from deleting the backing pod (and its local
+// workspace) while a session is still active. The WarmPoolController's
+// Sandbox-to-Pod reconciler removes it only after confirming no active
+// SandboxClaim references the Sandbox; until then a deletion blocks in
+// the Terminating state. spec: §4.6.1 "Sandbox finalizers".
+const FinalizerSessionCleanup = "lenny.dev/session-cleanup"
+
 // SandboxSpec is the desired state of a Sandbox — one managed agent
 // pod (§4.6, §6). The WarmPoolController owns spec.*; the pod is
 // created from the pool's SandboxTemplate, and these fields pin the

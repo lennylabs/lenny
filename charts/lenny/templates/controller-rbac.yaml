@@ -52,9 +52,12 @@ rules:
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # Pods: the Sandbox-to-Pod reconciler creates and deletes backing
+  # pods, and patches the §4.6.1 lenny.dev/state label so the per-pool
+  # warm-pod PodDisruptionBudget's idle selector tracks pod lifecycle.
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
   # Nodes: read-only, for the §13.2 NET-022 cluster-CIDR drift detector
   # aggregating spec.podCIDR, and for the §4.6.1 host-node
   # schedulability Node informer.

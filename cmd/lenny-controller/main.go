@@ -92,6 +92,7 @@ func main() {
 		agentNSList        string
 		redisURL           string
 		redisPassword      string
+		initialFillGrace   time.Duration
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -113,6 +114,8 @@ func main() {
 		"Redis connection URL for the §25.5 operational event stream. When set, controller-emitted pool_state_changed events land on ops:events:stream alongside the gateway-emitted events. When empty, events stay in the controller-local in-memory buffer.")
 	flag.StringVar(&redisPassword, "redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
 		"Redis AUTH password.")
+	flag.DurationVar(&initialFillGrace, "initial-fill-grace-period", 120*time.Second,
+		"§4.6.1 cold-start fill grace period. The WarmPoolExhausted and WarmPoolLow alerts are suppressed for a pool during this window from pool creation, controller startup, or a minWarm 0→positive re-activation, to avoid false positives while the pool fills toward minWarm.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -180,9 +183,10 @@ func main() {
 	}
 
 	warmPool := &warmpool.Reconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Events: opsEmitter,
+		Client:                 mgr.GetClient(),
+		Scheme:                 mgr.GetScheme(),
+		Events:                 opsEmitter,
+		InitialFillGracePeriod: initialFillGrace,
 	}
 	// A nil *agentpodstatepg.Store assigned to the agentpodstate.Store
 	// interface field would be a non-nil interface; only assign when a

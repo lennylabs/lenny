@@ -93,6 +93,10 @@ type Metrics struct {
 	// fallback writes to Postgres. Labels: `pool` and
 	// `had_prior_checkpoint`.
 	checkpointEvictionFallback *prometheus.CounterVec
+	// podClaimFallbackSkipped counts the §4.6.1 Postgres-backed pod-claim
+	// fallback skip events. Labels: `reason` (`mirror_stale` or
+	// `apiserver_unreachable`).
+	podClaimFallbackSkipped *prometheus.CounterVec
 	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
 	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
 	// registry).
@@ -468,6 +472,16 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.6.1 — `lenny_pod_claim_fallback_skipped_total` counts the
+	// Postgres-backed fallback claim skips when a precondition fails.
+	// Labels: `reason` (`mirror_stale` | `apiserver_unreachable`).
+	podClaimFallbackSkipped, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pod_claim_fallback_skipped_total",
+		Help: "Postgres-backed pod-claim fallback skips by precondition (§4.6.1).",
+	}, []string{"reason"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
 	// partial-manifest row writes. Labels: `pool` (finite).
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
@@ -584,7 +598,7 @@ func New() (*Metrics, error) {
 		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, checkpointStorageFailure,
-		checkpointEvictionFallback, checkpointPartialTotal, prestopCapSelection,
+		checkpointEvictionFallback, podClaimFallbackSkipped, checkpointPartialTotal, prestopCapSelection,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
 		drainReadinessChecks, legalHoldCheckpointGaps,
@@ -643,6 +657,7 @@ func New() (*Metrics, error) {
 		checkpointDuration:                   checkpointDuration,
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
+		podClaimFallbackSkipped:              podClaimFallbackSkipped,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
 		gcTombstonesPruned:                   gcTombstonesPruned,
@@ -900,6 +915,19 @@ func (m *Metrics) IncCheckpointEvictionFallback(pool string, hadPriorCheckpoint 
 		label = "true"
 	}
 	m.checkpointEvictionFallback.WithLabelValues(pool, label).Inc()
+}
+
+// IncPodClaimFallbackSkipped increments the §4.6.1
+// `lenny_pod_claim_fallback_skipped_total` counter for reason
+// (`mirror_stale` or `apiserver_unreachable`). Called by the gateway
+// pod binder when a fallback precondition fails.
+// spec: §4.6.1 "Fallback preconditions (mirror freshness and admission
+// reachability)".
+func (m *Metrics) IncPodClaimFallbackSkipped(reason string) {
+	if m == nil {
+		return
+	}
+	m.podClaimFallbackSkipped.WithLabelValues(reason).Inc()
 }
 
 // IncCheckpointPartial increments the §4.4 line 234

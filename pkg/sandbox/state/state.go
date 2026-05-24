@@ -16,6 +16,13 @@ import "fmt"
 // State is the Sandbox phase, written to Sandbox.status.phase.
 type State string
 
+// LabelState is the pod label the Sandbox-to-Pod reconciler keeps in
+// sync with the Sandbox's §6.2 phase. The §4.6.1 per-pool
+// PodDisruptionBudget selects warm pods by this label
+// (lenny.dev/state: idle) so disruption protection targets only
+// unclaimed pods. spec: §4.6.1 "Disruption protection for agent pods".
+const LabelState = "lenny.dev/state"
+
 const (
 	Warming              State = "warming"
 	SDKConnecting        State = "sdk_connecting"
