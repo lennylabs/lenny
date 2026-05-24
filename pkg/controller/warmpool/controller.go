@@ -131,6 +131,11 @@ type Reconciler struct {
 	// nil Events is a no-op; the reconcile is unaffected.
 	Events EventEmitter
 
+	// IdleMeterInterval is the period the reconciler re-queues a pool to
+	// advance the §4.6.1 lenny_warmpool_idle_pod_minutes integral when no
+	// pod event has fired. Zero selects defaultIdleMeterInterval (60s).
+	IdleMeterInterval time.Duration
+
 	// phaseMu guards lastPhase against concurrent reconciles. The
 	// controller-runtime queue serializes Reconcile per object, so the
 	// guard only matters across pools, but the mutex is cheap.
@@ -138,6 +143,9 @@ type Reconciler struct {
 	// lastPhase records the previously observed pool phase per pool
 	// (keyed by namespace/name). Emission fires only on a phase change.
 	lastPhase map[string]PoolPhase
+
+	// idle accumulates §4.6.1 idle-pod-minutes per pool across reconciles.
+	idle idleMeter
 }
 
 // Reconcile sizes one pool: it lists the pool's Sandboxes, computes
@@ -146,7 +154,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	var pool lennyv1.SandboxWarmPool
 	if err := r.Client.Get(ctx, req.NamespacedName, &pool); err != nil {
 		// The pool was deleted; its Sandboxes are garbage-collected via
-		// owner references, so there is nothing left to reconcile.
+		// owner references, so there is nothing left to reconcile. Drop the
+		// idle-pod-minutes accrual state so a recreated pool re-baselines.
+		if apierrors.IsNotFound(err) {
+			r.idle.forget(req.NamespacedName.String())
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -200,7 +212,24 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, fmt.Errorf("update template %s status: %w", tmpl.Name, err)
 	}
 	r.observePoolPhase(ctx, &pool, decision)
-	return ctrl.Result{}, nil
+
+	// Accrue §4.6.1 idle-pod-minutes for the pool's currently-idle
+	// (claimable) pods, labeled by pool and template resource class.
+	// spec: §4.6.1 line "lenny_warmpool_idle_pod_minutes ... tracks
+	// cumulative idle pod-minutes".
+	resourceClass := tmpl.Spec.ResourceClass
+	if resourceClass == "" {
+		resourceClass = "unspecified"
+	}
+	r.idle.observe(req.NamespacedName.String(), pool.Name, resourceClass, decision.ReadyCount)
+
+	// Re-queue on a fixed interval so the idle-pod-minutes integral keeps
+	// advancing for pools whose idle pods sit unchanged (no pod event).
+	requeue := r.IdleMeterInterval
+	if requeue <= 0 {
+		requeue = defaultIdleMeterInterval
+	}
+	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
 // DerivePoolPhase reduces one reconcile's plan output to the §4.0 pool
