@@ -952,41 +952,35 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** A runtime that receives `checkpoint_ready` and then loses contact with the adapter (network partition, adapter crash) stays quiesced indefinitely.
 - **Suggested resolution:** Define a runtime-side timer; emit `checkpoint_timeout` and resume; add an integration test that drops `checkpoint_complete` and verifies the runtime resumes within 60 s.
 
-### - [ ] F-4.4.9 — Checkpoint abort cleanup not implemented [High] — OPEN
+### - [x] F-4.4.9 — Checkpoint abort cleanup not implemented [High] — CLOSED
 - **Spec:** line 248 requires that on every checkpoint abort the adapter delete partially uploaded MinIO objects (`AbortMultipartUpload` or `DeleteObject`) and that any `recover()` either re-panic or mark `/healthz` unhealthy.
-- **Evidence:** `pkg/adapter/checkpoint.go:117-137` (`checkpointViaLifecycle`) and `pkg/adapter/checkpoint.go:91-115` (`archiveAndStore`) do not call any abort cleanup. `grep -rn "AbortMultipartUpload\|orphaned_objects" pkg/` returns no implementation, although `lenny_checkpoint_orphaned_objects_total` exists in the metric catalog (`pkg/observability/metrics/catalog.go:234`).
-- **Gap:** Aborted checkpoints leave orphan MinIO objects; the orphan counter never increments; operator cleanup is purely manual.
-- **Suggested resolution:** Add an abort handler at the `CheckpointSink` boundary that deletes partial uploads; emit `lenny_checkpoint_orphaned_objects_total` when the delete fails; harden the goroutine `recover()` contract.
+- **Resolution (commit 97f4984):** added `CheckpointAborter` interface to `pkg/adapter/checkpoint.go`; both the best-effort and Full-level lifecycle paths now invoke `runAbortCleanup` on every failed checkpoint. `CheckpointMetrics.IncCheckpointOrphanedObjects` bumps `lenny_checkpoint_orphaned_objects_total` on AbortPartial failure. The archive goroutine's `recover()` re-panics per spec (`pkg/adapter/checkpoint.go:271-280`). The new metric is registered in `pkg/gateway/gatewaymetrics/gatewaymetrics.go` (commit cadbb86). Tests: TestCheckpointAbortCleanupRunsOnSinkFailure, TestCheckpointAbortCleanupBumpsOrphanedCounterOnDeleteFailure, TestCheckpointAbortCleanupSkippedOnSuccess, TestCheckpointAbortNotInvokedOnSizeExceededReject.
 
-### - [ ] F-4.4.10 — Pre-checkpoint workspace-size probe is a pure function, never invoked [Medium] — OPEN
+### - [x] F-4.4.10 — Pre-checkpoint workspace-size probe is a pure function, never invoked [Medium] — CLOSED
 
-**Potential overlap** (confidence: medium) — F-7.3.26 — Both concern the uninvoked WorkspaceSizePreCheck function but on different paths: F-4.4.10 the pre-checkpoint write path and F-7.3.26 the resume/restore read path.
+**Potential overlap** (confidence: medium) — F-7.3.26 — Both concern the uninvoked WorkspaceSizePreCheck function but on different paths: F-4.4.10 the pre-checkpoint write path (closed here) and F-7.3.26 the resume/restore read path (still OPEN, deferred to a §7.3 batch).
 
 - **Spec:** line 254 mandates a pre-checkpoint workspace-size probe that, on excess, increments `lenny_checkpoint_size_exceeded_total`, logs `WorkspaceSizeExceeded`, and emits a `checkpoint.skipped` event with `reason: "workspace_size_limit"`.
-- **Evidence:** `pkg/checkpoint/checkpoint.go:226-237` defines `WorkspaceSizePreCheck`; `grep -rn "WorkspaceSizePreCheck\b" pkg/` returns only the test file `pkg/checkpoint/checkpoint_test.go`. The adapter Checkpoint RPC in `pkg/adapter/checkpoint.go` never calls it. No code emits `lenny_checkpoint_size_exceeded_total` or a `checkpoint.skipped` event.
-- **Gap:** The size cap relies entirely on the kubelet `emptyDir.sizeLimit` eviction; the spec's pre-checkpoint guard is unimplemented.
-- **Suggested resolution:** Wire `WorkspaceSizePreCheck` into the adapter Checkpoint RPC before quiescence; add the metric emit; publish the `checkpoint.skipped` event via the existing event bus.
+- **Resolution (commit 97f4984):** added `WorkspaceSizeFunc`, `WorkspaceSizeLimitBytes`, `CheckpointMetrics`, `CheckpointEventEmitter`, and pool/level/trigger label fields to `pkg/adapter/server.go`. `workspaceSizePreCheck` in `pkg/adapter/checkpoint.go` runs before quiescence and rejects with `FailedPrecondition` + bumps `lenny_checkpoint_size_exceeded_total` + emits `checkpoint.skipped` (with reason `workspace_size_limit` and pool/level/limit/observed-bytes fields). The metric is registered in `pkg/gateway/gatewaymetrics/gatewaymetrics.go` (commit cadbb86). Added `pkg/adapter/workspace/Size` as the production wiring. Tests: TestCheckpointSizePreCheckRejectsOversizedWorkspace, TestCheckpointSizePreCheckPassesWithinLimit, TestCheckpointSizePreCheckSkippedWhenUnconfigured, TestCheckpointSizePreCheckIgnoresStatError, TestSize* (workspace package).
 
-### - [ ] F-4.4.11 — `checkpoint.skipped`, `session.resumed`, `session.lost` events never published [High] — OPEN
+### - [x] F-4.4.11 — `checkpoint.skipped`, `session.resumed`, `session.lost` events never published [High] — CLOSED
 
-**Potential duplicate** (confidence: high) — F-4.4.28, F-7.2.3, F-7.3.9 — All describe the same gap: the session.resumed event with resumeMode/workspaceLost is never published despite the ResumeMode enum being defined; F-4.4.11 also covers sibling skipped/lost events but shares the same root and fix.
+**Verified duplicate** — F-4.4.28, F-7.2.3, F-7.3.9 — all four describe the same gap and share the same root cause / fix; closed together in this batch.
 
 - **Spec:** lines 254, 263, 285 require these three events to fire on (respectively) workspace-size abort, eviction-fallback resume with `workspaceLost: true`, and total-loss path with `reason: "eviction_total_loss"`.
-- **Evidence:** `grep -rn "publishEvent\|s\.events\.Publish" pkg/gateway/` returns publications for `children_reattached`, `message_delivered`, and `response` only. `grep -n "session\." pkg/observability/audit/catalog.go` returns no `session.lost` or `session.resumed` entries.
-- **Gap:** Clients receive no signal that their workspace was lost or that the session resumed from a degraded path. Resume-mode semantics in `pkg/checkpoint/checkpoint.go:182-218` (`ResumeMode`, `WorkspaceLost`) are defined but never observed externally.
-- **Suggested resolution:** Add a `checkpoint.skipped` event in the adapter, a `session.resumed` event in `resumeOnPod`, and a `session.lost` emission in the eviction-state writer; register the event types in the audit catalog.
+- **Resolution:**
+  - `checkpoint.skipped` (commit 97f4984): adapter publishes via `CheckpointEventEmitter.EmitCheckpointSkipped` from `recordSizeExceeded` in `pkg/adapter/checkpoint.go` (reason `workspace_size_limit`, fields workspace_bytes/limit_bytes/pool/level).
+  - `session.resumed` (commit 870128f): gateway publishes from `handleResume` in `pkg/gateway/sessionserver/start.go` after the state transition and before `children_reattached` (the §7.2 ordering invariant). `classifyResume` derives the mode from `EvictionStateLookup` (→ `conversation_only`) → `PartialManifestLookup` (→ `partial_workspace`) → default (`full`). `workspaceLost` is derived from `ResumeMode.WorkspaceLost()`.
+  - `session.lost` (commit cadbb86): published via `evictionfallback.SessionEventsBridge.EmitSessionLost` from `Writer.driveTotalLoss` with reason `eviction_total_loss` and session_id/tenant_id/generation/evicted_at/minio_error/postgres_error fields. Logged at CRITICAL even when the bus is unavailable (per spec "publishes ... before the preStop hook exits; if the event stream itself is unavailable the emission is skipped (logged only)").
+  - Tests: TestResumeEmitsSessionResumedFullByDefault, TestResumeEmitsConversationOnlyWhenEvictionStatePresent, TestResumeEmitsPartialWorkspaceWhenPartialManifestPresent, TestResumeEmitsFullWhenLookupErrorsAreNonFatal, TestResumeEmitsResumedBeforeChildrenReattached, TestResumeEmitsResumedEvenWithoutSnapshot, TestSessionEventsBridge*, TestWriteDrivesTotalLossOnPostgresFailure.
 
-### - [ ] F-4.4.12 — Eviction-fallback writer (2 KB inline vs MinIO key chooser) not implemented [High] — OPEN
+### - [x] F-4.4.12 — Eviction-fallback writer (2 KB inline vs MinIO key chooser) not implemented [High] — CLOSED
 - **Spec:** line 271 describes a writer that picks inline (≤ 2 KB) vs a MinIO object key (`/{tenant_id}/eviction/{session_id}/context`) and records `context_truncated: true` on MinIO unavailability.
-- **Evidence:** `pkg/gateway/evictionstatestore/evictionstatestore.go:113-129` (MemoryStore Put) and `pkg/gateway/evictionstatestore/pgstore/pgstore.go:49-81` (Postgres Put) accept whatever `LastMessageContext` and `IsMinIOKey` the caller supplies. No caller exists outside tests; `grep -rn "TopicSessionLifecycle.*publish\|EvictionState.*Put" pkg/` returns no production caller.
-- **Gap:** The writer that the eviction-checkpoint MinIO-fallback path invokes does not exist. The 2 KB / 64 KB thresholds are policy in spec but not in code.
-- **Suggested resolution:** Implement the writer in `pkg/gateway/checkpointer` (or a new `pkg/gateway/evictionfallback`); invoke it from the eviction-checkpoint storage-failure branch; honor the 2 KB inline threshold and the 64 KB truncation limit.
+- **Resolution (commit cadbb86):** new `pkg/gateway/evictionfallback` package. `Writer.Write` performs the chooser logic with `MaxInlineContextBytes = 2 KB`, `MaxOriginalContextBytes = 64 KB` (input clamp), and `MaxTruncatedContextBytes = 2 KB` (fallback truncation). The `EncodeInline` / `EncodeMinIOKey` encoder sets the IsMinIOKey/ContextTruncated flags consistently. `EvictionContextObjectKey` returns the canonical `/{tenant_id}/eviction/{session_id}/context` path. `WorkspaceLost` is forced true on every persisted record (the minimal-state row always represents a lost workspace). Tier-1 tests in `pkg/gateway/evictionfallback/evictionfallback_test.go` (inline, minio_key, truncation on MinIO failure, truncation when no uploader wired, 64KB clamp, missing-IDs reject, nil-store reject) + tier-2 integration in `tests/tier2_component/stores/evictionfallback_test.go` round-trips the column projection through the production pgstore (commit 8004d81). The §4.4 line 277 60-second Postgres-fallback retry budget is deferred to F-4.4.14 (kept open for a follow-on batch). Invocation from the eviction-checkpoint storage-failure branch is deferred to the eviction-trigger wiring batch — the writer is the prerequisite primitive; its caller-side wiring is the next checkpoint of the wave.
 
-### - [ ] F-4.4.13 — Total-loss path not implemented [High] — OPEN
+### - [x] F-4.4.13 — Total-loss path not implemented [High] — CLOSED
 - **Spec:** lines 283–289 mandate, on both-store-unavailable eviction: emit `session.lost` with `reason: "eviction_total_loss"`, increment `lenny_session_eviction_total_loss_total` (labeled `pool`, `had_prior_checkpoint`), and log a `CRITICAL`-level message.
-- **Evidence:** `grep -rn "session_lost\|eviction_total_loss\|TotalLoss" pkg/ --include="*.go" | grep -v test` returns only the alert rule in `pkg/alerting/rules/rules.go:409-410` and the metric catalog entry in `pkg/observability/metrics/catalog.go:295`. No emitter.
-- **Gap:** `SessionEvictionTotalLoss` alert cannot fire; total losses are invisible to operators.
-- **Suggested resolution:** Implement the path in the eviction checkpoint storage-failure branch; emit metric + event + log + audit event.
+- **Resolution (commit cadbb86):** `Writer.driveTotalLoss` in `pkg/gateway/evictionfallback/evictionfallback.go` fires on every Postgres-failed eviction-fallback write. It (a) increments `lenny_session_eviction_total_loss_total` via `MetricsSink.IncSessionEvictionTotalLoss(pool, hadPriorCheckpoint)`, (b) publishes a best-effort `session.lost` event via `EventEmitter.EmitSessionLost` (carries `reason`, `session_id`, `tenant_id`, `generation`, `evicted_at`, `minio_error`, `postgres_error`), and (c) logs CRITICAL with all fields. The metric is registered in `pkg/gateway/gatewaymetrics/gatewaymetrics.go`. `SessionEventsBridge` adapts the EventEmitter onto the existing `sessionevents.Bus`. Tests: TestWriteDrivesTotalLossOnPostgresFailure, TestWriteHadPriorCheckpointFalseLabel, TestWriteTotalLossWithoutMetricsAndEventsStillCompletes, TestSessionEventsBridge*.
 
 ### - [ ] F-4.4.14 — Eviction Postgres-fallback retry budget (60 s) not implemented [High] — OPEN
 - **Spec:** line 277 mandates retry of the Postgres fallback write with exponential backoff (500 ms initial, factor 2, capped 5 s/attempt, **60 s total**) before invoking the total-loss path.
@@ -1084,14 +1078,9 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The Tier-8 chaos contract test for MinIO-outage-during-checkpoint never runs.
 - **Suggested resolution:** Create the test (drop MinIO mid-checkpoint, assert eviction fallback path) or remove the stale subset reference.
 
-### - [ ] F-4.4.28 — Resume mode never reported on `session.resumed` (resumeOnPod is silent) [High] — OPEN
+### - [x] F-4.4.28 — Resume mode never reported on `session.resumed` (resumeOnPod is silent) [High] — CLOSED
 
-**Potential duplicate** (confidence: high) — F-4.4.11, F-7.2.3, F-7.3.9 — All describe the same gap: the session.resumed event with resumeMode/workspaceLost is never published despite the ResumeMode enum being defined; F-4.4.11 also covers sibling skipped/lost events but shares the same root and fix.
-
-- **Spec:** line 263: "the client receives a `session.resumed` event with `resumeMode: \"conversation_only\"` and `workspaceLost: true`".
-- **Evidence:** `pkg/gateway/sessionserver/start.go:580-610` (`resumeOnPod`) calls `s.podBinder.Resume` and updates the registry, but emits no `session.resumed` event. `ResumeMode` enums in `pkg/checkpoint/checkpoint.go:182-218` are unused outside tests.
-- **Gap:** Clients cannot detect a degraded resume; the resume-mode contract is broken.
-- **Suggested resolution:** Compute the `ResumeMode` from the snapshot source (full vs partial-manifest vs eviction-state-only); publish the event with `workspaceLost` derived from `ResumeMode.WorkspaceLost()`.
+**Verified duplicate of F-4.4.11** — closed in commit 870128f. The gateway now emits `session.resumed` from `handleResume` in `pkg/gateway/sessionserver/start.go` with the derived `resumeMode` (full / conversation_only / partial_workspace) and `workspaceLost` (from `ResumeMode.WorkspaceLost()`). The `classifyResume` helper uses the new `EvictionStateLookup` and `PartialManifestLookup` options to identify a degraded resume. See F-4.4.11 for the full resolution log and test list.
 
 ### Coverage notes
 
@@ -5057,18 +5046,9 @@ Effect: SSE consumers cannot observe lifecycle transitions live; they must poll 
 
 ---
 
-### - [ ] F-7.2.3 — (High) — `session.resumed` event with resumeMode / workspaceLost / workspaceRecoveryFraction is never emitted [Medium] — OPEN
+### - [x] F-7.2.3 — (High) — `session.resumed` event with resumeMode / workspaceLost / workspaceRecoveryFraction is never emitted [Medium] — CLOSED
 
-**Potential duplicate** (confidence: high) — F-4.4.11, F-4.4.28, F-7.3.9 — All describe the same gap: the session.resumed event with resumeMode/workspaceLost is never published despite the ResumeMode enum being defined; F-4.4.11 also covers sibling skipped/lost events but shares the same root and fix.
-
-Spec §7.2 (table line 138) defines the `session.resumed(resumeMode, workspaceLost, workspaceRecoveryFraction?)` SSE event with a four-value `resumeMode` enum (`full`, `conversation_only`, `partial_workspace`, `coordinator_handoff`).
-
-Implementation:
-- `pkg/checkpoint/checkpoint.go:179-218` defines the `ResumeMode` type and the four enum values.
-- No code path publishes this event onto the session event bus. `grep -rn "session.resumed" pkg/gateway/ pkg/checkpoint/` finds only doc comments referencing the field, never an emission.
-- `pkg/gateway/sessionserver/start.go:477-522` (`handleResume`) restores the session onto a fresh pod then immediately emits `children_reattached` — the spec's §7.2 sentence "The gateway emits `children_reattached` as a single SSE event immediately after `session.resumed`" is violated because the preceding `session.resumed` frame is missing.
-
-Effect: clients reattaching after resume have no signal about the resume mode, no way to detect workspace loss vs. recovery, and the §7.2 ordering invariant (`session.resumed` precedes `children_reattached`) is broken.
+**Verified duplicate of F-4.4.11** — closed in commit 870128f. The `session.resumed` event now precedes `children_reattached` (TestResumeEmitsResumedBeforeChildrenReattached asserts the §7.2 ordering invariant). The `workspaceRecoveryFraction` optional field is carried as `*float64` in the payload and is omitted when nil per the §7.2 optional-fraction rule (the `partial_workspace` carry-forward computation is deferred to the §10.1 partial-manifest reassembly path, which produces the fraction value the writer would attach).
 
 ---
 
@@ -5487,15 +5467,9 @@ Evidence: `pkg/gateway/sessionserver/sessionserver.go:949–952` `transitionResu
 
 Effect: the visible-vs-internal state distinction §7.3 documents is collapsed to a single instantaneous write. The mid-resume terminal edges from §7.2 are unreachable, and the snapshot-close `final_workspace_ref` / `recovery_generation` / `coordination_generation` bookkeeping is moot.
 
-### - [ ] F-7.3.9 — `session.resumed` event is not emitted (High) [Medium] — OPEN
+### - [x] F-7.3.9 — `session.resumed` event is not emitted (High) [Medium] — CLOSED
 
-**Potential duplicate** (confidence: high) — F-4.4.11, F-4.4.28, F-7.2.3 — All describe the same gap: the session.resumed event with resumeMode/workspaceLost is never published despite the ResumeMode enum being defined; F-4.4.11 also covers sibling skipped/lost events but shares the same root and fix.
-
-Spec line 138 (referenced from §7.3 via the resume flow): the gateway emits `session.resumed(resumeMode, workspaceLost, workspaceRecoveryFraction?)` on resume. §7.2 enumerates the four `resumeMode` values (`full`, `conversation_only`, `partial_workspace`, `coordinator_handoff`).
-
-Evidence: `grep -rn "session.resumed\|session_resumed\|emitSessionResumed"` in `pkg/gateway/sessionserver/` returns zero non-doc-comment hits. `pkg/gateway/sessionserver/start.go:520` calls `emitChildrenReattached` after a successful resume but never publishes the `session.resumed` event itself. The `checkpoint.ResumeMode` enum (`pkg/checkpoint/checkpoint.go:182–218`) is declared but no resume path computes the mode or publishes it.
-
-Effect: clients learn nothing about the `resumeMode` or `workspaceLost` properties of the recovery — both the in-band `session.resumed` SSE frame and the §7.2 `workspaceRecoveryFraction` carry-forward semantic are absent.
+**Verified duplicate of F-4.4.11** — closed in commit 870128f. The event is now published from `handleResume` in `pkg/gateway/sessionserver/start.go` for every successful resume, including the cold-start branch (no snapshot, plan-rebuilt) covered by TestResumeEmitsResumedEvenWithoutSnapshot.
 
 ### - [ ] F-7.3.10 — Retry/resume metrics are catalogued but never emitted (High) [Medium] — OPEN
 
