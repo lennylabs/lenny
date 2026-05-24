@@ -1912,7 +1912,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
 
 ### Findings
 
-### - [ ] F-4.8.1 — Interceptor chain core (Implemented) [Medium] — OPEN
+### - [x] F-4.8.1 — Interceptor chain core (Implemented) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 962–981. Interceptor SPI; per-phase chain;
   ascending priority; built-in beats external at equal priority;
@@ -1931,6 +1931,12 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   this. Phase enum at lines 35–48 covers all 13 phases.
 - **Gap:** None.
 - **Suggested resolution:** N/A.
+- **Resolution:** Re-verified against §4.8 lines 962–981 and the chain
+  core. `Chain.ordered`/`Run` implement the priority→builtin→registration
+  tie break, REJECT short-circuit, MODIFY carry-through, ALLOW
+  pass-through, and the REJECT-carries-accumulated-MODIFY rule; the
+  Phase enum covers every §4.8 phase. No code change required. Verified
+  in commit HEAD.
 
 ### - [ ] F-4.8.2 — Built-in `AuthEvaluator` not registered on the chain (Divergent) [Medium] — OPEN
 
@@ -2310,7 +2316,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   shared timer; add the `INTERCEPTOR_WEAKENING_COOLDOWN` rejection
   code. Severity Medium — depends on F-4.8.9.
 
-### - [ ] F-4.8.18 — `interceptor.rejected` audit row emitted only for PostAuth (Partial) [Medium] — OPEN
+### - [x] F-4.8.18 — `interceptor.rejected` audit row emitted only for PostAuth (Partial) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 979–981, and §11.7 / §16.7. Every chain REJECT
   writes an `interceptor.rejected` audit row carrying the rejecting
@@ -2339,6 +2345,14 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   (add `RejectedBy string` or similar) so the audit row identifies
   the actual rejector. Severity High — observability/audit gap that
   also affects forensic incident response.
+- **Resolution:** (a) `recordChainRejection` emits the
+  `interceptor.rejected` row from the `delegate_task` (PreDelegation) and
+  `send_message` (PreMessageDelivery) chain sites, wired through the new
+  `Deps.PolicyAudit`. (b) `interceptor.Result.RejectedBy` is stamped by
+  `Chain.Run` with the rejecting interceptor's `Name()` on the REJECT and
+  fail-closed paths; `AuditSink.RecordRejection` uses it for
+  `interceptor_name`/`interceptor_ref`, with `QuotaEvaluatorName` only as
+  a fallback when the chain names no rejector. Verified in commit HEAD.
 
 ### - [ ] F-4.8.19 — Per-phase MODIFY immutability enforced only at PreExportMaterialization (Missing) [Medium] — OPEN
 
@@ -2388,7 +2402,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `Timeout()` is unset. Severity Low until the consuming phases are
   wired; track as part of F-4.8.13/F-4.8.14.
 
-### - [ ] F-4.8.21 — Default external priority documented but no production caller (Info) [Medium] — OPEN
+### - [x] F-4.8.21 — Default external priority documented but no production caller (Info) [Medium] — CLOSED
 
 - **Spec:** §4.8 line 1014 registration table. `priority` defaults to
   500.
@@ -2399,8 +2413,12 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `interceptor_test.go:247-253` and `external_test.go:299-309`.
 - **Gap:** No functional gap. Only the consumer site is missing
   (F-4.8.9).
+- **Resolution:** Re-verified: `DefaultExternalPriority = 500` is applied
+  by `NewExternal` and the reserved-priority ceiling is enforced and
+  tested. No functional gap; the production registration caller remains
+  tracked under F-4.8.9. No code change. Verified in commit HEAD.
 
-### - [ ] F-4.8.22 — `INVALID_INTERCEPTOR_PHASE` / `INVALID_INTERCEPTOR_PRIORITY` error mapping at registration (Implemented) [Medium] — OPEN
+### - [x] F-4.8.22 — `INVALID_INTERCEPTOR_PHASE` / `INVALID_INTERCEPTOR_PRIORITY` error mapping at registration (Implemented) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 1021, 1023. An external interceptor registered
   with `priority ≤ 100` is rejected with `INVALID_INTERCEPTOR_PRIORITY`;
@@ -2416,8 +2434,14 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   (F-4.8.9). When that path lands, the registration handler will need
   to translate `ErrInvalidPriority`/`ErrInvalidPhase` to HTTP 400 with
   the spec-codes.
+- **Resolution:** Added `interceptor.RegistrationErrorCode(err)`, which
+  maps `ErrInvalidPriority`→`INVALID_INTERCEPTOR_PRIORITY` and
+  `ErrInvalidPhase`→`INVALID_INTERCEPTOR_PHASE` (both HTTP 400) via
+  `errors.Is`, with the new `CodeInvalidInterceptorPriority`/`...Phase`
+  constants. The sentinel→§15.1-code mapping is now a tested helper the
+  F-4.8.9 registration handler will call. Verified in commit HEAD.
 
-### - [ ] F-4.8.23 — `INTERCEPTOR_TIMEOUT` rejection envelope vs `LLM_REQUEST_REJECTED` distinction (Partial) [Medium] — OPEN
+### - [x] F-4.8.23 — `INTERCEPTOR_TIMEOUT` rejection envelope vs `LLM_REQUEST_REJECTED` distinction (Partial) [Medium] — CLOSED
 
 - **Spec:** §4.8 line 1032. `INTERCEPTOR_TIMEOUT` returned on
   timeout/error in a fail-closed chain; `LLM_REQUEST_REJECTED` only
@@ -2449,8 +2473,18 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `interceptor_ref` to the audit payload. Severity High — the
   caller cannot today distinguish "policy blocked" from "policy
   service degraded" on the session-creation path.
+- **Resolution:** `requirePolicyChain` now branches on
+  `res.Code == CodeInterceptorTimeout`, returning HTTP 503
+  `INTERCEPTOR_TIMEOUT` with `details.interceptor_ref`, `details.phase`,
+  and `details.timeout_ms`; `INTERCEPTOR_TIMEOUT` was added to the
+  `errorclassify` table as `(TRANSIENT, retryable)` so the envelope's
+  category/retryable match §15.1 line 1008. The audit row carries
+  `timeout_ms` (the interceptor's effective deadline, set by `Chain.Run`
+  on `Result.TimeoutMs`) and a real `interceptor_ref` (`RejectedBy`).
+  A deliberate REJECT still maps to 429 `QUOTA_EXCEEDED`. Verified in
+  commit HEAD.
 
-### - [ ] F-4.8.24 — RequestInterceptor gRPC proto matches spec (Implemented) [Medium] — OPEN
+### - [x] F-4.8.24 — RequestInterceptor gRPC proto matches spec (Implemented) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 987–1010. Protobuf shape: `Intercept` RPC,
   `InterceptRequest{phase, session_id, tenant_id, content, metadata}`,
@@ -2462,6 +2496,10 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   onto the internal `Result` enum. Compile-time mapping correctness
   is checked by `external_test.go`.
 - **Gap:** None.
+- **Resolution:** Re-verified the generated bindings and the
+  `External.Intercept` mapping against §4.8 lines 987–1010 (RPC,
+  request/response field set, ALLOW/REJECT/MODIFY enum). Conformant; no
+  code change. Verified in commit HEAD.
 
 ### Coverage notes
 

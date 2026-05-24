@@ -1382,6 +1382,7 @@ func main() {
 		Audit:                      mcpDelegationAuditor{sink: auditSink},
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		Interceptors:               policyChain,
+		PolicyAudit:                policyAuditSink,
 		Events:                     eventBus,
 		InputWaits:                 inputwait.NewRegistry(),
 		TreeArchive:                treeArchive,

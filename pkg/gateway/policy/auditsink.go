@@ -98,15 +98,32 @@ type RejectionContext struct {
 // synchronous per §11.7; RecordRejection returns the append error so
 // the caller can fail closed when the durable audit write fails.
 func (s *AuditSink) RecordRejection(ctx context.Context, rc RejectionContext, res interceptor.Result) error {
-	payload, _ := json.Marshal(map[string]any{
+	// spec: §4.8 line 981 — the audit row records the interceptor that
+	// actually rejected. The chain stamps Result.RejectedBy with the
+	// rejecting interceptor's Name(); only when the chain leaves it
+	// empty (no interceptor identified) does the built-in QuotaEvaluator
+	// name stand in.
+	interceptorName := res.RejectedBy
+	if interceptorName == "" {
+		interceptorName = QuotaEvaluatorName
+	}
+	row := map[string]any{
 		"phase":            string(rc.Phase),
-		"interceptor_name": QuotaEvaluatorName,
+		"interceptor_name": interceptorName,
+		"interceptor_ref":  interceptorName,
 		"reason":           res.Reason,
 		"error_code":       res.Code,
 		"caller_sub":       rc.CallerSub,
 		"caller_tenant_id": rc.TenantID,
 		"session_id":       rc.SessionID,
-	})
+	}
+	// spec: §4.8 line 1032, §15.1 INTERCEPTOR_TIMEOUT — a fail-closed
+	// timeout/error carries the elapsed deadline so operators can
+	// distinguish a degraded interceptor from a deliberate REJECT.
+	if res.Code == interceptor.CodeInterceptorTimeout {
+		row["timeout_ms"] = res.TimeoutMs
+	}
+	payload, _ := json.Marshal(row)
 	_, err := s.appender.Append(ctx, rc.TenantID, EventTypeInterceptorRejected, payload, s.clock())
 	return err
 }

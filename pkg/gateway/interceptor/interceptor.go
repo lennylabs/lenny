@@ -139,11 +139,23 @@ type Request struct {
 // fail-closed error). ModifiedContent carries the rewritten payload on
 // ActionModify and the payload as it stood at rejection on
 // ActionReject.
+//
+// RejectedBy and TimeoutMs are set by Chain.Run so the §16.7
+// interceptor.rejected audit row identifies the actual rejecting
+// interceptor rather than assuming a fixed built-in (spec: §4.8 line
+// 981, §4.8 line 1032). RejectedBy is the Name() of the interceptor
+// that returned ActionReject or failed closed. TimeoutMs is the
+// interceptor's effective per-call deadline in milliseconds, set only
+// on the fail-closed timeout/error path (Code == CodeInterceptorTimeout)
+// so the §15.1 INTERCEPTOR_TIMEOUT envelope and audit row can report
+// `timeout_ms`.
 type Result struct {
 	Action          Action
 	Reason          string
 	Code            string
 	ModifiedContent []byte
+	RejectedBy      string
+	TimeoutMs       int64
 }
 
 // Interceptor is one policy hook. A built-in interceptor reports
@@ -178,6 +190,34 @@ var (
 	// ErrUnknownPhase — registration named a phase that does not exist.
 	ErrUnknownPhase = errors.New("interceptor: unknown phase")
 )
+
+// §15.1 error codes a rejected external-interceptor registration maps
+// to. The gateway's interceptor-registration handler translates the
+// Register sentinel errors to these codes with HTTP 400.
+const (
+	// CodeInvalidInterceptorPriority is the §4.8 line 1021 code for an
+	// external interceptor registered at a priority within the reserved
+	// built-in ceiling.
+	CodeInvalidInterceptorPriority = "INVALID_INTERCEPTOR_PRIORITY"
+	// CodeInvalidInterceptorPhase is the §4.8 line 1023 code for an
+	// external interceptor that targets the PreAuth phase.
+	CodeInvalidInterceptorPhase = "INVALID_INTERCEPTOR_PHASE"
+)
+
+// RegistrationErrorCode maps a Register error to its §15.1 error code
+// and HTTP status. It returns ok == false for an error that is not a
+// registration-validation sentinel (the caller then falls back to a
+// generic 400/500). spec: §4.8 lines 1021, 1023.
+func RegistrationErrorCode(err error) (code string, httpStatus int, ok bool) {
+	switch {
+	case errors.Is(err, ErrInvalidPriority):
+		return CodeInvalidInterceptorPriority, 400, true
+	case errors.Is(err, ErrInvalidPhase):
+		return CodeInvalidInterceptorPhase, 400, true
+	default:
+		return "", 0, false
+	}
+}
 
 // entry pairs an interceptor with its registration index so an
 // equal-priority, equal-builtin tie resolves to registration order.
@@ -248,12 +288,20 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 				Code:            CodeInterceptorTimeout,
 				Reason:          fmt.Sprintf("interceptor %q failed and is fail-closed: %v", ic.Name(), err),
 				ModifiedContent: content,
+				RejectedBy:      ic.Name(),
+				TimeoutMs:       effectiveTimeout(ic).Milliseconds(),
 			}
 		}
 		switch res.Action {
 		case ActionReject:
 			if res.ModifiedContent == nil {
 				res.ModifiedContent = content
+			}
+			// spec: §4.8 line 981 — the audit row identifies the
+			// rejecting interceptor. A built-in may leave RejectedBy
+			// empty; stamp the chain's view of which interceptor rejected.
+			if res.RejectedBy == "" {
+				res.RejectedBy = ic.Name()
 			}
 			return res
 		case ActionModify:
@@ -269,13 +317,18 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 	return Result{Action: ActionAllow, ModifiedContent: content}
 }
 
+// effectiveTimeout returns the per-interceptor deadline, selecting
+// DefaultTimeout when the interceptor declares a non-positive value.
+func effectiveTimeout(ic Interceptor) time.Duration {
+	if t := ic.Timeout(); t > 0 {
+		return t
+	}
+	return DefaultTimeout
+}
+
 // invoke runs one interceptor under its per-interceptor deadline.
 func invoke(ctx context.Context, ic Interceptor, req Request) (Result, error) {
-	timeout := ic.Timeout()
-	if timeout <= 0 {
-		timeout = DefaultTimeout
-	}
-	cctx, cancel := context.WithTimeout(ctx, timeout)
+	cctx, cancel := context.WithTimeout(ctx, effectiveTimeout(ic))
 	defer cancel()
 	return ic.Intercept(cctx, req)
 }

@@ -4,16 +4,19 @@ package mcptools_test
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -137,5 +140,60 @@ func TestDelegateTaskPreDelegationModifies(t *testing.T) {
 	// §4: a PreDelegation MODIFY rewrites the input the child receives.
 	if got := rec.received("sess_child"); len(got) != 1 || got[0] != "scrubbed task" {
 		t.Errorf("child received %v, want [\"scrubbed task\"] (the interceptor-modified input)", got)
+	}
+}
+
+// capturePolicyAppender records the §16.7 interceptor.rejected payload.
+type capturePolicyAppender struct{ payload map[string]any }
+
+func (a *capturePolicyAppender) Append(_ context.Context, _, _ string, payload json.RawMessage, _ time.Time) (audit.Row, error) {
+	a.payload = map[string]any{}
+	_ = json.Unmarshal(payload, &a.payload)
+	return audit.Row{}, nil
+}
+
+// spec: §4.8 line 981, §11.7 — a PreDelegation chain REJECT writes an
+// interceptor.rejected audit row naming the rejecting interceptor.
+func TestDelegateTaskPreDelegationRejectAudits(t *testing.T) {
+	chain := interceptor.NewChain()
+	if err := chain.Register(interceptor.PhasePreDelegation, staticInterceptor{
+		result: interceptor.Result{Action: interceptor.ActionReject, Reason: "unsafe task content"},
+	}); err != nil {
+		t.Fatalf("register interceptor: %v", err)
+	}
+	app := &capturePolicyAppender{}
+	store := memstore.New()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:        store,
+		Executor:     newRecordingExecutor(),
+		Interceptors: chain,
+		PolicyAudit:  policy.NewAuditSink(app, nil),
+		Delegation: delegation.NewService(store, delegation.Options{
+			IDFunc: func() string { return "sess_child" },
+		}),
+		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		TenantID: "acme",
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", RuntimeRef: "claude", PoolRef: "pool-a",
+		State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed parent: %v", err)
+	}
+
+	call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"echo","taskInput":"do something bad"}`)
+
+	if app.payload == nil {
+		t.Fatal("no interceptor.rejected audit row written on PreDelegation REJECT")
+	}
+	if got := app.payload["interceptor_ref"]; got != "test-static" {
+		t.Errorf("interceptor_ref = %v, want test-static", got)
+	}
+	if got := app.payload["phase"]; got != string(interceptor.PhasePreDelegation) {
+		t.Errorf("phase = %v, want PreDelegation", got)
 	}
 }

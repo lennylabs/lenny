@@ -22,6 +22,11 @@ func TestClassifyKnownCodes(t *testing.T) {
 		// session-start retryable failure when the Token Service
 		// circuit breaker is open.
 		{"TOKEN_SERVICE_UNAVAILABLE", CategoryUpstream, true},
+		// spec: §15.1 line 1008 — INTERCEPTOR_TIMEOUT is TRANSIENT and
+		// retryable, distinct from the POLICY (non-retryable) codes a
+		// deliberate interceptor REJECT produces.
+		{"INTERCEPTOR_TIMEOUT", CategoryTransient, true},
+		{"INTERCEPTOR_REJECTED", CategoryPolicy, false},
 	}
 	for _, c := range cases {
 		t.Run(c.code, func(t *testing.T) {

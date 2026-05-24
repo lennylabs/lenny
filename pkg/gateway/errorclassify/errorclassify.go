@@ -75,6 +75,10 @@ var table = map[string]entry{
 	"QUOTA_EXCEEDED":                 {CategoryPolicy, false},
 	"RATE_LIMITED":                   {CategoryPolicy, true},
 	"INTERCEPTOR_REJECTED":           {CategoryPolicy, false},
+	// spec: §15.1 line 1008 — an interceptor timeout in a fail-closed
+	// chain is TRANSIENT and retryable, distinct from the POLICY
+	// INTERCEPTOR_REJECTED a deliberate REJECT produces.
+	"INTERCEPTOR_TIMEOUT": {CategoryTransient, true},
 	"INTERCEPTOR_COOLDOWN_IMMUTABLE": {CategoryPolicy, false},
 	"MCP_PROTOCOL_VERSION_RETIRED":   {CategoryPermanent, false},
 	"MCP_VERSION_UNSUPPORTED":        {CategoryPermanent, false},

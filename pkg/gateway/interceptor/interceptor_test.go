@@ -298,3 +298,91 @@ func TestActionString(t *testing.T) {
 		}
 	}
 }
+
+// spec: §4.8 line 981 — Chain.Run stamps Result.RejectedBy with the
+// rejecting interceptor's Name() so the §16.7 audit row identifies the
+// actual rejector rather than assuming a fixed built-in.
+func TestRunStampsRejectedByOnReject(t *testing.T) {
+	c := interceptor.NewChain()
+	mustRegister(t, c, phase, &fakeInterceptor{
+		name: "blocker", priority: 200, builtin: true,
+		fn: func(context.Context, interceptor.Request) (interceptor.Result, error) {
+			// Return a REJECT that does not set RejectedBy itself.
+			return interceptor.Result{Action: interceptor.ActionReject, Reason: "no"}, nil
+		},
+	})
+	res := c.Run(context.Background(), interceptor.Request{Phase: phase})
+	if res.Action != interceptor.ActionReject {
+		t.Fatalf("Action = %v, want REJECT", res.Action)
+	}
+	if res.RejectedBy != "blocker" {
+		t.Errorf("RejectedBy = %q, want %q", res.RejectedBy, "blocker")
+	}
+}
+
+// spec: §4.8 line 1032 — a fail-closed timeout/error carries the
+// rejecting interceptor's name, the INTERCEPTOR_TIMEOUT code, and the
+// elapsed deadline in milliseconds for the §15.1 envelope.
+func TestRunFailClosedCarriesNameAndTimeout(t *testing.T) {
+	c := interceptor.NewChain()
+	mustRegister(t, c, phase, &fakeInterceptor{
+		name: "flaky", priority: 200, builtin: true, timeout: 250 * time.Millisecond,
+		failPolicy: interceptor.FailClosed,
+		fn: func(context.Context, interceptor.Request) (interceptor.Result, error) {
+			return interceptor.Result{}, errors.New("boom")
+		},
+	})
+	res := c.Run(context.Background(), interceptor.Request{Phase: phase})
+	if res.Action != interceptor.ActionReject || res.Code != interceptor.CodeInterceptorTimeout {
+		t.Fatalf("Action/Code = %v/%q, want REJECT/INTERCEPTOR_TIMEOUT", res.Action, res.Code)
+	}
+	if res.RejectedBy != "flaky" {
+		t.Errorf("RejectedBy = %q, want %q", res.RejectedBy, "flaky")
+	}
+	if res.TimeoutMs != 250 {
+		t.Errorf("TimeoutMs = %d, want 250", res.TimeoutMs)
+	}
+}
+
+// A fail-open error skips the interceptor without stamping RejectedBy.
+func TestRunFailOpenLeavesRejectedByEmpty(t *testing.T) {
+	c := interceptor.NewChain()
+	mustRegister(t, c, phase, &fakeInterceptor{
+		name: "soft", priority: 200, builtin: true, failPolicy: interceptor.FailOpen,
+		fn: func(context.Context, interceptor.Request) (interceptor.Result, error) {
+			return interceptor.Result{}, errors.New("boom")
+		},
+	})
+	res := c.Run(context.Background(), interceptor.Request{Phase: phase})
+	if res.Action != interceptor.ActionAllow {
+		t.Fatalf("Action = %v, want ALLOW", res.Action)
+	}
+	if res.RejectedBy != "" {
+		t.Errorf("RejectedBy = %q, want empty", res.RejectedBy)
+	}
+}
+
+// spec: §4.8 lines 1021, 1023 — Register sentinel errors map to the
+// §15.1 INVALID_INTERCEPTOR_PRIORITY / INVALID_INTERCEPTOR_PHASE codes
+// with HTTP 400; an unrelated error is not a registration sentinel.
+func TestRegistrationErrorCode(t *testing.T) {
+	if code, status, ok := interceptor.RegistrationErrorCode(interceptor.ErrInvalidPriority); !ok ||
+		code != "INVALID_INTERCEPTOR_PRIORITY" || status != 400 {
+		t.Errorf("priority: got (%q,%d,%v)", code, status, ok)
+	}
+	if code, status, ok := interceptor.RegistrationErrorCode(interceptor.ErrInvalidPhase); !ok ||
+		code != "INVALID_INTERCEPTOR_PHASE" || status != 400 {
+		t.Errorf("phase: got (%q,%d,%v)", code, status, ok)
+	}
+	// A wrapped priority sentinel still maps via errors.Is semantics.
+	if _, _, ok := interceptor.RegistrationErrorCode(
+		errors.Join(errors.New("register"), interceptor.ErrInvalidPriority)); !ok {
+		t.Error("a wrapped ErrInvalidPriority did not map")
+	}
+	if _, _, ok := interceptor.RegistrationErrorCode(errors.New("x")); ok {
+		t.Error("a non-sentinel error reported ok=true")
+	}
+	if _, _, ok := interceptor.RegistrationErrorCode(interceptor.ErrUnknownPhase); ok {
+		t.Error("ErrUnknownPhase is not a priority/phase sentinel")
+	}
+}

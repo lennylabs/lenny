@@ -112,6 +112,20 @@ func (s *Server) requirePolicyChain(w http.ResponseWriter, r *http.Request, tena
 			return false
 		}
 	}
+	// spec: §4.8 line 1032, §15.1 line 1008 — a fail-closed interceptor
+	// timeout/error is surfaced as 503 INTERCEPTOR_TIMEOUT (TRANSIENT,
+	// retryable) so the caller distinguishes "the policy service is
+	// degraded" from a deliberate policy REJECT. The details carry
+	// interceptor_ref, phase, and timeout_ms per the error catalog.
+	if res.Code == interceptor.CodeInterceptorTimeout {
+		s.writeError(w, http.StatusServiceUnavailable, interceptor.CodeInterceptorTimeout, res.Reason,
+			map[string]any{
+				"interceptor_ref": res.RejectedBy,
+				"phase":           string(interceptor.PhasePostAuth),
+				"timeout_ms":      res.TimeoutMs,
+			})
+		return false
+	}
 	details := map[string]any{"reason": res.Reason}
 	if res.Code != "" {
 		details["interceptorCode"] = res.Code

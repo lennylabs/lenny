@@ -42,7 +42,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
@@ -51,8 +50,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
@@ -112,6 +113,12 @@ type Deps struct {
 	// non-nil, lenny/send_message runs the PreMessageDelivery phase
 	// over the message body before delivery.
 	Interceptors *interceptor.Chain
+
+	// PolicyAudit emits the §16.7 interceptor.rejected audit row when a
+	// chain REJECTs at PreDelegation or PreMessageDelivery. Optional —
+	// when nil, a chain REJECT still blocks the request but writes no
+	// audit row. spec: §4.8 line 981, §11.7.
+	PolicyAudit *policy.AuditSink
 
 	// Events is the §15.1 session event bus. Optional — when nil, the
 	// lenny/output tool is not registered.
@@ -321,6 +328,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				Content:   []byte(in.Content),
 			})
 			if res.Action == interceptor.ActionReject {
+				recordChainRejection(ctx, deps, tenant, row.ID, interceptor.PhasePreMessageDelivery, res)
 				return mcp.ToolResult{}, fmt.Errorf("message delivery rejected by policy: %s", res.Reason)
 			}
 			if res.Action == interceptor.ActionModify {
@@ -973,6 +981,7 @@ func Register(srv *mcp.Server, deps Deps) {
 					Content:   []byte(taskInput),
 				})
 				if res.Action == interceptor.ActionReject {
+					recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreDelegation, res)
 					return mcp.ToolResult{}, fmt.Errorf("delegation rejected by policy: %s", res.Reason)
 				}
 				if res.Action == interceptor.ActionModify {
@@ -1024,6 +1033,24 @@ func Register(srv *mcp.Server, deps Deps) {
 	if deps.Memory != nil {
 		registerMemoryTools(srv, deps, tenant, clock)
 	}
+}
+
+// recordChainRejection emits the §16.7 interceptor.rejected audit row
+// when a §4.8 chain REJECTs at a phase run from the MCP fabric
+// (PreDelegation, PreMessageDelivery). The chain stamps Result.RejectedBy
+// with the rejecting interceptor so the audit row identifies it. It is
+// best-effort: a nil PolicyAudit is a no-op, and an append failure is
+// logged-by-omission rather than blocking the rejection, because the
+// caller already fails the request closed. spec: §4.8 line 981, §11.7.
+func recordChainRejection(ctx context.Context, deps Deps, tenant, sessionID string, phase interceptor.Phase, res interceptor.Result) {
+	if deps.PolicyAudit == nil {
+		return
+	}
+	_ = deps.PolicyAudit.RecordRejection(ctx, policy.RejectionContext{
+		TenantID:  tenant,
+		SessionID: sessionID,
+		Phase:     phase,
+	}, res)
 }
 
 // registerMemoryTools wires the §9.4 lenny/memory_write and
