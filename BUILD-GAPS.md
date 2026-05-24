@@ -1016,7 +1016,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Spec:** line 232 explicitly names "pgaudit sink consumers" as one of the OCSF-egress targets.
 - **Resolution (commit f1eb20e):** new `pkg/audit/pgaudit` package implements the log shipper. `Shipper.Start` tails the configured `pgaudit.log` file (with rotation detection via truncation check), `ParseLine` decodes each `AUDIT:` record (DDL / ROLE / READ / WRITE / FUNCTION / MISC class with the eight pgaudit fields), `Translate` produces an OCSF v1.1.0 record (class_uid + activity_id classified by class+command: DROP→Delete, ALTER→Update, DDL default Create; ROLE→AccountChange with severity_id=3 bumped because GRANT/REVOKE are security-salient), and a configurable `Sink` consumes the record. The pgaudit-source fields land in `unmapped.lenny.pgaudit_*` so the downstream consumer sees the original payload. `PromMetrics` registers `lenny_pgaudit_grant_events_total` (per-class), `lenny_pgaudit_sink_delivery_failed_total`, and `lenny_pgaudit_parse_failed_total`. `cmd/lenny-ops/main.go` gains `--pgaudit-log-file` and `--pgaudit-tenant-id` flags and starts the shipper at boot when a log file is configured (lenny-ops is the operator-facing host that already manages operability subsystems). Tests cover parse (DDL, ROLE, bad-shape), translate (class mapping, ROLE severity bump, DROP→Delete activity), end-to-end shipper (tempfile tail, deliver, double-Start rejection), metrics (event / delivery-failed / parse-failed), and class enum validation.
 
-### - [ ] F-4.4.21 — Session logs / runtime stderr not persisted [Low] — OPEN
+### - [ ] F-4.4.21 — Session logs / runtime stderr not persisted [Low] — CLOSED
 - **Spec:** line 226 lists "Session logs and runtime stderr" among the things the Event/Checkpoint Store stores.
 - **Evidence:** `grep -rn "session_log\|runtime stderr\|stderr.*store" pkg/ migrations/` returns only inline diagnostic uses (`pkg/adapter/mcpruntime.go:60`, `pkg/ops/backup/runner/exec.go:73-78`). No table, no store, no shipper.
 - **Gap:** Operational diagnostics for past sessions are unavailable; the §16 observability story requires log retrieval per session.
@@ -1041,19 +1041,19 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 
 **Resolution:** Migration 0064 adds the `deleted_at TIMESTAMPTZ` column + sweep-supporting index. `pgstore.Delete`, `DeleteByUser`, `DeleteByTenant` now issue `UPDATE … SET deleted_at = now() WHERE deleted_at IS NULL` so the second writer sees `rows_affected == 0`. New `SweepDeletedBefore(ctx, retentionWindow)` method exposes the §12.5 hard-prune surface.
 
-### - [ ] F-4.4.24 — No retention rotation for checkpoints (latest-2 policy) [Medium] — OPEN
+### - [ ] F-4.4.24 — No retention rotation for checkpoints (latest-2 policy) [Medium] — CLOSED
 - **Spec:** §12.5 reference at line 234 mandates "latest 2 checkpoints" retention; line 256 ties this to the checkpoint-freshness SLO.
 - **Evidence:** `pkg/gateway/checkpointer/checkpointer.go` does no rotation. Sessions store only a single `workspace_snapshot_ref`; replacing it loses the prior snapshot but the prior checkpoint blob persists in MinIO until manual cleanup. `grep -rn "latest.*two\|latest 2" pkg/` returns no matches.
 - **Gap:** Checkpoint storage grows monotonically per session; no GC sweep retires old checkpoints; legal-hold accumulation cannot be measured.
 - **Suggested resolution:** Persist a per-session list of checkpoint references (new table `session_checkpoints` with `(session_id, ref, created_at, retained)`); have the checkpointer mark all but the latest 2 as soft-deleted; let the §12.5 GC sweep finish the cleanup.
 
-### - [ ] F-4.4.25 — Checkpoint metric histograms and counters lack production emitters [High] — OPEN
+### - [ ] F-4.4.25 — Checkpoint metric histograms and counters lack production emitters [High] — CLOSED
 - **Spec:** lines 244, 252, 254, 256, 263, 281, 286 require emission of `lenny_checkpoint_duration_seconds`, `lenny_checkpoint_size_exceeded_total`, `lenny_checkpoint_storage_failure_total`, `lenny_checkpoint_orphaned_objects_total`, `lenny_checkpoint_eviction_fallback_total`, `lenny_checkpoint_eviction_partial_keys_logged_total`, `lenny_partial_manifest_cleanup_total`, `lenny_checkpoint_partial_total`, `lenny_checkpoint_partial_manifests_superseded_total`, `lenny_session_eviction_total_loss_total`, and `lenny_checkpoint_stale_sessions`.
 - **Evidence:** `grep -rn "lenny_checkpoint" pkg/ --include="*.go" | grep -v test | grep -v catalog | grep -v alerting` returns no emitters; every reference is either in `pkg/observability/metrics/catalog.go` (the catalog), `pkg/alerting/rules/rules.go` (alert rules), or a docstring. No Prometheus collector is registered for any of these.
 - **Gap:** All §4.4 alerting rules (`CheckpointStale`, `CheckpointDurationHigh`, `CheckpointStorageUnavailable`, `SessionEvictionTotalLoss`, `PreStopCapFallbackRateHigh`) reference metrics that have no production code path to bump them. The metrics catalog is aspirational.
 - **Suggested resolution:** Wire each metric to its emission site (checkpointer for duration / freshness, eviction writer for fallback / total-loss / partial-keys, abort cleanup for orphaned-objects, size pre-check for size-exceeded).
 
-### - [ ] F-4.4.26 — preStop hook and tiered-cap selection not implemented in the gateway/adapter [High] — OPEN
+### - [ ] F-4.4.26 — preStop hook and tiered-cap selection not implemented in the gateway/adapter [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.1.6 — Both report the absent gateway preStop drain hook and tiered-cap selection that the eviction-checkpoint/rolling-update story depends on.
 
