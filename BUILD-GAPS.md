@@ -2164,6 +2164,8 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   fast. The Helm `interceptorNamespaces` egress NetworkPolicy is left as
   a separate chart task (NET-058). Resolved in commit 19273cb6.
 
+### - [ ] F-4.8.10 — `PreAuth` phase chain not invoked (Missing) [Medium] — OPEN
+
 **Potential duplicate** (confidence: high) — F-4.8.2 — Both report the AuthEvaluator/PreAuth phase chain never being invoked or registered; F-4.8.10 explicitly ties itself to F-4.8.2.
 
 - **Spec:** §4.8 lines 964, 1023. `PreAuth` runs exclusively in the
