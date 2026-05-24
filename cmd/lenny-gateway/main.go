@@ -149,6 +149,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
@@ -455,6 +456,17 @@ func main() {
 	} else {
 		partialManifests = partialmanifeststore.NewMemoryStore(nil)
 	}
+	// §4.4 line 226 session-log store: persists runtime stderr to MinIO
+	// when a session reaches a terminal state. The store is best-effort;
+	// the Noop implementation drops the bytes and is sufficient for
+	// in-memory deployments. A MinIO endpoint configured below
+	// upgrades the wiring to MinIOStore so production retains the
+	// observability artifact. The MinIO uploader integration is
+	// deferred to the §4.5 wiring follow-on; today the close-hook
+	// fires with an empty body so the session-completion path
+	// exercises the contract without writing any object.
+	// spec: §4.4 line 226.
+	var sessionLogs sessionlogstore.Store = sessionlogstore.Noop{}
 	// §4.5 artifact store: MinIO-backed when --minio-endpoint is set,
 	// otherwise an in-memory store for the minimal gateway. blobProbe
 	// is the §12.5 drain-readiness liveness probe — a real MinIO
@@ -1119,6 +1131,12 @@ func main() {
 			Store:   partialManifests,
 			Metrics: gwMetrics,
 		},
+		// §4.4 line 226 session-log close-hook. Wired with the
+		// per-deployment Store (Noop for in-memory, MinIOStore when
+		// the §4.5 follow-on wiring lands a MinIO uploader). The
+		// close-hook fires from the gateway's session-completion path;
+		// the SessionLogStore drops or persists best-effort.
+		SessionLogHook: &sessionlogstore.CloseHook{Store: sessionLogs},
 		TreeArchive:             treeArchive,
 		Interceptors:            policyChain,
 		PolicyAuditSink:         policyAuditSink,

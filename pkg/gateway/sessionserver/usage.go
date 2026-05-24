@@ -156,6 +156,17 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	// §8.10: apply the cascadeOnFailure policy to this session's
 	// children now that it has reached a terminal state.
 	s.cascadeToChildren(ctx, sess)
+	// §4.4 line 226: best-effort session-log close-hook. The hook
+	// captures the buffered runtime stderr and persists it as the
+	// `/{tenant_id}/sessions/{session_id}/stderr.log` artifact. A
+	// failure (MinIO unavailable, catalog insert error) logs and
+	// drops rather than fail the terminal-state transition.
+	// spec: §4.4 line 226 — Session logs and runtime stderr.
+	if s.sessionLogHook != nil {
+		if err := s.sessionLogHook.OnSessionTerminal(ctx, sess.TenantID, sess.ID, nil, false); err != nil {
+			log.Printf("lenny-gateway: session-log close-hook session=%s: %v", sess.ID, err)
+		}
+	}
 	if s.billing == nil {
 		return
 	}

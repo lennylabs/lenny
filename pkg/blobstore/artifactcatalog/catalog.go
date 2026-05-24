@@ -57,6 +57,14 @@ const (
 	// ArtifactTypeExport: an exported file subset for delegation
 	// (§8.7).
 	ArtifactTypeExport ArtifactType = "export"
+	// ArtifactTypeSessionLog: the §4.4 line 226 runtime-stderr session
+	// log object at the canonical key
+	// `/{tenant_id}/sessions/{session_id}/stderr.log`. Written by the
+	// session-log shipper on session terminal state; included in the
+	// §12.5 GC sweep on the same lifecycle as every other artifact
+	// kind.
+	// spec: §4.4 line 226.
+	ArtifactTypeSessionLog ArtifactType = "session_log"
 )
 
 // Record is one row in the §12.5 artifact_store catalog.

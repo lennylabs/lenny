@@ -155,6 +155,11 @@ type Server struct {
 	// duration stamped onto each session at create time. A non-zero
 	// value falls through to DefaultResumeWindow.
 	resumeWindow       time.Duration
+	// sessionLogHook, when set, receives the §4.4 line 226 session-log
+	// close-hook on every session transition to a terminal state.
+	// Best-effort: a failure logs and discards rather than abort the
+	// transition.
+	sessionLogHook SessionLogHook
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -233,6 +238,20 @@ type PartialManifestLookup interface {
 	// exists; a store error returns the error so the resume path can
 	// degrade gracefully (falls back to ResumeFull).
 	HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error)
+}
+
+// SessionLogHook is the §4.4 line 226 close-hook the gateway invokes
+// on every transition to a terminal state. Implementations capture
+// the buffered runtime stderr bytes and persist them best-effort.
+// The default production wiring lives in pkg/gateway/sessionlogstore
+// (CloseHook.OnSessionTerminal).
+//
+// spec: §4.4 line 226 — "Session logs and runtime stderr".
+type SessionLogHook interface {
+	// OnSessionTerminal records the session log for (tenant, session).
+	// Implementations are best-effort: a failure must not be
+	// propagated as a fatal error to the caller.
+	OnSessionTerminal(ctx context.Context, tenantID, sessionID string, body []byte, truncated bool) error
 }
 
 // Options configures the Server at construction.
@@ -483,6 +502,14 @@ type Options struct {
 	// without subsystem gating (tests and the minimal gateway do not
 	// configure a limit).
 	UploadSubsystem *subsystem.Subsystem
+
+	// SessionLogHook, when set, receives the §4.4 line 226 close-hook
+	// on every session transition to a terminal state. The production
+	// wiring lives in pkg/gateway/sessionlogstore (CloseHook). Nil
+	// disables the session-log persistence path; the transition still
+	// fires.
+	// spec: §4.4 line 226.
+	SessionLogHook SessionLogHook
 }
 
 // New returns a Server bound to the supplied store.
@@ -531,6 +558,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		policyAuditSink:    opts.PolicyAuditSink,
 		uploadSubsystem:    opts.UploadSubsystem,
 		resumeWindow:       opts.ResumeWindow,
+		sessionLogHook:     opts.SessionLogHook,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
