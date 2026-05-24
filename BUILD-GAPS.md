@@ -1098,7 +1098,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 
 ### Findings
 
-### - [ ] F-4.5.1 — ArtifactStore interface does not enforce per-tenant prefix at the interface boundary [Medium] — OPEN
+### - [ ] F-4.5.1 — ArtifactStore interface does not enforce per-tenant prefix at the interface boundary [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.2.15, F-12.5.8 — All three report that ArtifactStore does not enforce per-tenant prefix validation at the interface boundary and ErrCrossTenant is never returned.
 
@@ -1107,7 +1107,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The §4.5 invariant that validation lives "at the interface level" so caller bugs cannot cross-tenant is not satisfied; a future caller that constructs a URI from foreign-tenant input and calls `blobs.Get(uri)` would succeed without rejection. The current ergonomic is "trust the upstream handler", which §4.5 explicitly disclaims.
 - **Suggested resolution:** Add a `callerTenant` parameter to the Store interface methods (or wrap the production stores with a tenant-checking decorator) and return `ErrCrossTenant` on mismatch; remove the upstream-only check.
 
-### - [ ] F-4.5.2 — Object-key path does not carry the `{object_type}` segment [Medium] — OPEN
+### - [ ] F-4.5.2 — Object-key path does not carry the `{object_type}` segment [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.5.6, F-12.5.29 — All three describe the missing {object_type} segment in the blob object key path breaking eviction prefix scoping; F-12.5.29 is the parser-side facet of the same defect.
 
@@ -1125,7 +1125,7 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** Every PutObject in production falls through `if s.sseResolver != nil { ... }` to the bucket default; T4 tenants do not get per-tenant SSE-KMS regardless of their `workspaceTier`. The cryptographic-erasure property §12.5 builds on is silently absent.
 - **Suggested resolution:** Wire `SSEKeyResolver` in the gateway main: look up the writing tenant's `workspaceTier`, return `(tenantkms.AliasFor(tenantID), true)` when T4, return `("", false)` otherwise (falling back to bucket-default SSE-S3). Validate at startup that a T4 tenant's KMS alias is reachable.
 
-### - [ ] F-4.5.4 — MinIO `Put` silently falls back to bucket-default SSE when resolver returns `ok=false` [High] — OPEN
+### - [ ] F-4.5.4 — MinIO `Put` silently falls back to bucket-default SSE when resolver returns `ok=false` [High] — CLOSED
 - **Spec:** §12.5 ll. 303 (Failure behavior when the KMS key is unavailable at write time): "If the tenant-scoped KMS key is unavailable during a checkpoint or artifact write ... the gateway MUST reject the write with `CLASSIFICATION_CONTROL_VIOLATION`. The `ArtifactStore` does **not** fall back to the deployment-wide SSE key, because that would silently downgrade the tenant's classification controls and violate the cryptographic-erasure property."
 - **Evidence:** `pkg/blobstore/miniostore/miniostore.go:127-150` — when `s.sseResolver != nil` and the resolver returns `ok=false`, the Put proceeds without `ServerSideEncryption` set, falling through to the bucket default. There is no T4-vs-T3 branch and no per-tenant rejection.
 - **Gap:** Even if F-4.5.3 were resolved, the current contract does not distinguish "T3 — fall back to bucket default" from "T4 — fail closed if my key is unreachable". A misconfigured resolver returning `ok=false` for a T4 tenant silently downgrades the write.
@@ -1146,13 +1146,13 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The §12.5 tombstone-by-tag soft-delete contract that S3 satisfies is missing on MinIO. A deployment using MinIO (the spec-default self-managed backend) cannot exercise the soft-delete / hard-prune machinery the spec mandates.
 - **Suggested resolution:** Mirror the `pkg/blobstore/s3` `SoftDelete`/`HardPrune` implementations against MinIO's tag and lifecycle APIs (MinIO supports the S3 tagging surface), or rely on the catalog (F-4.5.5) once wired.
 
-### - [ ] F-4.5.7 — Workspace snapshot is identified by an opaque object path, not the SHA-256 content hash spec mandates [Medium] — OPEN
+### - [ ] F-4.5.7 — Workspace snapshot is identified by an opaque object path, not the SHA-256 content hash spec mandates [Medium] — CLOSED
 - **Spec:** §4.5 ll. 311: "Each workspace snapshot is immutable and identified by a **content-addressed hash (SHA-256 of the tar archive)**."
 - **Evidence:** `pkg/gateway/sessionstore/sessionstore.go:152-172` `WorkspaceSnapshot` carries only `Ref` (object key), `Source`, `Timestamp` — no SHA-256 field. `grep -rn "tar.*sha256\|sha256.*tar\|ContentHash" pkg/gateway/` returns no hits. The `parent_workspace_ref` field is the object key (session ID + path), not a content hash.
 - **Gap:** Lineage queries cannot identify two snapshots as the "same" workspace by content. A future content-addressed deduplication optimisation is foreclosed without a schema migration. The audit trail loses the immutability claim §4.5 makes.
 - **Suggested resolution:** Add a `ContentHash` field on `WorkspaceSnapshot`, compute it during the tar streaming in the upload handler and the seal/checkpoint paths, persist it on the session row, and surface it in the §15.1 derive response.
 
-### - [ ] F-4.5.8 — Derive does not copy parent workspace bytes — only rewrites the ref pointer [High] — OPEN
+### - [ ] F-4.5.8 — Derive does not copy parent workspace bytes — only rewrites the ref pointer [High] — CLOSED
 - **Spec:** §4.5 ll. 311 / §7.1 derive copy semantics: "When a session is derived ([Section 7.1]), the gateway copies the parent's workspace snapshot bytes into a new MinIO object scoped to the derived session's own path. The derived session owns its artifact independently; GC on the parent's artifacts has no effect on the derived session's workspace."
 - **Evidence:** `pkg/gateway/sessionserver/derive.go:244-276` builds the derived session with `WorkspaceSnapshot: copySnapshotRef(source.WorkspaceSnapshot, derivedSnapshotRef(tenantID, source.ID))`. The accompanying comment at line 265 admits: "The minimal gateway elides the MinIO copy and simply rewrites the ref; production swaps in a real `Copier`." No `Copier` interface or implementation exists in the tree — `grep -rn "Copier\|CopyObject\|ComposeObject" pkg/blobstore/` returns no hits.
 - **Gap:** A derived session's `WorkspaceSnapshot.Ref` points to a path under the derived session's prefix, but no object exists at that path — only the parent's. When the parent's TTL elapses and the retention GC deletes the parent's blob (the GC is keyed by session, not by content), the derived session's workspace ref becomes a dangling pointer. The §4.5 invariant "GC on the parent's artifacts has no effect on the derived session's workspace" is violated.
