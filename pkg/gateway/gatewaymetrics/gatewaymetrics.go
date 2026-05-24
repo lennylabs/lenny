@@ -79,6 +79,29 @@ type Metrics struct {
 	// `keys_committed` ("0" for total-MinIO-failure, "1+" for
 	// partial-upload scenarios).
 	checkpointEvictionPartialKeysLogged *prometheus.CounterVec
+	// checkpointDuration is the §4.4 line 254 end-to-end checkpoint
+	// wall time histogram. Observed at the end of every checkpoint
+	// snapshot regardless of trigger. Labels: `pool` (finite,
+	// sandbox-warm-pool registry), `level` (one of the four §4.4
+	// levels), and `trigger` (periodic | pre_scale_down | eviction).
+	checkpointDuration *prometheus.HistogramVec
+	// checkpointStorageFailure counts the §4.4 line 262 non-eviction
+	// MinIO-upload failures (all retries exhausted, the failed
+	// checkpoint is discarded). Labels: `pool`, `level`, and `trigger`.
+	checkpointStorageFailure *prometheus.CounterVec
+	// checkpointEvictionFallback counts the §4.4 line 263 eviction-
+	// fallback writes to Postgres. Labels: `pool` and
+	// `had_prior_checkpoint`.
+	checkpointEvictionFallback *prometheus.CounterVec
+	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
+	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
+	// registry).
+	checkpointPartialTotal *prometheus.CounterVec
+	// prestopCapSelection counts the §10.1 preStop tiered-cap
+	// selection by source. Labels: `pool`, `service_instance_id`,
+	// and `source` (postgres | postgres_null | cache_hit |
+	// cache_miss_max_tier).
+	prestopCapSelection *prometheus.CounterVec
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -365,6 +388,68 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.4 line 254 — `lenny_checkpoint_duration_seconds` is observed
+	// at the end of every checkpoint snapshot regardless of trigger.
+	// Labels are bounded: `pool` is finite; `level` is one of the four
+	// §4.4 levels; `trigger` is one of `periodic`, `pre_scale_down`,
+	// `eviction`. The §16.5 CheckpointDurationHigh alert fires when
+	// the P95 of this histogram for Full-level or embedded-adapter
+	// pools exceeds 2.5 s over a 5-minute window.
+	checkpointDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_checkpoint_duration_seconds",
+		Help:    "End-to-end checkpoint wall time in seconds (§4.4 line 254).",
+		Buckets: prometheus.ExponentialBuckets(0.1, 2, 10),
+	}, []string{"pool", "level", "trigger"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.4 line 262 — `lenny_checkpoint_storage_failure_total`
+	// counts non-eviction MinIO-upload failures (all retries
+	// exhausted, the failed checkpoint is discarded). Labels are
+	// bounded.
+	checkpointStorageFailure, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_checkpoint_storage_failure_total",
+		Help: "Non-eviction checkpoint uploads failed after all retries (§4.4 line 262).",
+	}, []string{"pool", "level", "trigger"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.4 line 263 — `lenny_checkpoint_eviction_fallback_total`
+	// counts the entries into the eviction Postgres-fallback writer
+	// when all MinIO retries for an eviction checkpoint failed.
+	// Labels: `pool` (finite) and `had_prior_checkpoint` ("true" |
+	// "false").
+	checkpointEvictionFallback, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_checkpoint_eviction_fallback_total",
+		Help: "Checkpoint storage fallbacks to Postgres minimal state (§4.4 line 263).",
+	}, []string{"pool", "had_prior_checkpoint"})
+	if err != nil {
+		return nil, err
+	}
+	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
+	// partial-manifest row writes. Labels: `pool` (finite).
+	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_checkpoint_partial_total",
+		Help: "Partial-manifest checkpoint writes (§4.4 line 234).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §10.1 — `lenny_prestop_cap_selection_total` counts the preStop
+	// tiered-cap selection by source. Labels: `pool` (finite),
+	// `service_instance_id` (the OTel service.instance.id of the
+	// replica performing the selection — at most one value per
+	// replica), and `source` (postgres | postgres_null | cache_hit |
+	// cache_miss_max_tier). The §16.5 PreStopCapFallbackRateHigh
+	// alert reads the combined (postgres_null + cache_miss_max_tier)
+	// rate.
+	prestopCapSelection, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_prestop_cap_selection_total",
+		Help: "preStop tiered checkpoint cap selections by source (§10.1).",
+	}, []string{"pool", "service_instance_id", "source"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -374,7 +459,9 @@ func New() (*Metrics, error) {
 		checkpointStaleSessions,
 		partialManifestCleanup, checkpointPartialManifestsSuperseded,
 		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
-		checkpointEvictionPartialKeysLogged)
+		checkpointEvictionPartialKeysLogged,
+		checkpointDuration, checkpointStorageFailure,
+		checkpointEvictionFallback, checkpointPartialTotal, prestopCapSelection)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -426,6 +513,11 @@ func New() (*Metrics, error) {
 		checkpointSizeExceeded:               checkpointSizeExceeded,
 		sessionEvictionTotalLoss:             sessionEvictionTotalLoss,
 		checkpointEvictionPartialKeysLogged:  checkpointEvictionPartialKeysLogged,
+		checkpointDuration:                   checkpointDuration,
+		checkpointStorageFailure:             checkpointStorageFailure,
+		checkpointEvictionFallback:           checkpointEvictionFallback,
+		checkpointPartialTotal:               checkpointPartialTotal,
+		prestopCapSelection:                  prestopCapSelection,
 	}, nil
 }
 
@@ -504,6 +596,72 @@ func (m *Metrics) IncCheckpointPartialManifestsSuperseded(pool string) {
 		return
 	}
 	m.checkpointPartialManifestsSuperseded.WithLabelValues(pool).Inc()
+}
+
+// ObserveCheckpointDuration observes one §4.4 line 254
+// `lenny_checkpoint_duration_seconds` histogram value labeled by
+// pool, level, and trigger. Called from the checkpointer at the
+// end of every snapshot regardless of outcome. The §16.5
+// CheckpointDurationHigh alert reads the P95 of this histogram.
+// spec: §4.4 line 254.
+func (m *Metrics) ObserveCheckpointDuration(pool, level, trigger string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.checkpointDuration.WithLabelValues(pool, level, trigger).Observe(seconds)
+}
+
+// IncCheckpointStorageFailure increments the §4.4 line 262
+// `lenny_checkpoint_storage_failure_total` counter labeled by pool,
+// level, and trigger. Called from the non-eviction MinIO-upload path
+// when all retries are exhausted and the failed checkpoint is
+// discarded.
+// spec: §4.4 line 262.
+func (m *Metrics) IncCheckpointStorageFailure(pool, level, trigger string) {
+	if m == nil {
+		return
+	}
+	m.checkpointStorageFailure.WithLabelValues(pool, level, trigger).Inc()
+}
+
+// IncCheckpointEvictionFallback increments the §4.4 line 263
+// `lenny_checkpoint_eviction_fallback_total` counter labeled by pool
+// and had_prior_checkpoint. Called from the eviction-fallback writer
+// at the entry to the Postgres minimal-state write.
+// spec: §4.4 line 263.
+func (m *Metrics) IncCheckpointEvictionFallback(pool string, hadPriorCheckpoint bool) {
+	if m == nil {
+		return
+	}
+	label := "false"
+	if hadPriorCheckpoint {
+		label = "true"
+	}
+	m.checkpointEvictionFallback.WithLabelValues(pool, label).Inc()
+}
+
+// IncCheckpointPartial increments the §4.4 line 234
+// `lenny_checkpoint_partial_total` counter labeled by pool. Called
+// once per partial-manifest row written by the §10.1
+// chunk-upload pipeline.
+// spec: §4.4 line 234.
+func (m *Metrics) IncCheckpointPartial(pool string) {
+	if m == nil {
+		return
+	}
+	m.checkpointPartialTotal.WithLabelValues(pool).Inc()
+}
+
+// IncPreStopCapSelection increments the §10.1
+// `lenny_prestop_cap_selection_total` counter labeled by pool,
+// service_instance_id, and source. Called once per preStop Stage 2
+// tier selection.
+// spec: §10.1 — preStop tier selection source.
+func (m *Metrics) IncPreStopCapSelection(pool, serviceInstanceID, source string) {
+	if m == nil {
+		return
+	}
+	m.prestopCapSelection.WithLabelValues(pool, serviceInstanceID, source).Inc()
 }
 
 // SetCheckpointStaleSessions sets the per-pool/level

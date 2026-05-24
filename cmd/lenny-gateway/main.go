@@ -147,6 +147,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
+	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpointretention/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
@@ -467,6 +469,18 @@ func main() {
 	// exercises the contract without writing any object.
 	// spec: §4.4 line 226.
 	var sessionLogs sessionlogstore.Store = sessionlogstore.Noop{}
+	// §4.4 line 234 / §12.5 latest-2 retention catalog. The Postgres-
+	// backed store records every successful checkpoint and runs the
+	// rotation in the same transaction; the in-memory store backs the
+	// dev-mode deployment so the checkpointer can call Insert + Rotate
+	// without a live database.
+	// spec: §4.4 line 234.
+	var checkpointRetention checkpointretention.Store
+	if pgPool != nil {
+		checkpointRetention = checkpointretentionpg.New(pgPool, nil)
+	} else {
+		checkpointRetention = checkpointretention.NewMemoryStore(nil)
+	}
 	// §4.5 artifact store: MinIO-backed when --minio-endpoint is set,
 	// otherwise an in-memory store for the minimal gateway. blobProbe
 	// is the §12.5 drain-readiness liveness probe — a real MinIO
@@ -861,6 +875,12 @@ func main() {
 			OnError: func(sessionID string, err error) {
 				log.Printf("lenny-gateway: checkpoint of session %s failed: %v", sessionID, err)
 			},
+			// §4.4 line 234 / §12.5 — record the snapshot ref to the
+			// retention catalog and Rotate so the table never holds
+			// more than the latest-2 active rows per session. The
+			// Metrics field is wired after gatewaymetrics.New() below
+			// so the §4.4 line 254 duration histogram is emitted.
+			Retention: checkpointRetention,
 		}
 		log.Printf("lenny-gateway: placing sessions on warm pods in namespace %q", *agentNamespace)
 	}
@@ -923,6 +943,15 @@ func main() {
 	}
 	gwMetrics.SetMaxSessionsPerReplica("direct", *maxSessionsPerReplica)
 	gwMetrics.SetMaxSessionsPerReplica("proxy", *maxSessionsPerReplica)
+
+	// §4.4 line 254 — late-binding the checkpointer's duration
+	// histogram emitter to the freshly-constructed gateway metrics.
+	// The checkpointer is constructed before gwMetrics so the Sealer
+	// can flow into the session-server, so the Metrics field is wired
+	// here once the registry is live.
+	if checkpointSvc != nil {
+		checkpointSvc.Metrics = gwMetrics
+	}
 
 	// §4.1 / §16.5: emit the configuration scalars the §16.5
 	// GatewayNoHealthyReplicas and GatewayActiveStreamsHigh alert

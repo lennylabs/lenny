@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -448,5 +449,150 @@ func TestSealRecordsASealedSnapshot(t *testing.T) {
 	}
 	if !row.WorkspaceSnapshot.Timestamp.Equal(when) {
 		t.Errorf("snapshot timestamp = %v, want %v", row.WorkspaceSnapshot.Timestamp, when)
+	}
+}
+
+// captureMetrics records every observed duration call so tests can
+// assert §4.4 line 254 emission.
+type captureMetrics struct {
+	calls []durationCall
+}
+
+type durationCall struct {
+	pool    string
+	level   string
+	trigger string
+	seconds float64
+}
+
+func (c *captureMetrics) ObserveCheckpointDuration(pool, level, trigger string, seconds float64) {
+	c.calls = append(c.calls, durationCall{pool, level, trigger, seconds})
+}
+
+// spec: §4.4 line 254 — every checkpoint emits the duration histogram.
+func TestCheckpointEmitsDurationHistogram(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", stubSink{id: "ck-1"})
+
+	metrics := &captureMetrics{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Metrics:  metrics,
+		Pool:     "default",
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(metrics.calls) != 1 {
+		t.Fatalf("ObserveCheckpointDuration: want 1 call, got %d", len(metrics.calls))
+	}
+	c := metrics.calls[0]
+	if c.pool != "default" || c.level != "basic" || c.trigger != "periodic" {
+		t.Fatalf("labels: got pool=%s level=%s trigger=%s", c.pool, c.level, c.trigger)
+	}
+	if c.seconds < 0 {
+		t.Fatalf("seconds must be non-negative: got %v", c.seconds)
+	}
+}
+
+// spec: §4.4 line 254 — even a failed checkpoint emits the duration
+// histogram. The §16.5 CheckpointDurationHigh alert reads the P95,
+// which would otherwise miss slow-then-failing checkpoints.
+func TestFailedCheckpointStillObservesDuration(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", stubSink{err: errors.New("store down")})
+
+	metrics := &captureMetrics{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Metrics:  metrics,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err == nil {
+		t.Fatal("Checkpoint: want failure, got success")
+	}
+	if len(metrics.calls) != 1 {
+		t.Fatalf("ObserveCheckpointDuration on failure: want 1 call, got %d", len(metrics.calls))
+	}
+}
+
+// fakeRetention captures Insert + Rotate so the test asserts §4.4
+// line 234 / §12.5 latest-2 wiring.
+type fakeRetention struct {
+	inserts []retInsert
+	rotates []retRotate
+}
+
+type retInsert struct {
+	tenantID  string
+	sessionID string
+	ref       string
+}
+
+type retRotate struct {
+	tenantID  string
+	sessionID string
+}
+
+func (f *fakeRetention) Insert(_ context.Context, r checkpointretention.Record) error {
+	f.inserts = append(f.inserts, retInsert{r.TenantID, r.SessionID, r.Ref})
+	return nil
+}
+
+func (f *fakeRetention) Rotate(_ context.Context, tenantID, sessionID string) ([]checkpointretention.Record, error) {
+	f.rotates = append(f.rotates, retRotate{tenantID, sessionID})
+	return nil, nil
+}
+
+// spec: §4.4 line 234 / §12.5 — every successful checkpoint records
+// to the retention catalog and runs Rotate to enforce latest-2.
+func TestCheckpointWritesRetentionCatalog(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", stubSink{id: "ckpt-42"})
+
+	ret := &fakeRetention{}
+	cp := &checkpointer.Checkpointer{
+		Sessions:  store,
+		Registry:  registry,
+		Retention: ret,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if len(ret.inserts) != 1 {
+		t.Fatalf("Insert: want 1 call, got %d", len(ret.inserts))
+	}
+	ins := ret.inserts[0]
+	if ins.tenantID != "acme" || ins.sessionID != "s1" || ins.ref != "ckpt-42" {
+		t.Fatalf("Insert args: got %+v", ins)
+	}
+	if len(ret.rotates) != 1 {
+		t.Fatalf("Rotate: want 1 call, got %d", len(ret.rotates))
+	}
+}
+
+// spec: §4.4 line 234 — a failed checkpoint must not record to the
+// retention catalog (no ref to rotate against).
+func TestFailedCheckpointDoesNotRecordRetention(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", stubSink{err: errors.New("store down")})
+
+	ret := &fakeRetention{}
+	cp := &checkpointer.Checkpointer{
+		Sessions:  store,
+		Registry:  registry,
+		Retention: ret,
+	}
+	_ = cp.Checkpoint(context.Background(), "acme", "s1")
+	if len(ret.inserts) != 0 {
+		t.Fatalf("Insert: want 0 calls on failure, got %d", len(ret.inserts))
+	}
+	if len(ret.rotates) != 0 {
+		t.Fatalf("Rotate: want 0 calls on failure, got %d", len(ret.rotates))
 	}
 }

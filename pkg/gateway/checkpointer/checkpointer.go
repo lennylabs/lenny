@@ -12,8 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/checkpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
@@ -37,6 +40,32 @@ const defaultInterval = 10 * time.Minute
 // spec: §4.4 line 258 — "periodicCheckpointJitterFraction (default: 0.2,
 // range: 0.0–1.0)".
 const DefaultJitterFraction = 0.2
+
+// DurationObserver receives the §4.4 line 254
+// `lenny_checkpoint_duration_seconds` observation for a single
+// checkpoint snapshot. The production wiring is
+// gatewaymetrics.Metrics; a nil observer skips the emission.
+//
+// spec: §4.4 line 254.
+type DurationObserver interface {
+	// ObserveCheckpointDuration records one observation for the
+	// supplied (pool, level, trigger) histogram label triple.
+	ObserveCheckpointDuration(pool, level, trigger string, seconds float64)
+}
+
+// Retention persists the §4.4 line 234 / §12.5 latest-2 rotation
+// catalog. The checkpointer records a row for every successful
+// snapshot and runs Rotate immediately after so the table never
+// holds more than RetainedCount active rows per session. Best-
+// effort: a failure logs and discards rather than fail the
+// snapshot — the catalog is observability for the §12.5 GC sweep,
+// not a §4.4 correctness gate.
+//
+// spec: §4.4 line 234.
+type Retention interface {
+	Insert(ctx context.Context, r checkpointretention.Record) error
+	Rotate(ctx context.Context, tenantID, sessionID string) ([]checkpointretention.Record, error)
+}
 
 // Checkpointer takes §4.4 checkpoints of running sessions and records
 // the resulting snapshot on the session row.
@@ -69,6 +98,20 @@ type Checkpointer struct {
 	// during a sweep so the gateway can log it. A sweep continues
 	// past a failed session regardless.
 	OnError func(sessionID string, err error)
+	// Metrics receives the §4.4 line 254 duration histogram
+	// observation at the end of every checkpoint snapshot. Nil
+	// disables the emission.
+	Metrics DurationObserver
+	// Retention persists the §4.4 line 234 / §12.5 latest-2
+	// rotation catalog. Nil disables both the Insert and the Rotate
+	// path; the snapshot still completes.
+	Retention Retention
+	// Pool is the pool-label value stamped onto the duration
+	// histogram. Empty omits the label.
+	Pool string
+	// Level is the level-label value stamped onto the duration
+	// histogram. Empty falls back to checkpoint.LevelBasic.
+	Level checkpoint.Level
 }
 
 // Run drives the periodic-checkpoint loop: every Interval it sweeps a
@@ -167,12 +210,30 @@ func (c *Checkpointer) Seal(ctx context.Context, tenantID, sessionID string) err
 // on the session row regardless of the trigger that produced it
 // (periodic, eviction, pre-drain, or seal); the §4.4 freshness gauge
 // keys off this field.
+//
+// Two side-effects are layered on top of the snapshot:
+//
+//   - The §4.4 line 254 `lenny_checkpoint_duration_seconds` histogram
+//     is observed at the end of the snapshot regardless of outcome
+//     (success or failure); the §16.5 CheckpointDurationHigh alert
+//     reads the P95 of this histogram.
+//   - The §4.4 line 234 / §12.5 latest-2 rotation catalog records a
+//     new row for the checkpoint and runs Rotate to soft-delete any
+//     row past the RetainedCount cap. Best-effort: catalog failures
+//     log and discard.
 func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string, source sessionstore.WorkspaceSnapshotSource) error {
 	binding, ok := c.Registry.Get(sessionID)
 	if !ok {
 		return ErrNoBinding
 	}
+	trigger := triggerForSource(source)
+	startedAt := c.now()
 	result, err := binding.Adapter.Checkpoint(ctx, sessionID, c.Deadline)
+	elapsed := c.now().Sub(startedAt).Seconds()
+	// spec: §4.4 line 254 — observe the duration histogram regardless
+	// of outcome so operators see slow checkpoints that also failed
+	// (the most common cause of a stuck quiescence handshake).
+	c.observeDuration(trigger, elapsed)
 	if err != nil {
 		return fmt.Errorf("checkpointer: checkpoint session %s: %w", sessionID, err)
 	}
@@ -192,7 +253,66 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 	}); err != nil {
 		return fmt.Errorf("checkpointer: record snapshot for session %s: %w", sessionID, err)
 	}
+	// §4.4 line 234 / §12.5 latest-2 rotation. Best-effort: a catalog
+	// or rotation failure does not unwind the successful snapshot.
+	c.recordRetention(ctx, tenantID, sessionID, result.CheckpointID)
 	return nil
+}
+
+// observeDuration emits the §4.4 line 254 histogram observation.
+// spec: §4.4 line 254.
+func (c *Checkpointer) observeDuration(trigger checkpoint.Trigger, seconds float64) {
+	if c.Metrics == nil {
+		return
+	}
+	level := c.Level
+	if level == "" {
+		level = checkpoint.LevelBasic
+	}
+	c.Metrics.ObserveCheckpointDuration(c.Pool, string(level), string(trigger), seconds)
+}
+
+// recordRetention inserts the catalog row for the new checkpoint and
+// runs Rotate to soft-delete any row past the §12.5 latest-2 cap.
+// Best-effort: a failure logs and discards rather than fail the
+// snapshot.
+// spec: §4.4 line 234 / §12.5 latest-2 retention.
+func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID, ref string) {
+	if c.Retention == nil || ref == "" {
+		return
+	}
+	if err := c.Retention.Insert(ctx, checkpointretention.Record{
+		TenantID:  tenantID,
+		SessionID: sessionID,
+		Ref:       ref,
+	}); err != nil && !errors.Is(err, checkpointretention.ErrDuplicate) {
+		log.Printf("checkpointer: retention insert tenant=%s session=%s ref=%s: %v",
+			tenantID, sessionID, ref, err)
+		// Skip Rotate so the cap is not enforced against an unwritten
+		// row; the next successful checkpoint will rotate the catalog.
+		return
+	}
+	if _, err := c.Retention.Rotate(ctx, tenantID, sessionID); err != nil {
+		log.Printf("checkpointer: retention rotate tenant=%s session=%s: %v",
+			tenantID, sessionID, err)
+	}
+}
+
+// triggerForSource maps a §7.1 WorkspaceSnapshotSource to the
+// §4.4 trigger label stamped onto the duration histogram. Sealed
+// snapshots map to TriggerPeriodic because the seal-and-export path
+// reuses the periodic checkpoint contract; eviction and pre-scale-
+// down callers invoke the dedicated trigger directly via
+// snapshotWithTrigger.
+func triggerForSource(source sessionstore.WorkspaceSnapshotSource) checkpoint.Trigger {
+	switch source {
+	case sessionstore.WorkspaceSnapshotCheckpoint:
+		return checkpoint.TriggerPeriodic
+	case sessionstore.WorkspaceSnapshotSealed:
+		return checkpoint.TriggerPeriodic
+	default:
+		return checkpoint.TriggerPeriodic
+	}
 }
 
 // now returns the checkpoint timestamp.
