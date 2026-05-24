@@ -107,6 +107,8 @@ var spec167AuditEvents = []string{
 	"legal_hold.escrow_region_resolved",
 	"legal_hold.escrowed",
 	"legal_hold.escrow_released",
+	// §12.8 line 739 — legal-hold reconciler gap-detection event.
+	"legal_hold.checkpoint_gap_detected",
 }
 
 func TestCatalogIsNonEmpty(t *testing.T) {

@@ -168,6 +168,7 @@ import (
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
+	"github.com/lennylabs/lenny/pkg/gateway/legalholdreconciler"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
@@ -1011,6 +1012,14 @@ func main() {
 		minioStore.SetOnArtifactUploadError(func(tenantID, errorType string) {
 			gwMetrics.IncArtifactUploadError(tenantID, errorType)
 		})
+		// §12.8 line 735 — wire the durable artifact_store catalog as
+		// the legal-hold source of truth on DeleteBySession. The
+		// in-memory legalHolds sync.Map remains a v1 fallback for the
+		// catalog-less dev gateway; production reads the durable row.
+		if artifactCatalog != nil {
+			minioStore.SetCatalog(artifactCatalog)
+			log.Printf("lenny-gateway: §12.8 line 735 durable legal-hold reader wired into MinIO blob store")
+		}
 
 		// §12.5 ll. 297 startup KMS probe: when at least one T4 tenant
 		// is configured, probe a sample alias so a chronic
@@ -2080,6 +2089,31 @@ func main() {
 					}
 				}
 			}()
+		}
+
+		// §12.8 line 739 legal-hold reconciler: co-located with the
+		// retention-GC sweep. On the same cadence it scans for
+		// (tenant, session) pairs under legal_hold=true with one or
+		// more checkpoints rotated, emits a
+		// legal_hold.checkpoint_gap_detected audit event into the
+		// per-tenant §11.7 chain, and bumps
+		// lenny_legal_hold_checkpoint_gaps_total. The reconciler is
+		// active only when the durable catalog and audit chain are
+		// wired (Postgres mode); the in-memory dev gateway has no
+		// catalog and skips it.
+		if artifactCatalog != nil && auditAppender != nil {
+			recon := legalholdreconciler.New(artifactCatalog, auditAppender, gwMetrics, legalholdreconciler.Options{
+				Clock: clockinject.Now,
+			})
+			go recon.Run(watchdogCtx, func(emitted int, err error) {
+				if err != nil {
+					log.Printf("lenny-gateway: §12.8 legal-hold reconciler sweep error: %v", err)
+					return
+				}
+				if emitted > 0 {
+					log.Printf("lenny-gateway: §12.8 legal-hold reconciler emitted %d checkpoint-gap audit rows", emitted)
+				}
+			})
 		}
 	}
 

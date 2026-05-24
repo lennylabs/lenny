@@ -190,6 +190,10 @@ const (
 	EventLegalHoldEscrowRegionResolved           EventType = "legal_hold.escrow_region_resolved"
 	EventLegalHoldEscrowed                       EventType = "legal_hold.escrowed"
 	EventLegalHoldEscrowReleased                 EventType = "legal_hold.escrow_released"
+	// §12.8 line 739 — emitted by the legal-hold reconciler when a
+	// session under legal_hold=true is observed with a checkpoint
+	// sequence gap (one or more checkpoints already rotated).
+	EventLegalHoldCheckpointGapDetected EventType = "legal_hold.checkpoint_gap_detected"
 )
 
 // catalog is the §16.7 closed enumeration of §25 audit event types.
@@ -248,6 +252,7 @@ var catalog = []EventType{
 	EventGDPRErasureBlockedByHold, EventGDPRLegalHoldOverridden,
 	EventGDPRLegalHoldOverriddenTenant, EventLegalHoldEscrowRegionResolved,
 	EventLegalHoldEscrowed, EventLegalHoldEscrowReleased,
+	EventLegalHoldCheckpointGapDetected,
 }
 
 // Catalog returns the §16.7 catalog of §25 audit event types. The
