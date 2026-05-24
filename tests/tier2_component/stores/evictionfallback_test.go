@@ -41,7 +41,8 @@ func (c *collectingUploader) Upload(_ context.Context, _, _ string, body io.Read
 }
 
 type captureMetrics struct {
-	calls []string
+	calls           []string
+	partialKeyCalls []string
 }
 
 func (c *captureMetrics) IncSessionEvictionTotalLoss(pool string, hadPrior bool) {
@@ -50,6 +51,10 @@ func (c *captureMetrics) IncSessionEvictionTotalLoss(pool string, hadPrior bool)
 		tag = "yes"
 	}
 	c.calls = append(c.calls, pool+"|"+tag)
+}
+
+func (c *captureMetrics) IncCheckpointEvictionPartialKeysLogged(pool, keys string) {
+	c.partialKeyCalls = append(c.partialKeyCalls, pool+"|"+keys)
 }
 
 type captureEvents struct {

@@ -11,9 +11,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/evictionfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/evictionstatestore"
 )
+
+// noRetryBudget disables the §4.4 line 277 retry loop in unit tests
+// that exercise the total-loss path with a permanently-failing store.
+// The retry-budget behaviour itself is covered by TestWriteRetryBudget*
+// below.
+var noRetryBudget = checkpoint.RetryBudget{
+	Initial:     1,
+	Cap:         1,
+	TotalBudget: 1, // 1 ns total — first failure terminates.
+}
 
 // spec: §4.4 lines 263–291 — eviction-fallback writer + total-loss path.
 
@@ -39,9 +50,11 @@ func (f *fakeUploader) Upload(_ context.Context, tenantID, sessionID string, bod
 	return nil
 }
 
-// fakeMetrics records every total-loss increment.
+// fakeMetrics records every total-loss increment and partial-keys-
+// logged increment.
 type fakeMetrics struct {
-	calls []string
+	calls           []string
+	partialKeyCalls []string
 }
 
 func (f *fakeMetrics) IncSessionEvictionTotalLoss(pool string, hadPriorCheckpoint bool) {
@@ -50,6 +63,10 @@ func (f *fakeMetrics) IncSessionEvictionTotalLoss(pool string, hadPriorCheckpoin
 		tag = "with_prior"
 	}
 	f.calls = append(f.calls, pool+"|"+tag)
+}
+
+func (f *fakeMetrics) IncCheckpointEvictionPartialKeysLogged(pool, keysCommitted string) {
+	f.partialKeyCalls = append(f.partialKeyCalls, pool+"|"+keysCommitted)
 }
 
 // fakeEvents records every session.lost emission.
@@ -229,9 +246,11 @@ func TestWriteDrivesTotalLossOnPostgresFailure(t *testing.T) {
 	metrics := &fakeMetrics{}
 	events := &fakeEvents{}
 	w := &evictionfallback.Writer{
-		Store:   failingStore{},
-		Metrics: metrics,
-		Events:  events,
+		Store:       failingStore{},
+		Metrics:     metrics,
+		Events:      events,
+		RetryBudget: noRetryBudget,
+		Sleep:       func(time.Duration) {},
 	}
 
 	_, err := w.Write(context.Background(), evictionfallback.WriteParams{
@@ -263,7 +282,11 @@ func TestWriteDrivesTotalLossOnPostgresFailure(t *testing.T) {
 }
 
 func TestWriteTotalLossWithoutMetricsAndEventsStillCompletes(t *testing.T) {
-	w := &evictionfallback.Writer{Store: failingStore{}}
+	w := &evictionfallback.Writer{
+		Store:       failingStore{},
+		RetryBudget: noRetryBudget,
+		Sleep:       func(time.Duration) {},
+	}
 	_, err := w.Write(context.Background(), evictionfallback.WriteParams{
 		Record:  baseTemplate(),
 		Context: []byte("c"),
@@ -310,8 +333,10 @@ func TestEvictionContextObjectKey(t *testing.T) {
 func TestWriteHadPriorCheckpointFalseLabel(t *testing.T) {
 	metrics := &fakeMetrics{}
 	w := &evictionfallback.Writer{
-		Store:   failingStore{},
-		Metrics: metrics,
+		Store:       failingStore{},
+		Metrics:     metrics,
+		RetryBudget: noRetryBudget,
+		Sleep:       func(time.Duration) {},
 	}
 	_, _ = w.Write(context.Background(), evictionfallback.WriteParams{
 		Record:             baseTemplate(),
@@ -321,5 +346,248 @@ func TestWriteHadPriorCheckpointFalseLabel(t *testing.T) {
 	})
 	if len(metrics.calls) != 1 || metrics.calls[0] != "echo-pool|no_prior" {
 		t.Errorf("total-loss metric = %v, want [echo-pool|no_prior]", metrics.calls)
+	}
+}
+
+// flakyStore fails on the first N attempts then succeeds. Used to
+// exercise the §4.4 line 277 retry loop.
+type flakyStore struct {
+	mu        sync.Mutex
+	failsLeft int
+	calls     int
+	got       *evictionstatestore.Record
+}
+
+func (f *flakyStore) Put(_ context.Context, r evictionstatestore.Record) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.failsLeft > 0 {
+		f.failsLeft--
+		return errors.New("postgres failover in progress")
+	}
+	cp := r
+	f.got = &cp
+	return nil
+}
+
+func (f *flakyStore) Get(context.Context, string, string) (evictionstatestore.Record, error) {
+	return evictionstatestore.Record{}, evictionstatestore.ErrNotFound
+}
+func (f *flakyStore) Delete(context.Context, string, string) error                 { return nil }
+func (f *flakyStore) DeleteByUser(context.Context, string, string, []string) error { return nil }
+func (f *flakyStore) DeleteByTenant(context.Context, string) error                 { return nil }
+
+// TestWriteRetriesPostgresFailover exercises the §4.4 line 277 retry
+// loop. The flakyStore fails twice then succeeds; the writer must
+// loop without driving the total-loss path.
+//
+// spec: §4.4 line 277.
+func TestWriteRetriesPostgresFailover(t *testing.T) {
+	store := &flakyStore{failsLeft: 2}
+	metrics := &fakeMetrics{}
+	sleeps := []time.Duration{}
+	w := &evictionfallback.Writer{
+		Store:       store,
+		Metrics:     metrics,
+		RetryBudget: checkpoint.RetryBudgetForFallback(),
+		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d) },
+	}
+	res, err := w.Write(context.Background(), evictionfallback.WriteParams{
+		Record:  baseTemplate(),
+		Context: []byte("conversation"),
+		Pool:    "claude-code-pool",
+	})
+	if err != nil {
+		t.Fatalf("Write: %v (succeeded on retry, should be nil)", err)
+	}
+	if res.Outcome != evictionfallback.OutcomeInline {
+		t.Errorf("Outcome = %q, want inline after retry success", res.Outcome)
+	}
+	if store.calls != 3 {
+		t.Errorf("Store.Put attempts = %d, want 3 (2 failures + 1 success)", store.calls)
+	}
+	// The retry path is the success branch — neither the total-loss
+	// metric nor the partial-keys WARN counter should fire.
+	if len(metrics.calls) != 0 {
+		t.Errorf("total-loss metric fired during successful retry: %v", metrics.calls)
+	}
+	if len(metrics.partialKeyCalls) != 0 {
+		t.Errorf("partial-keys metric fired during successful retry: %v", metrics.partialKeyCalls)
+	}
+	// First retry sleep should be 500ms; second 1s (2x).
+	if len(sleeps) != 2 {
+		t.Fatalf("retry sleeps = %v, want 2 backoffs", sleeps)
+	}
+	if sleeps[0] != 500*time.Millisecond {
+		t.Errorf("first backoff = %v, want 500ms", sleeps[0])
+	}
+	if sleeps[1] != time.Second {
+		t.Errorf("second backoff = %v, want 1s", sleeps[1])
+	}
+}
+
+// TestWriteExhaustsRetryBudgetThenDrivesTotalLoss confirms the §4.4
+// line 277 total budget terminates the loop and the §4.4 line 279 and
+// 283–289 emissions fire on exhaustion.
+//
+// spec: §4.4 lines 277, 279, 283–289.
+func TestWriteExhaustsRetryBudgetThenDrivesTotalLoss(t *testing.T) {
+	metrics := &fakeMetrics{}
+	events := &fakeEvents{}
+	store := &flakyStore{failsLeft: 100} // never recovers within the budget
+	w := &evictionfallback.Writer{
+		Store:   store,
+		Metrics: metrics,
+		Events:  events,
+		// Use a small budget that the test exhausts in a few attempts.
+		RetryBudget: checkpoint.RetryBudget{
+			Initial:     1 * time.Microsecond,
+			Cap:         2 * time.Microsecond,
+			TotalBudget: 10 * time.Microsecond,
+		},
+		Sleep: func(time.Duration) {}, // no real sleeps
+	}
+	_, err := w.Write(context.Background(), evictionfallback.WriteParams{
+		Record:             baseTemplate(),
+		Context:            []byte("c"),
+		Pool:               "p",
+		CommittedMinIOKeys: []string{"/acme/eviction/sess-evict-1/partial-1.tar"},
+		ChunkEncoding:      "tar",
+	})
+	if err == nil {
+		t.Fatal("Write returned nil after retry-budget exhaustion; want underlying Postgres error")
+	}
+	if len(metrics.calls) != 1 {
+		t.Errorf("total-loss metric = %v, want 1 increment", metrics.calls)
+	}
+	// Partial-keys metric should fire with keys_committed=1+ (we passed
+	// a non-empty CommittedMinIOKeys list).
+	if len(metrics.partialKeyCalls) != 1 || metrics.partialKeyCalls[0] != "p|1+" {
+		t.Errorf("partial-keys metric = %v, want [p|1+]", metrics.partialKeyCalls)
+	}
+	if events.calls != 1 {
+		t.Errorf("session.lost events = %d, want 1", events.calls)
+	}
+	if store.calls < 2 {
+		t.Errorf("Store.Put attempts = %d, want ≥ 2 (first + at least one retry)", store.calls)
+	}
+}
+
+// TestWritePartialKeysCounterZeroLabel covers the keys_committed="0"
+// label branch — total-MinIO-failure with no chunks committed.
+//
+// spec: §4.4 line 279.
+func TestWritePartialKeysCounterZeroLabel(t *testing.T) {
+	metrics := &fakeMetrics{}
+	w := &evictionfallback.Writer{
+		Store:       failingStore{},
+		Metrics:     metrics,
+		RetryBudget: noRetryBudget,
+		Sleep:       func(time.Duration) {},
+	}
+	_, _ = w.Write(context.Background(), evictionfallback.WriteParams{
+		Record:             baseTemplate(),
+		Context:            []byte("x"),
+		Pool:               "echo-pool",
+		CommittedMinIOKeys: nil, // no chunks committed
+	})
+	if len(metrics.partialKeyCalls) != 1 || metrics.partialKeyCalls[0] != "echo-pool|0" {
+		t.Errorf("partial-keys metric = %v, want [echo-pool|0]", metrics.partialKeyCalls)
+	}
+}
+
+// fakeCatalog records every artifact_store row written.
+type fakeCatalog struct {
+	calls []string
+	err   error
+}
+
+func (c *fakeCatalog) RecordEvictionContext(_ context.Context, tenantID, sessionID, uri string, size int64) error {
+	if c.err != nil {
+		return c.err
+	}
+	c.calls = append(c.calls, tenantID+"|"+sessionID+"|"+uri+"|"+strings.TrimSpace(strings.Repeat(" ", int(size%5))))
+	return nil
+}
+
+// fakeQuota records every storage-bytes adjustment.
+type fakeQuota struct {
+	deltas []int64
+	err    error
+}
+
+func (q *fakeQuota) Adjust(_ context.Context, _ string, delta int64) error {
+	q.deltas = append(q.deltas, delta)
+	return q.err
+}
+
+// TestWriteRecordsArtifactStoreAndBumpsQuota covers the §4.4 line 291
+// storage-quota accounting: when MinIO succeeds the writer inserts an
+// artifact_store row and then bumps the Redis quota by the confirmed
+// size.
+//
+// spec: §4.4 line 291.
+func TestWriteRecordsArtifactStoreAndBumpsQuota(t *testing.T) {
+	store := newMemStore()
+	uploader := &fakeUploader{}
+	catalog := &fakeCatalog{}
+	quota := &fakeQuota{}
+	w := &evictionfallback.Writer{
+		Store:           store,
+		ContextUploader: uploader,
+		Catalog:         catalog,
+		Quota:           quota,
+	}
+	big := strings.Repeat("x", evictionfallback.MaxInlineContextBytes+100)
+	res, err := w.Write(context.Background(), evictionfallback.WriteParams{
+		Record:  baseTemplate(),
+		Context: []byte(big),
+	})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if res.Outcome != evictionfallback.OutcomeMinIOKey {
+		t.Errorf("Outcome = %q, want minio_key", res.Outcome)
+	}
+	if len(catalog.calls) != 1 {
+		t.Errorf("catalog calls = %d, want 1 artifact_store insert", len(catalog.calls))
+	}
+	if len(quota.deltas) != 1 || quota.deltas[0] != int64(len(big)) {
+		t.Errorf("quota deltas = %v, want [%d]", quota.deltas, len(big))
+	}
+}
+
+// TestWriteSkipsArtifactAccountingOnMinIOFailure asserts the §4.4 line
+// 291 guard: on MinIO unavailability no artifact_store row is written
+// and no quota increment is issued.
+//
+// spec: §4.4 line 291 — "On MinIO unavailability ... no MinIO object
+// is written and therefore no artifact_store row is inserted and no
+// quota increment is issued."
+func TestWriteSkipsArtifactAccountingOnMinIOFailure(t *testing.T) {
+	store := newMemStore()
+	uploader := &fakeUploader{err: errors.New("minio down")}
+	catalog := &fakeCatalog{}
+	quota := &fakeQuota{}
+	w := &evictionfallback.Writer{
+		Store:           store,
+		ContextUploader: uploader,
+		Catalog:         catalog,
+		Quota:           quota,
+	}
+	big := strings.Repeat("y", evictionfallback.MaxInlineContextBytes+50)
+	_, err := w.Write(context.Background(), evictionfallback.WriteParams{
+		Record:  baseTemplate(),
+		Context: []byte(big),
+	})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(catalog.calls) != 0 {
+		t.Errorf("catalog calls = %d, want 0 on MinIO failure", len(catalog.calls))
+	}
+	if len(quota.deltas) != 0 {
+		t.Errorf("quota deltas = %v, want empty on MinIO failure", quota.deltas)
 	}
 }

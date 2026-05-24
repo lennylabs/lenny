@@ -73,6 +73,12 @@ type Metrics struct {
 	// and the session is unrecoverable. Labeled by pool and
 	// `had_prior_checkpoint`.
 	sessionEvictionTotalLoss *prometheus.CounterVec
+	// checkpointEvictionPartialKeysLogged counts the §4.4 line 279
+	// partial-MinIO-key WARN log emissions on the eviction loss path.
+	// Labels: `pool` (finite, sandbox-warm-pool registry) and
+	// `keys_committed` ("0" for total-MinIO-failure, "1+" for
+	// partial-upload scenarios).
+	checkpointEvictionPartialKeysLogged *prometheus.CounterVec
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -348,6 +354,17 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.4 line 279 — `lenny_checkpoint_eviction_partial_keys_logged_total`
+	// is incremented on every MinIO-then-Postgres-fail eviction WARN log
+	// emission. Labels are bounded: `pool` is finite; `keys_committed`
+	// is "0" or "1+".
+	checkpointEvictionPartialKeysLogged, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_checkpoint_eviction_partial_keys_logged_total",
+		Help: "Partial MinIO key sets logged on the eviction loss path (§4.4 line 279).",
+	}, []string{"pool", "keys_committed"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -356,7 +373,8 @@ func New() (*Metrics, error) {
 		noEnvPolicyAllowAll, tokenServiceCircuitState,
 		checkpointStaleSessions,
 		partialManifestCleanup, checkpointPartialManifestsSuperseded,
-		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss)
+		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
+		checkpointEvictionPartialKeysLogged)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -407,6 +425,7 @@ func New() (*Metrics, error) {
 		checkpointOrphanedObjects:            checkpointOrphanedObjects,
 		checkpointSizeExceeded:               checkpointSizeExceeded,
 		sessionEvictionTotalLoss:             sessionEvictionTotalLoss,
+		checkpointEvictionPartialKeysLogged:  checkpointEvictionPartialKeysLogged,
 	}, nil
 }
 
@@ -449,6 +468,19 @@ func (m *Metrics) IncSessionEvictionTotalLoss(pool string, hadPriorCheckpoint bo
 		label = "true"
 	}
 	m.sessionEvictionTotalLoss.WithLabelValues(pool, label).Inc()
+}
+
+// IncCheckpointEvictionPartialKeysLogged increments the §4.4 line 279
+// `lenny_checkpoint_eviction_partial_keys_logged_total` counter
+// labeled by pool and keys_committed ("0" for total-MinIO-failure, "1+"
+// for partial-upload scenarios). Called from the eviction-fallback
+// writer's WARN-log path before the total-loss orchestration fires.
+// spec: §4.4 line 279.
+func (m *Metrics) IncCheckpointEvictionPartialKeysLogged(pool, keysCommitted string) {
+	if m == nil {
+		return
+	}
+	m.checkpointEvictionPartialKeysLogged.WithLabelValues(pool, keysCommitted).Inc()
 }
 
 // IncPartialManifestCleanup increments the §4.4 line 236

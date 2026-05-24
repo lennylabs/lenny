@@ -133,6 +133,28 @@ func RetryBudgetFor(t Trigger) RetryBudget {
 	}
 }
 
+// RetryBudgetForFallback returns the §4.4 line 277 retry parameters for
+// the eviction Postgres minimal-state fallback write. The budget covers
+// the managed Postgres failover window (RDS Multi-AZ, Cloud SQL HA:
+// typically 15–30 s) that can prevent the first write attempt from
+// succeeding. The total budget is 60 s, fitting comfortably within
+// terminationGracePeriodSeconds (240 s at Tier 1/2, 300 s at Tier 3)
+// with ample headroom for stream drain after the Postgres write
+// completes or the budget is exhausted. Per-attempt cap is 5 s; initial
+// delay is 500 ms; growth factor is 2x (encoded by the caller's
+// backoff helper).
+//
+// spec: §4.4 line 277 — "The Postgres write is retried with exponential
+// backoff (initial 500ms, factor 2x, capped at 5s per attempt) for up
+// to 60 seconds total."
+func RetryBudgetForFallback() RetryBudget {
+	return RetryBudget{
+		Initial:     500 * time.Millisecond,
+		Cap:         5 * time.Second,
+		TotalBudget: 60 * time.Second,
+	}
+}
+
 // CheckpointTimeout is the §4.4 60-second timeout for the
 // quiescence-to-completion window. Applies to every checkpoint path.
 const CheckpointTimeout = 60 * time.Second

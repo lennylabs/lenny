@@ -86,6 +86,20 @@ func TestCheckpointTimeoutIs60s(t *testing.T) {
 	}
 }
 
+func TestRetryBudgetForFallback(t *testing.T) {
+	// spec: §4.4 line 277 — 500ms initial, 5s per-attempt cap, 60s total.
+	rb := RetryBudgetForFallback()
+	if rb.Initial != 500*time.Millisecond {
+		t.Errorf("Postgres fallback initial: want 500ms, got %v", rb.Initial)
+	}
+	if rb.Cap != 5*time.Second {
+		t.Errorf("Postgres fallback cap: want 5s, got %v", rb.Cap)
+	}
+	if rb.TotalBudget != 60*time.Second {
+		t.Errorf("Postgres fallback total: want 60s, got %v", rb.TotalBudget)
+	}
+}
+
 func TestAllOutcomesIsExhaustive(t *testing.T) {
 	got := AllOutcomes()
 	if len(got) != 4 {
