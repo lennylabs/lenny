@@ -2429,7 +2429,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   content is fully mutable (PreDelegation input, PreMessageDelivery,
   PostAgentOutput, the LLM phases) declare no immutable fields and are not
   inspected. PreExportMaterialization stays under export.go's richer
-  per-file size/sha256 enforcement. Resolved in commit <pending>.
+  per-file size/sha256 enforcement. Resolved in commit 40813f41.
 
 ### - [x] F-4.8.20 — LLM (100 ms) and connector (200 ms) phase-specific timeouts not applied (Missing) [Medium] — CLOSED
 
@@ -2457,7 +2457,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   (PreConnectorRequest/PostConnectorResponse) get 200 ms, every other phase
   keeps the 500 ms `DefaultTimeout`; an explicit positive `Timeout()` still
   overrides. The budgets apply automatically once F-4.8.13/F-4.8.14 wire
-  those phases. Resolved in commit <pending>.
+  those phases. Resolved in commit 40813f41.
 
 ### - [x] F-4.8.21 — Default external priority documented but no production caller (Info) [Medium] — CLOSED
 
