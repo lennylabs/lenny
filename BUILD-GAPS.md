@@ -1152,7 +1152,8 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** A derived session's `WorkspaceSnapshot.Ref` points to a path under the derived session's prefix, but no object exists at that path — only the parent's. When the parent's TTL elapses and the retention GC deletes the parent's blob (the GC is keyed by session, not by content), the derived session's workspace ref becomes a dangling pointer. The §4.5 invariant "GC on the parent's artifacts has no effect on the derived session's workspace" is violated.
 - **Suggested resolution:** Add a `Copy(src, dst URI) error` method to the Store interface (MinIO has native `CopyObject` / S3 has `CopyObject`), call it in the derive handler before persisting the derived session row.
 
-### - [ ] F-4.5.9 — Spec-mandated GC metrics are not implemented [Medium] — OPEN
+### - [x] F-4.5.9 — Spec-mandated GC metrics are not implemented [Medium] — CLOSED
+- **Resolution:** Added the four §12.5 ll. 321 metrics (`lenny_gc_runs_total`, `lenny_gc_artifacts_deleted`, `lenny_gc_errors_total`, `lenny_gc_duration_seconds`) to `pkg/observability/metrics/catalog.go` and registered the emitters in `pkg/gateway/gatewaymetrics`. `pkg/gateway/retentiongc.Collector` gained a `MetricsSink` hook called from `Tick`/`sweepTenant`. F-12.5.17 closes with this commit (same fix). (commit `f9bfb70`)
 
 **Potential duplicate** (confidence: high) — F-12.5.17 — Both report the §12.5 GC metrics (runs/artifacts_deleted/errors/duration) are absent from the catalog with only the tombstone-prune counter present.
 
@@ -1161,7 +1162,8 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** Operators cannot observe GC throughput, error rate, latency, or sweep cadence. The `ArtifactGCBacklog` alert (`pkg/alerting/rules/rules.go:605`) reads `expired artifacts pending cleanup` from a different gauge.
 - **Suggested resolution:** Add the four metrics to `pkg/observability/metrics/catalog.go` and increment them inside `pkg/gateway/retentiongc/retentiongc.go` (`Tick` / `sweepTenant`).
 
-### - [ ] F-4.5.10 — `lenny_checkpoint_storage_failure_total` is declared but never incremented [Medium] — OPEN
+### - [x] F-4.5.10 — `lenny_checkpoint_storage_failure_total` is declared but never incremented [Medium] — CLOSED
+- **Resolution:** Wired `miniostore.SetOnArtifactUploadError` in `cmd/lenny-gateway/main.go` to `gwMetrics.IncArtifactUploadError`, which both bumps `lenny_artifact_upload_error_total{error_type=...}` AND rolls the same signal into `lenny_checkpoint_storage_failure_total{reason=...}` so the §16.5 `CheckpointStorageUnavailable` alert fires from one source. The KMS-unavailable branch already emitted via `SetOnKMSUnavailable`. (commit `da29470`)
 
 **Potential duplicate** (confidence: medium) — F-4.5.11 — Both report a declared-but-never-incremented storage error counter with an identical root cause and fix (increment in the blob Put failure paths), differing only in which metric.
 
@@ -1170,7 +1172,8 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The alert can never fire because the counter is always zero. A MinIO outage or a missing T4 KMS key during checkpoint write goes unobserved.
 - **Suggested resolution:** Increment the counter (with the spec-specified `reason` label values `minio_unreachable`, `kms_unavailable`, `quota_exceeded`, ...) in the checkpoint/blob put failure path.
 
-### - [ ] F-4.5.11 — `lenny_artifact_upload_error_total` is declared but never incremented [Medium] — OPEN
+### - [x] F-4.5.11 — `lenny_artifact_upload_error_total` is declared but never incremented [Medium] — CLOSED
+- **Resolution:** Registered `lenny_artifact_upload_error_total` in `pkg/gateway/gatewaymetrics` (labels: `tenant_id`, `error_type`) and wired `IncArtifactUploadError` from the MinIO blob store callback. Reconciled the `error_type` label values across miniostore, s3, azureblob, gcs to the bounded set `{minio_unreachable, auth, quota_exceeded, other}` so the §16.5 `MinIOUnavailable` alert (which keys on `error_type="minio_unreachable"`) fires on every backend. (commit `da29470`)
 
 **Potential duplicate** (confidence: medium) — F-4.5.10 — Both report a declared-but-never-incremented storage error counter with an identical root cause and fix (increment in the blob Put failure paths), differing only in which metric.
 
@@ -1179,7 +1182,8 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** Identical pattern to F-4.5.10. The alert is structurally inert.
 - **Suggested resolution:** Increment in the MinIO/S3/GCS/Azure `Put` failure paths with the `error_type` label distinguishing transport failure, auth failure, quota exhaustion.
 
-### - [ ] F-4.5.12 — `lenny_drain_readiness_checks_total` counter is unimplemented [Medium] — OPEN
+### - [x] F-4.5.12 — `lenny_drain_readiness_checks_total` counter is unimplemented [Medium] — CLOSED
+- **Resolution:** Defined `lenny_drain_readiness_checks_total` in `pkg/observability/metrics/catalog.go` and `pkg/gateway/gatewaymetrics`. The `pkg/admission/webhook` `DrainReadiness` Decider now takes a `DrainReadinessMetricsSink` and increments on every decision with `outcome` ∈ `{allowed, blocked, forced, forced_audited, audit_failed}`. The webhook binary exposes the counter on its own `/metrics` scrape target. F-12.5.31 closes with this commit (same fix). (commit `bfd1fcd`)
 
 **Potential duplicate** (confidence: high) — F-12.5.31 — Both describe the lenny_drain_readiness_checks_total counter being unimplemented while the webhook and endpoint exist.
 
@@ -1188,13 +1192,15 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The drain-decision audit signal is missing; operators cannot dashboard allowed-vs-blocked drains.
 - **Suggested resolution:** Define the counter in `pkg/observability/metrics/catalog.go` and increment it from `pkg/admission/webhook/drain_readiness.go` `DrainReadiness` Decider with the appropriate `outcome` label.
 
-### - [ ] F-4.5.13 — `node.drain.forced` audit event is logged, not emitted to the audit trail [High] — OPEN
+### - [x] F-4.5.13 — `node.drain.forced` audit event is logged, not emitted to the audit trail [High] — CLOSED
+- **Resolution:** Registered `EventNodeDrainForced` in `pkg/observability/audit/catalog.go` and the spec167 catalog test. The webhook posts the §16.7 audit event to the new gateway `POST /internal/audit/node-drain-forced` endpoint (`pkg/gateway/drainreadiness.ForcedDrainHandler`), which appends the row to the durable per-tenant §11.7 hash chain via the same `AuditAppender` the gateway uses for `interceptor.rejected`. A chain-write failure flips the admission to a fail-closed `Deny` so the override never escapes the trail. The chart's `_webhook.tpl` wires the new `--gateway-drain-audit-url` flag. (commit `bfd1fcd`)
 - **Spec:** §12.5 ll. 291: "the webhook permits the drain but emits a `node.drain.forced` critical audit event."
 - **Evidence:** `pkg/admission/webhook/drain_readiness.go:78-90` invokes `onForced` when a force-override admits an eviction. The wiring in `cmd/lenny-webhook/main.go:150-158` (`logForcedDrain`) is a plain `log.Printf`, with a TODO-style comment: "surfaced here as a log line until the webhook gains an audit sink." `pkg/observability/audit/catalog.go` has no `EventNodeDrainForced` constant; `grep -rn "node.drain.forced" pkg/observability/audit/` returns no event-type registration.
 - **Gap:** A critical audit event the spec marks as a compliance signal is not in the audit trail, is not OCSF-translated, is not forwarded to the SIEM, and is not retained under `audit.gdprRetentionDays`. A compliance reviewer cannot reconstruct which drains were forced.
 - **Suggested resolution:** Register `node.drain.forced` in `pkg/observability/audit/catalog.go`, add an audit sink to the webhook, emit the event with `tenantId`, `nodeName`, `podName`, `evictedAt`, and the operator's identity (resolved from the eviction request user info).
 
-### - [ ] F-4.5.14 — Legal-hold reconciler / `legal_hold.checkpoint_gap_detected` event is unimplemented [Medium] — OPEN
+### - [x] F-4.5.14 — Legal-hold reconciler / `legal_hold.checkpoint_gap_detected` event is unimplemented [Medium] — CLOSED
+- **Resolution:** Added `pkg/gateway/legalholdreconciler`, the §12.8 line 739 reconciler. It runs co-located with the §12.5 GC sweep on the same 15-minute cadence, calls `artifactCatalog.SessionsWithLegalHoldAndCheckpoints` and `ListBySession`, and emits a `legal_hold.checkpoint_gap_detected` row to the §11.7 chain plus `lenny_legal_hold_checkpoint_gaps_total{tenant_id=...}` for every held session with at least one rotated checkpoint. A 24-hour per-pair dedupe window keeps a chronic gap from flooding the audit chain. F-12.8.18 closes with this commit (same fix). (commit `6b453d1`)
 
 **Potential duplicate** (confidence: high) — F-12.8.18 — Both report the unimplemented legal-hold checkpoint-gap reconciler and its missing event/counter, citing the same §12.8 line 739.
 
@@ -1203,7 +1209,8 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** Pre-existing checkpoint rotation that occurred before a hold was applied is not surfaced. Compliance and legal teams cannot assess spoliation exposure.
 - **Suggested resolution:** Add a reconciler under the gateway leader lease, schedule it on the GC cadence, register the audit event + counter, surface the event in OCSF mapping.
 
-### - [ ] F-4.5.15 — Blob-level legal hold is in-memory only [Medium] — OPEN
+### - [x] F-4.5.15 — Blob-level legal hold is in-memory only [Medium] — CLOSED
+- **Resolution:** Wired `artifactCatalog` into the MinIO blob store via `miniostore.SetCatalog(artifactCatalog)` in `cmd/lenny-gateway/main.go`. `DeleteBySession` already had a `legalHoldCatalog.IsLegalHeldAt` seam (added by F-4.5.18/19); now that it is wired in production, a session row carrying `legal_hold=true` in the durable catalog refuses the per-session sweep. The in-process `sync.Map` remains the dev-mode fallback. F-12.5.22 closes with this commit (same fix). (commit `6b453d1`)
 
 **Potential duplicate** (confidence: high) — F-12.5.22 — Both report blob-level legal hold lives only in an in-process sync.Map that does not survive gateway restart.
 
@@ -1212,7 +1219,8 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** A gateway restart loses every blob-level hold. The catalog row's `legal_hold` field cannot influence MinIO's `DeleteBySession` because the catalog is not consulted in that path.
 - **Suggested resolution:** Resolve F-4.5.5 (wire the catalog); query the catalog at `DeleteBySession` time, refuse to remove blobs whose row carries `legal_hold = true`.
 
-### - [ ] F-4.5.16 — Helm chart does not configure bucket versioning, lifecycle, or TLS-mandate posture [Medium] — OPEN
+### - [x] F-4.5.16 — Helm chart does not configure bucket versioning, lifecycle, or TLS-mandate posture [Medium] — CLOSED
+- **Resolution:** Added `charts/lenny/templates/minio-bucket-lifecycle-job.yaml`, a post-install/post-upgrade Helm hook that runs `mc mb`, `mc anonymous set none`, `mc version enable`, and `mc ilm add --expired-object-delete-marker --noncurrentversion-expiration-days 1` against the configured bucket. Renamed `minio.useSSL` to `minio.tls.enabled` per §12.5 line 279. The gateway-deployment template enforces the TLS-mandate posture at Helm-render time: `tls.enabled=false` fails the render under any regulated `complianceProfile` (`soc2 | fedramp | hipaa`) or outside `backends: embedded`. Helm-unittest coverage in `tests/minio-bucket-lifecycle_test.yaml`. F-12.5.5 closes with this commit (same fix). (commit `2d97f85`)
 
 **Potential duplicate** (confidence: high) — F-12.5.5 — Both describe the Helm chart failing to configure MinIO bucket versioning and delete-marker/noncurrent-version lifecycle via the mc ilm add post-install Job, with the same root cause and fix.
 
@@ -1222,7 +1230,8 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** A stock Helm render produces a MinIO that has no bucket versioning, no delete-marker expiration, no noncurrent-version expiration, and defaults to plaintext HTTP. The §12.5 production HA topology requirements (versioning + lifecycle + TLS) are not enforced by the chart.
 - **Suggested resolution:** Add a post-install `Job` template that runs `mc mb`, `mc anonymous set`, `mc ilm add ... --noncurrentversion-expire-days 1 --expired-marker-delete`, and `mc replicate enable` (when configured). Rename `minio.useSSL` → `minio.tls.enabled` to match §12.5; gate the `false` default on `backends: embedded`; fail Helm-render when the chart is rendered with a regulated `complianceProfile` and `tls.enabled: false`.
 
-### - [ ] F-4.5.17 — Preflight does not validate that MinIO SSE is enabled [Medium] — OPEN
+### - [x] F-4.5.17 — Preflight does not validate that MinIO SSE is enabled [Medium] — CLOSED
+- **Resolution:** Added `pkg/preflight/minio_sse.go`, the §12.5 line 297 SSE audit. The check calls `GetBucketEncryption` against the configured bucket and decides: regulated `complianceProfile` (soc2/fedramp/hipaa) with no SSE fails closed; regulated profile + unreachable MinIO fails closed; unregulated profile passes advisory. Wired the new `MinIOEncryptionProber` through `preflight.Config`, `pkg/preflight.Run`, and `cmd/lenny-preflight` (new flags `--minio-endpoint`, `--minio-bucket`, `--minio-use-ssl` plus env vars `MINIO_ACCESS_KEY_ENV`/`MINIO_SECRET_KEY_ENV`). The chart's preflight Job mounts the secrets and passes the bucket flags. Tier-1 + Tier-2 coverage in `pkg/preflight/minio_sse_test.go` and `tests/tier2_component/preflight/minio_sse_test.go`. (commit `93242b5`)
 - **Spec:** §12.5 ll. 297: "The preflight check ([Section 17.6]) validates that MinIO SSE is enabled but does not validate per-tenant KMS key existence."
 - **Evidence:** `ls pkg/preflight/` covers `hostsharing`, `networkpolicy`, `phasestamp`, `webhooks`. No SSE/MinIO probe — `grep -rn "minio.*sse\|MinIO.*SSE" pkg/preflight/ cmd/lenny-preflight/` returns no hits.
 - **Gap:** A deployer can install Lenny against a MinIO without SSE-S3 or SSE-KMS enabled, and the preflight does not catch it. The first T4 artifact write fails at runtime instead of at install time.
@@ -1240,7 +1249,8 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
 - **Gap:** The blob store has no retry; the spec assigns the retry responsibility to "the adapter" (the adapter side does carry retry, per §4.4), so the gap is on the seam between the gateway's checkpoint emitter and the blob store. If the gateway directly calls `Put` (e.g., during a session seal), no retry runs.
 - **Suggested resolution:** Wrap the `Put` path with the same exponential-backoff scheme used by `pkg/webhookdelivery` (1s, 5s, 30s, 3 attempts) when `reason` is a transient transport class.
 
-### - [ ] F-4.5.20 — `MinIO.Put` `StatObject` precheck duplicates a round-trip the S3 contract makes unnecessary [Info] — OPEN
+### - [x] F-4.5.20 — `MinIO.Put` `StatObject` precheck duplicates a round-trip the S3 contract makes unnecessary [Info] — CLOSED
+- **Resolution:** Documented the current StatObject-precheck pattern in a code comment in `pkg/blobstore/miniostore/miniostore.go` `Put`, including the planned future migration to `PutObject` with `If-None-Match: *` once `minio-go` exposes the header. Info-only finding; no functional change required for v1. (commit pending — see this commit)
 - **Spec:** §4.5 ll. 309 (write-once immutability is the only normative claim).
 - **Evidence:** `pkg/blobstore/miniostore/miniostore.go:127-135` issues a `StatObject` before `PutObject` and rejects on existence with `ErrConflict`. The S3 backend uses the same pre-Head pattern.
 - **Gap:** Functionally correct, but a `PutObject` with `If-None-Match: *` (or MinIO's `Bucket Object Lock`) achieves the same with one round trip. Non-blocking.
@@ -16597,7 +16607,8 @@ Consequence: the `T4KmsKeyUnusable` alert
 gauge for any tenant. The alert is silent; the "silent post-provisioning
 lifecycle drift" line 307 names is the actual operating posture.
 
-### - [ ] F-12.5.5 — MinIO bucket versioning + delete-marker / noncurrent lifecycle is unconfigured (§12.5 lines 277, 280) [High] — OPEN
+### - [x] F-12.5.5 — MinIO bucket versioning + delete-marker / noncurrent lifecycle is unconfigured (§12.5 lines 277, 280) [High] — CLOSED
+- **Resolution:** Closed by the F-4.5.16 fix (same root cause, same fix). The new `charts/lenny/templates/minio-bucket-lifecycle-job.yaml` runs `mc version enable` + `mc ilm add --expired-object-delete-marker --noncurrentversion-expiration-days 1` as a post-install/post-upgrade Helm hook. (commit `2d97f85`)
 
 **Potential duplicate** (confidence: high) — F-4.5.16 — Both describe the Helm chart failing to configure MinIO bucket versioning and delete-marker/noncurrent-version lifecycle via the mc ilm add post-install Job, with the same root cause and fix.
 
@@ -16882,7 +16893,8 @@ Evidence:
 Consequence: the cryptographic-erasure invariant is silently downgraded
 exactly when the spec mandates fail-closed.
 
-### - [ ] F-12.5.17 — `lenny_gc_runs_total / lenny_gc_artifacts_deleted / lenny_gc_errors_total / lenny_gc_duration_seconds` metrics are absent (§12.5 line 321) [Medium] — OPEN
+### - [x] F-12.5.17 — `lenny_gc_runs_total / lenny_gc_artifacts_deleted / lenny_gc_errors_total / lenny_gc_duration_seconds` metrics are absent (§12.5 line 321) [Medium] — CLOSED
+- **Resolution:** Closed by the F-4.5.9 fix (same root cause, same fix). The four §12.5 line 321 metrics now live in `pkg/observability/metrics/catalog.go` and are emitted from `pkg/gateway/retentiongc.Collector.Tick`. (commit `f9bfb70`)
 
 **Potential duplicate** (confidence: high) — F-4.5.9 — Both report the §12.5 GC metrics (runs/artifacts_deleted/errors/duration) are absent from the catalog with only the tombstone-prune counter present.
 
@@ -16983,7 +16995,8 @@ silently runs without TLS to MinIO; the §13.2 TLS-everywhere posture
 applies via NetworkPolicy on the wire, but the spec's stricter
 backend-aware TLS-enforcement check is absent.
 
-### - [ ] F-12.5.22 — per-blob legal-hold (`miniostore.SetLegalHold`) is never invoked (§12.5 line 313 + §12.8) [Medium] — OPEN
+### - [x] F-12.5.22 — per-blob legal-hold (`miniostore.SetLegalHold`) is never invoked (§12.5 line 313 + §12.8) [Medium] — CLOSED
+- **Resolution:** Closed by the F-4.5.15 fix (same root cause, same fix). The gateway wires `artifactCatalog` into the MinIO blob store via `miniostore.SetCatalog`; `DeleteBySession` now consults the durable `artifact_store.legal_hold` flag rather than the in-process `sync.Map`. (commit `6b453d1`)
 
 **Potential duplicate** (confidence: high) — F-4.5.15 — Both report blob-level legal hold lives only in an in-process sync.Map that does not survive gateway restart.
 
@@ -17130,7 +17143,8 @@ requires extending the parser, not just the writers.
 default (line 279, "https://minio.lenny-system:9000") and the chart default
 diverge; the spec naming is informational so this is flagged as Info.
 
-### - [ ] F-12.5.31 — drain-readiness webhook is correctly registered, gateway endpoint correctly handles GET, and the metric `lenny_drain_readiness_checks_total{outcome=…}` is absent [Info] — OPEN
+### - [x] F-12.5.31 — drain-readiness webhook is correctly registered, gateway endpoint correctly handles GET, and the metric `lenny_drain_readiness_checks_total{outcome=…}` is absent [Info] — CLOSED
+- **Resolution:** Closed by the F-4.5.12 fix (same root cause, same fix). The webhook now emits `lenny_drain_readiness_checks_total{outcome=...}` on every decision and exposes the counter on its own `/metrics` scrape target. (commit `bfd1fcd`)
 
 **Potential duplicate** (confidence: high) — F-4.5.12 — Both describe the lenny_drain_readiness_checks_total counter being unimplemented while the webhook and endpoint exist.
 
@@ -18005,7 +18019,8 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Impact:** A tenant that was created with `(billingErasurePolicy=exempt, complianceProfile=hipaa)` before the gateway was upgraded does not re-emit the event on subsequent startups. Auditors cannot rely on the SIEM stream to discover the posture at restart.
 
-### - [ ] F-12.8.18 — Legal-hold reconciler for checkpoint gaps (§12.8 line 739) is unimplemented [Medium] — OPEN
+### - [x] F-12.8.18 — Legal-hold reconciler for checkpoint gaps (§12.8 line 739) is unimplemented [Medium] — CLOSED
+- **Resolution:** Closed by the F-4.5.14 fix (same root cause, same fix). The new `pkg/gateway/legalholdreconciler` package runs co-located with the GC sweep, emits `legal_hold.checkpoint_gap_detected` audit rows, and bumps `lenny_legal_hold_checkpoint_gaps_total{tenant_id=...}`. (commit `6b453d1`)
 
 **Potential duplicate** (confidence: high) — F-4.5.14 — Both report the unimplemented legal-hold checkpoint-gap reconciler and its missing event/counter, citing the same §12.8 line 739.
 

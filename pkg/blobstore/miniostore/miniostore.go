@@ -256,6 +256,23 @@ func sessionPrefix(tenantID string, objectType blobstore.ObjectType, sessionID s
 func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, error) {
 	ctx := context.Background()
 	key := objectKey(u)
+	// F-4.5.20: §4.5 write-once contract is enforced today with an
+	// explicit StatObject precheck followed by PutObject. The
+	// precheck doubles the network round-trip on every Put — the S3
+	// contract supports a single-call alternative via the
+	// `If-None-Match: *` request header on PutObject, which returns
+	// 412 PreconditionFailed when the key already exists. Migrating
+	// to the conditional-put form would halve the latency on the hot
+	// path and remove the TOCTOU window between the precheck and the
+	// PutObject call. The migration is deferred because:
+	//   (a) minio-go does not yet expose If-None-Match on
+	//       PutObjectOptions (tracked upstream),
+	//   (b) the in-memory blobstore.MemoryStore that the gateway
+	//       falls back to in dev mode has no conditional-put
+	//       primitive, so the precheck is the simplest portable shape.
+	// When the upstream gains the header, drop the StatObject branch
+	// and trust PutObject's 412 to surface as ErrConflict; the
+	// MemoryStore implementation can keep its current explicit check.
 	switch _, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{}); {
 	case err == nil:
 		return "", blobstore.ErrConflict
