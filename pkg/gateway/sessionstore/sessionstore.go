@@ -199,6 +199,18 @@ type Session struct {
 	// window).
 	// spec: §4.2 line 159 — "Resume eligibility and window".
 	ResumeEligibleUntil time.Time
+
+	// LastSuccessfulCheckpointAt is the wall-clock instant the
+	// gateway recorded its most recent successful checkpoint for
+	// this session — regardless of trigger (periodic, eviction,
+	// pre-drain). Zero when the session has never been checkpointed.
+	// The §4.4 freshness gauge / `lenny_checkpoint_stale_sessions`
+	// reaper reads this to compute the per-pool staleness count.
+	// spec: §4.4 line 258 — "The gateway tracks
+	// last_successful_checkpoint_at on the session record in
+	// Postgres, updated on every successful checkpoint regardless
+	// of trigger (periodic, eviction, pre-drain)".
+	LastSuccessfulCheckpointAt time.Time
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a

@@ -128,6 +128,63 @@ func TestCheckpointRecordsTheWorkspaceSnapshot(t *testing.T) {
 	if !row.WorkspaceSnapshot.Timestamp.Equal(when) {
 		t.Errorf("snapshot timestamp = %v, want %v", row.WorkspaceSnapshot.Timestamp, when)
 	}
+	// spec: §4.4 line 258 — every successful checkpoint bumps
+	// last_successful_checkpoint_at on the session row, regardless of
+	// trigger. The freshness gauge keys off this field.
+	if !row.LastSuccessfulCheckpointAt.Equal(when) {
+		t.Errorf("LastSuccessfulCheckpointAt = %v, want %v", row.LastSuccessfulCheckpointAt, when)
+	}
+}
+
+// spec: §4.4 line 258 — a failed adapter checkpoint must NOT bump
+// last_successful_checkpoint_at; the freshness gauge would otherwise
+// report falsely-fresh sessions.
+func TestFailedCheckpointDoesNotBumpFreshnessTimestamp(t *testing.T) {
+	srv := adapter.New("checkpointer-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = stubRuntime{}
+	srv.Checkpoints = stubSink{err: errors.New("artifact store down")}
+	client := dialAdapter(t, srv)
+	if err := client.StartSession(context.Background(), "s1", "echo", nil, nil); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{SessionID: "s1", Adapter: client})
+	store := memstore.New()
+	runningSession(t, store, "acme", "s1")
+
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err == nil {
+		t.Fatal("Checkpoint succeeded though the adapter checkpoint failed")
+	}
+	row, _ := store.Get(context.Background(), "acme", "s1")
+	if !row.LastSuccessfulCheckpointAt.IsZero() {
+		t.Errorf("LastSuccessfulCheckpointAt = %v on failed checkpoint, want zero", row.LastSuccessfulCheckpointAt)
+	}
+}
+
+// spec: §4.4 line 258 — Seal counts as a successful checkpoint and
+// MUST bump last_successful_checkpoint_at as a regular checkpoint
+// would. A sealed session whose seal-recorded timestamp is stale would
+// otherwise resurface as stale in the freshness gauge.
+func TestSealBumpsFreshnessTimestamp(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", stubSink{id: "seal-1"})
+
+	when := time.Date(2026, 5, 16, 18, 0, 0, 0, time.UTC)
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Now:      func() time.Time { return when },
+	}
+	if err := cp.Seal(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	row, _ := store.Get(context.Background(), "acme", "s1")
+	if !row.LastSuccessfulCheckpointAt.Equal(when) {
+		t.Errorf("Seal LastSuccessfulCheckpointAt = %v, want %v", row.LastSuccessfulCheckpointAt, when)
+	}
 }
 
 func TestCheckpointReturnsErrNoBindingForAnUncoordinatedSession(t *testing.T) {

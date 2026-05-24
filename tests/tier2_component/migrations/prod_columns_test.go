@@ -139,6 +139,14 @@ var prodMigrationSchema = []struct {
 		"conversation_cursor", "evicted_at",
 		"workspace_lost", "context_truncated",
 	}},
+	// 0061 adds the §4.4 line 258 freshness timestamp the
+	// `lenny_checkpoint_stale_sessions` gauge / `CheckpointStale`
+	// alert reads. The gateway updates it on every successful
+	// checkpoint regardless of trigger (periodic, eviction,
+	// pre-drain).
+	{migration: "0061", table: "sessions", columns: []string{
+		"last_successful_checkpoint_at",
+	}},
 }
 
 // spec: 12.2, 18.5

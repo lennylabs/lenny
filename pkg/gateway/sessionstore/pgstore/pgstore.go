@@ -47,10 +47,13 @@ var _ sessionstore.Store = (*Store)(nil)
 // The trailing five columns from migration 0050 are
 // (cwd, pod_assignment, recovery_generation, coordination_generation,
 // schema_version) — the §4.2 line 156 session-record fields. The
-// final three columns from migration 0055 are
+// next three columns from migration 0055 are
 // (retry_count, policy_enforcement_state, resume_eligible_until) —
 // the §4.2 line 158-159 retry counter, policy enforcement state,
-// and resume window.
+// and resume window. The final column from migration 0061 is
+// `last_successful_checkpoint_at` — the §4.4 line 258 freshness
+// timestamp the gauge / `lenny_checkpoint_stale_sessions` reaper keys
+// off.
 const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
@@ -60,7 +63,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	experiment_id, experiment_variant_id, experiment_inherited, environment,
 	cwd, pod_assignment, recovery_generation, coordination_generation,
 	schema_version,
-	retry_count, policy_enforcement_state, resume_eligible_until`
+	retry_count, policy_enforcement_state, resume_eligible_until,
+	last_successful_checkpoint_at`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -77,9 +81,10 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	// The trailing five binds ($26-$30) cover the §4.2 session-record
 	// fields added in migration 0050: cwd, pod_assignment,
 	// recovery_generation, coordination_generation, schema_version.
-	// The final three binds ($31-$33) cover the §4.2 line 158-159
+	// The next three binds ($31-$33) cover the §4.2 line 158-159
 	// retry counter, policy enforcement state, and resume window
-	// added in migration 0055.
+	// added in migration 0055. The final bind ($34) is the §4.4
+	// freshness timestamp added in migration 0061.
 	const insertSQL = `INSERT INTO sessions (
 		id, tenant_id, user_id, state, runtime_ref, pool_ref, isolation_profile,
 		parent_session_id, root_session_id, failure_class, failure_reason,
@@ -89,14 +94,16 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		experiment_id, experiment_variant_id, experiment_inherited, environment,
 		cwd, pod_assignment, recovery_generation, coordination_generation,
 		schema_version,
-		retry_count, policy_enforcement_state, resume_eligible_until
+		retry_count, policy_enforcement_state, resume_eligible_until,
+		last_successful_checkpoint_at
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
 		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21,
 		$22, $23, $24, $25,
 		$26, $27, $28, $29, $30,
-		$31, $32::jsonb, $33
+		$31, $32::jsonb, $33,
+		$34
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -118,7 +125,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			sess.Cwd, sess.PodAssignment, sess.RecoveryGeneration,
 			sess.CoordinationGeneration, schemaVersion,
 			sess.RetryCount, policyEnforcementArg(sess.PolicyEnforcementState),
-			pgtenant.NullTime(sess.ResumeEligibleUntil))
+			pgtenant.NullTime(sess.ResumeEligibleUntil),
+			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -155,9 +163,10 @@ func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Sess
 // resolution) so callers can rely on monotonicity.
 func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	// The trailing five SET clauses cover the §4.2 session-record
-	// fields added in migration 0050; the final three cover the §4.2
+	// fields added in migration 0050; the next three cover the §4.2
 	// line 158-159 retry counter, policy enforcement state, and
-	// resume window added in migration 0055.
+	// resume window added in migration 0055. The final clause is the
+	// §4.4 line 258 freshness timestamp added in migration 0061.
 	const updateSQL = `UPDATE sessions SET
 		user_id = $3, state = $4, runtime_ref = $5, pool_ref = $6,
 		isolation_profile = $7, parent_session_id = NULLIF($8, '')::uuid,
@@ -170,7 +179,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		cwd = $24, pod_assignment = $25, recovery_generation = $26,
 		coordination_generation = $27, schema_version = $28,
 		retry_count = $29, policy_enforcement_state = $30::jsonb,
-		resume_eligible_until = $31
+		resume_eligible_until = $31,
+		last_successful_checkpoint_at = $32
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -223,6 +233,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			sess.CoordinationGeneration, schemaVersion,
 			sess.RetryCount, policyEnforcementArg(sess.PolicyEnforcementState),
 			pgtenant.NullTime(sess.ResumeEligibleUntil),
+			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt),
 		); err != nil {
 			return err
 		}
@@ -320,8 +331,10 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		expInherited            bool
 		// §4.2 line 158-159 retry / policy / resume fields from
 		// migration 0055.
-		policyJSON []byte
+		policyJSON  []byte
 		resumeUntil *time.Time
+		// §4.4 line 258 freshness timestamp from migration 0061.
+		lastCheckpointAt *time.Time
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -336,6 +349,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §4.2 line 158-159 retry / policy / resume fields from
 		// migration 0055.
 		&s.RetryCount, &policyJSON, &resumeUntil,
+		// §4.4 freshness timestamp from migration 0061.
+		// spec: §4.4 line 258.
+		&lastCheckpointAt,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
@@ -344,6 +360,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	}
 	if resumeUntil != nil {
 		s.ResumeEligibleUntil = *resumeUntil
+	}
+	if lastCheckpointAt != nil {
+		s.LastSuccessfulCheckpointAt = *lastCheckpointAt
 	}
 	if expID != "" {
 		s.ExperimentContext = &sessionstore.ExperimentContext{

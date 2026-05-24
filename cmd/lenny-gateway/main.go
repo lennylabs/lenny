@@ -1876,6 +1876,30 @@ func main() {
 		go checkpointSvc.Run(watchdogCtx)
 	}
 
+	// ----- §4.4 freshness-reaper loop -----
+	// Scans every active session and populates the per-(pool, level)
+	// `lenny_checkpoint_stale_sessions` gauge so the §16.5
+	// CheckpointStale alert can fire when any pool reports a non-zero
+	// stale count for > 60 s. The reaper runs on every gateway
+	// replica (not only the one with --agent-namespace) because the
+	// freshness signal is platform-wide and the read path against the
+	// session store is cheap.
+	// spec: §4.4 line 256.
+	freshnessReaper := &checkpointer.FreshnessReaper{
+		Tenants:  tenantsLister{tenants},
+		Sessions: sessions,
+		Gauge:    gwMetrics,
+		Interval: *checkpointInterval,
+		OnError: func(tenantID string, err error) {
+			if tenantID == "" {
+				log.Printf("lenny-gateway: freshness reaper: list tenants: %v", err)
+				return
+			}
+			log.Printf("lenny-gateway: freshness reaper: tenant %s: %v", tenantID, err)
+		},
+	}
+	go freshnessReaper.Run(watchdogCtx)
+
 	// ----- §13.3 revocation-cache rehydration -----
 	// Loads revoked-token jtis from the issued-token index so a
 	// revocation survives a restart and propagates across replicas.

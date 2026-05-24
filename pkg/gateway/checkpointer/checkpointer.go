@@ -162,7 +162,11 @@ func (c *Checkpointer) Seal(ctx context.Context, tenantID, sessionID string) err
 
 // snapshot drives the session's bound pod adapter to checkpoint its
 // workspace and records the result on the session row with the given
-// §7.1 snapshot source.
+// §7.1 snapshot source. Every successful checkpoint also bumps the
+// §4.4 line 258 `last_successful_checkpoint_at` freshness timestamp
+// on the session row regardless of the trigger that produced it
+// (periodic, eviction, pre-drain, or seal); the §4.4 freshness gauge
+// keys off this field.
 func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string, source sessionstore.WorkspaceSnapshotSource) error {
 	binding, ok := c.Registry.Get(sessionID)
 	if !ok {
@@ -172,12 +176,18 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 	if err != nil {
 		return fmt.Errorf("checkpointer: checkpoint session %s: %w", sessionID, err)
 	}
+	now := c.now()
 	if _, err := c.Sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.WorkspaceSnapshot = &sessionstore.WorkspaceSnapshot{
 			Ref:       result.CheckpointID,
 			Source:    source,
-			Timestamp: c.now(),
+			Timestamp: now,
 		}
+		// spec: §4.4 line 258 — "The gateway tracks
+		// last_successful_checkpoint_at on the session record in
+		// Postgres, updated on every successful checkpoint regardless
+		// of trigger".
+		row.LastSuccessfulCheckpointAt = now
 		return nil
 	}); err != nil {
 		return fmt.Errorf("checkpointer: record snapshot for session %s: %w", sessionID, err)

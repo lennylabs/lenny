@@ -50,6 +50,11 @@ type Metrics struct {
 	// open). The §16.5 TokenServiceUnavailable alert reads it via
 	// `lenny_token_service_circuit_state == 2`. spec: §4.3 line 211.
 	tokenServiceCircuitState prometheus.Gauge
+	// checkpointStaleSessions reports the §4.4 line 256 freshness
+	// counter labelled by pool and level. The §16.5 `CheckpointStale`
+	// alert fires when any label combination reports a non-zero value
+	// for > 60 s.
+	checkpointStaleSessions *prometheus.GaugeVec
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -251,12 +256,27 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.4 line 256 — `lenny_checkpoint_stale_sessions` per-pool/level
+	// gauge counts active sessions whose `last_successful_checkpoint_at`
+	// is older than `periodicCheckpointIntervalSeconds`. The §16.5
+	// `CheckpointStale` alert fires when any label combination reports
+	// a non-zero value for > 60 s. The labels are bounded: `pool` is
+	// drawn from the (finite) §5.2 sandbox-warm-pool registry, `level`
+	// is one of the four §4.4 levels.
+	checkpointStaleSessions, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_checkpoint_stale_sessions",
+		Help: "Active sessions whose last successful checkpoint age exceeds periodicCheckpointIntervalSeconds (§4.4).",
+	}, []string{"pool", "level"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
 		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen, elicitationDropped,
 		elicitationTamperDetected, experimentIsoRej,
-		noEnvPolicyAllowAll, tokenServiceCircuitState)
+		noEnvPolicyAllowAll, tokenServiceCircuitState,
+		checkpointStaleSessions)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -301,7 +321,22 @@ func New() (*Metrics, error) {
 		noEnvPolicyAllowAll:       noEnvPolicyAllowAll,
 		gcPauseP99Ms:              gcPause,
 		tokenServiceCircuitState:  tokenServiceCircuitChild,
+		checkpointStaleSessions:   checkpointStaleSessions,
 	}, nil
+}
+
+// SetCheckpointStaleSessions sets the per-pool/level
+// `lenny_checkpoint_stale_sessions` gauge value. The freshness reaper
+// calls this once per sweep with the count of active sessions whose
+// `last_successful_checkpoint_at` is older than
+// `periodicCheckpointIntervalSeconds`. The §16.5 `CheckpointStale`
+// alert keys on the per-label value.
+// spec: §4.4 line 256.
+func (m *Metrics) SetCheckpointStaleSessions(pool, level string, count int) {
+	if m == nil {
+		return
+	}
+	m.checkpointStaleSessions.WithLabelValues(pool, level).Set(float64(count))
 }
 
 // SetTokenServiceCircuitState updates the §4.3 / §4.1

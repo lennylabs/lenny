@@ -362,6 +362,62 @@ func TestSessionStoreContract(t *testing.T) {
 			t.Errorf("session_messages count after cascade = %d, want 0", n)
 		}
 	})
+
+	// spec: §4.4 line 258 — `last_successful_checkpoint_at` round-trips
+	// through Postgres and is nullable so a session that has never
+	// been checkpointed reads as zero rather than the UNIX epoch.
+	t.Run("last_successful_checkpoint_at round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		ts := time.Now().UTC().Truncate(time.Microsecond)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			LastSuccessfulCheckpointAt: ts,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.LastSuccessfulCheckpointAt.Equal(ts) {
+			t.Errorf("LastSuccessfulCheckpointAt = %v, want %v", got.LastSuccessfulCheckpointAt, ts)
+		}
+
+		// Update bumps the timestamp and the read path observes the
+		// new value.
+		when := ts.Add(2 * time.Minute)
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.LastSuccessfulCheckpointAt = when
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if !updated.LastSuccessfulCheckpointAt.Equal(when) {
+			t.Errorf("Update LastSuccessfulCheckpointAt = %v, want %v", updated.LastSuccessfulCheckpointAt, when)
+		}
+	})
+
+	// spec: §4.4 line 258 — never-checkpointed sessions read NULL on
+	// the column, which the sessionstore maps to the zero time.Time
+	// so the `FreshnessCheck` helper can treat them as stale.
+	t.Run("last_successful_checkpoint_at defaults to zero when unset", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.LastSuccessfulCheckpointAt.IsZero() {
+			t.Errorf("LastSuccessfulCheckpointAt = %v, want zero", got.LastSuccessfulCheckpointAt)
+		}
+	})
 }
 
 // insertMessage writes one session_messages row under the tenant
