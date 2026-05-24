@@ -57,9 +57,20 @@ const (
 	// credential tmpfs mounted at credentialMount.
 	CredVolumeName = "credentials"
 
-	// terminationGraceSeconds is the default pod termination grace
-	// period.
-	terminationGraceSeconds int64 = 30
+	// defaultTerminationGraceSeconds is the default pod termination grace
+	// period. spec: §4.6.1 "Disruption protection for agent pods" — the
+	// pod's terminationGracePeriodSeconds is set high enough (default:
+	// 120s) to give the preStop checkpoint time to complete and be
+	// persisted to object storage. A 30s default would SIGKILL the
+	// adapter mid-checkpoint on a node drain.
+	defaultTerminationGraceSeconds int64 = 120
+
+	// preStopDrainMarginSeconds is the slice of the grace period the
+	// preStop drain leaves for the kubelet to reap the container after
+	// the adapter exits. The preStop command's own timeout is the grace
+	// period minus this margin so the kubelet never SIGKILLs the adapter
+	// while its preStop drain is still in flight.
+	preStopDrainMarginSeconds int64 = 10
 
 	// adapterPort is the adapter's gRPC listener port (§13.2: the
 	// gateway reaches the adapter on TCP 50051).
@@ -135,6 +146,14 @@ type Inputs struct {
 	// lenny-pod-security admission webhook rejects pods carrying it in
 	// production.
 	EgressCapture *EgressCapture
+
+	// MaxTerminationGraceSeconds is the §4.6.1 / §5.2
+	// SandboxTemplate.spec.maxTerminationGracePeriodSeconds hard
+	// ceiling. When set and below the default, it clamps the pod's
+	// terminationGracePeriodSeconds so a pod never advertises a grace
+	// period the deployer has declared exceeds the cluster's node-drain
+	// timeout. A nil value leaves the default in force.
+	MaxTerminationGraceSeconds *int64
 }
 
 // EgressCapture configures the §12.9.8 egress-capture sidecar an
@@ -238,6 +257,12 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    adapterMounts,
 			SecurityContext: containerSecurityContext(AdapterUID),
+			// spec: §4.6.1 "Disruption protection for agent pods" — the
+			// preStop hook triggers a checkpoint before termination. It
+			// runs the adapter's drain so an in-flight gateway Checkpoint
+			// RPC completes within the grace period rather than being cut
+			// short by the kubelet SIGTERM/SIGKILL clock.
+			Lifecycle: preStopDrainHook(in),
 		},
 		{
 			Name:  "runtime",
@@ -288,6 +313,10 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    runtimeMounts,
 			SecurityContext: containerSecurityContext(AgentUID),
+			// spec: §4.6.1 — the embedded first-party runtime links the
+			// adapter and accepts the same CLI, so its preStop drain runs
+			// the same checkpoint-before-termination path.
+			Lifecycle: preStopDrainHook(in),
 		},
 	}
 	pod.Spec.Volumes = volumes
@@ -395,7 +424,7 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 		Spec: corev1.PodSpec{
 			RuntimeClassName:              &runtimeClass,
 			RestartPolicy:                 corev1.RestartPolicyNever,
-			TerminationGracePeriodSeconds: ptr.To(terminationGraceSeconds),
+			TerminationGracePeriodSeconds: ptr.To(terminationGrace(in)),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot:   ptr.To(true),
 				FSGroup:        ptr.To(CredReadersGID),
@@ -415,5 +444,44 @@ func containerSecurityContext(uid int64) *corev1.SecurityContext {
 		AllowPrivilegeEscalation: ptr.To(false),
 		ReadOnlyRootFilesystem:   ptr.To(true),
 		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+}
+
+// terminationGrace returns the pod's terminationGracePeriodSeconds. It
+// is the §4.6.1 default (120s) unless the SandboxTemplate declares a
+// lower maxTerminationGracePeriodSeconds ceiling, in which case the
+// grace period is clamped down to that ceiling. spec: §4.6.1
+// "Disruption protection for agent pods".
+func terminationGrace(in Inputs) int64 {
+	grace := defaultTerminationGraceSeconds
+	if in.MaxTerminationGraceSeconds != nil && *in.MaxTerminationGraceSeconds > 0 &&
+		*in.MaxTerminationGraceSeconds < grace {
+		grace = *in.MaxTerminationGraceSeconds
+	}
+	return grace
+}
+
+// preStopDrainHook returns the §4.6.1 preStop lifecycle hook for the
+// adapter container. The hook invokes the adapter binary's `prestop`
+// drain subcommand, which signals the running adapter to drain and
+// blocks until it exits or the bounded timeout elapses. Front-loading
+// the drain into the preStop window keeps an in-flight gateway
+// Checkpoint RPC from being SIGKILLed at the grace deadline. The
+// command timeout is the grace period minus a reaping margin so the
+// kubelet never cuts the drain short. spec: §4.6.1.
+func preStopDrainHook(in Inputs) *corev1.Lifecycle {
+	timeout := terminationGrace(in) - preStopDrainMarginSeconds
+	if timeout < 1 {
+		timeout = 1
+	}
+	return &corev1.Lifecycle{
+		PreStop: &corev1.LifecycleHandler{
+			Exec: &corev1.ExecAction{
+				Command: []string{
+					"lenny-adapter", "prestop",
+					fmt.Sprintf("--timeout=%ds", timeout),
+				},
+			},
+		},
 	}
 }

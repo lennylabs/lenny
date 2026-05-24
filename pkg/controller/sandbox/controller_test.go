@@ -136,6 +136,38 @@ func sandboxCR(phase string) *lennyv1.Sandbox {
 	}
 }
 
+// TestReconcileClampsPodGraceToTemplateCeiling_spec_4_6_1 confirms the
+// reconciler resolves the Sandbox's pool and template and clamps the
+// created pod's terminationGracePeriodSeconds to the template's
+// maxTerminationGracePeriodSeconds ceiling.
+func TestReconcileClampsPodGraceToTemplateCeiling_spec_4_6_1(t *testing.T) {
+	s := newScheme(t)
+	ceiling := int64(45)
+	tmpl := &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNS},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                       "claude-code",
+			MaxTerminationGracePeriodSeconds: &ceiling,
+		},
+	}
+	pool := &lennyv1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNS},
+		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
+	}
+	c := newClient(t, s, sandboxCR(""), runtimeCR(), tmpl, pool)
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	if g := pod.Spec.TerminationGracePeriodSeconds; g == nil || *g != ceiling {
+		t.Errorf("terminationGracePeriodSeconds = %v, want %d (template ceiling)", g, ceiling)
+	}
+}
+
 func runtimeCR() *lennyv1.Runtime {
 	return &lennyv1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-code"},
@@ -198,6 +230,11 @@ func TestReconcileCreatesPodForNewSandbox(t *testing.T) {
 	}
 	if len(pod.Spec.Containers) != 2 {
 		t.Errorf("pod has %d containers, want 2", len(pod.Spec.Containers))
+	}
+	// spec: §4.6.1 — a Sandbox with no resolvable template ceiling gets
+	// the 120s disruption-protection default.
+	if g := pod.Spec.TerminationGracePeriodSeconds; g == nil || *g != 120 {
+		t.Errorf("terminationGracePeriodSeconds = %v, want 120 (§4.6.1 default)", g)
 	}
 	if len(pod.OwnerReferences) != 1 ||
 		pod.OwnerReferences[0].Kind != "Sandbox" ||

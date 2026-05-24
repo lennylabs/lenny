@@ -70,6 +70,18 @@ func resolveRuntimeUID(flagUID uint) uint32 {
 }
 
 func main() {
+	// spec: §4.6.1 — `lenny-adapter prestop` is the agent-pod preStop
+	// drain hook. It signals the running adapter and waits for it to
+	// drain in-flight checkpoints, so it runs as a distinct subcommand
+	// rather than starting the gRPC server.
+	if len(os.Args) > 1 && os.Args[1] == "prestop" {
+		cfg, err := parsePreStopArgs(os.Args[2:])
+		if err != nil {
+			log.Fatalf("lenny-adapter: %v", err)
+		}
+		os.Exit(runPreStop(cfg, preStopOSDeps(log.Printf)))
+	}
+
 	addr := flag.String("addr", ":50051", "address the adapter gRPC server binds to")
 	certFile := flag.String("tls-cert-file", "", "path to the adapter server certificate")
 	keyFile := flag.String("tls-key-file", "", "path to the adapter server private key")

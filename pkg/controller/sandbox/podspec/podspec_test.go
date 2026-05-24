@@ -4,9 +4,11 @@ package podspec_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 )
@@ -327,5 +329,94 @@ func TestBuildEmbeddedDoesNotRequireAnAdapterImage(t *testing.T) {
 	in.AdapterImage = ""
 	if _, err := podspec.Build(in); err != nil {
 		t.Errorf("the embedded model must not require an adapter image: %v", err)
+	}
+}
+
+// TestBuildDefaultsTerminationGraceTo120_spec_4_6_1 confirms the §4.6.1
+// disruption-protection default: 120s, not the prior hardcoded 30s that
+// would SIGKILL the adapter mid-checkpoint on a node drain.
+func TestBuildDefaultsTerminationGraceTo120_spec_4_6_1(t *testing.T) {
+	pod, err := podspec.Build(inputs())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	got := pod.Spec.TerminationGracePeriodSeconds
+	if got == nil || *got != 120 {
+		t.Fatalf("terminationGracePeriodSeconds = %v, want 120 (§4.6.1)", got)
+	}
+}
+
+// TestBuildClampsTerminationGraceToCeiling_spec_4_6_1 confirms the
+// SandboxTemplate maxTerminationGracePeriodSeconds ceiling clamps the
+// pod grace below the 120s default.
+func TestBuildClampsTerminationGraceToCeiling_spec_4_6_1(t *testing.T) {
+	in := inputs()
+	in.MaxTerminationGraceSeconds = ptr.To(int64(60))
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := pod.Spec.TerminationGracePeriodSeconds; got == nil || *got != 60 {
+		t.Fatalf("terminationGracePeriodSeconds = %v, want 60 (clamped to ceiling)", got)
+	}
+}
+
+// TestBuildIgnoresCeilingAboveDefault_spec_4_6_1 confirms a ceiling at
+// or above the default leaves the 120s default in force (the ceiling is
+// a cap, not a setter).
+func TestBuildIgnoresCeilingAboveDefault_spec_4_6_1(t *testing.T) {
+	for _, ceiling := range []int64{120, 240} {
+		in := inputs()
+		in.MaxTerminationGraceSeconds = ptr.To(ceiling)
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(ceiling=%d): %v", ceiling, err)
+		}
+		if got := pod.Spec.TerminationGracePeriodSeconds; got == nil || *got != 120 {
+			t.Errorf("ceiling=%d: grace = %v, want 120", ceiling, got)
+		}
+	}
+}
+
+// TestBuildAddsPreStopDrainHook_spec_4_6_1 confirms every agent
+// container carries the §4.6.1 preStop checkpoint-drain hook with a
+// timeout below the grace period (so the kubelet does not cut the drain
+// short).
+func TestBuildAddsPreStopDrainHook_spec_4_6_1(t *testing.T) {
+	cases := []struct {
+		model     string
+		container string
+	}{
+		{"", "adapter"},
+		{"embedded", "runtime"},
+	}
+	for _, tc := range cases {
+		in := inputs()
+		in.DeploymentModel = tc.model
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(%q): %v", tc.model, err)
+		}
+		c := container(t, pod, tc.container)
+		if c.Lifecycle == nil || c.Lifecycle.PreStop == nil || c.Lifecycle.PreStop.Exec == nil {
+			t.Fatalf("model %q: %s container has no preStop exec hook", tc.model, tc.container)
+		}
+		cmd := c.Lifecycle.PreStop.Exec.Command
+		if len(cmd) < 2 || cmd[0] != "lenny-adapter" || cmd[1] != "prestop" {
+			t.Fatalf("model %q: preStop command = %v, want lenny-adapter prestop", tc.model, cmd)
+		}
+		var sawTimeout bool
+		for _, arg := range cmd {
+			if strings.HasPrefix(arg, "--timeout=") {
+				sawTimeout = true
+				// 120s grace - 10s margin = 110s.
+				if arg != "--timeout=110s" {
+					t.Errorf("model %q: preStop timeout arg = %q, want --timeout=110s", tc.model, arg)
+				}
+			}
+		}
+		if !sawTimeout {
+			t.Errorf("model %q: preStop command %v carries no --timeout", tc.model, cmd)
+		}
 	}
 }
