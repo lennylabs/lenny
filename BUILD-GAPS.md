@@ -1277,7 +1277,7 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 
 ### Findings
 
-### - [ ] F-4.6.1 — PoolScalingController implemented but not wired into the controller binary [High] — OPEN
+### - [x] F-4.6.1 — PoolScalingController implemented but not wired into the controller binary [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.1.6, F-5.2.11 — All three describe the implemented PoolScalingController not being wired into the production controller binary.
 
@@ -1285,6 +1285,7 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 - **Evidence:** `cmd/lenny-controller/main.go:81-194` constructs the manager, wires `warmpool.Reconciler`, the `sandbox.Reconciler`, and the `cidrdrift.Detector` only. No reference to `pkg/controller/poolscaling` anywhere under `cmd/`; `grep` of `cmd/` returns no `poolscaling` import outside the unrelated `cmd/lenny-test/tiers.go:142` documentation row. The `LeaderElectionID` set to `lenny-warm-pool-controller` (line 120) is the only lease; no second lease for `lenny-pool-scaling-controller`. The Helm chart's `controller-rbac.yaml` has no PSC ServiceAccount; `grep -rn "lenny-pool-scaling-controller\b" charts/` returns no result.
 - **Gap:** The PoolScalingController's `Reconciler`, `Runnable`, admission-retry tracker, circuit-breaker evaluator, and variant-roles resolver are fully implemented in `pkg/controller/poolscaling/` and have unit tests, but the production binary never starts the PSC. Consequently `SandboxTemplate.spec.*` and `SandboxWarmPool.spec.{minWarm,maxWarm,scalePolicy,sdkWarmDisabled}` and the `status.sdkWarmCircuitBreaker.*` carve-out are not actually reconciled from Postgres — pools created via the admin API exist only as Postgres rows, with no Kubernetes-side derived state, so the WarmPoolController has nothing to reconcile against. The §4.6.2 leader-election lease (`lenny-pool-scaling-controller`) is never created. The §4.6.3 `lenny-pool-config-validator`'s rule-set-2 authorization "PoolScalingController SA" never appears in any request because there is no such SA.
 - **Suggested resolution:** Wire a second `poolscaling.Runnable` into `cmd/lenny-controller/main.go` (or a dedicated `cmd/lenny-pool-scaling-controller/main.go` with its own deployment), constructing the `PoolConfigSource` against Postgres, the `DemandSource` against Prometheus, and the `DemotionRateSource` against the in-memory rolling window. Add a separate ctrl-runtime Manager (or use a second `manager.LeaderElectionRunnable` with `LeaderElectionID: lenny-pool-scaling-controller`). Create the PSC ServiceAccount in `charts/lenny/templates/controller-rbac.yaml` with the §4.6.3 RBAC grants (`create`/`update`/`delete` on `SandboxTemplate` and `SandboxWarmPool`, `get`/`patch` on the `status` subresource of `SandboxWarmPool` for the carve-out, `get`/`create`/`update` on `Leases` in `lenny-system`). Add the PSC Deployment to the Helm chart.
+- **Resolution:** Added a Postgres-backed `poolscaling.PoolStoreSource` mapping each active §5.2 pool row into a §4.6.2 `PoolConfig` (full SandboxTemplate spec; bootstrap `minWarm`/`maxWarm` = `warmCount`), a dedicated `cmd/lenny-pool-scaling-controller` binary running `poolscaling.Runnable` on its own ctrl-runtime Manager with `LeaderElectionID: lenny-pool-scaling-controller`, and the Helm `lenny-pool-scaling-controller` ServiceAccount + ClusterRole (§4.6.3 grants on the CRD pair and the `sandboxwarmpools/status` carve-out) + leader-election Role + Deployment (renders only when `postgres.dsn` is set; runs under the PSC identity so its derived-spec writes pass the rule-set-2 authz check). v1 runs every pool in §4.6.2 bootstrap mode (no DemandSource). Commit 627d3cc6.
 
 ### - [x] F-4.6.2 — `lenny-pool-config-validator` does not enforce rule-set-2 userInfo authorization [High] — CLOSED
 
@@ -3476,7 +3477,7 @@ Implementation: `pkg/gateway/admin/pools.go:PoolPayload` (lines 18–42) carries
 
 Consequence: operators must inspect Kubernetes CR status directly rather than the admin API. The spec's "operator visibility" requirement is unmet.
 
-### - [ ] F-5.2.11 — PoolScalingController is implemented but not wired in the production controller binary [High] — OPEN
+### - [x] F-5.2.11 — PoolScalingController is implemented but not wired in the production controller binary [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.1.6, F-4.6.1 — All three describe the implemented PoolScalingController not being wired into the production controller binary.
 
@@ -3489,6 +3490,8 @@ Implementation:
 - Consequence: in a deployed cluster, no controller writes the SandboxTemplate spec — pools must be created out-of-band, or by the `bootstrap-job` (`charts/lenny/templates/bootstrap-job.yaml`) at install time. The dynamic mode-adjusted warm-count formula never runs.
 
 This is High because the PoolScalingController is the spec's authoritative writer for the §5.2 pool model; without wiring, every §5.2 behavior that depends on a SandboxTemplate matching the poolstore Pool definition fails closed (and tenant-admin admin pool edits have no Kubernetes-side effect).
+
+- **Resolution:** Closed by F-4.6.1 (commit 627d3cc6). `poolscaling.PoolStoreSource` is the production `PoolConfigSource` adapting the poolstore `Pool` struct to `PoolConfig`, and the `lenny-pool-scaling-controller` binary runs `poolscaling.Runnable`, so the SandboxTemplate spec is now reconciled from the Postgres pool definitions.
 
 ### - [ ] F-5.2.12 — Slot-failure retry policy is not implemented [Medium] — OPEN
 
@@ -25637,7 +25640,7 @@ chart-rendered Job template or `lenny-ops`-owned Job factory exists
 yet. The `lenny-backup` image is built (`cmd/lenny-backup` exists) but
 nothing wires it into the cluster.
 
-### - [ ] F-17.1.6 — 06 — `PoolScalingController` is not deployed as a separate workload [High] — OPEN
+### - [x] F-17.1.6 — 06 — `PoolScalingController` is not deployed as a separate workload [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.6.1, F-5.2.11 — All three describe the implemented PoolScalingController not being wired into the production controller binary.
 
@@ -25666,6 +25669,8 @@ the SandboxWarmPool CRD (`charts/lenny/crds/lenny.dev_sandboxwarmpools.yaml`
 lines 40, 64, 139, 147, 164, 242, 250, 255) have no running owner. The
 CRD field-ownership boundary §4.6.3 documents is unenforced because the
 controller is absent.
+
+- **Resolution:** Closed by F-4.6.1 (commit 627d3cc6). The PSC now ships as its own `lenny-pool-scaling-controller` Deployment (2 replicas, dedicated leader-election lease, podAntiAffinity preferring scheduling away from the `lenny-controller` WPC) with a ServiceAccount and RBAC backing it; `charts/lenny/tests/pool-scaling-controller_test.yaml` locks the workload identity and CRD grants.
 
 ### - [ ] F-17.1.7 — 07 — Gateway preStop hook and rolling-update / topology-spread blocks are not rendered [Medium] — OPEN
 
