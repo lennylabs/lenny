@@ -24,6 +24,9 @@ type CredentialPoolPayload struct {
 	LeaseTTLSeconds            int                      `json:"leaseTTLSeconds,omitempty"`
 	RenewBeforeBufferSeconds   int                      `json:"renewBeforeBufferSeconds,omitempty"`
 	HostPatterns               []string                 `json:"hostPatterns,omitempty"`
+	DeliveryMode               string                   `json:"deliveryMode,omitempty"`
+	ProxyDialect               string                   `json:"proxyDialect,omitempty"`
+	ProxyEndpoint              string                   `json:"proxyEndpoint,omitempty"`
 	CacheScope                 string                   `json:"cacheScope,omitempty"`
 	CreatedAt                  string                   `json:"createdAt,omitempty"`
 	UpdatedAt                  string                   `json:"updatedAt,omitempty"`
@@ -102,6 +105,23 @@ func (r *Router) validateCacheScope(w http.ResponseWriter, req *http.Request, te
 	return true
 }
 
+// writeProxyEndpointError writes the §4.9 422 INVALID_POOL_PROXY_ENDPOINT
+// response when err is the store's proxy-endpoint scheme rejection, and
+// reports whether it handled the error. The §4.9 proxy-mode guarantee
+// (the real API key never leaves the gateway) requires the lease token
+// to travel encrypted, so a plaintext `http://` endpoint is rejected.
+//
+// spec: §4.9 line 1513 — the controller rejects an http:// proxyEndpoint
+// (InvalidProxyEndpointScheme).
+func writeProxyEndpointError(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, credentialpoolstore.ErrInvalidProxyEndpointScheme) {
+		return false
+	}
+	writeError(w, http.StatusUnprocessableEntity, "INVALID_POOL_PROXY_ENDPOINT",
+		"proxyEndpoint must use the https:// scheme", map[string]any{"field": "proxyEndpoint"})
+	return true
+}
+
 // fromCredentialPool maps a stored pool to the wire payload.
 func fromCredentialPool(p credentialpoolstore.CredentialPool) CredentialPoolPayload {
 	out := CredentialPoolPayload{
@@ -114,6 +134,9 @@ func fromCredentialPool(p credentialpoolstore.CredentialPool) CredentialPoolPayl
 		LeaseTTLSeconds:            p.LeaseTTLSeconds,
 		RenewBeforeBufferSeconds:   p.RenewBeforeBufferSeconds,
 		HostPatterns:               p.HostPatterns,
+		DeliveryMode:               p.DeliveryMode,
+		ProxyDialect:               p.ProxyDialect,
+		ProxyEndpoint:              p.ProxyEndpoint,
 		CacheScope:                 p.CacheScope,
 		CreatedAt:                  rfc3339Nano(p.CreatedAt),
 		UpdatedAt:                  rfc3339Nano(p.UpdatedAt),
@@ -186,6 +209,9 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 		LeaseTTLSeconds:            body.LeaseTTLSeconds,
 		RenewBeforeBufferSeconds:   body.RenewBeforeBufferSeconds,
 		HostPatterns:               body.HostPatterns,
+		DeliveryMode:               body.DeliveryMode,
+		ProxyDialect:               body.ProxyDialect,
+		ProxyEndpoint:              body.ProxyEndpoint,
 		CacheScope:                 body.CacheScope,
 		CreatedAt:                  r.clock(),
 	}
@@ -194,6 +220,9 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 		if errors.Is(err, credentialpoolstore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
 				"credential pool with this name already exists in tenant", nil)
+			return
+		}
+		if writeProxyEndpointError(w, err) {
 			return
 		}
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
@@ -284,12 +313,18 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 		p.LeaseTTLSeconds = body.LeaseTTLSeconds
 		p.RenewBeforeBufferSeconds = body.RenewBeforeBufferSeconds
 		p.HostPatterns = body.HostPatterns
+		p.DeliveryMode = body.DeliveryMode
+		p.ProxyDialect = body.ProxyDialect
+		p.ProxyEndpoint = body.ProxyEndpoint
 		p.CacheScope = body.CacheScope
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, credentialpoolstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
+			return
+		}
+		if writeProxyEndpointError(w, err) {
 			return
 		}
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)

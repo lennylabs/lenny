@@ -118,6 +118,55 @@ func TestCreateCredentialPoolRejectsInvalidCacheScope(t *testing.T) {
 	}
 }
 
+// TestCreateCredentialPoolRejectsHTTPProxyEndpoint covers the §4.9 line
+// 1513 rule: an http:// proxyEndpoint is rejected with 422
+// INVALID_POOL_PROXY_ENDPOINT so a lease token is never sent in
+// plaintext on the cluster network.
+func TestCreateCredentialPoolRejectsHTTPProxyEndpoint(t *testing.T) {
+	router, _ := newCredentialPoolAdmin(t)
+	body := validCredentialPool("acme", "p-proxy")
+	body.DeliveryMode = "proxy"
+	body.ProxyDialect = "anthropic"
+	body.ProxyEndpoint = "http://gateway-internal:8080/llm-proxy"
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools", body, withAdminPrincipal)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422; body %s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Code != "INVALID_POOL_PROXY_ENDPOINT" {
+		t.Errorf("error code = %q, want INVALID_POOL_PROXY_ENDPOINT", env.Error.Code)
+	}
+}
+
+// TestCreateCredentialPoolAcceptsHTTPSProxyEndpoint confirms an https://
+// proxy endpoint round-trips through the admin payload.
+func TestCreateCredentialPoolAcceptsHTTPSProxyEndpoint(t *testing.T) {
+	router, store := newCredentialPoolAdmin(t)
+	body := validCredentialPool("acme", "p-proxy-ok")
+	body.DeliveryMode = "proxy"
+	body.ProxyDialect = "openai"
+	body.ProxyEndpoint = "https://gateway-internal:8443/llm-proxy"
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools", body, withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status %d, want 201; body %s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "acme", "p-proxy-ok")
+	if err != nil {
+		t.Fatalf("store missing pool: %v", err)
+	}
+	if row.DeliveryMode != "proxy" || row.ProxyDialect != "openai" ||
+		row.ProxyEndpoint != "https://gateway-internal:8443/llm-proxy" {
+		t.Errorf("proxy fields not persisted: %+v", row)
+	}
+}
+
 func TestCreateCredentialPool(t *testing.T) {
 	router, store := newCredentialPoolAdmin(t)
 	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools",

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -83,6 +84,28 @@ type CredentialPool struct {
 	// otherwise.
 	HostPatterns []string
 
+	// DeliveryMode is the §4.9 credential delivery mode for the pool
+	// (`proxy` or `direct`). Empty selects the deployment default
+	// (proxy for multi-tenant, direct for single-tenant), resolved by
+	// the leasing path. The closed value set is validated in Validate.
+	DeliveryMode string
+
+	// ProxyDialect is the §4.9 wire dialect a proxy-mode pool's lease
+	// exposes (`openai` or `anthropic`). It must match a dialect the
+	// bound Runtime declares in credentialCapabilities.proxyDialect
+	// (§5.1); that cross-runtime check is enforced where a runtime and
+	// pool join. Empty is permitted for a direct-mode pool. The closed
+	// value set is validated in Validate.
+	ProxyDialect string
+
+	// ProxyEndpoint is the §4.9 HTTPS endpoint of the LLM reverse proxy
+	// a proxy-mode pool's lease points the runtime SDK at. It must use
+	// the `https://` scheme; an `http://` endpoint is rejected with
+	// ErrInvalidProxyEndpointScheme so a lease token is never sent in
+	// plaintext on the cluster network. Empty inherits the gateway's
+	// configured proxy endpoint.
+	ProxyEndpoint string
+
 	// CacheScope is the §4.9 semantic-cache cacheScope for the pool
 	// (`per-user`, `per-session`, `tenant`). Empty selects the
 	// per-user default. `tenant` is the deployer opt-in to cross-user
@@ -122,6 +145,13 @@ var (
 
 	// ErrAlreadyExists — a pool with this (tenant, name) is registered.
 	ErrAlreadyExists = errors.New("credentialpoolstore: credential pool already exists")
+
+	// ErrInvalidProxyEndpointScheme — proxyEndpoint does not use the
+	// `https://` scheme. The §4.9 proxy-mode guarantee (the real API
+	// key never leaves the gateway) requires the lease token to travel
+	// encrypted, so a plaintext `http://` endpoint is rejected. spec:
+	// §4.9 line 1513 (InvalidProxyEndpointScheme).
+	ErrInvalidProxyEndpointScheme = errors.New("credentialpoolstore: proxyEndpoint must use the https:// scheme")
 )
 
 // namePattern follows the §4.9 pool-name shape — the same identifier
@@ -146,6 +176,48 @@ func ValidateName(name string) error {
 func validCacheScope(s string) bool {
 	switch s {
 	case "", "per-user", "per-session", "tenant":
+		return true
+	default:
+		return false
+	}
+}
+
+// validDeliveryMode reports whether m is an accepted §4.9 delivery
+// mode. Empty is accepted and selects the deployment default at
+// consumption time.
+func validDeliveryMode(m string) bool {
+	switch m {
+	case "", "proxy", "direct":
+		return true
+	default:
+		return false
+	}
+}
+
+// validateProxyEndpoint rejects a proxyEndpoint that does not use the
+// `https://` scheme. An empty endpoint is accepted (the pool inherits
+// the gateway's configured endpoint). An `http://` endpoint, or any
+// other non-HTTPS scheme, yields ErrInvalidProxyEndpointScheme.
+//
+// spec: §4.9 line 1513 — the proxy endpoint must use TLS so the lease
+// token is always encrypted in transit; the controller rejects an
+// `http://` endpoint (InvalidProxyEndpointScheme).
+func validateProxyEndpoint(endpoint string) error {
+	if endpoint == "" {
+		return nil
+	}
+	if !strings.HasPrefix(strings.ToLower(endpoint), "https://") {
+		return ErrInvalidProxyEndpointScheme
+	}
+	return nil
+}
+
+// validProxyDialect reports whether d is an accepted §4.9 proxy
+// dialect. Empty is accepted (a direct-mode pool declares no dialect).
+// The two launch dialects are `openai` and `anthropic` (spec line 1481).
+func validProxyDialect(d string) bool {
+	switch d {
+	case "", "openai", "anthropic":
 		return true
 	default:
 		return false
@@ -179,6 +251,15 @@ func Validate(p CredentialPool) error {
 	}
 	if !validCacheScope(p.CacheScope) {
 		return errors.New("credentialpoolstore: cacheScope must be per-user, per-session, or tenant")
+	}
+	if !validDeliveryMode(p.DeliveryMode) {
+		return errors.New("credentialpoolstore: deliveryMode must be proxy or direct")
+	}
+	if !validProxyDialect(p.ProxyDialect) {
+		return errors.New("credentialpoolstore: proxyDialect must be openai or anthropic")
+	}
+	if err := validateProxyEndpoint(p.ProxyEndpoint); err != nil {
+		return err
 	}
 	seen := map[string]bool{}
 	for _, c := range p.Credentials {

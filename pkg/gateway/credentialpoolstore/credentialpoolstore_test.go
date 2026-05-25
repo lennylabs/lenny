@@ -46,6 +46,83 @@ func TestValidateCacheScope(t *testing.T) {
 	}
 }
 
+// TestValidateProxyFields covers the §4.9 proxy-mode pool fields:
+// deliveryMode and proxyDialect are closed enums (empty accepted), and
+// proxyEndpoint must use the https:// scheme.
+//
+// spec: §4.9 lines 1481 (dialects), 1503-1511 (pool example), 1513
+// (InvalidProxyEndpointScheme).
+func TestValidateProxyFields(t *testing.T) {
+	for _, m := range []string{"", "proxy", "direct"} {
+		p := samplePool("acme", "pool-dm")
+		p.DeliveryMode = m
+		if err := credentialpoolstore.Validate(p); err != nil {
+			t.Errorf("Validate deliveryMode %q: %v, want nil", m, err)
+		}
+	}
+	for _, d := range []string{"", "openai", "anthropic"} {
+		p := samplePool("acme", "pool-pd")
+		p.ProxyDialect = d
+		if err := credentialpoolstore.Validate(p); err != nil {
+			t.Errorf("Validate proxyDialect %q: %v, want nil", d, err)
+		}
+	}
+	bad := samplePool("acme", "pool-bad-dm")
+	bad.DeliveryMode = "passthrough"
+	if err := credentialpoolstore.Validate(bad); err == nil {
+		t.Error("Validate accepted an out-of-enum deliveryMode")
+	}
+	badDialect := samplePool("acme", "pool-bad-pd")
+	badDialect.ProxyDialect = "grpc"
+	if err := credentialpoolstore.Validate(badDialect); err == nil {
+		t.Error("Validate accepted an out-of-enum proxyDialect")
+	}
+}
+
+// TestValidateProxyEndpointScheme covers the §4.9 line 1513 rule: a
+// proxyEndpoint must use https://; http:// and other schemes are
+// rejected with ErrInvalidProxyEndpointScheme. Empty inherits the
+// gateway default.
+func TestValidateProxyEndpointScheme(t *testing.T) {
+	for _, ep := range []string{"", "https://gateway-internal:8443/llm-proxy", "HTTPS://gw/llm"} {
+		p := samplePool("acme", "pool-ep")
+		p.ProxyEndpoint = ep
+		if err := credentialpoolstore.Validate(p); err != nil {
+			t.Errorf("Validate proxyEndpoint %q: %v, want nil", ep, err)
+		}
+	}
+	for _, ep := range []string{"http://gateway-internal:8080/llm-proxy", "ws://gw", "gateway:8443"} {
+		p := samplePool("acme", "pool-ep-bad")
+		p.ProxyEndpoint = ep
+		err := credentialpoolstore.Validate(p)
+		if !errors.Is(err, credentialpoolstore.ErrInvalidProxyEndpointScheme) {
+			t.Errorf("Validate proxyEndpoint %q = %v, want ErrInvalidProxyEndpointScheme", ep, err)
+		}
+	}
+}
+
+// TestProxyFieldsRoundTrip confirms the new proxy fields survive a
+// Create/Get cycle on the in-memory store.
+func TestProxyFieldsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	store := credentialpoolstore.NewMemory()
+	p := samplePool("acme", "claude-direct-prod")
+	p.DeliveryMode = "proxy"
+	p.ProxyDialect = "anthropic"
+	p.ProxyEndpoint = "https://gateway-internal:8443/llm-proxy"
+	if err := store.Create(ctx, p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, "acme", "claude-direct-prod")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.DeliveryMode != "proxy" || got.ProxyDialect != "anthropic" ||
+		got.ProxyEndpoint != "https://gateway-internal:8443/llm-proxy" {
+		t.Errorf("proxy fields not round-tripped: %+v", got)
+	}
+}
+
 func TestCacheScopeRoundTrips(t *testing.T) {
 	ctx := context.Background()
 	store := credentialpoolstore.NewMemory()
