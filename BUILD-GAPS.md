@@ -3461,13 +3461,15 @@ Implementation:
 
 Consequence: a deployer can configure `maxConcurrent: 8` with a default 30s `terminationGracePeriodSeconds` and the cluster will SIGKILL the pod mid-checkpoint, losing in-flight slot state. The CRD field is dead.
 
-### - [ ] F-5.2.6 — `CAP_NET_RAW` drop is not enforced on concurrent-workspace pods [High] — OPEN
+### - [x] F-5.2.6 — `CAP_NET_RAW` drop is not enforced on concurrent-workspace pods [High] — CLOSED
 
 Spec §5.2 line 496: "To mitigate raw socket sniffing, the agent container's `securityContext` MUST drop `CAP_NET_RAW` (the `SandboxWarmPool` CRD validation webhook rejects concurrent-workspace pool definitions where the pod template grants `CAP_NET_RAW`)."
 
 Implementation: greps for `CAP_NET_RAW`, `NET_RAW`, `NetRaw` across `pkg/` return zero matches. The pool-config validator (`pkg/admission/pool_config_validator/validator.go`) does not inspect any pod-template fields (`SandboxTemplate.spec` has no `podTemplate` carrier in the implemented CRD, so the rule cannot be enforced today). `pkg/admission/webhook/pod_security.go` enforces other capability drops but not `CAP_NET_RAW` against concurrent-workspace pools specifically.
 
 Consequence: a concurrent-workspace deployer can grant `CAP_NET_RAW` and one slot can sniff sibling slots' network traffic. The spec-required validation does not fire.
+
+- **Resolution:** Closed by `e2f94b89` (re-verified false alarm; protection holds by construction at two layers). The agent container's securityContext already drops ALL capabilities (`pkg/controller/sandbox/podspec/podspec.go` `containerSecurityContext`), which subsumes `CAP_NET_RAW`, and the fail-closed `lenny-pod-security` ValidatingAdmissionWebhook rejects any agent pod whose container declares a non-empty `capabilities.add` or fails to drop ALL (`pkg/podsecurity` lines 161-166). Together these mean no agent pod — session, task, or concurrent-workspace — can hold `CAP_NET_RAW`; this is strictly stronger than the spec's NET_RAW-specific clause. The SandboxTemplate CRD carries no pod-template capability surface, so the parenthetical pool-config webhook clause has no field to validate. Added spec-named regression tests at both layers (`TestBuildDropsNetRawOnEveryContainer_spec_5_2_496`, `TestValidateRejectsNetRawAdd_spec_5_2_496` / `TestValidateAcceptsNetRawDropped_spec_5_2_496`) so the §5.2 line 496 invariant is greppable and protected against a future narrowing of the drop list.
 
 ### - [ ] F-5.2.7 — T4-tier cross-tenant reuse prohibition is documented but not enforced [High] — OPEN
 
@@ -3610,7 +3612,7 @@ The mismatch creates two interpretation paths: the CRD lives at the Kubernetes l
 
 Consequence: a deployer who creates a pool via `POST /v1/admin/pools` with `executionMode: task` cannot supply the policy block. They must register it on the runtime via `POST /v1/admin/runtimes` and rely on inheritance the implementation does not document.
 
-### - [ ] F-5.2.21 — Topology spread constraints are declared but not propagated [Medium] — OPEN
+### - [x] F-5.2.21 — Topology spread constraints are declared but not propagated [Medium] — CLOSED
 
 Spec §5.2 lines 631–636: PoolScalingController writes the soft zone/node defaults into `SandboxTemplate.spec.topologySpreadConstraints`; WarmPoolController copies them into `Sandbox.spec`; the WPC's sandbox reconciler stamps them on the pod template.
 
@@ -3621,6 +3623,8 @@ Implementation:
 - Greps for `topology.kubernetes.io/zone`, `topologyKey`, `TopologySpread` in `pkg/controller/` find no matches.
 
 Consequence: agent pods do not get zone/node anti-affinity by default. A node or zone outage takes out a whole warm pool tier.
+
+- **Resolution:** Closed by `e2f94b89`. Implemented the §5.2 lines 631-636 two-step propagation. The PoolScalingController's `syncTemplate` stamps the soft zone/node spread defaults (`maxSkew: 1`, `topology.kubernetes.io/zone` + `kubernetes.io/hostname`, `ScheduleAnyway`, selector scoped to `lenny.dev/pool`) into `SandboxTemplate.spec.topologySpreadConstraints` when a pool definition carries none, preserving a deployer override verbatim. Added `TopologySpreadConstraints` to the Sandbox CRD spec (type + deepcopy + OpenAPI in both the chart and embedded copies); the WarmPoolController's `createSandbox` copies the template's constraints onto `Sandbox.spec`, and the Sandbox-to-Pod reconciler threads them through `podspec.Inputs` so `basePod` stamps them onto `pod.spec.topologySpreadConstraints`.
 
 ### - [x] F-5.2.22 — Session-creation response `sessionIsolationLevel` does not reflect pool's execution mode or scrub policy [Medium] — CLOSED
 
