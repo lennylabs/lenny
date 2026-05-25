@@ -2752,7 +2752,7 @@ Confirmed sites that should emit but don't:
 
 ---
 
-### - [ ] F-4.9.2 — Emergency revocation admin endpoints not implemented [High] — OPEN
+### - [x] F-4.9.2 — Emergency revocation admin endpoints not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-11.8.1, F-13.3.7 — Three findings describe the missing emergency credential-revocation endpoints; F-24.5.1 and F-24.5.2 cover the broader credential-pool CLI/CRUD admin surface.
 
@@ -2767,6 +2767,8 @@ Confirmed sites that should emit but don't:
 **Evidence:** `pkg/gateway/admin/credential_pools.go` exposes only `POST/GET/PUT/DELETE /v1/admin/credential-pools` at the pool level (lines 95, 153, 174, 196, 240). No per-credential or revoke endpoints. `grep -r "/v1/admin/credential-pools/.*/revoke" pkg/` returns no matches. The credential-deny-list infrastructure exists (`pkg/gateway/denylist`, `pkg/gateway/denylist/propagator`, `pkg/gateway/credrenewal/propagator`), but the admin route that drives a revocation onto it is missing.
 
 **Effect:** An operator with a compromised key has no admin path to revoke it; they can `DELETE` the whole pool (disrupting every session) or modify the underlying Kubernetes Secret (the in-flight leases continue to use the cached secret).
+
+**Resolution (13fc529e):** Added the three named §4.9 endpoints under the `manage_credential_pools` gate: single-credential `POST .../credentials/{credId}/revoke`, pool-wide `POST .../revoke`, and `POST .../credentials/{credId}/re-enable`. Per-credential revocation state (`status`, `revokedAt`, `revokedBy`, `revocationReason`) is modelled on `credentialpoolstore.Credential` (JSONB-backed, no migration) and surfaced read-only on the GET payload; a pool PUT preserves revocation by credential id so editing pool config never silently re-enables. Revoke marks the store, then an injectable `PoolCredentialRevoker` (wired in the gateway over the credential-lease revocation propagator + lease store, mirroring the §11.4 `userLeaseRevoker`) adds the source-aware credential key to the deny list (propagated across replicas) and drops this replica's matching leases via the new `credleasestore.LeasesByCredential`. The handler emits the §4.9.2 `credential.revoked` / `credential.re_enabled` events with their exact field sets and returns the spec summary (`revokedCredential`, `leasesTerminated`, `propagatedAt`). Direct-mode `RotateCredentials` fan-out (step 5) is deliberately out of scope: a replacement lease requires the unbuilt fallback chain (F-4.9.4/F-4.9.9); the deny-list path fully covers proxy mode (the recommended default). The implicit per-credential add/update/delete CRUD and the Token-Service RBAC live-probe remain with F-4.9.3 and the §24.5 CLI findings (F-24.5.1/F-24.5.2).
 
 ---
 
@@ -2825,7 +2827,7 @@ Confirmed sites that should emit but don't:
 
 ---
 
-### - [ ] F-4.9.7 — Startup deny-list rebuild query not implemented [Medium] — OPEN
+### - [x] F-4.9.7 — Startup deny-list rebuild query not implemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.3.8 — Both report the §4.9 startup deny-list rebuild union query is not implemented (only doc comments reference it); F-13.3.8 additionally folds in the LISTEN/NOTIFY fallback but shares the core gap.
 
@@ -2834,6 +2836,8 @@ Confirmed sites that should emit but don't:
 **Spec:** spec/04_system-components.md lines 1668-1673 — UNION across `CredentialPoolStore` (revoked pool credentials + active-or-recent lease) and `TokenStore` (revoked user credentials + active lease).
 
 **Evidence:** `pkg/gateway/denylist/denylist.go` and `pkg/gateway/denylist/propagator/propagator.go` contain comments referring to the §4.9 startup rebuild ("the §4.9 startup deny-list rebuild reconciles a missed propagation," propagator.go:23,33), but no code reads the stores at gateway startup to populate the deny list. `cmd/lenny-gateway/main.go:1080` constructs `credDeny := denylist.New()` (empty) and never seeds it. Only the §13.3 issued-token rehydration loop runs (lines 1674-1697); there is no credential-deny-list analog.
+
+**Resolution (13fc529e):** Added `DenyList.Reset(keys)` (authoritative replace) and `credentialpoolstore.Store.RevokedCredentials` (cross-tenant scan via `pgtenant.InAllTenants`, JSONB-backed, skips soft-deleted pools). At gateway startup, `cmd/lenny-gateway/main.go` now reads `RevokedCredentials` and `credDeny.Reset`s the per-replica deny list to the revoked pool-credential set, so a replica started after a missed pub/sub revocation still denies the credential on the upstream path. The rebuild is startup-only (the deny list is empty there, so `Reset` seeds without clobbering); a periodic authoritative `Reset` is intentionally avoided because it would drop the entries the live §11.4 revocation path adds for pool credentials not yet reflected in the store query. The §4.9 union's user-credential term is vacuous today — no user-backed lease is minted at session creation (F-4.9.15) — so only the pool-credential side is seeded. The Postgres `LISTEN/NOTIFY` fallback (the live-window belt-and-suspenders to Redis pub/sub) and the named `TestUserCredentialRevocationDenyListProxy` integration test remain open under F-13.3.8.
 
 ---
 
@@ -3001,13 +3005,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.21 — Pool revocation `force-rotate all` and the `re-enable` admin path absent [Low] — OPEN
+### - [x] F-4.9.21 — Pool revocation `force-rotate all` and the `re-enable` admin path absent [Low] — CLOSED
 
 **Severity:** Low (the pool-wide `.../revoke` endpoint is mentioned in the spec at line 1656 and the `credential.re_enabled` audit event at line 1743 requires a `/re-enable` endpoint; both absent).
 
 **Spec:** spec/04_system-components.md lines 1653-1659 (pool-wide revoke), 1743 (`credential.re_enabled`), 1677 step 5 ("add a replacement credential to the pool via `PUT /v1/admin/credential-pools/{name}`").
 
 **Evidence:** Subsumed by F-4.9.2. No `/revoke` or `/re-enable` routes exist.
+
+**Resolution (13fc529e):** Closed by F-4.9.2. The pool-wide `POST /v1/admin/credential-pools/{name}/revoke` revokes every active credential in the pool (one `credential.revoked` event each) and the `POST .../credentials/{credId}/re-enable` path returns a revoked credential to active and emits `credential.re_enabled`.
 
 ---
 
@@ -15417,7 +15423,7 @@ trigger that is not defined in the alerting rules file.
 
 ### Findings
 
-### - [ ] F-11.8.1 — Pool-credential emergency-revocation endpoint absent (HIGH) [Medium] — OPEN
+### - [x] F-11.8.1 — Pool-credential emergency-revocation endpoint absent (HIGH) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.3.7, F-4.9.2 — Three findings describe the missing emergency credential-revocation endpoints; F-24.5.1 and F-24.5.2 cover the broader credential-pool CLI/CRUD admin surface.
 
@@ -15454,6 +15460,14 @@ trigger that is not defined in the alerting rules file.
   routes from §15.1:811-812 and the `revoke-credential` lenny-ctl
   subcommand from §24.5:91, or remove them from §15.1/§24.5 if they are
   intentionally out of scope for v1.
+- **Resolution (13fc529e):** Closed by F-4.9.2 — the single-credential
+  `revoke`, pool-wide `revoke`, and `re-enable` admin routes are now
+  registered in `pkg/gateway/admin/tenants.go`, wired through
+  `credentialpoolstore` and the deny-list propagator, and emit
+  `credential.revoked` / `credential.re_enabled`. The
+  `lenny_credential_revoked_with_active_leases` gauge emission stays with
+  F-4.9.12 (credential-metric emission) and the `lenny-ctl
+  revoke-credential` subcommand with the §24.5 CLI findings.
 
 ### - [ ] F-11.8.2 — `AuditChainGap` runbook trigger uses divergent alert name (MEDIUM) [Medium] — OPEN
 
@@ -19796,7 +19810,7 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ---
 
-### - [ ] F-13.3.7 — CFL-007 — Emergency credential revocation endpoint does not exist [High] — OPEN
+### - [x] F-13.3.7 — CFL-007 — Emergency credential revocation endpoint does not exist [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-11.8.1, F-4.9.2 — Three findings describe the missing emergency credential-revocation endpoints; F-24.5.1 and F-24.5.2 cover the broader credential-pool CLI/CRUD admin surface.
 
@@ -19810,6 +19824,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 **Impact.** An operator who detects a compromised credential (`key-2`'s leak) cannot revoke it through the spec-mandated API. The only available paths are (a) `lenny-ctl` removing the pool entirely, (b) rotating the underlying Kubernetes Secret (which has a 30-second informer lag and does not invalidate active leases), or (c) restarting the gateway. None of these is the "immediate, atomic, audited" revocation the spec promises. The `CredentialCompromised` alert mentioned in the §17.7 runbook (step 4) cannot clear on operator action because no operator action exists.
 
 **Severity rationale.** High because (a) the spec's "no window where the compromised key continues to reach the provider" guarantee is unenforceable, (b) the deny list infrastructure exists and is wired but is unreachable from the admin surface, and (c) this is the spec's first-line incident response for the credential-flow attack surface.
+
+**Resolution (13fc529e):** Closed by F-4.9.2. The admin handler routed at `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` (and the pool-wide `.../revoke`) marks the credential revoked, terminates this replica's active leases backed by it, drives `Revoke(CredentialKey{source: pool, ...})` onto the deny list propagated over Redis pub/sub, returns the `200 OK` lease-termination count, and emits `credential.revoked`. The proxy's existing source-aware deny-list check (CFL-009, F-13.3.9) then rejects any in-flight request with `CREDENTIAL_REVOKED`.
 
 ---
 
@@ -19828,6 +19844,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 **Impact.** A Redis outage or a missed pub/sub publish during a real revocation produces silent acceptance of the revoked credential on the replicas that missed the message. A replica restart immediately after a revocation produces silent acceptance on the restarted replica until the next live revoke. The fallback `LISTEN/NOTIFY` path the spec promises (Postgres being the authoritative source-of-truth when Redis is down) is absent.
 
 **Severity rationale.** Medium because (a) the deny list is correctly keyed (source-aware tagged union, CFL-009), (b) the at-most-once caveat is documented in the implementation, but (c) the spec promises stronger durability via `LISTEN/NOTIFY` + startup rebuild that is unimplemented, leaving the window CFL-007 already opens unbounded.
+
+**Partial progress (13fc529e):** The startup-rebuild half of this finding — the core gap shared with F-4.9.7 — is resolved: `cmd/lenny-gateway/main.go` now seeds `credDeny` from `credentialpoolstore.Store.RevokedCredentials` via `DenyList.Reset` at startup, so a restarted replica no longer silently accepts a credential revoked while it was down. **Remaining scope (stays OPEN):** the Postgres `LISTEN/NOTIFY` fallback for the live propagation window when Redis is unavailable, and the spec-named `TestUserCredentialRevocationDenyListProxy` integration test (which exercises a user-backed lease and so is blocked on user-backed lease minting at session creation, F-4.9.15).
 
 ---
 
