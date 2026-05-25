@@ -140,6 +140,76 @@ func TestCacheScopeRoundTrips(t *testing.T) {
 	}
 }
 
+// TestValidateCachePolicy covers the §4.9 CachePolicy structural
+// invariants (spec lines 1542-1556): a nil policy is valid (caching
+// off); strategy and backend are closed enums (empty accepted); ttl is
+// non-negative; similarityThreshold is in [0, 1].
+func TestValidateCachePolicy(t *testing.T) {
+	// A nil policy is the caching-off default and always valid.
+	if err := credentialpoolstore.Validate(samplePool("acme", "pool-nocache")); err != nil {
+		t.Fatalf("Validate nil cachePolicy: %v, want nil", err)
+	}
+	valid := []credentialpoolstore.CachePolicy{
+		{Enabled: true},
+		{Enabled: true, Strategy: "semantic", Backend: "redis", TTLSeconds: 300, SimilarityThreshold: 0.92},
+		{Enabled: false, Strategy: "semantic", Backend: "memory", SimilarityThreshold: 1},
+		{Enabled: true, SimilarityThreshold: 0},
+	}
+	for i, cp := range valid {
+		p := samplePool("acme", "pool-cp-ok")
+		c := cp
+		p.CachePolicy = &c
+		if err := credentialpoolstore.Validate(p); err != nil {
+			t.Errorf("valid cachePolicy[%d] %+v: %v, want nil", i, cp, err)
+		}
+	}
+	invalid := []credentialpoolstore.CachePolicy{
+		{Enabled: true, Strategy: "exact"},
+		{Enabled: true, Backend: "memcached"},
+		{Enabled: true, TTLSeconds: -1},
+		{Enabled: true, SimilarityThreshold: 1.5},
+		{Enabled: true, SimilarityThreshold: -0.1},
+	}
+	for i, cp := range invalid {
+		p := samplePool("acme", "pool-cp-bad")
+		c := cp
+		p.CachePolicy = &c
+		if err := credentialpoolstore.Validate(p); err == nil {
+			t.Errorf("Validate accepted invalid cachePolicy[%d] %+v", i, cp)
+		}
+	}
+}
+
+// TestCachePolicyRoundTrips confirms a CachePolicy survives a Create/Get
+// cycle and that a pool without one reads back nil (caching off).
+func TestCachePolicyRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	store := credentialpoolstore.NewMemory()
+	p := samplePool("acme", "pool-cp-rt")
+	p.CachePolicy = &credentialpoolstore.CachePolicy{
+		Enabled: true, Strategy: "semantic", Backend: "redis",
+		TTLSeconds: 120, SimilarityThreshold: 0.88,
+	}
+	if err := store.Create(ctx, p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, "acme", "pool-cp-rt")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CachePolicy == nil {
+		t.Fatalf("CachePolicy = nil, want round-tripped policy")
+	}
+	if *got.CachePolicy != *p.CachePolicy {
+		t.Errorf("CachePolicy = %+v, want %+v", *got.CachePolicy, *p.CachePolicy)
+	}
+
+	none, err := store.Get(ctx, "acme", "pool-cp-rt-absent")
+	if err == nil {
+		t.Fatalf("expected ErrNotFound for absent pool, got %+v", none)
+	}
+}
+
 func TestCreateAndGet(t *testing.T) {
 	ctx := context.Background()
 	store := credentialpoolstore.NewMemory()

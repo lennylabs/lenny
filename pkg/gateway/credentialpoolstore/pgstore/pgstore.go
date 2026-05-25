@@ -44,7 +44,7 @@ var _ credentialpoolstore.Store = (*Store)(nil)
 const selectList = `tenant_id, name, provider, credentials,
 	assignment_strategy, max_concurrent_sessions, cooldown_on_rate_limit_seconds,
 	lease_ttl_seconds, renew_before_buffer_seconds, host_patterns, cache_scope,
-	delivery_mode, proxy_dialect, proxy_endpoint,
+	delivery_mode, proxy_dialect, proxy_endpoint, cache_policy,
 	created_at, updated_at, deleted_at`
 
 // Create inserts a new credential-pool row after running the §4.9
@@ -70,18 +70,22 @@ func (s *Store) Create(ctx context.Context, p credentialpoolstore.CredentialPool
 	if err != nil {
 		return err
 	}
+	cachePolicy, err := cachePolicyJSON(p.CachePolicy)
+	if err != nil {
+		return err
+	}
 	err = pgtenant.InTx(ctx, s.pool, p.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO credential_pools (
 			tenant_id, name, provider, credentials,
 			assignment_strategy, max_concurrent_sessions, cooldown_on_rate_limit_seconds,
 			lease_ttl_seconds, renew_before_buffer_seconds, host_patterns, cache_scope,
-			delivery_mode, proxy_dialect, proxy_endpoint,
+			delivery_mode, proxy_dialect, proxy_endpoint, cache_policy,
 			created_at, updated_at, deleted_at
-		) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17)`,
+		) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15::jsonb, $16, $17, $18)`,
 			p.TenantID, p.Name, p.Provider, creds,
 			p.AssignmentStrategy, p.MaxConcurrentSessions, p.CooldownOnRateLimitSeconds,
 			p.LeaseTTLSeconds, p.RenewBeforeBufferSeconds, hosts, p.CacheScope,
-			p.DeliveryMode, p.ProxyDialect, p.ProxyEndpoint,
+			p.DeliveryMode, p.ProxyDialect, p.ProxyEndpoint, cachePolicy,
 			p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt))
 		return err
 	})
@@ -151,19 +155,24 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 		if err != nil {
 			return err
 		}
+		cachePolicy, err := cachePolicyJSON(p.CachePolicy)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `UPDATE credential_pools SET
 			provider = $3, credentials = $4::jsonb, assignment_strategy = $5,
 			max_concurrent_sessions = $6, cooldown_on_rate_limit_seconds = $7,
 			lease_ttl_seconds = $8, renew_before_buffer_seconds = $9,
 			host_patterns = $10::jsonb, cache_scope = $11,
 			delivery_mode = $14, proxy_dialect = $15, proxy_endpoint = $16,
+			cache_policy = $17::jsonb,
 			updated_at = $12, deleted_at = $13
 		WHERE tenant_id = $1 AND name = $2`,
 			tenantID, name, p.Provider, creds, p.AssignmentStrategy,
 			p.MaxConcurrentSessions, p.CooldownOnRateLimitSeconds,
 			p.LeaseTTLSeconds, p.RenewBeforeBufferSeconds, hosts, p.CacheScope,
 			p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
-			p.DeliveryMode, p.ProxyDialect, p.ProxyEndpoint); err != nil {
+			p.DeliveryMode, p.ProxyDialect, p.ProxyEndpoint, cachePolicy); err != nil {
 			return err
 		}
 		out = p
@@ -287,15 +296,15 @@ func (s *Store) RevokedCredentials(ctx context.Context) ([]credentialpoolstore.R
 // scanPool reads one row in selectList order into a CredentialPool.
 func scanPool(row pgx.Row) (credentialpoolstore.CredentialPool, error) {
 	var (
-		p                  credentialpoolstore.CredentialPool
-		credsRaw, hostsRaw []byte
-		deletedAt          *time.Time
+		p                               credentialpoolstore.CredentialPool
+		credsRaw, hostsRaw, cachePolRaw []byte
+		deletedAt                       *time.Time
 	)
 	if err := row.Scan(
 		&p.TenantID, &p.Name, &p.Provider, &credsRaw,
 		&p.AssignmentStrategy, &p.MaxConcurrentSessions, &p.CooldownOnRateLimitSeconds,
 		&p.LeaseTTLSeconds, &p.RenewBeforeBufferSeconds, &hostsRaw, &p.CacheScope,
-		&p.DeliveryMode, &p.ProxyDialect, &p.ProxyEndpoint,
+		&p.DeliveryMode, &p.ProxyDialect, &p.ProxyEndpoint, &cachePolRaw,
 		&p.CreatedAt, &p.UpdatedAt, &deletedAt,
 	); err != nil {
 		return credentialpoolstore.CredentialPool{}, err
@@ -309,6 +318,15 @@ func scanPool(row pgx.Row) (credentialpoolstore.CredentialPool, error) {
 		if err := json.Unmarshal(hostsRaw, &p.HostPatterns); err != nil {
 			return credentialpoolstore.CredentialPool{}, fmt.Errorf("credentialpoolstore: decode host patterns: %w", err)
 		}
+	}
+	// cache_policy is a nullable JSONB column: a NULL (the §4.9 caching-off
+	// default) scans as a zero-length slice and leaves CachePolicy nil.
+	if len(cachePolRaw) > 0 {
+		var cp credentialpoolstore.CachePolicy
+		if err := json.Unmarshal(cachePolRaw, &cp); err != nil {
+			return credentialpoolstore.CredentialPool{}, fmt.Errorf("credentialpoolstore: decode cache policy: %w", err)
+		}
+		p.CachePolicy = &cp
 	}
 	if deletedAt != nil {
 		p.DeletedAt = *deletedAt
@@ -341,4 +359,19 @@ func hostPatternsJSON(patterns []string) (string, error) {
 		return "", fmt.Errorf("credentialpoolstore: encode host patterns: %w", err)
 	}
 	return string(b), nil
+}
+
+// cachePolicyJSON marshals the §4.9 CachePolicy for the nullable
+// cache_policy jsonb column. A nil policy (the caching-off default)
+// marshals to a nil []byte, which pgx writes as SQL NULL so the scan
+// path reads it back as a nil CachePolicy.
+func cachePolicyJSON(c *credentialpoolstore.CachePolicy) ([]byte, error) {
+	if c == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("credentialpoolstore: encode cache policy: %w", err)
+	}
+	return b, nil
 }

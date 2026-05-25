@@ -160,6 +160,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/prestop"
+	"github.com/lennylabs/lenny/pkg/gateway/proxycache"
 	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
 	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
@@ -170,6 +171,7 @@ import (
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -308,6 +310,8 @@ func main() {
 		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — currently the ExtendLease lease-extension RPC — on this address. Empty disables the GatewayControl listener.")
 	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
 		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
+	llmSemanticCache := flag.Bool("llm-semantic-cache", os.Getenv("LENNY_LLM_SEMANTIC_CACHE") == "1",
+		"§4.9 enable the in-process semantic cache on the LLM proxy path. Caching stays disabled by default and is opt-in per pool via the pool's cachePolicy; this flag provisions the in-memory backend the per-pool policy draws on. The Redis-backed backend is wired separately.")
 	anthropicVersion := flag.String("anthropic-version", os.Getenv("LENNY_ANTHROPIC_VERSION"),
 		"default anthropic-version header the §4.9 LLM proxy injects when a request omits it. Empty rejects a request that omits the header.")
 	// §4.9 lines 1525-1526: the proxy dispatches each lease to the
@@ -2193,7 +2197,18 @@ func main() {
 		azureEndpoint:    *azureEndpoint,
 		azureAPIVersion:  *azureAPIVersion,
 	})
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain)
+	// §4.9 lines 1542-1556: the semantic cache is opt-in per pool. When
+	// --llm-semantic-cache is set the gateway provisions the in-process
+	// backend and the proxy consults it for any pool whose cachePolicy is
+	// enabled; left off, the proxy path is uncached regardless of pool
+	// policy. Per-user scope (the §4.9 default) keys on the session's
+	// owning user, resolved from the session store.
+	var llmCache llmproxy.ProxyCache
+	if *llmSemanticCache {
+		store := semanticcache.NewInMemory(nil, 0, 0, clockinject.Now)
+		llmCache = proxycache.New(credentialPools, store, sessionUserLookup{sessions})
+	}
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain, llmCache)
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control
@@ -2683,7 +2698,22 @@ type breakerRegistry interface {
 // the same instance the assignment wrote it to. denyList is the
 // per-replica credential deny list, owned by a propagator the caller
 // drives so revocations converge across replicas.
-func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain) *http.Server {
+// sessionUserLookup adapts the session store to
+// proxycache.SessionUserLookup so the §4.9 per-user semantic-cache scope
+// resolves a session's owning user. A store miss, or a session with no
+// recorded user, leaves the request uncached rather than keyed without a
+// user id.
+type sessionUserLookup struct{ sessions sessionstore.Store }
+
+func (l sessionUserLookup) UserID(ctx context.Context, tenantID, sessionID string) (string, bool) {
+	sess, err := l.sessions.Get(ctx, tenantID, sessionID)
+	if err != nil || sess.UserID == "" {
+		return "", false
+	}
+	return sess.UserID, true
+}
+
+func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache) *http.Server {
 	if addr == "" {
 		return nil
 	}
@@ -2695,6 +2725,7 @@ func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, lea
 		Credentials:  creds,
 		DenyList:     denyList,
 		Interceptors: chain,
+		Cache:        cache,
 	})
 	return &http.Server{
 		Addr:              addr,

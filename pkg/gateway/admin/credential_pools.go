@@ -33,9 +33,21 @@ type CredentialPoolPayload struct {
 	ProxyDialect               string                   `json:"proxyDialect,omitempty"`
 	ProxyEndpoint              string                   `json:"proxyEndpoint,omitempty"`
 	CacheScope                 string                   `json:"cacheScope,omitempty"`
+	CachePolicy                *CachePolicyPayload      `json:"cachePolicy,omitempty"`
 	CreatedAt                  string                   `json:"createdAt,omitempty"`
 	UpdatedAt                  string                   `json:"updatedAt,omitempty"`
 	DeletedAt                  string                   `json:"deletedAt,omitempty"`
+}
+
+// CachePolicyPayload is the §4.9 semantic-cache configuration on a pool
+// (spec lines 1542-1547). It is absent when the pool declares no
+// cachePolicy; §4.9 caching is disabled by default and opt-in per pool.
+type CachePolicyPayload struct {
+	Enabled             bool    `json:"enabled"`
+	Strategy            string  `json:"strategy,omitempty"`
+	TTLSeconds          int     `json:"ttl,omitempty"`
+	SimilarityThreshold float64 `json:"similarityThreshold,omitempty"`
+	Backend             string  `json:"backend,omitempty"`
 }
 
 // CredentialEntryPayload is one §4.9 credential in a pool. The
@@ -152,6 +164,7 @@ func fromCredentialPool(p credentialpoolstore.CredentialPool) CredentialPoolPayl
 		ProxyDialect:               p.ProxyDialect,
 		ProxyEndpoint:              p.ProxyEndpoint,
 		CacheScope:                 p.CacheScope,
+		CachePolicy:                fromCachePolicy(p.CachePolicy),
 		CreatedAt:                  rfc3339Nano(p.CreatedAt),
 		UpdatedAt:                  rfc3339Nano(p.UpdatedAt),
 		DeletedAt:                  rfc3339Nano(p.DeletedAt),
@@ -182,6 +195,36 @@ func toCredentials(in []CredentialEntryPayload) []credentialpoolstore.Credential
 		})
 	}
 	return out
+}
+
+// toCachePolicy maps the §4.9 wire cachePolicy to the store
+// representation. A nil payload maps to a nil policy (caching off).
+func toCachePolicy(in *CachePolicyPayload) *credentialpoolstore.CachePolicy {
+	if in == nil {
+		return nil
+	}
+	return &credentialpoolstore.CachePolicy{
+		Enabled:             in.Enabled,
+		Strategy:            in.Strategy,
+		TTLSeconds:          in.TTLSeconds,
+		SimilarityThreshold: in.SimilarityThreshold,
+		Backend:             in.Backend,
+	}
+}
+
+// fromCachePolicy maps a stored §4.9 cachePolicy to the wire payload. A
+// nil policy maps to an absent payload.
+func fromCachePolicy(in *credentialpoolstore.CachePolicy) *CachePolicyPayload {
+	if in == nil {
+		return nil
+	}
+	return &CachePolicyPayload{
+		Enabled:             in.Enabled,
+		Strategy:            in.Strategy,
+		TTLSeconds:          in.TTLSeconds,
+		SimilarityThreshold: in.SimilarityThreshold,
+		Backend:             in.Backend,
+	}
 }
 
 // WithCredentialPools wires the §15.1 credential-pool CRUD handlers
@@ -377,6 +420,7 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 		ProxyDialect:               body.ProxyDialect,
 		ProxyEndpoint:              body.ProxyEndpoint,
 		CacheScope:                 body.CacheScope,
+		CachePolicy:                toCachePolicy(body.CachePolicy),
 		CreatedAt:                  r.clock(),
 	}
 	pool.UpdatedAt = pool.CreatedAt
@@ -499,6 +543,7 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 		p.ProxyDialect = body.ProxyDialect
 		p.ProxyEndpoint = body.ProxyEndpoint
 		p.CacheScope = body.CacheScope
+		p.CachePolicy = toCachePolicy(body.CachePolicy)
 		return nil
 	})
 	if err != nil {

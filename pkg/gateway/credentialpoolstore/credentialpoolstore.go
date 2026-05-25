@@ -145,6 +145,13 @@ type CredentialPool struct {
 	// a tenant with a regulated complianceProfile.
 	CacheScope string
 
+	// CachePolicy is the §4.9 optional semantic-cache configuration for
+	// the pool (strategy, ttl, similarityThreshold, backend). It is nil
+	// when the pool declares no cachePolicy; §4.9 caching is disabled by
+	// default and opt-in per pool, so a nil policy (or one with Enabled
+	// false) leaves the LLM proxy path uncached. spec: §4.9 lines 1542-1556.
+	CachePolicy *CachePolicy
+
 	// CreatedAt / UpdatedAt / DeletedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -153,6 +160,83 @@ type CredentialPool struct {
 
 // IsActive reports whether the pool has not been soft-deleted.
 func (p CredentialPool) IsActive() bool { return p.DeletedAt.IsZero() }
+
+// CachePolicy is the §4.9 semantic-cache configuration on a pool. The
+// spec example (lines 1542-1547) carries strategy, ttl, similarityThreshold,
+// and backend; Enabled is the per-pool opt-in (§4.9 line 1549 — caching is
+// disabled by default and opt-in per pool). The zero value (every field
+// empty, Enabled false) is the disabled state.
+//
+// spec: spec/04_system-components.md lines 1542-1556.
+type CachePolicy struct {
+	// Enabled is the per-pool opt-in. A policy with Enabled false leaves
+	// the LLM proxy path uncached even when the other fields are set.
+	Enabled bool `json:"enabled"`
+
+	// Strategy is the §4.9 cache strategy. The launch strategy is
+	// `semantic`; empty selects it.
+	Strategy string `json:"strategy,omitempty"`
+
+	// TTLSeconds is the §4.9 cache entry TTL. Zero selects the
+	// semanticcache default (300s) at consumption time.
+	TTLSeconds int `json:"ttlSeconds,omitempty"`
+
+	// SimilarityThreshold is the §4.9 cosine-similarity hit threshold in
+	// [0, 1]. Zero selects the semanticcache default (0.92) at
+	// consumption time.
+	SimilarityThreshold float64 `json:"similarityThreshold,omitempty"`
+
+	// Backend is the §4.9 cache backend (`redis` or `memory`). Empty
+	// selects the deployment default (redis) at consumption time.
+	Backend string `json:"backend,omitempty"`
+}
+
+// validCacheStrategy reports whether s is an accepted §4.9 cache
+// strategy. Empty is accepted and selects `semantic` at consumption
+// time; `semantic` is the only launch strategy.
+func validCacheStrategy(s string) bool {
+	switch s {
+	case "", "semantic":
+		return true
+	default:
+		return false
+	}
+}
+
+// validCacheBackend reports whether b is an accepted §4.9 cache backend.
+// Empty is accepted and selects the deployment default. `redis` is the
+// §4.9 default implementation; `memory` is the in-process backend.
+func validCacheBackend(b string) bool {
+	switch b {
+	case "", "redis", "memory":
+		return true
+	default:
+		return false
+	}
+}
+
+// validateCachePolicy reports the §4.9 structural invariants of a pool's
+// CachePolicy: a recognized strategy and backend, a non-negative ttl,
+// and a similarityThreshold in [0, 1]. A nil policy is valid (caching is
+// off). spec: §4.9 lines 1542-1556.
+func validateCachePolicy(c *CachePolicy) error {
+	if c == nil {
+		return nil
+	}
+	if !validCacheStrategy(c.Strategy) {
+		return errors.New("credentialpoolstore: cachePolicy.strategy must be semantic")
+	}
+	if !validCacheBackend(c.Backend) {
+		return errors.New("credentialpoolstore: cachePolicy.backend must be redis or memory")
+	}
+	if c.TTLSeconds < 0 {
+		return errors.New("credentialpoolstore: cachePolicy.ttl must be >= 0")
+	}
+	if c.SimilarityThreshold < 0 || c.SimilarityThreshold > 1 {
+		return errors.New("credentialpoolstore: cachePolicy.similarityThreshold must be in [0, 1]")
+	}
+	return nil
+}
 
 // RevokedCredential identifies one revoked pool credential for the §4.9
 // startup deny-list rebuild. The §4.9 deny list keys a pool-backed
@@ -317,6 +401,9 @@ func Validate(p CredentialPool) error {
 		return errors.New("credentialpoolstore: proxyDialect must be openai or anthropic")
 	}
 	if err := validateProxyEndpoint(p.ProxyEndpoint); err != nil {
+		return err
+	}
+	if err := validateCachePolicy(p.CachePolicy); err != nil {
 		return err
 	}
 	seen := map[string]bool{}

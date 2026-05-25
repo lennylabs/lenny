@@ -2851,7 +2851,7 @@ Confirmed sites that should emit but don't:
 
 ---
 
-### - [ ] F-4.9.8 — Token Service gRPC `RotateCredentials` rejects user-backed leases as `Unimplemented` [Medium] — OPEN
+### - [ ] F-4.9.8 — Token Service gRPC `RotateCredentials` rejects user-backed leases as `Unimplemented` [Medium] — DEFERRED
 
 **Severity:** Medium (the §4.9.2 audit events `credential.rotated` and `credential.user_revoked` plus the spec's `PUT /v1/credentials/{credential_ref}` "active leases backed by this credential are immediately rotated via `RotateCredentials` RPC" contract cannot complete; user-credential rotation has no observable effect on running sessions).
 
@@ -2866,6 +2866,8 @@ if old.Source != credential.SourcePool {
 ```
 
 The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handleRevoke` paths update the store but never invoke any rotation propagation. The §4.9 deny list does carry user-backed entries via `userLeaseRevoker` (cmd/lenny-gateway/user_revocation.go:101-120), but that path is wired to admin `full_revoke` for user disable, not to per-credential rotate/revoke triggered by `POST /v1/credentials/{ref}/revoke` on a user-credential.
+
+**Deferred:** Blocked on the same v2 follow-on as F-4.9.15 (user-source lease delivery). v1 mints no `Source: user` leases — the session-creation `userCredChecker` is nil pending the §4.9 `materializedConfig` user-credential producer — so no user-backed lease can exist to rotate or revoke. The Token Service's `Unimplemented` rejection and the credentialserver's `active_leases_rotated: 0` / `active_leases_terminated: 0` are therefore correct for v1 (the propagation is a no-op over an empty set). Wiring user-lease rotation propagation now would build a path with no producer. Pick this up with F-4.9.15 once user-source leases are minted.
 
 ---
 
@@ -2932,13 +2934,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.14 — `CachePolicy` is not modelled on `CredentialPool` and the semantic cache is not wired into the LLM proxy path [Medium] — OPEN
+### - [x] F-4.9.14 — `CachePolicy` is not modelled on `CredentialPool` and the semantic cache is not wired into the LLM proxy path [Medium] — CLOSED
 
 **Severity:** Medium (capability unimplemented; semantic cache exists as a free-standing store with no producer/consumer in the request path).
 
 **Spec:** spec/04_system-components.md lines 1542-1556 (`CachePolicy` on `CredentialPool`).
 
 **Evidence:** `pkg/gateway/credentialpoolstore/credentialpoolstore.go:44-89` (CredentialPool struct) has no `CachePolicy` field. `pkg/gateway/admin/credential_pools.go` `CredentialPoolPayload` has no `cachePolicy` field. The LLM proxy handler (`pkg/gateway/llmproxy/handler.go:83-175`) does not consult `semanticcache.Store` before forwarding. The store has no producer (`grep -rn "semanticcache.Store\b\|semanticcache.NewMemory\|semanticcache.NewRedis" pkg/ cmd/ --include="*.go"` returns only the store's own files and its tests).
+
+**Resolution (this batch):** Modeled `credentialpoolstore.CachePolicy` (Enabled, Strategy, TTLSeconds, SimilarityThreshold, Backend) as a pointer field on `CredentialPool` with closed-enum/`[0,1]`-threshold validation, a nullable `cache_policy` JSONB column (migration 0078 + pgstore marshal/scan), the `cachePolicy` admin POST/PUT/GET payload, and the §24.1 bootstrap upsert. Wired the cache into the proxy via a new `llmproxy.ProxyCache` seam on `Handler`: the non-streaming path consults it after `PreLLMRequest` (a hit replays the cached body through `PostLLMResponse` with no upstream call and no usage recorded) and records the translated response on a miss; streaming bypasses it. New `pkg/gateway/proxycache.Adapter` resolves the lease's pool CachePolicy + CacheScope, keys the §12.4 (tenant, scope, model, provider) space, and resolves per-user scope via a session→user lookup (uncached when the user is unresolvable). `cmd/lenny-gateway` provisions the in-process `semanticcache.NewInMemory` producer behind `--llm-semantic-cache` (default off; opt-in per pool). The Redis backend remains a separate wiring.
 
 ---
 
@@ -3079,11 +3083,13 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.26 — Token Service `tokenservice/grpc.go` is at-source not Token-Service-owned (it lives in `cmd/lenny-token-service` but imports the gateway's `credassign.Service` directly) [Info] — OPEN
+### - [ ] F-4.9.26 — Token Service `tokenservice/grpc.go` is at-source not Token-Service-owned (it lives in `cmd/lenny-token-service` but imports the gateway's `credassign.Service` directly) [Info] — DEFERRED
 
 **Severity:** Info.
 
 **Evidence:** `pkg/tokenservice/grpc.go:13-16` imports `pkg/gateway/credassign` and `pkg/gateway/credleasestore`. `cmd/lenny-token-service/main.go:88-91` creates `credleasestore.New()`, `credcache.New()`, and `credassign.New(leases, cache)` in-process. The intended trust boundary is achieved (gateway uses `credassign.Client` to call the Token Service over mTLS), but in practice the Token Service operates on its own in-memory pool registry with **no pools registered at startup** (line 84-85 of main.go: "No pools are registered at startup so AssignCredentials fails fast until an operator configures pools"). There is no admin API on the Token Service for `RegisterPool`, so the gRPC path is dead until that is added.
+
+**Deferred (Info):** The `pkg/tokenservice/grpc.go` import of `pkg/gateway/credassign` is intentional and documented in the package comment ("a thin adapter over the in-process §4.9 credential-assignment service"); the trust boundary is achieved over mTLS, and the §4.9.3 RBAC live-probe already exercises the Token Service gRPC surface in-cluster. The dormant `AssignCredentials` path is the documented v1 posture: the gateway runs the in-process `credassign.Service` for lease minting, and "the gateway's eventual switch from the in-process MintLease call to the gRPC client lands as a separate change." Seeding the Token Service's pool registry has no v1 caller until that switch happens. Pick this up alongside the gateway→gRPC-client cutover; building a `RegisterPool` seed path now would provision a registry nothing reads.
 
 ---
 

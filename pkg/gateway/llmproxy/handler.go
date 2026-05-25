@@ -68,6 +68,25 @@ type UsageRecorder interface {
 	RecordUsage(lease credential.Lease, usage Usage)
 }
 
+// ProxyCache is the §4.9 semantic-cache seam on the proxy path. It backs
+// the optional CachePolicy on a CredentialPool: before forwarding a
+// non-streaming request the proxy consults the cache, and on a miss it
+// records the upstream response for a later hit. A nil Cache, or a lease
+// whose pool declares no enabled CachePolicy, leaves the path uncached
+// (§4.9 caching is disabled by default and opt-in per pool).
+//
+// spec: spec/04_system-components.md lines 1542-1556.
+type ProxyCache interface {
+	// Lookup returns a cached upstream response body for reqBody, in the
+	// dialect the agent pod speaks, and true on a hit. It is scoped to
+	// the lease's pool CachePolicy and CacheScope; a pool with caching
+	// disabled is always a miss. A miss is never an error.
+	Lookup(ctx context.Context, lease credential.Lease, reqBody []byte) (respBody []byte, hit bool)
+	// Store records respBody for reqBody under the lease's pool
+	// CachePolicy. A pool with caching disabled is a no-op.
+	Store(ctx context.Context, lease credential.Lease, reqBody, respBody []byte)
+}
+
 // Handler is the §4.9 LLM reverse proxy HTTP handler for the Anthropic
 // Messages dialect. It resolves the agent pod's bearer lease token,
 // runs the §4.9 per-request lease checks, translates the request into
@@ -101,6 +120,9 @@ type Handler struct {
 	// Usage records the authoritative token usage of each proxied
 	// request. A nil Usage discards the counts.
 	Usage UsageRecorder
+	// Cache is the §4.9 semantic cache consulted on the non-streaming
+	// request path. A nil Cache disables caching (the §4.9 default).
+	Cache ProxyCache
 	// Interceptors is the §4.8 policy chain run at the PreLLMRequest and
 	// PostLLMResponse phases (spec: §4.8 lines 1055-1056, 1075). A nil
 	// chain, or a phase with no registered interceptors, is a no-op:
@@ -173,6 +195,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §4.9 lines 1542-1556 — consult the per-pool semantic cache
+	// before any upstream call. A hit replays the cached response in the
+	// pod's dialect (re-running the PostLLMResponse chain so policy still
+	// applies) and consumes no upstream tokens, so no usage is recorded.
+	// Only non-streaming requests are cached; a streaming request always
+	// goes upstream. A nil Cache or a pool with caching off is a miss.
+	if h.Cache != nil && !requestWantsStream(body) {
+		if cached, hit := h.Cache.Lookup(r.Context(), lease, body); hit {
+			respBody, ok := h.runLLMPhase(r.Context(), w, lease, interceptor.PhasePostLLMResponse, cached)
+			if !ok {
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(respBody)
+			return
+		}
+	}
+
 	tr, ok := h.translatorFor(lease.Provider)
 	if !ok {
 		h.writeError(w, http.StatusBadGateway, "UPSTREAM_PROVIDER_UNSUPPORTED",
@@ -217,6 +258,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeTranslationError(w, err)
 		return
+	}
+
+	// spec: §4.9 lines 1542-1556 — record the upstream response for a
+	// later cache hit. Store the translated (pre-PostLLMResponse) body so
+	// a hit replays it through the same interceptor chain as a miss. A
+	// nil Cache or a pool with caching off is a no-op.
+	if h.Cache != nil {
+		h.Cache.Store(r.Context(), lease, body, resp.Body)
 	}
 
 	// spec: §4.8 line 1056 — run the PostLLMResponse chain over the

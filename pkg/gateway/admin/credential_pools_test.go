@@ -190,6 +190,67 @@ func TestCreateCredentialPool(t *testing.T) {
 	}
 }
 
+// TestCredentialPoolCachePolicyRoundTrips covers the §4.9 cachePolicy
+// admin surface (spec lines 1542-1556): a POST persists the policy, a GET
+// returns it, and a PUT replaces it. A pool created without a cachePolicy
+// reads back with none (caching off).
+func TestCredentialPoolCachePolicyRoundTrips(t *testing.T) {
+	router, store := newCredentialPoolAdmin(t)
+	body := validCredentialPool("acme", "claude-cached")
+	body.CachePolicy = &admin.CachePolicyPayload{
+		Enabled: true, Strategy: "semantic", Backend: "redis",
+		TTLSeconds: 120, SimilarityThreshold: 0.88,
+	}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools", body, withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "acme", "claude-cached")
+	if err != nil {
+		t.Fatalf("store missing pool: %v", err)
+	}
+	if row.CachePolicy == nil || !row.CachePolicy.Enabled || row.CachePolicy.TTLSeconds != 120 ||
+		row.CachePolicy.SimilarityThreshold != 0.88 || row.CachePolicy.Backend != "redis" {
+		t.Fatalf("stored cachePolicy = %+v, want the posted policy", row.CachePolicy)
+	}
+
+	// GET returns the policy on the wire.
+	getRR := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/credential-pools/claude-cached?tenantId=acme", nil, withAdminPrincipal)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("get: status %d, body %s", getRR.Code, getRR.Body.String())
+	}
+	var got admin.CredentialPoolPayload
+	if err := json.Unmarshal(getRR.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if got.CachePolicy == nil || !got.CachePolicy.Enabled || got.CachePolicy.TTLSeconds != 120 {
+		t.Errorf("GET cachePolicy = %+v, want the posted policy", got.CachePolicy)
+	}
+
+	// PUT replaces the policy (disable it).
+	body.CachePolicy = &admin.CachePolicyPayload{Enabled: false, Strategy: "semantic"}
+	putRR := doAdminReq(t, router.Handler(), http.MethodPut, "/v1/admin/credential-pools/claude-cached", body, withAdminPrincipal)
+	if putRR.Code != http.StatusOK {
+		t.Fatalf("put: status %d, body %s", putRR.Code, putRR.Body.String())
+	}
+	row, _ = store.Get(context.Background(), "acme", "claude-cached")
+	if row.CachePolicy == nil || row.CachePolicy.Enabled {
+		t.Errorf("after PUT cachePolicy = %+v, want enabled=false", row.CachePolicy)
+	}
+}
+
+// TestCreateCredentialPoolRejectsInvalidCachePolicy covers §4.9 cachePolicy
+// validation surfacing through the admin POST as a 400.
+func TestCreateCredentialPoolRejectsInvalidCachePolicy(t *testing.T) {
+	router, _ := newCredentialPoolAdmin(t)
+	body := validCredentialPool("acme", "claude-badcache")
+	body.CachePolicy = &admin.CachePolicyPayload{Enabled: true, SimilarityThreshold: 2.0}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools", body, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("create with bad cachePolicy: status %d, want 400; body %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestCreateCredentialPoolAsTenantAdmin(t *testing.T) {
 	router, store := newCredentialPoolAdmin(t)
 	// A tenant-admin omits tenantId — the call targets their own tenant.

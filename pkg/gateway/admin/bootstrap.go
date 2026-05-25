@@ -152,6 +152,7 @@ func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPay
 				ProxyDialect:               p.ProxyDialect,
 				ProxyEndpoint:              p.ProxyEndpoint,
 				CacheScope:                 p.CacheScope,
+				CachePolicy:                toCachePolicy(p.CachePolicy),
 				CreatedAt:                  r.clock(),
 			}
 			pool.UpdatedAt = pool.CreatedAt
@@ -180,6 +181,7 @@ func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPay
 			pool.ProxyDialect = p.ProxyDialect
 			pool.ProxyEndpoint = p.ProxyEndpoint
 			pool.CacheScope = p.CacheScope
+			pool.CachePolicy = toCachePolicy(p.CachePolicy)
 			pool.DeletedAt = time.Time{}
 			return nil
 		})
