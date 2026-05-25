@@ -1025,6 +1025,10 @@ func main() {
 	// earlier in the agent-namespace block.
 	if podBinder != nil {
 		podBinder.FallbackSkipped = gwMetrics.IncPodClaimFallbackSkipped
+		// §5.2 line 519: record concurrent-mode slot-contention conflicts
+		// on lenny_slot_assignment_conflict_total so operators can detect
+		// pool under-sizing.
+		podBinder.SlotConflict = gwMetrics.IncSlotAssignmentConflict
 	}
 	// §4.1 / §16.1: emit the per-replica capacity ceiling as a startup-set
 	// gauge so the §16.5 GatewaySessionBudgetNearExhaustion alert can
@@ -1630,6 +1634,16 @@ func main() {
 		WithEventBuffer(opsEventBuffer).
 		WithEventEmitter(opsEmitter).
 		WithOperationsInventory(operations.New())
+	// §5.2 line 629: surface live poolCondition / idlePodCount on the
+	// admin pool GET when the gateway has a Kubernetes client (an
+	// agent-namespace deployment). The minimal Postgres-only posture
+	// leaves the reader unwired and the fields are omitted.
+	if podBinder != nil && podBinder.Client != nil {
+		adminRouter = adminRouter.WithPoolStatusReader(podsession.PoolStatusLookup{
+			Reader:    podBinder.Client,
+			Namespace: podBinder.Namespace,
+		})
+	}
 	if *elicitationFloor != "" {
 		adminRouter = adminRouter.WithElicitationFloor(*elicitationFloor)
 	}

@@ -93,6 +93,11 @@ type Binder struct {
 	// FallbackSkipReasonAPIServerUnreachable), backing the
 	// lenny_pod_claim_fallback_skipped_total counter. Nil is a no-op.
 	FallbackSkipped func(reason string)
+	// SlotConflict records a §5.2 line 519 concurrent-mode slot
+	// reservation failure due to slot contention, backing the
+	// lenny_slot_assignment_conflict_total counter (labeled by pool).
+	// It is threaded into the per-BindSlot SlotClaimer. Nil is a no-op.
+	SlotConflict func(pool string)
 }
 
 // §4.6.1 lenny_pod_claim_fallback_skipped_total reason labels: the two

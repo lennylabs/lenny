@@ -267,11 +267,15 @@ func TestBindSlotStatelessConcurrentSkipsWorkspace(t *testing.T) {
 	}
 }
 
-// spec: 5.2
-// diagnosis: BindSlot did not surface ErrNoConcurrentSlot when the pool
-// has no idle pod and no slot capacity. §5.2 maps this to
-// WARM_POOL_EXHAUSTED with reason "concurrent_slots_exhausted".
-func TestBindSlotReturnsErrNoConcurrentSlotWhenPoolEmpty(t *testing.T) {
+// spec: §5.2 line 519
+// diagnosis: BindSlot must distinguish an empty pool from a full one so
+// the gateway can set the right details.reason. §5.2 line 519: a pool
+// with no pods at all is "no_idle_pods" (ErrNoIdlePod, the sentinel
+// session-mode exhaustion uses); pods-exist-but-full is
+// "concurrent_slots_exhausted" (ErrNoConcurrentSlot). The empty pool
+// here surfaces ErrNoIdlePod, passed through unwrapped for the gateway's
+// errors.Is check.
+func TestBindSlotReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 	a := newConcurrentAdapter()
 	binder := newBinder(k8sClient(t), concurrentAdapterDialer(t, a))
 
@@ -279,8 +283,8 @@ func TestBindSlotReturnsErrNoConcurrentSlotWhenPoolEmpty(t *testing.T) {
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
 		Style: podclaim.StyleWorkspace, MaxConcurrent: 8,
 	})
-	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
-		t.Errorf("error = %v, want ErrNoConcurrentSlot for an empty pool", err)
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("error = %v, want ErrNoIdlePod for an empty pool (§5.2 no_idle_pods)", err)
 	}
 }
 

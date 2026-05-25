@@ -161,7 +161,12 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 // handler can map it to WARM_POOL_EXHAUSTED with the §5.2
 // "concurrent_slots_exhausted" reason.
 func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxName, slotID, podIP string, cl *adapterclient.Client, err error) {
-	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
+	claimer := &podclaim.SlotClaimer{
+		Client:         b.Client,
+		Namespace:      b.Namespace,
+		Counter:        b.SlotCounter,
+		OnSlotConflict: b.SlotConflict,
+	}
 	res, err := claimer.ClaimSlot(ctx, podclaim.SlotRequest{
 		Pool:          req.Pool,
 		SessionID:     req.SessionID,
@@ -170,9 +175,14 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 		MaxConcurrent: req.MaxConcurrent,
 	})
 	if err != nil {
-		// ErrNoConcurrentSlot and ErrTenantMismatch are returned
-		// unwrapped for the caller's errors.Is check.
-		if errors.Is(err, podclaim.ErrNoConcurrentSlot) || errors.Is(err, podclaim.ErrTenantMismatch) {
+		// The §5.2 line 519 exhaustion sentinels are returned unwrapped
+		// for the caller's errors.Is check, which maps them to
+		// WARM_POOL_EXHAUSTED with the right details.reason: ErrNoIdlePod
+		// → "no_idle_pods" (pool holds no pods), ErrNoConcurrentSlot and
+		// ErrTenantMismatch → "concurrent_slots_exhausted".
+		if errors.Is(err, podclaim.ErrNoConcurrentSlot) ||
+			errors.Is(err, podclaim.ErrTenantMismatch) ||
+			errors.Is(err, podclaim.ErrNoIdlePod) {
 			return "", "", "", nil, err
 		}
 		return "", "", "", nil, fmt.Errorf("podsession: claim concurrent slot: %w", err)

@@ -167,6 +167,20 @@ type SlotClaimer struct {
 	// envtest unit tests' single-writer scenarios and is explicitly
 	// not spec-aligned for production.
 	Counter *slotcounter.Counter
+	// OnSlotConflict records a §5.2 line 519 atomic-reservation failure
+	// due to slot contention: a candidate pod was at its maxConcurrent
+	// bound when the reservation was attempted. It backs the
+	// lenny_slot_assignment_conflict_total counter (labeled by pool) so
+	// operators can detect pool under-sizing. Nil is a no-op.
+	OnSlotConflict func(pool string)
+}
+
+// recordSlotConflict reports a §5.2 line 519 slot-contention reservation
+// failure for pool. Nil-safe.
+func (c *SlotClaimer) recordSlotConflict(pool string) {
+	if c.OnSlotConflict != nil {
+		c.OnSlotConflict(pool)
+	}
 }
 
 // ClaimSlot reserves a concurrent-mode slot for the request's session.
@@ -267,8 +281,15 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 	}
 
 	// No slot_active pod has free capacity for this tenant and no idle
-	// pod is left. When the only blocker was tenant pinning, surface that
-	// distinction; otherwise the pool is genuinely slot-exhausted.
+	// pod is left. §5.2 line 519 distinguishes the cause via
+	// details.reason: when the pool holds no pods at all the reason is
+	// "no_idle_pods" (ErrNoIdlePod, the same sentinel session-mode
+	// exhaustion uses); when pods exist but every slot is full the reason
+	// is "concurrent_slots_exhausted" (ErrNoConcurrentSlot). Tenant
+	// pinning is surfaced distinctly so the binder can fall through.
+	if len(list.Items) == 0 {
+		return nil, ErrNoIdlePod
+	}
 	if sawTenantMismatch {
 		return nil, ErrTenantMismatch
 	}
@@ -317,6 +338,9 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 	if c.Counter != nil {
 		newCount, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrent)
 		if errors.Is(err, slotcounter.ErrSlotsExhausted) {
+			// §5.2 line 519: the atomic GET-compare-INCR found the pod at
+			// its maxConcurrent bound. Record the slot-contention conflict.
+			c.recordSlotConflict(req.Pool)
 			return nil, true, nil
 		}
 		if err != nil {
@@ -328,6 +352,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 		// approximation of the atomic CAS and is documented as
 		// race-prone in the SlotClaimer doc comment.
 		if sb.Status.ActiveSlots >= req.MaxConcurrent {
+			c.recordSlotConflict(req.Pool)
 			return nil, true, nil
 		}
 		nextActiveSlots = sb.Status.ActiveSlots + 1

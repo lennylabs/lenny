@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -169,5 +170,123 @@ func TestResolvePoolSkipsDanglingTemplateRef(t *testing.T) {
 	}
 	if got.Pool != "claude-pool" {
 		t.Errorf("resolved pool = %q, want claude-pool", got.Pool)
+	}
+}
+
+// seedPoolStatus stamps the §5.2 PoolWarmingUp condition on the template
+// and the warm/ready counts on the pool, mirroring what the
+// WarmPoolController writes, so ResolvePool and PoolStatusLookup can be
+// exercised against a realistic bootstrap-window status.
+func seedPoolStatus(t *testing.T, c client.Client, templateName, poolName string, warm, ready int32, warming bool) {
+	t.Helper()
+	ctx := context.Background()
+
+	var tmpl lennyv1.SandboxTemplate
+	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: templateName}, &tmpl); err != nil {
+		t.Fatalf("get template %s: %v", templateName, err)
+	}
+	status, reason := metav1.ConditionFalse, "Available"
+	if warming {
+		status, reason = metav1.ConditionTrue, "Provisioning"
+	}
+	tmpl.Status.Conditions = []metav1.Condition{{
+		Type:               "PoolWarmingUp",
+		Status:             status,
+		Reason:             reason,
+		Message:            "test",
+		LastTransitionTime: metav1.Now(),
+	}}
+	if err := c.Status().Update(ctx, &tmpl); err != nil {
+		t.Fatalf("seed template status %s: %v", templateName, err)
+	}
+
+	var pool lennyv1.SandboxWarmPool
+	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: poolName}, &pool); err != nil {
+		t.Fatalf("get pool %s: %v", poolName, err)
+	}
+	pool.Status.WarmCount, pool.Status.ReadyCount = warm, ready
+	if err := c.Status().Update(ctx, &pool); err != nil {
+		t.Fatalf("seed pool status %s: %v", poolName, err)
+	}
+}
+
+// spec: §5.2 lines 594, 602-625 — ResolvePool surfaces the PoolWarmingUp
+// condition and the warming-pod count so the start path can answer a
+// session creation against a bootstrapping pool with the 503 Pool Not
+// Ready response instead of burning a claim attempt.
+func TestResolvePoolSurfacesPoolWarmingUp(t *testing.T) {
+	c := k8sClient(t,
+		warmPool("warming-pool", "warming-tmpl"),
+		sandboxTemplate("warming-tmpl", "claude-code", "sandboxed"),
+	)
+	seedPoolStatus(t, c, "warming-tmpl", "warming-pool", 2, 0, true)
+
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if !got.PoolWarmingUp {
+		t.Error("PoolWarmingUp = false, want true while the pool is bootstrapping")
+	}
+	if got.PodsWarming != 2 {
+		t.Errorf("PodsWarming = %d, want 2 (warm 2 - ready 0)", got.PodsWarming)
+	}
+}
+
+// spec: §5.2 line 600 — a pool with idle pods is not warming; PodsWarming
+// clamps at zero.
+func TestResolvePoolNotWarmingWhenReady(t *testing.T) {
+	c := k8sClient(t,
+		warmPool("ready-pool", "ready-tmpl"),
+		sandboxTemplate("ready-tmpl", "claude-code", "sandboxed"),
+	)
+	seedPoolStatus(t, c, "ready-tmpl", "ready-pool", 3, 3, false)
+
+	got, err := podsession.ResolvePool(context.Background(), c, testNS, "claude-code", "sandboxed")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.PoolWarmingUp {
+		t.Error("PoolWarmingUp = true, want false once idle pods are ready")
+	}
+	if got.PodsWarming != 0 {
+		t.Errorf("PodsWarming = %d, want 0", got.PodsWarming)
+	}
+}
+
+// spec: §5.2 line 629 — PoolStatusLookup feeds the admin pool GET's
+// poolCondition and idlePodCount. One client carries a warming pool, a
+// ready pool, and an absent pool so the three cases share one envtest.
+func TestPoolStatusLookup(t *testing.T) {
+	c := k8sClient(t,
+		warmPool("warming-p", "warming-t"),
+		sandboxTemplate("warming-t", "rt-warming", "sandboxed"),
+		warmPool("ready-p", "ready-t"),
+		sandboxTemplate("ready-t", "rt-ready", "sandboxed"),
+	)
+	seedPoolStatus(t, c, "warming-t", "warming-p", 2, 0, true)
+	seedPoolStatus(t, c, "ready-t", "ready-p", 4, 4, false)
+
+	l := podsession.PoolStatusLookup{Reader: c, Namespace: testNS}
+	ctx := context.Background()
+
+	cond, idle, found, err := l.PoolStatus(ctx, "warming-p")
+	if err != nil || !found {
+		t.Fatalf("warming PoolStatus: found=%v err=%v", found, err)
+	}
+	if cond != "PoolWarmingUp" || idle != 0 {
+		t.Errorf("warming pool: condition=%q idle=%d, want PoolWarmingUp / 0", cond, idle)
+	}
+
+	cond, idle, found, err = l.PoolStatus(ctx, "ready-p")
+	if err != nil || !found {
+		t.Fatalf("ready PoolStatus: found=%v err=%v", found, err)
+	}
+	if cond != "" || idle != 4 {
+		t.Errorf("ready pool: condition=%q idle=%d, want empty / 4", cond, idle)
+	}
+
+	if _, _, found, err = l.PoolStatus(ctx, "absent-pool"); err != nil || found {
+		t.Errorf("absent pool: found=%v err=%v, want found=false with no error", found, err)
 	}
 }

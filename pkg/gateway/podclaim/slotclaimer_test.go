@@ -7,6 +7,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,6 +21,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
@@ -639,5 +642,63 @@ func TestClaimSlotRepeatedSessionCollides(t *testing.T) {
 	if _, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-dup", "acme", podclaim.StyleWorkspace, 8)); err == nil {
 		t.Error("a repeated slot claim for the same session should collide at CREATE")
+	}
+}
+
+// spec: §5.2 line 519
+// diagnosis: ClaimSlot conflated "no pods at all" with "pods exist but
+// full" — both returned ErrNoConcurrentSlot. §5.2 line 519 distinguishes
+// the cause via details.reason: an empty pool is "no_idle_pods", mapped
+// from ErrNoIdlePod (the same sentinel session-mode exhaustion uses).
+func TestClaimSlotEmptyPoolReturnsErrNoIdlePod(t *testing.T) {
+	claimer, _ := slotClaimerFor(t) // no pods in the pool at all
+	_, err := claimer.ClaimSlot(context.Background(),
+		slotReq("sess-x", "acme", podclaim.StyleWorkspace, 4))
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("error = %v, want ErrNoIdlePod when the pool holds no pods (§5.2 no_idle_pods)", err)
+	}
+	if errors.Is(err, podclaim.ErrNoConcurrentSlot) {
+		t.Error("an empty pool must not report ErrNoConcurrentSlot (that is the pods-exist-but-full case)")
+	}
+}
+
+// spec: §5.2 line 519
+// diagnosis: lenny_slot_assignment_conflict_total had no emitter. The
+// SlotClaimer must record a slot-contention conflict via OnSlotConflict
+// when the atomic counter finds a candidate pod at its maxConcurrent
+// bound. This reproduces the production race: the Sandbox status mirror
+// lags below the cap while the authoritative Redis counter is already
+// full, so pass-1 reaches reserveSlot and the counter rejects.
+func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
+	c := newEnvtestClient(t, concurrentSandbox("sbx-a", "slot_active", 1, "acme"))
+
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	counter := slotcounter.New(rc)
+	ctx := context.Background()
+	// Drive the authoritative counter for sbx-a up to the cap (2) while
+	// the Sandbox status mirror still reads activeSlots=1.
+	if _, err := counter.Reserve(ctx, "sbx-a", 2); err != nil {
+		t.Fatalf("seed counter (1): %v", err)
+	}
+	if _, err := counter.Reserve(ctx, "sbx-a", 2); err != nil {
+		t.Fatalf("seed counter (2): %v", err)
+	}
+
+	var conflicts []string
+	claimer := &podclaim.SlotClaimer{
+		Client:         c,
+		Namespace:      testNS,
+		Counter:        counter,
+		OnSlotConflict: func(pool string) { conflicts = append(conflicts, pool) },
+	}
+
+	_, err := claimer.ClaimSlot(ctx, slotReq("sess-x", "acme", podclaim.StyleWorkspace, 2))
+	if !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
+		t.Errorf("error = %v, want ErrNoConcurrentSlot (pods exist but full)", err)
+	}
+	if len(conflicts) != 1 || conflicts[0] != testPool {
+		t.Errorf("OnSlotConflict calls = %v, want one call for pool %q", conflicts, testPool)
 	}
 }

@@ -27,6 +27,18 @@ type ReconciliationResumer interface {
 	ResumePoolReconciliation(ctx context.Context, poolName string) (cleared int, err error)
 }
 
+// PoolStatusReader reads a pool's live §5.2 bootstrap status from its
+// Kubernetes CRD pair so the admin pool GET can surface poolCondition
+// and idlePodCount (§5.2 line 629) without operators inspecting the CR
+// status directly. condition is "PoolWarmingUp" while the pool is
+// bootstrapping and the empty string otherwise; idlePodCount is the
+// ready-pod count. found is false when no SandboxWarmPool exists for
+// the pool yet, so the handler omits the live-status fields.
+// The gateway satisfies it with a podsession.PoolStatusLookup.
+type PoolStatusReader interface {
+	PoolStatus(ctx context.Context, poolName string) (condition string, idlePodCount int, found bool, err error)
+}
+
 // PoolPayload is the §15.1 admin-pool wire shape.
 type PoolPayload struct {
 	Name                   string `json:"name"`
@@ -48,6 +60,15 @@ type PoolPayload struct {
 	AcknowledgeProcessLevelIsolation bool   `json:"acknowledgeProcessLevelIsolation,omitempty"`
 	CleanupTimeoutSeconds            int    `json:"cleanupTimeoutSeconds,omitempty"`
 	AllowCrossTenantReuse            bool   `json:"allowCrossTenantReuse,omitempty"`
+
+	// PoolCondition and IdlePodCount are the §5.2 line 629 live
+	// bootstrap-status fields, populated on GET when the gateway is
+	// wired with a PoolStatusReader and the pool's SandboxWarmPool
+	// exists. PoolCondition is "PoolWarmingUp" during the bootstrap
+	// window. They are pointers so a legitimate idlePodCount of 0 is
+	// emitted while an unwired reader or an unreconciled pool omits both.
+	PoolCondition *string `json:"poolCondition,omitempty"`
+	IdlePodCount  *int    `json:"idlePodCount,omitempty"`
 
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
@@ -105,6 +126,15 @@ func (r *Router) WithPools(s poolstore.Store) *Router {
 // process or through a control channel the deployer supplies.
 func (r *Router) WithReconciliationResumer(rr ReconciliationResumer) *Router {
 	r.reconciliationResumer = rr
+	return r
+}
+
+// WithPoolStatusReader wires the §5.2 line 629 live pool-status lookup
+// onto the Router. Without it the admin pool GET omits poolCondition
+// and idlePodCount (the gateway has no Kubernetes client to read CRD
+// status, e.g. the minimal Postgres-only dev posture).
+func (r *Router) WithPoolStatusReader(rdr PoolStatusReader) *Router {
+	r.poolStatus = rdr
 	return r
 }
 
@@ -248,8 +278,33 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	payload := fromPool(row)
+	r.attachPoolStatus(req.Context(), &payload)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(fromPool(row))
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// attachPoolStatus populates the §5.2 line 629 live poolCondition and
+// idlePodCount on a pool payload when a PoolStatusReader is wired and
+// the pool has a reconciled SandboxWarmPool. A reader error is swallowed
+// so a transient Kubernetes lookup failure never fails the admin GET;
+// the live-status fields are simply omitted. poolCondition is set only
+// while the pool is in the PoolWarmingUp bootstrap window.
+// spec: §5.2 line 629 ("Operator visibility").
+func (r *Router) attachPoolStatus(ctx context.Context, p *PoolPayload) {
+	if r.poolStatus == nil {
+		return
+	}
+	condition, idle, found, err := r.poolStatus.PoolStatus(ctx, p.Name)
+	if err != nil || !found {
+		return
+	}
+	idleCopy := idle
+	p.IdlePodCount = &idleCopy
+	if condition != "" {
+		condCopy := condition
+		p.PoolCondition = &condCopy
+	}
 }
 
 // handleResumeReconciliation implements §4.6.2 item 3 condition (c):

@@ -99,6 +99,11 @@ type Metrics struct {
 	// fallback skip events. Labels: `reason` (`mirror_stale` or
 	// `apiserver_unreachable`).
 	podClaimFallbackSkipped *prometheus.CounterVec
+	// slotAssignmentConflict counts the §5.2 line 519 concurrent-mode
+	// slot reservation failures due to slot contention (a candidate pod
+	// was at its maxConcurrent bound). Labeled by `pool` (finite, the
+	// warm-pool registry), it lets operators detect pool under-sizing.
+	slotAssignmentConflict *prometheus.CounterVec
 	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
 	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
 	// registry).
@@ -504,6 +509,17 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §5.2 line 519 — `lenny_slot_assignment_conflict_total` increments
+	// when a concurrent-mode slot reservation found a candidate pod at
+	// its maxConcurrent bound. `pool` is bounded by the warm-pool
+	// registry.
+	slotAssignmentConflict, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_slot_assignment_conflict_total",
+		Help: "Concurrent-mode slot reservation failures due to slot contention (§5.2 line 519).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
 	// partial-manifest row writes. Labels: `pool` (finite).
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
@@ -621,7 +637,8 @@ func New() (*Metrics, error) {
 		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, checkpointStorageFailure,
-		checkpointEvictionFallback, podClaimFallbackSkipped, checkpointPartialTotal, prestopCapSelection,
+		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
+		checkpointPartialTotal, prestopCapSelection,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
 		drainReadinessChecks, legalHoldCheckpointGaps,
@@ -647,30 +664,30 @@ func New() (*Metrics, error) {
 
 	tokenServiceCircuitChild := tokenServiceCircuitState.WithLabelValues()
 	return &Metrics{
-		reg:                       reg,
-		requestsTotal:             requestsTotal,
-		requestDuration:           requestDuration,
-		activeSessions:            gauge,
-		activeStreams:             streams,
-		requestQueueDepth:         queueDepth,
-		rejectionRate:             rejections,
-		maxSessionsPerReplica:     maxSessionsPerReplica,
-		minReplicas:               minReplicasChild,
-		streamCeiling:             streamCeilingChild,
-		replicaCount:              replicaCountChild,
-		extractionThreshold:       extractionThreshold,
-		storageQuotaUsed:          storageQuotaUsed,
-		storageQuotaLimit:         storageQuotaLimit,
-		circuitBreakerOpen:        circuitBreakerOpen,
-		cbRejections:              cbRejections,
-		cbRejectionsSuppressed:    cbRejectionsSuppressed,
-		cbCacheStale:              cbStale,
-		cbCacheInitialized:        cbInit,
-		elicitationDropped:        elicitationDropped,
-		elicitationTamperDetected: elicitationTamperDetected,
-		experimentIsoRej:          experimentIsoRej,
-		noEnvPolicyAllowAll:       noEnvPolicyAllowAll,
-		gcPauseP99Ms:              gcPause,
+		reg:                                  reg,
+		requestsTotal:                        requestsTotal,
+		requestDuration:                      requestDuration,
+		activeSessions:                       gauge,
+		activeStreams:                        streams,
+		requestQueueDepth:                    queueDepth,
+		rejectionRate:                        rejections,
+		maxSessionsPerReplica:                maxSessionsPerReplica,
+		minReplicas:                          minReplicasChild,
+		streamCeiling:                        streamCeilingChild,
+		replicaCount:                         replicaCountChild,
+		extractionThreshold:                  extractionThreshold,
+		storageQuotaUsed:                     storageQuotaUsed,
+		storageQuotaLimit:                    storageQuotaLimit,
+		circuitBreakerOpen:                   circuitBreakerOpen,
+		cbRejections:                         cbRejections,
+		cbRejectionsSuppressed:               cbRejectionsSuppressed,
+		cbCacheStale:                         cbStale,
+		cbCacheInitialized:                   cbInit,
+		elicitationDropped:                   elicitationDropped,
+		elicitationTamperDetected:            elicitationTamperDetected,
+		experimentIsoRej:                     experimentIsoRej,
+		noEnvPolicyAllowAll:                  noEnvPolicyAllowAll,
+		gcPauseP99Ms:                         gcPause,
 		tokenServiceCircuitState:             tokenServiceCircuitChild,
 		checkpointStaleSessions:              checkpointStaleSessions,
 		partialManifestCleanup:               partialManifestCleanup,
@@ -683,6 +700,7 @@ func New() (*Metrics, error) {
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
+		slotAssignmentConflict:               slotAssignmentConflict,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
 		gcTombstonesPruned:                   gcTombstonesPruned,
@@ -953,6 +971,18 @@ func (m *Metrics) IncPodClaimFallbackSkipped(reason string) {
 		return
 	}
 	m.podClaimFallbackSkipped.WithLabelValues(reason).Inc()
+}
+
+// IncSlotAssignmentConflict increments the §5.2 line 519
+// `lenny_slot_assignment_conflict_total` counter for pool. Called by
+// the gateway slot claimer when a concurrent-mode reservation found a
+// candidate pod at its maxConcurrent bound.
+// spec: §5.2 line 519 "atomic reservation failures due to slot contention".
+func (m *Metrics) IncSlotAssignmentConflict(pool string) {
+	if m == nil {
+		return
+	}
+	m.slotAssignmentConflict.WithLabelValues(pool).Inc()
 }
 
 // IncCheckpointPartial increments the §4.4 line 234

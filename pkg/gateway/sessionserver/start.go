@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
@@ -28,6 +30,81 @@ import (
 // circuit-breaker open-state cool-down in pkg/gateway/subsystem.
 // spec: §4.3 line 214.
 const tokenServiceUnavailableRetryAfterSeconds = 5
+
+// DefaultWarmupEstimateSeconds is the §5.2 line 625 fallback estimate
+// for a pool's remaining warm-up time, used for the PoolWarmingUp 503's
+// estimatedReadyIn detail and Retry-After header when no historical
+// lenny_warmpool_pod_startup_duration_seconds p50 is available. The
+// Retry-After header is max(30, estimate). Operators tune it through
+// the gateway's WarmupEstimateSeconds option.
+// spec: §5.2 line 625.
+const DefaultWarmupEstimateSeconds = 120
+
+// minWarmupRetryAfterSeconds is the §5.2 line 625 floor on the
+// PoolWarmingUp Retry-After header: max(30, estimatedWarmupSeconds).
+const minWarmupRetryAfterSeconds = 30
+
+// writePodClaimError maps a startOnPod / resumeOnPod failure to its
+// §15.1 error envelope. The §5.2 pool-warming and pod/slot exhaustion
+// conditions take their spec-defined codes; a Token Service outage
+// surfaces as TOKEN_SERVICE_UNAVAILABLE (§4.3). Any other failure falls
+// back to a retryable POD_CLAIM_FAILED carrying fallbackMsg.
+// spec: §5.2 line 519 (WARM_POOL_EXHAUSTED), §5.2 lines 602-625
+// (RUNTIME_UNAVAILABLE).
+func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackMsg string) {
+	var warming *podsession.PoolWarmingError
+	switch {
+	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
+		s.writeTokenServiceUnavailable(w, err)
+	case errors.As(err, &warming):
+		s.writePoolWarming(w, warming)
+	case errors.Is(err, podclaim.ErrNoIdlePod):
+		s.writeWarmPoolExhausted(w, "no_idle_pods")
+	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
+		s.writeWarmPoolExhausted(w, "concurrent_slots_exhausted")
+	default:
+		s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
+			fallbackMsg+": "+err.Error(), nil)
+	}
+}
+
+// writeWarmPoolExhausted writes the §5.2 line 519 WARM_POOL_EXHAUSTED
+// envelope. details.reason distinguishes "no_idle_pods" (the pool holds
+// no pods) from "concurrent_slots_exhausted" (pods exist but every slot
+// is full). The code is the same one session-mode pod exhaustion uses.
+// spec: §5.2 line 519, §15.2.1 line 1017.
+func (s *Server) writeWarmPoolExhausted(w http.ResponseWriter, reason string) {
+	s.writeError(w, http.StatusServiceUnavailable, "WARM_POOL_EXHAUSTED",
+		"no warm pod or concurrent slot is available; retry with backoff",
+		map[string]any{"reason": reason})
+}
+
+// writePoolWarming writes the §5.2 lines 602-625 "Pool Not Ready"
+// response: 503 RUNTIME_UNAVAILABLE with Retry-After max(30,
+// estimatedWarmupSeconds) and a details block carrying the pool name,
+// the PoolWarmingUp condition, the warm-up estimate, and the count of
+// pods still warming.
+// spec: §5.2 lines 602-625.
+func (s *Server) writePoolWarming(w http.ResponseWriter, warming *podsession.PoolWarmingError) {
+	estimate := s.warmupEstimateSeconds
+	if estimate <= 0 {
+		estimate = DefaultWarmupEstimateSeconds
+	}
+	retryAfter := estimate
+	if retryAfter < minWarmupRetryAfterSeconds {
+		retryAfter = minWarmupRetryAfterSeconds
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+	s.writeError(w, http.StatusServiceUnavailable, "RUNTIME_UNAVAILABLE",
+		fmt.Sprintf("Pool '%s' is warming up — no idle pods are available yet. "+
+			"Retry after the indicated interval.", warming.Pool),
+		map[string]any{
+			"poolName":         warming.Pool,
+			"poolCondition":    "PoolWarmingUp",
+			"estimatedReadyIn": estimate,
+			"podsWarming":      int(warming.PodsWarming),
+		})
+}
 
 // writeTokenServiceUnavailable writes the §4.3 retryable-503 envelope
 // when the Token Service circuit-breaker is open or the Token Service
@@ -192,12 +269,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	if s.podBinder != nil {
 		if err := s.startOnPod(r.Context(), row, parsedPlan); err != nil {
 			s.failSession(r.Context(), tenantID, row.ID)
-			if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
-				s.writeTokenServiceUnavailable(w, err)
-				return
-			}
-			s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
-				"could not place the session on a warm pod: "+err.Error(), nil)
+			s.writePodClaimError(w, err, "could not place the session on a warm pod")
 			return
 		}
 	}
@@ -253,12 +325,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.startOnPod(r.Context(), row, plan); err != nil {
-			if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
-				s.writeTokenServiceUnavailable(w, err)
-				return
-			}
-			s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
-				"could not place the session on a warm pod: "+err.Error(), nil)
+			s.writePodClaimError(w, err, "could not place the session on a warm pod")
 			return
 		}
 	}
@@ -477,6 +544,14 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	if err != nil {
 		return err
 	}
+	// spec: §5.2 lines 602-625 — a session targeting a pool in the
+	// PoolWarmingUp bootstrap state returns 503 RUNTIME_UNAVAILABLE
+	// before a claim is attempted, so the client receives a retry hint
+	// rather than burning a claim attempt that would surface as a less
+	// informative POD_CLAIM_FAILED.
+	if match.PoolWarmingUp {
+		return &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
+	}
 	if match.ExecutionMode == string(runtimestore.ExecutionModeConcurrent) {
 		result, err := s.podBinder.BindSlot(ctx, podsession.SlotBindRequest{
 			Pool:              match.Pool,
@@ -592,12 +667,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	if s.podBinder != nil {
 		if err := s.resumeOnPod(r.Context(), row); err != nil {
 			s.failSession(r.Context(), tenantID, id)
-			if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
-				s.writeTokenServiceUnavailable(w, err)
-				return
-			}
-			s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
-				"could not resume the session on a warm pod: "+err.Error(), nil)
+			s.writePodClaimError(w, err, "could not resume the session on a warm pod")
 			return
 		}
 	}
@@ -780,9 +850,9 @@ func (s *Server) classifyResume(ctx context.Context, row sessionstore.Session) c
 // path; omitted on full and conversation-only resumes per the
 // optional-fraction rule).
 type resumedEventPayload struct {
-	ResumeMode                 string   `json:"resumeMode"`
-	WorkspaceLost              bool     `json:"workspaceLost"`
-	WorkspaceRecoveryFraction  *float64 `json:"workspaceRecoveryFraction,omitempty"`
+	ResumeMode                string   `json:"resumeMode"`
+	WorkspaceLost             bool     `json:"workspaceLost"`
+	WorkspaceRecoveryFraction *float64 `json:"workspaceRecoveryFraction,omitempty"`
 }
 
 // emitResumedEvent publishes the §7.2 line 138 `session.resumed` event

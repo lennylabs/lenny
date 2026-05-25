@@ -285,12 +285,15 @@ func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string)
 // Returns the running session with the placed-pod identity recorded in
 // the gateway's sessionstore.
 //
-// Retries up to 6 times with linear backoff when the gateway returns
-// 503 POD_CLAIM_FAILED. The §4.6 WarmPoolController scales the pool
+// Retries up to 6 times with linear backoff while the gateway returns a
+// transient 503 pool-not-ready envelope: POD_CLAIM_FAILED, the §5.2
+// line 519 WARM_POOL_EXHAUSTED (no idle pods or no free concurrent
+// slot), or the §5.2 lines 602-625 RUNTIME_UNAVAILABLE (the pool is
+// still bootstrapping). The §4.6 WarmPoolController scales the pool
 // asynchronously after a claim drains it, so a follow-up test that
-// arrives before the next warm pod settles sees a transient
-// "pool has no idle pod" envelope. The retry window covers the
-// observed sub-second replenish on the tier-5/8/9 Kind path.
+// arrives before the next warm pod settles sees one of these envelopes.
+// The retry window covers the observed sub-second replenish on the
+// tier-5/8/9 Kind path.
 func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string) (*Session, error) {
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime
@@ -323,8 +326,7 @@ func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string
 		}
 		lastStatus = res.StatusCode
 		lastBody = rb
-		if res.StatusCode != http.StatusServiceUnavailable ||
-			!bytes.Contains(rb, []byte("POD_CLAIM_FAILED")) {
+		if res.StatusCode != http.StatusServiceUnavailable || !isPoolNotReady(rb) {
 			break
 		}
 		select {
@@ -335,6 +337,22 @@ func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string
 	}
 	return nil, fmt.Errorf("create-and-start session for tenant %q: status %d, body %s",
 		tenantID, lastStatus, string(lastBody))
+}
+
+// isPoolNotReady reports whether a 503 body carries one of the transient
+// pool-not-ready error codes that a session-start retry is expected to
+// clear once the §4.6 WarmPoolController settles the next warm pod.
+func isPoolNotReady(body []byte) bool {
+	for _, code := range [][]byte{
+		[]byte("POD_CLAIM_FAILED"),
+		[]byte("WARM_POOL_EXHAUSTED"),
+		[]byte("RUNTIME_UNAVAILABLE"),
+	} {
+		if bytes.Contains(body, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // Start issues POST /v1/sessions/{id}/start, transitioning a ready

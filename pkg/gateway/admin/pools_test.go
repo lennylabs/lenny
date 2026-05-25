@@ -292,3 +292,103 @@ func TestResumeReconciliationRouteAbsentWithoutResumer(t *testing.T) {
 		t.Errorf("status: %d, want 404 (route unregistered)", rr.Code)
 	}
 }
+
+// fakePoolStatus is a stub admin.PoolStatusReader for the §5.2 line 629
+// admin-GET live-status assertions.
+type fakePoolStatus struct {
+	condition string
+	idle      int
+	found     bool
+	err       error
+}
+
+func (f fakePoolStatus) PoolStatus(_ context.Context, _ string) (string, int, bool, error) {
+	return f.condition, f.idle, f.found, f.err
+}
+
+func seedGetPool(t *testing.T, pools *poolstore.Memory, runtimes *runtimestore.Memory) {
+	t.Helper()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	_ = pools.Create(context.Background(), poolstore.Pool{
+		Name: "p1", RuntimeRef: "echo", IsolationProfile: isolation.Default(),
+		ExecutionMode: runtimestore.ExecutionModeSession,
+	})
+}
+
+// spec: §5.2 line 629 — the admin pool GET surfaces poolCondition and
+// idlePodCount during the bootstrap window when a PoolStatusReader is
+// wired. idlePodCount of 0 must be emitted (the pointer field is
+// non-nil), and poolCondition reports the warming state.
+func TestGetPoolSurfacesWarmingStatus(t *testing.T) {
+	router, pools, runtimes, _ := newPoolAdmin(t)
+	seedGetPool(t, pools, runtimes)
+	router = router.WithPoolStatusReader(fakePoolStatus{condition: "PoolWarmingUp", idle: 0, found: true})
+
+	rr := poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/p1", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"idlePodCount":0`)) {
+		t.Errorf("body omits idlePodCount:0 during bootstrap: %s", rr.Body.String())
+	}
+	var got admin.PoolPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.PoolCondition == nil || *got.PoolCondition != "PoolWarmingUp" {
+		t.Errorf("poolCondition = %v, want PoolWarmingUp", got.PoolCondition)
+	}
+	if got.IdlePodCount == nil || *got.IdlePodCount != 0 {
+		t.Errorf("idlePodCount = %v, want 0", got.IdlePodCount)
+	}
+}
+
+// spec: §5.2 line 629 — a ready pool reports idlePodCount with no
+// warming condition.
+func TestGetPoolReadyHasIdleCountNoCondition(t *testing.T) {
+	router, pools, runtimes, _ := newPoolAdmin(t)
+	seedGetPool(t, pools, runtimes)
+	router = router.WithPoolStatusReader(fakePoolStatus{condition: "", idle: 5, found: true})
+
+	rr := poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/p1", nil)
+	var got admin.PoolPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.PoolCondition != nil {
+		t.Errorf("poolCondition = %v, want nil for a ready pool", *got.PoolCondition)
+	}
+	if got.IdlePodCount == nil || *got.IdlePodCount != 5 {
+		t.Errorf("idlePodCount = %v, want 5", got.IdlePodCount)
+	}
+}
+
+// spec: §5.2 line 629 — the live-status fields are omitted when no
+// reader is wired (the Postgres-only posture) or when the pool has no
+// reconciled SandboxWarmPool yet (found=false), so a misleading zero is
+// never reported.
+func TestGetPoolOmitsLiveStatusWhenUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reader admin.PoolStatusReader
+	}{
+		{"reader unwired", nil},
+		{"pool unreconciled", fakePoolStatus{found: false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router, pools, runtimes, _ := newPoolAdmin(t)
+			seedGetPool(t, pools, runtimes)
+			if tc.reader != nil {
+				router = router.WithPoolStatusReader(tc.reader)
+			}
+			rr := poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/p1", nil)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status: %d", rr.Code)
+			}
+			if bytes.Contains(rr.Body.Bytes(), []byte("idlePodCount")) ||
+				bytes.Contains(rr.Body.Bytes(), []byte("poolCondition")) {
+				t.Errorf("live-status fields should be omitted: %s", rr.Body.String())
+			}
+		})
+	}
+}

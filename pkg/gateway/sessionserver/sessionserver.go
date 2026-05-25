@@ -38,18 +38,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
@@ -97,27 +97,27 @@ func jsonReader(w http.ResponseWriter, r *http.Request) interface {
 
 // Server is the §15.1 session HTTP handler.
 type Server struct {
-	store              sessionstore.Store
-	clock              func() time.Time
-	idFn               func() string
-	deriveAuditSink    DeriveAuditSink
-	uploadIssuer       *uploadtoken.Issuer
-	uploadVerifier     *uploadtoken.Verifier
-	blobs              blobstore.Store
-	executor           executor.Executor
-	transcripts        transcriptstore.Store
-	events             *sessionevents.Bus
-	interactions       interactionstore.Store
-	usage              usagestore.Store
-	users              userstore.Store
-	billing            billingstore.Store
-	tenants            tenantstore.Store
-	storageQuota       storagequota.Counter
-	defaultIsoProf     isolation.Profile
-	podBinder          *podsession.Binder
-	podRegistry        *podsession.Registry
-	agentNamespace     string
-	sealer             Sealer
+	store           sessionstore.Store
+	clock           func() time.Time
+	idFn            func() string
+	deriveAuditSink DeriveAuditSink
+	uploadIssuer    *uploadtoken.Issuer
+	uploadVerifier  *uploadtoken.Verifier
+	blobs           blobstore.Store
+	executor        executor.Executor
+	transcripts     transcriptstore.Store
+	events          *sessionevents.Bus
+	interactions    interactionstore.Store
+	usage           usagestore.Store
+	users           userstore.Store
+	billing         billingstore.Store
+	tenants         tenantstore.Store
+	storageQuota    storagequota.Counter
+	defaultIsoProf  isolation.Profile
+	podBinder       *podsession.Binder
+	podRegistry     *podsession.Registry
+	agentNamespace  string
+	sealer          Sealer
 	// partialManifestCleaner, when set, executes the §4.4 line 236
 	// partial-manifest cleanup after the resume path completes.
 	// Nil leaves the resume path unchanged (cleanup is deferred to
@@ -133,33 +133,37 @@ type Server struct {
 	// session.resumed event surfaces the correct ResumeMode per
 	// §10.1 partial-manifest path.
 	partialManifestLookup PartialManifestLookup
-	treeArchive        treearchive.Store
-	maxOrphanTasks     int
-	evals              evalstore.Store
-	memory             memorystore.Store
-	experiments        experimentstore.Store
-	pools              poolstore.Store
-	experimentReporter ExperimentRejectionReporter
-	runtimes           runtimestore.Store
-	environments       environmentstore.Store
-	tenantAccess       tenantaccessstore.Store
-	opsEmitter         events.EventEmitter
-	refResolver        workspaceplan.RefResolver
-	credPools          credentialpoolstore.Store
-	defaultNoEnvPolicy string
-	customRoles        customrolestore.Store
-	interceptors       *interceptor.Chain
-	policyAuditSink    *policy.AuditSink
-	uploadSubsystem    *subsystem.Subsystem
+	treeArchive           treearchive.Store
+	maxOrphanTasks        int
+	evals                 evalstore.Store
+	memory                memorystore.Store
+	experiments           experimentstore.Store
+	pools                 poolstore.Store
+	experimentReporter    ExperimentRejectionReporter
+	runtimes              runtimestore.Store
+	environments          environmentstore.Store
+	tenantAccess          tenantaccessstore.Store
+	opsEmitter            events.EventEmitter
+	refResolver           workspaceplan.RefResolver
+	credPools             credentialpoolstore.Store
+	defaultNoEnvPolicy    string
+	customRoles           customrolestore.Store
+	interceptors          *interceptor.Chain
+	policyAuditSink       *policy.AuditSink
+	uploadSubsystem       *subsystem.Subsystem
 	// resumeWindow is the §4.2 line 159 default resume-eligibility
 	// duration stamped onto each session at create time. A non-zero
 	// value falls through to DefaultResumeWindow.
-	resumeWindow       time.Duration
+	resumeWindow time.Duration
 	// sessionLogHook, when set, receives the §4.4 line 226 session-log
 	// close-hook on every session transition to a terminal state.
 	// Best-effort: a failure logs and discards rather than abort the
 	// transition.
 	sessionLogHook SessionLogHook
+	// warmupEstimateSeconds is the §5.2 line 625 estimate used for the
+	// PoolWarmingUp 503's estimatedReadyIn and Retry-After. A zero value
+	// falls through to DefaultWarmupEstimateSeconds.
+	warmupEstimateSeconds int
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -510,55 +514,66 @@ type Options struct {
 	// fires.
 	// spec: §4.4 line 226.
 	SessionLogHook SessionLogHook
+
+	// WarmupEstimateSeconds overrides the §5.2 line 625 PoolWarmingUp
+	// warm-up estimate (estimatedReadyIn and the Retry-After floor's
+	// input). Zero selects DefaultWarmupEstimateSeconds (120s), the
+	// spec's no-historical-data fallback.
+	// spec: §5.2 line 625.
+	WarmupEstimateSeconds int
 }
 
 // New returns a Server bound to the supplied store.
 func New(store sessionstore.Store, opts Options) *Server {
 	s := &Server{
-		store:              store,
-		clock:              opts.Clock,
-		idFn:               opts.IDFunc,
-		deriveAuditSink:    opts.DeriveAuditSink,
-		uploadIssuer:       opts.UploadTokenIssuer,
-		uploadVerifier:     opts.UploadTokenVerifier,
-		blobs:              opts.Blobs,
-		executor:           opts.Executor,
-		transcripts:        opts.Transcripts,
-		evals:              opts.Evals,
-		memory:             opts.Memory,
-		experiments:        opts.Experiments,
-		pools:              opts.Pools,
-		experimentReporter: opts.ExperimentRejections,
-		events:             opts.Events,
-		interactions:       opts.Interactions,
-		usage:              opts.Usage,
-		users:              opts.Users,
-		billing:            opts.Billing,
-		tenants:            opts.Tenants,
-		storageQuota:       opts.StorageQuota,
-		defaultIsoProf:     opts.DefaultIsolationProfile,
-		podBinder:          opts.PodBinder,
-		podRegistry:        opts.PodRegistry,
-		agentNamespace:     opts.AgentNamespace,
-		sealer:             opts.Sealer,
+		store:                  store,
+		clock:                  opts.Clock,
+		idFn:                   opts.IDFunc,
+		deriveAuditSink:        opts.DeriveAuditSink,
+		uploadIssuer:           opts.UploadTokenIssuer,
+		uploadVerifier:         opts.UploadTokenVerifier,
+		blobs:                  opts.Blobs,
+		executor:               opts.Executor,
+		transcripts:            opts.Transcripts,
+		evals:                  opts.Evals,
+		memory:                 opts.Memory,
+		experiments:            opts.Experiments,
+		pools:                  opts.Pools,
+		experimentReporter:     opts.ExperimentRejections,
+		events:                 opts.Events,
+		interactions:           opts.Interactions,
+		usage:                  opts.Usage,
+		users:                  opts.Users,
+		billing:                opts.Billing,
+		tenants:                opts.Tenants,
+		storageQuota:           opts.StorageQuota,
+		defaultIsoProf:         opts.DefaultIsolationProfile,
+		podBinder:              opts.PodBinder,
+		podRegistry:            opts.PodRegistry,
+		agentNamespace:         opts.AgentNamespace,
+		sealer:                 opts.Sealer,
 		partialManifestCleaner: opts.PartialManifestCleaner,
 		evictionStateLookup:    opts.EvictionStateLookup,
 		partialManifestLookup:  opts.PartialManifestLookup,
-		treeArchive:        opts.TreeArchive,
-		maxOrphanTasks:     opts.MaxOrphanTasksPerTenant,
-		runtimes:           opts.Runtimes,
-		environments:       opts.Environments,
-		tenantAccess:       opts.TenantAccess,
-		opsEmitter:         opts.OpsEmitter,
-		refResolver:        opts.RefResolver,
-		credPools:          opts.CredentialPools,
-		defaultNoEnvPolicy: opts.DefaultNoEnvironmentPolicy,
-		customRoles:        opts.CustomRoles,
-		interceptors:       opts.Interceptors,
-		policyAuditSink:    opts.PolicyAuditSink,
-		uploadSubsystem:    opts.UploadSubsystem,
-		resumeWindow:       opts.ResumeWindow,
-		sessionLogHook:     opts.SessionLogHook,
+		treeArchive:            opts.TreeArchive,
+		maxOrphanTasks:         opts.MaxOrphanTasksPerTenant,
+		runtimes:               opts.Runtimes,
+		environments:           opts.Environments,
+		tenantAccess:           opts.TenantAccess,
+		opsEmitter:             opts.OpsEmitter,
+		refResolver:            opts.RefResolver,
+		credPools:              opts.CredentialPools,
+		defaultNoEnvPolicy:     opts.DefaultNoEnvironmentPolicy,
+		customRoles:            opts.CustomRoles,
+		interceptors:           opts.Interceptors,
+		policyAuditSink:        opts.PolicyAuditSink,
+		uploadSubsystem:        opts.UploadSubsystem,
+		resumeWindow:           opts.ResumeWindow,
+		sessionLogHook:         opts.SessionLogHook,
+		warmupEstimateSeconds:  opts.WarmupEstimateSeconds,
+	}
+	if s.warmupEstimateSeconds <= 0 {
+		s.warmupEstimateSeconds = DefaultWarmupEstimateSeconds
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }

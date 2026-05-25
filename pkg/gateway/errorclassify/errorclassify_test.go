@@ -35,6 +35,9 @@ func TestClassifyKnownCodes(t *testing.T) {
 		// spec: §15.1 line 1067, §8.3 line 157 — INPUT_TOO_LARGE is
 		// PERMANENT and not retryable; the caller must reduce the input.
 		{"INPUT_TOO_LARGE", CategoryPermanent, false},
+		// spec: §15.2.1 line 1017 — WARM_POOL_EXHAUSTED (no idle pods or
+		// concurrent slots) is TRANSIENT and retryable with backoff.
+		{"WARM_POOL_EXHAUSTED", CategoryTransient, true},
 	}
 	for _, c := range cases {
 		t.Run(c.code, func(t *testing.T) {

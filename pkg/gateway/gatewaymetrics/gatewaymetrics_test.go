@@ -618,3 +618,29 @@ func TestArtifactUploadErrorCounter(t *testing.T) {
 		}
 	}
 }
+
+// spec: §5.2 line 519 — lenny_slot_assignment_conflict_total is a
+// per-pool counter of concurrent-mode slot-contention reservation
+// failures, exposed on /metrics for the pool-under-sizing signal.
+func TestSlotAssignmentConflictCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncSlotAssignmentConflict("acme-agents")
+	m.IncSlotAssignmentConflict("acme-agents")
+	m.IncSlotAssignmentConflict("globex-agents")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_slot_assignment_conflict_total{pool="acme-agents"} 2`,
+		`lenny_slot_assignment_conflict_total{pool="globex-agents"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
