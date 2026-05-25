@@ -3139,19 +3139,21 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Suggested resolution:** Add a typed `CredentialCapabilities` struct (with `HotRotation bool` and `ProxyDialect []string`) to the store, persist via migration, accept on payload and merge as Override, and add the pool-controller cross-validation ("`deliveryMode: proxy` rejected when runtime declares no `proxyDialect`").
 - **Resolution (commit ad0443b3):** Added a typed `CredentialCapabilities` struct (`HotRotation bool`, `ProxyDialect []string`, with `Clone` and `AllowsProxyDialect` helpers) to `runtimestore.Runtime`, the Runtime CRD (`pkg/apis/lenny/v1` + chart/embedded CRD), and the admin POST/PUT payloads. Persisted via migration 0072 (`credential_capabilities JSONB`) + pgstore column; merged as Override per the §5.1 merge table (derived block replaces the base when set, base inherited when omitted). The pool-side cross-validation (pool `proxyDialect` ∈ runtime `credentialCapabilities.proxyDialect`) is the deferred F-4.9.18, which now has the per-runtime declaration to consult.
 
-### - [ ] F-5.1.4 — `limits` field unmodeled (including `maxRequestInputWaitSeconds`) — High [Medium] — OPEN
+### - [x] F-5.1.4 — `limits` field unmodeled (including `maxRequestInputWaitSeconds`) — High [Medium] — CLOSED
 
 - **Spec:** §5.1 standalone-runtime YAML (lines 76-79) declares `limits.maxSessionAge`, `limits.maxUploadSize`, and `limits.maxRequestInputWaitSeconds`. The merge table (line 193) classifies it as **Override** with base-fallback. The §5.1 prose also cross-references `maxRequestInputWaitSeconds` to §11.3 ("inter-agent lenny/request_input timeout").
 - **Evidence:** No `Limits` field on `runtimestore.Runtime`; no `limits` column on `runtime_definitions`; no `Limits` field on `RuntimePayload` / `UpdateRuntimeRequest`. The §11.3 enforcement path cannot read a per-runtime `maxRequestInputWaitSeconds` because the gateway does not store one.
 - **Gap:** Operators cannot declare per-runtime session age caps, upload size caps, or request-input timeouts. The §11.3 cross-reference is broken — the only path to a non-default `maxRequestInputWaitSeconds` is a platform-wide constant.
 - **Suggested resolution:** Add a typed `Limits` struct (with `MaxSessionAgeSeconds int`, `MaxUploadSizeBytes int64`, `MaxRequestInputWaitSeconds int`) to the store with Override merge. Wire the §11.3 timer to read it through `runtimestore.Resolve`.
+- **Resolution:** Added `Limits{MaxSessionAgeSeconds, MaxUploadSizeBytes, MaxRequestInputWaitSeconds}` to `runtimestore.Runtime` with Override merge, persisted via migration 0074 (`limits JSONB`) + pgstore, accepted/validated on `RuntimePayload`/`UpdateRuntimeRequest`/bootstrap/OpenAPI. The §11.3 `lenny/request_input` handler now resolves the session's runtime via `runtimestore.Resolve` and applies `Limits.MaxRequestInputWaitSeconds` over the platform default. Resolved in commit 2ea0bcfc.
 
-### - [ ] F-5.1.5 — `setupCommandPolicy` field unmodeled — Medium [Medium] — OPEN
+### - [x] F-5.1.5 — `setupCommandPolicy` field unmodeled — Medium [Medium] — CLOSED
 
 - **Spec:** §5.1 standalone-runtime YAML (lines 80-88) declares `setupCommandPolicy.mode: allowlist | shell`, `setupCommandPolicy.shell`, `setupCommandPolicy.allowlist: [...]`, and `setupCommandPolicy.maxCommands`. The merge table (line 194) classifies it as **Override** with the rule "Derived may restrict allowlist; gateway enforces at pod startup."
 - **Evidence:** No `SetupCommandPolicy` type, field, migration, payload entry, or merge clause in the implementation. (`SetupPolicy` exists for the aggregate-cap and `onTimeout` block per line 90 of the spec; that is a different field.) Setup commands themselves (`workspaceDefaults.setupCommands`) are likewise unmodeled — see F-5.1.6.
 - **Gap:** The gateway has no per-runtime command allowlist to enforce at pod startup. A derived runtime cannot restrict its base's allowlist. The §17.6 install path has no surface for the operator to constrain what `setupCommands` may run.
 - **Suggested resolution:** Add `SetupCommandPolicy` (with `Mode`, `Shell bool`, `Allowlist []string`, `MaxCommands int`) and the corresponding merge clause; the §6.4 pod-init path must read it before executing a setup command.
+- **Resolution:** Added `SetupCommandPolicy{Mode (allowlist|shell), Shell, Allowlist, MaxCommands}` to `runtimestore.Runtime` with Override merge, migration 0074 (`setup_command_policy JSONB`) + pgstore, admin payload/PUT/bootstrap validation (mode enum, non-negative maxCommands) and OpenAPI. The §6.4 pod-init enforcement of the allowlist is a forward-consuming path; the descriptor now reaches the store. Resolved in commit 2ea0bcfc.
 
 ### - [ ] F-5.1.6 — `workspaceDefaults` (files, setupCommands) unmodeled — High [Medium] — OPEN
 
@@ -3169,12 +3171,13 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Gap:** Per-runtime declared schemas for `runtimeOptions` cannot be authored; client-side `runtimeOptions` are unvalidated against the runtime contract. Derived-runtime registration cannot enforce the property-subset rule. The §26 reference-runtime catalog claim that per-runtime `runtimeOptions` schemas live on the runtime definition is unsupported.
 - **Suggested resolution:** Add a `RuntimeOptionsSchema json.RawMessage` field, persist it as JSONB, accept on the admin API, validate as a JSON Schema document, and implement the derived-must-be-subset-of-base property check.
 
-### - [ ] F-5.1.8 — `defaultPoolConfig` field unmodeled — Medium [Medium] — OPEN
+### - [x] F-5.1.8 — `defaultPoolConfig` field unmodeled — Medium [Medium] — CLOSED
 
 - **Spec:** §5.1 standalone-runtime YAML (lines 98-101) declares `defaultPoolConfig` with `warmCount`, `resourceClass`, and `egressProfile`. The merge table (line 200) classifies it as **Override**.
 - **Evidence:** No `DefaultPoolConfig` field, no migration, no admin payload entry, no merge clause. The §5.2 pool resolution falls through to platform defaults rather than reading the runtime's declared pool defaults.
 - **Gap:** Operators cannot ship a runtime with sensible default pool sizing. The §5.2 fallback hierarchy is broken: there is no "runtime defaults" tier between platform defaults and pool overrides.
 - **Suggested resolution:** Add `DefaultPoolConfig` to the store with Override merge; the §5.2 pool resolver must consult it before falling back to platform defaults.
+- **Resolution:** Added `DefaultPoolConfig{WarmCount, ResourceClass, EgressProfile}` to `runtimestore.Runtime` with Override merge, migration 0074 (`default_pool_config JSONB`) + pgstore, admin payload/PUT/bootstrap validation (non-negative warmCount) and OpenAPI. The §5.2 pool resolver consuming it as the runtime-defaults tier is a forward-consuming path; the descriptor now reaches the store. Resolved in commit 2ea0bcfc.
 
 ### - [x] F-5.1.9 — `allowSelfRecursion` field unmodeled in runtime registry — High [Medium] — CLOSED
 
@@ -3204,19 +3207,21 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Gap:** A runtime can declare `integrationLevel: full` and ship only a Basic-level binary; the gateway routes session assignments to it normally, silently degrading checkpoint, clean interrupt, and credential-rotation features the caller expects. The validator's promise ("register the runtime with a gateway and inspect the lifecycle handshake; the gateway reports `RUNTIME_LEVEL_UNDERPERFORMS`") is hollow.
 - **Suggested resolution:** Implement first-session-assignment admission in the gateway's pool-claim path: read the observed capability set from the adapter's `lifecycle_support` reply, compare against `runtimestore.Runtime.IntegrationLevel`, reject with `RUNTIME_LEVEL_UNDERPERFORMS` on underperformance and emit `runtime.integrationLevel.underdeclared` audit on overperformance. Stamp `runtime.integrationLevel.declared` on every registration audit event.
 
-### - [ ] F-5.1.12 — `INVALID_RUNTIME: integrationLevel is only valid on type: agent runtimes` not enforced on standalone registration — Medium [Medium] — OPEN
+### - [x] F-5.1.12 — `INVALID_RUNTIME: integrationLevel is only valid on type: agent runtimes` not enforced on standalone registration — Medium [Medium] — CLOSED
 
 - **Spec:** §5.1 line 36 mandates: "Only meaningful on `type: agent` runtimes — must not be set on `type: mcp` (gateway rejects with `INVALID_RUNTIME: integrationLevel is only valid on type: agent runtimes`)."
 - **Evidence:** `pkg/gateway/admin/runtimes.go:312-323` (`validatePayloadEnums`) accepts any `IntegrationLevel` value within the enum without considering the `Type`. `pkg/gateway/runtimestore/runtimestore.go:679` (`ApplyDefaults`) only refrains from defaulting an empty value on mcp; it does not reject an explicitly-set value. The bootstrap upsert (`pkg/gateway/admin/bootstrap.go:182`) similarly relies on `validatePayloadEnums`. The lenny-ctl validator (`cmd/lenny-ctl/runtimescaffold/validate.go:172-175`) does perform the check, but the gateway does not.
 - **Gap:** A POST `/v1/admin/runtimes` with `type: mcp, integrationLevel: full` is accepted and persisted. The §5.1 invariant that integration level is meaningful only on agent runtimes is enforceable on the runtime-author side but not on the platform side; the asymmetry breaks the §5.1 promise that the gateway is the authoritative validator.
 - **Suggested resolution:** In `validatePayloadEnums` (and the equivalent path in the PUT handler), reject `IntegrationLevel != ""` when `Type == "mcp"` with `INVALID_RUNTIME: integrationLevel is only valid on type: agent runtimes`.
+- **Resolution:** Added `RuntimePayload.validateIntegrationLevelOnType`; the POST handler and bootstrap upsert reject `IntegrationLevel != ""` on `type:mcp` with `INVALID_RUNTIME: integrationLevel is only valid on type: agent runtimes`, and the PUT handler rejects setting `integrationLevel` on an existing `type:mcp` runtime (type is immutable via PUT). Resolved in commit 2ea0bcfc.
 
-### - [ ] F-5.1.13 — `labels` not required on registration — Medium [Medium] — OPEN
+### - [ ] F-5.1.13 — `labels` not required on registration — Medium [Medium] — DEFERRED
 
 - **Spec:** §5.1 line 51: "**Labels are required from v1** — primary mechanism for environment `runtimeSelector` and `connectorSelector` matching (see [Section 10.6](10_gateway-internals.md#106-environment-resource-and-rbac-model))."
 - **Evidence:** `pkg/gateway/admin/runtimes.go:343-380` (POST) and 475-553 (PUT) do not require `Labels` to be non-empty. `pkg/gateway/runtimestore/runtimestore.go:62-65` documents the field as optional ("nil or empty map means the runtime carries no labels"). The bootstrap upsert (line 237) only writes labels when present.
 - **Gap:** A runtime registered with no labels is silently accepted; §10.6 `runtimeSelector` then matches nothing for that runtime, so its environment-membership status is effectively undefined. The §5.1 "required from v1" claim is contradicted.
 - **Suggested resolution:** In `validatePayloadEnums` (or a dedicated validator), reject creation when `len(Labels) == 0`. The PUT path may permit existing label sets to be replaced wholesale but should reject an explicit empty map.
+- **Deferred:** Enforcing labels-required at registration is a cross-cutting behavior change: ~80 existing `RuntimePayload`/`runtimestore.Runtime` test fixtures across `pkg/gateway/admin` and the embedded reference-runtime seed (`pkg/embedded/stack`) construct runtimes without labels and would all need label sets added. Warrants a dedicated batch that migrates every fixture and the §26 catalog seed alongside the validator.
 
 ### - [ ] F-5.1.14 — Base runtime `image` not immutable via API — Medium [Medium] — OPEN
 
