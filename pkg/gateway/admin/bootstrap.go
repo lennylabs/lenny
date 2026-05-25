@@ -309,8 +309,29 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
 			continue
 		}
+		if err := validateWorkspaceDefaults(p.WorkspaceDefaults); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
+		if err := validateSharedAssets(p.SharedAssets); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
+		if err := validateRuntimeOptionsSchema(p.RuntimeOptionsSchema); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
 		// §5.1 line 36: integrationLevel is only valid on type:agent.
 		if err := p.validateIntegrationLevelOnType(); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
+		// §5.1 lines 132-158: a bootstrap-seeded derived runtime is held to
+		// the same registration rules as one created via POST — its base
+		// must exist and be standalone, it may not set prohibited fields,
+		// and its runtimeOptionsSchema may only reference base property
+		// names (F-5.1.18).
+		if err := r.validateDerivedRuntime(req.Context(), p); err != nil {
 			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
 			continue
 		}
@@ -387,6 +408,15 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			}
 			if p.DefaultPoolConfig != nil {
 				rt.DefaultPoolConfig = p.DefaultPoolConfig
+			}
+			if p.WorkspaceDefaults != nil {
+				rt.WorkspaceDefaults = p.WorkspaceDefaults
+			}
+			if p.SharedAssets != nil {
+				rt.SharedAssets = p.SharedAssets
+			}
+			if len(p.RuntimeOptionsSchema) > 0 {
+				rt.RuntimeOptionsSchema = p.RuntimeOptionsSchema
 			}
 			if p.MinPlatformVersion != "" {
 				rt.MinPlatformVersion = p.MinPlatformVersion

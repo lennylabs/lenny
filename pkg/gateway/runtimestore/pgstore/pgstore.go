@@ -43,7 +43,7 @@ const selectList = `name, type, image, execution_mode, isolation_profile,
 	tool_capability_overrides, setup_policy, capabilities, min_platform_version,
 	task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 	supported_providers, credential_capabilities, limits, setup_command_policy,
-	default_pool_config`
+	default_pool_config, workspace_defaults, runtime_options_schema, shared_assets`
 
 // stringSliceJSON marshals a §5.1 string-set field (allowedResourceClasses,
 // supportedProviders) to its jsonb text form. An empty slice is stored as
@@ -185,6 +185,37 @@ func defaultPoolConfigJSON(c *runtimestore.DefaultPoolConfig) any {
 	return string(b)
 }
 
+// workspaceDefaultsJSON marshals a runtime's §5.1 workspaceDefaults block
+// to its jsonb text form. A nil block is stored as SQL NULL.
+func workspaceDefaultsJSON(w *runtimestore.WorkspaceDefaults) any {
+	if w == nil {
+		return nil
+	}
+	b, _ := json.Marshal(w)
+	return string(b)
+}
+
+// runtimeOptionsSchemaJSON stores a runtime's §5.1 runtimeOptionsSchema
+// raw JSON. An empty value is stored as SQL NULL, which scanRuntime
+// reads back as a nil RawMessage.
+func runtimeOptionsSchemaJSON(s json.RawMessage) any {
+	if len(s) == 0 {
+		return nil
+	}
+	return string(s)
+}
+
+// sharedAssetsJSON marshals a runtime's §5.1 sharedAssets list to its
+// jsonb text form. An empty list is stored as SQL NULL, which
+// scanRuntime reads back as a nil slice.
+func sharedAssetsJSON(a []runtimestore.SharedAsset) any {
+	if len(a) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(a)
+	return string(b)
+}
+
 // Create inserts a new runtime row. Returns ErrAlreadyExists when the
 // name is taken.
 func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
@@ -205,8 +236,8 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		tool_capability_overrides, setup_policy, capabilities, min_platform_version,
 		task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 		supported_providers, credential_capabilities, limits, setup_command_policy,
-		default_pool_config
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`,
+		default_pool_config, workspace_defaults, runtime_options_schema, shared_assets
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
@@ -218,7 +249,8 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		r.AllowSelfRecursion, stringSliceJSON(r.AllowedResourceClasses),
 		stringSliceJSON(r.SupportedProviders), credentialCapabilitiesJSON(r.CredentialCapabilities),
 		limitsJSON(r.Limits), setupCommandPolicyJSON(r.SetupCommandPolicy),
-		defaultPoolConfigJSON(r.DefaultPoolConfig))
+		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
+		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -274,7 +306,8 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		task_policy = $18, base_runtime = $19, allow_self_recursion = $20,
 		allowed_resource_classes = $21, supported_providers = $22,
 		credential_capabilities = $23, limits = $24, setup_command_policy = $25,
-		default_pool_config = $26
+		default_pool_config = $26, workspace_defaults = $27,
+		runtime_options_schema = $28, shared_assets = $29
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
@@ -288,7 +321,8 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		stringSliceJSON(r.SupportedProviders),
 		credentialCapabilitiesJSON(r.CredentialCapabilities),
 		limitsJSON(r.Limits), setupCommandPolicyJSON(r.SetupCommandPolicy),
-		defaultPoolConfigJSON(r.DefaultPoolConfig)); err != nil {
+		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
+		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets)); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -374,6 +408,8 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		credentialCapabilitiesRaw                  []byte
 		limitsRaw, setupCommandPolicyRaw           []byte
 		defaultPoolConfigRaw                       []byte
+		workspaceDefaultsRaw, sharedAssetsRaw      []byte
+		runtimeOptionsSchemaRaw                    []byte
 	)
 	if err := row.Scan(
 		&r.Name, &typ, &r.Image, &execMode, &isoProf, &level, &description,
@@ -381,7 +417,8 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		&capInferMode, &toolOverridesRaw, &setupPolicyRaw, &capabilitiesRaw, &r.MinPlatformVersion,
 		&taskPolicyRaw, &r.BaseRuntime, &r.AllowSelfRecursion, &allowedClassesRaw,
 		&supportedProvidersRaw, &credentialCapabilitiesRaw, &limitsRaw,
-		&setupCommandPolicyRaw, &defaultPoolConfigRaw,
+		&setupCommandPolicyRaw, &defaultPoolConfigRaw, &workspaceDefaultsRaw,
+		&runtimeOptionsSchemaRaw, &sharedAssetsRaw,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}
@@ -457,6 +494,19 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	if len(defaultPoolConfigRaw) > 0 {
 		if err := json.Unmarshal(defaultPoolConfigRaw, &r.DefaultPoolConfig); err != nil {
 			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode defaultPoolConfig: %w", err)
+		}
+	}
+	if len(workspaceDefaultsRaw) > 0 {
+		if err := json.Unmarshal(workspaceDefaultsRaw, &r.WorkspaceDefaults); err != nil {
+			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode workspaceDefaults: %w", err)
+		}
+	}
+	if len(runtimeOptionsSchemaRaw) > 0 {
+		r.RuntimeOptionsSchema = append(json.RawMessage(nil), runtimeOptionsSchemaRaw...)
+	}
+	if len(sharedAssetsRaw) > 0 {
+		if err := json.Unmarshal(sharedAssetsRaw, &r.SharedAssets); err != nil {
+			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode sharedAssets: %w", err)
 		}
 	}
 	return r, nil

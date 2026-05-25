@@ -68,6 +68,9 @@ type RuntimePayload struct {
 	Limits                  *runtimestore.Limits                        `json:"limits,omitempty"`
 	SetupCommandPolicy      *runtimestore.SetupCommandPolicy            `json:"setupCommandPolicy,omitempty"`
 	DefaultPoolConfig       *runtimestore.DefaultPoolConfig             `json:"defaultPoolConfig,omitempty"`
+	WorkspaceDefaults       *runtimestore.WorkspaceDefaults             `json:"workspaceDefaults,omitempty"`
+	RuntimeOptionsSchema    json.RawMessage                             `json:"runtimeOptionsSchema,omitempty"`
+	SharedAssets            []runtimestore.SharedAsset                  `json:"sharedAssets,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities           `json:"capabilities,omitempty"`
 	MinPlatformVersion      string                                      `json:"minPlatformVersion,omitempty"`
 	TaskPolicy              *runtimestore.TaskPolicy                    `json:"taskPolicy,omitempty"`
@@ -104,6 +107,9 @@ func runtimeFromPayload(p RuntimePayload, createdAt time.Time) runtimestore.Runt
 		Limits:                  p.Limits,
 		SetupCommandPolicy:      p.SetupCommandPolicy,
 		DefaultPoolConfig:       p.DefaultPoolConfig,
+		WorkspaceDefaults:       p.WorkspaceDefaults,
+		RuntimeOptionsSchema:    p.RuntimeOptionsSchema,
+		SharedAssets:            p.SharedAssets,
 		Capabilities:            p.Capabilities,
 		MinPlatformVersion:      p.MinPlatformVersion,
 		TaskPolicy:              p.TaskPolicy,
@@ -136,6 +142,9 @@ type UpdateRuntimeRequest struct {
 	Limits                  *runtimestore.Limits                         `json:"limits,omitempty"`
 	SetupCommandPolicy      *runtimestore.SetupCommandPolicy             `json:"setupCommandPolicy,omitempty"`
 	DefaultPoolConfig       *runtimestore.DefaultPoolConfig              `json:"defaultPoolConfig,omitempty"`
+	WorkspaceDefaults       *runtimestore.WorkspaceDefaults              `json:"workspaceDefaults,omitempty"`
+	RuntimeOptionsSchema    json.RawMessage                              `json:"runtimeOptionsSchema,omitempty"`
+	SharedAssets            *[]runtimestore.SharedAsset                  `json:"sharedAssets,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities            `json:"capabilities,omitempty"`
 	CredentialCapabilities  *runtimestore.CredentialCapabilities         `json:"credentialCapabilities,omitempty"`
 	MinPlatformVersion      *string                                      `json:"minPlatformVersion,omitempty"`
@@ -190,6 +199,14 @@ func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) e
 	// boundary — a derived runtime may only narrow recursion).
 	if p.AllowSelfRecursion && !base.AllowSelfRecursion {
 		return errors.New("allowSelfRecursion cannot widen base value")
+	}
+	// §5.1 runtimeOptionsSchema is Override (restrict-only): a derived
+	// schema may only reference property names present in the base
+	// schema's properties map.
+	if forbidden, err := forbiddenDerivedSchemaProperty(p.RuntimeOptionsSchema, base.RuntimeOptionsSchema); err != nil {
+		return err
+	} else if forbidden != "" {
+		return fmt.Errorf("runtimeOptionsSchema declares forbidden property %q", forbidden)
 	}
 	return nil
 }
@@ -250,6 +267,15 @@ func validateDerivedRuntimeUpdate(current, base runtimestore.Runtime, body Updat
 	}
 	if body.AllowSelfRecursion != nil && *body.AllowSelfRecursion && !base.AllowSelfRecursion {
 		return errors.New("allowSelfRecursion cannot widen base value")
+	}
+	// §5.1 runtimeOptionsSchema restrict-only: a derived schema may only
+	// reference property names present in the base schema.
+	if len(body.RuntimeOptionsSchema) > 0 {
+		if forbidden, err := forbiddenDerivedSchemaProperty(body.RuntimeOptionsSchema, base.RuntimeOptionsSchema); err != nil {
+			return err
+		} else if forbidden != "" {
+			return fmt.Errorf("runtimeOptionsSchema declares forbidden property %q", forbidden)
+		}
 	}
 	return nil
 }
@@ -352,6 +378,111 @@ func validateDefaultPoolConfig(c *runtimestore.DefaultPoolConfig) error {
 	return nil
 }
 
+// validateWorkspaceDefaults checks a §5.1 workspaceDefaults block: each
+// file entry declares a destination Path, and each setup command is
+// non-empty with a non-negative timeout.
+func validateWorkspaceDefaults(w *runtimestore.WorkspaceDefaults) error {
+	if w == nil {
+		return nil
+	}
+	for _, f := range w.Files {
+		if f.Path == "" {
+			return errors.New("workspaceDefaults.files entries must declare a path")
+		}
+	}
+	for _, c := range w.SetupCommands {
+		if c.Cmd == "" {
+			return errors.New("workspaceDefaults.setupCommands entries must declare a command")
+		}
+		if c.TimeoutSeconds < 0 {
+			return errors.New("workspaceDefaults.setupCommands timeoutSeconds must not be negative")
+		}
+	}
+	return nil
+}
+
+// validateSharedAssets checks a §5.1 sharedAssets list: each entry
+// declares a known type and a destPath, an artifact asset carries a ref,
+// and an inline asset carries a path.
+func validateSharedAssets(assets []runtimestore.SharedAsset) error {
+	for _, a := range assets {
+		if !a.Type.IsValid() {
+			return errors.New("sharedAssets.type must be artifact or inline")
+		}
+		if a.DestPath == "" {
+			return errors.New("sharedAssets entries must declare a destPath")
+		}
+		switch a.Type {
+		case runtimestore.SharedAssetArtifact:
+			if a.Ref == "" {
+				return errors.New("sharedAssets artifact entries must declare a ref")
+			}
+		case runtimestore.SharedAssetInline:
+			if a.Path == "" {
+				return errors.New("sharedAssets inline entries must declare a path")
+			}
+		}
+	}
+	return nil
+}
+
+// validateRuntimeOptionsSchema checks a §5.1 runtimeOptionsSchema: when
+// present it must be a JSON object (a JSON Schema fragment). An empty
+// value declares no schema.
+func validateRuntimeOptionsSchema(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if _, err := schemaProperties(raw); err != nil {
+		return err
+	}
+	return nil
+}
+
+// schemaProperties parses a §5.1 runtimeOptionsSchema and returns the set
+// of property names declared in its top-level `properties` object. It
+// errors when the schema is not a JSON object or its `properties` member
+// is present but is not an object.
+func schemaProperties(raw json.RawMessage) (map[string]bool, error) {
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, errors.New("runtimeOptionsSchema must be a JSON object")
+	}
+	out := make(map[string]bool, len(doc.Properties))
+	for name := range doc.Properties {
+		out[name] = true
+	}
+	return out, nil
+}
+
+// forbiddenDerivedSchemaProperty returns the first property name declared
+// in the derived runtimeOptionsSchema that is absent from the base
+// schema's properties map, or "" when the derived schema is a subset.
+// Per §5.1 a derived schema may only reference base property names. An
+// empty base schema means the base declares no properties, so any
+// derived property is forbidden.
+func forbiddenDerivedSchemaProperty(derived, base json.RawMessage) (string, error) {
+	if len(derived) == 0 {
+		return "", nil
+	}
+	derivedProps, err := schemaProperties(derived)
+	if err != nil {
+		return "", err
+	}
+	baseProps, err := schemaProperties(base)
+	if err != nil {
+		return "", err
+	}
+	for name := range derivedProps {
+		if !baseProps[name] {
+			return name, nil
+		}
+	}
+	return "", nil
+}
+
 // validateCapabilities checks a §5.1 capabilities block: a known
 // interaction model, known injection modes, and the §5.1 coherence
 // rule that a multi_turn runtime must support injection.
@@ -400,6 +531,9 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		Limits:                  r.Limits,
 		SetupCommandPolicy:      r.SetupCommandPolicy,
 		DefaultPoolConfig:       r.DefaultPoolConfig,
+		WorkspaceDefaults:       r.WorkspaceDefaults,
+		RuntimeOptionsSchema:    r.RuntimeOptionsSchema,
+		SharedAssets:            r.SharedAssets,
 		Capabilities:            r.Capabilities,
 		MinPlatformVersion:      r.MinPlatformVersion,
 		TaskPolicy:              r.TaskPolicy,
@@ -496,6 +630,18 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if err := validateDefaultPoolConfig(body.DefaultPoolConfig); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	if err := validateWorkspaceDefaults(body.WorkspaceDefaults); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	if err := validateSharedAssets(body.SharedAssets); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	if err := validateRuntimeOptionsSchema(body.RuntimeOptionsSchema); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
@@ -697,6 +843,24 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if body.WorkspaceDefaults != nil {
+		if err := validateWorkspaceDefaults(body.WorkspaceDefaults); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
+	if body.SharedAssets != nil {
+		if err := validateSharedAssets(*body.SharedAssets); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
+	if len(body.RuntimeOptionsSchema) > 0 {
+		if err := validateRuntimeOptionsSchema(body.RuntimeOptionsSchema); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
 	if body.Capabilities != nil {
 		if err := validateCapabilities(body.Capabilities); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
@@ -721,6 +885,15 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		if body.IntegrationLevel != nil && *body.IntegrationLevel != "" && current.Type == runtimestore.TypeMCP {
 			writeError(w, http.StatusBadRequest, "INVALID_RUNTIME",
 				"integrationLevel is only valid on type: agent runtimes", nil)
+			return
+		}
+		// §5.1 line 174: a base runtime's image is immutable via the admin
+		// API — the §10.5 RuntimeUpgrade orchestration is the only
+		// legitimate writer. (A derived runtime's image is rejected
+		// separately by validateDerivedRuntimeUpdate as prohibited.)
+		if !current.IsDerived() && body.Image != nil && *body.Image != current.Image {
+			writeError(w, http.StatusBadRequest, "IMAGE_IMMUTABLE",
+				"base runtime image is immutable; use RuntimeUpgrade to change runtime image", nil)
 			return
 		}
 		// §5.1 restrict-only invariants on supportedProviders /
@@ -795,6 +968,15 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.DefaultPoolConfig != nil {
 			rt.DefaultPoolConfig = body.DefaultPoolConfig
+		}
+		if body.WorkspaceDefaults != nil {
+			rt.WorkspaceDefaults = body.WorkspaceDefaults
+		}
+		if body.SharedAssets != nil {
+			rt.SharedAssets = *body.SharedAssets
+		}
+		if len(body.RuntimeOptionsSchema) > 0 {
+			rt.RuntimeOptionsSchema = body.RuntimeOptionsSchema
 		}
 		if body.Capabilities != nil {
 			rt.Capabilities = body.Capabilities
@@ -910,6 +1092,15 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.DefaultPoolConfig != nil {
 		out = append(out, "defaultPoolConfig")
+	}
+	if b.WorkspaceDefaults != nil {
+		out = append(out, "workspaceDefaults")
+	}
+	if b.SharedAssets != nil {
+		out = append(out, "sharedAssets")
+	}
+	if len(b.RuntimeOptionsSchema) > 0 {
+		out = append(out, "runtimeOptionsSchema")
 	}
 	if b.Capabilities != nil {
 		out = append(out, "capabilities")

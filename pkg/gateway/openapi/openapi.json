@@ -273,6 +273,48 @@
               "egressProfile": { "type": "string" }
             }
           },
+          "workspaceDefaults": {
+            "type": "object",
+            "properties": {
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["path"],
+                  "properties": {
+                    "path":    { "type": "string" },
+                    "content": { "type": "string" },
+                    "ref":     { "type": "string" }
+                  }
+                }
+              },
+              "setupCommands": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "cmd":            { "type": "string" },
+                    "timeoutSeconds": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "runtimeOptionsSchema": { "type": "object" },
+          "sharedAssets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["type", "destPath"],
+              "properties": {
+                "type":     { "type": "string", "enum": ["artifact","inline"] },
+                "ref":      { "type": "string" },
+                "path":     { "type": "string" },
+                "content":  { "type": "string" },
+                "destPath": { "type": "string" }
+              }
+            }
+          },
           "baseRuntime": { "type": "string" },
           "taskPolicy": {
             "type": "object",

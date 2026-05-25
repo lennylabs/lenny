@@ -4,6 +4,7 @@ package runtimestore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 )
 
@@ -119,13 +120,98 @@ func Merge(base, derived Runtime) Runtime {
 	if derived.DefaultPoolConfig == nil {
 		eff.DefaultPoolConfig = cb.DefaultPoolConfig.Clone()
 	}
+	// §5.1 runtimeOptionsSchema is Override: the derived schema replaces
+	// the base when set, and the base applies otherwise. The derived
+	// schema's property-subset invariant is enforced at registration.
+	if len(derived.RuntimeOptionsSchema) == 0 {
+		eff.RuntimeOptionsSchema = append(json.RawMessage(nil), cb.RuntimeOptionsSchema...)
+	}
 
 	// Collection merges.
 	eff.Labels = mergeLabels(cb.Labels, eff.Labels)
 	eff.PublishedMetadata = mergePublishedMetadata(cb.PublishedMetadata, eff.PublishedMetadata)
 	eff.SetupPolicy = mergeSetupPolicy(cb.SetupPolicy, eff.SetupPolicy)
+	eff.WorkspaceDefaults = mergeWorkspaceDefaults(cb.WorkspaceDefaults, eff.WorkspaceDefaults)
+	eff.SharedAssets = mergeSharedAssets(cb.SharedAssets, eff.SharedAssets)
 
 	return eff
+}
+
+// mergeWorkspaceDefaults applies the §5.1 Append merge: derived files are
+// appended onto the base file list with a conflicting Path replaced in
+// place by the derived entry, and derived setup commands are appended
+// after the base setup commands (order: base defaults → derived
+// defaults). When only one side declares a block that side is used.
+func mergeWorkspaceDefaults(base, derived *WorkspaceDefaults) *WorkspaceDefaults {
+	if base == nil {
+		return derived
+	}
+	if derived == nil {
+		return base
+	}
+	out := &WorkspaceDefaults{
+		Files:         mergeWorkspaceFiles(base.Files, derived.Files),
+		SetupCommands: append(append([]WorkspaceSetupCommand(nil), base.SetupCommands...), derived.SetupCommands...),
+	}
+	return out
+}
+
+// mergeWorkspaceFiles appends the derived files onto the base list, with
+// a derived entry whose Path matches a base entry replacing the base
+// entry in place. A derived-only Path is appended after the base entries.
+func mergeWorkspaceFiles(base, derived []WorkspaceFile) []WorkspaceFile {
+	if len(base) == 0 && len(derived) == 0 {
+		return nil
+	}
+	derivedByPath := make(map[string]WorkspaceFile, len(derived))
+	for _, f := range derived {
+		derivedByPath[f.Path] = f
+	}
+	out := make([]WorkspaceFile, 0, len(base)+len(derived))
+	seen := make(map[string]bool, len(base))
+	for _, f := range base {
+		if d, ok := derivedByPath[f.Path]; ok {
+			out = append(out, d)
+		} else {
+			out = append(out, f)
+		}
+		seen[f.Path] = true
+	}
+	for _, f := range derived {
+		if !seen[f.Path] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// mergeSharedAssets applies the §5.1 Append merge: derived assets are
+// appended onto the base list with a conflicting DestPath replaced in
+// place by the derived entry.
+func mergeSharedAssets(base, derived []SharedAsset) []SharedAsset {
+	if len(base) == 0 && len(derived) == 0 {
+		return nil
+	}
+	derivedByDest := make(map[string]SharedAsset, len(derived))
+	for _, a := range derived {
+		derivedByDest[a.DestPath] = a
+	}
+	out := make([]SharedAsset, 0, len(base)+len(derived))
+	seen := make(map[string]bool, len(base))
+	for _, a := range base {
+		if d, ok := derivedByDest[a.DestPath]; ok {
+			out = append(out, d)
+		} else {
+			out = append(out, a)
+		}
+		seen[a.DestPath] = true
+	}
+	for _, a := range derived {
+		if !seen[a.DestPath] {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // mergeLabels overlays the derived label keys onto the base label map,

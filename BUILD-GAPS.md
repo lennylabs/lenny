@@ -3194,7 +3194,7 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Suggested resolution:** Add `SetupCommandPolicy` (with `Mode`, `Shell bool`, `Allowlist []string`, `MaxCommands int`) and the corresponding merge clause; the §6.4 pod-init path must read it before executing a setup command.
 - **Resolution:** Added `SetupCommandPolicy{Mode (allowlist|shell), Shell, Allowlist, MaxCommands}` to `runtimestore.Runtime` with Override merge, migration 0074 (`setup_command_policy JSONB`) + pgstore, admin payload/PUT/bootstrap validation (mode enum, non-negative maxCommands) and OpenAPI. The §6.4 pod-init enforcement of the allowlist is a forward-consuming path; the descriptor now reaches the store. Resolved in commit 2ea0bcfc.
 
-### - [ ] F-5.1.6 — `workspaceDefaults` (files, setupCommands) unmodeled — High [Medium] — OPEN
+### - [x] F-5.1.6 — `workspaceDefaults` (files, setupCommands) unmodeled — High [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.5.3 — Both report that workspaceDefaults (files and setupCommands) are unmodeled in the Runtime struct and never merged into execution, breaking the §5.1 append-merge.
 
@@ -3202,13 +3202,15 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Evidence:** No `WorkspaceDefaults` field on `runtimestore.Runtime`, no JSONB column on `runtime_definitions`, no payload entry, no merge clause. The §14 workspace-plan path has nothing to read for the runtime-default layer.
 - **Gap:** The §5.1 derived-runtime feature is incomplete — a derived runtime cannot ship default files or default setup commands, so the operator cannot model the canonical "research-pipeline" example from the spec (which depends on `workspaceDefaults.files: agent.py` and `workspaceDefaults.setupCommands: pip install`). The §14 materialization order claim is unenforceable.
 - **Suggested resolution:** Add a typed `WorkspaceDefaults` struct (with `Files []FileEntry` and `SetupCommands []CommandEntry`) to the store and Postgres schema; wire it into the §14 materialization pipeline; implement the Append merge with conflicting-path replacement.
+- **Resolution:** Added `runtimestore.WorkspaceDefaults{Files []WorkspaceFile, SetupCommands []WorkspaceSetupCommand}` (bare-string and `{cmd,timeoutSeconds}` forms accepted) on `Runtime`, with migration 0075 (`workspace_defaults JSONB`) + pgstore, admin POST/PUT/bootstrap payload + validation + OpenAPI. `Merge` implements the §5.1 Append: derived files appended onto base with a conflicting Path replaced in place, derived setup commands appended after base. The §14 materialization consuming the resolved block is a forward-consuming path; the descriptor now reaches the store and resolver. Resolved in commit {SHA}.
 
-### - [ ] F-5.1.7 — `runtimeOptionsSchema` field unmodeled — High [Medium] — OPEN
+### - [x] F-5.1.7 — `runtimeOptionsSchema` field unmodeled — High [Medium] — CLOSED
 
 - **Spec:** §5.1 standalone-runtime YAML (lines 92-97) declares `runtimeOptionsSchema` as a JSON Schema fragment used to validate `runtimeOptions` on session creation (cross-referenced to §14). The merge table (line 199) classifies it as **Override** with the strict rule "Derived schema MAY only reference property names present in the base schema's `properties` map; introducing a property name absent from the base is forbidden. Gateway validates at derived-runtime registration and rejects with `INVALID_DERIVED_RUNTIME: runtimeOptionsSchema declares forbidden property '<name>'`."
 - **Evidence:** No `RuntimeOptionsSchema` field, no migration column, no payload entry, no validation. The §14 `runtimeOptions` validation path has nothing to consult.
 - **Gap:** Per-runtime declared schemas for `runtimeOptions` cannot be authored; client-side `runtimeOptions` are unvalidated against the runtime contract. Derived-runtime registration cannot enforce the property-subset rule. The §26 reference-runtime catalog claim that per-runtime `runtimeOptions` schemas live on the runtime definition is unsupported.
 - **Suggested resolution:** Add a `RuntimeOptionsSchema json.RawMessage` field, persist it as JSONB, accept on the admin API, validate as a JSON Schema document, and implement the derived-must-be-subset-of-base property check.
+- **Resolution:** Added `Runtime.RuntimeOptionsSchema json.RawMessage`, migration 0075 (`runtime_options_schema JSONB`) + pgstore, admin POST/PUT/bootstrap payload + OpenAPI. `validateRuntimeOptionsSchema` rejects a non-object schema; `forbiddenDerivedSchemaProperty` enforces the §5.1 subset rule at create/update/bootstrap with `INVALID_DERIVED_RUNTIME: runtimeOptionsSchema declares forbidden property '<name>'`. `Merge` classifies it Override (derived replaces base when set). Resolved in commit {SHA}.
 
 ### - [x] F-5.1.8 — `defaultPoolConfig` field unmodeled — Medium [Medium] — CLOSED
 
@@ -3226,12 +3228,13 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Suggested resolution:** Add `AllowSelfRecursion bool` to `runtimestore.Runtime`, persist via migration, accept on the admin payload, implement the restrict-only merge rule (derived `true` rejected when base `false`), and wire the value into the §8.2 `Settings.RuntimeAllowSelfRec` evaluator.
 - **Resolution:** Added `AllowSelfRecursion bool` to `runtimestore.Runtime` (Override restrict-only in `Merge`), persisted via migration 0069 (`allow_self_recursion BOOLEAN`), accepted on `RuntimePayload`/`UpdateRuntimeRequest`/OpenAPI runtime schema, and `validateDerivedRuntime`/`validateDerivedRuntimeUpdate` reject a derived value of `true` when the base is `false` (`INVALID_DERIVED_RUNTIME: allowSelfRecursion cannot widen base value`). `delegation.Service` now resolves the target runtime via `runtimestore.Resolve` and feeds `AllowSelfRecursion` into `cycle.Settings.RuntimeAllowSelfRec`, wired through the gateway's `delegation.Options.Runtimes`. The platform/policy layers of the three-layer gate remain separately wired. Resolved in commit 35d8fc4e.
 
-### - [ ] F-5.1.10 — `sharedAssets` field unmodeled — Medium [Medium] — OPEN
+### - [x] F-5.1.10 — `sharedAssets` field unmodeled — Medium [Medium] — CLOSED
 
 - **Spec:** §5.1 standalone-runtime YAML (lines 102-108) declares `sharedAssets` with `type: artifact | inline`, `ref`, `path`, `content`, `destPath`. The cross-reference to §6.4 specifies materialization into `/workspace/shared/` (read-only) during pod init. The merge table (line 208) classifies it as **Append** ("derived assets appended to base assets; conflicting `destPath` entries replaced by derived").
 - **Evidence:** No `SharedAssets` field, no payload entry, no migration. The §6.4 pod-init layout cannot populate `/workspace/shared/` because the runtime registry carries no descriptor.
 - **Gap:** The "concurrent execution mode" use case in the spec (line 102 prose: "only meaningful for concurrent execution mode") cannot be supported — no descriptor reaches the pod.
 - **Suggested resolution:** Add a `SharedAssets []SharedAsset` field with Append merge; wire into the §6.4 init flow gated on `executionMode: concurrent`.
+- **Resolution:** Added `Runtime.SharedAssets []SharedAsset` (`type: artifact|inline`, ref/path/content/destPath), migration 0075 (`shared_assets JSONB`) + pgstore, admin POST/PUT/bootstrap payload + validation (known type, required destPath, artifact→ref, inline→path) + OpenAPI. `Merge` implements the §5.1 Append keyed on DestPath (conflicting entry replaced by derived). The §6.4 init flow consuming the resolved list under `executionMode: concurrent` is a forward-consuming path; the descriptor now reaches the store and resolver. Resolved in commit {SHA}.
 
 ### - [ ] F-5.1.11 — Declared-vs-observed integrationLevel admission not enforced — High [Medium] — OPEN
 
@@ -3262,12 +3265,13 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Suggested resolution:** In `validatePayloadEnums` (or a dedicated validator), reject creation when `len(Labels) == 0`. The PUT path may permit existing label sets to be replaced wholesale but should reject an explicit empty map.
 - **Deferred:** Enforcing labels-required at registration is a cross-cutting behavior change: ~80 existing `RuntimePayload`/`runtimestore.Runtime` test fixtures across `pkg/gateway/admin` and the embedded reference-runtime seed (`pkg/embedded/stack`) construct runtimes without labels and would all need label sets added. Warrants a dedicated batch that migrates every fixture and the §26 catalog seed alongside the validator.
 
-### - [ ] F-5.1.14 — Base runtime `image` not immutable via API — Medium [Medium] — OPEN
+### - [x] F-5.1.14 — Base runtime `image` not immutable via API — Medium [Medium] — CLOSED
 
 - **Spec:** §5.1 line 174: "**Base runtime mutability:** `image` and `name` immutable via API."
 - **Evidence:** `pkg/gateway/admin/runtimes.go:564-566` accepts a PUT that mutates `Image` on a base runtime without restriction. `validateDerivedRuntimeUpdate` (line 166) only rejects `image` mutation on derived runtimes. `name` mutability is structurally prevented (the URL path drives identity), but `image` is not.
 - **Gap:** An operator can PUT a new `image` on a base runtime via the admin API, bypassing the §10.5 `RuntimeUpgrade` orchestration that is meant to govern image rollouts. The §5.1 immutability invariant is violated.
 - **Suggested resolution:** Reject `Image` mutation on a base runtime in the PUT handler with a dedicated error code (e.g., `IMAGE_IMMUTABLE: use RuntimeUpgrade to change runtime image`). The §10.5 controller path remains the only legitimate writer for `image`.
+- **Resolution:** The PUT handler now rejects an `Image` change on a base (non-derived) runtime with `400 IMAGE_IMMUTABLE: base runtime image is immutable; use RuntimeUpgrade to change runtime image`. A no-op PUT carrying the same image is accepted; a derived runtime's image remains rejected as prohibited by `validateDerivedRuntimeUpdate`. Resolved in commit {SHA}.
 
 ### - [ ] F-5.1.15 — Impact validation on base-runtime mutation not implemented — High [Medium] — OPEN
 
@@ -3290,12 +3294,13 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Gap:** Helm-applied `Runtime` resources sit in etcd without ever being mirrored into the gateway's `runtime_definitions` table. The chart's `reference-runtimes.yaml` template is a no-op against the gateway: a fresh install registers zero runtimes through the CRD path. The CRD's printer columns ("Type", "Image", "Level") are populated only because the CRD itself stores them; the gateway never sees them. Operators relying on the §5.1 / §17.6 declarative install flow ("`helm install` registers each catalog entry as a platform-global Runtime record") will find an empty runtime registry on the gateway side.
 - **Suggested resolution:** Add a `pkg/controller/runtime` package that watches `Runtime` resources, mirrors them into the gateway's runtimestore (via direct DB access or admin-API calls), and sets the `Registered` condition. The reconciler must also handle deletion (soft-delete via `runtimestore.Store.SoftDelete`) and field updates.
 
-### - [ ] F-5.1.18 — Bootstrap upsert path skips derived-runtime validation — Medium [Medium] — OPEN
+### - [x] F-5.1.18 — Bootstrap upsert path skips derived-runtime validation — Medium [Medium] — CLOSED
 
 - **Spec:** §5.1 lines 132-158 require the gateway to reject derived runtimes whose `baseRuntime` is missing, that set prohibited fields (`image`, `type`, `executionMode`, `isolationProfile`, `integrationLevel`, `capabilities`), or whose base is itself derived (the merge is single-level).
 - **Evidence:** `pkg/gateway/admin/runtimes.go:376-379` (POST) calls `validateDerivedRuntime`. `pkg/gateway/admin/bootstrap.go:175-269` (`upsertRuntimes`) does not — `runtimeFromPayload` is called directly with no derived-runtime validation, and the update branch does not re-validate either.
 - **Gap:** A bootstrap seed (`POST /v1/admin/bootstrap`, which §17.6 calls during install) can register a derived runtime that references a non-existent base, that sets prohibited fields, or that chains derivations. The runtime enters the registry in a §5.1-incompatible state; the failure surfaces later at session-creation `Resolve` time as a generic `derived runtime base: not found` error.
 - **Suggested resolution:** Call `validateDerivedRuntime` from `upsertRuntimes` before `runtimeFromPayload` for both create and update branches. Add the same `INVALID_DERIVED_RUNTIME` error to `BootstrapError`.
+- **Resolution:** `upsertRuntimes` now calls `r.validateDerivedRuntime` (missing/derived base, prohibited fields, runtimeOptionsSchema subset) plus the workspaceDefaults/sharedAssets/runtimeOptionsSchema validators before writing; a failing entry is recorded as a per-entry `BootstrapError` and not persisted. The new workspaceDefaults/sharedAssets/runtimeOptionsSchema fields are also wired into the bootstrap update branch. Resolved in commit {SHA}.
 
 ### - [ ] F-5.1.19 — Bootstrap upsert path does not auto-generate the A2A agent card — Medium [Medium] — OPEN
 
@@ -6214,7 +6219,7 @@ There is no branch on a shell-mode flag; the proto's `SetupCommand` message has 
 
 Effect: the "most restrictive execution mode" promised by §7.5 cannot be selected. A runtime declaring `shell: false` for a multi-tenant coding-agent pool gets shell-mode execution anyway. The §26.2 reference runtime catalog explicitly ships `shell: false` for coding-agent runtimes (`spec/26_reference-runtime-catalog.md:53`) — that expectation is silently ignored.
 
-### - [ ] F-7.5.3 — `workspaceDefaults.setupCommands` (base + derived runtime defaults) are never merged into the executed list (High) [Medium] — OPEN
+### - [x] F-7.5.3 — `workspaceDefaults.setupCommands` (base + derived runtime defaults) are never merged into the executed list (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-5.1.6 — Both report that workspaceDefaults (files and setupCommands) are unmodeled in the Runtime struct and never merged into execution, breaking the §5.1 append-merge.
 
@@ -6227,6 +6232,8 @@ Evidence:
 - `pkg/workspaceplan/plan.go:42-46` `Plan` carries only `SetupCommands []SetupCommand` (the client-supplied list) and there is no code path that prepends runtime defaults before `WorkspacePlanToProto` is called.
 
 Effect: a derived runtime that declares `workspaceDefaults.setupCommands: [pip install -r requirements.txt]` (the very example in `spec/05_runtime-registry-and-pool-model.md:125-126`) does not actually install dependencies — the commands silently never run. The §26 reference-runtime catalog's documented `setupCommands` is dead weight. The deployer-set platform defaults that the spec positions as the strict, server-controlled portion of the setup phase are skipped, and only the (presumably less-trusted) client list is executed.
+
+**Resolution:** Closed by F-5.1.6. `runtimestore.WorkspaceDefaults.SetupCommands` is now modeled and `Merge` appends derived setup commands after base (preserving per-command `timeoutSeconds`), giving the §14 path the resolved base→derived list to prepend before the client commands. Resolved in commit {SHA}.
 
 ### - [ ] F-7.5.4 — Setup-command stdout/stderr are not captured or surfaced (High) [Medium] — OPEN
 

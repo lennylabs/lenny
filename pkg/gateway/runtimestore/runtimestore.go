@@ -13,6 +13,7 @@ package runtimestore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -140,6 +141,29 @@ type Runtime struct {
 	// classifies it Override. It is nil when the runtime declares no
 	// defaultPoolConfig block.
 	DefaultPoolConfig *DefaultPoolConfig
+
+	// WorkspaceDefaults is the §5.1 workspaceDefaults block: the default
+	// files and setup commands the §14 workspace-plan path materializes
+	// into every pod before client uploads. The §5.1 merge table
+	// classifies it Append (base defaults → derived defaults → client
+	// uploads). It is nil when the runtime declares no workspaceDefaults
+	// block.
+	WorkspaceDefaults *WorkspaceDefaults
+
+	// RuntimeOptionsSchema is the §5.1 runtimeOptionsSchema: a JSON Schema
+	// fragment the §14 path validates session-creation runtimeOptions
+	// against. The §5.1 merge table classifies it Override with the
+	// restrict-only rule that a derived schema may only reference property
+	// names present in the base schema's properties map. It is nil when
+	// the runtime declares no runtimeOptionsSchema.
+	RuntimeOptionsSchema json.RawMessage
+
+	// SharedAssets is the §5.1 sharedAssets list: read-only files the
+	// §6.4 pod-init flow materializes into /workspace/shared/ for a
+	// concurrent-execution-mode runtime. The §5.1 merge table classifies
+	// it Append (conflicting destPath entries replaced by derived). A nil
+	// or empty slice means the runtime declares no shared assets.
+	SharedAssets []SharedAsset
 
 	// Capabilities is the §5.1 capabilities block: the runtime's
 	// interaction model and its mid-session injection support. It is
@@ -635,6 +659,128 @@ func (c *DefaultPoolConfig) Clone() *DefaultPoolConfig {
 	return &cp
 }
 
+// WorkspaceFile is one §5.1 workspaceDefaults.files entry: a default
+// workspace file the §14 path materializes into /workspace/current
+// before client uploads. Small files carry inline Content; large files
+// carry a Ref (a lenny-blob:// reference materialized in its place).
+type WorkspaceFile struct {
+	// Path is the destination path, relative to /workspace/current.
+	Path string `json:"path"`
+
+	// Content is the inline file content. Empty when the file is
+	// materialized from Ref.
+	Content string `json:"content,omitempty"`
+
+	// Ref names a large-file reference materialized in place of inline
+	// Content. Empty when Content is inline.
+	Ref string `json:"ref,omitempty"`
+}
+
+// WorkspaceSetupCommand is one §5.1 workspaceDefaults.setupCommands
+// entry. Per §5.1 line 198 the per-command TimeoutSeconds is preserved
+// from each source through the merge. The §5.1 YAML accepts a bare
+// command string or a {cmd, timeoutSeconds} object; UnmarshalJSON
+// admits both forms.
+type WorkspaceSetupCommand struct {
+	Cmd            string `json:"cmd"`
+	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
+}
+
+// UnmarshalJSON accepts the §5.1 bare-string form
+// (`- pip install -r requirements.txt`) and the §14 object form
+// (`{cmd: ..., timeoutSeconds: ...}`).
+func (c *WorkspaceSetupCommand) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		c.Cmd = s
+		c.TimeoutSeconds = 0
+		return nil
+	}
+	type alias WorkspaceSetupCommand
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*c = WorkspaceSetupCommand(a)
+	return nil
+}
+
+// WorkspaceDefaults is the §5.1 workspaceDefaults block: the default
+// files and setup commands a runtime ships. The §5.1 merge table
+// classifies it Append: derived files are appended to base files with a
+// conflicting Path replaced by the derived entry, and derived setup
+// commands are appended after base setup commands.
+type WorkspaceDefaults struct {
+	Files         []WorkspaceFile         `json:"files,omitempty"`
+	SetupCommands []WorkspaceSetupCommand `json:"setupCommands,omitempty"`
+}
+
+// Clone returns a deep copy of the block so the store never shares the
+// Files or SetupCommands slices with a caller. A nil receiver clones to
+// nil.
+func (w *WorkspaceDefaults) Clone() *WorkspaceDefaults {
+	if w == nil {
+		return nil
+	}
+	cp := &WorkspaceDefaults{}
+	if w.Files != nil {
+		cp.Files = append([]WorkspaceFile(nil), w.Files...)
+	}
+	if w.SetupCommands != nil {
+		cp.SetupCommands = append([]WorkspaceSetupCommand(nil), w.SetupCommands...)
+	}
+	return cp
+}
+
+// SharedAssetType is the §5.1 sharedAssets[].type enum: an artifact
+// reference or an inline file.
+type SharedAssetType string
+
+const (
+	// SharedAssetArtifact materializes a blob reference (Ref) into
+	// /workspace/shared/.
+	SharedAssetArtifact SharedAssetType = "artifact"
+	// SharedAssetInline materializes inline Content into /workspace/shared/.
+	SharedAssetInline SharedAssetType = "inline"
+)
+
+// AllSharedAssetTypes returns the closed enum.
+func AllSharedAssetTypes() []SharedAssetType {
+	return []SharedAssetType{SharedAssetArtifact, SharedAssetInline}
+}
+
+// IsValid reports whether t is a known shared-asset type.
+func (t SharedAssetType) IsValid() bool {
+	for _, v := range AllSharedAssetTypes() {
+		if t == v {
+			return true
+		}
+	}
+	return false
+}
+
+// SharedAsset is one §5.1 sharedAssets entry: a read-only file the §6.4
+// pod-init flow materializes into /workspace/shared/ for a
+// concurrent-execution-mode runtime.
+type SharedAsset struct {
+	// Type discriminates an artifact reference from an inline file.
+	Type SharedAssetType `json:"type"`
+
+	// Ref is the blob reference for an artifact asset.
+	Ref string `json:"ref,omitempty"`
+
+	// Path is the source path for an inline asset.
+	Path string `json:"path,omitempty"`
+
+	// Content is the inline content for an inline asset.
+	Content string `json:"content,omitempty"`
+
+	// DestPath is the destination under /workspace/shared/. The §5.1
+	// merge keys on DestPath: a conflicting derived entry replaces the
+	// base entry.
+	DestPath string `json:"destPath"`
+}
+
 // MicrovmScrubMode is the §5.1 taskPolicy.microvmScrubMode enum: how a
 // microvm-isolated task-mode pod is scrubbed between cross-tenant tasks.
 type MicrovmScrubMode string
@@ -914,6 +1060,13 @@ func cloneRuntime(r Runtime) Runtime {
 	r.Limits = r.Limits.Clone()
 	r.SetupCommandPolicy = r.SetupCommandPolicy.Clone()
 	r.DefaultPoolConfig = r.DefaultPoolConfig.Clone()
+	r.WorkspaceDefaults = r.WorkspaceDefaults.Clone()
+	if r.RuntimeOptionsSchema != nil {
+		r.RuntimeOptionsSchema = append(json.RawMessage(nil), r.RuntimeOptionsSchema...)
+	}
+	if r.SharedAssets != nil {
+		r.SharedAssets = append([]SharedAsset(nil), r.SharedAssets...)
+	}
 	return r
 }
 
