@@ -2961,7 +2961,7 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.17 — Direct-mode adapter timer for `anthropic_direct` lease expiry not implemented [Medium] — OPEN
+### - [x] F-4.9.17 — Direct-mode adapter timer for `anthropic_direct` lease expiry not implemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.3.14 — Both report the unimplemented adapter-side synthetic-TTL timer for anthropic_direct lease expiry that deletes credentials.json and reports AUTH_EXPIRED.
 
@@ -2970,6 +2970,8 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 **Spec:** spec/04_system-components.md line 1149.
 
 **Evidence:** `pkg/adapter` and `pkg/runtimekit` — `grep -rn "expiresAt\|AUTH_EXPIRED\|credentials.json" pkg/adapter pkg/runtimekit pkg/runtime` returns no expiry-timer code. The credential file path `/run/lenny/credentials.json` is referenced once in spec but no adapter code reads/writes/deletes it on expiry.
+
+**Resolution (commit a12eb06e):** Added `pkg/adapter/credexpiry.go`: the adapter arms a per-provider local timer at each direct-mode lease's `expiresAt`. `reconcileExpiryTimers` runs after every credential-file write (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`) and on `releaseSession`; it cancels timers for absent providers and arms or re-arms one for each direct-mode lease (`deliveryMode` is read from the lease payload discriminator). When a timer fires, `onLeaseExpired` checks the guarded lease is still current (no replacement arrived via `RotateCredentials`, matched by lease ID), removes the provider's entry from `/run/lenny/credentials.json`, and emits `AUTH_EXPIRED` on the §4.7 control channel to trigger the standard fallback flow. Proxy-mode leases and leases without an expiry arm no timer (the gateway enforces proxy expiry server-side). Test seams `ExpiryAfterFunc`/`ExpiryNow` fire expiry deterministically.
 
 ---
 
@@ -3051,13 +3053,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.25 — `lenny-cred-readers` supplementary group / tmpfs `0440` ownership scheme not present on tmpfs credential file delivery [Low] — OPEN
+### - [x] F-4.9.25 — `lenny-cred-readers` supplementary group / tmpfs `0440` ownership scheme not present on tmpfs credential file delivery [Low] — CLOSED
 
 **Severity:** Low (spec §4.7 item 4 cross-references the ownership scheme; the §4.9 reference at line 1252 cites it for the lease).
 
 **Spec:** spec/04_system-components.md line 1252.
 
 **Evidence:** Outside §4.9 strict scope but referenced. `grep -rn "lenny-cred-readers\|0440\|fsGroup.*cred" pkg/adapter pkg/runtimekit pkg/podsecurity` returns no matches.
+
+**Resolution (re-verified; already implemented):** The §4.7 item 4 / line 1252 ownership scheme is fully present. `pkg/controller/sandbox/podspec/podspec.go` defines `CredReadersGID = 65534` (the lenny-cred-readers group), sets the pod `securityContext.FSGroup` to it, and mounts the credential tmpfs (`CredVolumeName`, an in-memory `EmptyDir`) at `/run/lenny` into the adapter container read-write and the runtime container read-only. `pkg/adapter/credfile/credfile.go` writes the file at mode `0o440` (`FileMode`) through an atomic temp-file rename, with no `chown` (the kubelet sets group ownership via `fsGroup` at mount time, preserving the §13.1 dropped-capabilities invariant). The finding's grep was stale: `0o440` and `lenny-cred-readers` now appear in `credfile.go`, and the pod fsGroup lands in `podspec.go`. Covered by `podspec_test.go` (`POD_SPEC_CRED_FSGROUP_MISSING` assertion) and `credfile_test.go` (file-mode assertion).
 
 ---
 
@@ -19938,7 +19942,7 @@ This is documented/intentional for the dev path but worth flagging as Info: the 
 
 ---
 
-### - [ ] F-13.3.14 — CFL-014 — `anthropic_direct` adapter-side synthetic-TTL timer not implemented [Medium] — OPEN
+### - [x] F-13.3.14 — CFL-014 — `anthropic_direct` adapter-side synthetic-TTL timer not implemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.9.17 — Both report the unimplemented adapter-side synthetic-TTL timer for anthropic_direct lease expiry that deletes credentials.json and reports AUTH_EXPIRED.
 
@@ -19952,6 +19956,8 @@ This is documented/intentional for the dev path but worth flagging as Info: the 
 **Impact.** In direct-delivery mode with `anthropic_direct`, the agent pod's credential file lives at `/run/lenny/credentials.json` with the API key in it for as long as the file is not overwritten or deleted. If the gateway's proactive-renewal worker fails (e.g., gateway down, network partition), the file stays — and the underlying `sk-ant-...` key keeps working at Anthropic regardless of Lenny's lease TTL. The §4.9 expectation that "a long-lived `anthropic_direct` key cannot be used by the runtime beyond the lease boundary" relies on this adapter-side timer; without it, the synthetic TTL is purely gateway-side and a partitioned pod retains access.
 
 **Severity rationale.** Medium because (a) the failure requires both a gateway-pod partition AND a direct-mode `anthropic_direct` pool, (b) the spec explicitly requires the adapter-side timer as a MUST, and (c) defense-in-depth depends on it (the spec uses this control as part of the explanation for why proxy mode is recommended in multi-tenant deployments — direct mode is supposed to be safe modulo this control).
+
+**Resolution (commit a12eb06e):** Closed by F-4.9.17. The adapter now arms a per-provider expiry timer at each direct-mode lease's `expiresAt`; on fire without a replacement lease (lease-ID match) it deletes the provider's entry from `/run/lenny/credentials.json` and emits `AUTH_EXPIRED` on the control channel. See `pkg/adapter/credexpiry.go` and `pkg/adapter/credexpiry_test.go`.
 
 ---
 
