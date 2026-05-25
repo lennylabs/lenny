@@ -3931,7 +3931,7 @@ Implementation does not pre-connect any agent process at warm time.
 
 Consequence: every pod in every pool warms strictly to pod-warm idle. Setting `capabilities.preConnect: true` in a Runtime YAML is impossible (the field does not exist on the CRD); even if it were accepted, no controller would honor it. The latency-saving optional mode promised by §6.1 is unavailable.
 
-### - [ ] F-6.1.2 — `/sessions`, `/artifacts`, and `/dev/shm` mounts are not in the pod spec [High] — OPEN
+### - [x] F-6.1.2 — `/sessions`, `/artifacts`, and `/dev/shm` mounts are not in the pod spec [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.1.2, F-6.4.1 — F-13.1.2, F-6.1.2, and F-6.4.1 all report missing /sessions and /artifacts volumes/mounts in podspec.go; F-6.1.14 is a separate /dev/shm 64MB cap defect though F-6.1.2 also touches /dev/shm.
 
@@ -3947,6 +3947,8 @@ The three container mount lists at `podspec.go:203–212, 258–262` only mount 
 Greps across `pkg/controller/`, `pkg/adapter/`, `pkg/podsecurity/`, `charts/lenny/templates/` for `/sessions`, `/artifacts`, or `/dev/shm` return zero matches in production code.
 
 Consequence: the pod has no in-pod path for session transcripts, runtime state, agent logs, outputs, or checkpoints to land. A runtime that writes to `/sessions` or `/artifacts` writes onto the read-only root filesystem (`readOnlyRootFilesystem: true` is enforced — `podspec.go:401`) and fails with EROFS. The /dev/shm cap is not enforced; the §6.4 "Combined with the one-session-only invariant, sensitive data never persists on disk after pod termination" invariant is incomplete because /artifacts/ persistence path is absent altogether.
+
+- **Resolution:** Closed by `a4fa7a64` (the `/sessions` + `/artifacts` volumes and per-container mounts) and `e9ff206d` (the `/dev/shm` 64Mi cap, F-6.1.14). All three paths the finding named are now in the pod spec, with the §6.4 medium split (tmpfs `/sessions`+`/tmp`, disk `/workspace`+`/artifacts`). Same `/sessions`+`/artifacts` fix as F-6.4.1.
 
 ### - [ ] F-6.1.3 — No `sizeLimit` on tmpfs / emptyDir volumes; not accounted in resource requests [High] — OPEN
 
@@ -4737,7 +4739,7 @@ Classification: *Implemented*, *Partial*, *Missing*, *Deviates*, *Info*. Severit
 
 Summary: §6.4 mandates three concurrent layouts (single, per-slot, shared-read-only) and two enforcement axes (data-at-rest controls and T4 dedicated-node isolation). The implementation supplies only the simplest of these. The pod-spec builder (`pkg/controller/sandbox/podspec/podspec.go`) materializes three emptyDir volumes — `workspace`, `credentials` (tmpfs), and `tmp` (tmpfs) — mounted at `/workspace`, `/run/lenny`, and `/tmp`. The spec's `/sessions/` and `/artifacts/` mountpoints have no corresponding volume; nothing in the pod tree carries `sessions` or `artifacts` as either a path or a volume name. The per-slot tree (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`) and the `/workspace/shared/` read-only volume that §6.4 ties to `concurrent`+`workspace` mode are not built — neither the volume, the per-slot directory creation in the adapter, nor a `sharedAssets` field on the `Runtime` CRD exists. The recommended tmpfs `sizeLimit` of 256Mi for `/sessions/` and `/tmp/` is not set on any volume (no `SizeLimit` field is present in `podVolumes()`). The §6.4 `/dev/shm` 64 MB ceiling, the procfs/sysfs masking, and the `shareProcessNamespace: false` admission policy are partially or fully unsourced from the pod spec itself; the host-sharing flag is enforced by the `lenny-pod-security` webhook, but `/dev/shm` and proc/sys masking have no implementation. The T4 dedicated-node enforcement is split: the `lenny-t4-node-isolation` ValidatingAdmissionWebhook exists with the §6.4 STR-003 rejection message, but the controller-side preconditions it relies on — a `lenny.dev/workspace-tier: t4` pod label, a T4 `nodeSelector`, and a T4 NoSchedule toleration injected by the pool controller — are not produced anywhere; `podspec.Build` ignores `workspaceTier` entirely and the `Runtime` CRD has no `workspaceTier` field. The webhook is therefore architecturally live but functionally undriven: a T4 pod cannot exist because no code path tags one as T4. The pool-config validator does not reject a T4 Runtime whose pool omits the required nodeSelector. The `--staging-dir` flag is absent from `lenny-adapter`, so `PrepareWorkspace` returns `FailedPrecondition` in any production deployment and uploads cannot land in `/workspace/staging`.
 
-### - [ ] F-6.4.1 — `/sessions/` and `/artifacts/` mount paths are not provisioned [High] — OPEN
+### - [x] F-6.4.1 — `/sessions/` and `/artifacts/` mount paths are not provisioned [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.1.2, F-6.1.2 — F-13.1.2, F-6.1.2, and F-6.4.1 all report missing /sessions and /artifacts volumes/mounts in podspec.go; F-6.1.14 is a separate /dev/shm 64MB cap defect though F-6.1.2 also touches /dev/shm.
 
@@ -4754,6 +4756,8 @@ tmp                  (tmpfs emptyDir, Medium: Memory)
 There is no `sessions` volume, no `artifacts` volume, and no `MountPath: "/sessions"` or `MountPath: "/artifacts"` in either `buildSidecar` (lines 199–246) or `buildEmbedded` (lines 253–281). A grep across `pkg/controller/sandbox/podspec/`, `pkg/adapter/`, `pkg/sandbox/`, `pkg/runtimekit/`, `pkg/workspaceplan/`, and `pkg/upload/` returns no production code that references a `/sessions/` or `/artifacts/` path. The only `/sessions` matches in the implementation are HTTP route prefixes (`/v1/sessions/`) inside `cmd/lenny-gateway/main.go` and `cmd/lenny/session.go`, which are unrelated.
 
 Consequence: §6.4's "Session files (e.g., conversation logs, runtime state)" and "Logs, outputs, checkpoints" surfaces have nowhere to live. The runtime sees no `/sessions` directory at warm time, breaking the §6.1 line 13 invariant. `Checkpoint` (`pkg/adapter/checkpoint.go:99`) archives `s.WorkspaceRoot` only — it never writes to `/artifacts/`. The §6.4 data-at-rest controls (sessions tmpfs vs artifacts disk) cannot be applied because the volumes do not exist; any runtime or local-tool that writes to `/sessions` or `/artifacts` writes onto the container's read-only root filesystem (`ReadOnlyRootFilesystem: true` at `pkg/controller/sandbox/podspec/podspec.go:401`) and is rejected by the kernel.
+
+- **Resolution:** Closed by `a4fa7a64`. `podVolumes` now declares a memory-backed `sessions` tmpfs (§6.4 line 380) and a disk-backed `artifacts` emptyDir (§6.4 line 414), and every agent container — the sidecar adapter and runtime, and the embedded runtime — mounts them at `/sessions` and `/artifacts`. The §6.4 data-at-rest medium split holds: `/sessions` and `/tmp` are tmpfs (contents gone on pod termination); `/workspace` and `/artifacts` are disk-backed. Regression test `TestBuildMountsSessionsAndArtifacts_spec_6_4`.
 
 ### - [ ] F-6.4.2 — Concurrent-workspace per-slot tree (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`) is not built [High] — OPEN
 
@@ -4796,7 +4800,7 @@ Consequence: the webhook is *functionally undriven*. No code path produces a pod
 
 The §6.4 STR-003 enforcement is also unreachable from the pool-config webhook side: a T4 Runtime cannot be declared in the API (no `workspaceTier` field), and even if a `SandboxTemplate` carried a `nodeSelector` (the type does carry `TopologySpreadConstraints` at `pkg/apis/lenny/v1/sandboxtemplate_types.go:197`, but no `NodeSelector` or `Tolerations` fields), the validator has no `decide` branch that checks the selector for T4 alignment.
 
-### - [ ] F-6.4.5 — `lenny-adapter` has no `--staging-dir` flag; `PrepareWorkspace` returns `FailedPrecondition` in production [High] — OPEN
+### - [x] F-6.4.5 — `lenny-adapter` has no `--staging-dir` flag; `PrepareWorkspace` returns `FailedPrecondition` in production [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.7.10 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
@@ -4808,7 +4812,9 @@ Consequence: any client invoking `POST /v1/sessions/{id}/upload` against a real 
 
 The fix is small (add a `--staging-dir` flag with a sensible default like `/workspace/staging`, and a `subPath` mount or post-mount `MkdirAll`), but as shipped the production code path is broken.
 
-### - [ ] F-6.4.6 — tmpfs `sizeLimit` of 256Mi on `/sessions/` and `/tmp/` is not set [Medium] — OPEN
+- **Resolution:** Closed (re-verified). `cmd/lenny-adapter/main.go` declares `--staging-dir` (default `/workspace/.staging`) and assigns `adapterSrv.StagingDir`; the pod builder passes `--staging-dir=<stagingPath>` to both the sidecar adapter and the embedded runtime. `PrepareWorkspace` no longer returns `FailedPrecondition` in production. Resolved by commit `131a5107` (F-4.7.10); regression coverage in `TestBuildSidecarWiresStagingAndRuntimeUID`. The finding's evidence grep was stale.
+
+### - [x] F-6.4.6 — tmpfs `sizeLimit` of 256Mi on `/sessions/` and `/tmp/` is not set [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.1.3 — Both report no sizeLimit set on the tmpfs/emptyDir volumes in podspec.go:358-368 against the §6.4 256Mi recommendation.
 
@@ -4820,7 +4826,9 @@ Consequence: a runaway runtime that writes large blobs to `/tmp` cannot be cappe
 
 The wording is SHOULD ("Deployers should set"), so this is M severity rather than H.
 
-### - [ ] F-6.4.7 — `/dev/shm` 64 MB ceiling and procfs/sysfs masking are not configured [Medium] — OPEN
+- **Resolution:** Closed by `a4fa7a64`. The `sessions` and `tmp` memory-backed tmpfs volumes now carry the §6.4 line 413 recommended 256Mi `SizeLimit`; `workspace` and `artifacts` stay disk-backed (no cap). Regression test `TestBuildCapsTmpfs_spec_6_4`. The distinct "resource requests from `ResourceClass`" concern that F-6.1.3 also raises is out of scope here (it needs an operator-tunable resource-class → CPU/memory mapping) and remains tracked under F-6.1.3.
+
+### - [x] F-6.4.7 — `/dev/shm` 64 MB ceiling and procfs/sysfs masking are not configured [Medium] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-6.1.16 — Both report that procfs/sysfs masking is not configured in the pod spec; F-6.4.7 additionally covers the /dev/shm 64MB cap but shares the core masking defect.
 
@@ -4833,6 +4841,8 @@ The pod spec sets no `EmptyDirVolumeSource{Medium: Memory, SizeLimit: 64Mi}` on 
 The §13.1 webhook (`lenny-pod-security`) covers host-sharing flags, credential fsGroup, root pod, privilege escalation, read-only root, capability drop, and seccomp profile, but not `/dev/shm` size or proc/sys masking. The RuntimeClass-level masking (gVisor and Kata mask procfs/sysfs by default) provides defense in depth for `sandboxed`/`microvm` profiles, but the `standard` runc profile inherits the kernel's defaults — wide `/proc` and `/sys` visibility.
 
 Consequence: the §6.4 spec's IPC- and information-leak controls are absent on the runc isolation profile. The 64 MB `/dev/shm` cap is not enforced, allowing a runtime to allocate a large tmpfs region for IPC and inflate the pod's memory footprint outside the visible memory accounting.
+
+- **Resolution:** Closed (re-verified) by commit `e9ff206d` (F-6.1.14 + F-6.1.16). The pod builder mounts a memory-backed `/dev/shm` emptyDir with an explicit 64Mi `SizeLimit` in every agent container, and `containerSecurityContext` sets `ProcMount: Default` alongside `ReadOnlyRootFilesystem: true`, so procfs keeps the kubelet's masked set and sysfs is read-only. Regression coverage in `TestBuildCapsDevShm_spec_6_4` and `TestBuildMasksProc_spec_6_4`. The finding's evidence grep predated those commits.
 
 ### - [ ] F-6.4.8 — `shareProcessNamespace: true` rejection policy is enforced only by the in-tree `lenny-pod-security` webhook; no Kyverno/Gatekeeper policy is shipped [Medium] — OPEN
 
@@ -18997,7 +19007,7 @@ are only noted under Info.
 
 ### - [ ] F-13.1.1 — severity [High] — OPEN
 
-### - [ ] F-13.1.2 — 1-01 — Agent pods omit `/sessions` and `/artifacts` writable paths the §13.1 "Writable paths" row mandates [High] — OPEN
+### - [x] F-13.1.2 — 1-01 — Agent pods omit `/sessions` and `/artifacts` writable paths the §13.1 "Writable paths" row mandates [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.1.2, F-6.4.1 — F-13.1.2, F-6.1.2, and F-6.4.1 all report missing /sessions and /artifacts volumes/mounts in podspec.go; F-6.1.14 is a separate /dev/shm 64MB cap defect though F-6.1.2 also touches /dev/shm.
 
@@ -19029,6 +19039,14 @@ Evidence:
 - `pkg/controller/sandbox/podspec/podspec.go:396-404`
   (`readOnlyRootFilesystem: true` on every container)
 - spec/06_warm-pod-model.md:376-383, 394-397
+
+- **Resolution:** Closed by `a4fa7a64` (same fix as F-6.4.1). The pod
+  builder now declares and mounts `/sessions` (memory-backed tmpfs) and
+  `/artifacts` (disk-backed) in every agent container, satisfying the
+  §13.1 writable-paths row so runtime writes no longer hit EROFS on the
+  read-only root. The concurrent-workspace per-slot sub-tree
+  (`/sessions/{slotId}/`, `/artifacts/{slotId}/`, §6.4 lines 394-397)
+  remains tracked under F-6.4.2 (concurrent-workspace mode).
 
 ### - [ ] F-13.1.3 — 1-02 — Adapter-agent boundary nonce-only fallback (HMAC challenge-response) and `SO_PEERCRED` self-test are unimplemented [High] — OPEN
 
