@@ -175,6 +175,12 @@ type Server struct {
 	// adapter has no EventStore path).
 	RotationAudit RotationAuditEmitter
 
+	// ExpiryAfterFunc and ExpiryNow are the §4.9 line 1149 expiry-timer
+	// test seams. Nil selects time.AfterFunc and time.Now; tests inject
+	// fakes to fire a lease expiry deterministically.
+	ExpiryAfterFunc func(time.Duration, func()) expiryTimerHandle
+	ExpiryNow       func() time.Time
+
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock
 
@@ -200,6 +206,11 @@ type Server struct {
 	// credLeases is the credential lease set materialized into the
 	// credential file, keyed by provider.
 	credLeases map[string]*adapterv1.CredentialLease
+	// expiryTimers holds the §4.9 line 1149 direct-mode lease-expiry
+	// timers, keyed by provider. Each fires at its lease's expiresAt to
+	// delete the provider's credential-file entry and report
+	// AUTH_EXPIRED unless a replacement lease arrived first.
+	expiryTimers map[string]*expiryTimer
 }
 
 // New returns a Server advertising the given build version and the v1

@@ -89,6 +89,8 @@ func (s *Server) AssignCredentials(_ context.Context, req *adapterv1.AssignCrede
 	}
 	s.credSessionID = sessionID
 	s.credLeases = leases
+	// §4.9 line 1149: arm a local expiry timer for each direct-mode lease.
+	s.reconcileExpiryTimers(leases)
 	return &adapterv1.AssignCredentialsResponse{}, nil
 }
 
@@ -274,6 +276,9 @@ func (s *Server) applyRotation(sessionID string, newLeases map[string]*adapterv1
 		return nil, err
 	}
 	s.credLeases = leases
+	// §4.9 line 1149: a rotated direct-mode lease re-arms its expiry timer
+	// at the new expiresAt; unchanged providers keep their existing timer.
+	s.reconcileExpiryTimers(leases)
 	return rotated, nil
 }
 
@@ -299,6 +304,9 @@ func (s *Server) RevokeCredentials(_ context.Context, req *adapterv1.RevokeCrede
 		return nil, err
 	}
 	s.credLeases = leases
+	// §4.9 line 1149: a revoked provider's expiry timer is cancelled so
+	// it cannot fire AUTH_EXPIRED after the lease is already gone.
+	s.reconcileExpiryTimers(leases)
 	return &adapterv1.RevokeCredentialsResponse{}, nil
 }
 

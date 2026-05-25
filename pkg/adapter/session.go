@@ -191,6 +191,9 @@ func (s *Server) releaseSession() {
 	s.sessionID = ""
 	cancel := s.mcpCancel
 	s.mcpCancel = nil
+	// §4.9 line 1149: drop the direct-mode expiry timers so a stale lease
+	// cannot fire AUTH_EXPIRED against a session that has already ended.
+	s.cancelAllExpiryTimers()
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
