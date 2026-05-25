@@ -2927,7 +2927,7 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.18 — `proxyDialect` admission control mismatch validation not enforced [Medium] — OPEN
+### - [ ] F-4.9.18 — `proxyDialect` admission control mismatch validation not enforced [Medium] — DEFERRED
 
 **Severity:** Medium (spec MUSTs `422 INVALID_POOL_PROXY_DIALECT` when the pool's `proxyDialect` is not in the Runtime's `credentialCapabilities.proxyDialect`).
 
@@ -2935,15 +2935,19 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 **Evidence:** `pkg/gateway/admin/credential_pools.go` admission path validates `assignmentStrategy` only (lines 112-117, 208-213). No `proxyDialect` validation. The `CredentialPool` struct (`pkg/gateway/credentialpoolstore`) has no `ProxyDialect`, `DeliveryMode`, or `ProxyEndpoint` field; the spec example at line 1503-1511 carries these.
 
+**Deferred:** The two halves of the data model this validation joins now exist — the pool's `proxyDialect` (F-4.9.19, commit e5da86ba) and the runtime's `credentialCapabilities.proxyDialect` (F-5.1.3, commit ad0443b3). The remaining work is the cross-validation itself, which is blocked on the pool→runtime binding being undefined in the current model: a `CredentialPool` carries no runtime reference, and the runtime→pool binding (`defaultPoolConfig`, F-5.1.8) is itself still unmodeled. Without a defined join point, the spec's "the Runtime's credentialCapabilities.proxyDialect" cannot be resolved at pool admission. Pick this up once F-5.1.8 lands a binding, then enforce `422 INVALID_POOL_PROXY_DIALECT` at that join.
+
 ---
 
-### - [ ] F-4.9.19 — `INVALID_POOL_PROXY_ENDPOINT` (`http://` scheme rejection) and `proxyEndpoint` field not modelled [Low] — OPEN
+### - [x] F-4.9.19 — `INVALID_POOL_PROXY_ENDPOINT` (`http://` scheme rejection) and `proxyEndpoint` field not modelled [Low] — CLOSED
 
 **Severity:** Low (defense in depth for the spec's "must use TLS" guarantee at line 1513).
 
 **Spec:** spec/04_system-components.md line 1513.
 
 **Evidence:** `CredentialPool` carries no `ProxyEndpoint` field. The proxy endpoint is hard-coded via `--llm-proxy-addr` flag in `cmd/lenny-gateway/main.go:249`. `grep -rn "InvalidProxyEndpointScheme" pkg/ cmd/` returns no matches.
+
+**Resolution (commit e5da86ba):** Added `DeliveryMode`, `ProxyDialect`, and `ProxyEndpoint` to `credentialpoolstore.CredentialPool` (struct, pgstore columns via migration 0071, admin POST/PUT payload, and the §24.1 bootstrap seed). `Validate` rejects a non-`https://` proxyEndpoint with the `ErrInvalidProxyEndpointScheme` sentinel, which the admin handler surfaces as 422 `INVALID_POOL_PROXY_ENDPOINT`; deliveryMode and proxyDialect are validated against their closed enums.
 
 ---
 
@@ -2987,11 +2991,13 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.24 — `Lease` struct has no `IssuedAt` recording (spec implies issuedAt; only `ExpiresAt` and `RenewBefore` are present) [Low] — OPEN
+### - [x] F-4.9.24 — `Lease` struct has no `IssuedAt` recording (spec implies issuedAt; only `ExpiresAt` and `RenewBefore` are present) [Low] — CLOSED
 
 **Severity:** Low (spec line 1145 says "Each lease's `expiresAt` is computed as `issuedAt + min(leaseTTLSeconds, providerMaxTTL)`"; absence affects auditability of lease wall-clock duration).
 
 **Evidence:** `pkg/credential/lease.go:52-87` and `pkg/credential/lease_mint.go:104-150` track `ExpiresAt` and `RenewBefore` but not `IssuedAt`. The §16.1 `lenny_credential_lease_duration_seconds` histogram has no observation site.
+
+**Resolution (commit 3322f2f5):** Added `IssuedAt` to `credential.Lease`, set it at mint (`MintLease`), required it in `Validate`, and added a `Duration(now)` helper backing the §16.1 lease-duration histogram. Plumbed `issued_at` through the Token Service gRPC `CredentialLease` wire (proto field 19) and `credentialLeaseFromProto` so the gateway reconstructs the full lease. The histogram's emission wiring belongs to F-4.9.12 (credential-metric emission); this finding supplies the recorded `IssuedAt` it consumes.
 
 ---
 
@@ -3013,13 +3019,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.27 — `last_used_at` on user credentials never updated; the spec lists it as `GET /v1/credentials` response field [Info] — OPEN
+### - [x] F-4.9.27 — `last_used_at` on user credentials never updated; the spec lists it as `GET /v1/credentials` response field [Info] — CLOSED
 
 **Severity:** Info / Low.
 
 **Spec:** spec/04_system-components.md line 1349.
 
 **Evidence:** `pkg/gateway/credentialserver/credentialserver.go:44-51` `CredentialPayload` omits `last_used_at`. The `credentials` migration table (`migrations/0036_credentials.up.sql`) has no such column. The spec calls it out at line 1365.
+
+**Resolution (commit 3aca7c53):** Added `LastUsedAt` to `credentialstore.Credential`, the `lastUsedAt` field on the §15.1 `GET /v1/credentials` payload, the `last_used_at` column (migration 0073), and a `MarkUsed(ctx, tenant, ref, at)` store method on both the in-memory and pgstore backends. The "updated on each successful resolution" call (spec line 1365) lands with the §4.9 user-credential lease-resolution path (F-4.9.15); this finding supplies the field, endpoint surface, and update method that path invokes.
 
 ---
 
@@ -3123,12 +3131,13 @@ The audit surfaces three classes of gap. First, a substantial slice of the §5.1
 - **Suggested resolution:** Add `SupportedProviders []string` to the store, migration, payload, and merge (Override + derived-subset check). The §4.9 lease path must consult this field when matching a session's requested provider.
 - **Resolution:** Added `SupportedProviders []string` to `runtimestore.Runtime` (cloned, merged as Override so the base set applies when the derived runtime declares none), persisted via migration 0069 (`supported_providers JSONB`), accepted on `RuntimePayload`/`UpdateRuntimeRequest`/OpenAPI runtime schema, and flowed through the bootstrap upsert via the shared `runtimeFromPayload`. `validateDerivedRuntime`/`validateDerivedRuntimeUpdate` enforce the restrict-only subset rule (a derived entry absent from the base set is rejected with `INVALID_DERIVED_RUNTIME`). The §4.9 lease-path provider match is forward work (no provider-match path is wired on session creation yet). Resolved in commit 35d8fc4e.
 
-### - [ ] F-5.1.3 — `credentialCapabilities` field unmodeled — High [Medium] — OPEN
+### - [x] F-5.1.3 — `credentialCapabilities` field unmodeled — High [Medium] — CLOSED
 
 - **Spec:** §5.1 standalone-runtime YAML (lines 73-75) defines `credentialCapabilities` with `hotRotation: true` and `proxyDialect: [openai, anthropic]`. The same field carries a normative requirement: "Required when any pool bound to this Runtime uses `deliveryMode: proxy`. Set to empty (`[]`) for runtimes that only support direct mode." The merge table (line 192) classifies it as **Override**.
 - **Evidence:** No occurrence of `credentialCapabilities` or `CredentialCapabilities` anywhere in `pkg/`, `cmd/`, or `migrations/` (only on the spec file). The §4.9 proxy-mode pool wiring has no per-runtime dialect declaration to consult.
 - **Gap:** A pool can be configured with `deliveryMode: proxy` against a runtime whose SDK does not speak any dialect Lenny's reverse proxy emits; the gateway has no way to reject the binding at registration time. `hotRotation` declaration is also lost, so the §4.7 credential-rotation strategy cannot vary with runtime capability.
 - **Suggested resolution:** Add a typed `CredentialCapabilities` struct (with `HotRotation bool` and `ProxyDialect []string`) to the store, persist via migration, accept on payload and merge as Override, and add the pool-controller cross-validation ("`deliveryMode: proxy` rejected when runtime declares no `proxyDialect`").
+- **Resolution (commit ad0443b3):** Added a typed `CredentialCapabilities` struct (`HotRotation bool`, `ProxyDialect []string`, with `Clone` and `AllowsProxyDialect` helpers) to `runtimestore.Runtime`, the Runtime CRD (`pkg/apis/lenny/v1` + chart/embedded CRD), and the admin POST/PUT payloads. Persisted via migration 0072 (`credential_capabilities JSONB`) + pgstore column; merged as Override per the §5.1 merge table (derived block replaces the base when set, base inherited when omitted). The pool-side cross-validation (pool `proxyDialect` ∈ runtime `credentialCapabilities.proxyDialect`) is the deferred F-4.9.18, which now has the per-runtime declaration to consult.
 
 ### - [ ] F-5.1.4 — `limits` field unmodeled (including `maxRequestInputWaitSeconds`) — High [Medium] — OPEN
 
