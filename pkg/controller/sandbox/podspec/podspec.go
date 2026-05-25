@@ -35,6 +35,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -81,6 +82,16 @@ const (
 	workspaceMount  = "/workspace"
 	credentialMount = "/run/lenny"
 	tmpMount        = "/tmp"
+
+	// dshmMount is the in-pod /dev/shm path. spec: §6.4 line 420
+	// "/dev/shm is limited to 64MB." A memory-backed emptyDir with an
+	// explicit SizeLimit gives the cap a Lenny-controlled value rather
+	// than relying on the OCI runtime default.
+	dshmMount = "/dev/shm"
+	// dshmVolumeName is the pod volume backing dshmMount.
+	dshmVolumeName = "dshm"
+	// dshmSizeLimit is the §6.4 64MB /dev/shm ceiling.
+	dshmSizeLimit = "64Mi"
 
 	// stagingPath is the §4.7 PrepareWorkspace staging directory. It sits
 	// under the shared workspace emptyDir so the adapter can promote
@@ -154,6 +165,18 @@ type Inputs struct {
 	// period the deployer has declared exceeds the cluster's node-drain
 	// timeout. A nil value leaves the default in force.
 	MaxTerminationGraceSeconds *int64
+
+	// TerminationGraceSeconds is the §5.2
+	// SandboxTemplate.spec.terminationGracePeriodSeconds deployer
+	// override. spec: §5.2 line 516 — for concurrent-workspace pools the
+	// deployer sets this to cover the per-slot checkpoint budget
+	// (`maxConcurrent × max_tiered_checkpoint_cap +
+	// checkpointBarrierAckTimeoutSeconds + 30`); §6.4 line 67 requires it
+	// to be at least `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it
+	// replaces the §4.6.1 120s default as the base grace period; the
+	// MaxTerminationGraceSeconds ceiling still clamps it down. A nil
+	// value leaves the default in force.
+	TerminationGraceSeconds *int64
 }
 
 // EgressCapture configures the §12.9.8 egress-capture sidecar an
@@ -229,11 +252,13 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: "workspace", MountPath: workspaceMount},
 		{Name: CredVolumeName, MountPath: credentialMount},
 		{Name: "tmp", MountPath: tmpMount},
+		{Name: dshmVolumeName, MountPath: dshmMount},
 	}
 	runtimeMounts := []corev1.VolumeMount{
 		{Name: "workspace", MountPath: workspaceMount},
 		{Name: CredVolumeName, MountPath: credentialMount, ReadOnly: true},
 		{Name: "tmp", MountPath: tmpMount},
+		{Name: dshmVolumeName, MountPath: dshmMount},
 	}
 
 	pod := basePod(in, runtimeClass)
@@ -296,6 +321,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: "workspace", MountPath: workspaceMount},
 		{Name: CredVolumeName, MountPath: credentialMount},
 		{Name: "tmp", MountPath: tmpMount},
+		{Name: dshmVolumeName, MountPath: dshmMount},
 	}
 
 	pod := basePod(in, runtimeClass)
@@ -391,15 +417,16 @@ func injectEgressCaptureSidecar(in Inputs, pod *corev1.Pod, mountOn []int) {
 			Name:          "capture",
 			ContainerPort: listenPort,
 		}},
-		VolumeMounts:    []corev1.VolumeMount{captureMount},
+		VolumeMounts:    []corev1.VolumeMount{captureMount, {Name: dshmVolumeName, MountPath: dshmMount}},
 		SecurityContext: containerSecurityContext(AgentUID),
 	})
 }
 
 // podVolumes returns the §6.1 / §13.1 pod volumes: the workspace
-// emptyDir, the memory-backed credential tmpfs, and the memory-backed
-// tmp volume.
+// emptyDir, the memory-backed credential tmpfs, the memory-backed tmp
+// volume, and the §6.4 size-capped /dev/shm volume.
 func podVolumes() []corev1.Volume {
+	dshmLimit := resource.MustParse(dshmSizeLimit)
 	return []corev1.Volume{
 		{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: CredVolumeName, VolumeSource: corev1.VolumeSource{
@@ -407,6 +434,16 @@ func podVolumes() []corev1.Volume {
 		}},
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
+		}},
+		// spec: §6.4 line 420 "/dev/shm is limited to 64MB." A
+		// memory-backed emptyDir with an explicit SizeLimit enforces the
+		// cap under Lenny's control rather than the OCI runtime default,
+		// which varies across container runtimes.
+		{Name: dshmVolumeName, VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{
+				Medium:    corev1.StorageMediumMemory,
+				SizeLimit: &dshmLimit,
+			},
 		}},
 	}
 }
@@ -436,7 +473,8 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 
 // containerSecurityContext returns the §13.1 per-container security
 // context: the given non-root UID, no privilege escalation, a
-// read-only root filesystem, and all capabilities dropped.
+// read-only root filesystem, all capabilities dropped, and the default
+// masked /proc mount.
 func containerSecurityContext(uid int64) *corev1.SecurityContext {
 	return &corev1.SecurityContext{
 		RunAsUser:                ptr.To(uid),
@@ -444,6 +482,14 @@ func containerSecurityContext(uid int64) *corev1.SecurityContext {
 		AllowPrivilegeEscalation: ptr.To(false),
 		ReadOnlyRootFilesystem:   ptr.To(true),
 		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		// spec: §6.4 line 420 "procfs and sysfs are masked/read-only."
+		// DefaultProcMount keeps the kubelet's standard masked-/proc set
+		// (the /proc/kcore, /proc/sys, and similar paths are masked or
+		// read-only) rather than the Unmasked variant. Combined with the
+		// read-only root filesystem above, /sys is mounted read-only.
+		// Setting it explicitly states the §6.4 invariant in the pod spec
+		// instead of relying on the container runtime default.
+		ProcMount: ptr.To(corev1.DefaultProcMount),
 	}
 }
 
@@ -454,6 +500,11 @@ func containerSecurityContext(uid int64) *corev1.SecurityContext {
 // "Disruption protection for agent pods".
 func terminationGrace(in Inputs) int64 {
 	grace := defaultTerminationGraceSeconds
+	// spec: §5.2 line 516 — the deployer-set base grace period (sized to
+	// the pool's per-slot checkpoint budget) replaces the 120s default.
+	if in.TerminationGraceSeconds != nil && *in.TerminationGraceSeconds > 0 {
+		grace = *in.TerminationGraceSeconds
+	}
 	if in.MaxTerminationGraceSeconds != nil && *in.MaxTerminationGraceSeconds > 0 &&
 		*in.MaxTerminationGraceSeconds < grace {
 		grace = *in.MaxTerminationGraceSeconds

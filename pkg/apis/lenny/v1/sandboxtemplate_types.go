@@ -179,6 +179,17 @@ type SandboxTemplateSpec struct {
 	// +optional
 	MaxTerminationGracePeriodSeconds *int64 `json:"maxTerminationGracePeriodSeconds,omitempty"`
 
+	// TerminationGracePeriodSeconds is the §5.2 deployer-set pod
+	// terminationGracePeriodSeconds for this pool. spec: §5.2 line 516 —
+	// for concurrent-workspace pools the deployer sets it to cover the
+	// per-slot checkpoint budget (`maxConcurrent × max_tiered_checkpoint_cap
+	// + checkpointBarrierAckTimeoutSeconds + 30`); §6.4 line 67 requires
+	// at least `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces
+	// the §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
+	// clamps it down.
+	// +optional
+	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
+
 	// TaskPolicy configures task-mode pod reuse. It is required when
 	// ExecutionMode is `task`.
 	// +optional

@@ -420,3 +420,92 @@ func TestBuildAddsPreStopDrainHook_spec_4_6_1(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildAppliesTerminationGraceBaseOverride_spec_5_2 confirms the
+// deployer-set TerminationGraceSeconds replaces the 120s default base
+// (§5.2 line 516) and that the ceiling still clamps the override down.
+func TestBuildAppliesTerminationGraceBaseOverride_spec_5_2(t *testing.T) {
+	cases := []struct {
+		name    string
+		base    *int64
+		ceiling *int64
+		want    int64
+	}{
+		{"base above default", ptr.To(int64(840)), nil, 840},
+		{"base below default", ptr.To(int64(45)), nil, 45},
+		{"base clamped by ceiling", ptr.To(int64(840)), ptr.To(int64(600)), 600},
+		{"base below ceiling", ptr.To(int64(300)), ptr.To(int64(600)), 300},
+		{"zero base ignored", ptr.To(int64(0)), nil, 120},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := inputs()
+			in.TerminationGraceSeconds = tc.base
+			in.MaxTerminationGraceSeconds = tc.ceiling
+			pod, err := podspec.Build(in)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if got := pod.Spec.TerminationGracePeriodSeconds; got == nil || *got != tc.want {
+				t.Fatalf("terminationGracePeriodSeconds = %v, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildCapsDevShm_spec_6_4 confirms the §6.4 line 420 "/dev/shm is
+// limited to 64MB" invariant: a memory-backed emptyDir with an explicit
+// 64Mi SizeLimit, mounted at /dev/shm in every agent container.
+func TestBuildCapsDevShm_spec_6_4(t *testing.T) {
+	for _, model := range []string{"", "embedded"} {
+		in := inputs()
+		in.DeploymentModel = model
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(%q): %v", model, err)
+		}
+		var vol *corev1.Volume
+		for i := range pod.Spec.Volumes {
+			if pod.Spec.Volumes[i].Name == "dshm" {
+				vol = &pod.Spec.Volumes[i]
+			}
+		}
+		if vol == nil {
+			t.Fatalf("model %q: pod has no dshm volume", model)
+		}
+		ed := vol.VolumeSource.EmptyDir
+		if ed == nil || ed.Medium != corev1.StorageMediumMemory {
+			t.Fatalf("model %q: dshm volume must be a memory-backed emptyDir, got %+v", model, ed)
+		}
+		if ed.SizeLimit == nil || ed.SizeLimit.String() != "64Mi" {
+			t.Fatalf("model %q: dshm SizeLimit = %v, want 64Mi", model, ed.SizeLimit)
+		}
+		for _, c := range pod.Spec.Containers {
+			var mounted bool
+			for _, m := range c.VolumeMounts {
+				if m.Name == "dshm" && m.MountPath == "/dev/shm" {
+					mounted = true
+				}
+			}
+			if !mounted {
+				t.Errorf("model %q: container %q does not mount dshm at /dev/shm", model, c.Name)
+			}
+		}
+	}
+}
+
+// TestBuildMasksProc_spec_6_4 confirms the §6.4 line 420 "procfs and
+// sysfs are masked/read-only" invariant: each agent container sets the
+// default masked /proc mount explicitly.
+func TestBuildMasksProc_spec_6_4(t *testing.T) {
+	pod, err := podspec.Build(inputs())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, c := range pod.Spec.Containers {
+		sc := c.SecurityContext
+		if sc == nil || sc.ProcMount == nil || *sc.ProcMount != corev1.DefaultProcMount {
+			t.Errorf("container %q: procMount = %v, want Default (masked /proc)", c.Name, sc.ProcMount)
+		}
+	}
+}

@@ -440,6 +440,11 @@ func (in *SandboxTemplateSpec) DeepCopyInto(out *SandboxTemplateSpec) {
 		*out = new(int64)
 		**out = **in
 	}
+	if in.TerminationGracePeriodSeconds != nil {
+		in, out := &in.TerminationGracePeriodSeconds, &out.TerminationGracePeriodSeconds
+		*out = new(int64)
+		**out = **in
+	}
 	if in.TaskPolicy != nil {
 		in, out := &in.TaskPolicy, &out.TaskPolicy
 		*out = new(TaskPolicy)

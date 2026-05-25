@@ -4018,7 +4018,7 @@ Greps for "session-mode" pod termination logic in `pkg/gateway/sessionserver/` s
 
 Consequence: the spec invariant relies on the gateway driving the pod-replacement loop. Worth a focused follow-up to verify a real session-mode pod is in fact replaced, not recycled, in the integration harness; if absent, this is a HIGH-severity isolation defect.
 
-### - [ ] F-6.1.13 — `terminationGracePeriodSeconds` is hard-coded to 30s with no per-runtime override [Low] — OPEN
+### - [x] F-6.1.13 — `terminationGracePeriodSeconds` is hard-coded to 30s with no per-runtime override [Low] — CLOSED
 
 Spec §6.1 line 67: "The `terminationGracePeriodSeconds` on the pod spec must be set to at least `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s` to give the adapter time to complete this sequence before Kubernetes sends SIGKILL." Spec §5.2 (referenced from §6.1 concurrent paragraph) and the §6.1 concurrent-workspace pod paragraph require dynamic sizing based on `maxConcurrent × max_tiered_checkpoint_cap + checkpointBarrierAckTimeoutSeconds + 30`.
 
@@ -4030,13 +4030,17 @@ This 30s value is applied unconditionally at line 383 via `ptr.To(terminationGra
 
 Consequence: a concurrent-workspace pod with `maxConcurrent: 8` running long-running checkpoint barriers will receive SIGKILL after 30s before checkpoints land. Aligned with the §5.2 H-5 finding (audit 5.2.md) and reinforces the same root cause from a §6.1 angle.
 
-### - [ ] F-6.1.14 — No `/dev/shm` 64MB cap is set in the pod spec [Low] — OPEN
+**Resolution:** The 30s value was already 120s with a `maxTerminationGracePeriodSeconds` down-clamp (the pod builder reads the ceiling). Added the deployer-set base override: `SandboxTemplateSpec.terminationGracePeriodSeconds` (CRD field + deepcopy + chart/embedded OpenAPI), resolved by the Sandbox reconciler (`resolveTerminationGrace`) and threaded into `podspec.Inputs.TerminationGraceSeconds`. When set it replaces the 120s default base; the `MaxTerminationGraceSeconds` ceiling still clamps it down, so a deployer can size the grace period to the §5.2 line 516 per-slot checkpoint budget. Webhook enforcement of the `maxConcurrent × max_tiered_checkpoint_cap + checkpointBarrierAckTimeoutSeconds + 30 ≤ terminationGracePeriodSeconds` inequality remains tracked under §5.2 H-5.
+
+### - [x] F-6.1.14 — No `/dev/shm` 64MB cap is set in the pod spec [Low] — CLOSED
 
 Spec §6.4 (downstream of §6.1): "`/dev/shm` is limited to 64MB."
 
 `pkg/controller/sandbox/podspec/podspec.go` does not mount a `/dev/shm` emptyDir with a sizeLimit, does not configure `EmptyDirVolumeSource.SizeLimit`, and does not set any container-level constraints. The OCI runtime default applies (commonly 64MB but configurable per runtime, e.g. containerd defaults to 64MB but cri-o defaults can vary).
 
 Consequence: the cap is not Lenny-enforced; deployers cannot reason about /dev/shm size from the pod spec alone. Low severity because the OCI defaults usually align, but the spec's stated invariant is not under Lenny's control.
+
+**Resolution:** The pod builder now adds a `dshm` memory-backed emptyDir with an explicit `64Mi` `SizeLimit` (`podVolumes`) and mounts it at `/dev/shm` in every agent container (adapter, runtime, embedded runtime, and the test-only egress-capture sidecar). The §6.4 line 420 cap is now Lenny-controlled rather than dependent on the container runtime default.
 
 ### - [ ] F-6.1.15 — `shareProcessNamespace: false` is left as a forbidden-by-omission default — `Implemented` but worth noting [Low] — OPEN
 
@@ -4046,7 +4050,7 @@ Spec §6.4 references: "`shareProcessNamespace: false` when using sidecar contai
 
 `pkg/controller/sandbox/podspec/podspec.go:29–30` documents: "The §13.1 host-sharing flags … are left unset, which is forbidden-by-omission." `pkg/podsecurity/podsecurity.go:114` rejects `shareProcessNamespace: true` at the admission webhook. Good defense in depth, but the §6.4 explicit call for a Kyverno/Gatekeeper policy is satisfied by the Lenny admission webhook only — operators who bypass the webhook see no out-of-band enforcement. This is consistent with the §13.1 model; flagged only because §6.4 specifically references third-party policy.
 
-### - [ ] F-6.1.16 — `procfs` and `sysfs` are not explicitly masked/read-only in the pod spec [Low] — OPEN
+### - [x] F-6.1.16 — `procfs` and `sysfs` are not explicitly masked/read-only in the pod spec [Low] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-6.4.7 — Both report that procfs/sysfs masking is not configured in the pod spec; F-6.4.7 additionally covers the /dev/shm 64MB cap but shares the core masking defect.
 
@@ -4055,6 +4059,8 @@ Spec §6.4: "`procfs` and `sysfs` are masked/read-only."
 `pkg/controller/sandbox/podspec/podspec.go` does not configure `ProcMount` (e.g., `procMount: Default` or `Unmasked`) or set procfs/sysfs masking explicitly. The default Kubernetes `ProcMount: Default` provides the standard masked /proc, but the spec calls out explicit masking. Greps for `ProcMount`, `proc.fs.binfmt`, `/proc/sys` return zero matches in pod-builder code.
 
 Consequence: defense-in-depth gap — relies on container runtime defaults. Low severity because the runtime's default behavior aligns; flagged because §6.4 calls it out explicitly.
+
+**Resolution:** `containerSecurityContext` now sets `procMount: Default` explicitly on every agent container, stating the §6.4 line 420 masked-/proc invariant in the pod spec instead of relying on the implicit container-runtime default. Combined with the existing `readOnlyRootFilesystem: true`, /sys is mounted read-only.
 
 ### - [x] F-6.1.17 — Embedded model loses two-container security boundary [Info] — CLOSED
 

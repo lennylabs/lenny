@@ -208,28 +208,30 @@ func podReady(pod *corev1.Pod) bool {
 	return false
 }
 
-// resolveMaxTerminationGrace best-effort resolves the §5.2
-// SandboxTemplate.spec.maxTerminationGracePeriodSeconds ceiling for the
-// Sandbox's pool. It walks Sandbox → SandboxWarmPool (by PoolRef) →
-// SandboxTemplate (by TemplateRef). Any missing resource leaves the
-// ceiling unset (nil), so a transient lookup miss falls back to the
-// §4.6.1 120s default rather than failing pod creation. spec: §4.6.1.
-func (r *Reconciler) resolveMaxTerminationGrace(ctx context.Context, sb *lennyv1.Sandbox) *int64 {
+// resolveTerminationGrace best-effort resolves the §5.2 grace-period
+// settings for the Sandbox's pool: the deployer-set base
+// (terminationGracePeriodSeconds) and the hard ceiling
+// (maxTerminationGracePeriodSeconds). It walks Sandbox → SandboxWarmPool
+// (by PoolRef) → SandboxTemplate (by TemplateRef). Any missing resource
+// leaves both unset (nil), so a transient lookup miss falls back to the
+// §4.6.1 120s default rather than failing pod creation. spec: §5.2 line
+// 516, §4.6.1.
+func (r *Reconciler) resolveTerminationGrace(ctx context.Context, sb *lennyv1.Sandbox) (base, max *int64) {
 	if sb.Spec.PoolRef == "" {
-		return nil
+		return nil, nil
 	}
 	var pool lennyv1.SandboxWarmPool
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: sb.Namespace, Name: sb.Spec.PoolRef}, &pool); err != nil {
-		return nil
+		return nil, nil
 	}
 	if pool.Spec.TemplateRef == "" {
-		return nil
+		return nil, nil
 	}
 	var tmpl lennyv1.SandboxTemplate
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: sb.Namespace, Name: pool.Spec.TemplateRef}, &tmpl); err != nil {
-		return nil
+		return nil, nil
 	}
-	return tmpl.Spec.MaxTerminationGracePeriodSeconds
+	return tmpl.Spec.TerminationGracePeriodSeconds, tmpl.Spec.MaxTerminationGracePeriodSeconds
 }
 
 // createPod resolves the Sandbox's Runtime, builds the agent Pod, and
@@ -243,6 +245,7 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	if profile == "" {
 		profile = string(isolation.Default())
 	}
+	graceBase, graceMax := r.resolveTerminationGrace(ctx, sb)
 	pod, err := podspec.Build(podspec.Inputs{
 		Name:             sb.Name,
 		Namespace:        sb.Namespace,
@@ -252,11 +255,12 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		IsolationProfile: profile,
 		DeploymentModel:  rt.Spec.DeploymentModel,
 		EgressCapture:    r.resolveEgressCapture(sb),
-		// spec: §4.6.1 / §5.2 — the SandboxTemplate's
-		// maxTerminationGracePeriodSeconds ceiling clamps the pod's
-		// terminationGracePeriodSeconds when the deployer has declared a
-		// hard cap below the 120s default.
-		MaxTerminationGraceSeconds: r.resolveMaxTerminationGrace(ctx, sb),
+		// spec: §5.2 line 516 — the SandboxTemplate's deployer-set
+		// terminationGracePeriodSeconds replaces the 120s default base, and
+		// the maxTerminationGracePeriodSeconds ceiling clamps the pod's
+		// grace period down when the deployer has declared a hard cap.
+		TerminationGraceSeconds:    graceBase,
+		MaxTerminationGraceSeconds: graceMax,
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)
