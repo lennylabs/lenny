@@ -56,6 +56,27 @@ type RuntimeSpec struct {
 	// leased credentials for.
 	// +optional
 	SupportedProviders []string `json:"supportedProviders,omitempty"`
+
+	// CredentialCapabilities declares the runtime's §4.9 credential
+	// hot-rotation support and the LLM-proxy dialects its SDK speaks. It
+	// is required when a pool bound to this runtime uses
+	// deliveryMode: proxy, and empty for direct-mode-only runtimes.
+	// +optional
+	CredentialCapabilities *CredentialCapabilities `json:"credentialCapabilities,omitempty"`
+}
+
+// CredentialCapabilities is the §5.1 credentialCapabilities block on a
+// Runtime.
+type CredentialCapabilities struct {
+	// HotRotation reports mid-session credential hot-rotation support.
+	// +optional
+	HotRotation bool `json:"hotRotation,omitempty"`
+
+	// ProxyDialect lists the §4.9 LLM-proxy dialects the runtime's SDK
+	// speaks (openai, anthropic). An empty list declares direct-mode-only
+	// support.
+	// +optional
+	ProxyDialect []string `json:"proxyDialect,omitempty"`
 }
 
 // RuntimeStatus is the observed state of a Runtime.

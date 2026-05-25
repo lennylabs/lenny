@@ -42,7 +42,7 @@ const selectList = `name, type, image, execution_mode, isolation_profile,
 	agent_interface, published_metadata, capability_inference_mode,
 	tool_capability_overrides, setup_policy, capabilities, min_platform_version,
 	task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
-	supported_providers`
+	supported_providers, credential_capabilities`
 
 // stringSliceJSON marshals a §5.1 string-set field (allowedResourceClasses,
 // supportedProviders) to its jsonb text form. An empty slice is stored as
@@ -131,6 +131,17 @@ func capabilitiesJSON(c *runtimestore.RuntimeCapabilities) any {
 	return string(b)
 }
 
+// credentialCapabilitiesJSON marshals a runtime's §5.1
+// credentialCapabilities block to its jsonb text form. A nil block is
+// stored as SQL NULL, which scanRuntime reads back as a nil pointer.
+func credentialCapabilitiesJSON(c *runtimestore.CredentialCapabilities) any {
+	if c == nil {
+		return nil
+	}
+	b, _ := json.Marshal(c)
+	return string(b)
+}
+
 // taskPolicyJSON marshals a runtime's §5.1 taskPolicy to its jsonb text
 // form. A nil policy is stored as SQL NULL, which scanRuntime reads
 // back as a nil pointer.
@@ -161,8 +172,8 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		agent_interface, published_metadata, capability_inference_mode,
 		tool_capability_overrides, setup_policy, capabilities, min_platform_version,
 		task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
-		supported_providers
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+		supported_providers, credential_capabilities
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
@@ -172,7 +183,7 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		setupPolicyJSON(r.SetupPolicy), capabilitiesJSON(r.Capabilities),
 		r.MinPlatformVersion, taskPolicyJSON(r.TaskPolicy), r.BaseRuntime,
 		r.AllowSelfRecursion, stringSliceJSON(r.AllowedResourceClasses),
-		stringSliceJSON(r.SupportedProviders))
+		stringSliceJSON(r.SupportedProviders), credentialCapabilitiesJSON(r.CredentialCapabilities))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -226,7 +237,8 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		capability_inference_mode = $13, tool_capability_overrides = $14,
 		setup_policy = $15, capabilities = $16, min_platform_version = $17,
 		task_policy = $18, base_runtime = $19, allow_self_recursion = $20,
-		allowed_resource_classes = $21, supported_providers = $22
+		allowed_resource_classes = $21, supported_providers = $22,
+		credential_capabilities = $23
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
@@ -237,7 +249,8 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		setupPolicyJSON(r.SetupPolicy), capabilitiesJSON(r.Capabilities),
 		r.MinPlatformVersion, taskPolicyJSON(r.TaskPolicy), r.BaseRuntime,
 		r.AllowSelfRecursion, stringSliceJSON(r.AllowedResourceClasses),
-		stringSliceJSON(r.SupportedProviders)); err != nil {
+		stringSliceJSON(r.SupportedProviders),
+		credentialCapabilitiesJSON(r.CredentialCapabilities)); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -320,13 +333,14 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		toolOverridesRaw, setupPolicyRaw           []byte
 		capabilitiesRaw, taskPolicyRaw             []byte
 		allowedClassesRaw, supportedProvidersRaw   []byte
+		credentialCapabilitiesRaw                  []byte
 	)
 	if err := row.Scan(
 		&r.Name, &typ, &r.Image, &execMode, &isoProf, &level, &description,
 		&r.CreatedAt, &r.UpdatedAt, &deletedAt, &labelsRaw, &agentIfaceRaw, &publishedMetaRaw,
 		&capInferMode, &toolOverridesRaw, &setupPolicyRaw, &capabilitiesRaw, &r.MinPlatformVersion,
 		&taskPolicyRaw, &r.BaseRuntime, &r.AllowSelfRecursion, &allowedClassesRaw,
-		&supportedProvidersRaw,
+		&supportedProvidersRaw, &credentialCapabilitiesRaw,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}
@@ -382,6 +396,11 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	if len(supportedProvidersRaw) > 0 {
 		if err := json.Unmarshal(supportedProvidersRaw, &r.SupportedProviders); err != nil {
 			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode supportedProviders: %w", err)
+		}
+	}
+	if len(credentialCapabilitiesRaw) > 0 {
+		if err := json.Unmarshal(credentialCapabilitiesRaw, &r.CredentialCapabilities); err != nil {
+			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode credentialCapabilities: %w", err)
 		}
 	}
 	return r, nil

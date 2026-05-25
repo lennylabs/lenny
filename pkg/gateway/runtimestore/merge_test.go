@@ -284,3 +284,41 @@ func TestMergeOverridesProvidersAndRecursion(t *testing.T) {
 		t.Error("Merge result aliases the base supportedProviders slice")
 	}
 }
+
+// spec: §5.1 merge table line 192 — credentialCapabilities is Override:
+// the derived block replaces the base block when present, and the base
+// block applies (inherited) when the derived runtime omits it.
+func TestMergeOverridesCredentialCapabilities(t *testing.T) {
+	base := runtimestore.Runtime{
+		Name: "base",
+		CredentialCapabilities: &runtimestore.CredentialCapabilities{
+			HotRotation:  true,
+			ProxyDialect: []string{"openai", "anthropic"},
+		},
+	}
+
+	// A derived runtime that omits the block inherits the base block.
+	inherit := runtimestore.Merge(base, runtimestore.Runtime{Name: "d1", BaseRuntime: "base"})
+	if inherit.CredentialCapabilities == nil || !inherit.CredentialCapabilities.HotRotation ||
+		len(inherit.CredentialCapabilities.ProxyDialect) != 2 {
+		t.Errorf("derived must inherit base credentialCapabilities when unset: %+v", inherit.CredentialCapabilities)
+	}
+	// The inherited block must not alias the base slice.
+	inherit.CredentialCapabilities.ProxyDialect[0] = "tampered"
+	if base.CredentialCapabilities.ProxyDialect[0] != "openai" {
+		t.Error("Merge result aliases the base credentialCapabilities.proxyDialect slice")
+	}
+
+	// A derived runtime that declares its own block replaces the base.
+	override := runtimestore.Merge(base, runtimestore.Runtime{
+		Name: "d2", BaseRuntime: "base",
+		CredentialCapabilities: &runtimestore.CredentialCapabilities{ProxyDialect: []string{"anthropic"}},
+	})
+	if override.CredentialCapabilities.HotRotation {
+		t.Error("derived credentialCapabilities must fully replace the base block")
+	}
+	if !override.CredentialCapabilities.AllowsProxyDialect("anthropic") ||
+		override.CredentialCapabilities.AllowsProxyDialect("openai") {
+		t.Errorf("derived proxyDialect must replace base: %+v", override.CredentialCapabilities)
+	}
+}

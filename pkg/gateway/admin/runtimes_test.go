@@ -1269,3 +1269,34 @@ func TestStandaloneRuntimeRoundTripsNewFields(t *testing.T) {
 		t.Errorf("round-trip lost new fields: %+v", got)
 	}
 }
+
+// spec: §5.1 credentialCapabilities (lines 73-75) — the admin API
+// round-trips the hotRotation flag and proxyDialect set on a standalone
+// runtime.
+func TestRuntimeCredentialCapabilitiesRoundTrip(t *testing.T) {
+	router, store, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "cc-rt",
+		Image: "lenny/cc-rt@sha256:abc",
+		CredentialCapabilities: &runtimestore.CredentialCapabilities{
+			HotRotation:  true,
+			ProxyDialect: []string{"openai", "anthropic"},
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d body %s", rr.Code, rr.Body.String())
+	}
+	var got admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	if got.CredentialCapabilities == nil || !got.CredentialCapabilities.HotRotation ||
+		len(got.CredentialCapabilities.ProxyDialect) != 2 {
+		t.Errorf("round-trip lost credentialCapabilities: %+v", got.CredentialCapabilities)
+	}
+	stored, err := store.Get(context.Background(), "cc-rt")
+	if err != nil {
+		t.Fatalf("store missing runtime: %v", err)
+	}
+	if !stored.CredentialCapabilities.AllowsProxyDialect("anthropic") {
+		t.Errorf("stored credentialCapabilities lost proxyDialect: %+v", stored.CredentialCapabilities)
+	}
+}

@@ -64,6 +64,26 @@ spec:
                 items:
                   type: string
                 type: array
+              credentialCapabilities:
+                description: |-
+                  CredentialCapabilities declares the runtime's §4.9 credential
+                  hot-rotation support and the LLM-proxy dialects its SDK speaks. It
+                  is required when a pool bound to this runtime uses
+                  deliveryMode: proxy, and empty for direct-mode-only runtimes.
+                properties:
+                  hotRotation:
+                    description: HotRotation reports mid-session credential hot-rotation
+                      support.
+                    type: boolean
+                  proxyDialect:
+                    description: |-
+                      ProxyDialect lists the §4.9 LLM-proxy dialects the runtime's SDK
+                      speaks (openai, anthropic). An empty list declares direct-mode-only
+                      support.
+                    items:
+                      type: string
+                    type: array
+                type: object
               deploymentModel:
                 description: |-
                   DeploymentModel is the §4.7 agent-pod deployment model. `sidecar`

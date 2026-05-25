@@ -55,6 +55,7 @@ type RuntimePayload struct {
 	IntegrationLevel        string                                      `json:"integrationLevel,omitempty"`
 	AllowedResourceClasses  []string                                    `json:"allowedResourceClasses,omitempty"`
 	SupportedProviders      []string                                    `json:"supportedProviders,omitempty"`
+	CredentialCapabilities  *runtimestore.CredentialCapabilities        `json:"credentialCapabilities,omitempty"`
 	AllowSelfRecursion      bool                                        `json:"allowSelfRecursion,omitempty"`
 	Description             string                                      `json:"description,omitempty"`
 	DelegationPolicyRef     string                                      `json:"delegationPolicyRef,omitempty"`
@@ -87,6 +88,7 @@ func runtimeFromPayload(p RuntimePayload, createdAt time.Time) runtimestore.Runt
 		IntegrationLevel:        runtimestore.IntegrationLevel(p.IntegrationLevel),
 		AllowedResourceClasses:  p.AllowedResourceClasses,
 		SupportedProviders:      p.SupportedProviders,
+		CredentialCapabilities:  p.CredentialCapabilities,
 		AllowSelfRecursion:      p.AllowSelfRecursion,
 		Description:             p.Description,
 		DelegationPolicyRef:     p.DelegationPolicyRef,
@@ -126,6 +128,7 @@ type UpdateRuntimeRequest struct {
 	ToolCapabilityOverrides *map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
 	SetupPolicy             *runtimestore.SetupPolicy                    `json:"setupPolicy,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities            `json:"capabilities,omitempty"`
+	CredentialCapabilities  *runtimestore.CredentialCapabilities         `json:"credentialCapabilities,omitempty"`
 	MinPlatformVersion      *string                                      `json:"minPlatformVersion,omitempty"`
 	TaskPolicy              *runtimestore.TaskPolicy                     `json:"taskPolicy,omitempty"`
 	BaseRuntime             *string                                      `json:"baseRuntime,omitempty"`
@@ -336,6 +339,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		IntegrationLevel:        string(r.IntegrationLevel),
 		AllowedResourceClasses:  r.AllowedResourceClasses,
 		SupportedProviders:      r.SupportedProviders,
+		CredentialCapabilities:  r.CredentialCapabilities,
 		AllowSelfRecursion:      r.AllowSelfRecursion,
 		Description:             r.Description,
 		DelegationPolicyRef:     r.DelegationPolicyRef,
@@ -645,6 +649,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		if body.SupportedProviders != nil {
 			rt.SupportedProviders = *body.SupportedProviders
 		}
+		if body.CredentialCapabilities != nil {
+			rt.CredentialCapabilities = body.CredentialCapabilities
+		}
 		if body.AllowSelfRecursion != nil {
 			rt.AllowSelfRecursion = *body.AllowSelfRecursion
 		}
@@ -757,6 +764,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.SupportedProviders != nil {
 		out = append(out, "supportedProviders")
+	}
+	if b.CredentialCapabilities != nil {
+		out = append(out, "credentialCapabilities")
 	}
 	if b.AllowSelfRecursion != nil {
 		out = append(out, "allowSelfRecursion")

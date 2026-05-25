@@ -100,6 +100,12 @@ func Merge(base, derived Runtime) Runtime {
 	if len(derived.SupportedProviders) == 0 {
 		eff.SupportedProviders = append([]string(nil), cb.SupportedProviders...)
 	}
+	// §5.1 credentialCapabilities is Override: the derived block replaces
+	// the base block when the derived runtime declares one, and the base
+	// block applies when the derived runtime omits it.
+	if derived.CredentialCapabilities == nil {
+		eff.CredentialCapabilities = cb.CredentialCapabilities.Clone()
+	}
 
 	// Collection merges.
 	eff.Labels = mergeLabels(cb.Labels, eff.Labels)

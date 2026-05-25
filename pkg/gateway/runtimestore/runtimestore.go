@@ -66,6 +66,15 @@ type Runtime struct {
 	// runtime may restrict but not expand beyond its base set.
 	SupportedProviders []string
 
+	// CredentialCapabilities is the §5.1 credentialCapabilities block:
+	// the runtime's hot-rotation support and the §4.9 LLM-proxy dialects
+	// its SDK speaks. It is required when a pool bound to the runtime
+	// uses deliveryMode: proxy, and empty for runtimes that only support
+	// direct mode. The §5.1 merge table classifies it Override: a
+	// derived runtime's value replaces the base when set. It is nil when
+	// the runtime declares no credentialCapabilities block.
+	CredentialCapabilities *CredentialCapabilities
+
 	// AllowSelfRecursion is the §5.1 line 69 runtime-layer opt-in for the
 	// §8.2 cycle-detection three-layer AND gate (LayerRuntime). When
 	// false this runtime rejects every self-recursive delegation hop. The
@@ -218,6 +227,48 @@ func (m InjectionMode) IsValid() bool {
 type InjectionCapability struct {
 	Supported bool            `json:"supported"`
 	Modes     []InjectionMode `json:"modes,omitempty"`
+}
+
+// CredentialCapabilities is the §5.1 credentialCapabilities block on a
+// runtime. HotRotation reports whether the runtime's SDK honors a
+// mid-session credential rotation without a restart. ProxyDialect lists
+// the §4.9 LLM-proxy dialects the SDK speaks (openai, anthropic); a
+// pool bound to the runtime that uses deliveryMode: proxy must declare a
+// proxyDialect in this set.
+type CredentialCapabilities struct {
+	// HotRotation reports §5.1 mid-session credential hot-rotation
+	// support.
+	HotRotation bool `json:"hotRotation,omitempty"`
+
+	// ProxyDialect lists the §4.9 LLM-proxy dialects the runtime's SDK
+	// speaks. An empty slice declares direct-mode-only support.
+	ProxyDialect []string `json:"proxyDialect,omitempty"`
+}
+
+// Clone returns a deep copy of the block so the store never shares the
+// ProxyDialect slice with a caller. A nil receiver clones to nil.
+func (c *CredentialCapabilities) Clone() *CredentialCapabilities {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	cp.ProxyDialect = append([]string(nil), c.ProxyDialect...)
+	return &cp
+}
+
+// AllowsProxyDialect reports whether the runtime declares dialect in its
+// §5.1 credentialCapabilities.proxyDialect set. A nil receiver (no
+// credentialCapabilities block) allows nothing.
+func (c *CredentialCapabilities) AllowsProxyDialect(dialect string) bool {
+	if c == nil {
+		return false
+	}
+	for _, d := range c.ProxyDialect {
+		if d == dialect {
+			return true
+		}
+	}
+	return false
 }
 
 // RuntimeCapabilities is the §5.1 capabilities block on a runtime.
@@ -720,6 +771,7 @@ func cloneRuntime(r Runtime) Runtime {
 	}
 	r.AllowedResourceClasses = append([]string(nil), r.AllowedResourceClasses...)
 	r.SupportedProviders = append([]string(nil), r.SupportedProviders...)
+	r.CredentialCapabilities = r.CredentialCapabilities.Clone()
 	r.AgentInterface = r.AgentInterface.Clone()
 	if r.PublishedMetadata != nil {
 		r.PublishedMetadata = append([]PublishedMetadataEntry(nil), r.PublishedMetadata...)
