@@ -83,6 +83,26 @@ const (
 	credentialMount = "/run/lenny"
 	tmpMount        = "/tmp"
 
+	// sessionsMount and artifactsMount are the §6.4 lines 380-381 in-pod
+	// paths for session files and artifacts. /sessions holds conversation
+	// logs and runtime state; /artifacts holds logs, outputs, and
+	// checkpoints. §13.1 line 10 lists both among the agent's writable
+	// paths, so without these volumes a runtime write lands on the
+	// read-only root filesystem and fails with EROFS.
+	sessionsMount  = "/sessions"
+	artifactsMount = "/artifacts"
+	// sessionsVolumeName and artifactsVolumeName back the two mounts.
+	sessionsVolumeName  = "sessions"
+	artifactsVolumeName = "artifacts"
+
+	// tmpfsSizeLimit is the §6.4 line 413 recommended cap for the
+	// memory-backed /sessions and /tmp tmpfs volumes (256Mi each). The cap
+	// gives a predictable OOM boundary instead of silent memory pressure:
+	// tmpfs usage charges against the pod memory limit, so an uncapped
+	// tmpfs lets a runaway runtime grow until the kernel OOM-kills a
+	// container.
+	tmpfsSizeLimit = "256Mi"
+
 	// dshmMount is the in-pod /dev/shm path. spec: §6.4 line 420
 	// "/dev/shm is limited to 64MB." A memory-backed emptyDir with an
 	// explicit SizeLimit gives the cap a Lenny-controlled value rather
@@ -259,12 +279,16 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: "workspace", MountPath: workspaceMount},
 		{Name: CredVolumeName, MountPath: credentialMount},
 		{Name: "tmp", MountPath: tmpMount},
+		{Name: sessionsVolumeName, MountPath: sessionsMount},
+		{Name: artifactsVolumeName, MountPath: artifactsMount},
 		{Name: dshmVolumeName, MountPath: dshmMount},
 	}
 	runtimeMounts := []corev1.VolumeMount{
 		{Name: "workspace", MountPath: workspaceMount},
 		{Name: CredVolumeName, MountPath: credentialMount, ReadOnly: true},
 		{Name: "tmp", MountPath: tmpMount},
+		{Name: sessionsVolumeName, MountPath: sessionsMount},
+		{Name: artifactsVolumeName, MountPath: artifactsMount},
 		{Name: dshmVolumeName, MountPath: dshmMount},
 	}
 
@@ -328,6 +352,8 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: "workspace", MountPath: workspaceMount},
 		{Name: CredVolumeName, MountPath: credentialMount},
 		{Name: "tmp", MountPath: tmpMount},
+		{Name: sessionsVolumeName, MountPath: sessionsMount},
+		{Name: artifactsVolumeName, MountPath: artifactsMount},
 		{Name: dshmVolumeName, MountPath: dshmMount},
 	}
 
@@ -429,18 +455,32 @@ func injectEgressCaptureSidecar(in Inputs, pod *corev1.Pod, mountOn []int) {
 	})
 }
 
-// podVolumes returns the §6.1 / §13.1 pod volumes: the workspace
-// emptyDir, the memory-backed credential tmpfs, the memory-backed tmp
-// volume, and the §6.4 size-capped /dev/shm volume.
+// podVolumes returns the §6.1 / §6.4 / §13.1 pod volumes: the
+// disk-backed workspace and artifacts emptyDirs, the memory-backed
+// credential, tmp, and sessions tmpfs volumes, and the §6.4 size-capped
+// /dev/shm volume. spec: §6.4 lines 376-383 (filesystem layout), 411-414
+// (data-at-rest medium and tmpfs size caps).
 func podVolumes() []corev1.Volume {
 	dshmLimit := resource.MustParse(dshmSizeLimit)
+	tmpfsLimit := resource.MustParse(tmpfsSizeLimit)
 	return []corev1.Volume{
+		// spec: §6.4 line 414 — /workspace and /artifacts are disk-backed
+		// emptyDirs (no Memory medium): logs, outputs, and checkpoints can
+		// exceed the pod memory budget.
 		{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: artifactsVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: CredVolumeName, VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
 		}},
+		// spec: §6.4 lines 413, 380, 382 — /tmp and /sessions are
+		// memory-backed (tmpfs) so their contents are guaranteed gone when
+		// the pod terminates, each capped at the recommended 256Mi to bound
+		// memory pressure.
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
+			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &tmpfsLimit},
+		}},
+		{Name: sessionsVolumeName, VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &tmpfsLimit},
 		}},
 		// spec: §6.4 line 420 "/dev/shm is limited to 64MB." A
 		// memory-backed emptyDir with an explicit SizeLimit enforces the

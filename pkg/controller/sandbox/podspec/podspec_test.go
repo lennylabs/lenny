@@ -494,6 +494,94 @@ func TestBuildCapsDevShm_spec_6_4(t *testing.T) {
 	}
 }
 
+// findVolume returns the named pod volume, or fails the test.
+func findVolume(t *testing.T, pod *corev1.Pod, name string) corev1.Volume {
+	t.Helper()
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == name {
+			return v
+		}
+	}
+	t.Fatalf("pod has no %q volume", name)
+	return corev1.Volume{}
+}
+
+// mountsPath reports whether a container mounts the named volume at path.
+func mountsPath(c corev1.Container, name, path string) bool {
+	for _, m := range c.VolumeMounts {
+		if m.Name == name && m.MountPath == path {
+			return true
+		}
+	}
+	return false
+}
+
+// TestBuildMountsSessionsAndArtifacts_spec_6_4 confirms the §6.4 lines
+// 380-381 / §13.1 line 10 filesystem layout: /sessions is a memory-backed
+// (tmpfs) volume, /artifacts is disk-backed, and every agent container
+// mounts both so a runtime write does not land on the read-only root
+// filesystem (EROFS).
+func TestBuildMountsSessionsAndArtifacts_spec_6_4(t *testing.T) {
+	for _, model := range []string{"", "embedded"} {
+		in := inputs()
+		in.DeploymentModel = model
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(%q): %v", model, err)
+		}
+
+		// spec: §6.4 line 380 — /sessions is tmpfs (Memory medium).
+		sessions := findVolume(t, pod, "sessions").VolumeSource.EmptyDir
+		if sessions == nil || sessions.Medium != corev1.StorageMediumMemory {
+			t.Errorf("model %q: sessions volume must be a memory-backed emptyDir, got %+v", model, sessions)
+		}
+		// spec: §6.4 line 414 — /artifacts is disk-backed (no Memory medium).
+		artifacts := findVolume(t, pod, "artifacts").VolumeSource.EmptyDir
+		if artifacts == nil || artifacts.Medium != "" {
+			t.Errorf("model %q: artifacts volume must be a disk-backed emptyDir, got %+v", model, artifacts)
+		}
+
+		for _, c := range pod.Spec.Containers {
+			if !mountsPath(c, "sessions", "/sessions") {
+				t.Errorf("model %q: container %q does not mount sessions at /sessions", model, c.Name)
+			}
+			if !mountsPath(c, "artifacts", "/artifacts") {
+				t.Errorf("model %q: container %q does not mount artifacts at /artifacts", model, c.Name)
+			}
+		}
+	}
+}
+
+// TestBuildCapsTmpfs_spec_6_4 confirms the §6.4 line 413 recommended
+// tmpfs size caps: /sessions and /tmp carry a 256Mi SizeLimit so tmpfs
+// growth has a predictable OOM boundary. The disk-backed /workspace and
+// /artifacts volumes carry no Memory medium.
+func TestBuildCapsTmpfs_spec_6_4(t *testing.T) {
+	for _, model := range []string{"", "embedded"} {
+		in := inputs()
+		in.DeploymentModel = model
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(%q): %v", model, err)
+		}
+		for _, name := range []string{"sessions", "tmp"} {
+			ed := findVolume(t, pod, name).VolumeSource.EmptyDir
+			if ed == nil || ed.Medium != corev1.StorageMediumMemory {
+				t.Fatalf("model %q: %q must be a memory-backed emptyDir, got %+v", model, name, ed)
+			}
+			if ed.SizeLimit == nil || ed.SizeLimit.String() != "256Mi" {
+				t.Errorf("model %q: %q SizeLimit = %v, want 256Mi", model, name, ed.SizeLimit)
+			}
+		}
+		for _, name := range []string{"workspace", "artifacts"} {
+			ed := findVolume(t, pod, name).VolumeSource.EmptyDir
+			if ed == nil || ed.Medium != "" {
+				t.Errorf("model %q: %q must be a disk-backed emptyDir, got %+v", model, name, ed)
+			}
+		}
+	}
+}
+
 // TestBuildMasksProc_spec_6_4 confirms the §6.4 line 420 "procfs and
 // sysfs are masked/read-only" invariant: each agent container sets the
 // default masked /proc mount explicitly.
