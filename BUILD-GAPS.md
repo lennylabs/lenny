@@ -2788,7 +2788,7 @@ Confirmed sites that should emit but don't:
 
 ---
 
-### - [ ] F-4.9.4 — No CredentialRouter interface, no tenant `credentialPolicy`, no `providerPools` intersection, no `preferredSource` [High] — OPEN
+### - [x] F-4.9.4 — No CredentialRouter interface, no tenant `credentialPolicy`, no `providerPools` intersection, no `preferredSource` [High] — CLOSED
 
 **Severity:** High (the entire selection-and-fallback layer §4.9 describes — Three Credential Modes, fallback chain, multi-provider lease maps, per-provider fallback ordering, `preferredSource` semantics — is unmodelled in code).
 
@@ -2803,15 +2803,19 @@ Confirmed sites that should emit but don't:
 - `pkg/gateway/sessionserver/sessionserver.go:494` comment says: "Future phases add `timeouts`, `credentialPolicy`, `delegationPolicy`, etc." — so the absence is acknowledged.
 - `maxRotationsPerSession` and `rotationCount` tracking is absent from the session model.
 
+**Resolution:** Modeled `credential.CredentialPolicy` (preferredSource enum with the four §4.9 modes, `providerPools` map of `{defaultPool, fallback.order}`, `fallback{cooldownOnRateLimitSeconds, maxRotationsPerSession}`, `userCredentialsEnabled`) in `pkg/credential/policy.go` with `Validate`/`Clone`/`PoolOrderFor`/`SourceOrder`. Attached it to `tenantstore.Tenant` (struct + deep clone + Postgres JSONB column via migration `0077` + admin `TenantPayload`/`UpdateTenantRequest` round-trip with validation). Added `pkg/gateway/credrouter`: the §4.9 `CredentialRouter` interface (Resolve input/output per lines 1558-1591), the built-in `Default` router that walks the preferredSource source order and selects the first assignable pool from the provider's fallback-ordered `AllowedPools`, and `Intersection(supportedProviders, policy)`. Wired into session creation (`sessionserver.startOnPod` → `resolveCredentialPools`): the gateway computes the §4.9 intersection of the runtime's `supportedProviders` and the tenant's `providerPools`, resolves each provider's source via the router, and populates the binder's per-provider `CredentialPools` map (the §4.9 multi-provider lease map) before the claim. The per-provider fallback ordering is honored by `ProviderPool.PoolOrder`; `maxRotationsPerSession` is modeled on the policy (its session-counter enforcement is the rotation-time fault flow, F-4.9.9). User-source resolution is implemented in the router and gated behind an injectable `userCredChecker` (nil in v1 because user-source lease *delivery* is the §4.9 materializedConfig path, F-4.9.16). Resolution (commit 3e20869f).
+
 ---
 
-### - [ ] F-4.9.5 — Pre-claim credential availability check not implemented [High] — OPEN
+### - [x] F-4.9.5 — Pre-claim credential availability check not implemented [High] — CLOSED
 
 **Severity:** High (the spec MUSTs that the gateway compute the intersection and verify at least one provider has an assignable credential before claiming a pod; on miss it returns `CREDENTIAL_POOL_EXHAUSTED` immediately and increments `lenny_gateway_credential_preclaim_mismatch_total` on race).
 
 **Spec:** spec/04_system-components.md lines 1216-1220.
 
 **Evidence:** `grep -rn "preclaim\|PreClaim\|pre.claim\|PreClaimAvailability" pkg/ cmd/` returns no matches in production code. The metric `lenny_credential_preclaim_mismatch_total` is declared in `pkg/observability/metrics/catalog.go:112` but never incremented (grep across `pkg/` returns no emission). Session creation in `pkg/gateway/sessionserver` does not consult the pool registry for utilization before claiming a pod.
+
+**Resolution:** Implemented `credrouter.PreClaim` and wired it into `sessionserver.startOnPod` (via `resolveCredentialPools`) so the §4.9 availability check runs BEFORE the warm-pod claim. For each provider in the intersection the gateway builds a `PoolDescriptor` from the credential-pool registry (a pool with ≥1 non-revoked credential is assignable; the live active-leases-versus-maxConcurrentSessions refinement is a follow-on once a lease-utilization reader is wired) and resolves a source via the router. When no provider has an assignable credential the gateway rejects with `CREDENTIAL_POOL_EXHAUSTED` (category POLICY, HTTP 503, `details.reason: pre_claim`) and no pod is claimed; an empty intersection is the same rejection. The §4.9 line 1220 race (pre-claim passed but assignment failed) is surfaced by the binder's typed `podsession.CredentialAssignmentError`, which `writePodClaimError` maps to `CREDENTIAL_POOL_EXHAUSTED` (`details.reason: assignment_race`) and which increments the now-emitted `lenny_credential_preclaim_mismatch_total{pool,provider}` (new `gatewaymetrics.IncCredentialPreclaimMismatch`, wired in `cmd/lenny-gateway`). `CREDENTIAL_POOL_EXHAUSTED` and `USER_CREDENTIAL_NOT_FOUND` added to the §15.2.1 error classifier. Resolution (commit 3e20869f).
 
 ---
 
@@ -2938,7 +2942,7 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.15 — `userCredentialsEnabled` semantics and user-credential resolution at session creation not implemented [Medium] — OPEN
+### - [ ] F-4.9.15 — `userCredentialsEnabled` semantics and user-credential resolution at session creation not implemented [Medium] — DEFERRED
 
 **Severity:** Medium (the §4.9 pre-authorized flow is the user-bring-your-own-key path; without resolution, `POST /v1/credentials` is write-only with no read).
 
@@ -2949,6 +2953,8 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 - No code path at session creation consults `credentialstore` to resolve a user-scoped credential into a `Lease` with `Source: user`. `pkg/gateway/credassign/credassign.go:171` `Assign` always creates `Source: SourcePool` (line 214). The `Client.Assign` path (`pkg/gateway/credassign/client.go:139-173`) similarly does not pass user-credential context to the Token Service.
 - `last_used_at` (spec line 1365) is never updated; the `credentials` migration table has no such column.
 - `USER_CREDENTIAL_NOT_FOUND` error code not implemented (`grep -rn "USER_CREDENTIAL_NOT_FOUND" pkg/ cmd/` returns no matches).
+
+**Deferred:** The §4.9 resolution layer this finding needs is now in place — `credentialPolicy.userCredentialsEnabled` and the `preferredSource` modes are modeled (F-4.9.4), the `credrouter.Default` router resolves `source: user` per the preferredSource order with a terminal `USER_CREDENTIAL_NOT_FOUND` for the user-only-miss case, that error code maps in the §15.2.1 classifier (PERMANENT/404) and through `writePodClaimError`, and `last_used_at`/`MarkUsed` already exist on the credential store (F-4.9.27). What remains blocked is user-source lease **delivery**: minting a `Source: user` `CredentialLease` from the user's stored secret requires the §4.9 `materializedConfig` wire schema and a Token-Service user-credential producer, which is F-4.9.16 (also unbuilt). The session-creation wiring therefore gates user-source resolution behind an injectable `userCredChecker` (nil in v1 in `sessionserver`); once F-4.9.16 lands the delivery path, wiring the checker (a `credentialstore` lookup that skips revoked entries and calls `MarkUsed`) closes this finding. Picking it up before F-4.9.16 would resolve a `source: user` decision with no deliverable lease.
 
 ---
 
