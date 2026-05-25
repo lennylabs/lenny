@@ -3622,13 +3622,15 @@ Implementation:
 
 Consequence: agent pods do not get zone/node anti-affinity by default. A node or zone outage takes out a whole warm pool tier.
 
-### - [ ] F-5.2.22 — Session-creation response `sessionIsolationLevel` does not reflect pool's execution mode or scrub policy [Medium] — OPEN
+### - [x] F-5.2.22 — Session-creation response `sessionIsolationLevel` does not reflect pool's execution mode or scrub policy [Medium] — CLOSED
 
 Spec §5.2 line 475 + §7.1 (referenced): the session-creation response includes `sessionIsolationLevel` with `executionMode`, `isolationProfile`, `podReuse`, `scrubPolicy`, and `residualStateWarning`.
 
 Implementation: `pkg/gateway/sessionserver/sessionserver.go:727` (`defaultIsolationLevel`) hardcodes `ExecutionMode: "session"`, `PodReuse: false`, `ScrubPolicy: ""`, `ResidualStateWarning: false` for every response, ignoring the resolved pool. The function comment says: "Future phases that ship the §5.2 task / concurrent modes recompute these fields from the resolved pool configuration."
 
 Consequence: a client creating a session against a task-mode pool with `acknowledgeBestEffortScrub` cannot detect the weaker isolation posture from the response. The spec's "client visibility of task-mode isolation" contract is silently false.
+
+- **Resolution:** Closed by `ae75d11f`. `createSession` now calls `Server.resolveIsolationLevel`, which resolves the assigned pool (via `podsession.ResolvePool`, the same path the start handler uses) and maps the §5.2 execution mode and scrub policy to the §7.1 fields through `isolationLevelForPool`/`scrubPolicyForPool`: task and concurrent pools set `podReuse`/`residualStateWarning` true; `scrubPolicy` resolves to `best-effort` / `vm-restart` / `best-effort-in-place` (task) or `best-effort-per-slot` / `none` (concurrent-workspace / concurrent-stateless) per §7.1 line 72. `PoolMatch` now carries `IsolationProfile`, `AllowCrossTenantReuse`, and `MicrovmScrubMode` from the SandboxTemplate. When no pool resolver is wired (the Postgres-only posture) or the pool does not resolve, it falls back to the conservative session-mode level so the field never understates the posture.
 
 ### - [ ] F-5.2.23 — `lenny-ctl` has no pool CRUD commands [Medium] — OPEN
 
