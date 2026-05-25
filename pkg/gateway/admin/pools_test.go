@@ -211,3 +211,84 @@ func TestPoolMutationAuthorization(t *testing.T) {
 		}
 	}
 }
+
+// fakeResumer records the pool names passed to
+// ResumePoolReconciliation and returns a canned cleared count.
+type fakeResumer struct {
+	cleared map[string]int
+	calls   []string
+}
+
+func (f *fakeResumer) ResumePoolReconciliation(_ context.Context, poolName string) (int, error) {
+	f.calls = append(f.calls, poolName)
+	return f.cleared[poolName], nil
+}
+
+// spec: §4.6.2 item 3 condition (c)
+// (POST /v1/admin/pools/{name}/resume-reconciliation clears denial backoff)
+// An operator resets a stuck pool's in-memory admission-denial counter
+// and the handler reports how many CRD tuples were cleared.
+func TestResumeReconciliationClearsStuckPool(t *testing.T) {
+	router, pools, runtimes, audit := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	_ = pools.Create(context.Background(), poolstore.Pool{
+		Name: "stuck-pool", RuntimeRef: "echo", IsolationProfile: isolation.Default(),
+	})
+	resumer := &fakeResumer{cleared: map[string]int{"stuck-pool": 2}}
+	router.WithReconciliationResumer(resumer)
+
+	rr := poolReq(t, router.Handler(), http.MethodPost,
+		"/v1/admin/pools/stuck-pool/resume-reconciliation", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Pool          string `json:"pool"`
+		ClearedTuples int    `json:"clearedTuples"`
+		WasStuck      bool   `json:"wasStuck"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Pool != "stuck-pool" || body.ClearedTuples != 2 || !body.WasStuck {
+		t.Errorf("body = %+v, want stuck-pool/2/true", body)
+	}
+	if len(resumer.calls) != 1 || resumer.calls[0] != "stuck-pool" {
+		t.Errorf("resumer calls = %v", resumer.calls)
+	}
+	if len(audit.snapshot()) != 1 {
+		t.Errorf("audit: %+v", audit.snapshot())
+	}
+}
+
+// spec: §4.6.2 item 3 condition (c) (unknown pool is 404, resumer untouched)
+func TestResumeReconciliationUnknownPool(t *testing.T) {
+	router, _, _, _ := newPoolAdmin(t)
+	resumer := &fakeResumer{cleared: map[string]int{}}
+	router.WithReconciliationResumer(resumer)
+
+	rr := poolReq(t, router.Handler(), http.MethodPost,
+		"/v1/admin/pools/ghost/resume-reconciliation", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status: %d body=%s", rr.Code, rr.Body.String())
+	}
+	if len(resumer.calls) != 0 {
+		t.Errorf("resumer called for an unknown pool: %v", resumer.calls)
+	}
+}
+
+// spec: §4.6.2 item 3 (route absent without a wired PoolScalingController)
+// The endpoint is registered only when a resumer is wired; otherwise
+// the gateway has no PSC to address and the route 404s as unrouted.
+func TestResumeReconciliationRouteAbsentWithoutResumer(t *testing.T) {
+	router, pools, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	_ = pools.Create(context.Background(), poolstore.Pool{
+		Name: "p", RuntimeRef: "echo", IsolationProfile: isolation.Default(),
+	})
+	rr := poolReq(t, router.Handler(), http.MethodPost,
+		"/v1/admin/pools/p/resume-reconciliation", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status: %d, want 404 (route unregistered)", rr.Code)
+	}
+}

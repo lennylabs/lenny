@@ -6,10 +6,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
@@ -385,5 +389,144 @@ func TestSyncRejectsBasePoolWithSumVariantWeightsAtOne(t *testing.T) {
 	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: demand}
 	if err := r.Sync(context.Background()); err == nil {
 		t.Fatal("Sync should fail when Σ variant_weights ≥ 1")
+	}
+}
+
+// spec: §4.6.2 item 2 (per-tuple backoff gates re-sync within the pause)
+// A denied apply pauses the tuple for the backoff window; a Sync inside
+// that window does not re-issue the apply, and a Sync after the window
+// retries.
+func TestSyncBacksOffWithinPause(t *testing.T) {
+	scheme := newScheme(t)
+	var creates int
+	c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
+			creates++
+			return apierrors.NewForbidden(
+				schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
+				obj.GetName(), errors.New("validator rejected"))
+		},
+	}).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+	now := time.Unix(1000, 0)
+	r := &poolscaling.Reconciler{Client: c, Source: src, Now: func() time.Time { return now }}
+
+	// First pass: both CRD tuples are denied once (2 Create attempts).
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("sync 1: %v", err)
+	}
+	if creates != 2 {
+		t.Fatalf("after first sync creates=%d, want 2 (template+warmpool)", creates)
+	}
+	// Second pass at the same instant: both tuples are inside the 1s
+	// backoff window, so neither apply is retried.
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("sync 2: %v", err)
+	}
+	if creates != 2 {
+		t.Errorf("sync inside backoff retried the apply: creates=%d, want 2", creates)
+	}
+	// Advancing past the 1s window lets the tuples retry.
+	now = now.Add(1 * time.Second)
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("sync 3: %v", err)
+	}
+	if creates != 4 {
+		t.Errorf("sync after backoff did not retry: creates=%d, want 4", creates)
+	}
+}
+
+// spec: §4.6.2 item 3 (stuck-pool abort and operator resume)
+// At the retry ceiling the pool is marked stuck and no longer retried;
+// ResumeReconciliation clears the in-memory counter so a later Sync —
+// once the underlying rejection clears — succeeds.
+func TestSyncStuckPoolResumesAfterReconciliationReset(t *testing.T) {
+	scheme := newScheme(t)
+	deny := true
+	var creates int
+	c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if deny {
+				creates++
+				return apierrors.NewForbidden(
+					schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
+					obj.GetName(), errors.New("validator rejected"))
+			}
+			return cl.Create(ctx, obj, opts...)
+		},
+	}).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+	now := time.Unix(1000, 0)
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		AdmissionDeniedRetryCeiling: 1,
+		Now:                         func() time.Time { return now },
+	}
+
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("sync 1: %v", err)
+	}
+	if got := r.StuckPools(); len(got) != 1 || got[0] != testNS+"/"+testPool {
+		t.Fatalf("StuckPools = %v, want [%s/%s]", got, testNS, testPool)
+	}
+	createsBeforeStuckSync := creates
+	now = now.Add(5 * time.Minute) // well past any backoff
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("sync 2: %v", err)
+	}
+	if creates != createsBeforeStuckSync {
+		t.Errorf("stuck pool retried apply: creates=%d, want %d", creates, createsBeforeStuckSync)
+	}
+
+	// Operator resets the denial counter for the pool.
+	if cleared := r.ResumeReconciliation(testNS, testPool); cleared != 2 {
+		t.Errorf("ResumeReconciliation cleared=%d, want 2 (both tuples)", cleared)
+	}
+	// The underlying rejection has cleared; the next Sync now succeeds.
+	deny = false
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("sync 3: %v", err)
+	}
+	if got := r.StuckPools(); len(got) != 0 {
+		t.Errorf("StuckPools after recovery = %v, want []", got)
+	}
+	getTemplate(t, c)
+	getWarmPool(t, c)
+}
+
+// spec: §4.6.2 item 3 condition (c) (AdminResumer binds the agent namespace)
+// The adapter the gateway admin endpoint calls forwards the pool name
+// to the Reconciler under the configured namespace.
+func TestAdminResumerBindsNamespace(t *testing.T) {
+	scheme := newScheme(t)
+	deny := true
+	c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
+			_ = deny
+			return apierrors.NewForbidden(schema.GroupResource{}, obj.GetName(), errors.New("denied"))
+		},
+	}).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+	now := time.Unix(0, 0)
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		AdmissionDeniedRetryCeiling: 1,
+		Now:                         func() time.Time { return now },
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	resumer := poolscaling.AdminResumer{Reconciler: r, Namespace: testNS}
+	cleared, err := resumer.ResumePoolReconciliation(context.Background(), testPool)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if cleared != 2 {
+		t.Errorf("AdminResumer cleared=%d, want 2", cleared)
+	}
+	// A wrong namespace clears nothing.
+	other := poolscaling.AdminResumer{Reconciler: r, Namespace: "wrong-ns"}
+	if got, _ := other.ResumePoolReconciliation(context.Background(), testPool); got != 0 {
+		t.Errorf("wrong-namespace resume cleared=%d, want 0", got)
 	}
 }

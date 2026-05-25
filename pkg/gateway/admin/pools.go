@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,6 +14,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
+
+// ReconciliationResumer clears the PoolScalingController's in-memory
+// admission-denial backoff for one pool, implementing §4.6.2 item 3
+// condition (c): an operator-initiated reset of a stuck pool's denial
+// counter that does not require a Postgres configuration change. The
+// PSC's Reconciler satisfies it through a namespace-binding adapter
+// (the admin API addresses pools by name; the PSC keys them by agent
+// namespace). The returned count is the number of CRD tuples cleared,
+// zero when the pool was not stuck.
+type ReconciliationResumer interface {
+	ResumePoolReconciliation(ctx context.Context, poolName string) (cleared int, err error)
+}
 
 // PoolPayload is the §15.1 admin-pool wire shape.
 type PoolPayload struct {
@@ -81,6 +94,17 @@ func fromPool(p poolstore.Pool) PoolPayload {
 // WithPools wires the §15.1 pool CRUD handlers onto the Router.
 func (r *Router) WithPools(s poolstore.Store) *Router {
 	r.pools = s
+	return r
+}
+
+// WithReconciliationResumer wires the §4.6.2
+// POST /v1/admin/pools/{name}/resume-reconciliation endpoint onto the
+// Router. Without it the route is not registered (the gateway has no
+// PoolScalingController to address). The resumer is the PSC's denial
+// tracker, reachable from the gateway only when both run in the same
+// process or through a control channel the deployer supplies.
+func (r *Router) WithReconciliationResumer(rr ReconciliationResumer) *Router {
+	r.reconciliationResumer = rr
 	return r
 }
 
@@ -226,6 +250,45 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromPool(row))
+}
+
+// handleResumeReconciliation implements §4.6.2 item 3 condition (c):
+// an operator resets a stuck pool's in-memory admission-denial counter
+// so the PoolScalingController retries the pool on its next tick
+// without requiring a Postgres configuration change. The pool must
+// exist; the response reports how many CRD tuples were cleared and
+// whether the pool was actually stuck.
+func (r *Router) handleResumeReconciliation(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	if _, err := r.pools.Get(req.Context(), name); err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	cleared, err := r.reconciliationResumer.ResumePoolReconciliation(req.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	r.emit(req.Context(), principal, "admin.pool.reconciliation_resumed", name, map[string]any{
+		"clearedTuples": cleared,
+		"wasStuck":      cleared > 0,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"pool":          name,
+		"clearedTuples": cleared,
+		"wasStuck":      cleared > 0,
+	})
 }
 
 func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {

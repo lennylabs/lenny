@@ -181,25 +181,62 @@ type Reconciler struct {
 	retryState *admissionRetryState
 }
 
-// StuckPools returns the list of <namespace>/<name> pool keys whose
-// consecutive admission-rejection count is at or above the configured
-// retry ceiling. A pool exits the list on its first clean Sync. The
-// §16.5 PoolScalingAdmissionStuck alert binds to the same key set.
+// StuckPools returns the list of <namespace>/<name> pool keys with at
+// least one CRD tuple at or above the configured retry ceiling. A pool
+// exits the list on its first clean Sync. The §16.5
+// PoolScalingAdmissionStuck alert binds to the same key set.
 func (r *Reconciler) StuckPools() []string {
 	if r.retryState == nil {
 		return nil
 	}
-	return r.retryState.StuckPools()
+	return r.retryState.stuckPools()
 }
 
-// ConsecutiveAdmissionDenials returns the current consecutive-denial
-// count for one pool key. Zero when no denial has been recorded or
-// the retry tracker has not yet been initialized.
+// ConsecutiveAdmissionDenials returns the highest consecutive-denial
+// count across the pool's CRD tuples. Zero when no denial has been
+// recorded or the retry tracker has not yet been initialized.
 func (r *Reconciler) ConsecutiveAdmissionDenials(namespace, name string) int {
 	if r.retryState == nil {
 		return 0
 	}
-	return r.retryState.ConsecutiveDenials(poolKey(namespace, name))
+	return r.retryState.consecutiveDenials(namespace, name)
+}
+
+// ResumeReconciliation clears the in-memory admission-denial state for
+// the named pool, implementing §4.6.2 item 3 condition (c): an
+// operator POST /v1/admin/pools/{name}/resume-reconciliation resets
+// the denial counter so a stuck pool is retried on the next tick
+// without requiring a Postgres configuration change. It returns the
+// number of CRD tuples cleared (0 when the pool was not stuck or no
+// Sync has run yet). The namespace must match the agent namespace the
+// pool's CRDs live in.
+func (r *Reconciler) ResumeReconciliation(namespace, name string) int {
+	if r.retryState == nil {
+		return 0
+	}
+	return r.retryState.resumePool(namespace, name)
+}
+
+// AdminResumer adapts a Reconciler to the gateway admin
+// ReconciliationResumer interface (§4.6.2 item 3 condition c). The
+// admin API addresses pools by name; the PSC keys denial state by the
+// agent namespace its CRDs live in, so the adapter binds that
+// namespace. It satisfies the admin interface structurally without an
+// import edge between the two packages.
+type AdminResumer struct {
+	// Reconciler is the running PoolScalingController whose in-memory
+	// denial tracker is cleared.
+	Reconciler *Reconciler
+	// Namespace is the agent namespace the pool's CRDs live in.
+	Namespace string
+}
+
+// ResumePoolReconciliation clears the named pool's admission-denial
+// backoff and reports the number of CRD tuples cleared. It never
+// errors: clearing in-memory state cannot fail.
+func (a AdminResumer) ResumePoolReconciliation(ctx context.Context, poolName string) (int, error) {
+	_ = ctx
+	return a.Reconciler.ResumeReconciliation(a.Namespace, poolName), nil
 }
 
 // now returns the reconcile timestamp, honoring an injected clock.
@@ -223,30 +260,48 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list pool configs: %w", err)
 	}
+	now := r.now()
 	for i := range configs {
 		cfg := configs[i]
-		key := poolKey(cfg.Namespace, cfg.Name)
 		// syncTemplate and syncWarmPool both call into
 		// controllerutil.CreateOrUpdate; an admission webhook rejection
-		// surfaces as a Forbidden (or Invalid) status error which the
-		// retry tracker counts under the (namespace, name) key.
-		errTmpl := r.syncTemplate(ctx, cfg)
-		errPool := r.syncWarmPool(ctx, cfg)
-		// Roll up the per-pool outcome so a single rejection on either
-		// resource counts under the same key.
-		syncErr := errTmpl
-		if syncErr == nil {
-			syncErr = errPool
+		// surfaces as a Forbidden / Invalid / BadRequest status error.
+		// Each CRD tuple is gated and counted independently per §4.6.2:
+		// a tuple in backoff (or stuck at the ceiling) is skipped this
+		// tick, and an admission denial on one tuple never aborts the
+		// pass or blocks another pool. A non-admission failure
+		// (transport, Postgres, internal) aborts the pass so the next
+		// tick retries, matching the SSA conflict retry policy.
+		if err := r.syncTuple(ctx, cfg, crdSandboxTmpl, now, r.syncTemplate); err != nil {
+			return err
 		}
-		r.retryState.recordOutcome(key, syncErr)
-		if errTmpl != nil {
-			return fmt.Errorf("sync template %s: %w", key, errTmpl)
-		}
-		if errPool != nil {
-			return fmt.Errorf("sync warm pool %s: %w", key, errPool)
+		if err := r.syncTuple(ctx, cfg, crdSandboxPool, now, r.syncWarmPool); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// syncTuple applies one CRD tuple for a pool through the §4.6.2
+// admission-denial backoff gate. A tuple in backoff or marked stuck is
+// skipped without an apply. The apply outcome is recorded so an
+// admission denial extends the backoff and a clean apply clears it. An
+// admission denial is swallowed (the next tick retries after backoff);
+// a non-admission error is returned so the pass aborts.
+func (r *Reconciler) syncTuple(ctx context.Context, cfg PoolConfig, crd string, now time.Time, apply func(context.Context, PoolConfig) error) error {
+	key := denialKey{namespace: cfg.Namespace, pool: cfg.Name, crd: crd}
+	if !r.retryState.readyToSync(key, now) {
+		return nil
+	}
+	err := apply(ctx, cfg)
+	r.retryState.recordOutcome(key, err, now)
+	if err == nil {
+		return nil
+	}
+	if isAdmissionRejection(err) {
+		return nil
+	}
+	return fmt.Errorf("sync %s %s/%s: %w", crd, cfg.Namespace, cfg.Name, err)
 }
 
 // syncTemplate upserts the pool's SandboxTemplate. The whole spec is

@@ -144,6 +144,8 @@ type Router struct {
 
 	kmsProbe         KMSProbe
 	elicitationFloor string
+
+	reconciliationResumer ReconciliationResumer
 }
 
 // KMSProbe is the §12.5 T4 per-tenant KMS availability probe seam.
@@ -404,6 +406,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetPool)))
 		mux.Handle("PUT /v1/admin/pools/{name}", poolManage(http.HandlerFunc(r.handleUpdatePool)))
 		mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))
+		// §4.6.2 item 3 (c): operator-initiated reset of a stuck pool's
+		// admission-denial backoff. Only registered when a
+		// PoolScalingController denial tracker is wired.
+		if r.reconciliationResumer != nil {
+			mux.Handle("POST /v1/admin/pools/{name}/resume-reconciliation",
+				poolManage(http.HandlerFunc(r.handleResumeReconciliation)))
+		}
 	}
 	if r.connectors != nil {
 		mux.Handle("POST /v1/admin/connectors", r.requireAdmin(http.HandlerFunc(r.handleCreateConnector)))
