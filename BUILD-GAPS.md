@@ -3742,7 +3742,9 @@ Consequence: operators flipping a pool to runc via the explicit opt-in do not se
 
 `pkg/apis/lenny/v1/sandboxtemplate_types.go:213` mentions `SecurityDegradedMode` as a condition the WarmPoolController may set. Greps for `SecurityDegradedMode` in `pkg/controller/warmpool/` return nothing — the condition exists in the comment but is not produced by any reconciler. This intersects with H-1 (no RuntimeClass startup validation): the `Degraded` condition the spec wants for missing RuntimeClass would be the natural use of this otherwise-orphan condition string.
 
-### - [ ] F-5.3.15 — The §5.3 `Profile`/`RuntimeClass` model is otherwise faithful [Info] — OPEN
+### - [x] F-5.3.15 — The §5.3 `Profile`/`RuntimeClass` model is otherwise faithful [Info] — CLOSED
+
+**Resolution:** Re-verified the cited evidence (`pkg/sandbox/isolation/{profile,runtimeclass}.go` + tests, podspec RuntimeClass injection, cross-pool monotonicity call sites, `allowStandardIsolation` gate). Implementation present and matches spec; positive confirmation, no code change required.
 
 The closed enum (`standard` / `sandboxed` / `microvm`), the RuntimeClass name mapping (`runc` / `gvisor` / `kata`), the production default (`sandboxed`), the strict-only monotonicity ordering, the §7.1/§8.3/§15.1 helpers, and the `allowStandardIsolation` gate on the pool are all implemented and tested:
 - `pkg/sandbox/isolation/{profile,runtimeclass}.go` (the canonical types).
@@ -3755,7 +3757,9 @@ The closed enum (`standard` / `sandboxed` / `microvm`), the RuntimeClass name ma
 - `pkg/admission/pool_config_validator/validator.go:307` (the `allowCrossTenantReuse` requires `microvm` gate).
 - `pkg/tenantkms/tenantkms.go` (per-tenant KMS provisioning for T4, the §5.3-adjacent control that distinguishes Kata's cross-tenant reuse from T4's dedicated-node requirement).
 
-### - [ ] F-5.3.16 — Cosign verification, registry-digest webhook, and tenancy.mode interactions are wired [Info] — OPEN
+### - [x] F-5.3.16 — Cosign verification, registry-digest webhook, and tenancy.mode interactions are wired [Info] — CLOSED
+
+**Resolution:** Re-verified `pkg/admission/cosign_verify/verify.go` and `pkg/admission/registry_digest/guard.go` exist as fail-closed gates with the cited chart wiring. Positive confirmation, no code change required.
 
 - `pkg/admission/cosign_verify/{verify,publickey,resolver}.go` is a complete fail-closed signature gate; the chart renders `failurePolicy: Fail` when enabled (`charts/lenny/templates/admission-policies/cosign-verify-webhook.yaml:169`).
 - `pkg/admission/registry_digest/guard.go` enforces `@sha256:` pinning on every Pod image when `platform.registry.requireDigest: true`; fail-closed.
@@ -3763,11 +3767,15 @@ The closed enum (`standard` / `sandboxed` / `microvm`), the RuntimeClass name ma
 
 These provide the supply-chain controls §5.3 names (cosign + digest pinning + RuntimeClass-aware admission), even though defaults make several of them opt-in (see H-4, H-5).
 
-### - [ ] F-5.3.17 — T4 dedicated-node enforcement (the §5.3 adjacent control) is complete and tested [Info] — OPEN
+### - [x] F-5.3.17 — T4 dedicated-node enforcement (the §5.3 adjacent control) is complete and tested [Info] — CLOSED
+
+**Resolution:** Re-verified `pkg/admission/t4_node_isolation/guard.go` and the `lenny-t4-node-isolation` preflight check (`pkg/preflight/webhooks.go:52`). Positive confirmation, no code change required.
 
 `pkg/admission/t4_node_isolation/guard.go` enforces the §6.4 STR-003 predicate verbatim — both directions: a T4 pod must pin/tolerate, and a non-T4 pod must not. `pkg/podregistry/crd.go` and `pkg/controller/sandbox/controller.go` inject the `lenny.dev/workspace-tier: t4` label upstream. The chart renders the webhook with `replicas: 2`, `failurePolicy: Fail`, and the preflight Job checks for it (`charts/lenny/tests/t4-node-isolation-webhook_test.yaml`). `pkg/preflight/webhooks.go:52` expects `lenny-t4-node-isolation` when `features.compliance: true`. This is the most complete §5.3-related enforcement path in the build.
 
-### - [ ] F-5.3.18 — Experiment-router isolation monotonicity matches the spec [Info] — OPEN
+### - [x] F-5.3.18 — Experiment-router isolation monotonicity matches the spec [Info] — CLOSED
+
+**Resolution:** Re-verified `experimentrouter.go` enforces `AtLeastAsRestrictive` (line 347) with the cited isolation test and admin-side variant validation. Positive confirmation, no code change required.
 
 `pkg/gateway/sessionserver/experimentrouter.go:336-347` implements the §10.7 / §5.3 "fail-closed on weaker variant pool" rule. Tests cover the rejection (`experimentrouter_isolation_test.go:102`) and the equal-isolation pass (`:119`). The admin-side variant-pool validation (`pkg/gateway/admin/experiments.go:160,200`) also rejects weaker variants at experiment create-time, plus emits the advisory `experiment.variant_weaker_than_tenant_floor` event when the variant is below the tenant's `minIsolationProfile`.
 
@@ -4008,25 +4016,33 @@ Spec §6.4: "`procfs` and `sysfs` are masked/read-only."
 
 Consequence: defense-in-depth gap — relies on container runtime defaults. Low severity because the runtime's default behavior aligns; flagged because §6.4 calls it out explicitly.
 
-### - [ ] F-6.1.17 — Embedded model loses two-container security boundary [Info] — OPEN
+### - [x] F-6.1.17 — Embedded model loses two-container security boundary [Info] — CLOSED
+
+**Resolution:** Re-verified `buildEmbedded` (`pkg/controller/sandbox/podspec/podspec.go:290`) produces the documented single-container pod. The §4.7 embedded model permits this trade-off; the finding is an accepted-by-design observation, not a gap. Closed as confirmed.
 
 `pkg/controller/sandbox/podspec/podspec.go:253–281` (`buildEmbedded`) produces a single-container pod where the same process is both adapter and runtime. The single container runs as `AgentUID` (65533), and the credential mount is read-write at `/run/lenny`. This is correct per §4.7 deployment model but downgrades the §6.1 / §13.1 cross-UID credential delivery boundary (adapter-writes, agent-reads) into a single trust domain.
 
 Consequence: a runtime author choosing the embedded model accepts that any code-execution vulnerability in the runtime has direct read-write access to the credential file. §6.1 does not explicitly forbid this; flagged for visibility because the §6.1 paragraph naming "adapter listening and health-checked" implies the two-container split.
 
-### - [ ] F-6.1.18 — The §6.1 "No LLM provider credentials assigned" warm-time invariant is satisfied [Info] — OPEN
+### - [x] F-6.1.18 — The §6.1 "No LLM provider credentials assigned" warm-time invariant is satisfied [Info] — CLOSED
+
+**Resolution:** Re-verified `AssignCredentials` requires a non-empty session id (`pkg/adapter/credentials.go:23`) and `/run/lenny` is an empty tmpfs at warm time. No credentials present pre-claim. Positive confirmation, no code change required.
 
 Spec §6.1 line 15: "No LLM provider credentials assigned (credential lease is assigned at claim time, not warm time)".
 
 `pkg/adapter/credentials.go:22–48` requires `req.GetSessionId()` to be non-empty for `AssignCredentials`. `pkg/controller/sandbox/podspec/podspec.go` mounts `/run/lenny` as an empty tmpfs at warm time. The credential file is only written by the adapter after `AssignCredentials` arrives, which (per the gateway-side `Binder`) only happens after pod claim. No credentials are present at warm time.
 
-### - [ ] F-6.1.19 — Adapter health-check via gRPC `grpc.health.v1` is implemented and SERVING [Info] — OPEN
+### - [x] F-6.1.19 — Adapter health-check via gRPC `grpc.health.v1` is implemented and SERVING [Info] — CLOSED
+
+**Resolution:** Re-verified `NewGRPCServer` registers `grpc.health.v1` and sets SERVING (`pkg/adapter/transport.go:30-31`). Positive confirmation, no code change required.
 
 Spec §6.1 line 9: "Runtime adapter listening and health-checked".
 
 `pkg/adapter/transport.go:25–33` (`NewGRPCServer`) registers `grpc.health.v1` with status SERVING. `pkg/adapter/server_test.go:128–132` tests the path. The Kubernetes-level Pod Ready condition flips to True based on the standard gRPC health probe Lenny does not need to wire; the spec language is satisfied.
 
-### - [ ] F-6.1.20 — RuntimeClass mapping is correct [Info] — OPEN
+### - [x] F-6.1.20 — RuntimeClass mapping is correct [Info] — CLOSED
+
+**Resolution:** Re-verified `RuntimeClassName` maps standard→runc, sandboxed→gvisor, microvm→kata (`pkg/sandbox/isolation/runtimeclass.go`). Positive confirmation; the operator-override gap is tracked separately under F-17.5.7 (still OPEN). No code change required here.
 
 **Potential overlap** (confidence: high) — F-17.5.7 — Same RuntimeClass mapping code, but F-17.5.7 flags the hard-coded names as a missing operator override while F-6.1.20 records the mapping as correct with no gap.
 
@@ -4034,7 +4050,7 @@ Spec §6.1 line 8: "Selected `RuntimeClass` active (runc/gVisor/Kata)".
 
 `pkg/sandbox/isolation/runtimeclass.go:9–20` maps `standard → runc`, `sandboxed → gvisor`, `microvm → kata`. `pkg/controller/sandbox/podspec/podspec.go:170–172, 381` applies the mapping to `pod.Spec.RuntimeClassName`. Tested at `pkg/controller/sandbox/podspec/podspec_test.go:57–73`.
 
-### - [ ] F-6.1.21 — `/workspace/current` and `/workspace/staging` exist but are produced by a single volume mounted at `/workspace` [Info] — OPEN
+### - [x] F-6.1.21 — `/workspace/current` and `/workspace/staging` exist but are produced by a single volume mounted at `/workspace` [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.4.13 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
@@ -4044,17 +4060,25 @@ Spec §6.1 lines 11–12: "`/workspace/current` exists but is empty" and "`/work
 
 This satisfies the spec functionally (the directories exist when needed), but at warm time `/workspace/current` and `/workspace/staging` are absent; they are only materialized at claim time. The §6.1 sentence "`/workspace/current` exists but is empty" could be read either way; flagged as a minor discrepancy in wording vs. behavior. The adapter's `--workspace-root` flag default is `/workspace/current`, but the directory is not created at warm time by the pod builder or by the adapter at startup — only on the first FinalizeWorkspace call.
 
-### - [ ] F-6.1.22 — `lenny-cred-readers` GID handling and credential file delivery are correct [Info] — OPEN
+**Resolution (1132b772):** Fixed together with F-6.4.13 — the adapter now creates `/workspace/current` and the staging directory at startup via `EnsureWarmWorkspaceLayout`, so both exist at warm time.
+
+### - [x] F-6.1.22 — `lenny-cred-readers` GID handling and credential file delivery are correct [Info] — CLOSED
+
+**Resolution:** Re-verified `FSGroup = CredReadersGID (65534)` in the pod spec (`pkg/controller/sandbox/podspec/podspec.go:54,430`) and the §13.1 layout validation in `pkg/podsecurity`. Positive confirmation, no code change required.
 
 `pkg/controller/sandbox/podspec/podspec.go:50–54, 386` sets `pod.Spec.SecurityContext.FSGroup = 65534`. Adapter UID 65532, agent UID 65533, cred-readers GID 65534. Credentials volume tmpfs is fsGroup-owned by 65534, adapter container writes 0640, runtime reads group-read. `pkg/podsecurity/podsecurity.go:113–185` validates this layout at admission. Defense in depth holds for the pod-warm path.
 
-### - [ ] F-6.1.23 — `sdkWarmDisabled` CRD bit, circuit-breaker state, and minOpenUntil persistence are implemented (without a feature to gate) [Info] — OPEN
+### - [x] F-6.1.23 — `sdkWarmDisabled` CRD bit, circuit-breaker state, and minOpenUntil persistence are implemented (without a feature to gate) [Info] — CLOSED
+
+**Resolution:** Re-verified the CRD fields, circuit-breaker math, and SSA writer cited. The machinery is present and tested; it is dormant only because SDK-warm itself is not in v1 (H-1). Positive confirmation of the implemented surface, no code change required.
 
 `pkg/apis/lenny/v1/sandboxwarmpool_types.go:60–82, 110–115, 131–135` declares `Spec.SDKWarmDisabled`, `Status.SDKWarmCircuitBreaker.{OpenedAt,OpenedReason,MinOpenUntil}`. `pkg/controller/poolscaling/circuitbreaker.go:34, 39, 41–45` implements the rolling-window math, the 90% threshold, the 30-minute minOpenUntil default, and the on-startup re-evaluation. `pkg/controller/poolscaling/controller.go:267–377` writes spec.sdkWarmDisabled and the status carve-out via SSA. `pkg/admission/ownership/ownership.go:105, 162` enforces the §4.6.3 ownership boundary.
 
 This is well-implemented machinery without any feature to actually gate: the SDK-warm path itself does not exist (H-1) and no production code increments `lenny_warmpool_sdk_demotions_total` (H-5), so the breaker can only trip in tests that synthetically inject `DemotionRate`. The implementation will be useful when SDK-warm is built; today it is dormant.
 
-### - [ ] F-6.1.24 — Admin-API `circuitBreakerOverride` and `sdkWarm.acknowledgeHighDemotionRate` are absent [Info] — OPEN
+### - [ ] F-6.1.24 — Admin-API `circuitBreakerOverride` and `sdkWarm.acknowledgeHighDemotionRate` are absent [Info] — DEFERRED
+
+**Deferred:** The override knob only re-enables SDK-warm, which does not exist in v1 (H-1). Implementing it now would add an admin surface for a dormant feature. Deferred to the SDK-warm build.
 
 Spec §6.1 line 63: "Operators must re-enable SDK-warm explicitly via `PUT /v1/admin/pools/{name}` with `{"sdkWarm": {"circuitBreakerOverride": "enabled"}}` after narrowing the blocking paths or adjusting the workload profile."
 
@@ -4062,19 +4086,25 @@ Greps for `circuitBreakerOverride` and `acknowledgeHighDemotionRate` across `pkg
 
 Consequence: operators have no escape hatch to re-enable SDK-warm ahead of the grace period; the spec-mandated override knob is unimplemented. Severity is downgraded to Info because SDK-warm itself does not exist; this gap is on the critical path for enabling H-1.
 
-### - [ ] F-6.1.25 — The session-mode "pods are one-session-only" invariant has no automatic pod-drain after session terminal transitions [Info] — OPEN
+### - [ ] F-6.1.25 — The session-mode "pods are one-session-only" invariant has no automatic pod-drain after session terminal transitions [Info] — DEFERRED
+
+**Deferred:** Resolving this requires a cross-component audit of the gateway `OnSessionTerminal` close-hook path (`pkg/gateway/sessionserver/sessionserver.go`) against the Sandbox lifecycle planner to confirm whether a session-mode pod is retired on terminal transition or left resident. The finding itself flags this as a focused follow-up; it is the same root cause as M-5 and warrants a dedicated batch rather than a rushed close.
 
 `pkg/adapter/session.go:124–138` (`Shutdown`) tears down the runtime process and releases the session-id field, but the pod itself remains in the cluster. The Sandbox lifecycle planner (`pkg/controller/sandbox/lifecycle/lifecycle.go:84–94`) handles `idle → draining` only when the Pod is absent or failed; there is no `attached → completed → draining` path that would terminate and replace a session-mode pod after a successful session end.
 
 The gateway-side session-completion handler is the likely driver of pod replacement, but I did not find an explicit "set Sandbox.spec.phase to draining on session terminal transition" call. If absent, this is the same root cause flagged in M-5 above. This is significant for the §6.1 isolation guarantee and warrants a focused follow-up review of the gateway's session-completion handler.
 
-### - [ ] F-6.1.26 — `lenny-cred-readers` membership boundary for ephemeral containers is enforced separately [Info] — OPEN
+### - [x] F-6.1.26 — `lenny-cred-readers` membership boundary for ephemeral containers is enforced separately [Info] — CLOSED
+
+**Resolution:** Re-verified `pkg/podsecurity/podsecurity.go` rejects non-adapter/non-agent containers declaring the cred-readers GID and the `ephemeral-container-cred-guard` webhook is present. Positive confirmation; the same positive observation is also tracked under F-13.1.22 / F-13.3.17 (still OPEN, in their respective §13 batches). No code change required.
 
 **Potential duplicate** (confidence: high) — F-13.1.22, F-13.3.17 — All describe the same positive finding that the four-condition ephemeral-container cred-guard webhook is correctly implemented; F-13.2.23 also covers label-immutability so it is overlapping rather than a clean duplicate.
 
 The spec's "lenny-cred-readers membership is deliberately narrow" invariant is enforced by `pkg/podsecurity/podsecurity.go:142–185` (rejects a non-adapter, non-agent container declaring the cred-readers GID in runAsGroup) and by the `lenny-ephemeral-container-cred-guard` webhook (`charts/lenny/templates/admission-policies/ephemeral-container-cred-guard-webhook.yaml`). Defense in depth is in place.
 
-### - [ ] F-6.1.27 — The "demotion rate threshold and circuit-breaker" guidance is encoded as a 90% hardcoded threshold [Info] — OPEN
+### - [x] F-6.1.27 — The "demotion rate threshold and circuit-breaker" guidance is encoded as a 90% hardcoded threshold [Info] — CLOSED
+
+**Resolution:** Re-verified `SDKWarmDemotionRateTripThreshold = 0.90` (`pkg/controller/poolscaling/circuitbreaker.go:39`) and minOpenUntil persistence across PSC failover. Matches the §6.1 hardcoded-threshold requirement. Positive confirmation, no code change required.
 
 `pkg/controller/poolscaling/circuitbreaker.go:39`:
 ```go
@@ -4737,11 +4767,13 @@ Spec §6.4 references the §6.1 SDK-warm demotion guidance only obliquely; the m
 
 `pkg/controller/sandbox/podspec/podspec.go:271` and `cmd/runtimes/echo-embedded/main.go:66` both default `--workspace-root=/workspace/current`. This is correct for session and task modes; it becomes an actively wrong default the moment H-2 is built. Worth flagging as a follow-on coupling rather than a present-day defect.
 
-### - [ ] F-6.4.13 — `/workspace/current` does not exist at warm time [Low] — OPEN
+### - [x] F-6.4.13 — `/workspace/current` does not exist at warm time [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.1.21 — Three distinct defects in the staging area: missing --staging-dir flag causing PrepareWorkspace FailedPrecondition (4.7.10/6.4.5), absent atomic staging-to-current promotion in Materialize (13.4.5/7.4.12), and warm-time absence of /workspace/current and /workspace/staging subdirs (6.1.21/6.4.13).
 
 Spec §6.1 line 11: "`/workspace/current` exists but is empty". The pod-spec mounts the `workspace` emptyDir at `/workspace`, so `/workspace` exists but `/workspace/current` is created on the first `MkdirAll(filepath.Dir(path), 0o755)` inside `pkg/adapter/workspace/materialize.go:71,93,120` — at workspace finalization, not at warm time. A runtime listing `/workspace` on a freshly-warmed pod sees an empty directory rather than the spec's `current/` subdirectory. The functional consequence is small (the directory is created before the runtime reads from it) but the strict §6.1 invariant is violated. The same applies to `/workspace/staging` (H-5 covers the upstream cause).
+
+**Resolution (1132b772):** The adapter now calls `EnsureWarmWorkspaceLayout` at startup, before signalling READY, creating `WorkspaceRoot` (`/workspace/current`, chmod 0755 for the runtime) and `StagingDir` so both exist and `current/` is empty at warm time. Tier-1 tests cover creation, the empty-current invariant, idempotency, umask-independent mode, and the unconfigured-dir skip.
 
 ### - [ ] F-6.4.14 — Pod-spec test does not cover §6.4 invariants [Low] — OPEN
 
