@@ -3,9 +3,12 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -33,12 +36,21 @@ type CredentialPoolPayload struct {
 	DeletedAt                  string                   `json:"deletedAt,omitempty"`
 }
 
-// CredentialEntryPayload is one §4.9 credential in a pool.
+// CredentialEntryPayload is one §4.9 credential in a pool. The
+// revocation fields (status, revokedAt, revokedBy, revocationReason)
+// are response-only: the emergency-revocation endpoints own the
+// lifecycle transition, and a PUT that round-trips a credential
+// preserves its persisted revocation state by id rather than reading it
+// from the wire.
 type CredentialEntryPayload struct {
-	ID        string `json:"id"`
-	SecretRef string `json:"secretRef,omitempty"`
-	RoleArn   string `json:"roleArn,omitempty"`
-	Region    string `json:"region,omitempty"`
+	ID               string `json:"id"`
+	SecretRef        string `json:"secretRef,omitempty"`
+	RoleArn          string `json:"roleArn,omitempty"`
+	Region           string `json:"region,omitempty"`
+	Status           string `json:"status,omitempty"`
+	RevokedAt        string `json:"revokedAt,omitempty"`
+	RevokedBy        string `json:"revokedBy,omitempty"`
+	RevocationReason string `json:"revocationReason,omitempty"`
 }
 
 // validAssignmentStrategies is the §4.9 closed enum. Empty selects the
@@ -143,9 +155,14 @@ func fromCredentialPool(p credentialpoolstore.CredentialPool) CredentialPoolPayl
 		DeletedAt:                  rfc3339Nano(p.DeletedAt),
 	}
 	for _, c := range p.Credentials {
-		out.Credentials = append(out.Credentials, CredentialEntryPayload{
+		entry := CredentialEntryPayload{
 			ID: c.ID, SecretRef: c.SecretRef, RoleArn: c.RoleArn, Region: c.Region,
-		})
+			Status: string(c.Status), RevokedBy: c.RevokedBy, RevocationReason: c.RevocationReason,
+		}
+		if !c.RevokedAt.IsZero() {
+			entry.RevokedAt = rfc3339Nano(c.RevokedAt)
+		}
+		out.Credentials = append(out.Credentials, entry)
 	}
 	return out
 }
@@ -306,7 +323,7 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 	}
 	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
 		p.Provider = body.Provider
-		p.Credentials = toCredentials(body.Credentials)
+		p.Credentials = preserveRevocations(p.Credentials, toCredentials(body.Credentials))
 		p.AssignmentStrategy = body.AssignmentStrategy
 		p.MaxConcurrentSessions = body.MaxConcurrentSessions
 		p.CooldownOnRateLimitSeconds = body.CooldownOnRateLimitSeconds
@@ -356,4 +373,297 @@ func (r *Router) handleDeleteCredentialPool(w http.ResponseWriter, req *http.Req
 	r.emit(req.Context(), principal, "admin.credential_pool.soft_deleted", name,
 		map[string]any{"tenantId": tenant})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// PoolCredentialRevoker terminates the §4.9 credential leases backed by
+// one or more pool credentials. The emergency-revocation handlers
+// resolve the (poolID, credentialID) of each credential they revoke and
+// call this to add the credential's source-aware identity to the §4.9
+// deny list (propagated across replicas) and drop the leases this
+// replica holds, returning the count of leases it terminated.
+//
+// A minimal gateway leaves it nil; the revoke still marks the store and
+// emits the §4.9.2 audit event, and the §4.9 startup deny-list rebuild
+// seeds the revoked credential onto a replica's deny list at the next
+// restart, so the credential is still rejected on the upstream path.
+//
+// spec: §4.9 lines 1640-1652 — mark the credential revoked, look up all
+// active leases backed by it, terminate them, and add the credential to
+// the in-memory deny list propagated across replicas.
+type PoolCredentialRevoker interface {
+	// RevokePoolCredentials revokes every credentialID in poolID: it adds
+	// each credential to the deny list and removes the leases backed by
+	// it, returning the total leases terminated across all credentialIDs.
+	RevokePoolCredentials(ctx context.Context, poolID string, credentialIDs []string) int
+}
+
+// WithPoolCredentialRevocation wires the §4.9 emergency-revocation lease
+// terminator onto the Router. With it set, the revoke endpoints add a
+// revoked credential to the deny list and drop its active leases; the
+// returned `leasesTerminated` count reflects the leases this replica
+// held. Without it the revoke endpoints still mark the store and emit
+// the audit event, reporting zero leases terminated on this replica.
+func (r *Router) WithPoolCredentialRevocation(rev PoolCredentialRevoker) *Router {
+	r.poolCredRevoker = rev
+	return r
+}
+
+// errCredentialNotFound is the mutate sentinel for a credential id that
+// is absent from the pool. The revoke/re-enable handlers map it to a
+// 404 RESOURCE_NOT_FOUND.
+var errCredentialNotFound = errors.New("credential not found")
+
+// revokeRequest is the optional §4.9 revocation body. Both fields are
+// optional; the spec example carries a reason and a free-text note.
+type revokeRequest struct {
+	Reason string `json:"reason,omitempty"`
+	Note   string `json:"note,omitempty"`
+}
+
+// decodeOptionalRevokeBody reads the optional {reason, note} body. An
+// empty body is permitted (the spec marks the body optional). A
+// malformed non-empty body is reported so the caller can 400.
+func decodeOptionalRevokeBody(req *http.Request) (revokeRequest, error) {
+	var body revokeRequest
+	if req.Body == nil {
+		return body, nil
+	}
+	dec := json.NewDecoder(req.Body)
+	if err := dec.Decode(&body); err != nil {
+		if errors.Is(err, io.EOF) {
+			return revokeRequest{}, nil
+		}
+		return revokeRequest{}, err
+	}
+	return body, nil
+}
+
+// preserveRevocations carries forward per-credential revocation state
+// from the existing pool onto the incoming credential set, matched by
+// id. A PUT replaces the credential set wholesale (§15.1), but the
+// emergency-revocation lifecycle (§4.9) is owned by the dedicated
+// revoke/re-enable endpoints, so a PUT that round-trips a revoked
+// credential must not silently re-enable it.
+func preserveRevocations(existing, incoming []credentialpoolstore.Credential) []credentialpoolstore.Credential {
+	prior := make(map[string]credentialpoolstore.Credential, len(existing))
+	for _, c := range existing {
+		prior[c.ID] = c
+	}
+	for i := range incoming {
+		if p, ok := prior[incoming[i].ID]; ok && p.IsRevoked() {
+			incoming[i].Status = p.Status
+			incoming[i].RevokedAt = p.RevokedAt
+			incoming[i].RevokedBy = p.RevokedBy
+			incoming[i].RevocationReason = p.RevocationReason
+		}
+	}
+	return incoming
+}
+
+// handleRevokeCredential implements the §4.9 single-credential emergency
+// revocation: POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke.
+//
+// spec: §4.9 lines 1626-1652 — mark the credential revoked in the store,
+// terminate its active leases via the deny list, emit credential.revoked,
+// and return a 200 summary.
+func (r *Router) handleRevokeCredential(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	credID := req.PathValue("credId")
+	body, err := decodeOptionalRevokeBody(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return
+	}
+	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	at := r.clock()
+	if _, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
+		return revokeCredentialInPool(p, credID, principal.Subject, body.Reason, at)
+	}); err != nil {
+		r.writeCredentialMutateError(w, err)
+		return
+	}
+	terminated := 0
+	if r.poolCredRevoker != nil {
+		terminated = r.poolCredRevoker.RevokePoolCredentials(req.Context(), name, []string{credID})
+	}
+	r.emit(req.Context(), principal, "credential.revoked", name+"/"+credID, map[string]any{
+		"tenant_id":                tenant,
+		"pool_id":                  name,
+		"credential_id":            credID,
+		"revoked_by":               principal.Subject,
+		"reason":                   body.Reason,
+		"active_leases_terminated": terminated,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"revokedCredential": credID,
+		"leasesTerminated":  terminated,
+		"propagatedAt":      rfc3339Nano(at),
+	})
+}
+
+// handleRevokePool implements the §4.9 pool-wide force-rotate:
+// POST /v1/admin/credential-pools/{name}/revoke. It revokes every
+// credential in the pool simultaneously.
+//
+// spec: §4.9 lines 1654-1659 — revoke all credentials in the pool; all
+// active sessions are rotated to their fallback chain, or terminated
+// with CREDENTIAL_POOL_EXHAUSTED if no fallback is available.
+func (r *Router) handleRevokePool(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	body, err := decodeOptionalRevokeBody(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return
+	}
+	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	at := r.clock()
+	var revoked []string
+	if _, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
+		revoked = revoked[:0]
+		for i := range p.Credentials {
+			if p.Credentials[i].IsRevoked() {
+				continue
+			}
+			p.Credentials[i].Status = credentialpoolstore.CredentialRevoked
+			p.Credentials[i].RevokedAt = at
+			p.Credentials[i].RevokedBy = principal.Subject
+			p.Credentials[i].RevocationReason = body.Reason
+			revoked = append(revoked, p.Credentials[i].ID)
+		}
+		return nil
+	}); err != nil {
+		r.writeCredentialMutateError(w, err)
+		return
+	}
+	terminated := 0
+	if r.poolCredRevoker != nil && len(revoked) > 0 {
+		terminated = r.poolCredRevoker.RevokePoolCredentials(req.Context(), name, revoked)
+	}
+	for _, credID := range revoked {
+		r.emit(req.Context(), principal, "credential.revoked", name+"/"+credID, map[string]any{
+			"tenant_id":     tenant,
+			"pool_id":       name,
+			"credential_id": credID,
+			"revoked_by":    principal.Subject,
+			"reason":        body.Reason,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"revokedCredentials": revoked,
+		"leasesTerminated":   terminated,
+		"propagatedAt":       rfc3339Nano(at),
+	})
+}
+
+// handleReEnableCredential implements the §4.9 re-enable path:
+// POST /v1/admin/credential-pools/{name}/credentials/{credId}/re-enable.
+// It returns a revoked credential to active so the pool can assign it
+// again after the operator has rotated the underlying secret (runbook
+// step 6). The persisted status flip is authoritative: a new lease
+// minted after re-enable carries a fresh token, and the §4.9 startup
+// rebuild omits the re-enabled credential so a restarted replica no
+// longer denies it. A replica that was already running keeps the live
+// deny-list entry until it restarts or the entry reaches its lease-TTL
+// expiry, so an operator re-enabling a credential on a long-running
+// fleet should roll the gateway replicas to clear the live entries.
+//
+// spec: §4.9 line 1743 (credential.re_enabled), lines 1675-1677 (runbook
+// step 6 — rotate the underlying secret before re-enabling).
+func (r *Router) handleReEnableCredential(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	credID := req.PathValue("credId")
+	body, err := decodeOptionalRevokeBody(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return
+	}
+	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	at := r.clock()
+	if _, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
+		idx := credentialIndex(p, credID)
+		if idx < 0 {
+			return errCredentialNotFound
+		}
+		p.Credentials[idx].Status = credentialpoolstore.CredentialActive
+		p.Credentials[idx].RevokedAt = time.Time{}
+		p.Credentials[idx].RevokedBy = ""
+		p.Credentials[idx].RevocationReason = ""
+		return nil
+	}); err != nil {
+		r.writeCredentialMutateError(w, err)
+		return
+	}
+	r.emit(req.Context(), principal, "credential.re_enabled", name+"/"+credID, map[string]any{
+		"tenant_id":     tenant,
+		"pool_id":       name,
+		"credential_id": credID,
+		"reason":        body.Reason,
+		"re_enabled_by": principal.Subject,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"reEnabledCredential": credID,
+		"reEnabledAt":         rfc3339Nano(at),
+	})
+}
+
+// credentialIndex returns the index of the credential with id in the
+// pool, or -1 when absent.
+func credentialIndex(p *credentialpoolstore.CredentialPool, id string) int {
+	for i := range p.Credentials {
+		if p.Credentials[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// revokeCredentialInPool flips one credential to revoked inside an
+// Update mutate. A credential already revoked is left unchanged so a
+// repeated revoke is idempotent and preserves the original revoker and
+// timestamp. An absent credential id yields errCredentialNotFound.
+func revokeCredentialInPool(p *credentialpoolstore.CredentialPool, credID, revokedBy, reason string, at time.Time) error {
+	idx := credentialIndex(p, credID)
+	if idx < 0 {
+		return errCredentialNotFound
+	}
+	if p.Credentials[idx].IsRevoked() {
+		return nil
+	}
+	p.Credentials[idx].Status = credentialpoolstore.CredentialRevoked
+	p.Credentials[idx].RevokedAt = at
+	p.Credentials[idx].RevokedBy = revokedBy
+	p.Credentials[idx].RevocationReason = reason
+	return nil
+}
+
+// writeCredentialMutateError maps the shared revoke/re-enable mutate
+// failures to HTTP responses: an unknown pool or credential is 404, any
+// other failure is a 400 validation error.
+func (r *Router) writeCredentialMutateError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, credentialpoolstore.ErrNotFound):
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
+	case errors.Is(err, errCredentialNotFound):
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found in pool", nil)
+	default:
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+	}
 }

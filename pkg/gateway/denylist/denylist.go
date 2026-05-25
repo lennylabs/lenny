@@ -41,6 +41,31 @@ func (d *DenyList) Revoke(key credential.CredentialKey) {
 	d.revoked[key] = struct{}{}
 }
 
+// Reset replaces the deny list with exactly the credentials in keys.
+// The §4.9 startup deny-list rebuild calls it once, at replica start,
+// with the union of revoked entries from the stores so a freshly
+// started replica holds precisely the currently-revoked set even if it
+// missed the pub/sub revocations issued while it was down.
+//
+// Reset is authoritative: it constructs the full set rather than only
+// adding to it. It is therefore safe only against an empty (or
+// fully-store-derived) list — a periodic Reset would drop entries that
+// the live §11.4 revocation path adds for credentials not yet reflected
+// in the store query. The rebuild runs at startup, where the list is
+// empty, so Reset seeds without clobbering a live entry.
+//
+// spec: §4.9 lines 1668-1673 — a newly started gateway replica rebuilds
+// its deny list by executing a union across the credential stores.
+func (d *DenyList) Reset(keys []credential.CredentialKey) {
+	next := make(map[credential.CredentialKey]struct{}, len(keys))
+	for _, k := range keys {
+		next[k] = struct{}{}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.revoked = next
+}
+
 // Revoked reports whether the credential identified by key is on the
 // deny list. It satisfies the §4.9 LLM proxy's DenyList interface.
 func (d *DenyList) Revoked(key credential.CredentialKey) bool {

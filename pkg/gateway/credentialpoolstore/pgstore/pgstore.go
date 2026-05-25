@@ -233,6 +233,57 @@ func (s *Store) SoftDelete(ctx context.Context, tenantID, name string, at time.T
 	})
 }
 
+// RevokedCredentials implements credentialpoolstore.Store. It scans
+// every tenant's active (not soft-deleted) pools for revoked
+// credentials, for the §4.9 startup deny-list rebuild. It reads across
+// tenants via pgtenant.InAllTenants because the rebuild is a
+// platform-internal startup operation with no per-tenant request scope;
+// it is a read, so the §12.3 cross_tenant_read audit (for
+// user-triggered cross-tenant reads) does not apply.
+//
+// spec: §4.9 lines 1668-1673 — a newly started gateway replica rebuilds
+// its deny list from the stores' revoked entries.
+func (s *Store) RevokedCredentials(ctx context.Context) ([]credentialpoolstore.RevokedCredential, error) {
+	var out []credentialpoolstore.RevokedCredential
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT tenant_id, name, credentials FROM credential_pools
+			 WHERE deleted_at IS NULL ORDER BY tenant_id, name`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				tenantID, name string
+				credsRaw       []byte
+			)
+			if err := rows.Scan(&tenantID, &name, &credsRaw); err != nil {
+				return err
+			}
+			if len(credsRaw) == 0 {
+				continue
+			}
+			var creds []credentialpoolstore.Credential
+			if err := json.Unmarshal(credsRaw, &creds); err != nil {
+				return fmt.Errorf("credentialpoolstore: decode credentials: %w", err)
+			}
+			for _, c := range creds {
+				if c.IsRevoked() {
+					out = append(out, credentialpoolstore.RevokedCredential{
+						TenantID: tenantID, PoolName: name, CredentialID: c.ID,
+					})
+				}
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // scanPool reads one row in selectList order into a CredentialPool.
 func scanPool(row pgx.Row) (credentialpoolstore.CredentialPool, error) {
 	var (

@@ -24,6 +24,21 @@ import (
 	"time"
 )
 
+// CredentialStatus is the §4.9 per-credential lifecycle state within a
+// pool. An empty status reads as active, so a credential persisted
+// before the revocation fields existed is treated as usable.
+type CredentialStatus string
+
+const (
+	// CredentialActive — the credential is assignable.
+	CredentialActive CredentialStatus = "active"
+
+	// CredentialRevoked — the credential was emergency-revoked (§4.9
+	// Emergency Credential Revocation). It is held off assignment and
+	// its identity is on the §4.9 deny list.
+	CredentialRevoked CredentialStatus = "revoked"
+)
+
 // Credential is one §4.9 credential entry in a pool. A key-based
 // provider entry carries SecretRef (a Kubernetes Secret reference); an
 // `aws_bedrock` entry carries RoleArn and Region instead.
@@ -40,7 +55,24 @@ type Credential struct {
 
 	// Region is the provider region for an `aws_bedrock` credential.
 	Region string
+
+	// Status is the §4.9 lifecycle state of this credential within the
+	// pool. Empty reads as active. Emergency revocation
+	// (POST .../credentials/{credId}/revoke) sets it to revoked; the
+	// /re-enable path returns it to active. spec: §4.9 line 1640 step 1.
+	Status CredentialStatus
+
+	// RevokedAt / RevokedBy / RevocationReason record the §4.9 emergency
+	// revocation (spec line 1640 step 1). They are zero for an active
+	// credential.
+	RevokedAt        time.Time
+	RevokedBy        string
+	RevocationReason string
 }
+
+// IsRevoked reports whether the credential has been emergency-revoked.
+// An empty Status reads as active. spec: §4.9 line 1640 step 1.
+func (c Credential) IsRevoked() bool { return c.Status == CredentialRevoked }
 
 // CredentialPool is the §4.9 tenant-scoped credential pool resource.
 type CredentialPool struct {
@@ -122,14 +154,40 @@ type CredentialPool struct {
 // IsActive reports whether the pool has not been soft-deleted.
 func (p CredentialPool) IsActive() bool { return p.DeletedAt.IsZero() }
 
+// RevokedCredential identifies one revoked pool credential for the §4.9
+// startup deny-list rebuild. The §4.9 deny list keys a pool-backed
+// entry on (poolId, credentialId), and a lease's PoolID is the pool
+// name (§4.9), so PoolName is the deny-list poolId.
+type RevokedCredential struct {
+	// TenantID owns the pool.
+	TenantID string
+	// PoolName is the pool the credential belongs to; it is the
+	// deny-list poolId.
+	PoolName string
+	// CredentialID is the revoked credential's per-pool id.
+	CredentialID string
+}
+
 // Store is the §4.9 CredentialPool registry contract. Every method is
-// tenant-scoped.
+// tenant-scoped except RevokedCredentials, which scans all tenants for
+// the startup deny-list rebuild.
 type Store interface {
 	Create(ctx context.Context, p CredentialPool) error
 	Get(ctx context.Context, tenantID, name string) (CredentialPool, error)
 	Update(ctx context.Context, tenantID, name string, mutate func(*CredentialPool) error) (CredentialPool, error)
 	List(ctx context.Context, tenantID string, filter ListFilter) ([]CredentialPool, error)
 	SoftDelete(ctx context.Context, tenantID, name string, at time.Time) error
+
+	// RevokedCredentials returns every revoked credential across all
+	// tenants' active (not soft-deleted) pools, for the §4.9 startup
+	// deny-list rebuild. Soft-deleted pools are skipped: their leases
+	// are gone, so their credentials cannot be presented.
+	//
+	// spec: §4.9 lines 1668-1673 — a newly started gateway replica
+	// rebuilds its deny list from the stores' revoked entries so no
+	// revoked credential silently becomes accepted on a replica that
+	// missed the original pub/sub notification.
+	RevokedCredentials(ctx context.Context) ([]RevokedCredential, error)
 }
 
 // ListFilter narrows the List result.
@@ -270,6 +328,11 @@ func Validate(p CredentialPool) error {
 			return errors.New("credentialpoolstore: credential ids must be unique within a pool")
 		}
 		seen[c.ID] = true
+		switch c.Status {
+		case "", CredentialActive, CredentialRevoked:
+		default:
+			return errors.New("credentialpoolstore: credential status must be active or revoked")
+		}
 	}
 	return nil
 }
@@ -378,6 +441,36 @@ func (m *Memory) SoftDelete(_ context.Context, tenantID, name string, at time.Ti
 	row.UpdatedAt = at
 	m.pools[tenantID][name] = row
 	return nil
+}
+
+// RevokedCredentials implements Store. It scans every tenant's active
+// pools and returns each revoked credential in a deterministic order.
+func (m *Memory) RevokedCredentials(_ context.Context) ([]RevokedCredential, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []RevokedCredential
+	for tenantID, byName := range m.pools {
+		for name, p := range byName {
+			if !p.IsActive() {
+				continue
+			}
+			for _, c := range p.Credentials {
+				if c.IsRevoked() {
+					out = append(out, RevokedCredential{TenantID: tenantID, PoolName: name, CredentialID: c.ID})
+				}
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TenantID != out[j].TenantID {
+			return out[i].TenantID < out[j].TenantID
+		}
+		if out[i].PoolName != out[j].PoolName {
+			return out[i].PoolName < out[j].PoolName
+		}
+		return out[i].CredentialID < out[j].CredentialID
+	})
+	return out, nil
 }
 
 // clonePool deep-copies the credential and host-pattern slices so a

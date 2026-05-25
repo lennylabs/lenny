@@ -73,6 +73,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
+	"github.com/lennylabs/lenny/pkg/credential"
 	gwadapter "github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterregistry"
@@ -1726,6 +1727,15 @@ func main() {
 		}
 		adminRouter = adminRouter.WithUserRevocation(userPods, userLeases, userTokens)
 	}
+	// §4.9 emergency credential revocation lease terminator. Wired when
+	// the lease store exposes per-credential lookup (both backends do);
+	// it reuses the credential-lease revocation propagator so a revoked
+	// pool credential is denied on every replica, mirroring the §11.4
+	// full_revoke fan-out's deny-list path.
+	if ls, ok := llmLeases.(poolLeaseStore); ok {
+		adminRouter = adminRouter.WithPoolCredentialRevocation(
+			&poolCredentialRevoker{leases: ls, denyList: credRenewalProp})
+	}
 	adminRouter = adminRouter.WithPlatformInfo(
 		admin.PlatformInfo{
 			Version:       buildVersion,
@@ -2396,6 +2406,40 @@ func main() {
 				}
 			}
 		}()
+	}
+
+	// ----- §4.9 credential deny-list startup rebuild -----
+	// Seeds the per-replica credential deny list from the credential
+	// stores' revoked entries, so a replica started immediately after a
+	// pool-credential revocation denies that credential on the upstream
+	// path even if it missed the original Redis pub/sub notification. The
+	// rebuild is authoritative (Reset) and runs once at startup, where
+	// the list is empty; it is not periodic because a periodic Reset
+	// would drop the entries the live §11.4 revocation path adds for
+	// pool credentials not yet reflected in the store query. The §4.9
+	// union's user-credential term is vacuous today — no user-backed
+	// lease is minted at session creation yet — so only the
+	// pool-credential side is seeded.
+	//
+	// spec: §4.9 lines 1668-1673.
+	{
+		revoked, err := credentialPools.RevokedCredentials(context.Background())
+		if err != nil {
+			log.Printf("lenny-gateway: §4.9 credential deny-list startup rebuild failed: %v", err)
+		} else {
+			keys := make([]credential.CredentialKey, 0, len(revoked))
+			for _, rc := range revoked {
+				keys = append(keys, credential.CredentialKey{
+					Source:       credential.SourcePool,
+					PoolID:       rc.PoolName,
+					CredentialID: rc.CredentialID,
+				})
+			}
+			credDeny.Reset(keys)
+			if len(keys) > 0 {
+				log.Printf("lenny-gateway: §4.9 credential deny list rebuilt with %d revoked credential(s)", len(keys))
+			}
+		}
 	}
 
 	// ----- §11.5 idempotency-key TTL garbage collection -----

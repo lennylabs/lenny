@@ -111,6 +111,7 @@ type Router struct {
 	connectorOAuth     *ConnectorOAuth
 	delegationPolicies delegationpolicystore.Store
 	credentialPools    credentialpoolstore.Store
+	poolCredRevoker    PoolCredentialRevoker
 	customRoles        customrolestore.Store
 	tenantAccess       tenantaccessstore.Store
 	auditLog           AuditLog
@@ -472,6 +473,15 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleGetCredentialPool)))
 		mux.Handle("PUT /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleUpdateCredentialPool)))
 		mux.Handle("DELETE /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleDeleteCredentialPool)))
+		// §4.9 Emergency Credential Revocation: single-credential revoke,
+		// pool-wide force-rotate, and the re-enable path. Same
+		// manage_credential_pools gate as the pool CRUD.
+		mux.Handle("POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke",
+			credPoolAdmin(http.HandlerFunc(r.handleRevokeCredential)))
+		mux.Handle("POST /v1/admin/credential-pools/{name}/credentials/{credId}/re-enable",
+			credPoolAdmin(http.HandlerFunc(r.handleReEnableCredential)))
+		mux.Handle("POST /v1/admin/credential-pools/{name}/revoke",
+			credPoolAdmin(http.HandlerFunc(r.handleRevokePool)))
 	}
 	if r.tenantAccess != nil {
 		mux.Handle("POST /v1/admin/runtimes/{name}/tenant-access", r.requireAdmin(r.grantAccessHandler(tenantaccessstore.KindRuntime)))

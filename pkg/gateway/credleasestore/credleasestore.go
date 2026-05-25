@@ -142,3 +142,26 @@ func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {
 	}
 	return out
 }
+
+// LeasesByCredential returns every lease this replica holds whose
+// backing credential identity equals key. It backs the §4.9 emergency
+// credential revocation: the admin handler resolves the leases against
+// a revoked pool credential here, adds the credential to the deny list,
+// and removes the leases, reporting the count as `leasesTerminated`.
+// The returned slice is a copy, so the caller may iterate it while
+// removing the leases. The match is source-aware: a pool key never
+// aliases a user key (§4.9).
+//
+// spec: §4.9 lines 1640-1652 — look up all active leases backed by the
+// credential and terminate them.
+func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Lease {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []credential.Lease
+	for _, lease := range s.byID {
+		if lease.CredentialKey() == key {
+			out = append(out, lease)
+		}
+	}
+	return out
+}

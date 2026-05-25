@@ -135,6 +135,52 @@ func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {
 	return out
 }
 
+// LeasesByCredential returns every lease whose backing credential
+// identity equals key, the Postgres-backed counterpart of the in-memory
+// store's method. It backs the §4.9 emergency credential revocation
+// step. The lease is stored as a JSONB document; the query matches the
+// source-aware key fields the credential.Lease struct serialises
+// verbatim (Source plus PoolID/CredentialID for a pool key, or
+// TenantID/CredentialRef for a user key), mirroring
+// credential.Lease.CredentialKey. A row whose JSONB does not decode is
+// skipped.
+//
+// spec: §4.9 lines 1640-1652 — look up all active leases backed by the
+// revoked credential.
+func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Lease {
+	var (
+		q    string
+		args []any
+	)
+	switch key.Source {
+	case credential.SourcePool:
+		q = `SELECT lease FROM credential_leases
+		     WHERE lease->>'Source' = $1 AND lease->>'PoolID' = $2 AND lease->>'CredentialID' = $3`
+		args = []any{string(key.Source), key.PoolID, key.CredentialID}
+	case credential.SourceUser:
+		q = `SELECT lease FROM credential_leases
+		     WHERE lease->>'Source' = $1 AND lease->>'TenantID' = $2 AND lease->>'CredentialRef' = $3`
+		args = []any{string(key.Source), key.TenantID, key.CredentialRef}
+	default:
+		return nil
+	}
+	rows, err := s.pool.Query(context.Background(), q, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []credential.Lease
+	for rows.Next() {
+		if lease, ok := scanLease(rows); ok {
+			out = append(out, lease)
+		}
+	}
+	if rows.Err() != nil {
+		return nil
+	}
+	return out
+}
+
 // scanLease decodes the lease JSONB column into a credential.Lease. A
 // missing row yields the zero Lease and ok = false, matching the
 // in-memory store's lookup miss.
