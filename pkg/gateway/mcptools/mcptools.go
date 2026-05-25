@@ -242,6 +242,13 @@ func Register(srv *mcp.Server, deps Deps) {
 		tenant = "default"
 	}
 
+	// §4.8 PreToolResult: install the transport-layer hook that runs the
+	// interceptor chain over every tool result before it reaches the
+	// agent. A nil chain leaves the hook unset. spec: §4.8 line 1053.
+	if ri := buildPreToolResultInterceptor(deps, tenant); ri != nil {
+		srv.SetResultInterceptor(ri)
+	}
+
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/create_session",
 		Description: "Create a new agent session against a runtime.",
@@ -340,6 +347,17 @@ func Register(srv *mcp.Server, deps Deps) {
 		})
 		if err != nil {
 			return mcp.ToolResult{}, err
+		}
+		// §4.8 PostAgentOutput: run the chain over the agent's output
+		// parts before delivering the response to the calling agent. A
+		// REJECT blocks delivery; a MODIFY rewrites the parts.
+		out, rej := applyPostAgentOutput(ctx, deps, tenant, row.ID, out)
+		if rej != nil {
+			code := rej.Code
+			if code == "" {
+				code = "INTERCEPTOR_REJECTED"
+			}
+			return mcp.ToolResult{}, mcp.NewToolError(code, rej.Reason, nil)
 		}
 		content := make([]mcp.ToolContent, 0, len(out))
 		for _, p := range out {
@@ -1112,6 +1130,102 @@ func recordChainRejection(ctx context.Context, deps Deps, tenant, sessionID stri
 		SessionID: sessionID,
 		Phase:     phase,
 	}, res)
+}
+
+// preToolResultPayload is the §4.8 line 1053 PreToolResult content
+// payload: the tool result delivered back to the agent. `id` is the
+// originating tool_call.id and is immutable on MODIFY (the chain
+// enforces it via phaseImmutableFields); `content` and `isError` are
+// mutable. spec: §4.8 line 1053.
+type preToolResultPayload struct {
+	ID      string            `json:"id"`
+	Content []mcp.ToolContent `json:"content"`
+	IsError bool              `json:"isError,omitempty"`
+}
+
+// buildPreToolResultInterceptor returns the mcp.ResultInterceptor that
+// runs the §4.8 PreToolResult chain over every tool result before it
+// reaches the agent. It returns nil when no chain is configured so the
+// transport adapter keeps its zero-cost default. A REJECT (including an
+// immutable-id MODIFY violation, which the chain converts to a REJECT)
+// surfaces as a tool error; a MODIFY substitutes the rewritten result.
+// spec: §4.8 line 1053.
+func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultInterceptor {
+	if deps.Interceptors == nil {
+		return nil
+	}
+	return func(ctx context.Context, callID, name string, result mcp.ToolResult) (mcp.ToolResult, error) {
+		raw, err := json.Marshal(preToolResultPayload{
+			ID:      callID,
+			Content: result.Content,
+			IsError: result.IsError,
+		})
+		if err != nil {
+			return result, nil
+		}
+		res := deps.Interceptors.Run(ctx, interceptor.Request{
+			Phase:    interceptor.PhasePreToolResult,
+			TenantID: tenant,
+			Content:  raw,
+			Metadata: map[string]string{"tool_name": name},
+		})
+		switch res.Action {
+		case interceptor.ActionReject:
+			recordChainRejection(ctx, deps, tenant, "", interceptor.PhasePreToolResult, res)
+			code := res.Code
+			if code == "" {
+				code = "INTERCEPTOR_REJECTED"
+			}
+			return mcp.ToolResult{}, mcp.NewToolError(code, res.Reason, nil)
+		case interceptor.ActionModify:
+			var modified preToolResultPayload
+			if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
+				// A MODIFY that does not deserialize back into the
+				// payload fails closed: the original result is not
+				// trustworthy once an opaque rewrite has been applied.
+				return mcp.ToolResult{}, mcp.NewToolError("INTERCEPTOR_REJECTED",
+					"PreToolResult MODIFY returned an unparseable tool result", nil)
+			}
+			return mcp.ToolResult{Content: modified.Content, IsError: modified.IsError}, nil
+		default:
+			return result, nil
+		}
+	}
+}
+
+// applyPostAgentOutput runs the §4.8 PostAgentOutput chain over the
+// agent's output parts before they are delivered to the client or to
+// the parent session. It returns the possibly-modified parts and a
+// non-nil rejection Result when the chain REJECTs; the caller surfaces
+// the rejection to the agent or client. A nil chain or a malformed
+// MODIFY payload leaves the parts unchanged. spec: §4.8 line 1054.
+func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID string, parts []executor.OutputPart) ([]executor.OutputPart, *interceptor.Result) {
+	if deps.Interceptors == nil {
+		return parts, nil
+	}
+	raw, err := json.Marshal(parts)
+	if err != nil {
+		return parts, nil
+	}
+	res := deps.Interceptors.Run(ctx, interceptor.Request{
+		Phase:     interceptor.PhasePostAgentOutput,
+		SessionID: sessionID,
+		TenantID:  tenant,
+		Content:   raw,
+	})
+	switch res.Action {
+	case interceptor.ActionReject:
+		recordChainRejection(ctx, deps, tenant, sessionID, interceptor.PhasePostAgentOutput, res)
+		return parts, &res
+	case interceptor.ActionModify:
+		var modified []executor.OutputPart
+		if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
+			return parts, nil
+		}
+		return modified, nil
+	default:
+		return parts, nil
+	}
 }
 
 // registerMemoryTools wires the §9.4 lenny/memory_write and

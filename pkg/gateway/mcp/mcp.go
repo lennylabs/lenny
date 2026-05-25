@@ -150,11 +150,29 @@ func NewToolError(code, msg string, details map[string]any) *ToolError {
 	return &ToolError{Code: code, Msg: msg, Details: details}
 }
 
+// ResultInterceptor runs over a successful tool result before it is
+// delivered back to the agent. It is the transport-layer hook the
+// gateway uses to run the §4.8 PreToolResult interceptor phase without
+// coupling this transport-only adapter to the policy engine. callID is
+// the JSON-RPC request id (the originating tool_call.id, immutable per
+// §4.8 line 1053); name is the tool name. A non-nil error rejects
+// delivery and the dispatcher surfaces it through the standard tool
+// error path. A returned ToolResult replaces the handler's result
+// (a MODIFY may redact content or set isError). spec: §4.8 line 1053.
+type ResultInterceptor func(ctx context.Context, callID, name string, result ToolResult) (ToolResult, error)
+
 // Server is the §15.2 MCP adapter.
 type Server struct {
-	tools    map[string]Tool
-	handlers map[string]ToolHandler
-	order    []string
+	tools             map[string]Tool
+	handlers          map[string]ToolHandler
+	order             []string
+	resultInterceptor ResultInterceptor
+}
+
+// SetResultInterceptor installs the §4.8 PreToolResult hook. A nil
+// interceptor (the default) leaves tool results unmodified.
+func (s *Server) SetResultInterceptor(ri ResultInterceptor) {
+	s.resultInterceptor = ri
 }
 
 // NewServer returns an empty MCP Server. Register tools with
@@ -266,6 +284,38 @@ func (s *Server) handleToolCall(w http.ResponseWriter, ctx context.Context, req 
 			IsError: true,
 		})
 		return
+	}
+	// §4.8 PreToolResult: run the interceptor chain over the tool
+	// result before delivering it back to the agent. A REJECT (or an
+	// immutable-id MODIFY violation) surfaces through the same isError
+	// + lenny-envelope path as a handler failure; a MODIFY substitutes
+	// the rewritten result. spec: §4.8 line 1053.
+	if s.resultInterceptor != nil {
+		modified, ierr := s.resultInterceptor(ctx, string(req.ID), params.Name, result)
+		if ierr != nil {
+			lennyCode := "INTERCEPTOR_REJECTED"
+			msg := ierr.Error()
+			var details map[string]any
+			var te *ToolError
+			if errors.As(ierr, &te) {
+				if te.Code != "" {
+					lennyCode = te.Code
+				}
+				msg = te.Msg
+				details = te.Details
+			}
+			envelope := NewLennyErrorDetail(lennyCode, msg, details)
+			envelopeJSON, _ := json.Marshal(envelope)
+			s.writeResult(w, req.ID, ToolResult{
+				Content: []ToolContent{
+					{Type: "text", Text: msg},
+					{Type: LennyErrorContentType, Text: string(envelopeJSON)},
+				},
+				IsError: true,
+			})
+			return
+		}
+		result = modified
 	}
 	s.writeResult(w, req.ID, result)
 }

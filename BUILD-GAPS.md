@@ -2259,7 +2259,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. Every REJECT emits the
   §16.7 `interceptor.rejected` audit row. Resolved in commit d9d7de77.
 
-### - [ ] F-4.8.12 — `PreToolResult`, `PostAgentOutput` chains not invoked (Missing) [Medium] — OPEN
+### - [x] F-4.8.12 — `PreToolResult`, `PostAgentOutput` chains not invoked (Missing) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 964, 1053, 1054. `PreToolResult` runs over a
   tool result before delivery to the agent; `PostAgentOutput` runs
@@ -2269,6 +2269,18 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
 - **Gap:** Two phases declared but never executed.
 - **Suggested resolution:** Wire these into the adapter→gateway message
   delivery path and the agent-output stream. Severity Medium.
+- **Resolution:** `PreToolResult` is wired through a new transport-layer
+  `mcp.Server.SetResultInterceptor` hook: `handleToolCall` runs it over the
+  serialized `{id, content, isError}` of every successful tool result before
+  delivering it to the agent. `mcptools.buildPreToolResultInterceptor`
+  builds the hook from the chain — a MODIFY rewrites `content`/`isError`
+  (the chain enforces the immutable `id`), a REJECT (or immutable-id MODIFY
+  violation) surfaces as an `isError` lenny envelope. `PostAgentOutput` runs
+  over the serialized `OutputPart[]` before delivery to the client/parent in
+  both the `lenny/send_message` response path (`mcptools.applyPostAgentOutput`)
+  and the REST `/messages` path (`sessionserver.runPostAgentOutput`); a REJECT
+  writes the §16.7 `interceptor.rejected` audit row and blocks delivery.
+  Resolved in commit <PENDING>.
 
 ### - [x] F-4.8.13 — `PreLLMRequest`, `PostLLMResponse` chains not invoked (Missing) [Medium] — CLOSED
 
@@ -2305,7 +2317,15 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   non-retryable). The 100ms phase default was already in the chain
   (`phaseDefaultTimeout`). Resolved in commit a382f873.
 
-### - [ ] F-4.8.14 — `PreConnectorRequest`, `PostConnectorResponse` chains not invoked (Missing) [Medium] — OPEN
+### - [ ] F-4.8.14 — `PreConnectorRequest`, `PostConnectorResponse` chains not invoked (Missing) [Medium] — DEFERRED
+
+> **Deferred (verified iter17):** There is no gateway-proxied connector path
+> to wire into — `PreConnectorRequest`/`PostConnectorResponse` appear only in
+> the phase constants and `immutability.go`; no connector reverse proxy
+> consumes the chain (the connector surface is scaffolded by `connectoroauth`
+> and the admin connector store only). Wiring the two phases and adding the
+> `CONNECTOR_REQUEST_REJECTED`/`CONNECTOR_RESPONSE_REJECTED` codes requires
+> building the connector proxy first. Dedicated batch once that exists.
 
 - **Spec:** §4.8 lines 964, 1057, 1058, 1077. Phases on the connector
   proxy path. Default timeout **200 ms**. REJECT codes
@@ -2319,7 +2339,15 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   admin connector store), insert the two `Chain.Run` calls and add
   the codes. Severity Medium.
 
-### - [ ] F-4.8.15 — `PreExportMaterialization` runner present but not wired (Partial) [Medium] — OPEN
+### - [ ] F-4.8.15 — `PreExportMaterialization` runner present but not wired (Partial) [Medium] — DEFERRED
+
+> **Deferred (verified iter17):** The `RunPreExportMaterialization` primitive
+> exists with comprehensive tests, but the §8.7 delegation file-export
+> materialization path it would hook into is not built — `delegate_task`
+> carries no `fileExport` field, so there is no production caller. Closure
+> (adding the distinct `EXPORT_FILE_SCAN_UNAVAILABLE` code, emitting
+> `delegation.export_scan_failed_open`, and wiring the per-file call)
+> belongs in the batch that builds the fileExport delegation path.
 
 - **Spec:** §4.8 lines 1038, 1050. Per-file invocation at delegation
   materialization time; `contentPolicy.maxExportedFileSize` enforced
@@ -2386,7 +2414,14 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `interceptor.fail_open_restored` to the per-tenant §11.7 chain. The
   zero-value chain keeps plain fail-open semantics. Resolved in commit 19273cb6.
 
-### - [ ] F-4.8.17 — `interceptor.fail_policy_weakened` / `_strengthened` not implemented (Missing) [Medium] — OPEN
+### - [ ] F-4.8.17 — `interceptor.fail_policy_weakened` / `_strengthened` not implemented (Missing) [Medium] — DEFERRED
+
+> **Deferred (verified iter17):** The capability depends on F-4.8.9 — there is
+> still no admin/config surface that mutates an external interceptor's
+> `failPolicy` at runtime, so there is no transition to emit the weakening/
+> strengthening events on or to gate the `INTERCEPTOR_WEAKENING_COOLDOWN`
+> against. The finding's own suggested resolution conditions it on F-4.8.9.
+> Dedicated batch once the external-interceptor configuration surface lands.
 
 - **Spec:** §4.8 line 1034. On a `failPolicy` change, emit the
   weakening or strengthening event with `interceptor_ref`,

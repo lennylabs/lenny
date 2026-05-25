@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 )
@@ -123,4 +124,40 @@ func (s *Server) recordRouteRejection(ctx context.Context, w http.ResponseWriter
 	}
 	s.writeError(w, http.StatusForbidden, "INTERCEPTOR_REJECTED", res.Reason, details)
 	return false
+}
+
+// runPostAgentOutput runs the §4.8 PostAgentOutput chain over the
+// agent's output parts before the gateway delivers them to the client.
+// It returns the possibly-modified parts and a rejected flag. On REJECT
+// it writes the §16.7 audit row and the HTTP error envelope (so the
+// caller must return without delivering); on MODIFY it returns the
+// rewritten parts. A malformed MODIFY payload leaves the parts
+// unchanged. spec: §4.8 line 1054.
+func (s *Server) runPostAgentOutput(ctx context.Context, w http.ResponseWriter, tenantID, sessionID string, out []executor.OutputPart) ([]executor.OutputPart, bool) {
+	if s.interceptors == nil || s.interceptors.Len(interceptor.PhasePostAgentOutput) == 0 {
+		return out, false
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return out, false
+	}
+	res := s.interceptors.Run(ctx, interceptor.Request{
+		Phase:     interceptor.PhasePostAgentOutput,
+		SessionID: sessionID,
+		TenantID:  tenantID,
+		Content:   raw,
+	})
+	switch res.Action {
+	case interceptor.ActionReject:
+		s.recordRouteRejection(ctx, w, interceptor.PhasePostAgentOutput, tenantID, "", res)
+		return out, true
+	case interceptor.ActionModify:
+		var modified []executor.OutputPart
+		if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
+			return out, false
+		}
+		return modified, false
+	default:
+		return out, false
+	}
 }

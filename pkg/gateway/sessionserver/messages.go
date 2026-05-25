@@ -209,6 +209,19 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// §4.8 PostAgentOutput: run the chain over the agent's output parts
+	// before delivering the response to the client. A REJECT blocks
+	// delivery (and writes the §16.7 audit row); a MODIFY rewrites the
+	// parts that are transcribed, published, and returned. spec: §4.8
+	// line 1054.
+	if s.interceptors != nil {
+		modified, rejected := s.runPostAgentOutput(r.Context(), w, tenantID, row.ID, out)
+		if rejected {
+			return
+		}
+		out = modified
+	}
+
 	// Record the §15.1 transcript: inbound messages followed by the
 	// runtime's text response parts. Best-effort — a transcript
 	// write failure does not fail the message delivery.

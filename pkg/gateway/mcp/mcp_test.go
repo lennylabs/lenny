@@ -118,6 +118,74 @@ func TestToolsCallToolErrorIsResultNotTransportError(t *testing.T) {
 	}
 }
 
+// spec: §4.8 line 1053 — the result interceptor hook (the PreToolResult
+// seam) receives the call id and tool name and may replace the result.
+func TestResultInterceptorModifiesResult(t *testing.T) {
+	s := mcp.NewServer()
+	s.RegisterTool(mcp.Tool{Name: "echo", InputSchema: json.RawMessage(`{}`)},
+		func(context.Context, json.RawMessage) (mcp.ToolResult, error) {
+			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "raw"}}}, nil
+		})
+	var gotID, gotName string
+	s.SetResultInterceptor(func(_ context.Context, callID, name string, _ mcp.ToolResult) (mcp.ToolResult, error) {
+		gotID, gotName = callID, name
+		return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "scrubbed"}}}, nil
+	})
+	resp := rpc(t, s.Handler(),
+		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)
+	result, _ := resp["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	c0, _ := content[0].(map[string]any)
+	if c0["text"] != "scrubbed" {
+		t.Errorf("result text = %v, want scrubbed", c0["text"])
+	}
+	if gotID != "7" || gotName != "echo" {
+		t.Errorf("hook saw id=%q name=%q, want 7/echo", gotID, gotName)
+	}
+}
+
+// spec: §4.8 line 1053 — a result interceptor error rejects delivery; the
+// dispatcher surfaces it as an isError result with the interceptor's code.
+func TestResultInterceptorRejectIsErrorResult(t *testing.T) {
+	s := mcp.NewServer()
+	s.RegisterTool(mcp.Tool{Name: "echo", InputSchema: json.RawMessage(`{}`)},
+		func(context.Context, json.RawMessage) (mcp.ToolResult, error) {
+			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "raw"}}}, nil
+		})
+	s.SetResultInterceptor(func(context.Context, string, string, mcp.ToolResult) (mcp.ToolResult, error) {
+		return mcp.ToolResult{}, mcp.NewToolError("INTERCEPTOR_REJECTED", "blocked", nil)
+	})
+	resp := rpc(t, s.Handler(),
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)
+	if _, hasErr := resp["error"]; hasErr {
+		t.Fatalf("a result-interceptor REJECT should be a tool result, not a transport error: %+v", resp)
+	}
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("result.isError should be true: %+v", result)
+	}
+}
+
+// spec: §4.8 line 1053 — a handler that already failed is not passed to the
+// result interceptor; the original tool error is delivered unchanged.
+func TestResultInterceptorSkippedOnHandlerError(t *testing.T) {
+	s := mcp.NewServer()
+	s.RegisterTool(mcp.Tool{Name: "boom", InputSchema: json.RawMessage(`{}`)},
+		func(context.Context, json.RawMessage) (mcp.ToolResult, error) {
+			return mcp.ToolResult{}, errors.New("handler exploded")
+		})
+	called := false
+	s.SetResultInterceptor(func(context.Context, string, string, mcp.ToolResult) (mcp.ToolResult, error) {
+		called = true
+		return mcp.ToolResult{}, nil
+	})
+	rpc(t, s.Handler(),
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"boom","arguments":{}}}`)
+	if called {
+		t.Error("result interceptor ran on a handler error path; it must only see successful results")
+	}
+}
+
 func TestRejectsBadJSONRPC(t *testing.T) {
 	s := mcp.NewServer()
 	resp := rpc(t, s.Handler(), `{"jsonrpc":"1.0","id":1,"method":"initialize"}`)
