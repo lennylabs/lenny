@@ -209,6 +209,37 @@ func TestValidateRejectsAddedCapabilities(t *testing.T) {
 	}
 }
 
+// spec: §5.2 line 496 — concurrent-workspace slots share a network
+// namespace, so the agent container's securityContext MUST drop
+// CAP_NET_RAW to prevent one slot sniffing sibling traffic with a raw
+// socket. The §13.1 baseline enforces this two ways: every container
+// must drop ALL (which subsumes NET_RAW) and must add no capability. A
+// pod that re-grants NET_RAW via capabilities.add is rejected even
+// though it also drops ALL, because an explicit add overrides the drop.
+func TestValidateRejectsNetRawAdd_spec_5_2_496(t *testing.T) {
+	spec := wellFormedSpec()
+	// Drop ALL is present (NET_RAW dropped) but the container re-adds it.
+	spec.Containers[1].CapabilitiesAdd = []string{"NET_RAW"}
+	err := ValidateAgentPod(spec, lennyCredReadersGID)
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) {
+		t.Fatalf("a container adding CAP_NET_RAW must be rejected, got %v", err)
+	}
+	if !pe.HasViolation("capabilities.add must be empty") {
+		t.Errorf("CAP_NET_RAW add should be rejected; got %v", pe.Violations)
+	}
+}
+
+// The §5.2 line 496 NET_RAW drop holds for a standard agent pod: the
+// well-formed spec drops ALL and adds nothing, so it validates. This
+// pins the positive case so the rejection test above cannot pass
+// vacuously.
+func TestValidateAcceptsNetRawDropped_spec_5_2_496(t *testing.T) {
+	if err := ValidateAgentPod(wellFormedSpec(), lennyCredReadersGID); err != nil {
+		t.Errorf("a pod that drops ALL (NET_RAW included) and adds nothing must validate, got %v", err)
+	}
+}
+
 func TestValidateRejectsMissingSeccompProfile(t *testing.T) {
 	spec := wellFormedSpec()
 	spec.SeccompProfileType = "" // no pod-level profile; containers set none either

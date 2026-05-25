@@ -459,6 +459,11 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 			PoolRef:          pool.Name,
 			IsolationProfile: tmpl.Spec.IsolationProfile,
 			DeliveryMode:     tmpl.Spec.DeliveryMode,
+			// spec: §5.2 lines 631-636 — the WarmPoolController (which owns
+			// Sandbox.spec) copies the pool's topology spread constraints
+			// from the SandboxTemplate so the Sandbox-to-Pod reconciler can
+			// stamp them onto the agent pod.
+			TopologySpreadConstraints: tmpl.Spec.TopologySpreadConstraints,
 		},
 	}
 	if err := ctrl.SetControllerReference(pool, sb, r.Scheme); err != nil {

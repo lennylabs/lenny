@@ -261,6 +261,10 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// grace period down when the deployer has declared a hard cap.
 		TerminationGraceSeconds:    graceBase,
 		MaxTerminationGraceSeconds: graceMax,
+		// spec: §5.2 lines 631-636 — the WarmPoolController copied the
+		// pool's topology spread constraints onto Sandbox.spec; stamp them
+		// onto the pod here.
+		TopologySpreadConstraints: sb.Spec.TopologySpreadConstraints,
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)

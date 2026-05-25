@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -305,16 +306,59 @@ func (r *Reconciler) syncTuple(ctx context.Context, cfg PoolConfig, crd string, 
 }
 
 // syncTemplate upserts the pool's SandboxTemplate. The whole spec is
-// PoolScalingController-owned, so it is replaced wholesale.
+// PoolScalingController-owned, so it is replaced wholesale. The §5.2
+// topology-spread defaults are stamped in when the pool definition
+// carries none.
 func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig) error {
+	spec := cfg.Template
+	// spec: §5.2 lines 631-636 — the PoolScalingController owns
+	// SandboxTemplate.spec and writes the soft zone/node spread defaults
+	// when the deployer has not overridden them per pool.
+	if len(spec.TopologySpreadConstraints) == 0 {
+		spec.TopologySpreadConstraints = defaultTopologySpreadConstraints(cfg.Name)
+	}
 	tmpl := &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: cfg.Name, Namespace: cfg.Namespace},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, tmpl, func() error {
-		tmpl.Spec = cfg.Template
+		tmpl.Spec = spec
 		return nil
 	})
 	return err
+}
+
+// topology spread keys the §5.2 defaults distribute pods over. The
+// label selector matches the pool's managed agent pods (the
+// WarmPoolController stamps lenny.dev/pool onto every Sandbox, and the
+// podspec builder copies it onto the pod) so the skew is computed
+// within the pool rather than across unrelated pods.
+const (
+	topologyKeyZone = "topology.kubernetes.io/zone"
+	topologyKeyNode = "kubernetes.io/hostname"
+	poolLabelKey    = "lenny.dev/pool"
+)
+
+// defaultTopologySpreadConstraints returns the §5.2 lines 633-634 soft
+// spread defaults: maxSkew 1 across zones and across nodes, both with
+// whenUnsatisfiable ScheduleAnyway so scheduling never blocks on an
+// unsatisfiable spread. The selector scopes the skew to the named
+// pool's pods.
+func defaultTopologySpreadConstraints(poolName string) []corev1.TopologySpreadConstraint {
+	selector := &metav1.LabelSelector{MatchLabels: map[string]string{poolLabelKey: poolName}}
+	return []corev1.TopologySpreadConstraint{
+		{
+			MaxSkew:           1,
+			TopologyKey:       topologyKeyZone,
+			WhenUnsatisfiable: corev1.ScheduleAnyway,
+			LabelSelector:     selector,
+		},
+		{
+			MaxSkew:           1,
+			TopologyKey:       topologyKeyNode,
+			WhenUnsatisfiable: corev1.ScheduleAnyway,
+			LabelSelector:     selector.DeepCopy(),
+		},
+	}
 }
 
 // syncWarmPool upserts the pool's SandboxWarmPool, writing the spec

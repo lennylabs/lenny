@@ -3,6 +3,7 @@
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -37,6 +38,16 @@ type SandboxSpec struct {
 	// +kubebuilder:validation:Enum=proxy;direct
 	// +optional
 	DeliveryMode string `json:"deliveryMode,omitempty"`
+
+	// TopologySpreadConstraints distribute the pod across zones and
+	// nodes. spec: §5.2 lines 631-636 — the WarmPoolController copies the
+	// pool's SandboxTemplate.spec.topologySpreadConstraints onto each
+	// Sandbox it creates, and the Sandbox-to-Pod reconciler stamps them
+	// onto the agent pod. The PoolScalingController owns the defaults it
+	// writes into the SandboxTemplate; this field carries the resolved
+	// constraints (defaults or deployer override) down to the pod.
+	// +optional
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
 }
 
 // SandboxStatus is the observed state of a Sandbox. status.phase is

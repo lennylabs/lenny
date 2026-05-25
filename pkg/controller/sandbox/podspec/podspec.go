@@ -177,6 +177,13 @@ type Inputs struct {
 	// MaxTerminationGraceSeconds ceiling still clamps it down. A nil
 	// value leaves the default in force.
 	TerminationGraceSeconds *int64
+
+	// TopologySpreadConstraints are the §5.2 lines 631-636 spread
+	// constraints resolved for the pool (the PoolScalingController's zone
+	// and node defaults, or the deployer's per-pool override), carried
+	// down through Sandbox.spec. The builder stamps them onto the pod so
+	// the scheduler distributes the pool's pods across zones and nodes.
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint
 }
 
 // EgressCapture configures the §12.9.8 egress-capture sidecar an
@@ -462,6 +469,9 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 			RuntimeClassName:              &runtimeClass,
 			RestartPolicy:                 corev1.RestartPolicyNever,
 			TerminationGracePeriodSeconds: ptr.To(terminationGrace(in)),
+			// spec: §5.2 lines 631-636 — stamp the resolved topology spread
+			// constraints so the scheduler distributes the pool's pods.
+			TopologySpreadConstraints: in.TopologySpreadConstraints,
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot:   ptr.To(true),
 				FSGroup:        ptr.To(CredReadersGID),
