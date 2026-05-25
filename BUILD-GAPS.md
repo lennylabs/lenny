@@ -3462,7 +3462,7 @@ Implementation:
 
 Consequence: a T4-tier runtime with `allowCrossTenantReuse: true` and microvm isolation passes admission, violating the spec's dedicated-node guarantee. Severity is High because the rule is one of two explicit MUST clauses in the cross-tenant section.
 
-### - [ ] F-5.2.8 — Gateway does not emit `WARM_POOL_EXHAUSTED` or surface concurrent-slot details [High] — OPEN
+### - [x] F-5.2.8 — Gateway does not emit `WARM_POOL_EXHAUSTED` or surface concurrent-slot details [High] — CLOSED
 
 Spec §5.2 line 519: a slot exhaustion returns `WARM_POOL_EXHAUSTED` with `details.reason` either `concurrent_slots_exhausted` or `no_idle_pods`.
 
@@ -3474,7 +3474,9 @@ Implementation:
 
 Consequence: clients cannot distinguish "no pods" from "all slots full" from "pool is warming up", losing the spec's structured retry signal. `lenny_slot_assignment_conflict_total` (the per-pool counter the spec names on line 519) is also missing from the metrics catalog.
 
-### - [ ] F-5.2.9 — `503 Pool Not Ready` envelope is not emitted on `PoolWarmingUp` pools [High] — OPEN
+- **Resolution:** Closed by `45122989`. `writePodClaimError` (`pkg/gateway/sessionserver/start.go`) maps `podclaim.ErrNoIdlePod` → `WARM_POOL_EXHAUSTED` / `details.reason: no_idle_pods` and `ErrNoConcurrentSlot`/`ErrTenantMismatch` → `concurrent_slots_exhausted` at the create, start, and resume sites; `SlotClaimer.ClaimSlot` now returns `ErrNoIdlePod` for an empty pool (vs `ErrNoConcurrentSlot` when pods exist but are full) to drive the reason split. `WARM_POOL_EXHAUSTED` is added to the `errorclassify` table (TRANSIENT/retryable per §15.2.1 line 1017). `lenny_slot_assignment_conflict_total{pool}` is registered in `gatewaymetrics` and emitted via `SlotClaimer.OnSlotConflict` on each slot-contention reservation failure, wired through the `Binder` from gateway main. The counter is intentionally not added to the `pkg/observability/metrics` §16.1 catalog transcription: §16.1 does not list it (only §5.2 line 519 names it) and that catalog is guarded by a §16.1-parity test; it is exported through the live gatewaymetrics registry instead.
+
+### - [x] F-5.2.9 — `503 Pool Not Ready` envelope is not emitted on `PoolWarmingUp` pools [High] — CLOSED
 
 Spec §5.2 lines 602–625 require session creation against a pool whose `PoolWarmingUp = True` to return HTTP 503 with code `RUNTIME_UNAVAILABLE`, `Retry-After: max(30, estimatedWarmupSeconds)`, and a JSON body carrying `details.poolCondition`, `details.estimatedReadyIn`, `details.podsWarming`.
 
@@ -3485,13 +3487,17 @@ Implementation:
 
 Consequence: clients during a bootstrap window receive `503 POD_CLAIM_FAILED` (after burning a claim attempt) instead of the structured `503 RUNTIME_UNAVAILABLE` with a retry hint. Spec §5.2's bootstrap contract is silent in practice.
 
-### - [ ] F-5.2.10 — `GET /v1/admin/pools/<name>` does not surface `poolCondition` or `idlePodCount` [High] — OPEN
+- **Resolution:** Closed by `45122989`. `ResolvePool` (`pkg/gateway/podsession/resolve.go`) surfaces the SandboxTemplate `PoolWarmingUp` condition and the warming-pod count (warm − ready) on `PoolMatch`; `startOnPod` returns a typed `podsession.PoolWarmingError` before attempting a claim, and `writePoolWarming` maps it to `503 RUNTIME_UNAVAILABLE` with `Retry-After: max(30, estimatedWarmupSeconds)` and `details {poolName, poolCondition, estimatedReadyIn, podsWarming}`. The estimate defaults to 120s (the §5.2 line 625 no-historical-data fallback, operator-tunable via `Options.WarmupEstimateSeconds`); the `lenny_warmpool_pod_startup_duration_seconds` p50 read remains a future enhancement on top of that fallback.
+
+### - [x] F-5.2.10 — `GET /v1/admin/pools/<name>` does not surface `poolCondition` or `idlePodCount` [High] — CLOSED
 
 Spec §5.2 line 629: the admin pool GET returns `"poolCondition": "PoolWarmingUp"` and `"idlePodCount": 0` during the bootstrap window.
 
 Implementation: `pkg/gateway/admin/pools.go:PoolPayload` (lines 18–42) carries `Name`, `RuntimeRef`, `IsolationProfile`, `ExecutionMode`, `ResourceClass`, `WarmCount`, `MaxSessionAgeSeconds`, `AllowStandardIsolation`, the concurrent-mode block, and timestamps. There is no `PoolCondition` or `IdlePodCount` field. The admin handler does not read `SandboxWarmPool.status.warmCount` or `SandboxTemplate.status.conditions`. Greps for `PoolCondition`/`IdlePodCount` return no matches.
 
 Consequence: operators must inspect Kubernetes CR status directly rather than the admin API. The spec's "operator visibility" requirement is unmet.
+
+- **Resolution:** Closed by `45122989`. Added the `admin.PoolStatusReader` interface and `Router.WithPoolStatusReader`; `PoolPayload` carries pointer `poolCondition`/`idlePodCount` fields (pointers so a legitimate `idlePodCount: 0` is emitted while an unwired reader or unreconciled pool omits both). `handleGetPool` populates them from `podsession.PoolStatusLookup` over the pool's CRD pair (idlePodCount = `SandboxWarmPool.status.readyCount`; poolCondition = `"PoolWarmingUp"` while the SandboxTemplate condition is True). Wired in gateway main when a Kubernetes client is present; omitted in the Postgres-only posture.
 
 ### - [x] F-5.2.11 — PoolScalingController is implemented but not wired in the production controller binary [High] — CLOSED
 
