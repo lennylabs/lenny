@@ -1,0 +1,95 @@
+{{- /*
+The lenny-pool-scaling-controller Deployment (§4.6.2). Runs the
+PoolScalingController as its own workload with its own leader-election
+lease, separate from the WarmPoolController, so the two elect leaders
+independently and may run on different replicas. The pod follows the
+§13.1 Restricted-PSS posture: non-root, all capabilities dropped,
+read-only root filesystem, RuntimeDefault seccomp.
+
+The PSC reconciles the admin API's Postgres pool definitions into CRDs,
+so it requires a Postgres DSN. The chart wires LENNY_POSTGRES_DSN from
+the lenny-datastore-conn Secret only when postgres.dsn is set; without
+it the PSC has no source of truth and is not deployed.
+*/ -}}
+{{- $pg := .Values.postgres -}}
+{{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
+{{- if $hasPg }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-pool-scaling-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: pool-scaling-controller
+spec:
+  replicas: {{ .Values.poolScalingController.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      lenny.dev/component: pool-scaling-controller
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: pool-scaling-controller
+    spec:
+      serviceAccountName: lenny-pool-scaling-controller
+      # §4.6.2: prefer scheduling away from the WarmPoolController so a
+      # single node failure does not force both controllers to fail over
+      # at once, bounding the simultaneous-failover blast radius.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    lenny.dev/component: controller
+                topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pool-scaling-controller
+          image: "{{ .Values.poolScalingController.image.repository }}:{{ .Values.poolScalingController.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.poolScalingController.image.pullPolicy }}
+          args:
+            - --leader-elect
+            - --leader-election-namespace={{ .Release.Namespace }}
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+            - --agent-namespace={{ .Values.poolScalingController.agentNamespace }}
+          env:
+            - name: LENNY_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: postgres-dsn
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: probes
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.poolScalingController.resources | nindent 12 }}
+{{- end }}

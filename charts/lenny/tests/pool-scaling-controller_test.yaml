@@ -1,0 +1,62 @@
+suite: lenny-pool-scaling-controller (§4.6.2)
+templates:
+  - pool-scaling-controller-rbac.yaml
+  - pool-scaling-controller-deployment.yaml
+tests:
+  - it: renders the service account, cluster role, and bindings
+    template: pool-scaling-controller-rbac.yaml
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: creates the dedicated lenny-pool-scaling-controller service account
+    template: pool-scaling-controller-rbac.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ServiceAccount
+      - equal:
+          path: metadata.name
+          value: lenny-pool-scaling-controller
+
+  - it: grants create/update/delete on the PSC-owned CRD pair
+    template: pool-scaling-controller-rbac.yaml
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxtemplates", "sandboxwarmpools"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxwarmpools/status"]
+            verbs: ["get", "update", "patch"]
+
+  - it: does not render the Deployment without a Postgres DSN
+    template: pool-scaling-controller-deployment.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the Deployment under its own ServiceAccount when Postgres is set
+    template: pool-scaling-controller-deployment.yaml
+    set:
+      postgres:
+        dsn: postgres://lenny@db/lenny
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Deployment
+      - equal:
+          path: metadata.name
+          value: lenny-pool-scaling-controller
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: lenny-pool-scaling-controller

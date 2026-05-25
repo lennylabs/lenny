@@ -44,6 +44,31 @@ controller:
       cpu: 500m
       memory: 256Mi
 
+# poolScalingController configures the §4.6.2 PoolScalingController
+# Deployment. It runs as its own workload with its own leader-election
+# lease (lenny-pool-scaling-controller), separate from the
+# WarmPoolController, and reconciles the admin API's Postgres pool
+# definitions into SandboxTemplate/SandboxWarmPool CRDs. It requires
+# Postgres (the source of truth), so the Deployment renders only when
+# postgres.dsn is set.
+poolScalingController:
+  replicas: 2
+  # agentNamespace is the namespace the derived SandboxTemplate and
+  # SandboxWarmPool CRDs are materialized in.
+  agentNamespace: lenny-agents
+  image:
+    repository: ghcr.io/lennylabs/lenny-pool-scaling-controller
+    # tag defaults to the chart appVersion when left empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
 # admissionWebhooks configures the ValidatingAdmissionWebhook
 # Deployments under templates/admission-policies/ (§17.2). Each webhook
 # is its own Deployment + Service + PodDisruptionBudget running the
