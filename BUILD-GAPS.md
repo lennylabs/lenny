@@ -2724,7 +2724,7 @@ What is present and substantive: the proxy hot path (lease resolution, deny list
 
 ### Findings
 
-### - [ ] F-4.9.1 — §4.9.2 audit-event emission is absent across all credential code paths [High] — OPEN
+### - [x] F-4.9.1 — §4.9.2 audit-event emission is absent across all credential code paths [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-13.3.6 — Both report the credential.* lifecycle audit events are not implemented; the catalog declaration and the emission are two facets of the same missing surface.
 
@@ -2749,6 +2749,8 @@ Confirmed sites that should emit but don't:
 - The fallback chain (`pkg/gateway/credfallback`) — no `credential.fallback_exhausted` emission.
 
 **Severity rationale:** §11.7 audit log is hash-chained and is the security/compliance record of credential lifecycle. Missing emissions are an integrity gap.
+
+**Resolution (0e52e9d6):** Three facets resolved. (1) **OCSF translation surface fixed** — `pkg/audit/ocsf/mapping.go` used the pre-§4.9.2 names (`credential.lease_revoked`/`lease_renewed`/`pool_exhausted`), so the `credential.revoked`/`credential.re_enabled` events F-4.9.2 already emits and the `credential.rotation_ceiling_hit` F-4.7.7 already emits were dead-lettering as `class_mapping_missing` at translation. All twelve §4.9.2 events now map: the three security-salient events (`rotation_ceiling_hit`, `lease_spiffe_mismatch`, `proxy_mode_spiffe_binding_disabled`) → Application Security Finding (2004); the rest → Authentication (3002). (2) **Typed declaration** — the §4.9.2 catalog is declared as `credential.AuditEventType` constants in `pkg/credential/auditevents.go` with `AllCredentialAuditEventTypes`/`IsCredentialAuditEvent`. This is the correct home: the §16.7 catalog (`pkg/observability/audit`) enumerates only the §25 events added to the §11.7 path and is pinned bidirectionally against §16.7, which does not list credential events. (3) **Emission** — the reachable user-credential lifecycle events now emit from `credentialserver` (`registered`, `deleted`, `rotated`, `user_revoked`) with the exact §4.9.2 field sets, via a new `AuditSink` wired to the gateway `ChainAuditSink`. Together with the already-emitting `revoked`/`re_enabled` (F-4.9.2) and `rotation_ceiling_hit` (F-4.7.7), seven of twelve events emit and all twelve translate. The remaining emit sites have no production call path yet and are owned by other OPEN findings — each is a one-line emit once its path lands: `credential.leased` (the per-session LLM lease map is unpopulated, F-4.9.4/F-4.9.5/F-4.9.15); `credential.renewed` (the renewal worker carries no `tenant_id`, needs plumbing through `credrenewal.Lease`); `credential.fallback_exhausted` (no fallback chain wired, F-4.9.9); `credential.lease_spiffe_mismatch` (the data-plane LLM proxy has no per-tenant attribution for pool-backed leases); `credential.proxy_mode_spiffe_binding_disabled` (admission webhook, no audit-chain path).
 
 ---
 
@@ -3017,13 +3019,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.22 — Outbound egress NetworkPolicy is documented but not generated; only the gateway listener side has a Helm `NetworkPolicy` [Low] — OPEN
+### - [x] F-4.9.22 — Outbound egress NetworkPolicy is documented but not generated; only the gateway listener side has a Helm `NetworkPolicy` [Low] — CLOSED
 
 **Severity:** Low (spec line 1530 MUSTs `allow-gateway-egress-llm-upstream` enumerating every upstream provider CIDR/hostname).
 
 **Spec:** spec/04_system-components.md line 1530.
 
 **Evidence:** `charts/lenny/templates/agent-network-policies.yaml` and `system-network-policies.yaml` cover agent-to-gateway flows. `grep -rn "allow-gateway-egress-llm-upstream\|llm-upstream" charts/lenny/` returns no matches.
+
+**Resolution (643fcabc):** Added `charts/lenny/templates/gateway-llm-upstream-egress.yaml`, which renders `allow-gateway-egress-llm-upstream` selecting `lenny.dev/component: gateway` with the §13.2-exact two-peer, address-family-partitioned `ipBlock` shape (NET-062): a broad `0.0.0.0/0` IPv4 peer and a `::/0` IPv6 peer on TCP 443, each carrying only the same-family `except` entries — cluster pod/service CIDRs, the IPv4/IPv6 partition of the shared `egressCIDRs.excludePrivate` list (NET-057), and the family's IMDS addresses. When `egressCIDRs.llmProviders` is non-empty the broad rule is replaced by exactly those provider CIDRs (the §13.2 strict-compliance tightening; NetworkPolicy cannot resolve DNS, so CIDRs only). New `egressCIDRs` values surface plus a `gateway.llmUpstreamEgress.enabled` gate (default on, operator-tunable). The §13.2 `lenny-preflight` CIDR validation (NET-022/NET-065) and the WarmPoolController `NetworkPolicyCIDRDrift` detection are separate surfaces and remain out of scope. Verified by `charts/lenny/tests/gateway-llm-upstream-egress_test.yaml` (7 helm-unittest cases: render, two-peer/port-443, IPv4-peer family isolation, IPv6-peer family isolation, narrow-allowlist replacement, dual-stack v6 cluster CIDR, disabled gate).
 
 ---
 
@@ -3077,13 +3081,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.28 — KMS provider only `Local` is built; AWS/GCP/Azure providers are scaffolds [Info] — OPEN
+### - [x] F-4.9.28 — KMS provider only `Local` is built; AWS/GCP/Azure providers are scaffolds [Info] — CLOSED
 
 **Severity:** Info (acknowledged seam; cloud KMS is documented as a CloudProviderSeam).
 
 **Evidence:** `pkg/kms/aws/aws.go`, `pkg/kms/gcp/gcp.go`, `pkg/kms/azure/azure.go` exist; let me note their size:
 
 `pkg/kms/kms.go:111-138` documents `CloudProviderSeam`. The spec at lines 1188-1191 prescribes EKS/GKE/AKS envelope-encryption topology and does not pin a Go client surface, so this is reasonable to ship as a seam. No correctness failure.
+
+**Resolution (re-verified, no code change):** The "scaffolds" premise is outdated. `pkg/kms/aws/aws.go` (226 lines) implements `kms.Provider` over `aws-sdk-go-v2/service/kms`, `pkg/kms/gcp/gcp.go` (197 lines) over `cloud.google.com/go/kms/apiv1`, and `pkg/kms/azure/azure.go` (250 lines) over `Azure/azure-sdk-for-go/.../azkeys` — each with `WrapDEK`/`UnwrapDEK`/`CurrentKEKVersion`, KEK-version recording for §4.9.1 rotation, and a unit test (`aws_test.go`, `gcp_test.go`, `azure_test.go`). They are functional cloud KEK providers, not stubs. The spec (lines 1188-1191) does not pin a Go client surface and `Local` remains the development/test default, so there is no correctness failure. Closed as Info with no code change.
 
 ---
 
@@ -19792,7 +19798,7 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ---
 
-### - [ ] F-13.3.6 — CFL-006 — `credential.*` audit events not declared in the §16.7 catalog [Medium] — OPEN
+### - [x] F-13.3.6 — CFL-006 — `credential.*` audit events not declared in the §16.7 catalog [Medium] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-4.9.1 — Both report the credential.* lifecycle audit events are not implemented; the catalog declaration and the emission are two facets of the same missing surface.
 
@@ -19807,6 +19813,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 **Impact.** Credential lifecycle is observable only in operational logs (which are not audit-grade). SIEM correlation of "credential X was used by session Y at time T" is impossible. The §4.9 emergency-revocation runbook (§17.7) instructs operators to "identify the compromised credential ID from audit logs (`credential.leased` events showing `credentialId`)"; that audit search returns nothing today.
 
 **Severity rationale.** Medium because the §13.3 cluster of audit MUSTs is partially honored (the `token.exchanged` gap is CFL-001's High); credential lifecycle audit is the second-tier surface and feeds the SIEM runbook but is not on the critical-token-issuance path.
+
+**Resolution (0e52e9d6):** Closed by F-4.9.1. This finding's premise — that the §4.9.2 events should be declared in `pkg/observability/audit/catalog.go` — is corrected: that catalog is pinned bidirectionally to §16.7 (the §25 events added to the §11.7 path) by `TestCatalogIsCompleteAgainstSpec167`, and §16.7 does not enumerate credential events, so adding them there would break the pin and misplace a §4.9.2 concern. The §4.9.2 catalog is instead declared as typed `credential.AuditEventType` constants in `pkg/credential/auditevents.go`, and the OCSF translation table (`pkg/audit/ocsf/mapping.go`) now maps all twelve event names (the runtime `class_mapping_missing` check keys on `ocsf.LookupClass`, not `audit.IsKnownEventType`). The reachable user-credential lifecycle emit sites in `credentialserver` now write the events; a tier-1 cross-check (`TestCredentialAuditEventsAllMap_F491`) pins the typed catalog to the OCSF mapping in both directions. The unreachable emit sites are tracked under F-4.9.1 against their owning findings.
 
 ---
 
