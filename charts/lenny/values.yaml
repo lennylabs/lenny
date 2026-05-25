@@ -114,6 +114,48 @@ kubeApiServerPorts:
   - 443
   - 6443
 
+# egressCIDRs is the §13.2 shared exclusion surface (NET-057, NET-062,
+# NET-065) consumed by every lenny-system NetworkPolicy that opens a
+# broad public-internet egress — currently the gateway's
+# allow-gateway-egress-llm-upstream rule (§4.9 NET-046). The
+# lenny-preflight Job discovers the cluster's actual pod/service CIDRs
+# and overrides the cluster-CIDR defaults below; it also fails the
+# install if any entry here is not a valid CIDR.
+egressCIDRs:
+  # Cluster-internal CIDRs blocked from the broad external-HTTPS egress.
+  # Defaults are common kubeadm ranges; preflight overrides them with the
+  # cluster's discovered values (NET-022/NET-065).
+  excludeClusterPodCIDR: "10.244.0.0/16"
+  excludeClusterServiceCIDR: "10.96.0.0/12"
+  # IPv6 cluster CIDRs, set by preflight only on dual-stack clusters; an
+  # empty value renders no `except` entry.
+  excludeClusterPodCIDRv6: ""
+  excludeClusterServiceCIDRv6: ""
+  # RFC1918 private IPv4, IPv4 link-local, IPv6 ULA, and IPv6 link-local.
+  # Single source of truth shared with lenny-ops-egress (NET-057). The
+  # chart partitions this list by address family at render time because
+  # an `ipBlock` `except` entry must match its enclosing `cidr` family
+  # (NET-062).
+  excludePrivate:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "169.254.0.0/16"
+    - "fc00::/7"
+    - "fe80::/10"
+  # Cloud instance metadata endpoints (NET-002): AWS/GCP/Azure IPv4, AWS
+  # IPv6, and Alibaba Cloud IPv4. Extend for additional clouds.
+  excludeIMDS:
+    - "169.254.169.254/32"
+    - "fd00:ec2::254/128"
+    - "100.100.100.200/32"
+  # Optional narrow allowlist of upstream LLM provider CIDRs (CIDRs only —
+  # NetworkPolicy cannot resolve DNS names). When non-empty, the broad
+  # 0.0.0.0/0 default in allow-gateway-egress-llm-upstream is replaced by
+  # exactly these CIDRs (§13.2 default-scope caveat); resolving provider
+  # hostnames to CIDRs is the operator's responsibility.
+  llmProviders: []
+
 # ingressControllerNamespace is the namespace the Ingress controller
 # runs in (§13.2). The allow-gateway-ingress NetworkPolicy admits
 # external HTTPS to the gateway from pods in this namespace, matched
@@ -694,6 +736,15 @@ gateway:
   # proxy-mode agent pods are admitted to it, by the supplemental
   # allow-pod-egress-llm-proxy NetworkPolicy.
   llmProxyPort: 8443
+  # llmUpstreamEgress renders the §4.9 / §13.2 NET-046
+  # allow-gateway-egress-llm-upstream NetworkPolicy: the gateway pod's
+  # only external-HTTPS (TCP 443) egress path, required whenever a
+  # proxy-mode credential pool, a connector callback, or a webhook target
+  # is in use. The lenny-system default-deny blocks all gateway external
+  # egress without it. Disable only for direct-only deployments that make
+  # no gateway-initiated outbound HTTPS call.
+  llmUpstreamEgress:
+    enabled: true
   # internalPort is the gateway's internal HTTP port (§13.2). It serves
   # the REST API, /metrics, GET /healthz, and the §12.5
   # GET /internal/drain-readiness endpoint the lenny-drain-readiness
