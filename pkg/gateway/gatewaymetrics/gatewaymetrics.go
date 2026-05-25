@@ -110,6 +110,35 @@ type Metrics struct {
 	// `provider` (both finite, the credential-pool registry), it lets
 	// operators detect pool contention and tune pool sizing.
 	credentialPreclaimMismatch *prometheus.CounterVec
+	// credentialLeaseAssignments counts the §16.1 cumulative credential
+	// leases issued from a pool. Labels: `provider`, `pool` (both finite,
+	// the credential-pool registry) and `source` (`primary` | `fallback`
+	// | `cached`).
+	credentialLeaseAssignments *prometheus.CounterVec
+	// credentialLeaseDuration observes the §16.1 wall-clock duration of
+	// each issued credential lease from assignment to release. Labels:
+	// `provider`, `pool`.
+	credentialLeaseDuration *prometheus.HistogramVec
+	// credentialPoolUtilization is the §16.1 ratio of in-use credentials
+	// to total pool credentials, in [0,1]. Labeled by `pool`; the
+	// CredentialPoolLow alert fires above 0.80.
+	credentialPoolUtilization *prometheus.GaugeVec
+	// llmProxyActiveConnections is the §16.1 count of in-flight LLM proxy
+	// requests on a replica. No labels.
+	llmProxyActiveConnections prometheus.Gauge
+	// llmTranslationDuration observes the §16.1 native-translator CPU time
+	// per leg. Labels: `pool`, `provider`, `proxy_dialect`, `direction`
+	// (`request` | `response`).
+	llmTranslationDuration *prometheus.HistogramVec
+	// llmTranslationErrors counts the §16.1 native-translator failures by
+	// category. Labels: `pool`, `provider`, `error_type` (the §4.9
+	// translator taxonomy).
+	llmTranslationErrors *prometheus.CounterVec
+	// slotFailure counts the §5.2 line 12 concurrent-workspace slot bind
+	// failures after a slot was reserved. Labels: `error_type` (bind
+	// stage), `pool` (finite, the warm-pool registry), and `k8s_pod_name`
+	// (the §16.1.1-sanctioned pod label for this metric).
+	slotFailure *prometheus.CounterVec
 	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
 	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
 	// registry).
@@ -538,6 +567,77 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 line 51 — `lenny_credential_lease_assignments_total` counts
+	// the cumulative credential leases issued from a pool. `source` is
+	// `primary` | `fallback` | `cached`.
+	credentialLeaseAssignments, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_credential_lease_assignments_total",
+		Help: "Credential leases issued from a pool by source (§16.1).",
+	}, []string{"provider", "pool", "source"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 line 55 — `lenny_credential_lease_duration_seconds` observes
+	// the wall-clock duration of each issued lease from assignment to
+	// release. Buckets span a few seconds to a multi-hour session.
+	credentialLeaseDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_credential_lease_duration_seconds",
+		Help:    "Wall-clock duration of each issued credential lease (§16.1).",
+		Buckets: prometheus.ExponentialBuckets(15, 2, 12),
+	}, []string{"provider", "pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 line 53 — `lenny_credential_pool_utilization` is the ratio of
+	// in-use credentials to total pool credentials, in [0,1]. The
+	// CredentialPoolLow alert fires above 0.80.
+	credentialPoolUtilization, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_credential_pool_utilization",
+		Help: "Ratio of in-use credentials to total pool credentials (§16.1).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 line 97 — `lenny_gateway_llm_proxy_active_connections` is the
+	// count of in-flight LLM proxy requests on a replica.
+	llmProxyActiveConnections, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_llm_proxy_active_connections",
+		Help: "LLM Proxy active connections (§16.1).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 line 99 — `lenny_gateway_llm_translation_duration_seconds`
+	// observes the native-translator CPU time per leg (upstream network
+	// time excluded). `direction` is `request` | `response`.
+	llmTranslationDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_gateway_llm_translation_duration_seconds",
+		Help:    "Native LLM translator CPU time per leg (§16.1).",
+		Buckets: prometheus.ExponentialBuckets(0.0005, 2, 12),
+	}, []string{"pool", "provider", "proxy_dialect", "direction"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 line 100 — `lenny_gateway_llm_translation_errors_total`
+	// counts native-translator failures by the §4.9 error taxonomy.
+	llmTranslationErrors, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_gateway_llm_translation_errors_total",
+		Help: "LLM translator failures by error type (§16.1).",
+	}, []string{"pool", "provider", "error_type"})
+	if err != nil {
+		return nil, err
+	}
+	// §5.2 line 12 / §16.1 — `lenny_slot_failure_total` counts
+	// concurrent-workspace slot bind failures after a slot was reserved.
+	// `error_type` names the bind stage; `k8s_pod_name` is sanctioned for
+	// this metric by §16.1.
+	slotFailure, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_slot_failure_total",
+		Help: "Concurrent-workspace slot failure count (§5.2 line 12).",
+	}, []string{"error_type", "pool", "k8s_pod_name"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
 	// partial-manifest row writes. Labels: `pool` (finite).
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
@@ -657,6 +757,8 @@ func New() (*Metrics, error) {
 		checkpointDuration, checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
 		credentialPreclaimMismatch,
+		credentialLeaseAssignments, credentialLeaseDuration, credentialPoolUtilization,
+		llmTranslationDuration, llmTranslationErrors, slotFailure,
 		checkpointPartialTotal, prestopCapSelection,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
@@ -677,9 +779,10 @@ func New() (*Metrics, error) {
 	minReplicasChild := minReplicas.WithLabelValues()
 	streamCeilingChild := streamCeiling.WithLabelValues()
 	replicaCountChild := replicaCount.WithLabelValues()
+	llmProxyConns := llmProxyActiveConnections.WithLabelValues()
 	reg.MustRegister(activeSessions, activeStreams, requestQueueDepth,
 		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms,
-		minReplicas, streamCeiling, replicaCount)
+		minReplicas, streamCeiling, replicaCount, llmProxyActiveConnections)
 
 	tokenServiceCircuitChild := tokenServiceCircuitState.WithLabelValues()
 	return &Metrics{
@@ -721,6 +824,13 @@ func New() (*Metrics, error) {
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
 		slotAssignmentConflict:               slotAssignmentConflict,
 		credentialPreclaimMismatch:           credentialPreclaimMismatch,
+		credentialLeaseAssignments:           credentialLeaseAssignments,
+		credentialLeaseDuration:              credentialLeaseDuration,
+		credentialPoolUtilization:            credentialPoolUtilization,
+		llmProxyActiveConnections:            llmProxyConns,
+		llmTranslationDuration:               llmTranslationDuration,
+		llmTranslationErrors:                 llmTranslationErrors,
+		slotFailure:                          slotFailure,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
 		gcTombstonesPruned:                   gcTombstonesPruned,
@@ -1017,6 +1127,102 @@ func (m *Metrics) IncCredentialPreclaimMismatch(pool, provider string) {
 		return
 	}
 	m.credentialPreclaimMismatch.WithLabelValues(pool, provider).Inc()
+}
+
+// IncCredentialLeaseAssignment increments the §16.1
+// `lenny_credential_lease_assignments_total` counter for the
+// (provider, pool, source) tuple. Called by the credential-assignment
+// service after each lease is minted and recorded; in v1 source is
+// always `primary` (the §4.9 fallback chain is the source of `fallback`
+// and the semantic cache the source of `cached`).
+// spec: §16.1 line 51.
+func (m *Metrics) IncCredentialLeaseAssignment(provider, pool, source string) {
+	if m == nil {
+		return
+	}
+	m.credentialLeaseAssignments.WithLabelValues(provider, pool, source).Inc()
+}
+
+// ObserveCredentialLeaseDuration records the §16.1
+// `lenny_credential_lease_duration_seconds` histogram for a lease's
+// wall-clock duration from assignment to release. Called by the
+// credential-assignment service on Release.
+// spec: §16.1 line 55.
+func (m *Metrics) ObserveCredentialLeaseDuration(provider, pool string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.credentialLeaseDuration.WithLabelValues(provider, pool).Observe(seconds)
+}
+
+// SetCredentialPoolUtilization sets the §16.1
+// `lenny_credential_pool_utilization` gauge for pool to ratio (in
+// [0,1]). Called by the credential-assignment service after each assign
+// or release recomputes in-use credentials over the pool size.
+// spec: §16.1 line 53.
+func (m *Metrics) SetCredentialPoolUtilization(pool string, ratio float64) {
+	if m == nil {
+		return
+	}
+	m.credentialPoolUtilization.WithLabelValues(pool).Set(ratio)
+}
+
+// IncLLMProxyConnections / DecLLMProxyConnections move the §16.1
+// `lenny_gateway_llm_proxy_active_connections` gauge. The proxy handler
+// increments on request entry and decrements on exit so the gauge
+// reflects in-flight requests on the replica.
+// spec: §16.1 line 97.
+func (m *Metrics) IncLLMProxyConnections() {
+	if m == nil {
+		return
+	}
+	m.llmProxyActiveConnections.Inc()
+}
+
+// DecLLMProxyConnections decrements the §16.1 LLM-proxy active-connection
+// gauge.
+// spec: §16.1 line 97.
+func (m *Metrics) DecLLMProxyConnections() {
+	if m == nil {
+		return
+	}
+	m.llmProxyActiveConnections.Dec()
+}
+
+// ObserveLLMTranslation records the §16.1
+// `lenny_gateway_llm_translation_duration_seconds` histogram for one
+// translator leg. direction is `request` or `response`. Called by the
+// proxy handler around each TranslateRequest / TranslateResponse call.
+// spec: §16.1 line 99.
+func (m *Metrics) ObserveLLMTranslation(pool, provider, proxyDialect, direction string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.llmTranslationDuration.WithLabelValues(pool, provider, proxyDialect, direction).Observe(seconds)
+}
+
+// IncLLMTranslationError increments the §16.1
+// `lenny_gateway_llm_translation_errors_total` counter for the
+// (pool, provider, error_type) tuple. errorType is the §4.9 translator
+// taxonomy value carried by a *llmproxy.TranslationError.
+// spec: §16.1 line 100.
+func (m *Metrics) IncLLMTranslationError(pool, provider, errorType string) {
+	if m == nil {
+		return
+	}
+	m.llmTranslationErrors.WithLabelValues(pool, provider, errorType).Inc()
+}
+
+// IncSlotFailure increments the §5.2 line 12 `lenny_slot_failure_total`
+// counter for the (errorType, pool, podName) tuple. Called by the
+// concurrent-mode slot binder when a slot bind stage failed after the
+// slot was reserved.
+// spec: §5.2 line 12.
+func (m *Metrics) IncSlotFailure(errorType, pool, podName string) {
+	if m == nil {
+		return
+	}
+	m.slotFailure.WithLabelValues(errorType, pool, podName).Inc()
 }
 
 // IncCheckpointPartial increments the §4.4 line 234

@@ -87,6 +87,23 @@ type ProxyCache interface {
 	Store(ctx context.Context, lease credential.Lease, reqBody, respBody []byte)
 }
 
+// Metrics receives §16.1 LLM-proxy telemetry. A nil Metrics disables
+// emission. *gatewaymetrics.Metrics satisfies it.
+//
+// spec: §16.1 lines 97, 99, 100.
+type Metrics interface {
+	// IncLLMProxyConnections / DecLLMProxyConnections move the in-flight
+	// proxy-request gauge.
+	IncLLMProxyConnections()
+	DecLLMProxyConnections()
+	// ObserveLLMTranslation records native-translator CPU time for one
+	// leg. direction is `request` or `response`.
+	ObserveLLMTranslation(pool, provider, proxyDialect, direction string, seconds float64)
+	// IncLLMTranslationError counts a translator failure by the §4.9
+	// error taxonomy.
+	IncLLMTranslationError(pool, provider, errorType string)
+}
+
 // Handler is the §4.9 LLM reverse proxy HTTP handler for the Anthropic
 // Messages dialect. It resolves the agent pod's bearer lease token,
 // runs the §4.9 per-request lease checks, translates the request into
@@ -132,6 +149,9 @@ type Handler struct {
 	// Now returns the current time, checked against lease expiry. A nil
 	// Now selects time.Now.
 	Now func() time.Time
+	// Metrics receives the §16.1 LLM-proxy telemetry. A nil Metrics
+	// disables emission.
+	Metrics Metrics
 }
 
 // ServeHTTP implements the §4.9 proxy request path for one Anthropic
@@ -141,6 +161,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED",
 			"the LLM proxy accepts POST")
 		return
+	}
+
+	// spec: §16.1 line 97 — the active-connections gauge reflects
+	// in-flight proxy requests on the replica for the request's lifetime.
+	if h.Metrics != nil {
+		h.Metrics.IncLLMProxyConnections()
+		defer h.Metrics.DecLLMProxyConnections()
 	}
 
 	token := leaseToken(r)
@@ -228,15 +255,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §16.1 line 99 — measure the request-leg translator CPU time.
+	reqStart := h.now()
 	upstreamReq, err := tr.TranslateRequest(Request{
 		Dialect:          DialectAnthropic,
 		Body:             body,
 		AnthropicVersion: r.Header.Get("anthropic-version"),
 	}, apiKey)
 	if err != nil {
-		h.writeTranslationError(w, err)
+		h.writeTranslationError(w, lease, err)
 		return
 	}
+	h.observeTranslation(lease, "request", h.now().Sub(reqStart))
 
 	if requestWantsStream(body) {
 		h.serveStream(w, r, lease, upstreamReq)
@@ -250,15 +280,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"the upstream provider circuit breaker is open")
 			return
 		}
-		h.writeTranslationError(w, err)
+		h.writeTranslationError(w, lease, err)
 		return
 	}
 
+	// spec: §16.1 line 99 — measure the response-leg translator CPU time.
+	respStart := h.now()
 	resp, err := tr.TranslateResponse(DialectAnthropic, *upstreamResp)
 	if err != nil {
-		h.writeTranslationError(w, err)
+		h.writeTranslationError(w, lease, err)
 		return
 	}
+	h.observeTranslation(lease, "response", h.now().Sub(respStart))
 
 	// spec: §4.9 lines 1542-1556 — record the upstream response for a
 	// later cache hit. Store the translated (pre-PostLLMResponse) body so
@@ -295,7 +328,7 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, lease cred
 				"the upstream provider circuit breaker is open")
 			return
 		}
-		h.writeTranslationError(w, err)
+		h.writeTranslationError(w, lease, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -469,13 +502,30 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code, message st
 	_ = json.NewEncoder(w).Encode(proxyError{Error: proxyErrorBody{Code: code, Message: message}})
 }
 
+// observeTranslation records the §16.1 translator-leg CPU time for a
+// completed translation. direction is `request` or `response`. It is a
+// no-op when no Metrics sink is set.
+//
+// spec: §16.1 line 99.
+func (h *Handler) observeTranslation(lease credential.Lease, direction string, d time.Duration) {
+	if h.Metrics != nil {
+		h.Metrics.ObserveLLMTranslation(lease.PoolID, string(lease.Provider), string(DialectAnthropic), direction, d.Seconds())
+	}
+}
+
 // writeTranslationError maps a §4.9 translator error to its pod-facing
-// HTTP status and error code.
-func (h *Handler) writeTranslationError(w http.ResponseWriter, err error) {
+// HTTP status and error code, and counts the failure under the §16.1
+// lenny_gateway_llm_translation_errors_total taxonomy (spec: §16.1 line
+// 100). A non-TranslationError is an internal fault and is not counted
+// against the translator taxonomy.
+func (h *Handler) writeTranslationError(w http.ResponseWriter, lease credential.Lease, err error) {
 	var te *TranslationError
 	if !errors.As(err, &te) {
 		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
+	}
+	if h.Metrics != nil {
+		h.Metrics.IncLLMTranslationError(lease.PoolID, string(lease.Provider), string(te.Type))
 	}
 	switch te.Type {
 	case ErrUnsupportedField, ErrSchemaMismatch, ErrUpstream4xx:

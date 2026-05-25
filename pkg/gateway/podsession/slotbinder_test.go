@@ -40,6 +40,9 @@ type concurrentAdapter struct {
 	// test can assert that workspace-concurrent finalizes a workspace
 	// and stateless-concurrent does not.
 	finalized map[string]bool
+	// startErr, when non-nil, makes StartSession fail so a test can drive
+	// the §5.2 slot-failure path.
+	startErr error
 }
 
 func newConcurrentAdapter() *concurrentAdapter {
@@ -74,8 +77,14 @@ func (a *concurrentAdapter) RunSetup(context.Context, *adapterv1.RunSetupRequest
 
 func (a *concurrentAdapter) StartSession(_ context.Context, req *adapterv1.StartSessionRequest) (*adapterv1.StartSessionResponse, error) {
 	a.mu.Lock()
-	a.started[req.GetSessionId().GetValue()] = true
+	startErr := a.startErr
+	if startErr == nil {
+		a.started[req.GetSessionId().GetValue()] = true
+	}
 	a.mu.Unlock()
+	if startErr != nil {
+		return nil, startErr
+	}
 	return &adapterv1.StartSessionResponse{}, nil
 }
 
@@ -336,5 +345,61 @@ func TestReleaseSlotLeavesSiblingSlotsRunning(t *testing.T) {
 	if sb.Status.Phase != "idle" || sb.Status.ActiveSlots != 0 {
 		t.Errorf("after releasing the last slot: phase=%q slots=%d, want idle/0",
 			sb.Status.Phase, sb.Status.ActiveSlots)
+	}
+}
+
+type slotFailureCall struct{ errorType, pool, podName string }
+
+// spec: §5.2 line 12
+// A slot bind that fails after the slot was reserved emits
+// lenny_slot_failure_total labeled by the failing stage (error_type),
+// the pool, and the pod (k8s_pod_name).
+func TestBindSlotEmitsSlotFailureOnStartError_spec_5_2(t *testing.T) {
+	a := newConcurrentAdapter()
+	a.startErr = errors.New("runtime refused to start")
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, concurrentAdapterDialer(t, a))
+	var failures []slotFailureCall
+	binder.SlotFailure = func(errorType, pool, podName string) {
+		failures = append(failures, slotFailureCall{errorType, pool, podName})
+	}
+
+	_, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Style: podclaim.StyleWorkspace, MaxConcurrent: 8,
+		Plan: &adapterv1.WorkspacePlan{},
+	})
+	if err == nil {
+		t.Fatal("BindSlot succeeded, want a StartSession failure")
+	}
+	if len(failures) != 1 {
+		t.Fatalf("slot failures = %d, want 1", len(failures))
+	}
+	got := failures[0]
+	if got.errorType != "session_start" || got.pool != testPool || got.podName != "sbx-1" {
+		t.Errorf("slot failure = %+v, want session_start/%s/sbx-1", got, testPool)
+	}
+}
+
+// spec: §5.2 line 12
+// A successful slot bind emits no slot-failure counter.
+func TestBindSlotEmitsNoSlotFailureOnSuccess_spec_5_2(t *testing.T) {
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, concurrentAdapterDialer(t, a))
+	failed := false
+	binder.SlotFailure = func(string, string, string) { failed = true }
+
+	res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Style: podclaim.StyleWorkspace, MaxConcurrent: 8,
+		Plan: &adapterv1.WorkspacePlan{},
+	})
+	if err != nil {
+		t.Fatalf("BindSlot: %v", err)
+	}
+	defer res.Adapter.Close()
+	if failed {
+		t.Error("a successful slot bind emitted lenny_slot_failure_total")
 	}
 }

@@ -97,14 +97,17 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		// (§6.4). Run the full §4.7 workspace-and-start sequence.
 		if err := b.stageWorkspace(ctx, cl, req.SessionID, req.Plan); err != nil {
 			cl.Close()
+			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 			return nil, fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err)
 		}
 		if err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan); err != nil {
 			cl.Close()
+			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 			return nil, fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err)
 		}
 		if err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy); err != nil {
 			cl.Close()
+			b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
 			return nil, fmt.Errorf("podsession: run slot setup on pod %s: %w", sandboxName, err)
 		}
 	}
@@ -113,10 +116,12 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 
 	if err := b.assignSlotCredentials(ctx, cl, req); err != nil {
 		cl.Close()
+		b.recordSlotFailure(slotFailureCredentialAssignment, req.Pool, sandboxName)
 		return nil, fmt.Errorf("podsession: assign slot credentials on pod %s: %w", sandboxName, err)
 	}
 	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.ExperimentContext, req.TracingContext); err != nil {
 		cl.Close()
+		b.recordSlotFailure(slotFailureSessionStart, req.Pool, sandboxName)
 		return nil, fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err)
 	}
 	return &BindResult{
@@ -127,6 +132,17 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		SlotID:      slotID,
 		Adapter:     cl,
 	}, nil
+}
+
+// recordSlotFailure emits the §5.2 line 12 lenny_slot_failure_total
+// counter for a slot bind stage that failed after the slot was reserved.
+// It is a no-op when the binder has no SlotFailure hook.
+//
+// spec: §5.2 line 12.
+func (b *Binder) recordSlotFailure(errorType, pool, podName string) {
+	if b.SlotFailure != nil {
+		b.SlotFailure(errorType, pool, podName)
+	}
 }
 
 // assignSlotCredentials mints the slot's §4.9 credential leases and

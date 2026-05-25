@@ -1042,6 +1042,16 @@ func main() {
 		// on lenny_slot_assignment_conflict_total so operators can detect
 		// pool under-sizing.
 		podBinder.SlotConflict = gwMetrics.IncSlotAssignmentConflict
+		// §5.2 line 12: record concurrent-workspace slot bind failures on
+		// lenny_slot_failure_total (error_type, pool, k8s_pod_name).
+		podBinder.SlotFailure = gwMetrics.IncSlotFailure
+	}
+	// §16.1 lines 51, 53, 55: emit credential-lease assignment, lease
+	// duration, and pool-utilization telemetry from the in-process
+	// assignment service. The Token Service client path emits its own
+	// §16.1 metrics on its registry.
+	if inProcessAssign != nil {
+		inProcessAssign.SetMetrics(gwMetrics)
 	}
 	// §4.1 / §16.1: emit the per-replica capacity ceiling as a startup-set
 	// gauge so the §16.5 GatewaySessionBudgetNearExhaustion alert can
@@ -2208,7 +2218,7 @@ func main() {
 		store := semanticcache.NewInMemory(nil, 0, 0, clockinject.Now)
 		llmCache = proxycache.New(credentialPools, store, sessionUserLookup{sessions})
 	}
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain, llmCache)
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain, llmCache, gwMetrics)
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control
@@ -2713,7 +2723,7 @@ func (l sessionUserLookup) UserID(ctx context.Context, tenantID, sessionID strin
 	return sess.UserID, true
 }
 
-func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache) *http.Server {
+func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics) *http.Server {
 	if addr == "" {
 		return nil
 	}
@@ -2726,6 +2736,9 @@ func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, lea
 		DenyList:     denyList,
 		Interceptors: chain,
 		Cache:        cache,
+		// §16.1 lines 97, 99, 100: active connections, translation
+		// duration, and translation errors on the gateway registry.
+		Metrics: gwMetrics,
 	})
 	return &http.Server{
 		Addr:              addr,

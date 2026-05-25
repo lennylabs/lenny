@@ -107,6 +107,23 @@ type poolState struct {
 	active map[string]int
 }
 
+// Metrics receives §16.1 credential-pool telemetry from the assignment
+// service. A nil Metrics disables emission. *gatewaymetrics.Metrics
+// satisfies it.
+//
+// spec: §16.1 lines 51, 53, 55.
+type Metrics interface {
+	// IncCredentialLeaseAssignment counts a lease issued from pool for
+	// provider. source is `primary` | `fallback` | `cached`.
+	IncCredentialLeaseAssignment(provider, pool, source string)
+	// ObserveCredentialLeaseDuration records a released lease's
+	// assignment-to-release wall-clock duration.
+	ObserveCredentialLeaseDuration(provider, pool string, seconds float64)
+	// SetCredentialPoolUtilization sets the in-use/total credential
+	// ratio for pool, in [0,1].
+	SetCredentialPoolUtilization(pool string, ratio float64)
+}
+
 // Service is the §4.9 credential-assignment service. It is
 // goroutine-safe.
 type Service struct {
@@ -117,6 +134,7 @@ type Service struct {
 	pools    map[string]*poolState
 	now      func() time.Time
 	observer func(LeaseAssignment)
+	metrics  Metrics
 }
 
 // LeaseAssignment reports a §4.9 credential lease the service minted. It
@@ -144,6 +162,15 @@ func New(leases credleasestore.LeaseStore, creds *credcache.Cache) *Service {
 		pools:  make(map[string]*poolState),
 		now:    time.Now,
 	}
+}
+
+// SetMetrics registers the §16.1 telemetry sink. A nil sink disables
+// emission. SetMetrics is goroutine-safe and should be called before the
+// service mints leases concurrently.
+func (s *Service) SetMetrics(m Metrics) {
+	s.mu.Lock()
+	s.metrics = m
+	s.mu.Unlock()
 }
 
 // OnAssigned registers an observer invoked with every §4.9 credential
@@ -245,7 +272,37 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI string) (credentia
 
 	ps.selection = nextState
 	ps.active[selected.CredentialID]++
+
+	// spec: §16.1 lines 51, 53 — count the lease assignment and refresh
+	// the pool-utilization gauge. v1 has no §4.9 fallback chain, so every
+	// pool lease is sourced from the pool's primary selection.
+	if s.metrics != nil {
+		s.metrics.IncCredentialLeaseAssignment(string(lease.Provider), poolName, "primary")
+		s.metrics.SetCredentialPoolUtilization(poolName, poolUtilizationLocked(ps))
+	}
 	return lease, s.observer, nil
+}
+
+// poolUtilizationLocked returns the §16.1 credential-pool utilization:
+// the fraction of the pool's credentials that currently back at least
+// one active lease, in [0,1]. An empty pool reports zero. The caller
+// holds s.mu.
+//
+// spec: §16.1 line 53 ("ratio of active leases to total pool
+// credentials, in the range [0, 1]"; the CredentialPoolLow alert reads
+// available credentials below 20% as utilization above 0.80).
+func poolUtilizationLocked(ps *poolState) float64 {
+	total := len(ps.pool.Credentials)
+	if total == 0 {
+		return 0
+	}
+	inUse := 0
+	for _, c := range ps.pool.Credentials {
+		if ps.active[c.ID] > 0 {
+			inUse++
+		}
+	}
+	return float64(inUse) / float64(total)
 }
 
 // Release frees the credential session slot a lease held and removes
@@ -260,10 +317,20 @@ func (s *Service) Release(leaseID string) {
 	if !ok {
 		return
 	}
-	if ps, ok := s.pools[lease.PoolID]; ok && ps.active[lease.CredentialID] > 0 {
+	ps, poolKnown := s.pools[lease.PoolID]
+	if poolKnown && ps.active[lease.CredentialID] > 0 {
 		ps.active[lease.CredentialID]--
 	}
 	s.leases.Remove(leaseID)
+
+	// spec: §16.1 lines 55, 53 — observe the lease's assignment-to-release
+	// wall-clock duration and refresh the pool-utilization gauge.
+	if s.metrics != nil {
+		s.metrics.ObserveCredentialLeaseDuration(string(lease.Provider), lease.PoolID, lease.Duration(s.now()).Seconds())
+		if poolKnown {
+			s.metrics.SetCredentialPoolUtilization(lease.PoolID, poolUtilizationLocked(ps))
+		}
+	}
 }
 
 // directConfigFor returns the §4.9 direct-mode materializedConfig for a

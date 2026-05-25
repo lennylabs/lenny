@@ -30,13 +30,13 @@ import (
 // spec: §4.9 — the gateway's LLM reverse-proxy listener wiring.
 
 func TestNewLLMProxyServerDisabledWhenAddrEmpty(t *testing.T) {
-	if srv := newLLMProxyServer("", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil); srv != nil {
+	if srv := newLLMProxyServer("", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil, nil); srv != nil {
 		t.Errorf("newLLMProxyServer with an empty address returned %v, want nil", srv)
 	}
 }
 
 func TestNewLLMProxyServerBindsConfiguredAddress(t *testing.T) {
-	srv := newLLMProxyServer(":8443", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil)
+	srv := newLLMProxyServer(":8443", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil, nil)
 	if srv == nil {
 		t.Fatal("newLLMProxyServer returned nil for a configured address")
 	}
@@ -46,7 +46,7 @@ func TestNewLLMProxyServerBindsConfiguredAddress(t *testing.T) {
 }
 
 func TestNewLLMProxyServerRoutesTheMessagesEndpoint(t *testing.T) {
-	srv := newLLMProxyServer(":8443", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil)
+	srv := newLLMProxyServer(":8443", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil, nil)
 	if srv == nil {
 		t.Fatal("newLLMProxyServer returned nil")
 	}
@@ -66,7 +66,7 @@ func TestNewLLMProxyServerRoutesTheMessagesEndpoint(t *testing.T) {
 }
 
 func TestNewLLMProxyServerRejectsUnknownPath(t *testing.T) {
-	srv := newLLMProxyServer(":8443", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil)
+	srv := newLLMProxyServer(":8443", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/llm-proxy/v1/no-such-endpoint", nil)
 	rr := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rr, req)
@@ -76,7 +76,7 @@ func TestNewLLMProxyServerRejectsUnknownPath(t *testing.T) {
 }
 
 func TestNewLLMProxyServerRejectsNonPost(t *testing.T) {
-	srv := newLLMProxyServer(":8443", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil)
+	srv := newLLMProxyServer(":8443", buildLLMTranslatorRegistry(llmTranslatorConfig{anthropicVersion: "2023-06-01"}), credleasestore.New(), credcache.New(), denylist.New(), interceptor.NewChain(), nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/llm-proxy/v1/messages", nil)
 	rr := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rr, req)

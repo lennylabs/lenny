@@ -98,7 +98,23 @@ type Binder struct {
 	// lenny_slot_assignment_conflict_total counter (labeled by pool).
 	// It is threaded into the per-BindSlot SlotClaimer. Nil is a no-op.
 	SlotConflict func(pool string)
+	// SlotFailure records a §5.2 line 12 concurrent-workspace slot bind
+	// failure after a slot was reserved, backing the
+	// lenny_slot_failure_total counter (labeled by error_type, pool, and
+	// k8s_pod_name). errorType names the bind stage that failed. Nil is a
+	// no-op.
+	SlotFailure func(errorType, pool, podName string)
 }
+
+// §5.2 line 12 lenny_slot_failure_total error_type labels: the
+// concurrent-mode slot bind stages whose failure terminates a reserved
+// slot. The set is finite so the metric stays low-cardinality.
+const (
+	slotFailureWorkspacePrep        = "workspace_prep"
+	slotFailureSetup                = "setup"
+	slotFailureCredentialAssignment = "credential_assignment"
+	slotFailureSessionStart         = "session_start"
+)
 
 // §4.6.1 lenny_pod_claim_fallback_skipped_total reason labels: the two
 // fallback preconditions whose failure skips the Postgres-backed claim.
