@@ -150,6 +150,12 @@ func main() {
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
 	adapterSrv.StagingDir = *stagingDir
+	// §6.1: /workspace/current and the staging area must exist before the
+	// pod is claimed. The pod spec mounts one emptyDir at /workspace, so
+	// create the subdirectories at startup rather than lazily at claim time.
+	if err := adapterSrv.EnsureWarmWorkspaceLayout(); err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
 	adapterSrv.RuntimeUID = resolveRuntimeUID(*runtimeUID)
 	adapterSrv.CredentialsDir = *credentialsDir
 	// §15.4: the adapter manifest is written into /run/lenny alongside
