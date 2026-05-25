@@ -33,9 +33,20 @@ package pool_config_validator
 import (
 	"fmt"
 	"regexp"
+	"time"
+
+	cron "github.com/robfig/cron/v3"
 
 	"github.com/lennylabs/lenny/pkg/admission/label_immutability"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+)
+
+// scaleToZeroCronParser matches the five-field standard cron grammar
+// (plus @-descriptors) the §4.6.1 scaleToZero window accepts. It mirrors
+// the parser the PoolScalingController uses so admission and runtime
+// agree on what parses.
+var scaleToZeroCronParser = cron.NewParser(
+	cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 )
 
 // ReasonInvalidPoolConfiguration is the machine-readable failure code
@@ -230,8 +241,40 @@ func DecideWarmPool(pool *lennyv1.SandboxWarmPool) Decision {
 				return d
 			}
 		}
+		if sp.ScaleToZero != nil {
+			if d := decideScaleToZero(sp.ScaleToZero); !d.Allowed {
+				return d
+			}
+		}
 	}
 
+	return allow()
+}
+
+// decideScaleToZero validates the §4.6.1 scale-to-zero window: both cron
+// expressions must parse and the optional IANA timezone must load. A
+// configuration the PoolScalingController's embedded cron scheduler
+// cannot parse is rejected at admission so the controller never silently
+// fails to evaluate the window (spec/04_system-components.md §4.6.1 line
+// 400).
+func decideScaleToZero(p *lennyv1.ScaleToZeroPolicy) Decision {
+	if p.Timezone != "" {
+		if _, err := time.LoadLocation(p.Timezone); err != nil {
+			return reject(fmt.Sprintf(
+				"spec.scalePolicy.scaleToZero.timezone (%q) is not a valid IANA timezone", p.Timezone,
+			))
+		}
+	}
+	if _, err := scaleToZeroCronParser.Parse(p.Schedule); err != nil {
+		return reject(fmt.Sprintf(
+			"spec.scalePolicy.scaleToZero.schedule (%q) is not a valid cron expression", p.Schedule,
+		))
+	}
+	if _, err := scaleToZeroCronParser.Parse(p.ResumeAt); err != nil {
+		return reject(fmt.Sprintf(
+			"spec.scalePolicy.scaleToZero.resumeAt (%q) is not a valid cron expression", p.ResumeAt,
+		))
+	}
 	return allow()
 }
 

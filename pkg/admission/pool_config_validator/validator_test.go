@@ -433,3 +433,56 @@ func TestDecideAuthorization(t *testing.T) {
 		})
 	}
 }
+
+// spec: §4.6.1 line 400 — the scaleToZero cron window and optional IANA
+// timezone are validated at admission so the controller never silently
+// fails to parse them.
+func TestWarmPoolScaleToZero(t *testing.T) {
+	tests := []struct {
+		name       string
+		policy     *lennyv1.ScaleToZeroPolicy
+		reject     bool
+		wantSubstr string
+	}{
+		{
+			name:   "valid cron window is admitted",
+			policy: &lennyv1.ScaleToZeroPolicy{Schedule: "0 22 * * *", ResumeAt: "0 6 * * *"},
+		},
+		{
+			name:   "valid cron window with timezone is admitted",
+			policy: &lennyv1.ScaleToZeroPolicy{Schedule: "0 22 * * *", ResumeAt: "0 6 * * *", Timezone: "America/New_York"},
+		},
+		{
+			name:       "invalid timezone is rejected",
+			policy:     &lennyv1.ScaleToZeroPolicy{Schedule: "0 22 * * *", ResumeAt: "0 6 * * *", Timezone: "Mars/Olympus"},
+			reject:     true,
+			wantSubstr: "scaleToZero.timezone",
+		},
+		{
+			name:       "invalid schedule cron is rejected",
+			policy:     &lennyv1.ScaleToZeroPolicy{Schedule: "not a cron", ResumeAt: "0 6 * * *"},
+			reject:     true,
+			wantSubstr: "scaleToZero.schedule",
+		},
+		{
+			name:       "invalid resumeAt cron is rejected",
+			policy:     &lennyv1.ScaleToZeroPolicy{Schedule: "0 22 * * *", ResumeAt: "99 99 * * *"},
+			reject:     true,
+			wantSubstr: "scaleToZero.resumeAt",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := lennyv1.SandboxWarmPoolSpec{
+				TemplateRef: "t", MinWarm: 0, MaxWarm: 10,
+				ScalePolicy: &lennyv1.ScalePolicy{ScaleToZero: tc.policy},
+			}
+			d := pcv.DecideWarmPool(warmPool(spec))
+			if tc.reject {
+				assertRejected(t, d, tc.wantSubstr)
+				return
+			}
+			assertAllowed(t, d)
+		})
+	}
+}

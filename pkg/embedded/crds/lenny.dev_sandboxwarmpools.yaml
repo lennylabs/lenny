@@ -99,6 +99,38 @@ spec:
                       SDK-warm pools and roughly 10 seconds for pod-warm pools.
                     format: int64
                     type: integer
+                  scaleToZero:
+                    description: |-
+                      ScaleToZero drives the pool to `minWarm: 0` during a recurring
+                      off-hours window (§4.6.1). The PoolScalingController evaluates the
+                      cron window on every pass and overrides the demand-derived warm
+                      floor to zero while the window is open. Sessions arriving in a
+                      zero-warm period incur cold-start latency. When unset the pool
+                      never scales to zero on a schedule.
+                    properties:
+                      resumeAt:
+                        description: |-
+                          ResumeAt is the standard five-field cron expression whose firing
+                          closes the zero-warm window and restores the demand-derived warm
+                          floor (for example `0 6 * * *` for 06:00).
+                        minLength: 1
+                        type: string
+                      schedule:
+                        description: |-
+                          Schedule is the standard five-field cron expression whose firing
+                          opens the zero-warm window (for example `0 22 * * *` for 22:00).
+                        minLength: 1
+                        type: string
+                      timezone:
+                        description: |-
+                          Timezone is an optional IANA timezone string (for example
+                          `America/New_York`) the two cron expressions are interpreted in.
+                          Both Schedule and ResumeAt are interpreted as UTC when it is unset.
+                        type: string
+                    required:
+                    - resumeAt
+                    - schedule
+                    type: object
                   schedules:
                     description: |-
                       Schedules are time-of-day windows that override the

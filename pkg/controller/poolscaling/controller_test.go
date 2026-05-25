@@ -530,3 +530,44 @@ func TestAdminResumerBindsNamespace(t *testing.T) {
 		t.Errorf("wrong-namespace resume cleared=%d, want 0", got)
 	}
 }
+
+// spec: §4.6.1 line 400 — a pool inside its scaleToZero window targets
+// minWarm 0 regardless of its bootstrap floor or observed demand.
+func TestSyncScaleToZeroOverridesMinWarmToZero(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.ScalePolicy = &lennyv1.ScalePolicy{
+		ScaleToZero: &lennyv1.ScaleToZeroPolicy{Schedule: "0 22 * * *", ResumeAt: "0 6 * * *"},
+	}
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	// 23:00 UTC falls inside the 22:00→06:00 window.
+	now := time.Date(2026, 5, 24, 23, 0, 0, 0, time.UTC)
+	r := &poolscaling.Reconciler{Client: c, Source: src, Now: func() time.Time { return now }}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 0 {
+		t.Errorf("inside scaleToZero window minWarm = %d, want 0", got)
+	}
+}
+
+// Outside the window the pool keeps its bootstrap floor.
+func TestSyncScaleToZeroInactiveKeepsBootstrap(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.ScalePolicy = &lennyv1.ScalePolicy{
+		ScaleToZero: &lennyv1.ScaleToZeroPolicy{Schedule: "0 22 * * *", ResumeAt: "0 6 * * *"},
+	}
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	// 12:00 UTC is outside the window.
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	r := &poolscaling.Reconciler{Client: c, Source: src, Now: func() time.Time { return now }}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 3 {
+		t.Errorf("outside scaleToZero window minWarm = %d, want bootstrap 3", got)
+	}
+}

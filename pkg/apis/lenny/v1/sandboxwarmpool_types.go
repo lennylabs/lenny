@@ -55,6 +55,41 @@ type ScalePolicy struct {
 	// +optional
 	// +listType=atomic
 	Schedules []ScheduleWindow `json:"schedules,omitempty"`
+
+	// ScaleToZero drives the pool to `minWarm: 0` during a recurring
+	// off-hours window (§4.6.1). The PoolScalingController evaluates the
+	// cron window on every pass and overrides the demand-derived warm
+	// floor to zero while the window is open. Sessions arriving in a
+	// zero-warm period incur cold-start latency. When unset the pool
+	// never scales to zero on a schedule.
+	// +optional
+	ScaleToZero *ScaleToZeroPolicy `json:"scaleToZero,omitempty"`
+}
+
+// ScaleToZeroPolicy is the §4.6.1 off-hours scale-to-zero window. The
+// window opens when the Schedule cron fires and closes when the
+// ResumeAt cron fires; while open the PoolScalingController sets the
+// pool's `minWarm` to 0. Both cron expressions are interpreted in
+// Timezone, defaulting to UTC.
+type ScaleToZeroPolicy struct {
+	// Schedule is the standard five-field cron expression whose firing
+	// opens the zero-warm window (for example `0 22 * * *` for 22:00).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Schedule string `json:"schedule"`
+
+	// ResumeAt is the standard five-field cron expression whose firing
+	// closes the zero-warm window and restores the demand-derived warm
+	// floor (for example `0 6 * * *` for 06:00).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ResumeAt string `json:"resumeAt"`
+
+	// Timezone is an optional IANA timezone string (for example
+	// `America/New_York`) the two cron expressions are interpreted in.
+	// Both Schedule and ResumeAt are interpreted as UTC when it is unset.
+	// +optional
+	Timezone string `json:"timezone,omitempty"`
 }
 
 // SDKWarmCircuitBreakerStatus persists the SDK-warm circuit-breaker

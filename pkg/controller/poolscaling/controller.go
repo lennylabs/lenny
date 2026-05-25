@@ -452,6 +452,19 @@ func timePtrEqual(a, b *metav1.Time) bool {
 // §4.6.2 scaling formula. A pool with no DemandSource, or one whose
 // demand has not yet converged, stays at its bootstrap minWarm.
 func (r *Reconciler) targetMinWarm(ctx context.Context, cfg PoolConfig) (int32, error) {
+	// A pool inside its §4.6.1 scale-to-zero window targets zero warm
+	// pods regardless of observed demand. The window is evaluated before
+	// the scaling formula so an off-hours pool short-circuits to zero.
+	if cfg.ScalePolicy != nil && cfg.ScalePolicy.ScaleToZero != nil {
+		active, err := scaleToZeroActive(cfg.ScalePolicy.ScaleToZero, r.now())
+		if err != nil {
+			return 0, fmt.Errorf("evaluate scaleToZero for pool %q: %w", cfg.Name, err)
+		}
+		if active {
+			return 0, nil
+		}
+	}
+
 	in := strategy.ScalingInputs{
 		PoolType:                cfg.PoolType,
 		Mode:                    strategy.ExecutionMode(cfg.Template.ExecutionMode),
