@@ -2774,7 +2774,7 @@ Confirmed sites that should emit but don't:
 
 ---
 
-### - [ ] F-4.9.3 — Admin-time Token-Service RBAC live-probe not implemented [High] — OPEN
+### - [x] F-4.9.3 — Admin-time Token-Service RBAC live-probe not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.5.3 — Both report the admin-time Token-Service RBAC live-probe is unimplemented on credential-pool create/add/update.
 
@@ -2783,6 +2783,8 @@ Confirmed sites that should emit but don't:
 **Spec:** spec/04_system-components.md lines 1212. Three paths (pool create, credential add, credential update) MUST call a Token-Service-exposed internal probe endpoint over mTLS; the probe answers `{ALLOWED, DENIED, NOT_FOUND}`; failures map to `422 CREDENTIAL_SECRET_RBAC_MISSING` or `503 CREDENTIAL_PROBE_UNAVAILABLE`. The handler MUST NOT fail open.
 
 **Evidence:** `pkg/gateway/admin/credential_pools.go:96-101` says verbatim: "The §4.9 Token Service RBAC live-probe — verifying the Token Service can read every referenced secret before the pool is persisted — is deferred: it requires the gateway-to-Token-Service mTLS probe link, which is not yet built." `grep -rn "CREDENTIAL_SECRET_RBAC_MISSING\|CREDENTIAL_PROBE_UNAVAILABLE\|SelfSubjectAccessReview" pkg/ cmd/` returns no matches in production code (only spec-review prose).
+
+**Resolution (commit f757d769):** The deferral reason ("mTLS probe link not yet built") no longer holds — the gateway↔Token-Service mTLS gRPC link now exists (`credassign.Client`). Added the `ProbeSecretAccess` RPC + `Verdict` enum to the Token Service proto. The Token Service implements it via `pkg/tokenservice/secretprobe` (a client-go-backed `SelfSubjectAccessReview` for `get secrets` under its own ServiceAccount plus a `get` to confirm the Secret exists), returning ALLOWED/DENIED/NOT_FOUND; the probe is wired only when the Token Service runs in-cluster. The gateway-side prober (`cmd/lenny-gateway/secret_probe.go`) calls the RPC over the existing mTLS link and never impersonates the Token Service SA. The admin handlers probe every `secretRef` on pool create and every new/changed `secretRef` on PUT (the in-model equivalent of the spec's credential add/update paths, which this codebase folds into the pool PUT): DENIED/NOT_FOUND → `422 CREDENTIAL_SECRET_RBAC_MISSING` naming every failing Secret plus the `kubectl patch role lenny-token-service-secrets` remediation; an indeterminate probe (transport failure, unset prober) → `503 CREDENTIAL_PROBE_UNAVAILABLE` with the write rejected (never fail open). Both codes added to `errorclassify` (422 PERMANENT, 503 TRANSIENT). When no Token Service link is configured the probe is skipped, the dev-mode posture parallel to the in-process credential-materialization fallback. The forbidden impersonation/self-review paths are absent by construction (the gateway SA holds no `serviceaccounts/token` or `impersonate` grant and calls the RPC, not the k8s API); the Helm preflight that actively rejects such a grant is a separate chart surface and remains out of scope.
 
 ---
 
@@ -2813,7 +2815,7 @@ Confirmed sites that should emit but don't:
 
 ---
 
-### - [ ] F-4.9.6 — §4.9.1 KEK rotation procedure: per-record `Reseal` exists, but no background re-encryption job, no verification query, no idempotent migration runner [Medium] — OPEN
+### - [x] F-4.9.6 — §4.9.1 KEK rotation procedure: per-record `Reseal` exists, but no background re-encryption job, no verification query, no idempotent migration runner [Medium] — CLOSED
 
 **Severity:** Medium (spec describes the operational rotation steps prescriptively; per §4.9.1 the verification `SELECT COUNT(*) FROM tokens WHERE key_version < current_version` MUST return 0 before disabling the old key, and the rotation MUST be idempotent so a partial run can resume).
 
@@ -2826,6 +2828,8 @@ Confirmed sites that should emit but don't:
 - **No code runs the loop**: no background job iterates `SELECT lease_id, secret_key_version FROM credentials WHERE secret_key_version < ?`, calls `Cipher.Reseal`, and writes back. `grep -rn "Reseal\|key_version" pkg/ cmd/` returns no migration-runner caller.
 - No verification step: no helper executes the `SELECT COUNT(*) WHERE key_version < current_version` query and refuses to disable the old key until it returns 0.
 - Redis cache invalidation on KEK rotation (spec line 1726): the OAuth refresh-token cache derived-key invalidation is not visible in `pkg/gateway/issuedtokenstore` or `pkg/tokenservice`; there is no Redis cache of access tokens to invalidate (acceptable for now), but the contract is silently absent.
+
+**Resolution (commit bbd7ff0f):** Added `pkg/kms/rekey`: a `Job` that runs the §4.9.1 re-encryption loop across every envelope-backed store for a tenant and exposes the verification gate. `RekeyTenant` re-wraps each row's DEK under the tenant's current KEK version via the existing `envelope.Cipher.Reseal` primitive (which leaves rows already at the current version unchanged, making the job idempotent — a re-run after a partial failure re-keys only the rows still pending); `CountStale` is the spec's `SELECT COUNT(*) WHERE key_version < current_version` query, and `Verify` returns `ErrRekeyIncomplete` until that count reaches 0 (the gate the operator checks before disabling the old KEK version). Implemented `RekeyTenant`/`CountStale` on both `credentialstore/pgstore` (user-supplied API keys) and `connectorcredstore/pgstore` (OAuth access + refresh tokens) — the two sealed stores the gateway owns. Wired a per-tenant admin surface (`POST /v1/admin/tenants/{id}/credential-rekey` runs the loop; `GET` returns the verification count), platform-admin gated and registered only when a Postgres store is configured. No schema change (the `secret_key_version` columns already exist). The Redis-cache derived-key invalidation (spec line 1726) remains as noted — there is no Redis access-token cache to flush in v1; cached entries fail decryption and are treated as misses by construction.
 
 ---
 
@@ -31368,7 +31372,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.5.3 — (High) — Admin-time RBAC live-probe is unimplemented on pool creation [Medium] — OPEN
+### - [x] F-24.5.3 — (High) — Admin-time RBAC live-probe is unimplemented on pool creation [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.9.3 — Both report the admin-time Token-Service RBAC live-probe is unimplemented on credential-pool create/add/update.
 
@@ -31381,6 +31385,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - The bootstrap-skip rule from §15.1:1212 ("the probe is skipped for bootstrap-seeded pools") is moot because the probe is never run on any path.
 
 **Impact:** The §15.1:1212 fail-fast guarantee — that an admin write whose Secret cannot be read by the Token Service is rejected at admin time, not at lease-materialization time — does not hold. A `tenant-admin` who creates a pool with a `secretRef` outside the Token Service `resourceNames` set will see the pool persist successfully, then every session using it will fail with `CREDENTIAL_POOL_EXHAUSTED` at session-start — indistinguishable from a transient exhaustion event. The §15.1 contract that distinguishes a denied probe from a failed probe (so operators know whether to patch RBAC or fix Token Service reachability) is unmet. Severity is High because the spec calls this out as a security and operational-correctness barrier, and the alternative failure mode (silent runtime failure) is materially worse for incident response.
+
+**Resolution (commit f757d769):** Closed by F-4.9.3 — same admin-time RBAC live-probe surface. The probe runs on pool create (every `secretRef`) and PUT (every new/changed `secretRef`), maps DENIED/NOT_FOUND → `422 CREDENTIAL_SECRET_RBAC_MISSING` and transport failure → `503 CREDENTIAL_PROBE_UNAVAILABLE`, and never fails open. See the F-4.9.3 resolution for the full implementation.
 
 ---
 
