@@ -10,6 +10,7 @@
 package credentialserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,14 +20,42 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
+// AuditSink receives §4.9.2 credential audit events. The server emits
+// one event per successful user-credential mutation (register, rotate,
+// revoke, delete). A nil sink disables emission; the operation still
+// succeeds. Implementations must be non-blocking — the handler does not
+// wait for delivery.
+//
+// spec: §4.9.2 (Credential Audit Events) — every credential lifecycle
+// event is written to the §11.7 hash-chained EventStore.
+type AuditSink interface {
+	EmitCredentialEvent(ctx context.Context, eventType string, detail map[string]any)
+}
+
 // Server is the §15.1 /v1/credentials HTTP handler.
 type Server struct {
 	store credentialstore.Store
+	audit AuditSink
 }
 
 // New returns a Server over the supplied credential store.
 func New(store credentialstore.Store) *Server {
 	return &Server{store: store}
+}
+
+// WithAudit wires the §4.9.2 credential audit sink. Without it the
+// endpoints still mutate the store; they simply emit no audit event.
+func (s *Server) WithAudit(sink AuditSink) *Server {
+	s.audit = sink
+	return s
+}
+
+// emit fires a §4.9.2 credential audit event when an AuditSink is wired.
+func (s *Server) emit(ctx context.Context, eventType pkgcred.AuditEventType, detail map[string]any) {
+	if s.audit == nil {
+		return
+	}
+	s.audit.EmitCredentialEvent(ctx, eventType.String(), detail)
 }
 
 // Handler returns the http.Handler routing the credential endpoints.
@@ -66,6 +95,13 @@ type RegisterRequest struct {
 // RotateRequest is the §15.1 PUT /v1/credentials/{ref} body.
 type RotateRequest struct {
 	Secret string `json:"secret"`
+}
+
+// RevokeRequest is the optional POST /v1/credentials/{ref}/revoke body.
+// The reason is recorded in the §4.9.2 credential.user_revoked audit
+// event. An empty or absent body is valid.
+type RevokeRequest struct {
+	Reason string `json:"reason,omitempty"`
 }
 
 func toPayload(c credentialstore.Credential) CredentialPayload {
@@ -125,6 +161,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
+	// spec: §4.9.2 — credential.registered (tenant_id, user_id, provider,
+	// credential_ref).
+	s.emit(r.Context(), pkgcred.AuditCredentialRegistered, map[string]any{
+		"tenant_id":      tenant,
+		"user_id":        user,
+		"provider":       string(c.Provider),
+		"credential_ref": c.Ref,
+	})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(toPayload(c))
@@ -174,6 +218,17 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	// spec: §4.9.2 — credential.rotated (tenant_id, user_id, provider,
+	// credential_ref, active_leases_rotated). User-backed lease rotation
+	// is not yet wired (F-4.9.8 rejects it as Unimplemented), so no active
+	// lease is rotated by this path today; the count is reported as 0.
+	s.emit(r.Context(), pkgcred.AuditCredentialRotated, map[string]any{
+		"tenant_id":             tenant,
+		"user_id":               user,
+		"provider":              string(c.Provider),
+		"credential_ref":        c.Ref,
+		"active_leases_rotated": 0,
+	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(toPayload(c))
 }
@@ -189,11 +244,27 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found")
 		return
 	}
+	// The revoke body is optional; an absent or empty body is valid and
+	// records an empty reason.
+	var req RevokeRequest
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
 	c, err := s.store.Revoke(r.Context(), tenant, ref)
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
+	// spec: §4.9.2 — credential.user_revoked (tenant_id, user_id,
+	// provider, credential_ref, reason, active_leases_terminated). This
+	// handler revokes the registry record; user-backed lease termination
+	// at the session is not yet wired (F-4.9.15), so the count is 0.
+	s.emit(r.Context(), pkgcred.AuditCredentialUserRevoked, map[string]any{
+		"tenant_id":                tenant,
+		"user_id":                  user,
+		"provider":                 string(c.Provider),
+		"credential_ref":           c.Ref,
+		"reason":                   req.Reason,
+		"active_leases_terminated": 0,
+	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(toPayload(c))
 }
@@ -205,7 +276,10 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref := r.PathValue("ref")
-	if !s.ownedBy(r, tenant, user, ref) {
+	// Get the credential before deleting so the §4.9.2 audit event can
+	// record its provider, and to enforce per-user ownership.
+	c, err := s.store.Get(r.Context(), tenant, ref)
+	if err != nil || c.UserID != user {
 		writeErr(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found")
 		return
 	}
@@ -213,6 +287,14 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	// spec: §4.9.2 — credential.deleted (tenant_id, user_id, provider,
+	// credential_ref).
+	s.emit(r.Context(), pkgcred.AuditCredentialDeleted, map[string]any{
+		"tenant_id":      tenant,
+		"user_id":        user,
+		"provider":       string(c.Provider),
+		"credential_ref": c.Ref,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

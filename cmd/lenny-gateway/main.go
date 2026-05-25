@@ -1429,7 +1429,8 @@ func main() {
 			log.Fatalf("lenny-gateway: credential store: %v", err)
 		}
 	}
-	credServer := credentialserver.New(credentials)
+	credServer := credentialserver.New(credentials).
+		WithAudit(credentialAuditor{sink: auditSink})
 
 	// ----- §9.3 connector OAuth 2.1 authorization-code flow -----
 	// The connector-credential store holds the access/refresh tokens a
@@ -2900,6 +2901,29 @@ func (a mcpDelegationAuditor) EmitDelegationEvent(ctx context.Context, eventType
 	if p, ok := authmw.FromContext(ctx); ok {
 		ev.ActorSubject = p.Subject
 		ev.ActorTenantID = p.TenantID
+	}
+	a.sink.EmitAdminEvent(ctx, ev)
+}
+
+// credentialAuditor adapts the gateway audit sink to the
+// credentialserver.AuditSink interface, drawing the §11.7 actor fields
+// from the request principal and the §4.9.2 credential_ref from the
+// event detail so the audit query can target the affected credential.
+type credentialAuditor struct {
+	sink admin.AuditSink
+}
+
+func (a credentialAuditor) EmitCredentialEvent(ctx context.Context, eventType string, detail map[string]any) {
+	if a.sink == nil {
+		return
+	}
+	ev := admin.AuditEvent{Type: eventType, Detail: detail, At: clockinject.Now().UTC()}
+	if p, ok := authmw.FromContext(ctx); ok {
+		ev.ActorSubject = p.Subject
+		ev.ActorTenantID = p.TenantID
+	}
+	if ref, ok := detail["credential_ref"].(string); ok {
+		ev.TargetResource = ref
 	}
 	a.sink.EmitAdminEvent(ctx, ev)
 }

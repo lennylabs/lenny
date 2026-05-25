@@ -51,12 +51,24 @@ func finding(activity int) ClassMapping {
 // (§4.9.2) and admin event families are pinned here. Event types not
 // listed by exact name fall through to the prefix table below.
 var exactCatalog = map[string]ClassMapping{
-	// §4.9.2 credential audit events → Authentication (3002).
-	"credential.leased":         authn(ActivityLogon),
-	"credential.lease_renewed":  authn(ActivityUpdate),
-	"credential.lease_revoked":  authn(ActivityDelete),
-	"credential.rotated":        authn(ActivityUpdate),
-	"credential.pool_exhausted": authn(ActivityUnknown),
+	// §4.9.2 credential audit events. The lifecycle events map to
+	// Authentication (3002); the security-salient events
+	// (rotation_ceiling_hit, lease_spiffe_mismatch,
+	// proxy_mode_spiffe_binding_disabled) map to Application Security
+	// Finding (2004). Names match the §4.9.2 catalog exactly — the event
+	// types are declared as typed constants in pkg/credential.
+	"credential.registered":                         authn(ActivityCreate),
+	"credential.deleted":                            authn(ActivityDelete),
+	"credential.rotated":                            authn(ActivityUpdate),
+	"credential.user_revoked":                       authn(ActivityDelete),
+	"credential.leased":                             authn(ActivityLogon),
+	"credential.revoked":                            authn(ActivityDelete),
+	"credential.re_enabled":                         authn(ActivityCreate),
+	"credential.renewed":                            authn(ActivityUpdate),
+	"credential.fallback_exhausted":                 authn(ActivityUnknown),
+	"credential.rotation_ceiling_hit":               finding(ActivityCreate),
+	"credential.lease_spiffe_mismatch":              finding(ActivityCreate),
+	"credential.proxy_mode_spiffe_binding_disabled": finding(ActivityCreate),
 
 	// §13.3 / §16.7 token lifecycle → Authentication (3002).
 	"token.exchanged":             authn(ActivityCreate),
