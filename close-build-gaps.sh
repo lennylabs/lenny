@@ -144,6 +144,8 @@ run_claude_capture() {
   local cmd=(claude -p
         --permission-mode bypassPermissions
         --add-dir "$REPO"
+        --model opus
+        --effort max
         --output-format json)
   if [[ -n "$resume_id" ]]; then
     cmd+=(--resume "$resume_id")
