@@ -2909,13 +2909,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.12 — Many §16.1 credential / LLM-proxy metrics declared but never emitted [Medium] — OPEN
+### - [ ] F-4.9.12 — Many §16.1 credential / LLM-proxy metrics declared but never emitted [Medium] — CLOSED
 
 **Severity:** Medium (operators have no observability for the controls §4.9 requires; alerts in `pkg/alerting/rules/rules.go` query metrics that always return 0).
 
 **Spec:** spec/16_observability.md §16.1 (cross-referenced repeatedly from §4.9 — proactive renewal metric line 1442, fallback-exhausted line 1397, preclaim-mismatch line 1220, revoked-with-active-leases lines 259/115 of catalog, translation metrics line 1529).
 
 **Evidence:** `pkg/observability/metrics/catalog.go:107-115, 151-154` declares the metric names. `grep -rn "lenny_credential_lease_assignments_total\|lenny_credential_rotation_total\|lenny_credential_pool_utilization\|lenny_credential_pool_cooldown_count\|lenny_credential_lease_duration_seconds\|lenny_credential_preclaim_mismatch_total\|lenny_credential_rotation_inflight_ceiling_hit_total\|lenny_credential_revoked_with_active_leases\|lenny_user_credential_revoked_with_active_leases\|lenny_gateway_llm_proxy_active_connections\|lenny_gateway_llm_translation_duration_seconds\|lenny_gateway_llm_translation_errors_total\|lenny_credential_proactive_renewal_first_failure_total\|lenny_credential_proactive_renewal_exhausted_total\|lenny_gateway_credential_proactive_renewals_total\|lenny_gateway_credential_fallback_exhausted_total" pkg/ cmd/ --include="*.go" | grep -v _test.go | grep -v catalog` returns only alerting-rule references; no `Inc`/`Add`/`Observe`/`Set` call on any of these metrics.
+
+**Resolution (commit c31ae94b):** Every §16.1 credential/LLM-proxy metric whose producing code path runs in v1 is now registered on `gatewaymetrics.Metrics` and emitted at its production site. Wired this batch: `lenny_credential_lease_assignments_total` (credassign.Assign, `source=primary`), `lenny_credential_lease_duration_seconds` (credassign.Release via `Lease.Duration`), `lenny_credential_pool_utilization` (recomputed on each Assign/Release as in-use÷total credentials), `lenny_gateway_llm_proxy_active_connections` (Handler inc/defer-dec), `lenny_gateway_llm_translation_duration_seconds{...,direction}` (per request/response leg), and `lenny_gateway_llm_translation_errors_total` (writeTranslationError, §4.9 taxonomy). `lenny_credential_preclaim_mismatch_total` (F-4.9.5) and `lenny_credential_rotation_inflight_ceiling_hit_total` (F-4.7.7) were already emitted. The remaining names are dark because their producer is unbuilt in v1, tracked to the owning finding: `lenny_credential_pool_cooldown_count`, `lenny_gateway_credential_fallback_exhausted_total`, and `lenny_credential_rotation_total` (fault-rotation orchestration + cooldown belong to the §4.9 fallback chain, F-4.9.9); `lenny_credential_proactive_renewal_first_failure_total`, `lenny_credential_proactive_renewal_exhausted_total`, and `lenny_gateway_credential_proactive_renewals_total` (the proactive-renewal accounting loop); `lenny_credential_revoked_with_active_leases` and `lenny_user_credential_revoked_with_active_leases` (the `CredentialCompromised` alert source needs a periodic recompute over `credleasestore.LeasesByCredential` so the gauge falls back to zero as post-revocation leases drain, a F-4.9.2 follow-up; a one-shot set at revoke time would fire the critical alert forever).
 
 ---
 
@@ -3550,7 +3552,7 @@ Implementation: greps for `slot.*retry`, `MaxRetries`, `policy_rejection`, `work
 
 Consequence: a transient slot failure terminates the client request with no retry. A degraded pod accumulating failures keeps consuming slots indefinitely (until manually drained); the rolling 5-minute unhealthy-threshold is unimplemented.
 
-### - [ ] F-5.2.13 — `lenny_slot_failure_total` and `lenny_slot_assignment_conflict_total` have no emitters [Medium] — OPEN
+### - [ ] F-5.2.13 — `lenny_slot_failure_total` and `lenny_slot_assignment_conflict_total` have no emitters [Medium] — CLOSED
 
 Spec §5.2 lines 514, 519 cite both metrics with labels (`error_type`, `pool`).
 
@@ -3560,6 +3562,8 @@ Implementation:
 - `lenny_adapter_leaked_slots` (referenced in §5.2 line 515) is not present.
 
 Consequence: operators cannot detect pool under-sizing via the spec-named telemetry.
+
+**Resolution (commits c31ae94b, e2f94b89):** Both named metrics now emit. `lenny_slot_assignment_conflict_total{pool}` was registered on `gatewaymetrics.Metrics` and wired through `SlotClaimer.OnSlotConflict` by F-5.2.8 (e2f94b89). This batch adds `lenny_slot_failure_total{error_type,pool,k8s_pod_name}` (registered on `gatewaymetrics.Metrics`, exposed via `IncSlotFailure`, wired onto `podsession.Binder.SlotFailure`): `Binder.BindSlot` records it at each bind stage that fails after a slot is reserved, with `error_type` ∈ {`workspace_prep`, `setup`, `credential_assignment`, `session_start`}. `k8s_pod_name` is sanctioned for this metric by §16.1 and is not on the §16.1.1 forbidden label list. The §5.2 line 515 `lenny_adapter_leaked_slots` remains absent because the adapter has no slot-leak detection/reporting path; that producer lands with the concurrent-mode slot retry/leak policy (F-5.2.12).
 
 ### - [ ] F-5.2.14 — Scrub-warning preConnect re-warm transition is undefined [Medium] — OPEN
 
