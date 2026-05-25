@@ -40,6 +40,66 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Verdict is the §4.9 admin-time RBAC-probe outcome.
+type Verdict int32
+
+const (
+	// VERDICT_UNSPECIFIED is never returned; it is the proto3 zero value.
+	Verdict_VERDICT_UNSPECIFIED Verdict = 0
+	// VERDICT_ALLOWED — the Token Service SA can get the Secret and the
+	// Secret exists.
+	Verdict_VERDICT_ALLOWED Verdict = 1
+	// VERDICT_DENIED — the SelfSubjectAccessReview denied the get verb on
+	// the Secret (the resourceName is not in the Token Service Role).
+	Verdict_VERDICT_DENIED Verdict = 2
+	// VERDICT_NOT_FOUND — the get verb is allowed but the Secret object
+	// does not exist.
+	Verdict_VERDICT_NOT_FOUND Verdict = 3
+)
+
+// Enum value maps for Verdict.
+var (
+	Verdict_name = map[int32]string{
+		0: "VERDICT_UNSPECIFIED",
+		1: "VERDICT_ALLOWED",
+		2: "VERDICT_DENIED",
+		3: "VERDICT_NOT_FOUND",
+	}
+	Verdict_value = map[string]int32{
+		"VERDICT_UNSPECIFIED": 0,
+		"VERDICT_ALLOWED":     1,
+		"VERDICT_DENIED":      2,
+		"VERDICT_NOT_FOUND":   3,
+	}
+)
+
+func (x Verdict) Enum() *Verdict {
+	p := new(Verdict)
+	*p = x
+	return p
+}
+
+func (x Verdict) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Verdict) Descriptor() protoreflect.EnumDescriptor {
+	return file_lenny_tokenservice_proto_enumTypes[0].Descriptor()
+}
+
+func (Verdict) Type() protoreflect.EnumType {
+	return &file_lenny_tokenservice_proto_enumTypes[0]
+}
+
+func (x Verdict) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Verdict.Descriptor instead.
+func (Verdict) EnumDescriptor() ([]byte, []int) {
+	return file_lenny_tokenservice_proto_rawDescGZIP(), []int{0}
+}
+
 type AssignCredentialsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// tenant_id is the §4.2 tenant that owns the session.
@@ -367,6 +427,110 @@ func (*RevokeCredentialsResponse) Descriptor() ([]byte, []int) {
 	return file_lenny_tokenservice_proto_rawDescGZIP(), []int{5}
 }
 
+type ProbeSecretAccessRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// secret_name is the Kubernetes Secret name the credential pool's
+	// secretRef points at.
+	SecretName string `protobuf:"bytes,1,opt,name=secret_name,json=secretName,proto3" json:"secret_name,omitempty"`
+	// namespace optionally overrides the Token Service's configured
+	// secret namespace. Empty selects the configured default.
+	Namespace     string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProbeSecretAccessRequest) Reset() {
+	*x = ProbeSecretAccessRequest{}
+	mi := &file_lenny_tokenservice_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProbeSecretAccessRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProbeSecretAccessRequest) ProtoMessage() {}
+
+func (x *ProbeSecretAccessRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_tokenservice_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProbeSecretAccessRequest.ProtoReflect.Descriptor instead.
+func (*ProbeSecretAccessRequest) Descriptor() ([]byte, []int) {
+	return file_lenny_tokenservice_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ProbeSecretAccessRequest) GetSecretName() string {
+	if x != nil {
+		return x.SecretName
+	}
+	return ""
+}
+
+func (x *ProbeSecretAccessRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+type ProbeSecretAccessResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// verdict is the access decision. A transport or evaluation failure
+	// is returned as a gRPC error (codes.Unavailable) rather than a
+	// verdict, so the caller can distinguish a definitive DENIED/NOT_FOUND
+	// from an indeterminate probe and never fail open.
+	Verdict       Verdict `protobuf:"varint,1,opt,name=verdict,proto3,enum=lenny.tokenservice.v1.Verdict" json:"verdict,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProbeSecretAccessResponse) Reset() {
+	*x = ProbeSecretAccessResponse{}
+	mi := &file_lenny_tokenservice_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProbeSecretAccessResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProbeSecretAccessResponse) ProtoMessage() {}
+
+func (x *ProbeSecretAccessResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_tokenservice_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProbeSecretAccessResponse.ProtoReflect.Descriptor instead.
+func (*ProbeSecretAccessResponse) Descriptor() ([]byte, []int) {
+	return file_lenny_tokenservice_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ProbeSecretAccessResponse) GetVerdict() Verdict {
+	if x != nil {
+		return x.Verdict
+	}
+	return Verdict_VERDICT_UNSPECIFIED
+}
+
 // CredentialLease mirrors the §4.9 in-process credential.Lease on the
 // wire. Pod-facing delivery uses the lenny.adapter.v1.CredentialLease
 // projection; this gateway↔Token-Service shape carries the full lease
@@ -434,7 +598,7 @@ type CredentialLease struct {
 
 func (x *CredentialLease) Reset() {
 	*x = CredentialLease{}
-	mi := &file_lenny_tokenservice_proto_msgTypes[6]
+	mi := &file_lenny_tokenservice_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -446,7 +610,7 @@ func (x *CredentialLease) String() string {
 func (*CredentialLease) ProtoMessage() {}
 
 func (x *CredentialLease) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_tokenservice_proto_msgTypes[6]
+	mi := &file_lenny_tokenservice_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -459,7 +623,7 @@ func (x *CredentialLease) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CredentialLease.ProtoReflect.Descriptor instead.
 func (*CredentialLease) Descriptor() ([]byte, []int) {
-	return file_lenny_tokenservice_proto_rawDescGZIP(), []int{6}
+	return file_lenny_tokenservice_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CredentialLease) GetLeaseId() string {
@@ -621,7 +785,13 @@ const file_lenny_tokenservice_proto_rawDesc = "" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x19\n" +
 	"\blease_id\x18\x02 \x01(\tR\aleaseId\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"\x1b\n" +
-	"\x19RevokeCredentialsResponse\"\xde\x05\n" +
+	"\x19RevokeCredentialsResponse\"Y\n" +
+	"\x18ProbeSecretAccessRequest\x12\x1f\n" +
+	"\vsecret_name\x18\x01 \x01(\tR\n" +
+	"secretName\x12\x1c\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"U\n" +
+	"\x19ProbeSecretAccessResponse\x128\n" +
+	"\averdict\x18\x01 \x01(\x0e2\x1e.lenny.tokenservice.v1.VerdictR\averdict\"\xde\x05\n" +
 	"\x0fCredentialLease\x12\x19\n" +
 	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x1d\n" +
 	"\n" +
@@ -646,11 +816,17 @@ const file_lenny_tokenservice_proto_rawDesc = "" +
 	"leaseToken\x12%\n" +
 	"\x0eupstream_model\x18\x11 \x01(\tR\rupstreamModel\x12/\n" +
 	"\x13upstream_credential\x18\x12 \x01(\tR\x12upstreamCredential\x127\n" +
-	"\tissued_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt2\xfc\x02\n" +
+	"\tissued_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt*b\n" +
+	"\aVerdict\x12\x17\n" +
+	"\x13VERDICT_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fVERDICT_ALLOWED\x10\x01\x12\x12\n" +
+	"\x0eVERDICT_DENIED\x10\x02\x12\x15\n" +
+	"\x11VERDICT_NOT_FOUND\x10\x032\xf6\x03\n" +
 	"\fTokenService\x12x\n" +
 	"\x11AssignCredentials\x12/.lenny.tokenservice.v1.AssignCredentialsRequest\x1a0.lenny.tokenservice.v1.AssignCredentialsResponse\"\x00\x12x\n" +
 	"\x11RotateCredentials\x12/.lenny.tokenservice.v1.RotateCredentialsRequest\x1a0.lenny.tokenservice.v1.RotateCredentialsResponse\"\x00\x12x\n" +
-	"\x11RevokeCredentials\x12/.lenny.tokenservice.v1.RevokeCredentialsRequest\x1a0.lenny.tokenservice.v1.RevokeCredentialsResponse\"\x00BEZCgithub.com/lennylabs/lenny/pkg/proto/tokenservice/v1;tokenservicev1b\x06proto3"
+	"\x11RevokeCredentials\x12/.lenny.tokenservice.v1.RevokeCredentialsRequest\x1a0.lenny.tokenservice.v1.RevokeCredentialsResponse\"\x00\x12x\n" +
+	"\x11ProbeSecretAccess\x12/.lenny.tokenservice.v1.ProbeSecretAccessRequest\x1a0.lenny.tokenservice.v1.ProbeSecretAccessResponse\"\x00BEZCgithub.com/lennylabs/lenny/pkg/proto/tokenservice/v1;tokenservicev1b\x06proto3"
 
 var (
 	file_lenny_tokenservice_proto_rawDescOnce sync.Once
@@ -664,36 +840,43 @@ func file_lenny_tokenservice_proto_rawDescGZIP() []byte {
 	return file_lenny_tokenservice_proto_rawDescData
 }
 
-var file_lenny_tokenservice_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_lenny_tokenservice_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_lenny_tokenservice_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_lenny_tokenservice_proto_goTypes = []any{
-	(*AssignCredentialsRequest)(nil),  // 0: lenny.tokenservice.v1.AssignCredentialsRequest
-	(*AssignCredentialsResponse)(nil), // 1: lenny.tokenservice.v1.AssignCredentialsResponse
-	(*RotateCredentialsRequest)(nil),  // 2: lenny.tokenservice.v1.RotateCredentialsRequest
-	(*RotateCredentialsResponse)(nil), // 3: lenny.tokenservice.v1.RotateCredentialsResponse
-	(*RevokeCredentialsRequest)(nil),  // 4: lenny.tokenservice.v1.RevokeCredentialsRequest
-	(*RevokeCredentialsResponse)(nil), // 5: lenny.tokenservice.v1.RevokeCredentialsResponse
-	(*CredentialLease)(nil),           // 6: lenny.tokenservice.v1.CredentialLease
-	nil,                               // 7: lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry
-	(*timestamppb.Timestamp)(nil),     // 8: google.protobuf.Timestamp
+	(Verdict)(0),                      // 0: lenny.tokenservice.v1.Verdict
+	(*AssignCredentialsRequest)(nil),  // 1: lenny.tokenservice.v1.AssignCredentialsRequest
+	(*AssignCredentialsResponse)(nil), // 2: lenny.tokenservice.v1.AssignCredentialsResponse
+	(*RotateCredentialsRequest)(nil),  // 3: lenny.tokenservice.v1.RotateCredentialsRequest
+	(*RotateCredentialsResponse)(nil), // 4: lenny.tokenservice.v1.RotateCredentialsResponse
+	(*RevokeCredentialsRequest)(nil),  // 5: lenny.tokenservice.v1.RevokeCredentialsRequest
+	(*RevokeCredentialsResponse)(nil), // 6: lenny.tokenservice.v1.RevokeCredentialsResponse
+	(*ProbeSecretAccessRequest)(nil),  // 7: lenny.tokenservice.v1.ProbeSecretAccessRequest
+	(*ProbeSecretAccessResponse)(nil), // 8: lenny.tokenservice.v1.ProbeSecretAccessResponse
+	(*CredentialLease)(nil),           // 9: lenny.tokenservice.v1.CredentialLease
+	nil,                               // 10: lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry
+	(*timestamppb.Timestamp)(nil),     // 11: google.protobuf.Timestamp
 }
 var file_lenny_tokenservice_proto_depIdxs = []int32{
-	7, // 0: lenny.tokenservice.v1.AssignCredentialsResponse.leases:type_name -> lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry
-	6, // 1: lenny.tokenservice.v1.RotateCredentialsResponse.lease:type_name -> lenny.tokenservice.v1.CredentialLease
-	8, // 2: lenny.tokenservice.v1.CredentialLease.expires_at:type_name -> google.protobuf.Timestamp
-	8, // 3: lenny.tokenservice.v1.CredentialLease.renew_before:type_name -> google.protobuf.Timestamp
-	8, // 4: lenny.tokenservice.v1.CredentialLease.issued_at:type_name -> google.protobuf.Timestamp
-	6, // 5: lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry.value:type_name -> lenny.tokenservice.v1.CredentialLease
-	0, // 6: lenny.tokenservice.v1.TokenService.AssignCredentials:input_type -> lenny.tokenservice.v1.AssignCredentialsRequest
-	2, // 7: lenny.tokenservice.v1.TokenService.RotateCredentials:input_type -> lenny.tokenservice.v1.RotateCredentialsRequest
-	4, // 8: lenny.tokenservice.v1.TokenService.RevokeCredentials:input_type -> lenny.tokenservice.v1.RevokeCredentialsRequest
-	1, // 9: lenny.tokenservice.v1.TokenService.AssignCredentials:output_type -> lenny.tokenservice.v1.AssignCredentialsResponse
-	3, // 10: lenny.tokenservice.v1.TokenService.RotateCredentials:output_type -> lenny.tokenservice.v1.RotateCredentialsResponse
-	5, // 11: lenny.tokenservice.v1.TokenService.RevokeCredentials:output_type -> lenny.tokenservice.v1.RevokeCredentialsResponse
-	9, // [9:12] is the sub-list for method output_type
-	6, // [6:9] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	10, // 0: lenny.tokenservice.v1.AssignCredentialsResponse.leases:type_name -> lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry
+	9,  // 1: lenny.tokenservice.v1.RotateCredentialsResponse.lease:type_name -> lenny.tokenservice.v1.CredentialLease
+	0,  // 2: lenny.tokenservice.v1.ProbeSecretAccessResponse.verdict:type_name -> lenny.tokenservice.v1.Verdict
+	11, // 3: lenny.tokenservice.v1.CredentialLease.expires_at:type_name -> google.protobuf.Timestamp
+	11, // 4: lenny.tokenservice.v1.CredentialLease.renew_before:type_name -> google.protobuf.Timestamp
+	11, // 5: lenny.tokenservice.v1.CredentialLease.issued_at:type_name -> google.protobuf.Timestamp
+	9,  // 6: lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry.value:type_name -> lenny.tokenservice.v1.CredentialLease
+	1,  // 7: lenny.tokenservice.v1.TokenService.AssignCredentials:input_type -> lenny.tokenservice.v1.AssignCredentialsRequest
+	3,  // 8: lenny.tokenservice.v1.TokenService.RotateCredentials:input_type -> lenny.tokenservice.v1.RotateCredentialsRequest
+	5,  // 9: lenny.tokenservice.v1.TokenService.RevokeCredentials:input_type -> lenny.tokenservice.v1.RevokeCredentialsRequest
+	7,  // 10: lenny.tokenservice.v1.TokenService.ProbeSecretAccess:input_type -> lenny.tokenservice.v1.ProbeSecretAccessRequest
+	2,  // 11: lenny.tokenservice.v1.TokenService.AssignCredentials:output_type -> lenny.tokenservice.v1.AssignCredentialsResponse
+	4,  // 12: lenny.tokenservice.v1.TokenService.RotateCredentials:output_type -> lenny.tokenservice.v1.RotateCredentialsResponse
+	6,  // 13: lenny.tokenservice.v1.TokenService.RevokeCredentials:output_type -> lenny.tokenservice.v1.RevokeCredentialsResponse
+	8,  // 14: lenny.tokenservice.v1.TokenService.ProbeSecretAccess:output_type -> lenny.tokenservice.v1.ProbeSecretAccessResponse
+	11, // [11:15] is the sub-list for method output_type
+	7,  // [7:11] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_lenny_tokenservice_proto_init() }
@@ -706,13 +889,14 @@ func file_lenny_tokenservice_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lenny_tokenservice_proto_rawDesc), len(file_lenny_tokenservice_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   8,
+			NumEnums:      1,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_lenny_tokenservice_proto_goTypes,
 		DependencyIndexes: file_lenny_tokenservice_proto_depIdxs,
+		EnumInfos:         file_lenny_tokenservice_proto_enumTypes,
 		MessageInfos:      file_lenny_tokenservice_proto_msgTypes,
 	}.Build()
 	File_lenny_tokenservice_proto = out.File

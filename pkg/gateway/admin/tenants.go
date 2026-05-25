@@ -150,6 +150,7 @@ type Router struct {
 	poolStatus            PoolStatusReader
 
 	credentialRekey CredentialRekeyer
+	secretProber    SecretAccessProber
 }
 
 // KMSProbe is the §12.5 T4 per-tenant KMS availability probe seam.

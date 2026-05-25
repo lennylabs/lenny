@@ -108,4 +108,14 @@ var table = map[string]entry{
 	// unavailable, so clients can back off and retry. The session-start
 	// handler emits this code with HTTP 503 + Retry-After.
 	"TOKEN_SERVICE_UNAVAILABLE": {CategoryUpstream, true},
+	// §4.9 line 1212 admin-time RBAC live-probe. A DENIED/NOT_FOUND
+	// verdict is PERMANENT: the secretRef cannot be read until the
+	// operator patches the Token Service RBAC, so retrying the same
+	// write fails identically.
+	"CREDENTIAL_SECRET_RBAC_MISSING": {CategoryPermanent, false},
+	// §4.9 line 1212: the probe could not be evaluated (Token Service
+	// unreachable, mTLS handshake failure, upstream Kubernetes API
+	// timeout). TRANSIENT and retryable; the write was rejected rather
+	// than fail open.
+	"CREDENTIAL_PROBE_UNAVAILABLE": {CategoryTransient, true},
 }

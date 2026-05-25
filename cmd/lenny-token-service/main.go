@@ -39,8 +39,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	pkgaudit "github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
@@ -57,7 +60,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
 	"github.com/lennylabs/lenny/pkg/tokenservice/promemit"
-	pkgaudit "github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/tokenservice/secretprobe"
 )
 
 func main() {
@@ -101,6 +104,13 @@ func main() {
 		"path to the private key for --tls-cert.")
 	tlsCA := flag.String("tls-ca", os.Getenv("LENNY_TOKEN_SERVICE_CA"),
 		"path to the CA bundle that verifies gateway client certificates on the §4.3 / §10.3 mTLS gRPC link. Required when --tls-cert is set; the Token Service uses tls.RequireAndVerifyClientCert.")
+	// §4.9 line 1212 admin-time RBAC live-probe namespace. The probe's
+	// SelfSubjectAccessReview and Secret get target this namespace, where
+	// credentialPool secretRef Secrets are mounted. Defaults to the
+	// Token Service's own namespace (POD_NAMESPACE, set by the downward
+	// API), falling back to lenny-system.
+	secretNamespace := flag.String("secret-namespace", envOr("POD_NAMESPACE", "lenny-system"),
+		"namespace the §4.9 RBAC live-probe checks for credentialPool secretRef Secrets.")
 	// §4 / §17.5 KMS provider selector. The cloud adapters
 	// (pkg/kms/{aws,gcp,azure}) reach the binary through these flags;
 	// the chart renders tokenService.kms.* into them.
@@ -281,6 +291,18 @@ func main() {
 	tsGRPC := tokenservice.NewGRPCServer(assignSvc, leases)
 	tsGRPC.SetAuditor(auditor)
 	tsGRPC.SetMetrics(metricsEmitter)
+	// §4.9 line 1212 admin-time RBAC live-probe. Wire the
+	// Kubernetes-backed prober when the Token Service runs in-cluster.
+	// Out of cluster (local dev) the prober is left unset; the
+	// ProbeSecretAccess RPC then returns codes.Unavailable so the gateway
+	// admin handler maps it to 503 CREDENTIAL_PROBE_UNAVAILABLE and never
+	// fails open.
+	if clientset, kerr := inClusterClientset(); kerr != nil {
+		log.Printf("lenny-token-service: §4.9 RBAC live-probe disabled (no in-cluster Kubernetes client: %v)", kerr)
+	} else {
+		tsGRPC.SetSecretAccessProber(secretprobe.New(clientset, *secretNamespace))
+		log.Printf("lenny-token-service: §4.9 RBAC live-probe active in namespace %q", *secretNamespace)
+	}
 	// Sanity reference to pkgaudit so the import is used; the
 	// IssuedTokenAuditStore implementation in
 	// pkg/gateway/issuedtokenstore returns audit.Row values that the
@@ -360,6 +382,27 @@ func main() {
 
 // envInt resolves an int from the named env var, falling back to def
 // when unset or unparseable.
+// envOr resolves a string from the named env var, falling back to def
+// when unset.
+func envOr(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
+// inClusterClientset builds a Kubernetes clientset from the in-cluster
+// ServiceAccount config for the §4.9 RBAC live-probe. It returns an
+// error when the Token Service is not running inside a cluster (local
+// dev), in which case the probe is disabled.
+func inClusterClientset() (kubernetes.Interface, error) {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, err
+	}
+	return kubernetes.NewForConfig(cfg)
+}
+
 func envInt(name string, def int) int {
 	v := os.Getenv(name)
 	if v == "" {

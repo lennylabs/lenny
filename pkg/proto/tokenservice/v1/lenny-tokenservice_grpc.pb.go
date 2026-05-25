@@ -40,6 +40,7 @@ const (
 	TokenService_AssignCredentials_FullMethodName = "/lenny.tokenservice.v1.TokenService/AssignCredentials"
 	TokenService_RotateCredentials_FullMethodName = "/lenny.tokenservice.v1.TokenService/RotateCredentials"
 	TokenService_RevokeCredentials_FullMethodName = "/lenny.tokenservice.v1.TokenService/RevokeCredentials"
+	TokenService_ProbeSecretAccess_FullMethodName = "/lenny.tokenservice.v1.TokenService/ProbeSecretAccess"
 )
 
 // TokenServiceClient is the client API for TokenService service.
@@ -65,6 +66,19 @@ type TokenServiceClient interface {
 	// RevokeCredentials releases a lease and drops the credential's
 	// session-slot accounting. The lease becomes invalid immediately.
 	RevokeCredentials(ctx context.Context, in *RevokeCredentialsRequest, opts ...grpc.CallOption) (*RevokeCredentialsResponse, error)
+	// ProbeSecretAccess answers whether the Token Service's own
+	// ServiceAccount can read a named Kubernetes Secret. The gateway's
+	// credential-pool admin handlers call it before persisting a pool
+	// that references a new secretRef: the Token Service runs a
+	// SelfSubjectAccessReview under its own identity (and, on ALLOWED, a
+	// get on the named Secret to confirm the object exists) and returns
+	// one of {ALLOWED, DENIED, NOT_FOUND}. The probe is Token-Service-
+	// owned so the gateway never impersonates the Token Service SA. A
+	// DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
+	// at the admin handler; a transport or non-deterministic failure maps
+	// to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
+	// (never fail open). spec: §4.9 line 1212.
+	ProbeSecretAccess(ctx context.Context, in *ProbeSecretAccessRequest, opts ...grpc.CallOption) (*ProbeSecretAccessResponse, error)
 }
 
 type tokenServiceClient struct {
@@ -105,6 +119,16 @@ func (c *tokenServiceClient) RevokeCredentials(ctx context.Context, in *RevokeCr
 	return out, nil
 }
 
+func (c *tokenServiceClient) ProbeSecretAccess(ctx context.Context, in *ProbeSecretAccessRequest, opts ...grpc.CallOption) (*ProbeSecretAccessResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProbeSecretAccessResponse)
+	err := c.cc.Invoke(ctx, TokenService_ProbeSecretAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TokenServiceServer is the server API for TokenService service.
 // All implementations should embed UnimplementedTokenServiceServer
 // for forward compatibility.
@@ -128,6 +152,19 @@ type TokenServiceServer interface {
 	// RevokeCredentials releases a lease and drops the credential's
 	// session-slot accounting. The lease becomes invalid immediately.
 	RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error)
+	// ProbeSecretAccess answers whether the Token Service's own
+	// ServiceAccount can read a named Kubernetes Secret. The gateway's
+	// credential-pool admin handlers call it before persisting a pool
+	// that references a new secretRef: the Token Service runs a
+	// SelfSubjectAccessReview under its own identity (and, on ALLOWED, a
+	// get on the named Secret to confirm the object exists) and returns
+	// one of {ALLOWED, DENIED, NOT_FOUND}. The probe is Token-Service-
+	// owned so the gateway never impersonates the Token Service SA. A
+	// DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
+	// at the admin handler; a transport or non-deterministic failure maps
+	// to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
+	// (never fail open). spec: §4.9 line 1212.
+	ProbeSecretAccess(context.Context, *ProbeSecretAccessRequest) (*ProbeSecretAccessResponse, error)
 }
 
 // UnimplementedTokenServiceServer should be embedded to have
@@ -145,6 +182,9 @@ func (UnimplementedTokenServiceServer) RotateCredentials(context.Context, *Rotat
 }
 func (UnimplementedTokenServiceServer) RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeCredentials not implemented")
+}
+func (UnimplementedTokenServiceServer) ProbeSecretAccess(context.Context, *ProbeSecretAccessRequest) (*ProbeSecretAccessResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ProbeSecretAccess not implemented")
 }
 func (UnimplementedTokenServiceServer) testEmbeddedByValue() {}
 
@@ -220,6 +260,24 @@ func _TokenService_RevokeCredentials_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _TokenService_ProbeSecretAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ProbeSecretAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TokenServiceServer).ProbeSecretAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TokenService_ProbeSecretAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TokenServiceServer).ProbeSecretAccess(ctx, req.(*ProbeSecretAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // TokenService_ServiceDesc is the grpc.ServiceDesc for TokenService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -238,6 +296,10 @@ var TokenService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeCredentials",
 			Handler:    _TokenService_RevokeCredentials_Handler,
+		},
+		{
+			MethodName: "ProbeSecretAccess",
+			Handler:    _TokenService_ProbeSecretAccess_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

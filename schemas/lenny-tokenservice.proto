@@ -42,6 +42,20 @@ service TokenService {
   // RevokeCredentials releases a lease and drops the credential's
   // session-slot accounting. The lease becomes invalid immediately.
   rpc RevokeCredentials(RevokeCredentialsRequest) returns (RevokeCredentialsResponse) {}
+
+  // ProbeSecretAccess answers whether the Token Service's own
+  // ServiceAccount can read a named Kubernetes Secret. The gateway's
+  // credential-pool admin handlers call it before persisting a pool
+  // that references a new secretRef: the Token Service runs a
+  // SelfSubjectAccessReview under its own identity (and, on ALLOWED, a
+  // get on the named Secret to confirm the object exists) and returns
+  // one of {ALLOWED, DENIED, NOT_FOUND}. The probe is Token-Service-
+  // owned so the gateway never impersonates the Token Service SA. A
+  // DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
+  // at the admin handler; a transport or non-deterministic failure maps
+  // to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
+  // (never fail open). spec: §4.9 line 1212.
+  rpc ProbeSecretAccess(ProbeSecretAccessRequest) returns (ProbeSecretAccessResponse) {}
 }
 
 message AssignCredentialsRequest {
@@ -87,6 +101,38 @@ message RevokeCredentialsRequest {
 }
 
 message RevokeCredentialsResponse {}
+
+// Verdict is the §4.9 admin-time RBAC-probe outcome.
+enum Verdict {
+  // VERDICT_UNSPECIFIED is never returned; it is the proto3 zero value.
+  VERDICT_UNSPECIFIED = 0;
+  // VERDICT_ALLOWED — the Token Service SA can get the Secret and the
+  // Secret exists.
+  VERDICT_ALLOWED = 1;
+  // VERDICT_DENIED — the SelfSubjectAccessReview denied the get verb on
+  // the Secret (the resourceName is not in the Token Service Role).
+  VERDICT_DENIED = 2;
+  // VERDICT_NOT_FOUND — the get verb is allowed but the Secret object
+  // does not exist.
+  VERDICT_NOT_FOUND = 3;
+}
+
+message ProbeSecretAccessRequest {
+  // secret_name is the Kubernetes Secret name the credential pool's
+  // secretRef points at.
+  string secret_name = 1;
+  // namespace optionally overrides the Token Service's configured
+  // secret namespace. Empty selects the configured default.
+  string namespace = 2;
+}
+
+message ProbeSecretAccessResponse {
+  // verdict is the access decision. A transport or evaluation failure
+  // is returned as a gRPC error (codes.Unavailable) rather than a
+  // verdict, so the caller can distinguish a definitive DENIED/NOT_FOUND
+  // from an indeterminate probe and never fail open.
+  Verdict verdict = 1;
+}
 
 // CredentialLease mirrors the §4.9 in-process credential.Lease on the
 // wire. Pod-facing delivery uses the lenny.adapter.v1.CredentialLease

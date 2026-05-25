@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
@@ -189,12 +191,152 @@ func (r *Router) WithCredentialPools(s credentialpoolstore.Store) *Router {
 	return r
 }
 
+// SecretProbeVerdict is the §4.9 admin-time RBAC live-probe outcome for
+// a single secretRef. spec: §4.9 line 1212.
+type SecretProbeVerdict int
+
+const (
+	// SecretProbeAllowed — the Token Service can read the Secret.
+	SecretProbeAllowed SecretProbeVerdict = iota
+	// SecretProbeDenied — the Token Service ServiceAccount lacks the
+	// RBAC grant to read the Secret.
+	SecretProbeDenied
+	// SecretProbeNotFound — the grant exists but the Secret is absent.
+	SecretProbeNotFound
+)
+
+// SecretAccessProber runs the §4.9 admin-time RBAC live-probe against
+// the Token Service over the gateway↔Token-Service mTLS link. The
+// gateway implementation calls the Token Service's ProbeSecretAccess
+// RPC; the Token Service reviews its own ServiceAccount's access. A
+// non-nil error is an indeterminate probe (Token Service unreachable,
+// mTLS failure, Kubernetes API timeout) that the handler maps to
+// 503 CREDENTIAL_PROBE_UNAVAILABLE and never fails open.
+//
+// spec: §4.9 line 1212.
+type SecretAccessProber interface {
+	ProbeSecretAccess(ctx context.Context, secretRef string) (SecretProbeVerdict, error)
+}
+
+// WithSecretAccessProber wires the §4.9 admin-time RBAC live-probe onto
+// the Router. With it set, pool creation and any pool update that
+// introduces a new secretRef probe the Token Service's read access to
+// each referenced Secret before the write is persisted, rejecting an
+// unreadable secretRef with 422 CREDENTIAL_SECRET_RBAC_MISSING (or
+// 503 CREDENTIAL_PROBE_UNAVAILABLE when the probe cannot be evaluated).
+// Without it the probe is skipped, the dev-mode posture parallel to the
+// in-process credential path the gateway uses when no Token Service link
+// is configured (`--token-service-grpc-addr` empty); the probe is
+// Token-Service-owned and has no meaning without that link.
+//
+// spec: §4.9 line 1212.
+func (r *Router) WithSecretAccessProber(p SecretAccessProber) *Router {
+	r.secretProber = p
+	return r
+}
+
+// probeSecretRefs runs the §4.9 RBAC live-probe over refs (the new or
+// changed secretRef values for a pool write). It returns true when every
+// ref is readable (or no prober is wired). On a DENIED/NOT_FOUND verdict
+// it writes 422 CREDENTIAL_SECRET_RBAC_MISSING naming every failing
+// Secret plus the RBAC patch command, and returns false. On an
+// indeterminate probe it writes 503 CREDENTIAL_PROBE_UNAVAILABLE and
+// returns false — the handler MUST NOT fail open by persisting a write
+// whose probe could not be evaluated.
+//
+// spec: §4.9 line 1212.
+func (r *Router) probeSecretRefs(w http.ResponseWriter, req *http.Request, refs []string) bool {
+	if r.secretProber == nil {
+		return true
+	}
+	var missing []string
+	for _, ref := range refs {
+		if ref == "" {
+			continue
+		}
+		verdict, err := r.secretProber.ProbeSecretAccess(req.Context(), ref)
+		if err != nil {
+			// Indeterminate: a transport/evaluation failure prevents a
+			// definitive verdict. Reject with the distinct 5xx so the
+			// operator fixes reachability rather than RBAC, and never
+			// persist the unprobed secretRef.
+			writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_PROBE_UNAVAILABLE",
+				"Token Service secret-access probe could not be evaluated; the write was rejected",
+				map[string]any{"secretRef": ref})
+			return false
+		}
+		if verdict != SecretProbeAllowed {
+			missing = append(missing, ref)
+		}
+	}
+	if len(missing) > 0 {
+		writeError(w, http.StatusUnprocessableEntity, "CREDENTIAL_SECRET_RBAC_MISSING",
+			"the Token Service ServiceAccount cannot read every referenced Secret; patch its RBAC and retry",
+			map[string]any{
+				"missingSecrets": missing,
+				"remediation":    tokenServiceRBACPatch(missing),
+			})
+		return false
+	}
+	return true
+}
+
+// secretRefsOf returns the non-empty secretRef values in entries.
+func secretRefsOf(entries []CredentialEntryPayload) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.SecretRef != "" {
+			out = append(out, e.SecretRef)
+		}
+	}
+	return out
+}
+
+// newSecretRefs returns the secretRef values in want that are absent
+// from have. It is the §4.9 "update changes secretRef" set: a PUT
+// re-keys the full credential list, so only a secretRef not already in
+// the stored pool needs an admission-time probe.
+func newSecretRefs(have []credentialpoolstore.Credential, want []CredentialEntryPayload) []string {
+	existing := make(map[string]struct{}, len(have))
+	for _, c := range have {
+		if c.SecretRef != "" {
+			existing[c.SecretRef] = struct{}{}
+		}
+	}
+	var out []string
+	for _, e := range want {
+		if e.SecretRef == "" {
+			continue
+		}
+		if _, ok := existing[e.SecretRef]; !ok {
+			out = append(out, e.SecretRef)
+		}
+	}
+	return out
+}
+
+// tokenServiceRBACPatch builds the kubectl patch command that adds the
+// missing Secret names to the Token Service's secret-reader Role
+// resourceNames list — the remediation `lenny-ctl admin credential-pools
+// add-credential` emits. spec: §4.9 line 1212.
+func tokenServiceRBACPatch(missing []string) string {
+	ops := make([]string, 0, len(missing))
+	for _, s := range missing {
+		ops = append(ops, fmt.Sprintf(`{"op":"add","path":"/rules/0/resourceNames/-","value":%q}`, s))
+	}
+	return fmt.Sprintf(
+		`kubectl patch role lenny-token-service-secrets -n lenny-system --type=json -p '[%s]'`,
+		strings.Join(ops, ","))
+}
+
 // handleCreateCredentialPool implements POST /v1/admin/credential-pools.
 //
-// The §4.9 Token Service RBAC live-probe — verifying the Token Service
-// can read every referenced secret before the pool is persisted — is
-// deferred: it requires the gateway-to-Token-Service mTLS probe link,
-// which is not yet built.
+// When a §4.9 RBAC live-probe is wired (the gateway↔Token-Service mTLS
+// link is present), every credentials[].secretRef is probed for Token
+// Service read access before the pool is persisted, so a missing RBAC
+// grant fails admission with 422 CREDENTIAL_SECRET_RBAC_MISSING rather
+// than surfacing later as an opaque CREDENTIAL_POOL_EXHAUSTED. spec:
+// §4.9 line 1212.
 func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Request) {
 	var body CredentialPoolPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -213,6 +355,11 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 		return
 	}
 	if !r.validateCacheScope(w, req, tenant, body.CacheScope) {
+		return
+	}
+	// §4.9 admin-time RBAC live-probe over every referenced Secret. A
+	// new pool introduces all of its secretRefs.
+	if !r.probeSecretRefs(w, req, secretRefsOf(body.Credentials)) {
 		return
 	}
 	pool := credentialpoolstore.CredentialPool{
@@ -320,6 +467,24 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 	}
 	if !r.validateCacheScope(w, req, tenant, body.CacheScope) {
 		return
+	}
+	// §4.9 admin-time RBAC live-probe. A PUT replaces the full credential
+	// list, so probe only the secretRefs the update introduces (those not
+	// already in the stored pool). Skipped entirely when no prober is
+	// wired so the dev-mode update path takes no extra read.
+	if r.secretProber != nil {
+		current, gerr := r.credentialPools.Get(req.Context(), tenant, name)
+		if gerr != nil {
+			if errors.Is(gerr, credentialpoolstore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		if !r.probeSecretRefs(w, req, newSecretRefs(current.Credentials, body.Credentials)) {
+			return
+		}
 	}
 	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
 		p.Provider = body.Provider

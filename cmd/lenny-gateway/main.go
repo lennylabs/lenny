@@ -836,6 +836,10 @@ func main() {
 		credAssign       credassign.Assigner
 		inProcessAssign  *credassign.Service
 		tokenServiceConn *grpc.ClientConn
+		// §4.9 admin-time RBAC live-probe. Set only when the Token
+		// Service link is present; the probe is Token-Service-owned and
+		// has no meaning without that link.
+		secretProber admin.SecretAccessProber
 	)
 	// §4.3 line 211 per-subsystem circuit breaker for Token Service
 	// calls. A degraded Token Service trips this breaker open after
@@ -859,6 +863,10 @@ func main() {
 			TenantID:  *tokenServiceTenant,
 			Subsystem: tokenServiceSubsystem,
 		})
+		// §4.9 line 1212: the admin credential-pool handlers probe Token
+		// Service Secret-read access over this same mTLS link before
+		// persisting a new secretRef.
+		secretProber = &tokenServiceSecretProber{stub: tokensv1.NewTokenServiceClient(conn)}
 		log.Printf("lenny-gateway: §4.3 credential materialization via lenny-token-service at %s", *tokenServiceAddr)
 	} else {
 		inProcessAssign = credassign.New(llmLeases, credCache)
@@ -1771,6 +1779,11 @@ func main() {
 	// only when at least one envelope-backed store is wired (Postgres).
 	if credentialRekeyJob != nil {
 		adminRouter = adminRouter.WithCredentialRekey(credentialRekeyJob)
+	}
+	// §4.9 admin-time RBAC live-probe on credential-pool writes. Wired
+	// only when the Token Service link is present.
+	if secretProber != nil {
+		adminRouter = adminRouter.WithSecretAccessProber(secretProber)
 	}
 	adminRouter = adminRouter.WithPlatformInfo(
 		admin.PlatformInfo{

@@ -35,6 +35,7 @@ type GRPCServer struct {
 	leases  credleasestore.LeaseStore
 	auditor Auditor
 	metrics Metrics
+	prober  SecretAccessProber
 }
 
 // NewGRPCServer returns a Token Service gRPC server backed by an
@@ -167,6 +168,56 @@ func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.Revoke
 	// reconstruct when a lease token was deactivated.
 	s.emitRevocation(ctx, req.TenantId, "", req.LeaseId, req.Reason)
 	return &tokensv1.RevokeCredentialsResponse{}, nil
+}
+
+// SetSecretAccessProber wires the §4.9 admin-time RBAC live-probe onto
+// the gRPC server. With it set, ProbeSecretAccess runs a
+// SelfSubjectAccessReview under the Token Service ServiceAccount. Left
+// unset (the dev path with no in-cluster Kubernetes client),
+// ProbeSecretAccess returns codes.Unavailable so the gateway admin
+// handler maps it to 503 CREDENTIAL_PROBE_UNAVAILABLE and never fails
+// open. spec: §4.9 line 1212.
+func (s *GRPCServer) SetSecretAccessProber(p SecretAccessProber) { s.prober = p }
+
+// ProbeSecretAccess answers whether the Token Service ServiceAccount can
+// read the named Kubernetes Secret. It returns a definitive
+// {ALLOWED, DENIED, NOT_FOUND} verdict; a missing prober or any
+// non-deterministic evaluation failure is returned as codes.Unavailable
+// so the caller distinguishes a denied probe (fix RBAC) from a failed
+// probe (fix reachability) and never persists an unprobed secretRef.
+//
+// spec: §4.9 line 1212.
+func (s *GRPCServer) ProbeSecretAccess(ctx context.Context, req *tokensv1.ProbeSecretAccessRequest) (resp *tokensv1.ProbeSecretAccessResponse, err error) {
+	defer s.observe("probe_secret_access", time.Now())(&err)
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if req.SecretName == "" {
+		return nil, status.Error(codes.InvalidArgument, "secret_name is required")
+	}
+	if s.prober == nil {
+		return nil, status.Error(codes.Unavailable,
+			"secret-access probe not configured (Token Service has no in-cluster Kubernetes client)")
+	}
+	verdict, perr := s.prober.ProbeSecretAccess(ctx, req.Namespace, req.SecretName)
+	if perr != nil {
+		return nil, status.Errorf(codes.Unavailable, "secret-access probe failed: %v", perr)
+	}
+	return &tokensv1.ProbeSecretAccessResponse{Verdict: secretVerdictToProto(verdict)}, nil
+}
+
+// secretVerdictToProto maps the internal verdict onto the wire enum.
+func secretVerdictToProto(v SecretAccessVerdict) tokensv1.Verdict {
+	switch v {
+	case SecretAccessAllowed:
+		return tokensv1.Verdict_VERDICT_ALLOWED
+	case SecretAccessDenied:
+		return tokensv1.Verdict_VERDICT_DENIED
+	case SecretAccessNotFound:
+		return tokensv1.Verdict_VERDICT_NOT_FOUND
+	default:
+		return tokensv1.Verdict_VERDICT_UNSPECIFIED
+	}
 }
 
 // observe records request duration and error class through the
