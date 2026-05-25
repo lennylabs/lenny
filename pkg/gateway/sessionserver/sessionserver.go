@@ -46,6 +46,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -965,7 +966,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	resp := CreateSessionResponse{
 		SessionResponse:       toResponse(row),
 		UploadToken:           tok,
-		SessionIsolationLevel: defaultIsolationLevel(isoProf),
+		SessionIsolationLevel: s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf),
 		WorkspacePlanWarnings: planWarnings,
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -973,19 +974,92 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// defaultIsolationLevel returns the §7.1 sessionIsolationLevel
-// envelope the minimal gateway populates. The minimal gateway runs
-// in `executionMode: session` (no pod reuse) so podReuse is false,
-// scrubPolicy is empty, and residualStateWarning is false. Future
-// phases that ship the §5.2 task / concurrent modes recompute these
-// fields from the resolved pool configuration.
+// resolveIsolationLevel computes the §7.1 sessionIsolationLevel for a
+// session against its assigned pool. spec: §7.1 line 75 — the field is
+// populated from the assigned pool's configuration at session creation
+// time. When a pool resolver is wired, it resolves the pool from the
+// runtime and §5.3 profile and derives the fields from the pool's §5.2
+// execution mode and scrub policy. When no resolver is wired (the
+// Postgres-only posture) or the pool does not resolve cleanly, it falls
+// back to the session-mode level; a session-mode pod is the §5.2
+// default and carries no pod reuse, so the fallback never understates
+// the isolation posture a client would observe.
+func (s *Server) resolveIsolationLevel(ctx context.Context, runtimeRef string, requested isolation.Profile) SessionIsolationLevel {
+	if s.podBinder == nil || s.podBinder.Client == nil {
+		return defaultIsolationLevel(requested)
+	}
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace, runtimeRef, string(requested))
+	if err != nil {
+		return defaultIsolationLevel(requested)
+	}
+	return isolationLevelForPool(match, requested)
+}
+
+// defaultIsolationLevel returns the §7.1 sessionIsolationLevel for a
+// session-mode pod: no pod reuse, no scrub, no residual-state warning.
+// It is the fallback when the gateway runs without a pool resolver or
+// the resolved pool reports the default `executionMode: session`.
 func defaultIsolationLevel(p isolation.Profile) SessionIsolationLevel {
 	return SessionIsolationLevel{
-		ExecutionMode:        "session",
+		ExecutionMode:        string(runtimestore.ExecutionModeSession),
 		IsolationProfile:     string(p),
 		PodReuse:             false,
 		ScrubPolicy:          "",
 		ResidualStateWarning: false,
+	}
+}
+
+// isolationLevelForPool maps a resolved §5.2 pool to the §7.1
+// sessionIsolationLevel fields. spec: §7.1 lines 69-73 — task and
+// concurrent pools reuse a pod (podReuse true) and may expose residual
+// state from prior tasks or sibling slots (residualStateWarning true);
+// session pools do neither.
+func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profile) SessionIsolationLevel {
+	profile := match.IsolationProfile
+	if profile == "" {
+		profile = string(requested)
+	}
+	mode := match.ExecutionMode
+	if mode == "" {
+		mode = string(runtimestore.ExecutionModeSession)
+	}
+	level := SessionIsolationLevel{ExecutionMode: mode, IsolationProfile: profile}
+	switch mode {
+	case string(runtimestore.ExecutionModeTask), string(runtimestore.ExecutionModeConcurrent):
+		level.PodReuse = true
+		level.ResidualStateWarning = true
+		level.ScrubPolicy = scrubPolicyForPool(match)
+	}
+	return level
+}
+
+// scrubPolicyForPool returns the §7.1 line 72 scrubPolicy string for a
+// reuse pool. It is meaningful only when podReuse is true; a session
+// pool returns the empty string (the field is omitted on the wire).
+func scrubPolicyForPool(match podsession.PoolMatch) string {
+	switch match.ExecutionMode {
+	case string(runtimestore.ExecutionModeTask):
+		// Cross-tenant microvm task reuse selects a VM-level scrub
+		// variant; same-tenant and non-microvm task reuse uses the
+		// standard best-effort scrub. microvmScrubMode defaults to
+		// `restart` (§5.2), so an empty value with cross-tenant reuse maps
+		// to `vm-restart`.
+		if match.IsolationProfile == string(isolation.ProfileMicrovm) && match.AllowCrossTenantReuse {
+			if match.MicrovmScrubMode == string(runtimestore.MicrovmScrubInPlace) {
+				return "best-effort-in-place"
+			}
+			return "vm-restart"
+		}
+		return "best-effort"
+	case string(runtimestore.ExecutionModeConcurrent):
+		// Concurrent-stateless performs no per-request scrub; concurrent-
+		// workspace scrubs per slot on completion or failure.
+		if match.ConcurrencyStyle == string(podclaim.StyleStateless) {
+			return "none"
+		}
+		return "best-effort-per-slot"
+	default:
+		return ""
 	}
 }
 

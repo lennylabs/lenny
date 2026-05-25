@@ -61,6 +61,15 @@ type PoolMatch struct {
 	ConcurrencyStyle string
 	// MaxConcurrent is the per-pod slot count for concurrent mode.
 	MaxConcurrent int32
+	// IsolationProfile is the §5.3 profile the pool's pods run under,
+	// copied from the SandboxTemplate so the §7.1 sessionIsolationLevel
+	// can report the assigned pod's profile.
+	IsolationProfile string
+	// AllowCrossTenantReuse and MicrovmScrubMode are the §5.2 task-mode
+	// TaskPolicy fields that select the §7.1 scrubPolicy variant for a
+	// task-mode microvm pool. Both are zero on non-task pools.
+	AllowCrossTenantReuse bool
+	MicrovmScrubMode      string
 	// PoolWarmingUp reflects the §5.2 PoolWarmingUp condition on the
 	// pool's SandboxTemplate: true while the pool is bootstrapping with
 	// no idle pods. The start path returns a 503 RUNTIME_UNAVAILABLE
@@ -117,14 +126,20 @@ func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRe
 			continue
 		}
 		warmingUp, podsWarming := poolWarming(&tmpl, pool)
-		matches = append(matches, PoolMatch{
+		m := PoolMatch{
 			Pool:             pool.Name,
 			ExecutionMode:    tmpl.Spec.ExecutionMode,
 			ConcurrencyStyle: tmpl.Spec.ConcurrencyStyle,
 			MaxConcurrent:    tmpl.Spec.MaxConcurrent,
+			IsolationProfile: tmpl.Spec.IsolationProfile,
 			PoolWarmingUp:    warmingUp,
 			PodsWarming:      podsWarming,
-		})
+		}
+		if tp := tmpl.Spec.TaskPolicy; tp != nil {
+			m.AllowCrossTenantReuse = tp.AllowCrossTenantReuse
+			m.MicrovmScrubMode = tp.MicrovmScrubMode
+		}
+		matches = append(matches, m)
 	}
 
 	switch len(matches) {
