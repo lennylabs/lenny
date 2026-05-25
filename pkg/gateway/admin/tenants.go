@@ -148,6 +148,8 @@ type Router struct {
 
 	reconciliationResumer ReconciliationResumer
 	poolStatus            PoolStatusReader
+
+	credentialRekey CredentialRekeyer
 }
 
 // KMSProbe is the §12.5 T4 per-tenant KMS availability probe seam.
@@ -483,6 +485,18 @@ func (r *Router) Handler() http.Handler {
 			credPoolAdmin(http.HandlerFunc(r.handleReEnableCredential)))
 		mux.Handle("POST /v1/admin/credential-pools/{name}/revoke",
 			credPoolAdmin(http.HandlerFunc(r.handleRevokePool)))
+	}
+	if r.credentialRekey != nil {
+		// §4.9.1 KMS-key-rotation re-encryption job. KEK rotation is a
+		// platform-security operation, so both routes are platform-admin
+		// gated; the path tenant identifies the per-tenant KEK to
+		// re-key. POST runs the re-encryption loop; GET runs the
+		// verification query the operator checks before disabling the
+		// old KEK version.
+		mux.Handle("POST /v1/admin/tenants/{id}/credential-rekey",
+			r.requireAdmin(http.HandlerFunc(r.handleCredentialRekey)))
+		mux.Handle("GET /v1/admin/tenants/{id}/credential-rekey",
+			r.requireAdmin(http.HandlerFunc(r.handleCredentialRekeyStatus)))
 	}
 	if r.tenantAccess != nil {
 		mux.Handle("POST /v1/admin/runtimes/{name}/tenant-access", r.requireAdmin(r.grantAccessHandler(tenantaccessstore.KindRuntime)))

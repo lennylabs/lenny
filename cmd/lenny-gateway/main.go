@@ -195,6 +195,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
+	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
@@ -1427,11 +1428,18 @@ func main() {
 	// column under per-tenant KMS KEKs; the in-memory store keeps the
 	// secret process-local and never persists it.
 	var credentials credentialstore.Store = credentialstore.NewMemory(nil)
+	// §4.9.1 re-encryption job: the envelope-backed stores re-key their
+	// rows under the current KEK version after a rotation. Only the
+	// Postgres stores have a KEK to rotate; the in-memory stores hold
+	// plaintext.
+	var credentialRekeyers []rekey.TenantRekeyer
 	if pgPool != nil {
-		credentials, err = credentialpg.New(pgPool, kmsProvider)
-		if err != nil {
-			log.Fatalf("lenny-gateway: credential store: %v", err)
+		pgCreds, perr := credentialpg.New(pgPool, kmsProvider)
+		if perr != nil {
+			log.Fatalf("lenny-gateway: credential store: %v", perr)
 		}
+		credentials = pgCreds
+		credentialRekeyers = append(credentialRekeyers, pgCreds)
 	}
 	credServer := credentialserver.New(credentials).
 		WithAudit(credentialAuditor{sink: auditSink})
@@ -1461,7 +1469,15 @@ func main() {
 			log.Fatalf("lenny-gateway: connector-credential store: %v", err)
 		}
 		connectorCreds = pgConnectorCreds
+		credentialRekeyers = append(credentialRekeyers, pgConnectorCreds)
 		log.Printf("lenny-gateway: §4.3 connector credentials backed by Postgres (envelope-encrypted)")
+	}
+	// §4.9.1 KMS-key-rotation re-encryption job over every envelope-backed
+	// credential store. Wired to the admin router below; absent in the
+	// in-memory dev posture (no store to re-key).
+	var credentialRekeyJob *rekey.Job
+	if len(credentialRekeyers) > 0 {
+		credentialRekeyJob = rekey.NewJob(credentialRekeyers...)
 	}
 	var connectorOAuth *admin.ConnectorOAuth
 	if *connectorOAuthCallbackURL != "" {
@@ -1750,6 +1766,11 @@ func main() {
 	if ls, ok := llmLeases.(poolLeaseStore); ok {
 		adminRouter = adminRouter.WithPoolCredentialRevocation(
 			&poolCredentialRevoker{leases: ls, denyList: credRenewalProp})
+	}
+	// §4.9.1 KMS-key-rotation re-encryption admin surface. Registered
+	// only when at least one envelope-backed store is wired (Postgres).
+	if credentialRekeyJob != nil {
+		adminRouter = adminRouter.WithCredentialRekey(credentialRekeyJob)
 	}
 	adminRouter = adminRouter.WithPlatformInfo(
 		admin.PlatformInfo{
