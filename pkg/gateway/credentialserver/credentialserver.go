@@ -49,6 +49,7 @@ type CredentialPayload struct {
 	CreatedAt   string `json:"createdAt,omitempty"`
 	RotatedAt   string `json:"rotatedAt,omitempty"`
 	RevokedAt   string `json:"revokedAt,omitempty"`
+	LastUsedAt  string `json:"lastUsedAt,omitempty"`
 }
 
 // RegisterRequest is the §15.1 POST /v1/credentials body.
@@ -82,6 +83,9 @@ func toPayload(c credentialstore.Credential) CredentialPayload {
 	}
 	if !c.RevokedAt.IsZero() {
 		out.RevokedAt = c.RevokedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	}
+	if !c.LastUsedAt.IsZero() {
+		out.LastUsedAt = c.LastUsedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 	}
 	return out
 }

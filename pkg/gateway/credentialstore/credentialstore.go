@@ -67,6 +67,14 @@ type Credential struct {
 	CreatedAt time.Time
 	RotatedAt time.Time
 	RevokedAt time.Time
+
+	// LastUsedAt is the last instant the credential was resolved for a
+	// lease. It is the zero time until the credential is first used.
+	// The §15.1 GET /v1/credentials response carries it.
+	//
+	// spec: §4.9 line 1349, 1365 — last_used_at is a /v1/credentials
+	// response field.
+	LastUsedAt time.Time
 }
 
 // Sentinel errors.
@@ -99,6 +107,14 @@ type Store interface {
 
 	// Revoke marks the credential revoked.
 	Revoke(ctx context.Context, tenantID, ref string) (Credential, error)
+
+	// MarkUsed records at as the credential's last-used instant. The
+	// §4.9 lease-resolution path calls it when it resolves a user
+	// credential for a lease so the §15.1 GET /v1/credentials response
+	// reports last_used_at. It is a no-op for an unknown ref.
+	//
+	// spec: §4.9 line 1349, 1365.
+	MarkUsed(ctx context.Context, tenantID, ref string, at time.Time) error
 
 	// Delete removes the credential row.
 	Delete(ctx context.Context, tenantID, ref string) error
@@ -224,6 +240,21 @@ func (m *Memory) Revoke(_ context.Context, tenantID, ref string) (Credential, er
 	c.RevokedAt = m.clock()
 	m.byRef[k] = c
 	return c, nil
+}
+
+// MarkUsed implements Store.
+// spec: §4.9 line 1349, 1365.
+func (m *Memory) MarkUsed(_ context.Context, tenantID, ref string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := refKey(tenantID, ref)
+	c, ok := m.byRef[k]
+	if !ok {
+		return ErrNotFound
+	}
+	c.LastUsedAt = at.UTC()
+	m.byRef[k] = c
+	return nil
 }
 
 // Delete implements Store.

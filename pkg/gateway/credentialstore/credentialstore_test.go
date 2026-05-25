@@ -98,6 +98,31 @@ func TestRevoke(t *testing.T) {
 	}
 }
 
+// spec: §4.9 line 1349, 1365 — last_used_at is recorded by MarkUsed and
+// surfaces on the GET /v1/credentials response.
+func TestMarkUsed(t *testing.T) {
+	s := newStore()
+	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "x")
+	if !c.LastUsedAt.IsZero() {
+		t.Errorf("a fresh credential must have a zero lastUsedAt: %v", c.LastUsedAt)
+	}
+	at := time.Date(2026, 5, 24, 9, 30, 0, 0, time.UTC)
+	if err := s.MarkUsed(context.Background(), "acme", c.Ref, at); err != nil {
+		t.Fatalf("MarkUsed: %v", err)
+	}
+	got, err := s.Get(context.Background(), "acme", c.Ref)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.LastUsedAt.Equal(at) {
+		t.Errorf("LastUsedAt = %v, want %v", got.LastUsedAt, at)
+	}
+	// An unknown ref is a no-op error.
+	if err := s.MarkUsed(context.Background(), "acme", "cred-missing", at); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Errorf("MarkUsed unknown ref = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDelete(t *testing.T) {
 	s := newStore()
 	c, _ := s.Register(context.Background(), "acme", "alice", credential.ProviderGitHub, "", "x")

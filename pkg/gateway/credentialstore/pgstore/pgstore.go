@@ -138,7 +138,7 @@ func (s *Store) openSecret(ctx context.Context, tenantID string, blob []byte, ke
 // the envelope ciphertext blob and secret_key_version the §4.9.1 KEK
 // version. environment is the §4.3 line 202 scoping column.
 const selectList = `tenant_id, ref, user_id, provider, environment, secret, secret_key_version,
-	status, created_at, rotated_at, revoked_at, updated_at`
+	status, created_at, rotated_at, revoked_at, last_used_at, updated_at`
 
 // Register stores (or replaces) the credential for the
 // (tenant, user, provider, environment) four-tuple, returning the
@@ -386,6 +386,27 @@ func (s *Store) Revoke(ctx context.Context, tenantID, ref string) (credentialsto
 	return out, nil
 }
 
+// MarkUsed records at as the credential's last-used instant. It is a
+// no-op (ErrNotFound) for an unknown ref. The §4.9 lease-resolution
+// path calls it so the §15.1 GET /v1/credentials response reports
+// last_used_at.
+//
+// spec: §4.9 line 1349, 1365.
+func (s *Store) MarkUsed(ctx context.Context, tenantID, ref string, at time.Time) error {
+	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`UPDATE credentials SET last_used_at = $3 WHERE tenant_id = $1 AND ref = $2`,
+			tenantID, ref, at.UTC())
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return credentialstore.ErrNotFound
+		}
+		return nil
+	})
+}
+
 // Delete removes the credential row. Returns ErrNotFound when the
 // credential does not exist.
 func (s *Store) Delete(ctx context.Context, tenantID, ref string) error {
@@ -418,11 +439,12 @@ func scanCredential(row pgx.Row) (cred credentialstore.Credential, secretBlob []
 		blob                 []byte
 		version              int
 		rotatedAt, revokedAt *time.Time
+		lastUsedAt           *time.Time
 		updated              time.Time
 	)
 	if err := row.Scan(
 		&c.TenantID, &c.Ref, &c.UserID, &provider, &c.Environment, &blob, &version, &status,
-		&c.CreatedAt, &rotatedAt, &revokedAt, &updated,
+		&c.CreatedAt, &rotatedAt, &revokedAt, &lastUsedAt, &updated,
 	); err != nil {
 		return credentialstore.Credential{}, nil, 0, time.Time{}, err
 	}
@@ -433,6 +455,9 @@ func scanCredential(row pgx.Row) (cred credentialstore.Credential, secretBlob []
 	}
 	if revokedAt != nil {
 		c.RevokedAt = *revokedAt
+	}
+	if lastUsedAt != nil {
+		c.LastUsedAt = *lastUsedAt
 	}
 	return c, blob, version, updated, nil
 }
