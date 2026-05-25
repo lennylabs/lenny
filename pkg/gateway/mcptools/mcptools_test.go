@@ -1181,3 +1181,59 @@ func TestToolsListIncludesLennyTools(t *testing.T) {
 		}
 	}
 }
+
+// TestRequestInputPerRuntimeTimeoutOverride asserts the §11.3 /
+// §5.1 limits.maxRequestInputWaitSeconds per-runtime wait cap overrides the
+// platform default. The platform default is 40ms (which would time the
+// call out immediately), but the session's runtime declares a large
+// per-runtime cap, so the request stays pending long enough for a peer to
+// resolve it.
+func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
+	store := memstore.New()
+	reg := inputwait.NewRegistry()
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "slow-input", Type: runtimestore.TypeAgent, Image: "x@sha256:a",
+		Limits: &runtimestore.Limits{MaxRequestInputWaitSeconds: 3600},
+	}); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:               store,
+		Executor:            executor.NewEchoExecutor(),
+		InputWaits:          reg,
+		Runtimes:            runtimes,
+		RequestInputTimeout: 40 * time.Millisecond,
+		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:              func() string { return "sess_mcp" },
+		TenantID:            "acme",
+	})
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_r", TenantID: "acme", State: session.StateRunning, RuntimeRef: "slow-input",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	h := srv.Handler()
+
+	got := make(chan map[string]any, 1)
+	go func() {
+		got <- call(t, h, "lenny/request_input",
+			`{"sessionId":"sess_r","requestId":"req-1","prompt":"pick"}`)
+	}()
+	waitPending(t, reg, "sess_r", "req-1")
+	// Sleep well past the 40ms platform default to prove the per-runtime
+	// override (3600s) kept the request pending.
+	time.Sleep(200 * time.Millisecond)
+	call(t, h, "lenny/send_message", `{"sessionId":"sess_r","content":"blue","inReplyTo":"req-1"}`)
+
+	select {
+	case ri := <-got:
+		if text := resultText(t, ri); !strings.Contains(text, `"answer":"blue"`) {
+			t.Errorf("request_input result = %q, want answer blue (per-runtime override not applied)", text)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("request_input did not return after resolution")
+	}
+}

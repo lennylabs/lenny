@@ -248,6 +248,31 @@
           "allowedResourceClasses": { "type": "array", "items": { "type": "string" } },
           "supportedProviders": { "type": "array", "items": { "type": "string" } },
           "allowSelfRecursion": { "type": "boolean" },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "maxSessionAgeSeconds":        { "type": "integer" },
+              "maxUploadSizeBytes":          { "type": "integer" },
+              "maxRequestInputWaitSeconds":  { "type": "integer" }
+            }
+          },
+          "setupCommandPolicy": {
+            "type": "object",
+            "properties": {
+              "mode":        { "type": "string", "enum": ["allowlist","shell"] },
+              "shell":       { "type": "boolean" },
+              "allowlist":   { "type": "array", "items": { "type": "string" } },
+              "maxCommands": { "type": "integer" }
+            }
+          },
+          "defaultPoolConfig": {
+            "type": "object",
+            "properties": {
+              "warmCount":     { "type": "integer" },
+              "resourceClass": { "type": "string" },
+              "egressProfile": { "type": "string" }
+            }
+          },
           "baseRuntime": { "type": "string" },
           "taskPolicy": {
             "type": "object",

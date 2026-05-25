@@ -123,6 +123,24 @@ type Runtime struct {
 	// when the runtime declares no setup policy.
 	SetupPolicy *SetupPolicy
 
+	// Limits is the §5.1 limits block: per-runtime session-age, upload-size,
+	// and request-input-wait caps. The §5.1 merge table classifies it
+	// Override. It is nil when the runtime declares no limits block.
+	Limits *Limits
+
+	// SetupCommandPolicy is the §5.1 setupCommandPolicy block: the
+	// per-runtime command allowlist or shell mode the gateway enforces at
+	// pod startup. The §5.1 merge table classifies it Override. It is nil
+	// when the runtime declares no setupCommandPolicy block.
+	SetupCommandPolicy *SetupCommandPolicy
+
+	// DefaultPoolConfig is the §5.1 defaultPoolConfig block: the
+	// runtime-declared default pool sizing the §5.2 pool resolver consults
+	// before falling back to platform defaults. The §5.1 merge table
+	// classifies it Override. It is nil when the runtime declares no
+	// defaultPoolConfig block.
+	DefaultPoolConfig *DefaultPoolConfig
+
 	// Capabilities is the §5.1 capabilities block: the runtime's
 	// interaction model and its mid-session injection support. It is
 	// nil when the runtime declares no capabilities block.
@@ -510,6 +528,113 @@ func (p *SetupPolicy) Clone() *SetupPolicy {
 	return &cp
 }
 
+// Limits is the §5.1 limits block on a runtime. It carries the per-runtime
+// session-age cap, upload-size cap, and the §11.3 inter-agent
+// lenny/request_input wait timeout. A zero field declares no per-runtime
+// cap for that dimension; the gateway falls back to its platform default.
+type Limits struct {
+	// MaxSessionAgeSeconds caps a session's lifetime in seconds. Zero
+	// declares no per-runtime session-age cap.
+	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
+
+	// MaxUploadSizeBytes caps a single client upload in bytes. Zero
+	// declares no per-runtime upload cap.
+	MaxUploadSizeBytes int64 `json:"maxUploadSizeBytes,omitempty"`
+
+	// MaxRequestInputWaitSeconds is the §11.3 inter-agent
+	// lenny/request_input timeout in seconds. Zero selects the platform
+	// default.
+	MaxRequestInputWaitSeconds int `json:"maxRequestInputWaitSeconds,omitempty"`
+}
+
+// Clone returns a copy of the limits block. A nil receiver clones to nil.
+func (l *Limits) Clone() *Limits {
+	if l == nil {
+		return nil
+	}
+	cp := *l
+	return &cp
+}
+
+// SetupCommandMode is the §5.1 setupCommandPolicy.mode enum: whether the
+// runtime restricts setup commands to an explicit allowlist or runs them
+// through a shell.
+type SetupCommandMode string
+
+const (
+	// SetupCommandModeAllowlist permits only the listed commands.
+	SetupCommandModeAllowlist SetupCommandMode = "allowlist"
+	// SetupCommandModeShell runs setup commands through a shell.
+	SetupCommandModeShell SetupCommandMode = "shell"
+)
+
+// AllSetupCommandModes returns the closed enum.
+func AllSetupCommandModes() []SetupCommandMode {
+	return []SetupCommandMode{SetupCommandModeAllowlist, SetupCommandModeShell}
+}
+
+// IsValid reports whether m is a known setup-command mode.
+func (m SetupCommandMode) IsValid() bool {
+	for _, v := range AllSetupCommandModes() {
+		if m == v {
+			return true
+		}
+	}
+	return false
+}
+
+// SetupCommandPolicy is the §5.1 setupCommandPolicy block on a runtime: the
+// command allowlist or shell mode the gateway enforces at pod startup
+// (§6.4). The §5.1 merge table classifies it Override.
+type SetupCommandPolicy struct {
+	// Mode selects allowlist or shell enforcement.
+	Mode SetupCommandMode `json:"mode,omitempty"`
+
+	// Shell reports whether setup commands run through a shell.
+	Shell bool `json:"shell,omitempty"`
+
+	// Allowlist is the set of permitted setup commands when Mode is
+	// allowlist.
+	Allowlist []string `json:"allowlist,omitempty"`
+
+	// MaxCommands caps the number of setup commands. Zero declares no cap.
+	MaxCommands int `json:"maxCommands,omitempty"`
+}
+
+// Clone returns a deep copy of the policy so the store never shares the
+// Allowlist slice with a caller. A nil receiver clones to nil.
+func (p *SetupCommandPolicy) Clone() *SetupCommandPolicy {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.Allowlist = append([]string(nil), p.Allowlist...)
+	return &cp
+}
+
+// DefaultPoolConfig is the §5.1 defaultPoolConfig block on a runtime: the
+// default pool sizing the §5.2 pool resolver consults before falling back
+// to platform defaults. The §5.1 merge table classifies it Override.
+type DefaultPoolConfig struct {
+	// WarmCount is the default number of warm pods to keep.
+	WarmCount int `json:"warmCount,omitempty"`
+
+	// ResourceClass is the default §5.1 resource class for the pool.
+	ResourceClass string `json:"resourceClass,omitempty"`
+
+	// EgressProfile is the default §13 egress profile for the pool.
+	EgressProfile string `json:"egressProfile,omitempty"`
+}
+
+// Clone returns a copy of the config. A nil receiver clones to nil.
+func (c *DefaultPoolConfig) Clone() *DefaultPoolConfig {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	return &cp
+}
+
 // MicrovmScrubMode is the §5.1 taskPolicy.microvmScrubMode enum: how a
 // microvm-isolated task-mode pod is scrubbed between cross-tenant tasks.
 type MicrovmScrubMode string
@@ -786,6 +911,9 @@ func cloneRuntime(r Runtime) Runtime {
 	r.SetupPolicy = r.SetupPolicy.Clone()
 	r.Capabilities = r.Capabilities.Clone()
 	r.TaskPolicy = r.TaskPolicy.Clone()
+	r.Limits = r.Limits.Clone()
+	r.SetupCommandPolicy = r.SetupCommandPolicy.Clone()
+	r.DefaultPoolConfig = r.DefaultPoolConfig.Clone()
 	return r
 }
 

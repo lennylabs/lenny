@@ -297,6 +297,23 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
 			continue
 		}
+		if err := validateLimits(p.Limits); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
+		if err := validateSetupCommandPolicy(p.SetupCommandPolicy); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
+		if err := validateDefaultPoolConfig(p.DefaultPoolConfig); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
+		// §5.1 line 36: integrationLevel is only valid on type:agent.
+		if err := p.validateIntegrationLevelOnType(); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
 		// §5.1: a type:mcp runtime does not carry an agentInterface.
 		if runtimestore.RuntimeType(p.Type) == runtimestore.TypeMCP && p.AgentInterface != nil {
 			out.Errors = append(out.Errors, BootstrapError{
@@ -361,6 +378,15 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			}
 			if p.SetupPolicy != nil {
 				rt.SetupPolicy = p.SetupPolicy
+			}
+			if p.Limits != nil {
+				rt.Limits = p.Limits
+			}
+			if p.SetupCommandPolicy != nil {
+				rt.SetupCommandPolicy = p.SetupCommandPolicy
+			}
+			if p.DefaultPoolConfig != nil {
+				rt.DefaultPoolConfig = p.DefaultPoolConfig
 			}
 			if p.MinPlatformVersion != "" {
 				rt.MinPlatformVersion = p.MinPlatformVersion

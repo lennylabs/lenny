@@ -65,6 +65,9 @@ type RuntimePayload struct {
 	CapabilityInferenceMode string                                      `json:"capabilityInferenceMode,omitempty"`
 	ToolCapabilityOverrides map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
 	SetupPolicy             *runtimestore.SetupPolicy                   `json:"setupPolicy,omitempty"`
+	Limits                  *runtimestore.Limits                        `json:"limits,omitempty"`
+	SetupCommandPolicy      *runtimestore.SetupCommandPolicy            `json:"setupCommandPolicy,omitempty"`
+	DefaultPoolConfig       *runtimestore.DefaultPoolConfig             `json:"defaultPoolConfig,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities           `json:"capabilities,omitempty"`
 	MinPlatformVersion      string                                      `json:"minPlatformVersion,omitempty"`
 	TaskPolicy              *runtimestore.TaskPolicy                    `json:"taskPolicy,omitempty"`
@@ -98,6 +101,9 @@ func runtimeFromPayload(p RuntimePayload, createdAt time.Time) runtimestore.Runt
 		CapabilityInferenceMode: capabilityinference.Mode(p.CapabilityInferenceMode),
 		ToolCapabilityOverrides: p.ToolCapabilityOverrides,
 		SetupPolicy:             p.SetupPolicy,
+		Limits:                  p.Limits,
+		SetupCommandPolicy:      p.SetupCommandPolicy,
+		DefaultPoolConfig:       p.DefaultPoolConfig,
 		Capabilities:            p.Capabilities,
 		MinPlatformVersion:      p.MinPlatformVersion,
 		TaskPolicy:              p.TaskPolicy,
@@ -127,6 +133,9 @@ type UpdateRuntimeRequest struct {
 	CapabilityInferenceMode *string                                      `json:"capabilityInferenceMode,omitempty"`
 	ToolCapabilityOverrides *map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
 	SetupPolicy             *runtimestore.SetupPolicy                    `json:"setupPolicy,omitempty"`
+	Limits                  *runtimestore.Limits                         `json:"limits,omitempty"`
+	SetupCommandPolicy      *runtimestore.SetupCommandPolicy             `json:"setupCommandPolicy,omitempty"`
+	DefaultPoolConfig       *runtimestore.DefaultPoolConfig              `json:"defaultPoolConfig,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities            `json:"capabilities,omitempty"`
 	CredentialCapabilities  *runtimestore.CredentialCapabilities         `json:"credentialCapabilities,omitempty"`
 	MinPlatformVersion      *string                                      `json:"minPlatformVersion,omitempty"`
@@ -304,6 +313,45 @@ func validateSetupPolicy(p *runtimestore.SetupPolicy) error {
 	return nil
 }
 
+// validateLimits checks a §5.1 limits block: non-negative session-age,
+// upload-size, and request-input-wait caps.
+func validateLimits(l *runtimestore.Limits) error {
+	if l == nil {
+		return nil
+	}
+	if l.MaxSessionAgeSeconds < 0 || l.MaxUploadSizeBytes < 0 || l.MaxRequestInputWaitSeconds < 0 {
+		return errors.New("limits fields must not be negative")
+	}
+	return nil
+}
+
+// validateSetupCommandPolicy checks a §5.1 setupCommandPolicy block: a
+// known mode and a non-negative maxCommands.
+func validateSetupCommandPolicy(p *runtimestore.SetupCommandPolicy) error {
+	if p == nil {
+		return nil
+	}
+	if p.Mode != "" && !p.Mode.IsValid() {
+		return errors.New("setupCommandPolicy.mode must be allowlist or shell")
+	}
+	if p.MaxCommands < 0 {
+		return errors.New("setupCommandPolicy.maxCommands must not be negative")
+	}
+	return nil
+}
+
+// validateDefaultPoolConfig checks a §5.1 defaultPoolConfig block: a
+// non-negative warmCount.
+func validateDefaultPoolConfig(c *runtimestore.DefaultPoolConfig) error {
+	if c == nil {
+		return nil
+	}
+	if c.WarmCount < 0 {
+		return errors.New("defaultPoolConfig.warmCount must not be negative")
+	}
+	return nil
+}
+
 // validateCapabilities checks a §5.1 capabilities block: a known
 // interaction model, known injection modes, and the §5.1 coherence
 // rule that a multi_turn runtime must support injection.
@@ -349,6 +397,9 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		CapabilityInferenceMode: string(r.CapabilityInferenceMode),
 		ToolCapabilityOverrides: r.ToolCapabilityOverrides,
 		SetupPolicy:             r.SetupPolicy,
+		Limits:                  r.Limits,
+		SetupCommandPolicy:      r.SetupCommandPolicy,
+		DefaultPoolConfig:       r.DefaultPoolConfig,
 		Capabilities:            r.Capabilities,
 		MinPlatformVersion:      r.MinPlatformVersion,
 		TaskPolicy:              r.TaskPolicy,
@@ -398,6 +449,17 @@ func (p RuntimePayload) validatePayloadEnums() error {
 	return nil
 }
 
+// validateIntegrationLevelOnType enforces §5.1 line 36: integrationLevel
+// is only meaningful on type:agent runtimes and must not be set on
+// type:mcp. An empty Type defaults to agent (ApplyDefaults), so an empty
+// Type with a declared integrationLevel is allowed.
+func (p RuntimePayload) validateIntegrationLevelOnType() error {
+	if p.IntegrationLevel != "" && runtimestore.RuntimeType(p.Type) == runtimestore.TypeMCP {
+		return errors.New("integrationLevel is only valid on type: agent runtimes")
+	}
+	return nil
+}
+
 func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	var body RuntimePayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -423,6 +485,23 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	}
 	if err := validateSetupPolicy(body.SetupPolicy); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	if err := validateLimits(body.Limits); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	if err := validateSetupCommandPolicy(body.SetupCommandPolicy); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	if err := validateDefaultPoolConfig(body.DefaultPoolConfig); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	// §5.1 line 36: integrationLevel is only valid on type:agent runtimes.
+	if err := body.validateIntegrationLevelOnType(); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_RUNTIME", err.Error(), nil)
 		return
 	}
 	if err := validateCapabilities(body.Capabilities); err != nil {
@@ -600,6 +679,24 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if body.Limits != nil {
+		if err := validateLimits(body.Limits); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
+	if body.SetupCommandPolicy != nil {
+		if err := validateSetupCommandPolicy(body.SetupCommandPolicy); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
+	if body.DefaultPoolConfig != nil {
+		if err := validateDefaultPoolConfig(body.DefaultPoolConfig); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
 	if body.Capabilities != nil {
 		if err := validateCapabilities(body.Capabilities); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
@@ -619,6 +716,13 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	if current, err := r.runtimes.Get(req.Context(), name); err == nil {
+		// §5.1 line 36: integrationLevel is only valid on type:agent. Type
+		// is immutable via PUT, so the current row's type is authoritative.
+		if body.IntegrationLevel != nil && *body.IntegrationLevel != "" && current.Type == runtimestore.TypeMCP {
+			writeError(w, http.StatusBadRequest, "INVALID_RUNTIME",
+				"integrationLevel is only valid on type: agent runtimes", nil)
+			return
+		}
 		// §5.1 restrict-only invariants on supportedProviders /
 		// allowSelfRecursion are evaluated against the resolved base.
 		var base runtimestore.Runtime
@@ -682,6 +786,15 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.SetupPolicy != nil {
 			rt.SetupPolicy = body.SetupPolicy
+		}
+		if body.Limits != nil {
+			rt.Limits = body.Limits
+		}
+		if body.SetupCommandPolicy != nil {
+			rt.SetupCommandPolicy = body.SetupCommandPolicy
+		}
+		if body.DefaultPoolConfig != nil {
+			rt.DefaultPoolConfig = body.DefaultPoolConfig
 		}
 		if body.Capabilities != nil {
 			rt.Capabilities = body.Capabilities
@@ -788,6 +901,15 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.SetupPolicy != nil {
 		out = append(out, "setupPolicy")
+	}
+	if b.Limits != nil {
+		out = append(out, "limits")
+	}
+	if b.SetupCommandPolicy != nil {
+		out = append(out, "setupCommandPolicy")
+	}
+	if b.DefaultPoolConfig != nil {
+		out = append(out, "defaultPoolConfig")
 	}
 	if b.Capabilities != nil {
 		out = append(out, "capabilities")

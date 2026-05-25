@@ -600,6 +600,18 @@ func Register(srv *mcp.Server, deps Deps) {
 			if session.IsTerminal(row.State) {
 				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
 			}
+			// §11.3 / §5.1 limits.maxRequestInputWaitSeconds: the session's
+			// runtime may declare a per-runtime wait cap that overrides the
+			// platform default. Resolve the effective runtime so a derived
+			// runtime's merged Override value applies.
+			callTimeout := requestInputTimeout
+			if deps.Runtimes != nil && row.RuntimeRef != "" {
+				if rt, rerr := runtimestore.Resolve(ctx, deps.Runtimes, row.RuntimeRef); rerr == nil {
+					if rt.Limits != nil && rt.Limits.MaxRequestInputWaitSeconds > 0 {
+						callTimeout = time.Duration(rt.Limits.MaxRequestInputWaitSeconds) * time.Second
+					}
+				}
+			}
 			ch, err := deps.InputWaits.Register(in.SessionID, in.RequestID)
 			if err != nil {
 				return mcp.ToolResult{}, err
@@ -622,10 +634,10 @@ func Register(srv *mcp.Server, deps Deps) {
 					Answer    string `json:"answer"`
 				}{RequestID: in.RequestID, Answer: answer})
 				return textResult(string(body)), nil
-			case <-time.After(requestInputTimeout):
+			case <-time.After(callTimeout):
 				deps.InputWaits.Cancel(in.SessionID, in.RequestID)
 				return mcp.ToolResult{}, fmt.Errorf(
-					"REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", in.RequestID, requestInputTimeout,
+					"REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", in.RequestID, callTimeout,
 				)
 			case <-ctx.Done():
 				deps.InputWaits.Cancel(in.SessionID, in.RequestID)

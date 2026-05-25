@@ -1300,3 +1300,110 @@ func TestRuntimeCredentialCapabilitiesRoundTrip(t *testing.T) {
 		t.Errorf("stored credentialCapabilities lost proxyDialect: %+v", stored.CredentialCapabilities)
 	}
 }
+
+// spec: §5.1 lines 76-101 / merge table — limits, setupCommandPolicy, and
+// defaultPoolConfig are modeled, persisted, and round-trip through the
+// admin create/get path.
+func TestCreateRuntimeModelsLimitsSetupCommandPolicyAndPoolConfig(t *testing.T) {
+	router, store, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "langgraph",
+		Type:  "agent",
+		Image: "ghcr.io/acme/langgraph@sha256:abcdef",
+		Limits: &runtimestore.Limits{
+			MaxSessionAgeSeconds: 7200, MaxUploadSizeBytes: 524288000, MaxRequestInputWaitSeconds: 600,
+		},
+		SetupCommandPolicy: &runtimestore.SetupCommandPolicy{
+			Mode: runtimestore.SetupCommandModeAllowlist, Allowlist: []string{"npm ci", "make"}, MaxCommands: 10,
+		},
+		DefaultPoolConfig: &runtimestore.DefaultPoolConfig{WarmCount: 5, ResourceClass: "medium", EgressProfile: "restricted"},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "langgraph")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if row.Limits == nil || row.Limits.MaxRequestInputWaitSeconds != 600 || row.Limits.MaxUploadSizeBytes != 524288000 {
+		t.Errorf("stored limits = %+v", row.Limits)
+	}
+	if row.SetupCommandPolicy == nil || row.SetupCommandPolicy.Mode != runtimestore.SetupCommandModeAllowlist ||
+		len(row.SetupCommandPolicy.Allowlist) != 2 {
+		t.Errorf("stored setupCommandPolicy = %+v", row.SetupCommandPolicy)
+	}
+	if row.DefaultPoolConfig == nil || row.DefaultPoolConfig.WarmCount != 5 || row.DefaultPoolConfig.ResourceClass != "medium" {
+		t.Errorf("stored defaultPoolConfig = %+v", row.DefaultPoolConfig)
+	}
+}
+
+// spec: §5.1 — invalid limits / setupCommandPolicy values are rejected at
+// registration.
+func TestCreateRuntimeRejectsInvalidNewBlocks(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload admin.RuntimePayload
+	}{
+		{"negative-limit", admin.RuntimePayload{
+			Name: "r1", Image: "x@sha256:a", Limits: &runtimestore.Limits{MaxSessionAgeSeconds: -1},
+		}},
+		{"bad-setup-mode", admin.RuntimePayload{
+			Name: "r2", Image: "x@sha256:a", SetupCommandPolicy: &runtimestore.SetupCommandPolicy{Mode: "bogus"},
+		}},
+		{"negative-warm", admin.RuntimePayload{
+			Name: "r3", Image: "x@sha256:a", DefaultPoolConfig: &runtimestore.DefaultPoolConfig{WarmCount: -2},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router, _, _ := newRuntimeAdmin(t)
+			rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", tc.payload)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status %d, want 400; body=%s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+// spec: §5.1 line 36 — integrationLevel is only valid on type:agent
+// runtimes; a type:mcp payload that sets it is rejected with INVALID_RUNTIME.
+func TestCreateRuntimeRejectsIntegrationLevelOnMCP(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name: "mcp-tool", Type: "mcp", Image: "lenny/mcp-tool@sha256:abc", IntegrationLevel: "full",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("INVALID_RUNTIME")) {
+		t.Errorf("error code: body=%s, want INVALID_RUNTIME", rr.Body.String())
+	}
+}
+
+// spec: §5.1 line 36 — a PUT setting integrationLevel on an existing
+// type:mcp runtime is rejected.
+func TestUpdateRuntimeRejectsIntegrationLevelOnMCP(t *testing.T) {
+	router, store, _ := newRuntimeAdmin(t)
+	if err := store.Create(context.Background(), runtimestore.Runtime{
+		Name: "mcp-live", Type: runtimestore.TypeMCP, Image: "lenny/mcp-live@sha256:abc",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	level := "standard"
+	rr := runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/mcp-live",
+		admin.UpdateRuntimeRequest{IntegrationLevel: &level})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// spec: §5.1 line 36 — a type:agent runtime accepts integrationLevel.
+func TestCreateRuntimeAcceptsIntegrationLevelOnAgent(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name: "agent-rt", Type: "agent", Image: "lenny/agent@sha256:abc", IntegrationLevel: "full",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+}

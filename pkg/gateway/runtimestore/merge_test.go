@@ -322,3 +322,52 @@ func TestMergeOverridesCredentialCapabilities(t *testing.T) {
 		t.Errorf("derived proxyDialect must replace base: %+v", override.CredentialCapabilities)
 	}
 }
+
+// spec: §5.1 merge table — limits, setupCommandPolicy, and
+// defaultPoolConfig are Override: the derived block replaces the base
+// block when present, and the base block applies when the derived runtime
+// omits it.
+func TestMergeOverridesLimitsSetupCommandPolicyAndPoolConfig(t *testing.T) {
+	base := runtimestore.Runtime{
+		Name:   "base",
+		Limits: &runtimestore.Limits{MaxSessionAgeSeconds: 7200, MaxUploadSizeBytes: 500, MaxRequestInputWaitSeconds: 600},
+		SetupCommandPolicy: &runtimestore.SetupCommandPolicy{
+			Mode: runtimestore.SetupCommandModeAllowlist, Allowlist: []string{"npm ci", "make"}, MaxCommands: 10,
+		},
+		DefaultPoolConfig: &runtimestore.DefaultPoolConfig{WarmCount: 5, ResourceClass: "medium", EgressProfile: "restricted"},
+	}
+
+	// A derived runtime that omits the blocks inherits the base blocks.
+	inherit := runtimestore.Merge(base, runtimestore.Runtime{Name: "d1", BaseRuntime: "base"})
+	if inherit.Limits == nil || inherit.Limits.MaxRequestInputWaitSeconds != 600 {
+		t.Errorf("derived must inherit base limits when unset: %+v", inherit.Limits)
+	}
+	if inherit.SetupCommandPolicy == nil || len(inherit.SetupCommandPolicy.Allowlist) != 2 {
+		t.Errorf("derived must inherit base setupCommandPolicy when unset: %+v", inherit.SetupCommandPolicy)
+	}
+	if inherit.DefaultPoolConfig == nil || inherit.DefaultPoolConfig.WarmCount != 5 {
+		t.Errorf("derived must inherit base defaultPoolConfig when unset: %+v", inherit.DefaultPoolConfig)
+	}
+	// The inherited setupCommandPolicy must not alias the base slice.
+	inherit.SetupCommandPolicy.Allowlist[0] = "tampered"
+	if base.SetupCommandPolicy.Allowlist[0] != "npm ci" {
+		t.Error("Merge result aliases the base setupCommandPolicy.allowlist slice")
+	}
+
+	// A derived runtime that declares its own blocks replaces the base.
+	override := runtimestore.Merge(base, runtimestore.Runtime{
+		Name: "d2", BaseRuntime: "base",
+		Limits:             &runtimestore.Limits{MaxRequestInputWaitSeconds: 120},
+		SetupCommandPolicy: &runtimestore.SetupCommandPolicy{Mode: runtimestore.SetupCommandModeAllowlist, Allowlist: []string{"make"}},
+		DefaultPoolConfig:  &runtimestore.DefaultPoolConfig{WarmCount: 1},
+	})
+	if override.Limits.MaxRequestInputWaitSeconds != 120 || override.Limits.MaxSessionAgeSeconds != 0 {
+		t.Errorf("derived limits must fully replace the base block: %+v", override.Limits)
+	}
+	if len(override.SetupCommandPolicy.Allowlist) != 1 || override.SetupCommandPolicy.MaxCommands != 0 {
+		t.Errorf("derived setupCommandPolicy must fully replace base: %+v", override.SetupCommandPolicy)
+	}
+	if override.DefaultPoolConfig.WarmCount != 1 || override.DefaultPoolConfig.ResourceClass != "" {
+		t.Errorf("derived defaultPoolConfig must fully replace base: %+v", override.DefaultPoolConfig)
+	}
+}

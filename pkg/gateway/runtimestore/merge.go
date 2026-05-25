@@ -37,8 +37,9 @@ func Resolve(ctx context.Context, s Store, name string) (Runtime, error) {
 //     runtime may not set them.
 //   - Override fields (description, delegationPolicyRef, agentInterface,
 //     taskPolicy, capabilityInferenceMode, toolCapabilityOverrides,
-//     minPlatformVersion, supportedProviders) take the derived value
-//     when it is set and the base value otherwise.
+//     minPlatformVersion, supportedProviders, credentialCapabilities,
+//     limits, setupCommandPolicy, defaultPoolConfig) take the derived
+//     value when it is set and the base value otherwise.
 //   - allowSelfRecursion is Override (restrict-only): the derived value
 //     wins, and the restrict-only invariant is enforced at registration.
 //   - publishedMetadata appends the derived entries onto the base list,
@@ -105,6 +106,18 @@ func Merge(base, derived Runtime) Runtime {
 	// block applies when the derived runtime omits it.
 	if derived.CredentialCapabilities == nil {
 		eff.CredentialCapabilities = cb.CredentialCapabilities.Clone()
+	}
+	// §5.1 limits, setupCommandPolicy, and defaultPoolConfig are Override:
+	// the derived block wholly replaces the base block when the derived
+	// runtime declares one, and the base block applies otherwise.
+	if derived.Limits == nil {
+		eff.Limits = cb.Limits.Clone()
+	}
+	if derived.SetupCommandPolicy == nil {
+		eff.SetupCommandPolicy = cb.SetupCommandPolicy.Clone()
+	}
+	if derived.DefaultPoolConfig == nil {
+		eff.DefaultPoolConfig = cb.DefaultPoolConfig.Clone()
 	}
 
 	// Collection merges.
