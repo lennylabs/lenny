@@ -2280,7 +2280,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   both the `lenny/send_message` response path (`mcptools.applyPostAgentOutput`)
   and the REST `/messages` path (`sessionserver.runPostAgentOutput`); a REJECT
   writes the §16.7 `interceptor.rejected` audit row and blocks delivery.
-  Resolved in commit <PENDING>.
+  Resolved in commit 973e2b09.
 
 ### - [x] F-4.8.13 — `PreLLMRequest`, `PostLLMResponse` chains not invoked (Missing) [Medium] — CLOSED
 
