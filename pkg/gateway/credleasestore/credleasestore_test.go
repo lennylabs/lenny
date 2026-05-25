@@ -24,6 +24,7 @@ func proxyLease(leaseID, token string) credential.Lease {
 		PoolID:       "claude-prod",
 		CredentialID: "key-1",
 		DeliveryMode: credential.DeliveryProxy,
+		IssuedAt:     time.Now(),
 		ExpiresAt:    time.Now().Add(time.Hour),
 		Proxy: &credential.ProxyConfig{
 			ProxyURL:     "https://gateway-internal:8443/llm-proxy",
@@ -86,6 +87,7 @@ func TestDirectLeaseHasNoTokenIndex(t *testing.T) {
 		TenantID:      "acme",
 		CredentialRef: "cred-1",
 		DeliveryMode:  credential.DeliveryDirect,
+		IssuedAt:      time.Now(),
 		ExpiresAt:     time.Now().Add(time.Hour),
 	}
 	if err := s.Put(direct); err != nil {

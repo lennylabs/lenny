@@ -126,6 +126,7 @@ func MintLease(req MintRequest) (Lease, error) {
 		TenantID:        req.TenantID,
 		CredentialRef:   req.CredentialRef,
 		DeliveryMode:    req.DeliveryMode,
+		IssuedAt:        now,
 		ExpiresAt:       expiresAt,
 		RenewBefore:     expiresAt.Add(-time.Duration(renewBefore) * time.Second),
 		FallbackAllowed: req.FallbackAllowed,

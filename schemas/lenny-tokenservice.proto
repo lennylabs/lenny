@@ -142,4 +142,10 @@ message CredentialLease {
   // sees it. Empty for direct-mode leases where the upstream secret is
   // delivered to the runtime via the adapter credential file instead.
   string upstream_credential = 18;
+  // issued_at is the lease-mint instant. The §4.9 expiry rule computes
+  // expires_at as issued_at + min(leaseTTLSeconds, providerMaxTTL); the
+  // gateway records it so the lease's wall-clock duration is auditable
+  // and feeds the §16.1 lenny_credential_lease_duration_seconds
+  // histogram. spec: §4.9 line 1145.
+  google.protobuf.Timestamp issued_at = 19;
 }

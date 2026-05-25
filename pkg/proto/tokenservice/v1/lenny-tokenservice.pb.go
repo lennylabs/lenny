@@ -422,8 +422,14 @@ type CredentialLease struct {
 	// sees it. Empty for direct-mode leases where the upstream secret is
 	// delivered to the runtime via the adapter credential file instead.
 	UpstreamCredential string `protobuf:"bytes,18,opt,name=upstream_credential,json=upstreamCredential,proto3" json:"upstream_credential,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// issued_at is the lease-mint instant. The §4.9 expiry rule computes
+	// expires_at as issued_at + min(leaseTTLSeconds, providerMaxTTL); the
+	// gateway records it so the lease's wall-clock duration is auditable
+	// and feeds the §16.1 lenny_credential_lease_duration_seconds
+	// histogram. spec: §4.9 line 1145.
+	IssuedAt      *timestamppb.Timestamp `protobuf:"bytes,19,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CredentialLease) Reset() {
@@ -582,6 +588,13 @@ func (x *CredentialLease) GetUpstreamCredential() string {
 	return ""
 }
 
+func (x *CredentialLease) GetIssuedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return nil
+}
+
 var File_lenny_tokenservice_proto protoreflect.FileDescriptor
 
 const file_lenny_tokenservice_proto_rawDesc = "" +
@@ -608,7 +621,7 @@ const file_lenny_tokenservice_proto_rawDesc = "" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x19\n" +
 	"\blease_id\x18\x02 \x01(\tR\aleaseId\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"\x1b\n" +
-	"\x19RevokeCredentialsResponse\"\xa5\x05\n" +
+	"\x19RevokeCredentialsResponse\"\xde\x05\n" +
 	"\x0fCredentialLease\x12\x19\n" +
 	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x1d\n" +
 	"\n" +
@@ -632,7 +645,8 @@ const file_lenny_tokenservice_proto_rawDesc = "" +
 	"\vlease_token\x18\x10 \x01(\tR\n" +
 	"leaseToken\x12%\n" +
 	"\x0eupstream_model\x18\x11 \x01(\tR\rupstreamModel\x12/\n" +
-	"\x13upstream_credential\x18\x12 \x01(\tR\x12upstreamCredential2\xfc\x02\n" +
+	"\x13upstream_credential\x18\x12 \x01(\tR\x12upstreamCredential\x127\n" +
+	"\tissued_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt2\xfc\x02\n" +
 	"\fTokenService\x12x\n" +
 	"\x11AssignCredentials\x12/.lenny.tokenservice.v1.AssignCredentialsRequest\x1a0.lenny.tokenservice.v1.AssignCredentialsResponse\"\x00\x12x\n" +
 	"\x11RotateCredentials\x12/.lenny.tokenservice.v1.RotateCredentialsRequest\x1a0.lenny.tokenservice.v1.RotateCredentialsResponse\"\x00\x12x\n" +
@@ -667,18 +681,19 @@ var file_lenny_tokenservice_proto_depIdxs = []int32{
 	6, // 1: lenny.tokenservice.v1.RotateCredentialsResponse.lease:type_name -> lenny.tokenservice.v1.CredentialLease
 	8, // 2: lenny.tokenservice.v1.CredentialLease.expires_at:type_name -> google.protobuf.Timestamp
 	8, // 3: lenny.tokenservice.v1.CredentialLease.renew_before:type_name -> google.protobuf.Timestamp
-	6, // 4: lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry.value:type_name -> lenny.tokenservice.v1.CredentialLease
-	0, // 5: lenny.tokenservice.v1.TokenService.AssignCredentials:input_type -> lenny.tokenservice.v1.AssignCredentialsRequest
-	2, // 6: lenny.tokenservice.v1.TokenService.RotateCredentials:input_type -> lenny.tokenservice.v1.RotateCredentialsRequest
-	4, // 7: lenny.tokenservice.v1.TokenService.RevokeCredentials:input_type -> lenny.tokenservice.v1.RevokeCredentialsRequest
-	1, // 8: lenny.tokenservice.v1.TokenService.AssignCredentials:output_type -> lenny.tokenservice.v1.AssignCredentialsResponse
-	3, // 9: lenny.tokenservice.v1.TokenService.RotateCredentials:output_type -> lenny.tokenservice.v1.RotateCredentialsResponse
-	5, // 10: lenny.tokenservice.v1.TokenService.RevokeCredentials:output_type -> lenny.tokenservice.v1.RevokeCredentialsResponse
-	8, // [8:11] is the sub-list for method output_type
-	5, // [5:8] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	8, // 4: lenny.tokenservice.v1.CredentialLease.issued_at:type_name -> google.protobuf.Timestamp
+	6, // 5: lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry.value:type_name -> lenny.tokenservice.v1.CredentialLease
+	0, // 6: lenny.tokenservice.v1.TokenService.AssignCredentials:input_type -> lenny.tokenservice.v1.AssignCredentialsRequest
+	2, // 7: lenny.tokenservice.v1.TokenService.RotateCredentials:input_type -> lenny.tokenservice.v1.RotateCredentialsRequest
+	4, // 8: lenny.tokenservice.v1.TokenService.RevokeCredentials:input_type -> lenny.tokenservice.v1.RevokeCredentialsRequest
+	1, // 9: lenny.tokenservice.v1.TokenService.AssignCredentials:output_type -> lenny.tokenservice.v1.AssignCredentialsResponse
+	3, // 10: lenny.tokenservice.v1.TokenService.RotateCredentials:output_type -> lenny.tokenservice.v1.RotateCredentialsResponse
+	5, // 11: lenny.tokenservice.v1.TokenService.RevokeCredentials:output_type -> lenny.tokenservice.v1.RevokeCredentialsResponse
+	9, // [9:12] is the sub-list for method output_type
+	6, // [6:9] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_lenny_tokenservice_proto_init() }

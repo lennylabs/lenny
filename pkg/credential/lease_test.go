@@ -21,6 +21,7 @@ func validProxyLease() Lease {
 		PoolID:       "claude-prod",
 		CredentialID: "key-1",
 		DeliveryMode: DeliveryProxy,
+		IssuedAt:     time.Now(),
 		ExpiresAt:    time.Now().Add(time.Hour),
 		Proxy: &ProxyConfig{
 			ProxyURL:     "https://gateway-internal:8443/llm-proxy",
@@ -55,6 +56,7 @@ func TestLeaseValidateAcceptsValidLeases(t *testing.T) {
 		TenantID:      "acme",
 		CredentialRef: "cred-xyz",
 		DeliveryMode:  DeliveryDirect,
+		IssuedAt:      time.Now(),
 		ExpiresAt:     time.Now().Add(time.Hour),
 	}
 	if err := userDirect.Validate(); err != nil {
@@ -113,6 +115,51 @@ func TestLeaseValidateRejectsZeroExpiry(t *testing.T) {
 	l.ExpiresAt = time.Time{}
 	if l.Validate() == nil {
 		t.Error("lease with a zero expiresAt passed Validate")
+	}
+}
+
+// spec: §4.9 line 1145 — a lease records issuedAt so expiresAt and the
+// wall-clock duration are auditable.
+func TestLeaseValidateRejectsZeroIssuedAt(t *testing.T) {
+	l := validProxyLease()
+	l.IssuedAt = time.Time{}
+	err := l.Validate()
+	if err == nil {
+		t.Fatal("lease with a zero issuedAt passed Validate")
+	}
+	var le *LeaseError
+	if !errors.As(err, &le) {
+		t.Fatalf("error %v is not a *LeaseError", err)
+	}
+	found := false
+	for _, v := range le.Violations {
+		if v == "issuedAt is required" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("violations %v do not name issuedAt", le.Violations)
+	}
+}
+
+// spec: §4.9 line 1145 — Duration measures the lease lifetime from
+// issuedAt, backing the §16.1 lenny_credential_lease_duration_seconds
+// observation.
+func TestLeaseDuration(t *testing.T) {
+	issued := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	l := validProxyLease()
+	l.IssuedAt = issued
+	if got := l.Duration(issued.Add(90 * time.Second)); got != 90*time.Second {
+		t.Errorf("Duration = %v, want 90s", got)
+	}
+	// A now before issuedAt yields a zero duration rather than negative.
+	if got := l.Duration(issued.Add(-time.Second)); got != 0 {
+		t.Errorf("Duration before issuedAt = %v, want 0", got)
+	}
+	// A zero issuedAt (a pre-issuedAt lease) yields zero.
+	l.IssuedAt = time.Time{}
+	if got := l.Duration(issued); got != 0 {
+		t.Errorf("Duration with zero issuedAt = %v, want 0", got)
 	}
 }
 

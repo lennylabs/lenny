@@ -372,6 +372,7 @@ func credentialLeaseFromProto(p *tokensv1.CredentialLease) (credential.Lease, er
 		TenantID:        p.GetTenantId(),
 		CredentialRef:   p.GetCredentialRef(),
 		DeliveryMode:    credential.DeliveryMode(p.GetDeliveryMode()),
+		IssuedAt:        p.GetIssuedAt().AsTime(),
 		ExpiresAt:       p.GetExpiresAt().AsTime(),
 		RenewBefore:     p.GetRenewBefore().AsTime(),
 		FallbackAllowed: p.GetFallbackAllowed(),

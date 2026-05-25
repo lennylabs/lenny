@@ -47,6 +47,7 @@ func handlerLease(token string) credential.Lease {
 		PoolID:       "claude-prod",
 		CredentialID: "key-1",
 		DeliveryMode: credential.DeliveryProxy,
+		IssuedAt:     time.Now(),
 		ExpiresAt:    time.Now().Add(time.Hour),
 		Proxy: &credential.ProxyConfig{
 			ProxyURL:     "https://gateway-internal:8443/llm-proxy",

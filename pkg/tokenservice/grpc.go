@@ -213,6 +213,7 @@ func leaseToProto(l credential.Lease) *tokensv1.CredentialLease {
 		TenantId:        l.TenantID,
 		CredentialRef:   l.CredentialRef,
 		DeliveryMode:    string(l.DeliveryMode),
+		IssuedAt:        timestamppb.New(l.IssuedAt),
 		ExpiresAt:       timestamppb.New(l.ExpiresAt),
 		RenewBefore:     timestamppb.New(l.RenewBefore),
 		FallbackAllowed: l.FallbackAllowed,

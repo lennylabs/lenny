@@ -71,8 +71,12 @@ func TestMintLeaseProxyLease(t *testing.T) {
 	if err := lease.Validate(); err != nil {
 		t.Errorf("minted lease fails Validate: %v", err)
 	}
-	if !lease.ExpiresAt.Equal(now.Add(time.Hour)) {
-		t.Errorf("ExpiresAt = %v, want now+1h", lease.ExpiresAt)
+	// spec: §4.9 line 1145 — expiresAt = issuedAt + min(leaseTTLSeconds, providerMaxTTL).
+	if !lease.IssuedAt.Equal(now) {
+		t.Errorf("IssuedAt = %v, want %v", lease.IssuedAt, now)
+	}
+	if !lease.ExpiresAt.Equal(lease.IssuedAt.Add(time.Hour)) {
+		t.Errorf("ExpiresAt = %v, want issuedAt+1h", lease.ExpiresAt)
 	}
 	if !lease.RenewBefore.Equal(lease.ExpiresAt.Add(-300 * time.Second)) {
 		t.Errorf("RenewBefore = %v, want expiresAt-300s", lease.RenewBefore)

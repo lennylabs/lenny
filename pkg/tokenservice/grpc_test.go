@@ -65,6 +65,15 @@ func TestGRPCAssignCredentialsReturnsMaterializedLease(t *testing.T) {
 	if _, found := leases.GetByID(got.LeaseId); !found {
 		t.Errorf("lease %q not recorded in the lease store", got.LeaseId)
 	}
+	// spec: §4.9 line 1145 — the wire lease carries issued_at so the
+	// gateway can record the lease's wall-clock duration. It must be set
+	// and not after expires_at.
+	if got.IssuedAt == nil || got.IssuedAt.AsTime().IsZero() {
+		t.Errorf("lease has no issued_at: %+v", got)
+	}
+	if got.ExpiresAt != nil && got.IssuedAt.AsTime().After(got.ExpiresAt.AsTime()) {
+		t.Errorf("issued_at %v is after expires_at %v", got.IssuedAt.AsTime(), got.ExpiresAt.AsTime())
+	}
 }
 
 // spec: 4.3

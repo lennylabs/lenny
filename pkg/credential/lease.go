@@ -68,6 +68,12 @@ type Lease struct {
 	CredentialRef string
 	// DeliveryMode is the lease's §4.9 credential delivery mode.
 	DeliveryMode DeliveryMode
+	// IssuedAt is the lease-mint instant. The §4.9 expiry rule
+	// (spec/04_system-components.md line 1145) computes ExpiresAt as
+	// `issuedAt + min(leaseTTLSeconds, providerMaxTTL)`; recording it
+	// makes the lease's wall-clock duration auditable and feeds the
+	// §16.1 `lenny_credential_lease_duration_seconds` histogram.
+	IssuedAt time.Time
 	// ExpiresAt is the lease expiry. The §4.9 LLM proxy rejects a
 	// request whose lease has expired before any upstream call.
 	ExpiresAt time.Time
@@ -133,6 +139,9 @@ func (l Lease) Validate() error {
 			v = append(v, "a proxy materializedConfig requires proxyUrl, proxyDialect, and leaseToken")
 		}
 	}
+	if l.IssuedAt.IsZero() {
+		v = append(v, "issuedAt is required")
+	}
 	if l.ExpiresAt.IsZero() {
 		v = append(v, "expiresAt is required")
 	}
@@ -147,6 +156,20 @@ func (l Lease) Validate() error {
 // lease is rejected before any upstream call.
 func (l Lease) Expired(now time.Time) bool {
 	return !now.Before(l.ExpiresAt)
+}
+
+// Duration reports the wall-clock time the lease has been live as of
+// now, measured from IssuedAt. It backs the §16.1
+// `lenny_credential_lease_duration_seconds` observation taken when a
+// lease is released. A zero IssuedAt (a lease minted before issuedAt
+// was recorded) yields a zero duration.
+//
+// spec: §4.9 line 1145 — `expiresAt = issuedAt + min(leaseTTLSeconds, providerMaxTTL)`.
+func (l Lease) Duration(now time.Time) time.Duration {
+	if l.IssuedAt.IsZero() || now.Before(l.IssuedAt) {
+		return 0
+	}
+	return now.Sub(l.IssuedAt)
 }
 
 // CredentialKey is the §4.9 source-aware identity of a backing
