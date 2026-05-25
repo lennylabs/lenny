@@ -2958,7 +2958,7 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.16 — `CredentialLease` materializedConfig schemas not produced; direct-mode delivery has no provider-specific shape on the wire [Medium] — OPEN
+### - [x] F-4.9.16 — `CredentialLease` materializedConfig schemas not produced; direct-mode delivery has no provider-specific shape on the wire [Medium] — CLOSED
 
 **Severity:** Medium (the direct-mode delivery path produces a lease with `Provider`, `PoolID`, `CredentialID` but no provider-shaped credential payload; the spec's per-provider `materializedConfig` schemas at lines 1267-1297 are not modelled).
 
@@ -2968,6 +2968,8 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 - `pkg/credential/lease.go:52-87` defines `Lease` with `Proxy *ProxyConfig` for proxy-mode and `Validate()` that requires it; direct-mode leases carry no `materializedConfig` analog at all.
 - The adapter wire form (`pkg/proto/adapter/v1`) `CredentialLease` carries `upstream_credential` as a single string (used by the Token Service to send the API key to the gateway for caching, not for adapter delivery to the pod). There is no `accessKeyId`/`secretAccessKey`/`sessionToken`/`region`/`endpointUrl`/`expiresAt` structure for AWS, no `serviceAccountJson`/`projectId`/`region` for Vertex, etc.
 - The spec MUSTs validation at `Token Service`: "A missing required field causes lease issuance to fail with `CREDENTIAL_MATERIALIZATION_ERROR` (category: `INTERNAL`)". No `CREDENTIAL_MATERIALIZATION_ERROR` code exists in `pkg/`.
+
+**Resolution (commit 017f9a68):** Modeled the §4.9 direct-mode materializedConfig as a discriminated `credential.MaterializedConfig` (map keyed on the lease Provider). `pkg/credential/materialize.go` defines the per-provider Required:yes field tables (anthropic_direct, aws_bedrock, vertex_ai, github, vault_transit) plus the azure_openai API-key/Azure-AD variant rules, an RFC3339 expiry check, and the custom-provider bypass; `ValidateMaterializedConfig` returns a `*MaterializationError` (sentinel `ErrCredentialMaterialization`, code `CodeCredentialMaterializationError`). `credential.Lease` gains `Direct` tagged `json:"-"` so the durable pgstore never persists upstream secrets to its JSONB column (the bundle reaches the pod only through the adapter credential file). `MintLease` validates the bundle before issuing. The Token Service `leaseToProto` carries it in the new `tokensv1.CredentialLease.materialized_config` (field 20); the gateway client reconstructs `lease.Direct`; `AssignCredentials`/`RotateCredentials` map a materialization failure to `ResourceExhausted` so it surfaces to the client as `CREDENTIAL_POOL_EXHAUSTED` per line 1298. `credassign.PoolCredential.Materialized` carries the bundle (anthropic_direct promotes its `APIKey` to `{apiKey}`); `ProtoLease` renders the direct-mode payload the adapter writes to `credentials.json`.
 
 ---
 
@@ -3009,13 +3011,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.20 — `vault_transit` provider has no admission-time validation (length, scheme), no translator [Low] — OPEN
+### - [x] F-4.9.20 — `vault_transit` provider has no admission-time validation (length, scheme), no translator [Low] — CLOSED
 
 **Severity:** Low (provider is in the enum and accepted by `credentialstore.Register`, but no translator and no admission-time validation of the `vault_transit` per-pool fields exist).
 
 **Spec:** spec/04_system-components.md line 1098 (`vault_transit`), 1293-1297 (`materializedConfig` schema), 1154 (Vault-specific TTL clamping rule).
 
 **Evidence:** `pkg/credential/credential.go:28` declares `ProviderVaultTransit`. `pkg/gateway/llmproxy/*_translator.go` has no `vault_transit` translator. The spec's "Vault token TTL must be at least `leaseTTLSeconds`; a shorter Vault TTL takes precedence" rule is not implemented anywhere.
+
+**Resolution (commit 017f9a68):** Closed jointly with F-4.9.16. The `vault_transit` materializedConfig schema (`vaultToken`, `vaultAddr`, `transitPath`, `keyName`, `expiresAt`, all Required:yes) is now in `directRequiredFields`, so a pool credential missing any of them fails issuance at the §4.9 mint validation with `CREDENTIAL_MATERIALIZATION_ERROR` (the admission-time field/scheme check the finding asked for; the bundle's `expiresAt` is RFC3339-validated). The §4.9 line 1154 Vault TTL clamping rule is implemented in `MintLease`'s `clampDirectExpiry`: when the materialized `expiresAt` precedes `issuedAt + leaseTTLSeconds`, the lease expiry is clamped to the actual Vault token expiry and `renewBefore` is recomputed from the clamp, so a shorter Vault TTL takes precedence. `vault_transit` is a secrets backend rather than an LLM-proxy upstream, so it has no proxy translator by design (the runtime uses the Vault token to fetch its own secret); the "no translator" observation is not a gap.
 
 ---
 
