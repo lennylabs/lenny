@@ -85,6 +85,21 @@ type Lease struct {
 	// Proxy is the proxy-mode materializedConfig. It is non-nil exactly
 	// when DeliveryMode is DeliveryProxy.
 	Proxy *ProxyConfig
+	// Direct is the §4.9 direct-mode materializedConfig: the
+	// per-provider bundle of real upstream credential fields the runtime
+	// reads from its credential file. It is populated exactly when
+	// DeliveryMode is DeliveryDirect.
+	//
+	// `json:"-"` keeps the upstream secrets out of the gateway's durable
+	// lease store (the pgstore marshals the lease to a JSONB column); the
+	// bundle reaches the pod through the adapter credential file and is
+	// held in the gateway only transiently in memory. A direct-mode lease
+	// reloaded from the durable store therefore carries no Direct config,
+	// matching the proxy-mode model where the upstream secret lives only
+	// in the in-memory credential cache.
+	//
+	// spec: §4.9 lines 1246-1298.
+	Direct MaterializedConfig `json:"-"`
 	// SpiffeURI is the issuing pod's SPIFFE identity, recorded at
 	// AssignCredentials for the §4.9 proxy-mode SPIFFE-binding check.
 	// Empty when SPIFFE-binding is disabled (single-tenant or

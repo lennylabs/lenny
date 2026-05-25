@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -287,5 +288,51 @@ func TestClientPoolForLeaseLifecycle(t *testing.T) {
 	h.client.Release(lease.LeaseID)
 	if _, ok := h.client.PoolForLease(lease.LeaseID); ok {
 		t.Errorf("PoolForLease still resolves after Release")
+	}
+}
+
+// clientDirectPool returns a direct-mode pool whose single credential
+// carries a full per-provider materializedConfig bundle.
+func clientDirectPool(name string, p credential.Provider, mc credential.MaterializedConfig) credassign.Pool {
+	return credassign.Pool{
+		Name:         name,
+		Provider:     p,
+		DeliveryMode: credential.DeliveryDirect,
+		Strategy:     credential.StrategyLeastLoaded,
+		Credentials:  []credassign.PoolCredential{{ID: "key-1", Healthy: true, Materialized: mc}},
+	}
+}
+
+// spec: §4.9 lines 1246-1298
+// diagnosis: a direct-mode lease's materializedConfig survives the full
+// gateway↔Token-Service round trip: leaseToProto carries it in
+// materialized_config, credentialLeaseFromProto reconstructs lease.Direct,
+// and AssignProto renders the per-provider payload the adapter writes.
+func TestClientAssignDirectModeReconstructsMaterializedConfig(t *testing.T) {
+	mc := credential.MaterializedConfig{
+		"accessKeyId": "AKIA", "secretAccessKey": "shh", "sessionToken": "tok",
+		"region": "us-east-1", "expiresAt": "2099-01-01T00:00:00Z",
+	}
+	h := newClientHarness(t, clientDirectPool("bedrock-prod", credential.ProviderAWSBedrock, mc))
+	defer h.closer()
+
+	lease, err := h.client.Assign("bedrock-prod", "s_1", "")
+	if err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if lease.DeliveryMode != credential.DeliveryDirect {
+		t.Errorf("delivery = %q, want direct", lease.DeliveryMode)
+	}
+	if lease.Direct["accessKeyId"] != "AKIA" || lease.Direct["region"] != "us-east-1" {
+		t.Errorf("reconstructed Direct = %+v, want the STS bundle", lease.Direct)
+	}
+
+	proto, err := h.client.AssignProto("bedrock-prod", "s_2", "")
+	if err != nil {
+		t.Fatalf("AssignProto: %v", err)
+	}
+	if !strings.Contains(string(proto.GetPayload()), "\"deliveryMode\":\"direct\"") ||
+		!strings.Contains(string(proto.GetPayload()), "sessionToken") {
+		t.Errorf("adapter payload = %s, want a direct materializedConfig", proto.GetPayload())
 	}
 }

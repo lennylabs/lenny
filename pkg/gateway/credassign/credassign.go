@@ -55,8 +55,18 @@ type PoolCredential struct {
 	// ID identifies the credential within its pool.
 	ID string
 	// APIKey is the real upstream provider credential. It is held only
-	// in memory and never leaves the gateway process.
+	// in memory and never leaves the gateway process. For proxy-mode
+	// pools it is the secret the §4.9 LLM proxy injects upstream; for a
+	// single-secret direct-mode provider (anthropic_direct) it is the
+	// API key materialized into the runtime credential file.
 	APIKey string
+	// Materialized is the §4.9 direct-mode materializedConfig the Token
+	// Service hands the runtime: the per-provider bundle of real upstream
+	// credential fields (STS access keys, short-lived tokens, Vault
+	// coordinates, etc.). It is consulted only for direct-mode pools. A
+	// single-secret provider (anthropic_direct) may leave it empty and
+	// rely on APIKey, which the assigner promotes to `{apiKey: APIKey}`.
+	Materialized credential.MaterializedConfig
 	// Healthy reports whether the credential is currently assignable.
 	// An unhealthy credential (rate-limited, auth-failed, revoked) is
 	// skipped by the assignment strategy.
@@ -222,6 +232,7 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI string) (credentia
 		SpiffeURI:          spiffeURI,
 		ProxyURL:           ps.pool.ProxyURL,
 		ProxyDialect:       ps.pool.ProxyDialect,
+		Direct:             directConfigFor(ps.pool, selected.CredentialID),
 	})
 	if err != nil {
 		return credential.Lease{}, nil, err
@@ -253,6 +264,36 @@ func (s *Service) Release(leaseID string) {
 		ps.active[lease.CredentialID]--
 	}
 	s.leases.Remove(leaseID)
+}
+
+// directConfigFor returns the §4.9 direct-mode materializedConfig for a
+// pool credential, or nil for a proxy-mode pool (where the lease carries
+// the proxy config instead). For a single-secret provider
+// (anthropic_direct) whose pool credential records only an APIKey, it
+// promotes the key to `{apiKey: APIKey}`; otherwise it returns a copy of
+// the credential's recorded Materialized bundle so the lease does not
+// alias the pool's map. The mint path validates the result against the
+// provider's Required:yes field set.
+//
+// spec: §4.9 lines 1246-1298.
+func directConfigFor(p Pool, credentialID string) credential.MaterializedConfig {
+	if p.DeliveryMode != credential.DeliveryDirect {
+		return nil
+	}
+	for _, c := range p.Credentials {
+		if c.ID != credentialID {
+			continue
+		}
+		if len(c.Materialized) == 0 && p.Provider == credential.ProviderAnthropicDirect && c.APIKey != "" {
+			return credential.MaterializedConfig{"apiKey": c.APIKey}
+		}
+		out := make(credential.MaterializedConfig, len(c.Materialized))
+		for k, v := range c.Materialized {
+			out[k] = v
+		}
+		return out
+	}
+	return nil
 }
 
 // credentialSecret returns the real upstream secret for a pool

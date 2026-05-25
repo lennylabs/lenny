@@ -102,23 +102,66 @@ func TestProtoLeasePayloadCarriesNoUpstreamSecret(t *testing.T) {
 	}
 }
 
-func TestProtoLeaseRejectsDirectModeLease(t *testing.T) {
-	// A direct-mode lease's materializedConfig is the real upstream
-	// credential, which the credential.Lease does not carry; ProtoLease
-	// returns an error rather than emitting an incomplete credential file.
+func TestProtoLeaseEncodesDirectMaterializedConfig(t *testing.T) {
+	// spec: §4.9 lines 1246-1298 — a direct-mode lease's per-provider
+	// materializedConfig is rendered into the credential-file payload the
+	// adapter writes; the pod reads the real upstream credential there.
+	now := time.Date(2026, 4, 7, 9, 0, 0, 0, time.UTC)
 	lease, err := credential.MintLease(credential.MintRequest{
+		SessionID:    "s_1",
+		Provider:     credential.ProviderAWSBedrock,
+		Source:       credential.SourcePool,
+		PoolID:       "bedrock-prod",
+		CredentialID: "key-1",
+		DeliveryMode: credential.DeliveryDirect,
+		Direct: credential.MaterializedConfig{
+			"accessKeyId": "AKIA", "secretAccessKey": "shh", "sessionToken": "tok",
+			"region": "us-east-1", "expiresAt": "2026-04-07T10:30:00Z",
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("MintLease: %v", err)
+	}
+
+	proto, err := credassign.ProtoLease(lease)
+	if err != nil {
+		t.Fatalf("ProtoLease: %v", err)
+	}
+	var payload struct {
+		DeliveryMode       string            `json:"deliveryMode"`
+		MaterializedConfig map[string]string `json:"materializedConfig"`
+	}
+	if err := json.Unmarshal(proto.GetPayload(), &payload); err != nil {
+		t.Fatalf("decode proto payload: %v", err)
+	}
+	if payload.DeliveryMode != "direct" {
+		t.Errorf("payload deliveryMode = %q, want direct", payload.DeliveryMode)
+	}
+	if payload.MaterializedConfig["accessKeyId"] != "AKIA" ||
+		payload.MaterializedConfig["region"] != "us-east-1" {
+		t.Errorf("payload materializedConfig = %+v, want the bedrock STS fields", payload.MaterializedConfig)
+	}
+}
+
+func TestProtoLeaseRejectsDirectModeLeaseWithoutConfig(t *testing.T) {
+	// A direct-mode lease reloaded from the durable store carries no
+	// materializedConfig (the store never persists upstream secrets);
+	// ProtoLease refuses to emit an incomplete credential file rather
+	// than deliver an empty payload to the pod.
+	lease := credential.Lease{
+		LeaseID:      "cl-stripped",
 		SessionID:    "s_1",
 		Provider:     credential.ProviderAnthropicDirect,
 		Source:       credential.SourcePool,
 		PoolID:       "claude-prod",
 		CredentialID: "key-1",
 		DeliveryMode: credential.DeliveryDirect,
-	})
-	if err != nil {
-		t.Fatalf("MintLease: %v", err)
+		IssuedAt:     time.Now(),
+		ExpiresAt:    time.Now().Add(time.Hour),
 	}
 	if _, err := credassign.ProtoLease(lease); err == nil {
-		t.Error("ProtoLease converted a direct-mode lease, want an error")
+		t.Error("ProtoLease converted a direct-mode lease with no materializedConfig, want an error")
 	}
 }
 

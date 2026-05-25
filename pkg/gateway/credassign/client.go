@@ -386,6 +386,18 @@ func credentialLeaseFromProto(p *tokensv1.CredentialLease) (credential.Lease, er
 			UpstreamModel: p.GetUpstreamModel(),
 		}
 	}
+	if lease.DeliveryMode == credential.DeliveryDirect {
+		// §4.9 direct-mode materializedConfig: the per-provider upstream
+		// credential bundle the gateway forwards to the pod through the
+		// adapter credential file. Copy so the lease does not alias the
+		// proto's map.
+		if mc := p.GetMaterializedConfig(); len(mc) > 0 {
+			lease.Direct = make(credential.MaterializedConfig, len(mc))
+			for k, v := range mc {
+				lease.Direct[k] = v
+			}
+		}
+	}
 	return lease, nil
 }
 

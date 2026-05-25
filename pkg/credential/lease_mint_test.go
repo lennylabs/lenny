@@ -100,6 +100,7 @@ func TestMintLeaseDirectLeaseHasNoProxyConfig(t *testing.T) {
 		TenantID:      "acme",
 		CredentialRef: "cred-1",
 		DeliveryMode:  DeliveryDirect,
+		Direct:        MaterializedConfig{"apiKey": "sk-ant-x"},
 		Now:           time.Now(),
 	})
 	if err != nil {
@@ -107,6 +108,9 @@ func TestMintLeaseDirectLeaseHasNoProxyConfig(t *testing.T) {
 	}
 	if lease.Proxy != nil {
 		t.Errorf("direct-mode lease carries a proxy config: %+v", lease.Proxy)
+	}
+	if lease.Direct["apiKey"] != "sk-ant-x" {
+		t.Errorf("direct-mode lease dropped its materializedConfig: %+v", lease.Direct)
 	}
 }
 
@@ -162,7 +166,13 @@ func TestMintLeaseCapsTTLAtProviderCeiling(t *testing.T) {
 		CredentialID:   "c",
 		DeliveryMode:   DeliveryDirect,
 		PoolTTLSeconds: 99999, // far above the vertex_ai 1h ceiling
-		Now:            now,
+		// The materialized token expiry equals the capped lease expiry,
+		// so the direct-expiry clamp does not fire and the ceiling stands.
+		Direct: MaterializedConfig{
+			"accessToken": "ya29.x", "projectId": "acme-proj", "region": "us-central1",
+			"expiresAt": "2026-05-16T13:00:00Z",
+		},
+		Now: now,
 	})
 	if err != nil {
 		t.Fatalf("MintLease: %v", err)
@@ -181,6 +191,7 @@ func TestMintLeaseHonorsRenewBeforeOverride(t *testing.T) {
 		PoolID:             "p",
 		CredentialID:       "c",
 		DeliveryMode:       DeliveryDirect,
+		Direct:             MaterializedConfig{"apiKey": "sk-ant-x"},
 		RenewBeforeSeconds: 600,
 		Now:                now,
 	})
@@ -189,5 +200,88 @@ func TestMintLeaseHonorsRenewBeforeOverride(t *testing.T) {
 	}
 	if !lease.RenewBefore.Equal(lease.ExpiresAt.Add(-600 * time.Second)) {
 		t.Errorf("RenewBefore = %v, want expiresAt-600s", lease.RenewBefore)
+	}
+}
+
+func TestMintLeaseDirectModeRequiresMaterializedConfig(t *testing.T) {
+	// spec: §4.9 line 1298 — a direct-mode mint with a missing required
+	// materializedConfig field fails with a *MaterializationError, not a
+	// structural *LeaseError.
+	_, err := MintLease(MintRequest{
+		SessionID:    "s_1",
+		Provider:     ProviderAWSBedrock,
+		Source:       SourcePool,
+		PoolID:       "p",
+		CredentialID: "c",
+		DeliveryMode: DeliveryDirect,
+		Direct:       MaterializedConfig{"region": "us-east-1"}, // missing the STS triple + expiresAt
+	})
+	var me *MaterializationError
+	if !errors.As(err, &me) {
+		t.Fatalf("error %v is not a *MaterializationError", err)
+	}
+	if me.Provider != ProviderAWSBedrock {
+		t.Errorf("MaterializationError.Provider = %q, want aws_bedrock", me.Provider)
+	}
+}
+
+func TestMintLeaseClampsExpiryToVaultTokenExpiry(t *testing.T) {
+	// spec: §4.9 line 1154 — when materializing a vault_transit lease the
+	// Token Service sets expiresAt = min(issuedAt + leaseTTLSeconds,
+	// vaultTokenExpiryTime). A Vault token expiring before the TTL window
+	// clamps the lease and renewBefore is recomputed from the clamp.
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	vaultExpiry := now.Add(20 * time.Minute) // shorter than the 1h default TTL
+	lease, err := MintLease(MintRequest{
+		SessionID:          "s_1",
+		Provider:           ProviderVaultTransit,
+		Source:             SourcePool,
+		PoolID:             "p",
+		CredentialID:       "c",
+		DeliveryMode:       DeliveryDirect,
+		RenewBeforeSeconds: 300,
+		Direct: MaterializedConfig{
+			"vaultToken": "s.x", "vaultAddr": "https://vault:8200",
+			"transitPath": "transit/", "keyName": "k",
+			"expiresAt": vaultExpiry.Format(time.RFC3339),
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("MintLease: %v", err)
+	}
+	if !lease.ExpiresAt.Equal(vaultExpiry) {
+		t.Errorf("ExpiresAt = %v, want the clamped vault expiry %v", lease.ExpiresAt, vaultExpiry)
+	}
+	if !lease.RenewBefore.Equal(vaultExpiry.Add(-300 * time.Second)) {
+		t.Errorf("RenewBefore = %v, want vaultExpiry-300s", lease.RenewBefore)
+	}
+}
+
+func TestMintLeaseDoesNotClampWhenVaultExpiryExceedsTTL(t *testing.T) {
+	// A Vault token outliving the TTL window leaves the TTL-derived
+	// expiry in place: the lease never outlives min(TTL, token), and here
+	// the TTL is the binding limit.
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	lease, err := MintLease(MintRequest{
+		SessionID:      "s_1",
+		Provider:       ProviderVaultTransit,
+		Source:         SourcePool,
+		PoolID:         "p",
+		CredentialID:   "c",
+		DeliveryMode:   DeliveryDirect,
+		PoolTTLSeconds: 1800, // 30m TTL window
+		Direct: MaterializedConfig{
+			"vaultToken": "s.x", "vaultAddr": "https://vault:8200",
+			"transitPath": "transit/", "keyName": "k",
+			"expiresAt": now.Add(2 * time.Hour).Format(time.RFC3339),
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("MintLease: %v", err)
+	}
+	if !lease.ExpiresAt.Equal(now.Add(30 * time.Minute)) {
+		t.Errorf("ExpiresAt = %v, want the TTL window now+30m", lease.ExpiresAt)
 	}
 }

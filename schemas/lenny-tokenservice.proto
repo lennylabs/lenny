@@ -194,4 +194,17 @@ message CredentialLease {
   // and feeds the §16.1 lenny_credential_lease_duration_seconds
   // histogram. spec: §4.9 line 1145.
   google.protobuf.Timestamp issued_at = 19;
+  // materialized_config is the §4.9 direct-mode materializedConfig: the
+  // per-provider bundle of real upstream credential fields (apiKey,
+  // accessKeyId/secretAccessKey/sessionToken/region, accessToken, etc.)
+  // the runtime reads from its credential file. Populated only for
+  // direct-mode leases; empty for proxy-mode leases (which carry the
+  // proxy_* fields instead). The values are credential material and MUST
+  // be excluded from gRPC access-log payload capture, OpenTelemetry span
+  // attributes, and any request/response logging middleware, exactly as
+  // upstream_credential is. The gateway holds the bundle only
+  // transiently in memory and forwards it to the pod through the adapter
+  // credential file; it is never persisted in the gateway's durable
+  // lease store. spec: §4.9 lines 1246-1298.
+  map<string, string> materialized_config = 20;
 }

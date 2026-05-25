@@ -94,6 +94,15 @@ func (s *GRPCServer) AssignCredentials(ctx context.Context, req *tokensv1.Assign
 				return nil, status.Errorf(codes.ResourceExhausted,
 					"credential pool %q is exhausted", poolID)
 			}
+			if me := materializationError(lerr); me != nil {
+				// §4.9 line 1298: a missing required materializedConfig
+				// field fails issuance with CREDENTIAL_MATERIALIZATION_ERROR
+				// (category INTERNAL) but surfaces to the client as
+				// CREDENTIAL_POOL_EXHAUSTED. ResourceExhausted maps to that
+				// client code via the gateway's mapAssignError.
+				return nil, status.Errorf(codes.ResourceExhausted,
+					"credential pool %q: %s: %v", poolID, credential.CodeCredentialMaterializationError, me)
+			}
 			return nil, status.Errorf(codes.Internal,
 				"assign from pool %q: %v", poolID, lerr)
 		}
@@ -138,6 +147,12 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 		if errors.Is(rerr, credential.ErrPoolExhausted) {
 			return nil, status.Errorf(codes.ResourceExhausted,
 				"credential pool %q is exhausted on rotate", old.PoolID)
+		}
+		if me := materializationError(rerr); me != nil {
+			// §4.9 line 1298: surfaces to the client as
+			// CREDENTIAL_POOL_EXHAUSTED, like the assign path.
+			return nil, status.Errorf(codes.ResourceExhausted,
+				"credential pool %q: %s: %v", old.PoolID, credential.CodeCredentialMaterializationError, me)
 		}
 		return nil, status.Errorf(codes.Internal,
 			"rotate via pool %q: %v", old.PoolID, rerr)
@@ -204,6 +219,18 @@ func (s *GRPCServer) ProbeSecretAccess(ctx context.Context, req *tokensv1.ProbeS
 		return nil, status.Errorf(codes.Unavailable, "secret-access probe failed: %v", perr)
 	}
 	return &tokensv1.ProbeSecretAccessResponse{Verdict: secretVerdictToProto(verdict)}, nil
+}
+
+// materializationError returns the *credential.MaterializationError
+// wrapped in err, or nil when err is not a materialization failure. The
+// §4.9 direct-mode mint path returns it when a Required:yes
+// materializedConfig field is absent.
+func materializationError(err error) *credential.MaterializationError {
+	var me *credential.MaterializationError
+	if errors.As(err, &me) {
+		return me
+	}
+	return nil
 }
 
 // secretVerdictToProto maps the internal verdict onto the wire enum.
@@ -275,6 +302,16 @@ func leaseToProto(l credential.Lease) *tokensv1.CredentialLease {
 		out.ProxyDialect = l.Proxy.ProxyDialect
 		out.LeaseToken = l.Proxy.LeaseToken
 		out.UpstreamModel = l.Proxy.UpstreamModel
+	}
+	if len(l.Direct) > 0 {
+		// §4.9 direct-mode materializedConfig: the per-provider bundle of
+		// real upstream credential fields the gateway forwards to the pod
+		// through the adapter credential file. Copy so the wire form does
+		// not alias the lease's in-memory map.
+		out.MaterializedConfig = make(map[string]string, len(l.Direct))
+		for k, v := range l.Direct {
+			out.MaterializedConfig[k] = v
+		}
 	}
 	return out
 }

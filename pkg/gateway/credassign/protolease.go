@@ -71,32 +71,44 @@ func (s *Service) ProtoLeaseByID(leaseID string) (*adapterv1.CredentialLease, er
 // the proto payload, which the adapter writes into the runtime
 // credential file.
 //
-// Only proxy-mode leases are convertible here: a proxy-mode lease's
-// ProxyConfig fully describes its materializedConfig, so no upstream
-// secret is needed. A direct-mode lease's materializedConfig is the real
-// upstream credential, which the credential.Lease does not carry;
-// ProtoLease returns an error for a direct-mode lease rather than
-// emitting an incomplete credential file.
+// A proxy-mode lease's ProxyConfig is rendered as the uniform,
+// provider-agnostic proxy materializedConfig. A direct-mode lease's
+// per-provider materializedConfig (the real upstream credential bundle)
+// is rendered verbatim. A direct-mode lease whose materializedConfig was
+// stripped on the wire (a lease reloaded from the durable store, which
+// never persists upstream secrets) carries no Direct config; ProtoLease
+// returns an error rather than emit an incomplete credential file.
 func ProtoLease(lease credential.Lease) (*adapterv1.CredentialLease, error) {
-	if lease.DeliveryMode != credential.DeliveryProxy {
+	var payload credentialPayload
+	switch lease.DeliveryMode {
+	case credential.DeliveryProxy:
+		if lease.Proxy == nil {
+			return nil, fmt.Errorf("credassign: proxy-mode lease %s has no proxy materializedConfig", lease.LeaseID)
+		}
+		payload = credentialPayload{
+			DeliveryMode: string(credential.DeliveryProxy),
+			MaterializedConfig: proxyMaterializedConfig{
+				ProxyURL:      lease.Proxy.ProxyURL,
+				ProxyDialect:  lease.Proxy.ProxyDialect,
+				LeaseToken:    lease.Proxy.LeaseToken,
+				UpstreamModel: lease.Proxy.UpstreamModel,
+			},
+		}
+	case credential.DeliveryDirect:
+		if len(lease.Direct) == 0 {
+			return nil, fmt.Errorf("credassign: direct-mode lease %s has no materializedConfig (the durable lease store does not persist upstream secrets; re-mint to deliver)", lease.LeaseID)
+		}
+		payload = credentialPayload{
+			DeliveryMode:       string(credential.DeliveryDirect),
+			MaterializedConfig: map[string]string(lease.Direct),
+		}
+	default:
 		return nil, fmt.Errorf(
-			"credassign: lease %s uses delivery mode %q; only proxy-mode leases are convertible to the adapter wire form",
-			lease.LeaseID, lease.DeliveryMode,
+			"credassign: lease %s has unknown delivery mode %q", lease.LeaseID, lease.DeliveryMode,
 		)
 	}
-	if lease.Proxy == nil {
-		return nil, fmt.Errorf("credassign: proxy-mode lease %s has no proxy materializedConfig", lease.LeaseID)
-	}
 
-	payload, err := json.Marshal(credentialPayload{
-		DeliveryMode: string(credential.DeliveryProxy),
-		MaterializedConfig: proxyMaterializedConfig{
-			ProxyURL:      lease.Proxy.ProxyURL,
-			ProxyDialect:  lease.Proxy.ProxyDialect,
-			LeaseToken:    lease.Proxy.LeaseToken,
-			UpstreamModel: lease.Proxy.UpstreamModel,
-		},
-	})
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("credassign: encode credential payload for lease %s: %w", lease.LeaseID, err)
 	}
@@ -106,7 +118,7 @@ func ProtoLease(lease credential.Lease) (*adapterv1.CredentialLease, error) {
 		Provider:          string(lease.Provider),
 		ExpiresAtUnixMs:   unixMs(lease.ExpiresAt),
 		RenewBeforeUnixMs: unixMs(lease.RenewBefore),
-		Payload:           payload,
+		Payload:           encoded,
 	}, nil
 }
 

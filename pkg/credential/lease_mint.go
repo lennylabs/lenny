@@ -93,6 +93,12 @@ type MintRequest struct {
 	ProxyDialect string
 	// UpstreamModel is the optional proxy-mode upstream model hint.
 	UpstreamModel string
+	// Direct is the §4.9 direct-mode materializedConfig: the
+	// per-provider bundle of real upstream credential fields. The minter
+	// validates its Required:yes fields for a built-in provider and fails
+	// with a *MaterializationError when one is missing. Ignored for a
+	// proxy-mode lease.
+	Direct MaterializedConfig
 }
 
 // MintLease mints a §4.9 CredentialLease from req: it resolves the
@@ -144,10 +150,40 @@ func MintLease(req MintRequest) (Lease, error) {
 			UpstreamModel: req.UpstreamModel,
 		}
 	}
+	if req.DeliveryMode == DeliveryDirect {
+		// §4.9 line 1298: the Token Service validates every Required:yes
+		// materializedConfig field before issuing a direct-mode lease; a
+		// missing field fails issuance with CREDENTIAL_MATERIALIZATION_ERROR.
+		if err := ValidateMaterializedConfig(req.Provider, req.Direct); err != nil {
+			return Lease{}, err
+		}
+		lease.Direct = req.Direct
+		clampDirectExpiry(&lease)
+	}
 	if err := lease.Validate(); err != nil {
 		return Lease{}, err
 	}
 	return lease, nil
+}
+
+// clampDirectExpiry applies the §4.9 rule that a direct-mode lease never
+// outlives the upstream credential materialized into it. When the
+// materializedConfig carries an expiresAt earlier than the TTL-derived
+// lease expiry, the lease is clamped to it and renewBefore is recomputed
+// from the clamped expiry. For vault_transit the spec states the rule
+// explicitly (expiresAt = min(issuedAt + leaseTTLSeconds,
+// vaultTokenExpiryTime)); the same clamp upholds the "must equal or
+// precede lease expiresAt" invariant the STS-style providers share.
+//
+// spec: §4.9 lines 1154, 1271.
+func clampDirectExpiry(lease *Lease) {
+	credExpiry, ok := MaterializedExpiry(lease.Direct)
+	if !ok || !credExpiry.Before(lease.ExpiresAt) {
+		return
+	}
+	renewBuffer := lease.ExpiresAt.Sub(lease.RenewBefore)
+	lease.ExpiresAt = credExpiry
+	lease.RenewBefore = credExpiry.Add(-renewBuffer)
 }
 
 // randomString returns prefix joined to nBytes of cryptographically

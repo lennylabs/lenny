@@ -4,6 +4,7 @@ package tokenservice
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -235,5 +236,78 @@ func TestGRPCRevokeCredentialsUnknownLease(t *testing.T) {
 	})
 	if status.Code(err) != codes.NotFound {
 		t.Errorf("err = %v, want NotFound", err)
+	}
+}
+
+// directPool wires a §4.9 direct-mode pool with one credential carrying
+// the provided materializedConfig.
+func directPool(t *testing.T, name string, p credential.Provider, mc credential.MaterializedConfig) (*credleasestore.Store, *GRPCServer) {
+	t.Helper()
+	leases := credleasestore.New()
+	creds := credcache.New()
+	svc := credassign.New(leases, creds)
+	svc.RegisterPool(credassign.Pool{
+		Name:         name,
+		Provider:     p,
+		DeliveryMode: credential.DeliveryDirect,
+		Strategy:     credential.StrategyLeastLoaded,
+		Credentials: []credassign.PoolCredential{
+			{ID: "key-1", Healthy: true, Materialized: mc},
+		},
+	})
+	return leases, NewGRPCServer(svc, leases)
+}
+
+// spec: §4.9 lines 1246-1298
+// diagnosis: a direct-mode lease carries its per-provider
+// materializedConfig on the wire (and no proxy lease token) so the
+// gateway can forward it to the pod through the adapter credential file.
+func TestGRPCAssignCredentialsDirectModeCarriesMaterializedConfig(t *testing.T) {
+	_, srv := directPool(t, "bedrock-prod", credential.ProviderAWSBedrock, credential.MaterializedConfig{
+		"accessKeyId": "AKIA", "secretAccessKey": "shh", "sessionToken": "tok",
+		"region": "us-east-1", "expiresAt": "2099-01-01T00:00:00Z",
+	})
+	resp, err := srv.AssignCredentials(context.Background(), &tokensv1.AssignCredentialsRequest{
+		TenantId:  "acme",
+		SessionId: "s_1",
+		PoolIds:   []string{"bedrock-prod"},
+	})
+	if err != nil {
+		t.Fatalf("AssignCredentials: %v", err)
+	}
+	got, ok := resp.Leases["aws_bedrock"]
+	if !ok {
+		t.Fatalf("response has no aws_bedrock lease: %+v", resp.Leases)
+	}
+	if got.DeliveryMode != string(credential.DeliveryDirect) {
+		t.Errorf("deliveryMode = %q, want direct", got.DeliveryMode)
+	}
+	if got.LeaseToken != "" {
+		t.Errorf("direct-mode lease carries a proxy lease token: %q", got.LeaseToken)
+	}
+	if got.MaterializedConfig["accessKeyId"] != "AKIA" || got.MaterializedConfig["region"] != "us-east-1" {
+		t.Errorf("materialized_config = %+v, want the STS bundle", got.MaterializedConfig)
+	}
+}
+
+// spec: §4.9 line 1298
+// diagnosis: a direct-mode pool whose materializedConfig is missing a
+// Required:yes field fails issuance with CREDENTIAL_MATERIALIZATION_ERROR
+// (category INTERNAL), which the Token Service surfaces as
+// ResourceExhausted so the gateway maps it to CREDENTIAL_POOL_EXHAUSTED.
+func TestGRPCAssignCredentialsMaterializationFailureMapsToResourceExhausted(t *testing.T) {
+	_, srv := directPool(t, "bedrock-broken", credential.ProviderAWSBedrock, credential.MaterializedConfig{
+		"region": "us-east-1", // missing the STS triple + expiresAt
+	})
+	_, err := srv.AssignCredentials(context.Background(), &tokensv1.AssignCredentialsRequest{
+		TenantId:  "acme",
+		SessionId: "s_1",
+		PoolIds:   []string{"bedrock-broken"},
+	})
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("err = %v, want ResourceExhausted", err)
+	}
+	if !strings.Contains(err.Error(), credential.CodeCredentialMaterializationError) {
+		t.Errorf("err = %v, want it to name %s", err, credential.CodeCredentialMaterializationError)
 	}
 }
