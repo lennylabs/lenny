@@ -104,6 +104,12 @@ type Metrics struct {
 	// was at its maxConcurrent bound). Labeled by `pool` (finite, the
 	// warm-pool registry), it lets operators detect pool under-sizing.
 	slotAssignmentConflict *prometheus.CounterVec
+	// credentialPreclaimMismatch counts the §4.9 line 1220 races where
+	// the pre-claim credential availability check passed but the
+	// subsequent lease assignment failed. Labeled by `pool` and
+	// `provider` (both finite, the credential-pool registry), it lets
+	// operators detect pool contention and tune pool sizing.
+	credentialPreclaimMismatch *prometheus.CounterVec
 	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
 	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
 	// registry).
@@ -520,6 +526,18 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §4.9 line 1220 — `lenny_credential_preclaim_mismatch_total`
+	// increments when the pre-claim availability check passed but the
+	// subsequent assignment failed (a credential became unavailable
+	// between check and assignment). `pool` and `provider` are bounded
+	// by the credential-pool registry.
+	credentialPreclaimMismatch, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_credential_preclaim_mismatch_total",
+		Help: "Pre-claim credential availability check passed but assignment failed (§4.9 line 1220).",
+	}, []string{"pool", "provider"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
 	// partial-manifest row writes. Labels: `pool` (finite).
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
@@ -638,6 +656,7 @@ func New() (*Metrics, error) {
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
+		credentialPreclaimMismatch,
 		checkpointPartialTotal, prestopCapSelection,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
@@ -701,6 +720,7 @@ func New() (*Metrics, error) {
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
 		slotAssignmentConflict:               slotAssignmentConflict,
+		credentialPreclaimMismatch:           credentialPreclaimMismatch,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
 		gcTombstonesPruned:                   gcTombstonesPruned,
@@ -983,6 +1003,20 @@ func (m *Metrics) IncSlotAssignmentConflict(pool string) {
 		return
 	}
 	m.slotAssignmentConflict.WithLabelValues(pool).Inc()
+}
+
+// IncCredentialPreclaimMismatch increments the §4.9 line 1220
+// `lenny_credential_preclaim_mismatch_total` counter for the
+// (pool, provider) pair. Called when the pre-claim credential
+// availability check passed but the subsequent lease assignment failed,
+// so the gateway released the claimed pod and returned
+// CREDENTIAL_POOL_EXHAUSTED to the client.
+// spec: §4.9 line 1220.
+func (m *Metrics) IncCredentialPreclaimMismatch(pool, provider string) {
+	if m == nil {
+		return
+	}
+	m.credentialPreclaimMismatch.WithLabelValues(pool, provider).Inc()
 }
 
 // IncCheckpointPartial increments the §4.4 line 234

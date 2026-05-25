@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/experiment"
 )
 
@@ -95,6 +96,14 @@ type Tenant struct {
 	// value means the tenant configures no external targeting and only
 	// percentage-mode experiments route.
 	ExperimentTargeting experiment.TargetingConfig
+
+	// CredentialPolicy is the §4.9 tenant credentialPolicy: which
+	// credential sources are available and how they are selected. The
+	// §4.9 CredentialRouter intersects ProviderPools with a Runtime's
+	// supportedProviders at session creation. The zero value means the
+	// tenant configures no credential sourcing and the intersection is
+	// empty (sessions assign no upstream LLM credentials).
+	CredentialPolicy credential.CredentialPolicy
 
 	// ErasureSalt is the §12.8 per-tenant billing-pseudonymization
 	// secret (256-bit). It is non-nil only transiently, while an
@@ -229,6 +238,7 @@ func cloneTenant(t Tenant) Tenant {
 		cp.ErasureSalt = append([]byte(nil), t.ErasureSalt...)
 	}
 	cp.ExperimentTargeting = t.ExperimentTargeting.Clone()
+	cp.CredentialPolicy = t.CredentialPolicy.Clone()
 	return cp
 }
 

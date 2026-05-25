@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
@@ -611,21 +612,22 @@ func (r *Router) requirePermission(perm auth.Permission) func(http.Handler) http
 
 // TenantPayload is the §15.1 admin-tenant request/response body.
 type TenantPayload struct {
-	ID                      string                      `json:"id"`
-	DisplayName             string                      `json:"displayName,omitempty"`
-	ComplianceProfile       string                      `json:"complianceProfile,omitempty"`
-	DataResidencyRegion     string                      `json:"dataResidencyRegion,omitempty"`
-	WorkspaceTier           string                      `json:"workspaceTier,omitempty"`
-	MaxConcurrentSessions   int                         `json:"maxConcurrentSessions,omitempty"`
-	StorageQuotaBytes       int64                       `json:"storageQuotaBytes,omitempty"`
-	TokenQuotaPerWindow     int64                       `json:"tokenQuotaPerWindow,omitempty"`
-	MinIsolationProfile     string                      `json:"minIsolationProfile,omitempty"`
-	BillingErasurePolicy    string                      `json:"billingErasurePolicy,omitempty"`
-	ExperimentTargeting     *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
-	CreatedAt               string                      `json:"createdAt,omitempty"`
-	UpdatedAt               string                      `json:"updatedAt,omitempty"`
-	DeletedAt               string                      `json:"deletedAt,omitempty"`
-	T4KmsLastProbeSuccessAt string                      `json:"t4KmsLastProbeSuccessAt,omitempty"`
+	ID                      string                       `json:"id"`
+	DisplayName             string                       `json:"displayName,omitempty"`
+	ComplianceProfile       string                       `json:"complianceProfile,omitempty"`
+	DataResidencyRegion     string                       `json:"dataResidencyRegion,omitempty"`
+	WorkspaceTier           string                       `json:"workspaceTier,omitempty"`
+	MaxConcurrentSessions   int                          `json:"maxConcurrentSessions,omitempty"`
+	StorageQuotaBytes       int64                        `json:"storageQuotaBytes,omitempty"`
+	TokenQuotaPerWindow     int64                        `json:"tokenQuotaPerWindow,omitempty"`
+	MinIsolationProfile     string                       `json:"minIsolationProfile,omitempty"`
+	BillingErasurePolicy    string                       `json:"billingErasurePolicy,omitempty"`
+	ExperimentTargeting     *experiment.TargetingConfig  `json:"experimentTargeting,omitempty"`
+	CredentialPolicy        *credential.CredentialPolicy `json:"credentialPolicy,omitempty"`
+	CreatedAt               string                       `json:"createdAt,omitempty"`
+	UpdatedAt               string                       `json:"updatedAt,omitempty"`
+	DeletedAt               string                       `json:"deletedAt,omitempty"`
+	T4KmsLastProbeSuccessAt string                       `json:"t4KmsLastProbeSuccessAt,omitempty"`
 }
 
 // fromTenant maps a stored row to the wire payload. If probe is
@@ -654,6 +656,10 @@ func fromTenantWithProbe(t tenantstore.Tenant, probe KMSProbe) TenantPayload {
 	if t.ExperimentTargeting.Configured() {
 		et := t.ExperimentTargeting.Clone()
 		p.ExperimentTargeting = &et
+	}
+	if t.CredentialPolicy.Configured() {
+		cp := t.CredentialPolicy.Clone()
+		p.CredentialPolicy = &cp
 	}
 	if probe != nil && t.WorkspaceTier == "T4" {
 		if ts, ok := probe.LastProbeSuccess(t.ID); ok {
@@ -844,6 +850,13 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if body.CredentialPolicy != nil {
+		if err := body.CredentialPolicy.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+				map[string]any{"field": "credentialPolicy"})
+			return
+		}
+	}
 
 	t := tenantstore.Tenant{
 		ID:                    body.ID,
@@ -860,6 +873,9 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 	}
 	if body.ExperimentTargeting != nil {
 		t.ExperimentTargeting = body.ExperimentTargeting.Clone()
+	}
+	if body.CredentialPolicy != nil {
+		t.CredentialPolicy = body.CredentialPolicy.Clone()
 	}
 	t.UpdatedAt = t.CreatedAt
 	if err := r.tenants.Create(req.Context(), t); err != nil {
@@ -932,16 +948,17 @@ func (r *Router) handleGetTenant(w http.ResponseWriter, req *http.Request) {
 // the fields explicitly present are mutated; omitting a field leaves
 // the stored value untouched. Empty-string clears the field.
 type UpdateTenantRequest struct {
-	DisplayName           *string                     `json:"displayName,omitempty"`
-	ComplianceProfile     *string                     `json:"complianceProfile,omitempty"`
-	DataResidencyRegion   *string                     `json:"dataResidencyRegion,omitempty"`
-	WorkspaceTier         *string                     `json:"workspaceTier,omitempty"`
-	MaxConcurrentSessions *int                        `json:"maxConcurrentSessions,omitempty"`
-	StorageQuotaBytes     *int64                      `json:"storageQuotaBytes,omitempty"`
-	TokenQuotaPerWindow   *int64                      `json:"tokenQuotaPerWindow,omitempty"`
-	MinIsolationProfile   *string                     `json:"minIsolationProfile,omitempty"`
-	BillingErasurePolicy  *string                     `json:"billingErasurePolicy,omitempty"`
-	ExperimentTargeting   *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
+	DisplayName           *string                      `json:"displayName,omitempty"`
+	ComplianceProfile     *string                      `json:"complianceProfile,omitempty"`
+	DataResidencyRegion   *string                      `json:"dataResidencyRegion,omitempty"`
+	WorkspaceTier         *string                      `json:"workspaceTier,omitempty"`
+	MaxConcurrentSessions *int                         `json:"maxConcurrentSessions,omitempty"`
+	StorageQuotaBytes     *int64                       `json:"storageQuotaBytes,omitempty"`
+	TokenQuotaPerWindow   *int64                       `json:"tokenQuotaPerWindow,omitempty"`
+	MinIsolationProfile   *string                      `json:"minIsolationProfile,omitempty"`
+	BillingErasurePolicy  *string                      `json:"billingErasurePolicy,omitempty"`
+	ExperimentTargeting   *experiment.TargetingConfig  `json:"experimentTargeting,omitempty"`
+	CredentialPolicy      *credential.CredentialPolicy `json:"credentialPolicy,omitempty"`
 }
 
 // handleUpdateTenant implements PUT /v1/admin/tenants/{id}.
@@ -987,6 +1004,13 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		if err := body.ExperimentTargeting.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 				map[string]any{"field": "experimentTargeting"})
+			return
+		}
+	}
+	if body.CredentialPolicy != nil {
+		if err := body.CredentialPolicy.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+				map[string]any{"field": "credentialPolicy"})
 			return
 		}
 	}
@@ -1086,6 +1110,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		if body.ExperimentTargeting != nil {
 			t.ExperimentTargeting = body.ExperimentTargeting.Clone()
 		}
+		if body.CredentialPolicy != nil {
+			t.CredentialPolicy = body.CredentialPolicy.Clone()
+		}
 		return nil
 	})
 	if err != nil {
@@ -1140,6 +1167,12 @@ func changedFields(b UpdateTenantRequest) []string {
 	}
 	if b.BillingErasurePolicy != nil {
 		out = append(out, "billingErasurePolicy")
+	}
+	if b.ExperimentTargeting != nil {
+		out = append(out, "experimentTargeting")
+	}
+	if b.CredentialPolicy != nil {
+		out = append(out, "credentialPolicy")
 	}
 	return out
 }

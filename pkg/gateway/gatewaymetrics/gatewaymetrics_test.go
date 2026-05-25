@@ -644,3 +644,36 @@ func TestSlotAssignmentConflictCounter(t *testing.T) {
 		}
 	}
 }
+
+// spec: §4.9 line 1220 — lenny_credential_preclaim_mismatch_total is a
+// per-(pool,provider) counter of races where the pre-claim availability
+// check passed but the lease assignment failed.
+func TestCredentialPreclaimMismatchCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncCredentialPreclaimMismatch("claude-prod", "anthropic_direct")
+	m.IncCredentialPreclaimMismatch("claude-prod", "anthropic_direct")
+	m.IncCredentialPreclaimMismatch("bedrock-prod", "aws_bedrock")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_credential_preclaim_mismatch_total{pool="claude-prod",provider="anthropic_direct"} 2`,
+		`lenny_credential_preclaim_mismatch_total{pool="bedrock-prod",provider="aws_bedrock"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// A nil *Metrics must no-op rather than panic, matching the other
+// counter helpers (the minimal gateway leaves metrics unwired).
+func TestCredentialPreclaimMismatchNilSafe(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncCredentialPreclaimMismatch("p", "anthropic_direct") // must not panic
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -53,11 +54,30 @@ const minWarmupRetryAfterSeconds = 30
 // (RUNTIME_UNAVAILABLE).
 func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackMsg string) {
 	var warming *podsession.PoolWarmingError
+	var credAssign *podsession.CredentialAssignmentError
 	switch {
 	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
 		s.writeTokenServiceUnavailable(w, err)
 	case errors.As(err, &warming):
 		s.writePoolWarming(w, warming)
+	case errors.Is(err, credrouter.ErrUserCredentialNotFound):
+		// spec: §4.9 lines 1364, §15.1 line 993 — a user-only policy with
+		// no pre-registered credential for the user and provider.
+		s.writeError(w, http.StatusNotFound, "USER_CREDENTIAL_NOT_FOUND",
+			"no pre-registered credential found for the user and provider; "+
+				"register one via POST /v1/credentials or configure pool fallback", nil)
+	case errors.Is(err, credrouter.ErrNoCredentialAvailable):
+		// spec: §4.9 line 1218 — no provider in the intersection had an
+		// assignable credential at the pre-claim check; no pod was claimed.
+		s.writeCredentialPoolExhausted(w, "pre_claim")
+	case errors.As(err, &credAssign):
+		// spec: §4.9 line 1220 — the pre-claim check passed but the lease
+		// assignment failed (a credential became unavailable in the race
+		// window). Record the mismatch so operators can tune pool sizing.
+		if s.preclaimMismatch != nil {
+			s.preclaimMismatch(credAssign.Pool, credAssign.Provider)
+		}
+		s.writeCredentialPoolExhausted(w, "assignment_race")
 	case errors.Is(err, podclaim.ErrNoIdlePod):
 		s.writeWarmPoolExhausted(w, "no_idle_pods")
 	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
@@ -66,6 +86,16 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackMs
 		s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
 			fallbackMsg+": "+err.Error(), nil)
 	}
+}
+
+// writeCredentialPoolExhausted writes the §4.9 CREDENTIAL_POOL_EXHAUSTED
+// envelope (category POLICY, HTTP 503). details.reason distinguishes
+// the pre-claim miss ("pre_claim") from the assignment-race miss
+// ("assignment_race"). spec: §4.9 lines 1218, 1220; §15.1 line 990.
+func (s *Server) writeCredentialPoolExhausted(w http.ResponseWriter, reason string) {
+	s.writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_POOL_EXHAUSTED",
+		"no provider has an assignable credential; retry once the pool frees up",
+		map[string]any{"reason": reason})
 }
 
 // writeWarmPoolExhausted writes the §5.2 line 519 WARM_POOL_EXHAUSTED
@@ -525,6 +555,107 @@ func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *ad
 	}
 }
 
+// resolveCredentialPools runs the §4.9 pre-claim credential
+// availability check for a session and returns the provider→pool map
+// the binder mints leases from. It computes the §4.9 intersection of
+// the session runtime's supportedProviders and the tenant's
+// credentialPolicy.providerPools, builds a pool descriptor per provider
+// from the credential-pool registry, and asks the CredentialRouter to
+// resolve a source for each provider. The check passes when at least
+// one provider has an assignable credential; on miss it returns the
+// router's typed error (credrouter.ErrNoCredentialAvailable →
+// CREDENTIAL_POOL_EXHAUSTED, credrouter.ErrUserCredentialNotFound →
+// USER_CREDENTIAL_NOT_FOUND), surfaced by writePodClaimError before any
+// pod is claimed.
+//
+// When the tenant configures no credentialPolicy, or the tenant /
+// runtime / credential-pool registries are not all wired, the
+// intersection is empty and the session assigns no upstream LLM
+// credentials — preserving the pre-§4.9 behavior for deployments
+// without credential pools.
+//
+// spec: §4.9 lines 1216-1218 (Pre-Claim check), 1326 (intersection).
+func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Session) (map[string]string, error) {
+	if s.tenants == nil || s.runtimes == nil || s.credPools == nil {
+		return nil, nil
+	}
+	tenant, err := s.tenants.Get(ctx, row.TenantID)
+	if err != nil {
+		// The §10.2 tenant-claim extractor already gated the request; an
+		// unresolvable tenant row here means no credentialPolicy applies.
+		return nil, nil
+	}
+	policy := tenant.CredentialPolicy
+	if !policy.Configured() {
+		return nil, nil
+	}
+	rt, err := runtimestore.Resolve(ctx, s.runtimes, row.RuntimeRef)
+	if err != nil {
+		// Runtime-resolution failure is surfaced by the pool-resolution
+		// path; the §4.9 layer contributes no credentials.
+		return nil, nil
+	}
+	intersection := credrouter.Intersection(rt.SupportedProviders, policy)
+
+	allPools, err := s.credPools.List(ctx, row.TenantID, credentialpoolstore.ListFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("sessionserver: load credential pools for pre-claim: %w", err)
+	}
+	byName := make(map[string]credentialpoolstore.CredentialPool, len(allPools))
+	for _, p := range allPools {
+		byName[p.Name] = p
+	}
+
+	in := credrouter.PreClaimInput{
+		TenantID:        row.TenantID,
+		UserID:          row.UserID,
+		PreferredSource: policy.PreferredSource,
+	}
+	for _, provider := range intersection {
+		var descs []credrouter.PoolDescriptor
+		for _, poolName := range policy.PoolOrderFor(provider) {
+			if p, ok := byName[poolName]; ok {
+				descs = append(descs, poolDescriptor(p))
+			}
+		}
+		userAvail := s.userCredChecker != nil &&
+			s.userCredChecker(ctx, row.TenantID, row.UserID, provider)
+		in.Providers = append(in.Providers, credrouter.ProviderInput{
+			Provider:                provider,
+			AllowedPools:            descs,
+			UserCredentialAvailable: userAvail,
+		})
+	}
+
+	res, err := credrouter.PreClaim(ctx, s.credRouter, in)
+	if err != nil {
+		return nil, err
+	}
+	return res.PoolAssignments, nil
+}
+
+// poolDescriptor maps a §4.9 credential pool to the router's pool
+// descriptor. A pool is assignable when it holds at least one
+// non-revoked credential; cooldown is rotation-time state and is false
+// at session creation. The live active-leases-versus-maxConcurrent
+// refinement (spec §4.9 line 1218) tightens HasCapacity once a lease-
+// utilization reader is wired; until then a pool with a usable
+// credential is treated as having capacity.
+func poolDescriptor(p credentialpoolstore.CredentialPool) credrouter.PoolDescriptor {
+	assignable := false
+	for _, c := range p.Credentials {
+		if !c.IsRevoked() {
+			assignable = true
+			break
+		}
+	}
+	return credrouter.PoolDescriptor{
+		PoolID:      p.Name,
+		Healthy:     assignable,
+		HasCapacity: assignable,
+	}
+}
+
 // startOnPod places a started session on a Kubernetes warm pod. It
 // resolves the warm pool serving the session's runtime and §5.3
 // isolation profile, then dispatches by the pool's executionMode:
@@ -539,6 +670,14 @@ func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *ad
 // binding after a coordinator handoff without losing the assignment.
 // spec: §4.2 line 160 — "Pod-to-session binding".
 func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) error {
+	// spec: §4.9 lines 1216-1218 — run the pre-claim credential
+	// availability check and resolve the per-provider pool map BEFORE a
+	// pod is claimed, so a session that would fail at credential
+	// assignment is rejected without wasting a warm pod.
+	credPools, err := s.resolveCredentialPools(ctx, row)
+	if err != nil {
+		return err
+	}
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
@@ -564,6 +703,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			ExperimentContext: experimentContextToProto(row.ExperimentContext),
 			TracingContext:    row.TracingContext,
 			SetupPolicy:       s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+			CredentialPools:   credPools,
 		})
 		if err != nil {
 			return err
@@ -581,6 +721,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		ExperimentContext: experimentContextToProto(row.ExperimentContext),
 		TracingContext:    row.TracingContext,
 		SetupPolicy:       s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+		CredentialPools:   credPools,
 	})
 	if err != nil {
 		return err

@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
@@ -164,6 +165,18 @@ type Server struct {
 	// PoolWarmingUp 503's estimatedReadyIn and Retry-After. A zero value
 	// falls through to DefaultWarmupEstimateSeconds.
 	warmupEstimateSeconds int
+	// credRouter is the §4.9 CredentialRouter used at session creation
+	// to resolve a credential source and pool per provider. Never nil
+	// after New (defaults to credrouter.Default).
+	credRouter credrouter.Router
+	// preclaimMismatch, when set, increments the §4.9 line 1220
+	// pre-claim mismatch metric.
+	preclaimMismatch func(pool, provider string)
+	// userCredChecker reports whether a usable user-scoped credential
+	// exists for (tenant, user, provider). Nil in v1 because user-source
+	// lease delivery (the §4.9 materializedConfig path) is not yet wired;
+	// the §4.9 router resolves user sources only when this reports true.
+	userCredChecker func(ctx context.Context, tenantID, userID, provider string) bool
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -521,6 +534,21 @@ type Options struct {
 	// spec's no-historical-data fallback.
 	// spec: §5.2 line 625.
 	WarmupEstimateSeconds int
+
+	// CredentialRouter is the §4.9 pluggable CredentialRouter used at
+	// session creation to resolve a credential source and pool per
+	// provider in the intersection of the runtime's supportedProviders
+	// and the tenant's credentialPolicy. Nil selects the built-in
+	// strategy-and-fallback-order router (credrouter.Default).
+	// spec: §4.9 lines 1558-1591.
+	CredentialRouter credrouter.Router
+
+	// PreclaimMismatch, when set, increments
+	// lenny_credential_preclaim_mismatch_total{pool,provider} on the
+	// §4.9 line 1220 race: the pre-claim availability check passed but
+	// the lease assignment failed. Nil disables the emission.
+	// spec: §4.9 line 1220.
+	PreclaimMismatch func(pool, provider string)
 }
 
 // New returns a Server bound to the supplied store.
@@ -571,9 +599,16 @@ func New(store sessionstore.Store, opts Options) *Server {
 		resumeWindow:           opts.ResumeWindow,
 		sessionLogHook:         opts.SessionLogHook,
 		warmupEstimateSeconds:  opts.WarmupEstimateSeconds,
+		credRouter:             opts.CredentialRouter,
+		preclaimMismatch:       opts.PreclaimMismatch,
 	}
 	if s.warmupEstimateSeconds <= 0 {
 		s.warmupEstimateSeconds = DefaultWarmupEstimateSeconds
+	}
+	if s.credRouter == nil {
+		// spec: §4.9 lines 1583-1589 — the built-in strategy-and-
+		// fallback-order CredentialRouter is the default.
+		s.credRouter = credrouter.NewDefault()
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }

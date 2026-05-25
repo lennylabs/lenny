@@ -126,6 +126,24 @@ type CredentialAssigner interface {
 	AssignProto(poolName, sessionID, spiffeURI string) (*adapterv1.CredentialLease, error)
 }
 
+// CredentialAssignmentError reports that a §4.9 credential lease
+// assignment failed during Bind for a specific provider/pool, after the
+// §4.9 pre-claim availability check had already passed. The gateway
+// maps it to the §4.9 line 1220 race: it releases the claimed pod,
+// increments lenny_credential_preclaim_mismatch_total{pool,provider},
+// and returns CREDENTIAL_POOL_EXHAUSTED to the client.
+type CredentialAssignmentError struct {
+	Provider string
+	Pool     string
+	Err      error
+}
+
+func (e *CredentialAssignmentError) Error() string {
+	return fmt.Sprintf("podsession: lease %s credential from pool %s: %v", e.Provider, e.Pool, e.Err)
+}
+
+func (e *CredentialAssignmentError) Unwrap() error { return e.Err }
+
 // DefaultFallbackMaxMirrorLagSeconds is the §4.6.1
 // podClaimFallbackMaxMirrorLagSeconds default: the fallback claim runs
 // only when the mirror is no more than this many seconds stale.
@@ -270,7 +288,12 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 	for provider, pool := range req.CredentialPools {
 		lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI)
 		if err != nil {
-			return fmt.Errorf("lease %s credential from pool %s: %w", provider, pool, err)
+			// The §4.9 pre-claim check (CredentialRouter) passed for this
+			// provider, yet the assignment failed — the race at §4.9 line
+			// 1220. Surface a typed error so the caller can release the pod,
+			// increment lenny_credential_preclaim_mismatch_total, and return
+			// CREDENTIAL_POOL_EXHAUSTED.
+			return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
 		}
 		// The §4.7 AssignCredentials leases map is keyed by provider, and
 		// the adapter writes each runtime credential-file entry under the

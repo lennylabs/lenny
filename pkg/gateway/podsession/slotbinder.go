@@ -143,7 +143,9 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 	for provider, pool := range req.CredentialPools {
 		lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI)
 		if err != nil {
-			return fmt.Errorf("lease %s credential from pool %s: %w", provider, pool, err)
+			// §4.9 line 1220 pre-claim race: surface a typed error so the
+			// caller can release the slot and emit the mismatch metric.
+			return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
 		}
 		lease.Provider = provider
 		leases[provider] = lease

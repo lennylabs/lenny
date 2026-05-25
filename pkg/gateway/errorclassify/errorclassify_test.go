@@ -38,6 +38,12 @@ func TestClassifyKnownCodes(t *testing.T) {
 		// spec: §15.2.1 line 1017 — WARM_POOL_EXHAUSTED (no idle pods or
 		// concurrent slots) is TRANSIENT and retryable with backoff.
 		{"WARM_POOL_EXHAUSTED", CategoryTransient, true},
+		// spec: §4.9 line 1218, §15.1 line 990 — the §4.9 pre-claim
+		// exhaustion / assignment race is POLICY and retryable (503).
+		{"CREDENTIAL_POOL_EXHAUSTED", CategoryPolicy, true},
+		// spec: §4.9 line 1364, §15.1 line 993 — a user-only policy with
+		// no registered credential is PERMANENT and not retryable (404).
+		{"USER_CREDENTIAL_NOT_FOUND", CategoryPermanent, false},
 	}
 	for _, c := range cases {
 		t.Run(c.code, func(t *testing.T) {

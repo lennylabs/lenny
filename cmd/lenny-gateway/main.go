@@ -1425,6 +1425,8 @@ func main() {
 		PolicyAuditSink: policyAuditSink,
 		Clock:           clockinject.Now,
 		UploadSubsystem: uploadSubsystem,
+		// §4.9 line 1220 — the pre-claim availability check race metric.
+		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

@@ -84,8 +84,8 @@ var table = map[string]entry{
 	// or PostLLMResponse interceptor in the §4.9 LLM proxy. PERMANENT (the
 	// same request fails again), distinct from the TRANSIENT
 	// INTERCEPTOR_TIMEOUT a fail-closed interceptor error produces.
-	"LLM_REQUEST_REJECTED":         {CategoryPermanent, false},
-	"LLM_RESPONSE_REJECTED":        {CategoryPermanent, false},
+	"LLM_REQUEST_REJECTED":  {CategoryPermanent, false},
+	"LLM_RESPONSE_REJECTED": {CategoryPermanent, false},
 	// spec: §15.1 line 1067, §8.3 line 157 — a delegation whose
 	// TaskSpec.input exceeds the effective contentPolicy.maxInputSize is
 	// rejected by the §4.8 DelegationPolicyEvaluator at PreDelegation.
@@ -118,4 +118,14 @@ var table = map[string]entry{
 	// timeout). TRANSIENT and retryable; the write was rejected rather
 	// than fail open.
 	"CREDENTIAL_PROBE_UNAVAILABLE": {CategoryTransient, true},
+	// §4.9 lines 1218, §15.1 line 990 — the §4.9 pre-claim check found
+	// no provider in the intersection with an assignable credential, or
+	// the credential pool exhausted at assignment. POLICY, HTTP 503; the
+	// client may retry once the pool frees up.
+	"CREDENTIAL_POOL_EXHAUSTED": {CategoryPolicy, true},
+	// §4.9 lines 1364, §15.1 line 993 — a user-only credentialPolicy had
+	// no pre-registered credential for the user and provider. PERMANENT,
+	// HTTP 404; the same request fails until the user registers a
+	// credential or the operator configures pool fallback.
+	"USER_CREDENTIAL_NOT_FOUND": {CategoryPermanent, false},
 }
