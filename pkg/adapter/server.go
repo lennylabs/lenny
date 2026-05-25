@@ -15,6 +15,7 @@ package adapter
 import (
 	"context"
 	"sync"
+	"time"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -154,6 +155,25 @@ type Server struct {
 	// exhaustion. Nil leaves the §8.6 trigger path returning
 	// ErrLeaseExtenderUnset.
 	LeaseExtender LeaseExtender
+
+	// RuntimeName is the §5.1 runtime name stamped onto the
+	// `lenny_credential_rotation_timeout_total` metric's runtime label.
+	// Empty leaves the label empty.
+	RuntimeName string
+	// RotationInflightCeiling overrides the §4.7 line 822 fault/revocation
+	// in-flight gate ceiling (default 300s). The renewal trigger ignores
+	// it and waits unbounded. Zero selects the spec default. Operator
+	// override is for test and latency tuning; production keeps the spec
+	// value.
+	RotationInflightCeiling time.Duration
+	// CredentialsAckTimeout overrides the §4.7 line 824 60s
+	// credentials_acknowledged timeout. Zero selects the spec default.
+	CredentialsAckTimeout time.Duration
+	// RotationAudit emits the §4.7 line 822 / §4.9.2
+	// credential.rotation_ceiling_hit audit event when the in-flight gate
+	// hits the ceiling. Nil makes the emission a no-op (the dev-mode
+	// adapter has no EventStore path).
+	RotationAudit RotationAuditEmitter
 
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock

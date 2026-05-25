@@ -39,6 +39,37 @@ var (
 		Help: "Outbound LLM requests in flight per provider (§4.7 direct-mode " +
 			"in-flight gate), tracked from llm_request_started / completed.",
 	}, []string{"provider"})
+	// §4.7 lines 820-829: Full-level credential-rotation in-flight gate
+	// observability. The wait histogram records how long the gate blocked
+	// for in-flight LLM requests to drain; the ceiling counter records
+	// fault/revocation rotations that hit the 300s cap; the timeout
+	// counter records credentials_acknowledged timeouts that fell through
+	// to the standard rotation path; the grace histogram records the
+	// interval between credentials_rotated and the old credential's
+	// release.
+	credRotationInflightWait = mustHistogram(prometheus.HistogramOpts{
+		Name: "lenny_credential_rotation_inflight_wait_seconds",
+		Help: "Time the §4.7 Full-level rotation gate waited for in-flight " +
+			"LLM requests to drain, labelled by pool and provider.",
+		Buckets: []float64{0.01, 0.1, 1, 5, 15, 30, 60, 120, 300},
+	}, []string{"pool", "provider"})
+	credRotationCeilingHit = mustCounterVec(prometheus.CounterOpts{
+		Name: "lenny_credential_rotation_inflight_ceiling_hit_total",
+		Help: "Fault/revocation rotations that hit the §4.7 300s in-flight " +
+			"ceiling and sent credentials_rotated regardless, labelled by " +
+			"pool and trigger.",
+	}, []string{"pool", "trigger"})
+	credRotationTimeout = mustCounterVec(prometheus.CounterOpts{
+		Name: "lenny_credential_rotation_timeout_total",
+		Help: "credentials_acknowledged timeouts (§4.7 60s) that fell through " +
+			"to the standard rotation path, labelled by pool, provider, runtime.",
+	}, []string{"pool", "provider", "runtime"})
+	credRotationGracePeriod = mustHistogram(prometheus.HistogramOpts{
+		Name: "lenny_credential_rotation_grace_period_seconds",
+		Help: "Interval between credentials_rotated and old-credential " +
+			"release (§4.7), labelled by pool and provider.",
+		Buckets: []float64{0.01, 0.1, 1, 5, 15, 30, 60},
+	}, []string{"pool", "provider"})
 	// §4.7 lines 652-662: adapter→gateway control events surfaced over the
 	// gRPC LifecycleChannel stream (RATE_LIMITED, AUTH_EXPIRED,
 	// PROVIDER_UNAVAILABLE, LEASE_REJECTED, AdapterTerminating,
@@ -90,6 +121,40 @@ func mustGauge(opts prometheus.GaugeOpts, labels []string) *prometheus.GaugeVec 
 	}
 	metrics.MustRegister(prometheus.DefaultRegisterer, g)
 	return g
+}
+
+// mustHistogram builds and registers a labeled histogram, panicking on
+// a §16.1.1 naming violation.
+func mustHistogram(opts prometheus.HistogramOpts, labels []string) *prometheus.HistogramVec {
+	h, err := metrics.NewHistogram(opts, labels)
+	if err != nil {
+		panic(err)
+	}
+	metrics.MustRegister(prometheus.DefaultRegisterer, h)
+	return h
+}
+
+// observeRotationInflightWait records the §4.7 in-flight gate wait.
+func observeRotationInflightWait(pool, provider string, seconds float64) {
+	credRotationInflightWait.WithLabelValues(pool, provider).Observe(seconds)
+}
+
+// incRotationCeilingHit records a §4.7 rotation that hit the 300s
+// in-flight ceiling.
+func incRotationCeilingHit(pool, trigger string) {
+	credRotationCeilingHit.WithLabelValues(pool, trigger).Inc()
+}
+
+// incRotationTimeout records a §4.7 credentials_acknowledged timeout
+// that fell through to the standard rotation path.
+func incRotationTimeout(pool, provider, runtime string) {
+	credRotationTimeout.WithLabelValues(pool, provider, runtime).Inc()
+}
+
+// observeRotationGracePeriod records the §4.7 interval between
+// credentials_rotated and old-credential release.
+func observeRotationGracePeriod(pool, provider string, seconds float64) {
+	credRotationGracePeriod.WithLabelValues(pool, provider).Observe(seconds)
 }
 
 // IncTaskCompleteAckTimeout increments the §4.7 line 708 task-complete

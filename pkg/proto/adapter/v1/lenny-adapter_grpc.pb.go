@@ -47,6 +47,7 @@ const (
 	Adapter_Interrupt_FullMethodName         = "/lenny.adapter.v1.Adapter/Interrupt"
 	Adapter_Checkpoint_FullMethodName        = "/lenny.adapter.v1.Adapter/Checkpoint"
 	Adapter_Resume_FullMethodName            = "/lenny.adapter.v1.Adapter/Resume"
+	Adapter_ExportPaths_FullMethodName       = "/lenny.adapter.v1.Adapter/ExportPaths"
 	Adapter_ReportUsage_FullMethodName       = "/lenny.adapter.v1.Adapter/ReportUsage"
 	Adapter_Shutdown_FullMethodName          = "/lenny.adapter.v1.Adapter/Shutdown"
 	Adapter_DemoteSDK_FullMethodName         = "/lenny.adapter.v1.Adapter/DemoteSDK"
@@ -123,6 +124,14 @@ type AdapterClient interface {
 	// rebuilds /workspace/current from the named checkpoint, and starts
 	// the runtime — the replacement-pod counterpart of StartSession.
 	Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error)
+	// ExportPaths packages files from /workspace/current for delegation,
+	// rebased per the export spec (§8.7). The adapter resolves each export
+	// source glob inside the workspace root, rejects any matched file whose
+	// realpath escapes the workspace via symlink, strips the glob's base
+	// path, and re-roots each file under the export's dest_prefix. The
+	// gateway applies the lease's fileExportLimits and optional content
+	// scanning to the returned set. Spec: §4.7 line 633, §8.7.
+	ExportPaths(ctx context.Context, in *ExportPathsRequest, opts ...grpc.CallOption) (*ExportPathsResponse, error)
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(ctx context.Context, in *ReportUsageRequest, opts ...grpc.CallOption) (*ReportUsageResponse, error)
@@ -284,6 +293,16 @@ func (c *adapterClient) Resume(ctx context.Context, in *ResumeRequest, opts ...g
 	return out, nil
 }
 
+func (c *adapterClient) ExportPaths(ctx context.Context, in *ExportPathsRequest, opts ...grpc.CallOption) (*ExportPathsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExportPathsResponse)
+	err := c.cc.Invoke(ctx, Adapter_ExportPaths_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adapterClient) ReportUsage(ctx context.Context, in *ReportUsageRequest, opts ...grpc.CallOption) (*ReportUsageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReportUsageResponse)
@@ -406,6 +425,14 @@ type AdapterServer interface {
 	// rebuilds /workspace/current from the named checkpoint, and starts
 	// the runtime — the replacement-pod counterpart of StartSession.
 	Resume(context.Context, *ResumeRequest) (*ResumeResponse, error)
+	// ExportPaths packages files from /workspace/current for delegation,
+	// rebased per the export spec (§8.7). The adapter resolves each export
+	// source glob inside the workspace root, rejects any matched file whose
+	// realpath escapes the workspace via symlink, strips the glob's base
+	// path, and re-roots each file under the export's dest_prefix. The
+	// gateway applies the lease's fileExportLimits and optional content
+	// scanning to the returned set. Spec: §4.7 line 633, §8.7.
+	ExportPaths(context.Context, *ExportPathsRequest) (*ExportPathsResponse, error)
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error)
@@ -475,6 +502,9 @@ func (UnimplementedAdapterServer) Checkpoint(context.Context, *CheckpointRequest
 }
 func (UnimplementedAdapterServer) Resume(context.Context, *ResumeRequest) (*ResumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Resume not implemented")
+}
+func (UnimplementedAdapterServer) ExportPaths(context.Context, *ExportPathsRequest) (*ExportPathsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExportPaths not implemented")
 }
 func (UnimplementedAdapterServer) ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportUsage not implemented")
@@ -705,6 +735,24 @@ func _Adapter_Resume_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Adapter_ExportPaths_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExportPathsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).ExportPaths(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_ExportPaths_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).ExportPaths(ctx, req.(*ExportPathsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Adapter_ReportUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReportUsageRequest)
 	if err := dec(in); err != nil {
@@ -830,6 +878,10 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Resume",
 			Handler:    _Adapter_Resume_Handler,
+		},
+		{
+			MethodName: "ExportPaths",
+			Handler:    _Adapter_ExportPaths_Handler,
 		},
 		{
 			MethodName: "ReportUsage",

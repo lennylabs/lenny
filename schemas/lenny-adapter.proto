@@ -98,6 +98,15 @@ service Adapter {
   // the runtime — the replacement-pod counterpart of StartSession.
   rpc Resume(ResumeRequest) returns (ResumeResponse) {}
 
+  // ExportPaths packages files from /workspace/current for delegation,
+  // rebased per the export spec (§8.7). The adapter resolves each export
+  // source glob inside the workspace root, rejects any matched file whose
+  // realpath escapes the workspace via symlink, strips the glob's base
+  // path, and re-roots each file under the export's dest_prefix. The
+  // gateway applies the lease's fileExportLimits and optional content
+  // scanning to the returned set. Spec: §4.7 line 633, §8.7.
+  rpc ExportPaths(ExportPathsRequest) returns (ExportPathsResponse) {}
+
   // ReportUsage returns token-usage and time-usage accounting since the
   // last call. The gateway uses this for budget enforcement and billing.
   rpc ReportUsage(ReportUsageRequest) returns (ReportUsageResponse) {}
@@ -424,6 +433,14 @@ message AssignCredentialsResponse {}
 message RotateCredentialsRequest {
   SessionId session_id = 1;
   map<string, CredentialLease> leases = 2;
+  // rotation_trigger is the §4.9 rotationTrigger that drove this
+  // rotation. It governs the §4.7 Full-level in-flight gate ceiling:
+  // any value other than "proactive_renewal" caps the in-flight wait at
+  // 300s and falls through to the standard rotation path on ceiling hit
+  // (spec §4.7 line 822). The renewal trigger keeps the unbounded wait
+  // because the old credential is still valid. Empty is treated as a
+  // fault trigger (capped) for fail-closed safety.
+  string rotation_trigger = 3;
 }
 
 message RotateCredentialsResponse {}
@@ -491,6 +508,53 @@ message ResumeRequest {
 
 message ResumeResponse {
   int64 restored_bytes = 1;  // uncompressed workspace bytes restored
+}
+
+// ExportSpec is one §8.7 file-export entry: a source glob resolved
+// inside the parent's /workspace/current and an optional dest_prefix
+// the matched files are re-rooted under in the child's workspace.
+message ExportSpec {
+  // source is the glob resolved relative to /workspace/current. Its
+  // base path (the longest non-wildcard prefix) is stripped from each
+  // matched file's path during rebasing (§8.7).
+  string source = 1;
+  // dest_prefix is the relative directory the rebased files are placed
+  // under in the child workspace. Empty places them at the root. It
+  // must be a relative path with no "..": the gateway rejects an
+  // absolute or escaping prefix before the call (§8.7 validation).
+  string dest_prefix = 2;
+}
+
+message ExportPathsRequest {
+  SessionId session_id = 1;
+  // exports are applied in order; later entries overwrite earlier ones
+  // on path collision (§8.7 "Multiple exports").
+  repeated ExportSpec exports = 2;
+}
+
+// ExportedFile is one rebased file the adapter packaged for delegation.
+message ExportedFile {
+  // path is the child-workspace-relative destination after rebasing,
+  // always forward-slash separated and root-relative (no leading "./").
+  string path = 1;
+  // content is the file's bytes. The gateway re-derives sha256 when an
+  // interceptor MODIFIES the bytes at PreExportMaterialization (§8.7).
+  bytes content = 2;
+  // sha256 is the lowercase hex digest of content, for the gateway's
+  // export-size and dedup accounting.
+  string sha256 = 3;
+  // size_bytes is len(content), surfaced so the gateway can sum the
+  // export against fileExportLimits without re-reading content.
+  int64 size_bytes = 4;
+}
+
+message ExportPathsResponse {
+  // files are the rebased export set, deduplicated by path with
+  // last-write-wins across overlapping exports (§8.7).
+  repeated ExportedFile files = 1;
+  // total_bytes is the sum of size_bytes across files, for the
+  // gateway's fileExportLimits.maxBytes check.
+  int64 total_bytes = 2;
 }
 
 message ReportUsageRequest {

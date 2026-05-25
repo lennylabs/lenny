@@ -1535,7 +1535,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.5 — `ExportPaths` RPC absent [Medium] — OPEN
+### - [x] F-4.7.5 — `ExportPaths` RPC absent [Medium] — CLOSED
 
 **Severity: Medium.** §8.7 file-export model depends on this RPC.
 
@@ -1547,6 +1547,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** Recursive delegation cannot include file payloads in the request.
 
 **Suggested resolution:** Add `ExportPaths` to `schemas/lenny-adapter.proto` with the §8.7 path-rebasing contract; implement in `pkg/adapter/`.
+
+**Resolution:** Added `ExportPaths(ExportPathsRequest) returns (ExportPathsResponse)` with `ExportSpec` (source glob, dest_prefix) and `ExportedFile` (rebased path, content, sha256, size) to `schemas/lenny-adapter.proto`, regenerated bindings, and implemented `Server.ExportPaths` in `pkg/adapter/exportpaths.go`. It resolves each export source glob inside the workspace root, walks matched directories, strips the glob's wildcard-free base path, re-roots files under `dest_prefix`, rejects symlink escapes (realpath bounds check) and non-regular files, validates `dest_prefix` is relative with no `..`, and deduplicates with last-write-wins across overlapping exports per the §8.7 table. The gateway applies the lease `fileExportLimits` and `PreExportMaterialization` scanning to the returned set. (commit {SHA})
 
 ---
 
@@ -1573,7 +1575,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.7 — Full-level credential-rotation in-flight gate, 300 s ceiling, 60 s `credentials_acknowledged` timeout, and grace period not implemented [Medium] — OPEN
+### - [x] F-4.7.7 — Full-level credential-rotation in-flight gate, 300 s ceiling, 60 s `credentials_acknowledged` timeout, and grace period not implemented [Medium] — CLOSED
 
 **Severity: High.** The whole "no window where the compromised key continues to reach the provider" guarantee (spec line 822) relies on this control.
 
@@ -1588,6 +1590,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** The compromise window §4.7 closes with the in-flight gate / ceiling pair stays open in the implementation. The Standard-level fallback path is not wired, so a runtime that fails to ack will leave the session stuck.
 
 **Suggested resolution:** Implement the per-provider in-flight counter (incremented on `llm_request_started`, decremented on `llm_request_completed`); apply the 300 s ceiling unless `rotationTrigger == proactive_renewal`; enforce a 60 s `credentials_acknowledged` timeout; on timeout, take the Standard-level fallback path (Checkpoint → terminate → AssignCredentials → Resume); emit the four metrics named in spec lines 822-829 and the durable `credential.rotation_ceiling_hit` audit event.
+
+**Resolution:** `RotateCredentials` now runs `rotateProviderFull` per provider (`pkg/adapter/credentials.go`). `awaitInflightGate` blocks on the per-provider in-flight counter (the §4.7 line 820 counter landed with F-4.7.6's `InflightCount`) until it drains; the wait is unbounded for `rotationTrigger: proactive_renewal` and capped at the 300 s ceiling (`RotationInflightCeiling`, override default) for every other trigger. On ceiling hit it increments `lenny_credential_rotation_inflight_ceiling_hit_total{pool,trigger}` and emits the durable `credential.rotation_ceiling_hit` audit event through the injectable `RotationAuditEmitter`, then sends `credentials_rotated` regardless. The `credentials_acknowledged` wait is bounded at 60 s (`CredentialsAckTimeout`); a timeout increments `lenny_credential_rotation_timeout_total{pool,provider,runtime}` and returns `DeadlineExceeded` so the gateway takes the Standard-level path. `lenny_credential_rotation_inflight_wait_seconds` and `lenny_credential_rotation_grace_period_seconds` histograms are recorded on every rotation. A new `rotation_trigger` field on `RotateCredentialsRequest` carries the §4.9 trigger; the spec-named LLM-request queueing during the rotation window is the runtime/proxy responsibility in direct mode and is out of adapter scope. (commit {SHA})
 
 ---
 
