@@ -43,7 +43,8 @@ const selectList = `name, type, image, execution_mode, isolation_profile,
 	tool_capability_overrides, setup_policy, capabilities, min_platform_version,
 	task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 	supported_providers, credential_capabilities, limits, setup_command_policy,
-	default_pool_config, workspace_defaults, runtime_options_schema, shared_assets`
+	default_pool_config, workspace_defaults, runtime_options_schema, shared_assets,
+	sdk_warm_blocking_paths`
 
 // stringSliceJSON marshals a §5.1 string-set field (allowedResourceClasses,
 // supportedProviders) to its jsonb text form. An empty slice is stored as
@@ -236,8 +237,9 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		tool_capability_overrides, setup_policy, capabilities, min_platform_version,
 		task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 		supported_providers, credential_capabilities, limits, setup_command_policy,
-		default_pool_config, workspace_defaults, runtime_options_schema, shared_assets
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`,
+		default_pool_config, workspace_defaults, runtime_options_schema, shared_assets,
+		sdk_warm_blocking_paths
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
@@ -250,7 +252,8 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		stringSliceJSON(r.SupportedProviders), credentialCapabilitiesJSON(r.CredentialCapabilities),
 		limitsJSON(r.Limits), setupCommandPolicyJSON(r.SetupCommandPolicy),
 		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
-		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets))
+		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets),
+		stringSliceJSON(r.SDKWarmBlockingPaths))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -307,7 +310,8 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		allowed_resource_classes = $21, supported_providers = $22,
 		credential_capabilities = $23, limits = $24, setup_command_policy = $25,
 		default_pool_config = $26, workspace_defaults = $27,
-		runtime_options_schema = $28, shared_assets = $29
+		runtime_options_schema = $28, shared_assets = $29,
+		sdk_warm_blocking_paths = $30
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
@@ -322,7 +326,8 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		credentialCapabilitiesJSON(r.CredentialCapabilities),
 		limitsJSON(r.Limits), setupCommandPolicyJSON(r.SetupCommandPolicy),
 		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
-		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets)); err != nil {
+		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets),
+		stringSliceJSON(r.SDKWarmBlockingPaths)); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -410,6 +415,7 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		defaultPoolConfigRaw                       []byte
 		workspaceDefaultsRaw, sharedAssetsRaw      []byte
 		runtimeOptionsSchemaRaw                    []byte
+		sdkWarmBlockingPathsRaw                    []byte
 	)
 	if err := row.Scan(
 		&r.Name, &typ, &r.Image, &execMode, &isoProf, &level, &description,
@@ -418,7 +424,7 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		&taskPolicyRaw, &r.BaseRuntime, &r.AllowSelfRecursion, &allowedClassesRaw,
 		&supportedProvidersRaw, &credentialCapabilitiesRaw, &limitsRaw,
 		&setupCommandPolicyRaw, &defaultPoolConfigRaw, &workspaceDefaultsRaw,
-		&runtimeOptionsSchemaRaw, &sharedAssetsRaw,
+		&runtimeOptionsSchemaRaw, &sharedAssetsRaw, &sdkWarmBlockingPathsRaw,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}
@@ -507,6 +513,11 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	if len(sharedAssetsRaw) > 0 {
 		if err := json.Unmarshal(sharedAssetsRaw, &r.SharedAssets); err != nil {
 			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode sharedAssets: %w", err)
+		}
+	}
+	if len(sdkWarmBlockingPathsRaw) > 0 {
+		if err := json.Unmarshal(sdkWarmBlockingPathsRaw, &r.SDKWarmBlockingPaths); err != nil {
+			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode sdkWarmBlockingPaths: %w", err)
 		}
 	}
 	return r, nil

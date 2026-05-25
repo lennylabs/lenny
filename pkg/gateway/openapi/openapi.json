@@ -241,9 +241,11 @@
                   "supported": { "type": "boolean" },
                   "modes":     { "type": "array", "items": { "type": "string", "enum": ["immediate","queued"] } }
                 }
-              }
+              },
+              "preConnect": { "type": "boolean" }
             }
           },
+          "sdkWarmBlockingPaths": { "type": "array", "items": { "type": "string" } },
           "minPlatformVersion": { "type": "string" },
           "allowedResourceClasses": { "type": "array", "items": { "type": "string" } },
           "supportedProviders": { "type": "array", "items": { "type": "string" } },

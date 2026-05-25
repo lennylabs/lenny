@@ -170,6 +170,16 @@ type Runtime struct {
 	// nil when the runtime declares no capabilities block.
 	Capabilities *RuntimeCapabilities
 
+	// SDKWarmBlockingPaths is the §5.1 top-level sdkWarmBlockingPaths
+	// list: glob patterns matched against relative workspace paths. When
+	// capabilities.preConnect is true and any uploaded file (including
+	// workspaceDefaults files) matches a pattern, the §6.1 warm-pool
+	// controller demotes the SDK-warm pod before use. The field is only
+	// meaningful when capabilities.preConnect is true; ApplyDefaults seeds
+	// it to ["CLAUDE.md", ".claude/*"] in that case when the runtime
+	// declares none. Patterns follow Go path.Match extended with "**".
+	SDKWarmBlockingPaths []string
+
 	// MinPlatformVersion is the §5.1 minPlatformVersion: the lowest
 	// Lenny gateway version the runtime supports. The gateway rejects
 	// registration when its own version is below this. An empty value
@@ -320,6 +330,14 @@ type RuntimeCapabilities struct {
 
 	// Injection is the runtime's §5.1 mid-session injection support.
 	Injection InjectionCapability `json:"injection,omitempty"`
+
+	// PreConnect is the §5.1 capabilities.preConnect flag. When true the
+	// §6.1 warm-pool controller pre-connects the agent SDK process during
+	// the warm phase so every pod in the pool is SDK-warm, and the
+	// runtime's adapter must implement DemoteSDK. Default false. The
+	// companion runtime-level SDKWarmBlockingPaths governs the demotion
+	// decision (§5.1 lines 22-24).
+	PreConnect bool `json:"preConnect,omitempty"`
 }
 
 // Clone returns a deep copy of the capabilities so the store never
@@ -533,8 +551,14 @@ func (d SetupTimeoutDisposition) IsValid() bool {
 // SetupPolicy is the §5.1 setupPolicy block on a runtime: the aggregate
 // cap on the pod setup phase and the disposition when the cap is hit.
 type SetupPolicy struct {
-	// TimeoutSeconds is the aggregate cap on the setup phase in
-	// seconds. Zero means the runtime declares no aggregate cap.
+	// TimeoutSeconds is the aggregate cap on the setup phase in seconds.
+	// Zero means the runtime declares no aggregate cap and the setup
+	// phase waits indefinitely (§5.1 line 260). In the §5.1 derived
+	// Maximum merge (line 195) zero is the largest possible bound: it
+	// wins max() over any finite value, so a base's "no cap" floor cannot
+	// be shortened by a derived runtime. The registration validator
+	// enforces the line-195 note "neither can be zero if the other is
+	// set" across a base and derived pair.
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 
 	// OnTimeout is the disposition when the cap is exceeded. An empty
@@ -1027,6 +1051,13 @@ func ApplyDefaults(r *Runtime) {
 	if r.CapabilityInferenceMode == "" {
 		r.CapabilityInferenceMode = capabilityinference.DefaultMode
 	}
+	// §5.1 line 24: sdkWarmBlockingPaths defaults to ["CLAUDE.md",
+	// ".claude/*"] when capabilities.preConnect is true and the runtime
+	// declares no list. The field is ignored when preConnect is false, so
+	// no default is seeded there.
+	if r.Capabilities != nil && r.Capabilities.PreConnect && len(r.SDKWarmBlockingPaths) == 0 {
+		r.SDKWarmBlockingPaths = []string{"CLAUDE.md", ".claude/*"}
+	}
 }
 
 // cloneRuntime returns a deep copy of r. The Labels map, the
@@ -1042,6 +1073,7 @@ func cloneRuntime(r Runtime) Runtime {
 	}
 	r.AllowedResourceClasses = append([]string(nil), r.AllowedResourceClasses...)
 	r.SupportedProviders = append([]string(nil), r.SupportedProviders...)
+	r.SDKWarmBlockingPaths = append([]string(nil), r.SDKWarmBlockingPaths...)
 	r.CredentialCapabilities = r.CredentialCapabilities.Clone()
 	r.AgentInterface = r.AgentInterface.Clone()
 	if r.PublishedMetadata != nil {

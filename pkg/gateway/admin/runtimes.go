@@ -72,6 +72,7 @@ type RuntimePayload struct {
 	RuntimeOptionsSchema    json.RawMessage                             `json:"runtimeOptionsSchema,omitempty"`
 	SharedAssets            []runtimestore.SharedAsset                  `json:"sharedAssets,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities           `json:"capabilities,omitempty"`
+	SDKWarmBlockingPaths    []string                                    `json:"sdkWarmBlockingPaths,omitempty"`
 	MinPlatformVersion      string                                      `json:"minPlatformVersion,omitempty"`
 	TaskPolicy              *runtimestore.TaskPolicy                    `json:"taskPolicy,omitempty"`
 	BaseRuntime             string                                      `json:"baseRuntime,omitempty"`
@@ -111,6 +112,7 @@ func runtimeFromPayload(p RuntimePayload, createdAt time.Time) runtimestore.Runt
 		RuntimeOptionsSchema:    p.RuntimeOptionsSchema,
 		SharedAssets:            p.SharedAssets,
 		Capabilities:            p.Capabilities,
+		SDKWarmBlockingPaths:    p.SDKWarmBlockingPaths,
 		MinPlatformVersion:      p.MinPlatformVersion,
 		TaskPolicy:              p.TaskPolicy,
 		BaseRuntime:             p.BaseRuntime,
@@ -146,6 +148,7 @@ type UpdateRuntimeRequest struct {
 	RuntimeOptionsSchema    json.RawMessage                              `json:"runtimeOptionsSchema,omitempty"`
 	SharedAssets            *[]runtimestore.SharedAsset                  `json:"sharedAssets,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities            `json:"capabilities,omitempty"`
+	SDKWarmBlockingPaths    *[]string                                    `json:"sdkWarmBlockingPaths,omitempty"`
 	CredentialCapabilities  *runtimestore.CredentialCapabilities         `json:"credentialCapabilities,omitempty"`
 	MinPlatformVersion      *string                                      `json:"minPlatformVersion,omitempty"`
 	TaskPolicy              *runtimestore.TaskPolicy                     `json:"taskPolicy,omitempty"`
@@ -208,7 +211,33 @@ func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) e
 	} else if forbidden != "" {
 		return fmt.Errorf("runtimeOptionsSchema declares forbidden property %q", forbidden)
 	}
+	// §5.1 line 195 note: in the timeoutSeconds Maximum merge, neither
+	// side can be zero (no aggregate cap) while the other sets a finite
+	// value — max(no-cap, finite) is ambiguous.
+	if setupTimeoutPairingConflict(base.SetupPolicy, p.SetupPolicy) {
+		return errSetupTimeoutPairing
+	}
 	return nil
+}
+
+// errSetupTimeoutPairing reports the §5.1 line-195 note violation: a base
+// and derived setupPolicy where exactly one declares a finite
+// timeoutSeconds while the other is zero (no aggregate cap).
+var errSetupTimeoutPairing = errors.New(
+	"setupPolicy.timeoutSeconds cannot be zero on one runtime when the other sets a value")
+
+// setupTimeoutPairingConflict reports the §5.1 line-195 "neither can be
+// zero if the other is set" violation across a base and derived
+// setupPolicy pair. It applies only when both runtimes declare a
+// setupPolicy: a conflict is exactly one side carrying a zero (no-cap)
+// timeoutSeconds while the other carries a finite value. When either side
+// declares no setupPolicy at all the merge takes the single declared
+// policy unchanged and the note does not apply.
+func setupTimeoutPairingConflict(base, derived *runtimestore.SetupPolicy) bool {
+	if base == nil || derived == nil {
+		return false
+	}
+	return (base.TimeoutSeconds == 0) != (derived.TimeoutSeconds == 0)
 }
 
 // providersNotInBase returns the first entry of derived that is not in
@@ -277,7 +306,82 @@ func validateDerivedRuntimeUpdate(current, base runtimestore.Runtime, body Updat
 			return fmt.Errorf("runtimeOptionsSchema declares forbidden property %q", forbidden)
 		}
 	}
+	// §5.1 line 195 note: a PUT that sets the derived runtime's
+	// setupPolicy must not produce a zero/finite mismatch against the
+	// base's setupPolicy. An omitted setupPolicy leaves the prior
+	// (already-validated) pairing in place.
+	if body.SetupPolicy != nil && setupTimeoutPairingConflict(base.SetupPolicy, body.SetupPolicy) {
+		return errSetupTimeoutPairing
+	}
 	return nil
+}
+
+// proposedBaseRuntime applies the fields a PUT may change on a base
+// runtime that a derived runtime's validity depends on, returning the
+// would-be base. It covers the restrict-only / merge-input fields
+// (supportedProviders, allowSelfRecursion, runtimeOptionsSchema,
+// setupPolicy) that §5.1 impact validation evaluates; image and name are
+// immutable and the remaining fields do not constrain derived runtimes.
+func proposedBaseRuntime(current runtimestore.Runtime, body UpdateRuntimeRequest) runtimestore.Runtime {
+	p := current
+	if body.SupportedProviders != nil {
+		p.SupportedProviders = *body.SupportedProviders
+	}
+	if body.AllowSelfRecursion != nil {
+		p.AllowSelfRecursion = *body.AllowSelfRecursion
+	}
+	if len(body.RuntimeOptionsSchema) > 0 {
+		p.RuntimeOptionsSchema = body.RuntimeOptionsSchema
+	}
+	if body.SetupPolicy != nil {
+		p.SetupPolicy = body.SetupPolicy
+	}
+	return p
+}
+
+// derivedConflictsWithBase reports whether derived d would become invalid
+// against base — the §5.1 derived-runtime invariants evaluated at
+// registration, recomputed here for impact validation: supportedProviders
+// must stay a subset of the base set, allowSelfRecursion may not widen
+// beyond the base, runtimeOptionsSchema may only reference base property
+// names, and the setupPolicy.timeoutSeconds pairing may not become a
+// zero/finite mismatch.
+func derivedConflictsWithBase(d, base runtimestore.Runtime) bool {
+	if providersNotInBase(d.SupportedProviders, base.SupportedProviders) != "" {
+		return true
+	}
+	if d.AllowSelfRecursion && !base.AllowSelfRecursion {
+		return true
+	}
+	if forbidden, err := forbiddenDerivedSchemaProperty(d.RuntimeOptionsSchema, base.RuntimeOptionsSchema); err != nil || forbidden != "" {
+		return true
+	}
+	if setupTimeoutPairingConflict(base.SetupPolicy, d.SetupPolicy) {
+		return true
+	}
+	return false
+}
+
+// derivedRuntimesInvalidatedBy returns the names of active derived
+// runtimes that reference baseName and would be invalidated by replacing
+// their base with newBase. §5.1 line 174 requires the gateway to reject a
+// base-runtime mutation that would invalidate an existing derived runtime
+// and to name the affected runtimes.
+func (r *Router) derivedRuntimesInvalidatedBy(ctx context.Context, baseName string, newBase runtimestore.Runtime) ([]string, error) {
+	rows, err := r.runtimes.List(ctx, runtimestore.ListFilter{})
+	if err != nil {
+		return nil, err
+	}
+	var affected []string
+	for _, d := range rows {
+		if d.BaseRuntime != baseName || !d.IsActive() {
+			continue
+		}
+		if derivedConflictsWithBase(d, newBase) {
+			affected = append(affected, d.Name)
+		}
+	}
+	return affected, nil
 }
 
 // validateTaskPolicy checks a §5.1 taskPolicy: known scrub-mode and
@@ -535,6 +639,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		RuntimeOptionsSchema:    r.RuntimeOptionsSchema,
 		SharedAssets:            r.SharedAssets,
 		Capabilities:            r.Capabilities,
+		SDKWarmBlockingPaths:    r.SDKWarmBlockingPaths,
 		MinPlatformVersion:      r.MinPlatformVersion,
 		TaskPolicy:              r.TaskPolicy,
 		BaseRuntime:             r.BaseRuntime,
@@ -906,6 +1011,23 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusBadRequest, "INVALID_DERIVED_RUNTIME", derr.Error(), nil)
 			return
 		}
+		// §5.1 line 174: a base runtime is mutable with impact validation —
+		// a change that would invalidate an existing derived runtime is
+		// rejected with the list of affected runtimes.
+		if !current.IsDerived() {
+			affected, ierr := r.derivedRuntimesInvalidatedBy(req.Context(), name,
+				proposedBaseRuntime(current, body))
+			if ierr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", ierr.Error(), nil)
+				return
+			}
+			if len(affected) > 0 {
+				writeError(w, http.StatusBadRequest, "BASE_RUNTIME_MUTATION_INVALIDATES_DERIVED",
+					"change would invalidate derived runtimes",
+					map[string]any{"affectedRuntimes": affected})
+				return
+			}
+		}
 	}
 	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
 		if body.Image != nil {
@@ -980,6 +1102,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.Capabilities != nil {
 			rt.Capabilities = body.Capabilities
+		}
+		if body.SDKWarmBlockingPaths != nil {
+			rt.SDKWarmBlockingPaths = *body.SDKWarmBlockingPaths
 		}
 		if body.MinPlatformVersion != nil {
 			rt.MinPlatformVersion = *body.MinPlatformVersion

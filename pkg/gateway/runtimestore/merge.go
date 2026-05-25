@@ -46,8 +46,9 @@ func Resolve(ctx context.Context, s Store, name string) (Runtime, error) {
 //   - publishedMetadata appends the derived entries onto the base list,
 //     with a duplicate key won by the derived entry.
 //   - labels overlay the derived keys onto the base map.
-//   - setupPolicy.timeoutSeconds takes max(base, derived); onTimeout
-//     takes the derived value when it is set.
+//   - setupPolicy.timeoutSeconds takes max(base, derived), where zero
+//     ("no cap") counts as the largest bound and wins; onTimeout takes the
+//     derived value when it is set.
 //
 // The result is a fully resolved standalone runtime: its BaseRuntime is
 // empty and it shares no mutable state with the base or derived inputs.
@@ -67,6 +68,11 @@ func Merge(base, derived Runtime) Runtime {
 	eff.IntegrationLevel = cb.IntegrationLevel
 	eff.Capabilities = cb.Capabilities
 	eff.AllowedResourceClasses = append([]string(nil), cb.AllowedResourceClasses...)
+	// §5.1 lines 22-24: sdkWarmBlockingPaths is the companion of the
+	// inherited capabilities.preConnect flag (SDK-warm is a property of
+	// the base image's pre-connect behavior). It is taken from the base, so
+	// a derived runtime inherits the base's demotion path set.
+	eff.SDKWarmBlockingPaths = append([]string(nil), cb.SDKWarmBlockingPaths...)
 
 	// §5.1 allowSelfRecursion is Override (restrict-only). The derived
 	// value wins; the restrict-only invariant (derived true rejected when
@@ -275,7 +281,17 @@ func mergeSetupPolicy(base, derived *SetupPolicy) *SetupPolicy {
 		TimeoutSeconds: base.TimeoutSeconds,
 		OnTimeout:      base.OnTimeout,
 	}
-	if derived.TimeoutSeconds > out.TimeoutSeconds {
+	// §5.1 line 195: timeoutSeconds is Maximum. Zero means "no aggregate
+	// cap" (waits indefinitely), which is the largest possible bound — it
+	// wins the max over any finite value so a base's no-cap floor survives
+	// a finite derived value. The registration validator rejects a mixed
+	// pair where exactly one side is zero ("neither can be zero if the
+	// other is set"); this branch is the deterministic fallback if a base
+	// is later mutated into a mismatched state.
+	switch {
+	case base.TimeoutSeconds == 0 || derived.TimeoutSeconds == 0:
+		out.TimeoutSeconds = 0
+	case derived.TimeoutSeconds > base.TimeoutSeconds:
 		out.TimeoutSeconds = derived.TimeoutSeconds
 	}
 	if derived.OnTimeout != "" {

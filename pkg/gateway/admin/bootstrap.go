@@ -348,6 +348,11 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			row := runtimeFromPayload(p, r.clock())
 			runtimestore.ApplyDefaults(&row)
 			row.UpdatedAt = row.CreatedAt
+			// §5.1 lines 283-291: a runtime with an agentInterface gets a
+			// write-time auto-generated A2A agent card stored as a
+			// publishedMetadata entry — the bootstrap install path must
+			// generate it just as the POST handler does.
+			r.applyGeneratedCard(&row, row.CreatedAt)
 			if err := r.runtimes.Create(req.Context(), row); err != nil {
 				out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
 				continue
@@ -424,6 +429,13 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			if p.TaskPolicy != nil {
 				rt.TaskPolicy = p.TaskPolicy
 			}
+			if p.SDKWarmBlockingPaths != nil {
+				rt.SDKWarmBlockingPaths = p.SDKWarmBlockingPaths
+			}
+			// §5.1 lines 283-291: regenerate the auto-generated A2A agent
+			// card at write time whenever the resulting runtime carries an
+			// agentInterface, matching the PUT handler.
+			r.applyGeneratedCard(rt, r.clock())
 			return nil
 		})
 		if err != nil {
