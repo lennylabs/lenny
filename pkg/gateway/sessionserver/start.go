@@ -270,6 +270,12 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		runtimeRef = preRoute.RequestedRuntime
 	}
 
+	// spec: §7.1 line 75 — resolve the pool-derived isolation level
+	// once so executionMode + scrubPolicy can be persisted on the row
+	// (same path as the two-step create flow). GET / List read the
+	// persisted values via toResponse so the rich envelope survives a
+	// coordinator handoff.
+	level := s.resolveIsolationLevel(r.Context(), runtimeRef, isoProf)
 	row := sessionstore.Session{
 		ID:               s.idFn(),
 		TenantID:         tenantID,
@@ -278,6 +284,8 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		Environment:      req.Environment,
 		State:            session.StateRunning, // skip directly to running per §15.1
 		IsolationProfile: isoProf,
+		ExecutionMode:    level.ExecutionMode,
+		ScrubPolicy:      level.ScrubPolicy,
 		WorkspacePlan:    planJSON,
 		CreatedAt:        s.clock(),
 	}
@@ -365,7 +373,11 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	s.emitStatusChange(row.TenantID, row.ID, row.State)
 
 	base := toResponse(row)
-	base.SessionIsolationLevel = defaultIsolationLevel(isoProf)
+	// spec: §7.1 line 75 — the pool-resolved level was stamped onto the
+	// row before persist; persistedIsolationLevel inside toResponse
+	// already returns it. Override with the local copy for parity with
+	// the two-step create path (covers the no-pool-resolved fallback).
+	base.SessionIsolationLevel = level
 	resp := CreateSessionResponse{
 		SessionResponse:       base,
 		UploadToken:           tok,

@@ -303,6 +303,12 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// spec: §7.1 line 75 — resolve the derived session's pool-derived
+	// isolation level once so executionMode + scrubPolicy are persisted
+	// alongside isolationProfile (same path as the plain create flow).
+	// GET /v1/sessions/{id} on a derived row therefore returns the same
+	// rich envelope as a freshly-created row.
+	derivedLevel := s.resolveIsolationLevel(r.Context(), runtimeRef, target)
 	derived := sessionstore.Session{
 		ID:                 derivedID,
 		TenantID:           tenantID,
@@ -313,6 +319,8 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		RuntimeRef:         runtimeRef,
 		PoolRef:            pool,
 		IsolationProfile:   target,
+		ExecutionMode:      derivedLevel.ExecutionMode,
+		ScrubPolicy:        derivedLevel.ScrubPolicy,
 		WorkspaceSnapshot:  copySnapshotRef(source.WorkspaceSnapshot, derivedRef),
 		ParentSessionID:    source.ID,
 		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,

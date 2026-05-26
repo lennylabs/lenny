@@ -68,6 +68,24 @@ type Session struct {
 	// been resolved.
 	IsolationProfile isolation.Profile
 
+	// ExecutionMode is the §5.2 pool execution mode the assigned pool
+	// resolved to at session creation: "session" (default), "task", or
+	// "concurrent". Resolved from the pool's SandboxTemplate at
+	// /v1/sessions and frozen for the session lifetime per §7.1 line 75
+	// so GET /v1/sessions/{id} returns the same envelope a client
+	// received from the create response. Empty when the gateway has not
+	// resolved a pool (Postgres-only posture, no PodBinder), in which
+	// case the §7.1 sessionIsolationLevel falls back to session-mode.
+	ExecutionMode string
+
+	// ScrubPolicy is the §7.1 line 72 scrub-policy string for the
+	// session's assigned pool: "" for session-mode pools, or one of
+	// "best-effort" / "vm-restart" / "best-effort-in-place" /
+	// "best-effort-per-slot" / "none" for the §5.2 reuse modes.
+	// Resolved at create time and frozen for the session lifetime per
+	// §7.1 line 75. Empty for the session-mode default.
+	ScrubPolicy string
+
 	// WorkspacePlan is the raw §14 WorkspacePlan JSON submitted with
 	// POST /v1/sessions or POST /v1/sessions/start. It is stored at
 	// create so the finalize and start handlers can materialize the

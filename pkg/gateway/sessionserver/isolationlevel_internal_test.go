@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -119,5 +120,116 @@ func TestResolveIsolationLevel_NoResolverFallsBackToSession(t *testing.T) {
 	want := defaultIsolationLevel(isolation.ProfileSandboxed)
 	if got != want {
 		t.Errorf("resolveIsolationLevel without resolver = %+v, want session-mode default %+v", got, want)
+	}
+}
+
+// spec: §7.1 line 75 — persistedIsolationLevel surfaces the
+// executionMode + scrubPolicy halves stamped on the row at create time,
+// so GET / List return the same rich envelope a client received from
+// the create response. Empty ExecutionMode (legacy rows or no-pool-
+// resolved posture) falls back to the conservative session-mode level
+// so the field never understates the isolation posture.
+func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
+	cases := []struct {
+		name string
+		row  sessionstore.Session
+		want SessionIsolationLevel
+	}{
+		{
+			name: "empty execution mode falls back to session-mode default",
+			row:  sessionstore.Session{IsolationProfile: isolation.ProfileSandboxed},
+			want: defaultIsolationLevel(isolation.ProfileSandboxed),
+		},
+		{
+			name: "session mode: no reuse, no scrub, no warning",
+			row: sessionstore.Session{
+				IsolationProfile: isolation.ProfileSandboxed,
+				ExecutionMode:    "session",
+			},
+			want: SessionIsolationLevel{
+				ExecutionMode:    "session",
+				IsolationProfile: "sandboxed",
+			},
+		},
+		{
+			name: "task mode: pod reuse + warning + scrub",
+			row: sessionstore.Session{
+				IsolationProfile: isolation.ProfileMicrovm,
+				ExecutionMode:    "task",
+				ScrubPolicy:      "vm-restart",
+			},
+			want: SessionIsolationLevel{
+				ExecutionMode:        "task",
+				IsolationProfile:     "microvm",
+				PodReuse:             true,
+				ResidualStateWarning: true,
+				ScrubPolicy:          "vm-restart",
+			},
+		},
+		{
+			name: "concurrent stateless: pod reuse + warning + no scrub",
+			row: sessionstore.Session{
+				IsolationProfile: isolation.ProfileSandboxed,
+				ExecutionMode:    "concurrent",
+				ScrubPolicy:      "none",
+			},
+			want: SessionIsolationLevel{
+				ExecutionMode:        "concurrent",
+				IsolationProfile:     "sandboxed",
+				PodReuse:             true,
+				ResidualStateWarning: true,
+				ScrubPolicy:          "none",
+			},
+		},
+		{
+			name: "concurrent workspace: per-slot scrub",
+			row: sessionstore.Session{
+				IsolationProfile: isolation.ProfileSandboxed,
+				ExecutionMode:    "concurrent",
+				ScrubPolicy:      "best-effort-per-slot",
+			},
+			want: SessionIsolationLevel{
+				ExecutionMode:        "concurrent",
+				IsolationProfile:     "sandboxed",
+				PodReuse:             true,
+				ResidualStateWarning: true,
+				ScrubPolicy:          "best-effort-per-slot",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := persistedIsolationLevel(tc.row)
+			if got != tc.want {
+				t.Errorf("persistedIsolationLevel = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// spec: §7.1 line 75 — toResponse returns the persisted
+// executionMode + scrubPolicy halves so a GET surfaces the rich
+// envelope frozen at session creation, including after a coordinator
+// handoff.
+func TestToResponse_SurfacesPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
+	row := sessionstore.Session{
+		ID:               "sess-1",
+		TenantID:         "tenant-1",
+		IsolationProfile: isolation.ProfileSandboxed,
+		ExecutionMode:    "concurrent",
+		ScrubPolicy:      "best-effort-per-slot",
+	}
+	out := toResponse(row)
+	if out.SessionIsolationLevel.ExecutionMode != "concurrent" {
+		t.Errorf("executionMode = %q, want concurrent", out.SessionIsolationLevel.ExecutionMode)
+	}
+	if out.SessionIsolationLevel.ScrubPolicy != "best-effort-per-slot" {
+		t.Errorf("scrubPolicy = %q, want best-effort-per-slot", out.SessionIsolationLevel.ScrubPolicy)
+	}
+	if !out.SessionIsolationLevel.PodReuse {
+		t.Errorf("podReuse = false, want true (derived from executionMode=concurrent)")
+	}
+	if !out.SessionIsolationLevel.ResidualStateWarning {
+		t.Errorf("residualStateWarning = false, want true")
 	}
 }

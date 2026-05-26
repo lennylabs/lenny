@@ -1069,6 +1069,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		return
 	}
 
+	// spec: §7.1 line 75 — resolve the pool-derived isolation level
+	// once at create time so the executionMode / scrubPolicy halves can
+	// be persisted on the row alongside isolationProfile. GET / List
+	// return the same envelope across the session's lifetime
+	// (persistedIsolationLevel in toResponse), so a client that lost
+	// the create response or hits a different replica still sees the
+	// rich level the pool resolved to.
+	level := s.resolveIsolationLevel(r.Context(), req.RuntimeRef, isoProf)
 	row := sessionstore.Session{
 		ID:               s.idFn(),
 		TenantID:         tenantID,
@@ -1077,6 +1085,8 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		Environment:      req.Environment,
 		State:            session.StateCreated,
 		IsolationProfile: isoProf,
+		ExecutionMode:    level.ExecutionMode,
+		ScrubPolicy:      level.ScrubPolicy,
 		WorkspacePlan:    planJSON,
 		CreatedAt:        s.clock(),
 	}
@@ -1132,12 +1142,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	s.recordSessionCreated(r.Context(), row)
 
 	base := toResponse(row)
-	// spec: §7.1 line 75 — at creation the isolation level is resolved
-	// against the assigned pool (executionMode/scrubPolicy/podReuse from
-	// the §5.2 pool), which is richer than the profile-only level
-	// toResponse derives for the GET/list path. Override the embedded
-	// default with the pool-resolved value here.
-	base.SessionIsolationLevel = s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf)
+	// spec: §7.1 line 75 — the pool-resolved level is now persisted on
+	// the row, so toResponse returns it on every read. The local
+	// resolved-at-admission value still wins over the persisted column
+	// for the create response itself (covers a future code path that
+	// might write executionMode after the row insert).
+	base.SessionIsolationLevel = level
 	resp := CreateSessionResponse{
 		SessionResponse:       base,
 		UploadToken:           tok,
@@ -1181,6 +1191,33 @@ func defaultIsolationLevel(p isolation.Profile) SessionIsolationLevel {
 		ScrubPolicy:          "",
 		ResidualStateWarning: false,
 	}
+}
+
+// persistedIsolationLevel returns the §7.1 line 75 sessionIsolationLevel
+// derived from the persisted row. ExecutionMode + ScrubPolicy are
+// resolved against the assigned pool at create time and frozen for the
+// session lifetime; reading them off the row makes GET / List return
+// the same envelope a client received from POST /v1/sessions even after
+// a coordinator handoff. Rows whose ExecutionMode is empty (gateway
+// never resolved a pool, or pre-migration-0084 rows) fall back to the
+// session-mode default, mirroring resolveIsolationLevel's fallback
+// posture so the field never understates the isolation level.
+func persistedIsolationLevel(row sessionstore.Session) SessionIsolationLevel {
+	mode := row.ExecutionMode
+	if mode == "" {
+		return defaultIsolationLevel(row.IsolationProfile)
+	}
+	level := SessionIsolationLevel{
+		ExecutionMode:    mode,
+		IsolationProfile: string(row.IsolationProfile),
+	}
+	switch mode {
+	case string(runtimestore.ExecutionModeTask), string(runtimestore.ExecutionModeConcurrent):
+		level.PodReuse = true
+		level.ResidualStateWarning = true
+		level.ScrubPolicy = row.ScrubPolicy
+	}
+	return level
 }
 
 // isolationLevelForPool maps a resolved §5.2 pool to the §7.1
@@ -1553,13 +1590,16 @@ func toResponse(row sessionstore.Session) SessionResponse {
 		RecoveryGeneration: row.RecoveryGeneration,
 		SchemaVersion:      schemaVersion,
 		RetryCount:         row.RetryCount,
-		// spec: §7.1 line 75 — surface the isolation level on every read so
-		// a client that lost the create response can still inspect it. It is
-		// derived from the persisted §5.3 profile, which is fixed for the
-		// session's lifetime. The pod-reuse fields (executionMode,
-		// scrubPolicy, residualStateWarning) carry their session-mode
-		// defaults here; the create path resolves the pool-accurate values.
-		SessionIsolationLevel: defaultIsolationLevel(row.IsolationProfile),
+		// spec: §7.1 line 75 — surface the isolation level on every read.
+		// The execution-mode + scrub-policy halves are persisted on the
+		// row at create time (migration 0084) so a client that lost the
+		// create response, or a GET issued against a coordinator-handed-
+		// off replica, returns the same rich envelope. Rows persisted
+		// before migration 0084 (or by a code path that never resolved a
+		// pool) carry empty ExecutionMode — they fall back to the
+		// session-mode default so the field never understates the
+		// isolation posture.
+		SessionIsolationLevel: persistedIsolationLevel(row),
 	}
 	if row.FailureClass != "" {
 		out.FailureClass = string(row.FailureClass)

@@ -55,7 +55,9 @@ var _ sessionstore.Store = (*Store)(nil)
 // timestamp the gauge / `lenny_checkpoint_stale_sessions` reaper keys
 // off.
 // The final column (workspace_snapshot_hash) is the §4.5 line 311
-// content-addressed snapshot hash added in migration 0068.
+// content-addressed snapshot hash added in migration 0068. The
+// trailing execution_mode and scrub_policy columns are the §7.1
+// line 75 sessionIsolationLevel halves added in migration 0084.
 const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
@@ -67,7 +69,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	schema_version,
 	retry_count, policy_enforcement_state, resume_eligible_until,
 	last_successful_checkpoint_at,
-	COALESCE(workspace_snapshot_hash, '')`
+	COALESCE(workspace_snapshot_hash, ''),
+	execution_mode, scrub_policy`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -89,7 +92,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	// added in migration 0055. Bind $34 is the §4.4 freshness
 	// timestamp added in migration 0061. Bind $35 is the §4.5
 	// line 311 content-addressed snapshot hash added in
-	// migration 0068.
+	// migration 0068. Binds $36 and $37 are the §7.1 line 75
+	// execution_mode and scrub_policy halves of sessionIsolationLevel
+	// added in migration 0084.
 	const insertSQL = `INSERT INTO sessions (
 		id, tenant_id, user_id, state, runtime_ref, pool_ref, isolation_profile,
 		parent_session_id, root_session_id, failure_class, failure_reason,
@@ -101,7 +106,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		schema_version,
 		retry_count, policy_enforcement_state, resume_eligible_until,
 		last_successful_checkpoint_at,
-		workspace_snapshot_hash
+		workspace_snapshot_hash,
+		execution_mode, scrub_policy
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
@@ -110,7 +116,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$26, $27, $28, $29, $30,
 		$31, $32::jsonb, $33,
 		$34,
-		NULLIF($35, '')
+		NULLIF($35, ''),
+		$36, $37
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -134,7 +141,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			sess.RetryCount, policyEnforcementArg(sess.PolicyEnforcementState),
 			pgtenant.NullTime(sess.ResumeEligibleUntil),
 			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt),
-			hash)
+			hash,
+			sess.ExecutionMode, sess.ScrubPolicy)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -191,7 +199,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		retry_count = $29, policy_enforcement_state = $30::jsonb,
 		resume_eligible_until = $31,
 		last_successful_checkpoint_at = $32,
-		workspace_snapshot_hash = NULLIF($33, '')
+		workspace_snapshot_hash = NULLIF($33, ''),
+		execution_mode = $34, scrub_policy = $35
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -246,6 +255,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			pgtenant.NullTime(sess.ResumeEligibleUntil),
 			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt),
 			hash,
+			sess.ExecutionMode, sess.ScrubPolicy,
 		); err != nil {
 			return err
 		}
@@ -398,6 +408,8 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §4.5 line 311 content-addressed snapshot hash from
 		// migration 0068.
 		&wsHash,
+		// §7.1 line 75 sessionIsolationLevel halves from migration 0084.
+		&s.ExecutionMode, &s.ScrubPolicy,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
