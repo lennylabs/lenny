@@ -313,6 +313,19 @@ type Store interface {
 	// GDPR-erasure per-store adapter — erasing a user with no sessions
 	// is a no-op that returns (0, nil), never ErrNotFound.
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// GetActiveSlotsByPod returns the number of live (non-terminal)
+	// sessions bound to podID across every tenant. It is the §5.2
+	// "Post-recovery rehydration atomicity" seed source: after a Redis
+	// restart the gateway reads this count to rehydrate the pod's
+	// lenny:pod:{pod_id}:active_slots counter before allowing any new
+	// slot allocation on the pod. The query is pod-scoped rather than
+	// tenant-scoped because the rehydration path holds only the pod
+	// identity; §5.2 tenant pinning guarantees the rows it counts all
+	// belong to one tenant. A pod with no live sessions returns
+	// (0, nil).
+	// spec: §5.2 line 521 (post-recovery rehydration; GetActiveSlotsByPod).
+	GetActiveSlotsByPod(ctx context.Context, podID string) (int, error)
 }
 
 // ListFilter narrows the List result. Empty fields mean "no filter".

@@ -679,10 +679,10 @@ func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 	ctx := context.Background()
 	// Drive the authoritative counter for sbx-a up to the cap (2) while
 	// the Sandbox status mirror still reads activeSlots=1.
-	if _, err := counter.Reserve(ctx, "sbx-a", 2); err != nil {
+	if _, _, err := counter.Reserve(ctx, "sbx-a", 2); err != nil {
 		t.Fatalf("seed counter (1): %v", err)
 	}
-	if _, err := counter.Reserve(ctx, "sbx-a", 2); err != nil {
+	if _, _, err := counter.Reserve(ctx, "sbx-a", 2); err != nil {
 		t.Fatalf("seed counter (2): %v", err)
 	}
 

@@ -173,6 +173,12 @@ type SlotClaimer struct {
 	// lenny_slot_assignment_conflict_total counter (labeled by pool) so
 	// operators can detect pool under-sizing. Nil is a no-op.
 	OnSlotConflict func(pool string)
+	// OnRehydrate records a §5.2 line 521 post-recovery rehydration
+	// event: the slot counter for a pod was seeded from Postgres after a
+	// Redis restart. It backs the lenny_slot_rehydration_total counter
+	// (labeled by pod and pool) and fires exactly once per pod per Redis
+	// restart (the replica that won the rehydration). Nil is a no-op.
+	OnRehydrate func(podID, pool string)
 }
 
 // recordSlotConflict reports a §5.2 line 519 slot-contention reservation
@@ -180,6 +186,14 @@ type SlotClaimer struct {
 func (c *SlotClaimer) recordSlotConflict(pool string) {
 	if c.OnSlotConflict != nil {
 		c.OnSlotConflict(pool)
+	}
+}
+
+// recordRehydration reports a §5.2 line 521 slot-counter rehydration
+// event for podID in pool. Nil-safe.
+func (c *SlotClaimer) recordRehydration(podID, pool string) {
+	if c.OnRehydrate != nil {
+		c.OnRehydrate(podID, pool)
 	}
 }
 
@@ -336,7 +350,13 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, req 
 	// requires --redis-url.
 	var nextActiveSlots int32
 	if c.Counter != nil {
-		newCount, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrent)
+		newCount, rehydrated, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrent)
+		if rehydrated {
+			// §5.2 line 521: this reservation seeded the pod's slot
+			// counter from Postgres after a Redis restart. Emit the
+			// rehydration event regardless of the reservation outcome.
+			c.recordRehydration(sb.Name, req.Pool)
+		}
 		if errors.Is(err, slotcounter.ErrSlotsExhausted) {
 			// §5.2 line 519: the atomic GET-compare-INCR found the pod at
 			// its maxConcurrent bound. Record the slot-contention conflict.

@@ -941,7 +941,12 @@ func main() {
 		// fallback is retained only for tier-2 unit tests.
 		var slotCounter *slotcounter.Counter
 		if redisClient != nil {
-			slotCounter = slotcounter.New(redisClient)
+			// §5.2 line 521: the SessionStore is the post-recovery
+			// rehydration seed source. After a Redis restart the first
+			// slot reservation on each concurrent-mode pod re-seeds the
+			// pod's active_slots counter from GetActiveSlotsByPod before
+			// any new slot is allowed, closing the over-commit race.
+			slotCounter = slotcounter.New(redisClient, slotcounter.WithSlotSource(sessions))
 		}
 		podBinder = &podsession.Binder{
 			Client:           k8sClient,
@@ -1054,6 +1059,9 @@ func main() {
 		// §5.2 line 12: record concurrent-workspace slot bind failures on
 		// lenny_slot_failure_total (error_type, pool, k8s_pod_name).
 		podBinder.SlotFailure = gwMetrics.IncSlotFailure
+		// §5.2 line 521: record post-recovery slot-counter rehydration
+		// events on lenny_slot_rehydration_total (pod, pool).
+		podBinder.Rehydration = gwMetrics.IncSlotRehydration
 	}
 	// §16.1 lines 51, 53, 55: emit credential-lease assignment, lease
 	// duration, and pool-utilization telemetry from the in-process

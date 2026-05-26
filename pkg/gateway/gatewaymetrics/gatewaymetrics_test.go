@@ -484,7 +484,7 @@ func TestGCTombstonesPrunedCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	m.AddGCTombstonesPruned(0) // no-op guard
+	m.AddGCTombstonesPruned(0)  // no-op guard
 	m.AddGCTombstonesPruned(-3) // no-op guard for negative input
 	m.AddGCTombstonesPruned(4)
 	m.AddGCTombstonesPruned(2)
@@ -643,6 +643,38 @@ func TestSlotAssignmentConflictCounter(t *testing.T) {
 			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
 		}
 	}
+}
+
+// spec: §5.2 line 521 — lenny_slot_rehydration_total counts post-recovery
+// slot-counter rehydration events, labeled by pod and pool.
+func TestSlotRehydrationCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncSlotRehydration("sbx-1", "acme-agents")
+	m.IncSlotRehydration("sbx-2", "acme-agents")
+	m.IncSlotRehydration("sbx-1", "acme-agents")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_slot_rehydration_total{pod="sbx-1",pool="acme-agents"} 2`,
+		`lenny_slot_rehydration_total{pod="sbx-2",pool="acme-agents"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// A nil *Metrics is a no-op for the rehydration counter (the §5.2 hook
+// is nil-safe when metrics are unwired).
+func TestSlotRehydrationCounterNilSafe(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncSlotRehydration("sbx-1", "pool") // must not panic
 }
 
 // spec: §4.9 line 1220 — lenny_credential_preclaim_mismatch_total is a

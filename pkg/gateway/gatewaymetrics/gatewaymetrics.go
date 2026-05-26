@@ -139,6 +139,11 @@ type Metrics struct {
 	// stage), `pool` (finite, the warm-pool registry), and `k8s_pod_name`
 	// (the §16.1.1-sanctioned pod label for this metric).
 	slotFailure *prometheus.CounterVec
+	// slotRehydration counts the §5.2 line 521 post-recovery slot-counter
+	// rehydration events: a pod's active_slots counter was seeded from
+	// Postgres after a Redis restart. Labels: `pod` and `pool` (both
+	// bounded — at most one rehydration per pod per Redis restart).
+	slotRehydration *prometheus.CounterVec
 	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
 	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
 	// registry).
@@ -638,6 +643,17 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §5.2 line 521 / §12.4 — `lenny_slot_rehydration_total` counts
+	// post-recovery slot-counter rehydration events (seeding a pod's
+	// active_slots from Postgres after a Redis restart). `pod` and `pool`
+	// are bounded: at most one rehydration per pod per Redis restart.
+	slotRehydration, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_slot_rehydration_total",
+		Help: "Post-recovery slot-counter rehydration events (§5.2 line 521).",
+	}, []string{"pod", "pool"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
 	// partial-manifest row writes. Labels: `pool` (finite).
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
@@ -759,6 +775,7 @@ func New() (*Metrics, error) {
 		credentialPreclaimMismatch,
 		credentialLeaseAssignments, credentialLeaseDuration, credentialPoolUtilization,
 		llmTranslationDuration, llmTranslationErrors, slotFailure,
+		slotRehydration,
 		checkpointPartialTotal, prestopCapSelection,
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
@@ -831,6 +848,7 @@ func New() (*Metrics, error) {
 		llmTranslationDuration:               llmTranslationDuration,
 		llmTranslationErrors:                 llmTranslationErrors,
 		slotFailure:                          slotFailure,
+		slotRehydration:                      slotRehydration,
 		checkpointPartialTotal:               checkpointPartialTotal,
 		prestopCapSelection:                  prestopCapSelection,
 		gcTombstonesPruned:                   gcTombstonesPruned,
@@ -1223,6 +1241,20 @@ func (m *Metrics) IncSlotFailure(errorType, pool, podName string) {
 		return
 	}
 	m.slotFailure.WithLabelValues(errorType, pool, podName).Inc()
+}
+
+// IncSlotRehydration increments the §5.2 line 521
+// `lenny_slot_rehydration_total` counter for the (pod, pool) pair.
+// Called by the concurrent-mode slot claimer when a pod's slot counter
+// was seeded from Postgres after a Redis restart — once per pod per
+// Redis restart.
+// spec: §5.2 line 521 ("lenny_slot_rehydration_total counter (labeled
+// by pod, pool) is emitted on each rehydration event").
+func (m *Metrics) IncSlotRehydration(pod, pool string) {
+	if m == nil {
+		return
+	}
+	m.slotRehydration.WithLabelValues(pod, pool).Inc()
 }
 
 // IncCheckpointPartial increments the §4.4 line 234

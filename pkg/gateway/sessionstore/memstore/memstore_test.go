@@ -328,3 +328,61 @@ func TestCreatePreservesExplicitSchemaVersion(t *testing.T) {
 		t.Errorf("SchemaVersion: want 7 (preserved), got %d", got.SchemaVersion)
 	}
 }
+
+// spec: §5.2 line 521 — GetActiveSlotsByPod counts only the live
+// (non-terminal) sessions bound to a pod, across every tenant, and
+// excludes sessions on other pods.
+func TestGetActiveSlotsByPod_spec_5_2_521(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	// Two live sessions on pod-a for tenant acme.
+	_ = s.Create(ctx, sessionstore.Session{ID: "a1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-a"})
+	_ = s.Create(ctx, sessionstore.Session{ID: "a2", TenantID: "acme", State: session.StateStarting, PodAssignment: "pod-a"})
+	// A terminal session on pod-a must not count.
+	_ = s.Create(ctx, sessionstore.Session{ID: "a3", TenantID: "acme", State: session.StateCompleted, PodAssignment: "pod-a"})
+	// A live session on a different pod must not count toward pod-a.
+	_ = s.Create(ctx, sessionstore.Session{ID: "b1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-b"})
+	// A session with no pod binding must not count.
+	_ = s.Create(ctx, sessionstore.Session{ID: "u1", TenantID: "acme", State: session.StateRunning, PodAssignment: ""})
+
+	got, err := s.GetActiveSlotsByPod(ctx, "pod-a")
+	if err != nil {
+		t.Fatalf("GetActiveSlotsByPod: %v", err)
+	}
+	if got != 2 {
+		t.Errorf("pod-a active slots = %d, want 2 (live only, this pod only)", got)
+	}
+
+	// pod-b has one live slot.
+	if got, _ := s.GetActiveSlotsByPod(ctx, "pod-b"); got != 1 {
+		t.Errorf("pod-b active slots = %d, want 1", got)
+	}
+	// A pod with no sessions returns zero, never an error.
+	if got, err := s.GetActiveSlotsByPod(ctx, "pod-none"); err != nil || got != 0 {
+		t.Errorf("pod-none = (%d, %v), want (0, nil)", got, err)
+	}
+	// An empty pod identity matches no slot.
+	if got, _ := s.GetActiveSlotsByPod(ctx, ""); got != 0 {
+		t.Errorf("empty pod = %d, want 0", got)
+	}
+}
+
+// spec: §5.2 line 521 — the count aggregates across tenants because the
+// rehydration path holds only the pod identity (a pod is pinned to one
+// tenant by §5.2, but the query itself is pod-scoped).
+func TestGetActiveSlotsByPodCrossTenant_spec_5_2_521(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	// Two tenants both reference pod-shared (a pathological pre-pinning
+	// state the count must still tally rather than tenant-filter).
+	_ = s.Create(ctx, sessionstore.Session{ID: "x", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-shared"})
+	_ = s.Create(ctx, sessionstore.Session{ID: "y", TenantID: "globex", State: session.StateRunning, PodAssignment: "pod-shared"})
+
+	got, err := s.GetActiveSlotsByPod(ctx, "pod-shared")
+	if err != nil {
+		t.Fatalf("GetActiveSlotsByPod: %v", err)
+	}
+	if got != 2 {
+		t.Errorf("cross-tenant active slots = %d, want 2", got)
+	}
+}

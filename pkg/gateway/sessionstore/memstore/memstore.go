@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
 
@@ -171,6 +172,25 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 		}
 	}
 	return deleted, nil
+}
+
+// GetActiveSlotsByPod implements Store — the §5.2 rehydration seed
+// source. It counts live (non-terminal) sessions bound to podID across
+// every tenant. An empty podID matches no slot (sessions with no pod
+// binding carry an empty pod_assignment and are never counted).
+func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) (int, error) {
+	if podID == "" {
+		return 0, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, row := range s.sessions {
+		if row.PodAssignment == podID && !session.IsTerminal(row.State) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // DeleteByTenant implements the §12.2.1 / §14.10 mandatory-erasure

@@ -197,6 +197,7 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 		Namespace:      b.Namespace,
 		Counter:        b.SlotCounter,
 		OnSlotConflict: b.SlotConflict,
+		OnRehydrate:    b.Rehydration,
 	}
 	res, err := claimer.ClaimSlot(ctx, podclaim.SlotRequest{
 		Pool:          req.Pool,

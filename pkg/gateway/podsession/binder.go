@@ -104,6 +104,11 @@ type Binder struct {
 	// k8s_pod_name). errorType names the bind stage that failed. Nil is a
 	// no-op.
 	SlotFailure func(errorType, pool, podName string)
+	// Rehydration records a §5.2 line 521 post-recovery slot-counter
+	// rehydration event, backing the lenny_slot_rehydration_total counter
+	// (labeled by pod and pool). It is threaded into the per-BindSlot
+	// SlotClaimer. Nil is a no-op.
+	Rehydration func(podID, pool string)
 }
 
 // §5.2 line 12 lenny_slot_failure_total error_type labels: the

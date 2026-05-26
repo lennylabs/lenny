@@ -331,6 +331,34 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 	return deleted, err
 }
 
+// GetActiveSlotsByPod implements Store — the §5.2 rehydration seed
+// source. It counts live (non-terminal) sessions bound to podID. The
+// read runs cross-tenant (InAllTenants) because the rehydration path
+// holds only the pod identity; §5.2 tenant pinning guarantees every
+// counted row belongs to one tenant. The partial index from migration
+// 0080 keeps the count under the 5ms target the spec assumes during a
+// post-restart rehydration burst. The non-terminal predicate matches
+// the index predicate and session.TerminalStates() verbatim.
+// spec: §5.2 line 521 ("GetActiveSlotsByPod ... indexed ... returns at
+// most maxConcurrent rows").
+func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
+	if podID == "" {
+		return 0, nil
+	}
+	var count int
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT count(*) FROM sessions
+			   WHERE pod_assignment = $1
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			podID).Scan(&count)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: count active slots for pod %s: %w", podID, err)
+	}
+	return count, nil
+}
+
 // scanSession reads one row in selectList order into a Session.
 func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	var (
