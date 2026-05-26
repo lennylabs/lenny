@@ -268,6 +268,35 @@ type Metrics struct {
 	// F-8.10.13.
 	maxOrphanTasksPerTenant prometheus.Gauge
 
+	// statelessRequests is the §5.2 line 573 cumulative request count
+	// arriving at the pool's Kubernetes Service in concurrent-stateless
+	// mode. The PoolScalingController reads
+	// `rate(lenny_stateless_requests_total[5m])` as `base_demand_p95`
+	// for stateless pools (concurrent-stateless bypasses the gateway
+	// claim model). Labeled by `pool` (the SandboxTemplate name) — the
+	// emitter lands with the tenant-affinity routing layer (F-5.2.3),
+	// the metric is registered here so the catalog test sees the
+	// declared surface and operators can scrape it as soon as the
+	// producer exists.
+	statelessRequests *prometheus.CounterVec
+	// statelessConcurrentActive is the §5.2 line 573 instantaneous
+	// per-pod concurrent active-slot count. The PoolScalingController
+	// reads `max_over_time(lenny_stateless_concurrent_active[5m])` as
+	// `burst_p99_claims` for stateless pools. Labeled by `pool` — the
+	// per-pod dimension is intentionally dropped to keep the cardinality
+	// bound and because the controller aggregates across pods anyway.
+	// Emitter lands with F-5.2.3.
+	statelessConcurrentActive *prometheus.GaugeVec
+
+	// taskReuseCount is the §5.2 line 569 / §16.1 line 124 histogram of
+	// tasks executed on a single pod in task mode. The
+	// PoolScalingController reads `histogram_quantile(0.50, ...)` as the
+	// mode-adjusted `mode_factor` for task-mode pools with preConnect:
+	// true so the scaling formula converges on observed reuse. Labeled
+	// by `pool` and `k8s_pod_name` per §16.1; the emitter lands with the
+	// task-mode lifecycle (F-5.2.1 / F-5.2.18).
+	taskReuseCount *prometheus.HistogramVec
+
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
 	// the lenny_gateway_request_queue_depth gauge (the §4.1 SCL-026
@@ -967,6 +996,44 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §5.2 line 573 — `lenny_stateless_requests_total` is the cumulative
+	// request count arriving at a concurrent-stateless pool's Kubernetes
+	// Service; the PoolScalingController reads
+	// `rate(lenny_stateless_requests_total[5m])` for stateless pool
+	// `base_demand_p95`. The producer lands with the tenant-affinity
+	// routing layer (F-5.2.3).
+	statelessRequests, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_stateless_requests_total",
+		Help: "Concurrent-stateless requests routed through the pool's Service (§5.2 line 573).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §5.2 line 573 — `lenny_stateless_concurrent_active` is the
+	// instantaneous active-slot count per concurrent-stateless pool. The
+	// PoolScalingController reads `max_over_time(...[5m])` for stateless
+	// pool `burst_p99_claims`. Producer lands with F-5.2.3.
+	statelessConcurrentActive, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_stateless_concurrent_active",
+		Help: "Concurrent-stateless pool peak active slot count (§5.2 line 573).",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §5.2 line 569 / §16.1 line 124 — `lenny_task_reuse_count` is a
+	// per-pod histogram of completed task counts in task mode. The
+	// PoolScalingController reads the median over the rolling window as
+	// the mode-adjusted `mode_factor` for task-mode pools with
+	// preConnect: true. Emitter lands with the task-mode lifecycle
+	// (F-5.2.1 / F-5.2.18).
+	taskReuseCount, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_task_reuse_count",
+		Help:    "Tasks executed on a single pod in task mode (§5.2 line 569 / §16.1).",
+		Buckets: prometheus.ExponentialBuckets(1, 2, 10),
+	}, []string{"pool", "k8s_pod_name"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -994,7 +1061,8 @@ func New() (*Metrics, error) {
 		delegationDepth, delegationWouldHaveBlocked,
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
-		maxOrphanTasksPerTenant)
+		maxOrphanTasksPerTenant,
+		statelessRequests, statelessConcurrentActive, taskReuseCount)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -1084,7 +1152,152 @@ func New() (*Metrics, error) {
 		idempotencyCacheWriteFailures:        idempotencyCacheWriteFailures,
 		idempotencyCacheSkipped:              idempotencyCacheSkipped,
 		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
+		statelessRequests:                    statelessRequests,
+		statelessConcurrentActive:            statelessConcurrentActive,
+		taskReuseCount:                       taskReuseCount,
 	}, nil
+}
+
+// IncStatelessRequest records a §5.2 line 573 stateless-pool request.
+// `pool` is the SandboxTemplate name. spec: §5.2 line 573.
+func (m *Metrics) IncStatelessRequest(pool string) {
+	if m == nil {
+		return
+	}
+	m.statelessRequests.WithLabelValues(pool).Inc()
+}
+
+// SetStatelessConcurrentActive sets the instantaneous concurrent active
+// slot count for a stateless pool. spec: §5.2 line 573.
+func (m *Metrics) SetStatelessConcurrentActive(pool string, value float64) {
+	if m == nil {
+		return
+	}
+	m.statelessConcurrentActive.WithLabelValues(pool).Set(value)
+}
+
+// ObserveTaskReuseCount records the completed-task count of a retiring
+// task-mode pod. `pool` is the SandboxTemplate name and `k8sPodName`
+// is the pod whose retirement triggered the observation. spec: §5.2
+// line 569 / §16.1 line 124.
+func (m *Metrics) ObserveTaskReuseCount(pool, k8sPodName string, count int) {
+	if m == nil {
+		return
+	}
+	m.taskReuseCount.WithLabelValues(pool, k8sPodName).Observe(float64(count))
+}
+
+// TaskReuseQuantile reads the in-process median of the task-reuse
+// histogram for one pool. The PoolScalingController uses it as the
+// mode-adjusted `mode_factor` for task-mode pools with preConnect:
+// true (§5.2 line 569). q must be in (0,1]. ok is false until at least
+// one observation has been recorded for the pool (cold start). spec:
+// §5.2 line 569.
+func (m *Metrics) TaskReuseQuantile(pool string, q float64) (value float64, ok bool) {
+	if m == nil {
+		return 0, false
+	}
+	if q <= 0 || q > 1 {
+		return 0, false
+	}
+	families, err := m.reg.Gather()
+	if err != nil {
+		return 0, false
+	}
+	var totalCount uint64
+	var buckets []bucketSample
+	for _, fam := range families {
+		if fam.GetName() != "lenny_task_reuse_count" {
+			continue
+		}
+		for _, mtr := range fam.GetMetric() {
+			var match bool
+			for _, lp := range mtr.GetLabel() {
+				if lp.GetName() == "pool" && lp.GetValue() == pool {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+			h := mtr.GetHistogram()
+			if h == nil {
+				continue
+			}
+			totalCount += h.GetSampleCount()
+			for _, b := range h.GetBucket() {
+				buckets = append(buckets, bucketSample{ub: b.GetUpperBound(), count: b.GetCumulativeCount()})
+			}
+		}
+	}
+	if totalCount == 0 {
+		return 0, false
+	}
+	// Buckets across pods are summed by upper bound; histogram_quantile
+	// from Prometheus does the same accumulation pre-quantile.
+	merged := mergeBuckets(buckets)
+	if len(merged) == 0 {
+		return 0, false
+	}
+	// totalCount equals merged[last].count when bucket UB is +Inf, which
+	// promauto NewHistogram always includes; recompute defensively.
+	totalCount = merged[len(merged)-1].count
+	threshold := uint64(float64(totalCount) * q)
+	for i, b := range merged {
+		if b.count >= threshold {
+			lower := 0.0
+			if i > 0 {
+				lower = merged[i-1].ub
+			}
+			lowerCount := uint64(0)
+			if i > 0 {
+				lowerCount = merged[i-1].count
+			}
+			band := float64(b.count - lowerCount)
+			if band == 0 {
+				return b.ub, true
+			}
+			frac := float64(threshold-lowerCount) / band
+			return lower + (b.ub-lower)*frac, true
+		}
+	}
+	return merged[len(merged)-1].ub, true
+}
+
+// bucketSample is one (upper_bound, cumulative_count) pair from a
+// histogram sample. Used by TaskReuseQuantile to merge per-pod
+// histograms before computing the in-process median. spec: §5.2 line
+// 569.
+type bucketSample struct {
+	ub    float64
+	count uint64
+}
+
+// mergeBuckets aggregates per-pod task-reuse bucket samples by upper
+// bound, returning a sorted-by-UB slice with cumulative counts (across
+// all pods that share the upper bound). The summed cumulative counts
+// match Prometheus' histogram_quantile aggregation across series of
+// the same histogram. spec: §5.2 line 569.
+func mergeBuckets(in []bucketSample) []bucketSample {
+	by := map[float64]uint64{}
+	for _, b := range in {
+		by[b.ub] += b.count
+	}
+	ubs := make([]float64, 0, len(by))
+	for ub := range by {
+		ubs = append(ubs, ub)
+	}
+	for i := 1; i < len(ubs); i++ {
+		for j := i; j > 0 && ubs[j-1] > ubs[j]; j-- {
+			ubs[j-1], ubs[j] = ubs[j], ubs[j-1]
+		}
+	}
+	out := make([]bucketSample, 0, len(ubs))
+	for _, ub := range ubs {
+		out = append(out, bucketSample{ub: ub, count: by[ub]})
+	}
+	return out
 }
 
 // IncCheckpointOrphanedObjects increments the §4.4 line 248

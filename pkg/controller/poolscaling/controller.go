@@ -153,6 +153,20 @@ type DemotionRateSource interface {
 	PoolDemotionSignal(ctx context.Context, poolName string) (DemotionSignal, error)
 }
 
+// ModeFactorSource yields the observed-reuse multiplier the §5.2 line
+// 569 mode-adjusted scaling formula consumes as `mode_factor` for
+// task-mode pools. The production implementation reads the
+// `lenny_task_reuse_count` histogram's median over a rolling 100-task
+// convergence window (§5.2 line 549). `ok=false` means the histogram
+// has not converged yet — the PoolScalingController falls back to the
+// pool's `maxTasksPerPod` (preConnect=false pools) or 1.0
+// (preConnect=true pools that should wait for observed reuse).
+//
+// spec: §5.2 lines 549, 569.
+type ModeFactorSource interface {
+	PoolTaskReuseMedian(ctx context.Context, poolName string) (median float64, ok bool, err error)
+}
+
 // Reconciler is the §4.6.2 PoolScalingController. It syncs pool
 // definitions from the PoolConfigSource into their CRD pair, deriving
 // each pool's warm-pod floor from observed demand.
@@ -170,6 +184,12 @@ type Reconciler struct {
 	// trips the breaker but still honors a breaker already persisted on
 	// a pool's status until its grace window elapses.
 	Demotion DemotionRateSource
+	// ModeFactors supplies the §5.2 line 569 observed-reuse signal that
+	// drives the mode-adjusted formula's `mode_factor` for task-mode
+	// pools. When nil, the controller derives `mode_factor` from the
+	// pool's static maxTasksPerPod fallback per the §5.2 task-mode
+	// formula. spec: §5.2 lines 549, 569.
+	ModeFactors ModeFactorSource
 	// Strategy computes the warm-pod floor. When nil, the default
 	// §4.6.2 formula is used.
 	Strategy strategy.PoolScalingStrategy
@@ -578,6 +598,13 @@ func (r *Reconciler) targetMinWarm(ctx context.Context, cfg PoolConfig) (int32, 
 		SumActiveVariantWeights: cfg.SumActiveVariantWeights,
 		BootstrapMinWarm:        int(cfg.MinWarm),
 	}
+	// spec: §5.2 line 549 — resolve `mode_factor` for the pool. Task and
+	// concurrent modes have a static fallback from the CRD spec
+	// (maxTasksPerPod, maxConcurrent); preConnect task pools that have
+	// converged on a task-reuse median override the static fallback.
+	mf, bf := resolveModeFactors(ctx, cfg, r.ModeFactors)
+	in.ModeFactor = mf
+	in.BurstModeFactor = bf
 	// An unset PoolType defaults to a standard non-experiment pool; the
 	// strategy rejects an empty PoolType, so the default is resolved here.
 	if in.PoolType == "" {
@@ -615,4 +642,56 @@ func podWarmupSeconds(cfg PoolConfig) float64 {
 		return float64(cfg.ScalePolicy.PodWarmupSecondsBaseline)
 	}
 	return defaultPodWarmupSeconds
+}
+
+// resolveModeFactors returns the (mode_factor, burst_mode_factor) the
+// §5.2 line 569 mode-adjusted scaling formula consumes for one pool.
+//
+//   - Session mode: both factors are 1.0 (the base formula).
+//   - Task mode: mode_factor defaults to maxTasksPerPod (the static
+//     reuse-limit choice). When the runtime declares preConnect and a
+//     ModeFactorSource carries a converged task-reuse median, that
+//     observed reuse overrides the static fallback per §5.2 line 569.
+//     burst_mode_factor stays 1.0 for task mode (no per-pod burst reuse).
+//   - Concurrent mode: both factors are maxConcurrent (the per-pod slot
+//     bound) — the §5.2 line 569 formula treats concurrent pods as
+//     reusing their slots for both the steady-state and burst terms.
+//
+// spec: §5.2 lines 549, 569.
+func resolveModeFactors(ctx context.Context, cfg PoolConfig, src ModeFactorSource) (modeFactor, burstModeFactor float64) {
+	switch cfg.Template.ExecutionMode {
+	case "task":
+		modeFactor = taskStaticReuseFloor(cfg)
+		if src != nil {
+			if med, ok, err := src.PoolTaskReuseMedian(ctx, cfg.Name); err == nil && ok && med > 0 {
+				modeFactor = med
+			}
+		}
+		burstModeFactor = 1
+	case "concurrent":
+		if cfg.Template.MaxConcurrent > 0 {
+			modeFactor = float64(cfg.Template.MaxConcurrent)
+			burstModeFactor = modeFactor
+		} else {
+			modeFactor = 1
+			burstModeFactor = 1
+		}
+	default:
+		modeFactor = 1
+		burstModeFactor = 1
+	}
+	return modeFactor, burstModeFactor
+}
+
+// taskStaticReuseFloor resolves the §5.2 task-mode static
+// `mode_factor` fallback from the pool's TaskPolicy.MaxTasksPerPod.
+// Spec line 549 names the field as the bootstrap-mode value; a missing
+// or zero TaskPolicy maps to 1.0 (session-equivalent sizing) until the
+// pool-config validator catches the misconfiguration. spec: §5.2 line
+// 549.
+func taskStaticReuseFloor(cfg PoolConfig) float64 {
+	if cfg.Template.TaskPolicy != nil && cfg.Template.TaskPolicy.MaxTasksPerPod > 0 {
+		return float64(cfg.Template.TaskPolicy.MaxTasksPerPod)
+	}
+	return 1
 }

@@ -592,6 +592,128 @@ func TestSyncWithZeroGenerationOmitsAnnotation_Spec4_6_2_558(t *testing.T) {
 	}
 }
 
+// fakeModeFactors stubs ModeFactorSource with a per-pool median table.
+type fakeModeFactors struct {
+	medians map[string]float64 // poolName → median observed reuse
+	err     error
+}
+
+func (f *fakeModeFactors) PoolTaskReuseMedian(_ context.Context, poolName string) (float64, bool, error) {
+	if f.err != nil {
+		return 0, false, f.err
+	}
+	med, ok := f.medians[poolName]
+	return med, ok, nil
+}
+
+// TestSyncTaskModeFallsBackToMaxTasksPerPod_spec_5_2_549 confirms the
+// PoolScalingController uses TaskPolicy.MaxTasksPerPod as the
+// mode_factor when no observed-reuse signal is wired. Session-mode
+// pool with safetyFactor 1.5, failover 25s, podWarmup 10s, demand
+// p95 0.1, p99 0.0 → ceil(0.1·1.5·35 / mode_factor + 0) = 1 at
+// mode_factor 50.
+func TestSyncTaskModeFallsBackToMaxTasksPerPod_spec_5_2_549(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.Template.ExecutionMode = "task"
+	cfg.Template.TaskPolicy = &lennyv1.TaskPolicy{
+		AcknowledgeBestEffortScrub: true,
+		MaxTasksPerPod:             50,
+	}
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		Demand: &fakeDemand{demand: poolscaling.Demand{BaseDemandP95: 0.1, Observed: true}},
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	// mode_factor=50: steady = 0.1·1.5·35 / 50 = 0.105 → ceil = 1.
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 1 {
+		t.Errorf("task pool minWarm = %d, want 1 (mode_factor=50 fallback)", got)
+	}
+}
+
+// TestSyncTaskModeUsesObservedReuse_spec_5_2_569 confirms a converged
+// task-reuse median overrides the static maxTasksPerPod fallback. With
+// a median of 5 vs the static 50, the steady-state term is 10x larger.
+func TestSyncTaskModeUsesObservedReuse_spec_5_2_569(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.Template.ExecutionMode = "task"
+	cfg.Template.TaskPolicy = &lennyv1.TaskPolicy{
+		AcknowledgeBestEffortScrub: true,
+		MaxTasksPerPod:             50,
+	}
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		Demand:      &fakeDemand{demand: poolscaling.Demand{BaseDemandP95: 0.1, Observed: true}},
+		ModeFactors: &fakeModeFactors{medians: map[string]float64{testPool: 5}},
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	// mode_factor=5: steady = 0.1·1.5·35 / 5 = 1.05 → ceil = 2.
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 2 {
+		t.Errorf("task pool minWarm = %d, want 2 (observed median 5)", got)
+	}
+}
+
+// TestSyncConcurrentModeUsesMaxConcurrent_spec_5_2_569 confirms a
+// concurrent pool uses MaxConcurrent for both mode_factor and
+// burst_mode_factor. With MaxConcurrent=8 and demand p95 0.4, the
+// steady-state term collapses by a factor of 8.
+func TestSyncConcurrentModeUsesMaxConcurrent_spec_5_2_569(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.Template.ExecutionMode = "concurrent"
+	cfg.Template.ConcurrencyStyle = "workspace"
+	cfg.Template.MaxConcurrent = 8
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		Demand: &fakeDemand{demand: poolscaling.Demand{
+			BaseDemandP95: 0.4, BurstP99Claims: 0.4, Observed: true,
+		}},
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	// mode_factor=burst=8: steady = 0.4·1.5·35 / 8 = 2.625; burst =
+	// 0.4·10 / 8 = 0.5 → ceil(3.125) = 4.
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 4 {
+		t.Errorf("concurrent pool minWarm = %d, want 4 (mode_factor=8)", got)
+	}
+}
+
+// TestSyncTaskModeIgnoresModeFactorSourceErr_spec_5_2 confirms a
+// transient ModeFactorSource error does not abort the Sync — the
+// controller falls back to the static maxTasksPerPod value.
+func TestSyncTaskModeIgnoresModeFactorSourceErr_spec_5_2(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.Template.ExecutionMode = "task"
+	cfg.Template.TaskPolicy = &lennyv1.TaskPolicy{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 20}
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	r := &poolscaling.Reconciler{
+		Client: c, Source: src,
+		Demand:      &fakeDemand{demand: poolscaling.Demand{BaseDemandP95: 0.2, Observed: true}},
+		ModeFactors: &fakeModeFactors{err: errors.New("prometheus down")},
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync errored on transient ModeFactor: %v", err)
+	}
+	// mode_factor=20 (fallback): steady = 0.2·1.5·35 / 20 = 0.525 → ceil = 1.
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 1 {
+		t.Errorf("task pool minWarm = %d, want 1 (static fallback on error)", got)
+	}
+}
+
 // Outside the window the pool keeps its bootstrap floor.
 func TestSyncScaleToZeroInactiveKeepsBootstrap(t *testing.T) {
 	s := newScheme(t)
