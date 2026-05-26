@@ -110,6 +110,11 @@ func (s drainCounterSink) IncDrainReadinessCheck(outcome string) {
 func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, rcPolicy podsecurity.RuntimeClassPolicy, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
+	// §5.2 line 392 — lenny-tenant-label-immutability is a sibling
+	// ValidatingWebhookConfiguration that enforces only the tenant-id
+	// transition rules. The handler shares the binary and Service so the
+	// HA properties (replicas: 2 + PodDisruptionBudget) cover both.
+	mux.Handle("/tenant-label-immutability", webhook.Handler(webhook.TenantLabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
 	// §4.6.3 pool-config-validator: the sole admission gate for the
 	// §4.6.2/§4.6.3 semantic budget invariants on SandboxWarmPool and

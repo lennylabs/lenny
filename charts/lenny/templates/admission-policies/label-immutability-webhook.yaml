@@ -1,7 +1,18 @@
 {{- /*
-lenny-label-immutability ValidatingAdmissionWebhook (§17.2 item 5,
-§5.2 NET-003). Enforces the immutable agent-pod labels and the
-tenant-id transition rules. Scoped to agent namespaces; fail-closed.
+lenny-label-immutability + lenny-tenant-label-immutability
+ValidatingAdmissionWebhooks. Two distinct webhook configurations share
+the same backing Deployment / Service / PDB / Certificate (declared via
+the lenny.admissionWebhookWorkload helper) so the HA properties
+(replicas: 2, minAvailable: 1) cover both routes:
+
+- lenny-label-immutability (§17.2 item 5) enforces the three immutable
+  agent-pod labels (managed, delivery-mode, egress-profile).
+- lenny-tenant-label-immutability (§5.2 line 392 / §13.2 NET-003)
+  enforces the lenny.dev/tenant-id transition rules: only the gateway
+  SA may set tenant-id on a fresh pod, only the WarmPoolController SA
+  may reset it to "unassigned".
+
+Both are scoped to agent namespaces and fail-closed.
 */ -}}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-label-immutability") }}
 ---
@@ -36,4 +47,37 @@ webhooks:
         name: lenny-label-immutability
         namespace: {{ .Release.Namespace }}
         path: /label-immutability
+        port: 443
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-tenant-label-immutability
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-label-immutability
+webhooks:
+  - name: tenant-label-immutability.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-label-immutability
+        namespace: {{ .Release.Namespace }}
+        path: /tenant-label-immutability
         port: 443

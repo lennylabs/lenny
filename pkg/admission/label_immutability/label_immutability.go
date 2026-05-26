@@ -99,11 +99,33 @@ var ErrMissingNewLabels = errors.New("label_immutability: NewLabels is required"
 //     the canonical instance of that transition).
 //   - For UPDATE (OldLabels != nil), the three strictly-immutable
 //     labels must not change, and the tenant-id transition rules apply.
+//
+// Decide is the composition of DecideImmutableLabels (the §17.2 item 5
+// rule set) and DecideTenantTransition (the §5.2 line 392 / NET-003
+// rule set). It is preserved as the single-call entry point for
+// callers that want both rule sets evaluated against one Request; the
+// production webhooks each call one of the two split deciders directly
+// so the two ValidatingWebhookConfigurations the spec names
+// (lenny-label-immutability and lenny-tenant-label-immutability) hold
+// independent decision paths.
 func Decide(r Request) (Decision, error) {
+	if d, err := DecideImmutableLabels(r); err != nil || !d.Allowed {
+		return d, err
+	}
+	return DecideTenantTransition(r)
+}
+
+// DecideImmutableLabels enforces the §17.2 item 5 rule that the three
+// canonical labels (lenny.dev/managed, lenny.dev/delivery-mode,
+// lenny.dev/egress-profile) are immutable on existing agent pods. The
+// gateway-tenant-id transition rules belong to
+// DecideTenantTransition.
+//
+// spec: §17.2 item 5; §13.2.
+func DecideImmutableLabels(r Request) (Decision, error) {
 	if r.NewLabels == nil {
 		return Decision{}, ErrMissingNewLabels
 	}
-
 	for _, key := range []string{LabelManaged, LabelDeliveryMode, LabelEgressProfile} {
 		if r.OldLabels == nil {
 			continue
@@ -118,7 +140,18 @@ func Decide(r Request) (Decision, error) {
 			}, nil
 		}
 	}
+	return Decision{Allowed: true, Code: 200}, nil
+}
 
+// DecideTenantTransition enforces the §5.2 line 392 / NET-003 rule set
+// on lenny.dev/tenant-id transitions. The webhook config that calls
+// this decider is the spec-named lenny-tenant-label-immutability.
+//
+// spec: §5.2 line 392; §13.2 line 498.
+func DecideTenantTransition(r Request) (Decision, error) {
+	if r.NewLabels == nil {
+		return Decision{}, ErrMissingNewLabels
+	}
 	var oldTenant string
 	if r.OldLabels != nil {
 		oldTenant = r.OldLabels[LabelTenantID]
@@ -129,7 +162,6 @@ func Decide(r Request) (Decision, error) {
 		return Decision{Allowed: true, Code: 200}, nil
 	}
 
-	// Transitions to enforce on tenant-id.
 	switch {
 	case oldTenant == "" && newTenant != "":
 		// Initial assignment: only the gateway SA may set tenant-id.
