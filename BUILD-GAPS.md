@@ -16718,7 +16718,7 @@ Severity definitions:
 
 ---
 
-### - [ ] F-12.4.1 — Redis AUTH is not required; the spec mandates it [High] — OPEN
+### - [x] F-12.4.1 — Redis AUTH is not required; the spec mandates it [High] — CLOSED
 
 Spec §12.4 ("Security"): "Redis AUTH (ACLs) and TLS are **required**."
 
@@ -16726,7 +16726,9 @@ The `redisconn` constructor (`/Users/joan/projects/lenny/pkg/redisconn/redisconn
 
 Nothing in the Helm chart (`/Users/joan/projects/lenny/charts/lenny/templates/datastore-secret.yaml:21-46`) renders a dedicated Redis password key — the deployer is expected to embed the AUTH credential inside the URL (`rediss://:password@host:port/db`), and there is no rendered config-time check that the rendered URL actually carries one. The `system-network-policies.yaml` NetworkPolicy admits gateway → Redis egress on the configured TLS port regardless of whether AUTH is wired (lines 174-179).
 
-### - [ ] F-12.4.2 — Redis TLS is not enforced on the Sentinel path; only `rediss://` URL mode picks it up [High] — OPEN
+- **Resolution:** `redisconn.NewClient` now fails closed with `ErrAuthRequired` when no AUTH credential is supplied (URL userinfo or the `--redis-password` field) on both the direct-URL and Sentinel paths. A new `Config.AllowInsecure` field opts a dev or local Redis out of the invariant; it defaults off (gateway/ops `--redis-allow-insecure` / `LENNY_REDIS_ALLOW_INSECURE`), so a production deployment that omits the credential fails fast at construction rather than dialing an unauthenticated Redis. The gateway and ops flag help text dropped the "Empty leaves authentication off" disclaimer and now names the §12.4 requirement; `values.yaml` documents the `rediss://:password@host:port/db` form. Commit 3ba36b17.
+
+### - [x] F-12.4.2 — Redis TLS is not enforced on the Sentinel path; only `rediss://` URL mode picks it up [High] — CLOSED
 
 Spec §12.4 ("Security"): "Redis AUTH (ACLs) and TLS are **required**."
 
@@ -16737,6 +16739,8 @@ Spec §12.4 ("Security"): "Redis AUTH (ACLs) and TLS are **required**."
 - The constructor does not pin a TLS minimum version on either path (no `MinVersion: tls.VersionTLS12` on the direct path either; go-redis defaults are accepted as-is).
 
 Compare with the Postgres flow, which has live verification (`/Users/joan/projects/lenny/tests/tier6_e2e_cloud/managed_rds_test.go:100-127` `TestCloudRDSTLSRequired` and `/Users/joan/projects/lenny/tests/tier6_e2e_cloud/managed_elasticache_test.go:116-159` `TestCloudRedisTLSRequired`); the latter exists for the managed-Redis path but does not exercise Sentinel.
+
+- **Resolution:** `NewClient` now populates `FailoverOptions.TLSConfig` on the Sentinel path: enforcement (`AllowInsecure` false) forces TLS, and a dev deployment can opt into it via the new `Config.TLS` field (gateway/ops `--redis-tls` / `LENNY_REDIS_TLS`). Both paths pin `MinVersion: tls.VersionTLS12` — the direct-URL path raises the floor on the `rediss://` TLSConfig that `ParseURL` builds (`pinTLSFloor`, only when unset so an operator's higher pin is not downgraded), and the Sentinel path builds the config with that floor. Under enforcement a plaintext `redis://` URL is rejected with `ErrTLSRequired`. Commit 3ba36b17.
 
 ### - [ ] F-12.4.3 — `t:{tenant_id}:` tenant-key isolation is not enforced at the wrapper layer [High] — OPEN
 
