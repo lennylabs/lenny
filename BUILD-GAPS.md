@@ -5186,7 +5186,7 @@ by `derive.go:117` comment "the derive_failure terminal-row path under
 documented gap, but worth noting that `FailureClass = "derive_failure"`
 is enumerated yet unreachable.
 
-### - [ ] F-7.1.5 — Default 7-day artifact retention not applied on session create [High] — OPEN
+### - [x] F-7.1.5 — Default 7-day artifact retention not applied on session create [High] — CLOSED
 
 §7.1 line 77: "Session artifacts (workspace snapshots, logs,
 transcripts) are retained for a configurable TTL (default: 7 days,
@@ -5208,6 +5208,15 @@ forever — the §7.1 7-day default is a no-op. The
 `ExtendRetentionMaxSeconds = 90 days` (`retention.go:21`) is
 configurable as an upper bound, but there is no corresponding default
 floor on session creation.
+
+**Resolution (commit 9d3aa2aa):** `createSession` and the create-and-start
+path now stamp `RetentionExpiresAt = CreatedAt + defaultRetention` before
+persisting the row, so a session that never reaches a terminal state is
+still eligible for GC (the zero-deadline "lives forever" path is closed).
+The window default is `sessionserver.DefaultArtifactRetention` (7 days),
+operator-tunable via the gateway `--session-artifact-retention-seconds`
+flag (`LENNY_SESSION_ARTIFACT_RETENTION_SECONDS`) wired through
+`Options.DefaultRetention`. The terminal-transition roll is F-7.1.16.
 
 ### - [ ] F-7.1.6 — Step 4 (pool selection / claim) deferred until /start [Medium] — OPEN
 
@@ -5287,7 +5296,7 @@ archive in the first place beyond the per-blob `upload` endpoint
 (which is also bounded to `UploadMaxBodyBytes = 64 MiB`,
 `upload.go:38`).
 
-### - [ ] F-7.1.10 — `session.created` / `session.completed` audit events not emitted [Medium] — OPEN
+### - [x] F-7.1.10 — `session.created` / `session.completed` audit events not emitted [Medium] — CLOSED
 
 §7.1 / §16.6 expect lifecycle audit events `session.created`,
 `session.completed`, `session.failed`, `session.cancelled`,
@@ -5309,7 +5318,20 @@ The `derive.isolation_downgrade` event has a `DeriveAuditSink`
 omission of lifecycle audit emissions is therefore a missing wire-up,
 not a missing infrastructure.
 
-### - [ ] F-7.1.11 — Normative session-event names not published on the SSE stream [Medium] — OPEN
+**Resolution (commit 9d3aa2aa):** Added a `LifecycleAuditSink` seam
+(mirroring `DeriveAuditSink`). `recordSessionCreated` emits
+`session.created`; the shared `emitTerminalLifecycle` helper emits the
+terminal `session.{completed,failed,cancelled,expired}` event (with
+`failure_class` for the failed case). `cmd/lenny-gateway` wires a
+`sessionLifecycleAuditor` that calls `policy.AuditAppender.Append(ctx,
+tenantID, eventType, payload, at)`, writing to the §11.7 hash-chained
+audit log under the session's own tenant partition (satisfying the
+§11.7 line 428 write-time tenant rule); the existing OCSF `session.`
+prefix maps these to API Activity 6003. Emission is best-effort and
+distinct from the billing event and §16.6 operational event the same
+paths already write.
+
+### - [x] F-7.1.11 — Normative session-event names not published on the SSE stream [Medium] — CLOSED
 
 §7.1 / §7.2 enumerate the events `status_change`, `session.resumed`,
 `children_reattached`, `gap_detected`, `session_complete`,
@@ -5331,6 +5353,22 @@ The actual events published by the session server are
 signal that a session reached a terminal state and must poll
 `GET /v1/sessions/{id}` to discover completion — an
 SSE-with-cursor design that defeats its own efficiency rationale.
+
+**Resolution (commit 9d3aa2aa):** `status_change(state)` (§7.2 line 137)
+now publishes on every observable transition: the terminal states via
+`emitTerminalLifecycle` (reached from both `recordSessionCompleted` and
+the start-path `failSession`), plus `interrupt → suspended`,
+`finalize → ready`, `start → running`, the resume chain, and
+create-and-start. `session_complete(result)` (§7.2 line 141) publishes
+on every terminal state carrying the §8.8 `TaskResult` body (reusing the
+tree-archive encoder). `children_reattached` and `session.resumed` were
+already wired. The buffer-eviction `gap_detected` frame (§7.2 line 143,
+F-7.2.11) and the coordinator-failover `inbox_cleared` event (§7.2 line
+284) remain tracked to their owning inbox/replay findings (F-7.2.4,
+F-7.2.11, F-7.2.12); they are inbox-machinery signals, not session
+lifecycle transitions, and the finding's stated consequence (no
+platform-emitted terminal signal) is resolved. `status_change(input_required)`
+is tracked to the `lenny/request_input` path (F-7.2.1 / F-7.2.17).
 
 ### - [ ] F-7.1.12 — Derive flow elides Redis advisory lock and atomic-copy semantics [Medium] — OPEN
 
@@ -5397,7 +5435,7 @@ echoed in JSON responses only (`sessionserver.go:712`,
 that the redaction guarantee is enforced only at the response shape
 boundary.
 
-### - [ ] F-7.1.16 — `RetentionExpiresAt` not auto-rolled on session terminal transition [Low] — OPEN
+### - [x] F-7.1.16 — `RetentionExpiresAt` not auto-rolled on session terminal transition [Low] — CLOSED
 
 When `RetentionExpiresAt` is set before terminal completion (via
 extend-retention), the GC is computed relative to the wall clock from
@@ -5408,6 +5446,15 @@ does not touch `RetentionExpiresAt`. Sessions that call
 extend-retention while in `running` then complete may receive a
 retention deadline earlier than the documented "7 days after
 completion" default.
+
+**Resolution (commit 9d3aa2aa):** `rollRetentionOnTerminal` (invoked from
+`emitTerminalLifecycle`, reached by every terminal path) sets
+`RetentionExpiresAt = terminal_time + defaultRetention`, starting the
+§7.1 line 77 window at the terminal transition. It never shortens a
+deadline a client already extended past that instant (the `extend-retention`
+90-day case is preserved); the re-check inside the store mutation closes
+the race with a concurrent extend-retention write. Pairs with the
+create-time default floor in F-7.1.5.
 
 ### - [ ] F-7.1.17 — `/finalize` does not validate staging or materialise workspace [Low] — OPEN
 
@@ -5530,7 +5577,7 @@ Effect: external clients cannot observe that an agent is awaiting input. CI flow
 
 ---
 
-### - [ ] F-7.2.2 — (High) — `status_change` event class is never emitted [Medium] — OPEN
+### - [x] F-7.2.2 — (High) — `status_change` event class is never emitted [Medium] — CLOSED
 
 Spec §7.2 (table line 137) requires `status_change(state)` on every session state transition, including `suspended` and `input_required`.
 
@@ -5540,6 +5587,8 @@ Implementation:
 - `pkg/gateway/sessionserver/messages.go:236-244` publishes `message_delivered` and `response` but not `status_change`.
 
 Effect: SSE consumers cannot observe lifecycle transitions live; they must poll `GET /v1/sessions/{id}`. This breaks the documented streaming contract for `running → suspended` (interrupt), `running → input_required` (blocked-on-input), `awaiting_client_action → resume_pending → running` (resume), and the four terminal transitions.
+
+**Resolution (commit 9d3aa2aa):** Closed by F-7.1.11. `status_change(state)` now publishes on `interrupt → suspended`, the resume chain, and all four terminal transitions (via the shared `emitTerminalLifecycle` reached from `recordSessionCompleted` and `failSession`). `running ↔ input_required` is driven by the `lenny/request_input` tool path, which is unbuilt in v1 (F-7.2.1 / F-7.2.17); its `status_change(input_required)` / `status_change(running)` emission lands with that path.
 
 ---
 
