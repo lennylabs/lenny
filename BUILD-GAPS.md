@@ -3701,7 +3701,7 @@ Auditor inputs: `pkg/apis/lenny/v1/{runtime_types,sandbox_types,sandboxtemplate_
 
 Classification: each finding is *Implemented*, *Partial*, *Missing*, *Deviates*, or *Info*. Severity is calibrated against MUST/SHOULD wording in §5.3 (Security note, image controls, validation, dev fallback).
 
-### - [ ] F-5.3.1 — Warm pool controller has no RuntimeClass startup validation [High] — OPEN
+### - [ ] F-5.3.1 — Warm pool controller has no RuntimeClass startup validation [High] — CLOSED
 
 Spec §5.3 lines 674–675: "The warm pool controller validates that the required `RuntimeClass` objects exist in the cluster at startup. If a pool references a `RuntimeClass` that doesn't exist (e.g., `gvisor` on a cluster without gVisor installed), the controller logs an error and sets the pool's status to `Degraded` with a clear message: \"RuntimeClass 'gvisor' not found — install gVisor or change the pool's isolation profile.\""
 
@@ -3712,6 +3712,8 @@ Implementation:
 - The Pod creation in `pkg/controller/sandbox/controller.go:177` calls `podspec.Build` which stamps `RuntimeClassName` from the resolved profile, then submits the Pod; if the RuntimeClass is missing, the API server rejects the create and the controller surfaces the error as a generic reconciliation failure rather than a `Degraded` pool status.
 
 Consequence: a pool created against `isolationProfile: sandboxed` on a cluster without gVisor produces an opaque tight-loop of failing pod creates with no `Degraded` condition surfacing the actionable message the spec mandates. Operators have no programmatic way to detect "the RuntimeClass is missing" — they must read kubelet/API-server error events.
+
+**Resolution (`19d5ffad`):** `pkg/controller/warmpool/runtimeclass.go` adds a `RuntimeClassChecker` (production `readerRuntimeClassChecker` over the manager's uncached API reader) and the `evaluateRuntimeClass` reconcile step: every pass resolves the pool's isolation-profile→RuntimeClass name and, when the RuntimeClass is absent, logs an error and sets the `Degraded` condition on the SandboxWarmPool status with the verbatim §5.3 message (`"RuntimeClass 'gvisor' not found — install gVisor or change the pool's isolation profile."`; runc/kata follow the same form) while suppressing pod creation (`decision.Create = 0`); a present RuntimeClass clears the condition to `Degraded=False` so a pool recovers once the operator installs it. The condition rides the existing WPC SSA status patch (one field manager, `SandboxWarmPoolStatus.Conditions` already present, no CRD change). `cmd/lenny-controller` wires the checker; `controller-rbac.yaml` grants `node.k8s.io/runtimeclasses` get/list. This is the §4 `SetPoolCondition(... Degraded when RuntimeClass missing)` contract.
 
 ### - [ ] F-5.3.2 — `lenny-preflight` Job does not check RuntimeClass presence [High] — OPEN
 
@@ -3726,7 +3728,7 @@ Implementation:
 
 Consequence: a `helm install` on a cluster missing the chosen RuntimeClass succeeds; the failure surfaces only when the first warm pod create is rejected by the API server, long after the operator believes the install is healthy. The "fail-closed before any Lenny component is deployed" guarantee in §17.9 line 478 does not hold for RuntimeClass.
 
-### - [ ] F-5.3.3 — Dev-mode fallback to `standard` (runc) isolation is not implemented [High] — OPEN
+### - [ ] F-5.3.3 — Dev-mode fallback to `standard` (runc) isolation is not implemented [High] — CLOSED
 
 Spec §5.3 line 677: "When `global.devMode: true` in the Helm chart (or `LENNY_DEV_MODE=true`), the default isolation profile falls back to `standard` (runc) so developers can run locally without installing gVisor. A warning is logged: \"Dev mode: using runc isolation. Do not use in production.\""
 
@@ -3742,6 +3744,8 @@ Implementation:
 - `charts/lenny/answers/tier1-local.yaml` (the canonical dev-mode answer file) sets `auth.mode: dev` but does not seed `allowStandardIsolation: true` on any default pool — a fresh dev install requires the operator to either install gVisor or manually edit the pool to set both `isolationProfile: standard` and `allowStandardIsolation: true`. The latter is the very combination `pkg/gateway/poolstore/poolstore.go:254` rejects without the explicit opt-in flag.
 
 Consequence: a developer running `lenny-ctl install --answer-file charts/lenny/answers/tier1-local.yaml` on a stock kind/minikube cluster (no gVisor) cannot launch a single warm pod — the SandboxTemplate defaults to `sandboxed`, the pod stamps `runtimeClassName: gvisor`, and the API server rejects the create. The spec's stated "developers can run locally without installing gVisor" guarantee is broken.
+
+**Resolution (`19d5ffad`):** `isolation.DefaultForMode(devMode)` returns `standard` (runc) in dev mode and `sandboxed` otherwise; `isolation.DevModeIsolationWarning` holds the verbatim §5.3 warning. All six default sites now consult it: `admin/pools.go` (and auto-sets `allowStandardIsolation: true` for the dev-mode default fallback so the poolstore opt-in gate passes — an explicit `standard` without the flag is still rejected), `runtimestore.ApplyDefaults(r, devMode)`, `mcptools.Deps.DevMode`, `sessionserver.Options.DevMode`, and the `sandbox.Reconciler.DevMode` pod fallback. `cmd/lenny-gateway` and `cmd/lenny-controller` both log the warning once at startup; the controller gains `--dev-mode` (wired from `global.devMode` in `controller-deployment.yaml`, matching the gateway's existing `--dev-mode`). `auth.mode: dev` in `tier1-local.yaml` already sets `global.devMode: true`, so a stock dev install now launches pods on a gVisor-less cluster.
 
 ### - [ ] F-5.3.4 — Image digest pinning on Runtime definitions is enforced only at the admin API, not at the CRD [High] — OPEN
 
@@ -3781,7 +3785,7 @@ Implementation:
 
 Consequence: the spec's §13.2 cross-control (runc pods cannot get `internet` egress) is undeliverable at the data model level. A pool with `isolationProfile: standard, allowStandardIsolation: true` could combine with a permissive egress NetworkPolicy with no automated rejection.
 
-### - [ ] F-5.3.7 — `Pod Overhead` is not declared or wired on any RuntimeClass [Medium] — OPEN
+### - [ ] F-5.3.7 — `Pod Overhead` is not declared or wired on any RuntimeClass [Medium] — CLOSED
 
 Spec §5.3 lines 650–658: "Each `RuntimeClass` should define `Pod Overhead` so scheduling accounts for the isolation cost. Reference overhead values: sandboxed (gVisor) ~200m CPU + ~200Mi memory; microvm (Kata) ~500m + ~500Mi."
 
@@ -3791,6 +3795,8 @@ Implementation:
 - `pkg/controller/poolscaling/` scaling formulas (which the spec ties to overhead-adjusted pod sizes) do not consult overhead values.
 
 Consequence: scheduler placement and capacity planning under-account for the gVisor/Kata overhead. The spec uses SHOULD (`should define`), so this is a Medium rather than High, but the bundled chart provides no template to make the SHOULD easy for operators to satisfy.
+
+**Resolution (`19d5ffad`):** `charts/lenny/templates/runtimeclasses.yaml` renders `node.k8s.io/v1` RuntimeClass objects with the §5.3 reference Pod Overhead (`overhead.podFixed`: sandboxed 200m/200Mi, microvm 500m/500Mi, standard none), gated on `runtimeClasses.create` (default `false`, since most deployers install RuntimeClasses out-of-band such as GKE Sandbox). Per-profile `enabled`/`name`/`handler`/`overhead`/`nodeSelector` are tunable in `values.yaml`; `sandboxed` is enabled by default within the block. The chart now provides the template that makes the SHOULD satisfiable. Six helm-unittest assertions in `tests/runtimeclasses_test.yaml`.
 
 ### - [ ] F-5.3.8 — Kata `microvm` isolation has no end-to-end coverage in the implementation [Medium] — OPEN
 
@@ -3806,7 +3812,7 @@ Implementation:
 
 Consequence: microvm isolation passes type-checks but no production code path is end-to-end-verified to actually launch and slot-bind a Kata pod.
 
-### - [ ] F-5.3.9 — `RuntimeProvider` abstraction (e.g., KubeVirt forward compatibility) is absent [Medium] — OPEN
+### - [ ] F-5.3.9 — `RuntimeProvider` abstraction (e.g., KubeVirt forward compatibility) is absent [Medium] — CLOSED
 
 Spec §5.3 line 660: "A `RuntimeProvider` abstraction keeps the door open for future backends (e.g., KubeVirt)."
 
@@ -3815,6 +3821,8 @@ Implementation:
 - `pkg/sandbox/isolation/runtimeclass.go` hardcodes the three profile→RuntimeClass-name strings; no interface or registration point exists for additional backends.
 
 Consequence: a future KubeVirt or Firecracker addition requires changing the closed enum in `pkg/sandbox/isolation/profile.go` plus every switch statement that maps it. This is acceptable for v1 (the spec uses "keeps the door open" — informational), but `BUILD-PROGRESS.md` should note the deferred abstraction.
+
+**Resolution (`19d5ffad`):** Per the suggested resolution, the Phase 3 row of `BUILD-PROGRESS.md` now documents the `RuntimeProvider` abstraction as a v2 deferral: v1 ships the closed `isolation.Profile` enum and the profile→RuntimeClass mapping, which a new backend extends by adding an enum value plus its RuntimeClass mapping. The §5.3 spec wording ("keeps the door open") is informational, so no abstraction is built for v1.
 
 ### - [ ] F-5.3.10 — Pod-security validator does not relax the seccomp check for gVisor pods [Medium] — OPEN
 
