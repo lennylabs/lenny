@@ -57,6 +57,16 @@ service Adapter {
   // RunSetup. Returns Unavailable if the pod is not in `idle` state.
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse) {}
 
+  // ConfigureWorkspace points a pre-connected SDK-warm session at the
+  // finalized working directory (§4.7 SDK-warm mode). It is the SDK-warm
+  // counterpart of StartSession: the runtime has already connected its SDK
+  // at warm time, so instead of starting it fresh the adapter delivers the
+  // final cwd. Timeout: 10s. Idempotent — sending the same cwd twice is
+  // safe. On failure the gateway calls DemoteSDK and falls back to pod-warm
+  // materialization. Applies only to runtimes that declare
+  // capabilities.preConnect: true; pod-warm adapters return Unimplemented.
+  rpc ConfigureWorkspace(ConfigureWorkspaceRequest) returns (ConfigureWorkspaceResponse) {}
+
   // SendMessage delivers a content message to the agent over the adapter's
   // stdin JSONL channel. See lenny-adapter-jsonl.schema.json `message`.
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse) {}
@@ -598,6 +608,30 @@ message ShutdownRequest {
 message ShutdownResponse {
   bool exited_cleanly = 1;
   int32 exit_code = 2;
+}
+
+// ConfigureWorkspaceRequest carries the finalized working directory to a
+// pre-connected SDK-warm session (§4.7). It replaces StartSession on the
+// SDK-warm fast path.
+message ConfigureWorkspaceRequest {
+  SessionId session_id = 1;
+  // cwd is the finalized working directory the pre-connected SDK session
+  // is pointed at — /workspace/current in production. Idempotent: sending
+  // the same cwd twice is safe.
+  string cwd = 2;
+  // experiment_context and tracing_context are written into the adapter
+  // manifest the runtime re-reads when the workspace is configured, the
+  // same as StartSession.
+  ExperimentContext experiment_context = 3;
+  map<string, string> tracing_context = 4;
+}
+
+// ConfigureWorkspaceResponse is empty on success. A non-empty
+// refusal_reason is a graceful refusal: the pre-connected SDK could not be
+// pointed at the workspace, so the gateway calls DemoteSDK and falls back
+// to pod-warm materialization (§4.7).
+message ConfigureWorkspaceResponse {
+  string refusal_reason = 1;
 }
 
 message DemoteSDKRequest {

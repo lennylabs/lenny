@@ -1519,7 +1519,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.4 — `ConfigureWorkspace` and `DemoteSDK` are unimplemented; SDK-warm path is dead [Medium] — OPEN
+### - [x] F-4.7.4 — `ConfigureWorkspace` and `DemoteSDK` are unimplemented; SDK-warm path is dead [Medium] — CLOSED
 
 **Severity: High** for `ConfigureWorkspace` (it is the SDK-warm fast path; failing back to pod-warm requires `DemoteSDK`); **Medium** as a build gap because `--capabilities.preConnect: true` runtimes are not yet shipped.
 
@@ -1533,6 +1533,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** `ConfigureWorkspace` RPC is absent from proto entirely, and `DemoteSDK` is a permanent stub. The SDK-warm mode in §6.1 cannot land without these.
 
 **Suggested resolution:** Add `ConfigureWorkspace(ConfigureWorkspaceRequest) returns (ConfigureWorkspaceResponse)` to `schemas/lenny-adapter.proto`; implement the 10 s idempotent contract per spec, and the `DemoteSDK` 5 s fallback contract. Mark the proto Capability `preConnect` flag (already exposed via `NegotiateVersion.capabilities`) as the gate.
+
+**Resolution:** Added `ConfigureWorkspace(ConfigureWorkspaceRequest) returns (ConfigureWorkspaceResponse)` to `schemas/lenny-adapter.proto` (carrying `session_id`, `cwd`, and the manifest's experiment/tracing context) and regenerated the bindings. `pkg/adapter/sdkwarm.go` defines the `SDKWarmRuntime` seam (a `RuntimeProcess` that pre-connects its SDK and supports `ConfigureWorkspace`/`DemoteSDK`); the adapter's `ConfigureWorkspace` claims the session idempotently (a repeat for the same session re-points the runtime without rewriting the manifest, keeping the §15.4.3 nonce stable), writes the manifest, starts the platform MCP, and points the pre-connected SDK at `cwd`; on runtime error it releases the session so the gateway's DemoteSDK fallback lands. `DemoteSDK` tears down the pre-connected SDK and returns the pod to idle. Both RPCs gate on the `SDKWarmRuntime` type assertion (the `preConnect` capability), returning `Unimplemented` for a pod-warm adapter per the §4.7 contract; `NegotiateVersion` advertises `preConnect` when the wired runtime is SDK-warm. The gateway-side orchestration (choosing ConfigureWorkspace over StartSession, the 10s/5s deadlines, the fallback) is the §6.1 SDK-warm warm-pod feature, separate from this adapter contract. (commit <pending>)
 
 ---
 
@@ -1633,7 +1635,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 **Suggested resolution:** Add a challenge-response stage after the nonce check on every MCP and lifecycle connection. Emit the `lenny_adapter_sopeercred_disabled_total` counter and surface the `SOPeercredDisabled=True` pod condition when the flag is off.
 
-**Resolution:** Added the §4.7 lines 879-883 challenge-response supplement in `pkg/adapter/mcp/challenge.go`: a fresh 128-bit `adapterChallenge` per connection, the agent's `HMAC-SHA256(key=manifestNonce, data=adapterChallenge)` reply validated constant-time, and a 500 ms read deadline (`ChallengeTimeout`). `mcp.Server.ServeConn` runs it after the nonce check when `RequireChallenge` is set; a missing field, mismatch, or timeout closes the socket with no protocol response. The adapter `Server.NonceOnlyMode` (wired from `cmd/lenny-adapter --require-so-peercred=false`) sets `RequireChallenge` on the platform MCP server, so every intra-pod MCP connection (all route through `mcp.Server`) gets the supplement when SO_PEERCRED is disabled. The `lenny_adapter_sopeercred_disabled_total` counter is already emitted on every nonce-only-mode start (F-4.7.8, commit 131a5107). The `SOPeercredDisabled=True` pod condition and its `SecurityDegradedMode` propagation remain tracked under F-4.7.15 (needs an in-cluster client + RBAC + controller reconciler). The lifecycle channel presents no manifest nonce today, so the spec's "after the agent presents the manifest nonce" supplement does not apply to it. (commit <pending>)
+**Resolution:** Added the §4.7 lines 879-883 challenge-response supplement in `pkg/adapter/mcp/challenge.go`: a fresh 128-bit `adapterChallenge` per connection, the agent's `HMAC-SHA256(key=manifestNonce, data=adapterChallenge)` reply validated constant-time, and a 500 ms read deadline (`ChallengeTimeout`). `mcp.Server.ServeConn` runs it after the nonce check when `RequireChallenge` is set; a missing field, mismatch, or timeout closes the socket with no protocol response. The adapter `Server.NonceOnlyMode` (wired from `cmd/lenny-adapter --require-so-peercred=false`) sets `RequireChallenge` on the platform MCP server, so every intra-pod MCP connection (all route through `mcp.Server`) gets the supplement when SO_PEERCRED is disabled. The `lenny_adapter_sopeercred_disabled_total` counter is already emitted on every nonce-only-mode start (F-4.7.8, commit 131a5107). The `SOPeercredDisabled=True` pod condition and its `SecurityDegradedMode` propagation remain tracked under F-4.7.15 (needs an in-cluster client + RBAC + controller reconciler). The lifecycle channel presents no manifest nonce today, so the spec's "after the agent presents the manifest nonce" supplement does not apply to it. (commit 1eb4bd47)
 
 ---
 

@@ -35,24 +35,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Adapter_PrepareWorkspace_FullMethodName  = "/lenny.adapter.v1.Adapter/PrepareWorkspace"
-	Adapter_FinalizeWorkspace_FullMethodName = "/lenny.adapter.v1.Adapter/FinalizeWorkspace"
-	Adapter_RunSetup_FullMethodName          = "/lenny.adapter.v1.Adapter/RunSetup"
-	Adapter_StartSession_FullMethodName      = "/lenny.adapter.v1.Adapter/StartSession"
-	Adapter_SendMessage_FullMethodName       = "/lenny.adapter.v1.Adapter/SendMessage"
-	Adapter_Attach_FullMethodName            = "/lenny.adapter.v1.Adapter/Attach"
-	Adapter_AssignCredentials_FullMethodName = "/lenny.adapter.v1.Adapter/AssignCredentials"
-	Adapter_RotateCredentials_FullMethodName = "/lenny.adapter.v1.Adapter/RotateCredentials"
-	Adapter_RevokeCredentials_FullMethodName = "/lenny.adapter.v1.Adapter/RevokeCredentials"
-	Adapter_Interrupt_FullMethodName         = "/lenny.adapter.v1.Adapter/Interrupt"
-	Adapter_Checkpoint_FullMethodName        = "/lenny.adapter.v1.Adapter/Checkpoint"
-	Adapter_Resume_FullMethodName            = "/lenny.adapter.v1.Adapter/Resume"
-	Adapter_ExportPaths_FullMethodName       = "/lenny.adapter.v1.Adapter/ExportPaths"
-	Adapter_ReportUsage_FullMethodName       = "/lenny.adapter.v1.Adapter/ReportUsage"
-	Adapter_Shutdown_FullMethodName          = "/lenny.adapter.v1.Adapter/Shutdown"
-	Adapter_DemoteSDK_FullMethodName         = "/lenny.adapter.v1.Adapter/DemoteSDK"
-	Adapter_NegotiateVersion_FullMethodName  = "/lenny.adapter.v1.Adapter/NegotiateVersion"
-	Adapter_LifecycleChannel_FullMethodName  = "/lenny.adapter.v1.Adapter/LifecycleChannel"
+	Adapter_PrepareWorkspace_FullMethodName   = "/lenny.adapter.v1.Adapter/PrepareWorkspace"
+	Adapter_FinalizeWorkspace_FullMethodName  = "/lenny.adapter.v1.Adapter/FinalizeWorkspace"
+	Adapter_RunSetup_FullMethodName           = "/lenny.adapter.v1.Adapter/RunSetup"
+	Adapter_StartSession_FullMethodName       = "/lenny.adapter.v1.Adapter/StartSession"
+	Adapter_ConfigureWorkspace_FullMethodName = "/lenny.adapter.v1.Adapter/ConfigureWorkspace"
+	Adapter_SendMessage_FullMethodName        = "/lenny.adapter.v1.Adapter/SendMessage"
+	Adapter_Attach_FullMethodName             = "/lenny.adapter.v1.Adapter/Attach"
+	Adapter_AssignCredentials_FullMethodName  = "/lenny.adapter.v1.Adapter/AssignCredentials"
+	Adapter_RotateCredentials_FullMethodName  = "/lenny.adapter.v1.Adapter/RotateCredentials"
+	Adapter_RevokeCredentials_FullMethodName  = "/lenny.adapter.v1.Adapter/RevokeCredentials"
+	Adapter_Interrupt_FullMethodName          = "/lenny.adapter.v1.Adapter/Interrupt"
+	Adapter_Checkpoint_FullMethodName         = "/lenny.adapter.v1.Adapter/Checkpoint"
+	Adapter_Resume_FullMethodName             = "/lenny.adapter.v1.Adapter/Resume"
+	Adapter_ExportPaths_FullMethodName        = "/lenny.adapter.v1.Adapter/ExportPaths"
+	Adapter_ReportUsage_FullMethodName        = "/lenny.adapter.v1.Adapter/ReportUsage"
+	Adapter_Shutdown_FullMethodName           = "/lenny.adapter.v1.Adapter/Shutdown"
+	Adapter_DemoteSDK_FullMethodName          = "/lenny.adapter.v1.Adapter/DemoteSDK"
+	Adapter_NegotiateVersion_FullMethodName   = "/lenny.adapter.v1.Adapter/NegotiateVersion"
+	Adapter_LifecycleChannel_FullMethodName   = "/lenny.adapter.v1.Adapter/LifecycleChannel"
 )
 
 // AdapterClient is the client API for Adapter service.
@@ -91,6 +92,15 @@ type AdapterClient interface {
 	// materialized by FinalizeWorkspace and setup is already run by
 	// RunSetup. Returns Unavailable if the pod is not in `idle` state.
 	StartSession(ctx context.Context, in *StartSessionRequest, opts ...grpc.CallOption) (*StartSessionResponse, error)
+	// ConfigureWorkspace points a pre-connected SDK-warm session at the
+	// finalized working directory (§4.7 SDK-warm mode). It is the SDK-warm
+	// counterpart of StartSession: the runtime has already connected its SDK
+	// at warm time, so instead of starting it fresh the adapter delivers the
+	// final cwd. Timeout: 10s. Idempotent — sending the same cwd twice is
+	// safe. On failure the gateway calls DemoteSDK and falls back to pod-warm
+	// materialization. Applies only to runtimes that declare
+	// capabilities.preConnect: true; pod-warm adapters return Unimplemented.
+	ConfigureWorkspace(ctx context.Context, in *ConfigureWorkspaceRequest, opts ...grpc.CallOption) (*ConfigureWorkspaceResponse, error)
 	// SendMessage delivers a content message to the agent over the adapter's
 	// stdin JSONL channel. See lenny-adapter-jsonl.schema.json `message`.
 	SendMessage(ctx context.Context, in *SendMessageRequest, opts ...grpc.CallOption) (*SendMessageResponse, error)
@@ -204,6 +214,16 @@ func (c *adapterClient) StartSession(ctx context.Context, in *StartSessionReques
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StartSessionResponse)
 	err := c.cc.Invoke(ctx, Adapter_StartSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adapterClient) ConfigureWorkspace(ctx context.Context, in *ConfigureWorkspaceRequest, opts ...grpc.CallOption) (*ConfigureWorkspaceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConfigureWorkspaceResponse)
+	err := c.cc.Invoke(ctx, Adapter_ConfigureWorkspace_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -392,6 +412,15 @@ type AdapterServer interface {
 	// materialized by FinalizeWorkspace and setup is already run by
 	// RunSetup. Returns Unavailable if the pod is not in `idle` state.
 	StartSession(context.Context, *StartSessionRequest) (*StartSessionResponse, error)
+	// ConfigureWorkspace points a pre-connected SDK-warm session at the
+	// finalized working directory (§4.7 SDK-warm mode). It is the SDK-warm
+	// counterpart of StartSession: the runtime has already connected its SDK
+	// at warm time, so instead of starting it fresh the adapter delivers the
+	// final cwd. Timeout: 10s. Idempotent — sending the same cwd twice is
+	// safe. On failure the gateway calls DemoteSDK and falls back to pod-warm
+	// materialization. Applies only to runtimes that declare
+	// capabilities.preConnect: true; pod-warm adapters return Unimplemented.
+	ConfigureWorkspace(context.Context, *ConfigureWorkspaceRequest) (*ConfigureWorkspaceResponse, error)
 	// SendMessage delivers a content message to the agent over the adapter's
 	// stdin JSONL channel. See lenny-adapter-jsonl.schema.json `message`.
 	SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error)
@@ -478,6 +507,9 @@ func (UnimplementedAdapterServer) RunSetup(context.Context, *RunSetupRequest) (*
 }
 func (UnimplementedAdapterServer) StartSession(context.Context, *StartSessionRequest) (*StartSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartSession not implemented")
+}
+func (UnimplementedAdapterServer) ConfigureWorkspace(context.Context, *ConfigureWorkspaceRequest) (*ConfigureWorkspaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ConfigureWorkspace not implemented")
 }
 func (UnimplementedAdapterServer) SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendMessage not implemented")
@@ -598,6 +630,24 @@ func _Adapter_StartSession_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AdapterServer).StartSession(ctx, req.(*StartSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Adapter_ConfigureWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConfigureWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).ConfigureWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_ConfigureWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).ConfigureWorkspace(ctx, req.(*ConfigureWorkspaceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -850,6 +900,10 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StartSession",
 			Handler:    _Adapter_StartSession_Handler,
+		},
+		{
+			MethodName: "ConfigureWorkspace",
+			Handler:    _Adapter_ConfigureWorkspace_Handler,
 		},
 		{
 			MethodName: "SendMessage",

@@ -236,7 +236,7 @@ func New(version string) *Server {
 // the connection down and evicts the pod.
 func (s *Server) NegotiateVersion(_ context.Context, req *adapterv1.NegotiateVersionRequest) (*adapterv1.NegotiateVersionResponse, error) {
 	resp := &adapterv1.NegotiateVersionResponse{
-		Capabilities:   s.Capabilities,
+		Capabilities:   s.advertisedCapabilities(),
 		AdapterVersion: s.Version,
 	}
 	selected := highestCommonVersion(req.GetAcceptedProtocolVersions(), s.ProtocolVersions)
@@ -246,6 +246,26 @@ func (s *Server) NegotiateVersion(_ context.Context, req *adapterv1.NegotiateVer
 	}
 	resp.SelectedProtocolVersion = selected
 	return resp, nil
+}
+
+// advertisedCapabilities returns the capability tokens the adapter
+// declares during negotiation. It is the configured Capabilities set plus
+// the §4.7 preConnect token when the wired runtime supports the SDK-warm
+// fast path (SDKWarmRuntime), so the gateway drives the pod through
+// ConfigureWorkspace rather than StartSession.
+func (s *Server) advertisedCapabilities() []string {
+	caps := s.Capabilities
+	if _, ok := s.sdkWarmRuntime(); !ok {
+		return caps
+	}
+	for _, c := range caps {
+		if c == CapabilityPreConnect {
+			return caps
+		}
+	}
+	out := make([]string, 0, len(caps)+1)
+	out = append(out, caps...)
+	return append(out, CapabilityPreConnect)
 }
 
 // highestCommonVersion returns the first entry of gatewayAccepted that
