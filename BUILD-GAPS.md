@@ -5069,7 +5069,7 @@ Low = minor; Info = noteworthy.
 
 ### Findings
 
-### - [ ] F-7.1.1 — Step 3 pre-claim credential availability check not implemented [High] — OPEN
+### - [x] F-7.1.1 — Step 3 pre-claim credential availability check not implemented [High] — CLOSED
 
 §7.1 step 3 requires the gateway to compute the intersection of
 `Runtime.supportedProviders` and tenant `credentialPolicy.providerPools`
@@ -5090,7 +5090,17 @@ starting`, claim a pod, fail at credential mint in `binder.go`
 `POD_CLAIM_FAILED` (start.go:141,198) — wasting a pod claim contrary
 to the explicit "no pod is claimed or wasted" invariant.
 
-### - [ ] F-7.1.2 — Step 23 credential lease release never invoked on session terminate [High] — OPEN
+**Resolution (commit 3e20869f, re-verified this batch):** Already
+implemented. `startOnPod` (`start.go`) runs `resolveCredentialPools` —
+the §4.9 intersection of `Runtime.supportedProviders` and the tenant's
+`credentialPolicy.providerPools` fed through `credrouter.PreClaim` —
+**before** `ResolvePool`/`Bind`/`BindSlot`, so no pod is claimed on a
+pre-claim miss. `writePodClaimError` maps `credrouter.ErrNoCredentialAvailable`
+to `CREDENTIAL_POOL_EXHAUSTED` (details.reason `pre_claim`) and the
+assignment-race case to the same code (`assignment_race`). Covered by
+`start_preclaim_internal_test.go`.
+
+### - [x] F-7.1.2 — Step 23 credential lease release never invoked on session terminate [High] — CLOSED
 
 §7.1 step 23: "Release credential lease back to pool." The
 `credassign.Service.Release(leaseID)` and `credassign.Client.Release`
@@ -5115,7 +5125,16 @@ ends, so under sustained load the pool's per-credential slot count
 drifts upward without bound and `select.go` will eventually return
 `ErrPoolExhausted` for credentials that are in fact idle.
 
-### - [ ] F-7.1.3 — Seal-and-export retry / timeout / `workspace_seal_timeout` not enforced [High] — OPEN
+**Resolution (commit 52ec9940):** Added `ReleaseSession(sessionID)` to
+`credassign.Service`/`Client` and the `credassign.Assigner` +
+`podsession.CredentialAssigner` interfaces. It looks up the session's
+leases via `LeaseStore.LeasesBySession` (promoted onto the interface),
+removes each, and decrements the backing credential's active-session
+counter (Service) or issues `RevokeCredentials` per lease (Client).
+`Binder.Release` and `Binder.ReleaseSlot` now call it at teardown (§7.1
+step 23), so a completed session returns its pool slots.
+
+### - [x] F-7.1.3 — Seal-and-export retry / timeout / `workspace_seal_timeout` not enforced [High] — CLOSED
 
 §7.1 "Seal-and-export invariant" (line 112) requires: exponential
 backoff (initial 5 s, 2× factor, 60 s cap per attempt) bounded by
@@ -5149,6 +5168,21 @@ Consequences:
 The session reaches a clean `completed` even when its workspace was
 never durably exported — silently losing user-visible artifacts on a
 MinIO outage.
+
+**Resolution (commit e9a4870d):** `recordSessionCompleted` now runs the
+seal through `sealWorkspace` (seal-first, before the client-visible
+terminal signals) with the §7.1 line 112 bounded exponential backoff
+(initial 5s, 2×, 60s cap) bounded by `maxWorkspaceSealDurationSeconds`
+(default 300s, `--workspace-seal-max-duration-seconds`). On window
+exhaustion `failWorkspaceSeal` transitions the row to
+`failed`/`workspace_seal_timeout`, emits the `workspaceSealFailed` audit
+event (`session.workspace_seal_failed`) recording the last MinIO error,
+and the pod is still torn down by the executor release. Wired the
+`lenny_workspace_seal_duration_seconds{pool,outcome}` histogram (was
+catalogued but unproduced, leaving `WorkspaceSealStuck` dead).
+`checkpointer.Seal` now no-ops on no-binding so only real export failures
+retry. The `derive_failure` / `persistDeriveFailureRows` sub-gap stays
+open under F-7.1.4.
 
 ### - [ ] F-7.1.4 — Atomicity of creation steps 2–8 not enforced (no rollback) [High] — OPEN
 
@@ -5241,7 +5275,7 @@ not reflect what the pool will give the session at start. Clients that
 rely on `sessionIsolationLevel` for upload sizing or warning surfaces
 receive provisional values that can later differ.
 
-### - [ ] F-7.1.7 — `GET /v1/sessions/{id}` does not return `sessionIsolationLevel` [Medium] — OPEN
+### - [x] F-7.1.7 — `GET /v1/sessions/{id}` does not return `sessionIsolationLevel` [Medium] — CLOSED
 
 §7.1 line 75: "`GET /v1/sessions/{id}` also returns
 `sessionIsolationLevel` in the session metadata so clients can inspect
@@ -5259,6 +5293,14 @@ path.
 The `IsolationProfile` is persisted on the row
 (`pkg/gateway/sessionstore/sessionstore.go`), so populating the
 response is straightforward; nothing in storage prevents it.
+
+**Resolution (commit cc1bed96):** Moved `SessionIsolationLevel` onto
+`SessionResponse` (was only on `CreateSessionResponse`); `toResponse`
+now populates it from the persisted §5.3 profile via
+`defaultIsolationLevel`, so GET `/v1/sessions/{id}` and the list both
+carry it, stable for the session lifetime. The create path overrides the
+embedded value with the richer pool-resolved level. The executionMode /
+scrubPolicy / podReuse accuracy of the GET-time object remains F-7.1.8.
 
 ### - [ ] F-7.1.8 — `executionMode` / `podReuse` / `scrubPolicy` / `residualStateWarning` hard-coded to single-session [Medium] — OPEN
 
@@ -5475,7 +5517,7 @@ validation rejecting the staged upload) cannot surface; it is
 deferred until `/start` and then returns `POD_CLAIM_FAILED` rather
 than the spec-implied workspace-validation error.
 
-### - [ ] F-7.1.18 — Step 7 `AssignCredentials` ordering matches §4.7, not §7.1 literal step order [Info] — OPEN
+### - [x] F-7.1.18 — Step 7 `AssignCredentials` ordering matches §4.7, not §7.1 literal step order [Info] — CLOSED
 
 §7.1 lists step 7 (AssignCredentials) before step 8 (return
 `session_id` to client). The gateway invokes AssignCredentials inside
@@ -5483,6 +5525,15 @@ than the spec-implied workspace-validation error.
 `FinalizeWorkspace`, and `RunSetup` — matching §4.7 item 4 ordering.
 Functionally consistent with §4.7 normative ordering; the §7.1
 step-numbering is an informal sequence diagram.
+
+**Resolution (re-verified this batch, no code change):** No defect. The
+normative session-assignment RPC order is §4 `04_system-components.md`
+line 837: `PrepareWorkspace → FinalizeWorkspace → RunSetup →
+AssignCredentials(leases) → StartSession`, which the binder follows.
+The §7.1 step list (lines 1-54) is the high-level lifecycle sequence
+diagram; its step 7/8 placement of AssignCredentials within the
+"creation atomic unit (steps 2-8)" does not pin the exact adapter-RPC
+interleaving. Closed as verified by-design.
 
 ### - [ ] F-7.1.19 — `transcript-as-artifact` derive copy not implemented [Info] — OPEN
 
