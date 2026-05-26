@@ -67,16 +67,21 @@ func TestHasAndRemoveFinalizer(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 — a freshly-created Sandbox whose phase has not been set
-// yet labels its pod warming; otherwise the label mirrors the §6.2
-// phase.
+// spec: §6.2 lines 305-313 — a freshly-created Sandbox (unset phase,
+// treated as warming) has no coarse operational value, so the label is
+// omitted; once idle, the coarse value is "idle". An attached pod maps to
+// the coarse "active" value rather than carrying the raw §6.2 phase.
 func TestPodStateLabel(t *testing.T) {
 	sb := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "sb-a"}}
-	if got := podStateLabel(sb); got != "warming" {
-		t.Errorf("podStateLabel(empty phase) = %q, want warming", got)
+	if got, ok := podStateLabel(sb); ok {
+		t.Errorf("podStateLabel(empty phase) = (%q, true), want no coarse value (warming is pre-ready)", got)
 	}
 	sb.Status.Phase = "idle"
-	if got := podStateLabel(sb); got != "idle" {
-		t.Errorf("podStateLabel(idle) = %q, want idle", got)
+	if got, ok := podStateLabel(sb); !ok || got != "idle" {
+		t.Errorf("podStateLabel(idle) = (%q, %v), want (idle, true)", got, ok)
+	}
+	sb.Status.Phase = "attached"
+	if got, ok := podStateLabel(sb); !ok || got != "active" {
+		t.Errorf("podStateLabel(attached) = (%q, %v), want (active, true) per coarse mapping", got, ok)
 	}
 }

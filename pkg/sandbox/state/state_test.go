@@ -9,6 +9,70 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
+// TestCoarseState_spec_6_2 covers the §6.2 lines 305-313 coarse pod-state
+// mapping: the lenny.dev/state pod label carries only idle/active/draining.
+// idle maps to idle, draining to draining, every claimed/serving phase to
+// active, and the pre-ready (warming, sdk_connecting) and terminal phases
+// have no coarse value (so the reconciler omits the label).
+func TestCoarseState_spec_6_2(t *testing.T) {
+	cases := []struct {
+		phase state.State
+		want  string
+		ok    bool
+	}{
+		{state.Idle, "idle", true},
+		{state.Draining, "draining", true},
+		{state.Claimed, "active", true},
+		{state.ReceivingUploads, "active", true},
+		{state.FinalizingWorkspace, "active", true},
+		{state.RunningSetup, "active", true},
+		{state.Attached, "active", true},
+		{state.TaskCleanup, "active", true},
+		{state.SlotActive, "active", true},
+		{state.Resuming, "active", true},
+		{state.Suspended, "active", true},
+		{state.ResumePending, "active", true},
+		{state.AwaitingClientAction, "active", true},
+		// Pre-ready: not yet claimable, no coarse operational value.
+		{state.Warming, "", false},
+		{state.SDKConnecting, "", false},
+		// Terminal: the pod is gone, no coarse value.
+		{state.Completed, "", false},
+		{state.Failed, "", false},
+		{state.Cancelled, "", false},
+		{state.Expired, "", false},
+		{state.Terminated, "", false},
+	}
+	for _, tc := range cases {
+		got, ok := state.CoarseState(tc.phase)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("CoarseState(%q) = (%q, %v), want (%q, %v)", tc.phase, got, ok, tc.want, tc.ok)
+		}
+		// The label must only ever hold one of the three documented values.
+		if ok && got != state.CoarseIdle && got != state.CoarseActive && got != state.CoarseDraining {
+			t.Errorf("CoarseState(%q) = %q, which is outside the §6.2 line 309 value set", tc.phase, got)
+		}
+	}
+}
+
+// TestCoarseStateCoversEveryPhase_spec_6_2 guards against a new §6.2 phase
+// silently defaulting to "no coarse value": every state in All() must be
+// classified by CoarseState (the default branch is intentional only for
+// the pre-ready and terminal phases enumerated above).
+func TestCoarseStateCoversEveryPhase_spec_6_2(t *testing.T) {
+	noCoarse := map[state.State]bool{
+		state.Warming: true, state.SDKConnecting: true,
+		state.Completed: true, state.Failed: true, state.Cancelled: true,
+		state.Expired: true, state.Terminated: true,
+	}
+	for _, s := range state.All() {
+		_, ok := state.CoarseState(s)
+		if ok == noCoarse[s] {
+			t.Errorf("CoarseState(%q) ok=%v, but noCoarse=%v — reclassify or update the test", s, ok, noCoarse[s])
+		}
+	}
+}
+
 // spec: 6.2
 // diagnosis: A canonical Sandbox state from spec §6.2 is missing from
 //

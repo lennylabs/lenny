@@ -130,6 +130,31 @@ const (
 	// container reads to discover the adapter's runtime socket. It
 	// matches runtimekit.SocketEnvVar.
 	RuntimeSocketEnvVar = "LENNY_ADAPTER_SOCKET"
+
+	// ReadinessGateSandboxReady is the §6.1 line 18 pod readiness gate
+	// ("Marked 'idle and claimable' via readiness gate"). The pod spec
+	// declares the gate so the kubelet holds Pod.Ready False — and the pod
+	// un-claimable — until the WarmPoolController asserts the pod is warm.
+	// Container readiness alone does not make a pod claimable; the
+	// controller flips this gate to True (see the Sandbox-to-Pod
+	// reconciler) once it has observed the containers ready, which is the
+	// Lenny-controlled claimability handoff to the gateway.
+	ReadinessGateSandboxReady corev1.PodConditionType = "lenny.dev/sandbox-ready"
+
+	// saTokenVolumeName, saTokenMountPath, and saTokenFile name the §6.1
+	// line 14 projected service-account token: an audience-bound,
+	// short-TTL token the agent pod presents to the gateway (§10.3). The
+	// mount path is Lenny-namespaced so it does not collide with the
+	// kubelet's default kubernetes.io/serviceaccount mount.
+	saTokenVolumeName = "lenny-sa-token"
+	saTokenMountPath  = "/var/run/secrets/lenny.dev/serviceaccount"
+	saTokenFile       = "token"
+
+	// saTokenExpirationSeconds is the §10.3 projected-token TTL
+	// (expirationSeconds: 900 / 15 minutes). The kubelet auto-refreshes
+	// the token before expiry; the gateway validates the audience claim on
+	// every pod→gateway request.
+	saTokenExpirationSeconds int64 = 900
 )
 
 // DeploymentModel is the §4.7 agent-pod deployment model. It mirrors
@@ -204,6 +229,23 @@ type Inputs struct {
 	// down through Sandbox.spec. The builder stamps them onto the pod so
 	// the scheduler distributes the pool's pods across zones and nodes.
 	TopologySpreadConstraints []corev1.TopologySpreadConstraint
+
+	// SATokenAudience is the §10.3 deployment-specific audience
+	// (global.saTokenAudience, formatted as lenny-gateway-<cluster-name>)
+	// for the §6.1 line 14 projected service-account token. When non-empty,
+	// the builder mounts an audience-bound, 900s-TTL projected token the
+	// agent pod presents to the gateway and disables the kubelet's default
+	// (cluster-audience) token automount. An empty value (test or
+	// unconfigured) leaves the pod without the projected token rather than
+	// mounting a wrong-audience one.
+	SATokenAudience string
+
+	// ServiceAccountName is the agent pod's ServiceAccount. spec: §10.3 —
+	// the SA bound to agent pods has zero RBAC bindings (no Kubernetes API
+	// access); the projected token is one defense-in-depth layer alongside
+	// mTLS and NetworkPolicy. An empty value uses the namespace default SA
+	// (which carries no RBAC bindings in agent namespaces).
+	ServiceAccountName string
 }
 
 // EgressCapture configures the §12.9.8 egress-capture sidecar an
@@ -334,6 +376,9 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		},
 	}
 	pod.Spec.Volumes = volumes
+	// spec: §10.3 — the adapter is the pod's gateway-facing process, so the
+	// projected token mounts on the adapter container.
+	injectSATokenVolume(in, pod, []int{0})
 	injectEgressCaptureSidecar(in, pod, []int{1})
 	return pod, nil
 }
@@ -379,6 +424,9 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		},
 	}
 	pod.Spec.Volumes = volumes
+	// spec: §10.3 — the embedded runtime is the pod's gateway-facing
+	// process, so the projected token mounts on the runtime container.
+	injectSATokenVolume(in, pod, []int{0})
 	injectEgressCaptureSidecar(in, pod, []int{0})
 	return pod, nil
 }
@@ -499,7 +547,7 @@ func podVolumes() []corev1.Volume {
 // the §13.1 pod security context and the §5.3 RuntimeClass, with the
 // container list and volume list left for the caller to fill.
 func basePod(in Inputs, runtimeClass string) *corev1.Pod {
-	return &corev1.Pod{
+	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      in.Name,
 			Namespace: in.Namespace,
@@ -512,12 +560,64 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 			// spec: §5.2 lines 631-636 — stamp the resolved topology spread
 			// constraints so the scheduler distributes the pool's pods.
 			TopologySpreadConstraints: in.TopologySpreadConstraints,
+			// spec: §6.1 line 18 — the readiness gate lets the
+			// WarmPoolController gate claimability: Pod.Ready stays False
+			// (and the warming → idle transition, which keys off Pod.Ready,
+			// does not fire) until the controller flips this gate to True.
+			ReadinessGates: []corev1.PodReadinessGate{{ConditionType: ReadinessGateSandboxReady}},
+			// spec: §10.3 — the agent pod presents an audience-bound
+			// projected token, not the kubelet's default cluster-audience
+			// one; disable the automount so only the §6.1 line 14 projected
+			// token (injected below when an audience is configured) is
+			// present.
+			AutomountServiceAccountToken: ptr.To(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot:   ptr.To(true),
 				FSGroup:        ptr.To(CredReadersGID),
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 		},
+	}
+	// spec: §10.3 — the agent pod's ServiceAccount has zero RBAC bindings;
+	// an empty name uses the namespace default SA (no bindings in agent
+	// namespaces).
+	if in.ServiceAccountName != "" {
+		pod.Spec.ServiceAccountName = in.ServiceAccountName
+	}
+	return pod
+}
+
+// injectSATokenVolume adds the §6.1 line 14 / §10.3 projected
+// service-account token volume to the pod and mounts it read-only into the
+// container indices named in mountOn (the container that authenticates to
+// the gateway: the adapter in the sidecar model, the runtime in the
+// embedded model). The token is audience-bound (Inputs.SATokenAudience,
+// the §10.3 deployment-specific audience) with a 900s TTL the kubelet
+// auto-refreshes. The injection is a no-op when no audience is configured,
+// so the builder never mounts a wrong-audience (cluster-default) token.
+func injectSATokenVolume(in Inputs, pod *corev1.Pod, mountOn []int) {
+	if in.SATokenAudience == "" {
+		return
+	}
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: saTokenVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{{
+					ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+						Audience:          in.SATokenAudience,
+						ExpirationSeconds: ptr.To(saTokenExpirationSeconds),
+						Path:              saTokenFile,
+					},
+				}},
+			},
+		},
+	})
+	mount := corev1.VolumeMount{Name: saTokenVolumeName, MountPath: saTokenMountPath, ReadOnly: true}
+	for _, idx := range mountOn {
+		if idx >= 0 && idx < len(pod.Spec.Containers) {
+			pod.Spec.Containers[idx].VolumeMounts = append(pod.Spec.Containers[idx].VolumeMounts, mount)
+		}
 	}
 }
 

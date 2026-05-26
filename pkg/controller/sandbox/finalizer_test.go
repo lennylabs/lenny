@@ -89,9 +89,11 @@ func TestReconcileHoldsFinalizerWhileClaimActive(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 "Disruption protection for agent pods" — the reconciler
-// stamps the live §6.2 phase as the lenny.dev/state pod label on
-// creation so the warm-pod PDB's idle selector can target the pod.
+// spec: §6.2 lines 305-313 — a freshly-created pod is warming (pre-ready),
+// which has no coarse operational value, so the lenny.dev/state label is
+// omitted rather than carrying a value outside the documented
+// idle/active/draining set. The immutable lenny.dev/runtime label is
+// stamped at creation regardless.
 func TestReconcileStampsPodStateLabelOnCreate(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, sandboxCR(""), runtimeCR())
@@ -101,8 +103,11 @@ func TestReconcileStampsPodStateLabelOnCreate(t *testing.T) {
 	}
 
 	pod := getPod(t, c)
-	if got := pod.Labels[state.LabelState]; got != string(state.Warming) {
-		t.Errorf("pod state label = %q, want warming", got)
+	if got, ok := pod.Labels[state.LabelState]; ok {
+		t.Errorf("pod state label = %q, want absent (warming pod has no coarse state)", got)
+	}
+	if got := pod.Labels[state.LabelRuntime]; got != "claude-code" {
+		t.Errorf("pod runtime label = %q, want claude-code (§6.2 line 311)", got)
 	}
 }
 

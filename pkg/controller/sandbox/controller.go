@@ -93,6 +93,16 @@ type Reconciler struct {
 	// `standard` (runc) per §5.3 line 677, so a developer can launch pods
 	// on a cluster without gVisor installed.
 	DevMode bool
+	// SATokenAudience is the §10.3 deployment-specific projected-token
+	// audience (global.saTokenAudience). When set, every agent pod mounts a
+	// §6.1 line 14 audience-bound projected service-account token. Empty
+	// (test or unconfigured) leaves the pod without it rather than mounting
+	// a wrong-audience token.
+	SATokenAudience string
+	// AgentServiceAccountName is the §10.3 zero-RBAC ServiceAccount bound to
+	// agent pods. Empty uses the namespace default SA (no RBAC bindings in
+	// agent namespaces).
+	AgentServiceAccountName string
 	// StatusDedup is the §4.6.1 statusUpdateDeduplicationWindow gate. When
 	// set, a Sandbox status write within the window of the previous write
 	// for the same Sandbox is deferred and the reconcile requeued so the
@@ -167,6 +177,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	desiredPhase := sb.Status.Phase
 	if decision.Action == lifecycle.ActionSetPhase {
 		desiredPhase = string(decision.NextPhase)
+	}
+	// §6.1 line 18: flip the readiness gate once the containers are ready
+	// so Pod.Ready (and the warming → idle transition that keys off it) can
+	// proceed. This is the Lenny-controlled claimability handoff.
+	if err := r.syncReadinessGate(ctx, &pod, obs); err != nil {
+		return ctrl.Result{}, err
 	}
 	if err := r.syncPodStateLabel(ctx, desiredPhase, &pod, obs); err != nil {
 		return ctrl.Result{}, err
@@ -271,18 +287,31 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// pool's topology spread constraints onto Sandbox.spec; stamp them
 		// onto the pod here.
 		TopologySpreadConstraints: sb.Spec.TopologySpreadConstraints,
+		// spec: §6.1 line 14 / §10.3 — mount the audience-bound projected
+		// service-account token (when an audience is configured) under the
+		// zero-RBAC agent ServiceAccount.
+		SATokenAudience:    r.SATokenAudience,
+		ServiceAccountName: r.AgentServiceAccountName,
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)
 	}
-	// §4.6.1 disruption protection: stamp the live §6.2 phase as the
-	// lenny.dev/state pod label so the per-pool PodDisruptionBudget can
-	// select warm (idle) pods. The reconciler keeps the label in sync on
-	// every subsequent phase transition.
 	if pod.Labels == nil {
 		pod.Labels = map[string]string{}
 	}
-	pod.Labels[state.LabelState] = podStateLabel(sb)
+	// spec: §6.2 line 311 — stamp the immutable runtime-name label so
+	// operators can select pods by runtime type.
+	if sb.Spec.RuntimeRef != "" {
+		pod.Labels[state.LabelRuntime] = sb.Spec.RuntimeRef
+	}
+	// §4.6.1 disruption protection / §6.2 lines 305-313: stamp the coarse
+	// lenny.dev/state label so the per-pool PodDisruptionBudget can select
+	// warm (idle) pods. A pre-ready pod (warming) has no coarse value, so
+	// the label is omitted until the pod reaches a coarse state; the
+	// reconciler keeps the label in sync on every subsequent transition.
+	if v, ok := podStateLabel(sb); ok {
+		pod.Labels[state.LabelState] = v
+	}
 	if err := ctrl.SetControllerReference(sb, pod, r.Scheme); err != nil {
 		return fmt.Errorf("set controller reference: %w", err)
 	}
@@ -292,42 +321,112 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	return nil
 }
 
-// podStateLabel returns the lenny.dev/state label value for a Sandbox:
-// its §6.2 phase, or warming when the phase has not been set yet (a
-// freshly-created Sandbox whose pod is being materialized).
-func podStateLabel(sb *lennyv1.Sandbox) string {
-	if sb.Status.Phase == "" {
-		return string(state.Warming)
+// podStateLabel returns the coarse lenny.dev/state label value for a
+// Sandbox (spec §6.2 line 309: idle/active/draining) and whether the
+// Sandbox's §6.2 phase maps to a coarse value at all. An unset phase (a
+// freshly-created Sandbox whose pod is being materialized) is treated as
+// warming, which has no coarse operational value, so the second return is
+// false and the label is omitted.
+func podStateLabel(sb *lennyv1.Sandbox) (string, bool) {
+	phase := sb.Status.Phase
+	if phase == "" {
+		phase = string(state.Warming)
 	}
-	return sb.Status.Phase
+	return state.CoarseState(state.State(phase))
 }
 
-// syncPodStateLabel keeps the backing pod's lenny.dev/state label in
-// sync with the Sandbox's §6.2 phase so the §4.6.1 warm-pool
-// PodDisruptionBudget's idle selector tracks pod lifecycle. desiredPhase
-// is the phase syncStatus wrote this pass. The patch is skipped when the
-// pod is absent or the label already matches. spec: §4.6.1 "Disruption
-// protection for agent pods".
+// syncPodStateLabel keeps the backing pod's coarse lenny.dev/state label
+// in sync with the Sandbox's §6.2 phase so the §4.6.1 warm-pool
+// PodDisruptionBudget's idle selector and §6.2 NetworkPolicy/monitoring
+// selectors track pod lifecycle. desiredPhase is the phase syncStatus
+// wrote this pass; it is mapped to the coarse idle/active/draining value
+// set (spec §6.2 lines 305-313). When the phase has no coarse value
+// (warming, sdk_connecting, or a terminal phase) the label is removed
+// rather than carrying a value outside the documented set. The patch is
+// skipped when the pod is absent or the label already matches. spec:
+// §4.6.1 "Disruption protection for agent pods", §6.2 lines 305-313.
 func (r *Reconciler) syncPodStateLabel(ctx context.Context, desiredPhase string, pod *corev1.Pod, obs lifecycle.PodObservation) error {
 	if obs == lifecycle.PodAbsent || pod == nil || pod.Name == "" {
 		return nil
 	}
-	want := desiredPhase
-	if want == "" {
-		want = string(state.Warming)
+	want, ok := state.CoarseState(state.State(desiredPhase))
+	current, has := pod.Labels[state.LabelState]
+	if ok && current == want {
+		return nil
 	}
-	if pod.Labels[state.LabelState] == want {
+	if !ok && !has {
 		return nil
 	}
 	patch := client.MergeFrom(pod.DeepCopy())
 	if pod.Labels == nil {
 		pod.Labels = map[string]string{}
 	}
-	pod.Labels[state.LabelState] = want
+	if ok {
+		pod.Labels[state.LabelState] = want
+	} else {
+		delete(pod.Labels, state.LabelState)
+	}
 	if err := r.Client.Patch(ctx, pod, patch); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("patch pod %s state label: %w", pod.Name, err)
 	}
 	return nil
+}
+
+// syncReadinessGate flips the §6.1 line 18 lenny.dev/sandbox-ready pod
+// readiness gate to True once the pod's containers are ready. The pod spec
+// declares the gate (podspec.ReadinessGateSandboxReady), so the kubelet
+// holds Pod.Ready False — keeping the pod un-claimable and the warming →
+// idle transition (which keys off Pod.Ready) from firing — until the
+// WarmPoolController asserts the pod is warm. v1 flips the gate as soon as
+// the containers report ready; the gate exists so claimability is a
+// Lenny-controlled signal rather than implied by container readiness
+// alone. The patch is skipped when the pod is absent, its containers are
+// not yet ready, or the gate is already True. spec: §6.1 line 18.
+func (r *Reconciler) syncReadinessGate(ctx context.Context, pod *corev1.Pod, obs lifecycle.PodObservation) error {
+	if obs == lifecycle.PodAbsent || pod == nil || pod.Name == "" {
+		return nil
+	}
+	if !podConditionTrue(pod, corev1.ContainersReady) {
+		return nil
+	}
+	if podConditionTrue(pod, corev1.PodConditionType(podspec.ReadinessGateSandboxReady)) {
+		return nil
+	}
+	patch := client.MergeFrom(pod.DeepCopy())
+	setPodCondition(pod, corev1.PodCondition{
+		Type:               corev1.PodConditionType(podspec.ReadinessGateSandboxReady),
+		Status:             corev1.ConditionTrue,
+		Reason:             "SandboxWarm",
+		Message:            "containers ready; sandbox is idle and claimable",
+		LastTransitionTime: metav1.Now(),
+	})
+	if err := r.Client.Status().Patch(ctx, pod, patch); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("patch pod %s readiness gate: %w", pod.Name, err)
+	}
+	return nil
+}
+
+// podConditionTrue reports whether the pod carries condition t with status
+// True.
+func podConditionTrue(pod *corev1.Pod, t corev1.PodConditionType) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == t {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// setPodCondition sets cond on the pod, replacing any existing condition
+// of the same type.
+func setPodCondition(pod *corev1.Pod, cond corev1.PodCondition) {
+	for i, c := range pod.Status.Conditions {
+		if c.Type == cond.Type {
+			pod.Status.Conditions[i] = cond
+			return
+		}
+	}
+	pod.Status.Conditions = append(pod.Status.Conditions, cond)
 }
 
 // syncStatus writes the post-action phase, the backing pod name and

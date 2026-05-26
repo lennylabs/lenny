@@ -113,6 +113,8 @@ func main() {
 		devMode                 bool
 		certTTL                 time.Duration
 		certExpiryThreshold     time.Duration
+		saTokenAudience         string
+		agentServiceAccount     string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -124,6 +126,10 @@ func main() {
 		"namespace that holds the leader-election Lease")
 	flag.StringVar(&adapterImage, "adapter-image", "",
 		"the lenny-adapter sidecar image stamped into agent pods")
+	flag.StringVar(&saTokenAudience, "sa-token-audience", os.Getenv("LENNY_SA_TOKEN_AUDIENCE"),
+		"§10.3 deployment-specific projected-token audience (global.saTokenAudience, e.g. lenny-gateway-<cluster-name>). When set, every agent pod mounts a §6.1 audience-bound, 900s-TTL projected service-account token; empty leaves the pod without it rather than mounting a cluster-default-audience token.")
+	flag.StringVar(&agentServiceAccount, "agent-service-account", os.Getenv("LENNY_AGENT_SERVICE_ACCOUNT"),
+		"§10.3 zero-RBAC ServiceAccount bound to agent pods. Empty uses the namespace default SA (which carries no RBAC bindings in agent namespaces).")
 	flag.StringVar(&egressCaptureImage, "egress-capture-image", os.Getenv("LENNY_EGRESS_CAPTURE_IMAGE"),
 		"the §12.9.8 tier-9 lenny-egress-capture sidecar image. Empty disables capture globally. Non-empty enables injection on every Sandbox whose annotation set carries `lenny.dev/test-egress-capture-upstream`. Production rejects the sidecar via lenny-pod-security; the flag exists for tier-9 §12.9.8 credential-leakage probes.")
 	flag.StringVar(&postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
@@ -281,6 +287,8 @@ func main() {
 		AdapterImage:            adapterImage,
 		EgressCaptureImage:      egressCaptureImage,
 		DevMode:                 devMode,
+		SATokenAudience:         saTokenAudience,
+		AgentServiceAccountName: agentServiceAccount,
 		StatusDedup:             statusdedup.New(statusDedupWindow),
 		MaxConcurrentReconciles: maxConcurrentReconciles,
 		QueueFactory:            queueFactory,

@@ -172,8 +172,11 @@ func runtimeCR() *lennyv1.Runtime {
 	return &lennyv1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-code"},
 		Spec: lennyv1.RuntimeSpec{
-			Type:             "agent",
-			Image:            "ghcr.io/acme/claude-code:v1",
+			Type: "agent",
+			// spec: §5.3 (F-5.3.4) — the Runtime CRD pins images by digest;
+			// envtest enforces the @sha256:<64-hex> Pattern, so the test
+			// helper uses a digest reference rather than a tag.
+			Image:            "ghcr.io/acme/claude-code@sha256:" + "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			IntegrationLevel: "full",
 		},
 	}

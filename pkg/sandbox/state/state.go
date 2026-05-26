@@ -21,7 +21,55 @@ type State string
 // PodDisruptionBudget selects warm pods by this label
 // (lenny.dev/state: idle) so disruption protection targets only
 // unclaimed pods. spec: §4.6.1 "Disruption protection for agent pods".
+//
+// The label carries only the coarse operational value set (see
+// CoarseState), not the full §6.2 phase: spec §6.2 lines 305-313 reserve
+// the full phase for Sandbox.status.phase and restrict the pod label to
+// idle/active/draining for selectors, monitoring, and NetworkPolicies.
 const LabelState = "lenny.dev/state"
+
+// LabelRuntime is the pod label carrying the runtime name (the Sandbox's
+// RuntimeRef). spec: §6.2 line 311 — operators select pods by runtime
+// type through this coarse label. It is immutable for a pod's lifetime,
+// stamped once at pod creation.
+const LabelRuntime = "lenny.dev/runtime"
+
+// The coarse pod-state label values. spec: §6.2 line 309 — the
+// lenny.dev/state pod label carries only these three operational values
+// for kubectl, monitoring, and NetworkPolicy selectors. CoarseIdle and
+// CoarseDraining deliberately equal the Idle and Draining phase strings
+// so the §4.6.1 PDB idle selector (which matches string(Idle)) keeps
+// working unchanged.
+const (
+	CoarseIdle     = "idle"
+	CoarseActive   = "active"
+	CoarseDraining = "draining"
+)
+
+// CoarseState maps a §6.2 phase to its coarse lenny.dev/state pod-label
+// value (spec §6.2 line 309: idle, active, or draining) and reports
+// whether the phase has a coarse operational value at all. A pod is idle
+// when warm and claimable, active once it is claimed and serving a
+// session/slot/task, and draining when retiring. The pre-ready phases
+// (warming, sdk_connecting) and the terminal phases (completed, failed,
+// cancelled, expired, terminated) have no coarse value — the pod is
+// either not yet claimable or gone — so the second return is false and
+// the reconciler removes the label rather than emitting a fourth value
+// the spec does not define. spec: §6.2 lines 305-313.
+func CoarseState(s State) (string, bool) {
+	switch s {
+	case Idle:
+		return CoarseIdle, true
+	case Draining:
+		return CoarseDraining, true
+	case Claimed, ReceivingUploads, FinalizingWorkspace, RunningSetup,
+		Attached, TaskCleanup, SlotActive, Resuming, Suspended,
+		ResumePending, AwaitingClientAction:
+		return CoarseActive, true
+	default:
+		return "", false
+	}
+}
 
 const (
 	Warming              State = "warming"
