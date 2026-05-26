@@ -4,5 +4,6 @@
   "name": "read_file",
   "arguments": {
     "path": "/workspace/current/README.md"
-  }
+  },
+  "approvalRequired": false
 }

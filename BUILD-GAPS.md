@@ -5926,7 +5926,7 @@ Effect: coordinator failover loses the entire in-memory event history. The §7.2
 
 ---
 
-### - [ ] F-7.2.14 — (Medium) — REST `/v1/sessions/{id}/messages` lacks `inReplyTo`, `delivery`, `slotId` fields [Medium] — OPEN
+### - [x] F-7.2.14 — (Medium) — REST `/v1/sessions/{id}/messages` lacks `inReplyTo`, `delivery`, `slotId` fields [Medium] — CLOSED
 
 Spec §7.2 routing (paths 1, 3, 4, 6) and §15.4.1 expect the inbound message envelope to carry `inReplyTo` (resolves pending `lenny/request_input`), `delivery` (`immediate` | `queued`), and `slotId` (concurrent-workspace routing).
 
@@ -5936,9 +5936,11 @@ Implementation:
 
 Effect: the spec's external-client routing paths (1, 4, 6, and slot-routed concurrent-workspace) are unreachable from REST. Only MCP `lenny/send_message` (F10) implements `inReplyTo`, and only path 1 of the seven.
 
+**Resolution:** Per-message `inReplyTo`, `delivery`, `slotId` fields added to `MessagePayload`; the legacy top-level `MessageRequest.Delivery` removed (was never read, pre-deployment). The handler validates `delivery` against the §15.4 closed enum (`queued` | `immediate` | absent) and rejects unknown values with `400 INVALID_DELIVERY_VALUE`. A new `sessionserver.Options.InputWaits` shares a `*inputwait.Registry` instance with the MCP tools deps so an `inReplyTo` payload resolves the same pending `lenny/request_input` regardless of transport — path 1 of §7.2 is now reachable from REST. A non-matching `inReplyTo` falls through to executor delivery, mirroring the MCP `lenny/send_message` behaviour. `slotId` is round-tripped through the wire (slot-aware dispatch lands with the F-5.2 concurrent-workspace build-out). Tier-1 covers the delivery enum (3 valid + 1 invalid), inReplyTo resolution + fallthrough, slotId acceptance.
+
 ---
 
-### - [ ] F-7.2.15 — (Medium) — Pre-running message rejection (`TARGET_NOT_READY`) is not enforced for external clients [Medium] — OPEN
+### - [x] F-7.2.15 — (Medium) — Pre-running message rejection (`TARGET_NOT_READY`) is not enforced for external clients [Medium] — CLOSED
 
 Spec §7.2 (lines 339, "Pre-running" row): an external `POST /v1/sessions/{id}/messages` against a pre-running session (`created`, `ready`, `starting`, `finalizing`) must reject with `TARGET_NOT_READY`. An inter-session `lenny/send_message` against a pre-running target must buffer in the DLQ with `maxCreatedStateTimeoutSeconds` TTL.
 
@@ -5948,9 +5950,11 @@ Implementation:
 
 Effect: an external client can inject messages into a session that has not yet started its runtime. The messages will reach the executor (or fail in undefined ways) before the runtime is ready.
 
+**Resolution:** `handleMessages` now rejects pre-running states (`created`, `finalizing`, `ready`, `starting`) with `409 TARGET_NOT_READY` (`details.currentState`) per §7.2 line 339 routing-by-target-state table. The §15.1 precondition table is intentionally left admitting every non-terminal state — that table is the broader API gate; the §7.2 routing layer narrows it for external clients. The pre-running `lenny/send_message` DLQ buffering path lands with F-7.2.4 (inbox + DLQ machinery). Tier-1 case-table covers all four pre-running states + a positive happy-path against `running`.
+
 ---
 
-### - [ ] F-7.2.16 — (Medium) — `ReattachedChild.pending_request_id` is never populated [Medium] — OPEN
+### - [x] F-7.2.16 — (Medium) — `ReattachedChild.pending_request_id` is never populated [Medium] — CLOSED
 
 Spec §7.2 (line 153 in ReattachedChild schema, line 426 in §7.3): if the reattached child is in `input_required` with a pending elicitation or tool approval directed at the parent, the event carries the request id so the parent can respond.
 
@@ -5959,6 +5963,8 @@ Implementation:
 - `result` for terminal children comes from `archivedTaskResult`; non-terminal children leave `result` nil but never carry the pending request id.
 
 Effect: a resumed parent re-receives `children_reattached` but cannot determine which child is awaiting which input. The parent has to poll the children to find pending interactions.
+
+**Resolution:** `emitChildrenReattached` now calls a new `lookupPendingRequest(tenant, child)` helper for each non-terminal child. The helper prefers `inputwait.Registry.PendingForSession` (the §8.5 `lenny/request_input` structured-reply contract; oldest pending id by lexicographic sort to keep the pick deterministic) and falls back to `interactionstore.ListPending` (added in the same change; returns pending elicitations + tool-use approvals oldest first). `interactionstore.Store` gained a `ListPending(ctx, tenant, session)` method on both the `Memory` and `pgstore` implementations; `inputwait.Registry` gained `PendingForSession`. Tier-1 covers all four paths: inputwait win, interactionstore fallback, oldest-first ordering, and the absent-when-idle path (the field is omitted from the JSON envelope).
 
 ---
 
@@ -5991,7 +5997,7 @@ Effect: a runtime that creates a tool-use interaction will never be unblocked by
 
 ---
 
-### - [ ] F-7.2.19 — (Low) — Adapter JSONL schema lacks the §7.2 outbound event types [Medium] — OPEN
+### - [x] F-7.2.19 — (Low) — Adapter JSONL schema lacks the §7.2 outbound event types [Medium] — CLOSED
 
 Spec §7.2 (table lines 132-141) defines `agent_output`, `tool_use_requested`, `tool_result` (SSE-side), `elicitation_request`, `status_change`, `session.resumed`, `children_reattached`, `error`, `session_complete`. The adapter binary protocol at `/Users/joan/projects/lenny/schemas/lenny-adapter-jsonl.schema.json` enumerates `message`, `heartbeat`, `heartbeat_ack`, `shutdown`, `tool_call`, `tool_result`, `response`, `status`, `set_tracing_context`, `task_complete`, `task_complete_acknowledged`, `task_ready` — but does not define a `tool_use_requested` (i.e., approval-required) discriminant nor a `request_elicitation` outbound, leaving runtime authors with no contract for raising approval requests.
 
@@ -5999,6 +6005,8 @@ Implementation:
 - The adapter has a `tool_call` frame (`schemas/lenny-adapter-jsonl.schema.json:123-139`) but no flag indicating "approval required before invocation". The runtime can request a tool but cannot signal that the call is pending user approval.
 
 Effect: combined with F9 and F18, there is no end-to-end approval path. The schema needs an "approval-pending" marker on `tool_call` or a new frame.
+
+**Resolution:** Added `approvalRequired: boolean` (default false) to the `tool_call` JSONL frame in `schemas/lenny-adapter-jsonl.schema.json`. The doc-string spells out the §7.2 contract: when set, the adapter records a `KindToolUse` interaction, publishes a `tool_use_requested(tool_call_id, tool, args)` SSE event, and blocks the call until the user resolves via `POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve|deny`; an absent or `false` value executes immediately. Updated `schemas/examples/jsonl.tool_call.json` to carry the new field so the tier-0 schema-example validation exercises it. The producer side (interaction creation, SSE publish, runtime block) is the F-7.2.9 deliverable.
 
 ---
 
@@ -6026,7 +6034,7 @@ Effect: no current vulnerability, but the design assumes every consumer of the i
 
 ---
 
-### - [ ] F-7.2.22 — (Low) — Inter-session messaging does not enforce parent/child topology even before `messagingScope` [Medium] — OPEN
+### - [x] F-7.2.22 — (Low) — Inter-session messaging does not enforce parent/child topology even before `messagingScope` [Medium] — CLOSED
 
 Spec §7.2 (line 236 messagingScope, line 373 parent communication asymmetry) ties scope enforcement to the §8 delegation tree. A child without `messagingScope: direct` should not reach its parent; a `direct`-scope sender should only reach a direct parent or child.
 
@@ -6035,6 +6043,8 @@ Implementation:
 - Combined with F6 (no scope config), any session can message any other session within its tenant via `lenny/send_message`.
 
 Effect: the top-down control model described at lines 366-373 is unenforceable.
+
+**Resolution:** `lenny/send_message` accepts a new optional `fromSessionId` input field. When supplied, the handler enforces a constant-time topology check via the new `withinMessagingTopology(sender, target)` helper: target must be the sender's direct parent, direct child, or sibling (same parent); self-messaging is rejected. A violation returns a §15.1 `SCOPE_DENIED` envelope. When `fromSessionId` is omitted the check degrades (matches pre-F-7.2.22 behaviour) — the per-deployment / per-tenant / per-runtime `messagingScope` layering lands with F-7.2.6. The enforced superset is the most permissive spec-defined scope (`siblings`) so anything we reject would violate even the loosest configuration. Tier-1 case-table covers all four admissible relations (parent/child/sibling/omitted-from), self-rejection, grandparent-rejection, and unrelated-sender rejection.
 
 ---
 

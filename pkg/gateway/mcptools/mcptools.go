@@ -305,7 +305,14 @@ func Register(srv *mcp.Server, deps Deps) {
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/send_message",
 		Description: "Deliver a message to a running session and return the response.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","content"],"properties":{"sessionId":{"type":"string"},"content":{"type":"string"},"inReplyTo":{"type":"string"},"messageId":{"type":"string"}}}`),
+		// spec: §7.2 line 373 — when `fromSessionId` is supplied the
+		// gateway enforces the §7.2 line 240 topology constraint:
+		// target must be the sender's direct parent, direct child, or
+		// sibling (same parent). When omitted (legacy callers, or
+		// transports that have not yet bound a sender), the topology
+		// check is skipped — the per-deployment messagingScope config
+		// layered on top lands with F-7.2.6. F-7.2.22.
+		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","content"],"properties":{"sessionId":{"type":"string"},"content":{"type":"string"},"inReplyTo":{"type":"string"},"messageId":{"type":"string"},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set, the gateway enforces the §7.2 line 240 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
 			SessionID string `json:"sessionId"`
@@ -315,6 +322,10 @@ func Register(srv *mcp.Server, deps Deps) {
 			// empty the gateway assigns a `msg_` prefix id so every
 			// receipt is correlatable. F-7.2.10.
 			MessageID string `json:"messageId"`
+			// FromSessionID, when set, enables the §7.2 line 373
+			// parent/child/sibling topology check. Empty falls through
+			// to no topology check (the pre-F-7.2.22 behaviour).
+			FromSessionID string `json:"fromSessionId"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
@@ -325,6 +336,26 @@ func Register(srv *mcp.Server, deps Deps) {
 		}
 		if session.IsTerminal(row.State) {
 			return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+		}
+		// spec: §7.2 line 240 (`direct` and `siblings` messagingScope)
+		// and §7.2 line 373 (parent communication asymmetry) — restrict
+		// the target to a parent/child/sibling of the declared sender.
+		// Until F-7.2.6 wires the per-deployment / per-tenant /
+		// per-runtime scope layering, this is the strictest topology
+		// check we can apply: anything outside the local neighborhood
+		// would violate even the most permissive `siblings` scope.
+		// F-7.2.22.
+		if in.FromSessionID != "" {
+			sender, err := deps.Store.Get(ctx, tenant, in.FromSessionID)
+			if err != nil {
+				return mcp.ToolResult{}, mcp.NewToolError("SCOPE_DENIED",
+					fmt.Sprintf("sender session %s not found", in.FromSessionID), nil)
+			}
+			if !withinMessagingTopology(sender, row) {
+				return mcp.ToolResult{}, mcp.NewToolError("SCOPE_DENIED",
+					fmt.Sprintf("target %s is not a parent, direct child, or sibling of sender %s",
+						in.SessionID, in.FromSessionID), nil)
+			}
 		}
 		// spec: §15.4 line 1784 — the gateway assigns a `msg_` prefix
 		// id when the sender omits one so every receipt is
@@ -1816,6 +1847,32 @@ func walk(s sessionstore.Session, byParent map[string][]sessionstore.Session, se
 		node.Children = append(node.Children, walk(c, byParent, seen))
 	}
 	return node
+}
+
+// withinMessagingTopology reports whether target sits in sender's
+// §7.2 line 240 messaging neighborhood: direct parent, direct child,
+// or sibling (same parent). Self-messaging is rejected per the same
+// rule. The check is constant-time — no tree walk — because every
+// admissible relation is a one-hop ParentSessionID comparison.
+// spec: §7.2 line 240 (`direct` / `siblings` scope), §7.2 line 373
+// (parent communication asymmetry). F-7.2.22.
+func withinMessagingTopology(sender, target sessionstore.Session) bool {
+	if sender.ID == target.ID {
+		return false
+	}
+	// target is sender's direct child
+	if target.ParentSessionID == sender.ID {
+		return true
+	}
+	// target is sender's direct parent
+	if sender.ParentSessionID == target.ID && target.ID != "" {
+		return true
+	}
+	// target is sender's sibling (share a non-empty parent)
+	if sender.ParentSessionID != "" && sender.ParentSessionID == target.ParentSessionID {
+		return true
+	}
+	return false
 }
 
 // isDescendant reports whether child sits in the §8 delegation subtree

@@ -1067,6 +1067,123 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	}
 }
 
+// TestSendMessageTopologyAcceptsDirectChild — spec §7.2 line 240
+// `direct` scope admits a parent→child message.
+// spec: §7.2 line 240, 373; F-7.2.22.
+func TestSendMessageTopologyAcceptsDirectChild(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_parent", session.StateRunning, "")
+	mkSession(t, store, "sess_child", session.StateRunning, "sess_parent")
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"sessionId":"sess_child","content":"hi","fromSessionId":"sess_parent"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] == true {
+		content, _ := result["content"].([]any)
+		c0, _ := content[0].(map[string]any)
+		t.Fatalf("parent→child should be admitted; got error %v", c0["text"])
+	}
+}
+
+// TestSendMessageTopologyAcceptsParent — spec §7.2 line 373 child→
+// parent path is allowed under `direct` scope.
+// spec: §7.2 line 373; F-7.2.22.
+func TestSendMessageTopologyAcceptsParent(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_parent", session.StateRunning, "")
+	mkSession(t, store, "sess_child", session.StateRunning, "sess_parent")
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"sessionId":"sess_parent","content":"hi","fromSessionId":"sess_child"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] == true {
+		content, _ := result["content"].([]any)
+		c0, _ := content[0].(map[string]any)
+		t.Fatalf("child→parent should be admitted; got error %v", c0["text"])
+	}
+}
+
+// TestSendMessageTopologyAcceptsSibling — siblings share a parent so
+// the message is in the `siblings` scope (a superset of `direct`).
+// spec: §7.2 line 240; F-7.2.22.
+func TestSendMessageTopologyAcceptsSibling(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_parent", session.StateRunning, "")
+	mkSession(t, store, "sess_a", session.StateRunning, "sess_parent")
+	mkSession(t, store, "sess_b", session.StateRunning, "sess_parent")
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"sessionId":"sess_a","content":"hi","fromSessionId":"sess_b"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] == true {
+		content, _ := result["content"].([]any)
+		c0, _ := content[0].(map[string]any)
+		t.Fatalf("sibling→sibling should be admitted; got error %v", c0["text"])
+	}
+}
+
+// TestSendMessageTopologyRejectsUnrelatedSession — any session pair
+// that is not parent/child/sibling is rejected with SCOPE_DENIED.
+// spec: §7.2 line 240; §15.1 SCOPE_DENIED. F-7.2.22.
+func TestSendMessageTopologyRejectsUnrelatedSession(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_a", session.StateRunning, "")
+	mkSession(t, store, "sess_b", session.StateRunning, "")
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"sessionId":"sess_a","content":"hi","fromSessionId":"sess_b"}`)
+	result, _ := resp["result"].(map[string]any)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "SCOPE_DENIED" {
+		t.Errorf("error code = %v, want SCOPE_DENIED", env["code"])
+	}
+}
+
+// TestSendMessageTopologyRejectsGrandparent — two-hop relationships
+// fall outside the parent/child/sibling neighborhood.
+// spec: §7.2 line 240; F-7.2.22.
+func TestSendMessageTopologyRejectsGrandparent(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+	mkSession(t, store, "sess_mid", session.StateRunning, "sess_root")
+	mkSession(t, store, "sess_leaf", session.StateRunning, "sess_mid")
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"sessionId":"sess_root","content":"hi","fromSessionId":"sess_leaf"}`)
+	result, _ := resp["result"].(map[string]any)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "SCOPE_DENIED" {
+		t.Errorf("error code = %v, want SCOPE_DENIED (grandparent is outside the local neighborhood)", env["code"])
+	}
+}
+
+// TestSendMessageTopologyRejectsSelf — sender cannot target itself.
+// spec: §7.2 line 240; F-7.2.22.
+func TestSendMessageTopologyRejectsSelf(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_self", session.StateRunning, "")
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"sessionId":"sess_self","content":"hi","fromSessionId":"sess_self"}`)
+	result, _ := resp["result"].(map[string]any)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "SCOPE_DENIED" {
+		t.Errorf("error code = %v, want SCOPE_DENIED for self-message", env["code"])
+	}
+}
+
+// TestSendMessageTopologyDegradesWhenFromSessionIDOmitted — until
+// every caller upgrades to declare fromSessionId, the topology check
+// is skipped (the existing tests cover this baseline).
+// spec: §7.2 line 373; F-7.2.22.
+func TestSendMessageTopologyDegradesWhenFromSessionIDOmitted(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_a", session.StateRunning, "")
+	mkSession(t, store, "sess_b", session.StateRunning, "")
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"sessionId":"sess_a","content":"hi"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] == true {
+		content, _ := result["content"].([]any)
+		c0, _ := content[0].(map[string]any)
+		t.Fatalf("call without fromSessionId should fall through to existing behaviour; got error %v", c0["text"])
+	}
+}
+
 func TestSendMessageInReplyToFallsThroughWithoutPendingInput(t *testing.T) {
 	srv, store, _ := newMCPForInput(t, time.Second)
 	mkSession(t, store, "sess_i", session.StateRunning, "")
