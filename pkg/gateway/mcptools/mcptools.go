@@ -305,18 +305,24 @@ func Register(srv *mcp.Server, deps Deps) {
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/send_message",
 		Description: "Deliver a message to a running session and return the response.",
-		// spec: §7.2 line 373 — when `fromSessionId` is supplied the
-		// gateway enforces the §7.2 line 240 topology constraint:
-		// target must be the sender's direct parent, direct child, or
-		// sibling (same parent). When omitted (legacy callers, or
-		// transports that have not yet bound a sender), the topology
-		// check is skipped — the per-deployment messagingScope config
-		// layered on top lands with F-7.2.6. F-7.2.22.
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","content"],"properties":{"sessionId":{"type":"string"},"content":{"type":"string"},"inReplyTo":{"type":"string"},"messageId":{"type":"string"},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set, the gateway enforces the §7.2 line 240 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`),
+		// spec: §8.5 line 537 — the §8.5 contract is
+		// `lenny/send_message(to, message)`; the implementation MUST
+		// expose `to` (target taskId) and `message` (content) as the
+		// schema-named fields. `inReplyTo` is a §7.2/§8.8 extension
+		// surfaced from the await_children pattern, `messageId` is the
+		// §15.4 line 1784 sender-supplied id surface, and
+		// `fromSessionId` enables the §7.2 line 240 topology check
+		// when the calling transport has no principal binding.
+		// F-8.5.16 (rename), F-7.2.22 (fromSessionId).
+		InputSchema: json.RawMessage(`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId (§8.5 line 537)."},"message":{"type":"string","description":"Message content (§8.5 line 537)."},"inReplyTo":{"type":"string","description":"§8.8 line 951 — when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"§15.4 line 1784 sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces the §7.2 line 240 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
-			SessionID string `json:"sessionId"`
-			Content   string `json:"content"`
+			// To is the §8.5 target session id (renamed from the legacy
+			// `sessionId` to match the §8.5 line 537 schema). F-8.5.16.
+			To string `json:"to"`
+			// Message is the §8.5 content field (renamed from the legacy
+			// `content` to match the §8.5 line 537 schema). F-8.5.16.
+			Message   string `json:"message"`
 			InReplyTo string `json:"inReplyTo"`
 			// MessageID is the §15.4 line 1784 sender-supplied id. When
 			// empty the gateway assigns a `msg_` prefix id so every
@@ -324,37 +330,42 @@ func Register(srv *mcp.Server, deps Deps) {
 			MessageID string `json:"messageId"`
 			// FromSessionID, when set, enables the §7.2 line 373
 			// parent/child/sibling topology check. Empty falls through
-			// to no topology check (the pre-F-7.2.22 behaviour).
+			// to the principal's SessionID claim, then to no topology
+			// check (the pre-F-7.2.22 behaviour). F-7.2.22.
 			FromSessionID string `json:"fromSessionId"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 		}
-		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		if in.To == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"to is required (§8.5 line 537)", nil)
+		}
+		row, err := deps.Store.Get(ctx, tenant, in.To)
 		if err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 		}
 		if session.IsTerminal(row.State) {
-			return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+			return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.To, row.State)
 		}
 		// spec: §7.2 line 240 (`direct` and `siblings` messagingScope)
 		// and §7.2 line 373 (parent communication asymmetry) — restrict
 		// the target to a parent/child/sibling of the declared sender.
-		// Until F-7.2.6 wires the per-deployment / per-tenant /
-		// per-runtime scope layering, this is the strictest topology
-		// check we can apply: anything outside the local neighborhood
-		// would violate even the most permissive `siblings` scope.
-		// F-7.2.22.
-		if in.FromSessionID != "" {
-			sender, err := deps.Store.Get(ctx, tenant, in.FromSessionID)
+		// The principal's SessionID claim is the canonical sender id;
+		// the legacy `fromSessionId` field is the transport fallback
+		// for callers that have not yet bound a principal. F-7.2.22,
+		// F-8.5.16.
+		senderID := callerSessionID(ctx, in.FromSessionID)
+		if senderID != "" {
+			sender, err := deps.Store.Get(ctx, tenant, senderID)
 			if err != nil {
 				return mcp.ToolResult{}, mcp.NewToolError("SCOPE_DENIED",
-					fmt.Sprintf("sender session %s not found", in.FromSessionID), nil)
+					fmt.Sprintf("sender session %s not found", senderID), nil)
 			}
 			if !withinMessagingTopology(sender, row) {
 				return mcp.ToolResult{}, mcp.NewToolError("SCOPE_DENIED",
 					fmt.Sprintf("target %s is not a parent, direct child, or sibling of sender %s",
-						in.SessionID, in.FromSessionID), nil)
+						in.To, senderID), nil)
 			}
 		}
 		// spec: §15.4 line 1784 — the gateway assigns a `msg_` prefix
@@ -370,7 +381,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		// through to normal delivery — it is then an ordinary threaded
 		// message.
 		if in.InReplyTo != "" && deps.InputWaits != nil {
-			err := deps.InputWaits.Resolve(in.SessionID, in.InReplyTo, in.Content)
+			err := deps.InputWaits.Resolve(in.To, in.InReplyTo, in.Message)
 			if err == nil {
 				// spec: §15.4 lines 1725-1737 — the inReplyTo path
 				// counts as delivered (the runtime consumed the
@@ -389,13 +400,13 @@ func Register(srv *mcp.Server, deps Deps) {
 		// §4 PreMessageDelivery: run the interceptor chain over the
 		// message body before delivery. A REJECT blocks the message; a
 		// MODIFY rewrites what the target session receives.
-		messageBody := in.Content
+		messageBody := in.Message
 		if deps.Interceptors != nil {
 			res := deps.Interceptors.Run(ctx, interceptor.Request{
 				Phase:     interceptor.PhasePreMessageDelivery,
 				SessionID: row.ID,
 				TenantID:  tenant,
-				Content:   []byte(in.Content),
+				Content:   []byte(in.Message),
 			})
 			if res.Action == interceptor.ActionReject {
 				recordChainRejection(ctx, deps, tenant, row.ID, interceptor.PhasePreMessageDelivery, res)
@@ -466,21 +477,35 @@ func Register(srv *mcp.Server, deps Deps) {
 	})
 
 	srv.RegisterTool(mcp.Tool{
-		Name:        "lenny/cancel_child",
+		Name: "lenny/cancel_child",
+		// spec: §8.5 line 531 — the §8.5 contract is
+		// `lenny/cancel_child(child_id)`; the parent is implicit in the
+		// calling principal. The legacy `parentSessionId` field is
+		// accepted as a transport fallback for tests and dev-headers
+		// callers that have not yet bound a session-scoped principal
+		// but never participates in `required`. F-8.5.15.
 		Description: "Cancel a child session and cascade the cancellation to its descendants (§8.5).",
-		InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","childSessionId"],"properties":{"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"}}}`),
+		InputSchema: json.RawMessage(`{"type":"object","required":["childSessionId"],"properties":{"childSessionId":{"type":"string"},"parentSessionId":{"type":"string","description":"§15.2.1 transport-fallback parent session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
-			ParentSessionID string `json:"parentSessionId"`
+			// ParentSessionID is the transport fallback used when the
+			// principal carries no SessionID claim. F-8.5.15.
+			ParentSessionID string `json:"parentSessionId,omitempty"`
 			ChildSessionID  string `json:"childSessionId"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 		}
-		if in.ParentSessionID == "" || in.ChildSessionID == "" {
-			return mcp.ToolResult{}, errors.New("parentSessionId and childSessionId are required")
+		parentSessionID := callerSessionID(ctx, in.ParentSessionID)
+		if parentSessionID == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"caller session is unbound (no principal SessionID, no parentSessionId arg)", nil)
 		}
-		if in.ParentSessionID == in.ChildSessionID {
+		if in.ChildSessionID == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"childSessionId is required", nil)
+		}
+		if parentSessionID == in.ChildSessionID {
 			return mcp.ToolResult{}, errors.New("a session cannot cancel itself as its own child")
 		}
 		child, err := deps.Store.Get(ctx, tenant, in.ChildSessionID)
@@ -493,9 +518,9 @@ func Register(srv *mcp.Server, deps Deps) {
 		}
 		// Authorization: the caller may cancel only sessions inside its
 		// own §8 delegation subtree.
-		if !isDescendant(child, in.ParentSessionID, all) {
+		if !isDescendant(child, parentSessionID, all) {
 			return mcp.ToolResult{}, fmt.Errorf("session %s is not a child of %s",
-				in.ChildSessionID, in.ParentSessionID)
+				in.ChildSessionID, parentSessionID)
 		}
 		if session.IsTerminal(child.State) {
 			return mcp.ToolResult{}, fmt.Errorf("child session %s is already terminal (%s)",
@@ -632,19 +657,29 @@ func Register(srv *mcp.Server, deps Deps) {
 
 	if deps.Events != nil {
 		srv.RegisterTool(mcp.Tool{
-			Name:        "lenny/output",
-			Description: "Emit output parts to a session's event stream (§8.5).",
-			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","output"],"properties":{"sessionId":{"type":"string"},"output":{"type":"array","items":{"type":"object"}}}}`),
+			Name: "lenny/output",
+			// spec: §8.5 line 544 — the §8.5 schema lists `output` as the
+			// only required input; the session is implicit in the calling
+			// principal. The legacy `sessionId` field is accepted as a
+			// transport-fallback for tests and dev-headers callers that
+			// have not yet bound a session-scoped principal but never
+			// participates in `required`. F-8.5.11.
+			Description: "Emit output parts to the parent/client (§8.5).",
+			InputSchema: json.RawMessage(`{"type":"object","required":["output"],"properties":{"output":{"type":"array","items":{"type":"object"}},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			var in struct {
-				SessionID string          `json:"sessionId"`
+				// SessionID is the transport fallback used when the
+				// principal carries no SessionID claim. F-8.5.11.
+				SessionID string          `json:"sessionId,omitempty"`
 				Output    json.RawMessage `json:"output"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 			}
-			if in.SessionID == "" {
-				return mcp.ToolResult{}, errors.New("sessionId is required")
+			sessionID := callerSessionID(ctx, in.SessionID)
+			if sessionID == "" {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
 			}
 			var parts []json.RawMessage
 			if err := json.Unmarshal(in.Output, &parts); err != nil {
@@ -653,16 +688,19 @@ func Register(srv *mcp.Server, deps Deps) {
 			if len(parts) == 0 {
 				return mcp.ToolResult{}, errors.New("output must contain at least one part")
 			}
-			row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+			row, err := deps.Store.Get(ctx, tenant, sessionID)
 			if err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 			}
 			if session.IsTerminal(row.State) {
-				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", sessionID, row.State)
 			}
 			// §15.4.1: lenny/output parts are surfaced on the session's
 			// event stream as an agent_output event, the same stream the
-			// §15.1 GET /v1/sessions/{id}/events SSE relay reads.
+			// §15.1 GET /v1/sessions/{id}/events SSE relay reads. The
+			// reconciliation contract with the terminal `response.output`
+			// (so a parent observing both does not double-count) is
+			// tracked by the §15.4.1 work for child→parent delivery.
 			data, _ := json.Marshal(struct {
 				Output []json.RawMessage `json:"output"`
 			}{Output: parts})
@@ -677,27 +715,47 @@ func Register(srv *mcp.Server, deps Deps) {
 			requestInputTimeout = defaultRequestInputTimeout
 		}
 		srv.RegisterTool(mcp.Tool{
-			Name:        "lenny/request_input",
+			Name: "lenny/request_input",
+			// spec: §8.5 line 539 / §8.8 line 951 — the §8.5 contract is
+			// `lenny/request_input(parts)`; the question travels as an
+			// OutputPart[] so an agent can pose a structured prompt
+			// (text, JSON-shaped form, etc.) instead of a flat string.
+			// `requestId` is optional; when omitted the gateway assigns
+			// one and returns it on the resolution. `sessionId` is the
+			// transport fallback used when the principal carries no
+			// SessionID claim. F-8.5.12.
 			Description: "Block until a peer answers via lenny/send_message with a matching inReplyTo (§8.5).",
-			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","requestId"],"properties":{"sessionId":{"type":"string"},"requestId":{"type":"string"},"prompt":{"type":"string"}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["parts"],"properties":{"parts":{"type":"array","items":{"type":"object"},"description":"OutputPart[] describing the structured question."},"requestId":{"type":"string","description":"Optional caller-supplied request id; gateway assigns one when absent."},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			var in struct {
-				SessionID string `json:"sessionId"`
-				RequestID string `json:"requestId"`
-				Prompt    string `json:"prompt"`
+				// SessionID is the transport fallback used when the
+				// principal carries no SessionID claim. F-8.5.12.
+				SessionID string            `json:"sessionId,omitempty"`
+				RequestID string            `json:"requestId,omitempty"`
+				Parts     []json.RawMessage `json:"parts"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 			}
-			if in.SessionID == "" || in.RequestID == "" {
-				return mcp.ToolResult{}, errors.New("sessionId and requestId are required")
+			sessionID := callerSessionID(ctx, in.SessionID)
+			if sessionID == "" {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
 			}
-			row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+			if len(in.Parts) == 0 {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"parts is required and must contain at least one OutputPart", nil)
+			}
+			requestID := in.RequestID
+			if requestID == "" {
+				requestID = "req_" + idFn()
+			}
+			row, err := deps.Store.Get(ctx, tenant, sessionID)
 			if err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 			}
 			if session.IsTerminal(row.State) {
-				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", sessionID, row.State)
 			}
 			// §11.3 / §5.1 limits.maxRequestInputWaitSeconds: the session's
 			// runtime may declare a per-runtime wait cap that overrides the
@@ -711,7 +769,7 @@ func Register(srv *mcp.Server, deps Deps) {
 					}
 				}
 			}
-			ch, err := deps.InputWaits.Register(in.SessionID, in.RequestID)
+			ch, err := deps.InputWaits.Register(sessionID, requestID)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -719,13 +777,16 @@ func Register(srv *mcp.Server, deps Deps) {
 			// event stream as the canonical `elicitation_request` SSE event.
 			// `lenny/request_input` (§8.5) and `lenny/request_elicitation`
 			// (§9.2) both ask the user for input and so share the §7.2
-			// catalog name. F-7.2.17.
+			// catalog name. F-7.2.17. The event payload carries the §8.5
+			// `parts` array (rather than the legacy flat `prompt`) so
+			// rendering surfaces can re-use the same OutputPart visitor
+			// the runtime adapter applies. F-8.5.12.
 			if deps.Events != nil {
 				data, _ := json.Marshal(struct {
-					RequestID string `json:"requestId"`
-					Prompt    string `json:"prompt"`
-				}{RequestID: in.RequestID, Prompt: in.Prompt})
-				deps.Events.Publish(in.SessionID, "elicitation_request", string(data), clock())
+					RequestID string            `json:"requestId"`
+					Parts     []json.RawMessage `json:"parts"`
+				}{RequestID: requestID, Parts: in.Parts})
+				deps.Events.Publish(sessionID, "elicitation_request", string(data), clock())
 			}
 			// Block in the §7.2 input_required sub-state until a peer
 			// resolves the request or the §11.3 timeout fires.
@@ -734,15 +795,15 @@ func Register(srv *mcp.Server, deps Deps) {
 				body, _ := json.Marshal(struct {
 					RequestID string `json:"requestId"`
 					Answer    string `json:"answer"`
-				}{RequestID: in.RequestID, Answer: answer})
+				}{RequestID: requestID, Answer: answer})
 				return textResult(string(body)), nil
 			case <-time.After(callTimeout):
-				deps.InputWaits.Cancel(in.SessionID, in.RequestID)
+				deps.InputWaits.Cancel(sessionID, requestID)
 				return mcp.ToolResult{}, fmt.Errorf(
-					"REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", in.RequestID, callTimeout,
+					"REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", requestID, callTimeout,
 				)
 			case <-ctx.Done():
-				deps.InputWaits.Cancel(in.SessionID, in.RequestID)
+				deps.InputWaits.Cancel(sessionID, requestID)
 				return mcp.ToolResult{}, ctx.Err()
 			}
 		})
@@ -776,11 +837,19 @@ func Register(srv *mcp.Server, deps Deps) {
 			// A future gateway-mediated connector path will issue elicitations
 			// through a different authenticated surface (the registered
 			// connector binding), not by self-assertion at this tool.
+			//
+			// spec: §8.5 line 559 — the §8.5 JSON Schema lists `schema`
+			// AND `message` as required; the session is implicit in the
+			// calling principal. `sessionId` is the transport fallback
+			// used when the principal carries no SessionID claim.
+			// F-8.5.13.
 			Description: "Request human input via the §9.2 elicitation chain and block until it resolves.",
-			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","message"],"properties":{"sessionId":{"type":"string"},"message":{"type":"string"},"schema":{"type":"object"},"elicitationId":{"type":"string"},"url":{"type":"string"}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["schema","message"],"properties":{"schema":{"type":"object","description":"JSON Schema describing the input to collect from the user."},"message":{"type":"string","description":"Human-readable prompt displayed to the user."},"elicitationId":{"type":"string"},"url":{"type":"string"},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			var in struct {
-				SessionID     string          `json:"sessionId"`
+				// SessionID is the transport fallback used when the
+				// principal carries no SessionID claim. F-8.5.13.
+				SessionID     string          `json:"sessionId,omitempty"`
 				Message       string          `json:"message"`
 				Schema        json.RawMessage `json:"schema"`
 				ElicitationID string          `json:"elicitationId"`
@@ -791,15 +860,29 @@ func Register(srv *mcp.Server, deps Deps) {
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 			}
-			if in.SessionID == "" || in.Message == "" {
-				return mcp.ToolResult{}, errors.New("sessionId and message are required")
+			sessionID := callerSessionID(ctx, in.SessionID)
+			if sessionID == "" {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
 			}
-			row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+			if in.Message == "" {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"message is required (§8.5 line 559)", nil)
+			}
+			// spec: §8.5 line 559 — `schema` is required. An empty object
+			// is acceptable (the agent has declared the input shape is
+			// free-form), but the property must be present so renderers
+			// can dispatch on the schema type. F-8.5.13.
+			if len(in.Schema) == 0 {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"schema is required (§8.5 line 559)", nil)
+			}
+			row, err := deps.Store.Get(ctx, tenant, sessionID)
 			if err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 			}
 			if session.IsTerminal(row.State) {
-				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", sessionID, row.State)
 			}
 			// spec: §9.2 line 88 — agent binaries cannot self-declare as a
 			// connector. lenny/request_elicitation is the agent surface; an
@@ -810,7 +893,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			// §9.1: the per-session elicitation budget bounds how many
 			// elicitations an agent may raise — an over-budget request
 			// is dropped so an agent cannot spam the user.
-			count, err := deps.Interactions.CountElicitations(ctx, tenant, in.SessionID)
+			count, err := deps.Interactions.CountElicitations(ctx, tenant, sessionID)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -820,7 +903,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				}
 				return mcp.ToolResult{}, fmt.Errorf(
 					"elicitation budget exhausted: session %s has reached the maxElicitationsPerSession limit of %d",
-					in.SessionID, maxElicitations,
+					sessionID, maxElicitations,
 				)
 			}
 			// §9.2: the gateway records the original {message, schema}
@@ -1449,22 +1532,42 @@ func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID stri
 // recalls across all of the user's sessions within the tenant.
 func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() time.Time) {
 	srv.RegisterTool(mcp.Tool{
-		Name:        "lenny/memory_write",
+		Name: "lenny/memory_write",
+		// spec: §8.5 line 577 — the §8.5 JSON Schema lists `content` as
+		// the only required input; the §9.4 memory record is scoped to
+		// the calling principal's user via the session lookup. Metadata
+		// values are constrained to strings per the spec schema
+		// (`additionalProperties: {"type":"string"}`). `sessionId` is
+		// the transport fallback used when the principal carries no
+		// SessionID claim. F-8.5.14.
 		Description: "Write a memory to the §9.4 memory store, scoped to the calling session's user.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","content"],"properties":{"sessionId":{"type":"string"},"content":{"type":"string"},"metadata":{"type":"object"}}}`),
+		InputSchema: json.RawMessage(`{"type":"object","required":["content"],"properties":{"content":{"type":"string","description":"The memory content to store."},"metadata":{"type":"object","description":"Optional key-value metadata attached to the memory record.","additionalProperties":{"type":"string"}},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
-			SessionID string         `json:"sessionId"`
-			Content   string         `json:"content"`
-			Metadata  map[string]any `json:"metadata"`
+			// SessionID is the transport fallback used when the
+			// principal carries no SessionID claim. F-8.5.14.
+			SessionID string `json:"sessionId,omitempty"`
+			Content   string `json:"content"`
+			// Metadata values are decoded as strings per the §8.5 line
+			// 577 schema (`additionalProperties: {"type":"string"}`). A
+			// non-string value rejects the call so the storage layer is
+			// never asked to coerce. F-8.5.14.
+			Metadata map[string]string `json:"metadata"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				fmt.Sprintf("invalid arguments: %v (metadata values must be strings per §8.5 line 577)", err), nil)
 		}
-		if in.SessionID == "" || in.Content == "" {
-			return mcp.ToolResult{}, errors.New("sessionId and content are required")
+		sessionID := callerSessionID(ctx, in.SessionID)
+		if sessionID == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
 		}
-		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		if in.Content == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"content is required (§8.5 line 577)", nil)
+		}
+		row, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 		}
@@ -1472,8 +1575,15 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 			TenantID: tenant, UserID: row.UserID,
 			AgentType: row.RuntimeRef, SessionID: row.ID,
 		}
+		// The memorystore.Memory.Metadata is `map[string]any`; the
+		// schema-tightened input is widened back at the boundary so the
+		// store contract is unchanged.
+		md := make(map[string]any, len(in.Metadata))
+		for k, v := range in.Metadata {
+			md[k] = v
+		}
 		if err := deps.Memory.Write(ctx, scope, []memorystore.Memory{
-			{Content: in.Content, Metadata: in.Metadata},
+			{Content: in.Content, Metadata: md},
 		}); err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("memory write: %w", err)
 		}
@@ -1481,29 +1591,50 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 	})
 
 	srv.RegisterTool(mcp.Tool{
-		Name:        "lenny/memory_query",
+		Name: "lenny/memory_query",
+		// spec: §8.5 line 596 — the §8.5 JSON Schema lists `query` as
+		// required and declares `limit` with `default: 10`. The session
+		// is implicit in the calling principal. `sessionId` is the
+		// transport fallback used when the principal carries no
+		// SessionID claim. F-8.5.14.
 		Description: "Query the §9.4 memory store across the calling session's user's memories.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string"},"query":{"type":"string"},"limit":{"type":"integer"}}}`),
+		InputSchema: json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string","description":"Natural-language query for semantic search over the memory store."},"limit":{"type":"integer","description":"Maximum number of results to return. Default: 10.","default":10},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
-			SessionID string `json:"sessionId"`
+			// SessionID is the transport fallback used when the
+			// principal carries no SessionID claim. F-8.5.14.
+			SessionID string `json:"sessionId,omitempty"`
 			Query     string `json:"query"`
 			Limit     int    `json:"limit"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 		}
-		if in.SessionID == "" {
-			return mcp.ToolResult{}, errors.New("sessionId is required")
+		sessionID := callerSessionID(ctx, in.SessionID)
+		if sessionID == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
 		}
-		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		if in.Query == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"query is required (§8.5 line 596)", nil)
+		}
+		// spec: §8.5 line 596 — `limit` declares `default: 10`. The
+		// MCP transport does not auto-fill JSON Schema defaults, so a
+		// caller that omits the field arrives with the zero value; the
+		// handler applies the documented default here. F-8.5.14.
+		limit := in.Limit
+		if limit == 0 {
+			limit = 10
+		}
+		row, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 		}
 		// §9.4: memory recall is user-scoped — it spans every session
 		// the user has run, not just the calling session.
 		results, err := deps.Memory.Query(ctx,
-			memorystore.MemoryScope{TenantID: tenant, UserID: row.UserID}, in.Query, in.Limit)
+			memorystore.MemoryScope{TenantID: tenant, UserID: row.UserID}, in.Query, limit)
 		if err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("memory query: %w", err)
 		}
@@ -1719,6 +1850,23 @@ func resolvePoolIsolation(ctx context.Context, deps Deps, poolRef string) isolat
 // awaitPollInterval is how often lenny/await_children re-reads its
 // children's states while waiting for the mode's settle condition.
 const awaitPollInterval = 25 * time.Millisecond
+
+// callerSessionID resolves the calling session id. It prefers the
+// authenticated principal's SessionID claim (the §15 production path,
+// where every JWT carries the originating session) and falls back to
+// the explicit field a caller passed in the JSON args for transports
+// that have not yet bound a session-scoped principal (tests, the dev-
+// headers path). The spec §8.5 schemas do not include `sessionId`
+// because the session is implicit in the caller's identity; the
+// fallback keeps the v1 tool surface usable in deployments that have
+// not yet rotated to session-bound bearer tokens.
+// spec: §8.5 lines 544, 559, 577, 596; F-8.5.11, F-8.5.13, F-8.5.14.
+func callerSessionID(ctx context.Context, fallback string) string {
+	if p, ok := authmw.FromContext(ctx); ok && p.SessionID != "" {
+		return p.SessionID
+	}
+	return fallback
+}
 
 // taskResult is the §8.8 TaskResult lenny/await_children returns for a
 // settled child. v1 reports the identity and terminal state; the §8.8

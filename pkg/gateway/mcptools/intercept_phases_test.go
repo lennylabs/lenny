@@ -89,7 +89,7 @@ func TestPreToolResultModifyRewritesContent_spec_4_8_line_1053(t *testing.T) {
 	srv, store := newMCPWithChain(t, chain)
 	runningSession(t, store)
 
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	if got := resultText(t, resp); got != "redacted-tool" {
 		t.Errorf("tool result = %q, want redacted-tool — PreToolResult MODIFY not applied", got)
 	}
@@ -103,7 +103,7 @@ func TestPreToolResultReject_spec_4_8_line_1053(t *testing.T) {
 	srv, store := newMCPWithChain(t, chain)
 	runningSession(t, store)
 
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	if code := errorEnvelope(t, resp); code != "INTERCEPTOR_REJECTED" {
 		t.Errorf("code = %q, want INTERCEPTOR_REJECTED", code)
 	}
@@ -122,7 +122,7 @@ func TestPreToolResultModifyImmutableIdRejected_spec_4_8_line_1060(t *testing.T)
 	srv, store := newMCPWithChain(t, chain)
 	runningSession(t, store)
 
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	if code := errorEnvelope(t, resp); code != interceptor.CodeInterceptorImmutableFieldViolation {
 		t.Errorf("code = %q, want %s", code, interceptor.CodeInterceptorImmutableFieldViolation)
 	}
@@ -137,7 +137,7 @@ func TestPostAgentOutputModifyRewritesOutput_spec_4_8_line_1054(t *testing.T) {
 	srv, store := newMCPWithChain(t, chain)
 	runningSession(t, store)
 
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	text := resultText(t, resp)
 	if !strings.Contains(text, "redacted-output") {
 		t.Errorf("output = %q, want redacted-output — PostAgentOutput MODIFY not applied", text)
@@ -155,7 +155,7 @@ func TestPostAgentOutputReject_spec_4_8_line_1054(t *testing.T) {
 	srv, store := newMCPWithChain(t, chain)
 	runningSession(t, store)
 
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	if code := errorEnvelope(t, resp); code != "INTERCEPTOR_REJECTED" {
 		t.Errorf("code = %q, want INTERCEPTOR_REJECTED", code)
 	}
@@ -166,7 +166,7 @@ func TestPostAgentOutputReject_spec_4_8_line_1054(t *testing.T) {
 func TestPreToolResultNoChainPassesThrough_spec_4_8_line_1053(t *testing.T) {
 	srv, store := newMCP(t)
 	runningSession(t, store)
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	if got := resultText(t, resp); !strings.Contains(got, "ping") {
 		t.Errorf("tool result = %q, want it to echo ping", got)
 	}

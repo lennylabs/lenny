@@ -338,7 +338,7 @@ func TestSendMessageTool(t *testing.T) {
 		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	// spec: §15.4 lines 1725-1737 — every lenny/send_message call
 	// returns a `delivery_receipt` envelope as the first text block,
 	// followed by the runtime's text output. F-7.2.10.
@@ -383,12 +383,12 @@ func TestSendMessageToolDeliveryReceiptOnInReplyTo(t *testing.T) {
 
 	go func() {
 		_ = call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","prompt":"pick a color"}`)
+			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"pick a color"}]}`)
 	}()
 	waitPending(t, reg, "sess_i", "req-1")
 
 	resp := call(t, h, "lenny/send_message",
-		`{"sessionId":"sess_i","content":"blue","inReplyTo":"req-1","messageId":"msg_caller"}`)
+		`{"to":"sess_i","message":"blue","inReplyTo":"req-1","messageId":"msg_caller"}`)
 	result, _ := resp["result"].(map[string]any)
 	content, _ := result["content"].([]any)
 	if len(content) < 1 {
@@ -421,7 +421,7 @@ func TestSendMessageToolRejectsTerminalSession(t *testing.T) {
 		ID: "sess_done", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: now, UpdatedAt: now,
 	})
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_done","content":"x"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_done","message":"x"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("terminal session should be a tool error: %+v", resp)
@@ -442,7 +442,7 @@ func TestSendMessageRejectedByInterceptor(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("a PreMessageDelivery REJECT should be a tool error: %+v", resp)
@@ -465,7 +465,7 @@ func TestSendMessageModifiedByInterceptor(t *testing.T) {
 
 	// The echo executor reflects the delivered body. A PreMessageDelivery
 	// MODIFY must rewrite what the target session receives.
-	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	text := resultText(t, resp)
 	if !strings.Contains(text, "scrubbed") {
 		t.Errorf("echo response %q should reflect the interceptor-modified body", text)
@@ -968,12 +968,12 @@ func TestRequestInputResolvedByMessage(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","prompt":"pick a color"}`)
+			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"pick a color"}]}`)
 	}()
 	waitPending(t, reg, "sess_i", "req-1")
 
 	resp := call(t, h, "lenny/send_message",
-		`{"sessionId":"sess_i","content":"blue","inReplyTo":"req-1"}`)
+		`{"to":"sess_i","message":"blue","inReplyTo":"req-1"}`)
 	if text := resultText(t, resp); !strings.Contains(text, `"resolved":"req-1"`) {
 		t.Errorf("send_message inReplyTo result = %q, want resolved req-1", text)
 	}
@@ -993,7 +993,7 @@ func TestRequestInputTimeout(t *testing.T) {
 	mkSession(t, store, "sess_i", session.StateRunning, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_i","requestId":"req-1"}`)
+		`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"ask"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a timed-out request_input should be a tool error: %+v", resp)
@@ -1010,7 +1010,7 @@ func TestRequestInputRejectsTerminalSession(t *testing.T) {
 	mkSession(t, store, "sess_done", session.StateCompleted, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_done","requestId":"req-1"}`)
+		`{"sessionId":"sess_done","requestId":"req-1","parts":[{"type":"text","text":"ask"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("request_input on a terminal session should be a tool error: %+v", resp)
@@ -1043,7 +1043,7 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","prompt":"pick a color"}`)
+			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"pick a color"}]}`)
 	}()
 	waitPending(t, reg, "sess_i", "req-1")
 
@@ -1054,8 +1054,14 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	if hist[0].Type != "elicitation_request" {
 		t.Errorf("event type = %q, want elicitation_request (§7.2 line 136 canonical name)", hist[0].Type)
 	}
+	// spec: §8.5 line 539 — the elicitation_request event payload now
+	// carries the structured `parts` array (F-8.5.12) rather than the
+	// legacy flat `prompt` string.
 	if !strings.Contains(hist[0].Data, "req-1") || !strings.Contains(hist[0].Data, "pick a color") {
-		t.Errorf("event data = %q, want it to carry the requestId + prompt", hist[0].Data)
+		t.Errorf("event data = %q, want it to carry the requestId + parts", hist[0].Data)
+	}
+	if !strings.Contains(hist[0].Data, `"parts"`) {
+		t.Errorf("event data = %q, want a `parts` array (F-8.5.12)", hist[0].Data)
 	}
 
 	// Unblock the goroutine so the test does not hang on teardown.
@@ -1075,7 +1081,7 @@ func TestSendMessageTopologyAcceptsDirectChild(t *testing.T) {
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
 	mkSession(t, store, "sess_child", session.StateRunning, "sess_parent")
 	resp := call(t, srv.Handler(), "lenny/send_message",
-		`{"sessionId":"sess_child","content":"hi","fromSessionId":"sess_parent"}`)
+		`{"to":"sess_child","message":"hi","fromSessionId":"sess_parent"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] == true {
 		content, _ := result["content"].([]any)
@@ -1092,7 +1098,7 @@ func TestSendMessageTopologyAcceptsParent(t *testing.T) {
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
 	mkSession(t, store, "sess_child", session.StateRunning, "sess_parent")
 	resp := call(t, srv.Handler(), "lenny/send_message",
-		`{"sessionId":"sess_parent","content":"hi","fromSessionId":"sess_child"}`)
+		`{"to":"sess_parent","message":"hi","fromSessionId":"sess_child"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] == true {
 		content, _ := result["content"].([]any)
@@ -1110,7 +1116,7 @@ func TestSendMessageTopologyAcceptsSibling(t *testing.T) {
 	mkSession(t, store, "sess_a", session.StateRunning, "sess_parent")
 	mkSession(t, store, "sess_b", session.StateRunning, "sess_parent")
 	resp := call(t, srv.Handler(), "lenny/send_message",
-		`{"sessionId":"sess_a","content":"hi","fromSessionId":"sess_b"}`)
+		`{"to":"sess_a","message":"hi","fromSessionId":"sess_b"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] == true {
 		content, _ := result["content"].([]any)
@@ -1127,7 +1133,7 @@ func TestSendMessageTopologyRejectsUnrelatedSession(t *testing.T) {
 	mkSession(t, store, "sess_a", session.StateRunning, "")
 	mkSession(t, store, "sess_b", session.StateRunning, "")
 	resp := call(t, srv.Handler(), "lenny/send_message",
-		`{"sessionId":"sess_a","content":"hi","fromSessionId":"sess_b"}`)
+		`{"to":"sess_a","message":"hi","fromSessionId":"sess_b"}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "SCOPE_DENIED" {
@@ -1144,7 +1150,7 @@ func TestSendMessageTopologyRejectsGrandparent(t *testing.T) {
 	mkSession(t, store, "sess_mid", session.StateRunning, "sess_root")
 	mkSession(t, store, "sess_leaf", session.StateRunning, "sess_mid")
 	resp := call(t, srv.Handler(), "lenny/send_message",
-		`{"sessionId":"sess_root","content":"hi","fromSessionId":"sess_leaf"}`)
+		`{"to":"sess_root","message":"hi","fromSessionId":"sess_leaf"}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "SCOPE_DENIED" {
@@ -1158,7 +1164,7 @@ func TestSendMessageTopologyRejectsSelf(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_self", session.StateRunning, "")
 	resp := call(t, srv.Handler(), "lenny/send_message",
-		`{"sessionId":"sess_self","content":"hi","fromSessionId":"sess_self"}`)
+		`{"to":"sess_self","message":"hi","fromSessionId":"sess_self"}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "SCOPE_DENIED" {
@@ -1175,7 +1181,7 @@ func TestSendMessageTopologyDegradesWhenFromSessionIDOmitted(t *testing.T) {
 	mkSession(t, store, "sess_a", session.StateRunning, "")
 	mkSession(t, store, "sess_b", session.StateRunning, "")
 	resp := call(t, srv.Handler(), "lenny/send_message",
-		`{"sessionId":"sess_a","content":"hi"}`)
+		`{"to":"sess_a","message":"hi"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] == true {
 		content, _ := result["content"].([]any)
@@ -1191,7 +1197,7 @@ func TestSendMessageInReplyToFallsThroughWithoutPendingInput(t *testing.T) {
 	// inReplyTo references no pending request — the message is an
 	// ordinary threaded message and is delivered to the runtime.
 	resp := call(t, srv.Handler(), "lenny/send_message",
-		`{"sessionId":"sess_i","content":"hello","inReplyTo":"req-absent"}`)
+		`{"to":"sess_i","message":"hello","inReplyTo":"req-absent"}`)
 	if text := resultText(t, resp); !strings.Contains(text, "hello") {
 		t.Errorf("a non-matching inReplyTo should deliver normally, got %q", text)
 	}
@@ -1347,7 +1353,7 @@ func TestRequestElicitationResolvedByResponse(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_elicitation",
-			`{"sessionId":"sess_e","message":"pick one","elicitationId":"elic_x"}`)
+			`{"sessionId":"sess_e","message":"pick one","schema":{},"elicitationId":"elic_x"}`)
 	}()
 	waitElicitation(t, interactions, "sess_e", "elic_x")
 
@@ -1379,7 +1385,7 @@ func TestRequestElicitationDismissed(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_elicitation",
-			`{"sessionId":"sess_e","message":"pick one","elicitationId":"elic_x"}`)
+			`{"sessionId":"sess_e","message":"pick one","schema":{},"elicitationId":"elic_x"}`)
 	}()
 	waitElicitation(t, interactions, "sess_e", "elic_x")
 
@@ -1410,7 +1416,7 @@ func TestRequestElicitationTimeout_spec_9_2(t *testing.T) {
 	mkSession(t, store, "sess_e", session.StateRunning, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
-		`{"sessionId":"sess_e","message":"pick one","elicitationId":"elic_x"}`)
+		`{"sessionId":"sess_e","message":"pick one","schema":{},"elicitationId":"elic_x"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a timed-out elicitation should be a tool error: %+v", resp)
@@ -1446,7 +1452,7 @@ func TestRequestElicitationBudgetExceeded(t *testing.T) {
 	}
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
-		`{"sessionId":"sess_e","message":"one too many","elicitationId":"elic_over"}`)
+		`{"sessionId":"sess_e","message":"one too many","schema":{},"elicitationId":"elic_over"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("an over-budget elicitation should be a tool error: %+v", resp)
@@ -1492,7 +1498,7 @@ func TestRequestElicitationDropRecordsMetric(t *testing.T) {
 	}
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
-		`{"sessionId":"sess_e","message":"over budget","elicitationId":"elic_x"}`)
+		`{"sessionId":"sess_e","message":"over budget","schema":{},"elicitationId":"elic_x"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("an over-budget elicitation should be a tool error: %+v", resp)
@@ -1521,7 +1527,7 @@ func TestRequestElicitationSuppressedAtDepth(t *testing.T) {
 	mkSession(t, store, "sess_leaf", session.StateRunning, "sess_mid")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
-		`{"sessionId":"sess_leaf","message":"ask","elicitationId":"elic_x"}`)
+		`{"sessionId":"sess_leaf","message":"ask","schema":{},"elicitationId":"elic_x"}`)
 	// §9.2: a suppressed elicitation returns a SUPPRESSED response (not
 	// an error) the originating pod handles as "user declined".
 	text := resultText(t, resp)
@@ -1557,7 +1563,7 @@ func TestRequestElicitationNotSuppressedBelowDepth(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_elicitation",
-			`{"sessionId":"sess_mid","message":"ask","elicitationId":"elic_x"}`)
+			`{"sessionId":"sess_mid","message":"ask","schema":{},"elicitationId":"elic_x"}`)
 	}()
 	// §9.2: the elicitation was not suppressed below the depth and
 	// forwards up the chain to the human-facing root. It is recorded
@@ -1584,7 +1590,7 @@ func TestRequestElicitationRejectsTerminalSession(t *testing.T) {
 	mkSession(t, store, "sess_done", session.StateCompleted, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
-		`{"sessionId":"sess_done","message":"x","elicitationId":"elic_x"}`)
+		`{"sessionId":"sess_done","message":"x","schema":{},"elicitationId":"elic_x"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("a terminal session should be a tool error: %+v", resp)
@@ -1617,7 +1623,7 @@ func TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2(t *testing.
 	done := make(chan map[string]any, 1)
 	go func() {
 		done <- call(t, h, "lenny/request_elicitation",
-			`{"sessionId":"sess_e","message":"pick one","elicitationId":"elic_x"}`)
+			`{"sessionId":"sess_e","message":"pick one","schema":{},"elicitationId":"elic_x"}`)
 	}()
 	waitElicitation(t, interactions, "sess_e", "elic_x")
 
@@ -1713,13 +1719,13 @@ func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_r","requestId":"req-1","prompt":"pick"}`)
+			`{"sessionId":"sess_r","requestId":"req-1","parts":[{"type":"text","text":"pick"}]}`)
 	}()
 	waitPending(t, reg, "sess_r", "req-1")
 	// Sleep well past the 40ms platform default to prove the per-runtime
 	// override (3600s) kept the request pending.
 	time.Sleep(200 * time.Millisecond)
-	call(t, h, "lenny/send_message", `{"sessionId":"sess_r","content":"blue","inReplyTo":"req-1"}`)
+	call(t, h, "lenny/send_message", `{"to":"sess_r","message":"blue","inReplyTo":"req-1"}`)
 
 	select {
 	case ri := <-got:

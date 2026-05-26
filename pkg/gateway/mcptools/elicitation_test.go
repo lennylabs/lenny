@@ -110,7 +110,7 @@ func TestElicitationForwardsUpMultipleHops(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_elicitation",
-			`{"sessionId":"sess_leaf","message":"approve?","elicitationId":"elic_x"}`)
+			`{"sessionId":"sess_leaf","message":"approve?","schema":{},"elicitationId":"elic_x"}`)
 	}()
 
 	// §9.2: the elicitation forwarded up to the root — it is NOT
@@ -151,7 +151,7 @@ func TestElicitationParentIntercepts(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_elicitation",
-			`{"sessionId":"sess_leaf","message":"approve?","elicitationId":"elic_x"}`)
+			`{"sessionId":"sess_leaf","message":"approve?","schema":{},"elicitationId":"elic_x"}`)
 	}()
 
 	// §9.2: the chain stopped at the intercepting parent — recorded
@@ -234,7 +234,7 @@ func TestElicitationDepthSuppressed(t *testing.T) {
 	mkUserSession(t, store, "sess_leaf", "alice", "sess_mid") // depth 2
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
-		`{"sessionId":"sess_leaf","message":"ask","elicitationId":"elic_x"}`)
+		`{"sessionId":"sess_leaf","message":"ask","schema":{},"elicitationId":"elic_x"}`)
 	text := resultText(t, resp)
 	if !strings.Contains(text, "suppressed") {
 		t.Errorf("result = %q, want a SUPPRESSED response", text)
@@ -278,7 +278,7 @@ func TestURLModeElicitationAllowedDomain(t *testing.T) {
 
 	go func() {
 		_ = call(t, h, "lenny/request_elicitation",
-			`{"sessionId":"sess_leaf","message":"sign in","url":"https://accounts.example.com/oauth/authorize","elicitationId":"elic_x"}`)
+			`{"sessionId":"sess_leaf","message":"sign in","schema":{},"url":"https://accounts.example.com/oauth/authorize","elicitationId":"elic_x"}`)
 	}()
 	// An allowlisted url-mode elicitation is recorded — it forwarded up
 	// the chain normally.
@@ -305,7 +305,7 @@ func TestURLModeElicitationDisallowedDomain(t *testing.T) {
 	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
-		`{"sessionId":"sess_leaf","message":"sign in","url":"https://phish.evil.test/login","elicitationId":"elic_x"}`)
+		`{"sessionId":"sess_leaf","message":"sign in","schema":{},"url":"https://phish.evil.test/login","elicitationId":"elic_x"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a disallowed-domain url-mode elicitation should be a tool error: %+v", resp)
@@ -350,7 +350,7 @@ func TestURLModeElicitationAgentBlockedByDefault(t *testing.T) {
 	mkUserSession(t, store, "sess_root", "alice", "")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
-		`{"sessionId":"sess_root","message":"sign in","url":"https://accounts.example.com/oauth","elicitationId":"elic_x"}`)
+		`{"sessionId":"sess_root","message":"sign in","schema":{},"url":"https://accounts.example.com/oauth","elicitationId":"elic_x"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("an agent url-mode elicitation should be blocked by default: %+v", resp)
@@ -377,7 +377,7 @@ func TestRequestElicitationDropsSelfAssertedConnector_spec_9_2(t *testing.T) {
 	mkUserSession(t, store, "sess_root", "alice", "")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
-		`{"sessionId":"sess_root","message":"sign in","url":"https://github.com/login/oauth/authorize","initiatorType":"connector","elicitationId":"elic_x"}`)
+		`{"sessionId":"sess_root","message":"sign in","schema":{},"url":"https://github.com/login/oauth/authorize","initiatorType":"connector","elicitationId":"elic_x"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a self-asserted connector url-mode elicitation must not be admitted: %+v", resp)

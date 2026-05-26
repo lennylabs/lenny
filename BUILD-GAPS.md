@@ -8500,7 +8500,7 @@ Evidence:
 - `pkg/gateway/mcptools/elicitation.go:105,135`
 - `pkg/gateway/errorclassify/errorclassify.go:56-83`
 
-### - [ ] F-8.5.11 — `lenny/output` differs from spec — emits to event stream instead of to parent/client; requires `sessionId` not in spec schema — Medium [Medium] — OPEN
+### - [x] F-8.5.11 — `lenny/output` differs from spec — emits to event stream instead of to parent/client; requires `sessionId` not in spec schema — Medium [Medium] — CLOSED
 
 **Severity: Medium** (spec MUST schema; semantics need re-evaluation against §15.4.1)
 
@@ -8518,7 +8518,9 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:527-565`
 - `spec/15_external-api-surface.md:1891` (`lenny/output` reconciliation contract)
 
-### - [ ] F-8.5.12 — `lenny/request_input` schema disagrees with spec — `parts` vs `prompt` — Medium [Medium] — OPEN
+**Resolution:** `lenny/output`'s InputSchema now matches the §8.5 line 544 spec — `required: ["output"]` only. `sessionId` remains as an optional transport-fallback property and is resolved from `authmw.FromContext(ctx).SessionID` first via the shared `callerSessionID` helper so the spec-compliant principal-bound path is preferred. The agent-output emission still publishes to the calling session's event stream; the §15.4.1 reconciliation contract with terminal `response.output` is the separate child→parent delivery work tracked elsewhere. A new `TestOutputSchemaMatchesSpec_spec_8_5_F_8_5_11` reads the schema off `tools/list` and asserts `sessionId ∉ required`.
+
+### - [x] F-8.5.12 — `lenny/request_input` schema disagrees with spec — `parts` vs `prompt` — Medium [Medium] — CLOSED
 
 **Severity: Medium** (spec schema MUST: `request_input(parts)`; impl ships `prompt`)
 
@@ -8534,7 +8536,9 @@ Evidence:
 - `spec/08_recursive-delegation.md:539` (`lenny/request_input(parts)`)
 - `spec/08_recursive-delegation.md:951-971` (await_children multi-child pattern uses `parts`)
 
-### - [ ] F-8.5.13 — `lenny/request_elicitation` schema deviates from spec — `schema` required by spec but optional in impl; `sessionId` added — Medium [Medium] — OPEN
+**Resolution:** Schema now requires `parts` (an OutputPart[]) and drops `prompt` entirely; `sessionId` and `requestId` are optional. The handler decodes `parts: []json.RawMessage`, generates a `req_` prefixed id when the caller omits one, and the published `elicitation_request` event payload carries the structured `parts` array instead of the legacy flat `prompt` so rendering surfaces can re-use the same OutputPart visitor the runtime adapter applies. Verified by `TestRequestInputSchemaMatchesSpec_spec_8_5_F_8_5_12` and `TestRequestInputEmitsPartsOnEventStream_spec_8_5_F_8_5_12`.
+
+### - [x] F-8.5.13 — `lenny/request_elicitation` schema deviates from spec — `schema` required by spec but optional in impl; `sessionId` added — Medium [Medium] — CLOSED
 
 **Severity: Medium** (spec schema MUST)
 
@@ -8547,7 +8551,9 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:648-651`
 - `spec/08_recursive-delegation.md:559-575`
 
-### - [ ] F-8.5.14 — `lenny/memory_write` and `lenny/memory_query` schemas add `sessionId` and lose spec defaults — Medium [Medium] — OPEN
+**Resolution:** Schema now requires `schema` and `message` per §8.5 line 559; `sessionId` drops out of `required` and is an optional transport-fallback property resolved via `callerSessionID`. The handler rejects calls with an absent `schema` (empty `{}` is acceptable since the spec only requires the property be present). Verified by `TestRequestElicitationSchemaMatchesSpec_spec_8_5_F_8_5_13`.
+
+### - [x] F-8.5.14 — `lenny/memory_write` and `lenny/memory_query` schemas add `sessionId` and lose spec defaults — Medium [Medium] — CLOSED
 
 **Severity: Medium** (spec schema MUST; default value omitted)
 
@@ -8568,7 +8574,9 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:1037,1069`
 - `spec/08_recursive-delegation.md:577-613`
 
-### - [ ] F-8.5.15 — `lenny/cancel_child` schema deviates from spec — Medium [Medium] — OPEN
+**Resolution:** `memory_write` schema now requires only `content` per §8.5 line 577; `metadata` is `additionalProperties: {"type":"string"}` with the Go decode pinned to `map[string]string` so a non-string value rejects with VALIDATION_ERROR before the store is touched. `memory_query` schema now requires `query` per §8.5 line 596 and declares `limit.default: 10`; the handler applies the documented default when the caller omits the field (the MCP transport does not auto-fill schema defaults). `sessionId` is optional on both tools via `callerSessionID`. Verified by `TestMemoryWriteSchemaMatchesSpec_spec_8_5_F_8_5_14`, `TestMemoryQuerySchemaMatchesSpec_spec_8_5_F_8_5_14`, `TestMemoryWriteRejectsNonStringMetadata_spec_8_5_F_8_5_14`, and `TestMemoryQueryDefaultsLimitToTen_spec_8_5_F_8_5_14`.
+
+### - [x] F-8.5.15 — `lenny/cancel_child` schema deviates from spec — Medium [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-8.5.19 — Both concern the cancel_child MCP tool but describe different defects: F-8.5.15 is the schema deviation (extra parentSessionId arg) while F-8.5.19 is the ignored cascadeOnFailure policy in cancelSubtree.
 
@@ -8587,7 +8595,9 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:369-420`
 - `spec/08_recursive-delegation.md:531`
 
-### - [ ] F-8.5.16 — `lenny/send_message` schema deviates from spec — Medium [Medium] — OPEN
+**Resolution:** Schema now requires only `childSessionId` per §8.5 line 531; `parentSessionId` drops out of `required` and is resolved from the calling principal via `callerSessionID`. The descendant authorization check still runs against the resolved parent id so cross-subtree cancellation remains blocked. Verified by `TestCancelChildSchemaMatchesSpec_spec_8_5_F_8_5_15`. The cascadeOnFailure-policy gap is tracked separately under F-8.5.19.
+
+### - [x] F-8.5.16 — `lenny/send_message` schema deviates from spec — Medium [Medium] — CLOSED
 
 **Severity: Medium** (spec schema MUST)
 
@@ -8599,6 +8609,8 @@ Evidence:
 
 - `pkg/gateway/mcptools/mcptools.go:278`
 - `spec/08_recursive-delegation.md:537`
+
+**Resolution:** Schema renamed: `sessionId → to`, `content → message` per §8.5 line 537; both are now required. `inReplyTo`, `messageId`, and `fromSessionId` remain as documented extensions (§7.2 / §8.8 / §15.4). The handler decodes the new field names directly; the principal's SessionID claim is now the canonical sender id (`fromSessionId` is the transport fallback). All test sites were updated to the new field names. Verified by `TestSendMessageSchemaMatchesSpec_spec_8_5_F_8_5_16` and the existing topology + inReplyTo tests still pass with the renamed fields.
 
 ### - [x] F-8.5.17 — `lenny/set_tracing_context` schema adds `sessionId`; otherwise mostly spec-compliant — Low [Medium] — CLOSED
 

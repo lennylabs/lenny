@@ -75,7 +75,8 @@ func TestMemoryQueryRecallsAcrossSessions(t *testing.T) {
 	call(t, srv.Handler(), "lenny/memory_write",
 		`{"sessionId":"sess_a","content":"learned in session a"}`)
 	// §9.4: memory recall is user-scoped — a later session sees it.
-	q := call(t, srv.Handler(), "lenny/memory_query", `{"sessionId":"sess_b"}`)
+	// spec: §8.5 line 596 — `query` is required (F-8.5.14).
+	q := call(t, srv.Handler(), "lenny/memory_query", `{"sessionId":"sess_b","query":"learned"}`)
 	var resp struct {
 		Memories []json.RawMessage `json:"memories"`
 	}
