@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: MIT
+
+package runtime
+
+import (
+	"testing"
+
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+)
+
+// TestApplyCRDFields_spec_5_1 verifies the §5.1 CRD-owned field subset
+// maps onto the registry runtime: type, image, integration level,
+// execution mode, isolation profile, allowed resource classes,
+// supported providers, the credential-capabilities block, and the
+// object's domain labels.
+func TestApplyCRDFields_spec_5_1(t *testing.T) {
+	rt := &lennyv1.Runtime{
+		Spec: lennyv1.RuntimeSpec{
+			Type:                   "agent",
+			Image:                  "registry.example.com/langgraph@sha256:" + hex64,
+			IntegrationLevel:       "full",
+			ExecutionMode:          "task",
+			IsolationProfile:       "microvm",
+			DeploymentModel:        "embedded",
+			AllowedResourceClasses: []string{"small", "medium"},
+			SupportedProviders:     []string{"anthropic_direct", "aws_bedrock"},
+			CredentialCapabilities: &lennyv1.CredentialCapabilities{
+				HotRotation:  true,
+				ProxyDialect: []string{"anthropic", "openai"},
+			},
+		},
+	}
+	rt.Name = "langgraph-runtime"
+	rt.Labels = map[string]string{"team": "platform"}
+
+	var dst runtimestore.Runtime
+	applyCRDFields(&dst, rt)
+
+	if dst.Name != "langgraph-runtime" {
+		t.Errorf("name = %q, want langgraph-runtime", dst.Name)
+	}
+	if dst.Type != runtimestore.TypeAgent {
+		t.Errorf("type = %q, want agent", dst.Type)
+	}
+	if dst.Image != rt.Spec.Image {
+		t.Errorf("image = %q, want %q", dst.Image, rt.Spec.Image)
+	}
+	if dst.IntegrationLevel != runtimestore.IntegrationLevelFull {
+		t.Errorf("integrationLevel = %q, want full", dst.IntegrationLevel)
+	}
+	if dst.ExecutionMode != runtimestore.ExecutionModeTask {
+		t.Errorf("executionMode = %q, want task", dst.ExecutionMode)
+	}
+	if dst.IsolationProfile != isolation.ProfileMicrovm {
+		t.Errorf("isolationProfile = %q, want microvm", dst.IsolationProfile)
+	}
+	if len(dst.AllowedResourceClasses) != 2 || dst.AllowedResourceClasses[0] != "small" {
+		t.Errorf("allowedResourceClasses = %v", dst.AllowedResourceClasses)
+	}
+	if len(dst.SupportedProviders) != 2 || dst.SupportedProviders[1] != "aws_bedrock" {
+		t.Errorf("supportedProviders = %v", dst.SupportedProviders)
+	}
+	if dst.CredentialCapabilities == nil || !dst.CredentialCapabilities.HotRotation {
+		t.Fatalf("credentialCapabilities = %+v, want hotRotation true", dst.CredentialCapabilities)
+	}
+	if len(dst.CredentialCapabilities.ProxyDialect) != 2 {
+		t.Errorf("proxyDialect = %v", dst.CredentialCapabilities.ProxyDialect)
+	}
+	if dst.Labels["team"] != "platform" {
+		t.Errorf("labels = %v, want team=platform", dst.Labels)
+	}
+}
+
+// TestApplyCRDFields_PreservesNonCRDFields_spec_5_1 verifies the update
+// path leaves §5.1 fields the CRD does not model (capabilities, the
+// agent interface, setup policy, limits) intact, so an admin-API
+// configuration layered on top of the CRD base survives a re-reconcile.
+func TestApplyCRDFields_PreservesNonCRDFields_spec_5_1(t *testing.T) {
+	dst := runtimestore.Runtime{
+		Name:               "scanner",
+		Description:        "configured via admin API",
+		Capabilities:       &runtimestore.RuntimeCapabilities{Interaction: runtimestore.InteractionMultiTurn},
+		AgentInterface:     &runtimestore.AgentInterface{},
+		MinPlatformVersion: "1.4.0",
+	}
+	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + hex64, IntegrationLevel: "basic"}}
+	rt.Name = "scanner"
+
+	applyCRDFields(&dst, rt)
+
+	if dst.Description != "configured via admin API" {
+		t.Errorf("description wiped: %q", dst.Description)
+	}
+	if dst.Capabilities == nil || dst.Capabilities.Interaction != runtimestore.InteractionMultiTurn {
+		t.Errorf("capabilities wiped: %+v", dst.Capabilities)
+	}
+	if dst.AgentInterface == nil {
+		t.Error("agentInterface wiped")
+	}
+	if dst.MinPlatformVersion != "1.4.0" {
+		t.Errorf("minPlatformVersion wiped: %q", dst.MinPlatformVersion)
+	}
+}
+
+// TestCredentialCapabilitiesFromCRD verifies the nil-block mapping and
+// that the proxyDialect slice is copied, not aliased to the CRD slice.
+func TestCredentialCapabilitiesFromCRD(t *testing.T) {
+	if got := credentialCapabilitiesFromCRD(nil); got != nil {
+		t.Errorf("nil block mapped to %+v, want nil", got)
+	}
+	src := &lennyv1.CredentialCapabilities{ProxyDialect: []string{"anthropic"}}
+	got := credentialCapabilitiesFromCRD(src)
+	if got == nil || len(got.ProxyDialect) != 1 {
+		t.Fatalf("got %+v", got)
+	}
+	got.ProxyDialect[0] = "mutated"
+	if src.ProxyDialect[0] != "anthropic" {
+		t.Error("proxyDialect slice aliased to CRD: mutation leaked back")
+	}
+}
+
+// TestDomainLabels_spec_10_6 verifies the §10.6 runtimeSelector label
+// mirror drops the Kubernetes/Helm machinery labels the chart's
+// lenny.labels helper stamps and keeps domain labels (including the
+// lenny.dev/* markers).
+func TestDomainLabels_spec_10_6(t *testing.T) {
+	in := map[string]string{
+		"app.kubernetes.io/name":       "lenny",
+		"app.kubernetes.io/managed-by": "Helm",
+		"helm.sh/chart":                "lenny-0.1.0",
+		"lenny.dev/reference-runtime":  "true",
+		"team":                         "platform",
+	}
+	out := domainLabels(in)
+	if _, ok := out["app.kubernetes.io/name"]; ok {
+		t.Error("kept app.kubernetes.io/ label")
+	}
+	if _, ok := out["helm.sh/chart"]; ok {
+		t.Error("kept helm.sh/ label")
+	}
+	if out["lenny.dev/reference-runtime"] != "true" {
+		t.Error("dropped lenny.dev/ domain label")
+	}
+	if out["team"] != "platform" {
+		t.Error("dropped custom domain label")
+	}
+}
+
+// TestDomainLabels_AllSystem returns nil when only machinery labels are
+// present, so a chart-managed runtime with no domain labels mirrors to a
+// nil label set rather than carrying Helm noise into the registry.
+func TestDomainLabels_AllSystem(t *testing.T) {
+	in := map[string]string{
+		"app.kubernetes.io/name": "lenny",
+		"helm.sh/chart":          "lenny-0.1.0",
+	}
+	if out := domainLabels(in); out != nil {
+		t.Errorf("all-machinery labels mapped to %v, want nil", out)
+	}
+	if out := domainLabels(nil); out != nil {
+		t.Errorf("nil labels mapped to %v, want nil", out)
+	}
+}
+
+// hex64 is a 64-hex digest body used to satisfy the §5.3 digest-pinned
+// image references the Runtime CRD pattern requires.
+const hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

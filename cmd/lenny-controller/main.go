@@ -46,10 +46,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/ratelimit"
+	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
 	sessionstore "github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -212,6 +214,7 @@ func main() {
 	// mirroring.
 	var mirror *agentpodstatepg.Store
 	var sessionLookup warmpool.SessionLookup
+	var runtimeRegistry *runtimepg.Store
 	if postgresDSN != "" {
 		pgPool, err := pgxpool.New(context.Background(), postgresDSN)
 		if err != nil {
@@ -222,6 +225,11 @@ func main() {
 		// The §4.6.1 orphan-claim GC checks Postgres for an active session
 		// backing each candidate claim before reclaiming it.
 		sessionLookup = &sessionActiveLookup{store: sessionstorepg.New(pgPool)}
+		// §5.1 Runtime CRD mirror: the RuntimeReconciler writes the
+		// declarative Runtime resources into the same runtime_definitions
+		// registry the gateway reads at session creation. Requires the
+		// Postgres registry, so it is wired only under --postgres-dsn.
+		runtimeRegistry = runtimepg.New(pgPool)
 	}
 
 	// §4.0 pool state manager: the controller emits §16.6
@@ -311,6 +319,24 @@ func main() {
 		QueueFactory:            queueFactory,
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up per-pod reconciler: %v", err)
+	}
+
+	// §5.1 RuntimeReconciler: mirror declarative Runtime CRDs into the
+	// gateway runtime registry and set each one's Registered condition.
+	// The reconciler needs the Postgres registry, so it is registered
+	// only when --postgres-dsn is set; an in-memory-only controller posture
+	// has no shared registry to mirror into.
+	if runtimeRegistry != nil {
+		if err := (&runtimecontroller.Reconciler{
+			Client:                  mgr.GetClient(),
+			Scheme:                  mgr.GetScheme(),
+			Store:                   runtimeRegistry,
+			DevMode:                 devMode,
+			MaxConcurrentReconciles: maxConcurrentReconciles,
+			QueueFactory:            queueFactory,
+		}).SetupWithManager(mgr); err != nil {
+			log.Fatalf("lenny-controller: set up RuntimeReconciler: %v", err)
+		}
 	}
 
 	// §4.6.1 mirror reconciliation on recovery and orphan-claim GC are

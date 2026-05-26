@@ -28,8 +28,19 @@ metadata:
     {{- include "lenny.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxtemplates", "sandboxwarmpools", "runtimes"]
+    resources: ["sandboxtemplates", "sandboxwarmpools"]
     verbs: ["get", "list", "watch"]
+  # Runtimes: the §5.1 RuntimeReconciler watches Runtime resources and
+  # mirrors them into the gateway runtime registry. It manages a
+  # finalizer (update/patch on the resource) so a Runtime deletion
+  # soft-deletes the registry row before the object leaves etcd, and
+  # sets the Registered status condition.
+  - apiGroups: ["lenny.dev"]
+    resources: ["runtimes"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["lenny.dev"]
+    resources: ["runtimes/finalizers"]
+    verbs: ["update"]
   # Sandboxes: the WarmPoolController creates idle pods, drains and
   # recreates pods near cert expiry, and retires pod-failed Sandboxes;
   # the §4.6.1 cert-expiry replacement and pod-failed retire paths
@@ -44,7 +55,7 @@ rules:
     resources: ["sandboxclaims"]
     verbs: ["get", "list", "watch", "delete"]
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status"]
+    resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status", "runtimes/status"]
     verbs: ["get", "update", "patch"]
   # PodDisruptionBudgets: the §4.6.1 per-SandboxTemplate warm-pod PDB
   # management owns one PDB per pool (maxUnavailable: 1) and tears it
