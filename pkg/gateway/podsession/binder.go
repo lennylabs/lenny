@@ -147,6 +147,12 @@ type CredentialAssigner interface {
 	// pod's SPIFFE identity for proxy-mode SPIFFE-binding; an empty value
 	// disables binding.
 	AssignProto(poolName, sessionID, spiffeURI string) (*adapterv1.CredentialLease, error)
+	// ReleaseSession releases every §4.9 credential lease the session
+	// holds back to its pool. It is the §7.1 step 23 teardown the binder
+	// runs when a session's pod is released, so a completed session's
+	// pool slots are returned rather than leaking. A session with no
+	// leases is a no-op. spec: §7.1 line 52.
+	ReleaseSession(sessionID string)
 }
 
 // CredentialAssignmentError reports that a §4.9 credential lease
@@ -518,6 +524,17 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 	return cl.AssignCredentials(ctx, req.SessionID, leases)
 }
 
+// releaseCredentials returns the session's §4.9 credential leases to
+// their pool at teardown (§7.1 step 23). It is a no-op when the binder
+// has no credential service, mirroring assignCredentials so a deployment
+// without credential pools tears down cleanly.
+func (b *Binder) releaseCredentials(sessionID string) {
+	if b.Credentials == nil {
+		return
+	}
+	b.Credentials.ReleaseSession(sessionID)
+}
+
 // stageWorkspace prepares the pod's staging area for the plan's
 // non-filesystem-native sources, ahead of FinalizeWorkspace. It fetches
 // the blob content of every uploadFile and uploadArchive source from
@@ -798,6 +815,13 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, terminal state
 		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
 		result.Adapter.Close()
 	}
+
+	// spec: §7.1 line 52 (step 23) — release the session's §4.9 credential
+	// leases back to the pool. Done before the drain so the credential's
+	// active-session counter is decremented on the way out; without it the
+	// pool's per-credential slot count drifts up without bound and
+	// select.go eventually reports exhaustion for idle credentials.
+	b.releaseCredentials(result.SessionID)
 
 	var sb lennyv1.Sandbox
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: result.SandboxName}, &sb); err != nil {

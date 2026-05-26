@@ -44,6 +44,10 @@ type Assigner interface {
 	// Release frees the credential session slot a lease held and removes
 	// the lease record. It is a no-op for an unknown lease id.
 	Release(leaseID string)
+	// ReleaseSession releases every lease the session holds back to its
+	// pool. It is the §7.1 step 23 session-teardown release. A session
+	// with no leases is a no-op.
+	ReleaseSession(sessionID string)
 	// OnAssigned registers an observer the assigner invokes after every
 	// successful Assign. The §4.9 Proactive Lease Renewal worker
 	// registers here so each minted lease is tracked for renewal.
@@ -313,6 +317,38 @@ func poolUtilizationLocked(ps *poolState) float64 {
 func (s *Service) Release(leaseID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.releaseLocked(leaseID)
+}
+
+// ReleaseSession releases every §4.9 credential lease the service holds
+// for the session back to its pool. It is the §7.1 step 23
+// "Release credential lease back to pool" teardown the gateway runs when
+// a session reaches a terminal state: each of the session's leases is
+// removed from the lease store and the backing credential's active-
+// session counter decremented, so a completed session's pool slots are
+// returned rather than leaking. Releasing a session with no leases (an
+// unknown session, or one that needed no upstream credentials) is a
+// no-op.
+//
+// spec: §7.1 line 52 (step 23). Without this the credential's `active`
+// counter stays incremented after every session ends, so under sustained
+// load `select.go` eventually reports `ErrPoolExhausted` for credentials
+// that are in fact idle.
+func (s *Service) ReleaseSession(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, lease := range s.leases.LeasesBySession([]string{sessionID}) {
+		s.releaseLocked(lease.LeaseID)
+	}
+}
+
+// releaseLocked frees the credential session slot a single lease held and
+// removes the lease from the store. The caller holds s.mu. It is a no-op
+// for an unknown lease ID.
+func (s *Service) releaseLocked(leaseID string) {
 	lease, ok := s.leases.GetByID(leaseID)
 	if !ok {
 		return

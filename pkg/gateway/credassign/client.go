@@ -323,6 +323,22 @@ func (c *Client) Release(leaseID string) {
 	c.mu.Unlock()
 }
 
+// ReleaseSession releases every §4.9 credential lease the client holds
+// for the session: it issues a RevokeCredentials RPC for each and drops
+// the local lease entry, returning the session's pool slots. It is the
+// §7.1 step 23 session-teardown lease release the gateway runs when a
+// session reaches a terminal state. A session with no leases is a no-op.
+//
+// spec: §7.1 line 52 (step 23).
+func (c *Client) ReleaseSession(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	for _, lease := range c.leases.LeasesBySession([]string{sessionID}) {
+		c.Release(lease.LeaseID)
+	}
+}
+
 // recordAssignedLease mirrors the §4.3 AssignCredentials response into
 // the gateway's local state: the lease into the credleasestore, the
 // materialized upstream credential into the credcache, and the pool

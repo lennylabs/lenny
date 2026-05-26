@@ -145,6 +145,63 @@ func TestReleaseUnknownLeaseIsNoOp(t *testing.T) {
 	svc.Release("cl-absent") // must not panic
 }
 
+// TestReleaseSessionReturnsEveryLeaseToPool_spec_7_1 asserts the §7.1
+// step 23 session-teardown release: every lease the session holds is
+// removed from the store and its credential's slot freed, so a completed
+// session does not leak pool capacity. A session may hold more than one
+// lease (one per provider), so ReleaseSession must free them all.
+func TestReleaseSessionReturnsEveryLeaseToPool_spec_7_1(t *testing.T) {
+	svc, leases, _ := newService(t)
+	svc.RegisterPool(proxyPool("anthropic", credential.StrategyLeastLoaded,
+		healthyCred("key-a", "sk-a")))
+	svc.RegisterPool(proxyPool("openai", credential.StrategyLeastLoaded,
+		healthyCred("key-o", "sk-o")))
+
+	// One session leases from two pools; a sibling session leases too.
+	la, _ := svc.Assign("anthropic", "s_1", "")
+	lo, _ := svc.Assign("openai", "s_1", "")
+	other, _ := svc.Assign("anthropic", "s_2", "")
+	if leases.Len() != 3 {
+		t.Fatalf("lease store holds %d leases, want 3", leases.Len())
+	}
+
+	svc.ReleaseSession("s_1")
+
+	// Both of s_1's leases are gone; s_2's lease is untouched.
+	if _, ok := leases.GetByID(la.LeaseID); ok {
+		t.Error("anthropic lease for s_1 still present after ReleaseSession")
+	}
+	if _, ok := leases.GetByID(lo.LeaseID); ok {
+		t.Error("openai lease for s_1 still present after ReleaseSession")
+	}
+	if _, ok := leases.GetByID(other.LeaseID); !ok {
+		t.Error("ReleaseSession(s_1) wrongly removed s_2's lease")
+	}
+	if leases.Len() != 1 {
+		t.Errorf("lease store holds %d leases after release, want 1 (s_2's)", leases.Len())
+	}
+
+	// The anthropic pool's freed slot is reusable: the next assignment for
+	// a new session succeeds against the same single credential, which it
+	// could not if the active counter had leaked.
+	if _, err := svc.Assign("anthropic", "s_3", ""); err != nil {
+		t.Errorf("Assign after ReleaseSession: %v — the released slot did not return to the pool", err)
+	}
+}
+
+func TestReleaseSessionUnknownSessionIsNoOp_spec_7_1(t *testing.T) {
+	svc, leases, _ := newService(t)
+	svc.RegisterPool(proxyPool("anthropic", credential.StrategyLeastLoaded,
+		healthyCred("key-a", "sk-a")))
+	lease, _ := svc.Assign("anthropic", "s_1", "")
+
+	svc.ReleaseSession("")           // empty id: no panic, no effect
+	svc.ReleaseSession("s_absent")   // unknown session: no effect
+	if _, ok := leases.GetByID(lease.LeaseID); !ok {
+		t.Error("ReleaseSession for an unrelated/empty session removed a live lease")
+	}
+}
+
 func TestAssignDirectModePoolCachesCredential(t *testing.T) {
 	svc, _, creds := newService(t)
 	svc.RegisterPool(credassign.Pool{

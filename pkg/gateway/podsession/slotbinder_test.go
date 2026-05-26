@@ -348,6 +348,35 @@ func TestReleaseSlotLeavesSiblingSlotsRunning(t *testing.T) {
 	}
 }
 
+// TestReleaseSlotReturnsCredentialLeasesToPool_spec_7_1 asserts that the
+// concurrent-mode slot teardown also runs the §7.1 step 23 credential-
+// lease release, matching session-mode Release.
+func TestReleaseSlotReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, concurrentAdapterDialer(t, a))
+	assigner := &fakeAssigner{}
+	binder.Credentials = assigner
+
+	// No CredentialPools here: the §7.1 teardown hook fires on every slot
+	// release regardless of whether the slot held leases, and the fake
+	// concurrent adapter does not serve AssignCredentials. The actual
+	// lease-freeing is covered by the credassign ReleaseSession unit test.
+	r1, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "slot-sess", TenantID: "acme", Runtime: "claude-code",
+		Style: podclaim.StyleWorkspace, MaxConcurrent: 4, Plan: &adapterv1.WorkspacePlan{},
+	})
+	if err != nil {
+		t.Fatalf("BindSlot: %v", err)
+	}
+	if err := binder.ReleaseSlot(context.Background(), r1); err != nil {
+		t.Fatalf("ReleaseSlot: %v", err)
+	}
+	if len(assigner.released) != 1 || assigner.released[0] != "slot-sess" {
+		t.Errorf("ReleaseSession calls = %v, want [slot-sess]", assigner.released)
+	}
+}
+
 type slotFailureCall struct{ errorType, pool, podName string }
 
 // spec: §5.2 line 12

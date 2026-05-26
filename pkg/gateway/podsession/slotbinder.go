@@ -264,6 +264,10 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
 		result.Adapter.Close()
 	}
+	// spec: §7.1 line 52 (step 23) — release the slot session's §4.9
+	// credential leases back to the pool, the same teardown session-mode
+	// Release runs. The pod and its sibling slots stay live.
+	b.releaseCredentials(result.SessionID)
 	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
 	return claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID)
 }

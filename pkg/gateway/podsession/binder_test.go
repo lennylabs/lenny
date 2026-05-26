@@ -287,6 +287,8 @@ type fakeAssigner struct {
 	err error
 	// calls records each (pool, session, spiffeURI) AssignProto served.
 	calls []assignerCall
+	// released records each sessionID passed to ReleaseSession.
+	released []string
 }
 
 type assignerCall struct {
@@ -304,6 +306,10 @@ func (a *fakeAssigner) AssignProto(pool, session, spiffe string) (*adapterv1.Cre
 		Payload: []byte(`{"deliveryMode":"proxy",` +
 			`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-` + pool + `"}}`),
 	}, nil
+}
+
+func (a *fakeAssigner) ReleaseSession(sessionID string) {
+	a.released = append(a.released, sessionID)
 }
 
 func TestBindClaimsAndStartsTheSession(t *testing.T) {
@@ -505,6 +511,36 @@ func TestReleaseDrainsTheSandbox(t *testing.T) {
 	}
 	if sb.Status.Phase != "draining" {
 		t.Errorf("sandbox phase = %q, want draining after Release", sb.Status.Phase)
+	}
+}
+
+// TestReleaseReturnsCredentialLeasesToPool_spec_7_1 asserts the §7.1
+// step 23 teardown: Release returns the session's §4.9 credential leases
+// to the pool. Without this the credential's active-session counter
+// leaks on every completed session.
+func TestReleaseReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.CredentialsDir = t.TempDir()
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	assigner := &fakeAssigner{}
+	binder.Credentials = assigner
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-rel", Runtime: "claude-code",
+		CredentialPools: map[string]string{"anthropic": "claude-prod"},
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if len(assigner.released) != 1 || assigner.released[0] != "sess-rel" {
+		t.Errorf("ReleaseSession calls = %v, want [sess-rel]", assigner.released)
 	}
 }
 

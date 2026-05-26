@@ -30,6 +30,10 @@ type LeaseStore interface {
 	GetByID(leaseID string) (lease credential.Lease, ok bool)
 	Remove(leaseID string)
 	Len() int
+	// LeasesBySession returns every lease the store holds whose SessionID
+	// is one of sessionIDs. It backs the §7.1 step 23 session-teardown
+	// lease release and the §11.4 full_revoke revocation step.
+	LeasesBySession(sessionIDs []string) []credential.Lease
 }
 
 // Store indexes issued credential leases by lease ID and, for
