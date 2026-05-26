@@ -47,11 +47,25 @@ type ClaimRequest struct {
 	TenantID string
 }
 
-// Claim finds an idle Sandbox in the request's pool, flips it to the
-// claimed phase under an optimistic-locking guard, and creates the
-// binding SandboxClaim. A status-update conflict means a competing
-// gateway replica won that pod, so Claim moves to the next idle pod.
-// ErrNoIdlePod is returned when no idle pod can be claimed.
+// Claim finds an idle Sandbox in the request's pool, creates the binding
+// SandboxClaim (the §4.6.1 authoritative single-claim guard, backed by
+// the lenny-sandboxclaim-guard ValidatingAdmissionWebhook), and then
+// flips the Sandbox phase idle → claimed via SSA Apply under the
+// §4.6.3 gateway field manager + ForceOwnership.
+//
+// The race protection is the SandboxClaim CREATE: the deterministic
+// claim name (claim-<sessionID>) collides when the same session retries,
+// and the webhook rejects a CREATE that races a different session for
+// the same pod (a non-terminal claim already binds the Sandbox). On a
+// CREATE rejection or an AlreadyExists collision, Claim moves to the
+// next idle pod. The SSA phase write that follows is observability + a
+// §6.2 state-machine signal: it transfers ownership of status.phase from
+// the WPC to the gateway for the duration of the session lifecycle, per
+// §4.6.3's gateway carve-out.
+//
+// ErrNoIdlePod is returned when no idle pod can be claimed. spec:
+// §4.6.1 ADR-007 (single-claim invariant), §4.6.3 ownership table,
+// §5.2 / §6.2 lines 83-94 gateway-driven phase set.
 func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (*lennyv1.SandboxClaim, error) {
 	var list lennyv1.SandboxList
 	if err := c.Client.List(ctx, &list,
@@ -65,17 +79,27 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (*lennyv1.Sandbox
 		if sb.Status.Phase != string(state.Idle) {
 			continue
 		}
-		sb.Status.Phase = string(state.Claimed)
-		if err := c.Client.Status().Update(ctx, sb); err != nil {
-			if apierrors.IsConflict(err) {
-				// A competing replica claimed this pod first.
-				continue
-			}
-			return nil, fmt.Errorf("claim sandbox %s: %w", sb.Name, err)
-		}
-
+		// §4.6.1 CREATE-first: the SandboxClaim CRD is the authoritative
+		// single-claim guard. AlreadyExists (the deterministic claim-<sessionID>
+		// name) and Forbidden (the lenny-sandboxclaim-guard webhook flagging a
+		// non-terminal existing claim) are the two race outcomes that mean
+		// "another claim already binds this pod"; either way the gateway has
+		// not touched Sandbox.status, so a skip to the next idle pod leaves
+		// no cleanup behind. Every other CREATE error (validation, network,
+		// internal) is a real failure that propagates to the caller.
 		claim, err := CreateClaim(ctx, c.Client, c.Namespace, sb.Name, req)
 		if err != nil {
+			if apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) {
+				continue
+			}
+			return nil, err
+		}
+		// SSA + ForceOwnership for the §4.6.3 status.phase claim. A failure
+		// here means the gateway holds the binding SandboxClaim but failed
+		// to advance the phase observability; the §4.6.1 orphan-claim
+		// garbage collector (F-4.6.3) reclaims the dangling claim.
+		if err := ApplyGatewayPhase(ctx, c.Client, sb, state.Claimed); err != nil {
+			_ = c.Client.Delete(ctx, claim)
 			return nil, err
 		}
 		return claim, nil

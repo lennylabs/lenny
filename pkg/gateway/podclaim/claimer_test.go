@@ -11,10 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
@@ -49,17 +46,19 @@ func sandboxIn(pool, name, phase string) *lennyv1.Sandbox {
 	}
 }
 
+// claimerFor boots an envtest API server (real SSA support) and returns
+// a Claimer wired to it.
 func claimerFor(t *testing.T, objs ...client.Object) (*podclaim.Claimer, client.Client) {
 	t.Helper()
-	c := fake.NewClientBuilder().
-		WithScheme(newScheme(t)).
-		WithObjects(objs...).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
-		Build()
+	c := newEnvtestClient(t, objs...)
 	return &podclaim.Claimer{Client: c, Namespace: testNS}, c
 }
 
-func TestClaimBindsAnIdlePod(t *testing.T) {
+// spec: §4.6.1, §4.6.3
+// TestClaimBindsAnIdlePod_spec_4_6 — Claim CREATEs the SandboxClaim
+// first (single-claim guard) and then SSA-applies status.phase = claimed
+// under the gateway field manager.
+func TestClaimBindsAnIdlePod_spec_4_6(t *testing.T) {
 	claimer, c := claimerFor(t, sandboxIn(testPool, "sbx-1", "idle"))
 
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
@@ -134,42 +133,86 @@ func TestClaimScopesToTheRequestedPool(t *testing.T) {
 	}
 }
 
-// TestClaimSkipsAPodLostToAConcurrentClaimer exercises the §4.6.1
-// optimistic-locking retry: a status-update conflict on one pod (a
-// competing gateway replica won it) makes Claim move to the next idle
-// pod rather than fail.
-func TestClaimSkipsAPodLostToAConcurrentClaimer(t *testing.T) {
-	conflicted := false
-	c := fake.NewClientBuilder().
-		WithScheme(newScheme(t)).
-		WithObjects(
-			sandboxIn(testPool, "sbx-a", "idle"),
-			sandboxIn(testPool, "sbx-b", "idle"),
-		).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
-		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourceUpdate: func(ctx context.Context, cl client.Client, sr string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-				if obj.GetName() == "sbx-a" && !conflicted {
-					conflicted = true
-					return apierrors.NewConflict(
-						schema.GroupResource{Group: "lenny.dev", Resource: "sandboxes"},
-						"sbx-a", errors.New("claimed by a competing replica"),
-					)
-				}
-				return cl.Status().Update(ctx, obj, opts...)
-			},
-		}).
-		Build()
+// spec: §4.6.1 ADR-007 — the SandboxClaim CREATE with a
+// session-deterministic name (claim-<sessionID>) is the §4.6.1
+// authoritative single-claim guard. A repeated Claim() for the same
+// session collides on AlreadyExists everywhere it tries, surfacing
+// ErrNoIdlePod so the caller does not silently bind a second pod to the
+// same session.
+func TestClaimSameSessionRetryCollidesOnAlreadyExists_spec_4_6(t *testing.T) {
+	c := newEnvtestClient(t,
+		sandboxIn(testPool, "sbx-1", "idle"),
+		sandboxIn(testPool, "sbx-2", "idle"),
+	)
+	ctx := context.Background()
+	// First claim succeeds and creates claim-s bound to one of the pods.
+	if _, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-1", podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "s", TenantID: "acme",
+	}); err != nil {
+		t.Fatalf("seed first claim: %v", err)
+	}
 	claimer := &podclaim.Claimer{Client: c, Namespace: testNS}
 
-	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{Pool: testPool, SessionID: "s"})
-	if err != nil {
+	// A retried Claim for the same session sees AlreadyExists on every
+	// CREATE attempt (deterministic name claim-s); ErrNoIdlePod surfaces.
+	_, err := claimer.Claim(ctx, podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "s", TenantID: "acme",
+	})
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("retry error = %v, want ErrNoIdlePod (the deterministic name collides everywhere)", err)
+	}
+}
+
+// spec: §4.6.3 ownership table — status.phase under SSA Apply with
+// FieldOwner=lenny-gateway and ForceOwnership transfers ownership from
+// the WPC default to the gateway. A subsequent SSA Apply by the gateway
+// is idempotent on the value (same manager, same field).
+// TestClaimSSAOwnershipIsGateway_spec_4_6_3 — verifies the managedFields
+// entry for status.phase ends up under the gateway field manager.
+func TestClaimSSAOwnershipIsGateway_spec_4_6_3(t *testing.T) {
+	claimer, c := claimerFor(t, sandboxIn(testPool, "sbx-1", "idle"))
+
+	if _, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
+	}); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef == "sbx-a" {
-		t.Error("Claim bound sbx-a despite the conflicting status update")
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
 	}
-	if !conflicted {
-		t.Error("the conflicting-update path was not exercised")
+	foundGateway := false
+	for _, mf := range sb.ManagedFields {
+		if mf.Manager == "lenny-gateway" && mf.Subresource == "status" {
+			foundGateway = true
+		}
+	}
+	if !foundGateway {
+		t.Errorf("status managedFields did not include lenny-gateway: %+v", sb.ManagedFields)
+	}
+}
+
+// Defensive: verify the deterministic-name AlreadyExists path returns
+// the right error class for apierrors.IsAlreadyExists detection.
+func TestClaimCreateClaimAlreadyExistsClass(t *testing.T) {
+	c := newEnvtestClient(t)
+	ctx := context.Background()
+	first, err := podclaim.CreateClaim(ctx, c, testNS, "sbx-x", podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "s", TenantID: "acme",
+	})
+	if err != nil {
+		t.Fatalf("first CreateClaim: %v", err)
+	}
+	_ = first
+
+	_, err = podclaim.CreateClaim(ctx, c, testNS, "sbx-y", podclaim.ClaimRequest{
+		Pool: testPool, SessionID: "s", TenantID: "acme",
+	})
+	if err == nil {
+		t.Fatal("second CreateClaim with same session id should fail")
+	}
+	if !apierrors.IsAlreadyExists(err) {
+		t.Errorf("second CreateClaim error = %v, want apierrors.IsAlreadyExists", err)
 	}
 }

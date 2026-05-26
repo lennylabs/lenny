@@ -631,6 +631,23 @@ func (w *phaseStatusWriter) Update(ctx context.Context, obj client.Object, opts 
 	return nil
 }
 
+// Patch records the §4.6.3 SSA Apply path the binder uses for the
+// gateway-claimed phases (claimed, receiving_uploads, finalizing_workspace,
+// running_setup, starting_session, attached, completed/failed/cancelled).
+// The drain step still uses Update (yields to WPC); both paths are
+// observed so the test asserts the full §6.2 transition sequence.
+func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	if err := w.SubResourceWriter.Patch(ctx, obj, patch, opts...); err != nil {
+		return err
+	}
+	if u, ok := obj.(*unstructured.Unstructured); ok && u.GetKind() == "Sandbox" {
+		if phase, ok, _ := unstructured.NestedString(u.Object, "status", "phase"); ok {
+			*w.phases = append(*w.phases, phase)
+		}
+	}
+	return nil
+}
+
 // TestBindWritesSetupChainPhases_spec_6_2 asserts Bind advances the Sandbox
 // through the full §6.2 lines 83-94 setup chain (claimed →
 // receiving_uploads → finalizing_workspace → running_setup →

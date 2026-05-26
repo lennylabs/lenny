@@ -406,43 +406,26 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 }
 
 // setPhase advances the claimed Sandbox's §6.2 status.phase to `to`,
-// validating the edge against the state machine and retrying once per
-// optimistic-locking conflict. The gateway is the sole writer of the claim
-// and session phases (idle → claimed → ... → attached → terminal): the
-// WarmPoolController's lifecycle planner leaves these phases untouched and
-// drives only the warm-path (warming → idle) and reclamation
-// (draining → terminated) edges, so a conflict means a concurrent gateway
-// write — which cannot happen for the pod this replica holds the exclusive
-// claim on. The retry therefore re-reads and re-applies rather than
-// tolerating a lost update. sb is updated in place so a chain of setup
-// transitions needs no re-Get on the common no-conflict path; an invalid edge
-// fails loudly rather than corrupting the phase. spec: §6.2 lines 83-94,
-// 305-313.
+// validating the edge against the state machine and applying via
+// podclaim.ApplyGatewayPhase (SSA Apply with the gateway field manager
+// and ForceOwnership, per §4.6.3's gateway carve-out). The gateway is
+// the sole writer of the claim and session phases (idle → claimed →
+// ... → attached → terminal); the WarmPoolController's lifecycle
+// planner leaves these phases untouched, and SSA + ForceOwnership
+// transfers status.phase ownership from the WPC default to the gateway
+// for the lifetime of the session. sb is updated in place so a chain of
+// setup transitions needs no re-Get; an invalid edge fails loudly rather
+// than corrupting the phase. spec: §6.2 lines 83-94, 305-313; §4.6.3
+// ownership table.
 func (b *Binder) setPhase(ctx context.Context, sb *lennyv1.Sandbox, to state.State) error {
-	const maxAttempts = 4
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		from := state.State(sb.Status.Phase)
-		if from == to {
-			return nil // idempotent: a retry or concurrent writer already landed it
-		}
-		if err := state.IsValid(from, to); err != nil {
-			return err
-		}
-		sb.Status.Phase = string(to)
-		err := b.Client.Status().Update(ctx, sb)
-		if err == nil {
-			return nil
-		}
-		if !apierrors.IsConflict(err) {
-			return fmt.Errorf("podsession: set sandbox %s phase %s: %w", sb.Name, to, err)
-		}
-		lastErr = err
-		if gerr := b.Client.Get(ctx, client.ObjectKeyFromObject(sb), sb); gerr != nil {
-			return fmt.Errorf("podsession: re-read sandbox %s after phase conflict: %w", sb.Name, gerr)
-		}
+	from := state.State(sb.Status.Phase)
+	if from == to {
+		return nil // idempotent: a retry or concurrent writer already landed it
 	}
-	return fmt.Errorf("podsession: set sandbox %s phase %s exhausted retries: %w", sb.Name, to, lastErr)
+	if err := state.IsValid(from, to); err != nil {
+		return err
+	}
+	return podclaim.ApplyGatewayPhase(ctx, b.Client, sb, to)
 }
 
 // failPhase best-effort records the §6.2 pre-attached failure phase
@@ -457,13 +440,24 @@ func (b *Binder) failPhase(ctx context.Context, sb *lennyv1.Sandbox) {
 	}
 }
 
-// drain transitions the Sandbox to draining so the reconciler reclaims the
-// pod (§6.2 → draining → terminated), retrying once per optimistic-locking
-// conflict. Unlike setPhase it does not validate the edge: the drain must
-// reclaim the pod from whatever phase it holds (a terminal disposition,
-// attached, or an early claimed/idle release), so reclamation is never blocked
-// by a state-machine check. A Sandbox already draining or terminated is a
-// no-op.
+// drain transitions the Sandbox to draining so the WarmPoolController
+// reclaims the pod (§6.2 → draining → terminated). It does NOT validate
+// the edge: drain reclaims the pod from whatever phase it holds (a
+// terminal disposition, attached, or an early claimed/idle release), so
+// reclamation is never blocked by a state-machine check. A Sandbox
+// already draining or terminated is a no-op.
+//
+// Direct Update (rather than SSA Apply) is the documented yield
+// mechanism per §4.6.3: per the Kubernetes SSA spec, a non-Apply request
+// removes other managers' claims on the fields it writes. After the
+// drain step the §6.2 draining → terminated edge belongs to the
+// WPC's lifecycle planner, which SSA-applies status.phase under its
+// own field manager without ForceOwnership; if the gateway held
+// ownership via ForceOwnership the WPC's apply would conflict
+// indefinitely. Direct Update strips the gateway's prior SSA claim
+// (from setPhase) so the WPC can re-claim and write terminated. spec:
+// §4.6.3 "never force-conflicts" guidance for WPC/PSC; §6.2 lines
+// 91-94 reclamation edges.
 func (b *Binder) drain(ctx context.Context, sb *lennyv1.Sandbox) error {
 	const maxAttempts = 4
 	var lastErr error
@@ -710,9 +704,14 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 // The fallback claims an agent_pod_state row, then reproduces the
 // authoritative side of a claim: it creates the binding SandboxClaim
 // CRD (so the lenny-sandboxclaim-guard webhook's CREATE-time check
-// still guards against a double-claim) and best-effort flips the
-// Sandbox CRD phase idle → claimed, tolerating a conflict the same way
-// podclaim.Claimer.Claim does.
+// still guards against a double-claim), re-reads the Sandbox to confirm
+// it is still idle (the WPC may have drained the pod between the mirror
+// snapshot and the CRD lookup), and flips the Sandbox CRD phase idle →
+// claimed via SSA Apply under the §4.6.3 gateway field manager +
+// ForceOwnership. If the live Sandbox is past idle the just-created
+// SandboxClaim is deleted and ErrNoIdlePod is returned so the caller
+// surfaces warm-pool exhaustion rather than binding a session to a
+// draining pod.
 func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest) (string, error) {
 	if b.Fallback == nil {
 		// No Postgres mirror is configured; the no-idle-pod result stands.
@@ -767,23 +766,33 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest) (
 	// SandboxClaim first: the lenny-sandboxclaim-guard webhook rejects
 	// the CREATE if the pod is already claimed, which backstops the
 	// §4.6.1 single-claim invariant for the fallback path.
-	if _, err := podclaim.CreateClaim(ctx, b.Client, b.Namespace, pod.PodID, req); err != nil {
+	claim, err := podclaim.CreateClaim(ctx, b.Client, b.Namespace, pod.PodID, req)
+	if err != nil {
 		return "", err
 	}
 
-	// Best-effort flip the Sandbox CRD phase idle → claimed, the
-	// authoritative state. A conflict means a competing writer already
-	// advanced the pod; the SandboxClaim above still binds this session,
-	// so the claim holds and the conflict is tolerated.
+	// Re-read the Sandbox to detect a mid-fallback drain: the mirror
+	// snapshot may pre-date a §6.2 idle → draining transition the WPC
+	// applied while we were locking the Postgres row. If the live phase
+	// has moved past idle, delete the orphan claim and surface the
+	// no-idle-pod result rather than binding a session to a doomed pod.
+	// spec: §4.6.1 fallback claim consistency; §6.2 line 305.
 	var sb lennyv1.Sandbox
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: pod.PodID}, &sb); err != nil {
+		_ = b.Client.Delete(ctx, claim)
 		return "", fmt.Errorf("podsession: get sandbox %s for fallback claim: %w", pod.PodID, err)
 	}
-	if sb.Status.Phase == string(state.Idle) {
-		sb.Status.Phase = string(state.Claimed)
-		if err := b.Client.Status().Update(ctx, &sb); err != nil && !apierrors.IsConflict(err) {
-			return "", fmt.Errorf("podsession: claim sandbox %s in fallback: %w", pod.PodID, err)
-		}
+	if sb.Status.Phase != string(state.Idle) {
+		_ = b.Client.Delete(ctx, claim)
+		return "", podclaim.ErrNoIdlePod
+	}
+	// SSA Apply phase = claimed under the §4.6.3 gateway carve-out, the
+	// same path the in-cluster Claimer takes. ForceOwnership is required
+	// to transfer status.phase from the WPC default to the gateway for
+	// the session lifecycle.
+	if err := podclaim.ApplyGatewayPhase(ctx, b.Client, &sb, state.Claimed); err != nil {
+		_ = b.Client.Delete(ctx, claim)
+		return "", err
 	}
 	return pod.PodID, nil
 }

@@ -23,7 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
@@ -72,15 +71,14 @@ func podBindScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// podBindClient returns a fake cluster holding a warm pool, its
-// template, and one idle Sandbox the start path can claim.
+// podBindClient returns a cluster holding a warm pool, its template, and
+// one idle Sandbox the start path can claim. Backed by envtest so the
+// §4.6.3 SSA Apply path the session-mode claimer + slot claimer use is
+// real; the fake client does not implement SSA (kubernetes/kubernetes#115598).
+// spec: §4.6.3 ownership table.
 func podBindClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
-	return fake.NewClientBuilder().
-		WithScheme(podBindScheme(t)).
-		WithObjects(objs...).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
-		Build()
+	return podBindEnvtestClient(t, objs...)
 }
 
 // podBindEnvtestClient is podBindClient's envtest sibling, required by
@@ -231,7 +229,7 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc:                  func() string { return "sess_pod_1" },
+		IDFunc:                  func() string { return "sess-pod-1" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
@@ -248,15 +246,15 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
 
-	binding, ok := registry.Get("sess_pod_1")
+	binding, ok := registry.Get("sess-pod-1")
 	if !ok {
 		t.Fatal("registry holds no binding for the started session")
 	}
 	if binding.SandboxName != "sbx-1" || binding.PodIP != "10.244.2.5" {
 		t.Errorf("binding = %+v, want sbx-1 / 10.244.2.5", binding)
 	}
-	if rt.started != "sess_pod_1" {
-		t.Errorf("adapter runtime started for %q, want sess_pod_1", rt.started)
+	if rt.started != "sess-pod-1" {
+		t.Errorf("adapter runtime started for %q, want sess-pod-1", rt.started)
 	}
 
 	var sb lennyv1.Sandbox
@@ -361,7 +359,7 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc:                  func() string { return "sess_pod_nomatch" },
+		IDFunc:                  func() string { return "sess-pod-nomatch" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
@@ -381,7 +379,7 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 		t.Errorf("registry holds %d bindings, want 0 after a failed claim", registry.Len())
 	}
 
-	if _, err := store.Get(context.Background(), "acme", "sess_pod_nomatch"); err == nil {
+	if _, err := store.Get(context.Background(), "acme", "sess-pod-nomatch"); err == nil {
 		t.Fatalf("session row was persisted; §7.1 atomicity requires no row when the create-and-start atomic unit fails")
 	}
 	// §15.1 line 1138 — every retryable 503 carries Retry-After so a
@@ -442,7 +440,7 @@ func postSessionStep(t *testing.T, h http.Handler, path string, body []byte) *ht
 // stored on the row at create.
 
 func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
-	srv, registry, cluster, wsRoot := podBindServer(t, "sess_2step_1")
+	srv, registry, cluster, wsRoot := podBindServer(t, "sess-2step-1")
 	h := srv.Handler()
 
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
@@ -456,10 +454,10 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}
-	if rr := postSessionStep(t, h, "/v1/sessions/sess_2step_1/finalize", nil); rr.Code != http.StatusOK {
+	if rr := postSessionStep(t, h, "/v1/sessions/sess-2step-1/finalize", nil); rr.Code != http.StatusOK {
 		t.Fatalf("finalize: status %d, body=%s", rr.Code, rr.Body.String())
 	}
-	rr := postSessionStep(t, h, "/v1/sessions/sess_2step_1/start", nil)
+	rr := postSessionStep(t, h, "/v1/sessions/sess-2step-1/start", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("start: status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -469,7 +467,7 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	if resp.State != string(session.StateRunning) {
 		t.Errorf("state = %q, want running", resp.State)
 	}
-	if _, ok := registry.Get("sess_2step_1"); !ok {
+	if _, ok := registry.Get("sess-2step-1"); !ok {
 		t.Error("registry holds no binding after the two-step start")
 	}
 
@@ -495,7 +493,7 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 }
 
 func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
-	srv, registry, _, _ := podBindServer(t, "sess_2step_early")
+	srv, registry, _, _ := podBindServer(t, "sess-2step-early")
 	h := srv.Handler()
 
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
@@ -504,7 +502,7 @@ func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
 	}
 
 	// /start before /finalize: the row is still `created`, not `ready`.
-	rr := postSessionStep(t, h, "/v1/sessions/sess_2step_early/start", nil)
+	rr := postSessionStep(t, h, "/v1/sessions/sess-2step-early/start", nil)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("start before finalize: status %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
@@ -587,21 +585,21 @@ func seedAwaitingSession(t *testing.T, store *memstore.Store, row sessionstore.S
 }
 
 func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
-	srv, store, registry, cluster := podResumeServer(t, "sess_resume_1")
+	srv, store, registry, cluster := podResumeServer(t, "sess-resume-1")
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID: "sess_resume_1",
+		ID: "sess-resume-1",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
 			Ref:    "ckpt-1",
 			Source: sessionstore.WorkspaceSnapshotCheckpoint,
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_resume_1/resume", nil)
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-1/resume", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 
-	row, err := store.Get(context.Background(), "acme", "sess_resume_1")
+	row, err := store.Get(context.Background(), "acme", "sess-resume-1")
 	if err != nil {
 		t.Fatalf("get resumed session: %v", err)
 	}
@@ -609,7 +607,7 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 		t.Errorf("state = %q, want running after resume", row.State)
 	}
 
-	binding, ok := registry.Get("sess_resume_1")
+	binding, ok := registry.Get("sess-resume-1")
 	if !ok {
 		t.Fatal("registry holds no binding for the resumed session")
 	}
@@ -627,40 +625,40 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 }
 
 func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
-	srv, store, registry, _ := podResumeServer(t, "sess_resume_nockpt")
+	srv, store, registry, _ := podResumeServer(t, "sess-resume-nockpt")
 	// No WorkspaceSnapshot: the session never checkpointed. The resume
 	// path rebuilds it from the §14 WorkspacePlan recorded at create.
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID: "sess_resume_nockpt",
+		ID: "sess-resume-nockpt",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
 			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# resumed","mode":"0644"}]
 		}`),
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_resume_nockpt/resume", nil)
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-nockpt/resume", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 
-	row, err := store.Get(context.Background(), "acme", "sess_resume_nockpt")
+	row, err := store.Get(context.Background(), "acme", "sess-resume-nockpt")
 	if err != nil {
 		t.Fatalf("get resumed session: %v", err)
 	}
 	if row.State != session.StateRunning {
 		t.Errorf("state = %q, want running after resume", row.State)
 	}
-	if _, ok := registry.Get("sess_resume_nockpt"); !ok {
+	if _, ok := registry.Get("sess-resume-nockpt"); !ok {
 		t.Error("registry holds no binding after a snapshotless resume")
 	}
 }
 
 func TestResumeRejectsNonResumableState(t *testing.T) {
-	srv, store, registry, _ := podResumeServer(t, "sess_resume_bad")
+	srv, store, registry, _ := podResumeServer(t, "sess-resume-bad")
 	// A `running` session is not a valid POST /resume precondition —
 	// only `awaiting_client_action` is (§15.1).
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID:               "sess_resume_bad",
+		ID:               "sess-resume-bad",
 		TenantID:         "acme",
 		State:            session.StateRunning,
 		RuntimeRef:       "echo",
@@ -669,12 +667,12 @@ func TestResumeRejectsNonResumableState(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_resume_bad/resume", nil)
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-bad/resume", nil)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("resume of a running session: status %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
 
-	row, err := store.Get(context.Background(), "acme", "sess_resume_bad")
+	row, err := store.Get(context.Background(), "acme", "sess-resume-bad")
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
@@ -687,11 +685,11 @@ func TestResumeRejectsNonResumableState(t *testing.T) {
 }
 
 func TestResumeFailsSessionWhenNoPoolMatches(t *testing.T) {
-	srv, store, registry, _ := podResumeServer(t, "sess_resume_nopool")
+	srv, store, registry, _ := podResumeServer(t, "sess-resume-nopool")
 	// The cluster serves only the "echo" runtime; the session targets a
 	// runtime no warm pool covers, so the pod claim cannot resolve.
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID:         "sess_resume_nopool",
+		ID:         "sess-resume-nopool",
 		RuntimeRef: "no-such-runtime",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
 			Ref:    "ckpt-1",
@@ -699,12 +697,12 @@ func TestResumeFailsSessionWhenNoPoolMatches(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_resume_nopool/resume", nil)
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-nopool/resume", nil)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("resume with no matching pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
 
-	row, err := store.Get(context.Background(), "acme", "sess_resume_nopool")
+	row, err := store.Get(context.Background(), "acme", "sess-resume-nopool")
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
@@ -743,29 +741,29 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 	// A child session targeting a runtime no warm pool covers: resume
 	// cannot claim a pod, so the gateway fails the session.
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID:              "sess_child",
+		ID:              "sess-child",
 		RuntimeRef:      "no-such-runtime",
-		ParentSessionID: "sess_parent",
+		ParentSessionID: "sess-parent",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
 			Ref:    "ckpt-1",
 			Source: sessionstore.WorkspaceSnapshotCheckpoint,
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_child/resume", nil)
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-child/resume", nil)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("resume: status %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
 
-	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
+	got, err := archive.GetByNode(context.Background(), "acme", "sess-child")
 	if err != nil {
 		t.Fatalf("the failed child was not archived: %v", err)
 	}
 	if got.State != string(session.StateFailed) {
 		t.Errorf("archived state = %q, want failed", got.State)
 	}
-	if got.ParentSessionID != "sess_parent" {
-		t.Errorf("archived ParentSessionID = %q, want sess_parent", got.ParentSessionID)
+	if got.ParentSessionID != "sess-parent" {
+		t.Errorf("archived ParentSessionID = %q, want sess-parent", got.ParentSessionID)
 	}
 }
 
@@ -790,7 +788,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc:                  func() string { return "sess_persist_assign" },
+		IDFunc:                  func() string { return "sess-persist-assign" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
@@ -810,7 +808,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 	// The pod_assignment column on the sessions row must hold the bound
 	// sandbox's name; a fresh replica reading the row alone sees the
 	// binding without needing access to the in-memory Registry.
-	row, err := store.Get(context.Background(), "acme", "sess_persist_assign")
+	row, err := store.Get(context.Background(), "acme", "sess-persist-assign")
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
@@ -819,7 +817,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 	}
 	// The Registry also holds the binding — the in-memory cache is
 	// authoritative for this replica's hot path.
-	if _, ok := registry.Get("sess_persist_assign"); !ok {
+	if _, ok := registry.Get("sess-persist-assign"); !ok {
 		t.Error("registry holds no binding (cache should be populated alongside the persist)")
 	}
 }
@@ -828,9 +826,9 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 // pod recovery. The resume path bumps it by one and persists the new
 // pod assignment in the same Update.
 func TestResumeBumpsRecoveryGeneration(t *testing.T) {
-	srv, store, _, _ := podResumeServer(t, "sess_recovery_bump")
+	srv, store, _, _ := podResumeServer(t, "sess-recovery-bump")
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID: "sess_recovery_bump",
+		ID: "sess-recovery-bump",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
 			Ref:    "ckpt-1",
 			Source: sessionstore.WorkspaceSnapshotCheckpoint,
@@ -839,19 +837,19 @@ func TestResumeBumpsRecoveryGeneration(t *testing.T) {
 
 	// Baseline: a freshly created awaiting session has
 	// RecoveryGeneration=0.
-	row, _ := store.Get(context.Background(), "acme", "sess_recovery_bump")
+	row, _ := store.Get(context.Background(), "acme", "sess-recovery-bump")
 	if row.RecoveryGeneration != 0 {
 		t.Fatalf("baseline RecoveryGeneration = %d, want 0", row.RecoveryGeneration)
 	}
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_recovery_bump/resume", nil)
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-recovery-bump/resume", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 
 	// After one resume the counter advanced by exactly one and the
 	// pod assignment reflects the new bound sandbox.
-	row, _ = store.Get(context.Background(), "acme", "sess_recovery_bump")
+	row, _ = store.Get(context.Background(), "acme", "sess-recovery-bump")
 	if row.RecoveryGeneration != 1 {
 		t.Errorf("after resume, RecoveryGeneration = %d, want 1 (§4.2 line 156)",
 			row.RecoveryGeneration)
