@@ -175,6 +175,46 @@ func TestDeriveNonTerminalWithAllowStaleSucceeds(t *testing.T) {
 	}
 }
 
+// TestDeriveEarlyStateWithAllowStaleRejected_spec_15_1 asserts the §15.1
+// line 622-624 precondition table is consulted via the central
+// pkg/api/v1/session validator: even when the caller passes allowStale,
+// `created/finalizing/ready/starting/input_required` are not derivable
+// and the gateway must return INVALID_STATE_TRANSITION rather than fall
+// through to the workspace-snapshot validator. F-15.1.29.
+func TestDeriveEarlyStateWithAllowStaleRejected_spec_15_1(t *testing.T) {
+	earlyStates := []session.State{
+		session.StateCreated,
+		session.StateFinalizing,
+		session.StateReady,
+		session.StateStarting,
+		session.StateInputRequired,
+	}
+	for _, st := range earlyStates {
+		t.Run(string(st), func(t *testing.T) {
+			store := memstore.New()
+			newSourceSession(t, store, func(s *sessionstore.Session) {
+				s.State = st
+			})
+			srv := sessionserver.New(store, sessionserver.Options{})
+			rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{AllowStale: true})
+			if rr.Code != http.StatusConflict {
+				t.Fatalf("status: got %d, want 409; body=%s", rr.Code, rr.Body.String())
+			}
+			code, _, details := decodeError(t, rr)
+			if code != "INVALID_STATE_TRANSITION" {
+				t.Errorf("error code: got %q, want INVALID_STATE_TRANSITION", code)
+			}
+			if got, _ := details["currentState"].(string); got != string(st) {
+				t.Errorf("details.currentState: got %q, want %q", got, st)
+			}
+			allowed, _ := details["allowedStates"].([]any)
+			if len(allowed) == 0 {
+				t.Errorf("expected details.allowedStates populated; got %v", details)
+			}
+		})
+	}
+}
+
 func TestDeriveNoSnapshotReturns400(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store, func(s *sessionstore.Session) {

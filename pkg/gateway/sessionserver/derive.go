@@ -162,11 +162,45 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// §7.1 derive rule 1: non-terminal source requires `allowStale: true`.
-	if !session.IsTerminal(source.State) && !req.AllowStale {
-		s.writeError(w, http.StatusConflict, "DERIVE_ON_LIVE_SESSION",
-			"source session is non-terminal; set allowStale: true to derive from the most recent checkpoint",
-			map[string]any{"currentState": string(source.State)})
+	// §15.1 line 622-624 precondition table for /derive: terminal source
+	// admitted by default; non-terminal source admitted only when the
+	// caller passes `allowStale: true` AND the state is one of
+	// {running, suspended, resume_pending, awaiting_client_action}. The
+	// table-driven validator centralises that rule. When the rejection is
+	// specifically "non-terminal-without-allowStale", §15.1 line 1052
+	// upgrades the wire code from the generic INVALID_STATE_TRANSITION to
+	// the dedicated DERIVE_ON_LIVE_SESSION so SDK clients can distinguish
+	// "retry with allowStale" from "the source state is not derivable at
+	// all" (e.g., created/finalizing/ready/starting/input_required).
+	// spec: §15.1 line 622-624; spec: §15.1 line 1052.
+	capabilities := map[session.Capability]bool{}
+	if req.AllowStale {
+		capabilities[session.CapabilityAllowStaleDerive] = true
+	}
+	if err := session.Validate(session.PreconditionRequest{
+		Endpoint:     session.EndpointDerive,
+		CurrentState: source.State,
+		Capabilities: capabilities,
+	}); err != nil {
+		var pe *session.PreconditionError
+		if errors.As(err, &pe) {
+			if !session.IsTerminal(source.State) && !req.AllowStale {
+				s.writeError(w, http.StatusConflict, "DERIVE_ON_LIVE_SESSION",
+					"source session is non-terminal; set allowStale: true to derive from the most recent checkpoint",
+					map[string]any{"currentState": string(source.State)})
+				return
+			}
+			allowed := make([]string, 0, len(pe.AllowedStates))
+			for _, st := range pe.AllowedStates {
+				allowed = append(allowed, string(st))
+			}
+			s.writeError(w, pe.Code(), pe.ErrorCode(), pe.Error(), map[string]any{
+				"currentState":  string(source.State),
+				"allowedStates": allowed,
+			})
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 

@@ -137,4 +137,32 @@ var table = map[string]entry{
 	// HTTP 404; the same request fails until the user registers a
 	// credential or the operator configures pool fallback.
 	"USER_CREDENTIAL_NOT_FOUND": {CategoryPermanent, false},
+	// spec: §11.5 line 277 — an idempotency key that exceeds the 128-rune
+	// limit or fails the tenant scoping check is rejected before any
+	// dispatch happens. PERMANENT (the same key fails identically until
+	// the client picks a different one). The MCP surface uses this
+	// dedicated code so callers can distinguish a malformed key from a
+	// generic body-validation failure. F-11.5.1 / F-15.1.30.
+	"INVALID_IDEMPOTENCY_KEY": {CategoryPermanent, false},
+	// spec: §15.1 line 1052 — `POST /v1/sessions/{id}/derive` rejected
+	// because the source session is non-terminal and the caller did not
+	// pass `allowStale: true`. PERMANENT (the source state controls the
+	// failure; the same request fails until the caller sets the flag or
+	// the source reaches a terminal state). F-15.1.29.
+	"DERIVE_ON_LIVE_SESSION": {CategoryPermanent, false},
+	// spec: §15.1 line 1054 — `POST /v1/sessions/{id}/derive` failed
+	// because the workspace snapshot object was not found in object
+	// storage (TTL expiry or GC). TRANSIENT — re-issuing immediately is
+	// unlikely to help but the underlying condition can resolve out of
+	// band; HTTP 503.
+	"DERIVE_SNAPSHOT_UNAVAILABLE": {CategoryTransient, true},
+	// spec: §15.1 line 1055 — derive/replay/delegate rejected by the
+	// SEC-001 isolation-monotonicity rule. POLICY (the deployer's
+	// isolation lattice forbids the move); HTTP 422. Overridable only
+	// by a platform-admin with `allowIsolationDowngrade: true`.
+	"ISOLATION_MONOTONICITY_VIOLATED": {CategoryPolicy, false},
+	// spec: §15.1 line 1053 — derive rate-limited because too many
+	// concurrent derives are running against the same source session.
+	// POLICY, retryable=true with exponential backoff; HTTP 429.
+	"DERIVE_LOCK_CONTENTION": {CategoryPolicy, true},
 }

@@ -44,6 +44,22 @@ func TestClassifyKnownCodes(t *testing.T) {
 		// spec: §4.9 line 1364, §15.1 line 993 — a user-only policy with
 		// no registered credential is PERMANENT and not retryable (404).
 		{"USER_CREDENTIAL_NOT_FOUND", CategoryPermanent, false},
+		// spec: §11.5 line 277 — INVALID_IDEMPOTENCY_KEY is PERMANENT
+		// (key is malformed; the same key will be rejected identically).
+		// F-15.1.30.
+		{"INVALID_IDEMPOTENCY_KEY", CategoryPermanent, false},
+		// spec: §15.1 line 1052 — DERIVE_ON_LIVE_SESSION is PERMANENT
+		// (state controls the failure). F-15.1.29.
+		{"DERIVE_ON_LIVE_SESSION", CategoryPermanent, false},
+		// spec: §15.1 line 1054 — DERIVE_SNAPSHOT_UNAVAILABLE is TRANSIENT
+		// because the missing object can be remediated out of band.
+		{"DERIVE_SNAPSHOT_UNAVAILABLE", CategoryTransient, true},
+		// spec: §15.1 line 1055 — ISOLATION_MONOTONICITY_VIOLATED is POLICY
+		// (the SEC-001 lattice forbids the move); 422, not retryable.
+		{"ISOLATION_MONOTONICITY_VIOLATED", CategoryPolicy, false},
+		// spec: §15.1 line 1053 — DERIVE_LOCK_CONTENTION is POLICY,
+		// retryable=true (back off and try again).
+		{"DERIVE_LOCK_CONTENTION", CategoryPolicy, true},
 	}
 	for _, c := range cases {
 		t.Run(c.code, func(t *testing.T) {

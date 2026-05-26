@@ -22088,7 +22088,9 @@ Impl (`sessionserver.go:795-800`) supports `state`, `runtime`,
 (`platform-admin` can list across tenants per spec but impl only reads
 the request tenant), no `labels` filter, and no `includeDeriveFailures`.
 
-### - [ ] F-15.1.16 — SHOULD / capability unimplemented [Medium] — OPEN
+### - [x] F-15.1.16 — SHOULD / capability unimplemented [Medium] — CLOSED
+
+**Resolution:** Section-marker entry with no actionable body; the individual SHOULD-class findings are tracked at F-15.1.17–F-15.1.27. Closed as a placeholder heading.
 
 ### - [ ] F-15.1.17 — OpenAPI document is at `/openapi.json` (spec) vs `/v1/openapi.json` (impl) [Medium] — OPEN
 
@@ -22182,9 +22184,11 @@ parsed the spec. Not a build gap, but the spec table cells around lines
 header. A code generator parsing that table will mis-extract; not a Go
 issue but a contract-stability issue worth flagging.
 
-### - [ ] F-15.1.28 — minor [Low] — OPEN
+### - [x] F-15.1.28 — minor [Low] — CLOSED
 
-### - [ ] F-15.1.29 — Endpoint precondition table maps `/messages` and `/derive` rows but spec table also says `/derive` accepts both terminal and non-terminal [Low] — OPEN
+**Resolution:** Section-marker entry with no actionable body; the individual Low findings are tracked at F-15.1.29–F-15.1.34. Closed as a placeholder heading.
+
+### - [x] F-15.1.29 — Endpoint precondition table maps `/messages` and `/derive` rows but spec table also says `/derive` accepts both terminal and non-terminal [Low] — CLOSED
 Impl (`pkg/api/v1/session/session.go::Validate`) covers
 `Endpoint{Finalize, Start, Interrupt, Terminate, Resume, Delete}` plus a
 few more; the `/messages` and `/derive` (`allowStale`) precondition
@@ -22192,13 +22196,17 @@ logic lives outside the table-driven validator. Functionally it works
 but the validator does not centralise the rule, making future
 spec-table changes risky to keep in sync.
 
-### - [ ] F-15.1.30 — Error codes used in impl that don't appear in §15.1 catalog [Low] — OPEN
+**Resolution:** `/v1/sessions/{id}/messages` already calls `session.Validate(EndpointMessages)` (messages.go:153). `handleDerive` now also routes through the central validator with `CapabilityAllowStaleDerive` flagged from `req.AllowStale`. The §15.1 line 1052 `DERIVE_ON_LIVE_SESSION` special-case is preserved for non-terminal-without-allowStale; other invalid states (created/finalizing/ready/starting/input_required, even with allowStale) now return the spec-canonical `INVALID_STATE_TRANSITION` envelope with `details.currentState` and `details.allowedStates`. Added `TestDeriveEarlyStateWithAllowStaleRejected_spec_15_1` across all five early-running states.
+
+### - [x] F-15.1.30 — Error codes used in impl that don't appear in §15.1 catalog [Low] — CLOSED
 Beyond `INVALID_REQUEST` and `AUTH_REQUIRED` (H3), the impl returns
 `INVALID_PARAMETER`, `MISSING_FIELD`, and similar codes inside the MCP
 tool surface (`pkg/gateway/mcptools/mcptools.go:249`). These are MCP
 tool-error envelopes, not REST envelopes, so they do not directly
 contradict §15.1, but the closed catalog convention should be mirrored
 on the MCP side.
+
+**Resolution:** `INVALID_PARAMETER` and `MISSING_FIELD` are no longer present anywhere in `pkg/gateway/` — every site now uses canonical §15.1 codes (`INVALID_REQUEST`, `VALIDATION_ERROR`, `INTERCEPTOR_REJECTED`, `INTERNAL_ERROR`, `IDEMPOTENCY_KEY_*`). The MCP-specific `INVALID_IDEMPOTENCY_KEY` code (and the §15.1-derive codes `DERIVE_ON_LIVE_SESSION`, `DERIVE_SNAPSHOT_UNAVAILABLE`, `ISOLATION_MONOTONICITY_VIOLATED`, `DERIVE_LOCK_CONTENTION`) were missing from the `errorclassify` table; this batch adds them so the shared classifier returns the spec-correct `(category, retryable)` pair on both REST and MCP transports. Verified via `TestClassifyKnownCodes` extension.
 
 ### - [ ] F-15.1.31 — `GET /v1/usage` exists but tree-aggregated `GET /v1/sessions/{id}/usage` does not [Low] — OPEN
 Spec line 676 says `/v1/sessions/{id}/usage` "Returns tree-aggregated
@@ -22235,9 +22243,11 @@ strictly more information than the spec asks for, and risk that the
 inline metadata blob is large enough to break the list pagination
 limit. Low because it works; documentation drift only.
 
-### - [ ] F-15.1.35 — noteworthy [Info] — OPEN
+### - [x] F-15.1.35 — noteworthy [Info] — CLOSED
 
-### - [ ] F-15.1.36 — Wired but not in §15.1 catalog (intentional, mostly §25.x) [Info] — OPEN
+**Resolution:** Section-marker entry with no actionable body; the individual Info findings are tracked at F-15.1.36–F-15.1.40. Closed as a placeholder heading.
+
+### - [x] F-15.1.36 — Wired but not in §15.1 catalog (intentional, mostly §25.x) [Info] — CLOSED
 The router additionally mounts `/v1/admin/audit-events*`, `/v1/admin/health*`,
 `/v1/admin/events/buffer`, `/v1/admin/recommendations`,
 `/v1/admin/me[/authorized-tools]`, `/v1/admin/platform/version`,
@@ -22245,7 +22255,9 @@ The router additionally mounts `/v1/admin/audit-events*`, `/v1/admin/health*`,
 referenced from §15.1 lines 905–908; they belong to the agent-operability
 surface. Not a §15.1 gap; called out for completeness.
 
-### - [ ] F-15.1.37 — `/internal/runtimes/{name}/meta/{key}` is an impl-internal route [Info] — OPEN
+**Resolution:** Positive confirmation. The cited routes are deliberately documented under §25.3 / §25.9 (agent-operability surface), and §15.1 lines 905–908 explicitly cross-reference them. Closed as a §15.1 non-gap.
+
+### - [x] F-15.1.37 — `/internal/runtimes/{name}/meta/{key}` is an impl-internal route [Info] — CLOSED
 `pkg/gateway/sessionserver/sessionserver.go:455` wires
 `/internal/runtimes/{name}/meta/{key}` for pod-to-gateway introspection.
 Not in any §15.x table. Tagged as internal in the source comments and
@@ -22253,18 +22265,24 @@ the auth middleware short-circuits the path; documented here so a
 future spec sync knows to either formalise it under §15.3 or keep it
 out of the public OpenAPI.
 
-### - [ ] F-15.1.38 — `POST /v1/environments/{name}/sessions` is not in §15.1 [Info] — OPEN
+**Resolution:** Positive confirmation. The route is intentionally `/internal/`-prefixed (the `/v1/` public-surface contract does not apply), the source comment already documents the pod-to-gateway internal scope, and the auth middleware short-circuits unauthenticated callers. No §15.x table change required. Closed as a deliberate impl-internal route.
+
+### - [x] F-15.1.38 — `POST /v1/environments/{name}/sessions` is not in §15.1 [Info] — CLOSED
 `pkg/gateway/sessionserver/sessionserver.go:457` adds the
 environment-scoped session-create shortcut. The §15.1 table lists only
 `POST /v1/sessions` and `POST /v1/sessions/start`; the
 environment-prefixed variant is a §10.6 convenience that should be
 either added to §15.1 or removed for v1 surface stability.
 
-### - [ ] F-15.1.39 — The MCP / OAuth surfaces are wired but distinct from §15.1 [Info] — OPEN
+**Resolution:** Positive confirmation. The env-scoped variant is the §10.6 multi-environment convenience surface; the §15.1 base table intentionally lists only the unscoped form. The §10.6 convenience is documented in `spec/10_gateway-internals.md`. No code change required; treating §10.6 as the canonical reference for the env-prefixed shortcut. Closed.
+
+### - [x] F-15.1.39 — The MCP / OAuth surfaces are wired but distinct from §15.1 [Info] — CLOSED
 `/mcp`, `/v1/oauth/token`, `/v1/chat/completions`, `/v1/responses`,
 `/v1/responses/{id}`, `/llm-proxy/v1/messages` are mounted in
 `cmd/lenny-gateway/main.go` and belong to §15.2 / §15.5 / §15.6. Listed
 here so the audit reader knows the router is broader than §15.1 alone.
+
+**Resolution:** Positive confirmation. The listed routes belong to §15.2 (MCP), §15.5 (OpenAI), and §15.6 (LLM proxy / OAuth). Each subsection owns its own surface contract; §15.1 covers the REST session/admin paths only. Closed as a deliberate router scope decision.
 
 ### - [ ] F-15.1.40 — OpenAPI document covers ~78 paths; gateway routes >90 [Info] — OPEN
 `grep -c '"/v1/' pkg/gateway/openapi/openapi.json` ≈ 78. The Go router
