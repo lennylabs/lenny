@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/sandbox/egress"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -56,6 +57,84 @@ func TestCreateAdmitsStandardWithAllow(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("standard isolation with allowStandardIsolation should succeed: %v", err)
+	}
+}
+
+// TestCreateRejectsInternetEgressOnStandard covers the §13.2
+// cross-control: a runc pool cannot use the `internet` egress profile.
+func TestCreateRejectsInternetEgressOnStandard(t *testing.T) {
+	s := poolstore.NewMemory()
+	err := s.Create(context.Background(), poolstore.Pool{
+		Name:                   "runc-internet",
+		IsolationProfile:       isolation.ProfileStandard,
+		AllowStandardIsolation: true,
+		EgressProfile:          egress.ProfileInternet,
+	})
+	if err == nil {
+		t.Fatal("internet egress on standard isolation should be rejected (§13.2)")
+	}
+}
+
+func TestCreateAdmitsEgressIsolationCombinations(t *testing.T) {
+	cases := []struct {
+		name  string
+		iso   isolation.Profile
+		eg    egress.Profile
+		allow bool
+	}{
+		{"internet+sandboxed", isolation.ProfileSandboxed, egress.ProfileInternet, false},
+		{"internet+microvm", isolation.ProfileMicrovm, egress.ProfileInternet, false},
+		{"provider-direct+standard", isolation.ProfileStandard, egress.ProfileProviderDirect, true},
+		{"restricted+standard", isolation.ProfileStandard, egress.ProfileRestricted, true},
+		{"empty-egress+standard", isolation.ProfileStandard, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := poolstore.NewMemory()
+			err := s.Create(context.Background(), poolstore.Pool{
+				Name:                   "pool",
+				IsolationProfile:       tc.iso,
+				AllowStandardIsolation: tc.allow,
+				EgressProfile:          tc.eg,
+			})
+			if err != nil {
+				t.Errorf("Create(%s) = %v, want success", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestCreateRejectsUnknownEgressProfile fails closed on a mistyped
+// profile rather than silently ignoring it.
+func TestCreateRejectsUnknownEgressProfile(t *testing.T) {
+	s := poolstore.NewMemory()
+	err := s.Create(context.Background(), poolstore.Pool{
+		Name:             "bad-egress",
+		IsolationProfile: isolation.ProfileSandboxed,
+		EgressProfile:    egress.Profile("open"),
+	})
+	if err == nil {
+		t.Fatal("unrecognised egress profile should be rejected")
+	}
+}
+
+// TestUpdateRejectsInternetEgressOnStandard guards the §13.2
+// cross-control on the mutate path, not just create.
+func TestUpdateRejectsInternetEgressOnStandard(t *testing.T) {
+	s := poolstore.NewMemory()
+	if err := s.Create(context.Background(), poolstore.Pool{
+		Name:                   "runc-pool",
+		IsolationProfile:       isolation.ProfileStandard,
+		AllowStandardIsolation: true,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, err := s.Update(context.Background(), "runc-pool", func(p *poolstore.Pool) error {
+		p.EgressProfile = egress.ProfileInternet
+		return nil
+	})
+	if err == nil {
+		t.Fatal("updating a runc pool to internet egress should be rejected (§13.2)")
 	}
 }
 

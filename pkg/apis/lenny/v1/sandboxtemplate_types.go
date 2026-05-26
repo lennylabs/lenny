@@ -122,6 +122,15 @@ type SandboxTemplateSpec struct {
 	// +optional
 	IsolationProfile string `json:"isolationProfile,omitempty"`
 
+	// EgressProfile is the §13.2 egress profile the WarmPoolController
+	// stamps onto the pool's pods so the matching pre-created
+	// NetworkPolicy takes effect. Empty inherits the §13.2 default
+	// (`restricted`). The `internet` profile is rejected on a `standard`
+	// (runc) pool at admission per the §13.2 cross-control.
+	// +kubebuilder:validation:Enum=restricted;provider-direct;internet
+	// +optional
+	EgressProfile string `json:"egressProfile,omitempty"`
+
 	// ResourceClass is the §5.2 pod resource class.
 	// +kubebuilder:validation:Enum=small;medium;large
 	// +optional

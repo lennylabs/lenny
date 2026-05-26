@@ -1084,6 +1084,13 @@ playground:
 # POST /v1/admin/runtimes/{name}/tenant-access after install. The
 # runtime images live in their own repositories and are pulled lazily
 # on first session start.
+#
+# §5.3 supply-chain controls require every Runtime image to be pinned by
+# digest, not tag; the Runtime CRD rejects a non-digest reference. The
+# digests below are release-pinned placeholders (64 zero hex chars) the
+# release process replaces with the published per-image digest for the
+# chart version. Deployers mirroring these images to a private registry
+# pin their own digests in an override.
 referenceRuntimes:
   enabled: true
   # catalog is the §26 runtime set. Trim it to the runtimes a
@@ -1091,44 +1098,44 @@ referenceRuntimes:
   # through the admin API after install.
   catalog:
     - name: claude-code
-      image: ghcr.io/lennylabs/runtime-claude-code:1.0.0
+      image: ghcr.io/lennylabs/runtime-claude-code@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [anthropic_direct, aws_bedrock, gcp_vertex_anthropic]
     - name: gemini-cli
-      image: ghcr.io/lennylabs/runtime-gemini-cli:1.0.0
+      image: ghcr.io/lennylabs/runtime-gemini-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [gcp_vertex_gemini, google_ai_studio]
     - name: codex
-      image: ghcr.io/lennylabs/runtime-codex:1.0.0
+      image: ghcr.io/lennylabs/runtime-codex@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [openai_direct, azure_openai]
     - name: cursor-cli
-      image: ghcr.io/lennylabs/runtime-cursor-cli:1.0.0
+      image: ghcr.io/lennylabs/runtime-cursor-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [cursor_direct]
     - name: chat
-      image: ghcr.io/lennylabs/runtime-chat:1.0.0
+      image: ghcr.io/lennylabs/runtime-chat@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       allowedResourceClasses: [small]
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
     - name: langgraph
-      image: ghcr.io/lennylabs/runtime-langgraph:1.0.0
+      image: ghcr.io/lennylabs/runtime-langgraph@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini, azure_openai]
     - name: mastra
-      image: ghcr.io/lennylabs/runtime-mastra:1.0.0
+      image: ghcr.io/lennylabs/runtime-mastra@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
     - name: openai-assistants
-      image: ghcr.io/lennylabs/runtime-openai-assistants:1.0.0
+      image: ghcr.io/lennylabs/runtime-openai-assistants@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       supportedProviders: [openai_direct, azure_openai]
     - name: crewai
-      image: ghcr.io/lennylabs/runtime-crewai:1.0.0
+      image: ghcr.io/lennylabs/runtime-crewai@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct]
 

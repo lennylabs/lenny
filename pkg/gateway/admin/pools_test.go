@@ -474,3 +474,99 @@ func TestGetPoolOmitsLiveStatusWhenUnavailable(t *testing.T) {
 		})
 	}
 }
+
+// TestCreatePoolEgressProfileRoundTrip exercises the §13.2 egressProfile
+// admin round-trip: an explicit profile persists, and an omitted one
+// resolves to the §13.2 default (restricted).
+func TestCreatePoolEgressProfileRoundTrip(t *testing.T) {
+	router, store, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "p-internet", RuntimeRef: "echo", IsolationProfile: "sandboxed",
+		EgressProfile: "internet",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if row, _ := store.Get(context.Background(), "p-internet"); string(row.EgressProfile) != "internet" {
+		t.Errorf("stored egressProfile = %q, want internet", row.EgressProfile)
+	}
+
+	rr = poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "p-default", RuntimeRef: "echo", IsolationProfile: "sandboxed",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if row, _ := store.Get(context.Background(), "p-default"); string(row.EgressProfile) != "restricted" {
+		t.Errorf("omitted egressProfile defaulted to %q, want restricted (§13.2)", row.EgressProfile)
+	}
+}
+
+// TestCreatePoolRejectsInternetEgressOnStandard surfaces the §13.2
+// cross-control through the admin API as a 400 VALIDATION_ERROR.
+func TestCreatePoolRejectsInternetEgressOnStandard(t *testing.T) {
+	router, _, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "runc-internet", RuntimeRef: "echo", IsolationProfile: "standard",
+		AllowStandardIsolation: true, EgressProfile: "internet",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreatePoolRejectsUnknownEgressProfile(t *testing.T) {
+	router, _, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "bad", RuntimeRef: "echo", IsolationProfile: "sandboxed", EgressProfile: "open",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreatePoolEmitsWeakIsolationEvent covers F-5.3.12: a runc pool
+// admitted via allowStandardIsolation emits the DirectModeWeakIsolation
+// warning audit event in addition to admin.pool.created.
+func TestCreatePoolEmitsWeakIsolationEvent(t *testing.T) {
+	router, _, runtimes, audit := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "runc-pool", RuntimeRef: "echo", IsolationProfile: "standard",
+		AllowStandardIsolation: true,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var weak bool
+	for _, e := range audit.snapshot() {
+		if e.Type == "pool.direct_mode_weak_isolation" {
+			weak = true
+		}
+	}
+	if !weak {
+		t.Errorf("expected pool.direct_mode_weak_isolation event, got %+v", audit.snapshot())
+	}
+}
+
+// TestCreateSandboxedPoolEmitsNoWeakIsolationEvent confirms a sandboxed
+// pool (the default posture) emits no weak-isolation warning.
+func TestCreateSandboxedPoolEmitsNoWeakIsolationEvent(t *testing.T) {
+	router, _, runtimes, audit := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "gvisor-pool", RuntimeRef: "echo", IsolationProfile: "sandboxed",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	for _, e := range audit.snapshot() {
+		if e.Type == "pool.direct_mode_weak_isolation" {
+			t.Errorf("sandboxed pool should not emit weak-isolation event")
+		}
+	}
+}

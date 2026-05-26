@@ -106,6 +106,18 @@ spec:
                 - proxy
                 - direct
                 type: string
+              egressProfile:
+                description: |-
+                  EgressProfile is the §13.2 egress profile the WarmPoolController
+                  stamps onto the pool's pods so the matching pre-created
+                  NetworkPolicy takes effect. Empty inherits the §13.2 default
+                  (`restricted`). The `internet` profile is rejected on a `standard`
+                  (runc) pool at admission per the §13.2 cross-control.
+                enum:
+                - restricted
+                - provider-direct
+                - internet
+                type: string
               executionMode:
                 description: |-
                   ExecutionMode is the §5.2 pod-reuse mode. Empty is treated as
@@ -264,7 +276,6 @@ spec:
                   terminationGracePeriodSeconds for this pool. spec: §5.2 line 516 —
                   for concurrent-workspace pools the deployer sets it to cover the
                   per-slot checkpoint budget (`maxConcurrent × max_tiered_checkpoint_cap
-                  + checkpointBarrierAckTimeoutSeconds + 30`); §6.4 line 67 requires
                   at least `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces
                   the §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
                   clamps it down.

@@ -39,6 +39,15 @@ tests:
           path: spec.supportedProviders
           content: anthropic_direct
 
+  - it: pins every reference runtime image by digest per §5.3
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - matchRegex:
+          path: spec.image
+          pattern: "@sha256:[A-Fa-f0-9]{64}$"
+
   - it: registers the chat runtime restricted to the small resource class
     documentSelector:
       path: metadata.name

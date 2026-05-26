@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/sandbox/egress"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -87,6 +88,13 @@ type Pool struct {
 	// per §5.3 security note.
 	AllowStandardIsolation bool
 
+	// EgressProfile is the §13.2 per-pool egress profile (`restricted`,
+	// `provider-direct`, `internet`). Empty resolves to the §13.2
+	// default (`restricted`) at admission. The store rejects an
+	// `internet` profile on a `standard` (runc) pool per the §13.2
+	// cross-control.
+	EgressProfile egress.Profile
+
 	// CreatedAt / UpdatedAt / DeletedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -125,6 +133,43 @@ func (s ConcurrencyStyle) IsValid() bool {
 		}
 	}
 	return false
+}
+
+// ValidateEgressIsolation enforces the §13.2 cross-control that pairs a
+// pool's egress profile with its isolation profile. An empty egress
+// profile is treated as the §13.2 default (`restricted`), which is
+// compatible with any isolation profile, so the check fires only when a
+// pool explicitly opts into a broader egress profile. The current rule
+// rejects the `internet` egress profile on a `standard` (runc) pool: a
+// runc pod with broad internet egress is the high-blast-radius
+// configuration the §5.3 security note targets and §13.2 forbids.
+//
+// A non-empty but unrecognised egress profile is rejected so a mistyped
+// value fails closed rather than being silently ignored.
+//
+// spec: §13.2 — "the `internet` profile requires a sandboxed isolation
+// profile (`sandboxed` or `microvm`) ... The warm pool controller
+// rejects pool configurations that combine `standard` isolation with
+// `internet` egress at validation time."
+func ValidateEgressIsolation(p Pool) error {
+	if p.EgressProfile == "" {
+		return nil
+	}
+	if !egress.IsValid(p.EgressProfile) {
+		return errors.New("poolstore: egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)")
+	}
+	// Resolve the effective isolation profile the way the admission path
+	// does: an empty profile defaults to the §5.3 production default,
+	// which always satisfies the cross-control, so only an explicit
+	// `standard` profile can trip it.
+	iso := p.IsolationProfile
+	if iso == "" {
+		iso = isolation.Default()
+	}
+	if !egress.AllowsIsolation(p.EgressProfile, iso) {
+		return errors.New("poolstore: egressProfile=internet requires isolationProfile sandboxed or microvm; standard (runc) is forbidden (§13.2)")
+	}
+	return nil
 }
 
 // ValidateConcurrentConfig enforces the §5.2 / §13.1 admission rules for
@@ -254,6 +299,9 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if p.IsolationProfile == isolation.ProfileStandard && !p.AllowStandardIsolation {
 		return errors.New("poolstore: isolationProfile=standard requires allowStandardIsolation=true (§5.3)")
 	}
+	if err := ValidateEgressIsolation(p); err != nil {
+		return err
+	}
 	if err := ValidateConcurrentConfig(p); err != nil {
 		return err
 	}
@@ -304,6 +352,9 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 	}
 	if row.IsolationProfile == isolation.ProfileStandard && !row.AllowStandardIsolation {
 		return Pool{}, errors.New("poolstore: isolationProfile=standard requires allowStandardIsolation=true (§5.3)")
+	}
+	if err := ValidateEgressIsolation(row); err != nil {
+		return Pool{}, err
 	}
 	if err := ValidateConcurrentConfig(row); err != nil {
 		return Pool{}, err

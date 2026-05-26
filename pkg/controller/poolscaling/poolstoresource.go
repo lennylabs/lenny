@@ -67,6 +67,7 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		Template: lennyv1.SandboxTemplateSpec{
 			RuntimeRef:           p.RuntimeRef,
 			IsolationProfile:     string(p.IsolationProfile),
+			EgressProfile:        string(p.EgressProfile),
 			ResourceClass:        p.ResourceClass,
 			ExecutionMode:        string(p.ExecutionMode),
 			ConcurrencyStyle:     string(p.ConcurrencyStyle),

@@ -16,8 +16,14 @@ type RuntimeSpec struct {
 	// +kubebuilder:validation:Required
 	Type string `json:"type"`
 
-	// Image is the OCI image reference the warm pool launches.
+	// Image is the OCI image reference the warm pool launches. Per §5.3
+	// images must be pinned by digest, not tag: the reference must
+	// contain an `@sha256:<64-hex>` digest. The Pattern enforces the
+	// §5.3 supply-chain MUST at the CRD layer so a `kubectl apply` of a
+	// tag-pinned Runtime is rejected by the API server, matching the
+	// admin-API digest check.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`@sha256:[A-Fa-f0-9]{64}$`
 	Image string `json:"image"`
 
 	// IntegrationLevel is the §5.1 conformance level the runtime

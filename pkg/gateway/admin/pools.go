@@ -12,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/egress"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -50,6 +51,11 @@ type PoolPayload struct {
 	MaxSessionAgeSeconds   int    `json:"maxSessionAgeSeconds,omitempty"`
 	AllowStandardIsolation bool   `json:"allowStandardIsolation,omitempty"`
 
+	// EgressProfile is the §13.2 per-pool egress profile (`restricted`,
+	// `provider-direct`, `internet`). Empty on create resolves to the
+	// §13.2 default (`restricted`).
+	EgressProfile string `json:"egressProfile,omitempty"`
+
 	// ConcurrencyStyle, MaxConcurrent, AcknowledgeProcessLevelIsolation,
 	// CleanupTimeoutSeconds, and AllowCrossTenantReuse are the §5.2
 	// concurrent-mode (`executionMode: concurrent`) configuration. They
@@ -84,6 +90,7 @@ type UpdatePoolRequest struct {
 	WarmCount                        *int    `json:"warmCount,omitempty"`
 	MaxSessionAgeSeconds             *int    `json:"maxSessionAgeSeconds,omitempty"`
 	AllowStandardIsolation           *bool   `json:"allowStandardIsolation,omitempty"`
+	EgressProfile                    *string `json:"egressProfile,omitempty"`
 	ConcurrencyStyle                 *string `json:"concurrencyStyle,omitempty"`
 	MaxConcurrent                    *int    `json:"maxConcurrent,omitempty"`
 	AcknowledgeProcessLevelIsolation *bool   `json:"acknowledgeProcessLevelIsolation,omitempty"`
@@ -101,6 +108,7 @@ func fromPool(p poolstore.Pool) PoolPayload {
 		WarmCount:                        p.WarmCount,
 		MaxSessionAgeSeconds:             p.MaxSessionAgeSeconds,
 		AllowStandardIsolation:           p.AllowStandardIsolation,
+		EgressProfile:                    string(p.EgressProfile),
 		ConcurrencyStyle:                 string(p.ConcurrencyStyle),
 		MaxConcurrent:                    p.MaxConcurrent,
 		AcknowledgeProcessLevelIsolation: p.AcknowledgeProcessLevelIsolation,
@@ -148,6 +156,9 @@ func (p PoolPayload) validateEnums() error {
 	if p.ConcurrencyStyle != "" && !poolstore.ConcurrencyStyle(p.ConcurrencyStyle).IsValid() {
 		return errors.New("concurrencyStyle is not a recognised §5.2 style (workspace, stateless)")
 	}
+	if p.EgressProfile != "" && !egress.IsValid(egress.Profile(p.EgressProfile)) {
+		return errors.New("egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)")
+	}
 	return nil
 }
 
@@ -193,9 +204,16 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		WarmCount:                        body.WarmCount,
 		MaxSessionAgeSeconds:             body.MaxSessionAgeSeconds,
 		AllowStandardIsolation:           body.AllowStandardIsolation,
+		EgressProfile:                    egress.Profile(body.EgressProfile),
 		CreatedAt:                        r.clock(),
 	}
 	pl.UpdatedAt = pl.CreatedAt
+	if pl.EgressProfile == "" {
+		// spec: §13.2 — an omitted egress profile resolves to the
+		// narrowest egress (`restricted`), so the stored record reflects
+		// the resolved profile rather than an ambiguous empty value.
+		pl.EgressProfile = egress.Default()
+	}
 	if pl.IsolationProfile == "" {
 		// spec: §5.3 line 677 — in dev mode the default isolation profile
 		// falls back to `standard` (runc) so a developer can launch pods on
@@ -232,9 +250,32 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		"isolationProfile": string(stored.IsolationProfile),
 		"executionMode":    string(stored.ExecutionMode),
 	})
+	r.maybeEmitWeakIsolation(req.Context(), principal, stored)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(fromPool(stored))
+}
+
+// maybeEmitWeakIsolation emits the §5.3 DirectModeWeakIsolation warning
+// audit event when a pool runs under `standard` (runc) isolation via the
+// explicit `allowStandardIsolation: true` opt-in. The opt-in is the
+// deliberately-weak-isolation posture the §5.3 security note targets and
+// §4.9 line 1489 requires a warning signal for; the standard
+// `admin.pool.created` / `admin.pool.updated` event does not distinguish
+// it from a sandboxed pool, so this companion event gives compliance
+// teams an audit-trail signal that a runc pool was admitted. A pool that
+// is not runc, or one rejected before storage, emits nothing.
+func (r *Router) maybeEmitWeakIsolation(ctx context.Context, p authmw.Principal, pool poolstore.Pool) {
+	if pool.IsolationProfile != isolation.ProfileStandard || !pool.AllowStandardIsolation {
+		return
+	}
+	r.emit(ctx, p, "pool.direct_mode_weak_isolation", pool.Name, map[string]any{
+		"isolationProfile":       string(pool.IsolationProfile),
+		"allowStandardIsolation": true,
+		"egressProfile":          string(pool.EgressProfile),
+		"severity":               "warning",
+		"reason":                 "pool admitted under standard (runc) isolation via explicit allowStandardIsolation opt-in (§5.3)",
+	})
 }
 
 func (r *Router) handleListPools(w http.ResponseWriter, req *http.Request) {
@@ -380,6 +421,12 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 			"concurrencyStyle is not a recognised §5.2 style (workspace, stateless)", nil)
 		return
 	}
+	if body.EgressProfile != nil && *body.EgressProfile != "" &&
+		!egress.IsValid(egress.Profile(*body.EgressProfile)) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)", nil)
+		return
+	}
 	// runtimeRef cross-check.
 	if body.RuntimeRef != nil && *body.RuntimeRef != "" && r.runtimes != nil {
 		if _, err := r.runtimes.Get(req.Context(), *body.RuntimeRef); err != nil {
@@ -409,6 +456,9 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.AllowStandardIsolation != nil {
 			p.AllowStandardIsolation = *body.AllowStandardIsolation
+		}
+		if body.EgressProfile != nil {
+			p.EgressProfile = egress.Profile(*body.EgressProfile)
 		}
 		if body.ConcurrencyStyle != nil {
 			p.ConcurrencyStyle = poolstore.ConcurrencyStyle(*body.ConcurrencyStyle)
@@ -444,6 +494,7 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 	r.emit(req.Context(), principal, "admin.pool.updated", name, map[string]any{
 		"changedFields": changedPoolFields(body),
 	})
+	r.maybeEmitWeakIsolation(req.Context(), principal, updated)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromPool(updated))
 }
@@ -490,6 +541,9 @@ func changedPoolFields(b UpdatePoolRequest) []string {
 	}
 	if b.AllowStandardIsolation != nil {
 		out = append(out, "allowStandardIsolation")
+	}
+	if b.EgressProfile != nil {
+		out = append(out, "egressProfile")
 	}
 	if b.ConcurrencyStyle != nil {
 		out = append(out, "concurrencyStyle")
