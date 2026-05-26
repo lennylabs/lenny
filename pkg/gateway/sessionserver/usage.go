@@ -148,6 +148,18 @@ func terminalSessionEvent(st session.State) (et events.EventType, severity strin
 	}
 }
 
+// OnSessionTerminal is the watchdog / orphancleanup TerminalHook that
+// runs the full terminal-side-effects pipeline (workspace seal, executor
+// release — which drains the pod and releases concurrent-mode slots per
+// §5.2 line 519 — audit, SSE, billing, archive). It adapts the private
+// recordSessionCompleted so background sweepers force-terminating a
+// session emit the same signals exactly once as a session terminated by
+// REST. spec: §5.2 line 519; §6.2 lines 105-117; §11.7; §7.2 lines 137,
+// 141. Closes F-5.2.26.
+func (s *Server) OnSessionTerminal(ctx context.Context, sess sessionstore.Session) {
+	s.recordSessionCompleted(ctx, sess)
+}
+
 // recordSessionCompleted runs the side effects of a session reaching a
 // terminal state: it takes the §7.1 final workspace snapshot, releases
 // the session's executor state — for a pod-backed session this shuts

@@ -2303,9 +2303,16 @@ func main() {
 	// Sweeps every 5 s; transitions stuck sessions to failed.
 	// Tenants list is sourced from the in-memory store so newly
 	// registered tenants are picked up on the next tick.
+	// §5.2 line 519 / §6.2: a session forced terminal by background sweep
+	// must run the full gateway-side terminal pipeline — workspace seal,
+	// executor release (concurrent-mode slot release + pod drain), audit,
+	// SSE, billing, archive — so the watchdog-driven path emits the same
+	// signals exactly once as the REST-driven terminal path. Closes
+	// F-5.2.26.
 	wd := watchdog.New(sessions, tenantsLister{tenants}, watchdog.Config{}, nil).
 		WithBilling(billing).
-		WithTreeArchive(treeArchive)
+		WithTreeArchive(treeArchive).
+		WithTerminalHook(sessionSrv)
 	watchdogCtx, watchdogCancel := context.WithCancel(context.Background())
 	defer watchdogCancel()
 	go wd.Run(watchdogCtx, func(res watchdog.Result, err error) {
@@ -2354,6 +2361,9 @@ func main() {
 	orphanSweeper := orphancleanup.New(sessions, tenantsLister{tenants}, orphancleanup.Options{
 		Archive: treeArchive,
 		Clock:   clockinject.Now,
+		// F-5.2.26: same terminal pipeline as the watchdog so an orphan
+		// terminated by background sweep also releases its slot/pod.
+		Terminal: sessionSrv,
 	})
 	go orphanSweeper.Run(watchdogCtx, func(terminated int, err error) {
 		if err != nil {

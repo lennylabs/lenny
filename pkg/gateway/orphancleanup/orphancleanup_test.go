@@ -134,6 +134,60 @@ func TestTickArchivesTerminatedOrphan(t *testing.T) {
 	}
 }
 
+// fakeTerminalHook captures terminal-pipeline invocations.
+type fakeTerminalHook struct{ calls []sessionstore.Session }
+
+func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, sess sessionstore.Session) {
+	f.calls = append(f.calls, sess)
+}
+
+// spec: §5.2 line 519 + §8.10 — F-5.2.26: an orphan terminated by the
+// cascade sweep must run the gateway-side terminal pipeline so its
+// executor (concurrent-mode slot release + pod drain) is released.
+func TestTickInvokesTerminalHook_spec_5_2_519(t *testing.T) {
+	store := memstore.New()
+	hook := &fakeTerminalHook{}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seed(t, store, "sess_root", "", session.StateCompleted, base)
+	seed(t, store, "sess_child", "sess_root", session.StateRunning, base)
+	sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"},
+		orphancleanup.Options{Terminal: hook})
+
+	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(hook.calls) != 1 || hook.calls[0].ID != "sess_child" {
+		t.Fatalf("OnSessionTerminal invocations: %+v", hook.calls)
+	}
+	if hook.calls[0].State != session.StateExpired {
+		t.Errorf("hook state = %q, want expired", hook.calls[0].State)
+	}
+}
+
+// With a TerminalHook the in-package archive emission is skipped (the
+// hook drives the §8.10 archive write via the session-server pipeline),
+// so the orphan is archived exactly once.
+func TestTickWithTerminalHookSkipsInPackageArchive(t *testing.T) {
+	store := memstore.New()
+	archive := treearchive.NewMemory()
+	hook := &fakeTerminalHook{}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seed(t, store, "sess_root", "", session.StateCompleted, base)
+	seed(t, store, "sess_child", "sess_root", session.StateRunning, base)
+	sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"},
+		orphancleanup.Options{Archive: archive, Terminal: hook})
+
+	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if _, err := archive.GetByNode(context.Background(), "acme", "sess_child"); err == nil {
+		t.Fatal("in-package archive must not fire when TerminalHook is wired")
+	}
+	if len(hook.calls) != 1 {
+		t.Fatalf("OnSessionTerminal calls: got %d, want 1", len(hook.calls))
+	}
+}
+
 func TestTickIsIdempotent(t *testing.T) {
 	store := memstore.New()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

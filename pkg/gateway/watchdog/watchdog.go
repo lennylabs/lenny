@@ -127,14 +127,30 @@ type StaticTenants []string
 // ListTenants implements TenantLister.
 func (s StaticTenants) ListTenants(_ context.Context) ([]string, error) { return s, nil }
 
+// TerminalHook is invoked when the watchdog forces a session to a
+// terminal state (failed or expired). It supersedes the watchdog's
+// in-package billing/archive emission when wired, so terminal side
+// effects — workspace seal, executor release (which drains the pod and
+// for concurrent-mode sessions releases the slot per §5.2 line 519),
+// §11.7 audit, §7.2 SSE, §11.2.1 billing, and §8.10 archive — run once
+// through the same Server.recordSessionCompleted path the REST handlers
+// use.
+//
+// spec: §5.2 line 519 — slot release on session end / expiry; §6.2 lines
+// 105-117 — executor release maps the terminal phase onto the Sandbox.
+type TerminalHook interface {
+	OnSessionTerminal(ctx context.Context, sess sessionstore.Session)
+}
+
 // Watchdog drives the periodic sweep.
 type Watchdog struct {
-	store   sessionstore.Store
-	tenants TenantLister
-	cfg     Config
-	clock   func() time.Time
-	billing billingstore.Store
-	archive treearchive.Store
+	store    sessionstore.Store
+	tenants  TenantLister
+	cfg      Config
+	clock    func() time.Time
+	billing  billingstore.Store
+	archive  treearchive.Store
+	terminal TerminalHook
 }
 
 // New returns a Watchdog. The clock argument is optional; pass nil to
@@ -162,6 +178,23 @@ func (w *Watchdog) WithBilling(b billingstore.Store) *Watchdog {
 // archives a child session it forces to a terminal state.
 func (w *Watchdog) WithTreeArchive(a treearchive.Store) *Watchdog {
 	w.archive = a
+	return w
+}
+
+// WithTerminalHook wires the gateway-side terminal-side-effects pipeline
+// (workspace seal, executor release, audit, SSE, billing, archive). When
+// set, the watchdog delegates the full terminal pipeline to hook and
+// SKIPS its own billing/archive emission, so a session forced terminal
+// by background sweep emits the same signals exactly once as a session
+// terminated by REST. Without a hook the watchdog falls back to its own
+// best-effort billing + child-archive (preserving the pre-hook behaviour)
+// — but in that mode concurrent-mode slot releases stay leaked until
+// pod termination per F-5.2.26.
+//
+// spec: §5.2 line 519 — slot release; §7.2 lines 137, 141 — SSE; §11.7 —
+// audit; §6.2 — executor release.
+func (w *Watchdog) WithTerminalHook(hook TerminalHook) *Watchdog {
+	w.terminal = hook
 	return w
 }
 
@@ -328,10 +361,22 @@ func (w *Watchdog) Run(ctx context.Context, onTick func(Result, error)) {
 }
 
 // recordCompleted runs the side effects of a session the watchdog
-// forced to a terminal state: it archives a child session to the §8.10
-// session_tree_archive and emits the §11.2.1 session.completed billing
-// event. Best-effort: a failure must not abort the sweep.
+// forced to a terminal state. When a TerminalHook is wired (production
+// gateway path), it delegates the full terminal pipeline — workspace
+// seal, executor release (which releases concurrent-mode slots per §5.2
+// line 519 and drains pods per §6.2), audit, SSE, billing, archive — to
+// the hook so the watchdog-driven path emits the same signals exactly
+// once as the REST-driven terminal path. Without a hook the watchdog
+// falls back to its own §11.2.1 billing event and §8.10 child archive.
+// Best-effort either way: a failure must not abort the sweep.
+//
+// spec: §5.2 line 519 — concurrent-mode slot release on session end;
+// §11.2.1 — billing; §8.10 — child archive.
 func (w *Watchdog) recordCompleted(ctx context.Context, sess sessionstore.Session) {
+	if w.terminal != nil {
+		w.terminal.OnSessionTerminal(ctx, sess)
+		return
+	}
 	w.archiveChild(ctx, sess)
 	if w.billing == nil {
 		return

@@ -46,6 +46,20 @@ type StaticTenants []string
 // ListTenants implements TenantLister.
 func (s StaticTenants) ListTenants(_ context.Context) ([]string, error) { return s, nil }
 
+// TerminalHook is invoked when the orphan-cleanup sweep forces an
+// orphaned child session to a terminal state. It supersedes the
+// in-package archive emission when wired so terminal side effects —
+// workspace seal, executor release (which releases concurrent-mode slots
+// per §5.2 line 519 and drains pods per §6.2), §11.7 audit, §7.2 SSE,
+// §11.2.1 billing, and §8.10 archive — run once through the same
+// Server.recordSessionCompleted path the REST handlers use.
+//
+// spec: §5.2 line 519 — slot release on session end / expiry; §8.10 —
+// orphan cascade.
+type TerminalHook interface {
+	OnSessionTerminal(ctx context.Context, sess sessionstore.Session)
+}
+
 // Sweeper runs the periodic §8.10 orphan-cleanup sweep.
 type Sweeper struct {
 	store          sessionstore.Store
@@ -54,6 +68,7 @@ type Sweeper struct {
 	cascadeTimeout time.Duration
 	interval       time.Duration
 	clock          func() time.Time
+	terminal       TerminalHook
 }
 
 // Options configures a Sweeper. A zero field selects its §8.10
@@ -68,6 +83,9 @@ type Options struct {
 	// Archive, when set, receives a §8.10 archive record for each
 	// orphan the sweep terminates.
 	Archive treearchive.Store
+	// Terminal, when set, supersedes the in-package archive emission with
+	// the gateway-side terminal-side-effects pipeline. See TerminalHook.
+	Terminal TerminalHook
 }
 
 // New returns a Sweeper.
@@ -79,6 +97,7 @@ func New(store sessionstore.Store, tenants TenantLister, opts Options) *Sweeper 
 		cascadeTimeout: opts.CascadeTimeout,
 		interval:       opts.Interval,
 		clock:          opts.Clock,
+		terminal:       opts.Terminal,
 	}
 	if s.cascadeTimeout <= 0 {
 		s.cascadeTimeout = DefaultCascadeTimeout
@@ -145,7 +164,14 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 		}
 		if updated.State == session.StateExpired {
 			terminated++
-			s.archiveOrphan(ctx, updated, root.ID)
+			if s.terminal != nil {
+				// Gateway-side terminal pipeline — release the executor
+				// (drains the pod, returns concurrent-mode slots per §5.2
+				// line 519), emit SSE/audit/billing, and archive the child.
+				s.terminal.OnSessionTerminal(ctx, updated)
+			} else {
+				s.archiveOrphan(ctx, updated, root.ID)
+			}
 		}
 	}
 	return terminated, nil

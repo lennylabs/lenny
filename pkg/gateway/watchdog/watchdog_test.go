@@ -432,6 +432,79 @@ func TestTickArchivesExpiredChild(t *testing.T) {
 	}
 }
 
+// fakeTerminalHook captures terminal-pipeline invocations.
+type fakeTerminalHook struct{ calls []sessionstore.Session }
+
+func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, sess sessionstore.Session) {
+	f.calls = append(f.calls, sess)
+}
+
+// spec: §5.2 line 519 + §6.2 — F-5.2.26: a session forced terminal by
+// the watchdog must run the gateway-side terminal pipeline so its
+// executor (which for concurrent-mode sessions releases the slot) is
+// released and a single set of signals fires.
+func TestTickInvokesTerminalHook_spec_5_2_519(t *testing.T) {
+	store := memstore.New()
+	hook := &fakeTerminalHook{}
+	stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_stuck", "acme", session.StateCreated, stale)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithTerminalHook(hook)
+
+	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(hook.calls) != 1 || hook.calls[0].ID != "sess_stuck" {
+		t.Fatalf("OnSessionTerminal invocations: %+v", hook.calls)
+	}
+	if hook.calls[0].State != session.StateFailed {
+		t.Errorf("hook state = %q, want failed", hook.calls[0].State)
+	}
+}
+
+// When TerminalHook is wired the watchdog skips its own billing emission
+// (the hook is the canonical billing path) so the session is billed
+// exactly once.
+func TestTickWithTerminalHookDoesNotDoubleBill_spec_5_2_519(t *testing.T) {
+	store := memstore.New()
+	billing := billingstore.NewMemory()
+	hook := &fakeTerminalHook{}
+	stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_stuck", "acme", session.StateCreated, stale)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithBilling(billing).
+		WithTerminalHook(hook)
+
+	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	events, err := billing.Since(context.Background(), "acme", 0, 0)
+	if err != nil {
+		t.Fatalf("Since: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("watchdog must delegate billing to the TerminalHook; got %d in-package events", len(events))
+	}
+}
+
+// The TerminalHook also fires for the maxSessionAge expiry sweep so an
+// expired concurrent-mode session releases its slot.
+func TestTickExpiryInvokesTerminalHook_spec_5_2_519(t *testing.T) {
+	store := memstore.New()
+	hook := &fakeTerminalHook{}
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_old", "acme", session.StateRunning, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithTerminalHook(hook)
+
+	if _, err := w.Tick(context.Background(), born.Add(3*time.Hour)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(hook.calls) != 1 || hook.calls[0].State != session.StateExpired {
+		t.Fatalf("OnSessionTerminal expiry call: %+v", hook.calls)
+	}
+}
+
 func TestTickDoesNotArchiveAForcedRootSession(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
