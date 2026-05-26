@@ -1764,6 +1764,12 @@ func main() {
 	if *elicitationFloor != "" {
 		adminRouter = adminRouter.WithElicitationFloor(*elicitationFloor)
 	}
+	// §6.2 line 260 / §11.3 line 219: pin the admin runtime validator
+	// to the same outer bound the finalizing-state watchdog enforces, so
+	// the §15.1 POST/PUT /v1/admin/runtimes and POST /v1/admin/bootstrap
+	// handlers reject a runtime whose setupPolicy.timeoutSeconds exceeds
+	// gateway.maxFinalizingTimeoutSeconds.
+	adminRouter = adminRouter.WithMaxFinalizingTimeoutSeconds(watchdog.DefaultMaxFinalizingStateSeconds)
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.

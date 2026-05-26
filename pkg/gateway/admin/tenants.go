@@ -157,6 +157,17 @@ type Router struct {
 	// dev-mode isolation default for pools and runtimes that omit
 	// isolationProfile.
 	devMode bool
+
+	// maxFinalizingTimeoutSeconds is the gateway-side outer bound
+	// from §11.3 line 219. When > 0, runtime registration and bootstrap
+	// reject a runtime whose `setupPolicy.timeoutSeconds` exceeds it,
+	// honouring the §6.2 line 260 invariant
+	// `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds`. Zero
+	// disables enforcement (used in tests that do not exercise the
+	// finalizing-state watchdog).
+	//
+	// spec: §6.2 line 260; §11.3 line 219.
+	maxFinalizingTimeoutSeconds int
 }
 
 // KMSProbe is the §12.5 T4 per-tenant KMS availability probe seam.
@@ -239,6 +250,21 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 // gateway has no KMS lifecycle wired.
 func (r *Router) WithKMSProbe(p KMSProbe) *Router {
 	r.kmsProbe = p
+	return r
+}
+
+// WithMaxFinalizingTimeoutSeconds wires the §11.3 line 219 gateway
+// outer bound onto the Router so the §15.1 runtime POST/PUT and
+// bootstrap handlers can reject a runtime whose
+// `setupPolicy.timeoutSeconds` exceeds it. A non-positive value
+// disables enforcement; production should pass the same value the
+// finalizing watchdog uses so the §6.2 line 260 invariant
+// `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds` is enforced at
+// every admission path.
+//
+// spec: §6.2 line 260; §11.3 line 219.
+func (r *Router) WithMaxFinalizingTimeoutSeconds(seconds int) *Router {
+	r.maxFinalizingTimeoutSeconds = seconds
 	return r
 }
 

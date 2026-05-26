@@ -303,6 +303,14 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
 			continue
 		}
+		// §6.2 line 260: the gateway-side maxFinalizingTimeoutSeconds outer
+		// bound must be ≥ the runtime-side setupPolicy.timeoutSeconds inner
+		// bound; reject configurations that violate the invariant at every
+		// admission path, including bootstrap.
+		if err := validateSetupPolicy(p.SetupPolicy, r.maxFinalizingTimeoutSeconds); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
 		if err := validateSetupCommandPolicy(p.SetupCommandPolicy); err != nil {
 			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
 			continue

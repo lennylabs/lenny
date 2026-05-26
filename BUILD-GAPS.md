@@ -14336,51 +14336,73 @@ The runtime cannot parse the code out of the message; the §15.1 error envelope 
 
 ---
 
-### - [ ] F-11.3.24 — `MaxFinalizingSeconds ≥ setupTimeoutSeconds` invariant from §6.2 is a noop in the watchdog [Low] — OPEN
+### - [x] F-11.3.24 — `MaxFinalizingSeconds ≥ setupTimeoutSeconds` invariant from §6.2 is a noop in the watchdog [Low] — CLOSED
 
 `pkg/gateway/watchdog/watchdog.go:102-108` contains the comment "Spec §6.2 finalizing footnote: maxFinalizingTimeoutSeconds must be >= setupTimeoutSeconds. We don't have access to setupTimeoutSeconds here; the relevant invariant is captured at the admin API validation phase." The body is `_ = 0`. The comment acknowledges the deferred check; the admin path should be confirmed as the actual enforcer (out of scope for §11.3, but the marker should not stay).
 
-### - [ ] F-11.3.25 — Default `maxSessionAge` in the watchdog (7200s) is correct, but not source-of-truth-clear [Low] — OPEN
+**Resolution:** dropped the `_ = 0` marker and replaced it with a documentation comment pointing at the admin validator. `admin.validateSetupPolicy` now receives the gateway-side `maxFinalizingTimeoutSeconds` cap and rejects a runtime whose `setupPolicy.timeoutSeconds` exceeds it. The check is wired on the POST/PUT `/v1/admin/runtimes` handlers and the POST `/v1/admin/bootstrap` upsert path; `cmd/lenny-gateway/main.go` pins the admin Router to `watchdog.DefaultMaxFinalizingStateSeconds` so the two enforcement sites agree by construction.
+
+### - [x] F-11.3.25 — Default `maxSessionAge` in the watchdog (7200s) is correct, but not source-of-truth-clear [Low] — CLOSED
 
 `watchdog.go:58` defines `DefaultMaxSessionAgeSeconds = 7200`. Spec §11.3 line 198 / §6.2 line 240 each name 7200s. The value agrees, but with H3 in play this constant is what every session actually gets, so its discoverability matters more than usual.
 
-### - [ ] F-11.3.26 — `MaxAwaitingClientActionSeconds` budget reset interplay with `awaiting_client_action → resume_pending → running` cycles is undocumented [Low] — OPEN
+**Resolution:** broke the `Default*` block into individually-documented constants. Each carries a `// spec: …` citation tying it to the §11.3 line that names the value; `DefaultMaxSessionAgeSeconds` calls out that the per-runtime `runtime.maxSessionAgeSeconds` (§5.1 limits) is the override path and that the platform-wide constant applies to runtimes that do not opt into a tighter cap.
+
+### - [x] F-11.3.26 — `MaxAwaitingClientActionSeconds` budget reset interplay with `awaiting_client_action → resume_pending → running` cycles is undocumented [Low] — CLOSED
 
 `sweepAwaitingClientAction` (`watchdog.go:247-275`) measures `now.Sub(row.UpdatedAt)` against the deadline; when a session re-enters `awaiting_client_action` after a partial resume cycle, `UpdatedAt` advances, so the 900s clock effectively restarts on each entry. The spec is silent on whether this resets or is cumulative; the current code chooses "resets on each entry." Either decision is defensible — this is a documentation comment item.
 
+**Resolution:** added a Reset-semantics paragraph on `sweepAwaitingClientAction` documenting the per-entry interpretation and citing the §11.3 line 198 `maxSessionAge` cap as the upper-bound backstop.
+
 ---
 
-### - [ ] F-11.3.27 — `setupTimeoutSeconds` per-command and aggregate are implemented correctly [Info] — OPEN
+### - [x] F-11.3.27 — `setupTimeoutSeconds` per-command and aggregate are implemented correctly [Info] — CLOSED
 
 `/Users/joan/projects/lenny/pkg/adapter/workspace/setup.go:15-104` enforces both the §5.1 per-command timeout (default 5min) and the aggregate cap with `fail`/`warn` disposition. The `SetupPolicy` enum (`pkg/gateway/runtimestore/runtimestore.go:391-428`) is wired and tested.
 
-### - [ ] F-11.3.28 — Pre-running per-state watchdog budgets are implemented correctly (modulo M1) [Info] — OPEN
+**Resolution:** re-verified — `workspace.RunSetup` applies both the §5.1 per-command timeout and the `SetupOptions.AggregateTimeout` cap with the fail/warn disposition; closed by F-11.3.24's admin-side bound enforcement.
+
+### - [x] F-11.3.28 — Pre-running per-state watchdog budgets are implemented correctly (modulo M1) [Info] — CLOSED
 
 The four §11.3 pre-running timeouts (created/finalizing/ready/starting) are correctly enforced in `pkg/gateway/watchdog/watchdog.go:196-231` with correct failure-reason codes and metric labels.
 
-### - [ ] F-11.3.29 — Delegation-tree recovery uses the §11.3 dual budget (level + tree) correctly [Info] — OPEN
+**Resolution:** re-verified — `Watchdog.Tick` sweeps `created`/`finalizing`/`ready`/`starting` with `Reason*Timeout` failure codes; F-11.3.25 cleaned up the constant doc comments.
+
+### - [x] F-11.3.29 — Delegation-tree recovery uses the §11.3 dual budget (level + tree) correctly [Info] — CLOSED
 
 `/Users/joan/projects/lenny/pkg/delegation/recovery/recovery.go:21-29` defines `DefaultLevelTimeout = 120s` and `DefaultTreeTimeout = 600s`, matching §11.3 lines 226-227.
 
-### - [ ] F-11.3.30 — Orphan-cleanup cascade timeout uses §11.3 default [Info] — OPEN
+**Resolution:** re-verified — `DefaultLevelTimeout = 120 * time.Second` (line 25) and `DefaultTreeTimeout = 600 * time.Second` (line 28) match §11.3.
+
+### - [x] F-11.3.30 — Orphan-cleanup cascade timeout uses §11.3 default [Info] — CLOSED
 
 `/Users/joan/projects/lenny/pkg/gateway/orphancleanup/orphancleanup.go:29-35` defines `DefaultCascadeTimeout = 3600 * time.Second`, matching §11.3 line 225.
 
-### - [ ] F-11.3.31 — `REQUEST_INPUT_TIMEOUT` and `ELICITATION_TIMEOUT` happy paths fire on the spec'd default [Info] — OPEN
+**Resolution:** re-verified — `DefaultCascadeTimeout = 3600 * time.Second` (line 31).
+
+### - [x] F-11.3.31 — `REQUEST_INPUT_TIMEOUT` and `ELICITATION_TIMEOUT` happy paths fire on the spec'd default [Info] — CLOSED
 
 `pkg/gateway/mcptools/mcptools.go:567-625` and `:629-815` apply the 600s defaults defined in §11.3 lines 202, 204 when `Deps.{RequestInputTimeout,ElicitationTimeout}` are unset (which they always are in production wiring — see H6).
 
-### - [ ] F-11.3.32 — Delegation cascade timeout defaults pass through pool config; orphancleanup honours per-tenant overrides via the `Options.CascadeTimeout` field [Info] — OPEN
+**Resolution:** re-verified — `defaultRequestInputTimeout = 600 * time.Second` (line 209) and `defaultElicitationTimeout = 600 * time.Second` (line 213) apply when `Deps.{RequestInputTimeout,ElicitationTimeout}` are unset.
+
+### - [x] F-11.3.32 — Delegation cascade timeout defaults pass through pool config; orphancleanup honours per-tenant overrides via the `Options.CascadeTimeout` field [Info] — CLOSED
 
 `pkg/gateway/orphancleanup/orphancleanup.go:61-65` accepts an `Options.CascadeTimeout` override. The gateway constructs the sweeper with defaults in production (`cmd/lenny-gateway/main.go:1574`).
 
-### - [ ] F-11.3.33 — `interceptor.Timeout(...)` per-registration override is implemented and exercised by tests [Info] — OPEN
+**Resolution:** re-verified — `Options.CascadeTimeout` overrides `DefaultCascadeTimeout` (`orphancleanup.go:77,103`).
+
+### - [x] F-11.3.33 — `interceptor.Timeout(...)` per-registration override is implemented and exercised by tests [Info] — CLOSED
 
 The §11.3 line 212 statement that the 500ms default is per-registration is honoured: `pkg/gateway/interceptor/interceptor.go:273-281` invokes `ic.Timeout()` and falls back to `DefaultTimeout`. The per-interceptor override path works; only the phase-keyed default table (H10) is missing.
 
-### - [ ] F-11.3.34 — Pre-running watchdog and orphan cleanup sweep cadences are documented and overridable [Info] — OPEN
+**Resolution:** re-verified — `interceptor.go:402` calls `ic.Timeout()` then falls back to `phaseDefaultTimeout(phase)` / `DefaultTimeout` (line 122). The phase-keyed default table (`phaseDefaultTimeout`, line 141) is wired and tested.
+
+### - [x] F-11.3.34 — Pre-running watchdog and orphan cleanup sweep cadences are documented and overridable [Info] — CLOSED
 
 `watchdog.go:60` (`DefaultTickInterval = 5*time.Second`) and `orphancleanup.go:34` (`DefaultSweepInterval = 60*time.Second`) are correctly documented and accept overrides through their `Config`/`Options` structs.
+
+**Resolution:** re-verified — `DefaultTickInterval = 5 * time.Second` (watchdog.go) and `DefaultSweepInterval = 60 * time.Second` (orphancleanup.go) are operator-overridable via `Config.TickInterval` and `Options.Interval`.
 
 ---
 

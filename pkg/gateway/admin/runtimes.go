@@ -437,7 +437,18 @@ func (r *Router) validateMinPlatformVersion(minVersion string) error {
 
 // validateSetupPolicy checks a §5.1 setupPolicy: a non-negative
 // timeout and an onTimeout value within the fail / warn enum.
-func validateSetupPolicy(p *runtimestore.SetupPolicy) error {
+//
+// When maxFinalizingTimeoutSeconds > 0 (the gateway-side outer bound
+// from §11.3 line 219), the validator also enforces the §6.2 line 260
+// invariant `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds`. A
+// runtime whose `setupPolicy.timeoutSeconds` exceeds the gateway cap
+// is rejected at admin time per §6.2 line 260 ("the gateway rejects
+// configurations that violate this constraint"), since the
+// finalizing-state watchdog would otherwise terminate the session
+// before the setup phase could complete.
+//
+// spec: §5.1 setupPolicy; §6.2 line 260; §11.3 line 219.
+func validateSetupPolicy(p *runtimestore.SetupPolicy, maxFinalizingTimeoutSeconds int) error {
 	if p == nil {
 		return nil
 	}
@@ -446,6 +457,11 @@ func validateSetupPolicy(p *runtimestore.SetupPolicy) error {
 	}
 	if p.OnTimeout != "" && !p.OnTimeout.IsValid() {
 		return errors.New("setupPolicy.onTimeout must be fail or warn")
+	}
+	if maxFinalizingTimeoutSeconds > 0 && p.TimeoutSeconds > maxFinalizingTimeoutSeconds {
+		return fmt.Errorf(
+			"setupPolicy.timeoutSeconds (%d) exceeds gateway.maxFinalizingTimeoutSeconds (%d); §6.2 requires the gateway outer bound to be ≥ the runtime inner bound",
+			p.TimeoutSeconds, maxFinalizingTimeoutSeconds)
 	}
 	return nil
 }
@@ -733,7 +749,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
-	if err := validateSetupPolicy(body.SetupPolicy); err != nil {
+	if err := validateSetupPolicy(body.SetupPolicy, r.maxFinalizingTimeoutSeconds); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
@@ -941,7 +957,7 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	if body.SetupPolicy != nil {
-		if err := validateSetupPolicy(body.SetupPolicy); err != nil {
+		if err := validateSetupPolicy(body.SetupPolicy, r.maxFinalizingTimeoutSeconds); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 			return
 		}

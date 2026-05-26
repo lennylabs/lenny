@@ -1488,3 +1488,112 @@ func TestCreateRuntimeRejectsWorkspaceTierOnDerived_spec_5_1(t *testing.T) {
 		t.Errorf("workspaceTier on derived: got %d, want 400; body=%s", rr.Code, rr.Body.String())
 	}
 }
+
+// spec: §6.2 line 260 — `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds`;
+// §11.3 line 219 — the gateway-side outer bound.
+func TestCreateRuntimeRejectsSetupTimeoutAboveFinalizingCap_spec_6_2(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	router = router.WithMaxFinalizingTimeoutSeconds(600)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:             "echo",
+		Type:             "agent",
+		Image:            "lenny/echo@sha256:abc",
+		ExecutionMode:    "session",
+		IsolationProfile: "sandboxed",
+		IntegrationLevel: "full",
+		SetupPolicy:      &runtimestore.SetupPolicy{TimeoutSeconds: 900},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("setupTimeout 900 with cap 600: got %d, want 400; body=%s",
+			rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "maxFinalizingTimeoutSeconds") {
+		t.Errorf("error body should cite the gateway cap: %s", rr.Body.String())
+	}
+}
+
+// spec: §6.2 line 260 — the inner bound is enforced inclusively at the
+// boundary; setupTimeoutSeconds == maxFinalizingTimeoutSeconds is accepted.
+func TestCreateRuntimeAcceptsSetupTimeoutAtFinalizingCap_spec_6_2(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	router = router.WithMaxFinalizingTimeoutSeconds(600)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:             "echo",
+		Type:             "agent",
+		Image:            "lenny/echo@sha256:abc",
+		ExecutionMode:    "session",
+		IsolationProfile: "sandboxed",
+		IntegrationLevel: "full",
+		SetupPolicy:      &runtimestore.SetupPolicy{TimeoutSeconds: 600},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("setupTimeout 600 == cap 600: got %d, want 201; body=%s",
+			rr.Code, rr.Body.String())
+	}
+}
+
+// spec: §6.2 line 260 — the cap applies only when the runtime declares a
+// finite aggregate cap; zero (no-cap) remains acceptable because the
+// per-command timeout still bounds work.
+func TestCreateRuntimeAcceptsZeroSetupTimeoutUnderCap_spec_6_2(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	router = router.WithMaxFinalizingTimeoutSeconds(600)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:             "echo",
+		Type:             "agent",
+		Image:            "lenny/echo@sha256:abc",
+		ExecutionMode:    "session",
+		IsolationProfile: "sandboxed",
+		IntegrationLevel: "full",
+		SetupPolicy:      &runtimestore.SetupPolicy{TimeoutSeconds: 0},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("zero setupTimeout (no cap): got %d, want 201; body=%s",
+			rr.Code, rr.Body.String())
+	}
+}
+
+// spec: §6.2 line 260 — the bound applies on PUT updates too, since a PUT
+// can shrink the gateway cap or grow the runtime setupPolicy.
+func TestUpdateRuntimeRejectsSetupTimeoutAboveFinalizingCap_spec_6_2(t *testing.T) {
+	router, store, _ := newRuntimeAdmin(t)
+	router = router.WithMaxFinalizingTimeoutSeconds(600)
+	if err := store.Create(context.Background(), runtimestore.Runtime{
+		Name:             "echo",
+		Image:            "lenny/echo@sha256:abc",
+		Type:             runtimestore.TypeAgent,
+		ExecutionMode:    runtimestore.ExecutionModeSession,
+		IsolationProfile: isolation.ProfileSandboxed,
+		IntegrationLevel: runtimestore.IntegrationLevelFull,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rr := runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/echo",
+		admin.UpdateRuntimeRequest{
+			SetupPolicy: &runtimestore.SetupPolicy{TimeoutSeconds: 1200},
+		})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("PUT setupTimeout 1200 with cap 600: got %d, want 400; body=%s",
+			rr.Code, rr.Body.String())
+	}
+}
+
+// spec: §6.2 line 260 — when no gateway cap is wired (Router constructed
+// without WithMaxFinalizingTimeoutSeconds), the check no-ops so test
+// scaffolding does not need the wiring.
+func TestCreateRuntimeAcceptsArbitrarySetupTimeoutWithoutCap_spec_6_2(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:             "echo",
+		Type:             "agent",
+		Image:            "lenny/echo@sha256:abc",
+		ExecutionMode:    "session",
+		IsolationProfile: "sandboxed",
+		IntegrationLevel: "full",
+		SetupPolicy:      &runtimestore.SetupPolicy{TimeoutSeconds: 36000},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("setupTimeout 36000 without cap: got %d, want 201; body=%s",
+			rr.Code, rr.Body.String())
+	}
+}

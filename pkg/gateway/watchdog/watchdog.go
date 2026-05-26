@@ -49,15 +49,50 @@ const (
 	ReasonStartingTimeout = "STARTING_TIMEOUT"
 )
 
-// Default budgets per §11.3.
+// Default budgets per §11.3 line 191-205. Each is operator-tunable
+// through the matching Config field. The `runtime.maxSessionAgeSeconds`
+// per-runtime override (§5.1) further caps a runtime's session lifetime
+// below the platform default; the watchdog applies the per-row UpdatedAt
+// or createdAt comparison against the effective deadline.
 const (
-	DefaultMaxCreatedStateSeconds         = 300
-	DefaultMaxFinalizingStateSeconds      = 600
-	DefaultMaxReadyStateSeconds           = 300
-	DefaultMaxStartingStateSeconds        = 120
-	DefaultMaxSessionAgeSeconds           = 7200
+	// DefaultMaxCreatedStateSeconds is the §11.3 line 218 default for
+	// the `created` pre-running state: 300s.
+	DefaultMaxCreatedStateSeconds = 300
+
+	// DefaultMaxFinalizingStateSeconds is the §11.3 line 219 default
+	// for the `finalizing` pre-running state: 600s. The
+	// `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds` invariant
+	// (§6.2 line 260) is enforced at runtime admission; see
+	// pkg/gateway/admin.validateSetupPolicy.
+	DefaultMaxFinalizingStateSeconds = 600
+
+	// DefaultMaxReadyStateSeconds is the §11.3 line 220 default for
+	// the `ready` pre-running state: 300s.
+	DefaultMaxReadyStateSeconds = 300
+
+	// DefaultMaxStartingStateSeconds is the §11.3 line 221 default
+	// for the `starting` pre-running state: 120s.
+	DefaultMaxStartingStateSeconds = 120
+
+	// DefaultMaxSessionAgeSeconds is the §11.3 line 198 / §6.2 line
+	// 240 platform-wide total session lifetime cap: 7200s (2h). The
+	// per-runtime `runtime.maxSessionAgeSeconds` (§5.1 limits) caps a
+	// runtime's session lifetime below this default; when unset, the
+	// platform default applies to every session of that runtime, so
+	// this constant is the source-of-truth for the deployer-visible
+	// upper bound on a session that does not opt into a tighter
+	// per-runtime limit.
+	DefaultMaxSessionAgeSeconds = 7200
+
+	// DefaultMaxAwaitingClientActionSeconds is the §11.3 line 199
+	// deadline for the `awaiting_client_action` state: 900s. The
+	// 900s budget resets on each re-entry into the state — see
+	// `sweepAwaitingClientAction` below.
 	DefaultMaxAwaitingClientActionSeconds = 900
-	DefaultTickInterval                   = 5 * time.Second
+
+	// DefaultTickInterval is the §11.3 line 224 default sweep
+	// cadence: 5s.
+	DefaultTickInterval = 5 * time.Second
 )
 
 // Config holds the §11.3 budgets plus the sweep cadence. A zero value
@@ -99,13 +134,15 @@ func (c Config) withDefaults() Config {
 	if c.MaxAwaitingClientActionSeconds <= 0 {
 		c.MaxAwaitingClientActionSeconds = DefaultMaxAwaitingClientActionSeconds
 	}
-	if c.MaxFinalizingSeconds < c.MaxStartingSeconds {
-		// Spec §6.2 finalizing footnote: maxFinalizingTimeoutSeconds
-		// must be >= setupTimeoutSeconds. We don't have access to
-		// setupTimeoutSeconds here; the relevant invariant is
-		// captured at the admin API validation phase.
-		_ = 0
-	}
+	// spec: §6.2 line 260; §11.3 line 219. The watchdog enforces the
+	// gateway-side `maxFinalizingTimeoutSeconds` outer bound; the
+	// runtime-side `setupTimeoutSeconds` inner-bound invariant
+	// (maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds) is enforced
+	// at admin registration in the §15.1 POST/PUT /v1/admin/runtimes
+	// handlers (admin.validateSetupPolicy receives the gateway cap and
+	// rejects the runtime when its setupPolicy.timeoutSeconds exceeds
+	// it). A session that reaches `finalizing` is bounded by
+	// MaxFinalizingSeconds regardless.
 	if c.TickInterval <= 0 {
 		c.TickInterval = DefaultTickInterval
 	}
@@ -277,6 +314,18 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 // maxAwaitingClientAction deadline, measured from the row's UpdatedAt
 // (the instant it entered the state). §7.3 governs the transition:
 // awaiting_client_action → expired when the deadline is exhausted.
+//
+// Reset semantics: a session that traverses awaiting_client_action →
+// resume_pending → running and later re-enters awaiting_client_action
+// gets a fresh 900s budget because UpdatedAt advances on the
+// re-entering write. The §11.3 spec text is silent on whether the
+// deadline is per-entry or cumulative; the gateway implements the
+// per-entry interpretation because §7.3 frames the deadline as the
+// inactivity timeout on a single client-action cycle rather than as a
+// total-time budget. The platform-wide maxSessionAge cap (§11.3 line
+// 198, default 7200s) bounds the cumulative case from above and runs
+// in the same sweep, so a misbehaving client cannot indefinitely
+// re-arm the inner budget.
 func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	rows, err := w.store.List(ctx, tenant,
 		sessionstore.ListFilter{State: session.StateAwaitingClientAction})
