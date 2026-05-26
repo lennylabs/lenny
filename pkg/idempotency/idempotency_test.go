@@ -56,6 +56,49 @@ func TestKeyValidateRejectsMissingFields(t *testing.T) {
 	}
 }
 
+// spec: §11.5 line 277 — the 128-character cap is measured in runes,
+// so a 128-rune multi-byte key is admissible even though its byte
+// length exceeds 128. Closes F-11.5.11.
+func TestKeyValidateRuneLengthAcceptsMultibyteUpToCap(t *testing.T) {
+	// 128 Cyrillic letters; each is 2 UTF-8 bytes, so the byte length
+	// is 256 — well over the byte-count cap the prior implementation
+	// applied. Validate must accept it.
+	value := strings.Repeat("я", MaxKeyLength)
+	if got := utf8RuneCount(value); got != MaxKeyLength {
+		t.Fatalf("test fixture: want %d runes, got %d", MaxKeyLength, got)
+	}
+	k := Key{TenantID: "acme", Value: value}
+	if err := k.Validate(); err != nil {
+		t.Errorf("128-rune multibyte key: Validate = %v, want nil", err)
+	}
+}
+
+// spec: §11.5 line 277 — 129 runes (one over the cap) must be rejected
+// regardless of how many UTF-8 bytes they encode to. Closes F-11.5.11.
+func TestKeyValidateRuneLengthRejectsOverCapMultibyte(t *testing.T) {
+	value := strings.Repeat("я", MaxKeyLength+1)
+	k := Key{TenantID: "acme", Value: value}
+	err := k.Validate()
+	var tle *KeyTooLongError
+	if !errors.As(err, &tle) {
+		t.Fatalf("expected *KeyTooLongError, got %v", err)
+	}
+	if tle.Length != MaxKeyLength+1 {
+		t.Errorf("Length = %d, want %d (rune count, not byte count)", tle.Length, MaxKeyLength+1)
+	}
+}
+
+// utf8RuneCount mirrors utf8.RuneCountInString without importing the
+// package in the test file (the spec test only needs it to assert the
+// fixture is sized in runes).
+func utf8RuneCount(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
 func TestHashBodyIsStable(t *testing.T) {
 	a := HashBody([]byte(`{"input":"hello"}`))
 	b := HashBody([]byte(`{"input":"hello"}`))

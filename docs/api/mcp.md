@@ -132,8 +132,9 @@ Create a new agent session. Claims a warm pod, assigns credentials, and prepares
 | `labels` | object | No | Key-value labels for filtering and organization |
 | `environment` | string | No | Environment name to scope the session |
 | `callbackUrl` | string | No | Webhook URL for completion notification |
-| `idempotencyKey` | string | No | Client-supplied key for idempotent creation |
 | `dataResidencyRegion` | string | No | Required data residency region constraint |
+
+For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC POST that carries this tool call (see [Idempotency](../api/rest.html#idempotency)). The MCP tool input has no `idempotencyKey` field today.
 
 **Output schema:**
 

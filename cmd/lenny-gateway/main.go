@@ -2170,11 +2170,34 @@ func main() {
 	// authenticated tenant on the request to scope keys correctly).
 	// The §11.5 key cache is durable under --postgres-dsn so an
 	// idempotent retry replays across gateway replicas and restarts.
+	// AllowedPaths restricts the cache to the §11.5-listed critical
+	// operations so a stray Idempotency-Key on an unrelated route
+	// cannot trap a non-mutating response for 24 hours. spec: §11.5
+	// line 268; F-11.5.7.
 	var idemStore idemmw.Store = idemmw.NewMemoryStore()
 	if pgPool != nil {
 		idemStore = idempgstore.New(pgPool)
 	}
-	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{})
+	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{
+		Metrics: gwMetrics,
+		// spec: §11.5 line 268 — the six "critical operations"
+		// (CreateSession, FinalizeWorkspace, StartSession, SpawnChild,
+		// Approve/DenyDelegation, Resume) bound the §11.5 cache. The
+		// middleware also defaults to POST-only (Options.AllowedMethods),
+		// so a misplaced Idempotency-Key on a GET or unrelated POST
+		// passes through without being trapped for 24 hours. F-11.5.7.
+		AllowedPaths: []string{
+			"/v1/sessions",                       // CreateSession
+			"/v1/sessions/start",                 // create-and-start
+			"/v1/environments/{name}/sessions",   // environment-scoped CreateSession
+			"/v1/sessions/{id}/finalize",         // FinalizeWorkspace
+			"/v1/sessions/{id}/start",            // StartSession
+			"/v1/sessions/{id}/resume",           // Resume
+			"/v1/sessions/{id}/derive",           // fork (Resume-adjacent)
+			"/v1/sessions/{id}/tool-use/...",     // Approve/DenyDelegation tree
+			"/mcp",                               // SpawnChild via JSON-RPC POST
+		},
+	})
 
 	// Circuit breaker next: rejects requests when any open breaker
 	// matches. The shared breakerstore.Memory satisfies cbmw.Registry

@@ -40,8 +40,11 @@ func TestIdempotencyStoreContract(t *testing.T) {
 			BodyHash: idempotency.HashBody([]byte(`{"runtime":"echo"}`)),
 			Response: idempotency.Response{
 				StatusCode: 201,
-				Headers:    map[string]string{"Location": "/v1/sessions/abc"},
-				Body:       []byte(`{"sessionId":"abc"}`),
+				Headers: map[string][]string{
+					"Location":   {"/v1/sessions/abc"},
+					"Set-Cookie": {"sid=abc; Path=/", "trace=x; Path=/"},
+				},
+				Body: []byte(`{"sessionId":"abc"}`),
 			},
 			StoredAt: time.Now().UTC(),
 		}
@@ -61,8 +64,17 @@ func TestIdempotencyStoreContract(t *testing.T) {
 		if got.Response.StatusCode != 201 {
 			t.Errorf("StatusCode: got %d, want 201", got.Response.StatusCode)
 		}
-		if got.Response.Headers["Location"] != "/v1/sessions/abc" {
-			t.Errorf("Headers: got %v", got.Response.Headers)
+		// spec: §11.5 line 277 — replay reproduces "the cached response
+		// (same HTTP status and body)"; preserving multi-value headers
+		// keeps Set-Cookie round-trips faithful instead of dropping the
+		// later values. Closes F-11.5.9.
+		gotLoc := got.Response.Headers["Location"]
+		if len(gotLoc) != 1 || gotLoc[0] != "/v1/sessions/abc" {
+			t.Errorf("Headers[Location]: got %v", gotLoc)
+		}
+		gotCookies := got.Response.Headers["Set-Cookie"]
+		if len(gotCookies) != 2 || gotCookies[0] != "sid=abc; Path=/" || gotCookies[1] != "trace=x; Path=/" {
+			t.Errorf("Headers[Set-Cookie]: got %v, want both values preserved", gotCookies)
 		}
 		if string(got.Response.Body) != `{"sessionId":"abc"}` {
 			t.Errorf("Body: got %q", got.Response.Body)

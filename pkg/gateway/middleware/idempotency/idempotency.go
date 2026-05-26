@@ -20,8 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +94,25 @@ func (m *MemoryStore) Put(_ context.Context, rec idempotency.Record) error {
 // key on REST requests.
 const HeaderName = "Idempotency-Key"
 
+// Metrics is the subset of gatewaymetrics.Metrics the §11.5 middleware
+// emits. A nil Metrics passes every call through to a no-op so the
+// middleware remains usable in tests and minimal gateways that do not
+// register a registry. spec: §11.5 line 277.
+type Metrics interface {
+	// IncIdempotencyCacheWriteFailure increments
+	// lenny_idempotency_cache_write_failures_total when the durable
+	// store rejects a Put after the inner handler already executed —
+	// the silent-failure case F-11.5.4 calls out.
+	IncIdempotencyCacheWriteFailure(tenantID string)
+
+	// IncIdempotencyCacheSkipped increments
+	// lenny_idempotency_cache_skipped_total when the middleware
+	// declines to persist the response by policy (5xx status from the
+	// inner handler) — the 24-hour-error-replay case F-11.5.3.
+	// reason is one of: "server_error", "no_status".
+	IncIdempotencyCacheSkipped(tenantID, reason string)
+}
+
 // Options configures a Middleware.
 type Options struct {
 	// TenantFromRequest extracts the tenant id from the inbound
@@ -105,6 +126,35 @@ type Options struct {
 	// or pass to the inner handler with a fresh reader.
 	// Zero means 1 MiB.
 	MaxBodyBytes int64
+
+	// AllowedMethods restricts the methods the middleware will admit
+	// when an Idempotency-Key header is present. Requests on any other
+	// method pass through to the inner handler untouched (header is
+	// ignored, no cache lookup, no cache write). Nil defaults to
+	// {http.MethodPost} — the §11.5 critical operations are all POSTs.
+	// spec: §11.5 line 268; F-11.5.7.
+	AllowedMethods []string
+
+	// AllowedPaths restricts which paths the middleware admits. Each
+	// entry is a literal prefix match against r.URL.Path (so
+	// "/v1/sessions" matches "/v1/sessions" and
+	// "/v1/sessions/{id}/start"). Nil leaves every path admissible,
+	// preserving the legacy behaviour for tests that wire the
+	// middleware directly on a single handler; production callers
+	// SHOULD pass the §11.5 enumerated set so a misguided client cannot
+	// drag a non-critical endpoint into the cache. spec: §11.5 line
+	// 268; F-11.5.7.
+	AllowedPaths []string
+
+	// Metrics receives §11.5 cache-write failure and skip counters.
+	// Nil leaves observability disabled — the middleware still enforces
+	// and still skips identically. spec: §11.5 line 277; F-11.5.4.
+	Metrics Metrics
+
+	// Logger receives a structured WARN line whenever the durable
+	// store rejects a Put or the middleware declines to cache an inner
+	// 5xx response. Nil uses log.Default(). spec: F-11.5.3, F-11.5.4.
+	Logger *log.Logger
 }
 
 // Wrap returns an http.Handler that applies §11.5 idempotency before
@@ -117,6 +167,9 @@ func Wrap(inner http.Handler, store Store, opts Options) http.Handler {
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = 1 << 20
 	}
+	if opts.AllowedMethods == nil {
+		opts.AllowedMethods = []string{http.MethodPost}
+	}
 	return &middleware{inner: inner, store: store, opts: opts}
 }
 
@@ -126,9 +179,89 @@ type middleware struct {
 	opts  Options
 }
 
+// methodAllowed reports whether method is in opts.AllowedMethods. The
+// default set is {POST}; an empty slice (zero-value after Wrap's
+// fixup) admits nothing — the caller is expected to leave AllowedMethods
+// nil if they want the default.
+func (m *middleware) methodAllowed(method string) bool {
+	for _, ok := range m.opts.AllowedMethods {
+		if strings.EqualFold(ok, method) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathAllowed reports whether path is admissible under opts.AllowedPaths.
+// A nil/empty slice admits every path so single-handler test wiring
+// continues to work without an explicit allow-list. Each entry uses
+// the same `{var}` placeholder syntax as the Go 1.22 mux pattern (e.g.
+// `/v1/sessions/{id}/finalize` matches `/v1/sessions/abc/finalize`); a
+// trailing `/...` admits the segment subtree (e.g. `/v1/sessions/{id}/tool-use/...`
+// matches the whole approve/deny suffix tree). spec: §11.5; F-11.5.7.
+func (m *middleware) pathAllowed(path string) bool {
+	if len(m.opts.AllowedPaths) == 0 {
+		return true
+	}
+	for _, pattern := range m.opts.AllowedPaths {
+		if pattern == "" {
+			continue
+		}
+		if matchPathPattern(pattern, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchPathPattern reports whether the request path satisfies the
+// pattern. Segments matching `{name}` consume one segment of any
+// (non-empty) value; a literal `...` tail (preceded by /) matches the
+// rest of the path. spec: §11.5; F-11.5.7.
+func matchPathPattern(pattern, path string) bool {
+	patSegs := strings.Split(strings.TrimPrefix(pattern, "/"), "/")
+	pathSegs := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for i, ps := range patSegs {
+		if ps == "..." {
+			return true
+		}
+		if i >= len(pathSegs) {
+			return false
+		}
+		if strings.HasPrefix(ps, "{") && strings.HasSuffix(ps, "}") {
+			if pathSegs[i] == "" {
+				return false
+			}
+			continue
+		}
+		if ps != pathSegs[i] {
+			return false
+		}
+	}
+	return len(patSegs) == len(pathSegs)
+}
+
+func (m *middleware) logger() *log.Logger {
+	if m.opts.Logger != nil {
+		return m.opts.Logger
+	}
+	return log.Default()
+}
+
 func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.Header.Get(HeaderName)
 	if key == "" {
+		m.inner.ServeHTTP(w, r)
+		return
+	}
+
+	// spec: §11.5 line 268 — the six "critical operations" are all
+	// mutating POSTs. An Idempotency-Key header on any other method
+	// is a caller mistake; passing the request through (instead of
+	// caching it) keeps the §11.5 contract honest and prevents a
+	// stale GET response from masking subsequent state changes for
+	// 24 hours. Closes F-11.5.7.
+	if !m.methodAllowed(r.Method) || !m.pathAllowed(r.URL.Path) {
 		m.inner.ServeHTTP(w, r)
 		return
 	}
@@ -193,17 +326,59 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		captured := &captureWriter{header: http.Header{}}
 		m.inner.ServeHTTP(captured, r)
 		captured.flush(w)
-		fresh := idempotency.Record{
-			Key:      idemKey,
-			BodyHash: hash,
-			Response: idempotency.Response{
-				StatusCode: captured.status,
-				Headers:    flattenHeader(captured.header),
-				Body:       captured.body.Bytes(),
-			},
-			StoredAt: time.Now().UTC(),
+		m.maybePersist(r.Context(), idemKey, hash, captured)
+	}
+}
+
+// maybePersist decides whether to write the captured response to the
+// durable cache, applying the §11.5 line 277 success-only-replay policy
+// and surfacing Put errors via the configured logger + metrics.
+// spec: §11.5 line 277; F-11.5.3, F-11.5.4, F-11.5.12.
+func (m *middleware) maybePersist(ctx context.Context, idemKey idempotency.Key, hash string, captured *captureWriter) {
+	status := captured.status
+	if status == 0 {
+		// spec: §11.5 line 277 — captured.status==0 means the inner
+		// handler returned without calling WriteHeader; the flush path
+		// emits 200 OK to the client, so we persist 200 too. Without
+		// this normalisation the cache row stores a 0 that gets
+		// rewritten to 200 on replay only by accident of replayResponse's
+		// fallback. Closes F-11.5.12.
+		status = http.StatusOK
+	}
+	if status >= 500 {
+		// spec: §11.5 line 277 — a transient 5xx must not be replayed
+		// for the entire 24-hour TTL; that would block a legitimate
+		// retry against a now-healthy backend. The middleware does not
+		// cache it, so the next request with the same key re-executes
+		// the operation (and, if it succeeds, the cache row is written
+		// then). Closes F-11.5.3.
+		if m.opts.Metrics != nil {
+			m.opts.Metrics.IncIdempotencyCacheSkipped(idemKey.TenantID, "server_error")
 		}
-		_ = m.store.Put(r.Context(), fresh)
+		m.logger().Printf("idempotency: skipping cache write for 5xx response tenant=%q key=%q status=%d", idemKey.TenantID, idemKey.Value, status)
+		return
+	}
+	fresh := idempotency.Record{
+		Key:      idemKey,
+		BodyHash: hash,
+		Response: idempotency.Response{
+			StatusCode: status,
+			Headers:    cloneHeader(captured.header),
+			Body:       captured.body.Bytes(),
+		},
+		StoredAt: time.Now().UTC(),
+	}
+	if err := m.store.Put(ctx, fresh); err != nil {
+		// spec: §11.5 line 277 — the inner handler already executed and
+		// the client already got the response, so we cannot fail the
+		// HTTP exchange retroactively. A retry with the same key would
+		// re-execute the operation (creating a duplicate session /
+		// child), so surface the silent-failure case via metric + log
+		// for the operator. Closes F-11.5.4.
+		if m.opts.Metrics != nil {
+			m.opts.Metrics.IncIdempotencyCacheWriteFailure(idemKey.TenantID)
+		}
+		m.logger().Printf("idempotency: cache write failed (operation already executed; retry with same key WILL re-execute) tenant=%q key=%q err=%q", idemKey.TenantID, idemKey.Value, err.Error())
 	}
 }
 
@@ -262,9 +437,18 @@ func (c *captureWriter) flush(w http.ResponseWriter) {
 	_, _ = w.Write(c.body.Bytes())
 }
 
+// replayResponse mirrors the captured response onto the live writer.
+// Multi-valued headers (Set-Cookie, Vary, WWW-Authenticate, …) are
+// emitted once per value so the replayed response is byte-for-byte
+// equivalent to the original wire response — anything less would
+// quietly drop cookies on the second-of-two retries, which §11.5
+// explicitly designates as the "same HTTP status and body" surface.
+// spec: §11.5 line 277; F-11.5.9.
 func replayResponse(w http.ResponseWriter, resp idempotency.Response) {
-	for k, v := range resp.Headers {
-		w.Header().Set(k, v)
+	for k, vs := range resp.Headers {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
 	}
 	if resp.StatusCode == 0 {
 		w.WriteHeader(http.StatusOK)
@@ -301,12 +485,21 @@ func (e *bodyTooLargeError) Error() string {
 	return "idempotency middleware: body size " + strconv.FormatInt(e.size, 10) + " exceeds limit " + strconv.FormatInt(e.limit, 10)
 }
 
-func flattenHeader(h http.Header) map[string]string {
-	out := make(map[string]string, len(h))
+// cloneHeader copies http.Header into the typed map[string][]string the
+// idempotency Record persists. Every value of a multi-valued header is
+// preserved so the cached row replays the original wire response. The
+// returned value-slice is a fresh slice — mutating the captured writer's
+// header after the call cannot retroactively change the stored record.
+// spec: §11.5 line 277; F-11.5.9.
+func cloneHeader(h http.Header) map[string][]string {
+	out := make(map[string][]string, len(h))
 	for k, vs := range h {
-		if len(vs) > 0 {
-			out[k] = vs[0]
+		if len(vs) == 0 {
+			continue
 		}
+		dup := make([]string, len(vs))
+		copy(dup, vs)
+		out[k] = dup
 	}
 	return out
 }

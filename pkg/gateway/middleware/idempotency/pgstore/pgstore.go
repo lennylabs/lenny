@@ -150,10 +150,12 @@ func scanRecord(row pgx.Row) (idempotency.Record, error) {
 }
 
 // headerMap returns a non-nil map so json.Marshal yields {} rather
-// than null for the NOT NULL response_headers column.
-func headerMap(m map[string]string) map[string]string {
+// than null for the NOT NULL response_headers column. The map value
+// is a string slice so multi-valued headers (Set-Cookie, Vary,
+// WWW-Authenticate, …) round-trip without flattening. spec: §11.5.
+func headerMap(m map[string][]string) map[string][]string {
 	if m == nil {
-		return map[string]string{}
+		return map[string][]string{}
 	}
 	return m
 }

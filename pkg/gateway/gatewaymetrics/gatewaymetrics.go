@@ -248,6 +248,19 @@ type Metrics struct {
 	// spec: §11.1 line 7 fail-open observability.
 	rateLimitCounterFailure prometheus.Counter
 
+	// idempotencyCacheWriteFailures counts §11.5 idempotency-key cache
+	// Put failures: the inner handler already executed (the client
+	// already got the response), but the durable store rejected the
+	// cache row, so the next retry with the same key WILL re-execute
+	// the operation. Labelled by tenant so a noisy tenant doesn't
+	// hide a platform-wide spike. spec: §11.5 line 277; F-11.5.4.
+	idempotencyCacheWriteFailures *prometheus.CounterVec
+	// idempotencyCacheSkipped counts cache writes the middleware
+	// declined by policy — currently `server_error` (inner-handler
+	// 5xx, must not be replayed for the 24-hour TTL). spec: §11.5
+	// line 277; F-11.5.3.
+	idempotencyCacheSkipped *prometheus.CounterVec
+
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
 	// the lenny_gateway_request_queue_depth gauge (the §4.1 SCL-026
@@ -913,6 +926,28 @@ func New() (*Metrics, error) {
 		Name: "lenny_rate_limit_counter_failure_total",
 		Help: "§11.1 ratelimit counter errors observed by the middleware.",
 	})
+	// §11.5 line 277 — `lenny_idempotency_cache_write_failures_total`
+	// counts §11.5 idempotency-key Put failures (inner handler ran,
+	// durable store rejected the cache row; next retry WILL
+	// re-execute). spec: §11.5 line 277; F-11.5.4.
+	idempotencyCacheWriteFailures, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_idempotency_cache_write_failures_total",
+		Help: "§11.5 idempotency-key cache Put failures (silent re-execution risk).",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
+	// §11.5 line 277 — `lenny_idempotency_cache_skipped_total` counts
+	// cache writes the middleware declined by policy. reason:
+	// `server_error` (inner-handler 5xx; not replayed for the 24-hour
+	// TTL). spec: §11.5 line 277; F-11.5.3.
+	idempotencyCacheSkipped, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_idempotency_cache_skipped_total",
+		Help: "§11.5 idempotency-key cache writes the middleware declined by policy.",
+	}, []string{"tenant_id", "reason"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -938,7 +973,8 @@ func New() (*Metrics, error) {
 		drainReadinessChecks, legalHoldCheckpointGaps,
 		artifactUploadError,
 		delegationDepth, delegationWouldHaveBlocked,
-		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure)
+		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
+		idempotencyCacheWriteFailures, idempotencyCacheSkipped)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -1025,6 +1061,8 @@ func New() (*Metrics, error) {
 		rateLimitRejected:                    rateLimitRejected,
 		rateLimitFailopenActive:              rateLimitFailopenActive.WithLabelValues(),
 		rateLimitCounterFailure:              rateLimitCounterFailure,
+		idempotencyCacheWriteFailures:        idempotencyCacheWriteFailures,
+		idempotencyCacheSkipped:              idempotencyCacheSkipped,
 	}, nil
 }
 
@@ -1333,6 +1371,32 @@ func (m *Metrics) IncRateLimitCounterFailure() {
 		return
 	}
 	m.rateLimitCounterFailure.Inc()
+}
+
+// IncIdempotencyCacheWriteFailure increments
+// `lenny_idempotency_cache_write_failures_total{tenant_id}` once per
+// §11.5 cache Put failure. The middleware calls this when the inner
+// handler already executed (the client already got the response) and
+// the durable store rejected the cache row, so the next retry with the
+// same key WILL re-execute the operation. spec: §11.5 line 277;
+// F-11.5.4.
+func (m *Metrics) IncIdempotencyCacheWriteFailure(tenantID string) {
+	if m == nil {
+		return
+	}
+	m.idempotencyCacheWriteFailures.WithLabelValues(tenantID).Inc()
+}
+
+// IncIdempotencyCacheSkipped increments
+// `lenny_idempotency_cache_skipped_total{tenant_id,reason}` once per
+// §11.5 cache write the middleware declined by policy. reason is one
+// of: "server_error" (inner-handler 5xx). spec: §11.5 line 277;
+// F-11.5.3.
+func (m *Metrics) IncIdempotencyCacheSkipped(tenantID, reason string) {
+	if m == nil {
+		return
+	}
+	m.idempotencyCacheSkipped.WithLabelValues(tenantID, reason).Inc()
 }
 
 // ObserveDelegationDepth records a §8.2 delegation-admission depth

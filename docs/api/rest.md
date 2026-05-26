@@ -65,8 +65,9 @@ Create a new session. Claims a warm pod, assigns credentials, and returns a sess
 | `labels`              | object | No       | Key-value labels for filtering                               |
 | `environment`         | string | No       | Environment name to scope the session                        |
 | `callbackUrl`         | string | No       | Webhook URL for completion notification                      |
-| `idempotencyKey`      | string | No       | Client-supplied key for idempotent creation                  |
 | `dataResidencyRegion` | string | No       | Required data residency region constraint                    |
+
+For idempotent creation, set the `Idempotency-Key` request header (see [Idempotency](#idempotency) below). The body has no `idempotencyKey` field.
 
 **Key error codes:** `VALIDATION_ERROR` (400), `RUNTIME_UNAVAILABLE` (503), `WARM_POOL_EXHAUSTED` (503), `QUOTA_EXCEEDED` (429), `CREDENTIAL_POOL_EXHAUSTED` (503), `ERASURE_IN_PROGRESS` (403).
 
@@ -448,6 +449,29 @@ All endpoints return errors using the canonical error envelope. See the [Error C
 ```
 
 All responses include [rate-limit headers](../reference/error-catalog.html#rate-limit-headers).
+
+---
+
+## Idempotency
+
+Critical mutating operations support idempotency keys. Set the `Idempotency-Key` request header (not a request body field) to an opaque string of at most 128 characters; a UUID is recommended.
+
+```
+Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+```
+
+Within a 24-hour window, a duplicate request with the same key returns the cached response (same HTTP status and body) without re-executing the operation. A 5xx response is not cached, so a retry against a recovered backend re-executes. Reusing a key with a different request body returns `422 IDEMPOTENCY_KEY_REUSED`.
+
+Idempotency keys are scoped per tenant. The header applies to:
+
+- `POST /v1/sessions` (CreateSession)
+- `POST /v1/sessions/start` (create-and-start)
+- `POST /v1/sessions/{id}/finalize` (FinalizeWorkspace)
+- `POST /v1/sessions/{id}/start` (StartSession)
+- `POST /v1/sessions/{id}/resume` (Resume)
+- `POST /v1/sessions/{id}/derive`, `POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve`, `POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny`
+
+The header is ignored on read endpoints (GET / HEAD) and on non-listed POST endpoints.
 
 ---
 
