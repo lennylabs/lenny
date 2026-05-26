@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -117,18 +118,21 @@ type DeriveIsolationDowngradeEvent struct {
 }
 
 // handleDerive implements POST /v1/sessions/{id}/derive per §7.1 and
-// §15.1. The handler runs the source-session lookup, the precondition
-// state check, the workspace-snapshot resolution, the SEC-001
-// monotonicity check (with platform-admin override), the snapshot
-// copy, and the atomic INSERT of the derived session row.
+// §15.1. The handler runs the per-source-session advisory lock
+// acquisition (§7.1 line 92), the source-session lookup, the
+// precondition state check, the workspace-snapshot resolution, the
+// SEC-001 monotonicity check (with platform-admin override), the
+// snapshot copy, and the atomic INSERT of the derived session row.
 //
-// The minimal gateway elides the §7.1 Redis advisory lock + MinIO
-// copy + CAS-fenced coordination-generation write; the in-memory
-// store mutex serialises concurrent derives synchronously, and the
-// snapshot ref is reused in place since there is no separate object
-// store to copy to. The derive_failure terminal-row path under
-// `gateway.persistDeriveFailureRows: true` is also deferred to the
-// phase that ships the Postgres-backed store.
+// When DeriveLock is wired (production: derivelock.NewRedis), concurrent
+// derives on the same source session serialize across replicas; a
+// caller that does not acquire within the §7.1 5-second budget
+// receives 429 DERIVE_LOCK_CONTENTION. When DeriveLock is nil the
+// in-memory store mutex serializes within the running process — the
+// single-replica fallback. The CAS-fenced `coordination_generation`
+// write for opt-in derive-failure rows
+// (`gateway.persistDeriveFailureRows: true`) is tracked under
+// F-7.1.14.
 func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	if !s.requireActiveUser(w, r) {
 		return
@@ -141,6 +145,38 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sourceID := r.PathValue("id")
+
+	// §7.1 line 92 — acquire the per-source-session advisory lock
+	// before reading the workspace snapshot reference. Concurrent
+	// derives on the same source session serialize across replicas so
+	// no caller observes a torn read while a checkpoint is mid-update.
+	// The lock auto-expires after derivelock.DefaultTTL (30s) so a
+	// crashed holder cannot block subsequent derives. We release it as
+	// soon as the snapshot ref has been read; the copy itself runs
+	// without the lock per the spec's "release before the copy is
+	// safe" guarantee (each checkpoint write produces a new MinIO
+	// object).
+	if s.deriveLock != nil {
+		release, err := s.deriveLock.Acquire(r.Context(), sourceID)
+		if err != nil {
+			if errors.Is(err, derivelock.ErrContended) {
+				s.writeError(w, http.StatusTooManyRequests, "DERIVE_LOCK_CONTENTION",
+					"another derive on this source session is in progress; retry shortly",
+					map[string]any{"sourceSessionId": sourceID})
+				return
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				s.writeError(w, http.StatusRequestTimeout, "REQUEST_TIMEOUT",
+					"derive lock acquisition cancelled before the wait budget elapsed",
+					map[string]any{"sourceSessionId": sourceID})
+				return
+			}
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"derive lock acquisition failed: "+err.Error(), nil)
+			return
+		}
+		defer release()
+	}
 
 	source, err := s.store.Get(r.Context(), tenantID, sourceID)
 	if err != nil {

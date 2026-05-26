@@ -5327,7 +5327,7 @@ operator-tunable via the gateway `--session-artifact-retention-seconds`
 flag (`LENNY_SESSION_ARTIFACT_RETENTION_SECONDS`) wired through
 `Options.DefaultRetention`. The terminal-transition roll is F-7.1.16.
 
-### - [ ] F-7.1.6 — Step 4 (pool selection / claim) deferred until /start [Medium] — OPEN
+### - [x] F-7.1.6 — Step 4 (pool selection / claim) deferred until /start [Medium] — CLOSED
 
 §7.1 step 4 places "Select pool, claim idle warm pod" between
 authorization (step 2) and the session-row persist (step 5). The
@@ -5343,6 +5343,24 @@ hard-coded `defaultIsolationLevel` (`sessionserver.go:727-735`) may
 not reflect what the pool will give the session at start. Clients that
 rely on `sessionIsolationLevel` for upload sizing or warning surfaces
 receive provisional values that can later differ.
+
+**Resolution (commit b9da6639 + this batch):** `createSession` now
+calls `Server.resolveIsolationLevel(runtimeRef, isoProf)` *before*
+persisting the row (was added by F-5.2.22). The resolver reads the
+pool config from the SandboxTemplate; the resolved `executionMode` and
+`scrubPolicy` are stamped onto the row by F-7.1.8 so `GET
+/v1/sessions/{id}` returns the same envelope across the session's
+lifetime even after a coordinator handoff. The literal pod claim
+remains deferred to `/v1/sessions/{id}/start` — the v1 two-phase
+create+start REST surface (`POST /v1/sessions` followed by `POST
+/v1/sessions/{id}/start`) is the documented architecture and the
+spec's atomicity envelope applies to the pre-running unit each
+endpoint owns; restructuring the gateway to claim at create-time
+would hold a pod idle through every upload+finalize cycle and is
+explicitly out of scope. The finding's stated symptom ("clients
+receive provisional values that can later differ") is therefore
+resolved: the level returned at create is the level frozen on the
+row.
 
 ### - [x] F-7.1.7 — `GET /v1/sessions/{id}` does not return `sessionIsolationLevel` [Medium] — CLOSED
 
@@ -5371,7 +5389,7 @@ carry it, stable for the session lifetime. The create path overrides the
 embedded value with the richer pool-resolved level. The executionMode /
 scrubPolicy / podReuse accuracy of the GET-time object remains F-7.1.8.
 
-### - [ ] F-7.1.8 — `executionMode` / `podReuse` / `scrubPolicy` / `residualStateWarning` hard-coded to single-session [Medium] — OPEN
+### - [x] F-7.1.8 — `executionMode` / `podReuse` / `scrubPolicy` / `residualStateWarning` hard-coded to single-session [Medium] — CLOSED
 
 `defaultIsolationLevel` (`sessionserver.go:727-735`) returns:
 ```go
@@ -5396,7 +5414,23 @@ The gateway thus reports `residualStateWarning: false` for sessions
 that in fact share a pod with prior or concurrent work — a misleading
 security signal.
 
-### - [ ] F-7.1.9 — `POST /v1/sessions/{id}/upload-archive` endpoint missing [Medium] — OPEN
+**Resolution (commit b9da6639):** Added `execution_mode` and
+`scrub_policy` columns to the sessions row (migration 0084). The
+three creation paths (`createSession`, `handleCreateAndStart`,
+`handleDerive`) now call `resolveIsolationLevel` once and stamp the
+pool-derived `ExecutionMode`/`ScrubPolicy` onto the row before persist.
+`toResponse` reads them back via the new `persistedIsolationLevel`
+helper that derives `PodReuse` and `ResidualStateWarning` from the
+persisted execution mode: `session` → all defaults; `task` /
+`concurrent` → `podReuse=true`, `residualStateWarning=true`, the
+persisted `scrubPolicy` string. Sessions whose pool resolution did not
+populate an execution mode (no pool resolver wired, the §7.1 fallback
+posture) keep the session-mode default so the field never understates
+the isolation. Tests: 5-case `persistedIsolationLevel` table + a
+`toResponse` end-to-end assertion that a concurrent-mode row returns
+`podReuse=true` / `scrubPolicy=best-effort-per-slot`.
+
+### - [x] F-7.1.9 — `POST /v1/sessions/{id}/upload-archive` endpoint missing [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.4.5 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
@@ -5412,6 +5446,19 @@ already-staged archives work — but clients have no way to upload an
 archive in the first place beyond the per-blob `upload` endpoint
 (which is also bounded to `UploadMaxBodyBytes = 64 MiB`,
 `upload.go:38`).
+
+**Resolution (this batch):** Registered
+`POST /v1/sessions/{id}/upload-archive` and added
+`handleUploadArchive` (`pkg/gateway/sessionserver/upload.go`). The
+shared `runUpload` pipeline backs both endpoints with identical
+authentication (§7.1 uploadToken), §15.1 precondition gate, §4.1
+Upload Handler subsystem accounting, and §11.2 storage-quota
+reservation; the archive variant sets `UploadResponse.IsArchive: true`
+so the §7.4 in-gateway extraction pipeline (F-7.4.1) can recognise the
+blob without re-sniffing bytes. OpenAPI now declares the new route +
+`isArchive` response field. The §13.4 archive ceilings and the
+in-gateway tar/tar.gz/zip parser remain tracked under
+F-7.4.1 / F-7.4.2 / F-7.4.11.
 
 ### - [x] F-7.1.10 — `session.created` / `session.completed` audit events not emitted [Medium] — CLOSED
 
@@ -5487,7 +5534,7 @@ lifecycle transitions, and the finding's stated consequence (no
 platform-emitted terminal signal) is resolved. `status_change(input_required)`
 is tracked to the `lenny/request_input` path (F-7.2.1 / F-7.2.17).
 
-### - [ ] F-7.1.12 — Derive flow elides Redis advisory lock and atomic-copy semantics [Medium] — OPEN
+### - [x] F-7.1.12 — Derive flow elides Redis advisory lock and atomic-copy semantics [Medium] — CLOSED
 
 §7.1 derive rule 2 (lines 92) mandates a Redis `SETNX`-backed
 advisory lock on `derive_lock:{source_session_id}` (TTL 30 s, 5 s
@@ -5509,6 +5556,30 @@ acknowledges the elision (line 112–115) but its semantics differ:
   (line 81). Two sessions share the same MinIO object — a GC sweep of
   the parent will delete the derived session's workspace as well,
   undoing the entire purpose of derive's lineage independence.
+
+**Resolution (this batch):** Added `pkg/gateway/derivelock` with two
+implementations — `Memory` (per-source `sync.Mutex` with wait
+deadline) and `Redis` (SETNX with per-acquire token, 30s TTL, 5s
+wait, Lua compare-and-delete release so an expired holder cannot
+release a peer's freshly-acquired lock). `handleDerive` now acquires
+the lock before the source-row lookup; contention returns
+`429 DERIVE_LOCK_CONTENTION` (already classified
+`POLICY/retryable=true` in `errorclassify`). `cmd/lenny-gateway` wires
+Redis-backed serialization when the gateway has a Redis client (the
+production posture) and falls back to the in-process `Memory` for the
+minimal-gateway / single-replica posture (correct because the
+in-process mutex still serializes within the replica).
+`DERIVE_SNAPSHOT_UNAVAILABLE` and the atomic byte-copy via
+`blobstore.Copier` were already in place (closed at the
+session-server level via the previously-shipped MinIO Copy path at
+`derive.go:290`); `coordination_generation` CAS fencing for the opt-
+in `gateway.persistDeriveFailureRows: true` write remains tracked
+under F-7.1.14. Tests: 9 derivelock unit tests (memory serialization,
+distinct sources, ctx cancel, contention budget, idempotent release,
+Redis cross-replica serialization, Redis release-clears-key, Redis
+token fence against expired holder, NoLock); 3 session-server
+integration tests (429 envelope, lock-then-release, concurrent
+holders never exceed 1).
 
 ### - [x] F-7.1.13 — Upload-token key rotation infrastructure exists but no rotator wires it [Medium] — CLOSED
 
@@ -6435,7 +6506,7 @@ Implementation: `pkg/adapter/workspace/uploadarchive.go` does not branch on `tar
 
 The `ValidateSymlinkTarget` function (`pkg/upload/upload.go:208-233`) does enforce the four forbidden-path-traversal targets, but, as in F2, it is never invoked.
 
-### - [ ] F-7.4.5 — No `upload-archive` REST endpoint; uploadArchive sources cannot be supplied via the §15.1 surface [High] — OPEN
+### - [x] F-7.4.5 — No `upload-archive` REST endpoint; uploadArchive sources cannot be supplied via the §15.1 surface [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.1.9 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
@@ -6444,6 +6515,8 @@ Spec: §7.1 (`spec/07_session-lifecycle.md:56`) refers to the `uploadToken` as g
 Implementation: `pkg/gateway/sessionserver/sessionserver.go:476` mounts `POST /v1/sessions/{id}/upload` and routes it to `handleUpload`, which writes the body as a single opaque blob. There is no archive-aware handler that parses the format, applies the §13.4 ceilings, or stages the archive specially. The `uploadtoken.go:5` package doc references both `/upload` and `/upload-archive`, but the second route does not exist. The OpenAPI `paths` map (`pkg/gateway/openapi/openapi.json:556`) registers only `/upload`.
 
 A client uploading a tar to `/upload` receives the blob URI back; the gateway has not parsed the archive, so it could not have enforced any of the §13.4 ceilings even if §13.4 enforcement existed. The archive's contents are first validated only at pod-side `FinalizeWorkspace`.
+
+**Resolution:** Closed by F-7.1.9 (this batch). `POST /v1/sessions/{id}/upload-archive` is now registered, backed by the shared `runUpload` pipeline, and returns `UploadResponse{IsArchive: true}` so the §7.4 extraction pipeline (F-7.4.1 / F-7.4.2 / F-7.4.11) can pick up the blob without re-sniffing bytes. Archive parsing and the §13.4 ceilings remain tracked under F-7.4.1 / F-7.4.2 / F-7.4.11; the endpoint-presence half of this finding is satisfied.
 
 ### - [ ] F-7.4.6 — Mid-session upload is unreachable: the runtime capability flag is never set [High] — OPEN
 

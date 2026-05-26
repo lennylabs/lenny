@@ -84,6 +84,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover/redisstream"
 	billingpg "github.com/lennylabs/lenny/pkg/gateway/billingstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
@@ -1520,6 +1521,12 @@ func main() {
 		// resolves the same pending `lenny/request_input` MCP registers.
 		// F-7.2.14.
 		InputWaits: inputWaits,
+		// §7.1 line 92 — per-source-session advisory lock that serializes
+		// concurrent /derive calls across replicas. Wired with Redis when
+		// available (cross-replica serialization); a process-local
+		// derivelock.Memory backs the minimal-gateway and single-replica
+		// posture. F-7.1.12.
+		DeriveLock: defaultDeriveLock(redisClient),
 		// §7.1 line 77 — default artifact retention window.
 		DefaultRetention: time.Duration(*sessionArtifactRetentionSeconds) * time.Second,
 		// §7.1 line 112 — seal-and-export retry window + outcome histogram.
@@ -3718,6 +3725,19 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return out
+}
+
+// defaultDeriveLock picks the §7.1 line 92 derive-lock implementation.
+// Redis-backed serialization is mandatory across replicas; the in-
+// process Memory fallback is correct for the minimal-gateway and
+// single-replica deployments (the in-memory store mutex inside
+// derive.go is the only other serialization path in v1, and it
+// serializes by accident — not by spec). F-7.1.12.
+func defaultDeriveLock(client *redis.Client) derivelock.Lock {
+	if client != nil {
+		return derivelock.NewRedis(client)
+	}
+	return derivelock.NewMemory(derivelock.DefaultWait)
 }
 
 // dialTokenService dials lenny-token-service for the §4.3 credential

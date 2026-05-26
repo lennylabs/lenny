@@ -176,9 +176,11 @@
         "type": "object",
         "required": ["uploadRef", "size"],
         "properties": {
-          "uploadRef": { "type": "string", "description": "§4.5 lenny-blob:// URI" },
-          "mimeType":  { "type": "string" },
-          "size":      { "type": "integer", "format": "int64" }
+          "uploadRef":   { "type": "string", "description": "§4.5 lenny-blob:// URI" },
+          "mimeType":    { "type": "string" },
+          "size":        { "type": "integer", "format": "int64" },
+          "contentHash": { "type": "string", "description": "Hex-encoded SHA-256 of the streamed bytes (§4.5 line 311)" },
+          "isArchive":   { "type": "boolean", "description": "True when the body was uploaded via /upload-archive; consumed by the §7.4 extraction pipeline." }
         }
       },
       "ExtendRetentionRequest": {
@@ -630,6 +632,28 @@
     "/v1/sessions/{id}/upload": {
       "post": {
         "summary": "Upload a workspace file",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "X-Lenny-Upload-Token", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "*/*": { "schema": { "type": "string", "format": "binary" } } }
+        },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadResponse" } } } },
+          "401": { "description": "UPLOAD_TOKEN_INVALID / UPLOAD_TOKEN_EXPIRED" },
+          "403": { "description": "UPLOAD_TOKEN_MISMATCH" },
+          "410": { "description": "UPLOAD_TOKEN_CONSUMED" },
+          "413": { "description": "PAYLOAD_TOO_LARGE" }
+        }
+      }
+    },
+    "/v1/sessions/{id}/upload-archive": {
+      "post": {
+        "summary": "Upload a workspace archive (tar, tar.gz, or zip) for in-gateway extraction",
+        "description": "Streams the body into the gateway's Upload Handler subsystem. v1 stores the bytes as a blob; the §7.4 archive extraction pipeline applies the §13.4 ceilings and the zip-slip guard before promoting the extracted tree.",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },

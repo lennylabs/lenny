@@ -35,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
+	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
@@ -227,6 +228,19 @@ type Server struct {
 	// same blocked tool call. spec: §7.2 line 317.
 	inputWaits *inputwait.Registry
 
+	// deriveLock, when set, serializes concurrent /v1/sessions/{id}/derive
+	// calls on the same source session per §7.1 line 92. The session-
+	// server holds the lock around the workspace-snapshot read; it is
+	// released as soon as the snapshot reference resolves, mirroring the
+	// spec's "release the lock before the copy is safe" guarantee.
+	// Production wires a derivelock.Redis implementation backed by the
+	// shared Redis client; tests and the minimal gateway fall back to
+	// derivelock.Memory (per-source sync.Mutex). When nil, the in-memory
+	// store mutex serializes within the running process and no cross-
+	// replica protection is in force — the legacy minimal-gateway
+	// posture. spec: §7.1 line 92.
+	deriveLock derivelock.Lock
+
 	// defaultRetention is the §7.1 line 77 default artifact-retention
 	// window stamped on every session at create time and rolled forward
 	// at the terminal transition. A non-positive value falls through to
@@ -345,6 +359,16 @@ type Options struct {
 	// to the §11.7 audit pipeline; nil disables the emission (and the
 	// override still applies).
 	DeriveAuditSink DeriveAuditSink
+
+	// DeriveLock, when set, serializes concurrent /v1/sessions/{id}/derive
+	// calls on the same source session per §7.1 line 92. Production
+	// wires derivelock.NewRedis against the shared Redis client; tests
+	// and the single-replica minimal gateway can wire derivelock.NewMemory
+	// or leave this nil (the in-memory store mutex serializes within the
+	// running process and is correct for a single replica). On
+	// contention the handler returns 429 DERIVE_LOCK_CONTENTION.
+	// spec: §7.1 line 92.
+	DeriveLock derivelock.Lock
 
 	// LifecycleAuditSink, when set, receives the §7.1 / §16.6 session
 	// lifecycle audit events (session.created and the terminal
@@ -682,6 +706,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		clock:                  opts.Clock,
 		idFn:                   opts.IDFunc,
 		deriveAuditSink:        opts.DeriveAuditSink,
+		deriveLock:             opts.DeriveLock,
 		uploadIssuer:           opts.UploadTokenIssuer,
 		uploadVerifier:         opts.UploadTokenVerifier,
 		blobs:                  opts.Blobs,
@@ -831,6 +856,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/memory", read(s.handleMemoryQuery))
 	mux.HandleFunc("DELETE /v1/sessions/{id}/memory/{memoryId}", manage(s.handleMemoryDelete))
 	mux.HandleFunc("POST /v1/sessions/{id}/upload", manage(s.handleUpload))
+	mux.HandleFunc("POST /v1/sessions/{id}/upload-archive", manage(s.handleUploadArchive))
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", manage(s.handleMessages))
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", read(s.handleTranscript))
 	mux.HandleFunc("GET /v1/sessions/{id}/tree", read(s.handleTree))

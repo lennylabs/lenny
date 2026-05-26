@@ -62,7 +62,38 @@ type UploadResponse struct {
 	//
 	// spec: §4.5 line 311.
 	ContentHash string `json:"contentHash,omitempty"`
+
+	// IsArchive is true when the blob was uploaded via the §18 line 234
+	// POST /v1/sessions/{id}/upload-archive endpoint. The §7.4 archive
+	// extraction pipeline (the §4.1 Upload Handler subsystem) inspects
+	// this flag to decide whether to parse the body as a tar/tar.gz/zip
+	// and apply the §13.4 archive ceilings; a plain /upload blob is
+	// stored verbatim and finalized later via an `uploadArchive`
+	// workspace-plan source. Extraction itself remains tracked under
+	// F-7.4.1 / F-7.4.2 / F-7.4.11 (the in-gateway extraction pipeline
+	// and the §13.4 ceiling enforcement).
+	IsArchive bool `json:"isArchive,omitempty"`
 }
+
+// UploadKind distinguishes the §18 line 234 /upload and /upload-archive
+// surfaces. The plain upload stores the body verbatim under
+// ObjectTypeUpload; the archive variant tags the response so the §7.4
+// extraction pipeline (Upload Handler subsystem) can recognise the
+// blob as archive-shaped without inspecting bytes. Storage path and
+// breaker accounting are identical in v1 — F-7.4.1 / F-7.4.2 ship the
+// in-gateway extraction pipeline that actually parses the archive.
+type UploadKind int
+
+const (
+	// UploadKindBlob is the plain /upload endpoint. Body is stored as
+	// an opaque blob and referenced via a workspace plan `uploadFile`
+	// or `uploadArchive` source on finalize.
+	UploadKindBlob UploadKind = iota
+	// UploadKindArchive is the /upload-archive endpoint. Body is stored
+	// the same way as a blob in v1; the §7.4 extraction pipeline will
+	// later parse the body in-gateway and apply the §13.4 ceilings.
+	UploadKindArchive
+)
 
 // handleUpload implements POST /v1/sessions/{id}/upload per §15.1.
 //
@@ -77,8 +108,6 @@ type UploadResponse struct {
 //
 // Spec gaps the minimal gateway does not yet cover:
 //
-//   - Per-§7.4 archive parsing (POST /v1/sessions/{id}/upload-archive)
-//     — separate handler in a later commit.
 //   - Per-§7.1 single-use invalidation at finalize time — the upload
 //     handler does not consume the token; the finalize handler will
 //     when it ships.
@@ -87,6 +116,25 @@ type UploadResponse struct {
 //     gateway uses the §15.1 precondition table directly (which
 //     admits `created` only without the capability lift).
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	s.runUpload(w, r, UploadKindBlob)
+}
+
+// handleUploadArchive implements POST /v1/sessions/{id}/upload-archive
+// per §18 line 234. It accepts the same request shape as /upload but
+// tags the resulting blob as archive-kind so the §7.4 extraction
+// pipeline (F-7.4.1) can recognise it without sniffing bytes. v1
+// stores the body unchanged; archive parsing, the §13.4 size /
+// decompression-ratio / entry-count ceilings, and the zip-slip guard
+// land with the extraction pipeline. spec: §18 line 234.
+func (s *Server) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
+	s.runUpload(w, r, UploadKindArchive)
+}
+
+// runUpload is the shared §15.1 / §18 line 234 upload pipeline that
+// backs both /upload and /upload-archive. The kind parameter only
+// affects the response envelope's IsArchive flag; the storage path,
+// breaker accounting, and §11.2 quota reservation are identical.
+func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKind) {
 	if s.blobs == nil {
 		s.writeError(w, http.StatusServiceUnavailable, "BLOBSTORE_UNAVAILABLE",
 			"gateway has no blob store configured", nil)
@@ -233,6 +281,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		MimeType:    mimeType,
 		Size:        bytesRead.n,
 		ContentHash: bytesRead.ContentHash(),
+		IsArchive:   kind == UploadKindArchive,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
