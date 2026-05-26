@@ -3717,9 +3717,13 @@ The catalog (`pkg/observability/metrics/catalog.go:63`) marks it as a gauge. The
 
 Spec §5.2 line 516: "The `lenny-preflight` Job ... also checks for this condition and emits a preflight warning." `cmd/lenny-preflight/main.go` does not implement any pool-related preflight check (greps for `terminationGracePeriod`, `maxConcurrent`, `gracePeriod` return zero matches).
 
-### - [ ] F-5.2.28 — `WarmPoolBootstrapping` alert exists; the linked runbook is referenced [Low] — OPEN
+### - [x] F-5.2.28 — `WarmPoolBootstrapping` alert exists; the linked runbook is referenced [Low] — CLOSED
 
 `pkg/alerting/rules/rules.go:1236` declares the `WarmPoolBootstrapping` Prometheus rule against `lenny_warm_pool_condition_pool_warming_up > 0` for > `warmupDeadlineSeconds`. The runbook test (`pkg/ops/runbooks/runbooks_test.go`) refers to it via the `RUNTIME_UNAVAILABLE` symptom. This is fine.
+
+**Re-verification corrected the "fine" conclusion.** The shipped rule (`rules.go:1244` and `charts/lenny/files/alerting-rules.yaml:947`) fires on `lenny_pool_warming_up == 1`, but that metric had no producer: it was absent from the metrics catalog, emitted by no component, and not bridged from the `PoolWarmingUp` CRD condition by any kube-state-metrics CustomResourceState config. The alert was dead — it could never fire.
+
+**Resolution:** added the `lenny_pool_warming_up{pool}` alert-support gauge (`pkg/controller/warmpool/warming_meter.go`), registered on the controller-runtime metrics registry following the `lenny_warmpool_fill_grace_active` precedent. The WarmPoolController's `updateTemplateCondition` sets it every reconcile from the same `PoolWarmingUp` condition status it writes (1 when True, 0 otherwise), and the pool-deletion path clears the series. The §5.2 line 627 / §16.5 alert now has a live producer.
 
 - `pool_config_validator` covers the §5.2 acknowledgment rules and the concurrent-workspace cleanup-timeout floor correctly. The "session mode is the default" treatment (validator.go:280) matches the spec. Decision test coverage in `pkg/admission/pool_config_validator/validator_test.go` is comprehensive for the implemented surface.
 - `slotcounter` Lua scripts are correct for the steady-state path and the dual-ownership pattern is well-documented in the `SlotClaimer` doc comment (`pkg/gateway/podclaim/slotclaimer.go:34–48`).

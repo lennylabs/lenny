@@ -193,6 +193,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if apierrors.IsNotFound(err) {
 			r.idle.forget(req.NamespacedName.String())
 			r.fill.forget(req.NamespacedName.String(), req.NamespacedName.Name)
+			forgetPoolWarmingUp(req.NamespacedName.Name)
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -659,6 +660,10 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 	ready := decision.ReadyCount - drained
 
 	cond := poolWarmingUpCondition(int(pool.Spec.MinWarm), warm, ready)
+	// Publish the alert-support gauge every reconcile, independent of
+	// whether the condition value changed, so the WarmPoolBootstrapping
+	// rule has a live `lenny_pool_warming_up` series. spec: §5.2 line 627.
+	setPoolWarmingUp(pool.Name, cond.Status == metav1.ConditionTrue)
 	key := client.ObjectKeyFromObject(tmpl)
 	return retryOnConflictSSA(ctx, func(attempt int) error {
 		var live lennyv1.SandboxTemplate
