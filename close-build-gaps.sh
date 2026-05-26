@@ -97,6 +97,8 @@ L. **No backward-compatibility shims.** The codebase is pre-deployment; change i
 
 M. **Tread carefully — this is a large codebase.** Search broadly (do not restrict yourself to the file/line pointers in the finding text — they may be stale) and read enough surrounding context before each change.
 
+N. **Re-attempt unblocked deferrals.** Before exiting, scan BUILD-GAPS.md for DEFERRED findings whose Resolution notes cite this batch's closed F-IDs as the blocker. Re-attempt any that are now unblocked and mark CLOSED (or re-DEFERRED with a fresh note). Tackle only direct unblocks; do not chase second-order unblocks.
+
 YOUR TASK THIS INVOCATION
 
 1. Pick the next 4–8 OPEN findings from BUILD-GAPS.md. Prefer clustering on a shared §X.Y section or on text-flagged duplicates so one fix can close several. Start with:
