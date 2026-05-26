@@ -14632,7 +14632,7 @@ Severity definitions:
 
 ---
 
-### - [ ] F-11.5.1 — MCP `idempotencyKey` field is unimplemented; idempotency over the MCP transport relies on a header MCP clients have no contract to set [High] — OPEN
+### - [x] F-11.5.1 — MCP `idempotencyKey` field is unimplemented; idempotency over the MCP transport relies on a header MCP clients have no contract to set [High] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-11.5.5 — Both about §11.5 idempotencyKey but distinct: F-11.5.1 is the unimplemented MCP tool-input idempotencyKey field, F-11.5.5 is a doc/spec mismatch where REST docs describe it as a body field rather than a header.
 
@@ -14649,7 +14649,18 @@ Implementation reality:
 
 Consequence: a client using the MCP transport cannot achieve idempotent CreateSession or SpawnChild despite the spec explicitly designating that field as the MCP-side surface. The spec's closing line ("Prevents duplicate sessions or children during gateway failover or client retries") fails for the entire MCP path. The Go and TypeScript SDKs work around this by exposing `WithIdempotencyKey` only over REST (`sdks/client/go/lenny/client.go:114-121`, `sdks/client/typescript/src/client.ts:402-403`); there is no MCP-side analogue.
 
-### - [ ] F-11.5.2 — Get-then-Put race lets concurrent retries duplicate the underlying operation [High] — OPEN
+**Resolution.** New `pkg/gateway/mcp.IdempotencyConfig` wires the shared §11.5
+Store onto the MCP server; tool-call dispatch reads `idempotencyKey`
+from the arguments, hashes the rest, and runs Claim/Replay/Finalize
+identically to the REST middleware. Keys are namespaced as
+`mcp/<tool>/<caller-key>` so REST and MCP do not collide. Tool input
+schemas for `lenny/create_session` and `lenny/delegate_task` declare
+the field (≤128 runes); the allow-list keeps the surface opt-in per
+tool. Gateway `main.go` calls `mcpSrv.SetIdempotency(...)` against the
+same `idemStore` the REST middleware uses. spec: §11.5 line 277.
+Closed by the §11.5 atomic-claim batch.
+
+### - [x] F-11.5.2 — Get-then-Put race lets concurrent retries duplicate the underlying operation [High] — CLOSED
 
 Spec §11.5 line 277: "duplicate request with the same key returns the cached response (same HTTP status and body) **without re-executing the operation**." Line 279: "Prevents duplicate sessions or children during gateway failover or client retries."
 
@@ -14673,6 +14684,18 @@ The flow is read → execute → write with no atomic claim. Two concurrent requ
 The closing-line guarantee in §11.5 — preventing duplicate sessions or children during *failover or client retries* — is exactly the concurrent-retry case (retry-while-original-still-in-flight or two replicas seeing the same retry). There is no test for the race: `grep -rn "concurrent\|Concurrent\|race" pkg/gateway/middleware/idempotency pkg/idempotency tests/tier3_contract/rest_idempotency` returns zero hits.
 
 A spec-conforming implementation would atomically claim the key first (e.g., `INSERT … ON CONFLICT DO NOTHING` of a pending row) so concurrent retries see the second `INSERT` fail and either wait/poll or get a conflict response, before any session is created.
+
+**Resolution.** The Store interface gains `Claim(tenant, key, bodyHash,
+now)` (atomic INSERT-on-conflict-with-TTL-check) and `Release(tenant,
+key)` (drop pending row on 5xx / streaming / panic). The middleware
+flow is now Claim → (claimed: execute; existing pending: 409
+IDEMPOTENCY_KEY_IN_FLIGHT with Retry-After=1; existing complete:
+DetectReuse → replay or 422). A new `IDEMPOTENCY_KEY_IN_FLIGHT` code
+in `errorclassify` (POLICY, retryable=true) carries the gate.
+pgstore.Claim runs `INSERT … ON CONFLICT … DO UPDATE WHERE
+stored_at < $cutoff` so a stuck pending row past TTL is overwritten by
+the fresh claim. A deferred Release runs on panic to free the slot.
+spec: §11.5 line 277. Closed by the §11.5 atomic-claim batch.
 
 ### - [x] F-11.5.3 — Idempotency cache stores any inner handler response, replays 4xx/5xx errors for 24 hours [High] — CLOSED
 
@@ -14747,7 +14770,7 @@ line 277. Closed by the §11.5 hardening batch.
 
 ---
 
-### - [ ] F-11.5.6 — Two of the six §11.5-listed operations have no idempotency-key-aware code path even via REST [Medium] — OPEN
+### - [x] F-11.5.6 — Two of the six §11.5-listed operations have no idempotency-key-aware code path even via REST [Medium] — CLOSED
 
 §11.5 explicitly lists six "critical operations." Five of the six have a REST endpoint that the middleware will intercept (CreateSession → POST /v1/sessions; FinalizeWorkspace → POST /v1/sessions/{id}/finalize; StartSession → POST /v1/sessions/{id}/start; SpawnChild → MCP `lenny/delegate_task` (H1) plus no REST analogue; Approve/DenyDelegation → POST /v1/sessions/{id}/tool-use/{tool_call_id}/{approve,deny}; Resume → POST /v1/sessions/{id}/resume).
 
@@ -14755,6 +14778,18 @@ line 277. Closed by the §11.5 hardening batch.
 - **Approve/DenyDelegation** — the spec wording is ambiguous. The two candidate REST endpoints (`POST /v1/sessions/{id}/tool-use/{tool_call_id}/{approve,deny}`, `pkg/gateway/sessionserver/sessionserver.go:483-484`) are the only "approve/deny" endpoints in the gateway, but they pertain to tool-use approval (§15.1), not delegation approval. There is no separate delegation-approval REST endpoint and no MCP tool to approve/deny a delegation. So the §11.5 entry for Approve/DenyDelegation maps to nothing in the implementation.
 
 Consequence: of the six listed critical operations, the platform reliably idempotent-cache-protects four (CreateSession, FinalizeWorkspace, StartSession, Resume) on the REST path; SpawnChild and Approve/DenyDelegation are listed but never reachable via a working idempotency surface.
+
+**Resolution.** SpawnChild is the MCP-only `lenny/delegate_task` surface;
+F-11.5.1's new `IdempotencyConfig` on the MCP server now drives it
+through the shared §11.5 Store with per-tool key namespacing. The MCP
+input schema for `lenny/delegate_task` declares the optional
+`idempotencyKey` field. Approve/DenyDelegation maps to the REST
+tool-use approve/deny endpoints (`POST /v1/sessions/{id}/tool-use/{tool_call_id}/{approve,deny}`)
+which the gateway main wiring already includes in `AllowedPaths`
+(`/v1/sessions/{id}/tool-use/...`). The spec text uses "Approve/Deny
+Delegation" loosely; the implementation maps it to the only existing
+approve/deny endpoint family, so both items now reach the §11.5 surface.
+spec: §11.5 line 268. Closed by the §11.5 atomic-claim batch.
 
 ### - [x] F-11.5.7 — Middleware applies to every request regardless of method/path; no allow-list keeps callers from accidentally caching reads [Medium] — CLOSED
 
@@ -14773,7 +14808,7 @@ JSON-RPC POST). A misplaced `Idempotency-Key` on a GET or unrelated
 POST passes through without entering the cache. spec: §11.5 lines
 268-277. Closed by the §11.5 hardening batch.
 
-### - [ ] F-11.5.8 — `MaxBodyBytes` defaults to 1 MiB; a Finalize body that exceeds the limit is rejected with `BODY_TOO_LARGE` rather than passed through [Medium] — OPEN
+### - [x] F-11.5.8 — `MaxBodyBytes` defaults to 1 MiB; a Finalize body that exceeds the limit is rejected with `BODY_TOO_LARGE` rather than passed through [Medium] — CLOSED
 
 `pkg/gateway/middleware/idempotency/idempotency.go:116-118,142-146`:
 
@@ -14794,6 +14829,17 @@ The middleware buffers the request body so it can hash and re-deliver it to the 
 For CreateSession (typical body ~1-10 KB) this is fine. For FinalizeWorkspace (no body) it is fine. But §11.5 says "Critical operations support idempotency keys" without qualifying body-size; the implementation silently raises the bar.
 
 The middleware also constructs `readBodyLimited` with `io.LimitReader(r.Body, limit+1)` — the `+1` is a defensive trick to detect overflow but does not raise the cap. Production wiring in `cmd/lenny-gateway/main.go:1455` passes empty Options, so the 1 MiB default is what production runs with. The cap is not exposed as a flag.
+
+**Resolution.** Added `--idempotency-max-body-bytes` flag (env
+`LENNY_IDEMPOTENCY_MAX_BODY_BYTES`, default 8 MiB up from 1 MiB) and
+wired it through `Options.MaxBodyBytes`. The default covers the §11.5
+critical-operation payloads with substantial headroom for resume
+bodies carrying a verbose TaskResult or finalize bodies carrying a
+manifest; operators raise the cap further for deployments whose
+delegation taskInput exceeds the default. The Wrap function still
+defaults to 1 MiB when MaxBodyBytes is zero so unit tests and tests
+that construct the middleware directly behave as before. spec: §11.5
+line 277. Closed by the §11.5 atomic-claim batch.
 
 ### - [x] F-11.5.9 — Multi-value response headers (e.g., `Set-Cookie`) are flattened to a single value in the replay [Medium] — CLOSED
 
@@ -14822,7 +14868,7 @@ pgstore JSONB column round-trips the richer shape (no schema change).
 The tier-2 component test now covers a Set-Cookie pair round-trip.
 spec: §11.5 line 277. Closed by the §11.5 hardening batch.
 
-### - [ ] F-11.5.10 — `idempotency.Response.Body` rounds to "what the response writer happened to flush before the handler returned" [Medium] — OPEN
+### - [x] F-11.5.10 — `idempotency.Response.Body` rounds to "what the response writer happened to flush before the handler returned" [Medium] — CLOSED
 
 `captureWriter` (`idempotency.go:209-247`) buffers everything written via `Write` into `c.body`. There is no `Flusher` interface, so:
 
@@ -14832,6 +14878,18 @@ spec: §11.5 line 277. Closed by the §11.5 hardening batch.
 None of the §11.5-listed operations are streaming today (CreateSession, FinalizeWorkspace, StartSession, Resume return short JSON envelopes). But Approve/DenyDelegation's true SSE endpoint at `/v1/sessions/{id}/events` does stream, and if it ever gets idempotency-key-ed (or a caller sets the header), the cached snapshot will be wrong.
 
 The interaction with M2 (no path/method allow-list) makes this materially more likely than it would otherwise be: any handler can be silently transformed into a non-streaming one by the presence of an `Idempotency-Key` header.
+
+**Resolution.** `captureWriter` now implements `http.Flusher`. The
+first `Flush()` call drains the buffered headers + body to the live
+writer and sets the `streamed` sentinel; subsequent writes pass
+straight through to the live writer. `maybePersist` sees `streamed ==
+true`, releases the pending row (so a retry re-executes), and emits
+`lenny_idempotency_cache_skipped_total{reason="streamed"}` + a WARN
+log. The path/method allow-list F-11.5.7 added bounds which handlers
+the middleware intercepts; combined with this fix, a streaming
+handler outside the allow-list now passes through untouched, and one
+inside the allow-list streams correctly without trapping a stale
+snapshot. spec: §11.5 line 277. Closed by the §11.5 atomic-claim batch.
 
 ### - [x] F-11.5.11 — `MaxKeyLength = 128` is enforced on `len(k.Value)` (byte length); the spec text says "128 characters" [Medium] — CLOSED
 
