@@ -2076,7 +2076,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `delegation.Service` (per the finding's alternative framing).
   Resolved in commit 4916d354.
 
-### - [ ] F-4.8.5 — `ExperimentRouter` not registered as an interceptor (Divergent) [Medium] — OPEN
+### - [ ] F-4.8.5 — `ExperimentRouter` not registered as an interceptor (Divergent) [Medium] — DEFERRED
 
 - **Spec:** §4.8 lines 968–975, 1069. `ExperimentRouter` at `PreRoute`,
   priority 300; active when experiments are defined.
@@ -2096,6 +2096,27 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   `experimentrouter.routeExperiment` call site as a `PreRoute`
   built-in interceptor at priority 300, or amend §4.8 to remove
   `ExperimentRouter` from the built-in priority table.
+- **Deferred:** The finding's core evidence ("no `PreRoute` chain
+  invocation anywhere") is stale: `sessionserver.runRouteChain` now runs
+  the §4.8 PreRoute chain at session create (`start.go:223`) before
+  `routeExperiment` (`start.go:252`), and `start.go:232` reads the
+  chain's (possibly MODIFY-rewritten) `requested_runtime` into the row
+  before experiment routing — so the §4.8 line-110 contract ("MODIFY of
+  TaskSpec runtime hints by an interceptor at priority 101–299 affects
+  which variant `ExperimentRouter` assigns") is already satisfied for
+  every external PreRoute priority. The residual gap is narrow: making
+  `ExperimentRouter` a literal priority-300 chain participant so external
+  PreRoute interceptors at 301–599 order after it. Doing so cleanly is a
+  dedicated architectural batch: experiment routing is a core §10.7
+  session-creation step that must run with no chain wired (the
+  handler-level `experimentrouter_isolation_test` suite constructs the
+  server with `Interceptors: nil` and asserts enrollment + the 422
+  `VARIANT_ISOLATION_UNAVAILABLE` contract with `details`), so moving it
+  into the chain requires either chain-gating core routing (and
+  rewriting those tests) or adding priority-bounded chain execution, plus
+  carrying the §15.1 422 + its `details` through the generic
+  `interceptor.Result`. None of that is a regression-free single-batch
+  change; it is sequenced after the F-4.8 cluster's lower-risk work.
 
 ### - [x] F-4.8.6 — `GuardrailsInterceptor` not implemented (Missing) [Medium] — CLOSED
 
@@ -2121,7 +2142,7 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   (the PostAgentOutput chain stays dormant until F-4.8.12 wires it).
   Resolved in commit a382f873.
 
-### - [ ] F-4.8.7 — `RetryPolicyEvaluator` not implemented (Missing) [Medium] — OPEN
+### - [x] F-4.8.7 — `RetryPolicyEvaluator` not implemented (Missing) [Medium] — CLOSED
 
 - **Spec:** §4.8 lines 968–977, 1071. Built-in at `PostRoute`, priority
   600; enforces §7.3 retry eligibility and resume window.
@@ -2134,6 +2155,25 @@ the spec-mandated `admission.circuit_breaker_rejected` audit row.
   the session retry state when continuation requests land. Register it
   on `PhasePostRoute` at priority 600. Add a `PostRoute` chain
   invocation in the runtime-selection path.
+- **Resolution:** New `policy.RetryPolicyEvaluator` built-in at the fixed
+  PostRoute priority 600, always-active, fail-closed, registered in
+  `cmd/lenny-gateway/main.go` (the §4.8 PostRoute chain invocation already
+  existed at `start.go`/`route.go`). It enforces the §7.3 automatic-retry
+  budget: a routed session whose `retryCount` has reached the effective
+  `retryPolicy.maxRetries` is rejected before a warm pod is re-claimed
+  (it is in `awaiting_client_action` and requires an explicit client
+  resume). Backed by a `RetryStateLookup` over the session store
+  (not-found → admit; lookup fault → fail-closed reject) and a
+  `RetryPolicyResolver` seam for the effective per-session/per-policy
+  `maxRetries` (v1 models only the retry counter, so the
+  `--retry-max-retries` default of §7.3's example value 2 applies; the
+  per-DelegationPolicy `RetryPolicy` source layers on as it is modeled —
+  the same realize-the-slot division `DelegationPolicyEvaluator` uses for
+  the §8.3 `maxInputSize` cap). The complementary §7.3
+  `maxResumeWindowSeconds` timer stays canonical in the watchdog (gating
+  PostRoute on `resumeEligibleUntil` would falsely reject normal
+  continuations; see F-6.2.14). 7 unit tests + a chain integration test.
+  Resolved in commit 12375e6e.
 
 ### - [x] F-4.8.8 — `AdmissionController` pre-chain gate present but emits no audit row (Partial) [Medium] — CLOSED
 
@@ -4379,10 +4419,11 @@ Implementation tree audited:
 - **Impl:** `pkg/admission/sandboxclaim_guard/guard.go:219–224` rejects any PATCH/PUT when `SandboxPhase != PhaseClaimed`. With H-6.2-01, the impl never advances past `claimed`, so the bug is latent; but if/when H-6.2-01 is fixed the webhook will start denying legitimate claim mutations during `receiving_uploads/finalizing_workspace/running_setup`.
 - **Effect:** The two bugs mask each other. Either §6.2 setup transitions need to be implemented and the webhook must accept `claimed | receiving_uploads | finalizing_workspace | running_setup | attached`, or the spec must be revised. Today the divergence is silent.
 
-### - [ ] F-6.2.8 — 2-08 `state.Terminal()` omits `Completed`, contradicting `attached → completed` [Medium] — OPEN
+### - [x] F-6.2.8 — 2-08 `state.Terminal()` omits `Completed`, contradicting `attached → completed` [Medium] — CLOSED
 - **Spec:** §6.2 line 269 lists `completed` among the four terminal states for `maxSessionAge` accounting; §6.2 lines 96–99 list `attached → completed` and `suspended → completed` as terminal edges. The Sandbox CRD enum (`pkg/apis/lenny/v1/sandbox_types.go:42`) lists `completed` as a valid Sandbox phase.
 - **Impl:** `pkg/sandbox/state/state.go:51–53` defines `Terminal()` as `{Failed, Cancelled, Expired, Terminated}` — `Completed` is omitted. `IsTerminal(Completed) == false`. The state test (`pkg/sandbox/state/state_test.go:75–98`) doesn't cover Completed.
 - **Effect:** Code that loops on `IsTerminal` (none yet in the WPC reconciler but the helper is part of the public state API) treats `Completed` as resumable, which contradicts the spec. Latent regression risk for downstream callers.
+- **Resolution:** `state.Terminal()` now returns `{Completed, Failed, Cancelled, Expired, Terminated}` so `IsTerminal(Completed)` reports true, matching the §6.2 line 269 terminal set (already reflected in `CoarseState`, which classed `completed` among the no-coarse-label terminal phases). `TestIsTerminal` covers `Completed`. Resolved in commit 45566d68.
 
 ### - [x] F-6.2.9 — 2-09 `lenny.dev/state` coarse label not maintained [Medium] — CLOSED
 
@@ -4444,10 +4485,11 @@ Implementation tree audited:
 - **Impl:** `pkg/gateway/executor/pod.go:144–160` delegates to `binder.Release` (session-mode) or `binder.ReleaseSlot` (concurrent). `binder.Release` (`pkg/gateway/podsession/binder.go:483–498`) skips the terminal phase entirely and goes straight to `state.Draining`. `binder.ReleaseSlot` only decrements `activeSlots`.
 - **Effect:** The Sandbox CRD never reflects whether a session completed cleanly, failed, or was cancelled; the gateway carries that information out-of-band on session rows but the spec mandates it on Sandbox.status.phase (line 305).
 
-### - [ ] F-6.2.18 — 2-18 Sandbox enum is missing `starting_session` [Medium] — OPEN
+### - [x] F-6.2.18 — 2-18 Sandbox enum is missing `starting_session` [Medium] — CLOSED
 - **Spec:** §6.2 lines 87, 93, 102, 103 model `starting_session` as a distinct Sandbox phase between `running_setup` and `attached`, with edges `starting_session → failed` and `starting_session → resume_pending`.
 - **Impl:** `pkg/apis/lenny/v1/sandbox_types.go:42` and `pkg/sandbox/state/state.go:19–40` omit `starting_session` entirely. `state.ValidTransitions()` therefore has no edge involving the phase, and no caller can write it.
 - **Effect:** The spec-mandated `starting_session → resume_pending` (the sole post-attached visibility path per §6.2 line 303) cannot be expressed today.
+- **Resolution:** Added `state.StartingSession` to the phase enum, `All()`, and the `CoarseState` active set. `ValidTransitions()` now routes the §6.2 line-87 pod-warm chain `running_setup → starting_session → attached` (the direct `running_setup → attached` edge is removed; no production writer existed) and adds the §6.2 line-102/103 edges `starting_session → failed` and `starting_session → resume_pending`. The CRD enum is extended in `sandbox_types.go` and both rendered CRDs (`charts/lenny/crds`, `pkg/embedded/crds`). New `TestStartingSessionPhaseAndTransitions_spec_6_2`. Resolved in commit 45566d68.
 
 ### - [ ] F-6.2.19 — 2-19 Sandbox phase enum has no `input_required` value, even though the spec treats it as a sub-state of `running` [Low] — OPEN
 
@@ -4481,14 +4523,17 @@ Implementation tree audited:
 - **Effect:** Orphaned claims (created by a crashed gateway after the SSA claim but before the binding write) will leak. The spec's safety story is incomplete.
 - **Resolution:** Closed by F-4.6.3 (commit 945ca794). The leader-elected `warmpool.ClaimGarbageCollector` sweeps orphaned claims and emits `lenny_orphaned_claims_total{pool}`.
 
-### - [ ] F-6.2.24 — 2-24 `state.Terminal()` includes `Terminated` correctly; the pod-lifecycle terminal `terminated` and the session terminal set are deliberately overlapping [Info] — OPEN
+### - [x] F-6.2.24 — 2-24 `state.Terminal()` includes `Terminated` correctly; the pod-lifecycle terminal `terminated` and the session terminal set are deliberately overlapping [Info] — CLOSED
 - §6.2 mixes pod-lifecycle terminal (`terminated`) and session-terminal (`completed/failed/cancelled/expired`) on the same enum. The impl treats both as "no outgoing edge" for ValidTransitions purposes, which is consistent with the spec's diagram. This is correct; flagged only because the spec doesn't explicitly call out the dual interpretation.
+- **Resolution:** Verified correct. `state.Terminal()` returns the union of the four §6.2 line-269 session-terminal states and the pod-lifecycle `terminated`; both have no outgoing edge in `ValidTransitions()`, consistent with §6.2. The F-6.2.8 fix completed the session-terminal half (adding `completed`), and the `Terminal()` doc comment now documents the dual session/pod terminal interpretation explicitly. No further code change. Resolved in commit 45566d68.
 
-### - [ ] F-6.2.25 — 2-25 `Claimed → Draining` edge present in impl, not enumerated in §6.2 diagrams [Info] — OPEN
+### - [x] F-6.2.25 — 2-25 `Claimed → Draining` edge present in impl, not enumerated in §6.2 diagrams [Info] — CLOSED
 - `pkg/sandbox/state/state.go:138` includes `{Claimed, Draining}` to support claim-time aborts. The spec's pre-attached failure list (lines 95–101) jumps from `claimed` to `failed` only implicitly via the `claimed → receiving_uploads → failed` chain; a direct `claimed → draining` (e.g., gateway crash before workspace start) is a reasonable extension but unwritten in §6.2. Worth confirming with the spec author.
+- **Resolution:** Verified deliberate and benign. `{Claimed, Draining}` is the claim-time abort path: a pod claimed but torn down before workspace start (gateway crash between the SSA claim and the setup chain) drains and terminates rather than stranding. It is a deliberate extension of the §6.2 `idle → draining → terminated` cleanup model to the pre-attached `claimed` phase. A code comment in `ValidTransitions()` now documents this so the edge is not mistaken for an oversight. No production regression. Resolved in commit 45566d68.
 
-### - [ ] F-6.2.26 — 2-26 Sandbox enum order: spec's narrative order vs. CRD enum order [Info] — OPEN
+### - [x] F-6.2.26 — 2-26 Sandbox enum order: spec's narrative order vs. CRD enum order [Info] — CLOSED
 - The CRD enum (`+kubebuilder:validation:Enum`) groups slot_active alongside the pre-attach claims; the spec block lists it under the concurrent-mode section. Documentation-only divergence.
+- **Resolution:** Verified non-defect. `+kubebuilder:validation:Enum` validates set membership, not order — the enum list order carries no API or validation semantics, so the narrative-vs-enum order difference is cosmetic. The CRD enumerates every §6.2 phase; the `starting_session` value added by F-6.2.18 was placed in narrative position (after `running_setup`, before `attached`). No code change beyond F-6.2.18. Resolved in commit 45566d68.
 
 ---
 
