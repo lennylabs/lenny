@@ -13491,7 +13491,7 @@ corresponding `_test.go` files were inspected for coverage.
 
 ### Findings
 
-### - [ ] F-11.1.1 — 01  `noEnvironmentPolicy` is not consulted at session-create admission [High] — OPEN
+### - [x] F-11.1.1 — 01  `noEnvironmentPolicy` is not consulted at session-create admission [High] — CLOSED
 
 **Spec:** §11.1 line 13 — "Admission of a session that does not name an
 environment is governed by the tenant's `noEnvironmentPolicy` setting
@@ -13535,6 +13535,19 @@ environment-RBAC boundary entirely. This compounds with F-10.6-01 (the
 explicit-environment endpoint does not check membership either),
 because a caller who finds neither path enforces environment access can
 freely create sessions outside any environment scope.
+
+**Resolution:** `sessionserver.createSession` now invokes
+`requireEnvironmentAdmission` after the runtimeRef gate. The helper
+preserves the §10.6 transparent-filter behaviour: an empty `Environment`
+field is admitted only when the caller has at least one
+environment-membership or the resolved per-tenant policy is
+`allow-all`. The platform default `deny-all` (and any empty per-tenant
+value, which §10.6 line 646 treats as `deny-all`) returns
+`403 FORBIDDEN` with `details.reason="no_environment_policy_deny_all"`
+*before* the upload-token mint, preserving §7.1 atomicity. The gate is
+a no-op when the gateway runs without the §10.6 registries
+(`Environments` or `Tenants` nil), matching the minimal-deployment
+posture. Closed by the F-11.1 batch commit.
 
 ### - [ ] F-11.1.2 — 02  Rate-limit middleware covers only global and per-user scopes; per-runtime and per-pool unimplemented [High] — OPEN
 
@@ -13685,7 +13698,7 @@ session is not isolated from the tenant's quota and cannot be
 ringfenced by the deployer. Severity is Medium because the larger
 per-tenant cap does provide an upper bound on consumption.
 
-### - [ ] F-11.1.7 — 07  No rate-limit observability counter; admission rejections are not metered [Medium] — OPEN
+### - [x] F-11.1.7 — 07  No rate-limit observability counter; admission rejections are not metered [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-11.1.9 — Both about rate-limit middleware observability but distinct: F-11.1.7 is a missing rejection counter, F-11.1.9 is silent fail-open with no counter-failure metric or log.
 
@@ -13715,6 +13728,14 @@ request metric), with no breakdown by scope (`global`, `user`,
 `runtime`, `pool`) or by limit. Operators cannot answer "which user is
 driving the rate-limit floor?" or "how often is the per-user cap hit
 versus the global cap?" without parsing access logs.
+
+**Resolution:** `gatewaymetrics` now registers
+`lenny_rate_limit_rejected_total{scope}` and the ratelimit middleware
+calls `IncRateLimitRejected` from `writeRateLimited` on every 429,
+so rejections split by `scope` (`global` | `user`). The gateway main
+threads the metrics interface into the middleware options. Per-runtime
+and per-pool scopes remain blocked on F-11.1.2. Closed by the F-11.1
+batch commit.
 
 ### - [ ] F-11.1.8 — 08  Per-tenant rate-limit scope is absent — only global and per-user are configurable [Medium] — OPEN
 
@@ -13747,7 +13768,7 @@ token-bucket claim is a doc/code disagreement that should be
 reconciled (either implement a token bucket or update §13.3 to match
 the fixed-window implementation).
 
-### - [ ] F-11.1.9 — 09  Rate-limit middleware fails open silently with no observability of counter failures [Low] — OPEN
+### - [x] F-11.1.9 — 09  Rate-limit middleware fails open silently with no observability of counter failures [Low] — CLOSED
 
 **Potential overlap** (confidence: high) — F-11.1.7 — Both about rate-limit middleware observability but distinct: F-11.1.7 is a missing rejection counter, F-11.1.9 is silent fail-open with no counter-failure metric or log.
 
@@ -13773,7 +13794,18 @@ is the missing observability hook. Operators cannot distinguish
 the cap" from "rate limit is silently broken because the counter
 returned an error for every request in the last hour".
 
-### - [ ] F-11.1.10 — 10  `noEnvironmentPolicy` startup validation and tenant default treatment correctly implemented [Info] — OPEN
+**Resolution:** The ratelimit middleware now drives the §16.5
+`RateLimitDegraded` alert source through three new emissions: a
+per-replica `failopen` latch flips
+`lenny_rate_limit_failopen_active` to 1 on the first counter error
+and back to 0 on the next successful `Incr`; every counter error
+increments `lenny_rate_limit_counter_failure_total`; and the edge
+transition emits a `ratelimit: counter unavailable` WARN log so the
+Redis outage is visible even without metric scrape. All three are
+optional via the `Metrics`/`Logger` options so the middleware stays
+nil-safe in tests. Closed by the F-11.1 batch commit.
+
+### - [x] F-11.1.10 — 10  `noEnvironmentPolicy` startup validation and tenant default treatment correctly implemented [Info] — CLOSED
 
 The startup validation at
 `/Users/joan/projects/lenny/cmd/lenny-gateway/main.go` lines 321–335
@@ -13807,7 +13839,14 @@ These pieces are the §11.1 dependencies that *are* built; the gap
 documented in F-11.1-01 is that the session-create path does not call
 into them.
 
-### - [ ] F-11.1.11 — 11  `TestGatewayConfigValidation` integration test absent [Info] — OPEN
+**Resolution:** Re-verified against current code. The fatal-startup
+behavior now reaches the gateway main through a pure
+`resolveNoEnvironmentPolicy(value, devMode)` helper, exercised by the
+F-11.1.11 `TestGatewayConfigValidation_spec_11_1` regression test, and
+F-11.1.1 wires the actually-resolved policy into the session-create
+admission path. Closed by the F-11.1 batch commit.
+
+### - [x] F-11.1.11 — 11  `TestGatewayConfigValidation` integration test absent [Info] — CLOSED
 
 §10.3 (which §11.1 line 13 references for the startup validation
 table) explicitly requires a `TestGatewayConfigValidation` integration
@@ -13821,6 +13860,16 @@ table causes a startup failure when absent, that the corresponding
 implemented (F-11.1-10) but not exercised by an automated test, so a
 regression that strips the validation block from `main.go` would not
 be caught.
+
+**Resolution:** Extracted `resolveNoEnvironmentPolicy(value, devMode)`
+in `cmd/lenny-gateway/main.go` so the validation is a pure function
+that returns the resolved policy or an error carrying the
+`LENNY_CONFIG_MISSING config_key=noEnvironmentPolicy scope=platform`
+marker §10.3 requires. Added `TestGatewayConfigValidation_spec_11_1`
+in `cmd/lenny-gateway/main_test.go` covering: missing-outside-dev
+fatal error, dev-mode allow-all derivation, both valid passthroughs,
+and unrecognised-value rejection (including the dev-mode-no-override
+edge). Closed by the F-11.1 batch commit.
 
 ### Summary
 

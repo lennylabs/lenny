@@ -14,9 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -600,3 +604,171 @@ func (s *createRejectingStore) Create(ctx context.Context, row sessionstore.Sess
 }
 
 var errCreateRejected = errors.New("test: persistence failure injected")
+
+// --- §11.1 line 13 noEnvironmentPolicy admission gate -----------------
+
+// seedNoEnvServer builds a sessionserver wired with the §10.6
+// environment + tenant registries, the rest of the options stays
+// minimal so the test exercises only the §11.1 line 13 admission gate.
+func seedNoEnvServer(t *testing.T, sessionID string, tenantPolicy, platformDefault string, envs ...environmentstore.Environment) (*sessionserver.Server, *memstore.Store) {
+	t.Helper()
+	store := memstore.New()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	es := environmentstore.NewMemory()
+	for _, e := range envs {
+		if err := es.Create(context.Background(), e); err != nil {
+			t.Fatalf("seed environment %q: %v", e.Name, err)
+		}
+	}
+	ts := tenantstore.NewMemory()
+	if err := ts.Create(context.Background(), tenantstore.Tenant{ID: "acme", NoEnvironmentPolicy: tenantPolicy}); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:                      clock,
+		IDFunc:                     func() string { return sessionID },
+		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
+		Environments:               es,
+		Tenants:                    ts,
+		DefaultNoEnvironmentPolicy: platformDefault,
+	})
+	return srv, store
+}
+
+// createRequestAs drives a session create request whose context carries
+// an authenticated Principal (the §10.2 path the §11.1 line 13 gate
+// resolves environment membership against).
+func createRequestAs(t *testing.T, h http.Handler, body sessionserver.CreateSessionRequest, principal authmw.Principal) *httptest.ResponseRecorder {
+	t.Helper()
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), principal))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// TestCreateWithoutEnvironmentRejectedUnderDenyAll_spec_11_1 — the
+// §11.1 line 13 platform default `deny-all` rejects a session create
+// that names no environment when the caller has no environment
+// membership. §10.6 line 646 treats an empty per-tenant policy as
+// deny-all.
+func TestCreateWithoutEnvironmentRejectedUnderDenyAll_spec_11_1(t *testing.T) {
+	srv, store := seedNoEnvServer(t, "sess_deny", tenantstore.NoEnvPolicyDenyAll, tenantstore.NoEnvPolicyDenyAll)
+
+	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "FORBIDDEN") {
+		t.Errorf("rejection body must mention FORBIDDEN, got %q", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "no_environment_policy_deny_all") {
+		t.Errorf("rejection body must carry the policy reason, got %q", rr.Body.String())
+	}
+	// No row created — §7.1 atomicity holds because the gate runs
+	// before the upload-token mint.
+	if _, err := store.Get(context.Background(), "acme", "sess_deny"); err == nil {
+		t.Error("a rejected create must not persist a session row")
+	}
+}
+
+// TestCreateWithoutEnvironmentAdmittedUnderAllowAll_spec_11_1 — when
+// the tenant's noEnvironmentPolicy resolves to allow-all, the same
+// request passes through to the normal create path. §10.6 line 657.
+func TestCreateWithoutEnvironmentAdmittedUnderAllowAll_spec_11_1(t *testing.T) {
+	srv, _ := seedNoEnvServer(t, "sess_allow", tenantstore.NoEnvPolicyAllowAll, tenantstore.NoEnvPolicyDenyAll)
+
+	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 under allow-all; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateWithoutEnvironmentAdmittedWhenCallerIsMember_spec_11_1 —
+// a caller who belongs to at least one environment is admitted under
+// deny-all because §10.6 line 657 scopes the policy to "no environment
+// membership"; the transparent filter governs runtime access through
+// the runtimeRef path even when no environment is named in the body.
+func TestCreateWithoutEnvironmentAdmittedWhenCallerIsMember_spec_11_1(t *testing.T) {
+	// envaccess matches any identity Type other than "oidc-group"
+	// against the caller's Subject; "user" therefore matches a
+	// principal with Subject="alice@acme.com".
+	env := environmentstore.Environment{
+		Name:     "security-team",
+		TenantID: "acme",
+		Members: []environmentstore.Member{{
+			Identity: environmentstore.Identity{Type: "user", Value: "alice@acme.com"},
+			Role:     environment.RoleCreator,
+		}},
+		RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	}
+	srv, _ := seedNoEnvServer(t, "sess_member", tenantstore.NoEnvPolicyDenyAll, tenantstore.NoEnvPolicyDenyAll, env)
+
+	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+		UserID:     "alice@acme.com",
+	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 for an env-member caller; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateWithoutEnvironmentEmptyTenantPolicyDefaultsToDenyAll_spec_10_6
+// — an empty per-tenant noEnvironmentPolicy is treated as deny-all
+// when the platform default is also deny-all. §10.6 line 646.
+func TestCreateWithoutEnvironmentEmptyTenantPolicyDefaultsToDenyAll_spec_10_6(t *testing.T) {
+	srv, _ := seedNoEnvServer(t, "sess_empty", "", tenantstore.NoEnvPolicyDenyAll)
+
+	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (empty tenant policy → platform deny-all); body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateWithNamedEnvironmentBypassesAdmissionGate_spec_11_1 — when
+// the request names an environment the §11.1 line 13 gate does not
+// apply: the explicit-environment path is governed by §10.6
+// membership checks (out of scope for this gap).
+func TestCreateWithNamedEnvironmentBypassesAdmissionGate_spec_11_1(t *testing.T) {
+	srv, _ := seedNoEnvServer(t, "sess_named", tenantstore.NoEnvPolicyDenyAll, tenantstore.NoEnvPolicyDenyAll)
+
+	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef:  "claude-code",
+		Environment: "security-team",
+	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (named environment bypasses the §11.1 line 13 gate); body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateAdmissionGateDisabledWhenRegistriesUnwired_spec_11_1 — the
+// gate is a no-op when the gateway runs without the §10.6 registries
+// (a minimal deployment posture). The existing
+// TestCreateWithoutEnvironmentLeavesItEmpty case covers admission;
+// this case adds the explicit assertion that the deny-all default
+// does not engage without environments/tenants wired.
+func TestCreateAdmissionGateDisabledWhenRegistriesUnwired_spec_11_1(t *testing.T) {
+	store := memstore.New()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:                      clock,
+		IDFunc:                     func() string { return "sess_unwired" },
+		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
+		DefaultNoEnvironmentPolicy: tenantstore.NoEnvPolicyDenyAll,
+	})
+	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
+		authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 without env registries wired; body=%s", rr.Code, rr.Body.String())
+	}
+}

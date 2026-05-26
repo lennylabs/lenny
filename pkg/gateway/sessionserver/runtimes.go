@@ -298,3 +298,75 @@ func (s *Server) filterRuntimesByEnvironment(r *http.Request, runtimes []runtime
 	}
 	return res.FilterRuntimes(runtimes)
 }
+
+// resolveEnvironmentForRequest returns the §10.6 Resolution for the
+// caller in tenantID — preferring the middleware-attached Resolution
+// and falling back to direct Resolve when the request reached the
+// handler outside the HTTP middleware boundary. ok reports whether a
+// principal was attached; sessionserver paths that already established
+// a tenant should treat !ok as a programming error rather than a
+// runtime denial. spec: §10.6 environment resolver.
+func (s *Server) resolveEnvironmentForRequest(r *http.Request) (environmentmw.Resolution, bool, error) {
+	if res := environmentmw.FromContext(r.Context()); res.Configured {
+		return res, true, nil
+	}
+	principal, ok := getPrincipal(r)
+	if !ok || principal.TenantID == "" {
+		return environmentmw.Resolution{}, false, nil
+	}
+	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
+	resolved, err := environmentmw.Resolve(r.Context(), s.environments, s.tenants,
+		s.defaultNoEnvPolicy, caller, principal.TenantID)
+	if err != nil {
+		return environmentmw.Resolution{}, true, err
+	}
+	return resolved, true, nil
+}
+
+// requireEnvironmentAdmission enforces the §11.1 line 13 admission
+// gate: a session create that does not name an environment is
+// admitted only when the caller's tenant resolves to allow-all (or
+// when the caller is a member of at least one environment, in which
+// case the transparent filter governs runtime access for the
+// runtimeRef). The platform default deny-all rejects the request with
+// 403 FORBIDDEN; an empty NoEnvironmentPolicy is treated as deny-all
+// per §10.6 line 646. Returns true when admission passes. A nil
+// environment registry leaves admission open — the gateway runs in a
+// posture where §10.6 transparent filtering is disabled. spec: §11.1
+// line 13; §10.6 line 643; §15.1 FORBIDDEN.
+func (s *Server) requireEnvironmentAdmission(w http.ResponseWriter, r *http.Request, requestedEnvironment string) bool {
+	if requestedEnvironment != "" {
+		return true
+	}
+	if s.environments == nil || s.tenants == nil {
+		return true
+	}
+	res, hasPrincipal, err := s.resolveEnvironmentForRequest(r)
+	if err != nil {
+		// §10.6 store read failure: fail closed.
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"environment registry lookup failed: "+err.Error(), nil)
+		return false
+	}
+	if !hasPrincipal || !res.Configured {
+		return true
+	}
+	if len(res.MemberEnvironments) > 0 {
+		return true
+	}
+	policy := res.Policy
+	if policy == "" {
+		policy = envaccess.PolicyDenyAll
+	}
+	if policy == envaccess.PolicyAllowAll {
+		return true
+	}
+	s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+		"session creation requires either an environment in the request or the tenant's noEnvironmentPolicy to be allow-all (§11.1, §10.6)",
+		map[string]any{
+			"reason":               "no_environment_policy_deny_all",
+			"noEnvironmentPolicy":  policy,
+			"memberEnvironments":   0,
+		})
+	return false
+}

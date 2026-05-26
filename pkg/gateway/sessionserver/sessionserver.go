@@ -995,6 +995,16 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		return
 	}
 
+	// §11.1 line 13 / §10.6 — a session create that names no
+	// environment is admitted only when the caller is a member of at
+	// least one environment (transparent filter applies) or when the
+	// tenant's noEnvironmentPolicy resolves to allow-all. The platform
+	// default deny-all rejects with 403 so an empty Environment field
+	// no longer bypasses the §10.6 access-path default.
+	if !s.requireEnvironmentAdmission(w, r, req.Environment) {
+		return
+	}
+
 	// §5.3 isolation profile: explicit override > §5.3 default. The
 	// minimal gateway does not yet resolve pools, so any explicit
 	// value is taken at face value (production validates against the
