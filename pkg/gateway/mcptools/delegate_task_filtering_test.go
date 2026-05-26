@@ -252,6 +252,25 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 		t.Errorf("a same-environment violation should record cross_environment=false: %+v",
 			audit.events[0].detail)
 	}
+	// spec: §11.7 lines 99-101 — the audit payload uses the snake_case
+	// field names (parent_isolation / target_isolation /
+	// matched_policy_rule) that SIEM consumers pivot on. F-8.5.18.
+	detail := audit.events[0].detail
+	if got, _ := detail["parent_isolation"].(string); got != string(isolation.ProfileSandboxed) {
+		t.Errorf("parent_isolation = %v, want %s", detail["parent_isolation"], isolation.ProfileSandboxed)
+	}
+	if got, _ := detail["target_isolation"].(string); got != string(isolation.ProfileStandard) {
+		t.Errorf("target_isolation = %v, want %s", detail["target_isolation"], isolation.ProfileStandard)
+	}
+	if _, ok := detail["matched_policy_rule"]; !ok {
+		t.Errorf("matched_policy_rule must be present (empty until §8.3 DelegationPolicy enforcement lands): %+v", detail)
+	}
+	if _, legacy := detail["parentProfile"]; legacy {
+		t.Errorf("legacy camelCase parentProfile must not appear: %+v", detail)
+	}
+	if _, legacy := detail["childProfile"]; legacy {
+		t.Errorf("legacy camelCase childProfile must not appear: %+v", detail)
+	}
 
 	// A pool at least as restrictive as the parent is admitted, and a
 	// successful delegation emits no isolation-violation event.

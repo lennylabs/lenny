@@ -198,4 +198,13 @@ var table = map[string]entry{
 	// so the second resolver should observe the recorded phase rather
 	// than retry. F-9.2.17.
 	"INTERACTION_ALREADY_RESOLVED": {CategoryPolicy, false},
+	// spec: §8.3 — `lenny/set_tracing_context` validation failures. The
+	// gateway rejects a tracingContext that exceeds the size envelope,
+	// names a sensitive identifier (token/key/password/…), or carries
+	// a URL value. PERMANENT, retryable=false; the same payload would
+	// fail again. The size cap and the sensitive-key blocklist are
+	// gateway invariants, not transient quotas. F-8.5.17.
+	"TRACING_CONTEXT_TOO_LARGE":       {CategoryPermanent, false},
+	"TRACING_CONTEXT_SENSITIVE_KEY":   {CategoryPermanent, false},
+	"TRACING_CONTEXT_URL_NOT_ALLOWED": {CategoryPermanent, false},
 }

@@ -8489,7 +8489,7 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:278`
 - `spec/08_recursive-delegation.md:537`
 
-### - [ ] F-8.5.17 — `lenny/set_tracing_context` schema adds `sessionId`; otherwise mostly spec-compliant — Low [Medium] — OPEN
+### - [x] F-8.5.17 — `lenny/set_tracing_context` schema adds `sessionId`; otherwise mostly spec-compliant — Low [Medium] — CLOSED
 
 **Severity: Low** (schema deviation, defensible because MCP server has no implicit session)
 
@@ -8500,7 +8500,9 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:483-524`
 - `pkg/delegation/tracing/tracing.go:42-46` (codes defined)
 
-### - [ ] F-8.5.18 — `delegation.isolation_violation` audit payload field names diverge from §11.7 — Medium [Medium] — OPEN
+**Resolution:** The `set_tracing_context` handler now unwraps `*tracing.ValidationError` via `errors.As` and emits `*mcp.ToolError` carrying the stable code (`TRACING_CONTEXT_TOO_LARGE`, `TRACING_CONTEXT_SENSITIVE_KEY`, `TRACING_CONTEXT_URL_NOT_ALLOWED`). The shared `pkg/gateway/errorclassify` table now maps each of those codes to `(PERMANENT, retryable=false)` so REST and MCP envelopes share the §15.2.1 classification instead of collapsing to `INTERNAL_ERROR`. The `sessionId` schema deviation stands as the spec-acknowledged "MCP server has no implicit session" exception. Tests assert the envelope shape for each rejection.
+
+### - [x] F-8.5.18 — `delegation.isolation_violation` audit payload field names diverge from §11.7 — Medium [Medium] — CLOSED
 
 **Severity: Medium** (spec §11.7 audit schema)
 
@@ -8512,6 +8514,8 @@ Evidence:
 
 - `pkg/gateway/mcptools/mcptools.go:997-1004`
 - `spec/11_policy-and-controls.md:99-105`
+
+**Resolution:** The delegation isolation-violation emit site in `mcptools.go` now uses the §11.7 field names (`parent_isolation`, `target_isolation`, `matched_policy_rule`). `matched_policy_rule` is emitted as the empty string until the §8.3 DelegationPolicy enforcement lands (F-8.5.7); the field is present so SIEM consumers can pivot on it now and pick up the populated value when the policy gate ships. The legacy `parentProfile`/`childProfile` keys are removed (codebase is pre-deployment, no backwards-compat shim needed). `TestDelegateTaskPoolIsolationMonotonicity` asserts the new keys and the absence of the legacy keys.
 
 ### - [ ] F-8.5.19 — `cancel_child` cascade-on-failure policy not consulted — Medium [Medium] — OPEN
 
@@ -8541,7 +8545,7 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:835`
 - `spec/08_recursive-delegation.md:244`
 
-### - [ ] F-8.5.21 — `lenny/await_children` does not honour the §8.4 `approval` mode — Low (deferred in spec) [Medium] — OPEN
+### - [x] F-8.5.21 — `lenny/await_children` does not honour the §8.4 `approval` mode — Low (deferred in spec) [Medium] — CLOSED
 
 **Severity: Low** (spec §8.4: `approval` is reserved in v1)
 
@@ -8552,7 +8556,9 @@ Evidence:
 - `spec/08_recursive-delegation.md:520`
 - `pkg/gateway/delegation/service.go:156-232` (no approval gate, intentionally)
 
-### - [ ] F-8.5.22 — `lenny/await_children` does not honour `mode="any"` semantics — Low [Medium] — OPEN
+**Resolution (positive confirmation, no code change):** Re-verified `spec/08_recursive-delegation.md:520` declares `approval` is "Reserved — not implemented in v1" and that the gateway must treat it identically to `policy` mode. The implementation correctly runs no approval gate, so the finding's own conclusion ("No action required for v1") stands.
+
+### - [x] F-8.5.22 — `lenny/await_children` does not honour `mode="any"` semantics — Low [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-8.8.12 — Both about lenny/await_children mode handling but target different defects: F-8.5.22 concerns mode=any not cancelling vs cascade interaction, F-8.8.12 concerns any returning first-listed rather than first-chronological child and settled-vs-all naming.
 
@@ -8567,7 +8573,9 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:1401-1405`
 - `spec/08_recursive-delegation.md:948,1068`
 
-### - [ ] F-8.5.23 — `lenny/discover_agents` `filter?` parameter narrowed to `nameContains` — Low [Medium] — OPEN
+**Resolution (positive confirmation):** Re-verified `collectChildResults` in `mcptools.go` returns the first terminal child for `mode="any"` and does not cancel remaining children, matching `spec/08_recursive-delegation.md:948`. The finding's own observation that the broader cascade gap is upstream (F-8.5.19 / F-8.5.15 cascadeOnFailure) stands; the `mode="any"` implementation itself is correct. Closed; cascade gap remains tracked under F-8.5.19.
+
+### - [x] F-8.5.23 — `lenny/discover_agents` `filter?` parameter narrowed to `nameContains` — Low [Medium] — CLOSED
 
 **Severity: Low** (spec MAY: filter shape unspecified)
 
@@ -8579,7 +8587,9 @@ Evidence:
 
 - `pkg/gateway/mcptools/mcptools.go:819-861`
 
-### - [ ] F-8.5.24 — `lenny/await_children` does not surface `treeUsage`/`usage` from settled children — Low [Medium] — OPEN
+**Resolution (positive confirmation, no code change):** Re-verified `spec/08_recursive-delegation.md:532` leaves the `filter?` shape unspecified. The `nameContains` narrowing is a defensible v1 choice; the broader policy-based filtering gap is tracked under F-8.5.7.
+
+### - [x] F-8.5.24 — `lenny/await_children` does not surface `treeUsage`/`usage` from settled children — Low [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.8.3, F-8.9.4 — All three report that usage and treeUsage rollups on TaskResult are not aggregated or surfaced by the gateway.
 
@@ -8596,13 +8606,17 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:1306-1314`
 - `spec/08_recursive-delegation.md:885-917`
 
-### - [ ] F-8.5.25 — `lenny/output`: spec schema has no `sessionId`; impl requires it — Low (duplicate of F11 schema half) [Medium] — OPEN
+**Resolution:** Closed as duplicate of F-8.8.3 and F-8.9.4, which scope the gateway-side subtree usage accumulation. The §8.5 `await_children` surface inherits the rollup once that lands; nothing tool-specific to add here.
+
+### - [x] F-8.5.25 — `lenny/output`: spec schema has no `sessionId`; impl requires it — Low (duplicate of F11 schema half) [Medium] — CLOSED
 
 **Severity: Low** (covered under F11; noted separately because the §15.4.1 reconciliation gap is the more impactful half of F11)
 
 The spec schema (`lenny/output`) lists only `output` as required. Impl requires `sessionId` AND `output`. This recurrence of the "MCP server has no implicit session" pattern is consistent across all session-bound tools (memory, elicitation, request_input, output). A future v2 might add an MCP-session-to-lenny-session binding so the `sessionId` argument can be dropped.
 
 Evidence: see F11.
+
+**Resolution:** Closed as duplicate of F-8.5.11, which already tracks the `sessionId` schema deviation plus the §15.4.1 reconciliation surface gap. Nothing schema-specific to add separately.
 
 ---
 

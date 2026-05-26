@@ -549,6 +549,14 @@ func Register(srv *mcp.Server, deps Deps) {
 		// on the merged result that will be registered.
 		merged := tracing.Merge(row.TracingContext, in.Context)
 		if err := tracing.Validate(merged); err != nil {
+			// spec: §8.3 — a validation failure carries a stable
+			// TRACING_CONTEXT_* code. Surface it through *mcp.ToolError so
+			// REST and MCP envelopes share the §15.2.1 (category, retryable)
+			// pair instead of falling back to INTERNAL_ERROR. F-8.5.17.
+			var verr *tracing.ValidationError
+			if errors.As(err, &verr) {
+				return mcp.ToolResult{}, mcp.NewToolError(string(verr.Code), verr.Detail, nil)
+			}
 			return mcp.ToolResult{}, err
 		}
 		updated, err := deps.Store.Update(ctx, tenant, in.SessionID, func(row *sessionstore.Session) error {
@@ -1159,13 +1167,22 @@ func Register(srv *mcp.Server, deps Deps) {
 				var isoErr *delegation.IsolationViolationError
 				if errors.As(err, &isoErr) {
 					if deps.Audit != nil {
+						// spec: §11.7 lines 99-101 — the §11.7 delegation
+						// payload schema names parent_isolation /
+						// target_isolation / matched_policy_rule. v1
+						// rejection happens before the §8.3
+						// DelegationPolicy registry is consulted, so
+						// matched_policy_rule is emitted as the empty
+						// string until F-8.5.7 lands the policy-scoped
+						// filtering and can attribute the matching rule.
 						deps.Audit.EmitDelegationEvent(ctx, "delegation.isolation_violation", map[string]any{
-							"parentSessionId":   in.ParentSessionID,
-							"runtimeRef":        in.RuntimeRef,
-							"poolRef":           in.PoolRef,
-							"parentProfile":     string(isoErr.ParentProfile),
-							"childProfile":      string(isoErr.ChildProfile),
-							"cross_environment": viaCrossEnv,
+							"parentSessionId":     in.ParentSessionID,
+							"runtimeRef":          in.RuntimeRef,
+							"poolRef":             in.PoolRef,
+							"parent_isolation":    string(isoErr.ParentProfile),
+							"target_isolation":    string(isoErr.ChildProfile),
+							"matched_policy_rule": "",
+							"cross_environment":   viaCrossEnv,
 						})
 					}
 					return mcp.ToolResult{}, fmt.Errorf("ISOLATION_MONOTONICITY_VIOLATED: %w", err)

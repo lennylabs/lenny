@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -774,6 +775,19 @@ func TestSetTracingContextToolRejectsSensitiveKey(t *testing.T) {
 	if result["isError"] != true {
 		t.Errorf("a sensitive key should be a tool error: %+v", resp)
 	}
+	// spec: §8.3 — the structured envelope carries the stable code so
+	// REST and MCP transports map the failure to the same §15.2.1
+	// (category, retryable) pair instead of INTERNAL_ERROR. F-8.5.17.
+	envelope := readLennyErrorEnvelope(t, result)
+	if got := envelope["code"]; got != "TRACING_CONTEXT_SENSITIVE_KEY" {
+		t.Errorf("envelope.code = %v, want TRACING_CONTEXT_SENSITIVE_KEY", got)
+	}
+	if got := envelope["category"]; got != "PERMANENT" {
+		t.Errorf("envelope.category = %v, want PERMANENT", got)
+	}
+	if got, _ := envelope["retryable"].(bool); got {
+		t.Errorf("envelope.retryable = true, want false")
+	}
 }
 
 func TestSetTracingContextToolRejectsURLValue(t *testing.T) {
@@ -785,6 +799,35 @@ func TestSetTracingContextToolRejectsURLValue(t *testing.T) {
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("a URL value should be a tool error: %+v", resp)
+	}
+	// spec: §8.3 — F-8.5.17.
+	envelope := readLennyErrorEnvelope(t, result)
+	if got := envelope["code"]; got != "TRACING_CONTEXT_URL_NOT_ALLOWED" {
+		t.Errorf("envelope.code = %v, want TRACING_CONTEXT_URL_NOT_ALLOWED", got)
+	}
+	if got := envelope["category"]; got != "PERMANENT" {
+		t.Errorf("envelope.category = %v, want PERMANENT", got)
+	}
+}
+
+// TestSetTracingContextToolRejectsTooLarge_spec_8_3 covers the third
+// §8.3 validation gate: an oversized tracingContext value surfaces
+// the TRACING_CONTEXT_TOO_LARGE code through the structured envelope
+// rather than as an INTERNAL_ERROR. F-8.5.17.
+func TestSetTracingContextToolRejectsTooLarge_spec_8_3(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_t", session.StateRunning, "")
+
+	oversize := strings.Repeat("x", 2049)
+	body := fmt.Sprintf(`{"sessionId":"sess_t","context":{"k":%q}}`, oversize)
+	resp := call(t, srv.Handler(), "lenny/set_tracing_context", body)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("an oversize value should be a tool error: %+v", resp)
+	}
+	envelope := readLennyErrorEnvelope(t, result)
+	if got := envelope["code"]; got != "TRACING_CONTEXT_TOO_LARGE" {
+		t.Errorf("envelope.code = %v, want TRACING_CONTEXT_TOO_LARGE", got)
 	}
 }
 
