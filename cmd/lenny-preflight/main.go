@@ -42,9 +42,33 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
+
+// parseRuntimeClassRequirements splits the comma-separated
+// --required-runtime-classes value (each item `profile=name`) into the
+// §5.3 RuntimeClass requirements the chart derived from the enabled,
+// externally-managed runtimeClasses.profiles entries. Malformed items
+// are skipped.
+//
+// spec: §5.3 line 676.
+func parseRuntimeClassRequirements(s string) []preflight.RuntimeClassRequirement {
+	var out []preflight.RuntimeClassRequirement
+	for _, pair := range strings.Split(s, ",") {
+		if pair = strings.TrimSpace(pair); pair == "" {
+			continue
+		}
+		profile, name, ok := strings.Cut(pair, "=")
+		profile, name = strings.TrimSpace(profile), strings.TrimSpace(name)
+		if !ok || profile == "" || name == "" {
+			continue
+		}
+		out = append(out, preflight.RuntimeClassRequirement{Profile: profile, Name: name})
+	}
+	return out
+}
 
 // minioGetBucketEncryption builds a MinIOEncryptionProber that calls
 // the §12.5 MinIO server-side encryption configuration API. Empty
@@ -121,6 +145,9 @@ func main() {
 		"MinIO artifact bucket name for the §12.5 line 297 SSE audit. Empty skips the check.")
 	minioUseSSL := flag.Bool("minio-use-ssl", true,
 		"use TLS when probing MinIO for the §12.5 line 297 SSE audit.")
+	requiredRuntimeClasses := flag.String("required-runtime-classes", "",
+		"comma-separated profile=runtimeClassName pairs the §5.3 line 676 RuntimeClass "+
+			"presence check requires; empty skips the check")
 	flag.Parse()
 
 	// MinIO credentials for the §12.5 line 297 SSE preflight are read
@@ -145,6 +172,9 @@ func main() {
 	}
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	// Register lenny.dev/v1 so the §5.2 line 516 node-drain-timeout
+	// warning can list SandboxTemplate pools.
+	utilruntime.Must(lennyv1.AddToScheme(scheme))
 	cl, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		log.Fatalf("lenny-preflight: build cluster client: %v", err)
@@ -157,12 +187,13 @@ func main() {
 			DrainReadiness: *drainReadiness,
 			Compliance:     *compliance,
 		},
-		AcceptDowngrade:       parseAcceptDowngrade(*acceptDowngrade),
-		SPIFFETrustDomain:     *spiffeTrustDomain,
-		SATokenAudience:       *saTokenAudience,
-		ComplianceProfile:     *complianceProfile,
-		MinIOBucket:           *minioBucket,
-		MinIOEncryptionProber: minioGetBucketEncryption(*minioEndpoint, minioAccessKey, minioSecretKey, *minioUseSSL),
+		AcceptDowngrade:        parseAcceptDowngrade(*acceptDowngrade),
+		SPIFFETrustDomain:      *spiffeTrustDomain,
+		SATokenAudience:        *saTokenAudience,
+		ComplianceProfile:      *complianceProfile,
+		MinIOBucket:            *minioBucket,
+		MinIOEncryptionProber:  minioGetBucketEncryption(*minioEndpoint, minioAccessKey, minioSecretKey, *minioUseSSL),
+		RequiredRuntimeClasses: parseRuntimeClassRequirements(*requiredRuntimeClasses),
 	})
 
 	for _, r := range report {

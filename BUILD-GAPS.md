@@ -3713,9 +3713,11 @@ The catalog (`pkg/observability/metrics/catalog.go:63`) marks it as a gauge. The
 
 `SlotClaimer.ReleaseSlot` (`pkg/gateway/podclaim/slotclaimer.go:447`) is invoked from `Binder.ReleaseSlot` but the session-expiry sweeper (`pkg/gateway/sessionserver/sessionserver.go` and friends) does not appear to call it directly. The watchdog path that expires sessions may leak slots. This is a deeper trace that warrants its own audit; flagged as Low for §5.2.
 
-### - [ ] F-5.2.27 — The `lenny-preflight` Job does not warn on the `terminationGracePeriodSeconds > 600s` condition [Low] — OPEN
+### - [x] F-5.2.27 — The `lenny-preflight` Job does not warn on the `terminationGracePeriodSeconds > 600s` condition [Low] — CLOSED
 
 Spec §5.2 line 516: "The `lenny-preflight` Job ... also checks for this condition and emits a preflight warning." `cmd/lenny-preflight/main.go` does not implement any pool-related preflight check (greps for `terminationGracePeriod`, `maxConcurrent`, `gracePeriod` return zero matches).
+
+**Resolution:** added the `pool-termination-grace-period` preflight check (`pkg/preflight/terminationgrace.go`). `Run` lists SandboxTemplate pools cluster-wide and `CheckTerminationGracePeriods` emits an advisory warning for every pool whose `terminationGracePeriodSeconds` exceeds the common 600s node drain timeout, naming each offending pool and value. The check is warning-only (never blocks the install), mirroring the SandboxWarmPool CRD validation webhook's warning-only treatment of the same condition; a fresh install (no pools) passes cleanly, and a list failure surfaces as an advisory note rather than a failure. `cmd/lenny-preflight` registers the lenny.dev/v1 scheme and the chart grants `lenny.dev/sandboxtemplates` list to the preflight SA. Boundary: 600s does not warn, 601s does.
 
 ### - [x] F-5.2.28 — `WarmPoolBootstrapping` alert exists; the linked runbook is referenced [Low] — CLOSED
 
@@ -3768,7 +3770,7 @@ Consequence: a pool created against `isolationProfile: sandboxed` on a cluster w
 
 **Resolution (`19d5ffad`):** `pkg/controller/warmpool/runtimeclass.go` adds a `RuntimeClassChecker` (production `readerRuntimeClassChecker` over the manager's uncached API reader) and the `evaluateRuntimeClass` reconcile step: every pass resolves the pool's isolation-profile→RuntimeClass name and, when the RuntimeClass is absent, logs an error and sets the `Degraded` condition on the SandboxWarmPool status with the verbatim §5.3 message (`"RuntimeClass 'gvisor' not found — install gVisor or change the pool's isolation profile."`; runc/kata follow the same form) while suppressing pod creation (`decision.Create = 0`); a present RuntimeClass clears the condition to `Degraded=False` so a pool recovers once the operator installs it. The condition rides the existing WPC SSA status patch (one field manager, `SandboxWarmPoolStatus.Conditions` already present, no CRD change). `cmd/lenny-controller` wires the checker; `controller-rbac.yaml` grants `node.k8s.io/runtimeclasses` get/list. This is the §4 `SetPoolCondition(... Degraded when RuntimeClass missing)` contract.
 
-### - [ ] F-5.3.2 — `lenny-preflight` Job does not check RuntimeClass presence [High] — OPEN
+### - [x] F-5.3.2 — `lenny-preflight` Job does not check RuntimeClass presence [High] — CLOSED
 
 Spec §5.3 line 676: "The Helm chart includes a `lenny-preflight` validation Job (see Section 17.6) that checks for required RuntimeClasses and all other infrastructure dependencies before installation proceeds."
 
@@ -3780,6 +3782,8 @@ Implementation:
 - The preflight Job ClusterRole (`charts/lenny/templates/preflight-job.yaml:37-48`) does not grant `node.k8s.io.runtimeclasses` get/list, confirming the check is not wired.
 
 Consequence: a `helm install` on a cluster missing the chosen RuntimeClass succeeds; the failure surfaces only when the first warm pod create is rejected by the API server, long after the operator believes the install is healthy. The "fail-closed before any Lenny component is deployed" guarantee in §17.9 line 478 does not hold for RuntimeClass.
+
+**Resolution:** added the `runtimeclass-presence` preflight check (`pkg/preflight/runtimeclass.go`). `Run` lists the cluster's `node.k8s.io/v1` RuntimeClass objects and `CheckRuntimeClasses` fails the install fail-closed when any required class is absent, preserving the §17.9 `"RuntimeClass '<name>' not found"` wording. The §17.9 source `.Values.bootstrap.pools` does not exist (pools are runtime admin-API objects created after the gateway is up, so they are absent at pre-install when the guarantee matters most); the install-time source of "required RuntimeClasses" is the chart's enabled `runtimeClasses.profiles` set, so the chart passes one `profile=name` requirement per enabled profile via `--required-runtime-classes` and a miss is attributed to the isolation profile. The chart skips the requirement in dev mode (§5.3 runc fallback, so no gVisor/Kata needed) and when `runtimeClasses.create: true` (the chart renders the classes itself, which do not yet exist at the pre-install hook). The preflight SA gains `node.k8s.io/runtimeclasses` get/list.
 
 ### - [ ] F-5.3.3 — Dev-mode fallback to `standard` (runc) isolation is not implemented [High] — CLOSED
 

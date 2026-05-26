@@ -1,0 +1,63 @@
+suite: §5.3/§5.2 lenny-preflight RuntimeClass and termination-grace checks
+templates:
+  - preflight-job.yaml
+tests:
+  - it: requires the sandboxed gVisor RuntimeClass by default
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--required-runtime-classes=sandboxed=gvisor"
+
+  - it: requires both gVisor and Kata when microvm is also enabled
+    set:
+      runtimeClasses.profiles.microvm.enabled: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--required-runtime-classes=microvm=kata,sandboxed=gvisor"
+
+  - it: requires no RuntimeClass in dev mode (runc fallback per §5.3)
+    set:
+      global.devMode: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--required-runtime-classes=sandboxed=gvisor"
+
+  - it: requires no RuntimeClass when the chart renders them itself
+    set:
+      runtimeClasses.create: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--required-runtime-classes=sandboxed=gvisor"
+
+  - it: grants the preflight SA RuntimeClass and SandboxTemplate read
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["node.k8s.io"]
+            resources: ["runtimeclasses"]
+            verbs: ["get", "list"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["lenny.dev"]
+            resources: ["sandboxtemplates"]
+            verbs: ["list"]

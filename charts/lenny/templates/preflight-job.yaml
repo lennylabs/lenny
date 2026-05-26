@@ -46,6 +46,14 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["list"]
+  # §5.3 line 676 RuntimeClass presence check (cluster-scoped objects).
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list"]
+  # §5.2 line 516 node-drain-timeout warning lists pools cluster-wide.
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxtemplates"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -119,6 +127,26 @@ subjects:
 {{- if hasKey ($tls | default dict) "enabled" -}}
 {{- $useSSL = $tls.enabled -}}
 {{- end -}}
+{{- /*
+§5.3 line 676 RuntimeClass requirements. The install requires the
+RuntimeClasses backing the isolation profiles its pods will use. Source
+them from the chart's enabled runtimeClasses.profiles entries, skipping:
+  - dev mode, where §5.3 falls back to standard (runc) and no gVisor/Kata
+    RuntimeClass is required (a stock kind/minikube cluster has neither);
+  - the runtimeClasses.create case, where the chart renders the
+    RuntimeClass objects itself during install, so they do not yet exist
+    at this pre-install hook and must not be required here.
+*/ -}}
+{{- $rcReqs := list -}}
+{{- $rc := .Values.runtimeClasses | default dict -}}
+{{- $global := .Values.global | default dict -}}
+{{- if and (not $rc.create) (not $global.devMode) -}}
+{{-   range $profile, $cfg := ($rc.profiles | default dict) -}}
+{{-     if and $cfg $cfg.enabled $cfg.name -}}
+{{-       $rcReqs = append $rcReqs (printf "%s=%s" $profile $cfg.name) -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -154,6 +182,9 @@ spec:
             - --feature-compliance={{ .Values.features.compliance }}
             - --accept-downgrade={{ join "," $accepted }}
             - --compliance-profile={{ .Values.complianceProfile | default "" }}
+            {{- if $rcReqs }}
+            - --required-runtime-classes={{ join "," $rcReqs }}
+            {{- end }}
             {{- if $hasMinio }}
             - --minio-endpoint={{ $minio.endpoint }}
             - --minio-bucket={{ $minio.bucket }}

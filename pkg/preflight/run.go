@@ -59,6 +59,11 @@ type Config struct {
 	// artifact bucket. The lenny-preflight Job constructs a real
 	// prober against MinIO; tests pass a fake.
 	MinIOEncryptionProber MinIOEncryptionProber
+	// RequiredRuntimeClasses lists the §5.3 RuntimeClasses the install
+	// requires (one per enabled, externally-managed
+	// runtimeClasses.profiles entry). Empty skips the §5.3 line 676
+	// RuntimeClass presence check.
+	RequiredRuntimeClasses []RuntimeClassRequirement
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -191,6 +196,42 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 				ComplianceProfile: cfg.ComplianceProfile,
 				Prober:            cfg.MinIOEncryptionProber,
 			}.Decide(ctx),
+		})
+	}
+
+	// §5.3 line 676 — required RuntimeClass presence. The chart passes
+	// one requirement per enabled, externally-managed isolation profile;
+	// an absent RuntimeClass fails the install fail-closed before the
+	// first warm pod create would be rejected by the API server.
+	if len(cfg.RequiredRuntimeClasses) > 0 {
+		if existing, err := gatherRuntimeClasses(ctx, reader); err != nil {
+			report = append(report, CheckResult{
+				Name:     "runtimeclass-presence",
+				Decision: Decision{Reason: "list RuntimeClasses: " + err.Error()},
+			})
+		} else {
+			report = append(report, CheckResult{
+				Name:     "runtimeclass-presence",
+				Decision: CheckRuntimeClasses(cfg.RequiredRuntimeClasses, existing),
+			})
+		}
+	}
+
+	// §5.2 line 516 — node-drain-timeout warning. Existing pools (on
+	// upgrade) whose terminationGracePeriodSeconds exceeds the common
+	// 600s node drain timeout get an advisory warning. A fresh install
+	// has no pools and the check passes cleanly. The check is
+	// warning-only: a read failure surfaces as an advisory note and
+	// never blocks the install.
+	if pools, err := gatherPoolGracePeriods(ctx, reader); err != nil {
+		report = append(report, CheckResult{
+			Name:     "pool-termination-grace-period",
+			Decision: Decision{Passed: true, Reason: "WARNING: list SandboxTemplates: " + err.Error()},
+		})
+	} else {
+		report = append(report, CheckResult{
+			Name:     "pool-termination-grace-period",
+			Decision: CheckTerminationGracePeriods(pools),
 		})
 	}
 	return report
