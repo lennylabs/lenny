@@ -314,10 +314,11 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// with the explicit POST /start transition.
 	s.emitStatusChange(row.ID, row.State)
 
+	base := toResponse(row)
+	base.SessionIsolationLevel = defaultIsolationLevel(isoProf)
 	resp := CreateSessionResponse{
-		SessionResponse:       toResponse(row),
+		SessionResponse:       base,
 		UploadToken:           tok,
-		SessionIsolationLevel: defaultIsolationLevel(isoProf),
 		WorkspacePlanWarnings: planWarnings,
 	}
 	w.Header().Set("Content-Type", "application/json")

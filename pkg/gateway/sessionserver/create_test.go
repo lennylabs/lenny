@@ -282,6 +282,70 @@ func TestCreateRespectsExplicitIsolationProfile(t *testing.T) {
 	}
 }
 
+// TestGetReturnsSessionIsolationLevel_spec_7_1 asserts the §7.1 line 75
+// requirement that GET /v1/sessions/{id} and the list both return the
+// sessionIsolationLevel metadata so a client that lost the create
+// response can still inspect the session's isolation posture. The
+// isolation profile is the one persisted at creation (microvm here) and
+// is stable for the session's lifetime.
+func TestGetReturnsSessionIsolationLevel_spec_7_1(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_getiso" }})
+
+	if rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef:       "claude-code",
+		IsolationProfile: isolation.ProfileMicrovm,
+	}); rr.Code != http.StatusCreated {
+		t.Fatalf("create status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// GET /v1/sessions/{id} must carry sessionIsolationLevel.
+	get := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_getiso", nil)
+	get.Header.Set("X-Lenny-Tenant-ID", "acme")
+	gr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(gr, get)
+	if gr.Code != http.StatusOK {
+		t.Fatalf("GET status: got %d, want 200; body=%s", gr.Code, gr.Body.String())
+	}
+	var got sessionserver.SessionResponse
+	if err := json.Unmarshal(gr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode GET: %v", err)
+	}
+	if got.SessionIsolationLevel.IsolationProfile != string(isolation.ProfileMicrovm) {
+		t.Errorf("GET sessionIsolationLevel.isolationProfile = %q, want microvm",
+			got.SessionIsolationLevel.IsolationProfile)
+	}
+	if got.SessionIsolationLevel.ExecutionMode != "session" {
+		t.Errorf("GET executionMode = %q, want session", got.SessionIsolationLevel.ExecutionMode)
+	}
+	// The field must be present in the raw JSON, not just the zero value.
+	if !strings.Contains(gr.Body.String(), `"sessionIsolationLevel"`) {
+		t.Errorf("GET body missing sessionIsolationLevel key: %s", gr.Body.String())
+	}
+
+	// GET /v1/sessions (list) must carry it for each row too.
+	list := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+	list.Header.Set("X-Lenny-Tenant-ID", "acme")
+	lr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(lr, list)
+	if lr.Code != http.StatusOK {
+		t.Fatalf("LIST status: got %d, want 200", lr.Code)
+	}
+	var listResp struct {
+		Sessions []sessionserver.SessionResponse `json:"sessions"`
+	}
+	if err := json.Unmarshal(lr.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode LIST: %v", err)
+	}
+	if len(listResp.Sessions) != 1 {
+		t.Fatalf("LIST returned %d sessions, want 1", len(listResp.Sessions))
+	}
+	if listResp.Sessions[0].SessionIsolationLevel.IsolationProfile != string(isolation.ProfileMicrovm) {
+		t.Errorf("LIST sessionIsolationLevel.isolationProfile = %q, want microvm",
+			listResp.Sessions[0].SessionIsolationLevel.IsolationProfile)
+	}
+}
+
 func TestCreateRejectsUnknownIsolationProfile(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{})

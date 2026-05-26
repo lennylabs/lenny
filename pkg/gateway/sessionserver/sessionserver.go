@@ -843,6 +843,17 @@ type SessionResponse struct {
 	// resume budget.
 	// spec: §4.2 line 159 — "Resume eligibility and window".
 	ResumeEligibleUntil string `json:"resumeEligibleUntil,omitempty"`
+
+	// SessionIsolationLevel echoes the §7.1 sessionIsolationLevel object
+	// so a client that lost the create response can inspect the session's
+	// isolation posture through GET /v1/sessions/{id} and the list. The
+	// field is populated from the persisted §5.3 isolation profile and is
+	// stable for the lifetime of the session (the profile never changes
+	// after creation).
+	// spec: §7.1 line 75 — "GET /v1/sessions/{id} also returns
+	// sessionIsolationLevel in the session metadata ... does not change
+	// for the lifetime of the session".
+	SessionIsolationLevel SessionIsolationLevel `json:"sessionIsolationLevel"`
 }
 
 // CreateSessionResponse is the §15.1 POST /v1/sessions response
@@ -856,13 +867,6 @@ type CreateSessionResponse struct {
 	// `POST /v1/sessions/{id}/upload-archive` until the session is
 	// finalized. Treat as a secret per §7.1.
 	UploadToken string `json:"uploadToken"`
-
-	// SessionIsolationLevel echoes the §7.1 isolation-level object
-	// (executionMode, isolationProfile, podReuse, scrubPolicy,
-	// residualStateWarning). The minimal gateway populates
-	// isolationProfile + executionMode + residualStateWarning;
-	// scrubPolicy/podReuse default to the §7.1 single-session values.
-	SessionIsolationLevel SessionIsolationLevel `json:"sessionIsolationLevel"`
 
 	// WorkspacePlanWarnings echoes any §14 consumer-advisory
 	// warnings (unknown source type, path collisions) the parser
@@ -1037,10 +1041,16 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	row.UploadTokenDigest = parsed.Digest
 	row.UploadTokenExpiry = parsed.Expiry
 
+	base := toResponse(row)
+	// spec: §7.1 line 75 — at creation the isolation level is resolved
+	// against the assigned pool (executionMode/scrubPolicy/podReuse from
+	// the §5.2 pool), which is richer than the profile-only level
+	// toResponse derives for the GET/list path. Override the embedded
+	// default with the pool-resolved value here.
+	base.SessionIsolationLevel = s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf)
 	resp := CreateSessionResponse{
-		SessionResponse:       toResponse(row),
+		SessionResponse:       base,
 		UploadToken:           tok,
-		SessionIsolationLevel: s.resolveIsolationLevel(r.Context(), row.RuntimeRef, isoProf),
 		WorkspacePlanWarnings: planWarnings,
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1453,6 +1463,13 @@ func toResponse(row sessionstore.Session) SessionResponse {
 		RecoveryGeneration: row.RecoveryGeneration,
 		SchemaVersion:      schemaVersion,
 		RetryCount:         row.RetryCount,
+		// spec: §7.1 line 75 — surface the isolation level on every read so
+		// a client that lost the create response can still inspect it. It is
+		// derived from the persisted §5.3 profile, which is fixed for the
+		// session's lifetime. The pod-reuse fields (executionMode,
+		// scrubPolicy, residualStateWarning) carry their session-mode
+		// defaults here; the create path resolves the pool-accurate values.
+		SessionIsolationLevel: defaultIsolationLevel(row.IsolationProfile),
 	}
 	if row.FailureClass != "" {
 		out.FailureClass = string(row.FailureClass)
