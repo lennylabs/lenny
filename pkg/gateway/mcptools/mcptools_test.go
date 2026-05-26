@@ -339,9 +339,78 @@ func TestSendMessageTool(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
-	text := resultText(t, resp)
-	if !strings.Contains(text, "ping") {
-		t.Errorf("send_message echo: %q", text)
+	// spec: §15.4 lines 1725-1737 — every lenny/send_message call
+	// returns a `delivery_receipt` envelope as the first text block,
+	// followed by the runtime's text output. F-7.2.10.
+	result, _ := resp["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if len(content) < 2 {
+		t.Fatalf("send_message must return receipt + output blocks; got %d blocks: %+v", len(content), content)
+	}
+	first, _ := content[0].(map[string]any)
+	receiptJSON, _ := first["text"].(string)
+	var envelope struct {
+		DeliveryReceipt session.DeliveryReceipt `json:"deliveryReceipt"`
+	}
+	if err := json.Unmarshal([]byte(receiptJSON), &envelope); err != nil {
+		t.Fatalf("first block must be a deliveryReceipt JSON envelope: %v; body=%s", err, receiptJSON)
+	}
+	if envelope.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
+		t.Errorf("delivery receipt status = %q, want %q", envelope.DeliveryReceipt.Status, session.DeliveryStatusDelivered)
+	}
+	if envelope.DeliveryReceipt.MessageID == "" {
+		t.Error("delivery receipt messageId is empty; §15.4 line 1784 requires a gateway-assigned id")
+	}
+	if envelope.DeliveryReceipt.DeliveredAt.IsZero() {
+		t.Error("delivery receipt deliveredAt is zero for status=delivered")
+	}
+	second, _ := content[1].(map[string]any)
+	if echo, _ := second["text"].(string); !strings.Contains(echo, "ping") {
+		t.Errorf("second block must carry the executor echo; got %q", echo)
+	}
+}
+
+// TestSendMessageToolDeliveryReceiptOnInReplyTo asserts that the
+// §8.5 inReplyTo path also returns a §15.4 delivery_receipt — the
+// runtime consumed the answer, so status = delivered. The pre-fix
+// shape `{"resolved":"req-1"}` carried no receipt and clients tracking
+// receipts to reconcile retries had no signal on the inReplyTo path.
+// spec: §15.4 lines 1725-1737; §8.5 inReplyTo resolution. F-7.2.10.
+func TestSendMessageToolDeliveryReceiptOnInReplyTo(t *testing.T) {
+	srv, store, reg := newMCPForInput(t, 5*time.Second)
+	mkSession(t, store, "sess_i", session.StateRunning, "")
+	h := srv.Handler()
+
+	go func() {
+		_ = call(t, h, "lenny/request_input",
+			`{"sessionId":"sess_i","requestId":"req-1","prompt":"pick a color"}`)
+	}()
+	waitPending(t, reg, "sess_i", "req-1")
+
+	resp := call(t, h, "lenny/send_message",
+		`{"sessionId":"sess_i","content":"blue","inReplyTo":"req-1","messageId":"msg_caller"}`)
+	result, _ := resp["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if len(content) < 1 {
+		t.Fatalf("inReplyTo result must contain a receipt block; got %+v", content)
+	}
+	first, _ := content[0].(map[string]any)
+	receiptJSON, _ := first["text"].(string)
+	var envelope struct {
+		DeliveryReceipt session.DeliveryReceipt `json:"deliveryReceipt"`
+		Resolved        string                  `json:"resolved"`
+	}
+	if err := json.Unmarshal([]byte(receiptJSON), &envelope); err != nil {
+		t.Fatalf("inReplyTo result must be a deliveryReceipt envelope: %v; body=%s", err, receiptJSON)
+	}
+	if envelope.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
+		t.Errorf("inReplyTo receipt status = %q, want %q", envelope.DeliveryReceipt.Status, session.DeliveryStatusDelivered)
+	}
+	if envelope.DeliveryReceipt.MessageID != "msg_caller" {
+		t.Errorf("inReplyTo receipt messageId = %q, want the sender-supplied msg_caller", envelope.DeliveryReceipt.MessageID)
+	}
+	if envelope.Resolved != "req-1" {
+		t.Errorf("inReplyTo receipt `resolved` = %q, want req-1", envelope.Resolved)
 	}
 }
 
@@ -948,6 +1017,56 @@ func TestRequestInputRejectsTerminalSession(t *testing.T) {
 	}
 }
 
+// TestRequestInputPublishesElicitationRequestEvent_spec_7_2 asserts that
+// lenny/request_input surfaces the prompt on the session stream as the
+// canonical §7.2 line 136 `elicitation_request` SSE event, not as the
+// pre-fix `request_input` synonym that was not in the §7.2 catalog and
+// silently bypassed clients filtering on the documented event name.
+// spec: §7.2 line 136. F-7.2.17.
+func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
+	store := memstore.New()
+	reg := inputwait.NewRegistry()
+	bus := sessionevents.NewBus(0)
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:               store,
+		Events:              bus,
+		InputWaits:          reg,
+		RequestInputTimeout: time.Second,
+		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:              func() string { return "sess_mcp" },
+		TenantID:            "acme",
+	})
+	mkSession(t, store, "sess_i", session.StateRunning, "")
+	h := srv.Handler()
+
+	got := make(chan map[string]any, 1)
+	go func() {
+		got <- call(t, h, "lenny/request_input",
+			`{"sessionId":"sess_i","requestId":"req-1","prompt":"pick a color"}`)
+	}()
+	waitPending(t, reg, "sess_i", "req-1")
+
+	hist := bus.History("sess_i", 0)
+	if len(hist) != 1 {
+		t.Fatalf("event history has %d events, want 1: %+v", len(hist), hist)
+	}
+	if hist[0].Type != "elicitation_request" {
+		t.Errorf("event type = %q, want elicitation_request (§7.2 line 136 canonical name)", hist[0].Type)
+	}
+	if !strings.Contains(hist[0].Data, "req-1") || !strings.Contains(hist[0].Data, "pick a color") {
+		t.Errorf("event data = %q, want it to carry the requestId + prompt", hist[0].Data)
+	}
+
+	// Unblock the goroutine so the test does not hang on teardown.
+	reg.Cancel("sess_i", "req-1")
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request_input did not return after cancel")
+	}
+}
+
 func TestSendMessageInReplyToFallsThroughWithoutPendingInput(t *testing.T) {
 	srv, store, _ := newMCPForInput(t, time.Second)
 	mkSession(t, store, "sess_i", session.StateRunning, "")
@@ -1352,6 +1471,62 @@ func TestRequestElicitationRejectsTerminalSession(t *testing.T) {
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("a terminal session should be a tool error: %+v", resp)
+	}
+}
+
+// TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2 asserts
+// that lenny/request_elicitation surfaces the elicitation on the
+// resolver session's stream as the canonical §7.2 line 136
+// `elicitation_request` event, not the pre-fix `elicitation_requested`
+// synonym (which appeared nowhere in the §7.2 catalog).
+// spec: §7.2 line 136. F-7.2.17.
+func TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
+	store := memstore.New()
+	interactions := interactionstore.NewMemory()
+	bus := sessionevents.NewBus(0)
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:              store,
+		Events:             bus,
+		Interactions:       interactions,
+		ElicitationTimeout: 5 * time.Second,
+		Clock:              func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:             func() string { return "elic_gen" },
+		TenantID:           "acme",
+	})
+	mkSession(t, store, "sess_e", session.StateRunning, "")
+	h := srv.Handler()
+
+	done := make(chan map[string]any, 1)
+	go func() {
+		done <- call(t, h, "lenny/request_elicitation",
+			`{"sessionId":"sess_e","message":"pick one","elicitationId":"elic_x"}`)
+	}()
+	waitElicitation(t, interactions, "sess_e", "elic_x")
+
+	hist := bus.History("sess_e", 0)
+	if len(hist) != 1 {
+		t.Fatalf("event history has %d events, want 1: %+v", len(hist), hist)
+	}
+	if hist[0].Type != "elicitation_request" {
+		t.Errorf("event type = %q, want elicitation_request (§7.2 line 136 canonical name)", hist[0].Type)
+	}
+	if !strings.Contains(hist[0].Data, "elic_x") || !strings.Contains(hist[0].Data, "pick one") {
+		t.Errorf("event data = %q, want it to carry the elicitationId + message", hist[0].Data)
+	}
+
+	// Resolve so the goroutine returns cleanly.
+	if _, err := interactions.Resolve(context.Background(), "acme", "sess_e", "", "elic_x",
+		func(i *interactionstore.Interaction) error {
+			i.Phase = interactionstore.PhaseDismissed
+			return nil
+		}); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request_elicitation did not return after dismissal")
 	}
 }
 

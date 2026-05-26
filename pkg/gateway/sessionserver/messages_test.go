@@ -71,8 +71,16 @@ func TestMessagesEchoExecutor(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.DeliveryStatus != "delivered" {
-		t.Errorf("DeliveryStatus: %q", resp.DeliveryStatus)
+	// spec: §15.4 lines 1725-1737 — every send_message call returns a
+	// `delivery_receipt` envelope (F-7.2.10).
+	if got, want := resp.DeliveryReceipt.Status, session.DeliveryStatusDelivered; got != want {
+		t.Errorf("delivery receipt status = %q, want %q", got, want)
+	}
+	if resp.DeliveryReceipt.MessageID == "" {
+		t.Error("delivery receipt messageId is empty; §15.4 line 1784 requires a gateway-assigned id when the sender omits one")
+	}
+	if resp.DeliveryReceipt.DeliveredAt.IsZero() {
+		t.Error("delivery receipt deliveredAt is zero for status=delivered")
 	}
 	if len(resp.Output) != 1 || !strings.Contains(resp.Output[0].Text, "hello") {
 		t.Errorf("output: %+v", resp.Output)

@@ -61,6 +61,16 @@ const (
 	EventPlatformElicitationContentIntegrityFloorChanged EventType = "platform.elicitation_content_integrity_floor_changed"
 	EventTenantElicitationContentIntegrityFloorClamp     EventType = "tenant.elicitation_content_integrity_floor_clamp"
 
+	// §7.2 / §11.7 / §16.7 — interaction-resolution audit events. Every
+	// state-changing user decision (tool-use approve/deny, elicitation
+	// respond/dismiss) writes a §11.7 hash-chained audit row so a
+	// post-incident investigation can reconstruct who approved or denied
+	// which tool call or elicitation. F-7.2.8.
+	EventToolUseApproved      EventType = "tool_use.approved"
+	EventToolUseDenied        EventType = "tool_use.denied"
+	EventElicitationResponded EventType = "elicitation.responded"
+	EventElicitationDismissed EventType = "elicitation.dismissed"
+
 	// §12.4 — quota fail-open entry edge.
 	EventQuotaFailOpenStarted EventType = "quota_failopen_started"
 

@@ -98,11 +98,22 @@ type Session struct {
 }
 
 // MessageResponse is the parsed §15.1 POST /v1/sessions/{id}/messages
-// response.
+// response. The body wraps the §15.4 `delivery_receipt` envelope per
+// F-7.2.10.
 type MessageResponse struct {
-	SessionID      string          `json:"sessionId"`
-	DeliveryStatus string          `json:"deliveryStatus"`
-	Output         json.RawMessage `json:"output,omitempty"`
+	SessionID       string          `json:"sessionId"`
+	DeliveryReceipt DeliveryReceipt `json:"deliveryReceipt"`
+	Output          json.RawMessage `json:"output,omitempty"`
+}
+
+// DeliveryReceipt mirrors the §15.4 lines 1725-1737 schema returned by
+// every send_message call (the MCP tool and the REST endpoint).
+type DeliveryReceipt struct {
+	MessageID   string `json:"messageId"`
+	Status      string `json:"status"`
+	Reason      string `json:"reason,omitempty"`
+	DeliveredAt string `json:"deliveredAt,omitempty"`
+	QueueDepth  int    `json:"queueDepth,omitempty"`
 }
 
 // Event is one frame from the SSE /v1/sessions/{id}/events stream. The

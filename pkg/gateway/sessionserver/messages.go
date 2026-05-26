@@ -100,14 +100,20 @@ type MessagePayload struct {
 	Content string `json:"content"`
 }
 
-// MessageResponse is the §15.1 message-injection response. The
-// minimal gateway returns the synchronous output of the in-process
-// executor; production wires the §10.1 inbox path so the response
-// streams via the event channel.
+// MessageResponse is the §15.1 message-injection response. It wraps
+// the §15.4 `delivery_receipt` envelope every send_message call
+// returns alongside the executor's synchronous output. The minimal
+// gateway always emits `status: "delivered"`; the queued / dropped /
+// expired / rate_limited / error paths land with the §7.2 inbox + DLQ
+// machinery (F-7.2.4).
+//
+// spec: §15.4 lines 1725-1737 (`delivery_receipt` schema); §7.2 line
+// 345; F-7.2.10.
 type MessageResponse struct {
-	// DeliveryStatus echoes the §7.2 delivery-receipt status. The
-	// minimal executor always returns `delivered`.
-	DeliveryStatus string `json:"deliveryStatus"`
+	// DeliveryReceipt is the §15.4 envelope clients consume to
+	// distinguish delivered from queued / dropped / expired /
+	// rate_limited / error outcomes.
+	DeliveryReceipt session.DeliveryReceipt `json:"deliveryReceipt"`
 
 	// Output is the executor's synchronous response. Empty when the
 	// executor delivered the message but produced no immediate
@@ -256,10 +262,28 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// spec: §15.4 lines 1725-1737 — every send_message call returns a
+	// synchronous `delivery_receipt`. `messageId` defaults to the
+	// first inbound message's sender-supplied id; gateway-assigned
+	// ids carry the `msg_` prefix per §15.4 line 1784. The minimal
+	// gateway emits `status: "delivered"` after the executor returns;
+	// the queued / dropped / expired / rate_limited / error paths
+	// land with the §7.2 inbox + DLQ machinery (F-7.2.4). F-7.2.10.
+	messageID := ""
+	if len(msgs) > 0 {
+		messageID = msgs[0].ID
+	}
+	if messageID == "" {
+		messageID = "msg_" + session.NewID()
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(MessageResponse{
-		DeliveryStatus: "delivered",
-		Output:         out,
+		DeliveryReceipt: session.DeliveryReceipt{
+			MessageID:   messageID,
+			Status:      session.DeliveryStatusDelivered,
+			DeliveredAt: s.clock(),
+		},
+		Output: out,
 	})
 }

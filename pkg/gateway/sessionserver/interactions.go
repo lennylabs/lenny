@@ -131,10 +131,48 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 		}
 		return
 	}
+	// spec: §7.2 lines 124-127 / §11.7 / §16.7 — every state-changing
+	// user decision (tool-use approve/deny, elicitation respond/dismiss)
+	// writes a §11.7 hash-chained audit row so the post-incident
+	// reconstruction can show who approved or denied what. Best-effort:
+	// a nil sink or appender error never fails the resolution. F-7.2.8.
+	if s.interactionAudit != nil {
+		if eventType, ok := interactionResolutionAuditType(res.kind, res.phase); ok {
+			s.interactionAudit.EmitInteractionResolution(r.Context(), InteractionResolutionEvent{
+				EventType:     eventType,
+				TenantID:      tenantID,
+				SessionID:     sessionID,
+				UserID:        userID,
+				InteractionID: interactionID,
+				Phase:         string(out.Phase),
+				Reason:        res.reason,
+				At:            out.ResolvedAt,
+			})
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id":         out.ID,
 		"phase":      string(out.Phase),
 		"resolvedAt": out.ResolvedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 	})
+}
+
+// interactionResolutionAuditType maps the (interaction kind, target
+// phase) tuple to its §11.7 audit event type. Returns ok=false for an
+// unrecognized combination so the emission silently skips an
+// intermediate / unsupported phase. F-7.2.8.
+func interactionResolutionAuditType(kind interactionstore.Kind, phase interactionstore.Phase) (string, bool) {
+	switch {
+	case kind == interactionstore.KindToolUse && phase == interactionstore.PhaseApproved:
+		return auditToolUseApproved, true
+	case kind == interactionstore.KindToolUse && phase == interactionstore.PhaseDenied:
+		return auditToolUseDenied, true
+	case kind == interactionstore.KindElicitation && phase == interactionstore.PhaseResponded:
+		return auditElicitationResponded, true
+	case kind == interactionstore.KindElicitation && phase == interactionstore.PhaseDismissed:
+		return auditElicitationDismissed, true
+	default:
+		return "", false
+	}
 }

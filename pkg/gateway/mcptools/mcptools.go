@@ -305,12 +305,16 @@ func Register(srv *mcp.Server, deps Deps) {
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/send_message",
 		Description: "Deliver a message to a running session and return the response.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","content"],"properties":{"sessionId":{"type":"string"},"content":{"type":"string"},"inReplyTo":{"type":"string"}}}`),
+		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","content"],"properties":{"sessionId":{"type":"string"},"content":{"type":"string"},"inReplyTo":{"type":"string"},"messageId":{"type":"string"}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
 			SessionID string `json:"sessionId"`
 			Content   string `json:"content"`
 			InReplyTo string `json:"inReplyTo"`
+			// MessageID is the §15.4 line 1784 sender-supplied id. When
+			// empty the gateway assigns a `msg_` prefix id so every
+			// receipt is correlatable. F-7.2.10.
+			MessageID string `json:"messageId"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
@@ -322,6 +326,13 @@ func Register(srv *mcp.Server, deps Deps) {
 		if session.IsTerminal(row.State) {
 			return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
 		}
+		// spec: §15.4 line 1784 — the gateway assigns a `msg_` prefix
+		// id when the sender omits one so every receipt is
+		// correlatable. F-7.2.10.
+		messageID := in.MessageID
+		if messageID == "" {
+			messageID = "msg_" + idFn()
+		}
 		// §8.5: when the message answers a pending lenny/request_input
 		// call, it resolves that blocked call directly instead of being
 		// delivered to the runtime. A non-matching inReplyTo falls
@@ -330,7 +341,12 @@ func Register(srv *mcp.Server, deps Deps) {
 		if in.InReplyTo != "" && deps.InputWaits != nil {
 			err := deps.InputWaits.Resolve(in.SessionID, in.InReplyTo, in.Content)
 			if err == nil {
-				return textResult(fmt.Sprintf(`{"resolved":%q}`, in.InReplyTo)), nil
+				// spec: §15.4 lines 1725-1737 — the inReplyTo path
+				// counts as delivered (the runtime consumed the
+				// answer). The receipt also carries the resolved
+				// requestId so callers correlating by inReplyTo can
+				// pivot off either field. F-7.2.10.
+				return textResult(buildSendMessageReceipt(messageID, in.InReplyTo, nil, clock())), nil
 			}
 			if !errors.Is(err, inputwait.ErrNotFound) {
 				return mcp.ToolResult{}, err
@@ -375,7 +391,17 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			return mcp.ToolResult{}, mcp.NewToolError(code, rej.Reason, nil)
 		}
-		content := make([]mcp.ToolContent, 0, len(out))
+		// spec: §15.4 lines 1725-1737 — emit the `delivery_receipt`
+		// as the first text block so a strict client can parse it
+		// before reading the runtime's text output. The executor
+		// output follows as additional text blocks so existing
+		// callers parsing `content[*].text` still see the runtime's
+		// response.
+		content := make([]mcp.ToolContent, 0, 1+len(out))
+		content = append(content, mcp.ToolContent{
+			Type: "text",
+			Text: buildSendMessageReceipt(messageID, "", out, clock()),
+		})
 		for _, p := range out {
 			if p.Type == "text" {
 				content = append(content, mcp.ToolContent{Type: "text", Text: p.Text})
@@ -658,14 +684,17 @@ func Register(srv *mcp.Server, deps Deps) {
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
-			// §8.5: surface the question on the session event stream so a
-			// peer can see what input is being asked for.
+			// spec: §7.2 line 136 — surface the question on the session
+			// event stream as the canonical `elicitation_request` SSE event.
+			// `lenny/request_input` (§8.5) and `lenny/request_elicitation`
+			// (§9.2) both ask the user for input and so share the §7.2
+			// catalog name. F-7.2.17.
 			if deps.Events != nil {
 				data, _ := json.Marshal(struct {
 					RequestID string `json:"requestId"`
 					Prompt    string `json:"prompt"`
 				}{RequestID: in.RequestID, Prompt: in.Prompt})
-				deps.Events.Publish(in.SessionID, "request_input", string(data), clock())
+				deps.Events.Publish(in.SessionID, "elicitation_request", string(data), clock())
 			}
 			// Block in the §7.2 input_required sub-state until a peer
 			// resolves the request or the §11.3 timeout fires.
@@ -826,16 +855,18 @@ func Register(srv *mcp.Server, deps Deps) {
 			}); err != nil {
 				return mcp.ToolResult{}, err
 			}
-			// §9.2: surface the elicitation on the resolver session's
-			// event stream so the human responder (and the elicitation
-			// chain) can see it.
+			// spec: §7.2 line 136 — surface the elicitation on the resolver
+			// session's event stream as the canonical `elicitation_request`
+			// SSE event. The previous `elicitation_requested` synonym was
+			// not in the §7.2 catalog; clients filtering on the documented
+			// event name silently missed elicitation prompts. F-7.2.17.
 			if deps.Events != nil {
 				data, _ := json.Marshal(struct {
 					ElicitationID string `json:"elicitationId"`
 					Message       string `json:"message"`
 					OriginPod     string `json:"originPod"`
 				}{ElicitationID: elicitationID, Message: in.Message, OriginPod: row.ID})
-				deps.Events.Publish(resolverSessionID, "elicitation_requested", string(data), clock())
+				deps.Events.Publish(resolverSessionID, "elicitation_request", string(data), clock())
 			}
 			// Block until the chain resolver resolves the elicitation or
 			// the §9.1 maxElicitationWait timeout fires.
@@ -1907,6 +1938,36 @@ func archiveCancelled(ctx context.Context, archive treearchive.Store,
 
 func textResult(s string) mcp.ToolResult {
 	return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: s}}}
+}
+
+// buildSendMessageReceipt builds the §15.4 `delivery_receipt` envelope
+// for a lenny/send_message call. The minimal gateway always emits
+// `status: "delivered"` once the executor has accepted the message or
+// the inReplyTo path has resolved a pending lenny/request_input. The
+// queued / dropped / expired / rate_limited / error paths land with the
+// §7.2 inbox + DLQ machinery (F-7.2.4) and update this helper then.
+// When inReplyTo resolves a pending request the `resolved` field
+// carries the resolved request id so callers correlating by
+// inReplyTo can pivot off either field; for the executor path it is
+// empty. The `output` field mirrors the executor's text output parts so
+// the runtime's reply travels in the same JSON envelope as the receipt.
+// spec: §15.4 lines 1725-1737; F-7.2.10.
+func buildSendMessageReceipt(messageID, resolvedRequestID string, out []executor.OutputPart, now time.Time) string {
+	envelope := struct {
+		DeliveryReceipt session.DeliveryReceipt `json:"deliveryReceipt"`
+		Resolved        string                  `json:"resolved,omitempty"`
+		Output          []executor.OutputPart   `json:"output,omitempty"`
+	}{
+		DeliveryReceipt: session.DeliveryReceipt{
+			MessageID:   messageID,
+			Status:      session.DeliveryStatusDelivered,
+			DeliveredAt: now,
+		},
+		Resolved: resolvedRequestID,
+		Output:   out,
+	}
+	body, _ := json.Marshal(envelope)
+	return string(body)
 }
 
 // elicitationOrGen returns id when non-empty, otherwise a freshly

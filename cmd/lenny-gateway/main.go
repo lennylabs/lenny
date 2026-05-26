@@ -1504,6 +1504,11 @@ func main() {
 		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
 		// hash-chained log, written under the session's tenant.
 		LifecycleAuditSink: sessionLifecycleAuditor{appender: auditAppender},
+		// §7.2 lines 124-127 / §11.7 / §16.7 — interaction-resolution
+		// audit events (tool-use approve/deny, elicitation
+		// respond/dismiss) to the §11.7 hash-chained log, written under
+		// the session's tenant. F-7.2.8.
+		InteractionAuditSink: interactionResolutionAuditor{appender: auditAppender},
 		// §7.1 line 77 — default artifact retention window.
 		DefaultRetention: time.Duration(*sessionArtifactRetentionSeconds) * time.Second,
 		// §7.1 line 112 — seal-and-export retry window + outcome histogram.
@@ -3262,6 +3267,45 @@ func (a sessionLifecycleAuditor) EmitSessionLifecycle(ctx context.Context, ev se
 		// spec: §7.1 line 112 — workspaceSealFailed records the last MinIO
 		// export error in the detail field.
 		payload["detail"] = ev.Detail
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	at := ev.At
+	if at.IsZero() {
+		at = clockinject.Now().UTC()
+	}
+	_, _ = a.appender.Append(ctx, ev.TenantID, ev.EventType, json.RawMessage(data), at)
+}
+
+// interactionResolutionAuditor adapts the gateway audit appender to
+// the sessionserver.InteractionAuditSink interface. It writes the
+// §7.2 / §11.7 / §16.7 tool-use approve/deny and elicitation
+// respond/dismiss events to the hash-chained audit log under the
+// session's own tenant partition. The tenant is taken from the
+// session-derived event, satisfying the §11.7 line 428 write-time
+// tenant-validation rule. The OCSF mapping maps these event types to
+// API Activity (6003). spec: §7.2 lines 124-127. F-7.2.8.
+type interactionResolutionAuditor struct {
+	appender policy.AuditAppender
+}
+
+func (a interactionResolutionAuditor) EmitInteractionResolution(ctx context.Context, ev sessionserver.InteractionResolutionEvent) {
+	if a.appender == nil {
+		return
+	}
+	payload := map[string]any{
+		"session_id":     ev.SessionID,
+		"user_sub":       ev.UserID,
+		"interaction_id": ev.InteractionID,
+		"phase":          ev.Phase,
+	}
+	if ev.Reason != "" {
+		// §15.1 deny body — the optional dismissal reason recorded so
+		// the post-incident reconstruction can show why a tool call was
+		// denied.
+		payload["reason"] = ev.Reason
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

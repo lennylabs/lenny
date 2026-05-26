@@ -208,6 +208,13 @@ type Server struct {
 	// spec: §7.1, §16.6.
 	lifecycleAudit LifecycleAuditSink
 
+	// interactionAudit, when set, receives the §7.2 / §11.7 / §16.7
+	// interaction-resolution audit events emitted by the §15.1
+	// tool-use approve/deny and elicitation respond/dismiss endpoints.
+	// Nil disables the emission; the resolution itself proceeds either
+	// way. spec: §7.2 table lines 124-127; §11.7; §16.7. F-7.2.8.
+	interactionAudit InteractionAuditSink
+
 	// defaultRetention is the §7.1 line 77 default artifact-retention
 	// window stamped on every session at create time and rolled forward
 	// at the terminal transition. A non-positive value falls through to
@@ -333,6 +340,14 @@ type Options struct {
 	// hash-chained audit log. Production wires this to the audit
 	// appender; nil disables the emission.
 	LifecycleAuditSink LifecycleAuditSink
+
+	// InteractionAuditSink, when set, receives the §7.2 / §11.7 /
+	// §16.7 tool-use approve/deny and elicitation respond/dismiss
+	// audit events emitted by the §15.1 resolution endpoints.
+	// Production wires this to the audit appender; nil disables the
+	// emission and the resolution still proceeds.
+	// spec: §7.2 table lines 124-127. F-7.2.8.
+	InteractionAuditSink InteractionAuditSink
 
 	// DefaultRetention overrides the §7.1 line 77 default artifact-
 	// retention window. A non-positive value selects
@@ -696,6 +711,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		observeStartupDuration: opts.ObserveStartupDuration,
 		observeStartupPhase:    opts.ObserveStartupPhase,
 		lifecycleAudit:         opts.LifecycleAuditSink,
+		interactionAudit:       opts.InteractionAuditSink,
 		defaultRetention:       opts.DefaultRetention,
 	}
 	if s.defaultRetention <= 0 {

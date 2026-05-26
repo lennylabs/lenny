@@ -5837,7 +5837,7 @@ Effect: an `interrupt` call returns success and the row reads `suspended`, but t
 
 ---
 
-### - [ ] F-7.2.8 — (High) — Tool-use and elicitation resolution endpoints do not emit audit events [Medium] — OPEN
+### - [x] F-7.2.8 — (High) — Tool-use and elicitation resolution endpoints do not emit audit events [Medium] — CLOSED
 
 Spec §7.2 (table lines 124–127) defines four user-action endpoints that resolve agent-blocked decisions: tool-use approve, tool-use deny, elicitation respond, elicitation dismiss. Spec §11.7 and §16.7 require audit-trail entries for every state-changing user decision.
 
@@ -5846,6 +5846,8 @@ Implementation:
 - `grep -rn "EventToolUse\|EventElicitationResponded\|EventElicitationDismissed" pkg/observability/audit/` returns zero matches; the catalog at `pkg/observability/audit/catalog.go` defines `EventElicitationContentTamperDetected` but no respond/dismiss/approve/deny audit type.
 
 Effect: who-approved-what / who-denied-what is not in the audit log. Post-incident investigation cannot reconstruct user decisions on tool calls or elicitations. The audit catalog is missing the §16.7 entries that would naturally exist for these resolutions.
+
+**Resolution:** Added the §16.7 catalog entries `EventToolUseApproved`, `EventToolUseDenied`, `EventElicitationResponded`, `EventElicitationDismissed` and a new `sessionserver.InteractionAuditSink` interface paired with `InteractionResolutionEvent` (carries `EventType`, `TenantID`, `SessionID`, `UserID`, `InteractionID`, `Phase`, optional `Reason`, `At`). `resolveInteraction` emits one row per successful resolution via the sink; the kind+phase tuple is mapped by `interactionResolutionAuditType`. Failure paths (not-found, wrong-user, kind mismatch, already-resolved) emit no audit row, so a 404 does not leak the existence of a foreign interaction via an audit side channel. The gateway main wires `interactionResolutionAuditor{appender}` so the row lands in the §11.7 hash-chained log under the session's tenant per §11.7 line 428 write-time tenant validation. Tier-1 covers all four resolution paths + nil-sink safety + failure non-emission.
 
 ---
 
@@ -5865,7 +5867,7 @@ Effect: the approve/deny REST endpoints have no producer. Any tool that should r
 
 ---
 
-### - [ ] F-7.2.10 — (Medium) — `lenny/send_message` returns no `deliveryReceipt` [Medium] — OPEN
+### - [x] F-7.2.10 — (Medium) — `lenny/send_message` returns no `deliveryReceipt` [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.5.6 — Both report lenny/send_message does not return the deliveryReceipt envelope; F-8.5.6 additionally covers messagingScope and rate-limit gaps but shares the receipt root cause.
 
@@ -5876,6 +5878,8 @@ Implementation:
 - The REST `POST /v1/sessions/{id}/messages` returns `MessageResponse{DeliveryStatus: "delivered", Output: out}` (`pkg/gateway/sessionserver/messages.go:107-116, 248-251`) — a minimal receipt, but only the `delivered` value is ever set; the five other status values (`queued`, `dropped`, `expired`, `rate_limited`, `error`) are unreachable.
 
 Effect: agents cannot distinguish a delivered message from a buffered one; senders cannot react to drops, expiries, or rate-limit failures.
+
+**Resolution:** Added `pkg/api/v1/session.DeliveryReceipt` (the shared §15.4 lines 1725-1737 envelope with the closed `DeliveryStatus` and `DeliveryReason` enums). The REST `MessageResponse` now wraps `DeliveryReceipt{MessageID, Status, DeliveredAt}` with a gateway-assigned `msg_` prefix id when the sender omits one (§15.4 line 1784). The MCP `lenny/send_message` accepts an optional `messageId` input and returns the receipt as the first text block (followed by the executor's text output); the inReplyTo path also carries a `resolved` field so callers correlating by inReplyTo or messageId can pivot off either. The minimal gateway always emits `status: delivered` once the executor accepts the message or the inReplyTo path resolves a pending request; the queued / dropped / expired / rate_limited / error paths land with the §7.2 inbox + DLQ machinery (F-7.2.4). The sessiondriver test harness MessageResponse now mirrors the spec schema. Tier-1 covers the receipt shape, gateway-assigned id, and the inReplyTo path receipt + resolved field.
 
 ---
 
@@ -5958,7 +5962,7 @@ Effect: a resumed parent re-receives `children_reattached` but cannot determine 
 
 ---
 
-### - [ ] F-7.2.17 — (Medium) — `request_input` event published by `lenny/request_input` differs from spec event name [Medium] — OPEN
+### - [x] F-7.2.17 — (Medium) — `request_input` event published by `lenny/request_input` differs from spec event name [Medium] — CLOSED
 
 Spec §7.2 does not enumerate `request_input` as a session-stream event; it does define `tool_use_requested`, `tool_result`, `elicitation_request`, etc. (table lines 133-141). The MCP tool publishes a `request_input` event onto the calling session's stream and an `elicitation_requested` event onto the resolver's stream — neither matches the §7.2 catalog exactly.
 
@@ -5968,6 +5972,8 @@ Implementation:
 - Spec table line 136 defines the event as `elicitation_request` (not `elicitation_requested`).
 
 Effect: clients subscribed to the SSE stream filtering on the spec-documented event type names will silently miss elicitation prompts. The `request_input` channel name is a runtime invention not in the §7.2 catalog.
+
+**Resolution:** Renamed both publish sites to the canonical §7.2 line 136 `elicitation_request` event type. `lenny/request_input` (§8.5) and `lenny/request_elicitation` (§9.2) both ask the user for input, so both emit the shared `elicitation_request` SSE event. Tier-1 asserts the canonical name on both publish paths.
 
 ---
 
@@ -6044,7 +6050,7 @@ Effect: noteworthy that the internal state model already encodes the sub-state c
 
 ---
 
-### - [ ] F-7.2.24 — (Info) — `recordSessionCompleted` performs seal + executor.Close + tree-archive + cascadeOnFailure + billing but does not publish `session_complete` SSE event or drain the inbox [Medium] — OPEN
+### - [x] F-7.2.24 — (Info) — `recordSessionCompleted` performs seal + executor.Close + tree-archive + cascadeOnFailure + billing but does not publish `session_complete` SSE event or drain the inbox [Medium] — CLOSED
 
 Spec §7.2 (table line 141, lines 343, 425) requires:
 - `session_complete(result)` SSE event on terminal transitions.
@@ -6056,9 +6062,11 @@ Implementation:
 
 Effect: SSE subscribers receive no terminal frame; senders to a terminated target receive no notification (compounded by F4 — there is no inbox to drain).
 
+**Resolution:** The `session_complete` SSE event aspect is already closed by commit 9d3aa2aa (F-7.1.5 / F-7.1.10 / F-7.1.11 / F-7.1.16): `pkg/gateway/sessionserver/lifecycle.go:123` (`emitSessionComplete`) publishes the §7.2 line 141 event on the session's SSE stream, called from `emitTerminalLifecycle` (line 141) which `recordSessionCompleted` invokes for every terminal transition. The §7.2 line 343 / 425 inbox + DLQ drain with `message_expired(reason: "target_terminated")` emission remains gated on F-7.2.4 (the inbox/DLQ machinery is entirely unimplemented); that drain lands together with the inbox itself. Tier-1 coverage in `lifecycle_internal_test.go:125-217` verifies `session_complete` is emitted exactly once per terminal transition.
+
 ---
 
-### - [ ] F-7.2.25 — (Info) — Idempotency middleware applies to every POST including `/messages` and the interaction endpoints [Medium] — OPEN
+### - [x] F-7.2.25 — (Info) — Idempotency middleware applies to every POST including `/messages` and the interaction endpoints [Medium] — CLOSED
 
 Spec §11.5 (cross-cited from §7.2) requires deduplicated retries on the message-injection and interaction-resolution endpoints.
 
@@ -6066,6 +6074,8 @@ Implementation:
 - `cmd/lenny-gateway/main.go:1451-1455` wires `idemmw.Wrap` over the full session handler. The middleware (`pkg/gateway/middleware/idempotency/idempotency.go:128-193`) reads `Idempotency-Key` on any POST. This means tool-use approve/deny and elicitation respond/dismiss receive the same idempotency treatment as session creation, which is correct.
 
 Effect: noteworthy that idempotency is wired correctly even though the underlying handlers (F8) do not write audit rows that would benefit from it; the §7.2 idempotency requirement is met for the implemented endpoints.
+
+**Resolution:** Verified the finding's premise was stale. Spec §11.5 line 268 enumerates the closed "critical operations" list: CreateSession, FinalizeWorkspace, StartSession, SpawnChild, Approve/DenyDelegation, Resume — and the gateway's `AllowedPaths` (`cmd/lenny-gateway/main.go:2224-2234`) covers exactly those routes (`/v1/sessions`, `/v1/sessions/start`, `/v1/environments/{name}/sessions`, `/v1/sessions/{id}/finalize`, `/v1/sessions/{id}/start`, `/v1/sessions/{id}/resume`, `/v1/sessions/{id}/derive`, `/v1/sessions/{id}/tool-use/...`, `/mcp`). `/v1/sessions/{id}/messages` and the elicitation respond/dismiss endpoints are intentionally not on the list because §11.5 does not list them as critical operations; the message-injection + elicitation-resolution endpoints land elsewhere by design. There is no idempotency gap.
 
 ---
 
