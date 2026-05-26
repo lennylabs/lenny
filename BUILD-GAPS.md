@@ -6519,11 +6519,13 @@ Spec context: §16.2/§16.4 expect audit coverage of session-lifecycle transitio
 
 Implementation: `pkg/gateway/sessionserver/upload.go` and the `handleFinalize` block of `sessionserver.go` contain no calls to `audit.*`, `auditstore.Append`, or `ocsf.*`. The session-creation path emits `recordSessionCreated` (sessionserver.go:685), but the upload/finalize transitions don't. A captured `uploadToken` replay (now blocked by F16/single-use) generates no audit record either way.
 
-### - [ ] F-7.4.18 — Content-Type is taken verbatim from the client header with no validation [Low] — OPEN
+### - [x] F-7.4.18 — Content-Type is taken verbatim from the client header with no validation [Low] — CLOSED
 
 Spec: §7.4 enforcement-rules table does not enumerate `Content-Type` checks, but the §13.4 cross-reference implies the gateway validates payloads. The implementation accepts whatever the client supplies (`pkg/gateway/sessionserver/upload.go:112-115`), defaulting to `application/octet-stream` when missing, and stores the raw value alongside the blob. There is no allowlist of admissible MIME types, no magic-number sniffing, no rejection of malformed Content-Type, and no requirement that the declared type match the bytes.
 
 This is a "noteworthy" rather than a defect: the spec does not require Content-Type validation, but the absence of any check is worth flagging given the §13 security model.
+
+**Resolution (positive confirmation, no code change):** Re-verified the spec text: §7.4 and §13 do not enumerate any Content-Type allowlist, magic-number requirement, or declared-vs-actual match. The finding itself classifies the observation as "noteworthy rather than a defect". Per rule F (code fixes must cite a spec section), the absence of a normative requirement means no code change is warranted. The §13.4 size/structure ceilings the spec does mandate are tracked under F-7.4.2 (Phase 2 archive ceilings).
 
 ### - [ ] F-7.4.19 — §7.4 explicit precondition: "upload-archive" tokens not reissued for mid-session [Info] — OPEN
 
