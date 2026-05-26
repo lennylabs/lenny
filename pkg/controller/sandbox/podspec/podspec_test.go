@@ -597,3 +597,44 @@ func TestBuildMasksProc_spec_6_4(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildCredentialsVolumeIsTmpfs_spec_6_4 confirms the §13.1 / §6.4
+// invariant that the credential volume is memory-backed (tmpfs) so the
+// short-lived credential file never persists to a node disk. The mount
+// is read-only into the runtime container in the sidecar model (already
+// asserted by TestBuildMountsTheWorkspaceAndCredentialVolumes); this
+// test pins the volume backing.
+func TestBuildCredentialsVolumeIsTmpfs_spec_6_4(t *testing.T) {
+	for _, model := range []string{"", "embedded"} {
+		in := inputs()
+		in.DeploymentModel = model
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(%q): %v", model, err)
+		}
+		ed := findVolume(t, pod, podspec.CredVolumeName).VolumeSource.EmptyDir
+		if ed == nil || ed.Medium != corev1.StorageMediumMemory {
+			t.Errorf("model %q: credentials volume must be memory-backed (tmpfs), got %+v", model, ed)
+		}
+	}
+}
+
+// TestBuildMountsTheWorkspaceVolume_spec_6_4 confirms the §6.4 line 377
+// "/workspace" mount: a disk-backed emptyDir mounted at /workspace on
+// every agent container, so the §7.4 staging→current promotion and the
+// FinalizeWorkspace handoff are within one volume.
+func TestBuildMountsTheWorkspaceVolume_spec_6_4(t *testing.T) {
+	for _, model := range []string{"", "embedded"} {
+		in := inputs()
+		in.DeploymentModel = model
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(%q): %v", model, err)
+		}
+		for _, c := range pod.Spec.Containers {
+			if !mountsPath(c, "workspace", "/workspace") {
+				t.Errorf("model %q: container %q does not mount workspace at /workspace", model, c.Name)
+			}
+		}
+	}
+}

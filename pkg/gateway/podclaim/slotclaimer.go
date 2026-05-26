@@ -65,6 +65,14 @@ func gatewayStatusPatch(name, namespace, phase string, activeSlots int32, tenant
 // can never be re-pinned to another. It is the Kubernetes-layer half of
 // the two-layer tenant-pinning enforcement; SlotClaimer is the
 // application-layer half.
+//
+// spec: §6.4 lines 416-419 / §5.1 — the gateway-stamps-on-claim pattern
+// established here is the working precedent for the missing
+// `lenny.dev/workspace-tier: t4` writer (tracked under F-6.4.4 / F-6.4.9).
+// A future T4 writer (in the pool controller or pod-spec builder) should
+// follow the same SSA-Apply + `lenny-gateway` field-manager handoff used
+// in (*SlotClaimer).Claim below so the lenny-t4-node-isolation webhook
+// has a stable predicate to match on.
 const LabelTenant = "lenny.dev/tenant-id"
 
 // ConcurrencyStyle is the §5.2 concurrent-mode sub-variant.

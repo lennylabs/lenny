@@ -21,6 +21,15 @@ import (
 // is never followed, so Archive cannot read or embed content outside
 // the workspace root. Restore-side path containment is Materialize's
 // responsibility.
+//
+// spec: §6.4 line 407 — session-mode and task-mode pods use the single
+// `/workspace/current` tree, so callers pass that path and Archive
+// captures the whole session workspace in one snapshot. The
+// concurrent-workspace per-slot layout (`/workspace/slots/{slotId}/` plus
+// `/artifacts/{slotId}/`) is unbuilt in v1; once it lands, the caller —
+// not Archive — decides whether to snapshot the per-slot tree alone or
+// include the slot's `/artifacts/{slotId}/`. Archive itself is layout-
+// agnostic: it walks root verbatim.
 func Archive(root string, w io.Writer) (int64, error) {
 	counter := &countingWriter{w: w}
 	gz := gzip.NewWriter(counter)

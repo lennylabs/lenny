@@ -341,6 +341,12 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			Image: in.AdapterImage,
 			Args: []string{
 				fmt.Sprintf("--addr=:%d", adapterPort),
+				// spec: §6.4 line 407 — session-mode and task-mode pods use the
+				// single `/workspace/current` cwd. The concurrent-workspace
+				// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
+				// in v1 (tracked under F-6.4.2); when it lands, the builder will
+				// select the workspace root from the resolved Runtime layout
+				// instead of hard-coding it here.
 				"--workspace-root=" + workspaceMount + "/current",
 				// §4.7: PrepareWorkspace stages uploads here before
 				// FinalizeWorkspace promotes them into /workspace/current.
@@ -409,6 +415,12 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			Image: in.RuntimeImage,
 			Args: []string{
 				fmt.Sprintf("--addr=:%d", adapterPort),
+				// spec: §6.4 line 407 — session-mode and task-mode pods use the
+				// single `/workspace/current` cwd. The concurrent-workspace
+				// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
+				// in v1 (tracked under F-6.4.2); when it lands, the builder will
+				// select the workspace root from the resolved Runtime layout
+				// instead of hard-coding it here.
 				"--workspace-root=" + workspaceMount + "/current",
 				// §4.7: the embedded runtime is the adapter, so it stages
 				// uploads the same way the sidecar adapter does.
@@ -442,6 +454,13 @@ const (
 	// EgressCaptureMountPath is the in-pod path the capture volume is
 	// mounted on in both the sidecar and the runtime containers. The
 	// JSONL file lives at egress.jsonl within it by default.
+	//
+	// spec: §6.4 / §13.1 — distinct from the credentialMount (/run/lenny):
+	// `/run/lenny-capture` is a sibling path and not a subdirectory of
+	// `/run/lenny`, so the credential tmpfs and the capture emptyDir cannot
+	// collide. Any future §6.4 in-pod path under the `/run/lenny-*` prefix
+	// must remain a sibling — never a subpath of an existing mount — so the
+	// mounts stay independent.
 	EgressCaptureMountPath = "/run/lenny-capture"
 	// defaultEgressCaptureListenPort is the TCP port the sidecar
 	// listens on by default. The runtime container dials it instead

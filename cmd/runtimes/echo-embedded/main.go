@@ -63,6 +63,10 @@ func main() {
 	keyFile := flag.String("tls-key-file", "", "path to the server private key")
 	clientCAFile := flag.String("tls-client-ca-file", "",
 		"path to the CA bundle that verifies gateway client certificates")
+	// spec: §6.4 line 407 — session-mode and task-mode pods use the
+	// single `/workspace/current` cwd; the concurrent-workspace per-slot
+	// tree (F-6.4.2) is unbuilt in v1, so the default here is correct
+	// across the v1 surface.
 	workspaceRoot := flag.String("workspace-root", "/workspace/current",
 		"directory the session workspace is materialized into")
 	credentialsDir := flag.String("credentials-dir", "/run/lenny",
