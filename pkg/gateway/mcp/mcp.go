@@ -167,6 +167,11 @@ type Server struct {
 	handlers          map[string]ToolHandler
 	order             []string
 	resultInterceptor ResultInterceptor
+	// idem holds the §11.5 idempotency wiring (Store + tenant resolver
+	// + allow-list of tools that admit an idempotencyKey field). A
+	// zero IdempotencyConfig disables the per-tool idempotency path.
+	// spec: §11.5 line 277; F-11.5.1.
+	idem IdempotencyConfig
 }
 
 // SetResultInterceptor installs the §4.8 PreToolResult hook. A nil
@@ -225,7 +230,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	case "tools/list":
 		s.writeResult(w, req.ID, map[string]any{"tools": s.toolList()})
 	case "tools/call":
-		s.handleToolCall(w, r.Context(), req)
+		s.handleToolCall(w, r, req)
 	case "ping":
 		s.writeResult(w, req.ID, map[string]any{})
 	default:
@@ -241,7 +246,8 @@ func (s *Server) toolList() []Tool {
 	return out
 }
 
-func (s *Server) handleToolCall(w http.ResponseWriter, ctx context.Context, req jsonRPCRequest) {
+func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req jsonRPCRequest) {
+	ctx := r.Context()
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -255,7 +261,43 @@ func (s *Server) handleToolCall(w http.ResponseWriter, ctx context.Context, req 
 		s.writeError(w, req.ID, errMethodNotFound, "unknown tool "+params.Name)
 		return
 	}
-	result, err := handler(ctx, params.Arguments)
+	// spec: §11.5 line 277 — when the tool admits an idempotencyKey field
+	// and the caller supplied one, route the dispatch through the §11.5
+	// Claim/Replay/Finalize flow so retries collapse to one execution.
+	// dispatchIdempotent returns handled=true when the path consumed the
+	// call; handled=false falls through to the regular handler. Closes
+	// F-11.5.1, F-11.5.6.
+	var (
+		result ToolResult
+		err    error
+	)
+	if s.idem.Store != nil && s.idem.Tools[params.Name] {
+		callerKey := extractIdempotencyKey(params.Arguments)
+		if callerKey != "" {
+			tenant := ""
+			if s.idem.TenantFromRequest != nil {
+				tenant = s.idem.TenantFromRequest(r)
+			}
+			if tenant == "" {
+				// Mirror the REST middleware's fail-closed posture: a
+				// missing tenant means the auth chain was bypassed for
+				// this request, so collapsing keys under a shared
+				// bucket would violate §11.5's per-tenant scope.
+				s.writeError(w, req.ID, errInvalidRequest,
+					"idempotency: tenant could not be resolved for MCP tool call; auth chain must precede MCP dispatch")
+				return
+			}
+			var handled bool
+			result, handled, err = s.dispatchIdempotent(ctx, tenant, params.Name, callerKey, params.Arguments, handler)
+			if !handled {
+				result, err = handler(ctx, params.Arguments)
+			}
+		} else {
+			result, err = handler(ctx, params.Arguments)
+		}
+	} else {
+		result, err = handler(ctx, params.Arguments)
+	}
 	if err != nil {
 		// A tool execution failure surfaces as an MCP tool result with
 		// isError=true (the call reached the tool, the tool reported

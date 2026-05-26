@@ -363,6 +363,9 @@ func main() {
 	idempotencyGCIntervalSeconds := flag.Int("idempotency-gc-interval-seconds",
 		envInt("LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS", 3600),
 		"§11.5 line 277 idempotency_keys TTL garbage-collection cadence. The sweeper iterates tenants and drops rows past the 24-hour retention window every interval. Default 3600s (one hour). Lower values reduce row backlog at the cost of more frequent Postgres scans; higher values keep expired rows up to the configured interval past TTL (read-time gate masks them from clients). Override via LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS.")
+	idempotencyMaxBodyBytes := flag.Int64("idempotency-max-body-bytes",
+		envInt64("LENNY_IDEMPOTENCY_MAX_BODY_BYTES", 8<<20),
+		"§11.5 line 277 cap on the request body the idempotency middleware buffers and hashes. A request larger than this is rejected with 413 BODY_TOO_LARGE before reaching the inner handler. Default 8 MiB covers the §11.5 critical operations (CreateSession ~10KB, FinalizeWorkspace and StartSession ~KB, Resume body that may carry a TaskResult). Operators raise it when their delegation payloads (taskInput) or replay/derive bodies exceed the default. Override via LENNY_IDEMPOTENCY_MAX_BODY_BYTES.")
 	checkpointJitterFraction := flag.Float64("checkpoint-jitter-fraction", envFloat("LENNY_CHECKPOINT_JITTER_FRACTION", checkpointer.DefaultJitterFraction),
 		"§4.4 line 258 `periodicCheckpointJitterFraction`. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
 	noEnvPolicy := flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
@@ -2178,8 +2181,32 @@ func main() {
 	if pgPool != nil {
 		idemStore = idempgstore.New(pgPool)
 	}
+	// spec: §11.5 line 277 — when an MCP client supplies idempotencyKey
+	// inside a tool's arguments (lenny/create_session,
+	// lenny/delegate_task), the MCP server runs the call through the
+	// same §11.5 Store with per-tool key namespacing so retries collapse
+	// to one execution. The Tools allow-list keeps the field opt-in per
+	// tool; the TenantFromRequest resolver mirrors the REST middleware's
+	// auth-set header. spec: F-11.5.1, F-11.5.6.
+	mcpSrv.SetIdempotency(mcp.IdempotencyConfig{
+		Store: idemStore,
+		TenantFromRequest: func(r *http.Request) string {
+			return r.Header.Get("X-Lenny-Tenant-ID")
+		},
+		Tools: map[string]bool{
+			"lenny/create_session": true,
+			"lenny/delegate_task":  true,
+		},
+		Now: clockinject.Now,
+	})
 	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{
 		Metrics: gwMetrics,
+		// spec: §11.5 line 277 — the middleware buffers the request body
+		// to hash and replay it. The default 8 MiB cap covers the
+		// critical-operation payloads and is operator-tunable via the
+		// flag for deployments that carry larger bodies (e.g. resume
+		// with a verbose TaskResult). F-11.5.8.
+		MaxBodyBytes: *idempotencyMaxBodyBytes,
 		// spec: §11.5 line 268 — the six "critical operations"
 		// (CreateSession, FinalizeWorkspace, StartSession, SpawnChild,
 		// Approve/DenyDelegation, Resume) bound the §11.5 cache. The
@@ -3571,6 +3598,20 @@ func envInt(name string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// envInt64 mirrors envInt for int64-valued flags (idempotency body
+// cap, size limits). Returns def on missing or unparseable env vars.
+func envInt64(name string, def int64) int64 {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return def
 	}

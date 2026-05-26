@@ -60,6 +60,15 @@ var table = map[string]entry{
 	"RESOURCE_NOT_FOUND":          {CategoryPermanent, false},
 	"RESOURCE_HAS_DEPENDENTS":     {CategoryPolicy, false},
 	"IDEMPOTENCY_KEY_REUSED":      {CategoryPermanent, false},
+	// spec: §11.5 line 277 ("returns the cached response … without
+	// re-executing the operation"). The middleware atomically claims the
+	// (tenant_id, idempotency_key) row before executing the inner handler;
+	// a concurrent retry that arrives while the original is still in flight
+	// observes the pending claim and is rejected with this code so the two
+	// retries do not double-execute the side effect. POLICY: the gate is a
+	// deliberate concurrency rule. retryable=true: once the original
+	// finishes, the next retry replays the cached response. F-11.5.2.
+	"IDEMPOTENCY_KEY_IN_FLIGHT": {CategoryPolicy, true},
 	"PRECONDITION_FAILED":         {CategoryPermanent, false},
 	"UNAUTHORIZED":                {CategoryPermanent, false},
 	"FORBIDDEN":                   {CategoryPermanent, false},

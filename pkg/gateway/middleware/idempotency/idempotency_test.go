@@ -14,17 +14,26 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/idempotency"
 )
 
-// stubStore lets a test inject Get/Put errors.
+// stubStore lets a test inject Get/Put/Claim errors.
 type stubStore struct {
-	getErr error
-	putErr error
-	rec    idempotency.Record
-	found  bool
-	puts   int
+	getErr   error
+	putErr   error
+	claimErr error
+	// Inject behaviour for Claim: when injectClaimed is set, Claim returns
+	// (zero, true, nil). Otherwise Claim falls through to a Get-shaped
+	// lookup using rec/found, so existing tests that only seed (rec, found)
+	// continue to behave as if no prior row existed (claim succeeds) or
+	// the prior row replays (claim returns it). Two-arg sentinel keeps
+	// existing tests source-compatible.
+	rec      idempotency.Record
+	found    bool
+	puts     int
+	releases int
 }
 
 func (s *stubStore) Get(_ context.Context, _, _ string) (idempotency.Record, bool, error) {
@@ -41,6 +50,40 @@ func (s *stubStore) Put(_ context.Context, rec idempotency.Record) error {
 	}
 	s.rec = rec
 	s.found = true
+	return nil
+}
+
+// Claim mimics the atomic claim: when no prior record exists, the
+// middleware "wins the slot" (claimed=true, no existing row). When a
+// prior record exists, it's returned with claimed=false so the
+// middleware's existing-row branch runs. Errors from getErr are
+// surfaced through claimErr too so the §15.1 envelope test keeps
+// covering the store-failure path. spec: §11.5 line 277; F-11.5.2.
+func (s *stubStore) Claim(_ context.Context, tenantID, key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
+	if s.claimErr != nil {
+		return idempotency.Record{}, false, s.claimErr
+	}
+	if s.getErr != nil {
+		return idempotency.Record{}, false, s.getErr
+	}
+	if s.found {
+		return s.rec, false, nil
+	}
+	// Simulate inserting a pending row.
+	s.rec = idempotency.Record{
+		Key:      idempotency.Key{TenantID: tenantID, Value: key},
+		BodyHash: bodyHash,
+		Response: idempotency.Response{StatusCode: 0},
+		StoredAt: now,
+	}
+	s.found = true
+	return idempotency.Record{}, true, nil
+}
+
+func (s *stubStore) Release(_ context.Context, _, _ string) error {
+	s.releases++
+	s.found = false
+	s.rec = idempotency.Record{}
 	return nil
 }
 
@@ -447,6 +490,14 @@ func (c *countingStore) Put(ctx context.Context, rec idempotency.Record) error {
 	return c.inner.Put(ctx, rec)
 }
 
+func (c *countingStore) Claim(ctx context.Context, tenantID, key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
+	return c.inner.Claim(ctx, tenantID, key, bodyHash, now)
+}
+
+func (c *countingStore) Release(ctx context.Context, tenantID, key string) error {
+	return c.inner.Release(ctx, tenantID, key)
+}
+
 // spec: §11.5 — only paths matching an AllowedPaths pattern are
 // admissible; other POSTs pass through without caching. Closes
 // F-11.5.7.
@@ -605,3 +656,346 @@ func TestMatchPathPattern(t *testing.T) {
 // io.Reader for tests that need a body but want to avoid unused-import
 // lint when the test file doesn't use io anywhere else.
 var _ io.Reader = strings.NewReader("")
+
+// spec: §11.5 line 277 ("without re-executing the operation"). The
+// atomic Claim inserts a pending row before the inner handler runs; a
+// concurrent retry that arrives mid-execution observes the pending row
+// and is rejected with 409 IDEMPOTENCY_KEY_IN_FLIGHT. Closes F-11.5.2.
+func TestWrap_AtomicClaim_ConcurrentRetryGetsInFlight_spec_11_5(t *testing.T) {
+	gate := make(chan struct{})
+	releaseInner := make(chan struct{})
+	calls := 0
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		gate <- struct{}{}
+		<-releaseInner
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"sessionId":"sess-1"}`))
+	})
+	store := NewMemoryStore()
+	wrapped := Wrap(inner, store, Options{})
+
+	send := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
+		req.Header.Set(HeaderName, "race-key")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rec := httptest.NewRecorder()
+		wrapped.ServeHTTP(rec, req)
+		return rec
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- send() }()
+	<-gate
+
+	// Second concurrent retry — original is still in flight.
+	r2 := send()
+	if r2.Code != http.StatusConflict {
+		t.Errorf("concurrent retry status = %d, want 409 IDEMPOTENCY_KEY_IN_FLIGHT", r2.Code)
+	}
+	if r2.Header().Get("Retry-After") != "1" {
+		t.Errorf("Retry-After = %q, want 1", r2.Header().Get("Retry-After"))
+	}
+	var env map[string]any
+	if err := json.NewDecoder(r2.Body).Decode(&env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	body, _ := env["error"].(map[string]any)
+	if body == nil || body["code"] != "IDEMPOTENCY_KEY_IN_FLIGHT" || body["category"] != "POLICY" || body["retryable"] != true {
+		t.Errorf("envelope: got %v, want IN_FLIGHT/POLICY/retryable", env)
+	}
+
+	// Let the first request complete.
+	close(releaseInner)
+	r1 := <-done
+	if r1.Code != http.StatusCreated {
+		t.Fatalf("original status = %d, want 201", r1.Code)
+	}
+	if calls != 1 {
+		t.Errorf("inner called %d times, want 1 (concurrent retry must not double-execute)", calls)
+	}
+
+	// After completion, a third retry replays the cached response.
+	r3 := send()
+	if r3.Code != http.StatusCreated {
+		t.Errorf("post-completion retry status = %d, want 201 (replay)", r3.Code)
+	}
+	if calls != 1 {
+		t.Errorf("inner called %d times after replay, want 1", calls)
+	}
+}
+
+// spec: §11.5 line 277 — when the inner handler returns a 5xx, the
+// pending row is released so the retry can re-execute against a healthy
+// backend. Closes F-11.5.2 (release on 5xx skip path) + F-11.5.3.
+func TestWrap_AtomicClaim_5xxReleasesPendingRow_spec_11_5(t *testing.T) {
+	calls := 0
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+	store := NewMemoryStore()
+	wrapped := Wrap(inner, store, Options{})
+
+	send := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
+		req.Header.Set(HeaderName, "5xx-key")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rec := httptest.NewRecorder()
+		wrapped.ServeHTTP(rec, req)
+		return rec
+	}
+	if r := send(); r.Code != http.StatusInternalServerError {
+		t.Fatalf("first status = %d, want 500", r.Code)
+	}
+	// A second retry must re-execute, not see IDEMPOTENCY_KEY_IN_FLIGHT.
+	if r := send(); r.Code != http.StatusCreated {
+		t.Fatalf("retry status = %d, want 201 (5xx released pending row)", r.Code)
+	}
+	if calls != 2 {
+		t.Errorf("inner called %d times, want 2 (first 5xx, second succeeds)", calls)
+	}
+}
+
+// spec: §11.5 line 277 — a streamed response (handler calls Flush) is
+// not cached; the pending row is released so a retry re-executes.
+// Closes F-11.5.10.
+func TestWrap_StreamingResponseSkipsCache_spec_11_5(t *testing.T) {
+	calls := 0
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: tick-1\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		_, _ = w.Write([]byte("data: tick-2\n\n"))
+	})
+	store := NewMemoryStore()
+	rm := &recordingMetrics{}
+	var buf bytes.Buffer
+	wrapped := Wrap(inner, store, Options{Metrics: rm, Logger: log.New(&buf, "", 0)})
+
+	send := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
+		req.Header.Set(HeaderName, "stream-key")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rec := httptest.NewRecorder()
+		wrapped.ServeHTTP(rec, req)
+		return rec
+	}
+	r := send()
+	if r.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", r.Code)
+	}
+	if !strings.Contains(r.Body.String(), "tick-1") || !strings.Contains(r.Body.String(), "tick-2") {
+		t.Errorf("body missing stream output: %q", r.Body.String())
+	}
+	// The cache must be empty: streamed responses are not safely
+	// replayable.
+	if _, found, err := store.Get(context.Background(), "acme", "stream-key"); err != nil || found {
+		t.Errorf("streamed response must not be cached: found=%v err=%v", found, err)
+	}
+	if len(rm.skipped) != 1 || rm.skipped[0].reason != "streamed" {
+		t.Errorf("skip metric: got %+v, want one streamed row", rm.skipped)
+	}
+	if !strings.Contains(buf.String(), "skipping cache write for streamed response") {
+		t.Errorf("expected WARN log on streamed skip, got %q", buf.String())
+	}
+	// A retry must re-execute.
+	r2 := send()
+	if r2.Code != http.StatusOK {
+		t.Errorf("retry status = %d, want 200", r2.Code)
+	}
+	if calls != 2 {
+		t.Errorf("inner called %d times, want 2 (streamed responses must not replay)", calls)
+	}
+}
+
+// spec: §11.5 line 277 — the atomic Claim path remains compatible with
+// the existing same-key-different-body 422 contract: after the original
+// completes, a same-key retry with a mismatched body sees IDEMPOTENCY_KEY_REUSED.
+// Regression guard against the Claim/DetectReuse rewiring. spec: F-11.5.2.
+func TestWrap_AtomicClaim_PreservesReuseRejection_spec_11_5(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+	store := NewMemoryStore()
+	wrapped := Wrap(inner, store, Options{})
+
+	send := func(payload string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(payload))
+		req.Header.Set(HeaderName, "reuse-key")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rec := httptest.NewRecorder()
+		wrapped.ServeHTTP(rec, req)
+		return rec
+	}
+	if r := send(`{"a":1}`); r.Code != http.StatusCreated {
+		t.Fatalf("first status = %d, want 201", r.Code)
+	}
+	r := send(`{"a":2}`)
+	if r.Code != http.StatusUnprocessableEntity {
+		t.Errorf("mismatched body status = %d, want 422", r.Code)
+	}
+	var env map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	body, _ := env["error"].(map[string]any)
+	if body == nil || body["code"] != "IDEMPOTENCY_KEY_REUSED" {
+		t.Errorf("envelope: got %v, want IDEMPOTENCY_KEY_REUSED", env)
+	}
+}
+
+// spec: §11.5 line 277 — MemoryStore.Claim returns claimed=true the
+// first time and an existing record (pending or final) on conflict.
+// spec: F-11.5.2.
+func TestMemoryStore_Claim_spec_11_5(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// First claim wins.
+	existing, claimed, err := store.Claim(ctx, "acme", "k1", "hash-1", now)
+	if err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if !claimed {
+		t.Errorf("first claim should win, got claimed=%v", claimed)
+	}
+	if existing.Response.StatusCode != 0 {
+		t.Errorf("first claim should not return existing row, got %+v", existing)
+	}
+
+	// Concurrent retry observes the pending row.
+	existing, claimed, err = store.Claim(ctx, "acme", "k1", "hash-1", now)
+	if err != nil {
+		t.Fatalf("second claim: %v", err)
+	}
+	if claimed {
+		t.Errorf("second claim should not win, got claimed=%v", claimed)
+	}
+	if existing.Response.StatusCode != 0 {
+		t.Errorf("second claim should return pending row (status==0), got %+v", existing)
+	}
+	if existing.BodyHash != "hash-1" {
+		t.Errorf("BodyHash = %q, want hash-1", existing.BodyHash)
+	}
+
+	// Release frees the slot.
+	if err := store.Release(ctx, "acme", "k1"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	_, claimed, err = store.Claim(ctx, "acme", "k1", "hash-2", now)
+	if err != nil {
+		t.Fatalf("third claim: %v", err)
+	}
+	if !claimed {
+		t.Errorf("claim after release should win, got claimed=%v", claimed)
+	}
+}
+
+// spec: §11.5 line 277 — an expired pending row is treated as absent so
+// a fresh claim wins the slot (stuck claims are reclaimable by TTL).
+// spec: F-11.5.2.
+func TestMemoryStore_Claim_ExpiredRecordReclaimed_spec_11_5(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	old := time.Now().UTC().Add(-25 * time.Hour) // past the §11.5 24-hour TTL
+
+	// Seed a stale claim directly.
+	store.now = func() time.Time { return old }
+	_, claimed, err := store.Claim(ctx, "acme", "k1", "hash-old", old)
+	if err != nil || !claimed {
+		t.Fatalf("seed: claimed=%v err=%v", claimed, err)
+	}
+	// Now claim with a fresh `now`; expired pending row should yield.
+	store.now = func() time.Time { return time.Now().UTC() }
+	_, claimed, err = store.Claim(ctx, "acme", "k1", "hash-new", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("fresh claim: %v", err)
+	}
+	if !claimed {
+		t.Errorf("fresh claim should win over expired row, got claimed=%v", claimed)
+	}
+}
+
+// spec: §11.5 line 277 — Options.MaxBodyBytes governs the cap on the
+// request body the middleware buffers; a request larger than the cap
+// is rejected with 413 BODY_TOO_LARGE, smaller bodies pass through.
+// The flag --idempotency-max-body-bytes raises the operator-tunable
+// default. Closes F-11.5.8.
+func TestWrap_MaxBodyBytesIsOperatorTunable_spec_11_5(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})
+	store := NewMemoryStore()
+	// Operator raises the cap to 16 MiB.
+	wrapped := Wrap(inner, store, Options{MaxBodyBytes: 16 << 20})
+
+	// A 2 MiB body (would be rejected by the legacy 1 MiB default)
+	// passes through under the raised cap.
+	big := strings.Repeat("x", 2<<20)
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(big))
+	req.Header.Set(HeaderName, "big-key")
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("raised cap should admit 2 MiB body, got %d", rec.Code)
+	}
+
+	// A body just over the configured cap is rejected with 413.
+	wrappedTight := Wrap(inner, NewMemoryStore(), Options{MaxBodyBytes: 1024})
+	tooBig := strings.Repeat("y", 2048)
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(tooBig))
+	req2.Header.Set(HeaderName, "k2")
+	req2.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rec2 := httptest.NewRecorder()
+	wrappedTight.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("over-cap body status = %d, want 413", rec2.Code)
+	}
+	var env map[string]any
+	if err := json.NewDecoder(rec2.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	body, _ := env["error"].(map[string]any)
+	if body == nil || body["code"] != "BODY_TOO_LARGE" {
+		t.Errorf("envelope = %v, want BODY_TOO_LARGE", env)
+	}
+}
+
+// spec: §11.5 line 277 — the new IDEMPOTENCY_KEY_IN_FLIGHT code is in
+// the §15.2.1 classifier with (POLICY, retryable=true). Regression
+// guard for the envelope shape on the in-flight gate. spec: F-11.5.2.
+func TestErrorClassify_IdempotencyKeyInFlight_spec_15_1(t *testing.T) {
+	cat, retryable := classifyForTest("IDEMPOTENCY_KEY_IN_FLIGHT")
+	if cat != "POLICY" || !retryable {
+		t.Errorf("IDEMPOTENCY_KEY_IN_FLIGHT = (%v, %v), want (POLICY, true)", cat, retryable)
+	}
+}
+
+// classifyForTest invokes the package's writeError path indirectly by
+// asserting on the §15.1 envelope a fail-closed 409 produces. Keeps the
+// test independent of the classifier internals while still proving the
+// (code → category, retryable) edge holds.
+func classifyForTest(code string) (string, bool) {
+	w := httptest.NewRecorder()
+	writeError(w, http.StatusConflict, code, "test", nil)
+	var env map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&env)
+	body, _ := env["error"].(map[string]any)
+	if body == nil {
+		return "", false
+	}
+	retryable, _ := body["retryable"].(bool)
+	cat, _ := body["category"].(string)
+	return cat, retryable
+}

@@ -42,6 +42,24 @@ type Store interface {
 	// Put inserts or replaces a record. Implementations MUST honour
 	// the §11.5 24-hour TTL via Record.StoredAt.
 	Put(ctx context.Context, record idempotency.Record) error
+
+	// Claim atomically reserves (tenantID, key). When no live record
+	// exists, a pending row (Response.StatusCode == 0) is written with
+	// the inbound bodyHash and the call returns claimed=true. When a
+	// live record already exists, it is returned with claimed=false so
+	// the middleware can branch on its state (pending → in-flight,
+	// matching hash → replay, different hash → 422 reuse). An expired
+	// record (older than the §11.5 24-hour TTL) is treated as absent
+	// and overwritten by the fresh claim. spec: §11.5 line 277;
+	// F-11.5.2.
+	Claim(ctx context.Context, tenantID, key, bodyHash string, now time.Time) (existing idempotency.Record, claimed bool, err error)
+
+	// Release deletes the (tenantID, key) row. The middleware calls it
+	// when the inner handler returns a 5xx (so a retry can re-execute)
+	// or when the captured response was streamed and is not safely
+	// replayable. Releasing a non-existent row is not an error.
+	// spec: §11.5 line 277; F-11.5.2, F-11.5.3, F-11.5.10.
+	Release(ctx context.Context, tenantID, key string) error
 }
 
 // MemoryStore is an in-memory Store backing tests and the minimal
@@ -87,6 +105,40 @@ func (m *MemoryStore) Put(_ context.Context, rec idempotency.Record) error {
 		rec.StoredAt = m.now()
 	}
 	m.records[storeKey{rec.Key.TenantID, rec.Key.Value}] = rec
+	return nil
+}
+
+// Claim atomically inserts a pending row for (tenantID, key) when no
+// live record exists, or returns the existing record without modifying
+// it. The pending row's Response.StatusCode is zero — the sentinel the
+// middleware reads when a concurrent retry arrives mid-execution. An
+// expired record (older than the §11.5 24-hour TTL) is treated as
+// absent so the new caller wins the slot. spec: §11.5 line 277; F-11.5.2.
+func (m *MemoryStore) Claim(_ context.Context, tenantID, key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := storeKey{tenantID, key}
+	if rec, ok := m.records[k]; ok && !rec.IsExpired(now) {
+		return rec, false, nil
+	}
+	pending := idempotency.Record{
+		Key:      idempotency.Key{TenantID: tenantID, Value: key},
+		BodyHash: bodyHash,
+		Response: idempotency.Response{StatusCode: 0},
+		StoredAt: now,
+	}
+	m.records[k] = pending
+	return idempotency.Record{}, true, nil
+}
+
+// Release removes the pending or final row for (tenantID, key). Used by
+// the middleware on 5xx/streaming paths so a retry can re-execute
+// against a healthy backend. A missing row is not an error.
+// spec: §11.5 line 277; F-11.5.2, F-11.5.3.
+func (m *MemoryStore) Release(_ context.Context, tenantID, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.records, storeKey{tenantID, key})
 	return nil
 }
 
@@ -295,45 +347,89 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	hash := idempotency.HashBody(body)
 
-	stored, found, err := m.store.Get(r.Context(), tenantID, key)
+	now := time.Now().UTC()
+	// spec: §11.5 line 277 — "without re-executing the operation". The
+	// atomic Claim inserts a pending row (Response.StatusCode == 0)
+	// before the inner handler runs, so a concurrent retry that arrives
+	// mid-execution observes the claim and is rejected with
+	// IDEMPOTENCY_KEY_IN_FLIGHT instead of executing in parallel. Closes
+	// F-11.5.2.
+	existing, claimed, err := m.store.Claim(r.Context(), tenantID, key, hash, now)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	var record idempotency.Record
-	if found {
-		record = stored
-	}
-	action, derr := idempotency.DetectReuse(record, hash, time.Now().UTC())
-	if derr != nil {
-		var reuseErr *idempotency.ReuseError
-		if asReuseError(derr, &reuseErr) {
-			writeError(w, reuseErr.Code(), reuseErr.ErrorCode(), reuseErr.Error(), map[string]any{
-				"storedHash":  reuseErr.StoredHash,
-				"inboundHash": reuseErr.InboundHash,
-			})
+	if !claimed {
+		// A live record already exists. Branch on its state.
+		if existing.Response.StatusCode == 0 {
+			// Pending claim — the original retry is still in flight.
+			// Concurrent retries (same or different body) are rejected
+			// rather than served stale or double-executed. The caller
+			// retries when Retry-After elapses and replays from the
+			// completed cache. spec: §11.5 line 277; F-11.5.2.
+			w.Header().Set("Retry-After", "1")
+			writeError(w, http.StatusConflict, "IDEMPOTENCY_KEY_IN_FLIGHT",
+				"a request with this idempotency key is currently in flight; retry after the original completes",
+				map[string]any{"key": key})
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", derr.Error(), nil)
-		return
+		action, derr := idempotency.DetectReuse(existing, hash, now)
+		if derr != nil {
+			var reuseErr *idempotency.ReuseError
+			if asReuseError(derr, &reuseErr) {
+				writeError(w, reuseErr.Code(), reuseErr.ErrorCode(), reuseErr.Error(), map[string]any{
+					"storedHash":  reuseErr.StoredHash,
+					"inboundHash": reuseErr.InboundHash,
+				})
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", derr.Error(), nil)
+			return
+		}
+		switch action {
+		case idempotency.ActionReplay:
+			replayResponse(w, existing.Response)
+			return
+		case idempotency.ActionStoreNew:
+			// The existing row expired between the Claim's TTL check and
+			// here (unlikely race), so re-claim and proceed.
+			_, claimed, err = m.store.Claim(r.Context(), tenantID, key, hash, now)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+				return
+			}
+			if !claimed {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+					"idempotency: failed to claim slot after observed expiry", nil)
+				return
+			}
+		}
 	}
 
-	switch action {
-	case idempotency.ActionReplay:
-		replayResponse(w, record.Response)
-		return
-	case idempotency.ActionStoreNew:
-		captured := &captureWriter{header: http.Header{}}
-		m.inner.ServeHTTP(captured, r)
-		captured.flush(w)
-		m.maybePersist(r.Context(), idemKey, hash, captured)
-	}
+	// We won the claim; execute the inner handler and persist the
+	// finalized record. A panic inside the inner handler leaves the
+	// pending row in place; the deferred Release tears it down so a
+	// retry can re-execute. Closes F-11.5.2 (claim cleanup on panic).
+	captured := &captureWriter{header: http.Header{}, w: w}
+	finalized := false
+	defer func() {
+		if !finalized {
+			_ = m.store.Release(r.Context(), tenantID, key)
+		}
+	}()
+	m.inner.ServeHTTP(captured, r)
+	captured.flush(w)
+	finalized = true
+	m.maybePersist(r.Context(), idemKey, hash, captured)
 }
 
 // maybePersist decides whether to write the captured response to the
 // durable cache, applying the §11.5 line 277 success-only-replay policy
-// and surfacing Put errors via the configured logger + metrics.
-// spec: §11.5 line 277; F-11.5.3, F-11.5.4, F-11.5.12.
+// and surfacing Put errors via the configured logger + metrics. When
+// the response is not replayable (5xx or streamed), the pending row
+// inserted by Claim is released so a retry can re-execute against a
+// healthy backend instead of seeing IDEMPOTENCY_KEY_IN_FLIGHT.
+// spec: §11.5 line 277; F-11.5.2, F-11.5.3, F-11.5.4, F-11.5.10, F-11.5.12.
 func (m *middleware) maybePersist(ctx context.Context, idemKey idempotency.Key, hash string, captured *captureWriter) {
 	status := captured.status
 	if status == 0 {
@@ -345,17 +441,38 @@ func (m *middleware) maybePersist(ctx context.Context, idemKey idempotency.Key, 
 		// fallback. Closes F-11.5.12.
 		status = http.StatusOK
 	}
+	if captured.streamed {
+		// spec: §11.5 line 277 — a streamed response (SSE, chunked) is
+		// "what the writer happened to flush" at handler exit; replaying
+		// a frozen snapshot is wrong for a live stream. Release the
+		// pending claim so a retry re-executes, and emit a structured
+		// signal for operators who may be wondering why their streaming
+		// endpoint never produced a cache row. Closes F-11.5.10.
+		if m.opts.Metrics != nil {
+			m.opts.Metrics.IncIdempotencyCacheSkipped(idemKey.TenantID, "streamed")
+		}
+		m.logger().Printf("idempotency: skipping cache write for streamed response tenant=%q key=%q", idemKey.TenantID, idemKey.Value)
+		if err := m.store.Release(ctx, idemKey.TenantID, idemKey.Value); err != nil {
+			m.logger().Printf("idempotency: failed to release pending row after streamed response tenant=%q key=%q err=%q", idemKey.TenantID, idemKey.Value, err.Error())
+		}
+		return
+	}
 	if status >= 500 {
 		// spec: §11.5 line 277 — a transient 5xx must not be replayed
 		// for the entire 24-hour TTL; that would block a legitimate
 		// retry against a now-healthy backend. The middleware does not
 		// cache it, so the next request with the same key re-executes
 		// the operation (and, if it succeeds, the cache row is written
-		// then). Closes F-11.5.3.
+		// then). The pending row inserted by Claim is released here so
+		// the retry can re-execute instead of seeing
+		// IDEMPOTENCY_KEY_IN_FLIGHT. Closes F-11.5.3, F-11.5.2.
 		if m.opts.Metrics != nil {
 			m.opts.Metrics.IncIdempotencyCacheSkipped(idemKey.TenantID, "server_error")
 		}
 		m.logger().Printf("idempotency: skipping cache write for 5xx response tenant=%q key=%q status=%d", idemKey.TenantID, idemKey.Value, status)
+		if err := m.store.Release(ctx, idemKey.TenantID, idemKey.Value); err != nil {
+			m.logger().Printf("idempotency: failed to release pending row after 5xx response tenant=%q key=%q err=%q", idemKey.TenantID, idemKey.Value, err.Error())
+		}
 		return
 	}
 	fresh := idempotency.Record{
@@ -374,7 +491,11 @@ func (m *middleware) maybePersist(ctx context.Context, idemKey idempotency.Key, 
 		// HTTP exchange retroactively. A retry with the same key would
 		// re-execute the operation (creating a duplicate session /
 		// child), so surface the silent-failure case via metric + log
-		// for the operator. Closes F-11.5.4.
+		// for the operator. The pending row inserted by Claim is left
+		// in place — a retry within the §11.5 TTL still sees a record
+		// (pending), which produces IDEMPOTENCY_KEY_IN_FLIGHT until GC
+		// reclaims the row. That is preferable to silently allowing the
+		// retry to re-execute. Closes F-11.5.4.
 		if m.opts.Metrics != nil {
 			m.opts.Metrics.IncIdempotencyCacheWriteFailure(idemKey.TenantID)
 		}
@@ -398,12 +519,25 @@ func asReuseError(err error, out **idempotency.ReuseError) bool {
 
 // captureWriter is an http.ResponseWriter that buffers the response
 // so the middleware can both forward to the client and stash a copy
-// in the idempotency store.
+// in the idempotency store. It implements http.Flusher so a handler
+// that calls Flush (SSE / chunked transport) signals "this is a
+// streaming response" — captureWriter forwards the bytes accumulated so
+// far to the live writer and sets `streamed` so maybePersist skips the
+// cache write (a frozen snapshot of a live stream is wrong to replay).
+// spec: §11.5 line 277; F-11.5.10.
 type captureWriter struct {
-	header http.Header
-	body   bytes.Buffer
-	status int
-	wrote  bool
+	header   http.Header
+	body     bytes.Buffer
+	status   int
+	wrote    bool
+	streamed bool
+	// w is the live ResponseWriter the middleware's ServeHTTP holds.
+	// captureWriter forwards through it the first time Flush() fires so
+	// the streaming handler reaches the client with the bytes it has
+	// already produced; the rest of the stream is written by the inner
+	// handler directly to the client (subsequent Write/Flush passes are
+	// forwarded through w too, never re-buffered).
+	w http.ResponseWriter
 }
 
 func (c *captureWriter) Header() http.Header { return c.header }
@@ -420,10 +554,44 @@ func (c *captureWriter) Write(p []byte) (int, error) {
 	if !c.wrote {
 		c.WriteHeader(http.StatusOK)
 	}
+	if c.streamed {
+		// Once we've switched to streaming, every write goes through to
+		// the live writer instead of into the buffer.
+		return c.w.Write(p)
+	}
 	return c.body.Write(p)
 }
 
-func (c *captureWriter) flush(w http.ResponseWriter) {
+// Flush forwards everything captured so far to the live writer and
+// switches into streaming mode. The first Flush() call is the marker
+// that the handler is producing a live stream (SSE, chunked JSON); the
+// middleware's maybePersist then skips the cache write because a frozen
+// snapshot of a live stream is the wrong thing to replay. spec: §11.5
+// line 277; F-11.5.10.
+func (c *captureWriter) Flush() {
+	if c.w == nil {
+		// No live writer attached (test wiring); silently no-op so the
+		// inner handler's Flush() does not panic.
+		return
+	}
+	if !c.streamed {
+		// First flush: drain the accumulated buffer to the live writer.
+		// Headers + status must land before bytes; flushBuffered handles
+		// that idempotently.
+		c.flushBuffered(c.w)
+		c.streamed = true
+		c.body.Reset()
+	}
+	if f, ok := c.w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// flushBuffered drains the captured headers + status + body to w
+// exactly once. After this call captureWriter's body is empty (the
+// caller must Reset if it intends to keep accumulating). spec: §11.5
+// line 277.
+func (c *captureWriter) flushBuffered(w http.ResponseWriter) {
 	for k, vs := range c.header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
@@ -434,7 +602,18 @@ func (c *captureWriter) flush(w http.ResponseWriter) {
 		status = http.StatusOK
 	}
 	w.WriteHeader(status)
-	_, _ = w.Write(c.body.Bytes())
+	if c.body.Len() > 0 {
+		_, _ = w.Write(c.body.Bytes())
+	}
+}
+
+func (c *captureWriter) flush(w http.ResponseWriter) {
+	if c.streamed {
+		// Streaming handler already wrote through to w on every Flush;
+		// nothing more to forward. The remaining buffer is empty.
+		return
+	}
+	c.flushBuffered(w)
 }
 
 // replayResponse mirrors the captured response onto the live writer.

@@ -258,12 +258,22 @@ func Register(srv *mcp.Server, deps Deps) {
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/create_session",
 		Description: "Create a new agent session against a runtime.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["runtimeRef"],"properties":{"runtimeRef":{"type":"string"},"userId":{"type":"string"},"environment":{"type":"string"}}}`),
+		// spec: §11.5 line 277 — `idempotencyKey` (optional, ≤128 runes)
+		// collapses retries of CreateSession to one execution; identical
+		// retries replay the cached ToolResult, mismatched bodies are
+		// rejected with IDEMPOTENCY_KEY_REUSED. spec: F-11.5.1.
+		InputSchema: json.RawMessage(`{"type":"object","required":["runtimeRef"],"properties":{"runtimeRef":{"type":"string"},"userId":{"type":"string"},"environment":{"type":"string"},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached result without re-executing."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
 			RuntimeRef  string `json:"runtimeRef"`
 			UserID      string `json:"userId"`
 			Environment string `json:"environment"`
+			// IdempotencyKey is read by the MCP idempotency hook before
+			// the handler runs and is intentionally ignored here so a
+			// stray field on a non-idempotency-aware deployment is just
+			// dropped instead of producing a validation error. spec:
+			// §11.5 line 277; F-11.5.1.
+			IdempotencyKey string `json:"idempotencyKey,omitempty"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, mcp.NewToolError("INVALID_REQUEST",
@@ -961,7 +971,12 @@ func Register(srv *mcp.Server, deps Deps) {
 		srv.RegisterTool(mcp.Tool{
 			Name:        "lenny/delegate_task",
 			Description: "Spawn a child session under a running parent (§8.2 recursive delegation).",
-			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"}}}`),
+			// spec: §11.5 line 277 — `idempotencyKey` (optional, ≤128
+			// runes) collapses retries of SpawnChild to one execution;
+			// SpawnChild is one of the six §11.5 critical operations and
+			// the MCP path is its only client surface. spec: F-11.5.1,
+			// F-11.5.6.
+			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			var in struct {
 				ParentSessionID string `json:"parentSessionId"`
@@ -969,6 +984,11 @@ func Register(srv *mcp.Server, deps Deps) {
 				PoolRef         string `json:"poolRef"`
 				MaxDepth        int    `json:"maxDepth"`
 				TaskInput       string `json:"taskInput"`
+				// IdempotencyKey is read by the MCP idempotency hook
+				// before the handler runs and is intentionally accepted
+				// + ignored here. spec: §11.5 line 277; F-11.5.1,
+				// F-11.5.6.
+				IdempotencyKey string `json:"idempotencyKey,omitempty"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
