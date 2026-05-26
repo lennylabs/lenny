@@ -3747,7 +3747,7 @@ Consequence: a developer running `lenny-ctl install --answer-file charts/lenny/a
 
 **Resolution (`19d5ffad`):** `isolation.DefaultForMode(devMode)` returns `standard` (runc) in dev mode and `sandboxed` otherwise; `isolation.DevModeIsolationWarning` holds the verbatim §5.3 warning. All six default sites now consult it: `admin/pools.go` (and auto-sets `allowStandardIsolation: true` for the dev-mode default fallback so the poolstore opt-in gate passes — an explicit `standard` without the flag is still rejected), `runtimestore.ApplyDefaults(r, devMode)`, `mcptools.Deps.DevMode`, `sessionserver.Options.DevMode`, and the `sandbox.Reconciler.DevMode` pod fallback. `cmd/lenny-gateway` and `cmd/lenny-controller` both log the warning once at startup; the controller gains `--dev-mode` (wired from `global.devMode` in `controller-deployment.yaml`, matching the gateway's existing `--dev-mode`). `auth.mode: dev` in `tier1-local.yaml` already sets `global.devMode: true`, so a stock dev install now launches pods on a gVisor-less cluster.
 
-### - [ ] F-5.3.4 — Image digest pinning on Runtime definitions is enforced only at the admin API, not at the CRD [High] — OPEN
+### - [x] F-5.3.4 — Image digest pinning on Runtime definitions is enforced only at the admin API, not at the CRD [High] — CLOSED
 
 Spec §5.3 line 664: "Images **must** be pinned by digest (not tag) in Runtime definitions" (emphasis in spec).
 
@@ -3759,6 +3759,8 @@ Implementation:
 - The `requireDigest` value defaults to `false` (`charts/lenny/values.yaml:373`), so a stock install does not enforce the Pod-level digest gate either.
 
 Consequence: the chart's bundled reference runtimes — the very runtimes shipped to deployers — violate the §5.3 MUST. The CRD admits tag-pinned images, and only the admin REST surface guards the rule; a GitOps deployer who applies Runtime CRs through `kubectl apply` (the chart's own pattern) bypasses the check.
+
+**Resolution (`8586f582`):** `RuntimeSpec.Image` gains a `+kubebuilder:validation:Pattern` of `@sha256:[A-Fa-f0-9]{64}$` (regenerated into `charts/lenny/crds/lenny.dev_runtimes.yaml`), so the API server rejects a `kubectl apply` of a tag-pinned Runtime — closing the GitOps bypass the admin-API check did not cover. The §26 reference-runtime catalog (`charts/lenny/values.yaml`) is converted from `:1.0.0` tags to digest-pinned references; the digests are release-pinned placeholders the release process substitutes per chart version, documented in the values comment. A helm-unittest assertion enforces the catalog stays digest-pinned.
 
 ### - [ ] F-5.3.5 — Image signature verification (cosign) is opt-in and disabled by default [High] — OPEN
 
@@ -3772,7 +3774,7 @@ Implementation:
 
 Consequence: a production install can run with no signature verification and no operator notification. The spec's "prerequisite" wording is downgraded to "available if enabled" without preflight enforcement.
 
-### - [ ] F-5.3.6 — No defense-in-depth that prevents the `internet` egress profile from being combined with `standard` isolation [High] — OPEN
+### - [x] F-5.3.6 — No defense-in-depth that prevents the `internet` egress profile from being combined with `standard` isolation [High] — CLOSED
 
 Spec §13.2 (`spec/13_security-model.md:450`) explicitly states: "the `internet` profile **requires** a sandboxed isolation profile (`sandboxed` or `microvm`) — pools with `isolationProfile: standard` (runc) cannot use the `internet` egress profile. The warm pool controller rejects pool configurations that combine `standard` isolation with `internet` egress at validation time."
 
@@ -3784,6 +3786,8 @@ Implementation:
 - The label-immutability webhook (`pkg/admission/label_immutability/`) treats `lenny.dev/egress-profile` as an immutable label but does not enforce a runc/standard exclusion.
 
 Consequence: the spec's §13.2 cross-control (runc pods cannot get `internet` egress) is undeliverable at the data model level. A pool with `isolationProfile: standard, allowStandardIsolation: true` could combine with a permissive egress NetworkPolicy with no automated rejection.
+
+**Resolution (`8586f582`):** New `pkg/sandbox/egress` encodes the §13.2 profile enum (`restricted`, `provider-direct`, `internet`), `Default()` = `restricted`, and the `AllowsIsolation` cross-control (only `internet` requires `sandboxed`/`microvm`; unknown values fail closed). `poolstore.Pool` now carries `EgressProfile`, persisted via migration `0079` and the pgstore columns, and round-tripped through the admin POST/PUT/GET (with §13.2 default-to-`restricted` on create and closed-enum validation). The shared `poolstore.ValidateEgressIsolation` rejects `internet` egress on a `standard` (runc) pool at create and update in both the Memory and Postgres stores. The field flows to the controller via a new `SandboxTemplateSpec.EgressProfile` CRD field and the PoolScalingController mapping, so the WarmPoolController can stamp the `lenny.dev/egress-profile` pod label (pod-label stamping itself tracked with the broader §6.1 label work).
 
 ### - [ ] F-5.3.7 — `Pod Overhead` is not declared or wired on any RuntimeClass [Medium] — CLOSED
 
@@ -3837,13 +3841,15 @@ Consequence: the chart's pod-security admission policy is stricter than the spec
 
 **Resolution (`fdb13a9a`):** `podsecurity.PodSpec` gains a `RuntimeClassName` field and `ValidateAgentPod` takes a `RuntimeClassPolicy{GVisorRuntimeClass, KataRuntimeClass}` that maps the deployer's RuntimeClass names onto the §17.2 split-enforcement relaxations: a gVisor pod skips the seccomp profile check (RuntimeDefault is a no-op under gVisor's userspace syscall interception), a Kata pod may set `allowPrivilegeEscalation: true` for its device plugins, and every other §13.1 control (non-root, all-caps-dropped, read-only rootfs, privileged: false) still applies to both. An empty or unrecognized RuntimeClass — and a zero-value policy — receives full enforcement (fail-closed). The lenny-webhook binary reads `pod.spec.runtimeClassName` and is configured with the gVisor/Kata names via `--gvisor-runtime-class`/`--kata-runtime-class` flags (default `gvisor`/`kata` from `isolation.MustRuntimeClassName`, env-overridable), wired in `_webhook.tpl` from `runtimeClasses.profiles.{sandboxed,microvm}.name` so the policy tracks the deployer's RuntimeClass config. Tests: 7 tier-1 in `pkg/podsecurity/runtimeclass_test.go` (gVisor seccomp-skip + other-controls-still-enforced, Kata privesc-allow + seccomp-still-enforced, unknown/empty/runc full enforcement, empty-policy no-relaxation), 2 tier-1 webhook transport tests, and 2 tier-2 helm-unittest assertions (default + custom-name override).
 
-### - [ ] F-5.3.11 — Default-profile policy is centralised but not enforced when a Runtime CRD declares a profile — `Info`/`Partial` [Low] — OPEN
+### - [x] F-5.3.11 — Default-profile policy is centralised but not enforced when a Runtime CRD declares a profile — `Info`/`Partial` [Low] — CLOSED
 
 `pkg/apis/lenny/v1/runtime_types.go:38` allows `IsolationProfile` to be empty on a `Runtime`; `pkg/gateway/runtimestore/runtimestore.go:676` defaults the empty value to `sandboxed` when reading. The `SandboxTemplate` (`pkg/apis/lenny/v1/sandboxtemplate_types.go:123`) also allows empty and the admin handler (`pkg/gateway/admin/pools.go:145`) defaults to `sandboxed`. Both code paths use `isolation.Default()`. The two defaults are consistent.
 
 However: nothing prevents a deployer from setting `isolationProfile: standard` on a Runtime (`spec.isolationProfile`) without `allowStandardIsolation` (which is a pool-level flag per spec line 170). Runtime CRD admission accepts this; only the pool that references the runtime is gated. The spec is silent on whether Runtime-level `standard` requires an analogous flag; this audit notes the asymmetry as informational.
 
-### - [ ] F-5.3.12 — The `allowStandardIsolation` gate exists but emits no `DirectModeWeakIsolation` warning event [Low] — OPEN
+**Resolution (re-verified, no code change):** The asymmetry is by design and not a defect. The §5.3 `allowStandardIsolation` gate is normatively a pool-level flag (spec line 170), and the pod's effective isolation is resolved from the pool/`SandboxTemplate`, not the Runtime. The pool gate is enforced independently of the Runtime default at create and update in both stores (`poolstore.go:254/305`, `pgstore.go:58`): a pool that omits `isolationProfile` resolves via `isolation.DefaultForMode` (never inherits a Runtime's `standard`), and a pool that explicitly sets `standard` requires `allowStandardIsolation` regardless of which Runtime it references. A Runtime declaring `isolationProfile: standard` therefore cannot produce a runc pod that bypasses the pool gate. The spec is silent on a Runtime-level flag, so no enforcement is added (rule B: no spec basis).
+
+### - [x] F-5.3.12 — The `allowStandardIsolation` gate exists but emits no `DirectModeWeakIsolation` warning event [Low] — CLOSED
 
 Spec §4.9 (`spec/04_system-components.md:1489`, normative for §5.3 opt-in posture) requires that single-tenant or devMode pools that combine `direct` + `standard` "emit a `DirectModeWeakIsolation` warning event and a startup log warning". The same event family applies to the §5.3 `allowStandardIsolation: true` posture (a runc pool is by design at higher risk).
 
@@ -3853,13 +3859,19 @@ Implementation:
 
 Consequence: operators flipping a pool to runc via the explicit opt-in do not see an audit-trail signal that distinguishes "deliberately weak isolation in dev/single-tenant" from "everything is fine." The opt-in is silent.
 
-### - [ ] F-5.3.13 — The §5.3 isolation-monotonicity helpers ignore profile-equality short-circuit caching [Low] — OPEN
+**Resolution (`8586f582`):** `handleCreatePool` and `handleUpdatePool` now call `maybeEmitWeakIsolation`, which emits a `pool.direct_mode_weak_isolation` warning audit event (carrying `isolationProfile`, `allowStandardIsolation`, `egressProfile`, `severity: warning`, and a reason) whenever a stored pool runs under `standard` (runc) isolation via the explicit `allowStandardIsolation: true` opt-in. It fires alongside the standard `admin.pool.created` / `admin.pool.updated` event and is suppressed for sandboxed pools, giving compliance teams the §4.9 line 1489 audit-trail signal. The startup log-warning half of the spec requirement is already covered by the once-at-startup dev-mode runc warning.
+
+### - [x] F-5.3.13 — The §5.3 isolation-monotonicity helpers ignore profile-equality short-circuit caching [Low] — CLOSED
 
 `pkg/sandbox/isolation/profile.go` exposes `Compare`, `Rank`, `AtLeastAsRestrictive`. The implementation is correct (`profile_test.go` covers the full table). One minor: `Rank("")` returns `-1` and `AtLeastAsRestrictive` rejects unknown values (`profile.go:127`). Every call site validates with `isolation.IsValid` before invoking the predicate (`experimentrouter.go:340`, `experiments.go:157`, etc.). No defect; noted for completeness.
 
-### - [ ] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — OPEN
+**Resolution (re-verified, no code change):** Confirmed the finding's own conclusion. The monotonicity helpers are correct and `AtLeastAsRestrictive` fails closed on unknown values, and the call sites guard with `isolation.IsValid` first (`experimentrouter.go:344`, `experiments.go:148/157/197`, `derive.go`, `replay.go`). The "short-circuit caching" is a micro-optimization with no behavioral or correctness implication; there is no spec basis to add it. Closed as a positive confirmation.
+
+### - [ ] F-5.3.14 — `securityDegradedMode` condition is declared but not wired to RuntimeClass absence [Low] — DEFERRED
 
 `pkg/apis/lenny/v1/sandboxtemplate_types.go:213` mentions `SecurityDegradedMode` as a condition the WarmPoolController may set. Greps for `SecurityDegradedMode` in `pkg/controller/warmpool/` return nothing — the condition exists in the comment but is not produced by any reconciler. This intersects with H-1 (no RuntimeClass startup validation): the `Degraded` condition the spec wants for missing RuntimeClass would be the natural use of this otherwise-orphan condition string.
+
+**Deferred to F-4.7.9.** The finding's suggested resolution (wire `SecurityDegradedMode` to RuntimeClass absence) is spec-incorrect. The spec reserves two distinct conditions: `Degraded` for RuntimeClass absence (already wired by F-5.3.1 in `pkg/controller/warmpool/runtimeclass.go`), and `SecurityDegradedMode` exclusively for the §4.7 `SO_PEERCRED` nonce-only fallback — set when a pod carries `SOPeercredDisabled=True` and surfaced by the pool controller onto the `SandboxTemplate` (`spec/04_system-components.md:887`, `spec/13_security-model.md:14`, `spec/18_build-sequence.md:182`). Its producer path (the adapter setting the pod condition + the Sandbox surfacing it) is the unbuilt F-4.7.9 nonce-only/HMAC supplement; wiring the controller's surfacing half now would be dead code with no producer and no Sandbox-status field to read. The condition string is correctly named in the CRD comment for that future use.
 
 ### - [x] F-5.3.15 — The §5.3 `Profile`/`RuntimeClass` model is otherwise faithful [Info] — CLOSED
 
