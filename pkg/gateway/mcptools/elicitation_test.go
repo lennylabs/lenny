@@ -4,6 +4,7 @@ package mcptools_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -359,28 +360,34 @@ func TestURLModeElicitationAgentBlockedByDefault(t *testing.T) {
 	}
 }
 
-// TestURLModeElicitationConnectorAllowed proves a connector-initiated
-// url-mode elicitation is admitted even against an empty pool
-// allowlist — §9.2 reserves url-mode for gateway-registered
-// connectors.
-func TestURLModeElicitationConnectorAllowed(t *testing.T) {
-	srv, store, interactions := newMCPForChain(t, chainOpts{})
+// TestRequestElicitationDropsSelfAssertedConnector_spec_9_2 proves the
+// F-9.2.19 hardening: an agent pod cannot self-declare
+// `initiatorType: "connector"` through `lenny/request_elicitation` to
+// bypass the agent-initiated url-mode allowlist. The field was removed
+// from the tool's input schema; even when a legacy client supplies it,
+// the gateway treats the elicitation as agent-initiated and rejects it
+// against the empty allowlist with the standard §11.7 url_mode_disabled
+// audit event.
+//
+// spec: §9.2 lines 87–88 (agent binaries cannot self-declare as a
+// connector); F-9.2.19.
+func TestRequestElicitationDropsSelfAssertedConnector_spec_9_2(t *testing.T) {
+	audit := &fakeAuditor{}
+	srv, store, interactions := newMCPForChain(t, chainOpts{audit: audit})
 	mkUserSession(t, store, "sess_root", "alice", "")
-	h := srv.Handler()
 
-	go func() {
-		_ = call(t, h, "lenny/request_elicitation",
-			`{"sessionId":"sess_root","message":"sign in","url":"https://github.com/login/oauth/authorize","initiatorType":"connector","elicitationId":"elic_x"}`)
-	}()
-	// A connector url-mode elicitation forwarded normally and was
-	// recorded.
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
-	in, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x")
-	if err != nil {
-		t.Fatalf("get elicitation: %v", err)
+	resp := call(t, srv.Handler(), "lenny/request_elicitation",
+		`{"sessionId":"sess_root","message":"sign in","url":"https://github.com/login/oauth/authorize","initiatorType":"connector","elicitationId":"elic_x"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("a self-asserted connector url-mode elicitation must not be admitted: %+v", resp)
 	}
-	if in.Detail["initiatorType"] != "connector" {
-		t.Errorf("recorded initiatorType = %v, want connector", in.Detail["initiatorType"])
+	if len(audit.events) != 1 || audit.events[0].detail["reason"] != "url_mode_disabled" {
+		t.Errorf("audit events = %+v, want exactly one url_mode_disabled rejection (agent-initiated path)", audit.events)
+	}
+	// The dropped elicitation was never recorded against the resolver.
+	if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+		t.Error("a dropped self-asserted-connector elicitation must not be recorded")
 	}
 }
 
@@ -489,4 +496,147 @@ func TestResolveElicitationDismiss(t *testing.T) {
 	if out.Phase != interactionstore.PhaseDismissed || out.Reason != "user_cancelled" {
 		t.Errorf("dismissed interaction = %+v", out)
 	}
+}
+
+// TestMCPRespondToElicitationResolves proves the §9.2 line 108 MCP
+// `lenny/respond_to_elicitation` tool resolves a pending elicitation
+// when the (sessionId, sessionUserID, elicitationId) triple matches.
+// F-9.2.17.
+func TestMCPRespondToElicitationResolves(t *testing.T) {
+	srv, store, interactions := newMCPForChain(t, chainOpts{})
+	mkUserSession(t, store, "sess_root", "alice", "")
+	ctx := context.Background()
+	if err := interactions.Put(ctx, interactionstore.Interaction{
+		ID: "elic_x", Kind: interactionstore.KindElicitation,
+		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		Phase: interactionstore.PhasePending,
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	resp := call(t, srv.Handler(), "lenny/respond_to_elicitation",
+		`{"sessionId":"sess_root","elicitationId":"elic_x","response":"option-A"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, "responded") {
+		t.Errorf("respond result = %q, want a responded phase", text)
+	}
+	cur, err := interactions.Get(ctx, "acme", "sess_root", "alice", "elic_x")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if cur.Phase != interactionstore.PhaseResponded || cur.Response != "option-A" {
+		t.Errorf("resolved interaction = %+v", cur)
+	}
+}
+
+// TestMCPRespondToElicitationTripleMismatchSurfacesNotFound verifies
+// §9.2 line 108: a (sessionId, userId, elicitationId) mismatch
+// collapses to ELICITATION_NOT_FOUND on the MCP surface, mirroring the
+// §15.1 REST handler so the existence of another session's elicitation
+// never leaks. F-9.2.17.
+func TestMCPRespondToElicitationTripleMismatchSurfacesNotFound(t *testing.T) {
+	srv, store, interactions := newMCPForChain(t, chainOpts{})
+	// The elicitation is bound to alice's session; bob's session targets
+	// the same elicitation id and must collapse to not-found.
+	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_bob", "bob", "")
+	ctx := context.Background()
+	if err := interactions.Put(ctx, interactionstore.Interaction{
+		ID: "elic_x", Kind: interactionstore.KindElicitation,
+		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		Phase: interactionstore.PhasePending,
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	resp := call(t, srv.Handler(), "lenny/respond_to_elicitation",
+		`{"sessionId":"sess_bob","elicitationId":"elic_x","response":"option-A"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("a wrong-session resolve must be a tool error: %+v", resp)
+	}
+	envelope := readErrorEnvelope(t, result)
+	if envelope["code"] != "ELICITATION_NOT_FOUND" {
+		t.Errorf("envelope.code = %v, want ELICITATION_NOT_FOUND", envelope["code"])
+	}
+}
+
+// TestMCPDismissElicitation proves the §9.2 line 108 MCP
+// `lenny/dismiss_elicitation` tool records the dismissal with the
+// caller-supplied reason. F-9.2.17.
+func TestMCPDismissElicitation(t *testing.T) {
+	srv, store, interactions := newMCPForChain(t, chainOpts{})
+	mkUserSession(t, store, "sess_root", "alice", "")
+	ctx := context.Background()
+	if err := interactions.Put(ctx, interactionstore.Interaction{
+		ID: "elic_x", Kind: interactionstore.KindElicitation,
+		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		Phase: interactionstore.PhasePending,
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	_ = call(t, srv.Handler(), "lenny/dismiss_elicitation",
+		`{"sessionId":"sess_root","elicitationId":"elic_x","reason":"user_cancelled"}`)
+	cur, err := interactions.Get(ctx, "acme", "sess_root", "alice", "elic_x")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if cur.Phase != interactionstore.PhaseDismissed || cur.Reason != "user_cancelled" {
+		t.Errorf("dismissed interaction = %+v", cur)
+	}
+}
+
+// TestMCPRespondToElicitationAlreadyResolvedSurfacesConflict verifies a
+// second resolution attempt against an interaction the store has
+// already settled surfaces the §15.1 INTERACTION_ALREADY_RESOLVED
+// envelope rather than crashing or silently overwriting. F-9.2.17.
+func TestMCPRespondToElicitationAlreadyResolvedSurfacesConflict(t *testing.T) {
+	srv, store, interactions := newMCPForChain(t, chainOpts{})
+	mkUserSession(t, store, "sess_root", "alice", "")
+	ctx := context.Background()
+	if err := interactions.Put(ctx, interactionstore.Interaction{
+		ID: "elic_x", Kind: interactionstore.KindElicitation,
+		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		Phase: interactionstore.PhasePending,
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if _, err := interactions.Resolve(ctx, "acme", "sess_root", "alice", "elic_x",
+		func(i *interactionstore.Interaction) error {
+			i.Phase = interactionstore.PhaseResponded
+			i.Response = "first"
+			return nil
+		}); err != nil {
+		t.Fatalf("first resolve: %v", err)
+	}
+	resp := call(t, srv.Handler(), "lenny/respond_to_elicitation",
+		`{"sessionId":"sess_root","elicitationId":"elic_x","response":"second"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("a second resolution must be a tool error: %+v", resp)
+	}
+	envelope := readErrorEnvelope(t, result)
+	if envelope["code"] != "INTERACTION_ALREADY_RESOLVED" {
+		t.Errorf("envelope.code = %v, want INTERACTION_ALREADY_RESOLVED", envelope["code"])
+	}
+}
+
+// readErrorEnvelope decodes the §15.2.1 lenny error envelope (code,
+// category, retryable, message, details) from the `lenny/error`
+// content block of an isError MCP tool result.
+func readErrorEnvelope(t *testing.T, result map[string]any) map[string]any {
+	t.Helper()
+	content, _ := result["content"].([]any)
+	for _, raw := range content {
+		block, _ := raw.(map[string]any)
+		if block["type"] != "lenny/error" {
+			continue
+		}
+		text, _ := block["text"].(string)
+		var env map[string]any
+		if err := json.Unmarshal([]byte(text), &env); err != nil {
+			t.Fatalf("decode envelope: %v", err)
+		}
+		return env
+	}
+	t.Fatalf("no lenny/error block in %+v", content)
+	return nil
 }

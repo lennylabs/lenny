@@ -700,9 +700,16 @@ func Register(srv *mcp.Server, deps Deps) {
 			tamperMetrics:    deps.ElicitationTamperMetrics,
 		}
 		srv.RegisterTool(mcp.Tool{
-			Name:        "lenny/request_elicitation",
+			Name: "lenny/request_elicitation",
+			// spec: §9.2 lines 87–88 — agent-facing lenny/request_elicitation
+			// is always treated as agent-initiated. The InitiatorType input
+			// was removed to close F-9.2.19: a pod must not be able to
+			// self-declare `connector` and bypass the url-mode allowlist.
+			// A future gateway-mediated connector path will issue elicitations
+			// through a different authenticated surface (the registered
+			// connector binding), not by self-assertion at this tool.
 			Description: "Request human input via the §9.2 elicitation chain and block until it resolves.",
-			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","message"],"properties":{"sessionId":{"type":"string"},"message":{"type":"string"},"schema":{"type":"object"},"elicitationId":{"type":"string"},"url":{"type":"string"},"initiatorType":{"type":"string","enum":["connector","agent"]}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","message"],"properties":{"sessionId":{"type":"string"},"message":{"type":"string"},"schema":{"type":"object"},"elicitationId":{"type":"string"},"url":{"type":"string"}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			var in struct {
 				SessionID     string          `json:"sessionId"`
@@ -712,10 +719,6 @@ func Register(srv *mcp.Server, deps Deps) {
 				// URL is set for a §9.2 url-mode elicitation (an OAuth
 				// flow, for example). Empty for a non-url-mode prompt.
 				URL string `json:"url"`
-				// InitiatorType is the §9.2 provenance initiator_type.
-				// Defaults to `agent` — a connector-initiated elicitation
-				// is tagged `connector` by the gateway connector path.
-				InitiatorType string `json:"initiatorType"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
@@ -730,12 +733,12 @@ func Register(srv *mcp.Server, deps Deps) {
 			if session.IsTerminal(row.State) {
 				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
 			}
-			// §9.2 provenance initiator_type. An unrecognised value
-			// resolves to `agent` — the lower-trust default.
+			// spec: §9.2 line 88 — agent binaries cannot self-declare as a
+			// connector. lenny/request_elicitation is the agent surface; an
+			// elicitation raised through it is always agent-initiated and
+			// must pass the per-pool url-mode allowlist to carry a URL.
+			// F-9.2.19.
 			initiator := elicitation.InitiatorAgent
-			if elicitation.InitiatorType(in.InitiatorType) == elicitation.InitiatorConnector {
-				initiator = elicitation.InitiatorConnector
-			}
 			// §9.1: the per-session elicitation budget bounds how many
 			// elicitations an agent may raise — an over-budget request
 			// is dropped so an agent cannot spam the user.
@@ -850,8 +853,11 @@ func Register(srv *mcp.Server, deps Deps) {
 				case <-ctx.Done():
 					return mcp.ToolResult{}, ctx.Err()
 				case <-timeout:
-					// §9.1: on timeout the elicitation is dismissed and the
-					// agent receives a timeout error.
+					// §9.1 line 103: on timeout the elicitation is dismissed
+					// and the agent receives a structured timeout error. The
+					// shared §15.2.1 classifier maps ELICITATION_TIMEOUT to
+					// the same (category, retryable) pair on REST and MCP.
+					// F-9.2.18.
 					_, _ = deps.Interactions.Resolve(ctx, tenant, resolverSessionID, row.UserID, elicitationID,
 						func(i *interactionstore.Interaction) error {
 							if i.Phase == interactionstore.PhasePending {
@@ -860,12 +866,70 @@ func Register(srv *mcp.Server, deps Deps) {
 							}
 							return nil
 						})
-					return mcp.ToolResult{}, fmt.Errorf(
-						"ELICITATION_TIMEOUT: no response for %s within %s", elicitationID, elicitationTimeout,
-					)
+					return mcp.ToolResult{}, mcp.NewToolError("ELICITATION_TIMEOUT",
+						fmt.Sprintf("no response for %s within %s", elicitationID, elicitationTimeout),
+						map[string]any{
+							"elicitationId":  elicitationID,
+							"timeoutSeconds": elicitationTimeout.Seconds(),
+						})
 				case <-ticker.C:
 				}
 			}
+		})
+
+		// spec: §9.2 line 108 — respond_to_elicitation/dismiss_elicitation
+		// are MCP-callable resolution surfaces parallel to the §15.1 REST
+		// endpoints. The gateway validates the (session_id, user_id,
+		// elicitation_id) triple before routing the response down the
+		// chain; any mismatch collapses to ELICITATION_NOT_FOUND so the
+		// existence of another session's or user's elicitation never
+		// leaks. F-9.2.17.
+		srv.RegisterTool(mcp.Tool{
+			Name:        "lenny/respond_to_elicitation",
+			Description: "Respond to a pending §9.2 elicitation on the calling session.",
+			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","elicitationId","response"],"properties":{"sessionId":{"type":"string"},"elicitationId":{"type":"string"},"response":{}}}`),
+		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			var in struct {
+				SessionID     string          `json:"sessionId"`
+				ElicitationID string          `json:"elicitationId"`
+				Response      json.RawMessage `json:"response"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return mcp.ToolResult{}, mcp.NewToolError("INVALID_REQUEST",
+					fmt.Sprintf("invalid arguments: %v", err), nil)
+			}
+			if in.SessionID == "" || in.ElicitationID == "" {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"sessionId and elicitationId are required", nil)
+			}
+			var response any
+			if len(in.Response) > 0 {
+				_ = json.Unmarshal(in.Response, &response)
+			}
+			return resolveElicitationTool(ctx, deps, tenant, in.SessionID,
+				in.ElicitationID, interactionstore.PhaseResponded, response, "")
+		})
+
+		srv.RegisterTool(mcp.Tool{
+			Name:        "lenny/dismiss_elicitation",
+			Description: "Dismiss a pending §9.2 elicitation on the calling session.",
+			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","elicitationId"],"properties":{"sessionId":{"type":"string"},"elicitationId":{"type":"string"},"reason":{"type":"string"}}}`),
+		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			var in struct {
+				SessionID     string `json:"sessionId"`
+				ElicitationID string `json:"elicitationId"`
+				Reason        string `json:"reason"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return mcp.ToolResult{}, mcp.NewToolError("INVALID_REQUEST",
+					fmt.Sprintf("invalid arguments: %v", err), nil)
+			}
+			if in.SessionID == "" || in.ElicitationID == "" {
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"sessionId and elicitationId are required", nil)
+			}
+			return resolveElicitationTool(ctx, deps, tenant, in.SessionID,
+				in.ElicitationID, interactionstore.PhaseDismissed, nil, in.Reason)
 		})
 	}
 

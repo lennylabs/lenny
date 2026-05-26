@@ -165,4 +165,37 @@ var table = map[string]entry{
 	// concurrent derives are running against the same source session.
 	// POLICY, retryable=true with exponential backoff; HTTP 429.
 	"DERIVE_LOCK_CONTENTION": {CategoryPolicy, true},
+	// spec: §15.1 line 1084 — `respond_to_elicitation` /
+	// `dismiss_elicitation` rejected because the (session_id, user_id,
+	// elicitation_id) triple does not match any pending elicitation.
+	// PERMANENT, retryable=false; HTTP 404. 404 is returned in every
+	// mismatch case to avoid leaking the existence of other-session
+	// elicitations. F-9.2.17 / F-9.2.18.
+	"ELICITATION_NOT_FOUND": {CategoryPermanent, false},
+	// spec: §15.1 line 1085 — an intermediate hop's elicitation/create
+	// re-emission carried a {message, schema} pair that diverges from
+	// the gateway-recorded original; the chain walker dropped the
+	// forward and the originating pod sees its pending elicitation fail
+	// with a tamper signal. PERMANENT, retryable=false; HTTP 409.
+	"ELICITATION_CONTENT_TAMPERED": {CategoryPermanent, false},
+	// spec: §9.2 line 103 — `lenny/request_elicitation` timed out
+	// waiting for a human response within `maxElicitationWait` (default
+	// 600 s). The elicitation is dismissed by the gateway and the
+	// agent receives this structured error so it can either give up
+	// or raise a fresh elicitation. TRANSIENT — a fresh elicitation
+	// (a new elicitation_id) may succeed; not retryable as-is because
+	// the original elicitation has already been dismissed. F-9.2.18.
+	"ELICITATION_TIMEOUT": {CategoryTransient, false},
+	// spec: §9.2 line 87 — agent-initiated url-mode elicitation dropped
+	// because the URL's effective host does not match any entry in the
+	// pool's `urlModeElicitation.domainAllowlist`. POLICY, retryable=
+	// false; HTTP 403. The pool admin must allowlist the host or the
+	// agent must stop emitting URL-mode elicitations.
+	"DOMAIN_NOT_ALLOWLISTED": {CategoryPolicy, false},
+	// spec: §15.1 — a `respond_to_elicitation` / `dismiss_elicitation`
+	// (REST or MCP) lost the race with a prior resolution. PERMANENT,
+	// retryable=false; HTTP 409. The interaction is already resolved,
+	// so the second resolver should observe the recorded phase rather
+	// than retry. F-9.2.17.
+	"INTERACTION_ALREADY_RESOLVED": {CategoryPolicy, false},
 }

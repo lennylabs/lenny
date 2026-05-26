@@ -170,6 +170,32 @@ func call(t *testing.T, h http.Handler, tool, args string) map[string]any {
 	return resp
 }
 
+// readLennyErrorEnvelope extracts the full §15.2.1 lenny error envelope
+// (code, category, retryable, message, details) from the `lenny/error`
+// content block of an isError tool result. Used by the §9.2 elicitation
+// tests to verify the MCP envelope shape. F-9.2.17 / F-9.2.18.
+func readLennyErrorEnvelope(t *testing.T, result map[string]any) map[string]any {
+	t.Helper()
+	if result["isError"] != true {
+		t.Fatalf("expected isError result, got %+v", result)
+	}
+	content, _ := result["content"].([]any)
+	for _, raw := range content {
+		block, _ := raw.(map[string]any)
+		if block["type"] != "lenny/error" {
+			continue
+		}
+		text, _ := block["text"].(string)
+		var env map[string]any
+		if err := json.Unmarshal([]byte(text), &env); err != nil {
+			t.Fatalf("decode error envelope: %v", err)
+		}
+		return env
+	}
+	t.Fatalf("no lenny/error block in %+v", content)
+	return nil
+}
+
 func resultText(t *testing.T, resp map[string]any) string {
 	t.Helper()
 	result, ok := resp["result"].(map[string]any)
@@ -1096,7 +1122,11 @@ func TestRequestElicitationDismissed(t *testing.T) {
 	}
 }
 
-func TestRequestElicitationTimeout(t *testing.T) {
+// TestRequestElicitationTimeout_spec_9_2 verifies the §9.2 line 103
+// timeout path returns a structured ELICITATION_TIMEOUT envelope: the
+// lenny code lands in the lenny/error content block and the §15.2.1
+// classifier resolves it to (TRANSIENT, retryable=false). F-9.2.18.
+func TestRequestElicitationTimeout_spec_9_2(t *testing.T) {
 	srv, store, _ := newMCPForElicitation(t, 40*time.Millisecond)
 	mkSession(t, store, "sess_e", session.StateRunning, "")
 
@@ -1106,10 +1136,19 @@ func TestRequestElicitationTimeout(t *testing.T) {
 	if result["isError"] != true {
 		t.Fatalf("a timed-out elicitation should be a tool error: %+v", resp)
 	}
-	content, _ := result["content"].([]any)
-	c0, _ := content[0].(map[string]any)
-	if msg, _ := c0["text"].(string); !strings.Contains(msg, "ELICITATION_TIMEOUT") {
-		t.Errorf("timeout error = %q, want ELICITATION_TIMEOUT", msg)
+	envelope := readLennyErrorEnvelope(t, result)
+	if got := envelope["code"]; got != "ELICITATION_TIMEOUT" {
+		t.Errorf("envelope.code = %v, want ELICITATION_TIMEOUT", got)
+	}
+	if got := envelope["category"]; got != "TRANSIENT" {
+		t.Errorf("envelope.category = %v, want TRANSIENT", got)
+	}
+	if got, _ := envelope["retryable"].(bool); got {
+		t.Errorf("envelope.retryable = true, want false (the original elicitation is now dismissed)")
+	}
+	details, _ := envelope["details"].(map[string]any)
+	if id, _ := details["elicitationId"].(string); id != "elic_x" {
+		t.Errorf("envelope.details.elicitationId = %v, want elic_x", id)
 	}
 }
 

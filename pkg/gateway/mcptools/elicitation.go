@@ -4,11 +4,13 @@ package mcptools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
 
@@ -289,4 +291,56 @@ func ResolveElicitation(
 		return interactionstore.Interaction{}, err
 	}
 	return out, nil
+}
+
+// resolveElicitationTool is the shared body of the §9.2 MCP
+// `lenny/respond_to_elicitation` and `lenny/dismiss_elicitation` tools.
+// It looks up the calling session row (so the triple's user_id is the
+// session's bound user identity — the same binding the §9.2 dispatcher
+// used to record the pending row), enforces the (tenant, session,
+// user, elicitation) triple via ResolveElicitation, and surfaces a
+// well-typed lenny error envelope on the three failure paths:
+// ELICITATION_NOT_FOUND on triple mismatch, INTERACTION_ALREADY_RESOLVED
+// on a second resolution attempt, INTERNAL_ERROR otherwise. Symmetric
+// with sessionserver.resolveInteraction. F-9.2.17.
+func resolveElicitationTool(
+	ctx context.Context,
+	deps Deps,
+	tenant, sessionID, elicitationID string,
+	phase interactionstore.Phase,
+	response any,
+	reason string,
+) (mcp.ToolResult, error) {
+	row, err := deps.Store.Get(ctx, tenant, sessionID)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			return mcp.ToolResult{}, mcp.NewToolError("ELICITATION_NOT_FOUND",
+				"elicitation not found",
+				map[string]any{"elicitationId": elicitationID})
+		}
+		return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
+			fmt.Sprintf("session lookup: %v", err), nil)
+	}
+	out, err := ResolveElicitation(ctx, deps.Interactions, tenant, sessionID,
+		row.UserID, elicitationID, phase, response, reason)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrElicitationNotFound):
+			return mcp.ToolResult{}, mcp.NewToolError("ELICITATION_NOT_FOUND",
+				"elicitation not found",
+				map[string]any{"elicitationId": elicitationID})
+		case errors.Is(err, interactionstore.ErrAlreadyResolved):
+			return mcp.ToolResult{}, mcp.NewToolError("INTERACTION_ALREADY_RESOLVED",
+				"interaction has already been resolved",
+				map[string]any{"elicitationId": elicitationID})
+		default:
+			return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR", err.Error(), nil)
+		}
+	}
+	body, _ := json.Marshal(map[string]any{
+		"id":         out.ID,
+		"phase":      string(out.Phase),
+		"resolvedAt": out.ResolvedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+	})
+	return textResult(string(body)), nil
 }

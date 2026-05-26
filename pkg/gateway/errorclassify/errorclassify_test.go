@@ -60,6 +60,26 @@ func TestClassifyKnownCodes(t *testing.T) {
 		// spec: §15.1 line 1053 — DERIVE_LOCK_CONTENTION is POLICY,
 		// retryable=true (back off and try again).
 		{"DERIVE_LOCK_CONTENTION", CategoryPolicy, true},
+		// spec: §15.1 line 1084 — ELICITATION_NOT_FOUND is PERMANENT
+		// and not retryable; the triple mismatch will fail identically
+		// until the caller supplies a matching elicitation_id. F-9.2.17.
+		{"ELICITATION_NOT_FOUND", CategoryPermanent, false},
+		// spec: §15.1 line 1085 — ELICITATION_CONTENT_TAMPERED is
+		// PERMANENT and not retryable; the tampering pod's forward fails
+		// identically. F-9.2.18.
+		{"ELICITATION_CONTENT_TAMPERED", CategoryPermanent, false},
+		// spec: §9.2 line 103 — ELICITATION_TIMEOUT is TRANSIENT but
+		// not retryable as-is (the original elicitation_id is dismissed);
+		// a fresh elicitation may succeed. F-9.2.18.
+		{"ELICITATION_TIMEOUT", CategoryTransient, false},
+		// spec: §9.2 line 87 — DOMAIN_NOT_ALLOWLISTED is POLICY and not
+		// retryable; the operator must add the host to the pool
+		// urlModeElicitation.domainAllowlist.
+		{"DOMAIN_NOT_ALLOWLISTED", CategoryPolicy, false},
+		// spec: §15.1 — INTERACTION_ALREADY_RESOLVED is POLICY (a race
+		// the second caller lost) and not retryable; the resolved phase
+		// is the authoritative outcome. F-9.2.17.
+		{"INTERACTION_ALREADY_RESOLVED", CategoryPolicy, false},
 	}
 	for _, c := range cases {
 		t.Run(c.code, func(t *testing.T) {
