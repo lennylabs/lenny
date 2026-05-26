@@ -71,6 +71,45 @@ type Executor interface {
 
 	// Close releases any executor-side state associated with the
 	// session. Idempotent; calling Close on a session that was never
-	// opened is a no-op.
+	// opened is a no-op. An executor that drives a §6.2 Sandbox-backed
+	// pod also implements SessionReleaser to record the session's terminal
+	// disposition before the pod drains; Close on such an executor releases
+	// without recording a disposition (the pod still drains).
 	Close(ctx context.Context, sessionID string) error
+}
+
+// Disposition is how a session ended, supplied to SessionReleaser.Release so
+// a pod-backed executor can record the terminal phase on the backing Sandbox
+// per §6.2 (attached → completed/failed/cancelled/expired) before draining the
+// pod. The empty value carries no disposition and skips the terminal-phase
+// write.
+type Disposition string
+
+const (
+	// DispositionCompleted is a session that reached its terminal state
+	// normally (§6.2 completed).
+	DispositionCompleted Disposition = "completed"
+	// DispositionFailed is a session that ended on an unrecoverable error
+	// (§6.2 failed).
+	DispositionFailed Disposition = "failed"
+	// DispositionCancelled is a session cancelled by the client, a parent
+	// cascade, or an admin (§6.2 cancelled).
+	DispositionCancelled Disposition = "cancelled"
+	// DispositionExpired is a session that hit a deadline (§6.2 expired).
+	DispositionExpired Disposition = "expired"
+)
+
+// SessionReleaser is the optional Executor extension a pod-backed executor
+// implements to release a session while recording its terminal disposition
+// on the backing Sandbox (§6.2 attached → completed/failed/cancelled/expired)
+// before draining the pod. The gateway's terminal-state path prefers Release
+// over Close so the authoritative §6.2 state machine reflects the session
+// outcome; executors with no Sandbox phase to record (echo, subprocess) do not
+// implement it and the caller falls back to Close. spec: §6.2 lines 105-117,
+// 305.
+type SessionReleaser interface {
+	// Release tears down the session like Close and records disposition on
+	// the backing Sandbox. Idempotent; releasing an unbound session is a
+	// no-op.
+	Release(ctx context.Context, sessionID string, disposition Disposition) error
 }

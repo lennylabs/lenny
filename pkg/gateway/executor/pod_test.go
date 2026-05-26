@@ -56,7 +56,9 @@ func dialPodAdapter(t *testing.T, rt adapter.RuntimeProcess) *adapterclient.Clie
 		t.Fatalf("dial adapter: %v", err)
 	}
 	t.Cleanup(func() { _ = cl.Close() })
-	if err := cl.StartSession(context.Background(), "sess-pod", "echo", nil, nil); err != nil {
+	if err := cl.StartSession(context.Background(), adapterclient.StartSessionParams{
+		SessionID: "sess-pod", Runtime: "echo",
+	}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	return cl

@@ -26,9 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
+	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/blobstore"
@@ -36,8 +36,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // stubRestorer is an adapter.CheckpointSource serving a fixed archive.
@@ -336,8 +337,10 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	// spec: §6.2 lines 83-94 — a successful Bind advances the Sandbox through
+	// the setup chain to attached.
+	if sb.Status.Phase != "attached" {
+		t.Errorf("sandbox phase = %q, want attached", sb.Status.Phase)
 	}
 }
 
@@ -492,7 +495,7 @@ func TestReleaseDrainsTheSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := binder.Release(context.Background(), res); err != nil {
+	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
@@ -526,7 +529,7 @@ func TestReleaseFailsWhenSandboxGone(t *testing.T) {
 	if err := c.Delete(context.Background(), &sb); err != nil {
 		t.Fatalf("delete sandbox: %v", err)
 	}
-	if err := binder.Release(context.Background(), res); err == nil {
+	if err := binder.Release(context.Background(), res, state.Completed); err == nil {
 		t.Error("Release succeeded though the Sandbox was deleted, want an error")
 	}
 }
@@ -545,6 +548,164 @@ func TestBindFailsWhenAStagingRPCFails(t *testing.T) {
 	if err == nil {
 		t.Error("Bind succeeded though a staging RPC could not run, want a failure")
 	}
+
+	// spec: §6.2 lines 99-102 — a pre-attached setup-RPC failure best-effort
+	// moves the Sandbox to the `failed` phase (here finalizing_workspace →
+	// failed, after receiving_uploads → finalizing_workspace had advanced it).
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != string(state.Failed) {
+		t.Errorf("sandbox phase = %q, want failed after a pre-attached RPC failure", sb.Status.Phase)
+	}
+}
+
+// recordingPhaseClient wraps c so a test can assert the §6.2 transition
+// sequence the gateway wrote, including phases that are transient in the
+// final stored object (like the terminal disposition recorded just before
+// draining). It records the Sandbox phase of every status-subresource Update.
+// A wrapper struct is used rather than controller-runtime's interceptor.Funcs
+// because the envtest client is a plain client.Client, not a client.WithWatch.
+func recordingPhaseClient(c client.Client, phases *[]string) client.Client {
+	return &phaseRecorder{Client: c, phases: phases}
+}
+
+type phaseRecorder struct {
+	client.Client
+	phases *[]string
+}
+
+func (r *phaseRecorder) Status() client.SubResourceWriter {
+	return &phaseStatusWriter{SubResourceWriter: r.Client.Status(), phases: r.phases}
+}
+
+type phaseStatusWriter struct {
+	client.SubResourceWriter
+	phases *[]string
+}
+
+func (w *phaseStatusWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	if err := w.SubResourceWriter.Update(ctx, obj, opts...); err != nil {
+		return err
+	}
+	if sb, ok := obj.(*lennyv1.Sandbox); ok {
+		*w.phases = append(*w.phases, sb.Status.Phase)
+	}
+	return nil
+}
+
+// TestBindWritesSetupChainPhases_spec_6_2 asserts Bind advances the Sandbox
+// through the full §6.2 lines 83-94 setup chain (claimed →
+// receiving_uploads → finalizing_workspace → running_setup →
+// starting_session → attached) so the authoritative state machine
+// (line 305) reflects each phase, not just claimed.
+func TestBindWritesSetupChainPhases_spec_6_2(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	var phases []string
+	c := recordingPhaseClient(k8sClient(t, idleSandbox("sbx-1", "10.244.1.7")), &phases)
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	want := []string{"claimed", "receiving_uploads", "finalizing_workspace", "running_setup", "starting_session", "attached"}
+	if !equalStrings(phases, want) {
+		t.Errorf("setup-chain phase sequence = %v, want %v", phases, want)
+	}
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != string(state.Attached) {
+		t.Errorf("final sandbox phase = %q, want attached", sb.Status.Phase)
+	}
+}
+
+// TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2 asserts Release records
+// the session's terminal disposition on the Sandbox (§6.2 lines 105-117,
+// attached → completed) before draining the exclusive pod (→ draining), so
+// the state machine reflects how the session ended.
+func TestReleaseRecordsTerminalPhaseThenDrains_spec_6_2(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	var phases []string
+	c := recordingPhaseClient(k8sClient(t, idleSandbox("sbx-1", "10.244.1.7")), &phases)
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	phases = phases[:0] // drop the setup-chain phases; assert the release sequence
+	if err := binder.Release(context.Background(), res, state.Completed); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	want := []string{"completed", "draining"}
+	if !equalStrings(phases, want) {
+		t.Errorf("release phase sequence = %v, want %v", phases, want)
+	}
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != string(state.Draining) {
+		t.Errorf("final sandbox phase = %q, want draining", sb.Status.Phase)
+	}
+}
+
+// TestReleaseExpiredSkipsTerminalPhase_spec_6_2 asserts a disposition with no
+// §6.2 edge from the current phase (attached → expired, which the state
+// machine does not model) is skipped gracefully: Release drains the pod
+// without recording the terminal phase, so reclamation is never blocked.
+func TestReleaseExpiredSkipsTerminalPhase_spec_6_2(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	var phases []string
+	c := recordingPhaseClient(k8sClient(t, idleSandbox("sbx-1", "10.244.1.7")), &phases)
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	phases = phases[:0]
+	if err := binder.Release(context.Background(), res, state.Expired); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	want := []string{"draining"}
+	if !equalStrings(phases, want) {
+		t.Errorf("release phase sequence = %v, want %v (expired has no edge from attached)", phases, want)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestBindStagesUploadFile(t *testing.T) {
@@ -776,14 +937,16 @@ func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 		t.Errorf("SandboxClaim spec = %+v, want a binding of sess-1/acme to sbx-fb", claim.Spec)
 	}
 
-	// The fallback best-effort flipped the Sandbox phase idle → claimed.
+	// The fallback flipped the Sandbox idle → claimed, then the full Bind
+	// advanced it through the §6.2 setup chain to attached (the fallback
+	// claim feeds the same Bind path as a normal claim).
 	var sb lennyv1.Sandbox
 	if err := c.Get(context.Background(),
 		client.ObjectKey{Namespace: testNS, Name: "sbx-fb"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
-	if sb.Status.Phase != "claimed" {
-		t.Errorf("sandbox phase = %q, want claimed after the fallback claim", sb.Status.Phase)
+	if sb.Status.Phase != "attached" {
+		t.Errorf("sandbox phase = %q, want attached after the fallback claim + Bind", sb.Status.Phase)
 	}
 }
 

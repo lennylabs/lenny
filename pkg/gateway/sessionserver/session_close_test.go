@@ -36,6 +36,50 @@ func (e *closeRecordingExecutor) Close(_ context.Context, sessionID string) erro
 	return nil
 }
 
+// releaseRecordingExecutor implements both Executor and SessionReleaser so a
+// test can assert the §6.2 terminal disposition the gateway records at
+// session teardown (attached → completed/failed/cancelled/expired).
+type releaseRecordingExecutor struct {
+	released []executor.Disposition
+}
+
+func (e *releaseRecordingExecutor) Send(context.Context, string, []executor.Message) ([]executor.OutputPart, error) {
+	return nil, nil
+}
+
+func (e *releaseRecordingExecutor) Close(context.Context, string) error {
+	e.released = append(e.released, "")
+	return nil
+}
+
+func (e *releaseRecordingExecutor) Release(_ context.Context, _ string, d executor.Disposition) error {
+	e.released = append(e.released, d)
+	return nil
+}
+
+// TestTerminalTransitionReleasesWithDisposition_spec_6_2 asserts that when the
+// executor is a §6.2 Sandbox-backed pod executor (SessionReleaser), the
+// gateway records the session's terminal disposition at teardown. A DELETE
+// transitions running → cancelled, so the disposition is `cancelled`.
+func TestTerminalTransitionReleasesWithDisposition_spec_6_2(t *testing.T) {
+	store := memstore.New()
+	exec := &releaseRecordingExecutor{}
+	srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	seedRunning(t, store, "sess-disp")
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-disp", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("DELETE status = %d, want 200", rr.Code)
+	}
+
+	if len(exec.released) != 1 || exec.released[0] != executor.DispositionCancelled {
+		t.Errorf("Release dispositions = %v, want [cancelled]", exec.released)
+	}
+}
+
 // recordingSealer records the seal-and-export calls. When order is set,
 // Seal also appends "seal" to it.
 type recordingSealer struct {

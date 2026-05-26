@@ -166,6 +166,36 @@ func TestStartingSessionPhaseAndTransitions_spec_6_2(t *testing.T) {
 	}
 }
 
+// TestSessionTerminalDrainEdges_spec_6_2 covers the pod-reclamation drain
+// edges from the §6.2 session-terminal phases. A session-mode pod is
+// exclusive (§6.2 line 194), so once its session reaches a terminal phase the
+// gateway records the disposition and then drains the pod for replacement.
+// The terminal phases therefore carry an outgoing pod-cleanup edge to
+// draining while remaining session-terminal for the §6.2 line 269 timer
+// accounting; the two axes coexist.
+func TestSessionTerminalDrainEdges_spec_6_2(t *testing.T) {
+	t.Parallel()
+	for _, from := range []state.State{state.Completed, state.Failed, state.Cancelled, state.Expired} {
+		from := from
+		t.Run(string(from), func(t *testing.T) {
+			t.Parallel()
+			if err := state.IsValid(from, state.Draining); err != nil {
+				t.Errorf("IsValid(%q, draining) = %v, want nil — session-terminal pod reclamation edge", from, err)
+			}
+			// The drain edge does not make the phase non-terminal: the
+			// session-timer axis is independent of the pod-cleanup axis.
+			if !state.IsTerminal(from) {
+				t.Errorf("IsTerminal(%q) = false, want true — drain edge must not flip session terminality", from)
+			}
+			// The drain is the only outgoing edge: a terminal phase still
+			// cannot return to the claimable set.
+			if err := state.IsValid(from, state.Idle); err == nil {
+				t.Errorf("IsValid(%q, idle) = nil, want error — a terminal phase must not return to idle", from)
+			}
+		})
+	}
+}
+
 // spec: 6.2
 // diagnosis: state.IsTerminal returned the wrong value. Sandbox terminal
 //

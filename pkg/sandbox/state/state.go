@@ -104,16 +104,27 @@ func All() []State {
 	}
 }
 
-// Terminal returns the §6.2 phases with no outgoing transition. The set
-// is the union of the four session-terminal states (spec: §6.2 line 269 —
-// completed, failed, cancelled, expired) and the pod-lifecycle terminal
+// Terminal returns the §6.2 session-terminal phases (spec: §6.2 line 269 —
+// completed, failed, cancelled, expired) plus the pod-lifecycle terminal
 // terminated (spec: §6.2 line 84 SDK-warm sdk_connecting → terminated,
-// line 195 draining → terminated). completed is terminal: §6.2 lines
-// 96-99 list attached → completed and suspended → completed as terminal
-// edges with no path back out, so IsTerminal(Completed) must report true
-// (a resumable-state helper that treated completed as non-terminal would
-// contradict the spec and the CoarseState mapping, which already classes
-// completed among the terminal phases that carry no coarse label value).
+// line 195 draining → terminated). These are the phases at which the
+// SESSION has stopped: the §6.2 line 269 maxSessionAge timer is no longer
+// evaluated and no session-level edge leaves them. completed is terminal:
+// §6.2 lines 96-99 list attached → completed and suspended → completed as
+// terminal session edges with no path back out, so IsTerminal(Completed)
+// reports true (a resumable-state helper that treated completed as
+// non-terminal would contradict the spec and the CoarseState mapping, which
+// classes completed among the terminal phases that carry no coarse label
+// value).
+//
+// The four session-terminal phases additionally carry a pod-reclamation
+// drain edge (completed/failed/cancelled/expired → draining; see
+// ValidTransitions): a session-mode pod is exclusive, so once its session
+// settles the gateway records the disposition on Sandbox.status.phase and
+// drains the pod for replacement. That drain edge is a POD-lifecycle
+// transition, distinct from the SESSION-terminality this helper reports — a
+// phase can be session-terminal and still have an outgoing pod-cleanup edge.
+// Only terminated has no outgoing edge of any kind.
 func Terminal() []State {
 	return []State{Completed, Failed, Cancelled, Expired, Terminated}
 }
@@ -220,6 +231,22 @@ func ValidTransitions() []Transition {
 		{Claimed, Draining},
 		{Attached, Draining},
 		{Draining, Terminated},
+		// Session-terminal pod reclamation. A session-mode pod is exclusive
+		// to one session (§6.2 line 194); once the session reaches a terminal
+		// phase the gateway records the disposition on Sandbox.status.phase
+		// (attached → completed/failed/cancelled, §6.2 lines 105-117) and then
+		// drains the pod so the warm-pool sizer provisions a replacement.
+		// §6.2 enumerates the terminal session edges and the
+		// draining → terminated cleanup but not the per-terminal drain source;
+		// like the claimed → draining abort edge above, these are documented
+		// extensions of the §6.2 cleanup model so an exclusive pod is reclaimed
+		// rather than stranded at its terminal phase. The drain is a
+		// pod-lifecycle transition and does not contradict the session
+		// terminality reported by Terminal()/IsTerminal.
+		{Completed, Draining},
+		{Failed, Draining},
+		{Cancelled, Draining},
+		{Expired, Draining},
 	}
 }
 

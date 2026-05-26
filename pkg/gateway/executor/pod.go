@@ -11,6 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
 // PodExecutor is the Executor backed by Kubernetes agent pods. It
@@ -40,7 +41,10 @@ func NewPodExecutor(registry *podsession.Registry, binder *podsession.Binder) *P
 	}
 }
 
-var _ Executor = (*PodExecutor)(nil)
+var (
+	_ Executor        = (*PodExecutor)(nil)
+	_ SessionReleaser = (*PodExecutor)(nil)
+)
 
 // Send delivers each message to the session's bound pod over its Attach
 // stream and returns the agent's response output parts.
@@ -142,6 +146,18 @@ func readAttachResponse(stream *adapterclient.AttachStream) ([]OutputPart, error
 // drain would (a) tear down sibling slots that did not terminate and
 // (b) leak the SandboxClaim that the slot reservation created.
 func (e *PodExecutor) Close(ctx context.Context, sessionID string) error {
+	// No disposition: the pod still drains, but the §6.2 terminal phase is
+	// not recorded. The terminal-state path uses Release instead.
+	return e.Release(ctx, sessionID, "")
+}
+
+// Release implements SessionReleaser: it tears the session's pod down like
+// Close and records the session's terminal disposition on the backing
+// Sandbox (§6.2 attached → completed/failed/cancelled/expired) before
+// draining the pod. A concurrent-mode (slot) bind has no pod-level terminal
+// phase — the per-slot lifecycle tracks that — so it releases the slot
+// without a disposition.
+func (e *PodExecutor) Release(ctx context.Context, sessionID string, disposition Disposition) error {
 	e.mu.Lock()
 	if s, ok := e.streams[sessionID]; ok {
 		_ = s.CloseSend()
@@ -156,5 +172,24 @@ func (e *PodExecutor) Close(ctx context.Context, sessionID string) error {
 	if bind.SlotID != "" {
 		return e.binder.ReleaseSlot(ctx, bind)
 	}
-	return e.binder.Release(ctx, bind)
+	return e.binder.Release(ctx, bind, dispositionPhase(disposition))
+}
+
+// dispositionPhase maps a session's terminal Disposition to the §6.2 Sandbox
+// phase Release records before draining the pod. An unrecognized or empty
+// disposition maps to the empty phase, which Release treats as "no terminal
+// phase to record" and drains directly.
+func dispositionPhase(d Disposition) state.State {
+	switch d {
+	case DispositionCompleted:
+		return state.Completed
+	case DispositionFailed:
+		return state.Failed
+	case DispositionCancelled:
+		return state.Cancelled
+	case DispositionExpired:
+		return state.Expired
+	default:
+		return ""
+	}
 }

@@ -13,10 +13,44 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 )
+
+// releaseExecutor tears down a terminal session's executor state. When the
+// executor is a §6.2 Sandbox-backed pod executor (SessionReleaser), it records
+// the terminal disposition on the Sandbox before draining the pod; otherwise
+// it falls back to Close (echo, subprocess, and other executors with no
+// Sandbox phase). spec: §6.2 lines 105-117, 305.
+func releaseExecutor(ctx context.Context, exec executor.Executor, sessionID string, disp executor.Disposition) error {
+	if r, ok := exec.(executor.SessionReleaser); ok {
+		return r.Release(ctx, sessionID, disp)
+	}
+	return exec.Close(ctx, sessionID)
+}
+
+// dispositionForState maps a session's terminal §6.2 state to the executor
+// Disposition recorded on the backing Sandbox at release time
+// (attached → completed/failed/cancelled/expired). A non-terminal state
+// (recordSessionCompleted is only called on a terminal transition, so this is
+// defensive) carries no disposition and skips the terminal-phase write.
+// spec: §6.2 lines 105-117, 269.
+func dispositionForState(st session.State) executor.Disposition {
+	switch st {
+	case session.StateCompleted:
+		return executor.DispositionCompleted
+	case session.StateFailed:
+		return executor.DispositionFailed
+	case session.StateCancelled:
+		return executor.DispositionCancelled
+	case session.StateExpired:
+		return executor.DispositionExpired
+	default:
+		return ""
+	}
+}
 
 // handleUsage implements GET /v1/usage per §15.1 — the aggregated
 // usage report. The §15.1 contract: this is a single aggregated
@@ -158,7 +192,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 		_ = s.sealer.Seal(ctx, sess.TenantID, sess.ID)
 	}
 	if s.executor != nil {
-		if err := s.executor.Close(ctx, sess.ID); err != nil {
+		if err := releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State)); err != nil {
 			// recordSessionCompleted is best-effort by design (a failed
 			// teardown does not unwind the terminal-state transition), but
 			// silently dropping the error has bitten us: a 403 on

@@ -222,10 +222,11 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 	sandboxName = res.SandboxName
 	slotID = res.SlotID
 
-	podIP, err = b.resolvePodIP(ctx, sandboxName)
+	sb, err := b.resolveSandbox(ctx, sandboxName)
 	if err != nil {
 		return "", "", "", nil, err
 	}
+	podIP = sb.Status.PodIP
 
 	addr := net.JoinHostPort(podIP, strconv.Itoa(b.AdapterPort))
 	cl, err = b.DialAdapter(addr)

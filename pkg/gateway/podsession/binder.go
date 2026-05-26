@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"time"
@@ -308,38 +309,68 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	// discarded (the SLO measures successful starts only).
 	var t BindTimings
 	phaseStart := time.Now()
-	sandboxName, podIP, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
+	sb, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
+	sandboxName := sb.Name
 	t.PodClaim = time.Since(phaseStart)
 
+	// spec: §6.2 lines 83-94, 305-313 — advance Sandbox.status.phase through
+	// the setup chain (claimed → receiving_uploads → finalizing_workspace →
+	// running_setup → starting_session → attached) so the authoritative state
+	// machine reflects each phase. The detailed transitions live on the CRD
+	// status subresource only (line 313). On a pre-attached RPC failure the
+	// phase is best-effort moved to `failed` per §6.2 lines 99-102.
 	phaseStart = time.Now()
+	if err := b.setPhase(ctx, sb, state.ReceivingUploads); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: phase receiving_uploads on pod %s: %w", sandboxName, err)
+	}
 	if err := b.stageWorkspace(ctx, cl, req.SessionID, req.Plan); err != nil {
+		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
 	}
+	if err := b.setPhase(ctx, sb, state.FinalizingWorkspace); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: phase finalizing_workspace on pod %s: %w", sandboxName, err)
+	}
 	if err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan); err != nil {
+		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
 	}
 	t.WorkspaceMaterialization = time.Since(phaseStart)
 
 	phaseStart = time.Now()
+	if err := b.setPhase(ctx, sb, state.RunningSetup); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: phase running_setup on pod %s: %w", sandboxName, err)
+	}
 	if err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy); err != nil {
+		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: run setup on pod %s: %w", sandboxName, err)
 	}
 	t.SetupCommands = time.Since(phaseStart)
 
 	phaseStart = time.Now()
+	// §4.7 AssignCredentials is the fourth setup RPC; it runs while the pod
+	// is in running_setup (§6.2 has no distinct credential phase), before the
+	// starting_session transition below.
 	if err := b.assignCredentials(ctx, cl, req); err != nil {
+		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", sandboxName, err)
 	}
 	t.CredentialAssignment = time.Since(phaseStart)
 
 	phaseStart = time.Now()
+	if err := b.setPhase(ctx, sb, state.StartingSession); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: phase starting_session on pod %s: %w", sandboxName, err)
+	}
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
 		SessionID:          req.SessionID,
 		Runtime:            req.Runtime,
@@ -348,8 +379,13 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		AgentInterface:     req.AgentInterface,
 		MinPlatformVersion: req.MinPlatformVersion,
 	}); err != nil {
+		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
+	}
+	if err := b.setPhase(ctx, sb, state.Attached); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: phase attached on pod %s: %w", sandboxName, err)
 	}
 	t.AgentSessionStart = time.Since(phaseStart)
 
@@ -357,10 +393,92 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		SessionID:   req.SessionID,
 		TenantID:    req.TenantID,
 		SandboxName: sandboxName,
-		PodIP:       podIP,
+		PodIP:       sb.Status.PodIP,
 		Adapter:     cl,
 		Timings:     t,
 	}, nil
+}
+
+// setPhase advances the claimed Sandbox's §6.2 status.phase to `to`,
+// validating the edge against the state machine and retrying once per
+// optimistic-locking conflict. The gateway is the sole writer of the claim
+// and session phases (idle → claimed → ... → attached → terminal): the
+// WarmPoolController's lifecycle planner leaves these phases untouched and
+// drives only the warm-path (warming → idle) and reclamation
+// (draining → terminated) edges, so a conflict means a concurrent gateway
+// write — which cannot happen for the pod this replica holds the exclusive
+// claim on. The retry therefore re-reads and re-applies rather than
+// tolerating a lost update. sb is updated in place so a chain of setup
+// transitions needs no re-Get on the common no-conflict path; an invalid edge
+// fails loudly rather than corrupting the phase. spec: §6.2 lines 83-94,
+// 305-313.
+func (b *Binder) setPhase(ctx context.Context, sb *lennyv1.Sandbox, to state.State) error {
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		from := state.State(sb.Status.Phase)
+		if from == to {
+			return nil // idempotent: a retry or concurrent writer already landed it
+		}
+		if err := state.IsValid(from, to); err != nil {
+			return err
+		}
+		sb.Status.Phase = string(to)
+		err := b.Client.Status().Update(ctx, sb)
+		if err == nil {
+			return nil
+		}
+		if !apierrors.IsConflict(err) {
+			return fmt.Errorf("podsession: set sandbox %s phase %s: %w", sb.Name, to, err)
+		}
+		lastErr = err
+		if gerr := b.Client.Get(ctx, client.ObjectKeyFromObject(sb), sb); gerr != nil {
+			return fmt.Errorf("podsession: re-read sandbox %s after phase conflict: %w", sb.Name, gerr)
+		}
+	}
+	return fmt.Errorf("podsession: set sandbox %s phase %s exhausted retries: %w", sb.Name, to, lastErr)
+}
+
+// failPhase best-effort records the §6.2 pre-attached failure phase
+// (receiving_uploads / finalizing_workspace / running_setup /
+// starting_session → failed, spec lines 99-102) on a Sandbox whose setup
+// chain aborted. It is best-effort: the caller already returns the underlying
+// error, and a failed-phase write lost to reclamation does not change the
+// outcome — the orphaned claim is collected and the pod recycled (§4.6.1).
+func (b *Binder) failPhase(ctx context.Context, sb *lennyv1.Sandbox) {
+	if err := b.setPhase(ctx, sb, state.Failed); err != nil {
+		log.Printf("podsession: record failed phase on sandbox %s: %v", sb.Name, err)
+	}
+}
+
+// drain transitions the Sandbox to draining so the reconciler reclaims the
+// pod (§6.2 → draining → terminated), retrying once per optimistic-locking
+// conflict. Unlike setPhase it does not validate the edge: the drain must
+// reclaim the pod from whatever phase it holds (a terminal disposition,
+// attached, or an early claimed/idle release), so reclamation is never blocked
+// by a state-machine check. A Sandbox already draining or terminated is a
+// no-op.
+func (b *Binder) drain(ctx context.Context, sb *lennyv1.Sandbox) error {
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if sb.Status.Phase == string(state.Draining) || sb.Status.Phase == string(state.Terminated) {
+			return nil
+		}
+		sb.Status.Phase = string(state.Draining)
+		err := b.Client.Status().Update(ctx, sb)
+		if err == nil {
+			return nil
+		}
+		if !apierrors.IsConflict(err) {
+			return fmt.Errorf("podsession: drain sandbox %s: %w", sb.Name, err)
+		}
+		lastErr = err
+		if gerr := b.Client.Get(ctx, client.ObjectKeyFromObject(sb), sb); gerr != nil {
+			return fmt.Errorf("podsession: re-read sandbox %s after drain conflict: %w", sb.Name, gerr)
+		}
+	}
+	return fmt.Errorf("podsession: drain sandbox %s exhausted retries: %w", sb.Name, lastErr)
 }
 
 // assignCredentials mints the session's §4.9 credential leases and
@@ -483,7 +601,7 @@ func uploadRefs(plan *adapterv1.WorkspacePlan) []string {
 // must be rebuilt on a replacement pod. Any failure after the claim is
 // returned so the gateway can retry on a fresh pod.
 func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (*BindResult, error) {
-	sandboxName, podIP, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
+	sb, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -497,65 +615,72 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (*BindResult, er
 		MinPlatformVersion: req.MinPlatformVersion,
 	}); err != nil {
 		cl.Close()
-		return nil, fmt.Errorf("podsession: resume session on pod %s: %w", sandboxName, err)
+		return nil, fmt.Errorf("podsession: resume session on pod %s: %w", sb.Name, err)
 	}
+	// The resumed pod's §6.2 phase chain (resume_pending → resuming →
+	// attached) is driven by the resume watchdog path, tracked separately; the
+	// fresh pod stays in `claimed` here. Release's IsValid guard handles that
+	// gracefully (it skips the terminal-disposition write when no edge exists
+	// from claimed) and the drain reclaims the pod regardless.
 	return &BindResult{
 		SessionID:   req.SessionID,
 		TenantID:    req.TenantID,
-		SandboxName: sandboxName,
-		PodIP:       podIP,
+		SandboxName: sb.Name,
+		PodIP:       sb.Status.PodIP,
 		Adapter:     cl,
 	}, nil
 }
 
-// connect claims an idle pod from the pool, resolves the pod's adapter
-// address, dials it, and runs the §15.5 version handshake. On success
-// the caller owns cl and must close it once the session ends or on any
-// later failure. The shared claim-and-handshake path of Bind and Resume.
-func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) (sandboxName, podIP string, cl *adapterclient.Client, err error) {
+// connect claims an idle pod from the pool, resolves the claimed Sandbox,
+// dials its adapter, and runs the §15.5 version handshake. On success the
+// caller owns cl and must close it once the session ends or on any later
+// failure, and owns the returned Sandbox object for chaining §6.2 phase
+// transitions. The shared claim-and-handshake path of Bind and Resume.
+func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) (sb *lennyv1.Sandbox, cl *adapterclient.Client, err error) {
 	claimer := &podclaim.Claimer{Client: b.Client, Namespace: b.Namespace}
 	req := podclaim.ClaimRequest{
 		Pool:      pool,
 		SessionID: sessionID,
 		TenantID:  tenantID,
 	}
+	var sandboxName string
 	claim, err := claimer.Claim(ctx, req)
 	if errors.Is(err, podclaim.ErrNoIdlePod) {
 		// The Kubernetes-API claim found no idle pod. Attempt the §4.6.1
 		// Postgres-backed fallback claim before surfacing the error.
 		sandboxName, err = b.fallbackClaim(ctx, req)
 		if err != nil {
-			return "", "", nil, err
+			return nil, nil, err
 		}
 	} else if err != nil {
-		return "", "", nil, err
+		return nil, nil, err
 	} else {
 		sandboxName = claim.Spec.SandboxRef
 	}
 
-	podIP, err = b.resolvePodIP(ctx, sandboxName)
+	sb, err = b.resolveSandbox(ctx, sandboxName)
 	if err != nil {
-		return "", "", nil, err
+		return nil, nil, err
 	}
 
-	addr := net.JoinHostPort(podIP, strconv.Itoa(b.AdapterPort))
+	addr := net.JoinHostPort(sb.Status.PodIP, strconv.Itoa(b.AdapterPort))
 	cl, err = b.DialAdapter(addr)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("podsession: dial adapter at %s: %w", addr, err)
+		return nil, nil, fmt.Errorf("podsession: dial adapter at %s: %w", addr, err)
 	}
 
 	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
 	if err != nil {
 		cl.Close()
-		return "", "", nil, fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err)
+		return nil, nil, fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err)
 	}
 	if resp.GetIncompatible() {
 		cl.Close()
-		return "", "", nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
 		)
 	}
-	return sandboxName, podIP, cl, nil
+	return sb, cl, nil
 }
 
 // fallbackClaim runs the §4.6.1 Postgres-backed fallback claim after
@@ -656,13 +781,19 @@ func (b *Binder) recordFallbackSkip(reason string) {
 }
 
 // Release tears down a session that Bind placed on a pod: it shuts the
-// pod's runtime down through the adapter, closes the adapter
-// connection, and transitions the Sandbox to draining so the Sandbox
-// reconciler reclaims the pod (§6.2 claimed → draining → terminated).
-// The adapter Shutdown is best-effort — draining the Sandbox reclaims
-// the pod even if the runtime did not exit cleanly — so Release returns
-// only an error from the Sandbox transition.
-func (b *Binder) Release(ctx context.Context, result *BindResult) error {
+// pod's runtime down through the adapter, closes the adapter connection,
+// records the session's terminal disposition on the Sandbox, and drains
+// the pod so the Sandbox reconciler reclaims it (§6.2 → draining →
+// terminated). terminal is the §6.2 terminal phase the session reached
+// (completed, failed, cancelled, or expired); the gateway maps the session
+// state to it. When terminal names a valid edge from the Sandbox's current
+// phase, Release records it (attached → completed/failed/cancelled, §6.2
+// lines 105-117) before draining so the authoritative state machine reflects
+// the outcome; a non-terminal or non-applicable value skips straight to the
+// drain. The adapter Shutdown and the disposition write are best-effort —
+// the drain reclaims the pod regardless — so Release returns only an error
+// from the drain transition. spec: §6.2 lines 105-117, 305.
+func (b *Binder) Release(ctx context.Context, result *BindResult, terminal state.State) error {
 	if result.Adapter != nil {
 		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
 		result.Adapter.Close()
@@ -672,23 +803,36 @@ func (b *Binder) Release(ctx context.Context, result *BindResult) error {
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: result.SandboxName}, &sb); err != nil {
 		return fmt.Errorf("podsession: get sandbox %s: %w", result.SandboxName, err)
 	}
-	sb.Status.Phase = string(state.Draining)
-	if err := b.Client.Status().Update(ctx, &sb); err != nil {
-		return fmt.Errorf("podsession: drain sandbox %s: %w", result.SandboxName, err)
+
+	// §6.2 lines 105-117: record the terminal disposition on the Sandbox
+	// before draining the exclusive pod. Guarded by IsValid so a disposition
+	// with no edge from the current phase (e.g. attached → expired, which the
+	// state machine does not model, or a resumed pod still in claimed) is
+	// skipped gracefully — the disposition is still on the session row and the
+	// §11.7 audit log — rather than failing the drain.
+	if terminal != "" && terminal != state.Terminated {
+		if from := state.State(sb.Status.Phase); state.IsValid(from, terminal) == nil {
+			if err := b.setPhase(ctx, &sb, terminal); err != nil {
+				log.Printf("podsession: record terminal phase %s on sandbox %s: %v", terminal, result.SandboxName, err)
+			}
+		}
 	}
-	return nil
+
+	return b.drain(ctx, &sb)
 }
 
-// resolvePodIP reads the claimed Sandbox and returns its pod address.
-// The Sandbox reconciler records status.podIP once the pod is running,
-// so a pod that was idle when claimed carries an address.
-func (b *Binder) resolvePodIP(ctx context.Context, sandboxName string) (string, error) {
+// resolveSandbox reads the claimed Sandbox and verifies it carries a pod
+// address. The Sandbox reconciler records status.podIP once the pod is
+// running, so a pod that was idle when claimed carries an address. The full
+// object is returned so the caller can chain §6.2 phase transitions against
+// it without a re-Get.
+func (b *Binder) resolveSandbox(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, error) {
 	var sb lennyv1.Sandbox
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
-		return "", fmt.Errorf("podsession: get sandbox %s: %w", sandboxName, err)
+		return nil, fmt.Errorf("podsession: get sandbox %s: %w", sandboxName, err)
 	}
 	if sb.Status.PodIP == "" {
-		return "", fmt.Errorf("podsession: sandbox %s has no pod IP", sandboxName)
+		return nil, fmt.Errorf("podsession: sandbox %s has no pod IP", sandboxName)
 	}
-	return sb.Status.PodIP, nil
+	return &sb, nil
 }
