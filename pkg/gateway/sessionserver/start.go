@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -1048,6 +1049,12 @@ type reattachedChild struct {
 // already settled. The children array carries every child — a settled
 // child includes its §8.8 result. Best-effort: a failure to enumerate
 // or publish never fails the resume.
+//
+// A non-terminal child carries `pending_request_id` when an outstanding
+// `lenny/request_input` or §6/§9.2 pending interaction exists for the
+// child — the parent needs the id to answer via `lenny/send_message`
+// (inReplyTo) or the §15.1 interaction endpoints. spec: §7.2 line 153
+// (ReattachedChild.pending_request_id). F-7.2.16.
 func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID string) {
 	if s.events == nil {
 		return
@@ -1073,6 +1080,14 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 			child.Result, _ = json.Marshal(archivedTaskResult(row))
 		} else {
 			anyActive = true
+			// spec: §7.2 line 153 — populate the pending_request_id when
+			// the child has an outstanding request directed at the
+			// parent. lenny/request_input wins over the
+			// interaction-store entries because it carries a structured
+			// reply contract; an interaction (tool-use / elicitation)
+			// is the fallback when the child raised an approval.
+			// F-7.2.16.
+			child.PendingRequestID = s.lookupPendingRequest(ctx, tenantID, row.ID)
 		}
 		children = append(children, child)
 	}
@@ -1083,6 +1098,29 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 		Children []reattachedChild `json:"children"`
 	}{Children: children})
 	s.events.PublishForTenant(tenantID, parentID, "children_reattached", string(data), s.clock())
+}
+
+// lookupPendingRequest returns the pending request id for a child
+// session in `input_required`-equivalent state, or "" when none is
+// outstanding. It prefers `lenny/request_input` registrations (the
+// §8.5 structured-reply contract) and falls back to a §6/§9.2 pending
+// interaction (tool-use approval / elicitation). When both sources are
+// unwired the function is a no-op. spec: §7.2 line 153 (ReattachedChild
+// schema). F-7.2.16.
+func (s *Server) lookupPendingRequest(ctx context.Context, tenantID, sessionID string) string {
+	if s.inputWaits != nil {
+		if ids := s.inputWaits.PendingForSession(sessionID); len(ids) > 0 {
+			sort.Strings(ids)
+			return ids[0]
+		}
+	}
+	if s.interactions != nil {
+		pending, err := s.interactions.ListPending(ctx, tenantID, sessionID)
+		if err == nil && len(pending) > 0 {
+			return pending[0].ID
+		}
+	}
+	return ""
 }
 
 // resumeOnPod restores a session onto a fresh §5 warm pod. When the

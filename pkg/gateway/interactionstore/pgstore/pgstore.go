@@ -180,6 +180,37 @@ func (s *Store) CountElicitations(ctx context.Context, tenantID, sessionID strin
 	return n, nil
 }
 
+// ListPending returns every pending interaction recorded for the
+// (tenant, session) tuple, ordered oldest first. The §7.2 line 153
+// `ReattachedChild.pending_request_id` surface calls this so a
+// resumed parent learns which request its child is waiting on.
+func (s *Store) ListPending(ctx context.Context, tenantID, sessionID string) ([]interactionstore.Interaction, error) {
+	var out []interactionstore.Interaction
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT `+selectList+` FROM interactions
+			 WHERE tenant_id = $1 AND session_id = $2 AND phase = $3
+			 ORDER BY created_at ASC`,
+			tenantID, sessionID, string(interactionstore.PhasePending))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			in, err := scanInteraction(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, in)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeleteByUser removes every interaction directed at userID within
 // tenantID and returns the count deleted — the §12.8 GDPR-erasure
 // per-store adapter. Erasing a user with no interactions is a no-op

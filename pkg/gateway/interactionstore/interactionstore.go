@@ -14,6 +14,7 @@ package interactionstore
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -89,6 +90,14 @@ type Store interface {
 	// §9.1 maxElicitationsPerSession budget is a per-session lifetime
 	// cap, so already-resolved elicitations count toward it.
 	CountElicitations(ctx context.Context, tenantID, sessionID string) (int, error)
+
+	// ListPending returns every interaction recorded for the session
+	// that is still in PhasePending, ordered by CreatedAt ascending so
+	// the oldest pending request is first. The §7.2 `children_reattached`
+	// emitter calls this to surface a child session's pending request
+	// id to a resumed parent.
+	// spec: §7.2 line 153 (ReattachedChild.pending_request_id).
+	ListPending(ctx context.Context, tenantID, sessionID string) ([]Interaction, error)
 
 	// DeleteByUser removes every interaction directed at userID within
 	// tenantID and returns the count deleted — the §12.8 GDPR-erasure
@@ -176,6 +185,25 @@ func (m *Memory) CountElicitations(_ context.Context, tenantID, sessionID string
 		}
 	}
 	return n, nil
+}
+
+// ListPending implements Store. Pending entries are returned oldest
+// first (CreatedAt ascending) so the §7.2 line 153
+// `ReattachedChild.pending_request_id` surface picks the longest-
+// waiting request when a session carries several.
+func (m *Memory) ListPending(_ context.Context, tenantID, sessionID string) ([]Interaction, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Interaction, 0)
+	for _, in := range m.interactions {
+		if in.TenantID == tenantID && in.SessionID == sessionID && in.Phase == PhasePending {
+			out = append(out, in)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 // DeleteByUser implements Store — the §12.8 GDPR-erasure adapter.

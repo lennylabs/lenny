@@ -4,12 +4,15 @@ package sessionserver_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -336,6 +339,161 @@ func TestResumeSkipsChildrenReattachedWhenNoChildren(t *testing.T) {
 	}
 	if ev := childrenReattached(bus, "sess_solo"); ev != nil {
 		t.Error("children_reattached emitted for a session with no children")
+	}
+}
+
+// reattachedChildren parses the children array out of the
+// children_reattached event payload so tests can inspect individual
+// child fields (pending_request_id, etc.).
+func reattachedChildren(t *testing.T, ev *sessionevents.Event) []map[string]any {
+	t.Helper()
+	var payload struct {
+		Children []map[string]any `json:"children"`
+	}
+	if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+		t.Fatalf("decode children_reattached: %v", err)
+	}
+	return payload.Children
+}
+
+// TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait —
+// when a child registered an outstanding `lenny/request_input`, the
+// parent's children_reattached event surfaces the request id so the
+// parent knows what to answer via lenny/send_message / inReplyTo.
+// spec: §7.2 line 153; F-7.2.16.
+func TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(0)
+	reg := inputwait.NewRegistry()
+	srv := sessionserver.New(store, sessionserver.Options{
+		Events:     bus,
+		InputWaits: reg,
+	})
+	seedAwaitingParent(t, store, "sess_parent")
+	seedTreeSession(t, store, "sess_child", "sess_parent")
+	if _, err := reg.Register("sess_child", "req_42"); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	ev := childrenReattached(bus, "sess_parent")
+	if ev == nil {
+		t.Fatal("no children_reattached event")
+	}
+	kids := reattachedChildren(t, ev)
+	if len(kids) != 1 {
+		t.Fatalf("children = %d, want 1", len(kids))
+	}
+	if got := kids[0]["pending_request_id"]; got != "req_42" {
+		t.Errorf("pending_request_id = %v, want req_42", got)
+	}
+}
+
+// TestResumeChildrenReattachedCarriesPendingRequestIDFromInteractionStore —
+// when the child has a pending tool-use or elicitation interaction
+// (and no request_input registration), the parent surfaces the
+// interaction id as the pending_request_id.
+// spec: §7.2 line 153; F-7.2.16.
+func TestResumeChildrenReattachedCarriesPendingRequestIDFromInteractionStore(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(0)
+	ints := interactionstore.NewMemory()
+	srv := sessionserver.New(store, sessionserver.Options{
+		Events:       bus,
+		Interactions: ints,
+	})
+	seedAwaitingParent(t, store, "sess_parent")
+	seedTreeSession(t, store, "sess_child", "sess_parent")
+	now := time.Now().UTC()
+	if err := ints.Put(context.Background(), interactionstore.Interaction{
+		ID: "elic_99", Kind: interactionstore.KindElicitation,
+		SessionID: "sess_child", TenantID: "acme", UserID: "alice",
+		Phase: interactionstore.PhasePending, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	ev := childrenReattached(bus, "sess_parent")
+	if ev == nil {
+		t.Fatal("no children_reattached event")
+	}
+	kids := reattachedChildren(t, ev)
+	if got := kids[0]["pending_request_id"]; got != "elic_99" {
+		t.Errorf("pending_request_id = %v, want elic_99", got)
+	}
+}
+
+// TestResumeChildrenReattachedPendingRequestIDOldestFirst — when a
+// child has several pending interactions, the oldest one wins so the
+// resumed parent unblocks the longest-waiting request first.
+// spec: §7.2 line 153; F-7.2.16.
+func TestResumeChildrenReattachedPendingRequestIDOldestFirst(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(0)
+	ints := interactionstore.NewMemory()
+	srv := sessionserver.New(store, sessionserver.Options{
+		Events:       bus,
+		Interactions: ints,
+	})
+	seedAwaitingParent(t, store, "sess_parent")
+	seedTreeSession(t, store, "sess_child", "sess_parent")
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Insert the newer first so the natural map order does not coincide
+	// with the expected oldest-first order.
+	if err := ints.Put(context.Background(), interactionstore.Interaction{
+		ID: "elic_new", Kind: interactionstore.KindElicitation,
+		SessionID: "sess_child", TenantID: "acme", UserID: "alice",
+		Phase: interactionstore.PhasePending, CreatedAt: base.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := ints.Put(context.Background(), interactionstore.Interaction{
+		ID: "elic_old", Kind: interactionstore.KindElicitation,
+		SessionID: "sess_child", TenantID: "acme", UserID: "alice",
+		Phase: interactionstore.PhasePending, CreatedAt: base,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d", rr.Code)
+	}
+	ev := childrenReattached(bus, "sess_parent")
+	kids := reattachedChildren(t, ev)
+	if got := kids[0]["pending_request_id"]; got != "elic_old" {
+		t.Errorf("pending_request_id = %v, want elic_old (oldest first)", got)
+	}
+}
+
+// TestResumeChildrenReattachedPendingRequestIDAbsentWhenIdle — a
+// non-terminal child with no outstanding request omits the field
+// (the JSON encoder drops the empty string).
+// spec: §7.2 line 153 ("`null` if none"); F-7.2.16.
+func TestResumeChildrenReattachedPendingRequestIDAbsentWhenIdle(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(0)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	seedAwaitingParent(t, store, "sess_parent")
+	seedTreeSession(t, store, "sess_child", "sess_parent")
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d", rr.Code)
+	}
+	ev := childrenReattached(bus, "sess_parent")
+	if ev == nil {
+		t.Fatal("no children_reattached event")
+	}
+	if strings.Contains(ev.Data, "pending_request_id") {
+		t.Errorf("idle child should omit pending_request_id: %s", ev.Data)
 	}
 }
 

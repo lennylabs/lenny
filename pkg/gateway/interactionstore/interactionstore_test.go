@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 )
@@ -198,5 +199,82 @@ func TestDismissByUserNoInteractionsIsNoOp(t *testing.T) {
 	dismissed, err := s.DismissByUser(context.Background(), "acme", "nobody")
 	if err != nil || dismissed != 0 {
 		t.Errorf("DismissByUser of a user with no interactions = (%d, %v), want (0, nil)", dismissed, err)
+	}
+}
+
+// TestListPendingReturnsOnlyPendingOldestFirst covers the §7.2 line
+// 153 lookup used by `children_reattached`. The list omits resolved
+// rows and orders by CreatedAt ascending so the resumed parent
+// addresses the longest-waiting request first.
+// spec: §7.2 line 153; F-7.2.16.
+func TestListPendingReturnsOnlyPendingOldestFirst(t *testing.T) {
+	s := interactionstore.NewMemory()
+	ctx := context.Background()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Insert in reverse chronological order so a naive iteration would
+	// surface the newer one first.
+	mustPut := func(id string, at time.Time, phase interactionstore.Phase) {
+		err := s.Put(ctx, interactionstore.Interaction{
+			ID: id, Kind: interactionstore.KindElicitation,
+			SessionID: "sess_x", TenantID: "acme", UserID: "alice",
+			Phase: phase, CreatedAt: at,
+		})
+		if err != nil {
+			t.Fatalf("Put %s: %v", id, err)
+		}
+	}
+	mustPut("el_new", base.Add(time.Hour), interactionstore.PhasePending)
+	mustPut("el_old", base, interactionstore.PhasePending)
+	mustPut("el_resolved", base.Add(-time.Hour), interactionstore.PhaseResponded)
+
+	got, err := s.ListPending(ctx, "acme", "sess_x")
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListPending count = %d, want 2 (resolved excluded)", len(got))
+	}
+	if got[0].ID != "el_old" || got[1].ID != "el_new" {
+		t.Errorf("order = [%s, %s], want [el_old, el_new]", got[0].ID, got[1].ID)
+	}
+}
+
+// TestListPendingEmptyForUnknownSession — a session with no
+// interactions returns an empty slice and no error.
+// spec: §7.2 line 153; F-7.2.16.
+func TestListPendingEmptyForUnknownSession(t *testing.T) {
+	s := interactionstore.NewMemory()
+	got, err := s.ListPending(context.Background(), "acme", "sess_empty")
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("ListPending on unknown session = %d entries, want 0", len(got))
+	}
+}
+
+// TestListPendingScopedByTenantAndSession — entries leak across
+// neither boundary.
+// spec: §7.2 line 153 (tenant/session triple); F-7.2.16.
+func TestListPendingScopedByTenantAndSession(t *testing.T) {
+	s := interactionstore.NewMemory()
+	ctx := context.Background()
+	seed(t, s, "tc_a", "sess_a", "alice", interactionstore.KindToolUse)
+	seed(t, s, "tc_b", "sess_b", "alice", interactionstore.KindToolUse)
+	// Tenant boundary: same session id, different tenant.
+	if err := s.Put(ctx, interactionstore.Interaction{
+		ID: "tc_other", Kind: interactionstore.KindToolUse,
+		SessionID: "sess_a", TenantID: "globex", UserID: "alice",
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	got, _ := s.ListPending(ctx, "acme", "sess_a")
+	if len(got) != 1 || got[0].ID != "tc_a" {
+		t.Errorf("ListPending acme/sess_a = %+v, want [tc_a]", got)
+	}
+	got, _ = s.ListPending(ctx, "globex", "sess_a")
+	if len(got) != 1 || got[0].ID != "tc_other" {
+		t.Errorf("ListPending globex/sess_a = %+v, want [tc_other]", got)
 	}
 }
