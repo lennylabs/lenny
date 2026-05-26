@@ -196,6 +196,12 @@ type Deps struct {
 	// MCP adapter is mounted per-tenant; v1 binds one tenant per
 	// adapter instance.
 	TenantID string
+
+	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
+	// true, a session created without an explicit isolation profile
+	// defaults to `standard` (runc) per §5.3 line 677 rather than the
+	// production `sandboxed`.
+	DevMode bool
 }
 
 // defaultRequestInputTimeout is the §11.3 maxRequestInputWaitSeconds
@@ -276,7 +282,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			RuntimeRef:       in.RuntimeRef,
 			Environment:      in.Environment,
 			State:            session.StateRunning,
-			IsolationProfile: isolation.Default(),
+			IsolationProfile: isolation.DefaultForMode(deps.DevMode),
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		}

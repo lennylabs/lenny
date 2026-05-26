@@ -201,15 +201,41 @@ func TestMetadataVisibilityIsValid(t *testing.T) {
 func TestRuntimeCapabilityInferenceModeDefault(t *testing.T) {
 	// §5.1: capabilityInferenceMode defaults to strict.
 	rt := runtimestore.Runtime{Name: "rt", Type: runtimestore.TypeAgent}
-	runtimestore.ApplyDefaults(&rt)
+	runtimestore.ApplyDefaults(&rt, false)
 	if rt.CapabilityInferenceMode != capabilityinference.ModeStrict {
 		t.Errorf("default capabilityInferenceMode = %q, want strict", rt.CapabilityInferenceMode)
 	}
 	// An explicit mode survives ApplyDefaults.
 	rt2 := runtimestore.Runtime{Name: "rt2", CapabilityInferenceMode: capabilityinference.ModePermissive}
-	runtimestore.ApplyDefaults(&rt2)
+	runtimestore.ApplyDefaults(&rt2, false)
 	if rt2.CapabilityInferenceMode != capabilityinference.ModePermissive {
 		t.Errorf("explicit capabilityInferenceMode overwritten: %q", rt2.CapabilityInferenceMode)
+	}
+}
+
+// TestApplyDefaultsIsolationDevMode_spec_5_3 covers the §5.3 line 677
+// dev-mode isolation fallback in the runtime defaulter: dev mode
+// defaults an unset profile to standard (runc); production keeps
+// sandboxed; an explicit profile survives either way.
+//
+// spec: §5.3 line 677.
+func TestApplyDefaultsIsolationDevMode_spec_5_3(t *testing.T) {
+	prod := runtimestore.Runtime{Name: "prod"}
+	runtimestore.ApplyDefaults(&prod, false)
+	if prod.IsolationProfile != isolation.ProfileSandboxed {
+		t.Errorf("prod default isolation = %q, want sandboxed", prod.IsolationProfile)
+	}
+
+	dev := runtimestore.Runtime{Name: "dev"}
+	runtimestore.ApplyDefaults(&dev, true)
+	if dev.IsolationProfile != isolation.ProfileStandard {
+		t.Errorf("dev default isolation = %q, want standard", dev.IsolationProfile)
+	}
+
+	explicit := runtimestore.Runtime{Name: "x", IsolationProfile: isolation.ProfileMicrovm}
+	runtimestore.ApplyDefaults(&explicit, true)
+	if explicit.IsolationProfile != isolation.ProfileMicrovm {
+		t.Errorf("explicit isolation overwritten under dev mode: %q", explicit.IsolationProfile)
 	}
 }
 

@@ -1028,14 +1028,16 @@ func ValidateName(name string) error {
 
 // ApplyDefaults fills in the §5.1 default values for unset Runtime
 // fields: type defaults to agent, execution mode to session, and
-// isolation profile to the platform default. Integration level
-// defaults to basic for agent runtimes only — §5.1 specifies that
-// integrationLevel is meaningful solely on type: agent runtimes, so
-// an mcp runtime keeps an empty integration level.
+// isolation profile to the platform default. The isolation default
+// honors the §5.3 line 677 dev-mode fallback: when devMode is true an
+// unset profile defaults to `standard` (runc) rather than `sandboxed`.
+// Integration level defaults to basic for agent runtimes only — §5.1
+// specifies that integrationLevel is meaningful solely on type: agent
+// runtimes, so an mcp runtime keeps an empty integration level.
 //
 // Registration handlers call this at the admin-API boundary; the
 // stores persist whatever they are given.
-func ApplyDefaults(r *Runtime) {
+func ApplyDefaults(r *Runtime, devMode bool) {
 	if r.Type == "" {
 		r.Type = TypeAgent
 	}
@@ -1043,7 +1045,7 @@ func ApplyDefaults(r *Runtime) {
 		r.ExecutionMode = ExecutionModeSession
 	}
 	if r.IsolationProfile == "" {
-		r.IsolationProfile = isolation.Default()
+		r.IsolationProfile = isolation.DefaultForMode(devMode)
 	}
 	if r.Type == TypeAgent && r.IntegrationLevel == "" {
 		r.IntegrationLevel = IntegrationLevelBasic

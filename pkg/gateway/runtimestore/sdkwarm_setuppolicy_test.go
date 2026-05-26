@@ -44,7 +44,7 @@ func TestApplyDefaultsSeedsSDKWarmBlockingPaths(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := tc.in
-			runtimestore.ApplyDefaults(&rt)
+			runtimestore.ApplyDefaults(&rt, false)
 			if !equalStrings(rt.SDKWarmBlockingPaths, tc.want) {
 				t.Errorf("SDKWarmBlockingPaths = %v, want %v", rt.SDKWarmBlockingPaths, tc.want)
 			}

@@ -1,0 +1,82 @@
+suite: §5.3 RuntimeClass Pod Overhead
+templates:
+  - runtimeclasses.yaml
+tests:
+  - it: renders no RuntimeClasses by default (managed out-of-band)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders only enabled profiles when create is true
+    set:
+      runtimeClasses.create: true
+    asserts:
+      # sandboxed is enabled by default; microvm and standard are not.
+      - hasDocuments:
+          count: 1
+
+  - it: renders the gvisor RuntimeClass with the §5.3 reference overhead
+    set:
+      runtimeClasses.create: true
+    documentSelector:
+      path: metadata.name
+      value: gvisor
+    asserts:
+      - isKind:
+          of: RuntimeClass
+      - equal:
+          path: apiVersion
+          value: node.k8s.io/v1
+      - equal:
+          path: handler
+          value: runsc
+      - equal:
+          path: overhead.podFixed.cpu
+          value: "200m"
+      - equal:
+          path: overhead.podFixed.memory
+          value: "200Mi"
+      - equal:
+          path: metadata.labels["lenny.dev/isolation-profile"]
+          value: sandboxed
+
+  - it: renders kata with the §5.3 microvm overhead when enabled
+    set:
+      runtimeClasses.create: true
+      runtimeClasses.profiles.microvm.enabled: true
+    documentSelector:
+      path: metadata.name
+      value: kata
+    asserts:
+      - equal:
+          path: handler
+          value: kata
+      - equal:
+          path: overhead.podFixed.cpu
+          value: "500m"
+      - equal:
+          path: overhead.podFixed.memory
+          value: "500Mi"
+
+  - it: renders runc with no overhead block (native runtime adds none)
+    set:
+      runtimeClasses.create: true
+      runtimeClasses.profiles.standard.enabled: true
+    documentSelector:
+      path: metadata.name
+      value: runc
+    asserts:
+      - equal:
+          path: handler
+          value: runc
+      - notExists:
+          path: overhead
+
+  - it: renders all three profiles when each is enabled
+    set:
+      runtimeClasses.create: true
+      runtimeClasses.profiles.microvm.enabled: true
+      runtimeClasses.profiles.standard.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 3

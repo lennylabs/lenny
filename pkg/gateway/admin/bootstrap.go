@@ -348,7 +348,7 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 		existing, err := r.runtimes.Get(req.Context(), p.Name)
 		if errors.Is(err, runtimestore.ErrNotFound) {
 			row := runtimeFromPayload(p, r.clock())
-			runtimestore.ApplyDefaults(&row)
+			runtimestore.ApplyDefaults(&row, r.devMode)
 			row.UpdatedAt = row.CreatedAt
 			// §5.1 lines 283-291: a runtime with an agentInterface gets a
 			// write-time auto-generated A2A agent card stored as a

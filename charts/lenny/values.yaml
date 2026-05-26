@@ -693,6 +693,44 @@ sandbox:
   # agent-workload.yaml defines.
   defaultIsolationProfile: ""
 
+# runtimeClasses optionally renders node.k8s.io/v1 RuntimeClass objects
+# for the §5.3 isolation profiles, each with Pod Overhead so the
+# scheduler accounts for the isolation cost. Most deployers install
+# RuntimeClasses out-of-band (for example GKE Sandbox provides
+# `gvisor`), so chart management is opt-in: leave create false to manage
+# them externally, or set it true to have the chart render them.
+runtimeClasses:
+  create: false
+  # profiles maps each §5.3 isolation profile to its RuntimeClass. name
+  # is the RuntimeClass object name (matching the profile->RuntimeClass
+  # mapping the controller validates), handler is the CRI runtime
+  # handler, and overhead is the §5.3 reference Pod Overhead. The cpu and
+  # memory overhead values are reference points; tune them per
+  # deployment. Set enabled per profile to render only the ones the
+  # cluster uses.
+  profiles:
+    sandboxed:
+      enabled: true
+      name: gvisor
+      handler: runsc
+      overhead:
+        cpu: 200m
+        memory: 200Mi
+    microvm:
+      enabled: false
+      name: kata
+      handler: kata
+      overhead:
+        cpu: 500m
+        memory: 500Mi
+    standard:
+      enabled: false
+      name: runc
+      handler: runc
+      # standard (runc) is the native container runtime and adds no
+      # isolation overhead per §5.3.
+      overhead: {}
+
 # gateway configures the §4.1 edge gateway. The lenny-gateway
 # Deployment runs the gateway binary; it is stateless and horizontally
 # scaled (§17.1), so the chart sizes it with a replica count and an

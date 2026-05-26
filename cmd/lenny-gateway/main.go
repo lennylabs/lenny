@@ -410,6 +410,13 @@ func main() {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
 
+	// spec: §5.3 line 677 — in dev mode the default isolation profile
+	// falls back to runc. Log the mandated warning once at startup so an
+	// accidental production dev-mode install is visible in the logs.
+	if *devMode {
+		log.Printf("lenny-gateway: %s", isolation.DevModeIsolationWarning)
+	}
+
 	// §12.8 clock-injection harness. Read LENNY_CLOCK_OFFSET_SECONDS
 	// once at startup so the gateway and every clock-using subsystem
 	// pick up a chaos-test offset. A non-integer value fails loudly
@@ -1419,6 +1426,7 @@ func main() {
 		PodRegistry:             podRegistry,
 		AgentNamespace:          *agentNamespace,
 		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
+		DevMode:                 *devMode,
 		Sealer:                  sessionSealer,
 		// §4.4 line 236 — the resume path delegates partial-manifest
 		// cleanup to this adapter. Deleter is nil for v1 (no chunk
@@ -1548,6 +1556,7 @@ func main() {
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store:                      sessions,
 		Executor:                   exec,
+		DevMode:                    *devMode,
 		Delegation:                 delegationSvc,
 		Runtimes:                   runtimes,
 		Environments:               environments,
@@ -1651,7 +1660,7 @@ func main() {
 	if pgPool != nil {
 		delegationPolicies = delegationpolicypg.New(pgPool)
 	}
-	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics}).
+	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
 		WithRuntimes(runtimes).
 		WithUsers(users).
 		WithPools(pools).

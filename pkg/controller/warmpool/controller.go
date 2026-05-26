@@ -36,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -134,6 +135,14 @@ type Reconciler struct {
 	// nil Events is a no-op; the reconcile is unaffected.
 	Events EventEmitter
 
+	// RuntimeClasses, when set, validates that the RuntimeClass the
+	// pool's isolation profile maps to exists in the cluster before the
+	// pool is sized (§5.3 line 675). A missing RuntimeClass marks the
+	// pool Degraded and suppresses pod creation that the API server
+	// would reject. A nil checker disables the validation; the
+	// lenny-controller binary wires the production reader-backed checker.
+	RuntimeClasses RuntimeClassChecker
+
 	// IdleMeterInterval is the period the reconciler re-queues a pool to
 	// advance the §4.6.1 lenny_warmpool_idle_pod_minutes integral when no
 	// pod event has fired. Zero selects defaultIdleMeterInterval (60s).
@@ -220,6 +229,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	decision := plan.Compute(in)
 
+	// spec: §5.3 line 675 — validate the pool's RuntimeClass exists
+	// before sizing it. When the isolation profile maps to an
+	// uninstalled RuntimeClass the pool is marked Degraded and pod
+	// creation is suppressed, because every create would only produce an
+	// API-server rejection. The pool recovers automatically once the
+	// operator installs the RuntimeClass (the periodic re-queue re-runs
+	// this check).
+	degraded, err := r.evaluateRuntimeClass(ctx, &pool, tmpl)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if degraded != nil && degraded.Status == metav1.ConditionTrue {
+		decision.Create = 0
+	}
+
 	for i := 0; i < decision.Create; i++ {
 		if err := r.createSandbox(ctx, &pool, tmpl); err != nil {
 			return ctrl.Result{}, fmt.Errorf("create sandbox for pool %s: %w", pool.Name, err)
@@ -232,7 +256,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	if err := r.updateStatus(ctx, &pool, decision); err != nil {
+	if err := r.updateStatus(ctx, &pool, decision, degraded); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update pool %s status: %w", pool.Name, err)
 	}
 	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision); err != nil {
@@ -558,20 +582,52 @@ func (r *Reconciler) drainSandbox(ctx context.Context, items []lennyv1.Sandbox, 
 	})
 }
 
-// updateStatus writes the post-action warm and ready counts and the
-// observed generation to the pool status. The write is skipped when
-// nothing changed, to avoid generating spurious etcd writes and
-// reconcile events.
-func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision plan.Plan) error {
+// evaluateRuntimeClass resolves the RuntimeClass the pool's isolation
+// profile maps to and reports the §5.3 Degraded condition the pool
+// should carry. It returns nil when the check is disabled (no
+// RuntimeClasses checker wired) or the isolation profile is
+// unrecognized (a fault the pod builder surfaces separately), so
+// callers leave the condition list untouched in those cases. A missing
+// RuntimeClass logs an error and yields a Degraded=True condition; a
+// present one yields Degraded=False so a previously-degraded pool
+// recovers.
+//
+// spec: §5.3 line 675.
+func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) (*metav1.Condition, error) {
+	if r.RuntimeClasses == nil {
+		return nil, nil
+	}
+	profile := isolation.Profile(tmpl.Spec.IsolationProfile)
+	rcName, ok := isolation.RuntimeClassName(profile)
+	if !ok {
+		return nil, nil
+	}
+	exists, err := r.RuntimeClasses.RuntimeClassExists(ctx, rcName)
+	if err != nil {
+		return nil, fmt.Errorf("check runtimeclass %q for pool %s: %w", rcName, pool.Name, err)
+	}
+	if exists {
+		cond := runtimeClassPresentCondition(rcName)
+		return &cond, nil
+	}
+	msg := runtimeClassMissingMessage(profile, rcName)
+	logf.FromContext(ctx).Error(fmt.Errorf("runtimeclass %q not found", rcName), msg,
+		"pool", pool.Name, "isolationProfile", string(profile), "runtimeClass", rcName)
+	cond := runtimeClassMissingCondition(msg)
+	return &cond, nil
+}
+
+// updateStatus writes the post-action warm and ready counts, the
+// observed generation, and the optional §5.3 Degraded condition to the
+// pool status. The write is skipped when nothing changed, to avoid
+// generating spurious etcd writes and reconcile events. A nil degraded
+// condition leaves the condition list untouched (the RuntimeClass check
+// is disabled or not applicable).
+func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision plan.Plan, degraded *metav1.Condition) error {
 	drained := len(decision.Drain)
 	warm := int32(decision.WarmCount + decision.Create - drained)
 	ready := int32(decision.ReadyCount - drained)
 
-	if pool.Status.WarmCount == warm &&
-		pool.Status.ReadyCount == ready &&
-		pool.Status.ObservedGeneration == pool.Generation {
-		return nil
-	}
 	key := client.ObjectKeyFromObject(pool)
 	return retryOnConflictSSA(ctx, func(attempt int) error {
 		var live lennyv1.SandboxWarmPool
@@ -580,9 +636,17 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 		} else if err := r.Client.Get(ctx, key, &live); err != nil {
 			return err
 		}
-		if live.Status.WarmCount == warm &&
-			live.Status.ReadyCount == ready &&
-			live.Status.ObservedGeneration == live.Generation {
+		merged := append([]metav1.Condition{}, live.Status.Conditions...)
+		condChanged := false
+		if degraded != nil {
+			desired := *degraded
+			desired.ObservedGeneration = live.Generation
+			condChanged = meta.SetStatusCondition(&merged, desired)
+		}
+		countsChanged := live.Status.WarmCount != warm ||
+			live.Status.ReadyCount != ready ||
+			live.Status.ObservedGeneration != live.Generation
+		if !condChanged && !countsChanged {
 			return nil
 		}
 		patch := &lennyv1.SandboxWarmPool{
@@ -598,6 +662,12 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 		patch.Status.WarmCount = warm
 		patch.Status.ReadyCount = ready
 		patch.Status.ObservedGeneration = live.Generation
+		// Only assert ownership of the condition list when the §5.3
+		// RuntimeClass check produced one, so a build without the checker
+		// wired keeps the prior counts-only status patch.
+		if degraded != nil {
+			patch.Status.Conditions = merged
+		}
 		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
 	})
 }

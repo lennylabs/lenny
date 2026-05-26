@@ -228,6 +228,43 @@ func TestEnvironmentSessionsEndpointPathOverridesBody(t *testing.T) {
 	}
 }
 
+// TestCreateDevModeDefaultIsolation_spec_5_3 verifies the §5.3 line 677
+// dev-mode fallback at the session-creation default: with DevMode set
+// and no configured DefaultIsolationProfile, a session that omits a
+// profile resolves to `standard` (runc) rather than the production
+// `sandboxed`.
+//
+// spec: §5.3 line 677.
+func TestCreateDevModeDefaultIsolation_spec_5_3(t *testing.T) {
+	store := memstore.New()
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:   clock,
+		IDFunc:  func() string { return "sess_dev" },
+		DevMode: true,
+	})
+
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+		UserID:     "alice@acme.com",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.CreateSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.SessionIsolationLevel.IsolationProfile != string(isolation.ProfileStandard) {
+		t.Errorf("dev-mode default isolation = %q, want standard",
+			resp.SessionIsolationLevel.IsolationProfile)
+	}
+	row, _ := store.Get(context.Background(), "acme", "sess_dev")
+	if row.IsolationProfile != isolation.ProfileStandard {
+		t.Errorf("row.IsolationProfile = %q, want standard under dev mode", row.IsolationProfile)
+	}
+}
+
 func TestCreateRespectsExplicitIsolationProfile(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_iso" }})

@@ -152,6 +152,11 @@ type Router struct {
 
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
+
+	// devMode mirrors Options.DevMode; it selects the §5.3 line 677
+	// dev-mode isolation default for pools and runtimes that omit
+	// isolationProfile.
+	devMode bool
 }
 
 // KMSProbe is the §12.5 T4 per-tenant KMS availability probe seam.
@@ -205,6 +210,14 @@ type Options struct {
 	// Metrics, when set, receives the §10.6 RBAC-config observability
 	// counters. Nil disables them (the operation still succeeds).
 	Metrics RBACConfigMetrics
+
+	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
+	// true, a pool or runtime that omits isolationProfile defaults to
+	// `standard` (runc) per §5.3 line 677 so a developer can run on a
+	// cluster without gVisor; pools defaulted this way also receive the
+	// explicit allowStandardIsolation opt-in dev mode supplies on their
+	// behalf. When false the default is the production `sandboxed`.
+	DevMode bool
 }
 
 // NewRouter returns a Router. Pass nil for opts to use the defaults.
@@ -213,7 +226,7 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Router{tenants: tenants, clock: clock, audit: opts.Audit, metrics: opts.Metrics}
+	return &Router{tenants: tenants, clock: clock, audit: opts.Audit, metrics: opts.Metrics, devMode: opts.DevMode}
 }
 
 // WithKMSProbe wires the §12.5 T4 KMS availability probe onto the

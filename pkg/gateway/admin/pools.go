@@ -197,7 +197,16 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	}
 	pl.UpdatedAt = pl.CreatedAt
 	if pl.IsolationProfile == "" {
-		pl.IsolationProfile = isolation.Default()
+		// spec: §5.3 line 677 — in dev mode the default isolation profile
+		// falls back to `standard` (runc) so a developer can launch pods on
+		// a cluster without gVisor. A standard-isolation pool requires the
+		// explicit allowStandardIsolation opt-in; dev mode supplies it on
+		// the operator's behalf for the default fallback (the warning is
+		// logged once at gateway startup).
+		pl.IsolationProfile = isolation.DefaultForMode(r.devMode)
+		if r.devMode && pl.IsolationProfile == isolation.ProfileStandard {
+			pl.AllowStandardIsolation = true
+		}
 	}
 	if pl.ExecutionMode == "" {
 		pl.ExecutionMode = runtimestore.ExecutionModeSession

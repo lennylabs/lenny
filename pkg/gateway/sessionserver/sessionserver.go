@@ -116,6 +116,7 @@ type Server struct {
 	tenants         tenantstore.Store
 	storageQuota    storagequota.Counter
 	defaultIsoProf  isolation.Profile
+	devMode         bool
 	podBinder       *podsession.Binder
 	podRegistry     *podsession.Registry
 	agentNamespace  string
@@ -373,9 +374,16 @@ type Options struct {
 	Usage usagestore.Store
 
 	// DefaultIsolationProfile is the §5.3 fallback profile applied to
-	// a session whose pool resolution did not name one. When unset
-	// the server uses isolation.Default() (sandboxed/gVisor) per §5.3.
+	// a session whose pool resolution did not name one. When unset the
+	// server falls back to the dev-mode-aware default: `sandboxed`
+	// (gVisor) normally, or `standard` (runc) when DevMode is true per
+	// §5.3 line 677.
 	DefaultIsolationProfile isolation.Profile
+
+	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). It
+	// selects the §5.3 line 677 dev-mode fallback (`standard`) when no
+	// DefaultIsolationProfile is configured.
+	DevMode bool
 
 	// Users is the §10.2 user registry consulted to enforce §11.4 user
 	// invalidation on the session-creation path: a soft-disabled,
@@ -577,6 +585,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		tenants:                opts.Tenants,
 		storageQuota:           opts.StorageQuota,
 		defaultIsoProf:         opts.DefaultIsolationProfile,
+		devMode:                opts.DevMode,
 		podBinder:              opts.PodBinder,
 		podRegistry:            opts.PodRegistry,
 		agentNamespace:         opts.AgentNamespace,
@@ -636,7 +645,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		s.uploadIssuer = uploadtoken.NewIssuer(ring, s.clock)
 	}
 	if !isolation.IsValid(s.defaultIsoProf) {
-		s.defaultIsoProf = isolation.Default()
+		// spec: §5.3 line 677 — honor the dev-mode fallback to `standard`
+		// (runc) when no explicit default isolation profile is configured.
+		s.defaultIsoProf = isolation.DefaultForMode(s.devMode)
 	}
 	return s
 }

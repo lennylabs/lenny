@@ -88,6 +88,11 @@ type Reconciler struct {
 	// SandboxTemplate carries the egress-capture annotation
 	// (EgressCaptureUpstreamAnnotation).
 	EgressCaptureImage string
+	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
+	// true, a Sandbox that omits an isolation profile defaults its pod to
+	// `standard` (runc) per §5.3 line 677, so a developer can launch pods
+	// on a cluster without gVisor installed.
+	DevMode bool
 	// StatusDedup is the §4.6.1 statusUpdateDeduplicationWindow gate. When
 	// set, a Sandbox status write within the window of the previous write
 	// for the same Sandbox is deferred and the reconcile requeued so the
@@ -243,7 +248,8 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	}
 	profile := sb.Spec.IsolationProfile
 	if profile == "" {
-		profile = string(isolation.Default())
+		// spec: §5.3 line 677 — dev mode falls back to `standard` (runc).
+		profile = string(isolation.DefaultForMode(r.DevMode))
 	}
 	graceBase, graceMax := r.resolveTerminationGrace(ctx, sb)
 	pod, err := podspec.Build(podspec.Inputs{

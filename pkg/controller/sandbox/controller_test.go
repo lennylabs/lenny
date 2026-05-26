@@ -216,6 +216,33 @@ func getSandbox(t *testing.T, c client.Client) lennyv1.Sandbox {
 	return sb
 }
 
+// TestReconcileDevModeDefaultsPodToRunc_spec_5_3 verifies the §5.3 line
+// 677 pod-fallback default: a Sandbox that omits an isolation profile
+// stamps runtimeClassName=runc under dev mode (so a gVisor-less cluster
+// can launch the pod), and gvisor without dev mode.
+//
+// spec: §5.3 line 677.
+func TestReconcileDevModeDefaultsPodToRunc_spec_5_3(t *testing.T) {
+	s := newScheme(t)
+	sb := sandboxCR("")
+	sb.Spec.IsolationProfile = "" // exercise the controller default fallback
+	c := newClient(t, s, sb, runtimeCR())
+
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", DevMode: true}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+	}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+		t.Fatalf("expected a backing pod: %v", err)
+	}
+	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != "runc" {
+		t.Errorf("dev-mode runtimeClassName = %v, want runc", pod.Spec.RuntimeClassName)
+	}
+}
+
 func TestReconcileCreatesPodForNewSandbox(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, sandboxCR(""), runtimeCR())

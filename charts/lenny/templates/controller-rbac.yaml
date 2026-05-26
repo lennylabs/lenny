@@ -70,6 +70,14 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch"]
+  # RuntimeClasses: read-only, for the §5.3 WarmPoolController
+  # startup/reconcile validation. A pool whose isolation profile maps to
+  # a RuntimeClass the cluster has not installed is marked Degraded
+  # instead of tight-looping on rejected pod creates. The read uses the
+  # manager's uncached API reader, so get suffices (no watch).
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

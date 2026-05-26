@@ -40,6 +40,26 @@ func TestDefaultProfileIsSandboxed(t *testing.T) {
 	}
 }
 
+// TestDefaultForMode_spec_5_3_677 covers the dev-mode isolation
+// fallback: dev mode defaults to runc so a gVisor-less cluster can run
+// locally; production keeps the sandboxed default.
+//
+// spec: §5.3 line 677.
+func TestDefaultForMode_spec_5_3_677(t *testing.T) {
+	if got := DefaultForMode(true); got != ProfileStandard {
+		t.Errorf("DefaultForMode(devMode=true) = %q, want %q", got, ProfileStandard)
+	}
+	if got := DefaultForMode(false); got != ProfileSandboxed {
+		t.Errorf("DefaultForMode(devMode=false) = %q, want %q", got, ProfileSandboxed)
+	}
+	if got := DefaultForMode(false); got != Default() {
+		t.Errorf("DefaultForMode(false) = %q, want Default() = %q", got, Default())
+	}
+	if DevModeIsolationWarning != "Dev mode: using runc isolation. Do not use in production." {
+		t.Errorf("DevModeIsolationWarning = %q, does not match the §5.3 line 677 text", DevModeIsolationWarning)
+	}
+}
+
 func TestRuntimeClassMapping(t *testing.T) {
 	// §5.3 table: standard→runc, sandboxed→gvisor, microvm→kata.
 	cases := map[Profile]string{

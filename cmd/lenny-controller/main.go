@@ -50,6 +50,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
 	sessionstore "github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
@@ -109,6 +110,7 @@ func main() {
 		statusDedupWindow       time.Duration
 		claimOrphanTimeout      time.Duration
 		workqueueMaxDepth       int
+		devMode                 bool
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -148,11 +150,19 @@ func main() {
 		"§4.6.1 SandboxClaim orphan timeout: a SandboxClaim older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup.")
 	flag.IntVar(&workqueueMaxDepth, "workqueue-max-depth", 500,
 		"§4.6.1 controller work-queue max depth. When a controller's reconciliation queue is at this depth, new reconciliation events are dropped and lenny_controller_queue_overflow_total is incremented (requeues are never shed). A non-positive value disables work-shedding. Per-tier recommendations: 500 / 2,000 / 10,000.")
+	flag.BoolVar(&devMode, "dev-mode", os.Getenv("LENNY_DEV_MODE") == "true",
+		"§5.3 line 677 global.devMode. When true, a Sandbox that omits an isolation profile defaults its pod to `standard` (runc) so a developer can run on a cluster without gVisor installed. Production leaves this false (default `sandboxed`/gVisor).")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
+
+	// spec: §5.3 line 677 — log the dev-mode isolation warning once at
+	// startup so an accidental production dev-mode install is visible.
+	if devMode {
+		log.Printf("lenny-controller: %s", isolation.DevModeIsolationWarning)
+	}
 
 	// §4.6.1 API server rate limiting: route Create calls for Sandbox
 	// pods and UpdateStatus calls for Sandbox/SandboxWarmPool through two
@@ -237,9 +247,14 @@ func main() {
 	queueFactory := controllermetrics.NewQueueFactory(workqueueMaxDepth)
 
 	warmPool := &warmpool.Reconciler{
-		Client:                  mgr.GetClient(),
-		Scheme:                  mgr.GetScheme(),
-		Events:                  opsEmitter,
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Events: opsEmitter,
+		// §5.3 line 675: validate the pool's RuntimeClass exists before
+		// sizing it. The reader-backed checker uses the manager's uncached
+		// API reader so the RuntimeClass get needs only the `get` verb the
+		// §4.6.3 controller RBAC grants, not a cluster-wide watch.
+		RuntimeClasses:          warmpool.NewReaderRuntimeClassChecker(mgr.GetAPIReader()),
 		InitialFillGracePeriod:  initialFillGrace,
 		MaxConcurrentReconciles: maxConcurrentReconciles,
 		QueueFactory:            queueFactory,
@@ -259,6 +274,7 @@ func main() {
 		Scheme:                  mgr.GetScheme(),
 		AdapterImage:            adapterImage,
 		EgressCaptureImage:      egressCaptureImage,
+		DevMode:                 devMode,
 		StatusDedup:             statusdedup.New(statusDedupWindow),
 		MaxConcurrentReconciles: maxConcurrentReconciles,
 		QueueFactory:            queueFactory,

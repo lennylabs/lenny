@@ -49,6 +49,27 @@ func AllProfiles() []Profile {
 // Pools that omit `isolationProfile` resolve to this value.
 func Default() Profile { return ProfileSandboxed }
 
+// DevModeIsolationWarning is the §5.3 line 677 warning a binary logs
+// once at startup when global.devMode (LENNY_DEV_MODE=true) is set,
+// because the default isolation profile then falls back to runc.
+const DevModeIsolationWarning = "Dev mode: using runc isolation. Do not use in production."
+
+// DefaultForMode returns the §5.3 default isolation profile, honoring
+// the dev-mode fallback. When devMode is true the default falls back to
+// `standard` (runc) so developers can run on a cluster without gVisor
+// installed; otherwise it is the production default (`sandboxed`).
+// Binaries that apply this fallback log DevModeIsolationWarning once at
+// startup so an accidental production dev-mode install is visible in the
+// logs.
+//
+// spec: §5.3 line 677.
+func DefaultForMode(devMode bool) Profile {
+	if devMode {
+		return ProfileStandard
+	}
+	return Default()
+}
+
 // IsValid reports whether p is a known profile. Empty strings and
 // unrecognised values return false; callers should reject those at the
 // admission boundary.

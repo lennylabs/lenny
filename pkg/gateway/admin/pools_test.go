@@ -92,6 +92,88 @@ func TestCreatePoolRejectsBadIsolation(t *testing.T) {
 	}
 }
 
+// TestCreatePoolDefaultsSandboxedWithoutDevMode_spec_5_3 verifies a pool
+// that omits isolationProfile defaults to the production `sandboxed`
+// profile when dev mode is off.
+//
+// spec: §5.3 line 677.
+func TestCreatePoolDefaultsSandboxedWithoutDevMode_spec_5_3(t *testing.T) {
+	router, store, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name:       "p",
+		RuntimeRef: "echo",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d body=%s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "p")
+	if row.IsolationProfile != isolation.ProfileSandboxed {
+		t.Errorf("isolationProfile = %q, want sandboxed", row.IsolationProfile)
+	}
+	if row.AllowStandardIsolation {
+		t.Error("allowStandardIsolation set true without dev mode; want false")
+	}
+}
+
+// TestCreatePoolDevModeDefaultsStandard_spec_5_3 verifies the §5.3 line
+// 677 dev-mode fallback: a pool that omits isolationProfile under dev
+// mode defaults to `standard` (runc) and receives the allowStandardIsolation
+// opt-in dev mode supplies on the operator's behalf, so the pool is
+// accepted on a gVisor-less cluster.
+//
+// spec: §5.3 line 677.
+func TestCreatePoolDevModeDefaultsStandard_spec_5_3(t *testing.T) {
+	tenants := tenantstore.NewMemory()
+	runtimes := runtimestore.NewMemory()
+	pools := poolstore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	router := admin.NewRouter(tenants, admin.Options{
+		Clock:   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		DevMode: true,
+	}).WithRuntimes(runtimes).WithPools(pools)
+
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name:       "dev-pool",
+		RuntimeRef: "echo",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("dev-mode pool create: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	row, _ := pools.Get(context.Background(), "dev-pool")
+	if row.IsolationProfile != isolation.ProfileStandard {
+		t.Errorf("isolationProfile = %q, want standard (runc) under dev mode", row.IsolationProfile)
+	}
+	if !row.AllowStandardIsolation {
+		t.Error("allowStandardIsolation = false under dev-mode default; want true")
+	}
+}
+
+// TestCreatePoolDevModeExplicitProfileWins_spec_5_3 verifies dev mode
+// only governs the *default*: an explicitly-set standard profile without
+// the opt-in is still rejected, so dev mode does not silently weaken an
+// explicit configuration.
+//
+// spec: §5.3 line 677.
+func TestCreatePoolDevModeExplicitProfileWins_spec_5_3(t *testing.T) {
+	tenants := tenantstore.NewMemory()
+	runtimes := runtimestore.NewMemory()
+	pools := poolstore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
+	router := admin.NewRouter(tenants, admin.Options{DevMode: true}).
+		WithRuntimes(runtimes).WithPools(pools)
+
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name:             "explicit-runc",
+		RuntimeRef:       "echo",
+		IsolationProfile: "standard",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("explicit standard without opt-in under dev mode: got %d, want 400", rr.Code)
+	}
+}
+
 func TestCreatePoolStandardIsolationRequiresOptIn(t *testing.T) {
 	router, _, _, _ := newPoolAdmin(t)
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{

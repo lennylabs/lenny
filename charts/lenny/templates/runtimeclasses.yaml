@@ -1,0 +1,44 @@
+{{- /*
+§5.3 RuntimeClass objects with Pod Overhead. Lenny maps each isolation
+profile to a Kubernetes RuntimeClass (standard->runc, sandboxed->gvisor,
+microvm->kata). Most deployers install these out-of-band (for example
+GKE Sandbox provides `gvisor`), so chart-managed RuntimeClasses are
+opt-in: set runtimeClasses.create=true to have the chart render them.
+
+Each rendered RuntimeClass carries the §5.3 reference Pod Overhead so
+the scheduler accounts for the isolation cost (sandboxed ~200m/200Mi,
+microvm ~500m/500Mi; standard runc adds none). The values are reference
+points; tune overhead.cpu / overhead.memory per deployment.
+*/ -}}
+{{- if .Values.runtimeClasses.create }}
+{{- range $profile, $rc := .Values.runtimeClasses.profiles }}
+{{- if $rc.enabled }}
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: {{ $rc.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/isolation-profile: {{ $profile }}
+handler: {{ $rc.handler }}
+{{- with $rc.overhead }}
+{{- if or .cpu .memory }}
+overhead:
+  podFixed:
+    {{- with .cpu }}
+    cpu: {{ . | quote }}
+    {{- end }}
+    {{- with .memory }}
+    memory: {{ . | quote }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- with $rc.nodeSelector }}
+scheduling:
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -206,6 +206,50 @@ func TestCreateSessionTool(t *testing.T) {
 	}
 }
 
+// TestCreateSessionToolDevModeIsolation_spec_5_3 verifies the §5.3 line
+// 677 dev-mode fallback in the lenny/create_session tool: the default
+// session profile is sandboxed normally and standard (runc) when the
+// adapter is wired with DevMode.
+//
+// spec: §5.3 line 677.
+func TestCreateSessionToolDevModeIsolation_spec_5_3(t *testing.T) {
+	// Default (production) mode: sandboxed.
+	_, store := newMCP(t)
+	{
+		srv, st := newMCP(t)
+		_ = call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
+		row, err := st.Get(context.Background(), "acme", "sess_mcp")
+		if err != nil {
+			t.Fatalf("session not stored: %v", err)
+		}
+		if row.IsolationProfile != isolation.ProfileSandboxed {
+			t.Errorf("default-mode isolation = %q, want sandboxed", row.IsolationProfile)
+		}
+	}
+	_ = store
+
+	// Dev mode: standard (runc).
+	devStore := memstore.New()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:    devStore,
+		Executor: executor.NewEchoExecutor(),
+		Runtimes: runtimestore.NewMemory(),
+		DevMode:  true,
+		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:   func() string { return "sess_dev" },
+		TenantID: "acme",
+	})
+	_ = call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
+	row, err := devStore.Get(context.Background(), "acme", "sess_dev")
+	if err != nil {
+		t.Fatalf("dev session not stored: %v", err)
+	}
+	if row.IsolationProfile != isolation.ProfileStandard {
+		t.Errorf("dev-mode isolation = %q, want standard", row.IsolationProfile)
+	}
+}
+
 func TestCreateSessionToolRecordsEnvironment(t *testing.T) {
 	srv, store := newMCP(t)
 	resp := call(t, srv.Handler(), "lenny/create_session",

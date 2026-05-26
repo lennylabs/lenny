@@ -773,7 +773,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	}
 
 	rt := runtimeFromPayload(body, r.clock())
-	runtimestore.ApplyDefaults(&rt)
+	runtimestore.ApplyDefaults(&rt, r.devMode)
 	rt.UpdatedAt = rt.CreatedAt
 	// §5.1: type:mcp runtimes do not carry an agentInterface.
 	if rt.Type == runtimestore.TypeMCP && rt.AgentInterface != nil {

@@ -53,6 +53,11 @@ spec:
             {{- if .Values.controller.egressCaptureImage }}
             - --egress-capture-image={{ .Values.controller.egressCaptureImage }}
             {{- end }}
+            {{- if .Values.global.devMode }}
+            {{- /* §5.3 line 677: dev mode defaults pods missing an
+                   isolation profile to runc so a gVisor-less cluster works. */}}
+            - --dev-mode
+            {{- end }}
           {{- if $hasPg }}
           env:
             - name: LENNY_POSTGRES_DSN
