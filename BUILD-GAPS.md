@@ -14674,7 +14674,7 @@ The closing-line guarantee in §11.5 — preventing duplicate sessions or childr
 
 A spec-conforming implementation would atomically claim the key first (e.g., `INSERT … ON CONFLICT DO NOTHING` of a pending row) so concurrent retries see the second `INSERT` fail and either wait/poll or get a conflict response, before any session is created.
 
-### - [ ] F-11.5.3 — Idempotency cache stores any inner handler response, replays 4xx/5xx errors for 24 hours [High] — OPEN
+### - [x] F-11.5.3 — Idempotency cache stores any inner handler response, replays 4xx/5xx errors for 24 hours [High] — CLOSED
 
 The spec's replay contract is unconditional ("a duplicate request with the same key returns the cached response (same HTTP status and body)"), but as written this enables the following: an inner handler that returns a transient `500 INTERNAL_ERROR` or `503 RUNTIME_UNAVAILABLE` is cached and then replayed for the entire 24-hour window, blocking the client from any retry even after the underlying condition has cleared.
 
@@ -14695,7 +14695,14 @@ This is technically a literal reading of "returns the cached response (same HTTP
 
 The collateral effect is amplified by H2: if the first concurrent request was the one that wrote the 5xx and the second concurrent request actually succeeded, the 5xx may be persisted as the canonical replay even though the operation succeeded.
 
-### - [ ] F-11.5.4 — `m.store.Put` errors are silently dropped; pgstore write failures leave the operation un-cached without a structured audit trail [High] — OPEN
+**Resolution.** Middleware now refuses to persist a 5xx capture; the
+next retry re-executes against the (hopefully) healthy backend. 4xx
+remains cached (a deterministic per-request outcome). New
+`lenny_idempotency_cache_skipped_total{reason="server_error"}` and a
+WARN log surface every skip for operators. spec: §11.5 line 277.
+Closed by the §11.5 hardening batch.
+
+### - [x] F-11.5.4 — `m.store.Put` errors are silently dropped; pgstore write failures leave the operation un-cached without a structured audit trail [High] — CLOSED
 
 `pkg/gateway/middleware/idempotency/idempotency.go:191`:
 
@@ -14709,7 +14716,15 @@ The spec promises "without re-executing the operation"; in this failure mode the
 
 At a minimum the Put error should be logged at WARN with the tenant + key, surfaced as a metric (`lenny_idempotency_cache_write_failures_total`), and ideally retried before the response is written so the client sees a 5xx (causing a retry of the same operation, which the next Get would replay).
 
-### - [ ] F-11.5.5 — `idempotencyKey` documented in REST docs as a request-body field, not as a header [High] — OPEN
+**Resolution.** Middleware now emits a WARN log naming tenant + key +
+error and increments
+`lenny_idempotency_cache_write_failures_total{tenant_id}` whenever the
+durable store rejects a Put after the inner handler executed. The
+log line explicitly flags that a retry with the same key WILL
+re-execute, so the operator can correlate to duplicate-side-effect
+incidents. spec: §11.5 line 277. Closed by the §11.5 hardening batch.
+
+### - [x] F-11.5.5 — `idempotencyKey` documented in REST docs as a request-body field, not as a header [High] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-11.5.1 — Both about §11.5 idempotencyKey but distinct: F-11.5.1 is the unimplemented MCP tool-input idempotencyKey field, F-11.5.5 is a doc/spec mismatch where REST docs describe it as a body field rather than a header.
 
@@ -14722,6 +14737,14 @@ This is a doc/spec/impl three-way mismatch surfaced by the audit, not strictly a
 
 Consequence: a developer reading the published REST/MCP docs sees `idempotencyKey` listed as a body parameter on POST /v1/sessions and will encode it as such — and the middleware will treat the request as having no idempotency key (the header is absent), so a retry creates a second session. The body field is also not validated server-side: the create-session handler `json.Unmarshal`s into `CreateSessionRequest` which doesn't define `IdempotencyKey` (`pkg/gateway/sessionserver/sessionserver.go:495-509`), so the field is silently dropped. Combined with H1 (MCP field also unimplemented), the entire body-field surface advertised in the docs is non-functional.
 
+**Resolution.** `docs/api/rest.md` POST /v1/sessions body table no
+longer lists `idempotencyKey`; an inline pointer + a new
+"Idempotency" section names the header surface, the 24-hour TTL, the
+5xx-not-cached behaviour, and the per-tenant scope (the six §11.5
+critical operations). The MCP doc loses the `idempotencyKey` row and
+adds a callout pointing at the REST Idempotency section. spec: §11.5
+line 277. Closed by the §11.5 hardening batch.
+
 ---
 
 ### - [ ] F-11.5.6 — Two of the six §11.5-listed operations have no idempotency-key-aware code path even via REST [Medium] — OPEN
@@ -14733,13 +14756,22 @@ Consequence: a developer reading the published REST/MCP docs sees `idempotencyKe
 
 Consequence: of the six listed critical operations, the platform reliably idempotent-cache-protects four (CreateSession, FinalizeWorkspace, StartSession, Resume) on the REST path; SpawnChild and Approve/DenyDelegation are listed but never reachable via a working idempotency surface.
 
-### - [ ] F-11.5.7 — Middleware applies to every request regardless of method/path; no allow-list keeps callers from accidentally caching reads [Medium] — OPEN
+### - [x] F-11.5.7 — Middleware applies to every request regardless of method/path; no allow-list keeps callers from accidentally caching reads [Medium] — CLOSED
 
 `pkg/gateway/middleware/idempotency/idempotency.go:128-133` activates whenever the `Idempotency-Key` header is present, regardless of HTTP method (GET, PUT, DELETE all flow through). The spec scopes idempotency to "critical operations" — all six listed are mutating POSTs. There is no allow-list of paths/methods.
 
 Consequence: a misguided client that sets `Idempotency-Key` on `GET /v1/sessions/{id}` will get the first response cached and replayed for 24 hours — the session row can be mutated by other code paths, but the cached response will not reflect the change. This is not a security issue (cache is tenant-scoped, body-hashed) but it is a foot-gun and a §11.5 surface drift: §11.5 says "Critical operations support idempotency keys" and enumerates them; the implementation accepts the key on any request.
 
 A spec-aligned implementation either gates by method (`POST` only) or by a registered set of routes (the six operations).
+
+**Resolution.** `Options.AllowedMethods` defaults to `[POST]` and
+`Options.AllowedPaths` accepts §11.5-style patterns (`{id}` placeholders
+and a literal `...` tail for subtrees). Gateway main wires the six
+critical-operation paths (CreateSession, FinalizeWorkspace,
+StartSession, Resume, Derive, tool-use approve/deny, and the `/mcp`
+JSON-RPC POST). A misplaced `Idempotency-Key` on a GET or unrelated
+POST passes through without entering the cache. spec: §11.5 lines
+268-277. Closed by the §11.5 hardening batch.
 
 ### - [ ] F-11.5.8 — `MaxBodyBytes` defaults to 1 MiB; a Finalize body that exceeds the limit is rejected with `BODY_TOO_LARGE` rather than passed through [Medium] — OPEN
 
@@ -14763,7 +14795,7 @@ For CreateSession (typical body ~1-10 KB) this is fine. For FinalizeWorkspace (n
 
 The middleware also constructs `readBodyLimited` with `io.LimitReader(r.Body, limit+1)` — the `+1` is a defensive trick to detect overflow but does not raise the cap. Production wiring in `cmd/lenny-gateway/main.go:1455` passes empty Options, so the 1 MiB default is what production runs with. The cap is not exposed as a flag.
 
-### - [ ] F-11.5.9 — Multi-value response headers (e.g., `Set-Cookie`) are flattened to a single value in the replay [Medium] — OPEN
+### - [x] F-11.5.9 — Multi-value response headers (e.g., `Set-Cookie`) are flattened to a single value in the replay [Medium] — CLOSED
 
 `pkg/gateway/middleware/idempotency/idempotency.go:289-297` reduces `http.Header` (map[string][]string) to `map[string]string` by taking the first value:
 
@@ -14783,6 +14815,13 @@ A handler that returns multiple `Set-Cookie` headers (the canonical multi-value 
 
 The fix is to keep the typed `http.Header` shape in `idempotency.Response.Headers`, or persist as `map[string][]string`. The pgstore column is `JSONB`, so the persistence layer has no constraint preventing the richer shape.
 
+**Resolution.** `idempotency.Response.Headers` is now
+`map[string][]string`; capture preserves every header value via
+`cloneHeader`; replay emits each value via `w.Header().Add`. The
+pgstore JSONB column round-trips the richer shape (no schema change).
+The tier-2 component test now covers a Set-Cookie pair round-trip.
+spec: §11.5 line 277. Closed by the §11.5 hardening batch.
+
 ### - [ ] F-11.5.10 — `idempotency.Response.Body` rounds to "what the response writer happened to flush before the handler returned" [Medium] — OPEN
 
 `captureWriter` (`idempotency.go:209-247`) buffers everything written via `Write` into `c.body`. There is no `Flusher` interface, so:
@@ -14794,7 +14833,7 @@ None of the §11.5-listed operations are streaming today (CreateSession, Finaliz
 
 The interaction with M2 (no path/method allow-list) makes this materially more likely than it would otherwise be: any handler can be silently transformed into a non-streaming one by the presence of an `Idempotency-Key` header.
 
-### - [ ] F-11.5.11 — `MaxKeyLength = 128` is enforced on `len(k.Value)` (byte length); the spec text says "128 characters" [Medium] — OPEN
+### - [x] F-11.5.11 — `MaxKeyLength = 128` is enforced on `len(k.Value)` (byte length); the spec text says "128 characters" [Medium] — CLOSED
 
 `pkg/idempotency/idempotency.go:24,47-49`:
 
@@ -14810,11 +14849,22 @@ if len(k.Value) > MaxKeyLength {
 
 Either fix the implementation to `utf8.RuneCountInString` and document, or fix the spec to say "128 bytes" or "128 ASCII characters."
 
-### - [ ] F-11.5.12 — The pgstore `Put` accepts and persists records produced by the middleware even after the inner handler wrote a `200 OK` empty body, but does not detect or reject a 0-status capture as a degenerate case [Medium] — OPEN
+**Resolution.** `Key.Validate` now uses `utf8.RuneCountInString`; the
+`MaxKeyLength` doc-comment names the rune semantics; new tests cover a
+128-rune multi-byte key (admitted) and a 129-rune multi-byte key
+(rejected with the matching rune count in the error). spec: §11.5
+line 277. Closed by the §11.5 hardening batch.
+
+### - [x] F-11.5.12 — The pgstore `Put` accepts and persists records produced by the middleware even after the inner handler wrote a `200 OK` empty body, but does not detect or reject a 0-status capture as a degenerate case [Medium] — CLOSED
 
 `pgstore.go:94-103` inserts whatever `Response.StatusCode` the caller provides. The middleware code path (`idempotency.go:177-189`) sets `StatusCode: captured.status`, where `captured.status` is `0` until `WriteHeader` is called. A handler that returns without calling `WriteHeader` and without writing any body produces a `0`-status capture (`flush` at line 242-244 corrects this for the *client* by writing `200`, but the cache stores `0`). On replay, `replayResponse` (`idempotency.go:254-258`) corrects `0` → `200`, so the client-visible outcome is consistent. The pgstore has no constraint on `response_status`, so the `0` is persisted intact.
 
 This is benign in practice but the round-trip violates the principle that the cached record matches the wire response. A handler that writes `204 No Content` via `WriteHeader(204)` followed by nothing produces a clean record; a handler that returns without WriteHeader produces a `0` record that becomes a `200` on both flush and replay paths. Either path is fine on its own; the inconsistency is the lurking foot-gun.
+
+**Resolution.** `maybePersist` normalises a captured status of 0 to 200
+before constructing the Record, so the persisted row always matches
+the wire response and the cache↔wire round-trip is consistent. spec:
+§11.5 line 277. Closed by the §11.5 hardening batch.
 
 ---
 
