@@ -113,6 +113,13 @@ func main() {
 	taskMode := flag.Bool("task-mode", false,
 		"§4.7/§5.2: advertise the task_lifecycle capability on the lifecycle channel; "+
 			"set on task-mode pods so the runtime is driven through task_complete / task_ready")
+	otlpEndpoint := flag.String("otlp-endpoint", "",
+		"§4.7/§16.3 OTLP collector URL written into the adapter manifest's "+
+			"observability.otlpEndpoint; empty omits the observability object")
+	otlpTLSDisabled := flag.Bool("otlp-tls-disabled", false,
+		"§13.2 (NET-059) dev/make-run escape hatch: write observability.otlpTlsEnabled=false "+
+			"so the runtime accepts an http:// OTLP endpoint; production keeps this false and "+
+			"uses an https:// endpoint")
 	flag.Parse()
 
 	if *runtimeBin != "" && *runtimeSocket != "" {
@@ -164,6 +171,10 @@ func main() {
 	// §15.4: the adapter manifest is written into /run/lenny alongside
 	// the credential file.
 	adapterSrv.ManifestDir = *credentialsDir
+	// §4.7: the manifest's observability object points an OTel-emitting
+	// runtime at the deployment's OTLP collector.
+	adapterSrv.OTLPEndpoint = *otlpEndpoint
+	adapterSrv.OTLPTLSDisabled = *otlpTLSDisabled
 	switch {
 	case *runtimeSocket != "":
 		// §4.7 sidecar model: bind the abstract socket the runtime

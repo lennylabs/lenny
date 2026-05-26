@@ -1253,8 +1253,21 @@ type StartSessionRequest struct {
 	// runtime receives in the adapter manifest to stitch its native
 	// traces into the parent's trace tree. Empty when none is set.
 	TracingContext map[string]string `protobuf:"bytes,6,rep,name=tracing_context,json=tracingContext,proto3" json:"tracing_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// task_id is the §4.7 current task identifier written into the adapter
+	// manifest. Empty in session mode, where the adapter defaults the
+	// manifest taskId to the session id (the session is its single task).
+	TaskId string `protobuf:"bytes,8,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// agent_interface is the runtime's §5.1 agentInterface descriptor,
+	// JSON-encoded, written verbatim into the adapter manifest's
+	// agentInterface field. Empty when the runtime declares none (the
+	// manifest field is then null).
+	AgentInterface []byte `protobuf:"bytes,9,opt,name=agent_interface,json=agentInterface,proto3" json:"agent_interface,omitempty"`
+	// min_platform_version is the runtime's §5.1 minPlatformVersion (semver)
+	// written into the adapter manifest. Empty when the runtime specifies no
+	// minimum.
+	MinPlatformVersion string `protobuf:"bytes,10,opt,name=min_platform_version,json=minPlatformVersion,proto3" json:"min_platform_version,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *StartSessionRequest) Reset() {
@@ -1320,6 +1333,27 @@ func (x *StartSessionRequest) GetTracingContext() map[string]string {
 		return x.TracingContext
 	}
 	return nil
+}
+
+func (x *StartSessionRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *StartSessionRequest) GetAgentInterface() []byte {
+	if x != nil {
+		return x.AgentInterface
+	}
+	return nil
+}
+
+func (x *StartSessionRequest) GetMinPlatformVersion() string {
+	if x != nil {
+		return x.MinPlatformVersion
+	}
+	return ""
 }
 
 // SetupPolicy is the §5.1 runtime setupPolicy: the aggregate cap on the
@@ -2231,8 +2265,15 @@ type ResumeRequest struct {
 	// pod. Absent when unset.
 	ExperimentContext *ExperimentContext `protobuf:"bytes,4,opt,name=experiment_context,json=experimentContext,proto3" json:"experiment_context,omitempty"`
 	TracingContext    map[string]string  `protobuf:"bytes,5,rep,name=tracing_context,json=tracingContext,proto3" json:"tracing_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// task_id, agent_interface, and min_platform_version are re-delivered to
+	// the restored runtime in the adapter manifest, the same as
+	// StartSessionRequest, so a resume onto a fresh pod reproduces the
+	// §15.4 manifest field set.
+	TaskId             string `protobuf:"bytes,6,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AgentInterface     []byte `protobuf:"bytes,7,opt,name=agent_interface,json=agentInterface,proto3" json:"agent_interface,omitempty"`
+	MinPlatformVersion string `protobuf:"bytes,8,opt,name=min_platform_version,json=minPlatformVersion,proto3" json:"min_platform_version,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ResumeRequest) Reset() {
@@ -2298,6 +2339,27 @@ func (x *ResumeRequest) GetTracingContext() map[string]string {
 		return x.TracingContext
 	}
 	return nil
+}
+
+func (x *ResumeRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *ResumeRequest) GetAgentInterface() []byte {
+	if x != nil {
+		return x.AgentInterface
+	}
+	return nil
+}
+
+func (x *ResumeRequest) GetMinPlatformVersion() string {
+	if x != nil {
+		return x.MinPlatformVersion
+	}
+	return ""
 }
 
 type ResumeResponse struct {
@@ -3483,14 +3545,18 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12E\n" +
 	"\x0esetup_commands\x18\x02 \x03(\v2\x1e.lenny.adapter.v1.SetupCommandR\rsetupCommands\x12@\n" +
 	"\fsetup_policy\x18\x03 \x01(\v2\x1d.lenny.adapter.v1.SetupPolicyR\vsetupPolicy\"\x12\n" +
-	"\x10RunSetupResponse\"\x96\x04\n" +
+	"\x10RunSetupResponse\"\x8a\x05\n" +
 	"\x13StartSessionRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
 	"\aruntime\x18\x02 \x01(\tR\aruntime\x12I\n" +
 	"\x06labels\x18\x04 \x03(\v21.lenny.adapter.v1.StartSessionRequest.LabelsEntryR\x06labels\x12R\n" +
 	"\x12experiment_context\x18\x05 \x01(\v2#.lenny.adapter.v1.ExperimentContextR\x11experimentContext\x12b\n" +
-	"\x0ftracing_context\x18\x06 \x03(\v29.lenny.adapter.v1.StartSessionRequest.TracingContextEntryR\x0etracingContext\x1a9\n" +
+	"\x0ftracing_context\x18\x06 \x03(\v29.lenny.adapter.v1.StartSessionRequest.TracingContextEntryR\x0etracingContext\x12\x17\n" +
+	"\atask_id\x18\b \x01(\tR\x06taskId\x12'\n" +
+	"\x0fagent_interface\x18\t \x01(\fR\x0eagentInterface\x120\n" +
+	"\x14min_platform_version\x18\n" +
+	" \x01(\tR\x12minPlatformVersion\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aA\n" +
@@ -3572,14 +3638,17 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x12CheckpointResponse\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"\xff\x02\n" +
+	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"\xf3\x03\n" +
 	"\rResumeRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
 	"\aruntime\x18\x02 \x01(\tR\aruntime\x12#\n" +
 	"\rcheckpoint_id\x18\x03 \x01(\tR\fcheckpointId\x12R\n" +
 	"\x12experiment_context\x18\x04 \x01(\v2#.lenny.adapter.v1.ExperimentContextR\x11experimentContext\x12\\\n" +
-	"\x0ftracing_context\x18\x05 \x03(\v23.lenny.adapter.v1.ResumeRequest.TracingContextEntryR\x0etracingContext\x1aA\n" +
+	"\x0ftracing_context\x18\x05 \x03(\v23.lenny.adapter.v1.ResumeRequest.TracingContextEntryR\x0etracingContext\x12\x17\n" +
+	"\atask_id\x18\x06 \x01(\tR\x06taskId\x12'\n" +
+	"\x0fagent_interface\x18\a \x01(\fR\x0eagentInterface\x120\n" +
+	"\x14min_platform_version\x18\b \x01(\tR\x12minPlatformVersion\x1aA\n" +
 	"\x13TracingContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"7\n" +

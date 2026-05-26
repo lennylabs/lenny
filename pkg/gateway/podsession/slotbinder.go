@@ -60,6 +60,12 @@ type SlotBindRequest struct {
 	// PodSpiffeURI is the issuing pod's SPIFFE identity recorded on each
 	// minted lease. Empty disables proxy-mode SPIFFE binding.
 	PodSpiffeURI string
+	// AgentInterface is the runtime's §5.1 agentInterface descriptor as
+	// JSON, written into the §15.4 manifest. Nil when undeclared.
+	AgentInterface []byte
+	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion written
+	// into the §15.4 manifest. Empty when none is specified.
+	MinPlatformVersion string
 }
 
 // BindSlot places a session on a concurrent-mode (§5.2) pod slot.
@@ -119,7 +125,14 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		b.recordSlotFailure(slotFailureCredentialAssignment, req.Pool, sandboxName)
 		return nil, fmt.Errorf("podsession: assign slot credentials on pod %s: %w", sandboxName, err)
 	}
-	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.ExperimentContext, req.TracingContext); err != nil {
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
+		SessionID:          req.SessionID,
+		Runtime:            req.Runtime,
+		ExperimentContext:  req.ExperimentContext,
+		TracingContext:     req.TracingContext,
+		AgentInterface:     req.AgentInterface,
+		MinPlatformVersion: req.MinPlatformVersion,
+	}); err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureSessionStart, req.Pool, sandboxName)
 		return nil, fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err)

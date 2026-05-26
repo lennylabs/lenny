@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/lennylabs/lenny/pkg/adapter/localtools"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -64,15 +65,50 @@ type ManifestLifecycleChannel struct {
 	Socket string `json:"socket"`
 }
 
+// ManifestObservability is the §4.7 observability manifest object: the
+// OTLP collector a runtime points its OpenTelemetry SDK at. Omitted when
+// the deployment configures no collector.
+type ManifestObservability struct {
+	// OTLPEndpoint is the §4.7 / §16.3 OTLP collector URL. Production
+	// profiles require https:// per §13.2 (NET-059).
+	OTLPEndpoint string `json:"otlpEndpoint,omitempty"`
+	// OTLPTLSEnabled is set false only for the dev / make-run profile to
+	// permit an http:// endpoint; omitted (nil) otherwise.
+	OTLPTLSEnabled *bool `json:"otlpTlsEnabled,omitempty"`
+}
+
+// ManifestLLM is the §4.7 llm manifest object: the LLM provider
+// configuration the runtime uses to set up its SDK. The adapter derives it
+// from the session's assigned §4.9 credential lease(s).
+type ManifestLLM struct {
+	// DeliveryMode is the §4.9 credential delivery mode: "direct" or
+	// "proxy". It tells the runtime whether to use the upstream provider's
+	// native SDK (direct) or point its SDK at the proxy (proxy).
+	DeliveryMode string `json:"deliveryMode"`
+	// Dialect is the wire format the runtime's SDK speaks to the proxy:
+	// "openai" or "anthropic". Set in proxy mode; omitted in direct mode.
+	Dialect string `json:"dialect,omitempty"`
+	// BaseURL is the proxy endpoint the runtime configures its SDK against
+	// (the lease's proxyUrl). Set in proxy mode; omitted in direct mode.
+	BaseURL string `json:"baseUrl,omitempty"`
+	// APIKeyEnv is the canonical env var the runtime's SDK reads for its
+	// API key (ANTHROPIC_API_KEY for anthropic, OPENAI_API_KEY for openai).
+	// Set in proxy mode where the runtime exports the lease token into it.
+	APIKeyEnv string `json:"apiKeyEnv,omitempty"`
+}
+
 // Manifest is the §15.4 adapter manifest the runtime reads at startup.
 // v1 carries the session metadata a Basic-level runtime needs, the
 // §15.4.3 intra-pod MCP nonce, and the §15 adapter-local tool
 // descriptors; the platformMcpServer and connectorServers socket
 // fields are added with the MCP socket layer.
 type Manifest struct {
-	Version           int                        `json:"version"`
-	SessionID         string                     `json:"sessionId"`
-	WorkspaceRoot     string                     `json:"workspaceRoot"`
+	Version   int    `json:"version"`
+	SessionID string `json:"sessionId"`
+	// TaskID is the §4.7 current task identifier. In session mode it is
+	// the session id (the session is its single task); task-mode pods
+	// rewrite it before each task.
+	TaskID            string                     `json:"taskId"`
 	ExperimentContext *ManifestExperimentContext `json:"experimentContext,omitempty"`
 	// TracingContext is the §8.3 opaque tracing-identifier map the
 	// runtime uses to stitch its native traces into the parent's trace
@@ -82,8 +118,22 @@ type Manifest struct {
 	// random 256-bit hex string the runtime presents on the MCP
 	// initialize handshake to every adapter-local MCP server. The
 	// adapter rejects an intra-pod MCP connection that does not present
-	// it. Omitted when no manifest directory is configured.
-	MCPNonce string `json:"mcpNonce,omitempty"`
+	// it. Required at the Standard and Full levels (§4.7).
+	MCPNonce string `json:"mcpNonce"`
+	// AgentInterface is the runtime's §5.1 agentInterface descriptor,
+	// carried verbatim from the Runtime definition. Null (JSON null) when
+	// the runtime declares none. The field is always present per §4.7.
+	AgentInterface json.RawMessage `json:"agentInterface"`
+	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion (semver).
+	// Informational; omitted when the runtime specifies no minimum.
+	MinPlatformVersion string `json:"minPlatformVersion,omitempty"`
+	// Observability carries the §4.7 OTLP collector endpoint. Omitted when
+	// the deployment configures no collector.
+	Observability *ManifestObservability `json:"observability,omitempty"`
+	// LLM is the §4.7 LLM provider configuration derived from the session's
+	// credential lease. Null (JSON null) when the session has no active LLM
+	// lease. The field is always present per §4.7.
+	LLM *ManifestLLM `json:"llm"`
 	// AdapterLocalTools advertises the §15 adapter-local tools the
 	// runtime may call over the tool_call binary protocol. The runtime
 	// discovers the tool set by reading this array.
@@ -158,15 +208,28 @@ func WriteManifest(dir string, m Manifest) error {
 	return nil
 }
 
-// writeSessionManifest writes the §15.4 adapter manifest for a session
-// — carrying the §8.3 experimentContext and tracingContext, the §15
-// adapter-local tools, and the §15.4.3 MCP nonce — when a ManifestDir
-// is configured. StartSession and Resume both call it so a runtime
-// started on a fresh or a resumed pod reads the same manifest. It
-// returns the generated MCP nonce so the caller can start the platform
-// MCP server with the same nonce; when no ManifestDir is configured it
-// is a no-op and returns an empty nonce.
-func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.ExperimentContext, tc map[string]string) (string, error) {
+// manifestInputs bundles the per-session §15.4 manifest data the gateway
+// delivers through StartSession / Resume (or that the adapter derives) for
+// writeSessionManifest to assemble.
+type manifestInputs struct {
+	sessionID          string
+	taskID             string
+	experimentContext  *adapterv1.ExperimentContext
+	tracingContext     map[string]string
+	agentInterface     []byte // opaque JSON; nil writes a null manifest field
+	minPlatformVersion string
+}
+
+// writeSessionManifest writes the §15.4 adapter manifest for a session —
+// carrying the §4.7 taskId / agentInterface / minPlatformVersion / llm /
+// observability fields, the §8.3 experimentContext and tracingContext, the
+// §15 adapter-local tools, and the §15.4.3 MCP nonce — when a ManifestDir
+// is configured. StartSession, ConfigureWorkspace, and Resume call it so a
+// runtime started on a fresh, SDK-warm, or resumed pod reads the same
+// manifest. It returns the generated MCP nonce so the caller can start the
+// platform MCP server with the same nonce; when no ManifestDir is
+// configured it is a no-op and returns an empty nonce.
+func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	if s.ManifestDir == "" {
 		return "", nil
 	}
@@ -174,14 +237,24 @@ func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.Experiment
 	if err != nil {
 		return "", err
 	}
+	// §4.7: in session mode the manifest taskId defaults to the session id
+	// (the session is its single task) when the gateway supplies none.
+	taskID := in.taskID
+	if taskID == "" {
+		taskID = in.sessionID
+	}
 	m := Manifest{
-		Version:           ManifestVersion,
-		SessionID:         sessionID,
-		WorkspaceRoot:     s.WorkspaceRoot,
-		ExperimentContext: manifestExperimentContext(ec),
-		TracingContext:    tc,
-		MCPNonce:          nonce,
-		AdapterLocalTools: manifestLocalTools(),
+		Version:            ManifestVersion,
+		SessionID:          in.sessionID,
+		TaskID:             taskID,
+		ExperimentContext:  manifestExperimentContext(in.experimentContext),
+		TracingContext:     in.tracingContext,
+		MCPNonce:           nonce,
+		AgentInterface:     manifestAgentInterface(in.agentInterface),
+		MinPlatformVersion: in.minPlatformVersion,
+		Observability:      s.manifestObservability(),
+		LLM:                s.manifestLLM(),
+		AdapterLocalTools:  manifestLocalTools(),
 	}
 	if s.MCPSocket != "" {
 		m.PlatformMcpServer = &ManifestMCPServer{Socket: s.MCPSocket}
@@ -193,6 +266,97 @@ func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.Experiment
 		return "", err
 	}
 	return nonce, nil
+}
+
+// manifestAgentInterface validates the gateway-supplied agentInterface
+// JSON and returns it for the manifest. A nil or empty value yields a JSON
+// null, matching the spec's "object or null" field. Invalid JSON is
+// dropped to null rather than corrupting the manifest.
+func manifestAgentInterface(b []byte) json.RawMessage {
+	if len(b) == 0 || !json.Valid(b) {
+		return json.RawMessage("null")
+	}
+	return json.RawMessage(b)
+}
+
+// manifestObservability builds the §4.7 observability manifest object from
+// the adapter's configured OTLP endpoint. It returns nil (the field is
+// omitted) when no endpoint is configured.
+func (s *Server) manifestObservability() *ManifestObservability {
+	if s.OTLPEndpoint == "" {
+		return nil
+	}
+	o := &ManifestObservability{OTLPEndpoint: s.OTLPEndpoint}
+	if s.OTLPTLSDisabled {
+		disabled := false
+		o.OTLPTLSEnabled = &disabled
+	}
+	return o
+}
+
+// manifestLLM derives the §4.7 llm manifest object from the session's
+// assigned §4.9 credential lease. It returns nil (a JSON null field) when
+// no lease is assigned. When more than one provider lease is present the
+// lease is selected deterministically by provider name; the full
+// per-provider set is always in /run/lenny/credentials.json.
+func (s *Server) manifestLLM() *ManifestLLM {
+	s.mu.Lock()
+	leases := s.credLeases
+	s.mu.Unlock()
+	if len(leases) == 0 {
+		return nil
+	}
+	providers := make([]string, 0, len(leases))
+	for p := range leases {
+		providers = append(providers, p)
+	}
+	sort.Strings(providers)
+	return manifestLLMFromPayload(leases[providers[0]].GetPayload())
+}
+
+// llmPayload is the subset of the §4.7 credential-file entry the manifest
+// llm field is derived from.
+type llmPayload struct {
+	DeliveryMode       string `json:"deliveryMode"`
+	MaterializedConfig struct {
+		ProxyURL     string `json:"proxyUrl"`
+		ProxyDialect string `json:"proxyDialect"`
+	} `json:"materializedConfig"`
+}
+
+// manifestLLMFromPayload builds the §4.7 llm manifest object from one
+// credential lease's payload. Proxy-mode leases carry the dialect and base
+// URL the runtime points its SDK at; direct-mode leases omit them because
+// the runtime uses the upstream provider's native SDK.
+func manifestLLMFromPayload(payload []byte) *ManifestLLM {
+	var p llmPayload
+	if len(payload) > 0 {
+		_ = json.Unmarshal(payload, &p)
+	}
+	if p.DeliveryMode == "" {
+		return nil
+	}
+	llm := &ManifestLLM{DeliveryMode: p.DeliveryMode}
+	if p.DeliveryMode == "proxy" {
+		llm.Dialect = p.MaterializedConfig.ProxyDialect
+		llm.BaseURL = p.MaterializedConfig.ProxyURL
+		llm.APIKeyEnv = apiKeyEnvForDialect(p.MaterializedConfig.ProxyDialect)
+	}
+	return llm
+}
+
+// apiKeyEnvForDialect returns the §4.7 canonical API-key env var the
+// runtime's SDK reads for a proxy dialect. An unrecognized dialect yields
+// an empty string (the field is then omitted).
+func apiKeyEnvForDialect(dialect string) string {
+	switch dialect {
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	default:
+		return ""
+	}
 }
 
 // manifestLocalTools converts the localtools built-in descriptors into
@@ -209,6 +373,32 @@ func manifestLocalTools() []ManifestTool {
 		}
 	}
 	return tools
+}
+
+// ErrManifestVersionTooHigh reports an adapter manifest whose version
+// exceeds the highest version this build understands. Per §4.7 a runtime
+// MUST reject such a manifest because every version increment is a
+// breaking change to existing field semantics.
+var ErrManifestVersionTooHigh = fmt.Errorf("adapter: manifest version exceeds the highest understood version %d", ManifestVersion)
+
+// ReadManifest decodes the adapter manifest from dir and enforces the §4.7
+// forward-compatibility rule: a manifest whose version is higher than
+// ManifestVersion is rejected with ErrManifestVersionTooHigh. A Go runtime
+// SDK reads the manifest through this helper so the version check is
+// applied uniformly rather than re-encoded at each call site.
+func ReadManifest(dir string) (Manifest, error) {
+	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+	if err != nil {
+		return Manifest{}, fmt.Errorf("adapter: read manifest: %w", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return Manifest{}, fmt.Errorf("adapter: decode manifest: %w", err)
+	}
+	if m.Version > ManifestVersion {
+		return Manifest{}, ErrManifestVersionTooHigh
+	}
+	return m, nil
 }
 
 // manifestExperimentContext converts the StartSession proto experiment

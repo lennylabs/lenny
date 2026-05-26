@@ -74,6 +74,15 @@ type Server struct {
 	// adapter-manifest.json into — the pod's /run/lenny. Empty disables
 	// manifest writing.
 	ManifestDir string
+	// OTLPEndpoint is the §4.7 / §16.3 OTLP collector URL written into the
+	// manifest's observability.otlpEndpoint so an OTel-emitting runtime can
+	// configure its SDK. Empty omits the observability manifest object.
+	OTLPEndpoint string
+	// OTLPTLSDisabled records the §13.2 (NET-059) dev/make-run escape hatch:
+	// when set, the manifest carries observability.otlpTlsEnabled: false so
+	// the runtime accepts an http:// collector endpoint. Production leaves
+	// it false and uses an https:// endpoint.
+	OTLPTLSDisabled bool
 	// MCPSocket is the Unix socket address the §4.7 platform MCP server
 	// listens on for the session — the pod's abstract socket
 	// @lenny-platform-mcp in production. Empty disables the platform

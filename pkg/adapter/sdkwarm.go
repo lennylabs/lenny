@@ -84,7 +84,11 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 		// §15.4: write the adapter manifest the pre-connected runtime
 		// re-reads when pointed at the workspace, and start the platform
 		// MCP server keyed on the freshly written nonce.
-		nonce, err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext())
+		nonce, err := s.writeSessionManifest(manifestInputs{
+			sessionID:         sessionID,
+			experimentContext: req.GetExperimentContext(),
+			tracingContext:    req.GetTracingContext(),
+		})
 		if err != nil {
 			s.releaseSession()
 			return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)

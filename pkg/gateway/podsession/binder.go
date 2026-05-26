@@ -200,6 +200,13 @@ type BindRequest struct {
 	// disables binding, which §4.9 permits only in single-tenant and
 	// development deployments.
 	PodSpiffeURI string
+	// AgentInterface is the runtime's §5.1 agentInterface descriptor as
+	// JSON, written verbatim into the §15.4 manifest's agentInterface
+	// field. Nil when the runtime declares none.
+	AgentInterface []byte
+	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion written
+	// into the §15.4 manifest. Empty when the runtime specifies no minimum.
+	MinPlatformVersion string
 }
 
 // BindResult reports the pod a session was bound to.
@@ -239,6 +246,10 @@ type ResumeRequest struct {
 	// restored runtime in the adapter manifest. Nil when unset.
 	ExperimentContext *adapterv1.ExperimentContext
 	TracingContext    map[string]string
+	// AgentInterface and MinPlatformVersion re-deliver the §15.4 manifest
+	// fields to the restored runtime, matching BindRequest.
+	AgentInterface     []byte
+	MinPlatformVersion string
 }
 
 // Bind claims an idle pod for the request's session, resolves the
@@ -271,7 +282,14 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", sandboxName, err)
 	}
-	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.ExperimentContext, req.TracingContext); err != nil {
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
+		SessionID:          req.SessionID,
+		Runtime:            req.Runtime,
+		ExperimentContext:  req.ExperimentContext,
+		TracingContext:     req.TracingContext,
+		AgentInterface:     req.AgentInterface,
+		MinPlatformVersion: req.MinPlatformVersion,
+	}); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
 	}
@@ -408,7 +426,15 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (*BindResult, er
 	if err != nil {
 		return nil, err
 	}
-	if _, err := cl.Resume(ctx, req.SessionID, req.Runtime, req.CheckpointID, req.ExperimentContext, req.TracingContext); err != nil {
+	if _, err := cl.Resume(ctx, adapterclient.ResumeParams{
+		SessionID:          req.SessionID,
+		Runtime:            req.Runtime,
+		CheckpointID:       req.CheckpointID,
+		ExperimentContext:  req.ExperimentContext,
+		TracingContext:     req.TracingContext,
+		AgentInterface:     req.AgentInterface,
+		MinPlatformVersion: req.MinPlatformVersion,
+	}); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: resume session on pod %s: %w", sandboxName, err)
 	}

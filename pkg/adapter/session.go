@@ -76,7 +76,14 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	}
 
 	// §15.4: write the adapter manifest the runtime reads at startup.
-	nonce, err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext())
+	nonce, err := s.writeSessionManifest(manifestInputs{
+		sessionID:          sessionID,
+		taskID:             req.GetTaskId(),
+		experimentContext:  req.GetExperimentContext(),
+		tracingContext:     req.GetTracingContext(),
+		agentInterface:     req.GetAgentInterface(),
+		minPlatformVersion: req.GetMinPlatformVersion(),
+	})
 	if err != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)

@@ -382,6 +382,19 @@ message StartSessionRequest {
   // runtime receives in the adapter manifest to stitch its native
   // traces into the parent's trace tree. Empty when none is set.
   map<string, string> tracing_context = 6;
+  // task_id is the §4.7 current task identifier written into the adapter
+  // manifest. Empty in session mode, where the adapter defaults the
+  // manifest taskId to the session id (the session is its single task).
+  string task_id = 8;
+  // agent_interface is the runtime's §5.1 agentInterface descriptor,
+  // JSON-encoded, written verbatim into the adapter manifest's
+  // agentInterface field. Empty when the runtime declares none (the
+  // manifest field is then null).
+  bytes agent_interface = 9;
+  // min_platform_version is the runtime's §5.1 minPlatformVersion (semver)
+  // written into the adapter manifest. Empty when the runtime specifies no
+  // minimum.
+  string min_platform_version = 10;
 }
 
 // SetupPolicy is the §5.1 runtime setupPolicy: the aggregate cap on the
@@ -514,6 +527,13 @@ message ResumeRequest {
   // pod. Absent when unset.
   ExperimentContext experiment_context = 4;
   map<string, string> tracing_context = 5;
+  // task_id, agent_interface, and min_platform_version are re-delivered to
+  // the restored runtime in the adapter manifest, the same as
+  // StartSessionRequest, so a resume onto a fresh pod reproduces the
+  // §15.4 manifest field set.
+  string task_id = 6;
+  bytes agent_interface = 7;
+  string min_platform_version = 8;
 }
 
 message ResumeResponse {

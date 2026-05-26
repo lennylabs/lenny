@@ -61,8 +61,15 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 			req.GetCheckpointId(), extractErr)
 	}
 	// §15.4: re-deliver the manifest so the restored runtime reads the
-	// same §8.3 experimentContext and tracingContext as before the resume.
-	nonce, err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext())
+	// same §4.7 / §8.3 fields as before the resume.
+	nonce, err := s.writeSessionManifest(manifestInputs{
+		sessionID:          sessionID,
+		taskID:             req.GetTaskId(),
+		experimentContext:  req.GetExperimentContext(),
+		tracingContext:     req.GetTracingContext(),
+		agentInterface:     req.GetAgentInterface(),
+		minPlatformVersion: req.GetMinPlatformVersion(),
+	})
 	if err != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)

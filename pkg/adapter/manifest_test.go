@@ -57,7 +57,7 @@ func TestWriteManifestModeIsGroupReadableNotWorldReadable(t *testing.T) {
 func TestWriteSessionManifestAdvertisesLocalTools(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
-	if _, err := srv.writeSessionManifest("sess-t", nil, nil); err != nil {
+	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-t"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -90,7 +90,7 @@ func TestWriteSessionManifestIncludesMCPNonce(t *testing.T) {
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
 
 	readNonce := func() string {
-		if _, err := srv.writeSessionManifest("sess-n", nil, nil); err != nil {
+		if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-n"}); err != nil {
 			t.Fatalf("writeSessionManifest: %v", err)
 		}
 		b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -121,7 +121,7 @@ func TestWriteSessionManifestLifecycleChannel(t *testing.T) {
 
 	// A Basic-level adapter has no lifecycle channel; the manifest omits
 	// the lifecycleChannel object entirely.
-	if _, err := srv.writeSessionManifest("sess-basic", nil, nil); err != nil {
+	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-basic"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -146,7 +146,7 @@ func TestWriteSessionManifestLifecycleChannel(t *testing.T) {
 	defer lc.Close()
 	srv.Lifecycle = lc
 
-	if _, err := srv.writeSessionManifest("sess-full", nil, nil); err != nil {
+	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-full"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -168,9 +168,9 @@ func TestWriteSessionManifestLifecycleChannel(t *testing.T) {
 func TestWriteManifest(t *testing.T) {
 	dir := t.TempDir()
 	if err := WriteManifest(dir, Manifest{
-		Version:       ManifestVersion,
-		SessionID:     "sess-1",
-		WorkspaceRoot: "/workspace/current",
+		Version:   ManifestVersion,
+		SessionID: "sess-1",
+		TaskID:    "task_root",
 	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestWriteManifest(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("decode manifest: %v", err)
 	}
-	if m.Version != ManifestVersion || m.SessionID != "sess-1" || m.WorkspaceRoot != "/workspace/current" {
+	if m.Version != ManifestVersion || m.SessionID != "sess-1" || m.TaskID != "task_root" {
 		t.Errorf("manifest = %+v", m)
 	}
 	if m.ExperimentContext != nil {
@@ -263,7 +263,7 @@ func TestWriteManifestWithExperimentContext(t *testing.T) {
 func TestWriteSessionManifestSkipsWithoutDir(t *testing.T) {
 	// An adapter with no ManifestDir writes nothing.
 	srv := &Server{WorkspaceRoot: "/workspace/current"}
-	if _, err := srv.writeSessionManifest("sess-x", nil, nil); err != nil {
+	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-x"}); err != nil {
 		t.Errorf("writeSessionManifest with no ManifestDir = %v, want nil", err)
 	}
 }
@@ -271,9 +271,13 @@ func TestWriteSessionManifestSkipsWithoutDir(t *testing.T) {
 func TestWriteSessionManifestWrites(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
-	if _, err := srv.writeSessionManifest("sess-y", &adapterv1.ExperimentContext{
-		ExperimentId: "exp_1", VariantId: "treatment",
-	}, map[string]string{"run": "r1"}); err != nil {
+	if _, err := srv.writeSessionManifest(manifestInputs{
+		sessionID: "sess-y",
+		experimentContext: &adapterv1.ExperimentContext{
+			ExperimentId: "exp_1", VariantId: "treatment",
+		},
+		tracingContext: map[string]string{"run": "r1"},
+	}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))

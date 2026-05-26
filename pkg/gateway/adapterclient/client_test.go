@@ -126,9 +126,14 @@ func TestStartSessionWritesManifest(t *testing.T) {
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
 
-	err := cl.StartSession(context.Background(), "sess-m", "claude-code",
-		&adapterv1.ExperimentContext{ExperimentId: "exp_1", VariantId: "treatment", Inherited: true},
-		map[string]string{"langsmith_run_id": "run_9"})
+	err := cl.StartSession(context.Background(), adapterclient.StartSessionParams{
+		SessionID:          "sess-m",
+		Runtime:            "claude-code",
+		ExperimentContext:  &adapterv1.ExperimentContext{ExperimentId: "exp_1", VariantId: "treatment", Inherited: true},
+		TracingContext:     map[string]string{"langsmith_run_id": "run_9"},
+		AgentInterface:     []byte(`{"description":"analyzes codebases"}`),
+		MinPlatformVersion: "1.4.0",
+	})
 	if err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
@@ -144,12 +149,27 @@ func TestStartSessionWritesManifest(t *testing.T) {
 	if m.SessionID != "sess-m" {
 		t.Errorf("manifest sessionId = %q, want sess-m", m.SessionID)
 	}
+	// §4.7: in session mode the manifest taskId defaults to the session id.
+	if m.TaskID != "sess-m" {
+		t.Errorf("manifest taskId = %q, want sess-m (session-mode default)", m.TaskID)
+	}
 	if m.ExperimentContext == nil || m.ExperimentContext.ExperimentID != "exp_1" ||
 		m.ExperimentContext.VariantID != "treatment" || !m.ExperimentContext.Inherited {
 		t.Errorf("manifest experimentContext = %+v, want exp_1/treatment inherited", m.ExperimentContext)
 	}
 	if m.TracingContext["langsmith_run_id"] != "run_9" {
 		t.Errorf("manifest tracingContext = %v, want the langsmith run id", m.TracingContext)
+	}
+	// §4.7: agentInterface is carried through (the manifest is pretty-printed,
+	// so compare the decoded value rather than the bytes).
+	var ai struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(m.AgentInterface, &ai); err != nil || ai.Description != "analyzes codebases" {
+		t.Errorf("manifest agentInterface = %s (err %v), want the runtime descriptor", m.AgentInterface, err)
+	}
+	if m.MinPlatformVersion != "1.4.0" {
+		t.Errorf("manifest minPlatformVersion = %q, want 1.4.0", m.MinPlatformVersion)
 	}
 }
 
@@ -381,7 +401,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if rt.started != "sess-x" {
@@ -416,7 +436,7 @@ func TestInterruptDeliversTheSignalToTheRuntime(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	ack, err := cl.Interrupt(ctx, "sess-x", true, 2*time.Second)
@@ -452,7 +472,7 @@ func TestAttachStreamsRuntimeOutput(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	stream, err := cl.Attach(ctx, "sess-x")
@@ -586,7 +606,7 @@ func TestTerminateEndsTheSessionOnThePod(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	clean, err := cl.Terminate(ctx, "sess-x", "USER_REVOKED", 10*time.Second)
@@ -641,7 +661,7 @@ func TestCheckpointReturnsTheStoredCheckpoint(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	res, err := cl.Checkpoint(ctx, "sess-x", 30*time.Second)
@@ -693,7 +713,11 @@ func TestResumeRestoresTheWorkspace(t *testing.T) {
 	srv.Restorer = stubCheckpointSource{archive: archived.Bytes()}
 	cl := dialAdapter(t, srv)
 
-	n, err := cl.Resume(context.Background(), "sess-r", "echo", "ckpt-1", nil, nil)
+	n, err := cl.Resume(context.Background(), adapterclient.ResumeParams{
+		SessionID:    "sess-r",
+		Runtime:      "echo",
+		CheckpointID: "ckpt-1",
+	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -709,7 +733,9 @@ func TestResumeRejectsAMissingCheckpointSource(t *testing.T) {
 	// No Restorer configured: the adapter cannot restore a checkpoint.
 	cl := dialAdapter(t, srv)
 
-	if _, err := cl.Resume(context.Background(), "sess-r", "echo", "ckpt-1", nil, nil); err == nil {
+	if _, err := cl.Resume(context.Background(), adapterclient.ResumeParams{
+		SessionID: "sess-r", Runtime: "echo", CheckpointID: "ckpt-1",
+	}); err == nil {
 		t.Error("Resume succeeded with no checkpoint source, want a failure")
 	}
 }
@@ -732,7 +758,7 @@ func TestReportUsageReturnsAccounting(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	rep, err := cl.ReportUsage(ctx, "sess-x")
@@ -765,7 +791,7 @@ func TestReportUsageRejectsAMissingMeter(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if _, err := cl.ReportUsage(ctx, "sess-x"); err == nil {

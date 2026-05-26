@@ -55,19 +55,43 @@ func (c *Client) NegotiateVersion(ctx context.Context, acceptedVersions []string
 	})
 }
 
+// StartSessionParams carries the §15.4 adapter-manifest inputs the
+// gateway delivers to a pod's runtime at session start. SessionID and
+// Runtime are required; the rest populate the §4.7 manifest fields and may
+// be zero.
+type StartSessionParams struct {
+	SessionID string
+	Runtime   string
+	// TaskID is the §4.7 manifest taskId. Empty in session mode, where the
+	// adapter defaults it to the session id.
+	TaskID string
+	// ExperimentContext is the session's §8.3 / §10.7 experiment enrollment
+	// (nil for an unenrolled session).
+	ExperimentContext *adapterv1.ExperimentContext
+	// TracingContext is the §8.3 opaque tracing identifiers (nil when none
+	// is set).
+	TracingContext map[string]string
+	// AgentInterface is the runtime's §5.1 agentInterface descriptor as
+	// JSON (nil when undeclared; the manifest field is then null).
+	AgentInterface []byte
+	// MinPlatformVersion is the runtime's §5.1 minPlatformVersion (empty
+	// when none is specified).
+	MinPlatformVersion string
+}
+
 // StartSession starts the runtime on a pod whose workspace is already
-// materialized by FinalizeWorkspace and whose setup commands are
-// already run by RunSetup (§4.7, the final session-assignment RPC).
-// experimentContext carries the session's §8.3 / §10.7 experiment
-// enrollment for the adapter manifest (nil for an unenrolled session);
-// tracingContext carries the §8.3 opaque tracing identifiers (nil when
-// none is set).
-func (c *Client) StartSession(ctx context.Context, sessionID, runtimeName string, experimentContext *adapterv1.ExperimentContext, tracingContext map[string]string) error {
+// materialized by FinalizeWorkspace and whose setup commands are already
+// run by RunSetup (§4.7, the final session-assignment RPC). The params
+// populate the §15.4 adapter manifest the runtime reads at startup.
+func (c *Client) StartSession(ctx context.Context, p StartSessionParams) error {
 	_, err := c.rpc.StartSession(ctx, &adapterv1.StartSessionRequest{
-		SessionId:         &adapterv1.SessionId{Value: sessionID},
-		Runtime:           runtimeName,
-		ExperimentContext: experimentContext,
-		TracingContext:    tracingContext,
+		SessionId:          &adapterv1.SessionId{Value: p.SessionID},
+		Runtime:            p.Runtime,
+		TaskId:             p.TaskID,
+		ExperimentContext:  p.ExperimentContext,
+		TracingContext:     p.TracingContext,
+		AgentInterface:     p.AgentInterface,
+		MinPlatformVersion: p.MinPlatformVersion,
 	})
 	return err
 }
@@ -245,19 +269,36 @@ func (c *Client) Checkpoint(ctx context.Context, sessionID string, deadline time
 	}, nil
 }
 
-// Resume asks the pod's adapter to restore the session workspace from
-// the named §4.4 checkpoint and start the runtime (§4.7, §7.1) — the
-// replacement-pod counterpart of StartSession. experimentContext and
-// tracingContext are re-delivered to the restored runtime in the
-// adapter manifest. It returns the uncompressed workspace bytes
-// restored.
-func (c *Client) Resume(ctx context.Context, sessionID, runtimeName, checkpointID string, experimentContext *adapterv1.ExperimentContext, tracingContext map[string]string) (int64, error) {
+// ResumeParams carries the inputs to restore a session onto a replacement
+// pod. SessionID, Runtime, and CheckpointID are required; the rest
+// re-deliver the §15.4 adapter-manifest fields so the restored runtime
+// reads the same manifest as before the resume.
+type ResumeParams struct {
+	SessionID          string
+	Runtime            string
+	CheckpointID       string
+	TaskID             string
+	ExperimentContext  *adapterv1.ExperimentContext
+	TracingContext     map[string]string
+	AgentInterface     []byte
+	MinPlatformVersion string
+}
+
+// Resume asks the pod's adapter to restore the session workspace from the
+// named §4.4 checkpoint and start the runtime (§4.7, §7.1) — the
+// replacement-pod counterpart of StartSession. The params re-deliver the
+// §15.4 manifest fields to the restored runtime. It returns the
+// uncompressed workspace bytes restored.
+func (c *Client) Resume(ctx context.Context, p ResumeParams) (int64, error) {
 	resp, err := c.rpc.Resume(ctx, &adapterv1.ResumeRequest{
-		SessionId:         &adapterv1.SessionId{Value: sessionID},
-		Runtime:           runtimeName,
-		CheckpointId:      checkpointID,
-		ExperimentContext: experimentContext,
-		TracingContext:    tracingContext,
+		SessionId:          &adapterv1.SessionId{Value: p.SessionID},
+		Runtime:            p.Runtime,
+		CheckpointId:       p.CheckpointID,
+		TaskId:             p.TaskID,
+		ExperimentContext:  p.ExperimentContext,
+		TracingContext:     p.TracingContext,
+		AgentInterface:     p.AgentInterface,
+		MinPlatformVersion: p.MinPlatformVersion,
 	})
 	if err != nil {
 		return 0, err

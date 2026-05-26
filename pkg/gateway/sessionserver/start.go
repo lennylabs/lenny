@@ -541,6 +541,29 @@ func experimentContextToProto(ec *sessionstore.ExperimentContext) *adapterv1.Exp
 // bound the setup phase. It returns nil when no runtime store is
 // wired, the runtime is unresolvable, or the runtime declares no
 // setupPolicy.
+// runtimeManifestFields resolves the runtime definition and returns the
+// §15.4 adapter-manifest fields sourced from it (§4.7): the agentInterface
+// descriptor JSON-encoded (nil when the runtime declares none, so the
+// manifest field is null) and minPlatformVersion. A resolve failure yields
+// zero values so a missing descriptor never blocks session start — the
+// gateway already enforces minPlatformVersion at registration, and
+// agentInterface is informational.
+func (s *Server) runtimeManifestFields(ctx context.Context, runtimeName string) (agentInterface []byte, minPlatformVersion string) {
+	if s.runtimes == nil {
+		return nil, ""
+	}
+	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeName)
+	if err != nil {
+		return nil, ""
+	}
+	if rt.AgentInterface != nil {
+		if b, err := json.Marshal(rt.AgentInterface); err == nil {
+			agentInterface = b
+		}
+	}
+	return agentInterface, rt.MinPlatformVersion
+}
+
 func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *adapterv1.SetupPolicy {
 	if s.runtimes == nil {
 		return nil
@@ -691,19 +714,22 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	if match.PoolWarmingUp {
 		return &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
 	}
+	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	if match.ExecutionMode == string(runtimestore.ExecutionModeConcurrent) {
 		result, err := s.podBinder.BindSlot(ctx, podsession.SlotBindRequest{
-			Pool:              match.Pool,
-			SessionID:         row.ID,
-			TenantID:          row.TenantID,
-			Runtime:           row.RuntimeRef,
-			Style:             podclaim.ConcurrencyStyle(match.ConcurrencyStyle),
-			MaxConcurrent:     match.MaxConcurrent,
-			Plan:              podsession.WorkspacePlanToProto(plan),
-			ExperimentContext: experimentContextToProto(row.ExperimentContext),
-			TracingContext:    row.TracingContext,
-			SetupPolicy:       s.runtimeSetupPolicy(ctx, row.RuntimeRef),
-			CredentialPools:   credPools,
+			Pool:               match.Pool,
+			SessionID:          row.ID,
+			TenantID:           row.TenantID,
+			Runtime:            row.RuntimeRef,
+			Style:              podclaim.ConcurrencyStyle(match.ConcurrencyStyle),
+			MaxConcurrent:      match.MaxConcurrent,
+			Plan:               podsession.WorkspacePlanToProto(plan),
+			ExperimentContext:  experimentContextToProto(row.ExperimentContext),
+			TracingContext:     row.TracingContext,
+			SetupPolicy:        s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+			CredentialPools:    credPools,
+			AgentInterface:     agentInterface,
+			MinPlatformVersion: minPlatformVersion,
 		})
 		if err != nil {
 			return err
@@ -713,15 +739,17 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		return nil
 	}
 	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
-		Pool:              match.Pool,
-		SessionID:         row.ID,
-		TenantID:          row.TenantID,
-		Runtime:           row.RuntimeRef,
-		Plan:              podsession.WorkspacePlanToProto(plan),
-		ExperimentContext: experimentContextToProto(row.ExperimentContext),
-		TracingContext:    row.TracingContext,
-		SetupPolicy:       s.runtimeSetupPolicy(ctx, row.RuntimeRef),
-		CredentialPools:   credPools,
+		Pool:               match.Pool,
+		SessionID:          row.ID,
+		TenantID:           row.TenantID,
+		Runtime:            row.RuntimeRef,
+		Plan:               podsession.WorkspacePlanToProto(plan),
+		ExperimentContext:  experimentContextToProto(row.ExperimentContext),
+		TracingContext:     row.TracingContext,
+		SetupPolicy:        s.runtimeSetupPolicy(ctx, row.RuntimeRef),
+		CredentialPools:    credPools,
+		AgentInterface:     agentInterface,
+		MinPlatformVersion: minPlatformVersion,
 	})
 	if err != nil {
 		return err
@@ -924,14 +952,17 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) erro
 	if err != nil {
 		return err
 	}
+	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	result, err := s.podBinder.Resume(ctx, podsession.ResumeRequest{
-		Pool:              match.Pool,
-		SessionID:         row.ID,
-		TenantID:          row.TenantID,
-		Runtime:           row.RuntimeRef,
-		CheckpointID:      row.WorkspaceSnapshot.Ref,
-		ExperimentContext: experimentContextToProto(row.ExperimentContext),
-		TracingContext:    row.TracingContext,
+		Pool:               match.Pool,
+		SessionID:          row.ID,
+		TenantID:           row.TenantID,
+		Runtime:            row.RuntimeRef,
+		CheckpointID:       row.WorkspaceSnapshot.Ref,
+		ExperimentContext:  experimentContextToProto(row.ExperimentContext),
+		TracingContext:     row.TracingContext,
+		AgentInterface:     agentInterface,
+		MinPlatformVersion: minPlatformVersion,
 	})
 	if err != nil {
 		return err
