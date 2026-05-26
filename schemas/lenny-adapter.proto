@@ -276,6 +276,18 @@ message SlotId {
 // receive a value > 1 they don't recognize follow the §15.4.1
 // forward-read rule: keep the field, log a degraded-fidelity event,
 // and proceed.
+//
+// setup_commands carry the §14 plan-declared setup commands. The
+// gateway re-emits the same setup_commands on the dedicated RunSetup
+// RPC (see RunSetupRequest below); the field's presence here is a
+// transport convenience so a downstream that handles the WorkspacePlan
+// (the §10.7 ref-resolver, audit log, partial-replay snapshot) sees the
+// plan as a single document. The adapter MUST NOT execute setup
+// commands from this field — it runs them only on the explicit
+// RunSetup RPC, which §5.2 line 415 specifies fires once per pod at
+// start (task-mode pods reuse the materialized workspace across tasks
+// and skip the second RunSetup; the first-task gate is owned by the
+// task-mode lifecycle, F-5.2.18). See also F-5.2.24.
 message WorkspacePlan {
   int32 schema_version = 1;
   repeated WorkspaceSource sources = 2;
@@ -354,7 +366,17 @@ message FinalizeWorkspaceResponse {}
 
 // RunSetupRequest carries the §14 WorkspacePlan setup commands the
 // adapter runs against the materialized workspace. setup_policy bounds
-// the aggregate setup phase per §5.1.
+// the aggregate setup phase per §5.1. The setup_commands here are the
+// authoritative execution payload — see WorkspacePlan.setup_commands
+// for why the same commands also ride on the plan document.
+//
+// Per §5.2 line 415 setup commands run once per pod at start, not per
+// task. The gateway issues RunSetup once on first session/task assignment;
+// on subsequent task-mode assignments the gateway skips the RunSetup RPC
+// entirely so the adapter's pod-level setup-completion state is
+// implicit (no second RunSetup means no second execution). The
+// task-mode lifecycle owner of this gate is the first-task pod
+// transition (F-5.2.18).
 message RunSetupRequest {
   SessionId session_id = 1;
   repeated SetupCommand setup_commands = 2;

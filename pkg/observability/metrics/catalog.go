@@ -60,7 +60,17 @@ var metricCatalog = []MetricSpec{
 	{"lenny_gateway_active_sessions", TypeGauge, "Active sessions known to a gateway replica"},
 	{"lenny_warmpool_idle_pods", TypeGauge, "Warm pods available in the idle state"},
 	{"lenny_warmpool_stale_pods", TypeGauge, "Warm pods idle beyond the pool maxIdleSeconds threshold"},
-	{"lenny_task_pod_scrub_failure_count", TypeGauge, "Task-mode per-pod scrub failure count"},
+	// lenny_task_pod_scrub_failure_count is a per-pod cumulative scrub
+	// failure count. Labeled by k8s_pod_name so each pod's series is
+	// independent. spec: §5.2 line 446 — task-mode scrub. Reset semantics:
+	// the series is monotonically incremented over the pod's lifetime,
+	// reset to zero on a fresh pod (a new k8s_pod_name produces a new
+	// series), and removed when the pod is deleted (the scrape just
+	// stops; Prometheus retains the historical series per its own
+	// retention). The emitter compares the running value against the
+	// pool's TaskPolicy.MaxScrubFailures (default 3) to drive pod
+	// retirement.
+	{"lenny_task_pod_scrub_failure_count", TypeGauge, "Task-mode per-pod scrub failure count (cumulative per k8s_pod_name; resets only on pod replacement)"},
 	{"lenny_task_pod_retirement_total", TypeCounter, "Task-mode pod retirements by reason"},
 	{"lenny_slot_failure_total", TypeCounter, "Concurrent-workspace slot failure count"},
 	{"lenny_slot_pod_replacement_total", TypeCounter, "Concurrent-workspace slot pod replacement count"},
