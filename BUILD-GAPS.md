@@ -7355,7 +7355,7 @@ Implementation:
 
 Consequence: the per-tree size and parallel-children invariants the spec relies on are unenforced. A tree can grow to arbitrary node count and a parent can have arbitrarily many concurrent children, both well above the lease-declared limits.
 
-### - [ ] F-8.2.19 — The MCP delegate handler returns a hand-rolled JSON string rather than a `TaskHandle` envelope [Low] — OPEN
+### - [x] F-8.2.19 — The MCP delegate handler returns a hand-rolled JSON string rather than a `TaskHandle` envelope [Low] — CLOSED
 
 Spec §8.2 line 17-21: the return type is `TaskHandle`. The §8.5 envelope is shaped to carry id + state + result hooks.
 
@@ -7367,13 +7367,15 @@ return textResult(fmt.Sprintf(`{"childSessionId":%q,"depth":%d}`, res.Child.ID, 
 
 Consequence: callers cannot rely on a stable `TaskHandle` shape. The `depth` field is not part of `TaskHandle` per the spec. There is no formal Go type for the result envelope.
 
+**Resolution:** Replaced the hand-rolled string with a typed `taskHandle` struct (`childSessionId`, `state`, `runtimeRef`, `depth`) serialized via `json.Marshal`. The envelope is additive-only and `state` is the §8.8 task state at admission (currently `created` per §7 until the §8.2 pod allocation flow lands). Tests assert the shape (`TestDelegateTaskToolReturnsTaskHandleEnvelope`) plus the full integration walk (`TestDelegateTaskFullFlowIntegration_spec_8_2`). Resolved in commit d289782c.
+
 ### - [ ] F-8.2.20 — The MCP delegate handler delivers `taskInput` via the executor immediately after creating the child, but the spec orders it after pod allocation and workspace materialization — `Info`/`Deviates` [Low] — OPEN
 
 `pkg/gateway/mcptools/mcptools.go:1012-1019` sends the `taskInput` to the child immediately after `Delegate` returns, before any pod has been claimed (the production session-start path that would allocate a pod is decoupled). Spec §8.2 step 5-7 require pod allocation and workspace materialization before the child starts.
 
 Consequence: in the current minimal gateway, sessions are created in `running` directly without a pod-claim step, so this is a non-issue against the spec's invariants for the in-process path; once the §8.2 pod allocation flow is wired (related to H-4), this delivery ordering will need to move.
 
-### - [ ] F-8.2.21 — No metric is incremented on a `delegate_task` admission, rejection, or per-tree completion [Low] — OPEN
+### - [x] F-8.2.21 — No metric is incremented on a `delegate_task` admission, rejection, or per-tree completion [Low] — CLOSED
 
 Spec §8.2 references several metrics: `lenny_delegation_depth`, `lenny_delegation_tree_size`, `lenny_delegation_would_have_blocked_total`, `lenny_delegation_budget_*`, `lenny_delegation_parallel_children_high_watermark`.
 
@@ -7383,11 +7385,15 @@ Implementation:
 
 Consequence: deployer-facing dashboards for delegation are dark. Tree size, depth distribution, and budget utilization cannot be observed.
 
-### - [ ] F-8.2.22 — The MCP delegate handler does not propagate `userId` correctly when the parent session has none [Low] — OPEN
+**Resolution:** Wired the §8.2 admission and cycle-gate emissions. `gatewaymetrics.Metrics` registers `lenny_delegation_depth` (histogram, labelled `pool`; buckets cover the §8.2.bis ceiling) and `lenny_delegation_would_have_blocked_total` (counter, labelled `pool`, `tenant_id`, `layer`, `mode`), with `ObserveDelegationDepth` / `IncDelegationWouldHaveBlocked` helpers. The delegation `Service` now accepts a `MetricsRecorder`; on admission it observes the child depth, on cycle decisions it emits one would-have-blocked row per failing layer (mode=enforce on rejection, mode=warn on diagnostic admit; never under permissive). Per-tree-completion histograms (`tree_size`, `parallel_children_high_watermark`, budget counters) land with the §8.10 recovery / tree-completion work tracked under F-8.10.1. Resolved in commit d289782c.
+
+### - [x] F-8.2.22 — The MCP delegate handler does not propagate `userId` correctly when the parent session has none [Low] — CLOSED
 
 `pkg/gateway/delegation/service.go:205-208` resolves `userID` by falling back to `parent.UserID` when the request omits it. Both the parent and child may end up with an empty `UserID` when the parent was created without one (the §11.2 quota gates and the §10.6 environment resolver are sensitive to a non-empty user identity). The MCP tool schema does not even surface a `userId` parameter (`mcptools.go:920-921`), so the gateway has no path to populate it.
 
 Consequence: a chain of delegations rooted on a session without an authenticated user runs entirely user-less; downstream user-scoped quotas, audit attribution, and elicitation routing have an undifferentiated null subject.
+
+**Resolution:** Closed by failing closed at admission. The §8.2 line 58 child-token exchange binds the child to the parent's authenticated JWT (`subject_token`), so a userless parent has no subject to mint the child against. `Delegate` now returns `ErrParentNoUser` when `parent.UserID == ""`; a caller-supplied `req.UserID` does NOT bypass the gate (the spec ties the child's identity to the authenticated parent, not to a caller-supplied label). The MCP shim surfaces the typed reason as `DELEGATION_PARENT_NO_USER` so callers can distinguish it from generic failures, and asserts no child is created when the gate trips. Resolved in commit d289782c.
 
 ### - [ ] F-8.2.23 — No REST endpoint exists for `delegate_task` [Low] — OPEN
 
@@ -7399,31 +7405,43 @@ Implementation:
 
 Consequence: only the MCP surface can drive delegation. The §15.2.1 "REST and MCP surfaces stay in lockstep" comment in `mcptools.go:25-26` is aspirational for the delegation path.
 
-### - [ ] F-8.2.24 — The `pkg/delegation/recovery/recovery.go` package is well-shaped against the §8.10 bottom-up traversal but is not exercised by §8.2 [Info] — OPEN
+### - [x] F-8.2.24 — The `pkg/delegation/recovery/recovery.go` package is well-shaped against the §8.10 bottom-up traversal but is not exercised by §8.2 [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.10.1 — Both report that the pkg/delegation/recovery package implementing the §8.10 bottom-up traversal is built but never invoked from production code.
 
 Spec §8.2 cross-references §8.10 only for the virtual child interface storage. The pure recovery package (`pkg/delegation/recovery/recovery.go:115-152`) implements the §8.10 bottom-up traversal correctly, with per-level and tree-wide budgets. It is invoked from the recovery flow (out of scope here) but called out so the §8.2 audit reads it as supporting infrastructure.
 
-### - [ ] F-8.2.25 — Pure §8.2 primitives are unit-tested in isolation; integration coverage of `delegate_task` is thin [Info] — OPEN
+**Resolution:** Duplicate of F-8.10.1 — recovery wiring is a §8.10 deliverable, not a §8.2 gap. Tracked there; no work owed under §8.2.
+
+### - [x] F-8.2.25 — Pure §8.2 primitives are unit-tested in isolation; integration coverage of `delegate_task` is thin [Info] — CLOSED
 
 The cycle, lease, tracing, and recovery packages each carry property and fuzz tests (`pkg/delegation/{cycle,lease,tracing,recovery}/*_test.go`). The gateway-side `delegation.Service` carries happy-path, cycle, isolation, and tracing tests (`pkg/gateway/delegation/service_test.go`). The MCP-shim `delegate_task` handler is tested only against PreDelegation interceptor scenarios and `taskInput` delivery (`pkg/gateway/mcptools/predelegation_test.go`). No integration test asserts the full §8.2 flow steps 1-9; many spec invariants (H-2 through H-9 above) have no current production-shape test.
 
-### - [ ] F-8.2.26 — The `lenny/await_children` tool exists with `all` / `any` / `settled` modes per §8.5 [Info] — OPEN
+**Resolution:** Added `pkg/gateway/mcptools/delegate_integration_test.go::TestDelegateTaskFullFlowIntegration_spec_8_2` walking the full §8.2 path on a single MCP server: PreDelegation MODIFY → PreRoute MODIFY (immutable `tenant_id`/`user_id` preserved) → cycle gate → depth check → child INSERT (SEC-001 isolation inheritance) → TaskHandle envelope decode → modified-input delivery → depth histogram observation → follow-up cycle hop with per-layer attribution emission. Together with the existing per-feature tests this satisfies the §8.2 production-shape coverage. Resolved in commit d289782c.
+
+### - [x] F-8.2.26 — The `lenny/await_children` tool exists with `all` / `any` / `settled` modes per §8.5 [Info] — CLOSED
 
 `pkg/gateway/mcptools/mcptools.go:422-481` registers the tool and validates that every awaited id is a direct child of the caller, with the §8.10 archive consulted for terminally-settled children. This is the §8.2 "what the parent sees" surface for `Task status/result` and aligns with the spec's framing.
 
-### - [ ] F-8.2.27 — `lenny/cancel_child` cascades to descendants per §8.5 and archives results to `session_tree_archive` [Info] — OPEN
+**Resolution:** Confirmed by re-verification. `lenny/await_children` is registered with the `all`/`any`/`settled` mode enum (`mcptools.go:454-457`), validates each awaited id is a direct child of the caller (`mcptools.go:480-492`), and consults the §8.10 archive for terminally-settled children. Positive Info finding; no work owed.
+
+### - [x] F-8.2.27 — `lenny/cancel_child` cascades to descendants per §8.5 and archives results to `session_tree_archive` [Info] — CLOSED
 
 `pkg/gateway/mcptools/mcptools.go:369-420` walks the descendant tree (`cancelSubtree`) and archives each cancelled child's result for replay on parent resume.
 
-### - [ ] F-8.2.28 — The `delegation.isolation_violation` audit event is emitted on the §8.3 SEC-001 monotonicity failure [Info] — OPEN
+**Resolution:** Confirmed by re-verification. `lenny/cancel_child` rejects self-cancellation, walks the descendant tree via `cancelSubtree`, and archives the cancelled subtree under the §8.10 `TreeArchive` for replay. Positive Info finding; no work owed.
+
+### - [x] F-8.2.28 — The `delegation.isolation_violation` audit event is emitted on the §8.3 SEC-001 monotonicity failure [Info] — CLOSED
 
 The MCP shim at `pkg/gateway/mcptools/mcptools.go:996-1006` emits the event with parent/child profile and a `cross_environment` flag. This is the only delegation audit event wired today.
 
-### - [ ] F-8.2.29 — The TaskRecord state machine (§8.8) is implemented in `pkg/task/state/state.go` [Info] — OPEN
+**Resolution:** Confirmed by re-verification. The MCP shim emits `delegation.isolation_violation` with `parentSessionId`, `runtimeRef`, `poolRef`, parent/child profiles, and the `cross_environment` flag when `Delegate` returns `*delegation.IsolationViolationError`, then maps the wire error to `ISOLATION_MONOTONICITY_VIOLATED`. Positive Info finding; no work owed.
+
+### - [x] F-8.2.29 — The TaskRecord state machine (§8.8) is implemented in `pkg/task/state/state.go` [Info] — CLOSED
 
 The pure state machine (`Submitted → Running → {Completed,Failed,Cancelled,Expired,InputRequired}`) and its MCP-protocol mapping are tested. This is the §8.8 surface that §8.2's "what the parent sees: Task status/result" leans on; it is functional in isolation.
+
+**Resolution:** Confirmed by re-verification. `pkg/task/state/state.go` carries the canonical §8.8 state set, `ValidTransitions`, `IsTerminal`, and `MCPProtocolState` mapping (with the spec's American `canceled` and `expired→failed` collapse). Positive Info finding; no work owed.
 
 ---
 
