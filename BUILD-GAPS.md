@@ -3989,7 +3989,7 @@ Consequence: the pod has no in-pod path for session transcripts, runtime state, 
 
 - **Resolution:** Closed by `a4fa7a64` (the `/sessions` + `/artifacts` volumes and per-container mounts) and `e9ff206d` (the `/dev/shm` 64Mi cap, F-6.1.14). All three paths the finding named are now in the pod spec, with the §6.4 medium split (tmpfs `/sessions`+`/tmp`, disk `/workspace`+`/artifacts`). Same `/sessions`+`/artifacts` fix as F-6.4.1.
 
-### - [ ] F-6.1.3 — No `sizeLimit` on tmpfs / emptyDir volumes; not accounted in resource requests [High] — OPEN
+### - [ ] F-6.1.3 — No `sizeLimit` on tmpfs / emptyDir volumes; not accounted in resource requests [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-6.4.6 — Both report no sizeLimit set on the tmpfs/emptyDir volumes in podspec.go:358-368 against the §6.4 256Mi recommendation.
 
@@ -4006,7 +4006,9 @@ No container declares `Resources.Requests` or `Resources.Limits` either; greps f
 
 Consequence: the runtime container can fill the tmpfs without bound until the pod hits the cgroup memory limit (which itself is unset) and the kernel OOM-kills a container. The §6.4-promised "predictable OOM boundaries" do not exist. A multi-tenant cluster has no per-pod memory/CPU isolation from the Lenny pod spec — only whatever the namespace LimitRange or admission webhook injects out-of-band.
 
-### - [ ] F-6.1.4 — Projected service-account token mount is not produced by the pod builder [High] — OPEN
+- **DEFERRED:** The `sizeLimit` half is already closed — `/sessions` and `/tmp` carry the §6.4 line-413 256Mi cap (F-6.4.6) and `/dev/shm` the 64Mi cap (F-6.1.14). The remaining half (per-container `Resources.Requests`/`Limits` derived from `SandboxTemplate.spec.resourceClass`) is deferred: §5.2/§6.4 name the `small`/`medium`/`large` classes and require tmpfs accounting in memory requests, but the spec pins no concrete CPU/memory quantity per class anywhere in the repo. Wiring it needs an operator-tunable resource-class→quantity registry (flag/config + documented defaults per `feedback_fixes_must_align_with_spec`), which is its own batch rather than an inline default.
+
+### - [x] F-6.1.4 — Projected service-account token mount is not produced by the pod builder [High] — CLOSED
 
 Spec §6.1 line 14: "Projected service account token mounted (audience: deployment-specific, see [Section 10.3](10_gateway-internals.md#103-mtls-pki))".
 
@@ -4015,6 +4017,8 @@ Spec §6.1 line 14: "Projected service account token mounted (audience: deployme
 Tests at `/Users/joan/projects/lenny/tests/tier6_e2e_cloud/behavior_test.go` reference projected-token VolumeMount inspection but only on the gateway pod (the EKS IRSA injection), not on agent pods.
 
 Consequence: the agent pod has no audience-bound JWT to authenticate to the gateway over mTLS as described in §10.3. Whatever cross-pod authentication the spec assumes is not in place. If a deployer relies on the default service-account token (`kubernetes.io/service-account-token`) the audience is the cluster default, not deployment-specific, and the token is not bound to the pod's SPIFFE identity.
+
+- **Resolution:** Closed by `b04e6923`. `podspec.injectSATokenVolume` adds a projected `ServiceAccountToken` volume (audience = the §10.3 deployment-specific `global.saTokenAudience`, `expirationSeconds: 900`, path `token`) mounted read-only on the gateway-facing container (adapter in the sidecar model, runtime in the embedded model); `basePod` sets `AutomountServiceAccountToken: false` so the kubelet's default cluster-audience token is never mounted, and stamps the zero-RBAC `ServiceAccountName` when configured. The audience and SA name thread from new `cmd/lenny-controller` flags (`--sa-token-audience`, `--agent-service-account`) through `sandbox.Reconciler`. An unset audience omits the projected volume rather than mounting a wrong-audience token.
 
 ### - [ ] F-6.1.5 — No `lenny_warmpool_sdk_demotions_total` / `lenny_warmpool_sdk_connect_timeout_total` emitters [High] — OPEN
 
@@ -4049,7 +4053,7 @@ Spec §6.1 line 67 (paragraph "Adapter SIGTERM behavior during `sdk_connecting`"
 
 Consequence: a future SDK-warm path would leak the SDK process or its credentials on SIGTERM. Moot today because of H-1; flagged because the eviction path needs to land alongside SDK-warm enablement.
 
-### - [ ] F-6.1.8 — Pod has no `lenny.dev/state` or `lenny.dev/runtime` labels [Medium] — OPEN
+### - [x] F-6.1.8 — Pod has no `lenny.dev/state` or `lenny.dev/runtime` labels [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.2.9, F-6.2.11 — All three report the coarse pod labels are not stamped; F-6.1.8 covers both state and runtime, while F-6.2.9 and F-6.2.11 each isolate one of them.
 
@@ -4069,7 +4073,9 @@ Implementation:
 
 Consequence: NetworkPolicies and monitoring selectors that key on `lenny.dev/state in (idle, active)` or `lenny.dev/runtime=…` will silently match nothing. The §6.1 "Marked 'idle and claimable' via readiness gate" promise has no observable signal on the pod object beyond the Sandbox `.status.phase` (which is on the CRD, not the pod). A `kubectl get pods -l lenny.dev/state=idle` returns empty regardless of pod state.
 
-### - [ ] F-6.1.9 — No readinessGate on agent pods [Medium] — OPEN
+- **Resolution:** Closed by `b04e6923`. `lenny.dev/state` is now the §6.2 line-309 coarse value set: `state.CoarseState` maps the full §6.2 phase to `idle`/`active`/`draining` (idle→idle, draining→draining, every claimed/serving phase→active), and the pre-ready (warming, sdk_connecting) and terminal phases carry no label. The Sandbox reconciler stamps this on create and maintains it (set or delete) on every transition. `lenny.dev/runtime` (the immutable runtime name from `Sandbox.spec.runtimeRef`) is stamped at pod creation. The §4.6.1 PDB and per-pod cert-drain selectors are unaffected because the coarse `idle` value equals `string(state.Idle)`. The §6.1 line-197 concurrent-mode 5s active→idle debounce stays with the unbuilt concurrent path (H-3); session/task pods transition labels immediately per §6.1 line 197.
+
+### - [x] F-6.1.9 — No readinessGate on agent pods [Medium] — CLOSED
 
 Spec §6.1 line 18: "Marked 'idle and claimable' via readiness gate".
 
@@ -4078,6 +4084,8 @@ Spec §6.1 line 18: "Marked 'idle and claimable' via readiness gate".
 Pod readiness for the WarmPoolController's `warming → idle` transition is computed from the container `PodReady` Kubernetes condition (`pkg/controller/sandbox/controller.go:156–164` — `podReady` helper), not from a Lenny-owned readiness gate. The Sandbox CRD `.status.phase` is the only Lenny-side claimability signal.
 
 Consequence: another controller (`kubelet`, a service mesh, a CNI) cannot delay pod readiness by failing to flip a Lenny gate; the pod is "claimable" the moment Kubernetes reports `PodReady`. The §6.1 readiness-gate-mediated claimability handoff between WarmPoolController and gateway is downgraded to a status-subresource read.
+
+- **Resolution:** Closed by `b04e6923`. `basePod` declares the `lenny.dev/sandbox-ready` readiness gate (`podspec.ReadinessGateSandboxReady`), so the kubelet holds `Pod.Ready` False — keeping the pod un-claimable and the `warming → idle` transition (which keys off `Pod.Ready`) from firing — until the controller asserts the pod is warm. The Sandbox reconciler's `syncReadinessGate` flips the gate condition to True once it observes `ContainersReady: True`, the Lenny-controlled claimability handoff. v1 flips as soon as containers are ready; the gate's value is that claimability is a controller-owned signal rather than implied by container readiness alone.
 
 ### - [x] F-6.1.10 — `lenny.dev/host-schedulable` Node-driven label is unimplemented on the WarmPoolController [Medium] — CLOSED
 
@@ -4376,13 +4384,14 @@ Implementation tree audited:
 - **Impl:** `pkg/sandbox/state/state.go:51–53` defines `Terminal()` as `{Failed, Cancelled, Expired, Terminated}` — `Completed` is omitted. `IsTerminal(Completed) == false`. The state test (`pkg/sandbox/state/state_test.go:75–98`) doesn't cover Completed.
 - **Effect:** Code that loops on `IsTerminal` (none yet in the WPC reconciler but the helper is part of the public state API) treats `Completed` as resumable, which contradicts the spec. Latent regression risk for downstream callers.
 
-### - [ ] F-6.2.9 — 2-09 `lenny.dev/state` coarse label not maintained [Medium] — OPEN
+### - [x] F-6.2.9 — 2-09 `lenny.dev/state` coarse label not maintained [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.1.8, F-6.2.11 — All three report the coarse pod labels are not stamped; F-6.1.8 covers both state and runtime, while F-6.2.9 and F-6.2.11 each isolate one of them.
 
 - **Spec:** §6.2 lines 305–313 mandate the `lenny.dev/state` pod label with values `idle`, `active`, `draining`, surfaced to selectors, monitoring, and NetworkPolicy. §6.1 (concurrent-mode pod lifecycle, line 197) and the §6.2 PDB references depend on this label.
 - **Impl:** No code writes the `lenny.dev/state` label. The Sandbox reconciler creates pods with only the labels propagated from the Sandbox object (`pkg/controller/sandbox/podspec/podspec.go:108–110`, `pkg/controller/sandbox/controller.go:177–186`), and the WarmPoolController only stamps `lenny.dev/pool` and `lenny.dev/managed` (`pkg/controller/warmpool/controller.go:76–79, 254–257`). There is no reconciler-driven label maintenance for state.
 - **Effect:** Any PDB or NetworkPolicy selector that depends on `lenny.dev/state` matches zero pods, exactly the K8S-002 regression that earlier review cycles flagged on the spec side. The 5s `active → idle` stabilization delay (§6.1 line 197) is also moot.
+- **Resolution:** Closed by F-6.1.8 (commit `b04e6923`). The label now carries the coarse §6.2 line-309 value set via `state.CoarseState`, maintained by the Sandbox reconciler on every transition. The §6.1 line-197 5s active→idle debounce is concurrent-mode (H-3, unbuilt); session/task pods transition immediately per the same spec line.
 
 ### - [x] F-6.2.10 — 2-10 `lenny.dev/host-schedulable` label not maintained by WarmPoolController [Medium] — CLOSED
 
@@ -4393,13 +4402,14 @@ Implementation tree audited:
 - **Effect:** With the label perpetually absent, §6.2's fail-safe interpretation (line 181: "absent, which is treated as unschedulable") would force every `task_cleanup` to drain even on healthy nodes if/when H-6.2-06 is implemented. Today the path is unreachable; gap will manifest as the rest of §6.2 is implemented.
 - **Resolution:** Closed by F-4.6.7. `warmpool.PodReconciler` writes `lenny.dev/host-schedulable` (`"true"`/`"false"`) on every managed pod from its Node watch, with cordon/uncordon re-labeling in a single reconcile cycle. Resolved in commit 1f2bb711.
 
-### - [ ] F-6.2.11 — 2-11 `lenny.dev/runtime` pod label not stamped [Medium] — OPEN
+### - [x] F-6.2.11 — 2-11 `lenny.dev/runtime` pod label not stamped [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.1.8, F-6.2.9 — All three report the coarse pod labels are not stamped; F-6.1.8 covers both state and runtime, while F-6.2.9 and F-6.2.11 each isolate one of them.
 
 - **Spec:** §6.2 lines 305–312 list `lenny.dev/runtime` (runtime name) as one of the three coarse labels.
 - **Impl:** Not stamped (grep yields no writes). Only `lenny.dev/pool` and `lenny.dev/managed` are set.
 - **Effect:** Operators cannot select pods by runtime; aggregation queries that the spec encourages can't be built.
+- **Resolution:** Closed by F-6.1.8 (commit `b04e6923`). The Sandbox reconciler stamps `lenny.dev/runtime` (= `Sandbox.spec.runtimeRef`) on the pod at creation; the label is immutable for the pod's lifetime.
 
 ### - [ ] F-6.2.12 — 2-12 Sandbox `status.conditions` field declared but never written [Medium] — OPEN
 - **Spec:** §6.2 line 305 explicitly references `Sandbox.status.conditions` as part of the authoritative state. §4.6.1's lifecycle manager is expected to record condition history (orphan claim, scrub warning, demotion, etc.).
