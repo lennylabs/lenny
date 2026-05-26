@@ -4566,7 +4566,7 @@ Classification: *Implemented*, *Partial*, *Missing*, *Deviates*, or *Info*. Seve
 
 Summary: §6.3 establishes (a) the P95 pod-warm session-start SLO (`< 2s` runc / `< 5s` gVisor), (b) the P95 TTFT SLO (`< 10s`), (c) the per-phase latency budget table spanning pod claim → first-token, and (d) a Tier 2 promotion gate that blocks promotion until a Phase 2 startup benchmark harness produces validated P50/P95/P99 measurements across runc, gVisor, and Kata, per-hot-path-phase, using the metric `lenny_session_startup_phase_duration_seconds{phase, runtime_class}`. **The per-phase histogram named by the spec does not exist** anywhere in the catalog, code, charts, or docs — neither emitted, declared, nor referenced (except inside spec source). The two end-to-end metrics that *are* cataloged (`lenny_session_startup_duration_seconds`, `lenny_session_time_to_first_token_seconds`) are declared but have zero production emitters; their alert rules reference recording-rule sentinels (`*_slow_ratio`) that are likewise undefined. The `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` operator guidance from §6.3 has no recording rule and no SLO/alert. The benchmark harness shipped as `tests/tier7_load/scenarios/startup_latency` measures only the echo adapter's heartbeat round-trip on the local Go process (median 2 ms, p99 3 ms recorded against an `echo` binary) — it does not measure any of the spec's six hot-path phases, does not split by runtime class, does not compare pod-warm vs SDK-warm, and does not produce P95 (only p50/p90/p99). The Tier 2 promotion gate's three preconditions are all unsatisfied; no Phase 2 exit ADR exists in `docs/adr/`.
 
-### - [ ] F-6.3.1 — `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` is unimplemented across catalog, code, alerts, and docs [High] — OPEN
+### - [ ] F-6.3.1 — `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` is unimplemented across catalog, code, alerts, and docs [High] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-6.3.7 — Both concern session-startup phase metrics, but one is the unimplemented startup_phase_duration metric and the other is a phase-set mismatch in the existing creation_duration metric.
 
@@ -4583,7 +4583,9 @@ The metric name appears nowhere outside the spec source.
 
 Consequence: the Tier 2 promotion gate's instrumentation precondition (condition (b)) cannot be satisfied — there is no metric series to attach to a benchmark run ID. Per-phase latency attribution (workspace materialization vs setup commands vs agent session start, etc.) is unobservable. Operators chasing a slow startup cannot localize the cost to a specific phase from metrics alone. The §6.3 promotion-gate language stating that the latency budget table "MUST NOT be used as an SLO in any capacity agreement or customer-facing documentation" until the gate is cleared is operative — the gate is not clearable from current instrumentation.
 
-### - [ ] F-6.3.2 — `lenny_session_startup_duration_seconds` (the end-to-end SLO metric) has no production emitter [High] — OPEN
+- **Resolution:** `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` is now registered in `gatewaymetrics` and observed for each v1-instrumented hot-path phase (`pod_claim`, `workspace_materialization`, `setup_commands`, `credential_assignment`, `agent_session_start`). `podsession.Bind` records per-phase wall-clock on its `BindResult.Timings`; `sessionserver.startOnPod` maps the pool's isolation profile to the runtime class and emits. The metric is a §6.3 surface, intentionally absent from the §16.1 catalog (the catalog-conformance test forbids non-§16.1 names). The `first_prompt_dispatch`/TTFT phase needs runtime streaming feedback and stays tracked to F-6.3.3. Commit 0ce97870.
+
+### - [ ] F-6.3.2 — `lenny_session_startup_duration_seconds` (the end-to-end SLO metric) has no production emitter [High] — CLOSED
 
 Spec §6.3 line 348: "Startup latency SLO target: P95 pod-warm session start (pod claim through agent session ready) < 2s for runc, < 5s for gVisor … See [Section 16.5] for the SLO definition and [Section 16.1] for the `lenny_session_startup_duration_seconds` metric boundary."
 
@@ -4598,6 +4600,8 @@ The metric is declared in the §16.1 catalog and referenced by burn-rate alerts,
 
 Consequence: the `StartupLatencyBurnRate` and `StartupLatencyGVisorBurnRate` alerts (`pkg/alerting/rules/rules.go:1541–1552`) reference a recording rule that is not shipped. Prometheus evaluates the alert PromQL against a missing series and the rule never fires regardless of actual latency. The §6.3 SLO ("P95 pod-warm session start < 2s for runc, < 5s for gVisor") cannot be measured from running telemetry; the SLO is enforced only at the alert-routing layer, but the underlying data is absent. A 60-second p95 startup would not trigger an alert.
 
+- **Resolution:** `lenny_session_startup_duration_seconds{pool, runtime_class, isolation_profile}` is now emitted on every successful pod-warm start (`sessionserver.recordStartupMetrics`), measuring pod claim + credential assignment + agent session start, excluding workspace materialization and deployer setup commands per the §6.3 line 348 boundary. The two burn-rate alerts no longer reference the never-shipped `lenny_session_startup_duration_slow_ratio` recording rule; the slow-ratio is computed inline from the histogram's `le="2"` (runc) and `le="5"` (gVisor) buckets against the 5% error budget, and `charts/lenny/files/alerting-rules.yaml` is regenerated from the catalog. A unit test asserts the buckets carry exactly those `le` labels. Commit 0ce97870.
+
 ### - [ ] F-6.3.3 — `lenny_session_time_to_first_token_seconds` (TTFT SLO metric) has no production emitter and the same missing recording-rule chain [High] — OPEN
 
 Spec §6.3 line 356: "The TTFT SLO is P95 < 10s (from session start request to first streaming event…)." Spec §16.5 carries the alert `TTFTBurnRate`.
@@ -4609,7 +4613,7 @@ Spec §6.3 line 356: "The TTFT SLO is P95 < 10s (from session start request to f
 
 Consequence: the §6.3 TTFT SLO is undetectable from telemetry. The per-phase budget table allocates `≤ 1s` of platform overhead to "First prompt dispatch + first token" — without TTFT instrumentation, this allocation cannot be validated, and operators cannot tell whether breaches originate in platform overhead vs model behavior.
 
-### - [ ] F-6.3.4 — Per-phase budgets in the §6.3 table are unmeasurable [High] — OPEN
+### - [ ] F-6.3.4 — Per-phase budgets in the §6.3 table are unmeasurable [High] — CLOSED
 
 Spec §6.3 line 358–366 (per-phase latency budget table):
 
@@ -4632,6 +4636,8 @@ Each of these phases would need an independent histogram observation to verify t
 - **First prompt dispatch + first token (≤ 1s platform overhead)**: H-3 covers the TTFT metric absence; no separate "platform overhead" sub-histogram exists to factor out model TTFP.
 
 Consequence: the spec explicitly states the per-phase table is "indicative planning targets, not hard requirements" and that "all phases must be validated by the Phase 2 startup benchmark harness before targets are promoted to SLOs" (line 368). Without per-phase instrumentation, none of these targets can be validated by the benchmark harness, and the Tier 2 promotion gate (line 370) cannot transition the table from indicative to SLO.
+
+- **Resolution:** The platform-controlled hot-path phases observable in v1 (`pod_claim`, `workspace_materialization`, `credential_assignment`, `agent_session_start`) plus the deployer `setup_commands` phase now each have an independent histogram via `lenny_session_startup_phase_duration_seconds` (F-6.3.1), so the §6.3 per-phase latency budget is measurable from telemetry. The `first prompt dispatch + first token` budget remains tracked to F-6.3.3 (TTFT), which requires runtime streaming feedback the start path does not observe. Commit 0ce97870.
 
 ### - [ ] F-6.3.5 — Startup benchmark harness does not measure any §6.3 phase, runtime class, or pod-warm vs SDK-warm split [High] — OPEN
 
@@ -4667,7 +4673,7 @@ Both inputs to the ratio are catalog-only.
 
 Consequence: §6.3's "verify that SDK-warm is delivering net benefit" workflow has no observable signal. Even if SDK-warm were enabled (it is not — see `6.1.md` H-1), an operator following the spec's instruction cannot construct the ratio from Prometheus because neither counter has a series. The "demotion rate threshold and circuit-breaker" cross-reference points to §6.1 guidance that itself depends on the same unemitted counter.
 
-### - [ ] F-6.3.7 — `lenny_session_creation_duration_seconds{phase}` covers a different phase set than §6.3 requires; no normative mapping is provided [Medium] — OPEN
+### - [ ] F-6.3.7 — `lenny_session_creation_duration_seconds{phase}` covers a different phase set than §6.3 requires; no normative mapping is provided [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-6.3.1 — Both concern session-startup phase metrics, but one is the unimplemented startup_phase_duration metric and the other is a phase-set mismatch in the existing creation_duration metric.
 
@@ -4679,6 +4685,8 @@ The overlap is partial: `pod_claim` and `credential_assign` map across. `auth`, 
 - The chart's OpenSLO export (`spec/16_observability.md:734`) references `lenny_session_creation_duration_seconds` as the SLO source for `SessionCreationLatencyBurnRate`. That alert targets a P99 < 500ms SLO for the `POST /v1/sessions` handler, which is the gateway-handler envelope — not the §6.3 hot-path session-start envelope (which extends past pod assignment into workspace materialization, setup commands, etc.).
 
 Consequence: even if `lenny_session_creation_duration_seconds` were treated as the §6.3 per-phase metric, four of the six §6.3 phases would still be uninstrumented. The OpenSLO export and the §16.5 burn-rate alert key off the wrong envelope for §6.3 purposes; a clean S2-promotion benchmark would still need the §6.3-named metric (H-1) or a normative §16.1 cross-walk that extends `lenny_session_creation_duration_seconds`'s phase enum and changes its labeled boundary.
+
+- **Resolution:** The §6.3 hot-path phase set now has its own metric, `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` (F-6.3.1), carrying exactly the §6.3 phases with the `runtime_class` dimension. `lenny_session_creation_duration_seconds` remains the §16.1 `POST /v1/sessions` handler-envelope metric with its own phase set. The two metrics are distinct by design — handler envelope versus pod-warm hot path — so no cross-walk of the handler metric's phase enum is required. Commit 0ce97870.
 
 ### - [ ] F-6.3.8 — No measurement of "SDK teardown penalty (typically 1–3s)" on demotion path [Medium] — OPEN
 
@@ -4733,13 +4741,15 @@ The platform has no histogram or alert that distinguishes deployer-supplied setu
 
 Consequence: the gVisor warning in §6.3 ("gVisor deployments with >1s setup commands will exceed the 10s TTFT SLO") has no early-warning signal; the SLO breach would be noticed only after TTFT P95 already crosses 10s — and even then, TTFT itself is uninstrumented (H-3).
 
-### - [ ] F-6.3.13 — `startup_latency` baseline JSON encodes a temp-folder path that does not exist on any other developer's machine [Low] — OPEN
+### - [ ] F-6.3.13 — `startup_latency` baseline JSON encodes a temp-folder path that does not exist on any other developer's machine [Low] — CLOSED
 
 `tests/tier7_load/baselines/startup_latency.json:4`: `"binary": "/var/folders/q_/df6ygvl10fj4g162_ld1tkvw0000gn/T/echo-load-3068842834/echo"`.
 
 The `binary` and `binary_rel` fields are recorded with absolute and relative paths into a private `/var/folders/q_/...` macOS temp directory specific to the recording machine. The baseline cannot be replayed against the same binary on another host; the path is also leaked into version control. The scenario rebuilds the echo binary on each invocation (line 64–73 of `main.go`), so the `binary` field is recording-host trivia, not a reproducibility input.
 
 Consequence: minor information-leak in the baseline file; the file is fine as a numeric reference but the `binary` and `binary_rel` paths should not be persisted into git.
+
+- **Resolution:** The `Binary`/`BinaryRel` fields are removed from the harness `Result` struct and from `tests/tier7b_load_kind/baselines/startup_latency.json`. The harness rebuilds the echo binary into a fresh temp directory on every run, so the absolute path was recording-host trivia rather than a reproducibility input; it is no longer persisted. Commit 0ce97870.
 
 ### - [ ] F-6.3.14 — The `startup_latency` baseline records 20 iterations and labels p99 — statistically thin for tail-latency claims [Low] — OPEN
 
@@ -4749,7 +4759,7 @@ Consequence: minor information-leak in the baseline file; the file is fine as a 
 
 Consequence: even within its limited scope, the baseline's tail metric is not a defensible reference. Not a blocker for the much larger H-1/H-5 gaps; flagged for completeness.
 
-### - [ ] F-6.3.15 — Per-phase `runtime_class` label is also absent from `lenny_warmpool_pod_startup_duration_seconds` per §16.1 [Low] — OPEN
+### - [ ] F-6.3.15 — Per-phase `runtime_class` label is also absent from `lenny_warmpool_pod_startup_duration_seconds` per §16.1 [Low] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-6.3.18 — Both concern startup-latency metric labels, but one is a missing runtime_class label on the warmpool metric and the other is a cardinality concern about carrying both isolation_profile and runtime_class.
 
@@ -4759,11 +4769,15 @@ Consequence: even within its limited scope, the baseline's tail metric is not a 
 
 Consequence: the runbook's diagnosis Step 1 ("Per-pool distribution") returns an empty group on `runtime_class`. Operators following the runbook will see no breakdown by runc/gVisor/Kata.
 
-### - [ ] F-6.3.16 — `docs/runbooks/slo-startup-latency.md` Step 2 references an undefined metric [Low] — OPEN
+- **Resolution:** §16.1 line 117 declares `lenny_warmpool_pod_startup_duration_seconds` labeled by `pool` and `isolation_profile`, not `runtime_class`; runbook Step 1 is corrected to `groupBy=pool,isolation_profile`. Adding a `runtime_class` label to the metric would contradict §16.1 (a spec change, out of scope per rule B) — the runbook query, not the metric, carried the mismatch. Commit 0ce97870.
+
+### - [ ] F-6.3.16 — `docs/runbooks/slo-startup-latency.md` Step 2 references an undefined metric [Low] — CLOSED
 
 Already noted in H-1: `docs/runbooks/slo-startup-latency.md:54` references `lenny_warmpool_pod_startup_phase_duration_seconds`, a metric name not present in the catalog, not in production code, and not referenced by §16.1 or §6.3. Phases enumerated (`schedule`, `image_pull`, `sandbox_init`, `setup_command`, `ready_check`) suggest the runbook is conflating pre-creation lifecycle phases with hot-path session-start phases.
 
 Consequence: the diagnosis runbook for the §6.3 SLO has a step that returns no data and uses a phase taxonomy unrelated to §6.3.
+
+- **Resolution:** Runbook Step 2 now queries `lenny_session_startup_phase_duration_seconds` (F-6.3.1) grouped by `phase,runtime_class` with the §6.3 hot-path phases (`pod_claim`, `workspace_materialization`, `setup_commands`, `credential_assignment`, `agent_session_start`), replacing the undefined `lenny_warmpool_pod_startup_phase_duration_seconds` and its unrelated pre-creation taxonomy. Commit 0ce97870.
 
 ### - [ ] F-6.3.17 — The `pod_claim_latency` k6 scenario records a baseline already over the §6.3 100ms claim-and-routing budget [Info] — OPEN
 
@@ -4773,7 +4787,7 @@ Consequence: the diagnosis runbook for the §6.3 SLO has a step that returns no 
 
 This is a meta-observation rather than a code defect: the harness side is producing a real measurement that should fail the §6.3 budget check, but no part of the platform is checking the budget. Once H-2 and H-4 are addressed, the alert chain would fire on this baseline.
 
-### - [ ] F-6.3.18 — The `lenny_session_startup_duration_seconds` metric labels in §16.1 include `isolation_profile` and `runtime_class` as separate dimensions — duplicate-ish [Info] — OPEN
+### - [ ] F-6.3.18 — The `lenny_session_startup_duration_seconds` metric labels in §16.1 include `isolation_profile` and `runtime_class` as separate dimensions — duplicate-ish [Info] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-6.3.15 — Both concern startup-latency metric labels, but one is a missing runtime_class label on the warmpool metric and the other is a cardinality concern about carrying both isolation_profile and runtime_class.
 
@@ -4782,6 +4796,8 @@ This is a meta-observation rather than a code defect: the harness side is produc
 Carrying both labels on the same histogram bloats the series cardinality by a constant factor without adding observability. §6.3 quotes `{phase, runtime_class}` as the label dimension for the per-phase metric (H-1); for the end-to-end metric, the spec text doesn't require both labels.
 
 Consequence: when this metric eventually gets emitted (H-2), the cardinality contract should pick one of the two dimensions.
+
+- **Resolution:** Closed as by-design. §16.1 line 14 explicitly declares `lenny_session_startup_duration_seconds` labeled by `pool`, `runtime_class`, and `isolation_profile`; the emitter shipped in F-6.3.2 carries all three exactly as the spec mandates. Dropping a label to reduce cardinality would require a §16.1 change, which is out of scope (the spec is authoritative per rule B). No code defect. Commit 0ce97870.
 
 ### - [ ] F-6.3.19 — The §6.3 paragraph "Estimated latency savings (targets, not benchmarks — to be validated by startup benchmark harness, see Phase 2)" is explicit about its provisional status [Info] — OPEN
 
