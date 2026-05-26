@@ -20,6 +20,7 @@ package poolscaling
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -88,6 +89,14 @@ type PoolConfig struct {
 	// standard base pool. It is 0 when no variants are active and feeds
 	// the §4.6.2 base-pool adjustment (1 - Σ variant_weights).
 	SumActiveVariantWeights float64
+
+	// Generation is the §4.6.2 pool_config_generation the admin API
+	// bumped on the last write to this pool. The reconciler stamps it
+	// onto the SandboxTemplate and SandboxWarmPool CRDs as the
+	// `lenny.dev/config-generation` annotation so the gateway-side
+	// PoolConfigDrift check can compare Postgres- and CRD-side
+	// generations. spec: spec/04_system-components.md lines 557-560.
+	Generation int64
 }
 
 // Demand is the observed claim-rate signal for one pool — the input
@@ -180,6 +189,11 @@ type Reconciler struct {
 	// It is initialized on the first Sync to honor a Reconciler
 	// constructed with the zero value.
 	retryState *admissionRetryState
+
+	// lagMeter publishes the §4.6.2 line 557
+	// lenny_pool_config_reconciliation_lag_seconds gauge. It is
+	// lazily constructed on the first Sync.
+	lagMeter *reconciliationLagMeter
 }
 
 // StuckPools returns the list of <namespace>/<name> pool keys with at
@@ -257,13 +271,21 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 	if r.retryState == nil {
 		r.retryState = newAdmissionRetryState(r.AdmissionDeniedRetryCeiling)
 	}
+	if r.lagMeter == nil {
+		r.lagMeter = newReconciliationLagMeter(r.Now)
+	}
 	configs, err := r.Source.ListPoolConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("list pool configs: %w", err)
 	}
 	now := r.now()
+	// spec: §4.6.2 line 557 — refresh the lag gauge for every tracked
+	// pool so it advances even on a quiet tick.
+	r.lagMeter.Sample()
+	desired := make(map[string]struct{}, len(configs))
 	for i := range configs {
 		cfg := configs[i]
+		desired[cfg.Name] = struct{}{}
 		// syncTemplate and syncWarmPool both call into
 		// controllerutil.CreateOrUpdate; an admission webhook rejection
 		// surfaces as a Forbidden / Invalid / BadRequest status error.
@@ -273,13 +295,22 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 		// pass or blocks another pool. A non-admission failure
 		// (transport, Postgres, internal) aborts the pass so the next
 		// tick retries, matching the SSA conflict retry policy.
-		if err := r.syncTuple(ctx, cfg, crdSandboxTmpl, now, r.syncTemplate); err != nil {
-			return err
+		tmplErr := r.syncTuple(ctx, cfg, crdSandboxTmpl, now, r.syncTemplate)
+		if tmplErr != nil {
+			return tmplErr
 		}
-		if err := r.syncTuple(ctx, cfg, crdSandboxPool, now, r.syncWarmPool); err != nil {
-			return err
+		warmErr := r.syncTuple(ctx, cfg, crdSandboxPool, now, r.syncWarmPool)
+		if warmErr != nil {
+			return warmErr
 		}
+		// spec: §4.6.2 line 557 — both tuples synced cleanly, reset the
+		// lag gauge to zero.
+		r.lagMeter.MarkSynced(cfg.Name)
 	}
+	// Pools removed from the Postgres source no longer participate in
+	// the drift check; clear their series so the §16.5 alert
+	// auto-resolves.
+	r.lagMeter.forgetNotIn(desired)
 	return nil
 }
 
@@ -322,9 +353,33 @@ func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig) error {
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, tmpl, func() error {
 		tmpl.Spec = spec
+		// spec: §4.6.2 line 558 — stamp pool_config_generation onto the
+		// CRD so the gateway-side PoolConfigDrift check can compare it
+		// to Postgres.
+		setConfigGenerationAnnotation(&tmpl.ObjectMeta, cfg.Generation)
 		return nil
 	})
 	return err
+}
+
+// configGenerationAnnotation is the §4.6.2 line 558 annotation key the
+// PoolScalingController stamps on every Sandbox CRD it reconciles. The
+// gateway-side PoolConfigDrift check reads it and compares to the
+// Postgres pool_config_generation; a mismatch over the drift window
+// fires the PoolConfigDrift alert.
+const configGenerationAnnotation = "lenny.dev/config-generation"
+
+// setConfigGenerationAnnotation writes the §4.6.2 pool_config_generation
+// onto the resource. A zero generation leaves the annotation untouched
+// (the spec implies a real generation count starts at 1).
+func setConfigGenerationAnnotation(meta *metav1.ObjectMeta, generation int64) {
+	if generation <= 0 {
+		return
+	}
+	if meta.Annotations == nil {
+		meta.Annotations = map[string]string{}
+	}
+	meta.Annotations[configGenerationAnnotation] = strconv.FormatInt(generation, 10)
 }
 
 // topology spread keys the §5.2 defaults distribute pods over. The
@@ -402,6 +457,10 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
 		} else {
 			pool.Spec.SDKWarmDisabled = cfg.SDKWarmDisabled
 		}
+		// spec: §4.6.2 line 558 — same generation stamp on the
+		// SandboxWarmPool so a partial sync (template-only) still
+		// exposes the mismatch.
+		setConfigGenerationAnnotation(&pool.ObjectMeta, cfg.Generation)
 		return nil
 	})
 	if err != nil {

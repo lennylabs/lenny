@@ -44,7 +44,8 @@ const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	resource_class, warm_count, max_session_age_seconds,
 	allow_standard_isolation, concurrency_style, max_concurrent,
 	acknowledge_process_level_isolation, cleanup_timeout_seconds,
-	allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at`
+	allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
+	pool_config_generation`
 
 // validatePool runs the §5.2 / §5.3 invariants poolstore.Memory
 // enforces on Create and after Update's mutate. The error strings
@@ -82,18 +83,23 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = p.CreatedAt
 	}
+	if p.Generation == 0 {
+		p.Generation = 1
+	}
 	_, err := s.pool.Exec(ctx, `INSERT INTO sandbox_warm_pools (
 		name, runtime_ref, isolation_profile, execution_mode,
 		resource_class, warm_count, max_session_age_seconds,
 		allow_standard_isolation, concurrency_style, max_concurrent,
 		acknowledge_process_level_isolation, cleanup_timeout_seconds,
-		allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		allow_cross_tenant_reuse, egress_profile, created_at, updated_at, deleted_at,
+		pool_config_generation
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
-		p.AllowCrossTenantReuse, string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt))
+		p.AllowCrossTenantReuse, string(p.EgressProfile), p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
+		p.Generation)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return poolstore.ErrAlreadyExists
@@ -143,18 +149,24 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 		return poolstore.Pool{}, err
 	}
 	p.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
+	// spec: §4.6.2 line 558 — pool_config_generation is bumped on
+	// every admin-API write so the gateway-side drift check can
+	// compare it to the CRD annotation.
+	p.Generation++
 	if _, err := tx.Exec(ctx, `UPDATE sandbox_warm_pools SET
 		runtime_ref = $2, isolation_profile = $3, execution_mode = $4,
 		resource_class = $5, warm_count = $6, max_session_age_seconds = $7,
 		allow_standard_isolation = $8, concurrency_style = $9, max_concurrent = $10,
 		acknowledge_process_level_isolation = $11, cleanup_timeout_seconds = $12,
-		allow_cross_tenant_reuse = $13, egress_profile = $14, updated_at = $15, deleted_at = $16
+		allow_cross_tenant_reuse = $13, egress_profile = $14, updated_at = $15, deleted_at = $16,
+		pool_config_generation = $17
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
 		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
 		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
-		p.AllowCrossTenantReuse, string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt)); err != nil {
+		p.AllowCrossTenantReuse, string(p.EgressProfile), p.UpdatedAt, pgtenant.NullTime(p.DeletedAt),
+		p.Generation); err != nil {
 		return poolstore.Pool{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -207,7 +219,8 @@ func (s *Store) List(ctx context.Context, filter poolstore.ListFilter) ([]poolst
 // soft-deleting an already-deleted pool is a no-op success.
 func (s *Store) SoftDelete(ctx context.Context, name string, at time.Time) error {
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE sandbox_warm_pools SET deleted_at = $2, updated_at = $2
+		`UPDATE sandbox_warm_pools SET deleted_at = $2, updated_at = $2,
+			pool_config_generation = pool_config_generation + 1
 		 WHERE name = $1 AND deleted_at IS NULL`, name, at)
 	if err != nil {
 		return err
@@ -239,6 +252,7 @@ func scanPool(row pgx.Row) (poolstore.Pool, error) {
 		&p.AllowStandardIsolation, &concurrencyStyle, &p.MaxConcurrent,
 		&p.AcknowledgeProcessLevelIsolation, &p.CleanupTimeoutSeconds,
 		&p.AllowCrossTenantReuse, &egressProfile, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
+		&p.Generation,
 	); err != nil {
 		return poolstore.Pool{}, err
 	}

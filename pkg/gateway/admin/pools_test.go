@@ -651,3 +651,137 @@ func TestUpdatePoolRejectsEnablingCrossTenantReuseOnT4Runtime_spec_5_2_396(t *te
 		t.Errorf("body does not name the §5.2 T4 rule: %s", rr.Body.String())
 	}
 }
+
+// fakeCRDGeneration stubs admin.CRDGenerationReader so the sync-status
+// tests exercise the §4.6.2 comparison without a Kubernetes client.
+type fakeCRDGeneration struct {
+	generation int64
+	lastAt     time.Time
+	ok         bool
+	err        error
+}
+
+func (f fakeCRDGeneration) CRDGeneration(_ context.Context, _ string) (int64, time.Time, bool, error) {
+	return f.generation, f.lastAt, f.ok, f.err
+}
+
+// TestSyncStatusEndpointReportsSyncedWhenGenerationsMatch_Spec4_6_2_560
+// covers the §4.6.2 line 560 sync-status GET in the synced case.
+func TestSyncStatusEndpointReportsSyncedWhenGenerationsMatch_Spec4_6_2_560(t *testing.T) {
+	router, pools, runtimes, _ := newPoolAdmin(t)
+	seedGetPool(t, pools, runtimes)
+	// Bump Postgres generation to a known value via an Update.
+	_, _ = pools.Update(context.Background(), "p1", func(p *poolstore.Pool) error {
+		p.WarmCount = 3
+		return nil
+	})
+	row, _ := pools.Get(context.Background(), "p1")
+	last := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(-5 * time.Second)
+	router = router.WithCRDGenerationReader(fakeCRDGeneration{
+		generation: row.Generation,
+		lastAt:     last,
+		ok:         true,
+	})
+
+	rr := poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/p1/sync-status", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var got admin.PoolSyncStatus
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Pool != "p1" || got.PostgresGeneration != row.Generation {
+		t.Errorf("payload = %+v", got)
+	}
+	if got.CRDGeneration != row.Generation || !got.InSync {
+		t.Errorf("expected inSync, got = %+v", got)
+	}
+	if got.LagSeconds < 4 || got.LagSeconds > 6 {
+		t.Errorf("lagSeconds = %d, want ~5", got.LagSeconds)
+	}
+}
+
+// TestSyncStatusEndpointPendingWhenGenerationsDiverge_Spec4_6_2_560
+// covers the §4.6.2 mismatch case: Postgres has advanced, the CRD has
+// not, inSync is false.
+func TestSyncStatusEndpointPendingWhenGenerationsDiverge_Spec4_6_2_560(t *testing.T) {
+	router, pools, runtimes, _ := newPoolAdmin(t)
+	seedGetPool(t, pools, runtimes)
+	// Two updates bump Postgres generation to 3 (Create=1 + Update*2).
+	_, _ = pools.Update(context.Background(), "p1", func(p *poolstore.Pool) error { p.WarmCount = 2; return nil })
+	_, _ = pools.Update(context.Background(), "p1", func(p *poolstore.Pool) error { p.WarmCount = 3; return nil })
+	router = router.WithCRDGenerationReader(fakeCRDGeneration{
+		generation: 1, // CRD lagging at the create-time generation
+		lastAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(-30 * time.Second),
+		ok:         true,
+	})
+	rr := poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/p1/sync-status", nil)
+	var got admin.PoolSyncStatus
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.InSync {
+		t.Errorf("inSync = true, want false; payload = %+v", got)
+	}
+	if got.PostgresGeneration <= got.CRDGeneration {
+		t.Errorf("expected postgresGeneration > crdGeneration; got %+v", got)
+	}
+}
+
+// TestSyncStatusOnGetReportsUnknownWithoutReader_Spec4_6_2_559 confirms
+// the GET /v1/admin/pools/{name} response carries syncStatus=unknown
+// when no CRD reader is wired (the Postgres-only dev posture).
+func TestSyncStatusOnGetReportsUnknownWithoutReader_Spec4_6_2_559(t *testing.T) {
+	router, pools, runtimes, _ := newPoolAdmin(t)
+	seedGetPool(t, pools, runtimes)
+	rr := poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/p1", nil)
+	var got admin.PoolPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.SyncStatus != "unknown" {
+		t.Errorf("syncStatus = %q, want unknown", got.SyncStatus)
+	}
+}
+
+// TestSyncStatusOnPUTReportsPendingAfterWrite_Spec4_6_2_559 confirms an
+// admin PUT that bumps Postgres generation past the CRD's reports
+// syncStatus=pending. spec: spec/04_system-components.md line 559.
+func TestSyncStatusOnPUTReportsPendingAfterWrite_Spec4_6_2_559(t *testing.T) {
+	router, pools, runtimes, _ := newPoolAdmin(t)
+	seedGetPool(t, pools, runtimes)
+	// Reader pins the CRD generation at the create-time value (1), so a
+	// PUT that bumps Postgres to 2 makes the payload "pending".
+	router = router.WithCRDGenerationReader(fakeCRDGeneration{generation: 1, ok: true})
+	warm := 4
+	rr := poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/p1",
+		admin.UpdatePoolRequest{WarmCount: &warm})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	_ = pools // ensure store-state assertions still possible
+	var got admin.PoolPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.SyncStatus != "pending" {
+		t.Errorf("syncStatus after PUT = %q, want pending", got.SyncStatus)
+	}
+}
+
+// TestPoolUpdateBumpsGeneration_Spec4_6_2_558 confirms every admin
+// write bumps the pool_config_generation on the Postgres row.
+func TestPoolUpdateBumpsGeneration_Spec4_6_2_558(t *testing.T) {
+	_, pools, runtimes, _ := newPoolAdmin(t)
+	seedGetPool(t, pools, runtimes)
+	row, _ := pools.Get(context.Background(), "p1")
+	startGen := row.Generation
+	if startGen == 0 {
+		t.Errorf("Create did not set Generation; got 0")
+	}
+	updated, _ := pools.Update(context.Background(), "p1", func(p *poolstore.Pool) error { p.WarmCount = 5; return nil })
+	if updated.Generation <= startGen {
+		t.Errorf("Update did not advance Generation: %d -> %d", startGen, updated.Generation)
+	}
+}

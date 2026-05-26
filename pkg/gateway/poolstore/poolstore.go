@@ -99,6 +99,13 @@ type Pool struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt time.Time
+
+	// Generation is the §4.6.2 pool_config_generation counter, bumped
+	// on every admin-API write and stamped onto the pool's CRD pair as
+	// the lenny.dev/config-generation annotation so the §4.6.2
+	// PoolConfigDrift alert can compare Postgres-side and CRD-side
+	// generations. spec: spec/04_system-components.md lines 558-560.
+	Generation int64
 }
 
 // IsActive reports whether the pool has not been soft-deleted.
@@ -341,6 +348,9 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = p.CreatedAt
 	}
+	if p.Generation == 0 {
+		p.Generation = 1
+	}
 	m.pools[p.Name] = p
 	return nil
 }
@@ -388,6 +398,7 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
+	row.Generation++
 	m.pools[name] = row
 	return row, nil
 }
@@ -423,6 +434,7 @@ func (m *Memory) SoftDelete(_ context.Context, name string, at time.Time) error 
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
+	row.Generation++
 	m.pools[name] = row
 	return nil
 }

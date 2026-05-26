@@ -552,6 +552,46 @@ func TestSyncScaleToZeroOverridesMinWarmToZero(t *testing.T) {
 	}
 }
 
+// TestSyncStampsConfigGenerationOnCRDs_Spec4_6_2_558 confirms the
+// PoolScalingController writes lenny.dev/config-generation onto both
+// SandboxTemplate and SandboxWarmPool, taking the value from the
+// PoolConfig.Generation the admin store bumps on every write.
+// spec: spec/04_system-components.md line 558.
+func TestSyncStampsConfigGenerationOnCRDs_Spec4_6_2_558(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.Generation = 7
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	if err := syncOnce(t, c, src); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	tmpl := getTemplate(t, c)
+	if got := tmpl.Annotations["lenny.dev/config-generation"]; got != "7" {
+		t.Errorf("template config-generation annotation = %q, want 7", got)
+	}
+	pool := getWarmPool(t, c)
+	if got := pool.Annotations["lenny.dev/config-generation"]; got != "7" {
+		t.Errorf("warm pool config-generation annotation = %q, want 7", got)
+	}
+}
+
+// TestSyncWithZeroGenerationOmitsAnnotation_Spec4_6_2_558 confirms a
+// PoolConfig with the zero generation does not stamp the annotation
+// (the source has not advanced past create-time).
+func TestSyncWithZeroGenerationOmitsAnnotation_Spec4_6_2_558(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+	if err := syncOnce(t, c, src); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	tmpl := getTemplate(t, c)
+	if _, set := tmpl.Annotations["lenny.dev/config-generation"]; set {
+		t.Errorf("template carries config-generation annotation with zero generation: %v", tmpl.Annotations)
+	}
+}
+
 // Outside the window the pool keeps its bootstrap floor.
 func TestSyncScaleToZeroInactiveKeepsBootstrap(t *testing.T) {
 	s := newScheme(t)

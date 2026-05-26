@@ -74,7 +74,8 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 			MaxConcurrent:        int32(p.MaxConcurrent),
 			MaxSessionAgeSeconds: int64(p.MaxSessionAgeSeconds),
 		},
-		MinWarm: warm,
-		MaxWarm: warm,
+		MinWarm:    warm,
+		MaxWarm:    warm,
+		Generation: p.Generation,
 	}
 }

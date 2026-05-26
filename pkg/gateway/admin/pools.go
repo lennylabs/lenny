@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -38,6 +39,21 @@ type ReconciliationResumer interface {
 // The gateway satisfies it with a podsession.PoolStatusLookup.
 type PoolStatusReader interface {
 	PoolStatus(ctx context.Context, poolName string) (condition string, idlePodCount int, found bool, err error)
+}
+
+// CRDGenerationReader reports the pool's CRD-side pool_config_generation
+// (read from the lenny.dev/config-generation annotation the
+// PoolScalingController stamps in §4.6.2 line 558). It backs the
+// §4.6.2 line 560 sync-status endpoint and the PUT response's
+// syncStatus field. A nil reader leaves the CRD generation unknown,
+// so the handler omits it and reports syncStatus="unknown". spec:
+// spec/04_system-components.md lines 557-560.
+type CRDGenerationReader interface {
+	// CRDGeneration returns the generation observed on the pool's
+	// SandboxTemplate annotation, the last successful reconciliation
+	// instant, and ok = true when the CRD pair exists. ok = false
+	// when no SandboxTemplate has been created for the pool yet.
+	CRDGeneration(ctx context.Context, poolName string) (generation int64, lastReconciledAt time.Time, ok bool, err error)
 }
 
 // PoolPayload is the §15.1 admin-pool wire shape.
@@ -76,9 +92,27 @@ type PoolPayload struct {
 	PoolCondition *string `json:"poolCondition,omitempty"`
 	IdlePodCount  *int    `json:"idlePodCount,omitempty"`
 
+	// SyncStatus is the §4.6.2 line 559 reconciliation-status flag.
+	// "synced" means the CRD generation matches the Postgres
+	// generation; "pending" means the controller has not yet observed
+	// the latest write; "unknown" means no CRD reader is wired.
+	// spec: spec/04_system-components.md line 559.
+	SyncStatus string `json:"syncStatus,omitempty"`
+
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 	DeletedAt string `json:"deletedAt,omitempty"`
+}
+
+// PoolSyncStatus is the §15.1 GET /v1/admin/pools/{name}/sync-status
+// payload. spec: spec/04_system-components.md line 560.
+type PoolSyncStatus struct {
+	Pool               string `json:"pool"`
+	PostgresGeneration int64  `json:"postgresGeneration"`
+	CRDGeneration      int64  `json:"crdGeneration"`
+	LastReconciledAt   string `json:"lastReconciledAt,omitempty"`
+	LagSeconds         int64  `json:"lagSeconds"`
+	InSync             bool   `json:"inSync"`
 }
 
 // UpdatePoolRequest is the §15.1 PUT body.
@@ -143,6 +177,15 @@ func (r *Router) WithReconciliationResumer(rr ReconciliationResumer) *Router {
 // status, e.g. the minimal Postgres-only dev posture).
 func (r *Router) WithPoolStatusReader(rdr PoolStatusReader) *Router {
 	r.poolStatus = rdr
+	return r
+}
+
+// WithCRDGenerationReader wires the §4.6.2 line 559/560 sync-status
+// data source. Without it the admin pool GET / PUT report
+// syncStatus="unknown" and the sync-status endpoint reports
+// crdGeneration=0 inSync=false — the §6.0 Postgres-only dev posture.
+func (r *Router) WithCRDGenerationReader(rdr CRDGenerationReader) *Router {
+	r.crdGenerations = rdr
 	return r
 }
 
@@ -342,6 +385,7 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 	}
 	payload := fromPool(row)
 	r.attachPoolStatus(req.Context(), &payload)
+	payload.SyncStatus = r.resolveSyncStatus(req.Context(), row)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(payload)
 }
@@ -367,6 +411,84 @@ func (r *Router) attachPoolStatus(ctx context.Context, p *PoolPayload) {
 		condCopy := condition
 		p.PoolCondition = &condCopy
 	}
+}
+
+// handleSyncStatus implements the §4.6.2 line 560
+// GET /v1/admin/pools/{name}/sync-status endpoint. It compares the
+// pool's Postgres generation to the CRD-side generation stamped by the
+// PoolScalingController and reports the lag in seconds.
+func (r *Router) handleSyncStatus(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	row, err := r.pools.Get(req.Context(), name)
+	if err != nil {
+		if errors.Is(err, poolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if tenantID, filtered := tenantScopeFilter(req); filtered {
+		if !r.accessibleSet(req.Context(), tenantaccessstore.KindPool, tenantID)[row.Name] {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
+	}
+	payload := r.buildSyncStatus(req.Context(), row)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// buildSyncStatus assembles the §4.6.2 line 560 sync-status response
+// from a pool row, looking up the CRD-side generation when a reader is
+// wired. spec: spec/04_system-components.md lines 557-560.
+func (r *Router) buildSyncStatus(ctx context.Context, row poolstore.Pool) PoolSyncStatus {
+	out := PoolSyncStatus{
+		Pool:               row.Name,
+		PostgresGeneration: row.Generation,
+	}
+	if r.crdGenerations == nil {
+		// Without a CRD reader the gateway can only report the
+		// Postgres-side state; leave crdGeneration / inSync at their
+		// zero values so the operator sees that no CRD comparison ran.
+		return out
+	}
+	crdGen, lastAt, ok, err := r.crdGenerations.CRDGeneration(ctx, row.Name)
+	if err != nil || !ok {
+		// A missing SandboxTemplate is the not-yet-reconciled case; the
+		// pool exists in Postgres but the controller has yet to write
+		// it to the CRD. Leave crdGeneration=0 inSync=false.
+		return out
+	}
+	out.CRDGeneration = crdGen
+	out.InSync = crdGen == row.Generation
+	if !lastAt.IsZero() {
+		out.LastReconciledAt = rfc3339Nano(lastAt)
+		lag := int64(r.clock().Sub(lastAt).Seconds())
+		if lag < 0 {
+			lag = 0
+		}
+		out.LagSeconds = lag
+	}
+	return out
+}
+
+// resolveSyncStatus reports the §4.6.2 line 559 syncStatus flag for one
+// pool. "synced" means the CRD generation matches Postgres; "pending"
+// means a write has not been observed on the CRD yet; "unknown" means
+// no CRD reader is wired.
+func (r *Router) resolveSyncStatus(ctx context.Context, row poolstore.Pool) string {
+	if r.crdGenerations == nil {
+		return "unknown"
+	}
+	crdGen, _, ok, err := r.crdGenerations.CRDGeneration(ctx, row.Name)
+	if err != nil || !ok {
+		return "pending"
+	}
+	if crdGen == row.Generation {
+		return "synced"
+	}
+	return "pending"
 }
 
 // handleResumeReconciliation implements §4.6.2 item 3 condition (c):
@@ -550,7 +672,12 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, updated)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(fromPool(updated))
+	payload := fromPool(updated)
+	// spec: §4.6.2 line 559 — a PUT immediately bumps the Postgres
+	// generation; the CRD has not yet reconciled, so syncStatus is
+	// "pending" until the controller catches up.
+	payload.SyncStatus = r.resolveSyncStatus(req.Context(), updated)
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func (r *Router) handleDeletePool(w http.ResponseWriter, req *http.Request) {

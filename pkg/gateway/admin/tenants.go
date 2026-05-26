@@ -149,6 +149,7 @@ type Router struct {
 
 	reconciliationResumer ReconciliationResumer
 	poolStatus            PoolStatusReader
+	crdGenerations        CRDGenerationReader
 
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
@@ -458,6 +459,16 @@ func (r *Router) Handler() http.Handler {
 			mux.Handle("POST /v1/admin/pools/{name}/resume-reconciliation",
 				poolManage(http.HandlerFunc(r.handleResumeReconciliation)))
 		}
+		// §4.6.2 item 4: GET /v1/admin/pools/{name}/sync-status reports
+		// the Postgres vs CRD generation comparison. spec:
+		// spec/04_system-components.md line 560. The route is
+		// registered unconditionally; without a CRD reader wired the
+		// handler reports the Postgres-only generation and leaves
+		// crdGeneration / inSync at their zero values so operators can
+		// see Postgres is moving even on the §6.0 Postgres-only dev
+		// posture.
+		mux.Handle("GET /v1/admin/pools/{name}/sync-status",
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleSyncStatus)))
 	}
 	if r.connectors != nil {
 		mux.Handle("POST /v1/admin/connectors", r.requireAdmin(http.HandlerFunc(r.handleCreateConnector)))
