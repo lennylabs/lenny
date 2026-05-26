@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 )
 
 // ProtocolVersion is the MCP spec version the adapter's local MCP
@@ -46,6 +47,14 @@ type Tool struct {
 // handshake before any tool is dispatched.
 type Server struct {
 	tools map[string]Tool
+
+	// RequireChallenge enables the §4.7 nonce-only-mode challenge-response
+	// supplement: after the manifest-nonce handshake, the adapter sends a
+	// per-connection adapterChallenge and requires the agent's
+	// HMAC-SHA256 reply before dispatching tools. The adapter sets it when
+	// SO_PEERCRED is disabled (--require-so-peercred=false), where the
+	// static nonce alone is replayable (spec lines 879-883).
+	RequireChallenge bool
 }
 
 // NewServer returns an MCP server with no tools registered.
@@ -127,6 +136,15 @@ func (s *Server) ServeConn(conn net.Conn, nonce string) error {
 	if err != nil {
 		return err
 	}
+	// §4.7 lines 879-883: in nonce-only mode the static manifest nonce is
+	// replayable, so supplement it with a per-connection challenge-response
+	// before dispatching any tool. Failure closes the socket with no
+	// protocol response.
+	if s.RequireChallenge {
+		if err := s.challenge(conn, dec, enc, nonce); err != nil {
+			return err
+		}
+	}
 	var initReq rpcRequest
 	if err := json.Unmarshal(cleaned, &initReq); err != nil {
 		return fmt.Errorf("mcp: decode initialize request: %w", err)
@@ -151,6 +169,37 @@ func (s *Server) ServeConn(conn net.Conn, nonce string) error {
 			return fmt.Errorf("mcp: write response: %w", err)
 		}
 	}
+}
+
+// challenge runs the §4.7 nonce-only-mode challenge-response exchange on
+// an already-nonce-authenticated connection: it sends a fresh 128-bit
+// adapterChallenge, then reads the agent's HMAC reply under a 500 ms
+// deadline and validates it as HMAC-SHA256(key=nonce, data=challenge). A
+// missing field, a mismatch, or a timeout returns an error so ServeConn
+// closes the socket without a protocol response (spec lines 879-883).
+//
+// The agent has not sent anything since its initialize request — it
+// blocks for the challenge — so the decoder buffer is empty and the read
+// observes the deadline. The deadline is cleared on return so the
+// post-handshake tool loop reads without one.
+func (s *Server) challenge(conn net.Conn, dec *json.Decoder, enc *json.Encoder, nonce string) error {
+	challenge, err := newChallenge()
+	if err != nil {
+		return err
+	}
+	if err := enc.Encode(map[string]string{ChallengeParamKey: challenge}); err != nil {
+		return fmt.Errorf("mcp: write adapterChallenge: %w", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(ChallengeTimeout)); err != nil {
+		return fmt.Errorf("mcp: set challenge deadline: %w", err)
+	}
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	var response json.RawMessage
+	if err := dec.Decode(&response); err != nil {
+		return fmt.Errorf("mcp: read challenge response: %w", err)
+	}
+	return ValidateChallengeResponse(response, nonce, challenge)
 }
 
 func (s *Server) initializeResponse(id json.RawMessage) rpcResponse {

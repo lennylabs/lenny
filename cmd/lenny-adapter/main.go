@@ -157,6 +157,9 @@ func main() {
 		log.Fatalf("lenny-adapter: %v", err)
 	}
 	adapterSrv.RuntimeUID = resolveRuntimeUID(*runtimeUID)
+	// §4.7 lines 879-883: in nonce-only mode the platform MCP server adds
+	// the per-connection challenge-response supplement to the static nonce.
+	adapterSrv.NonceOnlyMode = !*requireSoPeercred
 	adapterSrv.CredentialsDir = *credentialsDir
 	// §15.4: the adapter manifest is written into /run/lenny alongside
 	// the credential file.

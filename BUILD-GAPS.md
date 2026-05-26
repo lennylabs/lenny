@@ -1617,7 +1617,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.9 — Nonce-only mode and HMAC challenge-response supplement missing [Medium] — OPEN
+### - [x] F-4.7.9 — Nonce-only mode and HMAC challenge-response supplement missing [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.1.3, F-4.7.8 — F-13.1.3 spans both the SO_PEERCRED startup self-test and the nonce-only HMAC fallback; F-4.7.8 and F-4.7.9 each cover one half of that same missing §4.7 contract.
 
@@ -1632,6 +1632,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** A process that observes the static nonce (e.g., via `/proc/<pid>/fd`) can replay it on subsequent connections.
 
 **Suggested resolution:** Add a challenge-response stage after the nonce check on every MCP and lifecycle connection. Emit the `lenny_adapter_sopeercred_disabled_total` counter and surface the `SOPeercredDisabled=True` pod condition when the flag is off.
+
+**Resolution:** Added the §4.7 lines 879-883 challenge-response supplement in `pkg/adapter/mcp/challenge.go`: a fresh 128-bit `adapterChallenge` per connection, the agent's `HMAC-SHA256(key=manifestNonce, data=adapterChallenge)` reply validated constant-time, and a 500 ms read deadline (`ChallengeTimeout`). `mcp.Server.ServeConn` runs it after the nonce check when `RequireChallenge` is set; a missing field, mismatch, or timeout closes the socket with no protocol response. The adapter `Server.NonceOnlyMode` (wired from `cmd/lenny-adapter --require-so-peercred=false`) sets `RequireChallenge` on the platform MCP server, so every intra-pod MCP connection (all route through `mcp.Server`) gets the supplement when SO_PEERCRED is disabled. The `lenny_adapter_sopeercred_disabled_total` counter is already emitted on every nonce-only-mode start (F-4.7.8, commit 131a5107). The `SOPeercredDisabled=True` pod condition and its `SecurityDegradedMode` propagation remain tracked under F-4.7.15 (needs an in-cluster client + RBAC + controller reconciler). The lifecycle channel presents no manifest nonce today, so the spec's "after the agent presents the manifest nonce" supplement does not apply to it. (commit <pending>)
 
 ---
 

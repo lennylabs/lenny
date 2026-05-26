@@ -34,6 +34,9 @@ func (s *Server) startPlatformMCP(nonce string) error {
 		}
 	}
 	srv := mcp.NewServer()
+	// §4.7 lines 879-883: when SO_PEERCRED is disabled, the static nonce
+	// is replayable, so the server adds a per-connection challenge-response.
+	srv.RequireChallenge = s.NonceOnlyMode
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Serve(ctx, serveLis, nonce) }()
 	s.mu.Lock()

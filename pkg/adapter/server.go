@@ -85,6 +85,13 @@ type Server struct {
 	// SO_PEERCRED peer-credential check, rejecting any connection from
 	// a process running as a different UID. Zero disables the check.
 	RuntimeUID uint32
+	// NonceOnlyMode reports that SO_PEERCRED is disabled
+	// (--require-so-peercred=false), so the manifest nonce alone is the
+	// intra-pod MCP authentication boundary. When set, the platform MCP
+	// server supplements the static nonce with the §4.7 per-connection
+	// challenge-response (lines 879-883), keeping forward security on each
+	// new connection.
+	NonceOnlyMode bool
 	// RuntimeKind selects the §5.1 runtime type the adapter drives. The
 	// zero value is RuntimeKindAgent: the adapter drives an agent binary
 	// over the §15.4.1 JSONL stdin/stdout protocol. RuntimeKindMCP
