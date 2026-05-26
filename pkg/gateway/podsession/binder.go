@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -232,6 +233,39 @@ type BindResult struct {
 	// Adapter is the live connection to the pod's adapter. The caller
 	// owns it and closes it when the session ends.
 	Adapter *adapterclient.Client
+	// Timings reports the wall-clock duration of each §6.3 hot-path
+	// phase Bind executed, for the caller to record on the §6.3
+	// per-phase and end-to-end startup-latency histograms. It is the
+	// zero value for a BindSlot result, where the concurrent-mode
+	// startup path is timed separately.
+	Timings BindTimings
+}
+
+// BindTimings carries the per-phase wall-clock durations a successful
+// Bind measured, so the caller can attribute the §6.3 line 358 latency
+// budget. The end-to-end pod-warm SLO (§6.3 line 348,
+// lenny_session_startup_duration_seconds) is the sum of PodClaim,
+// CredentialAssignment, and AgentSessionStart; it excludes
+// WorkspaceMaterialization (payload-dependent) and SetupCommands
+// (deployer-controlled), both of which §6.3 keeps out of the
+// platform-controlled pod-warm budget. spec: §6.3 lines 348, 372.
+type BindTimings struct {
+	// PodClaim is the §6.3 "pod claim and routing" phase: the warm-pod
+	// claim, pod-IP resolution, mTLS dial, and version handshake.
+	PodClaim time.Duration
+	// WorkspaceMaterialization is the staging plus FinalizeWorkspace
+	// phase. Excluded from the pod-warm SLO total per §6.3 line 348.
+	WorkspaceMaterialization time.Duration
+	// SetupCommands is the RunSetup phase. Deployer-controlled and
+	// excluded from the platform pod-warm budget (§6.3 line 363), but
+	// instrumented per the §6.3 line 372 per-phase requirement.
+	SetupCommands time.Duration
+	// CredentialAssignment is the §4.9 lease mint plus AssignCredentials
+	// RPC phase.
+	CredentialAssignment time.Duration
+	// AgentSessionStart is the StartSession RPC phase, after which the
+	// session is ready.
+	AgentSessionStart time.Duration
 }
 
 // ResumeRequest describes a session to restore onto a fresh warm pod.
@@ -267,10 +301,20 @@ type ResumeRequest struct {
 // the caller owns the returned live adapter connection. Any failure
 // after the claim is returned so the gateway can retry on a fresh pod.
 func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error) {
+	// spec: §6.3 lines 358, 372 — time each hot-path phase so the caller
+	// can attribute the per-phase latency budget and the end-to-end
+	// pod-warm startup SLO. The clock starts at the claim and segments
+	// at each phase boundary; on any failure the partial timings are
+	// discarded (the SLO measures successful starts only).
+	var t BindTimings
+	phaseStart := time.Now()
 	sandboxName, podIP, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
+	t.PodClaim = time.Since(phaseStart)
+
+	phaseStart = time.Now()
 	if err := b.stageWorkspace(ctx, cl, req.SessionID, req.Plan); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
@@ -279,14 +323,23 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
 	}
+	t.WorkspaceMaterialization = time.Since(phaseStart)
+
+	phaseStart = time.Now()
 	if err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: run setup on pod %s: %w", sandboxName, err)
 	}
+	t.SetupCommands = time.Since(phaseStart)
+
+	phaseStart = time.Now()
 	if err := b.assignCredentials(ctx, cl, req); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", sandboxName, err)
 	}
+	t.CredentialAssignment = time.Since(phaseStart)
+
+	phaseStart = time.Now()
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
 		SessionID:          req.SessionID,
 		Runtime:            req.Runtime,
@@ -298,12 +351,15 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
 	}
+	t.AgentSessionStart = time.Since(phaseStart)
+
 	return &BindResult{
 		SessionID:   req.SessionID,
 		TenantID:    req.TenantID,
 		SandboxName: sandboxName,
 		PodIP:       podIP,
 		Adapter:     cl,
+		Timings:     t,
 	}, nil
 }
 

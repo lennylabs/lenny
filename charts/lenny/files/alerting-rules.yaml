@@ -9,7 +9,7 @@ groups:
     - name: lenny.rules
       rules:
         - alert: WarmPoolExhausted
-          expr: min by (pool) (lenny_warmpool_idle_pods) == 0
+          expr: (min by (pool) (lenny_warmpool_idle_pods) == 0) unless on (pool) (lenny_warmpool_fill_grace_active == 1)
           for: 1m
           labels:
             severity: critical
@@ -331,7 +331,7 @@ groups:
             runbook_url: https://docs.lenny.dev/runbooks/ops-lock-split-brain
             summary: lenny-ops remediation lock split-brain detected
         - alert: WarmPoolLow
-          expr: lenny_warmpool_idle_pods / on(pool) group_left lenny_warmpool_min_warm < 0.25
+          expr: (lenny_warmpool_idle_pods / on(pool) group_left lenny_warmpool_min_warm < 0.25) unless on (pool) (lenny_warmpool_fill_grace_active == 1)
           labels:
             severity: warning
           annotations:
@@ -1255,7 +1255,7 @@ groups:
             slo: Gateway availability >= 99.95%
             summary: Slow-window error-budget burn for Gateway availability >= 99.95%
         - alert: StartupLatencyBurnRate
-          expr: lenny_session_startup_duration_slow_ratio{isolation_profile="runc"} / 0.05 > 14
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05 > 14
           for: 1h
           labels:
             severity: critical
@@ -1265,7 +1265,7 @@ groups:
             slo: Startup latency P95 < 2s (runc)
             summary: Fast-window error-budget burn for Startup latency P95 < 2s (runc)
         - alert: StartupLatencyBurnRateSlow
-          expr: lenny_session_startup_duration_slow_ratio{isolation_profile="runc"} / 0.05 > 3
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05 > 3
           for: 6h
           labels:
             severity: warning
@@ -1274,7 +1274,7 @@ groups:
             slo: Startup latency P95 < 2s (runc)
             summary: Slow-window error-budget burn for Startup latency P95 < 2s (runc)
         - alert: StartupLatencyGVisorBurnRate
-          expr: lenny_session_startup_duration_slow_ratio{isolation_profile="gvisor"} / 0.05 > 14
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05 > 14
           for: 1h
           labels:
             severity: critical
@@ -1284,7 +1284,7 @@ groups:
             slo: Startup latency P95 < 5s (gVisor)
             summary: Fast-window error-budget burn for Startup latency P95 < 5s (gVisor)
         - alert: StartupLatencyGVisorBurnRateSlow
-          expr: lenny_session_startup_duration_slow_ratio{isolation_profile="gvisor"} / 0.05 > 3
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05 > 3
           for: 6h
           labels:
             severity: warning

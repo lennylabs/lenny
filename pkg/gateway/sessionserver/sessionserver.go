@@ -174,6 +174,13 @@ type Server struct {
 	// preclaimMismatch, when set, increments the §4.9 line 1220
 	// pre-claim mismatch metric.
 	preclaimMismatch func(pool, provider string)
+	// observeStartupDuration, when set, records the §6.3 line 348
+	// end-to-end pod-warm startup latency on a successful start. Nil
+	// disables the emission.
+	observeStartupDuration func(pool, runtimeClass, isolationProfile string, seconds float64)
+	// observeStartupPhase, when set, records the §6.3 line 372 latency
+	// of one hot-path startup phase. Nil disables the emission.
+	observeStartupPhase func(phase, runtimeClass string, seconds float64)
 	// userCredChecker reports whether a usable user-scoped credential
 	// exists for (tenant, user, provider). Nil in v1 because user-source
 	// lease delivery (the §4.9 materializedConfig path) is not yet wired;
@@ -558,6 +565,19 @@ type Options struct {
 	// the lease assignment failed. Nil disables the emission.
 	// spec: §4.9 line 1220.
 	PreclaimMismatch func(pool, provider string)
+
+	// ObserveStartupDuration, when set, records the §6.3 line 348
+	// end-to-end pod-warm session startup latency (pod claim through
+	// agent session ready, excluding upload and workspace
+	// materialization) for each successful start. Nil disables it.
+	// spec: §16.1 line 14, §6.3 line 348.
+	ObserveStartupDuration func(pool, runtimeClass, isolationProfile string, seconds float64)
+
+	// ObserveStartupPhase, when set, records the §6.3 line 372 latency
+	// of one hot-path startup phase (pod_claim,
+	// workspace_materialization, setup_commands, credential_assignment,
+	// agent_session_start). Nil disables it. spec: §6.3 line 372.
+	ObserveStartupPhase func(phase, runtimeClass string, seconds float64)
 }
 
 // New returns a Server bound to the supplied store.
@@ -611,6 +631,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		warmupEstimateSeconds:  opts.WarmupEstimateSeconds,
 		credRouter:             opts.CredentialRouter,
 		preclaimMismatch:       opts.PreclaimMismatch,
+		observeStartupDuration: opts.ObserveStartupDuration,
+		observeStartupPhase:    opts.ObserveStartupPhase,
 	}
 	if s.warmupEstimateSeconds <= 0 {
 		s.warmupEstimateSeconds = DefaultWarmupEstimateSeconds

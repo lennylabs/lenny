@@ -87,6 +87,21 @@ type Metrics struct {
 	// sandbox-warm-pool registry), `level` (one of the four §4.4
 	// levels), and `trigger` (periodic | pre_scale_down | eviction).
 	checkpointDuration *prometheus.HistogramVec
+	// sessionStartupDuration is the §16.1 line 14 / §6.3 line 348
+	// end-to-end pod-warm startup histogram: pod claim through agent
+	// session ready, excluding client file upload and workspace
+	// materialization. Labels: `pool`, `runtime_class`,
+	// `isolation_profile`. Consumed by the StartupLatencyBurnRate and
+	// StartupLatencyGVisorBurnRate alerts via the
+	// lenny_session_startup_duration_slow_ratio recording rule. Buckets
+	// straddle the 2s (runc) and 5s (gVisor) SLO thresholds.
+	sessionStartupDuration *prometheus.HistogramVec
+	// sessionStartupPhaseDuration is the §6.3 line 372 per-phase
+	// hot-path histogram. Labels: `phase` (pod_claim,
+	// workspace_materialization, setup_commands, credential_assignment,
+	// agent_session_start) and `runtime_class`. Each phase is observed
+	// independently so a slow startup can be localized to one phase.
+	sessionStartupPhaseDuration *prometheus.HistogramVec
 	// checkpointStorageFailure counts the §4.4 line 262 non-eviction
 	// MinIO-upload failures (all retries exhausted, the failed
 	// checkpoint is discarded). Labels: `pool`, `level`, and `trigger`.
@@ -508,6 +523,33 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 line 14 / §6.3 line 348 — `lenny_session_startup_duration_seconds`
+	// measures pod claim through agent session ready, excluding client
+	// file upload and workspace materialization. Explicit buckets
+	// include the 2s (runc) and 5s (gVisor) SLO thresholds so the
+	// lenny_session_startup_duration_slow_ratio recording rule can read
+	// the bucket boundary directly.
+	sessionStartupDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_session_startup_duration_seconds",
+		Help:    "End-to-end pod-warm session startup: pod claim through agent session ready, excluding upload and workspace materialization (§6.3 line 348).",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 3, 5, 8, 13},
+	}, []string{"pool", "runtime_class", "isolation_profile"})
+	if err != nil {
+		return nil, err
+	}
+	// §6.3 line 372 — `lenny_session_startup_phase_duration_seconds`
+	// instruments each hot-path phase independently so a slow startup
+	// can be localized. Buckets cover the per-phase budgets from the
+	// §6.3 table (≤100ms claim/credential through ≤4.5s gVisor agent
+	// start).
+	sessionStartupPhaseDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_session_startup_phase_duration_seconds",
+		Help:    "Per-phase pod-warm session startup latency (§6.3 line 372).",
+		Buckets: []float64{0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 3, 4.5, 8},
+	}, []string{"phase", "runtime_class"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 262 / §12.5 ll. 303 —
 	// `lenny_checkpoint_storage_failure_total` counts non-eviction
 	// MinIO-upload failures (all retries exhausted, the failed
@@ -770,7 +812,8 @@ func New() (*Metrics, error) {
 		partialManifestCleanup, checkpointPartialManifestsSuperseded,
 		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
 		checkpointEvictionPartialKeysLogged,
-		checkpointDuration, checkpointStorageFailure,
+		checkpointDuration, sessionStartupDuration, sessionStartupPhaseDuration,
+		checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
 		credentialPreclaimMismatch,
 		credentialLeaseAssignments, credentialLeaseDuration, credentialPoolUtilization,
@@ -836,6 +879,8 @@ func New() (*Metrics, error) {
 		sessionEvictionTotalLoss:             sessionEvictionTotalLoss,
 		checkpointEvictionPartialKeysLogged:  checkpointEvictionPartialKeysLogged,
 		checkpointDuration:                   checkpointDuration,
+		sessionStartupDuration:               sessionStartupDuration,
+		sessionStartupPhaseDuration:          sessionStartupPhaseDuration,
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
@@ -950,6 +995,33 @@ func (m *Metrics) ObserveCheckpointDuration(pool, level, trigger string, seconds
 		return
 	}
 	m.checkpointDuration.WithLabelValues(pool, level, trigger).Observe(seconds)
+}
+
+// ObserveSessionStartupDuration records the §6.3 line 348 end-to-end
+// pod-warm startup latency (pod claim through agent session ready,
+// excluding upload and workspace materialization) for a successful
+// session start. The StartupLatencyBurnRate and
+// StartupLatencyGVisorBurnRate alerts read the P95 of this histogram
+// through the lenny_session_startup_duration_slow_ratio recording rule.
+// spec: §16.1 line 14, §6.3 line 348.
+func (m *Metrics) ObserveSessionStartupDuration(pool, runtimeClass, isolationProfile string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.sessionStartupDuration.WithLabelValues(pool, runtimeClass, isolationProfile).Observe(seconds)
+}
+
+// ObserveSessionStartupPhase records the §6.3 line 372 latency of one
+// hot-path startup phase. phase is one of pod_claim,
+// workspace_materialization, setup_commands, credential_assignment, or
+// agent_session_start. Observed once per phase per successful start so
+// the per-phase latency budget (§6.3 table) can be attributed.
+// spec: §6.3 line 372.
+func (m *Metrics) ObserveSessionStartupPhase(phase, runtimeClass string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.sessionStartupPhaseDuration.WithLabelValues(phase, runtimeClass).Observe(seconds)
 }
 
 // IncCheckpointStorageFailure increments the §4.4 line 262

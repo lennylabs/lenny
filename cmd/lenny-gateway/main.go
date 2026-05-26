@@ -1476,6 +1476,10 @@ func main() {
 		UploadSubsystem: uploadSubsystem,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
+		// §6.3 lines 348, 372 — startup-latency histograms observed on
+		// each successful pod-warm start.
+		ObserveStartupDuration: gwMetrics.ObserveSessionStartupDuration,
+		ObserveStartupPhase:    gwMetrics.ObserveSessionStartupPhase,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

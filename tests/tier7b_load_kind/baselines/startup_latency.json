@@ -1,8 +1,6 @@
 {
   "scenario": "startup_latency",
   "version": "0.2.0-phase2",
-  "binary": "/var/folders/q_/df6ygvl10fj4g162_ld1tkvw0000gn/T/echo-load-3068842834/echo",
-  "binary_rel": "../../../../var/folders/q_/df6ygvl10fj4g162_ld1tkvw0000gn/T/echo-load-3068842834/echo",
   "iterations": 20,
   "recorded_at": "2026-05-13T23:48:28.088138Z",
   "metric_ms": {

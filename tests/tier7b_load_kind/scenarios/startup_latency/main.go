@@ -30,10 +30,13 @@ import (
 const scenarioVersion = "0.2.0-phase2"
 
 type Result struct {
-	Scenario       string           `json:"scenario"`
-	Version        string           `json:"version"`
-	Binary         string           `json:"binary"`
-	BinaryRel      string           `json:"binary_rel,omitempty"`
+	Scenario string `json:"scenario"`
+	Version  string `json:"version"`
+	// The measured binary is rebuilt into a fresh temp directory on
+	// every run, so its absolute path is recording-host trivia rather
+	// than a reproducibility input. It is deliberately not persisted to
+	// the baseline (it leaked a developer's private /var/folders path
+	// into version control). spec-reviews: F-6.3.13.
 	Iterations     int              `json:"iterations"`
 	RecordedAt     string           `json:"recorded_at"`
 	MetricMS       map[string]int64 `json:"metric_ms"`
@@ -87,7 +90,7 @@ func main() {
 		samples = append(samples, d)
 	}
 
-	r := buildResult(bin, samples)
+	r := buildResult(samples)
 	r.Notes = fmt.Sprintf("warmup=%d, timeout=%s", *warmup, *timeout)
 
 	outPath := *output
@@ -155,15 +158,12 @@ func measureOnce(bin string, timeout time.Duration) (time.Duration, error) {
 	return elapsed, nil
 }
 
-func buildResult(bin string, samples []time.Duration) Result {
+func buildResult(samples []time.Duration) Result {
 	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
 
-	rel, _ := filepath.Rel(must(repoRoot()), bin)
 	r := Result{
 		Scenario:   "startup_latency",
 		Version:    scenarioVersion,
-		Binary:     bin,
-		BinaryRel:  rel,
 		Iterations: len(samples),
 		RecordedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		MetricMS:   map[string]int64{},
@@ -245,13 +245,6 @@ func repoRoot() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("repoRoot: no go.mod above %s", wd)
-}
-
-func must(s string, err error) string {
-	if err != nil {
-		panic(err)
-	}
-	return s
 }
 
 var _ = strings.TrimSpace

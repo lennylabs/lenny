@@ -763,4 +763,71 @@ func TestNewMetricsEmittersNilSafe(t *testing.T) {
 	m.ObserveLLMTranslation("p", "anthropic_direct", "anthropic", "request", 0.01)
 	m.IncLLMTranslationError("p", "anthropic_direct", "upstream_5xx")
 	m.IncSlotFailure("session_start", "p", "sbx-1")
+	m.ObserveSessionStartupDuration("p", "runc", "standard", 1.0)
+	m.ObserveSessionStartupPhase("pod_claim", "runc", 0.05)
+}
+
+// spec: §16.1 line 14 / §6.3 lines 348, 372 — the startup-latency
+// histograms register and expose their series, the end-to-end metric
+// carries the pool/runtime_class/isolation_profile labels, and the
+// per-phase metric carries phase/runtime_class.
+func TestSessionStartupMetricsExposed_spec_6_3(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ObserveSessionStartupDuration("pool-a", "runc", "standard", 1.3)
+	m.ObserveSessionStartupDuration("pool-b", "gvisor", "sandboxed", 4.0)
+	m.ObserveSessionStartupPhase("pod_claim", "runc", 0.05)
+	m.ObserveSessionStartupPhase("agent_session_start", "gvisor", 4.2)
+
+	body := scrapeMetrics(t, m)
+	for _, want := range []string{
+		`lenny_session_startup_duration_seconds_count{isolation_profile="standard",pool="pool-a",runtime_class="runc"} 1`,
+		`lenny_session_startup_duration_seconds_count{isolation_profile="sandboxed",pool="pool-b",runtime_class="gvisor"} 1`,
+		`lenny_session_startup_phase_duration_seconds_count{phase="pod_claim",runtime_class="runc"} 1`,
+		`lenny_session_startup_phase_duration_seconds_count{phase="agent_session_start",runtime_class="gvisor"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q", want)
+		}
+	}
+}
+
+// spec: §16.5 lines 635-636 — the StartupLatency burn-rate alerts read
+// the histogram's le="2" (runc, 2s SLO) and le="5" (gVisor, 5s SLO)
+// bucket boundaries. The recorded buckets must carry exactly those le
+// labels or the alert PromQL silently selects no series.
+func TestSessionStartupDurationBucketBoundaries_spec_16_5(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ObserveSessionStartupDuration("pool-a", "runc", "standard", 0.5)
+
+	body := scrapeMetrics(t, m)
+	for _, le := range []string{`le="2"`, `le="5"`} {
+		needle := `lenny_session_startup_duration_seconds_bucket{`
+		found := false
+		for _, line := range strings.Split(body, "\n") {
+			if strings.HasPrefix(line, needle) && strings.Contains(line, le) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("startup duration histogram has no bucket with %s; the StartupLatency alert expr would match no series", le)
+		}
+	}
+}
+
+func scrapeMetrics(t *testing.T, m *gatewaymetrics.Metrics) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status = %d", rr.Code)
+	}
+	return rr.Body.String()
 }

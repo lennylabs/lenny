@@ -754,9 +754,45 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	if err != nil {
 		return err
 	}
+	s.recordStartupMetrics(match, result.Timings)
 	s.podRegistry.Put(result)
 	s.persistPodAssignment(ctx, row.TenantID, row.ID, result.SandboxName)
 	return nil
+}
+
+// recordStartupMetrics observes the §6.3 startup-latency histograms for
+// a successful session-mode start. It records each instrumented
+// hot-path phase on lenny_session_startup_phase_duration_seconds
+// (§6.3 line 372) and the end-to-end pod-warm envelope on
+// lenny_session_startup_duration_seconds (§6.3 line 348). Per §6.3 line
+// 348 the end-to-end metric is pod claim through agent session ready
+// excluding workspace materialization; setup commands are also excluded
+// because they are deployer-controlled (§6.3 line 363) and the 2s runc /
+// 5s gVisor SLO budgets only the platform phases (claim ≤100ms +
+// credential ≤100ms + agent start ≤1.5s/4.5s). The end-to-end total is
+// therefore PodClaim + CredentialAssignment + AgentSessionStart.
+// The first-prompt/TTFT phase is tracked separately (F-6.3.3,
+// lenny_session_time_to_first_token_seconds) because it needs runtime
+// streaming feedback the start path does not see.
+// spec: §6.3 lines 348, 358, 372.
+func (s *Server) recordStartupMetrics(match podsession.PoolMatch, t podsession.BindTimings) {
+	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(match.IsolationProfile))
+	if !ok {
+		// An unrecognized profile would mislabel the series; skip rather
+		// than emit an empty runtime_class.
+		return
+	}
+	if s.observeStartupPhase != nil {
+		s.observeStartupPhase("pod_claim", runtimeClass, t.PodClaim.Seconds())
+		s.observeStartupPhase("workspace_materialization", runtimeClass, t.WorkspaceMaterialization.Seconds())
+		s.observeStartupPhase("setup_commands", runtimeClass, t.SetupCommands.Seconds())
+		s.observeStartupPhase("credential_assignment", runtimeClass, t.CredentialAssignment.Seconds())
+		s.observeStartupPhase("agent_session_start", runtimeClass, t.AgentSessionStart.Seconds())
+	}
+	if s.observeStartupDuration != nil {
+		total := t.PodClaim + t.CredentialAssignment + t.AgentSessionStart
+		s.observeStartupDuration(match.Pool, runtimeClass, match.IsolationProfile, total.Seconds())
+	}
 }
 
 // persistPodAssignment writes the bound pod's SandboxName back to the

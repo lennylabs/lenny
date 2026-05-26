@@ -1546,15 +1546,23 @@ func burnRateAlerts() []Rule {
 			slug: "gateway-availability-burn-rate",
 		},
 		{
+			// The slow ratio is computed inline from the
+			// lenny_session_startup_duration_seconds histogram (§6.3 line 348,
+			// emitted by the gateway start path): the fraction of runc starts
+			// slower than the 2s SLO threshold, against the 5% error budget.
+			// The le="2" bucket boundary is one of the histogram's explicit
+			// buckets. spec: §16.5 line 635, §6.3 line 348.
 			name: "StartupLatencyBurnRate",
 			slo:  "Startup latency P95 < 2s (runc)",
-			expr: `lenny_session_startup_duration_slow_ratio{isolation_profile="runc"} / 0.05`,
+			expr: `(1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05`,
 			slug: "startup-latency-burn-rate",
 		},
 		{
+			// As above for the gVisor 5s SLO threshold (le="5" bucket).
+			// spec: §16.5 line 636, §6.3 line 348.
 			name: "StartupLatencyGVisorBurnRate",
 			slo:  "Startup latency P95 < 5s (gVisor)",
-			expr: `lenny_session_startup_duration_slow_ratio{isolation_profile="gvisor"} / 0.05`,
+			expr: `(1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05`,
 			slug: "startup-latency-gvisor-burn-rate",
 		},
 		{

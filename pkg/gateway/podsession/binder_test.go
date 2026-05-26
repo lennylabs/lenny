@@ -341,6 +341,54 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 	}
 }
 
+// spec: §6.3 lines 358, 372 — Bind records the per-phase wall-clock
+// durations on its result so the start path can attribute the §6.3
+// latency budget. Each phase duration is non-negative and the recorded
+// phases cannot together exceed the overall Bind wall-clock.
+func TestBindRecordsPhaseTimings_spec_6_3(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = rt
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	wallStart := time.Now()
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+	})
+	wall := time.Since(wallStart)
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	tm := res.Timings
+	phases := map[string]time.Duration{
+		"pod_claim":                 tm.PodClaim,
+		"workspace_materialization": tm.WorkspaceMaterialization,
+		"setup_commands":            tm.SetupCommands,
+		"credential_assignment":     tm.CredentialAssignment,
+		"agent_session_start":       tm.AgentSessionStart,
+	}
+	var sum time.Duration
+	for name, d := range phases {
+		if d < 0 {
+			t.Errorf("phase %q duration is negative: %v", name, d)
+		}
+		sum += d
+	}
+	if sum > wall {
+		t.Errorf("recorded phase durations sum to %v, exceeding the %v Bind wall clock", sum, wall)
+	}
+	// The agent-start phase is the last RPC before the session is ready;
+	// it must have been entered (the connect+start path runs real work).
+	if tm.AgentSessionStart == 0 && tm.PodClaim == 0 {
+		t.Error("Bind recorded no claim or agent-start time; phase instrumentation is not wired")
+	}
+}
+
 func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")

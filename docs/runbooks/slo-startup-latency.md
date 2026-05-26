@@ -42,19 +42,19 @@ Pod-startup latency SLO burn. Separate SLO targets are defined per `RuntimeClass
 
 <!-- access: api method=GET path=/v1/admin/metrics -->
 ```
-GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_warmpool_pod_startup_duration_seconds_bucket[5m]))&groupBy=pool,runtime_class&window=1h
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_warmpool_pod_startup_duration_seconds_bucket[5m]))&groupBy=pool,isolation_profile&window=1h
 ```
 
-Which pool and runtime class? Startup cost differs materially between runc (light) and gVisor/Kata (heavier).
+This metric carries the `isolation_profile` label, not `runtime_class`. Startup cost differs by isolation profile: standard (runc) is light, while sandboxed (gVisor) and microvm (Kata) are heavier.
 
 ### Step 2 — Phase breakdown
 
 <!-- access: api method=GET path=/v1/admin/metrics -->
 ```
-GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_warmpool_pod_startup_phase_duration_seconds_bucket[5m]))&groupBy=phase&window=1h
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_session_startup_phase_duration_seconds_bucket[5m]))&groupBy=phase,runtime_class&window=1h
 ```
 
-Phases: `schedule`, `image_pull`, `sandbox_init`, `setup_command`, `ready_check`.
+Phases: `pod_claim`, `workspace_materialization`, `setup_commands`, `credential_assignment`, and `agent_session_start`.
 
 ### Step 3 — Node pressure
 
