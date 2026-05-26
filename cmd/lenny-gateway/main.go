@@ -278,6 +278,8 @@ func main() {
 		"§4.8 cumulative fail-open escalation ceiling: when a fail-open interceptor errors more than this many times in a rolling 5-minute window, the gateway auto-escalates it to fail-closed and emits interceptor.fail_open_escalated.")
 	delegationMaxInputSize := flag.Int("delegation-max-input-size", envInt("LENNY_DELEGATION_MAX_INPUT_SIZE", delegationpolicystore.DefaultMaxInputSize),
 		"§8.3 default contentPolicy.maxInputSize: the hard byte cap on TaskSpec.input the §4.8 DelegationPolicyEvaluator (PreDelegation, priority 250) enforces. A delegation exceeding it is rejected with INPUT_TOO_LARGE before pod allocation. Defaults to the §8.3 128 KiB. Override via LENNY_DELEGATION_MAX_INPUT_SIZE.")
+	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
+		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	agentNamespace := flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	clusterQPS := flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
@@ -1301,7 +1303,18 @@ func main() {
 		policy.NewDelegationPolicyEvaluator(nil, *delegationMaxInputSize)); err != nil {
 		log.Fatalf("lenny-gateway: register DelegationPolicyEvaluator: %v", err)
 	}
-	log.Printf("lenny-gateway: §4.8 AuthEvaluator (PreAuth) and DelegationPolicyEvaluator (PreDelegation, maxInputSize=%d) registered", *delegationMaxInputSize)
+	// §4.8 line 977: RetryPolicyEvaluator (priority 600) fires at PostRoute
+	// only. It enforces the §7.3 automatic-retry budget — a session whose
+	// retryCount has reached the effective retryPolicy.maxRetries is
+	// rejected at routing rather than re-claiming a warm pod for an attempt
+	// past its budget. The §7.3 resume-window timer stays canonical in the
+	// watchdog. Backed by the session store; "always active" — registered
+	// unconditionally.
+	if err := policyChain.Register(interceptor.PhasePostRoute,
+		policy.NewRetryPolicyEvaluator(sessionRetryLookup{sessions: sessions}, nil, *retryMaxRetries)); err != nil {
+		log.Fatalf("lenny-gateway: register RetryPolicyEvaluator: %v", err)
+	}
+	log.Printf("lenny-gateway: §4.8 AuthEvaluator (PreAuth), DelegationPolicyEvaluator (PreDelegation, maxInputSize=%d), and RetryPolicyEvaluator (PostRoute, maxRetries=%d) registered", *delegationMaxInputSize, *retryMaxRetries)
 	var policyAuditSink *policy.AuditSink
 	if redisClient != nil {
 		quotaCounter := quotastore.New(redisClient)
@@ -2730,6 +2743,23 @@ func (l sessionUserLookup) UserID(ctx context.Context, tenantID, sessionID strin
 		return "", false
 	}
 	return sess.UserID, true
+}
+
+// sessionRetryLookup adapts the §4.2 session store to the §4.8
+// RetryPolicyEvaluator's RetryStateLookup: a missing session reads as
+// not-found (ok == false, the request is admitted), and any other store
+// fault surfaces as an error so the fail-closed evaluator rejects.
+type sessionRetryLookup struct{ sessions sessionstore.Store }
+
+func (l sessionRetryLookup) LookupRetryState(ctx context.Context, tenantID, sessionID string) (policy.RetryState, bool, error) {
+	sess, err := l.sessions.Get(ctx, tenantID, sessionID)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return policy.RetryState{}, false, nil
+	}
+	if err != nil {
+		return policy.RetryState{}, false, err
+	}
+	return policy.RetryState{RetryCount: sess.RetryCount}, true, nil
 }
 
 func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics) *http.Server {
