@@ -25,7 +25,11 @@ func seedParent(t *testing.T, store sessionstore.Store, id, parentID, runtime, p
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
 		ID: id, TenantID: "acme", State: session.StateRunning,
-		RuntimeRef: runtime, PoolRef: pool, IsolationProfile: prof,
+		// §8.2 line 58: child-token exchange requires a parent user
+		// identity; tests seed `user_alice` so Delegate does not
+		// reject with ErrParentNoUser.
+		UserID:          "user_alice",
+		RuntimeRef:      runtime, PoolRef: pool, IsolationProfile: prof,
 		ParentSessionID: parentID,
 		CreatedAt:       now, UpdatedAt: now,
 	}
@@ -64,6 +68,9 @@ func seedEnrolledParent(t *testing.T, store sessionstore.Store, expID string) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		// §8.2 line 58: Delegate requires the parent carry an
+		// authenticated user identity.
+		UserID:     "user_alice",
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		ExperimentContext: &sessionstore.ExperimentContext{ExperimentID: expID, VariantID: "treatment"},
 		CreatedAt:         now, UpdatedAt: now,
@@ -328,7 +335,8 @@ func TestDelegatePropagatesTracingContext(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	parentCtx := map[string]string{"trace-id": "t-root", "span_id": "s-1"}
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		TracingContext: parentCtx,
 		CreatedAt:      now, UpdatedAt: now,
@@ -418,5 +426,228 @@ func TestDelegateCycleReadsRuntimeAllowSelfRecursion(t *testing.T) {
 	}
 	if rej.EffectiveSettings.RuntimeAllowSelfRec {
 		t.Error("RuntimeAllowSelfRec must default false with no runtime registry")
+	}
+}
+
+// recorder captures the §8.2 metric calls so tests can assert emission
+// without depending on a Prometheus registry. spec: §8.2 / §16.1.
+type recorder struct {
+	depths []depthObs
+	blocks []blockObs
+}
+
+type depthObs struct {
+	pool  string
+	depth int
+}
+
+type blockObs struct {
+	pool, tenantID, layer, mode string
+}
+
+func (r *recorder) ObserveDelegationDepth(pool string, depth int) {
+	r.depths = append(r.depths, depthObs{pool, depth})
+}
+
+func (r *recorder) IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode string) {
+	r.blocks = append(r.blocks, blockObs{pool, tenantID, layer, mode})
+}
+
+// spec: §8.2 line 58 — the child-token exchange requires the parent's
+// authenticated user JWT as `subject_token`. A userless parent must be
+// rejected at admission with ErrParentNoUser; an empty req.UserID
+// inherits-or-rejects but does NOT substitute the parent identity.
+func TestDelegateRejectsUserlessParent(t *testing.T) {
+	store := memstore.New()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme",
+		// UserID intentionally omitted.
+		State:      session.StateRunning,
+		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt:  now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed userless parent: %v", err)
+	}
+	svc := newService(t, store, func() string { return "sess_child" })
+
+	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if !errors.Is(err, delegation.ErrParentNoUser) {
+		t.Fatalf("Delegate userless parent: got %v, want ErrParentNoUser", err)
+	}
+
+	// A caller-supplied req.UserID must NOT bypass the gate — the
+	// spec ties the child to the authenticated parent identity.
+	_, err = svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+		UserID:           "spoofed_caller",
+	})
+	if !errors.Is(err, delegation.ErrParentNoUser) {
+		t.Fatalf("spoofed req.UserID must not bypass ErrParentNoUser: got %v", err)
+	}
+}
+
+// spec: §8.2 / §16.1 line 27 — Delegate observes the admitted child's
+// depth onto lenny_delegation_depth at admission time.
+func TestDelegateRecordsAdmittedDepth(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	seedParent(t, store, "sess_parent", "sess_root", "gemini", "pool-b", isolation.ProfileSandboxed)
+	rec := &recorder{}
+	svc := delegation.NewService(store, delegation.Options{
+		Clock:   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:  func() string { return "sess_child" },
+		Metrics: rec,
+	})
+	res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "research",
+		PoolRef:          "pool-c",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	if res.Depth != 2 {
+		t.Fatalf("child depth = %d, want 2", res.Depth)
+	}
+	if len(rec.depths) != 1 || rec.depths[0] != (depthObs{pool: "pool-c", depth: 2}) {
+		t.Errorf("depths = %+v, want [{pool-c 2}]", rec.depths)
+	}
+	if len(rec.blocks) != 0 {
+		t.Errorf("non-self-recursive hop must not emit would-have-blocked, got %+v", rec.blocks)
+	}
+}
+
+// spec: §8.2 line 70 — the gateway emits one
+// lenny_delegation_would_have_blocked_total row per failing layer of
+// the three-layer AND gate on a self-recursive rejection (enforce
+// mode), so per-tenant rejection-attribution dashboards can read the
+// per-layer breakdown. spec: §16.1 line 79.
+func TestDelegateRecordsCycleRejectionAttribution(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	seedParent(t, store, "sess_parent", "sess_root", "gemini", "pool-b", isolation.ProfileSandboxed)
+	rec := &recorder{}
+	svc := delegation.NewService(store, delegation.Options{
+		Clock:     func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:    func() string { return "sess_child" },
+		Metrics:   rec,
+		CycleMode: cycle.ModeEnforce,
+	})
+	// Delegating back to (claude, pool-a) creates a cycle. With no
+	// runtime registry the runtime layer defaults false; platform and
+	// policy layers default false. Expect three would-have-blocked
+	// rows on the rejected hop, all stamped mode=enforce.
+	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "claude",
+		PoolRef:          "pool-a",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err == nil {
+		t.Fatal("Delegate must reject the self-recursive hop")
+	}
+	if len(rec.blocks) != 3 {
+		t.Fatalf("would-have-blocked rows = %d, want 3 (platform/runtime/policy under enforce): %+v",
+			len(rec.blocks), rec.blocks)
+	}
+	wantLayers := map[string]bool{"platform": false, "runtime": false, "policy": false}
+	for _, b := range rec.blocks {
+		if b.pool != "pool-a" || b.tenantID != "acme" || b.mode != "enforce" {
+			t.Errorf("attribution row %+v: want pool=pool-a tenant=acme mode=enforce", b)
+		}
+		if _, ok := wantLayers[b.layer]; !ok {
+			t.Errorf("unexpected layer %q in attribution row", b.layer)
+			continue
+		}
+		wantLayers[b.layer] = true
+	}
+	for layer, seen := range wantLayers {
+		if !seen {
+			t.Errorf("missing attribution row for layer %q", layer)
+		}
+	}
+	// A rejected hop must not emit a depth observation.
+	if len(rec.depths) != 0 {
+		t.Errorf("rejected hop emitted depth = %+v, want none", rec.depths)
+	}
+}
+
+// spec: §8.2 line 70 — under mode=warn the delegation is admitted, but
+// the same per-layer breakdown is recorded for the diagnostic rollout.
+func TestDelegateRecordsCycleWarnModeAttribution(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	seedParent(t, store, "sess_parent", "sess_root", "gemini", "pool-b", isolation.ProfileSandboxed)
+	rec := &recorder{}
+	svc := delegation.NewService(store, delegation.Options{
+		Clock:     func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:    func() string { return "sess_child" },
+		Metrics:   rec,
+		CycleMode: cycle.ModeWarn,
+	})
+	res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "claude",
+		PoolRef:          "pool-a",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err != nil {
+		t.Fatalf("warn-mode self-recursive hop must be admitted: %v", err)
+	}
+	if res.Child.ID != "sess_child" {
+		t.Errorf("warn-mode admission missing child: %+v", res)
+	}
+	if len(rec.blocks) != 3 {
+		t.Fatalf("warn-mode rows = %d, want 3: %+v", len(rec.blocks), rec.blocks)
+	}
+	for _, b := range rec.blocks {
+		if b.mode != "warn" {
+			t.Errorf("warn-mode attribution row %+v: mode must be warn", b)
+		}
+	}
+	// Admitted under warn → depth observation is recorded.
+	if len(rec.depths) != 1 || rec.depths[0] != (depthObs{pool: "pool-a", depth: 2}) {
+		t.Errorf("warn-mode admission depths = %+v, want [{pool-a 2}]", rec.depths)
+	}
+}
+
+// spec: §8.2 / §16.1 — under mode=permissive cycle detection is
+// disabled and lenny_delegation_would_have_blocked_total is NOT
+// emitted (the §16.1 catalog row marks this explicit).
+func TestDelegatePermissiveModeSkipsAttribution(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	seedParent(t, store, "sess_parent", "sess_root", "gemini", "pool-b", isolation.ProfileSandboxed)
+	rec := &recorder{}
+	svc := delegation.NewService(store, delegation.Options{
+		Clock:     func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:    func() string { return "sess_child" },
+		Metrics:   rec,
+		CycleMode: cycle.ModePermissive,
+	})
+	if _, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "claude",
+		PoolRef:          "pool-a",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}); err != nil {
+		t.Fatalf("permissive-mode must admit: %v", err)
+	}
+	if len(rec.blocks) != 0 {
+		t.Errorf("permissive-mode must not emit would-have-blocked, got %+v", rec.blocks)
+	}
+	// Depth is still observed on the admitted hop.
+	if len(rec.depths) != 1 {
+		t.Errorf("permissive-mode depths = %+v, want one observation", rec.depths)
 	}
 }

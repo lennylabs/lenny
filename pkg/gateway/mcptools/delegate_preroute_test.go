@@ -58,9 +58,10 @@ func newDelegateMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Serve
 	_ = runtimes.Create(ctxbg, runtimestore.Runtime{Name: "child-agent", Type: runtimestore.TypeAgent})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt:  now, UpdatedAt: now,
 	})
 	return srv, store
 }

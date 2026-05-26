@@ -208,6 +208,22 @@ type Metrics struct {
 	// quota_exceeded | other`). The §16.5 MinIOUnavailable alert reads
 	// the `minio_unreachable` label.
 	artifactUploadError *prometheus.CounterVec
+	// delegationDepth observes the §16.1 / §8.2 per-session delegation
+	// depth at admission. The catalog comment positions it as a
+	// session-completion histogram; depth is set at admission and
+	// invariant for the session's lifetime, so the distribution is
+	// identical whether sampled at admission or terminal. Labelled by
+	// `pool` per §16.1.
+	delegationDepth *prometheus.HistogramVec
+	// delegationWouldHaveBlocked counts §8.2 self-recursion hops where
+	// any layer of the three-layer AND gate evaluated `false`. Labels
+	// `pool`, `tenant_id`, `layer` (`platform` | `runtime` | `policy`),
+	// and `mode` (`enforce` | `warn`). Under `mode: enforce` this is a
+	// counter of "rejection causes" (the delegation is rejected, one
+	// row per failing layer); under `mode: warn` it counts the same
+	// per-layer breakdown for diagnostic rollouts (the delegation is
+	// admitted). Not emitted under `mode: permissive`.
+	delegationWouldHaveBlocked *prometheus.CounterVec
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -821,6 +837,28 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 / §8.2 — `lenny_delegation_depth` per-session delegation
+	// depth histogram, labelled by `pool` (per §16.1). Buckets cover
+	// the §8.2.bis maxDelegationDepth ceiling and a head-room margin.
+	delegationDepth, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_delegation_depth",
+		Help:    "Per-session delegation depth observed at delegation admission (§8.2).",
+		Buckets: []float64{0, 1, 2, 3, 5, 8, 13, 21},
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 / §8.2 — `lenny_delegation_would_have_blocked_total` counter
+	// of self-recursion hops where any layer of the §8.2 three-layer
+	// AND gate evaluated `false`. Labels match the §16.1 catalog row
+	// (`pool`, `tenant_id`, `layer`, `mode`).
+	delegationWouldHaveBlocked, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_delegation_would_have_blocked_total",
+		Help: "Self-recursion would-have-blocked counter by layer and cycle-detection mode (§8.2).",
+	}, []string{"pool", "tenant_id", "layer", "mode"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -844,7 +882,8 @@ func New() (*Metrics, error) {
 		gcTombstonesPruned,
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
 		drainReadinessChecks, legalHoldCheckpointGaps,
-		artifactUploadError)
+		artifactUploadError,
+		delegationDepth, delegationWouldHaveBlocked)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -926,6 +965,8 @@ func New() (*Metrics, error) {
 		drainReadinessChecks:                 drainReadinessChecks,
 		legalHoldCheckpointGaps:              legalHoldCheckpointGaps,
 		artifactUploadError:                  artifactUploadError,
+		delegationDepth:                      delegationDepth,
+		delegationWouldHaveBlocked:           delegationWouldHaveBlocked,
 	}, nil
 }
 
@@ -1197,6 +1238,31 @@ func (m *Metrics) IncArtifactUploadError(tenantID, errorType string) {
 	// level/trigger labels are blank since the failure originates in
 	// the blob store before the higher-level context is available.
 	m.checkpointStorageFailure.WithLabelValues("", "", "", errorType).Inc()
+}
+
+// ObserveDelegationDepth records a §8.2 delegation-admission depth
+// observation onto the `lenny_delegation_depth` histogram labeled by
+// `pool`. spec: §8.2; §16.1 line 27.
+func (m *Metrics) ObserveDelegationDepth(pool string, depth int) {
+	if m == nil {
+		return
+	}
+	m.delegationDepth.WithLabelValues(pool).Observe(float64(depth))
+}
+
+// IncDelegationWouldHaveBlocked increments the §8.2 three-layer-gate
+// `lenny_delegation_would_have_blocked_total` counter for one
+// (`layer`, `mode`) attribution row. Callers emit one row per failing
+// layer: under `mode: enforce` this attributes the rejection causes
+// for a rejected hop; under `mode: warn` it records the
+// would-have-blocked layers for an admitted hop. The counter is not
+// emitted under `mode: permissive` (the caller decides; this helper
+// is unconditional). spec: §8.2 line 70; §16.1 line 79.
+func (m *Metrics) IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode string) {
+	if m == nil {
+		return
+	}
+	m.delegationWouldHaveBlocked.WithLabelValues(pool, tenantID, layer, mode).Inc()
 }
 
 // IncCheckpointEvictionFallback increments the §4.4 line 263

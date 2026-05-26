@@ -1610,7 +1610,16 @@ func main() {
 	}
 
 	// ----- MCP adapter -----
-	delegationSvc := delegation.NewService(sessions, delegation.Options{Experiments: experiments, Runtimes: runtimes, Clock: clockinject.Now})
+	delegationSvc := delegation.NewService(sessions, delegation.Options{
+		Experiments: experiments,
+		Runtimes:    runtimes,
+		Clock:       clockinject.Now,
+		// §8.2 / §16.1: the delegation service emits
+		// `lenny_delegation_depth` and
+		// `lenny_delegation_would_have_blocked_total` through the
+		// gateway metrics registry.
+		Metrics: gwMetrics,
+	})
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store:                      sessions,

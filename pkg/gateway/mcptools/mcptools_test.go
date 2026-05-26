@@ -402,9 +402,10 @@ func TestDelegateTaskTool(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt:  now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b"}`)
@@ -425,9 +426,10 @@ func TestDelegateTaskToolDetectsCycle(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt:  now, UpdatedAt: now,
 	})
 	// Delegating back to the parent's own (runtime, pool) is a cycle.
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
@@ -435,6 +437,79 @@ func TestDelegateTaskToolDetectsCycle(t *testing.T) {
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("cycle should be a tool error: %+v", resp)
+	}
+}
+
+// spec: §8.2 line 17 — `lenny/delegate_task` returns a TaskHandle. v1
+// ships the typed envelope (childSessionId, state, runtimeRef, depth)
+// so callers can decode against a stable shape rather than a
+// hand-rolled JSON string.
+func TestDelegateTaskToolReturnsTaskHandleEnvelope(t *testing.T) {
+	srv, store := newMCP(t)
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
+		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt:  now, UpdatedAt: now,
+	})
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b"}`)
+	text := resultText(t, resp)
+	var handle struct {
+		ChildSessionID string `json:"childSessionId"`
+		State          string `json:"state"`
+		RuntimeRef     string `json:"runtimeRef"`
+		Depth          int    `json:"depth"`
+	}
+	if err := json.Unmarshal([]byte(text), &handle); err != nil {
+		t.Fatalf("TaskHandle is not valid JSON: %v (raw=%q)", err, text)
+	}
+	if handle.ChildSessionID != "sess_child" {
+		t.Errorf("childSessionId = %q, want sess_child", handle.ChildSessionID)
+	}
+	if handle.State != string(session.StateCreated) {
+		t.Errorf("state = %q, want %q", handle.State, session.StateCreated)
+	}
+	if handle.RuntimeRef != "gemini" {
+		t.Errorf("runtimeRef = %q, want gemini", handle.RuntimeRef)
+	}
+	if handle.Depth != 1 {
+		t.Errorf("depth = %d, want 1 (root parent → child)", handle.Depth)
+	}
+}
+
+// spec: §8.2 line 58 — Delegate rejects a userless parent with
+// ErrParentNoUser; the MCP shim surfaces DELEGATION_PARENT_NO_USER
+// so callers can distinguish it from the generic error path.
+func TestDelegateTaskToolRejectsUserlessParent(t *testing.T) {
+	srv, store := newMCP(t)
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		// UserID intentionally omitted.
+		ID: "sess_parent", TenantID: "acme",
+		State:      session.StateRunning,
+		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt:  now, UpdatedAt: now,
+	})
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("userless parent must be a tool error: %+v", resp)
+	}
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("error result has no content: %+v", resp)
+	}
+	c0, _ := content[0].(map[string]any)
+	errText, _ := c0["text"].(string)
+	if !strings.Contains(errText, "DELEGATION_PARENT_NO_USER") {
+		t.Errorf("error text = %q, want DELEGATION_PARENT_NO_USER reason", errText)
+	}
+	// No child must be created when the gate trips.
+	if _, err := store.Get(context.Background(), "acme", "sess_child"); err == nil {
+		t.Error("a child was created despite the userless-parent rejection")
 	}
 }
 

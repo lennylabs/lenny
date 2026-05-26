@@ -68,11 +68,20 @@ type Result struct {
 	Depth int
 }
 
+// MetricsRecorder receives §8.2 delegation admission and cycle-gate
+// observations. *gatewaymetrics.Metrics implements it. A nil recorder
+// makes Delegate skip metric emission.
+type MetricsRecorder interface {
+	ObserveDelegationDepth(pool string, depth int)
+	IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode string)
+}
+
 // Service creates child sessions from a delegation request.
 type Service struct {
 	store       sessionstore.Store
 	experiments experimentstore.Store
 	runtimes    runtimestore.Store
+	metrics     MetricsRecorder
 	clock       func() time.Time
 	idFn        func() string
 	mode        cycle.Mode
@@ -103,6 +112,10 @@ type Options struct {
 	// layer at its conservative false default, rejecting self-recursive
 	// hops regardless of the target runtime's declared value.
 	Runtimes runtimestore.Store
+
+	// Metrics, when set, receives §8.2 delegation admission and
+	// cycle-gate observations. Nil disables emission.
+	Metrics MetricsRecorder
 }
 
 // NewService returns a delegation Service.
@@ -123,6 +136,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		store:       store,
 		experiments: opts.Experiments,
 		runtimes:    opts.Runtimes,
+		metrics:     opts.Metrics,
 		clock:       clock,
 		idFn:        idFn,
 		mode:        mode,
@@ -137,6 +151,15 @@ var (
 	// ErrParentNotRunning — the parent is not in a state that may
 	// delegate (§8.2 requires the parent be running).
 	ErrParentNotRunning = errors.New("delegation: parent session is not running")
+
+	// ErrParentNoUser — the parent session carries no authenticated
+	// user identity, so the §8.2 child-token exchange (line 58) has no
+	// `subject_token` to bind the child to. The §11.2 quota gates,
+	// §10.6 environment resolver, §11.7 audit attribution, and §9.2
+	// elicitation routing all key on a non-empty user_id; spawning a
+	// userless child would silently downgrade every one of those
+	// invariants for the entire subtree.
+	ErrParentNoUser = errors.New("delegation: parent session has no authenticated user identity")
 )
 
 // IsolationViolationError reports a §8.3 SEC-001 monotonicity
@@ -175,6 +198,20 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		return Result{}, ErrParentNotRunning
 	}
 
+	// §8.2 line 58: the gateway mints the child session's token via
+	// the canonical token-exchange endpoint with `subject_token` set
+	// to the parent's authenticated user JWT. A parent without a
+	// user identity has no subject to bind the child to, so the
+	// subtree is rejected at admission rather than spawning a child
+	// whose §11.2 quotas, §10.6 environment scope, §11.7 audit
+	// attribution, and §9.2 elicitation routing are undifferentiated.
+	// req.UserID is rejected as a substitute: the spec ties the
+	// child's identity to the *authenticated* parent, not to a
+	// caller-supplied label.
+	if parent.UserID == "" {
+		return Result{}, ErrParentNoUser
+	}
+
 	// §8.3 SEC-001 isolation monotonicity. The child profile
 	// defaults to the parent's when unset.
 	childProfile := req.IsolationProfile
@@ -210,6 +247,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		}
 	}
 	decision := cycle.Decide(lineage, target, settings)
+	s.recordCycleDecision(req.PoolRef, tenantID, decision)
 	if decision.Outcome == cycle.OutcomeRejected {
 		return Result{}, cycle.ToError(decision, target)
 	}
@@ -248,7 +286,43 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 	if err := s.store.Create(ctx, child); err != nil {
 		return Result{}, err
 	}
-	return Result{Child: child, Depth: depth + 1}, nil
+	// §8.2 / §16.1 line 27: observe the admitted child's depth onto
+	// the `lenny_delegation_depth` histogram. Depth is invariant once
+	// admitted, so sampling at admission and at session completion
+	// produces the same distribution.
+	childDepth := depth + 1
+	if s.metrics != nil {
+		s.metrics.ObserveDelegationDepth(req.PoolRef, childDepth)
+	}
+	return Result{Child: child, Depth: childDepth}, nil
+}
+
+// recordCycleDecision emits the §8.2 three-layer-gate
+// `lenny_delegation_would_have_blocked_total` attribution rows for the
+// cycle decision. Rules:
+//   - OutcomeAdmitted with no would-have-blocked layers: no emission.
+//   - OutcomeRejected (mode=enforce): one row per failing layer with
+//     `mode="enforce"` — the per-layer rejection-cause attribution.
+//   - OutcomeWouldHaveBlocked (mode=warn): one row per failing layer
+//     with `mode="warn"` — the per-layer diagnostic attribution.
+//   - OutcomePermissive: never emitted (mode=permissive disables
+//     evaluation per §16.1 catalog).
+//
+// spec: §8.2 line 70; §16.1 line 79.
+func (s *Service) recordCycleDecision(pool, tenantID string, d cycle.Decision) {
+	if s.metrics == nil || len(d.WouldHaveBlockedLayers) == 0 {
+		return
+	}
+	mode := string(d.EffectiveSettings.Mode)
+	if mode == "" {
+		mode = string(cycle.ModeEnforce)
+	}
+	if mode == string(cycle.ModePermissive) {
+		return
+	}
+	for _, layer := range d.WouldHaveBlockedLayers {
+		s.metrics.IncDelegationWouldHaveBlocked(pool, tenantID, string(layer), mode)
+	}
 }
 
 // propagateExperimentContext applies the §8.3/§10.7 experiment-context

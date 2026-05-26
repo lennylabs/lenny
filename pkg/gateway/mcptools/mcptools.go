@@ -1086,6 +1086,14 @@ func Register(srv *mcp.Server, deps Deps) {
 					}
 					return mcp.ToolResult{}, fmt.Errorf("ISOLATION_MONOTONICITY_VIOLATED: %w", err)
 				}
+				// §8.2 line 58: the child-token exchange requires the
+				// parent's authenticated user JWT as `subject_token`. A
+				// userless parent is surfaced under a distinct reason so
+				// the caller can distinguish "missing user identity" from
+				// the generic delegation failure path.
+				if errors.Is(err, delegation.ErrParentNoUser) {
+					return mcp.ToolResult{}, fmt.Errorf("DELEGATION_PARENT_NO_USER: %w", err)
+				}
 				return mcp.ToolResult{}, err
 			}
 			// Deliver the (possibly interceptor-modified) task input to
@@ -1098,13 +1106,51 @@ func Register(srv *mcp.Server, deps Deps) {
 						res.Child.ID, err)
 				}
 			}
-			return textResult(fmt.Sprintf(`{"childSessionId":%q,"depth":%d}`, res.Child.ID, res.Depth)), nil
+			handle := taskHandle{
+				ChildSessionID: res.Child.ID,
+				State:          string(res.Child.State),
+				RuntimeRef:     res.Child.RuntimeRef,
+				Depth:          res.Depth,
+			}
+			body, merr := json.Marshal(handle)
+			if merr != nil {
+				return mcp.ToolResult{}, fmt.Errorf("task handle serialization: %w", merr)
+			}
+			return textResult(string(body)), nil
 		})
 	}
 
 	if deps.Memory != nil {
 		registerMemoryTools(srv, deps, tenant, clock)
 	}
+}
+
+// taskHandle is the §8.2 return envelope for lenny/delegate_task. The
+// spec frames the signature as `→ TaskHandle`; v1 ships the minimal
+// fields callers need to address the child and observe its initial
+// state. The envelope is additive-only — new fields go at the end with
+// `omitempty` so existing parsers continue to decode older payloads.
+type taskHandle struct {
+	// ChildSessionID is the §8.8 taskId / sessionId identifying the
+	// admitted child session.
+	ChildSessionID string `json:"childSessionId"`
+
+	// State is the child's §8.8 task state at admission. v1 returns
+	// `created` (the §7 session create state) because §8.2 step 7 (pod
+	// allocation + workspace materialization) is unbuilt; once the
+	// allocation flow lands, the state will be `submitted` or `running`
+	// per §8.8.
+	State string `json:"state"`
+
+	// RuntimeRef echoes the resolved §5.1 runtime so the caller can
+	// confirm the binding the gateway selected (in case of derived /
+	// alias resolution) without a separate GET.
+	RuntimeRef string `json:"runtimeRef"`
+
+	// Depth is the child's depth in the §8.2 delegation tree (root = 0).
+	// Out-of-spec but stable — useful for the caller to surface the tree
+	// position without re-walking the lineage.
+	Depth int `json:"depth"`
 }
 
 // recordChainRejection emits the §16.7 interceptor.rejected audit row

@@ -821,6 +821,53 @@ func TestSessionStartupDurationBucketBoundaries_spec_16_5(t *testing.T) {
 	}
 }
 
+// spec: §8.2 / §16.1 line 27 — lenny_delegation_depth histogram
+// observation labelled by `pool`.
+func TestObserveDelegationDepth_spec_8_2(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ObserveDelegationDepth("pool-a", 3)
+	m.ObserveDelegationDepth("pool-a", 1)
+	body := scrapeMetrics(t, m)
+	if !strings.Contains(body, `lenny_delegation_depth_count{pool="pool-a"} 2`) {
+		t.Errorf("expected lenny_delegation_depth_count for pool-a = 2, body=%q", body)
+	}
+	if !strings.Contains(body, `lenny_delegation_depth_sum{pool="pool-a"} 4`) {
+		t.Errorf("expected lenny_delegation_depth_sum for pool-a = 4, body=%q", body)
+	}
+}
+
+// spec: §8.2 line 70 / §16.1 line 79 —
+// lenny_delegation_would_have_blocked_total carries (pool, tenant_id,
+// layer, mode) labels.
+func TestIncDelegationWouldHaveBlocked_spec_8_2(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncDelegationWouldHaveBlocked("pool-a", "acme", "platform", "enforce")
+	m.IncDelegationWouldHaveBlocked("pool-a", "acme", "runtime", "warn")
+	body := scrapeMetrics(t, m)
+	for _, want := range []string{
+		`lenny_delegation_would_have_blocked_total{layer="platform",mode="enforce",pool="pool-a",tenant_id="acme"} 1`,
+		`lenny_delegation_would_have_blocked_total{layer="runtime",mode="warn",pool="pool-a",tenant_id="acme"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q in /metrics, body=%q", want, body)
+		}
+	}
+}
+
+// spec: §8.2 / §16.1 — nil receivers are no-ops (caller-side guard).
+func TestDelegationMetricsNilSafe_spec_8_2(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	// Must not panic.
+	m.ObserveDelegationDepth("pool-a", 1)
+	m.IncDelegationWouldHaveBlocked("pool-a", "acme", "policy", "enforce")
+}
+
 func scrapeMetrics(t *testing.T, m *gatewaymetrics.Metrics) string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)

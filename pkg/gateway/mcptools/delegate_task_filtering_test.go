@@ -61,9 +61,10 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 	))
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
 		RuntimeRef: "sec-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt:  now, UpdatedAt: now,
 	})
 
 	// The caller is a member of security-team via the security-engineers
@@ -148,8 +149,9 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
-		RuntimeRef: "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:       session.StateRunning,
+		RuntimeRef:  "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		Environment: "team-a", CreatedAt: now, UpdatedAt: now,
 	})
 
@@ -216,9 +218,10 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
 		RuntimeRef: "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt:  now, UpdatedAt: now,
 	})
 
 	// §8.3 / §10.6: delegating to a pool whose §5.3 isolation profile is
