@@ -51,6 +51,17 @@ type PodSpec struct {
 	// cross-UID file-delivery path works.
 	SupplementalGroups []int64
 
+	// RuntimeClassName is the pod's spec.runtimeClassName. §17.2
+	// applies a RuntimeClass-aware split-enforcement model: a gVisor
+	// pod skips the seccomp profile check (RuntimeDefault is a no-op
+	// under gVisor's userspace syscall interception) and a Kata pod may
+	// set allowPrivilegeEscalation: true for its device plugins. Every
+	// other §13.1 control still applies. An empty or unrecognized
+	// RuntimeClass receives full enforcement (fail-closed). The
+	// validator maps the name to a relaxation through the
+	// RuntimeClassPolicy passed to ValidateAgentPod.
+	RuntimeClassName string
+
 	// CredentialContainerNames lists the containers that legitimately
 	// carry the lenny-cred-readers GID: the adapter container, which
 	// writes the credential file, and the agent container, which reads
@@ -99,6 +110,46 @@ type ContainerSpec struct {
 	CapabilitiesAdd  []string
 }
 
+// RuntimeClassPolicy maps the cluster's RuntimeClass names onto the
+// §17.2 split-enforcement relaxations. RuntimeClass names are
+// deployer-configurable (the chart's runtimeClasses.profiles.*.name
+// values; default gvisor/kata/runc from isolation.RuntimeClassName), so
+// the webhook supplies the names it is configured with and the
+// validator owns the §17.2 policy (which relaxation each profile gets).
+//
+// A pod whose RuntimeClassName matches neither name receives full
+// §13.1 enforcement.
+type RuntimeClassPolicy struct {
+	// GVisorRuntimeClass is the RuntimeClass name mapped to the
+	// sandboxed (gVisor) profile. §17.2: a pod with this
+	// runtimeClassName skips the seccomp profile check. Empty disables
+	// the gVisor relaxation (every pod is seccomp-checked).
+	GVisorRuntimeClass string
+	// KataRuntimeClass is the RuntimeClass name mapped to the microvm
+	// (Kata) profile. §17.2: a pod with this runtimeClassName may set
+	// allowPrivilegeEscalation: true for its device plugins. Empty
+	// disables the Kata relaxation (every pod must set
+	// allowPrivilegeEscalation: false).
+	KataRuntimeClass string
+}
+
+// relaxations resolves the §17.2 per-RuntimeClass exemptions for spec.
+// A gVisor pod is seccomp-exempt; a Kata pod is
+// privilege-escalation-exempt. An empty policy name never matches, so
+// the corresponding relaxation stays off.
+func (p RuntimeClassPolicy) relaxations(runtimeClass string) (seccompExempt, privEscExempt bool) {
+	if runtimeClass == "" {
+		return false, false
+	}
+	if p.GVisorRuntimeClass != "" && runtimeClass == p.GVisorRuntimeClass {
+		seccompExempt = true
+	}
+	if p.KataRuntimeClass != "" && runtimeClass == p.KataRuntimeClass {
+		privEscExempt = true
+	}
+	return seccompExempt, privEscExempt
+}
+
 // ValidateAgentPod applies the §13.1 invariants to spec. Returns nil
 // when the spec satisfies every rule and *PodSecurityError listing
 // every violation otherwise.
@@ -106,8 +157,14 @@ type ContainerSpec struct {
 // LennyCredReadersGID is the supplementary GID the §13.1 cross-UID
 // file-delivery path requires on the pod-level fsGroup. Pass the GID
 // from the chart's `agent.credReadersGID` Helm value.
-func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
+//
+// rcPolicy carries the §17.2 RuntimeClass-aware relaxations: a gVisor
+// pod skips the seccomp check, a Kata pod may allow privilege
+// escalation. A zero-value policy applies full enforcement to every
+// pod regardless of RuntimeClass.
+func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeClassPolicy) error {
 	violations := []string{}
+	seccompExempt, privEscExempt := rcPolicy.relaxations(spec.RuntimeClassName)
 
 	// §13.1 host-sharing prohibitions.
 	if spec.ShareProcessNamespace {
@@ -152,7 +209,10 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
 		if c.Privileged != nil && *c.Privileged {
 			violations = append(violations, fmt.Sprintf("container %q: privileged is forbidden", c.Name))
 		}
-		if c.AllowPrivilegeEscalation == nil || *c.AllowPrivilegeEscalation {
+		// §17.2: Kata pods permit the privilege-escalation paths their
+		// device plugins need; every other RuntimeClass must set
+		// allowPrivilegeEscalation: false.
+		if !privEscExempt && (c.AllowPrivilegeEscalation == nil || *c.AllowPrivilegeEscalation) {
 			violations = append(violations, fmt.Sprintf("container %q: allowPrivilegeEscalation must be false", c.Name))
 		}
 		if c.ReadOnlyRootFilesystem == nil || !*c.ReadOnlyRootFilesystem {
@@ -167,11 +227,16 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
 		// §13.1 / §17.2 seccomp baseline: the effective seccomp profile
 		// must be RuntimeDefault. The effective profile is the
 		// container-level value when set, otherwise the pod-level value.
-		if effective := effectiveSeccompProfile(c.SeccompProfileType, spec.SeccompProfileType); effective != SeccompRuntimeDefault {
-			violations = append(violations, fmt.Sprintf(
-				"container %q: seccompProfile.type must be %s, got %s (§13.1 pod-security baseline)",
-				c.Name, SeccompRuntimeDefault, describeSeccomp(effective),
-			))
+		// §17.2 exempts gVisor pods: RuntimeDefault is a no-op under
+		// gVisor's userspace syscall interception, so the check is
+		// skipped for them while every other §13.1 control still applies.
+		if !seccompExempt {
+			if effective := effectiveSeccompProfile(c.SeccompProfileType, spec.SeccompProfileType); effective != SeccompRuntimeDefault {
+				violations = append(violations, fmt.Sprintf(
+					"container %q: seccompProfile.type must be %s, got %s (§13.1 pod-security baseline)",
+					c.Name, SeccompRuntimeDefault, describeSeccomp(effective),
+				))
+			}
 		}
 		// §13.1 lenny-cred-readers membership boundary: a container that
 		// is not the adapter or agent must not declare the cred-readers

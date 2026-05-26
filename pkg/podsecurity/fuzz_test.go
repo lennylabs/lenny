@@ -37,6 +37,6 @@ func FuzzValidateAgentPod(f *testing.F) {
 		if includeCredReadersGID {
 			spec.SupplementalGroups = []int64{credReadersGID}
 		}
-		_ = ValidateAgentPod(spec, credReadersGID)
+		_ = ValidateAgentPod(spec, credReadersGID, RuntimeClassPolicy{})
 	})
 }

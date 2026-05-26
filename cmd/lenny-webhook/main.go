@@ -58,6 +58,8 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	obsmetrics "github.com/lennylabs/lenny/pkg/observability/metrics"
+	"github.com/lennylabs/lenny/pkg/podsecurity"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // buildScheme assembles the scheme the admission client uses to decode
@@ -105,7 +107,7 @@ func (s drainCounterSink) IncDrainReadinessCheck(outcome string) {
 	s.vec.WithLabelValues(outcome).Inc()
 }
 
-func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink) *http.ServeMux {
+func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, rcPolicy podsecurity.RuntimeClassPolicy, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
@@ -141,7 +143,9 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	// §13.1 pod-security: validates the agent-pod securityContext
 	// posture — host-sharing flags, credential fsGroup, non-root,
 	// per-container hardening, and the RuntimeDefault seccomp profile.
-	mux.Handle("/pod-security", webhook.Handler(webhook.PodSecurity(podspec.CredReadersGID)))
+	// rcPolicy applies the §17.2 RuntimeClass-aware split: gVisor pods
+	// skip the seccomp check, Kata pods may allow privilege escalation.
+	mux.Handle("/pod-security", webhook.Handler(webhook.PodSecurity(podspec.CredReadersGID, rcPolicy)))
 	// §5.2 cosign-verify: rejects agent pods whose in-scope container
 	// images carry no valid cosign signature. The route is registered
 	// only when the chart enables cosign verification and supplies a
@@ -189,6 +193,15 @@ func parseRegions(csv string) []string {
 	return out
 }
 
+// envOr returns the value of environment variable key, or def when the
+// variable is unset or empty. It backs flag defaults that fall back to
+// a built-in value when the chart wires no override.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
 
 // buildCosignDecider constructs the §5.2 cosign image-signature
 // Decider. It returns nil when cosign verification is disabled, leaving
@@ -256,7 +269,16 @@ func main() {
 		"comma-separated list of image-registry prefixes whose images must carry a valid cosign signature. An image outside every prefix is admitted unchecked.")
 	requireDigest := flag.Bool("registry-require-digest", os.Getenv("LENNY_REGISTRY_REQUIRE_DIGEST") == "true",
 		"enable the §13.1 platform.registry.requireDigest admission gate. When true the registry-digest webhook rejects any agent pod whose container image references are not @sha256: digest-pinned. Air-gap installs are required to set this true (§25.8).")
+	gvisorRuntimeClass := flag.String("gvisor-runtime-class", envOr("LENNY_GVISOR_RUNTIME_CLASS", isolation.MustRuntimeClassName(isolation.ProfileSandboxed)),
+		"the RuntimeClass name mapped to the sandboxed (gVisor) profile. §17.2: pods with this runtimeClassName skip the pod-security seccomp check. Matches the chart's runtimeClasses.profiles.sandboxed.name.")
+	kataRuntimeClass := flag.String("kata-runtime-class", envOr("LENNY_KATA_RUNTIME_CLASS", isolation.MustRuntimeClassName(isolation.ProfileMicrovm)),
+		"the RuntimeClass name mapped to the microvm (Kata) profile. §17.2: pods with this runtimeClassName may set allowPrivilegeEscalation: true. Matches the chart's runtimeClasses.profiles.microvm.name.")
 	flag.Parse()
+
+	rcPolicy := podsecurity.RuntimeClassPolicy{
+		GVisorRuntimeClass: *gvisorRuntimeClass,
+		KataRuntimeClass:   *kataRuntimeClass,
+	}
 
 	declaredRegions := parseRegions(*storageRegions)
 
@@ -280,7 +302,7 @@ func main() {
 	}
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, *drainAuditURL, declaredRegions, cosignDecider, *requireDigest, metricsReg, drainCounterSink{vec: drainCounter}),
+		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, *drainAuditURL, declaredRegions, cosignDecider, *requireDigest, rcPolicy, metricsReg, drainCounterSink{vec: drainCounter}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

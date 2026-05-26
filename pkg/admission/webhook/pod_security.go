@@ -26,17 +26,21 @@ import (
 // credential-delivery path requires on the pod-level fsGroup; the
 // binary passes the chart's agent.credReadersGID value.
 //
+// rcPolicy carries the §17.2 RuntimeClass-aware relaxations (the
+// gVisor and Kata RuntimeClass names); the binary passes the names from
+// the chart's runtimeClasses.profiles.{sandboxed,microvm}.name values.
+//
 // A decode failure rejects, consistent with the webhook's fail-closed
 // deployment: a pod the webhook cannot inspect must not be admitted
 // with a pod-security posture it could not verify (§13.1).
-func PodSecurity(credReadersGID int64) Decider {
+func PodSecurity(credReadersGID int64, rcPolicy podsecurity.RuntimeClassPolicy) Decider {
 	return func(_ context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		var pod corev1.Pod
 		if err := json.Unmarshal(req.Object.Raw, &pod); err != nil {
 			return Deny(http.StatusBadRequest, "decode Pod object: "+err.Error())
 		}
 
-		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod), credReadersGID); err != nil {
+		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod), credReadersGID, rcPolicy); err != nil {
 			return Deny(http.StatusForbidden, err.Error())
 		}
 		return Allow()
@@ -64,6 +68,7 @@ func translatePodSpec(pod *corev1.Pod) podsecurity.PodSpec {
 		HostPID:               pod.Spec.HostPID,
 		HostNetwork:           pod.Spec.HostNetwork,
 		HostIPC:               pod.Spec.HostIPC,
+		RuntimeClassName:      derefString(pod.Spec.RuntimeClassName),
 	}
 
 	if sc := pod.Spec.SecurityContext; sc != nil {
@@ -133,4 +138,14 @@ func capabilityStrings(caps []corev1.Capability) []string {
 // matching the Kubernetes default.
 func derefBool(b *bool) bool {
 	return b != nil && *b
+}
+
+// derefString returns the pointed-to string, or "" when the pointer is
+// nil. An unset *string runtimeClassName is treated as the empty
+// string, which selects full §13.1 enforcement (no §17.2 relaxation).
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

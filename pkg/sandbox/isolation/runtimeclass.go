@@ -18,3 +18,15 @@ func RuntimeClassName(p Profile) (string, bool) {
 		return "", false
 	}
 }
+
+// MustRuntimeClassName returns the §5.3 RuntimeClass name for p and
+// panics for an unrecognized profile. It is for call sites that pass a
+// compile-time profile constant (for example a flag default), where an
+// unknown value is a programming error rather than runtime input.
+func MustRuntimeClassName(p Profile) string {
+	name, ok := RuntimeClassName(p)
+	if !ok {
+		panic("isolation: no RuntimeClass name for profile " + string(p))
+	}
+	return name
+}

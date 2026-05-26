@@ -16,6 +16,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
+	"github.com/lennylabs/lenny/pkg/podsecurity"
 )
 
 // spec: §13.1 / §18.33 — the lenny-pod-security webhook transport
@@ -73,7 +74,7 @@ func psPodRaw(t *testing.T, pod corev1.Pod) runtime.RawExtension {
 
 func psDecide(t *testing.T, pod corev1.Pod) *admissionv1.AdmissionResponse {
 	t.Helper()
-	return webhook.PodSecurity(psCredReadersGID)(context.Background(), &admissionv1.AdmissionRequest{
+	return webhook.PodSecurity(psCredReadersGID, podsecurity.RuntimeClassPolicy{})(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "ps",
 		Operation: admissionv1.Create,
 		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
@@ -96,6 +97,45 @@ func TestPodSecurityRejectsHostSharing(t *testing.T) {
 	}
 	if !strings.Contains(resp.Result.Message, "POD_SPEC_HOST_SHARING_FORBIDDEN") {
 		t.Errorf("rejection should cite POD_SPEC_HOST_SHARING_FORBIDDEN, got %q", resp.Result.Message)
+	}
+}
+
+// psDecideWithPolicy runs the webhook with a §17.2 RuntimeClass policy
+// wired, so a test can exercise the gVisor/Kata relaxations the webhook
+// derives from the pod's runtimeClassName.
+func psDecideWithPolicy(t *testing.T, pod corev1.Pod, rc podsecurity.RuntimeClassPolicy) *admissionv1.AdmissionResponse {
+	t.Helper()
+	return webhook.PodSecurity(psCredReadersGID, rc)(context.Background(), &admissionv1.AdmissionRequest{
+		UID:       "ps",
+		Operation: admissionv1.Create,
+		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+		Object:    psPodRaw(t, pod),
+	})
+}
+
+// TestPodSecurityGVisorSkipsSeccomp_spec_17_2 asserts the webhook reads
+// the pod's runtimeClassName and applies the §17.2 gVisor seccomp
+// exemption: a gVisor pod with no seccomp profile is admitted.
+func TestPodSecurityGVisorSkipsSeccomp_spec_17_2(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.RuntimeClassName = ptr.To("gvisor")
+	pod.Spec.SecurityContext.SeccompProfile = nil
+	resp := psDecideWithPolicy(t, pod, podsecurity.RuntimeClassPolicy{GVisorRuntimeClass: "gvisor", KataRuntimeClass: "kata"})
+	if !resp.Allowed {
+		t.Fatalf("§17.2: a gVisor pod with no seccomp profile should be admitted: %+v", resp.Result)
+	}
+}
+
+// TestPodSecurityKataAllowsPrivEsc_spec_17_2 asserts the webhook applies
+// the §17.2 Kata privilege-escalation relaxation derived from the pod's
+// runtimeClassName.
+func TestPodSecurityKataAllowsPrivEsc_spec_17_2(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.RuntimeClassName = ptr.To("kata")
+	pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = ptr.To(true)
+	resp := psDecideWithPolicy(t, pod, podsecurity.RuntimeClassPolicy{GVisorRuntimeClass: "gvisor", KataRuntimeClass: "kata"})
+	if !resp.Allowed {
+		t.Fatalf("§17.2: a Kata pod may allow privilege escalation: %+v", resp.Result)
 	}
 }
 
@@ -178,7 +218,7 @@ func TestPodSecurityValidatesInitContainers(t *testing.T) {
 }
 
 func TestPodSecurityRejectsUndecodablePod(t *testing.T) {
-	resp := webhook.PodSecurity(psCredReadersGID)(context.Background(),
+	resp := webhook.PodSecurity(psCredReadersGID, podsecurity.RuntimeClassPolicy{})(context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:       "ps-bad",
 			Operation: admissionv1.Create,

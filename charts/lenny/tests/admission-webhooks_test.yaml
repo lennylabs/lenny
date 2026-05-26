@@ -22,6 +22,35 @@ tests:
           path: spec.template.metadata.labels["lenny.dev/component"]
           value: admission-webhook
 
+  # spec §17.2: the webhook binary receives the gVisor and Kata
+  # RuntimeClass names so the pod-security route applies the
+  # split-enforcement relaxations (gVisor skips seccomp, Kata permits
+  # privilege escalation) keyed off the deployer's runtimeClasses config.
+  - it: passes the gVisor and Kata RuntimeClass names to the webhook binary
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gvisor-runtime-class=gvisor
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kata-runtime-class=kata
+
+  - it: tracks a custom RuntimeClass name override into the webhook args
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 0
+    set:
+      runtimeClasses.profiles.sandboxed.name: gvisor-prod
+      runtimeClasses.profiles.microvm.name: kata-qemu
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gvisor-runtime-class=gvisor-prod
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kata-runtime-class=kata-qemu
+
   - it: protects the label-immutability webhook with a PodDisruptionBudget
     template: admission-policies/label-immutability-webhook.yaml
     documentIndex: 2

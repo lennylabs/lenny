@@ -3824,7 +3824,7 @@ Consequence: a future KubeVirt or Firecracker addition requires changing the clo
 
 **Resolution (`19d5ffad`):** Per the suggested resolution, the Phase 3 row of `BUILD-PROGRESS.md` now documents the `RuntimeProvider` abstraction as a v2 deferral: v1 ships the closed `isolation.Profile` enum and the profile→RuntimeClass mapping, which a new backend extends by adding an enum value plus its RuntimeClass mapping. The §5.3 spec wording ("keeps the door open") is informational, so no abstraction is built for v1.
 
-### - [ ] F-5.3.10 — Pod-security validator does not relax the seccomp check for gVisor pods [Medium] — OPEN
+### - [x] F-5.3.10 — Pod-security validator does not relax the seccomp check for gVisor pods [Medium] — CLOSED
 
 Spec §17.2 (`spec/17_deployment-topology.md:36`, normative for §5.3 enforcement model): "gVisor pods skip the seccomp profile check while still requiring non-root, all-caps-dropped, and read-only rootfs. Kata pods permit the specific privilege escalation paths needed by their device plugins but enforce all other Restricted constraints."
 
@@ -3834,6 +3834,8 @@ Implementation:
 - In practice the violation does not manifest for Lenny-built pods because `pkg/controller/sandbox/podspec/podspec.go:387` always stamps pod-level `SeccompProfileType: RuntimeDefault`. The validator's rejection of a hypothetical "no-seccomp gVisor pod" still violates the spec's RuntimeClass-aware policy intent — any third-party pod the chart's ValidatingAdmissionWebhook scopes over (e.g., a future Kata-device-plugin pod) would be incorrectly rejected.
 
 Consequence: the chart's pod-security admission policy is stricter than the spec mandates for non-runc RuntimeClasses. This breaks the spec's intent that "namespace-level PSS `enforce` cannot distinguish RuntimeClasses, so we apply RuntimeClass-aware admission policies instead" — Lenny's webhook replicates the namespace-PSS over-enforcement it was meant to replace.
+
+**Resolution:** `podsecurity.PodSpec` gains a `RuntimeClassName` field and `ValidateAgentPod` takes a `RuntimeClassPolicy{GVisorRuntimeClass, KataRuntimeClass}` that maps the deployer's RuntimeClass names onto the §17.2 split-enforcement relaxations: a gVisor pod skips the seccomp profile check (RuntimeDefault is a no-op under gVisor's userspace syscall interception), a Kata pod may set `allowPrivilegeEscalation: true` for its device plugins, and every other §13.1 control (non-root, all-caps-dropped, read-only rootfs, privileged: false) still applies to both. An empty or unrecognized RuntimeClass — and a zero-value policy — receives full enforcement (fail-closed). The lenny-webhook binary reads `pod.spec.runtimeClassName` and is configured with the gVisor/Kata names via `--gvisor-runtime-class`/`--kata-runtime-class` flags (default `gvisor`/`kata` from `isolation.MustRuntimeClassName`, env-overridable), wired in `_webhook.tpl` from `runtimeClasses.profiles.{sandboxed,microvm}.name` so the policy tracks the deployer's RuntimeClass config. Tests: 7 tier-1 in `pkg/podsecurity/runtimeclass_test.go` (gVisor seccomp-skip + other-controls-still-enforced, Kata privesc-allow + seccomp-still-enforced, unknown/empty/runc full enforcement, empty-policy no-relaxation), 2 tier-1 webhook transport tests, and 2 tier-2 helm-unittest assertions (default + custom-name override).
 
 ### - [ ] F-5.3.11 — Default-profile policy is centralised but not enforced when a Runtime CRD declares a profile — `Info`/`Partial` [Low] — OPEN
 

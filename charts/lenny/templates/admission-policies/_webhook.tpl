@@ -54,6 +54,8 @@ spec:
             - --gateway-drain-readiness-url=http://lenny-gateway.{{ $.Release.Namespace }}.svc:{{ $.Values.gateway.internalPort }}/internal/drain-readiness
             - --gateway-drain-audit-url=http://lenny-gateway.{{ $.Release.Namespace }}.svc:{{ $.Values.gateway.internalPort }}/internal/audit/node-drain-forced
             - --registry-require-digest={{ $.Values.platform.registry.requireDigest }}
+            - --gvisor-runtime-class={{ $.Values.runtimeClasses.profiles.sandboxed.name }}
+            - --kata-runtime-class={{ $.Values.runtimeClasses.profiles.microvm.name }}
           ports:
             - name: https
               containerPort: 8443
