@@ -2352,7 +2352,12 @@ func main() {
 		store := semanticcache.NewInMemory(nil, 0, 0, clockinject.Now)
 		llmCache = proxycache.New(credentialPools, store, sessionUserLookup{sessions})
 	}
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain, llmCache, gwMetrics)
+	// spec: §4.9 line 1468 — wire the §15.1 / §11.2 usage recorder so
+	// proxy-extracted (authoritative) counts are persisted as the
+	// quota-accounting record. Pod-reported counts are filtered at the
+	// adapterclient ReportUsage boundary (see §11.2 usage path).
+	llmProxyUsage := newProxyUsageRecorder(usage, sessions)
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, llmTranslators, llmLeases, credCache, credDeny, policyChain, llmCache, gwMetrics, llmProxyUsage)
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control
@@ -2916,7 +2921,7 @@ func (l sessionRetryLookup) LookupRetryState(ctx context.Context, tenantID, sess
 	return policy.RetryState{RetryCount: sess.RetryCount}, true, nil
 }
 
-func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics) *http.Server {
+func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics, usage llmproxy.UsageRecorder) *http.Server {
 	if addr == "" {
 		return nil
 	}
@@ -2929,6 +2934,9 @@ func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, lea
 		DenyList:     denyList,
 		Interceptors: chain,
 		Cache:        cache,
+		// spec: §4.9 line 1468 — proxy-extracted counts feed the §15.1 /
+		// §11.2 usage record. A nil Usage discards the counts.
+		Usage: usage,
 		// §16.1 lines 97, 99, 100: active connections, translation
 		// duration, and translation errors on the gateway registry.
 		Metrics: gwMetrics,

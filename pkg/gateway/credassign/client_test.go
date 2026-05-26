@@ -112,7 +112,7 @@ func TestClientAssignMirrorsLocally(t *testing.T) {
 	h := newClientHarness(t, clientProxyPool("claude-prod", "key-1", "sk-ant-real"))
 	defer h.closer()
 
-	lease, err := h.client.Assign("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1")
+	lease, err := h.client.Assign("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestClientAssignProtoConvertsToAdapterWire(t *testing.T) {
 	h := newClientHarness(t, clientProxyPool("claude-prod", "key-1", "sk-ant-real"))
 	defer h.closer()
 
-	wire, err := h.client.AssignProto("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1")
+	wire, err := h.client.AssignProto("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1", "")
 	if err != nil {
 		t.Fatalf("AssignProto: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestClientAssignUnknownPoolReturnsErrPoolNotFound(t *testing.T) {
 	h := newClientHarness(t, clientProxyPool("claude-prod", "key-1", "sk-ant-real"))
 	defer h.closer()
 
-	_, err := h.client.Assign("missing", "s_1", "")
+	_, err := h.client.Assign("missing", "s_1", "", "")
 	if !errors.Is(err, credassign.ErrPoolNotFound) {
 		t.Errorf("err = %v, want credassign.ErrPoolNotFound", err)
 	}
@@ -191,7 +191,7 @@ func TestClientAssignExhaustedPoolReturnsErrPoolExhausted(t *testing.T) {
 	h := newClientHarness(t, pool)
 	defer h.closer()
 
-	_, err := h.client.Assign("claude-prod", "s_1", "")
+	_, err := h.client.Assign("claude-prod", "s_1", "", "")
 	if !errors.Is(err, credential.ErrPoolExhausted) {
 		t.Errorf("err = %v, want credential.ErrPoolExhausted", err)
 	}
@@ -206,7 +206,7 @@ func TestClientReleaseRemovesLeaseEndToEnd(t *testing.T) {
 	h := newClientHarness(t, clientProxyPool("claude-prod", "key-1", "sk-ant-real"))
 	defer h.closer()
 
-	lease, err := h.client.Assign("claude-prod", "s_1", "")
+	lease, err := h.client.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestClientProtoLeaseByIDFromLocalStore(t *testing.T) {
 	h := newClientHarness(t, clientProxyPool("claude-prod", "key-1", "sk-ant-real"))
 	defer h.closer()
 
-	lease, err := h.client.Assign("claude-prod", "s_1", "")
+	lease, err := h.client.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestClientOnAssignedObserverFires(t *testing.T) {
 	var got credassign.LeaseAssignment
 	h.client.OnAssigned(func(a credassign.LeaseAssignment) { got = a })
 
-	lease, err := h.client.Assign("claude-prod", "s_1", "")
+	lease, err := h.client.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestClientPoolForLeaseLifecycle(t *testing.T) {
 	h := newClientHarness(t, clientProxyPool("claude-prod", "key-1", "sk-ant-real"))
 	defer h.closer()
 
-	lease, err := h.client.Assign("claude-prod", "s_1", "")
+	lease, err := h.client.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestClientAssignDirectModeReconstructsMaterializedConfig(t *testing.T) {
 	h := newClientHarness(t, clientDirectPool("bedrock-prod", credential.ProviderAWSBedrock, mc))
 	defer h.closer()
 
-	lease, err := h.client.Assign("bedrock-prod", "s_1", "")
+	lease, err := h.client.Assign("bedrock-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestClientAssignDirectModeReconstructsMaterializedConfig(t *testing.T) {
 		t.Errorf("reconstructed Direct = %+v, want the STS bundle", lease.Direct)
 	}
 
-	proto, err := h.client.AssignProto("bedrock-prod", "s_2", "")
+	proto, err := h.client.AssignProto("bedrock-prod", "s_2", "", "")
 	if err != nil {
 		t.Fatalf("AssignProto: %v", err)
 	}

@@ -9,12 +9,14 @@ package adapterclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"google.golang.org/grpc"
 
+	"github.com/lennylabs/lenny/pkg/credential"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -322,6 +324,14 @@ type UsageReport struct {
 // pod's adapter (§4.7). The accounting is incremental — each call
 // returns usage accumulated since the previous one — so the gateway
 // sums it for §11.2 budget enforcement and billing.
+//
+// spec: spec/04_system-components.md line 1468 — for sessions in proxy
+// mode the gateway is the sole counter of record (the §4.9 LLM proxy
+// extracts authoritative counts from the upstream response). The
+// caller must filter proxy-mode sessions before reaching this RPC; the
+// pod-reported counts are not accepted for them. ErrUsageReportProxyMode
+// surfaces a misrouted proxy-mode call so a regression is observable
+// rather than silently double-counting.
 func (c *Client) ReportUsage(ctx context.Context, sessionID string) (UsageReport, error) {
 	resp, err := c.rpc.ReportUsage(ctx, &adapterv1.ReportUsageRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
@@ -334,6 +344,25 @@ func (c *Client) ReportUsage(ctx context.Context, sessionID string) (UsageReport
 		OutputTokens: resp.GetOutputTokens(),
 		WallClockMS:  resp.GetWallClockMs(),
 	}, nil
+}
+
+// ErrUsageReportProxyMode reports that ReportUsage was called for a
+// session whose credential lease is proxy-mode. spec: §4.9 line 1468.
+var ErrUsageReportProxyMode = errors.New("adapterclient: ReportUsage is not accepted for proxy-mode sessions (§4.9 line 1468)")
+
+// ReportUsageForLease is the proxy-mode-safe wrapper around ReportUsage.
+// It returns ErrUsageReportProxyMode when lease is the §4.9 proxy-mode
+// lease for the session, so the caller does not double-count
+// (proxy-extracted counts are already recorded by the §4.9 LLM proxy).
+// A direct-mode lease, or an empty lease (the session has no §4.9
+// credential pool), falls through to the underlying RPC.
+//
+// spec: spec/04_system-components.md line 1468.
+func (c *Client) ReportUsageForLease(ctx context.Context, sessionID string, deliveryMode credential.DeliveryMode) (UsageReport, error) {
+	if deliveryMode == credential.DeliveryProxy {
+		return UsageReport{}, ErrUsageReportProxyMode
+	}
+	return c.ReportUsage(ctx, sessionID)
 }
 
 // AttachStream is a live §4.7 bidirectional content stream to a pod's

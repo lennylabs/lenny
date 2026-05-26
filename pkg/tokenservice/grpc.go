@@ -84,7 +84,7 @@ func (s *GRPCServer) AssignCredentials(ctx context.Context, req *tokensv1.Assign
 	}
 	out := make(map[string]*tokensv1.CredentialLease, len(req.PoolIds))
 	for _, poolID := range req.PoolIds {
-		lease, lerr := s.assign.Assign(poolID, req.SessionId, req.PodSpiffeUri)
+		lease, lerr := s.assign.Assign(poolID, req.SessionId, req.PodSpiffeUri, req.TenantId)
 		if lerr != nil {
 			if errors.Is(lerr, credassign.ErrPoolNotFound) {
 				return nil, status.Errorf(codes.NotFound,
@@ -138,7 +138,7 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 	// §13.3 line 597: rotation revokes the previous lease's lease
 	// token. Emit token.revoked so SIEM has a revocation receipt.
 	s.emitRevocation(ctx, req.TenantId, "", req.LeaseId, "rotation")
-	fresh, rerr := s.assign.Assign(old.PoolID, old.SessionID, old.SpiffeURI)
+	fresh, rerr := s.assign.Assign(old.PoolID, old.SessionID, old.SpiffeURI, old.TenantID)
 	if rerr != nil {
 		if errors.Is(rerr, credassign.ErrPoolNotFound) {
 			return nil, status.Errorf(codes.NotFound,

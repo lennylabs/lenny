@@ -34,7 +34,7 @@ func TestAssignProtoDirectAnthropicPromotesAPIKey(t *testing.T) {
 	svc.RegisterPool(directPool("claude-direct", credential.ProviderAnthropicDirect,
 		healthyCred("key-1", "sk-ant-real")))
 
-	proto, err := svc.AssignProto("claude-direct", "s_1", "")
+	proto, err := svc.AssignProto("claude-direct", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("AssignProto: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestAssignProtoDirectBedrockDeliversMaterializedBundle(t *testing.T) {
 			},
 		}))
 
-	proto, err := svc.AssignProto("bedrock-prod", "s_1", "")
+	proto, err := svc.AssignProto("bedrock-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("AssignProto: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestAssignDirectIncompleteBundleFailsMaterialization(t *testing.T) {
 			Materialized: credential.MaterializedConfig{"region": "us-east-1"}, // missing STS triple + expiresAt
 		}))
 
-	_, err := svc.Assign("bedrock-broken", "s_1", "")
+	_, err := svc.Assign("bedrock-broken", "s_1", "", "")
 	if !errors.Is(err, credential.ErrCredentialMaterialization) {
 		t.Fatalf("Assign error = %v, want a materialization error", err)
 	}

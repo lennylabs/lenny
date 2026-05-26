@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -796,6 +798,49 @@ func TestReportUsageRejectsAMissingMeter(t *testing.T) {
 	}
 	if _, err := cl.ReportUsage(ctx, "sess-x"); err == nil {
 		t.Error("ReportUsage with no usage meter succeeded, want a failure")
+	}
+}
+
+// TestReportUsageForLeaseRejectsProxyMode_Spec4_9_1468 confirms the
+// proxy-mode-safe wrapper refuses pod-reported counts; the §4.9 LLM
+// proxy is the authoritative counter for these sessions.
+// spec: spec/04_system-components.md line 1468.
+func TestReportUsageForLeaseRejectsProxyMode_Spec4_9_1468(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.Usage = fakeUsageMeter{usage: adapter.Usage{InputTokens: 1, OutputTokens: 1}}
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	if _, err := cl.ReportUsageForLease(ctx, "sess-x", credential.DeliveryProxy); !errors.Is(err, adapterclient.ErrUsageReportProxyMode) {
+		t.Errorf("ReportUsageForLease proxy-mode err = %v, want ErrUsageReportProxyMode", err)
+	}
+}
+
+// TestReportUsageForLeaseAcceptsDirectMode_Spec4_9_1468 confirms the
+// wrapper falls through to the underlying RPC for direct-mode leases.
+// spec: spec/04_system-components.md line 1468.
+func TestReportUsageForLeaseAcceptsDirectMode_Spec4_9_1468(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.Usage = fakeUsageMeter{usage: adapter.Usage{InputTokens: 11, OutputTokens: 22}}
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	rep, err := cl.ReportUsageForLease(ctx, "sess-x", credential.DeliveryDirect)
+	if err != nil {
+		t.Fatalf("ReportUsageForLease direct-mode: %v", err)
+	}
+	if rep.InputTokens != 11 || rep.OutputTokens != 22 {
+		t.Errorf("ReportUsageForLease direct usage = %+v, want input=11 output=22", rep)
 	}
 }
 

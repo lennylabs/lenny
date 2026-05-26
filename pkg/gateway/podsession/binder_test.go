@@ -292,11 +292,11 @@ type fakeAssigner struct {
 }
 
 type assignerCall struct {
-	pool, session, spiffe string
+	pool, session, spiffe, tenant string
 }
 
-func (a *fakeAssigner) AssignProto(pool, session, spiffe string) (*adapterv1.CredentialLease, error) {
-	a.calls = append(a.calls, assignerCall{pool: pool, session: session, spiffe: spiffe})
+func (a *fakeAssigner) AssignProto(pool, session, spiffe, tenant string) (*adapterv1.CredentialLease, error) {
+	a.calls = append(a.calls, assignerCall{pool: pool, session: session, spiffe: spiffe, tenant: tenant})
 	if a.err != nil {
 		return nil, a.err
 	}

@@ -49,7 +49,7 @@ func TestAssignEmitsLeaseAssignmentCounter_spec_16_1(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
 
-	if _, err := svc.Assign("claude-prod", "s_1", ""); err != nil {
+	if _, err := svc.Assign("claude-prod", "s_1", "", ""); err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
 	if len(m.assignments) != 1 {
@@ -73,7 +73,7 @@ func TestReleaseObservesLeaseDuration_spec_16_1(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
 
-	lease, err := svc.Assign("claude-prod", "s_1", "")
+	lease, err := svc.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -105,14 +105,14 @@ func TestPoolUtilizationTracksInUseCredentials_spec_16_1(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-1"), healthyCred("key-2", "sk-2")))
 
-	l1, err := svc.Assign("claude-prod", "s_1", "")
+	l1, err := svc.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign s_1: %v", err)
 	}
 	if m.utilization["claude-prod"] != 0.5 {
 		t.Errorf("after 1 assign utilization = %v, want 0.5", m.utilization["claude-prod"])
 	}
-	if _, err := svc.Assign("claude-prod", "s_2", ""); err != nil {
+	if _, err := svc.Assign("claude-prod", "s_2", "", ""); err != nil {
 		t.Fatalf("Assign s_2: %v", err)
 	}
 	if m.utilization["claude-prod"] != 1.0 {
@@ -129,7 +129,7 @@ func TestNilMetricsIsNoOp_spec_16_1(t *testing.T) {
 	// No SetMetrics call: Assign and Release must not panic.
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
-	lease, err := svc.Assign("claude-prod", "s_1", "")
+	lease, err := svc.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign with nil metrics: %v", err)
 	}

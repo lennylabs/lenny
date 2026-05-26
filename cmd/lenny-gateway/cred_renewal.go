@@ -49,6 +49,10 @@ type renewalProvider struct {
 	// provider is the §4.7 AssignCredentials leases-map key (the
 	// runtime-facing provider name) the lease serves.
 	provider string
+	// tenantID is the owning tenant the original lease was minted for,
+	// replayed so the replacement carries the same tenant attribution
+	// (spec: §4.9 line 1468 — proxy-extracted usage attribution).
+	tenantID string
 }
 
 // credRenewalWiring binds the §4.9 credrenewal.Worker to the gateway's
@@ -105,7 +109,7 @@ func (w *credRenewalWiring) track(worker *credrenewal.Worker, pool, provider str
 		return
 	}
 	w.mu.Lock()
-	w.pools[lease.LeaseID] = renewalProvider{pool: pool, provider: provider}
+	w.pools[lease.LeaseID] = renewalProvider{pool: pool, provider: provider, tenantID: lease.TenantID}
 	w.mu.Unlock()
 	worker.Track(credrenewal.Lease{
 		LeaseID:      lease.LeaseID,
@@ -136,7 +140,7 @@ func (w *credRenewalWiring) Renew(_ context.Context, lease credrenewal.Lease) (c
 	// AssignCredentials, selecting a credential from the same pool. The
 	// SPIFFE-binding identity is re-derived at proxy-request time from
 	// the lease record, so the renewal mint does not need it here.
-	next, err := w.assign.Assign(rp.pool, lease.SessionID, "")
+	next, err := w.assign.Assign(rp.pool, lease.SessionID, "", rp.tenantID)
 	if err != nil {
 		return credrenewal.Lease{}, err
 	}

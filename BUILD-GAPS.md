@@ -3100,13 +3100,15 @@ The `pkg/gateway/credentialserver/credentialserver.go` `handleRotate` and `handl
 
 ---
 
-### - [ ] F-4.9.23 — `ReportUsage` ignore-in-proxy-mode rule not enforced; pod-reported counts have no path-aware filter [Low] — OPEN
+### - [x] F-4.9.23 — `ReportUsage` ignore-in-proxy-mode rule not enforced; pod-reported counts have no path-aware filter [Low] — CLOSED
 
 **Severity:** Low (the spec MUSTs that in proxy mode, pod-reported counts are ignored and the gateway's extracted counts are authoritative — line 1468).
 
 **Spec:** spec/04_system-components.md line 1468.
 
 **Evidence:** `pkg/gateway/llmproxy/handler.go:218-223` invokes `UsageRecorder.RecordUsage` for proxy-extracted counts (good). However, no production wiring of `Usage` exists in `cmd/lenny-gateway/main.go:1806-1822` (`newLLMProxyServer`); the `Usage` field is left nil so even authoritative counts are discarded. Separately, the §11.2 usage path (`pkg/gateway/usagestore`) is not filtered to reject pod-reported counts when the session is proxy-mode.
+
+**Resolution:** Threaded the owning tenantID through `credassign.{Assign,AssignProto,Assigner}` (and the `podsession.CredentialAssigner` / `tokenservice.AssignCredentials` gRPC) so every minted lease carries tenant attribution regardless of source. Wired a new `cmd/lenny-gateway/llmproxy_usage.go` `proxyUsageRecorder` into `newLLMProxyServer`: it implements `llmproxy.UsageRecorder`, records proxy-extracted token counts into the §15.1 usagestore against the lease's tenant, looks up the session for the runtime label, and defensively drops any non-proxy-mode lease. The §4.9 line 1468 filter is codified at the `adapterclient.Client.ReportUsageForLease(ctx, sessionID, deliveryMode)` boundary: it returns `ErrUsageReportProxyMode` for a proxy-mode lease so a future caller cannot silently double-count. Tier-1 tests cover proxy/direct/tenantless/session-miss for the recorder and the proxy-mode rejection / direct-mode pass-through for the filter.
 
 ---
 
@@ -3702,11 +3704,13 @@ Consequence: a client creating a session against a task-mode pool with `acknowle
 
 - **Resolution:** Closed by `ae75d11f`. `createSession` now calls `Server.resolveIsolationLevel`, which resolves the assigned pool (via `podsession.ResolvePool`, the same path the start handler uses) and maps the §5.2 execution mode and scrub policy to the §7.1 fields through `isolationLevelForPool`/`scrubPolicyForPool`: task and concurrent pools set `podReuse`/`residualStateWarning` true; `scrubPolicy` resolves to `best-effort` / `vm-restart` / `best-effort-in-place` (task) or `best-effort-per-slot` / `none` (concurrent-workspace / concurrent-stateless) per §7.1 line 72. `PoolMatch` now carries `IsolationProfile`, `AllowCrossTenantReuse`, and `MicrovmScrubMode` from the SandboxTemplate. When no pool resolver is wired (the Postgres-only posture) or the pool does not resolve, it falls back to the conservative session-mode level so the field never understates the posture.
 
-### - [ ] F-5.2.23 — `lenny-ctl` has no pool CRUD commands [Medium] — OPEN
+### - [x] F-5.2.23 — `lenny-ctl` has no pool CRUD commands [Medium] — CLOSED
 
 Spec §24 (lenny-ctl reference) — orthogonal to §5.2, but the spec's pool model assumes operator tooling for pools beyond `kubectl`. `lenny-ctl` only offers `diagnose pool <name>` (`cmd/lenny-ctl/ops.go:177`) and a `--limit-tier pool` flag for breaker management. No `pool create | get | update | delete | list` subcommands exist.
 
 Consequence: operators must hit the admin REST API directly or build their own client.
+
+**Resolution:** Added `cmdPools` to `cmd/lenny-ctl/main.go` implementing `lenny-ctl admin pools {list,get,create,update,delete,drain,sync-status,resume-reconciliation}`, each a thin pass-through to the §15.1 admin REST endpoints (lines 792-799 of `spec/15_external-api-surface.md`). `create`/`update` accept the pool definition via `--from-file <pool.json>`. Tier-1 coverage in `main_test.go` asserts the method+path mapping for each subcommand plus the flag-validation fail-fast cases.
 
 ### - [x] F-5.2.24 — `setup_commands` proto message is delivered per-session in `WorkspacePlan` [Low] — CLOSED
 

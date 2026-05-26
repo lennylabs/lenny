@@ -41,8 +41,8 @@ type credentialPayload struct {
 // AssignProto satisfies the gateway session path's credential-assigner
 // dependency, so the §4.7 binder can mint and deliver a session's
 // leases without depending on the lease internals.
-func (s *Service) AssignProto(poolName, sessionID, spiffeURI string) (*adapterv1.CredentialLease, error) {
-	lease, err := s.Assign(poolName, sessionID, spiffeURI)
+func (s *Service) AssignProto(poolName, sessionID, spiffeURI, tenantID string) (*adapterv1.CredentialLease, error) {
+	lease, err := s.Assign(poolName, sessionID, spiffeURI, tenantID)
 	if err != nil {
 		return nil, err
 	}

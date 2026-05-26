@@ -41,6 +41,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -147,6 +148,14 @@ Gateway commands:
   admin runtimes list                   List runtimes
   admin runtimes get <name>             Get a runtime
   admin runtimes register --manifest <f>  Register a runtime from a runtime.yaml
+  admin pools list                      List pool configurations
+  admin pools get <name>                Get a pool configuration
+  admin pools create --from-file <f>    Create a pool from a JSON file
+  admin pools update <name> --from-file <f>  Replace a pool's configuration
+  admin pools delete <name>             Delete a pool
+  admin pools drain <name>              Drain a pool (no new assignments)
+  admin pools sync-status <name>        Show Postgres↔CRD reconciliation state
+  admin pools resume-reconciliation <name>  Clear PoolScalingAdmissionStuck state
   admin circuit-breakers list           List circuit breakers
   admin circuit-breakers open <name> --limit-tier <t> --scope <k>=<v> --reason <text>
   admin circuit-breakers close <name>   Close a circuit breaker
@@ -256,7 +265,7 @@ func cmdVersion(ctx context.Context, c *ctl.Client, stdout, stderr io.Writer) in
 // cmdAdmin dispatches the §24 `admin` resource-management group.
 func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|circuit-breakers)")
+		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|circuit-breakers)")
 		return 2
 	}
 	switch args[0] {
@@ -264,6 +273,8 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return cmdTenants(ctx, c, args[1:], stdout, stderr)
 	case "runtimes":
 		return cmdRuntimes(ctx, c, args[1:], stdout, stderr)
+	case "pools":
+		return cmdPools(ctx, c, args[1:], stdout, stderr)
 	case "circuit-breakers":
 		return cmdCircuitBreakers(ctx, c, args[1:], stdout, stderr)
 	default:
@@ -396,6 +407,134 @@ func cmdRuntimesRegister(ctx context.Context, c *ctl.Client, args []string, stdo
 		body["image"] = image
 	}
 	return registerRuntime(ctx, c, body, stdout, stderr)
+}
+
+// cmdPools implements the §24.4 `lenny-ctl admin pools` group. spec:
+// spec/24_lenny-ctl-command-reference.md lines 61-78. v1 covers the
+// CRUD primitives, drain, sync-status, and resume-reconciliation. Each
+// subcommand maps 1:1 to the §15.1 admin REST surface
+// (spec/15_external-api-surface.md lines 792-799).
+func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: pools requires a subcommand (list|get|create|update|delete|drain|sync-status|resume-reconciliation)")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/pools", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "get":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: pools get requires <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/pools/"+url.PathEscape(args[1]), nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "create":
+		// spec: §15.1 line 792 — POST /v1/admin/pools accepts the pool
+		// definition as JSON. --from-file reads the body from a local
+		// file so an operator can keep pool definitions under source
+		// control.
+		path := flagValue(args[1:], "--from-file")
+		if path == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: pools create requires --from-file <pool.json>")
+			return 2
+		}
+		body, err := readJSONFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
+			return 1
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/pools", body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "update":
+		// spec: §15.1 line 795 — PUT /v1/admin/pools/{name} requires the
+		// updated pool definition in the body.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: pools update requires <name> --from-file <pool.json>")
+			return 2
+		}
+		path := flagValue(args[2:], "--from-file")
+		if path == "" {
+			fmt.Fprintln(stderr, "lenny-ctl: pools update requires --from-file <pool.json>")
+			return 2
+		}
+		body, err := readJSONFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
+			return 1
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "PUT", "/v1/admin/pools/"+url.PathEscape(args[1]), body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "delete":
+		// spec: §15.1 line 796 — DELETE /v1/admin/pools/{name}.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: pools delete requires <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "DELETE", "/v1/admin/pools/"+url.PathEscape(args[1]), nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "drain":
+		// spec: §15.1 line 797 — POST /v1/admin/pools/{name}/drain.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: pools drain requires <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/pools/"+url.PathEscape(args[1])+"/drain", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "sync-status":
+		// spec: §15.1 line 798 — GET /v1/admin/pools/{name}/sync-status.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: pools sync-status requires <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/pools/"+url.PathEscape(args[1])+"/sync-status", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "resume-reconciliation":
+		// spec: §15.1 line 799 — POST /v1/admin/pools/{name}/resume-reconciliation.
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: pools resume-reconciliation requires <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/pools/"+url.PathEscape(args[1])+"/resume-reconciliation", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown pools subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
 }
 
 // cmdCircuitBreakers implements the §24.7 circuit-breaker commands.

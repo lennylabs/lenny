@@ -115,7 +115,7 @@ func TestRenewalWorkerPushesRotationToPod(t *testing.T) {
 
 	// Mint and assign the session's first lease. OnAssigned tracks it
 	// for renewal.
-	lease, err := assign.Assign("claude-prod", "run_a", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestRenewalWorkerSurvivesNoPodBinding(t *testing.T) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
 	})
 
-	lease, err := assign.Assign("claude-prod", "run_a", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestRenewalEmitsCredentialRotatedOnSuccess(t *testing.T) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
 	})
 
-	lease, err := assign.Assign("claude-prod", "run_a", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestRenewalEmitsCredentialPoolExhaustedOnExhaustion(t *testing.T) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
 	})
 
-	lease, err := assign.Assign("claude-prod", "run_a", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestRenewalNoEmitterIsSilent(t *testing.T) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
 	})
 
-	lease, err := assign.Assign("claude-prod", "run_a", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}

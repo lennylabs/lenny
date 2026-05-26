@@ -100,7 +100,7 @@ func TestClientBreakerOpensOnConsecutiveUnavailable(t *testing.T) {
 	// First three calls: gRPC reaches the server, which returns
 	// Unavailable. The breaker counts each failure.
 	for i := 0; i < 3; i++ {
-		_, err := client.Assign("any-pool", "s_1", "")
+		_, err := client.Assign("any-pool", "s_1", "", "")
 		if err == nil {
 			t.Fatalf("call %d: Assign succeeded against an Unavailable server", i)
 		}
@@ -114,7 +114,7 @@ func TestClientBreakerOpensOnConsecutiveUnavailable(t *testing.T) {
 
 	// Fourth call: breaker is open; the Client must short-circuit with
 	// ErrTokenServiceUnavailable and never reach the stub server.
-	_, err := client.Assign("any-pool", "s_1", "")
+	_, err := client.Assign("any-pool", "s_1", "", "")
 	if !errors.Is(err, credassign.ErrTokenServiceUnavailable) {
 		t.Fatalf("breaker-open call: got %v, want ErrTokenServiceUnavailable", err)
 	}
@@ -136,7 +136,7 @@ func TestClientBreakerSkipsNotFound(t *testing.T) {
 	t.Cleanup(closer)
 
 	for i := 0; i < 5; i++ {
-		_, err := client.Assign("missing", "s_1", "")
+		_, err := client.Assign("missing", "s_1", "", "")
 		if !errors.Is(err, credassign.ErrPoolNotFound) {
 			t.Fatalf("call %d: expected ErrPoolNotFound, got %v", i, err)
 		}
@@ -187,13 +187,13 @@ func TestClientBreakerResetsOnSuccess(t *testing.T) {
 
 	// Two consecutive failures, just under threshold.
 	for i := 0; i < 2; i++ {
-		if _, err := client.Assign("pool", "s_1", ""); err == nil {
+		if _, err := client.Assign("pool", "s_1", "", ""); err == nil {
 			t.Fatalf("call %d: expected failure, got nil", i)
 		}
 	}
 	failing.Store(false)
 	// Success resets the consecutive-fail counter.
-	if _, err := client.Assign("pool", "s_1", ""); err != nil {
+	if _, err := client.Assign("pool", "s_1", "", ""); err != nil {
 		t.Fatalf("post-blip Assign: %v", err)
 	}
 	if state := sub.State(); state != subsystem.StateClosed {
@@ -204,7 +204,7 @@ func TestClientBreakerResetsOnSuccess(t *testing.T) {
 	// reset the counter.
 	failing.Store(true)
 	for i := 0; i < 2; i++ {
-		_, _ = client.Assign("pool", "s_1", "")
+		_, _ = client.Assign("pool", "s_1", "", "")
 	}
 	if state := sub.State(); state != subsystem.StateClosed {
 		t.Fatalf("after success+2 failures: breaker state = %s, want closed", state)
@@ -222,7 +222,7 @@ func TestClientWithoutBreakerPassesRawErrors(t *testing.T) {
 	)
 	t.Cleanup(closer)
 
-	_, err := client.Assign("pool", "s_1", "")
+	_, err := client.Assign("pool", "s_1", "", "")
 	if err == nil {
 		t.Fatal("expected an error against an Unavailable server")
 	}

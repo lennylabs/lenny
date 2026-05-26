@@ -33,10 +33,14 @@ type Assigner interface {
 	// Assign mints a §4.9 credential lease from poolName for sessionID
 	// and returns it. spiffeURI is the issuing pod's SPIFFE identity for
 	// proxy-mode SPIFFE-binding; an empty value disables binding.
-	Assign(poolName, sessionID, spiffeURI string) (credential.Lease, error)
+	// tenantID is recorded on the lease so downstream code paths
+	// (proxy-mode usage accounting, audit) can attribute the lease to
+	// its owning tenant regardless of the lease source. spec: §4.9
+	// lines 1107-1141.
+	Assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, error)
 	// AssignProto mints a lease and returns its adapter wire form for
 	// the §4.7 binder to push to a pod via AssignCredentials.
-	AssignProto(poolName, sessionID, spiffeURI string) (*adapterv1.CredentialLease, error)
+	AssignProto(poolName, sessionID, spiffeURI, tenantID string) (*adapterv1.CredentialLease, error)
 	// ProtoLeaseByID returns the adapter wire form of a recorded lease.
 	// The §4.9 renewal worker uses it to push a rotated lease to a pod
 	// without re-deriving the wire form from raw fields.
@@ -209,8 +213,8 @@ func (s *Service) RegisterPool(p Pool) {
 // Assign returns ErrPoolNotFound for an unknown pool and
 // credential.ErrPoolExhausted when the pool has no assignable
 // credential.
-func (s *Service) Assign(poolName, sessionID, spiffeURI string) (credential.Lease, error) {
-	lease, observer, err := s.assignLocked(poolName, sessionID, spiffeURI)
+func (s *Service) Assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, error) {
+	lease, observer, err := s.assignLocked(poolName, sessionID, spiffeURI, tenantID)
 	if err != nil {
 		return credential.Lease{}, err
 	}
@@ -226,7 +230,7 @@ func (s *Service) Assign(poolName, sessionID, spiffeURI string) (credential.Leas
 // assignLocked performs the §4.9 credential selection and lease mint
 // under s.mu and returns the minted lease together with the registered
 // renewal observer, which the caller invokes after releasing the lock.
-func (s *Service) assignLocked(poolName, sessionID, spiffeURI string) (credential.Lease, func(LeaseAssignment), error) {
+func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, func(LeaseAssignment), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -255,6 +259,11 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI string) (credentia
 		Source:             credential.SourcePool,
 		PoolID:             poolName,
 		CredentialID:       selected.CredentialID,
+		// spec: §4.9 line 1468 — record the lease's owning tenant on the
+		// lease record so the LLM proxy can attribute proxy-extracted
+		// usage to the right tenant without an out-of-band session
+		// lookup.
+		TenantID:           tenantID,
 		DeliveryMode:       ps.pool.DeliveryMode,
 		PoolTTLSeconds:     ps.pool.LeaseTTLSeconds,
 		RenewBeforeSeconds: ps.pool.RenewBeforeSeconds,

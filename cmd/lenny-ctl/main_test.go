@@ -146,6 +146,133 @@ func TestCircuitBreakersOpenRequiresLimitTier(t *testing.T) {
 	}
 }
 
+// TestAdminPoolsList covers `lenny-ctl admin pools list` mapping to
+// GET /v1/admin/pools. spec: §24.4 line 61.
+func TestAdminPoolsList(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"pools":[]}`,
+		"admin", "pools", "list")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodGet || got.path != "/v1/admin/pools" {
+		t.Errorf("request: %s %s, want GET /v1/admin/pools", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsGet covers `lenny-ctl admin pools get <name>`. spec:
+// §24.4 line 62.
+func TestAdminPoolsGet(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"p1"}`,
+		"admin", "pools", "get", "p1")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodGet || got.path != "/v1/admin/pools/p1" {
+		t.Errorf("request: %s %s, want GET /v1/admin/pools/p1", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsCreate covers `lenny-ctl admin pools create
+// --from-file <pool.json>` mapping to POST /v1/admin/pools.
+func TestAdminPoolsCreate(t *testing.T) {
+	path := writeSeedFile(t, "pool.json",
+		`{"name":"p1","runtimeRef":"claude-prod","isolationProfile":"strict"}`)
+	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"p1"}`,
+		"admin", "pools", "create", "--from-file", path)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/pools" {
+		t.Errorf("request: %s %s, want POST /v1/admin/pools", got.method, got.path)
+	}
+	if got.body["name"] != "p1" || got.body["isolationProfile"] != "strict" {
+		t.Errorf("body: %+v", got.body)
+	}
+}
+
+// TestAdminPoolsCreateRequiresFromFile rejects a create with no body.
+func TestAdminPoolsCreateRequiresFromFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"admin", "pools", "create"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("missing --from-file: exit code %d, want 2", code)
+	}
+}
+
+// TestAdminPoolsUpdate covers `lenny-ctl admin pools update <name>
+// --from-file <pool.json>` mapping to PUT /v1/admin/pools/{name}.
+func TestAdminPoolsUpdate(t *testing.T) {
+	path := writeSeedFile(t, "pool.json", `{"minWarm":4}`)
+	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"p1"}`,
+		"admin", "pools", "update", "p1", "--from-file", path)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPut || got.path != "/v1/admin/pools/p1" {
+		t.Errorf("request: %s %s, want PUT /v1/admin/pools/p1", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsDelete covers DELETE /v1/admin/pools/{name}. spec:
+// §15.1 line 796.
+func TestAdminPoolsDelete(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{}`,
+		"admin", "pools", "delete", "p1")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodDelete || got.path != "/v1/admin/pools/p1" {
+		t.Errorf("request: %s %s, want DELETE /v1/admin/pools/p1", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsSyncStatus covers GET /v1/admin/pools/{name}/sync-status.
+// spec: §15.1 line 798.
+func TestAdminPoolsSyncStatus(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"inSync":true}`,
+		"admin", "pools", "sync-status", "p1")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodGet || got.path != "/v1/admin/pools/p1/sync-status" {
+		t.Errorf("request: %s %s, want GET /v1/admin/pools/p1/sync-status", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsDrain covers POST /v1/admin/pools/{name}/drain.
+func TestAdminPoolsDrain(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"status":"draining"}`,
+		"admin", "pools", "drain", "p1")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/pools/p1/drain" {
+		t.Errorf("request: %s %s, want POST /v1/admin/pools/p1/drain", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsResumeReconciliation covers
+// POST /v1/admin/pools/{name}/resume-reconciliation. spec: §15.1 line 799.
+func TestAdminPoolsResumeReconciliation(t *testing.T) {
+	code, got := runAgainstGateway(t, http.StatusOK, `{"pool":"p1"}`,
+		"admin", "pools", "resume-reconciliation", "p1")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/pools/p1/resume-reconciliation" {
+		t.Errorf("request: %s %s, want POST /v1/admin/pools/p1/resume-reconciliation", got.method, got.path)
+	}
+}
+
+// TestAdminPoolsUnknownSubcommand fails fast with exit code 2.
+func TestAdminPoolsUnknownSubcommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"admin", "pools", "frobnicate"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("unknown pools subcommand: exit code %d, want 2", code)
+	}
+}
+
 func TestAdminUnknownResource(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"admin", "widgets"}, &stdout, &stderr)

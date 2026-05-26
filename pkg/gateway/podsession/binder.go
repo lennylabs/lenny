@@ -145,8 +145,10 @@ type CredentialAssigner interface {
 	// AssignProto leases a credential from poolName to sessionID and
 	// returns the wire-form CredentialLease. spiffeURI is the issuing
 	// pod's SPIFFE identity for proxy-mode SPIFFE-binding; an empty value
-	// disables binding.
-	AssignProto(poolName, sessionID, spiffeURI string) (*adapterv1.CredentialLease, error)
+	// disables binding. tenantID is recorded on the lease so the §4.9
+	// LLM proxy can attribute proxy-extracted usage to the right tenant
+	// (spec: §4.9 line 1468).
+	AssignProto(poolName, sessionID, spiffeURI, tenantID string) (*adapterv1.CredentialLease, error)
 	// ReleaseSession releases every §4.9 credential lease the session
 	// holds back to its pool. It is the §7.1 step 23 teardown the binder
 	// runs when a session's pod is released, so a completed session's
@@ -499,7 +501,7 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 	}
 	leases := make(map[string]*adapterv1.CredentialLease, len(req.CredentialPools))
 	for provider, pool := range req.CredentialPools {
-		lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI)
+		lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
 		if err != nil {
 			// The §4.9 pre-claim check (CredentialRouter) passed for this
 			// provider, yet the assignment failed — the race at §4.9 line

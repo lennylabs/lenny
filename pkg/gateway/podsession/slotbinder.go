@@ -170,7 +170,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 	}
 	leases := make(map[string]*adapterv1.CredentialLease, len(req.CredentialPools))
 	for provider, pool := range req.CredentialPools {
-		lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI)
+		lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
 		if err != nil {
 			// §4.9 line 1220 pre-claim race: surface a typed error so the
 			// caller can release the slot and emit the mismatch metric.

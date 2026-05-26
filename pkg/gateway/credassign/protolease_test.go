@@ -170,7 +170,7 @@ func TestAssignProtoMintsAndConverts(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
 
-	proto, err := svc.AssignProto("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1")
+	proto, err := svc.AssignProto("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1", "")
 	if err != nil {
 		t.Fatalf("AssignProto: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestAssignProtoMintsAndConverts(t *testing.T) {
 
 func TestAssignProtoPropagatesAssignError(t *testing.T) {
 	svc, _, _ := newService(t)
-	if _, err := svc.AssignProto("no-such-pool", "s_1", ""); err == nil {
+	if _, err := svc.AssignProto("no-such-pool", "s_1", "", ""); err == nil {
 		t.Error("AssignProto succeeded for an unknown pool, want an error")
 	}
 }

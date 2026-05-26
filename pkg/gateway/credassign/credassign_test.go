@@ -46,7 +46,7 @@ func TestAssignRecordsLeaseAndCachesCredential(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
 
-	lease, err := svc.Assign("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1")
+	lease, err := svc.Assign("claude-prod", "s_1", "spiffe://lenny.test/agent/claude-prod/pod-1", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestAssignRecordsLeaseAndCachesCredential(t *testing.T) {
 
 func TestAssignUnknownPool(t *testing.T) {
 	svc, _, _ := newService(t)
-	if _, err := svc.Assign("no-such-pool", "s_1", ""); !errors.Is(err, credassign.ErrPoolNotFound) {
+	if _, err := svc.Assign("no-such-pool", "s_1", "", ""); !errors.Is(err, credassign.ErrPoolNotFound) {
 		t.Errorf("error = %v, want ErrPoolNotFound", err)
 	}
 }
@@ -83,7 +83,7 @@ func TestAssignExhaustedPool(t *testing.T) {
 	svc.RegisterPool(proxyPool("drained", credential.StrategyLeastLoaded,
 		credassign.PoolCredential{ID: "key-1", APIKey: "sk", Healthy: false}))
 
-	if _, err := svc.Assign("drained", "s_1", ""); !errors.Is(err, credential.ErrPoolExhausted) {
+	if _, err := svc.Assign("drained", "s_1", "", ""); !errors.Is(err, credential.ErrPoolExhausted) {
 		t.Errorf("error = %v, want ErrPoolExhausted", err)
 	}
 }
@@ -94,11 +94,11 @@ func TestAssignLeastLoadedSpreadsAcrossCredentials(t *testing.T) {
 		healthyCred("key-1", "sk-one"),
 		healthyCred("key-2", "sk-two")))
 
-	first, err := svc.Assign("claude-prod", "s_1", "")
+	first, err := svc.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign 1: %v", err)
 	}
-	second, err := svc.Assign("claude-prod", "s_2", "")
+	second, err := svc.Assign("claude-prod", "s_2", "", "")
 	if err != nil {
 		t.Fatalf("Assign 2: %v", err)
 	}
@@ -113,12 +113,12 @@ func TestReleaseFreesTheCredentialSlot(t *testing.T) {
 		healthyCred("key-1", "sk-one"),
 		healthyCred("key-2", "sk-two")))
 
-	first, _ := svc.Assign("claude-prod", "s_1", "") // key-1, active{key-1:1}
-	_, _ = svc.Assign("claude-prod", "s_2", "")      // key-2, active{key-2:1}
+	first, _ := svc.Assign("claude-prod", "s_1", "", "") // key-1, active{key-1:1}
+	_, _ = svc.Assign("claude-prod", "s_2", "", "")      // key-2, active{key-2:1}
 	svc.Release(first.LeaseID)                       // active{key-1:0}
 
 	// key-1 is now the least loaded, so the next assignment picks it.
-	third, err := svc.Assign("claude-prod", "s_3", "")
+	third, err := svc.Assign("claude-prod", "s_3", "", "")
 	if err != nil {
 		t.Fatalf("Assign 3: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestReleaseRemovesLeaseFromStore(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-one")))
 
-	lease, _ := svc.Assign("claude-prod", "s_1", "")
+	lease, _ := svc.Assign("claude-prod", "s_1", "", "")
 	svc.Release(lease.LeaseID)
 
 	if _, ok := leases.GetByID(lease.LeaseID); ok {
@@ -158,9 +158,9 @@ func TestReleaseSessionReturnsEveryLeaseToPool_spec_7_1(t *testing.T) {
 		healthyCred("key-o", "sk-o")))
 
 	// One session leases from two pools; a sibling session leases too.
-	la, _ := svc.Assign("anthropic", "s_1", "")
-	lo, _ := svc.Assign("openai", "s_1", "")
-	other, _ := svc.Assign("anthropic", "s_2", "")
+	la, _ := svc.Assign("anthropic", "s_1", "", "")
+	lo, _ := svc.Assign("openai", "s_1", "", "")
+	other, _ := svc.Assign("anthropic", "s_2", "", "")
 	if leases.Len() != 3 {
 		t.Fatalf("lease store holds %d leases, want 3", leases.Len())
 	}
@@ -184,7 +184,7 @@ func TestReleaseSessionReturnsEveryLeaseToPool_spec_7_1(t *testing.T) {
 	// The anthropic pool's freed slot is reusable: the next assignment for
 	// a new session succeeds against the same single credential, which it
 	// could not if the active counter had leaked.
-	if _, err := svc.Assign("anthropic", "s_3", ""); err != nil {
+	if _, err := svc.Assign("anthropic", "s_3", "", ""); err != nil {
 		t.Errorf("Assign after ReleaseSession: %v — the released slot did not return to the pool", err)
 	}
 }
@@ -193,7 +193,7 @@ func TestReleaseSessionUnknownSessionIsNoOp_spec_7_1(t *testing.T) {
 	svc, leases, _ := newService(t)
 	svc.RegisterPool(proxyPool("anthropic", credential.StrategyLeastLoaded,
 		healthyCred("key-a", "sk-a")))
-	lease, _ := svc.Assign("anthropic", "s_1", "")
+	lease, _ := svc.Assign("anthropic", "s_1", "", "")
 
 	svc.ReleaseSession("")           // empty id: no panic, no effect
 	svc.ReleaseSession("s_absent")   // unknown session: no effect
@@ -212,7 +212,7 @@ func TestAssignDirectModePoolCachesCredential(t *testing.T) {
 		Credentials:  []credassign.PoolCredential{healthyCred("key-1", "sk-direct")},
 	})
 
-	lease, err := svc.Assign("direct-pool", "s_1", "")
+	lease, err := svc.Assign("direct-pool", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestOnAssignedObservesEachMintedLease(t *testing.T) {
 		observed = append(observed, a)
 	})
 
-	lease, err := svc.Assign("claude-prod", "s_1", "")
+	lease, err := svc.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestOnAssignedNotFiredOnFailedAssign(t *testing.T) {
 	svc.OnAssigned(func(credassign.LeaseAssignment) { fired = true })
 
 	// An unknown pool fails before any lease is minted.
-	if _, err := svc.Assign("no-such-pool", "s_1", ""); err == nil {
+	if _, err := svc.Assign("no-such-pool", "s_1", "", ""); err == nil {
 		t.Fatal("Assign of an unknown pool succeeded, want ErrPoolNotFound")
 	}
 	if fired {
@@ -271,7 +271,7 @@ func TestProtoLeaseByIDResolvesARecordedLease(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
 
-	lease, err := svc.Assign("claude-prod", "s_1", "")
+	lease, err := svc.Assign("claude-prod", "s_1", "", "")
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}

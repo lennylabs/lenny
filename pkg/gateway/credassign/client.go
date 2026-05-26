@@ -163,8 +163,8 @@ func (c *Client) OnAssigned(fn func(LeaseAssignment)) {
 // gateway's local lease store and credential cache so the §4.9 LLM
 // proxy and the renewal worker have everything they need without
 // another round-trip.
-func (c *Client) Assign(poolName, sessionID, spiffeURI string) (credential.Lease, error) {
-	lease, observer, err := c.assign(poolName, sessionID, spiffeURI)
+func (c *Client) Assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, error) {
+	lease, observer, err := c.assign(poolName, sessionID, spiffeURI, tenantID)
 	if err != nil {
 		return credential.Lease{}, err
 	}
@@ -174,20 +174,27 @@ func (c *Client) Assign(poolName, sessionID, spiffeURI string) (credential.Lease
 	return lease, nil
 }
 
-func (c *Client) assign(poolName, sessionID, spiffeURI string) (credential.Lease, func(LeaseAssignment), error) {
+func (c *Client) assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, func(LeaseAssignment), error) {
 	parent, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 	var (
 		resp *tokensv1.AssignCredentialsResponse
 		err  error
 	)
+	// spec: §4.9 line 1468 — when the caller supplies a per-request
+	// tenantID it wins over the client's replica-wide tenantID so the
+	// minted lease records the session's tenant.
+	effectiveTenant := tenantID
+	if effectiveTenant == "" {
+		effectiveTenant = c.tenantID
+	}
 	// Route the gRPC through the §4.1 / §4.3 per-subsystem breaker so
 	// a degraded Token Service trips the breaker open after consecutive
 	// failures and the session-start path fails fast with
 	// ErrTokenServiceUnavailable.
 	callErr := c.callTokenService(parent, func(ctx context.Context) error {
 		resp, err = c.stub.AssignCredentials(ctx, &tokensv1.AssignCredentialsRequest{
-			TenantId:     c.tenantID,
+			TenantId:     effectiveTenant,
 			SessionId:    sessionID,
 			PodSpiffeUri: spiffeURI,
 			PoolIds:      []string{poolName},
@@ -268,8 +275,8 @@ func classifyTokenServiceError(err error) error {
 // AssignProto mirrors Service.AssignProto: it issues AssignCredentials
 // over the wire, mirrors the response into local state, and returns the
 // gateway → pod adapter wire form of the lease.
-func (c *Client) AssignProto(poolName, sessionID, spiffeURI string) (*adapterv1.CredentialLease, error) {
-	lease, err := c.Assign(poolName, sessionID, spiffeURI)
+func (c *Client) AssignProto(poolName, sessionID, spiffeURI, tenantID string) (*adapterv1.CredentialLease, error) {
+	lease, err := c.Assign(poolName, sessionID, spiffeURI, tenantID)
 	if err != nil {
 		return nil, err
 	}
