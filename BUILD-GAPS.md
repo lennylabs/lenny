@@ -5024,9 +5024,11 @@ Consequence: combined with H-2, concurrent-mode credential leasing cannot honor 
 
 Spec §6.4 references the §6.1 SDK-warm demotion guidance only obliquely; the metric itself is the §6.1 contract. This audit notes it as `Info` because it surfaces in the §6.3 audit; carrying it forward here clarifies that the §6.4 layout doesn't depend on demotion behaviour. See `6.3.md` for the detailed gap.
 
-### - [ ] F-6.4.12 — The pod-spec builder hardcodes the per-runtime workspace cwd to `/workspace/current` even in embedded mode [Low] — OPEN
+### - [x] F-6.4.12 — The pod-spec builder hardcodes the per-runtime workspace cwd to `/workspace/current` even in embedded mode [Low] — CLOSED
 
 `pkg/controller/sandbox/podspec/podspec.go:271` and `cmd/runtimes/echo-embedded/main.go:66` both default `--workspace-root=/workspace/current`. This is correct for session and task modes; it becomes an actively wrong default the moment H-2 is built. Worth flagging as a follow-on coupling rather than a present-day defect.
+
+**Resolution:** Per §6.4 line 407, session-mode and task-mode pods use the single `/workspace/current` cwd — the current default is correct for the v1 surface. The concurrent-workspace per-slot tree is unbuilt and tracked under F-6.4.2; both hard-coded call sites now carry a code comment naming the H-2 coupling so a future reviewer who adds the per-slot tree finds the hand-off. No present-day defect.
 
 ### - [x] F-6.4.13 — `/workspace/current` does not exist at warm time [Low] — CLOSED
 
@@ -5036,25 +5038,35 @@ Spec §6.1 line 11: "`/workspace/current` exists but is empty". The pod-spec mou
 
 **Resolution (1132b772):** The adapter now calls `EnsureWarmWorkspaceLayout` at startup, before signalling READY, creating `WorkspaceRoot` (`/workspace/current`, chmod 0755 for the runtime) and `StagingDir` so both exist and `current/` is empty at warm time. Tier-1 tests cover creation, the empty-current invariant, idempotency, umask-independent mode, and the unconfigured-dir skip.
 
-### - [ ] F-6.4.14 — Pod-spec test does not cover §6.4 invariants [Low] — OPEN
+### - [x] F-6.4.14 — Pod-spec test does not cover §6.4 invariants [Low] — CLOSED
 
 `pkg/controller/sandbox/podspec/podspec_test.go:142–162` (`TestBuildMountsTheWorkspaceAndCredentialVolumes`) asserts the existence of the `workspace`, `credentials`, and `tmp` volumes. It does not assert: tmpfs medium on `credentials`/`tmp`, presence of `sessions`/`artifacts`/`shared` volumes, sizeLimit values, or read-only mounts on `/workspace/shared/`. No test enforces the §6.4 layout against pod-spec output, so the missing volumes (H-1, H-3) and the missing sizeLimits (M-1) cannot be regression-caught.
 
-### - [ ] F-6.4.15 — `lenny-t4-node-isolation` webhook is gated on `features.compliance` [Info] — OPEN
+**Resolution:** Coverage is now in `pkg/controller/sandbox/podspec/podspec_test.go`: `TestBuildCapsTmpfs_spec_6_4` (sizeLimit on `tmp` and `sessions`), `TestBuildCapsDevShm_spec_6_4` (sizeLimit on `dshm`), `TestBuildMountsSessionsAndArtifacts_spec_6_4` (sessions tmpfs + artifacts disk + per-container mounts), `TestBuildMasksProc_spec_6_4` (procMount Default), `TestBuildMountsTheWorkspaceVolume_spec_6_4` (workspace mount on every container), and the new `TestBuildCredentialsVolumeIsTmpfs_spec_6_4` (credentials tmpfs medium across sidecar + embedded). The `/workspace/shared/` read-only mount and `sharedAssets` are unbuilt and tracked under F-6.4.3; this test surface lands the moment that work does.
+
+### - [x] F-6.4.15 — `lenny-t4-node-isolation` webhook is gated on `features.compliance` [Info] — CLOSED
 
 `charts/lenny/templates/admission-policies/t4-node-isolation-webhook.yaml:17` wraps the entire ValidatingWebhookConfiguration in `{{- if .Values.features.compliance }}`. A deployer that does not enable `features.compliance` ships without the webhook entirely, removing even the fail-closed defense for T4 pods. Combined with H-4 (no T4 label injection anyway), the practical T4 isolation posture is currently absent regardless of the chart feature flag. Worth noting that the webhook would also need to remain rendered for the §6.4 invariant to hold once H-4 is fixed.
 
-### - [ ] F-6.4.16 — `EgressCaptureMountPath = /run/lenny-capture` overlaps the `/run/lenny` namespace [Info] — OPEN
+**Resolution:** By-design per §17.2 lines 62-68 "Feature-gated chart inventory" — `features.compliance` is the Phase 13 gate and `lenny-t4-node-isolation` is listed among its rendered webhooks. The render-time downgrade guard, preflight phase-stamp check, and `AdmissionPlaneFeatureFlagDowngrade` runtime alert (§17.2 lines 72-79) prevent a deployer from flipping the flag back to `false` once Phase 13 is reached, so a production deployment cannot quietly lose this webhook. The chart template already cites §17.2. The T4 pod label injection that makes the webhook's predicate reachable is tracked separately under F-6.4.4 / F-6.4.9; both must land together to hold the §6.4 invariant.
+
+### - [x] F-6.4.16 — `EgressCaptureMountPath = /run/lenny-capture` overlaps the `/run/lenny` namespace [Info] — CLOSED
 
 `pkg/controller/sandbox/podspec/podspec.go:294` puts the §12.9.8 egress-capture sidecar shared volume at `/run/lenny-capture`. This does not collide with `/run/lenny` (the §13.1 credential mount), but the shared `/run/lenny-*` prefix is a small namespace-hygiene risk if §6.4 ever calls out a different subpath. Currently fine; flagged for future reviewers.
 
-### - [ ] F-6.4.17 — `pkg/adapter/workspace/archive.go:24` archives only `WorkspaceRoot` for checkpoints [Info] — OPEN
+**Resolution:** Added the `/run/lenny-*` sibling-path rule to the `EgressCaptureMountPath` constant doc-comment (`pkg/controller/sandbox/podspec/podspec.go`): `/run/lenny-capture` and `/run/lenny` are siblings — not nested — so the credential tmpfs and the capture emptyDir cannot collide. Any future §6.4 in-pod path under `/run/lenny-*` must remain a sibling so the mounts stay independent. No code change beyond documentation.
+
+### - [x] F-6.4.17 — `pkg/adapter/workspace/archive.go:24` archives only `WorkspaceRoot` for checkpoints [Info] — CLOSED
 
 If §6.4's `/artifacts/` ever gets built (H-1), the checkpoint pipeline will need to choose between including `/artifacts/` in the workspace archive or treating artifact retention separately. The current code archives `/workspace/current` only; this is correct for v1's single-tree layout but is a coupling point for the per-slot work.
 
-### - [ ] F-6.4.18 — `LabelTenant` on concurrent-mode pods is the only Lenny-injected pod label outside `LabelPool`/`LabelManaged` [Info] — OPEN
+**Resolution:** `Archive` is layout-agnostic — it walks the `root` it is passed. The doc-comment in `pkg/adapter/workspace/archive.go` now states that v1 session/task mode passes `/workspace/current` per §6.4 line 407, and that the caller (not Archive) chooses the snapshot scope when the per-slot tree (F-6.4.2) lands. No code change beyond documentation; v1 single-tree behaviour is correct.
+
+### - [x] F-6.4.18 — `LabelTenant` on concurrent-mode pods is the only Lenny-injected pod label outside `LabelPool`/`LabelManaged` [Info] — CLOSED
 
 `pkg/gateway/podclaim/slotclaimer.go:68` documents the `lenny.dev/tenant-id` label that the gateway stamps on a concurrent-mode (or task-mode) pod at first slot assignment. This is the working precedent for how the §6.4 `lenny.dev/workspace-tier: t4` label *should* be injected — the missing piece for H-4 is the corresponding writer path.
+
+**Resolution:** The `LabelTenant` doc-comment in `pkg/gateway/podclaim/slotclaimer.go` now names the T4 label coupling explicitly: a future T4 writer (pool controller or pod-spec builder) should follow the same SSA-Apply + `lenny-gateway` field-manager handoff used in `(*SlotClaimer).Claim` so the `lenny-t4-node-isolation` webhook has a stable predicate. The concrete T4 writer is tracked under F-6.4.4 / F-6.4.9.
 
 ### Convergence note
 
