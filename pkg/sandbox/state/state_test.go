@@ -26,6 +26,7 @@ func TestCoarseState_spec_6_2(t *testing.T) {
 		{state.ReceivingUploads, "active", true},
 		{state.FinalizingWorkspace, "active", true},
 		{state.RunningSetup, "active", true},
+		{state.StartingSession, "active", true},
 		{state.Attached, "active", true},
 		{state.TaskCleanup, "active", true},
 		{state.SlotActive, "active", true},
@@ -132,16 +133,53 @@ func TestSlotActivePhaseAndTransitions(t *testing.T) {
 }
 
 // spec: 6.2
+// diagnosis: the §6.2 line 87 starting_session phase (between
+// running_setup and attached on the pod-warm path) or one of its edges is
+// missing from the Sandbox state machine. spec §6.2 lines 102-103 require
+// starting_session → failed (retries exhausted) and starting_session →
+// resume_pending (post-attached visibility, retries remain); line 87
+// requires running_setup → starting_session → attached.
+func TestStartingSessionPhaseAndTransitions_spec_6_2(t *testing.T) {
+	t.Parallel()
+	found := false
+	for _, s := range state.All() {
+		if s == state.StartingSession {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("state.All() is missing starting_session (spec §6.2 line 87)")
+	}
+	required := []state.Transition{
+		{From: state.RunningSetup, To: state.StartingSession}, // §6.2 line 87
+		{From: state.StartingSession, To: state.Attached},     // §6.2 line 87
+		{From: state.StartingSession, To: state.Failed},       // §6.2 line 102
+		{From: state.StartingSession, To: state.ResumePending}, // §6.2 line 103
+	}
+	for _, tr := range required {
+		if err := state.IsValid(tr.From, tr.To); err != nil {
+			t.Errorf("IsValid(%q, %q) = %v, want nil — §6.2 starting_session edge", tr.From, tr.To, err)
+		}
+	}
+	if state.IsTerminal(state.StartingSession) {
+		t.Error("starting_session must not be a terminal phase")
+	}
+}
+
+// spec: 6.2
 // diagnosis: state.IsTerminal returned the wrong value. Sandbox terminal
 //
-//	states per spec §6.2 are exactly: failed, cancelled, expired,
-//	terminated. Pods in `draining` are not terminal.
+//	states per spec §6.2 are the four session-terminal states (line 269:
+//	completed, failed, cancelled, expired) plus the pod-lifecycle terminal
+//	terminated. completed is terminal (§6.2 lines 96-99 attached/suspended
+//	→ completed with no edge back out). Pods in `draining` are not terminal.
 func TestIsTerminal(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		s    state.State
 		want bool
 	}{
+		{state.Completed, true},
 		{state.Failed, true},
 		{state.Cancelled, true},
 		{state.Expired, true},
@@ -149,6 +187,7 @@ func TestIsTerminal(t *testing.T) {
 		{state.Draining, false},
 		{state.Idle, false},
 		{state.Suspended, false},
+		{state.StartingSession, false},
 	}
 	for _, c := range cases {
 		c := c
@@ -191,6 +230,10 @@ func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 		{state.Failed, state.Idle},
 		{state.Terminated, state.Idle},
 		{state.Warming, state.Claimed},
+		// spec §6.2 line 87: the pod-warm chain routes running_setup →
+		// starting_session → attached, so a direct running_setup → attached
+		// edge is no longer valid.
+		{state.RunningSetup, state.Attached},
 	}
 	for _, tr := range illegal {
 		tr := tr

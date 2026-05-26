@@ -366,6 +366,7 @@ spec:
                 - receiving_uploads
                 - finalizing_workspace
                 - running_setup
+                - starting_session
                 - attached
                 - task_cleanup
                 - resuming

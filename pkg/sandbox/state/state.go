@@ -63,8 +63,8 @@ func CoarseState(s State) (string, bool) {
 	case Draining:
 		return CoarseDraining, true
 	case Claimed, ReceivingUploads, FinalizingWorkspace, RunningSetup,
-		Attached, TaskCleanup, SlotActive, Resuming, Suspended,
-		ResumePending, AwaitingClientAction:
+		StartingSession, Attached, TaskCleanup, SlotActive, Resuming,
+		Suspended, ResumePending, AwaitingClientAction:
 		return CoarseActive, true
 	default:
 		return "", false
@@ -80,6 +80,7 @@ const (
 	ReceivingUploads     State = "receiving_uploads"
 	FinalizingWorkspace  State = "finalizing_workspace"
 	RunningSetup         State = "running_setup"
+	StartingSession      State = "starting_session"
 	Attached             State = "attached"
 	TaskCleanup          State = "task_cleanup"
 	Resuming             State = "resuming"
@@ -97,14 +98,24 @@ const (
 func All() []State {
 	return []State{
 		Warming, SDKConnecting, Idle, Claimed, SlotActive, ReceivingUploads,
-		FinalizingWorkspace, RunningSetup, Attached, TaskCleanup,
+		FinalizingWorkspace, RunningSetup, StartingSession, Attached, TaskCleanup,
 		Resuming, Suspended, ResumePending, AwaitingClientAction,
 		Completed, Failed, Cancelled, Expired, Draining, Terminated,
 	}
 }
 
+// Terminal returns the §6.2 phases with no outgoing transition. The set
+// is the union of the four session-terminal states (spec: §6.2 line 269 —
+// completed, failed, cancelled, expired) and the pod-lifecycle terminal
+// terminated (spec: §6.2 line 84 SDK-warm sdk_connecting → terminated,
+// line 195 draining → terminated). completed is terminal: §6.2 lines
+// 96-99 list attached → completed and suspended → completed as terminal
+// edges with no path back out, so IsTerminal(Completed) must report true
+// (a resumable-state helper that treated completed as non-terminal would
+// contradict the spec and the CoarseState mapping, which already classes
+// completed among the terminal phases that carry no coarse label value).
 func Terminal() []State {
-	return []State{Failed, Cancelled, Expired, Terminated}
+	return []State{Completed, Failed, Cancelled, Expired, Terminated}
 }
 
 func IsTerminal(s State) bool {
@@ -145,8 +156,18 @@ func ValidTransitions() []Transition {
 		{ReceivingUploads, Failed},
 		{FinalizingWorkspace, RunningSetup},
 		{FinalizingWorkspace, Failed},
-		{RunningSetup, Attached},
+		{RunningSetup, StartingSession},
 		{RunningSetup, Failed},
+		// starting_session is the §6.2 line 87 phase between running_setup
+		// and attached (the agent runtime is starting on a live pod). Its
+		// pre-attached failure edges (spec: §6.2 lines 102-103):
+		// starting_session → failed when retries are exhausted, and
+		// starting_session → resume_pending when the pod crashed after the
+		// client observed `starting` and retries remain (the sole
+		// post-attached visibility path per §6.2 line 303).
+		{StartingSession, Attached},
+		{StartingSession, Failed},
+		{StartingSession, ResumePending},
 		// Session-level edges from attached.
 		{Attached, Completed},
 		{Attached, Failed},
@@ -188,7 +209,13 @@ func ValidTransitions() []Transition {
 		{SlotActive, Idle},
 		{SlotActive, Draining}, // unhealthy slot threshold or maxPodUptimeSeconds
 		{SlotActive, Failed},
-		// Drain and terminate.
+		// Drain and terminate. claimed → draining is the claim-time abort
+		// path: a pod claimed but torn down before workspace start (gateway
+		// crash between the SSA claim and the setup chain) drains and
+		// terminates rather than stranding. It is a deliberate extension of
+		// the §6.2 idle → draining → terminated cleanup model to the
+		// pre-attached claimed phase; §6.2 enumerates the cleanup edge but
+		// not this specific source, so it is documented here.
 		{Idle, Draining},
 		{Claimed, Draining},
 		{Attached, Draining},

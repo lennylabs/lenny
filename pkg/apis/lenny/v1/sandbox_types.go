@@ -58,7 +58,7 @@ type SandboxStatus struct {
 	// Phase is the §6.2 pod lifecycle state. `slot_active` is the
 	// concurrent-mode (§5.2) pod-level phase: the pod hosts one or more
 	// simultaneous slots.
-	// +kubebuilder:validation:Enum=warming;sdk_connecting;idle;claimed;slot_active;receiving_uploads;finalizing_workspace;running_setup;attached;task_cleanup;resuming;suspended;resume_pending;awaiting_client_action;completed;failed;cancelled;expired;draining;terminated
+	// +kubebuilder:validation:Enum=warming;sdk_connecting;idle;claimed;slot_active;receiving_uploads;finalizing_workspace;running_setup;starting_session;attached;task_cleanup;resuming;suspended;resume_pending;awaiting_client_action;completed;failed;cancelled;expired;draining;terminated
 	// +optional
 	Phase string `json:"phase,omitempty"`
 
