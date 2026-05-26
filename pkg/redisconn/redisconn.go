@@ -16,6 +16,7 @@ package redisconn
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"time"
@@ -52,7 +53,36 @@ type Config struct {
 
 	// DB selects the Redis logical database. Default 0.
 	DB int
+
+	// TLS requests TLS on the Sentinel path (the data-plane Redis and
+	// the sentinels themselves). The direct-URL path derives TLS from
+	// the rediss:// scheme instead, so this field is ignored when URL
+	// is set. When AUTH-and-TLS enforcement is active (AllowInsecure
+	// is false) TLS is mandatory on the Sentinel path regardless of
+	// this field; it exists so a dev deployment that has opted out of
+	// enforcement can still dial a TLS-fronted sentinel topology.
+	//
+	// spec: §12.4 line 197 — Redis AUTH (ACLs) and TLS are required.
+	TLS bool
+
+	// AllowInsecure disables the §12.4 AUTH-and-TLS startup invariant.
+	// The spec mandates AUTH and TLS on every Redis instance, so the
+	// constructor fails closed when a password or TLS is absent. A dev
+	// or local deployment that runs an unauthenticated, plaintext
+	// Redis sets this (the gateway/ops --redis-allow-insecure flag) to
+	// opt out; production leaves it false so a misconfiguration fails
+	// fast at construction rather than silently dialing an
+	// unauthenticated, plaintext Redis.
+	//
+	// spec: §12.4 line 197.
+	AllowInsecure bool
 }
+
+// minTLSVersion pins the floor for every TLS connection the
+// constructor builds. go-redis accepts the standard-library defaults
+// otherwise; §12.4 requires TLS and a 1.2 floor matches the
+// gateway-wide policy applied to the Postgres and adapter paths.
+const minTLSVersion = tls.VersionTLS12
 
 // Errors returned by NewClient.
 var (
@@ -62,6 +92,19 @@ var (
 	// ErrMissingMasterName reports that SentinelAddrs is set but
 	// MasterName is empty — Sentinel discovery cannot run without it.
 	ErrMissingMasterName = errors.New("redisconn: SentinelAddrs requires MasterName")
+	// ErrAuthRequired reports that no Redis AUTH credential was
+	// supplied while enforcement is active. §12.4 mandates AUTH on
+	// every Redis instance; set AllowInsecure (the
+	// --redis-allow-insecure flag) only for a dev or local Redis.
+	ErrAuthRequired = errors.New("redisconn: Redis AUTH is required (§12.4); " +
+		"supply a password (direct-URL userinfo or --redis-password) or set --redis-allow-insecure for a dev Redis")
+	// ErrTLSRequired reports that TLS was not configured while
+	// enforcement is active. §12.4 mandates TLS on every Redis
+	// instance; the direct-URL path requires the rediss:// scheme and
+	// the Sentinel path requires --redis-tls (or active enforcement,
+	// which forces it). Set AllowInsecure only for a dev Redis.
+	ErrTLSRequired = errors.New("redisconn: Redis TLS is required (§12.4); " +
+		"use a rediss:// URL or the Sentinel TLS path, or set --redis-allow-insecure for a dev Redis")
 )
 
 // NewClient returns a Redis client built from cfg. The returned
@@ -82,10 +125,33 @@ func NewClient(cfg Config) (*redis.Client, error) {
 		if cfg.DB != 0 {
 			opts.DB = cfg.DB
 		}
+		// §12.4 AUTH-and-TLS invariant. ParseURL sets a non-nil
+		// TLSConfig only for the rediss:// scheme, so a nil TLSConfig
+		// means the operator chose a plaintext redis:// URL.
+		if !cfg.AllowInsecure {
+			if opts.Password == "" {
+				return nil, ErrAuthRequired
+			}
+			if opts.TLSConfig == nil {
+				return nil, ErrTLSRequired
+			}
+		}
+		pinTLSFloor(opts.TLSConfig)
 		return redis.NewClient(opts), nil
 	case len(cfg.SentinelAddrs) > 0:
 		if cfg.MasterName == "" {
 			return nil, ErrMissingMasterName
+		}
+		// Enforcement forces TLS on the Sentinel path; without it the
+		// FailoverClient dials plaintext regardless of operator
+		// intent (the prior gap reported in §12.4). A dev deployment
+		// that has opted out can still request TLS via cfg.TLS.
+		if !cfg.AllowInsecure && cfg.Password == "" {
+			return nil, ErrAuthRequired
+		}
+		var tlsCfg *tls.Config
+		if cfg.TLS || !cfg.AllowInsecure {
+			tlsCfg = &tls.Config{MinVersion: minTLSVersion}
 		}
 		return redis.NewFailoverClient(&redis.FailoverOptions{
 			MasterName:       cfg.MasterName,
@@ -93,9 +159,22 @@ func NewClient(cfg Config) (*redis.Client, error) {
 			SentinelPassword: cfg.SentinelPassword,
 			Password:         cfg.Password,
 			DB:               cfg.DB,
+			TLSConfig:        tlsCfg,
 		}), nil
 	default:
 		return nil, ErrNoSource
+	}
+}
+
+// pinTLSFloor raises a TLS config to the §12.4 minimum version when
+// the operator left MinVersion unset. ParseURL builds the rediss://
+// TLSConfig with go-redis defaults, so without this the negotiated
+// floor would be whatever the standard library defaults to. A nil
+// config (plaintext, only reachable under AllowInsecure) is left
+// untouched.
+func pinTLSFloor(c *tls.Config) {
+	if c != nil && c.MinVersion == 0 {
+		c.MinVersion = minTLSVersion
 	}
 }
 

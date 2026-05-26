@@ -26,7 +26,9 @@ func TestNewClientRejectsSentinelWithoutMaster(t *testing.T) {
 }
 
 func TestNewClientDirectMode(t *testing.T) {
-	c, err := redisconn.NewClient(redisconn.Config{URL: "redis://127.0.0.1:6379/0"})
+	// AllowInsecure isolates the addr-plumbing assertion from the §12.4
+	// AUTH-and-TLS invariant exercised in enforce_test.go.
+	c, err := redisconn.NewClient(redisconn.Config{URL: "redis://127.0.0.1:6379/0", AllowInsecure: true})
 	if err != nil {
 		t.Fatalf("direct mode: %v", err)
 	}
@@ -38,8 +40,9 @@ func TestNewClientDirectMode(t *testing.T) {
 
 func TestNewClientDirectModeAppliesPasswordOverride(t *testing.T) {
 	c, err := redisconn.NewClient(redisconn.Config{
-		URL:      "redis://127.0.0.1:6379/0",
-		Password: "override",
+		URL:           "redis://127.0.0.1:6379/0",
+		Password:      "override",
+		AllowInsecure: true,
 	})
 	if err != nil {
 		t.Fatalf("direct mode: %v", err)
@@ -52,8 +55,9 @@ func TestNewClientDirectModeAppliesPasswordOverride(t *testing.T) {
 
 func TestNewClientDirectModeAppliesDBOverride(t *testing.T) {
 	c, err := redisconn.NewClient(redisconn.Config{
-		URL: "redis://127.0.0.1:6379/0",
-		DB:  3,
+		URL:           "redis://127.0.0.1:6379/0",
+		DB:            3,
+		AllowInsecure: true,
 	})
 	if err != nil {
 		t.Fatalf("direct mode: %v", err)
@@ -87,6 +91,7 @@ func TestNewClientURLTakesPrecedenceOverSentinel(t *testing.T) {
 		URL:           "redis://127.0.0.1:6379/0",
 		SentinelAddrs: []string{"127.0.0.1:26379"},
 		MasterName:    "ignored",
+		AllowInsecure: true,
 	})
 	if err != nil {
 		t.Fatalf("mixed mode: %v", err)

@@ -75,9 +75,13 @@ func main() {
 		"§12.8 Redis Sentinel monitored master name (e.g., lenny-master). Required when "+
 			"--redis-sentinel-addrs is set.")
 	redisPassword := flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
-		"Redis AUTH password applied to both direct and Sentinel modes.")
+		"Redis AUTH password applied to both direct and Sentinel modes. §12.4 requires AUTH; an empty password fails startup unless --redis-allow-insecure is set. Override via LENNY_REDIS_PASSWORD.")
 	redisSentinelPassword := flag.String("redis-sentinel-password", os.Getenv("LENNY_REDIS_SENTINEL_PASSWORD"),
 		"AUTH password for the sentinels themselves. Optional; sentinels typically run unauthenticated.")
+	redisTLS := flag.Bool("redis-tls", envBool("LENNY_REDIS_TLS", false),
+		"§12.4 request TLS on the Sentinel path. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set. Override via LENNY_REDIS_TLS.")
+	redisAllowInsecure := flag.Bool("redis-allow-insecure", envBool("LENNY_REDIS_ALLOW_INSECURE", false),
+		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. Defaults off; set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
 	gatewayURL := flag.String("gateway-url", os.Getenv("LENNY_GATEWAY_URL"),
 		"§25.4 gateway admin API base URL (the internal ClusterIP Service). Used for the "+
 			"connectivity probe and gateway-backed diagnostics. Override via LENNY_GATEWAY_URL.")
@@ -163,13 +167,15 @@ func main() {
 		var rcfg redisconn.Config
 		switch {
 		case *redisURL != "":
-			rcfg = redisconn.Config{URL: *redisURL, Password: *redisPassword}
+			rcfg = redisconn.Config{URL: *redisURL, Password: *redisPassword, AllowInsecure: *redisAllowInsecure}
 		default:
 			rcfg = redisconn.Config{
 				SentinelAddrs:    splitAndTrim(*redisSentinelAddrs),
 				MasterName:       *redisSentinelMaster,
 				Password:         *redisPassword,
 				SentinelPassword: *redisSentinelPassword,
+				TLS:              *redisTLS,
+				AllowInsecure:    *redisAllowInsecure,
 			}
 		}
 		client, err := redisconn.NewClient(rcfg)

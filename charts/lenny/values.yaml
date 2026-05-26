@@ -200,12 +200,19 @@ tokenService:
 redis:
   # tlsPort is the TLS port for Redis (§13.2).
   tlsPort: 6380
-  # url is the Redis connection URL (redis://host:port/db). Redis is a
-  # bring-your-own external service: the chart leaves url empty by
-  # default, and a stock render wires no LENNY_REDIS_URL so the gateway
-  # uses its in-memory breaker store. Set url to point the gateway at
-  # an external Redis. When set, the chart renders the value into the
-  # lenny-datastore-conn Secret and the gateway env reads it from there.
+  # url is the Redis connection URL. Redis is a bring-your-own external
+  # service: the chart leaves url empty by default, and a stock render
+  # wires no LENNY_REDIS_URL so the gateway uses its in-memory breaker
+  # store. Set url to point the gateway at an external Redis. When set,
+  # the chart renders the value into the lenny-datastore-conn Secret and
+  # the gateway env reads it from there.
+  #
+  # §12.4 requires Redis AUTH and TLS on every instance, so url MUST use
+  # the rediss:// scheme and carry an AUTH credential
+  # (rediss://:password@host:port/db). The gateway refuses to start on a
+  # plaintext redis:// URL or a missing password unless
+  # --redis-allow-insecure (LENNY_REDIS_ALLOW_INSECURE) is set, which is
+  # intended only for a dev or local Redis.
   url: ""
   # gatewayEgressCIDR is the destination CIDR the gateway and token-
   # service NetworkPolicies admit for external Redis egress. Empty

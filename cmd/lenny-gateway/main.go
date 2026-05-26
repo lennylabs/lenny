@@ -243,9 +243,13 @@ func main() {
 	redisSentinelMaster := flag.String("redis-sentinel-master", os.Getenv("LENNY_REDIS_SENTINEL_MASTER"),
 		"§12.8 Redis Sentinel monitored master name (e.g., lenny-master). Required when --redis-sentinel-addrs is set.")
 	redisPassword := flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
-		"Redis AUTH password applied to both direct and Sentinel modes. Empty leaves authentication off.")
+		"Redis AUTH password applied to both direct and Sentinel modes. §12.4 requires AUTH; an empty password fails startup unless --redis-allow-insecure is set. Override via LENNY_REDIS_PASSWORD.")
 	redisSentinelPassword := flag.String("redis-sentinel-password", os.Getenv("LENNY_REDIS_SENTINEL_PASSWORD"),
 		"AUTH password for the sentinels themselves. Optional; sentinels typically run unauthenticated.")
+	redisTLS := flag.Bool("redis-tls", envFlag("LENNY_REDIS_TLS"),
+		"§12.4 request TLS on the Sentinel path. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set, in which case this flag opts a dev Sentinel topology back into TLS. Override via LENNY_REDIS_TLS.")
+	redisAllowInsecure := flag.Bool("redis-allow-insecure", envFlag("LENNY_REDIS_ALLOW_INSECURE"),
+		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. The spec requires both on every Redis instance, so this defaults off and a missing password or plaintext connection fails startup. Set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
 	coordInterval := flag.Duration("coordination-interval", 15*time.Second,
 		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
@@ -624,13 +628,15 @@ func main() {
 		var rcfg redisconn.Config
 		switch {
 		case *redisURL != "":
-			rcfg = redisconn.Config{URL: *redisURL, Password: *redisPassword}
+			rcfg = redisconn.Config{URL: *redisURL, Password: *redisPassword, AllowInsecure: *redisAllowInsecure}
 		default:
 			rcfg = redisconn.Config{
 				SentinelAddrs:    splitAndTrim(*redisSentinelAddrs),
 				MasterName:       *redisSentinelMaster,
 				Password:         *redisPassword,
 				SentinelPassword: *redisSentinelPassword,
+				TLS:              *redisTLS,
+				AllowInsecure:    *redisAllowInsecure,
 			}
 		}
 		client, err := redisconn.NewClient(rcfg)
