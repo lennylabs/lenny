@@ -631,6 +631,18 @@ message ExtendLeaseResponse {
   int32 granted_seconds = 3;
   // When status is REJECTED, the gateway includes the cool-off expiry.
   int64 cool_off_expiry_unix_ms = 4;
+  // subtree_id is the §8.6 denied subtree (the session whose adapter
+  // issued the ExtendLease request that triggered the user rejection
+  // or, on an in-flight denial, that observed the denial inside the
+  // grant-commit transaction). Set only when status is REJECTED.
+  // spec: §15.1 line 1080
+  string subtree_id = 5;
+  // cool_off_expires_at is the §15.1 line 1080 UTC RFC 3339 timestamp
+  // marking when the rejection cool-off window ends. Mirrors
+  // cool_off_expiry_unix_ms with the spec-named ISO 8601 string. Set
+  // only when status is REJECTED.
+  // spec: §15.1 line 1080
+  string cool_off_expires_at = 6;
 
   enum Status {
     STATUS_UNSPECIFIED = 0;

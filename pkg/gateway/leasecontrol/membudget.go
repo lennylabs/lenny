@@ -57,6 +57,20 @@ type memTree struct {
 	// rejectionCoolOff is the resolved §8.6 rejectionCoolOffSeconds for
 	// the tree. Zero applies DefaultRejectionCoolOff.
 	rejectionCoolOff time.Duration
+
+	// approvalMode is the resolved §8.6 extensionApproval mode (auto vs
+	// elicitation). The dispatcher that selects between the two lands
+	// with the §8.6 line 714 elicitation flow; until then the field is
+	// plumbed but not consulted by the handler, which auto-approves
+	// under the ceiling. Zero applies DefaultApprovalMode.
+	// spec: §8.6 line 674
+	approvalMode ApprovalMode
+
+	// successCoolOff is the resolved §8.6 coolOffSeconds for the
+	// elicitation-mode post-approval window. Zero applies
+	// DefaultSuccessCoolOff once the dispatcher consumes it.
+	// spec: §8.6 line 675
+	successCoolOff time.Duration
 }
 
 // effectiveMax resolves the tree's §8.6 layered ceiling with the pure
@@ -118,6 +132,17 @@ type TreeConfig struct {
 
 	// RejectionCoolOff overrides DefaultRejectionCoolOff for the tree.
 	RejectionCoolOff time.Duration
+
+	// ApprovalMode is the §8.6 extensionApproval mode resolved for the
+	// tree via the deployment→tenant→runtime layering. The unspecified
+	// zero value is normalized to DefaultApprovalMode.
+	// spec: §8.6 line 674
+	ApprovalMode ApprovalMode
+
+	// SuccessCoolOff is the §8.6 coolOffSeconds for the elicitation-mode
+	// post-approval window. Zero applies DefaultSuccessCoolOff.
+	// spec: §8.6 line 675
+	SuccessCoolOff time.Duration
 }
 
 // RegisterTree records a delegation tree's §8.6 budget configuration,
@@ -126,6 +151,10 @@ type TreeConfig struct {
 func (m *MemoryBudgetSource) RegisterTree(rootSessionID string, cfg TreeConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	mode := cfg.ApprovalMode
+	if mode == ApprovalModeUnspecified {
+		mode = DefaultApprovalMode
+	}
 	m.trees[rootSessionID] = &memTree{
 		rootSessionID:    rootSessionID,
 		tenantID:         cfg.TenantID,
@@ -136,6 +165,8 @@ func (m *MemoryBudgetSource) RegisterTree(rootSessionID string, cfg TreeConfig) 
 		tenantMax:        cfg.TenantMax,
 		runtimeBase:      cfg.RuntimeBase,
 		rejectionCoolOff: cfg.RejectionCoolOff,
+		approvalMode:     mode,
+		successCoolOff:   cfg.SuccessCoolOff,
 	}
 	m.sessionTree[rootSessionID] = rootSessionID
 	m.sessionTenant[rootSessionID] = cfg.TenantID
@@ -247,6 +278,38 @@ func (m *MemoryBudgetSource) RejectionCoolOff(_ context.Context, tenantID, rootS
 		return 0
 	}
 	return t.rejectionCoolOff
+}
+
+// ApprovalMode returns the §8.6 extensionApproval mode the tree was
+// registered with, falling back to DefaultApprovalMode when the
+// registration left it unspecified. The dispatcher that selects auto
+// vs. elicitation behaviour reads it.
+// spec: §8.6 line 674
+func (m *MemoryBudgetSource) ApprovalMode(_ context.Context, tenantID, rootSessionID string) ApprovalMode {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, err := m.lookupLocked(tenantID, rootSessionID)
+	if err != nil {
+		return DefaultApprovalMode
+	}
+	if t.approvalMode == ApprovalModeUnspecified {
+		return DefaultApprovalMode
+	}
+	return t.approvalMode
+}
+
+// SuccessCoolOff returns the §8.6 elicitation-mode post-approval
+// cool-off configured for the tree, or zero when none is set so the
+// caller applies DefaultSuccessCoolOff.
+// spec: §8.6 line 675
+func (m *MemoryBudgetSource) SuccessCoolOff(_ context.Context, tenantID, rootSessionID string) time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, err := m.lookupLocked(tenantID, rootSessionID)
+	if err != nil {
+		return 0
+	}
+	return t.successCoolOff
 }
 
 // lookupLocked resolves the tree for sessionID and asserts the tenant

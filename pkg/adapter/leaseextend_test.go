@@ -9,6 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // fakeExtender is a stub LeaseExtender for the §8.6 trigger seam. It
@@ -160,6 +161,71 @@ func TestHandleBudgetExhaustionNoExtender(t *testing.T) {
 	}
 	if decision != adapter.PropagateBudgetExhausted {
 		t.Errorf("decision = %v, want PropagateBudgetExhausted", decision)
+	}
+}
+
+// TestBudgetExhaustedEnvelopeForCeilingReached_spec_8_6_line_629: a
+// CEILING_REACHED outcome maps to a §15.1 BUDGET_EXHAUSTED envelope
+// with POLICY category and retryable=false.
+func TestBudgetExhaustedEnvelopeForCeilingReached_spec_8_6_line_629(t *testing.T) {
+	env := adapter.BudgetExhaustedEnvelopeFor(gatewaycontrol.StatusCeilingReached)
+	if env == nil {
+		t.Fatal("BudgetExhaustedEnvelopeFor(CEILING_REACHED) = nil, want envelope")
+	}
+	if env.Code != adapterv1.Error_ERROR_CODE_BUDGET_EXHAUSTED {
+		t.Errorf("Code = %v, want ERROR_CODE_BUDGET_EXHAUSTED", env.Code)
+	}
+	if env.Category != adapterv1.Error_CATEGORY_POLICY {
+		t.Errorf("Category = %v, want CATEGORY_POLICY", env.Category)
+	}
+	if env.Retryable {
+		t.Error("Retryable = true; the adapter MUST NOT retry the extension")
+	}
+	if env.Message == "" {
+		t.Error("Message is empty; want human-readable terminal-budget text")
+	}
+}
+
+// TestBudgetExhaustedEnvelopeForRejected_spec_8_6_line_629: a REJECTED
+// outcome maps to a §15.1 BUDGET_EXHAUSTED envelope.
+func TestBudgetExhaustedEnvelopeForRejected_spec_8_6_line_629(t *testing.T) {
+	env := adapter.BudgetExhaustedEnvelopeFor(gatewaycontrol.StatusRejected)
+	if env == nil {
+		t.Fatal("BudgetExhaustedEnvelopeFor(REJECTED) = nil, want envelope")
+	}
+	if env.Code != adapterv1.Error_ERROR_CODE_BUDGET_EXHAUSTED {
+		t.Errorf("Code = %v, want ERROR_CODE_BUDGET_EXHAUSTED", env.Code)
+	}
+	if env.Message != adapter.BudgetExhaustedMessageRejected {
+		t.Errorf("Message = %q, want %q", env.Message, adapter.BudgetExhaustedMessageRejected)
+	}
+}
+
+// TestBudgetExhaustedEnvelopeForGrantedReturnsNil_spec_8_6_line_629:
+// non-terminal outcomes do not produce a propagation envelope; the
+// caller retries the LLM call.
+func TestBudgetExhaustedEnvelopeForGrantedReturnsNil_spec_8_6_line_629(t *testing.T) {
+	cases := []gatewaycontrol.ExtensionStatus{
+		gatewaycontrol.StatusGranted,
+		gatewaycontrol.StatusPartiallyGranted,
+		gatewaycontrol.StatusUnspecified,
+	}
+	for _, status := range cases {
+		t.Run(status.String(), func(t *testing.T) {
+			if env := adapter.BudgetExhaustedEnvelopeFor(status); env != nil {
+				t.Errorf("envelope for %v = %+v, want nil", status, env)
+			}
+		})
+	}
+}
+
+// TestBudgetExhaustedEnvelopeDefaultMessage_spec_15_1_line_1080: an
+// empty message falls back to the rejection-default text so the
+// envelope always carries a human-readable message.
+func TestBudgetExhaustedEnvelopeDefaultMessage_spec_15_1_line_1080(t *testing.T) {
+	env := adapter.BudgetExhaustedEnvelope("")
+	if env.Message != adapter.BudgetExhaustedMessageRejected {
+		t.Errorf("default message = %q, want %q", env.Message, adapter.BudgetExhaustedMessageRejected)
 	}
 }
 

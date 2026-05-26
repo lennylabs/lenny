@@ -191,11 +191,66 @@ func TestExtendLeaseRejectedDuringCoolOff(t *testing.T) {
 	if resp.CoolOffExpiryUnixMs != wantExpiry {
 		t.Errorf("cool-off expiry = %d, want %d", resp.CoolOffExpiryUnixMs, wantExpiry)
 	}
+	// spec: §15.1 line 1080 — REJECTED carries details.subtreeId and
+	// details.coolOffExpiresAt (UTC RFC 3339) for the denied subtree.
+	if resp.SubtreeId != "root-1" {
+		t.Errorf("subtree_id = %q, want %q", resp.SubtreeId, "root-1")
+	}
+	wantISO := now.Add(leasecontrol.DefaultRejectionCoolOff).UTC().Format(time.RFC3339)
+	if resp.CoolOffExpiresAt != wantISO {
+		t.Errorf("cool_off_expires_at = %q, want %q", resp.CoolOffExpiresAt, wantISO)
+	}
 
 	// The denied request must not raise the budget.
 	tb, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
 	if tb.CurrentTokenBudget != 100_000 {
 		t.Errorf("current budget = %d, want 100000 (rejection must not grant)", tb.CurrentTokenBudget)
+	}
+}
+
+// TestExtendLeaseRejectedResponseCarriesSpec15ErrorDetails_spec_15_1_line_1080:
+// an in-flight denial (the §8.6 atomic re-check converting the outcome
+// to REJECTED) also carries the §15.1 details.subtreeId and
+// details.coolOffExpiresAt fields.
+func TestExtendLeaseRejectedResponseCarriesSpec15ErrorDetails_spec_15_1_line_1080(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	base := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
+	base.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+		RejectionCoolOff:   90 * time.Second,
+	})
+	base.AddSession("child-2", "root-1", "acme")
+	racing := &raceBudgetSource{inner: base, denyOnApply: true}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: racing, Tenants: base, Clock: clock,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	resp, err := svc.ExtendLease(context.Background(), extendReq("child-2", 200_000))
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_REJECTED {
+		t.Fatalf("status = %v, want REJECTED", resp.Status)
+	}
+	// The subtree id is the requesting session, not the tree root.
+	if resp.SubtreeId != "child-2" {
+		t.Errorf("subtree_id = %q, want %q", resp.SubtreeId, "child-2")
+	}
+	wantISO := now.Add(90 * time.Second).UTC().Format(time.RFC3339)
+	if resp.CoolOffExpiresAt != wantISO {
+		t.Errorf("cool_off_expires_at = %q, want %q", resp.CoolOffExpiresAt, wantISO)
+	}
+	// Unix-ms cool-off mirror is preserved for legacy clients.
+	wantUnixMs := now.Add(90 * time.Second).UnixMilli()
+	if resp.CoolOffExpiryUnixMs != wantUnixMs {
+		t.Errorf("cool_off_expiry_unix_ms = %d, want %d", resp.CoolOffExpiryUnixMs, wantUnixMs)
 	}
 }
 
@@ -368,14 +423,97 @@ func TestExtendLeaseAuditRecorded(t *testing.T) {
 		t.Fatalf("audit entries = %d, want 1", len(rec.entries))
 	}
 	e := rec.entries[0]
-	if e.Outcome != "PARTIALLY_GRANTED" {
-		t.Errorf("audit outcome = %q, want PARTIALLY_GRANTED", e.Outcome)
+	// spec: §8.6 line 743 — PartiallyGranted maps to the "capped" audit
+	// class because the ceiling reduced the grant below the requested
+	// amount.
+	if e.Outcome != leasecontrol.AuditOutcomeCapped {
+		t.Errorf("audit outcome = %q, want capped", e.Outcome)
 	}
 	if e.RequestedTokens != 200_000 || e.GrantedTokens != 50_000 {
 		t.Errorf("audit amounts = (req %d, grant %d), want (200000, 50000)", e.RequestedTokens, e.GrantedTokens)
 	}
 	if e.RootSessionID != "root-1" || e.TenantID != "acme" {
 		t.Errorf("audit identity = (%q, %q), want (root-1, acme)", e.RootSessionID, e.TenantID)
+	}
+}
+
+// TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743: a full grant
+// is audited under the "approved" classification per §8.6 line 743.
+func TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	rec := &recordingAuditor{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Auditing: rec,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if _, err := svc.ExtendLease(context.Background(), extendReq("root-1", 50_000)); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got := rec.entries[0].Outcome; got != leasecontrol.AuditOutcomeApproved {
+		t.Errorf("audit outcome = %q, want approved", got)
+	}
+}
+
+// TestExtendLeaseAuditOutcomeDeniedDuringCoolOff_spec_8_6_line_743: an
+// auto-rejection during the cool-off audits under "denied" per §8.6 line
+// 743.
+func TestExtendLeaseAuditOutcomeDeniedDuringCoolOff_spec_8_6_line_743(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	rec := &recordingAuditor{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Auditing: rec, Clock: clock,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	budgets.MarkDenied("root-1")
+	if _, err := svc.ExtendLease(context.Background(), extendReq("root-1", 100_000)); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got := rec.entries[0].Outcome; got != leasecontrol.AuditOutcomeDenied {
+		t.Errorf("audit outcome = %q, want denied", got)
+	}
+}
+
+// TestExtendLeaseAuditOutcomeCeilingReachedIsCapped_spec_8_6_line_743: a
+// zero grant against an already-reached ceiling audits under "capped"
+// (§8.6 line 743 treats CEILING_REACHED as a cap-to-zero).
+func TestExtendLeaseAuditOutcomeCeilingReachedIsCapped_spec_8_6_line_743(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 500_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	rec := &recordingAuditor{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Auditing: rec,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if _, err := svc.ExtendLease(context.Background(), extendReq("root-1", 100_000)); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got := rec.entries[0].Outcome; got != leasecontrol.AuditOutcomeCapped {
+		t.Errorf("audit outcome = %q, want capped", got)
 	}
 }
 
@@ -620,4 +758,98 @@ func (e errBudgetSource) ApplyGrant(context.Context, string, string, int64) (int
 
 func (e errBudgetSource) RejectionCoolOff(context.Context, string, string) time.Duration {
 	return 0
+}
+
+// TestResolveApprovalMode_spec_8_6_line_654: the
+// deployment→tenant→runtime layering picks the most specific
+// non-unspecified value, falling back to DefaultApprovalMode when the
+// whole stack is empty.
+func TestResolveApprovalMode_spec_8_6_line_654(t *testing.T) {
+	cases := []struct {
+		name                              string
+		deployment, tenant, runtime, want leasecontrol.ApprovalMode
+	}{
+		{"all unspecified falls back to default", "", "", "", leasecontrol.DefaultApprovalMode},
+		{"deployment only", leasecontrol.ApprovalModeAuto, "", "", leasecontrol.ApprovalModeAuto},
+		{"tenant overrides deployment", leasecontrol.ApprovalModeAuto, leasecontrol.ApprovalModeElicitation, "", leasecontrol.ApprovalModeElicitation},
+		{"runtime overrides tenant", leasecontrol.ApprovalModeAuto, leasecontrol.ApprovalModeElicitation, leasecontrol.ApprovalModeAuto, leasecontrol.ApprovalModeAuto},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := leasecontrol.ResolveApprovalMode(c.deployment, c.tenant, c.runtime); got != c.want {
+				t.Errorf("ResolveApprovalMode = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestResolveSuccessCoolOff_spec_8_6_line_675: the
+// deployment→tenant→runtime layering picks the most specific positive
+// duration, falling back to DefaultSuccessCoolOff when none is set.
+func TestResolveSuccessCoolOff_spec_8_6_line_675(t *testing.T) {
+	cases := []struct {
+		name                              string
+		deployment, tenant, runtime, want time.Duration
+	}{
+		{"all zero falls back to default", 0, 0, 0, leasecontrol.DefaultSuccessCoolOff},
+		{"deployment only", 7 * time.Second, 0, 0, 7 * time.Second},
+		{"tenant overrides deployment", 7 * time.Second, 12 * time.Second, 0, 12 * time.Second},
+		{"runtime overrides tenant", 7 * time.Second, 12 * time.Second, 3 * time.Second, 3 * time.Second},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := leasecontrol.ResolveSuccessCoolOff(c.deployment, c.tenant, c.runtime); got != c.want {
+				t.Errorf("ResolveSuccessCoolOff = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestMemoryBudgetSourceApprovalModeDefault_spec_8_6_line_674: a tree
+// registered without an explicit ApprovalMode reports the spec-default
+// elicitation mode, satisfying §8.6 line 674 even before the
+// dispatcher lands.
+func TestMemoryBudgetSourceApprovalModeDefault_spec_8_6_line_674(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	got := budgets.ApprovalMode(context.Background(), "acme", "root-1")
+	if got != leasecontrol.DefaultApprovalMode {
+		t.Errorf("default ApprovalMode = %q, want %q (elicitation)", got, leasecontrol.DefaultApprovalMode)
+	}
+	if got != leasecontrol.ApprovalModeElicitation {
+		t.Errorf("DefaultApprovalMode is %q, want elicitation per §8.6 line 674", got)
+	}
+}
+
+// TestMemoryBudgetSourceApprovalModeExplicit_spec_8_6_line_674: an
+// explicitly registered mode round-trips unchanged.
+func TestMemoryBudgetSourceApprovalModeExplicit_spec_8_6_line_674(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+		ApprovalMode:       leasecontrol.ApprovalModeAuto,
+		SuccessCoolOff:     12 * time.Second,
+	})
+	if got := budgets.ApprovalMode(context.Background(), "acme", "root-1"); got != leasecontrol.ApprovalModeAuto {
+		t.Errorf("ApprovalMode = %q, want auto", got)
+	}
+	if got := budgets.SuccessCoolOff(context.Background(), "acme", "root-1"); got != 12*time.Second {
+		t.Errorf("SuccessCoolOff = %v, want 12s", got)
+	}
+}
+
+// TestDefaultSuccessCoolOff_spec_8_6_line_675: the constant equals the
+// spec-default 5 seconds.
+func TestDefaultSuccessCoolOff_spec_8_6_line_675(t *testing.T) {
+	if leasecontrol.DefaultSuccessCoolOff != 5*time.Second {
+		t.Errorf("DefaultSuccessCoolOff = %v, want 5s per §8.6 line 675", leasecontrol.DefaultSuccessCoolOff)
+	}
 }

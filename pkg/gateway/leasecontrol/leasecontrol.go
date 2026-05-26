@@ -37,7 +37,91 @@ import (
 // requests are auto-rejected for this long. The spec default is 300
 // seconds. Deployment, tenant, and runtime configuration override it
 // through the same layering as the other lease-extension fields.
+// spec: §8.6 line 734
 const DefaultRejectionCoolOff = 300 * time.Second
+
+// DefaultSuccessCoolOff is the §8.6 default coolOffSeconds for the
+// post-approval window in elicitation mode: after the user approves an
+// elicitation, the gateway auto-grants further extension requests for
+// this long without re-eliciting. The spec deployment default is 5
+// seconds (line 675). Deployment, tenant, and runtime configuration
+// override it through the same layering as the other lease-extension
+// fields.
+//
+// The elicitation-mode dispatcher itself is the §8.6 line 714 stateful
+// surface that lands separately; this constant is the value the
+// dispatcher consumes when no override is present, so the spec default
+// is fixed in code now and the dispatcher does not need to re-derive
+// it.
+// spec: §8.6 line 675
+const DefaultSuccessCoolOff = 5 * time.Second
+
+// ApprovalMode is the §8.6 extensionApproval mode resolved through the
+// deployment→tenant→runtime layering. The dispatcher that selects auto
+// vs. elicitation behaviour lands with the §8.6 line 714 elicitation
+// flow; this type and its default constant are the plumbing the
+// dispatcher will read.
+// spec: §8.6 line 654, line 674
+type ApprovalMode string
+
+const (
+	// ApprovalModeUnspecified — the layered configuration left the mode
+	// blank; resolution falls back to DefaultApprovalMode.
+	ApprovalModeUnspecified ApprovalMode = ""
+	// ApprovalModeAuto — every extension is auto-approved up to the
+	// effective max. No elicitation, no queuing, no success cool-off.
+	// spec: §8.6 line 712
+	ApprovalModeAuto ApprovalMode = "auto"
+	// ApprovalModeElicitation — requests are serialized per task tree
+	// with a generic elicitation and a success cool-off window.
+	// spec: §8.6 line 714
+	ApprovalModeElicitation ApprovalMode = "elicitation"
+)
+
+// DefaultApprovalMode is the §8.6 line 674 deployment-default
+// extensionApproval mode. The spec calls for elicitation (the
+// human-in-the-loop budget gate) so a deployment with no override
+// receives the safer mode.
+// spec: §8.6 line 674
+const DefaultApprovalMode = ApprovalModeElicitation
+
+// ResolveApprovalMode returns the effective approval mode for the
+// deployment→tenant→runtime layering. A later layer overrides an
+// earlier one when it carries a non-unspecified value. A fully empty
+// stack falls back to DefaultApprovalMode.
+// spec: §8.6 line 654
+func ResolveApprovalMode(deployment, tenant, runtime ApprovalMode) ApprovalMode {
+	v := deployment
+	if tenant != ApprovalModeUnspecified {
+		v = tenant
+	}
+	if runtime != ApprovalModeUnspecified {
+		v = runtime
+	}
+	if v == ApprovalModeUnspecified {
+		return DefaultApprovalMode
+	}
+	return v
+}
+
+// ResolveSuccessCoolOff returns the effective post-approval cool-off
+// duration for the deployment→tenant→runtime layering. A later layer
+// overrides an earlier one when it carries a positive duration. A
+// fully zero stack falls back to DefaultSuccessCoolOff.
+// spec: §8.6 line 654, line 675
+func ResolveSuccessCoolOff(deployment, tenant, runtime time.Duration) time.Duration {
+	v := deployment
+	if tenant > 0 {
+		v = tenant
+	}
+	if runtime > 0 {
+		v = runtime
+	}
+	if v <= 0 {
+		return DefaultSuccessCoolOff
+	}
+	return v
+}
 
 // TreeBudget is the §8.6 per-tree extension state for one delegation
 // tree, keyed by its root session. A BudgetSource returns it for the
@@ -142,6 +226,52 @@ type Auditor interface {
 	RecordExtension(ctx context.Context, e ExtensionAudit)
 }
 
+// AuditOutcome is the §8.6 line 743 "outcome (approved/denied/capped)"
+// classification recorded on every extension audit. It groups the
+// proto-level statuses (GRANTED/PARTIALLY_GRANTED/CEILING_REACHED/
+// REJECTED) into the three audit-facing categories the spec calls out:
+// a full grant is approved, a user rejection (or in-flight denial) is
+// denied, and any ceiling-capped outcome is capped — including the
+// zero-grant CEILING_REACHED case, which the spec treats as a cap to
+// zero rather than a separate audit class.
+type AuditOutcome string
+
+const (
+	// AuditOutcomeApproved — the full requested amount was granted under
+	// the §8.6 ceiling (proto STATUS_GRANTED).
+	// spec: §8.6 line 743
+	AuditOutcomeApproved AuditOutcome = "approved"
+	// AuditOutcomeCapped — the ceiling reduced the grant. Either the
+	// grant was non-zero but capped (STATUS_PARTIALLY_GRANTED) or the
+	// ceiling was already reached and the grant is zero
+	// (STATUS_CEILING_REACHED). The audit class merges both because the
+	// spec frames the §8.6 line 743 distinction as approved/denied/capped
+	// rather than approved/denied/ceiling.
+	// spec: §8.6 line 743
+	AuditOutcomeCapped AuditOutcome = "capped"
+	// AuditOutcomeDenied — the §8.6 extension-denied flag was set, either
+	// when the TreeBudget read returned it or when ApplyGrant detected an
+	// in-flight denial (the §8.6 line 732 atomic re-check). The proto
+	// status is STATUS_REJECTED in both paths.
+	// spec: §8.6 line 743
+	AuditOutcomeDenied AuditOutcome = "denied"
+)
+
+// auditOutcomeFor maps a §8.6 grant outcome to the audit category. The
+// REJECTED path does not go through leaseextension.Grant, so the
+// handler picks AuditOutcomeDenied directly.
+// spec: §8.6 line 743
+func auditOutcomeFor(o leaseextension.Outcome) AuditOutcome {
+	switch o {
+	case leaseextension.Granted:
+		return AuditOutcomeApproved
+	case leaseextension.PartiallyGranted, leaseextension.CeilingReached:
+		return AuditOutcomeCapped
+	default:
+		return AuditOutcomeCapped
+	}
+}
+
 // ExtensionAudit is the §8.6 audit record for one extension request.
 type ExtensionAudit struct {
 	TenantID         string
@@ -150,7 +280,8 @@ type ExtensionAudit struct {
 	RequestedTokens  int64
 	GrantedTokens    int64
 	EffectiveMax     int64
-	Outcome          string
+	// Outcome is the §8.6 line 743 approved/denied/capped classification.
+	Outcome AuditOutcome
 }
 
 // Options configures a Service.
@@ -233,11 +364,17 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 	// CoolOffExpiry against the authoritative clock; a zero expiry with
 	// the flag set is treated as still in effect.
 	if budget.ExtensionDenied && (budget.CoolOffExpiry.IsZero() || s.clock().Before(budget.CoolOffExpiry)) {
-		s.audit(ctx, tenantID, budget, sessionID, req.GetRequestedTokens(), 0, "REJECTED")
+		s.audit(ctx, tenantID, budget, sessionID, req.GetRequestedTokens(), 0, AuditOutcomeDenied)
+		// spec: §15.1 line 1080 — REJECTED carries details.subtreeId and
+		// details.coolOffExpiresAt (UTC RFC 3339) so clients can identify
+		// the denied subtree and the cool-off window end without parsing
+		// the legacy unix-ms field.
 		return &adapterv1.ExtendLeaseResponse{
 			Status:              adapterv1.ExtendLeaseResponse_STATUS_REJECTED,
 			GrantedTokens:       0,
 			CoolOffExpiryUnixMs: budget.CoolOffExpiry.UnixMilli(),
+			SubtreeId:           sessionID,
+			CoolOffExpiresAt:    formatCoolOffExpiry(budget.CoolOffExpiry),
 		}, nil
 	}
 
@@ -255,11 +392,16 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 			// granting.
 			if errors.Is(err, ErrExtensionDenied) {
 				coolOff := s.resolveCoolOff(ctx, tenantID, budget.RootSessionID)
-				s.audit(ctx, tenantID, budget, sessionID, req.GetRequestedTokens(), 0, "REJECTED")
+				expiry := s.clock().Add(coolOff)
+				s.audit(ctx, tenantID, budget, sessionID, req.GetRequestedTokens(), 0, AuditOutcomeDenied)
+				// spec: §15.1 line 1080 — REJECTED carries the subtreeId
+				// and the UTC RFC 3339 cool-off expiry.
 				return &adapterv1.ExtendLeaseResponse{
 					Status:              adapterv1.ExtendLeaseResponse_STATUS_REJECTED,
 					GrantedTokens:       0,
-					CoolOffExpiryUnixMs: s.clock().Add(coolOff).UnixMilli(),
+					CoolOffExpiryUnixMs: expiry.UnixMilli(),
+					SubtreeId:           sessionID,
+					CoolOffExpiresAt:    formatCoolOffExpiry(expiry),
 				}, nil
 			}
 			return nil, fmt.Errorf("leasecontrol: apply grant for tree %s: %w", budget.RootSessionID, err)
@@ -267,7 +409,7 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 	}
 
 	status := statusFor(outcome)
-	s.audit(ctx, tenantID, budget, sessionID, req.GetRequestedTokens(), granted, outcome.String())
+	s.audit(ctx, tenantID, budget, sessionID, req.GetRequestedTokens(), granted, auditOutcomeFor(outcome))
 	return &adapterv1.ExtendLeaseResponse{
 		Status:        status,
 		GrantedTokens: granted,
@@ -290,6 +432,17 @@ func statusFor(o leaseextension.Outcome) adapterv1.ExtendLeaseResponse_Status {
 	}
 }
 
+// formatCoolOffExpiry renders the §15.1 line 1080 details.coolOffExpiresAt
+// field as a UTC RFC 3339 string. A zero time renders empty so clients
+// can distinguish "no cool-off recorded" from a valid expiry.
+// spec: §15.1 line 1080
+func formatCoolOffExpiry(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 // resolveCoolOff returns the §8.6 rejection cool-off for the tree,
 // falling back to DefaultRejectionCoolOff when the source supplies no
 // override.
@@ -302,7 +455,8 @@ func (s *Service) resolveCoolOff(ctx context.Context, tenantID, rootSessionID st
 }
 
 // audit records one §8.6 extension decision when an Auditor is wired.
-func (s *Service) audit(ctx context.Context, tenantID string, b TreeBudget, sessionID string, requested, granted int64, outcome string) {
+// outcome carries the §8.6 line 743 approved/denied/capped classification.
+func (s *Service) audit(ctx context.Context, tenantID string, b TreeBudget, sessionID string, requested, granted int64, outcome AuditOutcome) {
 	if s.auditing == nil {
 		return
 	}

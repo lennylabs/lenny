@@ -559,6 +559,18 @@ func (x *SlotId) GetValue() string {
 // receive a value > 1 they don't recognize follow the §15.4.1
 // forward-read rule: keep the field, log a degraded-fidelity event,
 // and proceed.
+//
+// setup_commands carry the §14 plan-declared setup commands. The
+// gateway re-emits the same setup_commands on the dedicated RunSetup
+// RPC (see RunSetupRequest below); the field's presence here is a
+// transport convenience so a downstream that handles the WorkspacePlan
+// (the §10.7 ref-resolver, audit log, partial-replay snapshot) sees the
+// plan as a single document. The adapter MUST NOT execute setup
+// commands from this field — it runs them only on the explicit
+// RunSetup RPC, which §5.2 line 415 specifies fires once per pod at
+// start (task-mode pods reuse the materialized workspace across tasks
+// and skip the second RunSetup; the first-task gate is owned by the
+// task-mode lifecycle, F-5.2.18). See also F-5.2.24.
 type WorkspacePlan struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SchemaVersion int32                  `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
@@ -1141,7 +1153,17 @@ func (*FinalizeWorkspaceResponse) Descriptor() ([]byte, []int) {
 
 // RunSetupRequest carries the §14 WorkspacePlan setup commands the
 // adapter runs against the materialized workspace. setup_policy bounds
-// the aggregate setup phase per §5.1.
+// the aggregate setup phase per §5.1. The setup_commands here are the
+// authoritative execution payload — see WorkspacePlan.setup_commands
+// for why the same commands also ride on the plan document.
+//
+// Per §5.2 line 415 setup commands run once per pod at start, not per
+// task. The gateway issues RunSetup once on first session/task assignment;
+// on subsequent task-mode assignments the gateway skips the RunSetup RPC
+// entirely so the adapter's pod-level setup-completion state is
+// implicit (no second RunSetup means no second execution). The
+// task-mode lifecycle owner of this gate is the first-task pod
+// transition (F-5.2.18).
 type RunSetupRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -2826,8 +2848,20 @@ type ExtendLeaseResponse struct {
 	GrantedSeconds int32                      `protobuf:"varint,3,opt,name=granted_seconds,json=grantedSeconds,proto3" json:"granted_seconds,omitempty"`
 	// When status is REJECTED, the gateway includes the cool-off expiry.
 	CoolOffExpiryUnixMs int64 `protobuf:"varint,4,opt,name=cool_off_expiry_unix_ms,json=coolOffExpiryUnixMs,proto3" json:"cool_off_expiry_unix_ms,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// subtree_id is the §8.6 denied subtree (the session whose adapter
+	// issued the ExtendLease request that triggered the user rejection
+	// or, on an in-flight denial, that observed the denial inside the
+	// grant-commit transaction). Set only when status is REJECTED.
+	// spec: §15.1 line 1080
+	SubtreeId string `protobuf:"bytes,5,opt,name=subtree_id,json=subtreeId,proto3" json:"subtree_id,omitempty"`
+	// cool_off_expires_at is the §15.1 line 1080 UTC RFC 3339 timestamp
+	// marking when the rejection cool-off window ends. Mirrors
+	// cool_off_expiry_unix_ms with the spec-named ISO 8601 string. Set
+	// only when status is REJECTED.
+	// spec: §15.1 line 1080
+	CoolOffExpiresAt string `protobuf:"bytes,6,opt,name=cool_off_expires_at,json=coolOffExpiresAt,proto3" json:"cool_off_expires_at,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ExtendLeaseResponse) Reset() {
@@ -2886,6 +2920,20 @@ func (x *ExtendLeaseResponse) GetCoolOffExpiryUnixMs() int64 {
 		return x.CoolOffExpiryUnixMs
 	}
 	return 0
+}
+
+func (x *ExtendLeaseResponse) GetSubtreeId() string {
+	if x != nil {
+		return x.SubtreeId
+	}
+	return ""
+}
+
+func (x *ExtendLeaseResponse) GetCoolOffExpiresAt() string {
+	if x != nil {
+		return x.CoolOffExpiresAt
+	}
+	return ""
 }
 
 type ShutdownRequest struct {
@@ -3684,12 +3732,15 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12)\n" +
 	"\x10requested_tokens\x18\x02 \x01(\x03R\x0frequestedTokens\x12+\n" +
-	"\x11requested_seconds\x18\x03 \x01(\x05R\x10requestedSeconds\"\xe7\x02\n" +
+	"\x11requested_seconds\x18\x03 \x01(\x05R\x10requestedSeconds\"\xb5\x03\n" +
 	"\x13ExtendLeaseResponse\x12D\n" +
 	"\x06status\x18\x01 \x01(\x0e2,.lenny.adapter.v1.ExtendLeaseResponse.StatusR\x06status\x12%\n" +
 	"\x0egranted_tokens\x18\x02 \x01(\x03R\rgrantedTokens\x12'\n" +
 	"\x0fgranted_seconds\x18\x03 \x01(\x05R\x0egrantedSeconds\x124\n" +
-	"\x17cool_off_expiry_unix_ms\x18\x04 \x01(\x03R\x13coolOffExpiryUnixMs\"\x83\x01\n" +
+	"\x17cool_off_expiry_unix_ms\x18\x04 \x01(\x03R\x13coolOffExpiryUnixMs\x12\x1d\n" +
+	"\n" +
+	"subtree_id\x18\x05 \x01(\tR\tsubtreeId\x12-\n" +
+	"\x13cool_off_expires_at\x18\x06 \x01(\tR\x10coolOffExpiresAt\"\x83\x01\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_GRANTED\x10\x01\x12\x1c\n" +

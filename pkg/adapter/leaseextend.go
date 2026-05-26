@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // LeaseExtender is the §8.6 lease-extension seam: the adapter calls it
@@ -85,4 +86,61 @@ func (s *Server) currentSessionID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sessionID
+}
+
+// BudgetExhaustedMessageGatewayUnreachable is the human-readable
+// message embedded in the BUDGET_EXHAUSTED envelope when the adapter
+// cannot reach the gateway to request an extension. The runtime sees a
+// terminal-budget error rather than a transport error so the §8.6 line
+// 629 contract holds even when the §8.6 round-trip itself fails.
+const BudgetExhaustedMessageGatewayUnreachable = "lease extension unavailable; the budget for this session is exhausted"
+
+// BudgetExhaustedMessageCeilingReached is embedded when the gateway
+// returned CEILING_REACHED — the deployment/tenant/runtime ceiling is
+// at zero headroom for the tree.
+const BudgetExhaustedMessageCeilingReached = "lease-extension ceiling reached; the budget for this session is exhausted"
+
+// BudgetExhaustedMessageRejected is embedded when the gateway returned
+// REJECTED — the user (or the in-flight §8.6 line 732 atomic re-check)
+// denied the extension and the subtree is in a rejection cool-off
+// window.
+const BudgetExhaustedMessageRejected = "lease extension denied; the budget for this session is exhausted"
+
+// BudgetExhaustedEnvelope renders a §15.1 line 1080 error envelope the
+// adapter sends to the runtime when it propagates BUDGET_EXHAUSTED per
+// §8.6 line 629. Category is POLICY and retryable is false because the
+// adapter MUST NOT retry the extension after a terminal outcome; the
+// runtime is expected to surface the terminal error rather than loop.
+//
+// The helper is consumed by the LLM-proxy trigger that lands with the
+// §8.6 F-8.6.6 wiring. It centralises the envelope shape so the
+// production trigger and any other future propagation site emit the
+// same wire shape.
+// spec: §8.6 line 629; §15.1 line 1080
+func BudgetExhaustedEnvelope(message string) *adapterv1.Error {
+	if message == "" {
+		message = BudgetExhaustedMessageRejected
+	}
+	return &adapterv1.Error{
+		Code:      adapterv1.Error_ERROR_CODE_BUDGET_EXHAUSTED,
+		Category:  adapterv1.Error_CATEGORY_POLICY,
+		Message:   message,
+		Retryable: false,
+	}
+}
+
+// BudgetExhaustedEnvelopeFor maps a §8.6 ExtendLease outcome to the
+// BUDGET_EXHAUSTED envelope text the adapter propagates. It returns nil
+// for non-terminal outcomes (GRANTED, PARTIALLY_GRANTED) so the caller
+// retries the LLM call instead of propagating an error.
+// spec: §8.6 line 629
+func BudgetExhaustedEnvelopeFor(status gatewaycontrol.ExtensionStatus) *adapterv1.Error {
+	switch status {
+	case gatewaycontrol.StatusCeilingReached:
+		return BudgetExhaustedEnvelope(BudgetExhaustedMessageCeilingReached)
+	case gatewaycontrol.StatusRejected:
+		return BudgetExhaustedEnvelope(BudgetExhaustedMessageRejected)
+	default:
+		return nil
+	}
 }

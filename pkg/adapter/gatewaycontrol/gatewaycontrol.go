@@ -118,6 +118,15 @@ type ExtensionResult struct {
 	// CoolOffExpiryUnixMs is the rejection cool-off expiry in Unix
 	// milliseconds, set when Status is REJECTED. Zero otherwise.
 	CoolOffExpiryUnixMs int64
+	// SubtreeID is the §15.1 details.subtreeId identifying the denied
+	// subtree. Set only when Status is REJECTED.
+	// spec: §15.1 line 1080
+	SubtreeID string
+	// CoolOffExpiresAt is the §15.1 details.coolOffExpiresAt — a UTC
+	// RFC 3339 timestamp marking when the cool-off window ends. Set
+	// only when Status is REJECTED.
+	// spec: §15.1 line 1080
+	CoolOffExpiresAt string
 }
 
 // ErrUnknownStatus — the gateway returned a §8.6 status the adapter
@@ -149,6 +158,8 @@ func (c *Client) ExtendLease(ctx context.Context, sessionID string, requestedTok
 		Status:              status,
 		GrantedTokens:       resp.GetGrantedTokens(),
 		CoolOffExpiryUnixMs: resp.GetCoolOffExpiryUnixMs(),
+		SubtreeID:           resp.GetSubtreeId(),
+		CoolOffExpiresAt:    resp.GetCoolOffExpiresAt(),
 	}, nil
 }
 
