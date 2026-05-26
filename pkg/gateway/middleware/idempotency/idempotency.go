@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 )
 
@@ -133,6 +134,20 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := m.opts.TenantFromRequest(r)
+	if tenantID == "" {
+		// spec: §11.5 line 277 — "Idempotency keys are scoped per
+		// tenant — the same key string used by different tenants is
+		// treated independently." If the request reaches this
+		// middleware without a tenant, the chain is misordered (the
+		// idempotency middleware ran before auth or auth was bypassed
+		// for this path); failing closed surfaces the wiring bug
+		// instead of collapsing keys from different tenants under a
+		// shared scope.
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"idempotency middleware: tenant could not be resolved from request — auth chain must precede idempotency",
+			map[string]any{"reason": "tenant_required"})
+		return
+	}
 	idemKey := idempotency.Key{TenantID: tenantID, Value: key}
 	if err := idemKey.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", err.Error(), nil)
@@ -296,19 +311,34 @@ func flattenHeader(h http.Header) map[string]string {
 	return out
 }
 
+// writeError emits the §15.1 canonical error envelope. Category and
+// retryable are populated through the shared §15.2.1 classifier so
+// the middleware's REST surface reports the same values for the same
+// code as the rest of the gateway (sessionserver, MCP, etc.).
+// spec: §15.1 lines 958-972 (error response envelope).
 func writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
+	cat, retryable := errorclassify.Classify(code)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
-		"code":    code,
-		"message": message,
-		"details": details,
-	}})
+	body := map[string]any{
+		"code":      code,
+		"category":  string(cat),
+		"message":   message,
+		"retryable": retryable,
+	}
+	if details != nil {
+		body["details"] = details
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": body})
 }
 
+// defaultTenantFromRequest reads the tenant from the auth-set
+// X-Lenny-Tenant-ID header (set by pkg/gateway/middleware/auth on
+// every authenticated request). Returning "" causes the middleware to
+// fail closed with 500 INTERNAL_ERROR — the §11.5 per-tenant scope
+// must not silently collapse to a shared bucket when the request
+// arrives without a tenant.
+// spec: §11.5 line 277 — "scoped per tenant".
 func defaultTenantFromRequest(r *http.Request) string {
-	if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" {
-		return v
-	}
-	return "default"
+	return r.Header.Get("X-Lenny-Tenant-ID")
 }

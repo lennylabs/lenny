@@ -93,7 +93,16 @@ type Response struct {
 }
 
 // IsExpired reports whether the record has aged out of the §11.5 TTL
-// window.
+// window. spec: §11.5 line 277.
+//
+// MUST-NOT-RELAX: this method returns false for the zero Record
+// (StoredAt.IsZero()) by design. Every store implementation
+// (MemoryStore.Get, pgstore.Store.Get) layers a "not found" check
+// *before* calling IsExpired, so the zero-StoredAt branch is never
+// reached in production. A future refactor that drops the not-found
+// check would silently fall through this branch and treat a missing
+// record as "fresh", admitting a same-key request as a Replay against
+// an empty body hash. Keep the not-found gate at the callsite.
 func (r Record) IsExpired(now time.Time) bool {
 	return !r.StoredAt.IsZero() && now.Sub(r.StoredAt) > TTL
 }

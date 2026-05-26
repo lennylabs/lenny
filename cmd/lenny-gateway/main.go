@@ -360,6 +360,9 @@ func main() {
 	workspaceSealMaxDurationSeconds := flag.Int("workspace-seal-max-duration-seconds",
 		envInt("LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS", int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second)),
 		"§7.1 line 112 maxWorkspaceSealDurationSeconds: the total wall-clock window the gateway retries seal-and-export (exponential backoff 5s→60s) before failing the session with workspace_seal_timeout and terminating the pod anyway. Default 300s. Override via LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS.")
+	idempotencyGCIntervalSeconds := flag.Int("idempotency-gc-interval-seconds",
+		envInt("LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS", 3600),
+		"§11.5 line 277 idempotency_keys TTL garbage-collection cadence. The sweeper iterates tenants and drops rows past the 24-hour retention window every interval. Default 3600s (one hour). Lower values reduce row backlog at the cost of more frequent Postgres scans; higher values keep expired rows up to the configured interval past TTL (read-time gate masks them from clients). Override via LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS.")
 	checkpointJitterFraction := flag.Float64("checkpoint-jitter-fraction", envFloat("LENNY_CHECKPOINT_JITTER_FRACTION", checkpointer.DefaultJitterFraction),
 		"§4.4 line 258 `periodicCheckpointJitterFraction`. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
 	noEnvPolicy := flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
@@ -2638,13 +2641,18 @@ func main() {
 
 	// ----- §11.5 idempotency-key TTL garbage collection -----
 	// Reclaims idempotency_keys rows past the 24-hour retention window
-	// so the durable key cache stays bounded.
+	// so the durable key cache stays bounded. The cadence is operator
+	// tunable via --idempotency-gc-interval-seconds (default 3600s).
 	if pgPool != nil {
 		idemGC := idempgstore.New(pgPool)
 		lister := tenantsLister{tenants}
+		gcInterval := time.Duration(*idempotencyGCIntervalSeconds) * time.Second
+		if gcInterval <= 0 {
+			gcInterval = time.Hour
+		}
 		sweepIdempotencyKeys(context.Background(), idemGC, lister)
 		go func() {
-			ticker := time.NewTicker(time.Hour)
+			ticker := time.NewTicker(gcInterval)
 			defer ticker.Stop()
 			for {
 				select {
