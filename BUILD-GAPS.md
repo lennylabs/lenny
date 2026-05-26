@@ -3528,7 +3528,7 @@ Consequence: a concurrent-workspace deployer can grant `CAP_NET_RAW` and one slo
 
 - **Resolution:** Closed by `e2f94b89` (re-verified false alarm; protection holds by construction at two layers). The agent container's securityContext already drops ALL capabilities (`pkg/controller/sandbox/podspec/podspec.go` `containerSecurityContext`), which subsumes `CAP_NET_RAW`, and the fail-closed `lenny-pod-security` ValidatingAdmissionWebhook rejects any agent pod whose container declares a non-empty `capabilities.add` or fails to drop ALL (`pkg/podsecurity` lines 161-166). Together these mean no agent pod — session, task, or concurrent-workspace — can hold `CAP_NET_RAW`; this is strictly stronger than the spec's NET_RAW-specific clause. The SandboxTemplate CRD carries no pod-template capability surface, so the parenthetical pool-config webhook clause has no field to validate. Added spec-named regression tests at both layers (`TestBuildDropsNetRawOnEveryContainer_spec_5_2_496`, `TestValidateRejectsNetRawAdd_spec_5_2_496` / `TestValidateAcceptsNetRawDropped_spec_5_2_496`) so the §5.2 line 496 invariant is greppable and protected against a future narrowing of the drop list.
 
-### - [ ] F-5.2.7 — T4-tier cross-tenant reuse prohibition is documented but not enforced [High] — OPEN
+### - [x] F-5.2.7 — T4-tier cross-tenant reuse prohibition is documented but not enforced [High] — CLOSED
 
 Spec §5.2 line 396: "The pool controller additionally rejects `allowCrossTenantReuse: true` on any pool whose associated Runtime is configured with `workspaceTier: T4` ... The gateway also enforces this at session assignment time."
 
@@ -3539,6 +3539,8 @@ Implementation:
 - No session-assignment-time rejection either: the binder does not consult `workspaceTier` against the pod's current tenant pin.
 
 Consequence: a T4-tier runtime with `allowCrossTenantReuse: true` and microvm isolation passes admission, violating the spec's dedicated-node guarantee. Severity is High because the rule is one of two explicit MUST clauses in the cross-tenant section.
+
+- **Resolution:** Modeled the §5.2 line 396 / §12.9 runtime workspace tier and enforced the prohibition at pool admission. `runtimestore.Runtime` gains a `WorkspaceTier` field (closed enum `T3`/`T4`, empty = implicit T3, `IsT4()` helper) persisted as a dedicated `workspace_tier` column (migration 0081, pgstore INSERT/UPDATE/SELECT/scan); accepted on the admin runtime POST/PUT/bootstrap payloads + OpenAPI, prohibited on derived runtimes, and inherited from base in `Merge`. New pure helper `poolstore.ValidateCrossTenantReuseTier(pool, runtimeTier)` returns the verbatim §5.2 line 396 error when a pool sets `allowCrossTenantReuse` and its runtime is T4. The admin pool create handler captures the referenced runtime's tier and rejects before storage; the update handler resolves the effective post-PUT `runtimeRef` + `allowCrossTenantReuse` so newly setting either field is caught. The session-assignment-time backstop the spec also names is moot in v1: task-mode cross-tenant pod reuse (the only path that reuses a pod across tenants) is unbuilt (H-1), so there is no cross-tenant assignment to reject; the admission rejection is the active guard. Tests: poolstore helper 4-case (incl. verbatim error-string assertion), admin create reject/allow + update-enable reject, runtime workspaceTier round-trip / unknown-tier reject / derived-prohibition. Commit 0cbfc974.
 
 ### - [x] F-5.2.8 — Gateway does not emit `WARM_POOL_EXHAUSTED` or surface concurrent-slot details [High] — CLOSED
 

@@ -570,3 +570,84 @@ func TestCreateSandboxedPoolEmitsNoWeakIsolationEvent(t *testing.T) {
 		}
 	}
 }
+
+// TestCreatePoolRejectsCrossTenantReuseOnT4Runtime_spec_5_2_396 verifies
+// the admin pool create handler rejects allowCrossTenantReuse: true when
+// the referenced runtime is workspaceTier T4, before the pool is stored.
+//
+// spec: §5.2 line 396.
+func TestCreatePoolRejectsCrossTenantReuseOnT4Runtime_spec_5_2_396(t *testing.T) {
+	router, store, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "phi-agent", WorkspaceTier: runtimestore.WorkspaceTierT4,
+	})
+
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name:                  "t4-pool",
+		RuntimeRef:            "phi-agent",
+		ExecutionMode:         "task",
+		AllowCrossTenantReuse: true,
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("T4-tier pools")) {
+		t.Errorf("body does not name the §5.2 T4 rule: %s", rr.Body.String())
+	}
+	if _, err := store.Get(context.Background(), "t4-pool"); err == nil {
+		t.Error("rejected pool was stored; the tier check must run before Create")
+	}
+}
+
+// TestCreatePoolAllowsCrossTenantReuseOnT3Runtime_spec_5_2_396 verifies a
+// cross-tenant-reuse pool backed by a T3 (default) runtime is admitted —
+// the prohibition is T4-specific.
+//
+// spec: §5.2 line 396.
+func TestCreatePoolAllowsCrossTenantReuseOnT3Runtime_spec_5_2_396(t *testing.T) {
+	router, store, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "general-agent", WorkspaceTier: runtimestore.WorkspaceTierT3,
+	})
+
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name:                  "reuse-pool",
+		RuntimeRef:            "general-agent",
+		ExecutionMode:         "task",
+		AllowCrossTenantReuse: true,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := store.Get(context.Background(), "reuse-pool"); err != nil {
+		t.Errorf("valid pool not stored: %v", err)
+	}
+}
+
+// TestUpdatePoolRejectsEnablingCrossTenantReuseOnT4Runtime_spec_5_2_396
+// verifies a PUT that newly enables cross-tenant reuse on a T4-runtime
+// pool is rejected even though the pool was created without it.
+//
+// spec: §5.2 line 396.
+func TestUpdatePoolRejectsEnablingCrossTenantReuseOnT4Runtime_spec_5_2_396(t *testing.T) {
+	router, _, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "phi-agent", WorkspaceTier: runtimestore.WorkspaceTierT4,
+	})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "t4-pool", RuntimeRef: "phi-agent", ExecutionMode: "task",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: got %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	enable := true
+	rr = poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/t4-pool",
+		admin.UpdatePoolRequest{AllowCrossTenantReuse: &enable})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("update status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("T4-tier pools")) {
+		t.Errorf("body does not name the §5.2 T4 rule: %s", rr.Body.String())
+	}
+}

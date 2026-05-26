@@ -180,14 +180,18 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// Cross-resource consistency: if the runtimes store is wired,
 	// reject pools that reference a non-existent runtime so
 	// misconfigurations surface at admin time rather than at session
-	// creation.
+	// creation. Capture the runtime's §12.9 workspace tier for the §5.2
+	// line 396 T4 cross-tenant-reuse check below.
+	var runtimeTier runtimestore.WorkspaceTier
 	if r.runtimes != nil && body.RuntimeRef != "" {
-		if _, err := r.runtimes.Get(req.Context(), body.RuntimeRef); err != nil {
+		rt, err := r.runtimes.Get(req.Context(), body.RuntimeRef)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"runtimeRef does not resolve to a registered runtime",
 				map[string]any{"runtimeRef": body.RuntimeRef})
 			return
 		}
+		runtimeTier = rt.WorkspaceTier
 	}
 
 	pl := poolstore.Pool{
@@ -228,6 +232,14 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	}
 	if pl.ExecutionMode == "" {
 		pl.ExecutionMode = runtimestore.ExecutionModeSession
+	}
+	// spec: §5.2 line 396 — reject cross-tenant reuse on a pool whose
+	// runtime is T4 before storage, so a misconfigured pool never enters
+	// the registry.
+	if err := poolstore.ValidateCrossTenantReuseTier(pl, runtimeTier); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+			map[string]any{"runtimeRef": body.RuntimeRef, "workspaceTier": string(runtimeTier)})
+		return
 	}
 	if err := r.pools.Create(req.Context(), pl); err != nil {
 		if errors.Is(err, poolstore.ErrAlreadyExists) {
@@ -433,6 +445,48 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"runtimeRef does not resolve to a registered runtime", nil)
 			return
+		}
+	}
+	// spec: §5.2 line 396 — reject a PUT that would leave the pool with
+	// cross-tenant reuse enabled while its runtime is T4. The effective
+	// post-update runtimeRef and allowCrossTenantReuse are resolved from
+	// the body (when set) or the stored pool, so newly setting either
+	// field is caught. The runtime tier is only consulted when reuse
+	// would be on.
+	if r.runtimes != nil {
+		current, gerr := r.pools.Get(req.Context(), name)
+		if errors.Is(gerr, poolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		} else if gerr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return
+		}
+		effCross := current.AllowCrossTenantReuse
+		if body.AllowCrossTenantReuse != nil {
+			effCross = *body.AllowCrossTenantReuse
+		}
+		if effCross {
+			effRef := current.RuntimeRef
+			if body.RuntimeRef != nil {
+				effRef = *body.RuntimeRef
+			}
+			var tier runtimestore.WorkspaceTier
+			if effRef != "" {
+				rt, rerr := r.runtimes.Get(req.Context(), effRef)
+				if rerr != nil {
+					writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+						"runtimeRef does not resolve to a registered runtime", nil)
+					return
+				}
+				tier = rt.WorkspaceTier
+			}
+			if err := poolstore.ValidateCrossTenantReuseTier(
+				poolstore.Pool{AllowCrossTenantReuse: true}, tier); err != nil {
+				writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+					map[string]any{"runtimeRef": effRef, "workspaceTier": string(tier)})
+				return
+			}
 		}
 	}
 	updated, err := r.pools.Update(req.Context(), name, func(p *poolstore.Pool) error {

@@ -52,6 +52,12 @@ type Runtime struct {
 	// `standard`, or `full`.
 	IntegrationLevel IntegrationLevel
 
+	// WorkspaceTier is the §12.9 / §5.2 data-classification tier this
+	// runtime processes (`T3` default, `T4` Restricted). A T4 runtime
+	// cannot back a cross-tenant-reuse pool (§5.2 line 396). Empty is
+	// treated as T3.
+	WorkspaceTier WorkspaceTier
+
 	// AllowedResourceClasses is the §5.1 set of resource classes the
 	// runtime permits (for example small, medium, large). The §5.1 merge
 	// table classifies it Prohibited on derived runtimes: a derived
@@ -985,6 +991,47 @@ func (l IntegrationLevel) IsValid() bool {
 	}
 	return false
 }
+
+// WorkspaceTier is the §12.9 / §5.2 data-classification tier a runtime
+// is configured for. Workspace data defaults to T3 (Confidential);
+// runtimes that process Restricted data (PHI, credentials) are
+// configured with T4. §5.2 line 396 forbids cross-tenant pod reuse on a
+// pool whose runtime is T4 because T4 requires dedicated node pools for
+// per-tenant key isolation (§6.4). The empty value is treated as T3.
+type WorkspaceTier string
+
+const (
+	// WorkspaceTierT3 is the §12.9 default workspace classification
+	// (Confidential).
+	WorkspaceTierT3 WorkspaceTier = "T3"
+	// WorkspaceTierT4 is the §12.9 Restricted classification. A T4
+	// runtime cannot back a cross-tenant-reuse pool (§5.2 line 396).
+	WorkspaceTierT4 WorkspaceTier = "T4"
+)
+
+// AllWorkspaceTiers returns the closed set of workspace tiers a runtime
+// may declare. §12.9 line 1025 scopes workspace classification to T3
+// (default) and T4; lower tiers describe non-workspace data.
+func AllWorkspaceTiers() []WorkspaceTier {
+	return []WorkspaceTier{WorkspaceTierT3, WorkspaceTierT4}
+}
+
+// IsValid reports whether t is a recognised runtime workspace tier. The
+// empty value is not "valid" but callers treat it as the T3 default;
+// admission accepts an empty tier and only a non-empty, unrecognised one
+// is rejected.
+func (t WorkspaceTier) IsValid() bool {
+	for _, v := range AllWorkspaceTiers() {
+		if t == v {
+			return true
+		}
+	}
+	return false
+}
+
+// IsT4 reports whether t is the §12.9 Restricted tier. The empty value
+// (implicit T3 default) is not T4.
+func (t WorkspaceTier) IsT4() bool { return t == WorkspaceTierT4 }
 
 // Store is the §5.1 Runtime registry contract.
 type Store interface {

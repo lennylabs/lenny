@@ -44,7 +44,7 @@ const selectList = `name, type, image, execution_mode, isolation_profile,
 	task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 	supported_providers, credential_capabilities, limits, setup_command_policy,
 	default_pool_config, workspace_defaults, runtime_options_schema, shared_assets,
-	sdk_warm_blocking_paths`
+	sdk_warm_blocking_paths, workspace_tier`
 
 // stringSliceJSON marshals a §5.1 string-set field (allowedResourceClasses,
 // supportedProviders) to its jsonb text form. An empty slice is stored as
@@ -238,8 +238,8 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		task_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 		supported_providers, credential_capabilities, limits, setup_command_policy,
 		default_pool_config, workspace_defaults, runtime_options_schema, shared_assets,
-		sdk_warm_blocking_paths
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)`,
+		sdk_warm_blocking_paths, workspace_tier
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
@@ -253,7 +253,7 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		limitsJSON(r.Limits), setupCommandPolicyJSON(r.SetupCommandPolicy),
 		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
 		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets),
-		stringSliceJSON(r.SDKWarmBlockingPaths))
+		stringSliceJSON(r.SDKWarmBlockingPaths), string(r.WorkspaceTier))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -311,7 +311,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		credential_capabilities = $23, limits = $24, setup_command_policy = $25,
 		default_pool_config = $26, workspace_defaults = $27,
 		runtime_options_schema = $28, shared_assets = $29,
-		sdk_warm_blocking_paths = $30
+		sdk_warm_blocking_paths = $30, workspace_tier = $31
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
@@ -327,7 +327,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		limitsJSON(r.Limits), setupCommandPolicyJSON(r.SetupCommandPolicy),
 		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
 		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets),
-		stringSliceJSON(r.SDKWarmBlockingPaths)); err != nil {
+		stringSliceJSON(r.SDKWarmBlockingPaths), string(r.WorkspaceTier)); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -404,6 +404,7 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	var (
 		r                                          runtimestore.Runtime
 		typ, execMode, isoProf, level, description string
+		workspaceTier                              string
 		capInferMode                               string
 		deletedAt                                  *time.Time
 		labelsRaw, agentIfaceRaw, publishedMetaRaw []byte
@@ -425,6 +426,7 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		&supportedProvidersRaw, &credentialCapabilitiesRaw, &limitsRaw,
 		&setupCommandPolicyRaw, &defaultPoolConfigRaw, &workspaceDefaultsRaw,
 		&runtimeOptionsSchemaRaw, &sharedAssetsRaw, &sdkWarmBlockingPathsRaw,
+		&workspaceTier,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}
@@ -432,6 +434,7 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	r.ExecutionMode = runtimestore.ExecutionMode(execMode)
 	r.IsolationProfile = isolation.Profile(isoProf)
 	r.IntegrationLevel = runtimestore.IntegrationLevel(level)
+	r.WorkspaceTier = runtimestore.WorkspaceTier(workspaceTier)
 	r.Description = description
 	r.CapabilityInferenceMode = capabilityinference.Mode(capInferMode)
 	if deletedAt != nil {

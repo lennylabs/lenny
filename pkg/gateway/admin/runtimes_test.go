@@ -1407,3 +1407,84 @@ func TestCreateRuntimeAcceptsIntegrationLevelOnAgent(t *testing.T) {
 		t.Fatalf("status %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
 }
+
+// TestRuntimeWorkspaceTierRoundTrip_spec_12_9 verifies the §12.9 / §5.2
+// runtime workspaceTier field round-trips through POST and GET and is
+// updatable via PUT.
+//
+// spec: §5.2 line 396 / §12.9.
+func TestRuntimeWorkspaceTierRoundTrip_spec_12_9(t *testing.T) {
+	router, store, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:          "phi-agent",
+		Type:          "agent",
+		Image:         "ghcr.io/acme/phi-agent@sha256:abcdef",
+		WorkspaceTier: "T4",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.WorkspaceTier != "T4" {
+		t.Errorf("response workspaceTier = %q, want T4", resp.WorkspaceTier)
+	}
+	row, err := store.Get(context.Background(), "phi-agent")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if row.WorkspaceTier != runtimestore.WorkspaceTierT4 {
+		t.Errorf("stored workspaceTier = %q, want T4", row.WorkspaceTier)
+	}
+
+	// PUT back down to T3.
+	t3 := "T3"
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/phi-agent",
+		admin.UpdateRuntimeRequest{WorkspaceTier: &t3})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update status: got %d; body=%s", rr.Code, rr.Body.String())
+	}
+	row, _ = store.Get(context.Background(), "phi-agent")
+	if row.WorkspaceTier != runtimestore.WorkspaceTierT3 {
+		t.Errorf("after PUT workspaceTier = %q, want T3", row.WorkspaceTier)
+	}
+}
+
+// TestCreateRuntimeRejectsUnknownWorkspaceTier_spec_12_9 verifies a
+// non-empty, unrecognised workspaceTier fails closed at admission.
+//
+// spec: §12.9.
+func TestCreateRuntimeRejectsUnknownWorkspaceTier_spec_12_9(t *testing.T) {
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:          "bad-tier",
+		Image:         "ghcr.io/acme/x@sha256:abcdef",
+		WorkspaceTier: "T9",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("unknown workspaceTier: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateRuntimeRejectsWorkspaceTierOnDerived_spec_5_1 verifies
+// workspaceTier is Inherited from the base runtime, so a derived runtime
+// may not declare it.
+//
+// spec: §5.1 merge table / §5.2 line 396.
+func TestCreateRuntimeRejectsWorkspaceTierOnDerived_spec_5_1(t *testing.T) {
+	router, store, _ := newRuntimeAdmin(t)
+	if err := store.Create(context.Background(), runtimestore.Runtime{
+		Name: "base", Type: runtimestore.TypeAgent, Image: "ghcr.io/acme/base@sha256:abc",
+		WorkspaceTier: runtimestore.WorkspaceTierT4,
+	}); err != nil {
+		t.Fatalf("seed base: %v", err)
+	}
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:          "derived",
+		BaseRuntime:   "base",
+		WorkspaceTier: "T4",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("workspaceTier on derived: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+}

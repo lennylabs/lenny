@@ -380,6 +380,9 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			if p.IntegrationLevel != "" {
 				rt.IntegrationLevel = runtimestore.IntegrationLevel(p.IntegrationLevel)
 			}
+			if p.WorkspaceTier != "" {
+				rt.WorkspaceTier = runtimestore.WorkspaceTier(p.WorkspaceTier)
+			}
 			if p.Description != "" {
 				rt.Description = p.Description
 			}

@@ -240,6 +240,30 @@ func ValidateConcurrentConfig(p Pool) error {
 	return nil
 }
 
+// ValidateCrossTenantReuseTier enforces the §5.2 line 396 T4 cross-tenant
+// reuse prohibition: a pool whose associated Runtime is configured with
+// workspaceTier: T4 may not set allowCrossTenantReuse, because T4
+// workloads require dedicated node pools for per-tenant key isolation
+// (§6.4) and cross-tenant pod reuse — even with microvm isolation —
+// co-locates two tenants' Restricted data on a shared microvm host.
+//
+// runtimeTier is the resolved workspace tier of the pool's runtime; the
+// caller looks it up (the pure poolstore record carries no runtime).
+// The check is a no-op when the pool does not request cross-tenant reuse
+// or the runtime is not T4. The error string is verbatim from §5.2 line
+// 396 so operators see the exact spec language.
+//
+// spec: §5.2 line 396 — "The pool controller additionally rejects
+// allowCrossTenantReuse: true on any pool whose associated Runtime is
+// configured with workspaceTier: T4".
+func ValidateCrossTenantReuseTier(p Pool, runtimeTier runtimestore.WorkspaceTier) error {
+	if p.AllowCrossTenantReuse && runtimeTier.IsT4() {
+		return errors.New("allowCrossTenantReuse: true is not permitted for T4-tier pools " +
+			"(workspaceTier: T4); T4 workloads require dedicated node pools (Section 6.4)")
+	}
+	return nil
+}
+
 // Store is the §5.2 pool registry contract.
 type Store interface {
 	Create(ctx context.Context, p Pool) error

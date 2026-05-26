@@ -66,6 +66,9 @@ func Merge(base, derived Runtime) Runtime {
 	eff.ExecutionMode = cb.ExecutionMode
 	eff.IsolationProfile = cb.IsolationProfile
 	eff.IntegrationLevel = cb.IntegrationLevel
+	// §12.9 / §5.2: workspaceTier is a property of the base image's data
+	// classification, so a derived runtime inherits the base's tier.
+	eff.WorkspaceTier = cb.WorkspaceTier
 	eff.Capabilities = cb.Capabilities
 	eff.AllowedResourceClasses = append([]string(nil), cb.AllowedResourceClasses...)
 	// §5.1 lines 22-24: sdkWarmBlockingPaths is the companion of the

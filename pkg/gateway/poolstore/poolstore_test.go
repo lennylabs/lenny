@@ -378,3 +378,60 @@ func TestCreateAdmitsValidConcurrentPool(t *testing.T) {
 		t.Errorf("concurrent fields did not round-trip: %+v", got)
 	}
 }
+
+// spec: §5.2 line 396 — the pool controller rejects allowCrossTenantReuse:
+// true on any pool whose associated Runtime is workspaceTier T4. The check
+// is mode-agnostic (it keys on the pool's reuse flag and the runtime's
+// tier), a no-op when reuse is off or the runtime is not T4, and emits the
+// verbatim spec error otherwise.
+func TestValidateCrossTenantReuseTier_spec_5_2_396(t *testing.T) {
+	cases := []struct {
+		name string
+		pool poolstore.Pool
+		tier runtimestore.WorkspaceTier
+		ok   bool
+	}{
+		{
+			name: "T4 runtime with cross-tenant reuse is rejected",
+			pool: poolstore.Pool{Name: "p", AllowCrossTenantReuse: true},
+			tier: runtimestore.WorkspaceTierT4,
+		},
+		{
+			name: "T4 runtime without cross-tenant reuse is allowed",
+			pool: poolstore.Pool{Name: "p", AllowCrossTenantReuse: false},
+			tier: runtimestore.WorkspaceTierT4,
+			ok:   true,
+		},
+		{
+			name: "T3 runtime with cross-tenant reuse is allowed",
+			pool: poolstore.Pool{Name: "p", AllowCrossTenantReuse: true},
+			tier: runtimestore.WorkspaceTierT3,
+			ok:   true,
+		},
+		{
+			name: "empty tier (implicit T3) with cross-tenant reuse is allowed",
+			pool: poolstore.Pool{Name: "p", AllowCrossTenantReuse: true},
+			tier: "",
+			ok:   true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := poolstore.ValidateCrossTenantReuseTier(tc.pool, tc.tier)
+			if tc.ok && err != nil {
+				t.Fatalf("want nil, got %v", err)
+			}
+			if !tc.ok {
+				if err == nil {
+					t.Fatal("want rejection, got nil")
+				}
+				// The error string is verbatim from §5.2 line 396.
+				want := "allowCrossTenantReuse: true is not permitted for T4-tier pools " +
+					"(workspaceTier: T4); T4 workloads require dedicated node pools (Section 6.4)"
+				if err.Error() != want {
+					t.Errorf("error string drifted from spec:\n got:  %q\n want: %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}

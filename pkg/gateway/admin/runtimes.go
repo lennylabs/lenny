@@ -53,6 +53,7 @@ type RuntimePayload struct {
 	ExecutionMode           string                                      `json:"executionMode,omitempty"`
 	IsolationProfile        string                                      `json:"isolationProfile,omitempty"`
 	IntegrationLevel        string                                      `json:"integrationLevel,omitempty"`
+	WorkspaceTier           string                                      `json:"workspaceTier,omitempty"`
 	AllowedResourceClasses  []string                                    `json:"allowedResourceClasses,omitempty"`
 	SupportedProviders      []string                                    `json:"supportedProviders,omitempty"`
 	CredentialCapabilities  *runtimestore.CredentialCapabilities        `json:"credentialCapabilities,omitempty"`
@@ -93,6 +94,7 @@ func runtimeFromPayload(p RuntimePayload, createdAt time.Time) runtimestore.Runt
 		ExecutionMode:           runtimestore.ExecutionMode(p.ExecutionMode),
 		IsolationProfile:        isolation.Profile(p.IsolationProfile),
 		IntegrationLevel:        runtimestore.IntegrationLevel(p.IntegrationLevel),
+		WorkspaceTier:           runtimestore.WorkspaceTier(p.WorkspaceTier),
 		AllowedResourceClasses:  p.AllowedResourceClasses,
 		SupportedProviders:      p.SupportedProviders,
 		CredentialCapabilities:  p.CredentialCapabilities,
@@ -130,6 +132,7 @@ type UpdateRuntimeRequest struct {
 	ExecutionMode           *string                                      `json:"executionMode,omitempty"`
 	IsolationProfile        *string                                      `json:"isolationProfile,omitempty"`
 	IntegrationLevel        *string                                      `json:"integrationLevel,omitempty"`
+	WorkspaceTier           *string                                      `json:"workspaceTier,omitempty"`
 	AllowedResourceClasses  *[]string                                    `json:"allowedResourceClasses,omitempty"`
 	SupportedProviders      *[]string                                    `json:"supportedProviders,omitempty"`
 	AllowSelfRecursion      *bool                                        `json:"allowSelfRecursion,omitempty"`
@@ -178,6 +181,8 @@ func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) e
 		return errors.New("isolationProfile is prohibited on derived runtimes")
 	case p.IntegrationLevel != "":
 		return errors.New("integrationLevel is prohibited on derived runtimes")
+	case p.WorkspaceTier != "":
+		return errors.New("workspaceTier is prohibited on derived runtimes")
 	case p.Capabilities != nil:
 		return errors.New("capabilities is prohibited on derived runtimes")
 	case len(p.AllowedResourceClasses) > 0:
@@ -281,6 +286,8 @@ func validateDerivedRuntimeUpdate(current, base runtimestore.Runtime, body Updat
 		return errors.New("isolationProfile is prohibited on derived runtimes")
 	case body.IntegrationLevel != nil && *body.IntegrationLevel != "":
 		return errors.New("integrationLevel is prohibited on derived runtimes")
+	case body.WorkspaceTier != nil && *body.WorkspaceTier != "":
+		return errors.New("workspaceTier is prohibited on derived runtimes")
 	case body.Capabilities != nil:
 		return errors.New("capabilities is prohibited on derived runtimes")
 	case body.AllowedResourceClasses != nil && len(*body.AllowedResourceClasses) > 0:
@@ -620,6 +627,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		ExecutionMode:           string(r.ExecutionMode),
 		IsolationProfile:        string(r.IsolationProfile),
 		IntegrationLevel:        string(r.IntegrationLevel),
+		WorkspaceTier:           string(r.WorkspaceTier),
 		AllowedResourceClasses:  r.AllowedResourceClasses,
 		SupportedProviders:      r.SupportedProviders,
 		CredentialCapabilities:  r.CredentialCapabilities,
@@ -674,6 +682,9 @@ func (p RuntimePayload) validatePayloadEnums() error {
 	}
 	if p.IntegrationLevel != "" && !runtimestore.IntegrationLevel(p.IntegrationLevel).IsValid() {
 		return errors.New("integrationLevel is not a recognised level")
+	}
+	if p.WorkspaceTier != "" && !runtimestore.WorkspaceTier(p.WorkspaceTier).IsValid() {
+		return errors.New("workspaceTier is not a recognised §12.9 tier (T3, T4)")
 	}
 	if p.CapabilityInferenceMode != "" && !capabilityinference.Mode(p.CapabilityInferenceMode).IsValid() {
 		return errors.New("capabilityInferenceMode must be strict or permissive")
@@ -895,6 +906,11 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			"integrationLevel is not a recognised level", nil)
 		return
 	}
+	if body.WorkspaceTier != nil && *body.WorkspaceTier != "" && !runtimestore.WorkspaceTier(*body.WorkspaceTier).IsValid() {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"workspaceTier is not a recognised §12.9 tier (T3, T4)", nil)
+		return
+	}
 	if body.Image != nil && *body.Image != "" && !strings.Contains(*body.Image, "@sha256:") {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"image must be digest-pinned (contain @sha256:...)", nil)
@@ -1042,6 +1058,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		if body.IntegrationLevel != nil {
 			rt.IntegrationLevel = runtimestore.IntegrationLevel(*body.IntegrationLevel)
 		}
+		if body.WorkspaceTier != nil {
+			rt.WorkspaceTier = runtimestore.WorkspaceTier(*body.WorkspaceTier)
+		}
 		if body.AllowedResourceClasses != nil {
 			rt.AllowedResourceClasses = *body.AllowedResourceClasses
 		}
@@ -1178,6 +1197,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.IntegrationLevel != nil {
 		out = append(out, "integrationLevel")
+	}
+	if b.WorkspaceTier != nil {
+		out = append(out, "workspaceTier")
 	}
 	if b.AllowedResourceClasses != nil {
 		out = append(out, "allowedResourceClasses")
