@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -498,3 +500,103 @@ func TestCreateAcceptsNullWorkspacePlan(t *testing.T) {
 		t.Errorf("status: got %d, want 201", rr.Code)
 	}
 }
+
+// spec: §7.1 line 28 — the atomic-creation contract requires that
+// when the upload-token mint fails, no session row is persisted and
+// the client receives 503 SESSION_CREATION_FAILED with Retry-After.
+// A nil UploadTokenIssuer is not the exercised failure mode (the
+// constructor synthesizes one); fabricate a failure-mode store that
+// rejects Create to verify the persistence-failure half of the
+// rollback contract.
+func TestCreateReturnsSessionCreationFailedOnPersistFailure_spec_7_1_4(t *testing.T) {
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	store := &createRejectingStore{Store: memstore.New()}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:             clock,
+		IDFunc:            func() string { return "sess_persist_fail" },
+		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+	})
+
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	})
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if ra := rr.Header().Get("Retry-After"); ra == "" {
+		t.Errorf("Retry-After header missing on the SESSION_CREATION_FAILED reply")
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	if env.Error.Code != "SESSION_CREATION_FAILED" {
+		t.Errorf("code = %q, want SESSION_CREATION_FAILED", env.Error.Code)
+	}
+	if env.Error.Details["reason"] != "row_persistence_failed" {
+		t.Errorf("details.reason = %v, want row_persistence_failed", env.Error.Details["reason"])
+	}
+
+	// §7.1 line 28: "does NOT persist the session row". Even though the
+	// store's Create returned an error, the row must not exist.
+	if _, err := store.Store.Get(context.Background(), "acme", "sess_persist_fail"); err == nil {
+		t.Errorf("session row exists after persistence failure; §7.1 forbids the create row")
+	}
+}
+
+// spec: §7.1 line 28 — when the upload-token mint itself fails, the
+// row was never built (no IDFunc was even called for persistence).
+// The handler returns SESSION_CREATION_FAILED with reason
+// `upload_token_issuance_failed` and no row.
+func TestCreateReturnsSessionCreationFailedOnMintFailure_spec_7_1_4(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc: func() string {
+			// Return a sessionID containing a forbidden dot so
+			// uploadtoken.IssueDetailed rejects it; this is the canonical
+			// path-deterministic mint failure.
+			return "sess.bad-id"
+		},
+	})
+
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	})
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	if env.Error.Code != "SESSION_CREATION_FAILED" {
+		t.Errorf("code = %q, want SESSION_CREATION_FAILED", env.Error.Code)
+	}
+	if env.Error.Details["reason"] != "upload_token_issuance_failed" {
+		t.Errorf("details.reason = %v, want upload_token_issuance_failed", env.Error.Details["reason"])
+	}
+	if _, err := store.Get(context.Background(), "acme", "sess.bad-id"); err == nil {
+		t.Errorf("session row exists after upload-token mint failure; §7.1 forbids the create row")
+	}
+}
+
+// createRejectingStore wraps memstore so Create returns an error,
+// exercising the §7.1 line 28 persistence-failure roll-back branch.
+type createRejectingStore struct {
+	*memstore.Store
+}
+
+func (s *createRejectingStore) Create(ctx context.Context, row sessionstore.Session) error {
+	return errCreateRejected
+}
+
+var errCreateRejected = errors.New("test: persistence failure injected")

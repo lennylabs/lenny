@@ -48,7 +48,8 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			s.writePodClaimError(w, tc.err, "could not place the session on a warm pod")
+			s.writePodClaimError(w, tc.err, "SESSION_CREATION_FAILED",
+				"could not place the session on a warm pod")
 			if w.Code != 503 {
 				t.Errorf("status = %d, want 503", w.Code)
 			}
@@ -75,7 +76,7 @@ func TestWritePodClaimErrorPoolWarming(t *testing.T) {
 	s := New(memstore.New(), Options{})
 	w := httptest.NewRecorder()
 	s.writePodClaimError(w, &podsession.PoolWarmingError{Pool: "acme-pool", PodsWarming: 3},
-		"could not place the session on a warm pod")
+		"SESSION_CREATION_FAILED", "could not place the session on a warm pod")
 	if w.Code != 503 {
 		t.Errorf("status = %d, want 503", w.Code)
 	}
@@ -114,17 +115,37 @@ func TestWritePoolWarmingRetryAfterFloor(t *testing.T) {
 	}
 }
 
-// spec: §15.1 — a claim failure that is neither exhaustion nor warming
-// stays a retryable POD_CLAIM_FAILED carrying the call site's message.
-func TestWritePodClaimErrorFallback(t *testing.T) {
-	s := New(memstore.New(), Options{})
-	w := httptest.NewRecorder()
-	s.writePodClaimError(w, errors.New("boom"), "could not place the session on a warm pod")
-	body := decodeErrorBody(t, w.Body.Bytes())
-	if body["code"] != "POD_CLAIM_FAILED" {
-		t.Errorf("code = %v, want POD_CLAIM_FAILED", body["code"])
+// spec: §7.1 line 28 / §15.1 line 1138 — a claim failure that is
+// neither exhaustion nor warming surfaces as a retryable 503 carrying
+// the caller-named fallback code (SESSION_CREATION_FAILED for atomic
+// create / start, STARTING_FAILED for the two-step start, RESUME_FAILED
+// for resume) plus a Retry-After header so clients back off with a
+// deterministic budget.
+func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
+	cases := []struct {
+		name string
+		code string
+	}{
+		{"create_and_start", "SESSION_CREATION_FAILED"},
+		{"two_step_start", "STARTING_FAILED"},
+		{"resume", "RESUME_FAILED"},
 	}
-	if msg, _ := body["message"].(string); msg != "could not place the session on a warm pod: boom" {
-		t.Errorf("message = %q, want the fallback message with the cause appended", msg)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(memstore.New(), Options{})
+			w := httptest.NewRecorder()
+			s.writePodClaimError(w, errors.New("boom"), tc.code, "could not place the session on a warm pod")
+			body := decodeErrorBody(t, w.Body.Bytes())
+			if body["code"] != tc.code {
+				t.Errorf("code = %v, want %s", body["code"], tc.code)
+			}
+			if msg, _ := body["message"].(string); msg != "could not place the session on a warm pod: boom" {
+				t.Errorf("message = %q, want the fallback message with the cause appended", msg)
+			}
+			// spec: §15.1 line 1138 — every retryable 503 carries Retry-After.
+			if ra := w.Header().Get("Retry-After"); ra != "5" {
+				t.Errorf("Retry-After = %q, want 5 (the §7.1 atomic-unit floor)", ra)
+			}
+		})
 	}
 }

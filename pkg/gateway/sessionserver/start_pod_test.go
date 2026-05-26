@@ -338,7 +338,12 @@ func TestSessionStartDispatchesConcurrentRuntimeToSlotClaim(t *testing.T) {
 	}
 }
 
-func TestSessionStartFailsSessionWhenNoPoolMatches(t *testing.T) {
+// spec: §7.1 line 28 — the §7.1 atomicity contract demands "does NOT
+// persist the session row" when the create-and-start atomic unit
+// (steps 2-8) fails. A claim failure on the §15.1 `POST
+// /v1/sessions/start` path returns SESSION_CREATION_FAILED with no
+// session row left behind; the registry stays empty too.
+func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceRoot = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -376,12 +381,13 @@ func TestSessionStartFailsSessionWhenNoPoolMatches(t *testing.T) {
 		t.Errorf("registry holds %d bindings, want 0 after a failed claim", registry.Len())
 	}
 
-	row, err := store.Get(context.Background(), "acme", "sess_pod_nomatch")
-	if err != nil {
-		t.Fatalf("session row not stored: %v", err)
+	if _, err := store.Get(context.Background(), "acme", "sess_pod_nomatch"); err == nil {
+		t.Fatalf("session row was persisted; §7.1 atomicity requires no row when the create-and-start atomic unit fails")
 	}
-	if row.State != session.StateFailed {
-		t.Errorf("session state = %q, want failed after the claim failure", row.State)
+	// §15.1 line 1138 — every retryable 503 carries Retry-After so a
+	// client retries with a deterministic budget.
+	if ra := rr.Header().Get("Retry-After"); ra == "" {
+		t.Errorf("Retry-After header missing on the SESSION_CREATION_FAILED reply")
 	}
 }
 

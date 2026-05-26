@@ -1053,34 +1053,35 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	if !s.routeExperiment(w, r, &row) {
 		return
 	}
-	if err := s.store.Create(r.Context(), row); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	s.recordSessionCreated(r.Context(), row)
 
-	// §7.1 step 8: mint the single-use uploadToken stamped on the
-	// session creation response. TTL = maxCreatedStateTimeoutSeconds
-	// (uploadtoken.DefaultTTL — 300 s). The digest + expiry are
-	// stored on the row so the finalize handler can consume the
-	// token through the §7.1 single-use tracker.
+	// spec: §7.1 line 28 — atomicity. Mint the §7.1 step 8 uploadToken
+	// BEFORE the row is persisted: on failure no session row exists, so
+	// the client receives no session_id (matching the "does NOT persist
+	// the session row" rule). The token's digest + expiry are stamped
+	// directly on the row that will be persisted, replacing the legacy
+	// "Create then Update with digest" sequence that left an orphan
+	// `created`-state row when the mint failed.
+	// TTL = maxCreatedStateTimeoutSeconds (uploadtoken.DefaultTTL —
+	// 300 s).
 	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, 0)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			fmt.Sprintf("upload token issuance failed: %v", err), nil)
-		return
-	}
-	if _, err := s.store.Update(r.Context(), tenantID, row.ID, func(row *sessionstore.Session) error {
-		row.UploadTokenDigest = parsed.Digest
-		row.UploadTokenExpiry = parsed.Expiry
-		return nil
-	}); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			fmt.Sprintf("session row update failed: %v", err), nil)
+		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
+			"upload token issuance failed: "+err.Error())
 		return
 	}
 	row.UploadTokenDigest = parsed.Digest
 	row.UploadTokenExpiry = parsed.Expiry
+
+	if err := s.store.Create(r.Context(), row); err != nil {
+		// spec: §7.1 line 28 — persistence failure leaves no row behind;
+		// the minted upload token's digest is never referenced because
+		// the finalize/upload paths look up the digest off the
+		// (non-existent) row. Return SESSION_CREATION_FAILED so the
+		// client retries.
+		s.writeSessionCreationFailed(w, "row_persistence_failed", err.Error())
+		return
+	}
+	s.recordSessionCreated(r.Context(), row)
 
 	base := toResponse(row)
 	// spec: §7.1 line 75 — at creation the isolation level is resolved

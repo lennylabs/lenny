@@ -201,7 +201,7 @@ func TestResolveCredentialPoolsNoRegistries(t *testing.T) {
 func TestWriteCredentialPoolExhaustedShape(t *testing.T) {
 	s := &Server{}
 	rr := httptest.NewRecorder()
-	s.writePodClaimError(rr, credrouter.ErrNoCredentialAvailable, "claim failed")
+	s.writePodClaimError(rr, credrouter.ErrNoCredentialAvailable, "SESSION_CREATION_FAILED", "claim failed")
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rr.Code)
 	}
@@ -231,7 +231,7 @@ func TestWriteCredentialPoolExhaustedShape(t *testing.T) {
 func TestWriteUserCredentialNotFoundShape(t *testing.T) {
 	s := &Server{}
 	rr := httptest.NewRecorder()
-	s.writePodClaimError(rr, credrouter.ErrUserCredentialNotFound, "claim failed")
+	s.writePodClaimError(rr, credrouter.ErrUserCredentialNotFound, "SESSION_CREATION_FAILED", "claim failed")
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rr.Code)
 	}
@@ -265,7 +265,7 @@ func TestWritePodClaimErrorAssignmentRaceEmitsMetric(t *testing.T) {
 		Pool:     "claude-prod",
 		Err:      credential.ErrPoolExhausted,
 	}
-	s.writePodClaimError(rr, raceErr, "claim failed")
+	s.writePodClaimError(rr, raceErr, "SESSION_CREATION_FAILED", "claim failed")
 	if gotPool != "claude-prod" || gotProvider != "anthropic_direct" {
 		t.Errorf("mismatch metric labels = (%q,%q), want (claude-prod, anthropic_direct)", gotPool, gotProvider)
 	}

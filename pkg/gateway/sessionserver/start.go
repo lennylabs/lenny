@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
@@ -48,11 +49,18 @@ const minWarmupRetryAfterSeconds = 30
 // writePodClaimError maps a startOnPod / resumeOnPod failure to its
 // §15.1 error envelope. The §5.2 pool-warming and pod/slot exhaustion
 // conditions take their spec-defined codes; a Token Service outage
-// surfaces as TOKEN_SERVICE_UNAVAILABLE (§4.3). Any other failure falls
-// back to a retryable POD_CLAIM_FAILED carrying fallbackMsg.
+// surfaces as TOKEN_SERVICE_UNAVAILABLE (§4.3). Any other failure
+// falls back to a retryable 503 carrying fallbackCode + fallbackMsg
+// plus a §15.1 line 1138 `Retry-After` header. Per §7.1 line 28 the
+// atomic-creation paths (`POST /v1/sessions`, `POST /v1/sessions/start`)
+// pass `SESSION_CREATION_FAILED` so a generic claim failure surfaces
+// the spec-named code instead of the legacy `POD_CLAIM_FAILED`; the
+// `POST /v1/sessions/{id}/start` two-step path passes `STARTING_FAILED`
+// per §6.2 line 303.
 // spec: §5.2 line 519 (WARM_POOL_EXHAUSTED), §5.2 lines 602-625
-// (RUNTIME_UNAVAILABLE).
-func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackMsg string) {
+// (RUNTIME_UNAVAILABLE), §7.1 line 28 (SESSION_CREATION_FAILED),
+// §15.1 line 1138 (Retry-After).
+func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCode, fallbackMsg string) {
 	var warming *podsession.PoolWarmingError
 	var credAssign *podsession.CredentialAssignmentError
 	switch {
@@ -83,9 +91,37 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackMs
 	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
 		s.writeWarmPoolExhausted(w, "concurrent_slots_exhausted")
 	default:
-		s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
+		// spec: §7.1 line 28 / §15.1 line 1138 — the atomic-unit fallback
+		// is always retryable; include Retry-After so a client backs off
+		// with a deterministic budget rather than parsing the body.
+		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
 			fallbackMsg+": "+err.Error(), nil)
 	}
+}
+
+// sessionCreationFailedRetryAfterSeconds is the default Retry-After
+// budget written on §7.1 atomic-unit failures (SESSION_CREATION_FAILED,
+// STARTING_FAILED). Five seconds matches the §4.3 TOKEN_SERVICE_UNAVAILABLE
+// floor and is short enough that a client retry sees a freshly idle
+// warm pod under the typical §5.2 fill cadence.
+// spec: §7.1 line 28; §15.1 line 1138.
+const sessionCreationFailedRetryAfterSeconds = 5
+
+// writeSessionCreationFailed writes the §7.1 line 28 SESSION_CREATION_FAILED
+// 503 envelope used by the create paths (POST /v1/sessions, POST
+// /v1/sessions/start) when the atomic unit (steps 2-8) fails outside
+// the classified errors (CREDENTIAL_POOL_EXHAUSTED, WARM_POOL_EXHAUSTED,
+// RUNTIME_UNAVAILABLE, TOKEN_SERVICE_UNAVAILABLE). reason is echoed
+// under details.reason so an operator can distinguish
+// upload_token_issuance_failed from row_persistence_failed without
+// parsing the human message. The §15.1 line 1138 Retry-After header is
+// always included so clients back off with a deterministic budget.
+// spec: §7.1 line 28; §15.1 line 1138.
+func (s *Server) writeSessionCreationFailed(w http.ResponseWriter, reason, message string) {
+	w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
+	s.writeError(w, http.StatusServiceUnavailable, "SESSION_CREATION_FAILED",
+		message, map[string]any{"reason": reason})
 }
 
 // writeCredentialPoolExhausted writes the §4.9 CREDENTIAL_POOL_EXHAUSTED
@@ -249,6 +285,10 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// at create (mirrors the plain create path) so the GC can reclaim
 	// this session's artifacts; the terminal transition rolls it forward.
 	row.RetentionExpiresAt = row.CreatedAt.Add(s.defaultRetention)
+	// spec: §4.2 line 159 — stamp the resume-eligibility deadline so the
+	// row reaching `running` carries the same per-session resume window
+	// as the two-step `POST /v1/sessions` + `POST /start` path.
+	row.ResumeEligibleUntil = row.CreatedAt.Add(s.resumeWindow)
 	// §10.7: the ExperimentRouter may enroll the session in a variant,
 	// rewriting its runtime/pool before the row is persisted. It fails
 	// the creation closed when the variant pool is less isolated than
@@ -267,46 +307,55 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	}); !ok {
 		return
 	}
-	if err := s.store.Create(r.Context(), row); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	s.recordSessionCreated(r.Context(), row)
 
-	// §7.1 step 8: mint the uploadToken — useful even for the
-	// /sessions/start path because clients may follow up with
-	// mid-session uploads when the runtime supports them.
+	// spec: §7.1 line 28 — atomicity. Mint the §7.1 step 8 uploadToken
+	// and run the pod claim BEFORE the row is persisted: a failure in any
+	// step of the create-and-start atomic unit (mint, pre-claim,
+	// claim, bind) returns `SESSION_CREATION_FAILED` to the client with
+	// no session row left behind, matching the §7.1 "does NOT persist
+	// the session row" contract. On store.Create failure the bound pod
+	// is released to the §6.2 reclaim path so no pod or credential
+	// lease leaks past the failure.
 	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, 0)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"upload token issuance failed", nil)
-		return
-	}
-	if _, err := s.store.Update(r.Context(), tenantID, row.ID, func(row *sessionstore.Session) error {
-		row.UploadTokenDigest = parsed.Digest
-		row.UploadTokenExpiry = parsed.Expiry
-		return nil
-	}); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
+			"upload token issuance failed: "+err.Error())
 		return
 	}
 	row.UploadTokenDigest = parsed.Digest
 	row.UploadTokenExpiry = parsed.Expiry
 
 	// When the gateway is wired with a pod binder, the §15.1 start path
-	// places the session on a Kubernetes warm pod before reporting it
-	// running. A claim failure marks the row failed and surfaces a
-	// retryable 503 rather than leaving a session stuck in running with
-	// no pod behind it. A Token Service outage during credential
-	// assignment surfaces as TOKEN_SERVICE_UNAVAILABLE with Retry-After
-	// per §4.3 line 214.
+	// places the session on a Kubernetes warm pod before the row is
+	// persisted. A claim failure leaves no row behind per the atomicity
+	// contract. A Token Service outage during credential assignment
+	// surfaces as TOKEN_SERVICE_UNAVAILABLE with Retry-After per §4.3
+	// line 214.
+	var bound *podsession.BindResult
 	if s.podBinder != nil {
-		if err := s.startOnPod(r.Context(), row, parsedPlan); err != nil {
-			s.failSession(r.Context(), tenantID, row.ID)
-			s.writePodClaimError(w, err, "could not place the session on a warm pod")
+		result, err := s.startOnPod(r.Context(), row, parsedPlan)
+		if err != nil {
+			s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
+				"could not place the session on a warm pod")
 			return
 		}
+		bound = result
+		if bound != nil {
+			row.PodAssignment = bound.SandboxName
+		}
 	}
+
+	if err := s.store.Create(r.Context(), row); err != nil {
+		// spec: §7.1 line 28 — persistence failure after the bind must
+		// roll back the claimed pod so the gateway does not leak a pod
+		// or its credential lease past a "no session_id returned"
+		// failure.
+		s.rollbackBinding(r.Context(), bound)
+		s.writeSessionCreationFailed(w, "row_persistence_failed", err.Error())
+		return
+	}
+	s.recordSessionCreated(r.Context(), row)
+	s.registerBinding(r.Context(), bound)
 
 	// spec: §7.2 line 137 — the create-and-start path lands the session
 	// directly in running, so emit status_change(running) for SSE
@@ -365,10 +414,17 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 				"stored workspace plan could not be parsed: "+err.Error(), nil)
 			return
 		}
-		if err := s.startOnPod(r.Context(), row, plan); err != nil {
-			s.writePodClaimError(w, err, "could not place the session on a warm pod")
+		result, err := s.startOnPod(r.Context(), row, plan)
+		if err != nil {
+			// spec: §7.1 line 28 / §6.2 line 303 — `POST /v1/sessions/{id}/start`
+			// returns `STARTING_FAILED` when the §7.1 atomic-creation unit
+			// fails on the explicit start half. The row stays `ready` so the
+			// client can retry; no pod is left allocated (pre-claim or
+			// claim-attempt errors release before this point).
+			s.writePodClaimError(w, err, "STARTING_FAILED", "could not place the session on a warm pod")
 			return
 		}
+		s.registerBinding(r.Context(), result)
 	}
 
 	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
@@ -698,34 +754,39 @@ func poolDescriptor(p credentialpoolstore.CredentialPool) credrouter.PoolDescrip
 // session and task modes claim an idle pod through podBinder.Bind,
 // concurrent mode reserves a slot on a shared pod through
 // podBinder.BindSlot (§5.2). The pod's §4.7 adapter runs the
-// per-mode assignment sequence and the binding is recorded so the
-// message and teardown paths can reach the pod.
+// per-mode assignment sequence; the BindResult is returned for the
+// caller to register and persist after its own atomicity gates pass.
 //
-// On success the bound pod's SandboxName is persisted to
-// sessions.pod_assignment so a fresh gateway replica can recover the
-// binding after a coordinator handoff without losing the assignment.
-// spec: §4.2 line 160 — "Pod-to-session binding".
-func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) error {
+// startOnPod no longer registers the binding or persists the
+// SandboxName field itself: the §7.1 line 28 atomicity contract
+// requires the gateway to skip the persist write entirely when an
+// earlier step in steps 2-8 fails, so the caller decides when to
+// publish the binding. The session-mode and concurrent-slot paths
+// both surface their result the same way; the caller distinguishes
+// them by inspecting BindResult.SlotID when it has to roll back.
+// spec: §4.2 line 160 — "Pod-to-session binding"; §7.1 line 28 —
+// atomic-creation rollback.
+func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*podsession.BindResult, error) {
 	// spec: §4.9 lines 1216-1218 — run the pre-claim credential
 	// availability check and resolve the per-provider pool map BEFORE a
 	// pod is claimed, so a session that would fail at credential
 	// assignment is rejected without wasting a warm pod.
 	credPools, err := s.resolveCredentialPools(ctx, row)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// spec: §5.2 lines 602-625 — a session targeting a pool in the
 	// PoolWarmingUp bootstrap state returns 503 RUNTIME_UNAVAILABLE
 	// before a claim is attempted, so the client receives a retry hint
 	// rather than burning a claim attempt that would surface as a less
-	// informative POD_CLAIM_FAILED.
+	// informative SESSION_CREATION_FAILED.
 	if match.PoolWarmingUp {
-		return &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
+		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	if match.ExecutionMode == string(runtimestore.ExecutionModeConcurrent) {
@@ -745,11 +806,9 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 			MinPlatformVersion: minPlatformVersion,
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
-		s.podRegistry.Put(result)
-		s.persistPodAssignment(ctx, row.TenantID, row.ID, result.SandboxName)
-		return nil
+		return result, nil
 	}
 	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
 		Pool:               match.Pool,
@@ -765,12 +824,47 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		MinPlatformVersion: minPlatformVersion,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	s.recordStartupMetrics(match, result.Timings)
+	return result, nil
+}
+
+// registerBinding publishes a successful startOnPod / resumeOnPod
+// result so the message and teardown paths can reach the pod, and
+// persists the bound pod's SandboxName to sessions.pod_assignment so
+// a fresh gateway replica can recover the binding after a coordinator
+// handoff. The persist is best-effort: a failure leaves the in-memory
+// Registry authoritative and the next coordination sweep re-publishes
+// the assignment. spec: §4.2 line 160 — "Pod-to-session binding".
+func (s *Server) registerBinding(ctx context.Context, result *podsession.BindResult) {
+	if result == nil {
+		return
+	}
 	s.podRegistry.Put(result)
-	s.persistPodAssignment(ctx, row.TenantID, row.ID, result.SandboxName)
-	return nil
+	s.persistPodAssignment(ctx, result.TenantID, result.SessionID, result.SandboxName)
+}
+
+// rollbackBinding releases a successful startOnPod result whose
+// caller has decided to abort the §7.1 line 28 atomic-creation flow
+// before the session row was persisted. Session-mode and task-mode
+// bindings drop through Binder.Release with a `failed` disposition;
+// concurrent-slot bindings drop through ReleaseSlot. Best-effort:
+// the §6.2 reclaim path runs regardless, so a release error here is
+// logged and swallowed. spec: §7.1 line 28 atomic-creation rollback.
+func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindResult) {
+	if result == nil || s.podBinder == nil {
+		return
+	}
+	var err error
+	if result.SlotID != "" {
+		err = s.podBinder.ReleaseSlot(ctx, result)
+	} else {
+		err = s.podBinder.Release(ctx, result, state.Failed)
+	}
+	if err != nil {
+		log.Printf("sessionserver: rollback binding for session %s: %v", result.SessionID, err)
+	}
 }
 
 // recordStartupMetrics observes the §6.3 startup-latency histograms for
@@ -893,7 +987,11 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	if s.podBinder != nil {
 		if err := s.resumeOnPod(r.Context(), row); err != nil {
 			s.failSession(r.Context(), tenantID, id)
-			s.writePodClaimError(w, err, "could not resume the session on a warm pod")
+			// spec: §7.3 — a resume claim failure surfaces as a retryable
+			// 503; the row was already persisted (resume requires it), so
+			// `RESUME_FAILED` is the analogous spec-named fallback to
+			// `SESSION_CREATION_FAILED` and `STARTING_FAILED`.
+			s.writePodClaimError(w, err, "RESUME_FAILED", "could not resume the session on a warm pod")
 			return
 		}
 	}
@@ -1006,7 +1104,12 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) erro
 		if err != nil {
 			return err
 		}
-		return s.startOnPod(ctx, row, plan)
+		result, err := s.startOnPod(ctx, row, plan)
+		if err != nil {
+			return err
+		}
+		s.registerBinding(ctx, result)
+		return nil
 	}
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
