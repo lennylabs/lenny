@@ -24,7 +24,29 @@
 //     (`401 UPLOAD_TOKEN_INVALID`).
 //   - Key rotation — the KeyRing carries one signing key plus zero or
 //     more verification keys still inside the §7.1 overlap window
-//     (default 5 minutes). Verify accepts any key in the ring.
+//     (default 5 minutes). Verify accepts any key in the ring. The
+//     gateway's Rotator (see rotator.go) drives the 24h rotation
+//     cadence and the overlap-window sweep.
+//
+// **Secret-credential handling — gateway side.** Per §7.1 line 63 the
+// uploadToken is a secret credential: clients MUST NOT log it, embed
+// it in URLs, or include it in client-side error reports. On the
+// gateway side this package is the sole holder of the plaintext
+// signing keys and the only producer of token strings. The gateway:
+//
+//   - Returns the token in the response body of `POST /v1/sessions`
+//     and `POST /v1/sessions/start` only; never in a URL, redirect
+//     header, or log line.
+//   - Persists only the SHA-256 digest of the token on the session
+//     row (`uploadTokenDigest`), never the token itself; the digest
+//     is opaque and cannot be replayed.
+//   - Stores the consumed-tracker keyed by digest so the §11.7 audit
+//     log and any operator-side observability surface never see the
+//     raw token.
+//
+// Callers in the gateway (`pkg/gateway/sessionserver/upload.go` and
+// friends) preserve this boundary: a verify failure logs the digest
+// and the §15.1 error code, never the raw token bytes.
 //
 // The package is pure: no Redis, no Postgres. The
 // `ConsumedTracker` interface lets production swap in a Redis-backed

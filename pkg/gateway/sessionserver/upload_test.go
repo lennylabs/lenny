@@ -144,6 +144,34 @@ func TestUploadRejectsInvalidToken(t *testing.T) {
 	}
 }
 
+// spec: §7.1 line 63 — "Clients MUST treat `uploadToken` as a secret
+// credential: it MUST NOT be logged, embedded in URLs, or included in
+// client-side error reports." The client-side rules bind the caller;
+// the gateway-side companion is that the server response never
+// echoes the supplied token. This test sends a deliberately
+// recognisable token string and verifies the §15.1 error envelope
+// (message, details, code, category) does not contain it.
+func TestUploadResponseNeverEchoesToken_spec_7_1_15(t *testing.T) {
+	srv, _, _, _, store, _ := newUploadServer(t)
+	seedCreatedSession(t, store, "sess_upload", "acme")
+	// A clearly-marked sentinel: if the gateway logs or echoes the
+	// supplied token bytes anywhere, this exact string will surface in
+	// the response body.
+	sentinel := "SECRET-uploadToken-DO-NOT-LEAK-9c0ffee"
+	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", sentinel, []byte("data"), "text/plain")
+	body := rr.Body.String()
+	if strings.Contains(body, sentinel) {
+		t.Errorf("response body echoed the supplied uploadToken; §7.1 line 63 redaction violated. body=%s", body)
+	}
+	for k, vs := range rr.Header() {
+		for _, v := range vs {
+			if strings.Contains(v, sentinel) {
+				t.Errorf("response header %s echoed the supplied uploadToken; §7.1 line 63 violation. value=%s", k, v)
+			}
+		}
+	}
+}
+
 func TestUploadRejectsSessionMismatch(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
