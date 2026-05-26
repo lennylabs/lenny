@@ -443,17 +443,12 @@ func main() {
 	// §10.6: the platform-wide noEnvironmentPolicy must be set
 	// explicitly. Dev mode derives allow-all for local convenience;
 	// outside dev mode an unset value is a fatal misconfiguration so a
-	// chart with the default stripped fails closed at startup.
-	resolvedNoEnvPolicy := *noEnvPolicy
-	if resolvedNoEnvPolicy == "" && *devMode {
-		resolvedNoEnvPolicy = tenantstore.NoEnvPolicyAllowAll
-	}
-	if resolvedNoEnvPolicy == "" {
-		log.Fatalf("lenny-gateway: LENNY_CONFIG_MISSING config_key=noEnvironmentPolicy scope=platform: " +
-			"set --no-environment-policy or LENNY_NO_ENVIRONMENT_POLICY to deny-all or allow-all (§10.6)")
-	}
-	if resolvedNoEnvPolicy != tenantstore.NoEnvPolicyDenyAll && resolvedNoEnvPolicy != tenantstore.NoEnvPolicyAllowAll {
-		log.Fatalf("lenny-gateway: --no-environment-policy must be deny-all or allow-all, got %q", resolvedNoEnvPolicy)
+	// chart with the default stripped fails closed at startup. See
+	// resolveNoEnvironmentPolicy for the pure-function form the
+	// §11.1 TestGatewayConfigValidation regression test exercises.
+	resolvedNoEnvPolicy, err := resolveNoEnvironmentPolicy(*noEnvPolicy, *devMode)
+	if err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
 	}
 
 	// spec: §4.2 line 165 — LENNY_POOLER_MODE must be one of the two
@@ -2203,11 +2198,14 @@ func main() {
 
 	// §11.1 rate limiting next — runs just after auth so the per-user
 	// scope sees the authenticated principal. Limits default to zero
-	// (disabled); operators set them via the rate-limit flags.
+	// (disabled); operators set them via the rate-limit flags. Metrics
+	// wires the §11.1 line 7 rejection counter and the §16.5
+	// RateLimitDegraded fail-open gauge.
 	handler = ratelimitmw.Wrap(handler, ratelimitmw.Options{
 		Counter:          rateLimiter,
 		GlobalPerMinute:  *rlGlobalPerMin,
 		PerUserPerMinute: *rlPerUserPerMin,
+		Metrics:          gwMetrics,
 	})
 
 	// §10.6 transparent-filtering environment resolver — runs
@@ -2970,6 +2968,31 @@ func verifyPostgresSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("postgres: schema not migrated (the sessions table is absent); apply migrations/ before starting the gateway")
 	}
 	return nil
+}
+
+// resolveNoEnvironmentPolicy returns the resolved §10.6 / §11.1
+// platform-wide noEnvironmentPolicy or a fatal-startup error. An
+// empty value outside dev mode returns the
+// "LENNY_CONFIG_MISSING config_key=noEnvironmentPolicy scope=platform"
+// error §10.3's configuration validation table mandates. Dev mode
+// derives allow-all for local convenience. Any value other than
+// deny-all / allow-all returns a typed validation error. Extracted
+// from main() so the §11.1 TestGatewayConfigValidation test can
+// regression-cover the §10.3 contract. spec: §10.6 line 646;
+// §11.1 line 13; §10.3 configuration validation table.
+func resolveNoEnvironmentPolicy(value string, devMode bool) (string, error) {
+	resolved := value
+	if resolved == "" && devMode {
+		resolved = tenantstore.NoEnvPolicyAllowAll
+	}
+	if resolved == "" {
+		return "", fmt.Errorf("LENNY_CONFIG_MISSING config_key=noEnvironmentPolicy scope=platform: " +
+			"set --no-environment-policy or LENNY_NO_ENVIRONMENT_POLICY to deny-all or allow-all (§10.6)")
+	}
+	if resolved != tenantstore.NoEnvPolicyDenyAll && resolved != tenantstore.NoEnvPolicyAllowAll {
+		return "", fmt.Errorf("--no-environment-policy must be deny-all or allow-all, got %q", resolved)
+	}
+	return resolved, nil
 }
 
 // resolveReplicaID returns this gateway replica's §10.1 coordination

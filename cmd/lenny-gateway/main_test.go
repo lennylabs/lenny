@@ -331,3 +331,80 @@ func TestNewSSEKeyResolverPicksT4AliasOrFallsBack(t *testing.T) {
 		})
 	}
 }
+
+// TestGatewayConfigValidation_spec_11_1 asserts the §10.3 configuration
+// validation table contract for the noEnvironmentPolicy startup key:
+// outside dev mode an unset value is a fatal startup error carrying the
+// `LENNY_CONFIG_MISSING config_key=noEnvironmentPolicy scope=platform`
+// log marker §10.3 mandates; under dev mode an unset value derives
+// allow-all (the §17.4 dev-mode escape hatch); explicit deny-all and
+// allow-all both pass through; an unrecognised value is rejected.
+// spec: §11.1 line 13; §10.3 configuration validation table; §10.6
+// line 646; §17.4 dev mode.
+func TestGatewayConfigValidation_spec_11_1(t *testing.T) {
+	cases := []struct {
+		name        string
+		value       string
+		devMode     bool
+		want        string
+		wantErr     bool
+		wantErrMsg  string
+	}{
+		{
+			name:       "missing outside dev mode emits LENNY_CONFIG_MISSING",
+			value:      "",
+			devMode:    false,
+			wantErr:    true,
+			wantErrMsg: "LENNY_CONFIG_MISSING config_key=noEnvironmentPolicy scope=platform",
+		},
+		{
+			name:    "missing under dev mode derives allow-all",
+			value:   "",
+			devMode: true,
+			want:    tenantstore.NoEnvPolicyAllowAll,
+		},
+		{
+			name:  "explicit deny-all passes through",
+			value: tenantstore.NoEnvPolicyDenyAll,
+			want:  tenantstore.NoEnvPolicyDenyAll,
+		},
+		{
+			name:  "explicit allow-all passes through",
+			value: tenantstore.NoEnvPolicyAllowAll,
+			want:  tenantstore.NoEnvPolicyAllowAll,
+		},
+		{
+			name:       "dev mode does not override an explicit unknown value",
+			value:      "permit-everything",
+			devMode:    true,
+			wantErr:    true,
+			wantErrMsg: "must be deny-all or allow-all",
+		},
+		{
+			name:       "unrecognised value rejected outside dev mode",
+			value:      "audit-only",
+			wantErr:    true,
+			wantErrMsg: "must be deny-all or allow-all",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveNoEnvironmentPolicy(tc.value, tc.devMode)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("err = nil, want one containing %q", tc.wantErrMsg)
+				}
+				if !strings.Contains(err.Error(), tc.wantErrMsg) {
+					t.Errorf("err = %q, want containing %q", err.Error(), tc.wantErrMsg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("resolved = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

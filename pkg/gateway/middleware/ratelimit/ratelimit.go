@@ -6,21 +6,38 @@
 // scope's count exceeds its configured per-minute limit.
 //
 // A counter error fails open: §11.1 admission must not block traffic
-// on a transient counter outage. The per-runtime and per-pool scopes
-// the §11.1 table also names need the request's resolved runtime and
-// pool, which are not available at the middleware boundary; they are
-// enforced deeper once the pool model is wired.
+// on a transient counter outage. The fail-open path emits the
+// lenny_rate_limit_failopen_active gauge that the §16.5
+// RateLimitDegraded alert reads and increments
+// lenny_rate_limit_counter_failure_total so an outage is observable
+// even before the alert's persistence window. The per-runtime and
+// per-pool scopes the §11.1 table also names need the request's
+// resolved runtime and pool, which are not available at the
+// middleware boundary; they are enforced deeper once the pool model
+// is wired.
 package ratelimit
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 )
+
+// Metrics is the subset of gatewaymetrics.Metrics the §11.1 ratelimit
+// middleware emits. A nil Metrics passes every recorder call through
+// to a no-op so the middleware remains usable in tests that do not
+// register a registry. spec: §11.1 line 7; §16.5 RateLimitDegraded.
+type Metrics interface {
+	IncRateLimitRejected(scope string)
+	SetRateLimitFailopenActive(active bool)
+	IncRateLimitCounterFailure()
+}
 
 // Options configures the rate-limit middleware.
 type Options struct {
@@ -39,6 +56,17 @@ type Options struct {
 	// Clock overrides time.Now for the window computation. Tests inject
 	// a fixed clock; production leaves this nil.
 	Clock func() time.Time
+
+	// Metrics receives §11.1 rejection counters and the fail-open
+	// gauge flip. Nil leaves observability disabled — the middleware
+	// still enforces and fails open identically. spec: §11.1 line 7.
+	Metrics Metrics
+
+	// Logger receives a structured WARN line on each counter error so
+	// a Redis outage is visible even when no rejection ever fires.
+	// Nil uses the default log package. spec: §11.1 line 7 fail-open
+	// observability.
+	Logger *log.Logger
 }
 
 // Wrap returns the §11.1 rate-limit middleware around inner.
@@ -54,6 +82,14 @@ type middleware struct {
 	inner http.Handler
 	opts  Options
 	clock func() time.Time
+	// failopen is the per-replica fail-open state. We mirror it onto
+	// the metrics gauge so the §16.5 RateLimitDegraded alert reflects
+	// the live state without depending on metrics scrape ordering.
+	// Storing the latched bool here lets repeated outages skip the
+	// gauge write (a constant 1 reads identically), and lets the
+	// recovery edge clear back to 0 the next time Incr succeeds.
+	// spec: §16.5 RateLimitDegraded; §11.1 line 7.
+	failopen atomic.Bool
 }
 
 func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -65,23 +101,74 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if m.opts.GlobalPerMinute > 0 {
 		count, err := m.opts.Counter.Incr(r.Context(), "global", now)
-		if err == nil && count > m.opts.GlobalPerMinute {
-			writeRateLimited(w, "global", m.opts.GlobalPerMinute, now)
-			return
+		if err != nil {
+			m.onCounterError("global", err)
+		} else {
+			m.onCounterSuccess()
+			if count > m.opts.GlobalPerMinute {
+				m.writeRateLimited(w, "global", m.opts.GlobalPerMinute, now)
+				return
+			}
 		}
 	}
 
 	if m.opts.PerUserPerMinute > 0 {
 		if key, ok := userKey(r); ok {
 			count, err := m.opts.Counter.Incr(r.Context(), key, now)
-			if err == nil && count > m.opts.PerUserPerMinute {
-				writeRateLimited(w, "user", m.opts.PerUserPerMinute, now)
-				return
+			if err != nil {
+				m.onCounterError("user", err)
+			} else {
+				m.onCounterSuccess()
+				if count > m.opts.PerUserPerMinute {
+					m.writeRateLimited(w, "user", m.opts.PerUserPerMinute, now)
+					return
+				}
 			}
 		}
 	}
 
 	m.inner.ServeHTTP(w, r)
+}
+
+// onCounterError emits the §11.1 fail-open observability triplet — a
+// structured WARN log, the failopen-active gauge flip, and the
+// counter-failure counter bump — so a silent counter outage no longer
+// disables ratelimit enforcement without operator visibility.
+// spec: §11.1 line 7.
+func (m *middleware) onCounterError(scope string, err error) {
+	if m.opts.Metrics != nil {
+		m.opts.Metrics.IncRateLimitCounterFailure()
+	}
+	if !m.failopen.Swap(true) {
+		// Edge: transitioning from healthy → degraded. Log once on
+		// entry (subsequent errors still bump the counter) and flip
+		// the gauge so the §16.5 alert can fire.
+		m.logger().Printf("ratelimit: counter unavailable scope=%q err=%q fail_open=true", scope, err.Error())
+		if m.opts.Metrics != nil {
+			m.opts.Metrics.SetRateLimitFailopenActive(true)
+		}
+	}
+}
+
+// onCounterSuccess clears the fail-open state on the recovery edge so
+// the §16.5 RateLimitDegraded alert resolves once Redis is back.
+// spec: §16.5 RateLimitDegraded.
+func (m *middleware) onCounterSuccess() {
+	if !m.failopen.Swap(false) {
+		// Already healthy; the gauge is already 0.
+		return
+	}
+	m.logger().Printf("ratelimit: counter recovered, fail_open=false")
+	if m.opts.Metrics != nil {
+		m.opts.Metrics.SetRateLimitFailopenActive(false)
+	}
+}
+
+func (m *middleware) logger() *log.Logger {
+	if m.opts.Logger != nil {
+		return m.opts.Logger
+	}
+	return log.Default()
 }
 
 // userKey returns the per-user counter key for the request, or
@@ -106,8 +193,14 @@ func isInfraPath(p string) bool {
 }
 
 // writeRateLimited writes the §15.1 429 RATE_LIMITED envelope and a
-// Retry-After header pointing at the next window boundary.
-func writeRateLimited(w http.ResponseWriter, scope string, limit int, now time.Time) {
+// Retry-After header pointing at the next window boundary. It also
+// emits the §11.1 line 7 `lenny_rate_limit_rejected_total{scope}`
+// counter so admission rejections are attributable by scope.
+// spec: §11.1 line 7; §15.1 RATE_LIMITED envelope.
+func (m *middleware) writeRateLimited(w http.ResponseWriter, scope string, limit int, now time.Time) {
+	if m.opts.Metrics != nil {
+		m.opts.Metrics.IncRateLimitRejected(scope)
+	}
 	retryAfter := 60 - now.Second()
 	if retryAfter <= 0 {
 		retryAfter = 1

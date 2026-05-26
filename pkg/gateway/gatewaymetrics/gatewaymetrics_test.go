@@ -868,6 +868,75 @@ func TestDelegationMetricsNilSafe_spec_8_2(t *testing.T) {
 	m.IncDelegationWouldHaveBlocked("pool-a", "acme", "policy", "enforce")
 }
 
+// spec: §11.1 line 7 — lenny_rate_limit_rejected_total{scope} carries
+// the §11.1 admission scope and bumps once per 429 rejection.
+func TestIncRateLimitRejected_spec_11_1(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncRateLimitRejected("global")
+	m.IncRateLimitRejected("user")
+	m.IncRateLimitRejected("user")
+	body := scrapeMetrics(t, m)
+	for _, want := range []string{
+		`lenny_rate_limit_rejected_total{scope="global"} 1`,
+		`lenny_rate_limit_rejected_total{scope="user"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q in /metrics, body=%q", want, body)
+		}
+	}
+}
+
+// spec: §16.5 RateLimitDegraded — the source gauge must flip 0→1 on
+// SetRateLimitFailopenActive(true) and 1→0 on the recovery call so
+// the alert resolves cleanly.
+func TestSetRateLimitFailopenActive_spec_16_5(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	body := scrapeMetrics(t, m)
+	if !strings.Contains(body, "lenny_rate_limit_failopen_active 0") {
+		t.Errorf("startup gauge sample = missing 0, body=%q", body)
+	}
+	m.SetRateLimitFailopenActive(true)
+	body = scrapeMetrics(t, m)
+	if !strings.Contains(body, "lenny_rate_limit_failopen_active 1") {
+		t.Errorf("degraded gauge sample = missing 1, body=%q", body)
+	}
+	m.SetRateLimitFailopenActive(false)
+	body = scrapeMetrics(t, m)
+	if !strings.Contains(body, "lenny_rate_limit_failopen_active 0") {
+		t.Errorf("recovery gauge sample = missing 0, body=%q", body)
+	}
+}
+
+// spec: §11.1 line 7 — counter-failure counter is monotonic across
+// the outage window so an operator can rate-aggregate even after the
+// gauge edge has fired.
+func TestIncRateLimitCounterFailure_spec_11_1(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncRateLimitCounterFailure()
+	m.IncRateLimitCounterFailure()
+	body := scrapeMetrics(t, m)
+	if !strings.Contains(body, "lenny_rate_limit_counter_failure_total 2") {
+		t.Errorf("expected counter_failure_total = 2, body=%q", body)
+	}
+}
+
+// spec: §11.1 — nil receivers are no-ops.
+func TestRateLimitMetricsNilSafe_spec_11_1(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncRateLimitRejected("global")
+	m.SetRateLimitFailopenActive(true)
+	m.IncRateLimitCounterFailure()
+}
+
 func scrapeMetrics(t *testing.T, m *gatewaymetrics.Metrics) string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)

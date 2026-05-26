@@ -3,11 +3,15 @@
 package ratelimit_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +19,47 @@ import (
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 )
+
+// recordingMetrics is a test double that captures every Metrics call.
+// spec: §11.1 line 7; §16.5 RateLimitDegraded.
+type recordingMetrics struct {
+	mu              sync.Mutex
+	rejected        map[string]int
+	failopenSet     []bool
+	counterFailures int
+}
+
+func (rm *recordingMetrics) IncRateLimitRejected(scope string) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	if rm.rejected == nil {
+		rm.rejected = map[string]int{}
+	}
+	rm.rejected[scope]++
+}
+
+func (rm *recordingMetrics) SetRateLimitFailopenActive(active bool) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	rm.failopenSet = append(rm.failopenSet, active)
+}
+
+func (rm *recordingMetrics) IncRateLimitCounterFailure() {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	rm.counterFailures++
+}
+
+func (rm *recordingMetrics) snapshot() (map[string]int, []bool, int) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	cp := make(map[string]int, len(rm.rejected))
+	for k, v := range rm.rejected {
+		cp[k] = v
+	}
+	gauge := append([]bool(nil), rm.failopenSet...)
+	return cp, gauge, rm.counterFailures
+}
 
 // spec: §11.1 requests-per-minute rate limiting.
 
@@ -136,5 +181,129 @@ func TestCounterErrorFailsOpen(t *testing.T) {
 		if code := fire(h, "/v1/sessions", ""); code != http.StatusNoContent {
 			t.Fatalf("request %d during a counter outage: status %d, want 204 (fail open)", i, code)
 		}
+	}
+}
+
+// TestGlobalRejectionEmitsCounter_spec_11_1 — §11.1 line 7 admission
+// rejection must increment lenny_rate_limit_rejected_total{scope}.
+func TestGlobalRejectionEmitsCounter_spec_11_1(t *testing.T) {
+	rm := &recordingMetrics{}
+	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: rlcounter.NewMemory(), GlobalPerMinute: 2, Clock: fixedClock, Metrics: rm,
+	})
+	// Two under-limit requests must not bump the rejection counter.
+	fire(h, "/v1/sessions", "")
+	fire(h, "/v1/sessions", "")
+	if code := fire(h, "/v1/sessions", ""); code != http.StatusTooManyRequests {
+		t.Fatalf("over-limit: status %d, want 429", code)
+	}
+	rejected, _, _ := rm.snapshot()
+	if rejected["global"] != 1 {
+		t.Errorf("global rejections = %d, want 1; full=%v", rejected["global"], rejected)
+	}
+	if rejected["user"] != 0 {
+		t.Errorf("user rejections = %d, want 0 (global only); full=%v", rejected["user"], rejected)
+	}
+}
+
+// TestPerUserRejectionEmitsCounter_spec_11_1 — the user-scope 429 must
+// attribute the rejection to scope="user" so operators can split global
+// vs per-user pressure.
+func TestPerUserRejectionEmitsCounter_spec_11_1(t *testing.T) {
+	rm := &recordingMetrics{}
+	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: rlcounter.NewMemory(), PerUserPerMinute: 1, Clock: fixedClock, Metrics: rm,
+	})
+	fire(h, "/v1/sessions", "alice@acme.com")
+	if code := fire(h, "/v1/sessions", "alice@acme.com"); code != http.StatusTooManyRequests {
+		t.Fatalf("over-limit: status %d, want 429", code)
+	}
+	rejected, _, _ := rm.snapshot()
+	if rejected["user"] != 1 {
+		t.Errorf("user rejections = %d, want 1; full=%v", rejected["user"], rejected)
+	}
+}
+
+// TestCounterErrorFlipsFailopen_spec_11_1 — §16.5 RateLimitDegraded
+// reads `lenny_rate_limit_failopen_active == 1`, so a counter outage
+// must flip the gauge to true and bump the counter-failure counter.
+func TestCounterErrorFlipsFailopen_spec_11_1(t *testing.T) {
+	rm := &recordingMetrics{}
+	var buf bytes.Buffer
+	logger := log.New(&buf, "", 0)
+	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: erroringCounter{}, GlobalPerMinute: 1, Clock: fixedClock, Metrics: rm, Logger: logger,
+	})
+	// First failure must flip the gauge and log.
+	fire(h, "/v1/sessions", "")
+	_, gauge, failures := rm.snapshot()
+	if failures != 1 {
+		t.Errorf("counter failures = %d after first error, want 1", failures)
+	}
+	if len(gauge) != 1 || !gauge[0] {
+		t.Errorf("failopen gauge sequence = %v, want [true] on entry", gauge)
+	}
+	if !strings.Contains(buf.String(), "ratelimit: counter unavailable") {
+		t.Errorf("expected fail-open log, got %q", buf.String())
+	}
+	// A second failure must bump the counter but not the gauge — the
+	// edge has already fired, the gauge stays pinned at true.
+	fire(h, "/v1/sessions", "")
+	_, gauge, failures = rm.snapshot()
+	if failures != 2 {
+		t.Errorf("counter failures = %d after second error, want 2", failures)
+	}
+	if len(gauge) != 1 {
+		t.Errorf("failopen gauge sequence = %v, want still [true] (edge only)", gauge)
+	}
+}
+
+// recoveringCounter fails the first N Incrs, then succeeds for ever.
+// spec: §16.5 RateLimitDegraded recovery edge.
+type recoveringCounter struct{ remaining atomic.Int32 }
+
+func (rc *recoveringCounter) Incr(_ context.Context, key string, _ time.Time) (int, error) {
+	_ = key
+	if rc.remaining.Add(-1) >= 0 {
+		return 0, errors.New("ratelimit: degraded")
+	}
+	return 1, nil
+}
+
+// TestCounterRecoveryClearsFailopen_spec_16_5 — once Incr succeeds
+// after a degraded window the gauge must clear back to 0 so the
+// RateLimitDegraded alert resolves.
+func TestCounterRecoveryClearsFailopen_spec_16_5(t *testing.T) {
+	rm := &recordingMetrics{}
+	rc := &recoveringCounter{}
+	rc.remaining.Store(2)
+	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: rc, GlobalPerMinute: 5, Clock: fixedClock, Metrics: rm,
+	})
+	fire(h, "/v1/sessions", "")
+	fire(h, "/v1/sessions", "")
+	// The next request lands on a successful Incr — recovery edge.
+	fire(h, "/v1/sessions", "")
+	_, gauge, _ := rm.snapshot()
+	if len(gauge) != 2 || gauge[0] != true || gauge[1] != false {
+		t.Errorf("failopen gauge sequence = %v, want [true,false]", gauge)
+	}
+}
+
+// TestNoMetricsIsSafe_spec_11_1 — Metrics is optional; a nil interface
+// must not panic on any rejection or fail-open transition.
+func TestNoMetricsIsSafe_spec_11_1(t *testing.T) {
+	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: rlcounter.NewMemory(), GlobalPerMinute: 1, Clock: fixedClock,
+	})
+	fire(h, "/v1/sessions", "")
+	if code := fire(h, "/v1/sessions", ""); code != http.StatusTooManyRequests {
+		t.Errorf("over-limit with nil metrics: status %d, want 429", code)
+	}
+	h = ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: erroringCounter{}, GlobalPerMinute: 1, Clock: fixedClock,
+	})
+	if code := fire(h, "/v1/sessions", ""); code != http.StatusNoContent {
+		t.Errorf("fail-open with nil metrics: status %d, want 204", code)
 	}
 }

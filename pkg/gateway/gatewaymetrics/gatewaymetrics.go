@@ -224,6 +224,29 @@ type Metrics struct {
 	// per-layer breakdown for diagnostic rollouts (the delegation is
 	// admitted). Not emitted under `mode: permissive`.
 	delegationWouldHaveBlocked *prometheus.CounterVec
+	// rateLimitRejected counts §11.1 line 7 admission rejections by
+	// the ratelimit middleware. Labelled by `scope` (`global` | `user`)
+	// so operators can attribute rejection volume to the scope that
+	// fired. Required by §11.1's observability contract; the metric is
+	// not in §16.1 because §11.1 leaves the metric name to the
+	// implementation, but the catalog still excludes it to keep the
+	// §16.1 surface in sync with that table.
+	// spec: §11.1 line 7.
+	rateLimitRejected *prometheus.CounterVec
+	// rateLimitFailopenActive is the §16.5 RateLimitDegraded alert's
+	// source gauge. Set to 1 once the ratelimit middleware has
+	// observed a counter error in the current process; cleared back
+	// to 0 on the next successful Incr. The §16.5 alert reads
+	// `lenny_rate_limit_failopen_active == 1`. spec: §16.5
+	// RateLimitDegraded; §11.1 line 7 fail-open semantics.
+	rateLimitFailopenActive prometheus.Gauge
+	// rateLimitCounterFailure counts §11.1 ratelimit middleware
+	// counter errors. Distinct from `rateLimitFailopenActive`: this is
+	// a monotonic per-error counter the operator can rate-aggregate
+	// to detect a partial Redis outage that produces sporadic Incr
+	// errors but stays under the alert's persistence window.
+	// spec: §11.1 line 7 fail-open observability.
+	rateLimitCounterFailure prometheus.Counter
 
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
@@ -859,6 +882,37 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §11.1 line 7 — `lenny_rate_limit_rejected_total` counts ratelimit
+	// middleware 429 rejections, labelled by `scope` (`global` | `user`)
+	// so operators can attribute rejection volume per enforcement axis.
+	rateLimitRejected, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_rate_limit_rejected_total",
+		Help: "§11.1 ratelimit middleware admission rejections by scope (global | user).",
+	}, []string{"scope"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.5 RateLimitDegraded — `lenny_rate_limit_failopen_active` is
+	// the per-replica fail-open gauge: 1 once a counter outage has been
+	// observed (the middleware is admitting traffic without enforcement),
+	// 0 once the next Incr returns successfully. The §16.5 alert reads
+	// `lenny_rate_limit_failopen_active == 1`.
+	rateLimitFailopenActive, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_rate_limit_failopen_active",
+		Help: "§11.1 ratelimit fail-open state: 1 while the counter is degraded, 0 when healthy.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §11.1 line 7 — `lenny_rate_limit_counter_failure_total` counts
+	// every counter error observed by the ratelimit middleware. Bumps
+	// at fail-open entry and on each subsequent error in the outage
+	// window so the operator sees a rate even when the gauge is
+	// pinned to 1.
+	rateLimitCounterFailure := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_rate_limit_counter_failure_total",
+		Help: "§11.1 ratelimit counter errors observed by the middleware.",
+	})
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -883,7 +937,8 @@ func New() (*Metrics, error) {
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
 		drainReadinessChecks, legalHoldCheckpointGaps,
 		artifactUploadError,
-		delegationDepth, delegationWouldHaveBlocked)
+		delegationDepth, delegationWouldHaveBlocked,
+		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -967,6 +1022,9 @@ func New() (*Metrics, error) {
 		artifactUploadError:                  artifactUploadError,
 		delegationDepth:                      delegationDepth,
 		delegationWouldHaveBlocked:           delegationWouldHaveBlocked,
+		rateLimitRejected:                    rateLimitRejected,
+		rateLimitFailopenActive:              rateLimitFailopenActive.WithLabelValues(),
+		rateLimitCounterFailure:              rateLimitCounterFailure,
 	}, nil
 }
 
@@ -1238,6 +1296,43 @@ func (m *Metrics) IncArtifactUploadError(tenantID, errorType string) {
 	// level/trigger labels are blank since the failure originates in
 	// the blob store before the higher-level context is available.
 	m.checkpointStorageFailure.WithLabelValues("", "", "", errorType).Inc()
+}
+
+// IncRateLimitRejected increments the §11.1 line 7
+// `lenny_rate_limit_rejected_total` counter for one 429 admission
+// rejection. scope is `global` or `user`. spec: §11.1 line 7.
+func (m *Metrics) IncRateLimitRejected(scope string) {
+	if m == nil {
+		return
+	}
+	m.rateLimitRejected.WithLabelValues(scope).Inc()
+}
+
+// SetRateLimitFailopenActive flips the §16.5 RateLimitDegraded source
+// gauge. The ratelimit middleware sets 1 once a counter error is
+// observed and 0 once the next Incr succeeds, so the alert reflects
+// the live degraded state. spec: §16.5 RateLimitDegraded; §11.1 line 7.
+func (m *Metrics) SetRateLimitFailopenActive(active bool) {
+	if m == nil {
+		return
+	}
+	v := 0.0
+	if active {
+		v = 1
+	}
+	m.rateLimitFailopenActive.Set(v)
+}
+
+// IncRateLimitCounterFailure increments the §11.1
+// `lenny_rate_limit_counter_failure_total` counter. The middleware
+// calls this on every Incr error so an operator can rate-aggregate
+// counter outages even when the failopen-active gauge is pinned to 1.
+// spec: §11.1 line 7.
+func (m *Metrics) IncRateLimitCounterFailure() {
+	if m == nil {
+		return
+	}
+	m.rateLimitCounterFailure.Inc()
 }
 
 // ObserveDelegationDepth records a §8.2 delegation-admission depth
