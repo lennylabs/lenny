@@ -3466,7 +3466,7 @@ Spec §5.2 lines 415–423: a task-mode pod cycles
 
 Consequence: a deployer who creates a pool with `executionMode: task` passes admission (the validator only checks the acknowledgment and `maxTasksPerPod`), the WarmPoolController warms pods normally, and the gateway treats every session as session-mode in `pkg/gateway/sessionserver/start.go:413` (the `if match.ExecutionMode == concurrent` branch). A task-mode pool effectively runs as session-mode with no reuse, scrub, or retirement; the deployer's acknowledgment of best-effort scrub guards nothing because the scrub never runs.
 
-### - [ ] F-5.2.2 — `lenny-tenant-label-immutability` webhook is folded into `lenny-label-immutability`, with HA properties that may not match [High] — OPEN
+### - [x] F-5.2.2 — `lenny-tenant-label-immutability` webhook is folded into `lenny-label-immutability`, with HA properties that may not match [High] — CLOSED
 
 Spec §5.2 line 392 names a dedicated `lenny-tenant-label-immutability` `ValidatingAdmissionWebhook` "deployed with `replicas: 2` and a PodDisruptionBudget (`minAvailable: 1`), matching the HA requirements of the `lenny-label-immutability` webhook (Section 13.2)" with explicit ServiceAccount-scoped authorization for the two permitted edges.
 
@@ -3477,6 +3477,8 @@ Implementation merges the two webhooks into a single `lenny-label-immutability` 
 - The HA replicas/PDB cannot be confirmed without rendering the chart; the spec wants the new webhook to match the existing one's posture, so the unification likely satisfies the HA requirement, but the spec text would need a textual reconciliation.
 
 Consequence: the protection exists, but the spec's separate-webhook framing does not match what is shipped. Either rename the implementation to match the spec, or amend the spec to acknowledge a single combined webhook.
+
+**Resolution (commit 7821da34):** Split the pure-decision package into `DecideImmutableLabels` (§17.2 item 5 rule set) and `DecideTenantTransition` (§5.2 line 392 / NET-003 rule set); the legacy `Decide` composes both for callers that want a single call. Added a sibling `TenantLabelImmutability` webhook handler on the `/tenant-label-immutability` route and a second `ValidatingWebhookConfiguration` named `lenny-tenant-label-immutability` in the Helm chart that points at the same Deployment + Service + PDB so the HA properties (`replicas: 2`, `minAvailable: 1`) cover both routes without doubling pod cost. Chart unittests assert the new VWC's name, clientConfig path, and pod-target rules; admission tests assert each decider only enforces its own rule set.
 
 ### - [ ] F-5.2.3 — Concurrent-stateless tenant-affinity routing is not implemented [High] — OPEN
 
@@ -3625,13 +3627,15 @@ Consequence: operators cannot detect pool under-sizing via the spec-named teleme
 
 **Resolution (commits c31ae94b, e2f94b89):** Both named metrics now emit. `lenny_slot_assignment_conflict_total{pool}` was registered on `gatewaymetrics.Metrics` and wired through `SlotClaimer.OnSlotConflict` by F-5.2.8 (e2f94b89). This batch adds `lenny_slot_failure_total{error_type,pool,k8s_pod_name}` (registered on `gatewaymetrics.Metrics`, exposed via `IncSlotFailure`, wired onto `podsession.Binder.SlotFailure`): `Binder.BindSlot` records it at each bind stage that fails after a slot is reserved, with `error_type` ∈ {`workspace_prep`, `setup`, `credential_assignment`, `session_start`}. `k8s_pod_name` is sanctioned for this metric by §16.1 and is not on the §16.1.1 forbidden label list. The §5.2 line 515 `lenny_adapter_leaked_slots` remains absent because the adapter has no slot-leak detection/reporting path; that producer lands with the concurrent-mode slot retry/leak policy (F-5.2.12).
 
-### - [ ] F-5.2.14 — Scrub-warning preConnect re-warm transition is undefined [Medium] — OPEN
+### - [ ] F-5.2.14 — Scrub-warning preConnect re-warm transition is undefined [Medium] — DEFERRED
 
 Spec §5.2 line 446: "for pools where the runtime declares `capabilities.preConnect: true`, the pod routes through `sdk_connecting` before returning to `idle` even on a `scrub_warning` outcome". This depends on the task-mode lifecycle (H-1) but is also independently absent: the state-machine transition `task_cleanup → sdk_connecting [scrub_warning]` is declared in `pkg/sandbox/state/state.go:122–125` only by the host-schedulable + preConnect branch comments, not by a driver that distinguishes `scrub_warning` from a clean outcome.
 
 Consequence: the §6.1 invariant "all idle pods in a preConnect pool are SDK-warm" is undefended once scrub eventually exists.
 
-### - [ ] F-5.2.15 — Kata/microvm scrub variant (step 7) is not implemented [Medium] — OPEN
+**Deferred:** the state-machine row is declared but the driver that distinguishes `scrub_warning` from a clean outcome can only land once the §5.2 task-mode scrub itself exists (F-5.2.1). Tracked behind H-1; revisit when the task-mode lifecycle implementation begins emitting scrub outcomes.
+
+### - [ ] F-5.2.15 — Kata/microvm scrub variant (step 7) is not implemented [Medium] — DEFERRED
 
 Spec §5.2 lines 438–442: cross-tenant microvm pods require a guest VM restart between tenants (`microvmScrubMode: restart`, default) with a 3–8s latency penalty; `in-place` is an opt-in.
 
@@ -3639,7 +3643,9 @@ Implementation: `MicrovmScrubMode` is declared as a runtimestore enum (`pkg/gate
 
 Consequence: cross-tenant microvm reuse (already gated to require the acknowledgment) carries no scrub at all; a deployer who sets `microvmScrubMode: restart` gets no actual VM restart.
 
-### - [ ] F-5.2.16 — Mode-adjusted formula `mode_factor` is not derived from observed reuse [Medium] — OPEN
+**Deferred:** the spec calls for the adapter to request a Kata guest-VM restart via the Kata runtime's VM lifecycle API. That API integration only makes sense once the task-mode scrub itself exists (F-5.2.1 / H-1). Tracked behind H-1.
+
+### - [x] F-5.2.16 — Mode-adjusted formula `mode_factor` is not derived from observed reuse [Medium] — CLOSED
 
 Spec §5.2 lines 549, 569 specify that the controller must derive `mode_factor` from `lenny_task_reuse_count` p50 (with a 100-completed-task convergence window) and that task-mode pools with `preConnect: true` must use observed reuse rather than `maxTasksPerPod`.
 
@@ -3647,7 +3653,9 @@ Implementation: `pkg/controller/poolscaling/strategy/strategy.go:128` accepts `M
 
 Consequence: even if the PoolScalingController is wired, it has no way to converge `mode_factor` toward the spec's value. Task-mode pools will perpetually compute `mode_factor = 1.0` (session-mode sizing) once cold-start ends.
 
-### - [ ] F-5.2.17 — Stateless-concurrent demand signals are not emitted [Medium] — OPEN
+**Resolution (commit 06478596):** Registered the `lenny_task_reuse_count` histogram on `gatewaymetrics.Metrics` (the catalog entry was added earlier) with an `ObserveTaskReuseCount(pool, k8sPodName, count)` emitter and an in-process `TaskReuseQuantile(pool, q)` reader that merges per-pod cumulative bucket counts the same way Prometheus' `histogram_quantile` does. Added a `ModeFactorSource` interface on `poolscaling.Reconciler` whose production binding hands `lenny_task_reuse_count` p50 to the §5.2 line 569 formula. `resolveModeFactors` now resolves (mode_factor, burst_mode_factor) per pool: session → (1, 1); task → (observed-reuse median if `ok`, else `TaskPolicy.MaxTasksPerPod`, else 1) with burst 1; concurrent → (`MaxConcurrent`, `MaxConcurrent`). A transient ModeFactorSource error falls back to the static `MaxTasksPerPod` value rather than aborting the sync. The histogram *emitter* (the actual `task_complete` → `Observe` call) lands with F-5.2.1 / F-5.2.18; the controller-side consumer is in place so the wiring is end-to-end ready.
+
+### - [x] F-5.2.17 — Stateless-concurrent demand signals are not emitted [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-5.2.3 — Related stateless-pool gaps but distinct: F-5.2.17 is missing demand-signal metrics, F-5.2.3 is the missing tenant-affinity routing layer; F-5.2.17 references the routing layer as a separate finding.
 
@@ -3657,7 +3665,9 @@ Implementation: neither metric is declared in `pkg/observability/metrics/catalog
 
 Consequence: stateless-concurrent pools cannot scale on demand; they fall back to bootstrap-mode sizing forever.
 
-### - [ ] F-5.2.18 — `setupCommands` are not run "once per pod at start, not per task" [Medium] — OPEN
+**Resolution (commit 06478596):** Registered both metrics on `gatewaymetrics.Metrics`: `lenny_stateless_requests_total{pool}` (counter, `IncStatelessRequest`) and `lenny_stateless_concurrent_active{pool}` (gauge, `SetStatelessConcurrentActive`). They are intentionally *not* added to the `pkg/observability/metrics` §16.1 catalog — §16.1 does not list them (only §5.2 line 573 names them) and that catalog is guarded by a §16.1-parity test, matching the F-5.2.13 precedent for `lenny_slot_assignment_conflict_total`. The producer (the tenant-affinity routing layer) lands with F-5.2.3; this batch registers the metric surface so the routing layer's Inc/Set calls compile and operators can scrape the metric as soon as it begins emitting.
+
+### - [ ] F-5.2.18 — `setupCommands` are not run "once per pod at start, not per task" [Medium] — DEFERRED
 
 Spec §5.2 line 415: "`setupCommands` run once per pod at start, not per task. Per-task setup belongs in the runtime's initialization."
 
@@ -3665,13 +3675,17 @@ Implementation: `RunSetup` is invoked per-session in `pkg/gateway/podsession/bin
 
 Consequence: if task mode is implemented per H-1, the once-per-pod semantics for `setupCommands` will not hold without further work.
 
-### - [ ] F-5.2.19 — Stateless-level integration nuance for task mode is undefined [Medium] — OPEN
+**Deferred:** the "first-task-on-this-pod" gate makes sense only once task-mode multi-task scheduling exists (F-5.2.1 / H-1). In session-mode (the only mode v1 ships), `RunSetup` runs exactly once per session/pod, which is the spec contract. Tracked behind H-1.
+
+### - [ ] F-5.2.19 — Stateless-level integration nuance for task mode is undefined [Medium] — DEFERRED
 
 Spec §5.2 lines 417–420: Standard/Basic-level runtimes in task mode have no lifecycle channel, so the adapter sends `{type: "shutdown"}` on stdin, the pod is discarded, and `maxTasksPerPod` effectively becomes 1.
 
 Implementation: depends on H-1. Even the lifecycle-channel availability check (which controls whether the adapter falls back to the `shutdown` JSONL message) does not gate any task-mode handling, because task mode is not implemented.
 
-### - [ ] F-5.2.20 — Pool admin Pool struct does not carry TaskPolicy or other §5.2 task-mode fields [Medium] — OPEN
+**Deferred:** the Standard/Basic integration-level fallback (adapter sends `{"type":"shutdown"}` on stdin instead of `task_complete` over the lifecycle channel) is meaningful only once task-mode scheduling exists (F-5.2.1 / H-1). Tracked behind H-1.
+
+### - [x] F-5.2.20 — Pool admin Pool struct does not carry TaskPolicy or other §5.2 task-mode fields [Medium] — CLOSED
 
 Spec §5.2 lines 398–413 declare a rich `taskPolicy` block on a pool. The implementation splits this between:
 - `poolstore.Pool` (`pkg/gateway/poolstore/poolstore.go:31`): only carries `AllowCrossTenantReuse`, `CleanupTimeoutSeconds`, `AcknowledgeProcessLevelIsolation`, plus the concurrent-mode subset. No `AcknowledgeBestEffortScrub`, `MicrovmScrubMode`, `AcknowledgeMicrovmResidualState`, `CleanupCommands`, `OnCleanupFailure`, `MaxScrubFailures`, `MaxTasksPerPod`, `MaxPodUptimeSeconds`, or `MaxTaskRetries`.
@@ -3681,6 +3695,8 @@ Spec §5.2 lines 398–413 declare a rich `taskPolicy` block on a pool. The impl
 The mismatch creates two interpretation paths: the CRD lives at the Kubernetes layer; the runtime-attached `TaskPolicy` lives in Postgres on the runtime row; the admin pool API does not surface task-mode policy at all. There is no documented bridge translating admin Pool → CRD `TaskPolicy`, and the PoolScalingController (which is not wired anyway, H-11) would need one.
 
 Consequence: a deployer who creates a pool via `POST /v1/admin/pools` with `executionMode: task` cannot supply the policy block. They must register it on the runtime via `POST /v1/admin/runtimes` and rely on inheritance the implementation does not document.
+
+**Resolution (commit 427be4e2):** `poolstore.Pool` carries a new `TaskPolicy *poolstore.TaskPolicy` block mirroring the §5.2 lines 398-413 yaml (acknowledgeBestEffortScrub, microvmScrubMode + residual-state ack, cleanupCommands + timeout + onFailure, maxScrubFailures, maxTasksPerPod, maxPodUptimeSeconds, maxTaskRetries). `AllowCrossTenantReuse` stays at the Pool top level as the v1 admin contract surface and is folded into `TaskPolicy.AllowCrossTenantReuse` when the PSC writes the CRD. `ValidateTaskPolicy` enforces the same invariants as `lenny-pool-config-validator` at the admin boundary so a Postgres-only dev posture fails fast: task pools must carry the block with `acknowledgeBestEffortScrub: true` and `maxTasksPerPod >= 1`; non-task pools must NOT carry one; `in-place` scrub requires the residual-state ack; cross-tenant reuse requires microvm. Migration `0085_pool_task_policy.up.sql` adds the `task_policy JSONB NULL` column; pgstore round-trips it. `PoolStoreSource.toConfig` folds `TaskPolicy` and the existing concurrent-workspace fields onto the SandboxTemplate CRD so the §5.2 lines 631-636 + 487-494 invariants the pool-config webhook checks see the full deployer intent.
 
 ### - [x] F-5.2.21 — Topology spread constraints are declared but not propagated [Medium] — CLOSED
 
