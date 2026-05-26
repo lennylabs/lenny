@@ -14818,7 +14818,7 @@ This is benign in practice but the round-trip violates the principle that the ca
 
 ---
 
-### - [ ] F-11.5.13 — `defaultTenantFromRequest` silently falls back to `"default"` if `X-Lenny-Tenant-ID` is absent [Low] — OPEN
+### - [x] F-11.5.13 — `defaultTenantFromRequest` silently falls back to `"default"` if `X-Lenny-Tenant-ID` is absent [Low] — CLOSED
 
 `pkg/gateway/middleware/idempotency/idempotency.go:309-314`:
 
@@ -14835,7 +14835,14 @@ The middleware is wired after auth (`cmd/lenny-gateway/main.go:1455` is inside t
 
 A spec-aligned default would either reject the request (`500 ROUTE_MISCONFIGURED`) or refuse to apply the key cache without an authenticated tenant. The current fallback masks a wiring bug.
 
-### - [ ] F-11.5.14 — The error envelope returned by the middleware has a slightly different shape than §15.1 typed errors [Low] — OPEN
+**Resolution:** `defaultTenantFromRequest` now returns `""` when the
+header is absent; the middleware fails closed with
+`500 INTERNAL_ERROR` + `details.reason = "tenant_required"` before any
+store interaction so a misordered chain surfaces immediately instead
+of collapsing the per-tenant scope. spec: §11.5 line 277. Closed by
+the F-11.5 batch commit.
+
+### - [x] F-11.5.14 — The error envelope returned by the middleware has a slightly different shape than §15.1 typed errors [Low] — CLOSED
 
 `pkg/gateway/middleware/idempotency/idempotency.go:299-307`:
 
@@ -14853,7 +14860,17 @@ func writeError(w http.ResponseWriter, status int, code, message string, details
 
 Comparing with the §15.1 envelope `{"error": {"code", "message", "details": {…}, "traceId": "...", "requestId": "..."}}` (e.g., `pkg/gateway/sessionserver/sessionserver.go:writeError` emits `traceId` and `requestId`). The middleware variant omits `traceId` / `requestId`, so an `IDEMPOTENCY_KEY_REUSED` 422 from the cache layer is missing the correlation fields a §15.1-aware client expects. Same gap on the `INVALID_IDEMPOTENCY_KEY` 400 and `BODY_TOO_LARGE` 413 envelopes.
 
-### - [ ] F-11.5.15 — `pkg/idempotency.Record.IsExpired` returns `false` for a zero-`StoredAt` record, but the pgstore additionally does a defensive "report-expired-as-absent" wrap that masks the empty case in tests [Low] — OPEN
+**Resolution:** the §15.1 canonical envelope at lines 958–972 is
+`{code, category, message, retryable, details?}` (no `traceId` or
+`requestId`; the finding's mention of those fields is inaccurate, but
+the underlying complaint about the shape mismatch is real). The
+middleware now routes through the shared §15.2.1 classifier
+(`pkg/gateway/errorclassify.Classify`) so every error carries the
+spec-mandated `category` + `retryable` pair matching what sessionserver
+and the MCP transport emit for the same code. Closed by the F-11.5
+batch commit.
+
+### - [x] F-11.5.15 — `pkg/idempotency.Record.IsExpired` returns `false` for a zero-`StoredAt` record, but the pgstore additionally does a defensive "report-expired-as-absent" wrap that masks the empty case in tests [Low] — CLOSED
 
 `pkg/idempotency/idempotency.go:97-99`:
 
@@ -14873,7 +14890,13 @@ if !found || rec.IsExpired(time.Now().UTC()) {
 
 The behaviour is correct (no false positives, no false negatives) but layered enough that a future refactor that drops the `!found` check would silently rely on `IsExpired` returning `false` for the zero record. A comment in `IsExpired` already calls this out (`idempotency_test.go:155-161`), but the documentation could be hardened with a `must-not-relax` callout.
 
-### - [ ] F-11.5.16 — `idempotency_keys_stored_at_idx` is a single-column index on `stored_at` with no tenant prefix [Low] — OPEN
+**Resolution:** `IsExpired`'s doc-comment now carries an explicit
+`MUST-NOT-RELAX` callout explaining why both store implementations
+gate on a not-found check before calling `IsExpired`, and why dropping
+that gate would silently admit a same-key request as a Replay against
+an empty body hash. Closed by the F-11.5 batch commit.
+
+### - [x] F-11.5.16 — `idempotency_keys_stored_at_idx` is a single-column index on `stored_at` with no tenant prefix [Low] — CLOSED
 
 `migrations/0005_idempotency_keys.up.sql:28`:
 
@@ -14883,7 +14906,13 @@ CREATE INDEX idempotency_keys_stored_at_idx ON idempotency_keys (stored_at);
 
 The GC sweep filters by `WHERE tenant_id = $1 AND stored_at < $2` (`pgstore.go:121`). On a large multi-tenant table the per-tenant sweep would benefit from `(tenant_id, stored_at)` index ordering so the planner can prune to the tenant first. The current index helps a hypothetical cross-tenant sweep (which the implementation explicitly does not do — see `sweepIdempotencyKeys` in `main.go:2060-2072` which iterates tenants individually). Cosmetic but worth noting.
 
-### - [ ] F-11.5.17 — The GC interval is hard-coded to one hour with no flag [Low] — OPEN
+**Resolution:** migration 0082 drops `idempotency_keys_stored_at_idx`
+and creates `idempotency_keys_tenant_stored_at_idx` on
+`(tenant_id, stored_at)`. The per-tenant `DeleteExpired` sweep can now
+index-prune to the tenant before scanning by `stored_at`. Closed by
+the F-11.5 batch commit.
+
+### - [x] F-11.5.17 — The GC interval is hard-coded to one hour with no flag [Low] — CLOSED
 
 `cmd/lenny-gateway/main.go:1706-1717`:
 
@@ -14898,21 +14927,44 @@ go func() {
 
 The spec is silent on the GC cadence ("After the 24-hour window, the key record is garbage-collected"). A 1-hour cadence means an expired row can persist up to 1 hour past its TTL; expired rows are masked at read time (`pgstore.go:69`) so this is invisible to clients, but operators tuning storage and database load may want a knob.
 
+**Resolution:** added `--idempotency-gc-interval-seconds`
+(env `LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS`, default 3600s) and
+threaded it into the `time.NewTicker` callsite. Non-spec default is
+flag-overridable per memory rule
+[[feedback_fixes_must_align_with_spec]]. Closed by the F-11.5 batch
+commit.
+
 ---
 
-### - [ ] F-11.5.18 — The §11.5 pure primitives (`MaxKeyLength`, `TTL`, `HashBody`, `Key.Validate`, `DetectReuse`, `*ReuseError` 422 envelope) are correctly modelled in `pkg/idempotency` [Info] — OPEN
+### - [x] F-11.5.18 — The §11.5 pure primitives (`MaxKeyLength`, `TTL`, `HashBody`, `Key.Validate`, `DetectReuse`, `*ReuseError` 422 envelope) are correctly modelled in `pkg/idempotency` [Info] — CLOSED
 
 `pkg/idempotency/idempotency.go:24,28,40-51,66-71,130-145,150-166` line up with §11.5: the 128-character cap, the 24h TTL, SHA-256 hex digest body hash, the three actions (`ActionStoreNew/Replay/Reject`), and the typed `*ReuseError` carrying `Code() == 422` and `ErrorCode() == "IDEMPOTENCY_KEY_REUSED"` matching the §15.1 catalogue entry.
 
-### - [ ] F-11.5.19 — Tenant-scoping is exercised end-to-end [Info] — OPEN
+**Resolution:** re-verified against current `pkg/idempotency/idempotency.go`
+— `MaxKeyLength = 128`, `TTL = 24h`, `HashBody`/`Key.Validate`/`DetectReuse`/`ReuseError` all match the §11.5 + §15.1 catalogue. Positive
+confirmation, no code change. Closed by the F-11.5 batch commit.
+
+### - [x] F-11.5.19 — Tenant-scoping is exercised end-to-end [Info] — CLOSED
 
 `pkg/idempotency.Key` includes a `TenantID` field (`idempotency.go:33-36`), the pgstore's primary key is `(tenant_id, idempotency_key)` (`migrations/0005_idempotency_keys.up.sql:23`), the table is RLS-policed (`migrations/0005:34-37`), the `lenny_tenant_guard` trigger fires for every insert/update/delete (`migrations/0005:30-32`), and the contract test `TestIdempotencyTenantScoped` (`tests/tier3_contract/rest_idempotency/idempotency_test.go:155-194`) verifies that the same key value from two different tenants produces two distinct cache entries. §11.5's "scoped per tenant" clause is properly enforced.
 
-### - [ ] F-11.5.20 — The GC sweep is per-tenant, runs once at startup, then hourly; uses the `idempotency.TTL` constant [Info] — OPEN
+**Resolution:** re-verified — `Key.TenantID`, PK `(tenant_id, idempotency_key)`,
+RLS policy `lenny_tenant_isolation`, `lenny_tenant_guard` trigger, and
+the contract test `TestIdempotencyTenantScoped` all still in place.
+F-11.5.13's fail-closed change reinforces this control at the
+middleware boundary. Closed by the F-11.5 batch commit.
+
+### - [x] F-11.5.20 — The GC sweep is per-tenant, runs once at startup, then hourly; uses the `idempotency.TTL` constant [Info] — CLOSED
 
 `cmd/lenny-gateway/main.go:1699-1717,2056-2072`. The sweeper iterates tenants, calls `s.DeleteExpired(ctx, tenant, cutoff)` per tenant inside the `pgtenant.InTx` envelope so the `lenny_tenant_guard` trigger and the RLS policy both fire as designed (`pgstore.go:117-129`). The cutoff is `clockinject.Now().Add(-idempotency.TTL)`, so the spec's 24-hour TTL is the authoritative source.
 
-### - [ ] F-11.5.21 — Wire-level contract tests cover the four mainline behaviours [Info] — OPEN
+**Resolution:** re-verified — `sweepIdempotencyKeys` iterates tenants
+and calls `gc.DeleteExpired(ctx, tenant, cutoff)` per tenant; cutoff
+uses `clockinject.Now().Add(-idempotency.TTL)`. F-11.5.17 made the
+cadence configurable while preserving these guarantees. Closed by the
+F-11.5 batch commit.
+
+### - [x] F-11.5.21 — Wire-level contract tests cover the four mainline behaviours [Info] — CLOSED
 
 `tests/tier3_contract/rest_idempotency/idempotency_test.go` exercises:
 - `TestIdempotencyReplayReturnsCachedResponse` — replay returns the same session id (lines 71-92).
@@ -14923,7 +14975,13 @@ The spec is silent on the GC cadence ("After the 24-hour window, the key record 
 
 Plus property tests (`pkg/idempotency/property_test.go`) and fuzz tests (`pkg/idempotency/fuzz_test.go`) for the primitives.
 
-### - [ ] F-11.5.22 — `pgstore.Put` validates the key before writing, so the durable store carries the same invariants as the request boundary [Info] — OPEN
+**Resolution:** re-verified all five tier-3 contract tests are present
+and green; property/fuzz tests at `pkg/idempotency/property_test.go`
+and `pkg/idempotency/fuzz_test.go` confirmed. The F-11.5 batch adds
+six tier-1 tests covering the new fail-closed + envelope-shape
+behaviour. Closed by the F-11.5 batch commit.
+
+### - [x] F-11.5.22 — `pgstore.Put` validates the key before writing, so the durable store carries the same invariants as the request boundary [Info] — CLOSED
 
 `pkg/gateway/middleware/idempotency/pgstore/pgstore.go:78-82`:
 
@@ -14935,17 +14993,40 @@ if err := rec.Key.Validate(); err != nil {
 
 This means a callsite that bypasses the middleware and writes directly to the store still cannot persist a malformed key (empty tenant, empty value, over-length value).
 
-### - [ ] F-11.5.23 — The pgstore selects under `pgtenant.InTx` so RLS and the tenant-guard trigger both fire on every read [Info] — OPEN
+**Resolution:** re-verified at `pgstore.go:79-81` — `rec.Key.Validate()`
+runs before INSERT and rejects empty tenant, empty value, or
+over-length keys with the typed `KeyTooLongError`. Closed by the
+F-11.5 batch commit.
+
+### - [x] F-11.5.23 — The pgstore selects under `pgtenant.InTx` so RLS and the tenant-guard trigger both fire on every read [Info] — CLOSED
 
 `pgstore.go:52-65`. Reads are wrapped in the same tenant-scoped transaction as writes; the `app.current_tenant` GUC is set before each query so the `lenny_tenant_isolation` RLS policy actually filters, and the `lenny_tenant_guard` trigger fires on Delete. §12.3 tenant isolation lines up.
 
-### - [ ] F-11.5.24 — The middleware exposes a small `Store` interface so the in-memory implementation and the Postgres-backed implementation share one contract; the contract tests drive the middleware against the memory store [Info] — OPEN
+**Resolution:** re-verified — `Get`/`Put`/`DeleteExpired` all run
+inside `pgtenant.InTx(ctx, pool, tenantID, ...)`, setting
+`app.current_tenant` before every query so RLS and the
+`lenny_tenant_guard` trigger fire as designed. Closed by the F-11.5
+batch commit.
+
+### - [x] F-11.5.24 — The middleware exposes a small `Store` interface so the in-memory implementation and the Postgres-backed implementation share one contract; the contract tests drive the middleware against the memory store [Info] — CLOSED
 
 `pkg/gateway/middleware/idempotency/idempotency.go:34-42` defines the `Store` interface (Get / Put). `idempotency.go:46-88` is the in-memory implementation; `pgstore/pgstore.go` is the Postgres implementation. Both satisfy the same shape and the contract tests run against the in-memory store, so the wire-level behaviour can be re-validated cheaply.
 
-### - [ ] F-11.5.25 — `defaultTenantFromRequest` defers to the auth-set `X-Lenny-Tenant-ID` header rather than a context value [Info] — OPEN
+**Resolution:** re-verified — `Store` interface still scoped to
+`Get`/`Put`, `MemoryStore` and `pgstore.Store` both implement it
+(static check `var _ idemmw.Store = (*Store)(nil)` at
+`pgstore.go:41`). Closed by the F-11.5 batch commit.
+
+### - [x] F-11.5.25 — `defaultTenantFromRequest` defers to the auth-set `X-Lenny-Tenant-ID` header rather than a context value [Info] — CLOSED
 
 By reading the header rather than `r.Context()`, the middleware avoids tight coupling to `pkg/auth`'s context keys and works with any auth implementation that propagates the header. Auth in turn forwards the tenant on the request header (`pkg/gateway/middleware/auth/auth.go:215`).
+
+**Resolution:** re-verified — `defaultTenantFromRequest` reads
+`X-Lenny-Tenant-ID`, set by `pkg/gateway/middleware/auth/auth.go:297`
+(bearer path) and `:330` (dev-header path). F-11.5.13's empty-string
+return on absent header preserves the loose coupling while failing
+closed instead of synthesising a tenant. Closed by the F-11.5 batch
+commit.
 
 ---
 
