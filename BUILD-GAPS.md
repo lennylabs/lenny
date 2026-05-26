@@ -8825,7 +8825,7 @@ Each is mapped to the implementation below.
 
 ---
 
-### - [ ] F-8.6.16 — Spec-default `extensionApproval = elicitation` is not the implementation default [Low] — OPEN
+### - [x] F-8.6.16 — Spec-default `extensionApproval = elicitation` is not the implementation default [Low] — CLOSED
 
 **Spec:** §8.6 (line 674) shows the deployment defaults as `extensionApproval: elicitation`, `coolOffSeconds: 5`, `maxExtendableBudget: 500000`.
 
@@ -8835,7 +8835,9 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:35–40`.
 
-### - [ ] F-8.6.17 — `BUDGET_EXHAUSTED` error code not surfaced by the gateway path [Low] — OPEN
+**Resolution:** Added the §8.6 line 674 defaults as exported constants on `pkg/gateway/leasecontrol` — `DefaultApprovalMode = ApprovalModeElicitation` and `DefaultSuccessCoolOff = 5 * time.Second` — together with the typed `ApprovalMode` enum (`auto`/`elicitation`) and `ResolveApprovalMode` / `ResolveSuccessCoolOff` deployment→tenant→runtime layering helpers (§8.6 line 654). `TreeConfig.ApprovalMode` and `TreeConfig.SuccessCoolOff` plumb the resolved values into the `MemoryBudgetSource`, with `ApprovalMode()` / `SuccessCoolOff()` accessors the dispatcher consumes when H2 (F-8.6.2) lands. An unspecified registration falls back to `elicitation` per the spec.
+
+### - [x] F-8.6.17 — `BUDGET_EXHAUSTED` error code not surfaced by the gateway path [Low] — CLOSED
 
 **Spec:** §8.6 (line 629) "the adapter propagates `BUDGET_EXHAUSTED` to the runtime as a terminal error." This is an adapter→runtime error.
 
@@ -8845,7 +8847,9 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/adapter/leaseextend.go:36–41`.
 
-### - [ ] F-8.6.18 — `ExtensionAudit.Outcome` is a free-form string [Low] — OPEN
+**Resolution:** The proto already carries `ERROR_CODE_BUDGET_EXHAUSTED = 9` (the finding's evidence was stale). Added the runtime-facing envelope helper: `adapter.BudgetExhaustedEnvelope(message)` returns an `*adapterv1.Error` with code `ERROR_CODE_BUDGET_EXHAUSTED`, category `CATEGORY_POLICY`, and `retryable=false`; `adapter.BudgetExhaustedEnvelopeFor(status)` maps `CEILING_REACHED` / `REJECTED` to the envelope (returns nil for non-terminal outcomes). Spec-default messages (`BudgetExhaustedMessageCeilingReached`, `BudgetExhaustedMessageRejected`, `BudgetExhaustedMessageGatewayUnreachable`) cover the three propagation paths. The LLM-proxy trigger that calls these helpers lands with F-8.6.6 (H6); the envelope shape is now ready and unit-tested.
+
+### - [x] F-8.6.18 — `ExtensionAudit.Outcome` is a free-form string [Low] — CLOSED
 
 **Spec:** §8.6 (line 743) "outcome (approved/denied/capped)".
 
@@ -8855,7 +8859,9 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:145–154`.
 
-### - [ ] F-8.6.19 — Rejection-cool-off response shape lacks `subtreeId` and `coolOffExpiresAt` [Low] — OPEN
+**Resolution:** Replaced `Outcome string` with a typed `AuditOutcome` (`approved` / `capped` / `denied`) matching the §8.6 line 743 classification. `auditOutcomeFor` maps `leaseextension.Granted` → `approved`, `leaseextension.PartiallyGranted` / `leaseextension.CeilingReached` → `capped` (the spec treats the zero-grant ceiling case as a cap to zero), and the cool-off / in-flight denial paths emit `denied` directly. Updated the existing audit test and added approved / denied / ceiling-as-capped coverage.
+
+### - [x] F-8.6.19 — Rejection-cool-off response shape lacks `subtreeId` and `coolOffExpiresAt` [Low] — CLOSED
 
 **Spec:** §15.1 (line 1080) for `EXTENSION_COOL_OFF_ACTIVE` says "`details.subtreeId` identifies the denied subtree and `details.coolOffExpiresAt` is the UTC timestamp at which the cool-off window ends."
 
@@ -8865,23 +8871,33 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:235–242, 257–264`; `schemas/lenny-adapter.proto:506–526`.
 
+**Resolution:** Added `subtree_id` (field 5) and `cool_off_expires_at` (field 6) to `ExtendLeaseResponse` in `schemas/lenny-adapter.proto`, regenerated bindings, and populated both on every REJECTED path. `cool_off_expires_at` carries the UTC RFC 3339 string via a `formatCoolOffExpiry` helper; the legacy `cool_off_expiry_unix_ms` is preserved for back-compat. `gatewaycontrol.ExtensionResult` reflects both fields end-to-end so the adapter receives them. The cool-off path uses the requesting session id as the subtree id (the §8.6 line 729 "session whose adapter issued the ExtendLease gRPC call"). Tests added for both the in-cool-off and in-flight-denial paths.
+
 ---
 
-### - [ ] F-8.6.20 — Pure-decision kernel `pkg/leaseextension` is clean and matches §8.6 example table [Info] — OPEN
+### - [x] F-8.6.20 — Pure-decision kernel `pkg/leaseextension` is clean and matches §8.6 example table [Info] — CLOSED
 
 The `ResolveEffectiveMax` math in `pkg/leaseextension/leaseextension.go:64–85` mirrors the §8.6 worked-example table (line 700–706); `pkg/leaseextension/leaseextension_test.go:11–48` reproduces all five rows. `Grant` (lines 50–62) correctly maps to the three non-rejected outcomes. The pure kernel is solid; the gaps above are all in the layers above it (wire, dispatcher, storage, audit, trigger).
 
-### - [ ] F-8.6.21 — In-flight atomic re-check is implemented for the in-memory source [Info] — OPEN
+**Resolution:** Re-verified — `ResolveEffectiveMax` and `Grant` both at `pkg/leaseextension/leaseextension.go`, with five-row coverage of the §8.6 worked example in `TestResolveEffectiveMax` and seven-case grant coverage in `TestGrant`. Positive Info confirmation; no code change.
+
+### - [x] F-8.6.21 — In-flight atomic re-check is implemented for the in-memory source [Info] — CLOSED
 
 `pkg/gateway/leasecontrol/membudget.go:223–237` and the `raceBudgetSource` test (`leasecontrol_test.go:385–455`) demonstrate the §8.6 in-flight denial path returning `REJECTED` when a denial lands between the budget read and the grant commit. The seam is set up for a Postgres implementation to slot in once H5 is closed.
 
-### - [ ] F-8.6.22 — The §8.6 RPC moved from the Adapter service to a gateway-hosted GatewayControl service [Info] — OPEN
+**Resolution:** Re-verified — `MemoryBudgetSource.ApplyGrant` rechecks the extension-denied flag under the source mutex and returns `ErrExtensionDenied`; the handler converts that to REJECTED. The `raceBudgetSource` test fixture in `leasecontrol_test.go` exercises the race. Positive Info confirmation; no code change.
+
+### - [x] F-8.6.22 — The §8.6 RPC moved from the Adapter service to a gateway-hosted GatewayControl service [Info] — CLOSED
 
 `BUILD-PROGRESS.md:47` documents the move and `schemas/lenny-adapter.proto:132–151` reflects it. The direction reversal closes the §8.6 chicken-and-egg, and the proto/service shape is what the spec asks for. This is noteworthy because earlier code may still reference the old direction in comments.
 
-### - [ ] F-8.6.23 — The proto carries an `ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE` enum value (`schemas/lenny-adapter.proto:226`) [Info] — OPEN
+**Resolution:** Re-verified — `service GatewayControl` in `schemas/lenny-adapter.proto` declares `ExtendLease` as gateway-hosted, dialed by the adapter; `pkg/gateway/leasecontrol/leasecontrol.go` implements `GatewayControlServer`. Positive Info confirmation; no code change.
+
+### - [x] F-8.6.23 — The proto carries an `ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE` enum value (`schemas/lenny-adapter.proto:226`) [Info] — CLOSED
 
 The wire is ready for M1; only the handler emission and admin-facing details are missing.
+
+**Resolution:** Re-verified — `ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE = 25` lives in `schemas/lenny-adapter.proto` and is exported by the regenerated bindings. Positive Info confirmation; no code change.
 
 ---
 
