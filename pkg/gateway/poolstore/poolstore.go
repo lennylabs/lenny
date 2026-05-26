@@ -106,6 +106,88 @@ type Pool struct {
 	// PoolConfigDrift alert can compare Postgres-side and CRD-side
 	// generations. spec: spec/04_system-components.md lines 558-560.
 	Generation int64
+
+	// TaskPolicy is the §5.2 task-mode policy block (lines 398-413). It
+	// is required when ExecutionMode is `task` and must be absent on
+	// session or concurrent pools — `ValidateTaskPolicy` enforces both
+	// directions. AllowCrossTenantReuse is intentionally not on this
+	// struct: it lives on Pool as the legacy top-level field and the
+	// CRD-side TaskPolicy.AllowCrossTenantReuse is populated from there
+	// when PoolStoreSource maps the pool to its SandboxTemplate. spec:
+	// §5.2 lines 398-475.
+	TaskPolicy *TaskPolicy
+}
+
+// TaskPolicy mirrors the §5.2 taskPolicy block declared on
+// SandboxTemplate.spec (`pkg/apis/lenny/v1/sandboxtemplate_types.go`)
+// minus AllowCrossTenantReuse, which lives at the pool top level. Field
+// semantics match the CRD verbatim so the admin REST surface, store
+// row, and CRD all share interpretation. spec: §5.2 lines 398-475.
+type TaskPolicy struct {
+	// AcknowledgeBestEffortScrub records the §5.2 line 461 deployer
+	// acknowledgment that workspace scrub is best-effort. A task-mode
+	// pool is rejected without it (line 473).
+	AcknowledgeBestEffortScrub bool
+
+	// MicrovmScrubMode is the §5.2 line 442 cross-tenant scrub variant
+	// for microvm pods: `restart` (default) boots a fresh guest between
+	// tenants, `in-place` reuses the running guest with documented
+	// guest-kernel residual state. Meaningful only when the pool's
+	// AllowCrossTenantReuse is true and IsolationProfile is microvm.
+	MicrovmScrubMode runtimestore.MicrovmScrubMode
+
+	// AcknowledgeMicrovmResidualState records the §5.2 line 442
+	// acknowledgment that guest-kernel residual state persists when
+	// MicrovmScrubMode is `in-place`. Required in that mode.
+	AcknowledgeMicrovmResidualState bool
+
+	// CleanupCommands are the §5.2 line 404 deployer-defined commands
+	// the adapter runs between tasks (after the credential purge in
+	// step 0, before the §5.2 scrub steps 1-6).
+	CleanupCommands []string
+
+	// CleanupTimeoutSeconds bounds the cleanupCommands phase (§5.2 line
+	// 407). 30s in the spec yaml example.
+	CleanupTimeoutSeconds int
+
+	// OnCleanupFailure is the §5.2 line 444 disposition for a cleanup
+	// failure: `warn` returns the pod to the pool with a scrub_warning
+	// annotation; `fail` retires the pod.
+	OnCleanupFailure runtimestore.CleanupFailureDisposition
+
+	// MaxScrubFailures is the §5.2 line 446 cumulative scrub-failure
+	// retirement threshold. The spec default is 3.
+	MaxScrubFailures int
+
+	// MaxTasksPerPod is the §5.2 line 410 task-count retirement
+	// threshold. Required (>= 1) on task-mode pools.
+	MaxTasksPerPod int
+
+	// MaxPodUptimeSeconds is the §5.2 line 411 uptime retirement
+	// threshold; zero leaves retirement governed by MaxTasksPerPod and
+	// MaxScrubFailures alone.
+	MaxPodUptimeSeconds int
+
+	// MaxTaskRetries is the §5.2 line 412 / §6.6 per-task crash retry
+	// budget. A nil value takes the §6.6 default of 1; an explicit 0
+	// disables retries.
+	MaxTaskRetries *int
+}
+
+// Clone returns a deep copy so the store never shares the
+// cleanup-command slice or retry pointer with a caller. A nil receiver
+// clones to nil.
+func (p *TaskPolicy) Clone() *TaskPolicy {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.CleanupCommands = append([]string(nil), p.CleanupCommands...)
+	if p.MaxTaskRetries != nil {
+		n := *p.MaxTaskRetries
+		cp.MaxTaskRetries = &n
+	}
+	return &cp
 }
 
 // IsActive reports whether the pool has not been soft-deleted.
@@ -247,6 +329,85 @@ func ValidateConcurrentConfig(p Pool) error {
 	return nil
 }
 
+// ValidateTaskPolicy enforces the §5.2 task-mode taskPolicy invariants
+// at admin admission time. The same invariants are re-checked at the CRD
+// layer by `lenny-pool-config-validator`; running them here makes a
+// misconfigured pool fail at the admin API rather than after the CRD
+// write, and it covers the Postgres-only dev posture where the
+// admission webhook is not deployed.
+//
+// The rules (verbatim from §5.2 lines 398-475):
+//
+//   - A non-task pool must not carry a TaskPolicy (a stray policy on a
+//     session-mode or concurrent pool is rejected rather than silently
+//     ignored).
+//
+//   - A task pool must carry a TaskPolicy with
+//     AcknowledgeBestEffortScrub: true (§5.2 line 473 "the pool
+//     controller rejects the pool definition at validation time").
+//
+//   - A task pool's TaskPolicy must set MaxTasksPerPod >= 1 (§5.2 line
+//     473 "maxTasksPerPod is required with no default — the deployer
+//     must make an explicit choice").
+//
+//   - A task pool's AllowCrossTenantReuse is permitted only when
+//     IsolationProfile is microvm (§5.2 line 387). The further §5.2
+//     line 396 T4 prohibition is enforced by `ValidateCrossTenantReuseTier`.
+//
+//   - A task pool's MicrovmScrubMode `in-place` requires
+//     AcknowledgeMicrovmResidualState: true (§5.2 line 442).
+//
+//   - A task pool's MicrovmScrubMode and OnCleanupFailure values, if
+//     set, must be on the §5.2 closed enums.
+//
+// spec: §5.2 lines 398-475.
+func ValidateTaskPolicy(p Pool) error {
+	if p.ExecutionMode != runtimestore.ExecutionModeTask {
+		if p.TaskPolicy != nil {
+			return errors.New("poolstore: taskPolicy is valid only when executionMode is task (§5.2)")
+		}
+		return nil
+	}
+	tp := p.TaskPolicy
+	if tp == nil {
+		return errors.New("poolstore: task-mode pool requires taskPolicy with acknowledgeBestEffortScrub: true and maxTasksPerPod set (§5.2 line 473)")
+	}
+	if !tp.AcknowledgeBestEffortScrub {
+		return errors.New("poolstore: task-mode pool requires taskPolicy.acknowledgeBestEffortScrub: true; " +
+			"the between-task workspace scrub is best-effort and is not a tenant isolation boundary (§5.2 line 473)")
+	}
+	if tp.MaxTasksPerPod < 1 {
+		return errors.New("poolstore: task-mode pool requires taskPolicy.maxTasksPerPod >= 1; " +
+			"it is required with no default so the deployer makes an explicit reuse-limit choice (§5.2 line 473)")
+	}
+	if p.AllowCrossTenantReuse && p.IsolationProfile != isolation.ProfileMicrovm {
+		return errors.New("poolstore: allowCrossTenantReuse is permitted only when isolationProfile is microvm (§5.2 line 387)")
+	}
+	if tp.MicrovmScrubMode != "" && !tp.MicrovmScrubMode.IsValid() {
+		return errors.New("poolstore: taskPolicy.microvmScrubMode is not a recognised §5.2 mode (restart, in-place)")
+	}
+	if tp.MicrovmScrubMode == runtimestore.MicrovmScrubInPlace && !tp.AcknowledgeMicrovmResidualState {
+		return errors.New("poolstore: taskPolicy.microvmScrubMode \"in-place\" requires taskPolicy.acknowledgeMicrovmResidualState: true; " +
+			"in-place scrub leaves guest-kernel residual state across tenants (§5.2 line 442)")
+	}
+	if tp.OnCleanupFailure != "" && !tp.OnCleanupFailure.IsValid() {
+		return errors.New("poolstore: taskPolicy.onCleanupFailure is not a recognised §5.2 disposition (warn, fail)")
+	}
+	if tp.MaxScrubFailures < 0 {
+		return errors.New("poolstore: taskPolicy.maxScrubFailures must be >= 0 (§5.2)")
+	}
+	if tp.MaxPodUptimeSeconds < 0 {
+		return errors.New("poolstore: taskPolicy.maxPodUptimeSeconds must be >= 0 (§5.2)")
+	}
+	if tp.MaxTaskRetries != nil && *tp.MaxTaskRetries < 0 {
+		return errors.New("poolstore: taskPolicy.maxTaskRetries must be >= 0 (§5.2 line 412)")
+	}
+	if tp.CleanupTimeoutSeconds < 0 {
+		return errors.New("poolstore: taskPolicy.cleanupTimeoutSeconds must be >= 0 (§5.2)")
+	}
+	return nil
+}
+
 // ValidateCrossTenantReuseTier enforces the §5.2 line 396 T4 cross-tenant
 // reuse prohibition: a pool whose associated Runtime is configured with
 // workspaceTier: T4 may not set allowCrossTenantReuse, because T4
@@ -336,6 +497,9 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if err := ValidateConcurrentConfig(p); err != nil {
 		return err
 	}
+	if err := ValidateTaskPolicy(p); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.pools[p.Name]; exists {
@@ -351,6 +515,7 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if p.Generation == 0 {
 		p.Generation = 1
 	}
+	p.TaskPolicy = p.TaskPolicy.Clone()
 	m.pools[p.Name] = p
 	return nil
 }
@@ -363,6 +528,7 @@ func (m *Memory) Get(_ context.Context, name string) (Pool, error) {
 	if !ok {
 		return Pool{}, ErrNotFound
 	}
+	row.TaskPolicy = row.TaskPolicy.Clone()
 	return row, nil
 }
 
@@ -393,14 +559,20 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 	if err := ValidateConcurrentConfig(row); err != nil {
 		return Pool{}, err
 	}
+	if err := ValidateTaskPolicy(row); err != nil {
+		return Pool{}, err
+	}
 	now := time.Now().UTC()
 	if !now.After(prev) {
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
 	row.Generation++
+	row.TaskPolicy = row.TaskPolicy.Clone()
 	m.pools[name] = row
-	return row, nil
+	out := row
+	out.TaskPolicy = row.TaskPolicy.Clone()
+	return out, nil
 }
 
 // List implements Store.
@@ -415,6 +587,7 @@ func (m *Memory) List(_ context.Context, filter ListFilter) ([]Pool, error) {
 		if filter.RuntimeRef != "" && row.RuntimeRef != filter.RuntimeRef {
 			continue
 		}
+		row.TaskPolicy = row.TaskPolicy.Clone()
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

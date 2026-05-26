@@ -100,3 +100,113 @@ func TestPoolStoreSourceRequiresNamespace(t *testing.T) {
 		t.Fatal("want error for empty namespace, got nil")
 	}
 }
+
+// TestPoolStoreSourceFoldsTaskPolicyIntoCRD verifies the §5.2 task-mode
+// taskPolicy block + the top-level Pool.AllowCrossTenantReuse are folded
+// onto SandboxTemplate.spec.taskPolicy so the pool-config validator sees
+// the deployer's intent.
+//
+// spec: §5.2 lines 398-475.
+func TestPoolStoreSourceFoldsTaskPolicyIntoCRD(t *testing.T) {
+	mt := 2
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:                  "task-pool",
+		RuntimeRef:            "claude-code",
+		IsolationProfile:      isolation.ProfileMicrovm,
+		ExecutionMode:         runtimestore.ExecutionModeTask,
+		AllowCrossTenantReuse: true,
+		WarmCount:             2,
+		TaskPolicy: &poolstore.TaskPolicy{
+			AcknowledgeBestEffortScrub:      true,
+			MicrovmScrubMode:                runtimestore.MicrovmScrubInPlace,
+			AcknowledgeMicrovmResidualState: true,
+			CleanupCommands:                 []string{"pkill jupyter"},
+			CleanupTimeoutSeconds:           30,
+			OnCleanupFailure:                runtimestore.CleanupFailureFail,
+			MaxScrubFailures:                4,
+			MaxTasksPerPod:                  50,
+			MaxPodUptimeSeconds:             86400,
+			MaxTaskRetries:                  &mt,
+		},
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	if len(configs) != 1 {
+		t.Fatalf("want 1 config, got %d", len(configs))
+	}
+	tp := configs[0].Template.TaskPolicy
+	if tp == nil {
+		t.Fatal("CRD TaskPolicy not populated")
+	}
+	if !tp.AllowCrossTenantReuse {
+		t.Error("AllowCrossTenantReuse should mirror the top-level Pool field")
+	}
+	if !tp.AcknowledgeBestEffortScrub {
+		t.Error("AcknowledgeBestEffortScrub did not propagate")
+	}
+	if tp.MicrovmScrubMode != "in-place" {
+		t.Errorf("MicrovmScrubMode = %q", tp.MicrovmScrubMode)
+	}
+	if !tp.AcknowledgeMicrovmResidualState {
+		t.Error("AcknowledgeMicrovmResidualState did not propagate")
+	}
+	if tp.MaxTasksPerPod != 50 {
+		t.Errorf("MaxTasksPerPod = %d", tp.MaxTasksPerPod)
+	}
+	if tp.MaxScrubFailures == nil || *tp.MaxScrubFailures != 4 {
+		t.Errorf("MaxScrubFailures: %#v", tp.MaxScrubFailures)
+	}
+	if tp.MaxPodUptimeSeconds == nil || *tp.MaxPodUptimeSeconds != 86400 {
+		t.Errorf("MaxPodUptimeSeconds: %#v", tp.MaxPodUptimeSeconds)
+	}
+	if tp.MaxTaskRetries == nil || *tp.MaxTaskRetries != 2 {
+		t.Errorf("MaxTaskRetries: %#v", tp.MaxTaskRetries)
+	}
+	if len(tp.CleanupCommands) != 1 || tp.CleanupCommands[0] != "pkill jupyter" {
+		t.Errorf("CleanupCommands: %#v", tp.CleanupCommands)
+	}
+	if tp.OnCleanupFailure != "fail" {
+		t.Errorf("OnCleanupFailure = %q", tp.OnCleanupFailure)
+	}
+}
+
+// TestPoolStoreSourcePopulatesConcurrentWorkspacePolicy verifies the
+// §5.2 concurrent-workspace pool's stored AcknowledgeProcessLevelIsolation
+// + CleanupTimeoutSeconds flow into the SandboxTemplate's
+// concurrentWorkspacePolicy block so the pool-config validation webhook
+// admits the pool.
+//
+// spec: §5.2 lines 487-494.
+func TestPoolStoreSourcePopulatesConcurrentWorkspacePolicy(t *testing.T) {
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:                             "cw-pool",
+		RuntimeRef:                       "claude-code",
+		ExecutionMode:                    runtimestore.ExecutionModeConcurrent,
+		ConcurrencyStyle:                 poolstore.ConcurrencyStyleWorkspace,
+		MaxConcurrent:                    4,
+		AcknowledgeProcessLevelIsolation: true,
+		CleanupTimeoutSeconds:            60,
+		WarmCount:                        1,
+	})
+	src := &poolscaling.PoolStoreSource{Store: store, Namespace: "lenny-agents"}
+	configs, err := src.ListPoolConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("ListPoolConfigs: %v", err)
+	}
+	if len(configs) != 1 {
+		t.Fatalf("want 1 config, got %d", len(configs))
+	}
+	cw := configs[0].Template.ConcurrentWorkspacePolicy
+	if cw == nil {
+		t.Fatal("CRD ConcurrentWorkspacePolicy not populated")
+	}
+	if !cw.AcknowledgeProcessLevelIsolation {
+		t.Error("AcknowledgeProcessLevelIsolation did not propagate")
+	}
+	if cw.CleanupTimeoutSeconds != 60 {
+		t.Errorf("CleanupTimeoutSeconds = %d", cw.CleanupTimeoutSeconds)
+	}
+}

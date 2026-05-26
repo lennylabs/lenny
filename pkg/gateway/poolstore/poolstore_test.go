@@ -5,6 +5,7 @@ package poolstore_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -384,6 +385,206 @@ func TestCreateAdmitsValidConcurrentPool(t *testing.T) {
 // is mode-agnostic (it keys on the pool's reuse flag and the runtime's
 // tier), a no-op when reuse is off or the runtime is not T4, and emits the
 // verbatim spec error otherwise.
+// TestValidateTaskPolicy_spec_5_2 covers the §5.2 task-mode taskPolicy
+// admission rules: required on task pools, prohibited on other pools,
+// must carry acknowledgeBestEffortScrub + maxTasksPerPod, microvm
+// in-place scrub requires acknowledgement.
+//
+// spec: §5.2 lines 398-475.
+func TestValidateTaskPolicy_spec_5_2(t *testing.T) {
+	mt := 1
+	cases := []struct {
+		name    string
+		pool    poolstore.Pool
+		wantSub string
+	}{
+		{
+			name: "session pool with TaskPolicy is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				TaskPolicy:    &poolstore.TaskPolicy{},
+			},
+			wantSub: "taskPolicy is valid only when executionMode is task",
+		},
+		{
+			name: "concurrent pool with TaskPolicy is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				TaskPolicy:    &poolstore.TaskPolicy{},
+			},
+			wantSub: "taskPolicy is valid only when executionMode is task",
+		},
+		{
+			name: "task pool without TaskPolicy is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeTask,
+			},
+			wantSub: "task-mode pool requires taskPolicy",
+		},
+		{
+			name: "task pool without acknowledgement is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeTask,
+				TaskPolicy:    &poolstore.TaskPolicy{MaxTasksPerPod: 10},
+			},
+			wantSub: "acknowledgeBestEffortScrub: true",
+		},
+		{
+			name: "task pool without maxTasksPerPod is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeTask,
+				TaskPolicy:    &poolstore.TaskPolicy{AcknowledgeBestEffortScrub: true},
+			},
+			wantSub: "maxTasksPerPod >= 1",
+		},
+		{
+			name: "in-place scrub without residual-state acknowledgement is rejected",
+			pool: poolstore.Pool{
+				IsolationProfile:      isolation.ProfileMicrovm,
+				ExecutionMode:         runtimestore.ExecutionModeTask,
+				AllowCrossTenantReuse: true,
+				TaskPolicy: &poolstore.TaskPolicy{
+					AcknowledgeBestEffortScrub: true,
+					MaxTasksPerPod:             10,
+					MicrovmScrubMode:           runtimestore.MicrovmScrubInPlace,
+				},
+			},
+			wantSub: "acknowledgeMicrovmResidualState",
+		},
+		{
+			name: "cross-tenant reuse without microvm is rejected",
+			pool: poolstore.Pool{
+				IsolationProfile:      isolation.ProfileSandboxed,
+				ExecutionMode:         runtimestore.ExecutionModeTask,
+				AllowCrossTenantReuse: true,
+				TaskPolicy: &poolstore.TaskPolicy{
+					AcknowledgeBestEffortScrub: true,
+					MaxTasksPerPod:             10,
+				},
+			},
+			wantSub: "permitted only when isolationProfile is microvm",
+		},
+		{
+			name: "task pool with unrecognised scrub mode is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeTask,
+				TaskPolicy: &poolstore.TaskPolicy{
+					AcknowledgeBestEffortScrub: true,
+					MaxTasksPerPod:             10,
+					MicrovmScrubMode:           "wipe",
+				},
+			},
+			wantSub: "microvmScrubMode is not a recognised",
+		},
+		{
+			name: "task pool with unrecognised cleanup failure is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeTask,
+				TaskPolicy: &poolstore.TaskPolicy{
+					AcknowledgeBestEffortScrub: true,
+					MaxTasksPerPod:             10,
+					OnCleanupFailure:           "boom",
+				},
+			},
+			wantSub: "onCleanupFailure is not a recognised",
+		},
+		{
+			name: "task pool with negative max-task-retries is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeTask,
+				TaskPolicy: &poolstore.TaskPolicy{
+					AcknowledgeBestEffortScrub: true,
+					MaxTasksPerPod:             10,
+					MaxTaskRetries:             negInt(),
+				},
+			},
+			wantSub: "maxTaskRetries must be >= 0",
+		},
+		{
+			name: "task pool with full TaskPolicy is admitted",
+			pool: poolstore.Pool{
+				IsolationProfile:      isolation.ProfileMicrovm,
+				ExecutionMode:         runtimestore.ExecutionModeTask,
+				AllowCrossTenantReuse: true,
+				TaskPolicy: &poolstore.TaskPolicy{
+					AcknowledgeBestEffortScrub:      true,
+					MicrovmScrubMode:                runtimestore.MicrovmScrubInPlace,
+					AcknowledgeMicrovmResidualState: true,
+					CleanupCommands:                 []string{"rm -rf /tmp/x"},
+					CleanupTimeoutSeconds:           30,
+					OnCleanupFailure:                runtimestore.CleanupFailureFail,
+					MaxScrubFailures:                3,
+					MaxTasksPerPod:                  50,
+					MaxPodUptimeSeconds:             3600,
+					MaxTaskRetries:                  &mt,
+				},
+			},
+		},
+		{
+			name: "session pool without TaskPolicy is admitted",
+			pool: poolstore.Pool{ExecutionMode: runtimestore.ExecutionModeSession},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := poolstore.ValidateTaskPolicy(tc.pool)
+			if tc.wantSub == "" {
+				if err != nil {
+					t.Fatalf("want nil, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("want error containing %q, got nil", tc.wantSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
+func negInt() *int { n := -1; return &n }
+
+// TestCreatePersistsTaskPolicy verifies Memory.Create stores a task
+// policy block and Get returns the persisted shape.
+//
+// spec: §5.2 lines 398-413.
+func TestCreatePersistsTaskPolicy(t *testing.T) {
+	ctx := context.Background()
+	store := poolstore.NewMemory()
+	if err := store.Create(ctx, poolstore.Pool{
+		Name:          "tp",
+		ExecutionMode: runtimestore.ExecutionModeTask,
+		TaskPolicy: &poolstore.TaskPolicy{
+			AcknowledgeBestEffortScrub: true,
+			MaxTasksPerPod:             20,
+			CleanupCommands:            []string{"pkill -f jupyter_kernel"},
+		},
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := store.Get(ctx, "tp")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.TaskPolicy == nil {
+		t.Fatal("task policy not persisted")
+	}
+	if got.TaskPolicy.MaxTasksPerPod != 20 {
+		t.Errorf("maxTasksPerPod: %d", got.TaskPolicy.MaxTasksPerPod)
+	}
+	if len(got.TaskPolicy.CleanupCommands) != 1 || got.TaskPolicy.CleanupCommands[0] != "pkill -f jupyter_kernel" {
+		t.Errorf("cleanup commands: %#v", got.TaskPolicy.CleanupCommands)
+	}
+	// Mutating the returned slice must not leak into the store.
+	got.TaskPolicy.CleanupCommands[0] = "MUTATED"
+	again, _ := store.Get(ctx, "tp")
+	if again.TaskPolicy.CleanupCommands[0] == "MUTATED" {
+		t.Error("Create shared the cleanup-command slice with the caller")
+	}
+}
+
 func TestValidateCrossTenantReuseTier_spec_5_2_396(t *testing.T) {
 	cases := []struct {
 		name string

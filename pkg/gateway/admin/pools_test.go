@@ -613,8 +613,13 @@ func TestCreatePoolAllowsCrossTenantReuseOnT3Runtime_spec_5_2_396(t *testing.T) 
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
 		Name:                  "reuse-pool",
 		RuntimeRef:            "general-agent",
+		IsolationProfile:      "microvm",
 		ExecutionMode:         "task",
 		AllowCrossTenantReuse: true,
+		TaskPolicy: &admin.TaskPolicyPayload{
+			AcknowledgeBestEffortScrub: true,
+			MaxTasksPerPod:             10,
+		},
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
@@ -636,6 +641,10 @@ func TestUpdatePoolRejectsEnablingCrossTenantReuseOnT4Runtime_spec_5_2_396(t *te
 	})
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
 		Name: "t4-pool", RuntimeRef: "phi-agent", ExecutionMode: "task",
+		TaskPolicy: &admin.TaskPolicyPayload{
+			AcknowledgeBestEffortScrub: true,
+			MaxTasksPerPod:             5,
+		},
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: got %d, body=%s", rr.Code, rr.Body.String())
@@ -767,6 +776,162 @@ func TestSyncStatusOnPUTReportsPendingAfterWrite_Spec4_6_2_559(t *testing.T) {
 	}
 	if got.SyncStatus != "pending" {
 		t.Errorf("syncStatus after PUT = %q, want pending", got.SyncStatus)
+	}
+}
+
+// TestCreatePoolRoundTripsTaskPolicy_spec_5_2 verifies the §5.2
+// task-mode taskPolicy block flows from PoolPayload → store → GET
+// response with every field preserved.
+func TestCreatePoolRoundTripsTaskPolicy_spec_5_2(t *testing.T) {
+	router, store, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
+	mt := 2
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name:                  "task-pool",
+		RuntimeRef:            "claude-code",
+		IsolationProfile:      "microvm",
+		ExecutionMode:         "task",
+		AllowCrossTenantReuse: true,
+		TaskPolicy: &admin.TaskPolicyPayload{
+			AcknowledgeBestEffortScrub:      true,
+			MicrovmScrubMode:                "in-place",
+			AcknowledgeMicrovmResidualState: true,
+			CleanupCommands:                 []string{"pkill -f jupyter_kernel", "rm -rf /tmp/sandbox-*"},
+			CleanupTimeoutSeconds:           30,
+			OnCleanupFailure:                "warn",
+			MaxScrubFailures:                3,
+			MaxTasksPerPod:                  50,
+			MaxPodUptimeSeconds:             86400,
+			MaxTaskRetries:                  &mt,
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "task-pool")
+	if err != nil {
+		t.Fatalf("store get: %v", err)
+	}
+	if row.TaskPolicy == nil {
+		t.Fatal("task policy not persisted")
+	}
+	if row.TaskPolicy.MaxTasksPerPod != 50 || !row.TaskPolicy.AcknowledgeBestEffortScrub {
+		t.Errorf("task policy fields not round-tripped: %+v", row.TaskPolicy)
+	}
+
+	// GET surfaces the task policy back to the client.
+	rr = poolReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/task-pool", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: %d %s", rr.Code, rr.Body.String())
+	}
+	var got admin.PoolPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.TaskPolicy == nil {
+		t.Fatal("GET response missing taskPolicy")
+	}
+	if got.TaskPolicy.MicrovmScrubMode != "in-place" {
+		t.Errorf("MicrovmScrubMode = %q", got.TaskPolicy.MicrovmScrubMode)
+	}
+	if got.TaskPolicy.MaxTaskRetries == nil || *got.TaskPolicy.MaxTaskRetries != 2 {
+		t.Errorf("MaxTaskRetries = %#v", got.TaskPolicy.MaxTaskRetries)
+	}
+	if got.AllowCrossTenantReuse != true {
+		t.Error("AllowCrossTenantReuse top-level field not preserved")
+	}
+}
+
+// TestCreatePoolRejectsTaskModeWithoutPolicy_spec_5_2_473 confirms a
+// task-mode pool POST without a taskPolicy block is rejected with the
+// §5.2 line 473 message.
+func TestCreatePoolRejectsTaskModeWithoutPolicy_spec_5_2_473(t *testing.T) {
+	router, _, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "tp", RuntimeRef: "claude-code", ExecutionMode: "task",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("task-mode pool requires taskPolicy")) {
+		t.Errorf("body: %s", rr.Body.String())
+	}
+}
+
+// TestCreatePoolRejectsTaskPolicyOnSessionPool_spec_5_2 confirms a
+// session-mode pool that carries a TaskPolicy is rejected — the policy
+// is task-mode-only.
+func TestCreatePoolRejectsTaskPolicyOnSessionPool_spec_5_2(t *testing.T) {
+	router, _, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "wrong", RuntimeRef: "claude-code", ExecutionMode: "session",
+		TaskPolicy: &admin.TaskPolicyPayload{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 5},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("taskPolicy is valid only when executionMode is task")) {
+		t.Errorf("body: %s", rr.Body.String())
+	}
+}
+
+// TestUpdatePoolClearsTaskPolicy_spec_5_2 confirms ClearTaskPolicy on a
+// PUT removes the persisted policy block while leaving everything else
+// intact.
+func TestUpdatePoolClearsTaskPolicy_spec_5_2(t *testing.T) {
+	router, store, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "task",
+		TaskPolicy: &admin.TaskPolicyPayload{
+			AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 5,
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// Switching the pool out of task mode and clearing TaskPolicy in one
+	// PUT should succeed (mode mismatch + stray policy would otherwise
+	// reject; the clear flag handles it explicitly).
+	mode := "session"
+	rr = poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/p1",
+		admin.UpdatePoolRequest{ExecutionMode: &mode, ClearTaskPolicy: true})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "p1")
+	if row.TaskPolicy != nil {
+		t.Errorf("TaskPolicy not cleared: %+v", row.TaskPolicy)
+	}
+}
+
+// TestUpdatePoolMutexClearAndSetTaskPolicy_spec_5_2 confirms a PUT that
+// sets both ClearTaskPolicy and TaskPolicy is rejected.
+func TestUpdatePoolMutexClearAndSetTaskPolicy_spec_5_2(t *testing.T) {
+	router, _, runtimes, _ := newPoolAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
+	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "task",
+		TaskPolicy: &admin.TaskPolicyPayload{
+			AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 5,
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	rr = poolReq(t, router.Handler(), http.MethodPut, "/v1/admin/pools/p1",
+		admin.UpdatePoolRequest{
+			ClearTaskPolicy: true,
+			TaskPolicy:      &admin.TaskPolicyPayload{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 6},
+		})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("mutually exclusive")) {
+		t.Errorf("body: %s", rr.Body.String())
 	}
 }
 

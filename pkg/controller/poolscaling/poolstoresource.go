@@ -55,27 +55,72 @@ func (s *PoolStoreSource) ListPoolConfigs(ctx context.Context) ([]PoolConfig, er
 
 // toConfig maps one store row into a PoolConfig. The whole
 // SandboxTemplate spec is PoolScalingController-owned (§4.6.3), so every
-// field the store models is copied; fields the v1 store does not model
-// (taskPolicy, concurrentWorkspacePolicy) are left unset, and a pool
-// whose mode requires them is rejected by the pool-config validator at
-// admission, which the controller's per-tuple backoff handles.
+// field the store models is copied. spec: §5.2 — the §5.2 task-mode
+// taskPolicy block and §5.2 concurrent-workspace
+// concurrentWorkspacePolicy block are populated from the corresponding
+// store fields so the SandboxTemplate carries the full mode-specific
+// configuration the pool-config validation webhook expects.
 func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 	warm := int32(p.WarmCount)
+	spec := lennyv1.SandboxTemplateSpec{
+		RuntimeRef:           p.RuntimeRef,
+		IsolationProfile:     string(p.IsolationProfile),
+		EgressProfile:        string(p.EgressProfile),
+		ResourceClass:        p.ResourceClass,
+		ExecutionMode:        string(p.ExecutionMode),
+		ConcurrencyStyle:     string(p.ConcurrencyStyle),
+		MaxConcurrent:        int32(p.MaxConcurrent),
+		MaxSessionAgeSeconds: int64(p.MaxSessionAgeSeconds),
+	}
+	if p.TaskPolicy != nil || p.AllowCrossTenantReuse {
+		spec.TaskPolicy = taskPolicyToCRD(p.TaskPolicy, p.AllowCrossTenantReuse)
+	}
+	if p.ConcurrencyStyle == poolstore.ConcurrencyStyleWorkspace {
+		spec.ConcurrentWorkspacePolicy = &lennyv1.ConcurrentWorkspacePolicy{
+			AcknowledgeProcessLevelIsolation: p.AcknowledgeProcessLevelIsolation,
+			CleanupTimeoutSeconds:            int64(p.CleanupTimeoutSeconds),
+		}
+	}
 	return PoolConfig{
-		Name:      p.Name,
-		Namespace: s.Namespace,
-		Template: lennyv1.SandboxTemplateSpec{
-			RuntimeRef:           p.RuntimeRef,
-			IsolationProfile:     string(p.IsolationProfile),
-			EgressProfile:        string(p.EgressProfile),
-			ResourceClass:        p.ResourceClass,
-			ExecutionMode:        string(p.ExecutionMode),
-			ConcurrencyStyle:     string(p.ConcurrencyStyle),
-			MaxConcurrent:        int32(p.MaxConcurrent),
-			MaxSessionAgeSeconds: int64(p.MaxSessionAgeSeconds),
-		},
+		Name:       p.Name,
+		Namespace:  s.Namespace,
+		Template:   spec,
 		MinWarm:    warm,
 		MaxWarm:    warm,
 		Generation: p.Generation,
 	}
+}
+
+// taskPolicyToCRD renders a store TaskPolicy into the CRD shape. The
+// pool-level AllowCrossTenantReuse flag lives at the Pool top level in
+// the store (legacy v1 admin contract) but at the CRD's TaskPolicy
+// level in §5.2 spec yaml, so the value is folded in here. A nil store
+// policy with allowCrossTenantReuse=true still produces a CRD
+// TaskPolicy carrying the flag — the webhook then rejects it for
+// missing acknowledgeBestEffortScrub / maxTasksPerPod, surfacing the
+// configuration error to the operator. spec: §5.2 lines 398-475.
+func taskPolicyToCRD(tp *poolstore.TaskPolicy, allowCrossTenantReuse bool) *lennyv1.TaskPolicy {
+	out := &lennyv1.TaskPolicy{AllowCrossTenantReuse: allowCrossTenantReuse}
+	if tp != nil {
+		out.AcknowledgeBestEffortScrub = tp.AcknowledgeBestEffortScrub
+		out.MicrovmScrubMode = string(tp.MicrovmScrubMode)
+		out.AcknowledgeMicrovmResidualState = tp.AcknowledgeMicrovmResidualState
+		out.CleanupCommands = append([]string(nil), tp.CleanupCommands...)
+		out.CleanupTimeoutSeconds = int64(tp.CleanupTimeoutSeconds)
+		out.OnCleanupFailure = string(tp.OnCleanupFailure)
+		if tp.MaxScrubFailures > 0 {
+			n := int32(tp.MaxScrubFailures)
+			out.MaxScrubFailures = &n
+		}
+		out.MaxTasksPerPod = int32(tp.MaxTasksPerPod)
+		if tp.MaxPodUptimeSeconds > 0 {
+			n := int64(tp.MaxPodUptimeSeconds)
+			out.MaxPodUptimeSeconds = &n
+		}
+		if tp.MaxTaskRetries != nil {
+			n := int32(*tp.MaxTaskRetries)
+			out.MaxTaskRetries = &n
+		}
+	}
+	return out
 }

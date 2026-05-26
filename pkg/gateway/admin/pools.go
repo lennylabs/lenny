@@ -99,9 +99,35 @@ type PoolPayload struct {
 	// spec: spec/04_system-components.md line 559.
 	SyncStatus string `json:"syncStatus,omitempty"`
 
+	// TaskPolicy is the §5.2 task-mode taskPolicy block (lines 398-413).
+	// Required when ExecutionMode is `task` and must be absent on session
+	// and concurrent pools; the gateway-side ValidateTaskPolicy enforces
+	// both directions. AllowCrossTenantReuse is not nested under
+	// taskPolicy on the wire — it is carried at the top level above to
+	// match the v1 admin contract. spec: §5.2 lines 398-475.
+	TaskPolicy *TaskPolicyPayload `json:"taskPolicy,omitempty"`
+
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 	DeletedAt string `json:"deletedAt,omitempty"`
+}
+
+// TaskPolicyPayload is the §5.2 taskPolicy block on the admin wire. It
+// mirrors the §5.2 spec yaml minus allowCrossTenantReuse, which lives on
+// PoolPayload at the top level so the v1 admin contract stays stable
+// while the spec-canonical CRD field is populated downstream by the
+// PoolScalingController. spec: §5.2 lines 398-475.
+type TaskPolicyPayload struct {
+	AcknowledgeBestEffortScrub      bool     `json:"acknowledgeBestEffortScrub,omitempty"`
+	MicrovmScrubMode                string   `json:"microvmScrubMode,omitempty"`
+	AcknowledgeMicrovmResidualState bool     `json:"acknowledgeMicrovmResidualState,omitempty"`
+	CleanupCommands                 []string `json:"cleanupCommands,omitempty"`
+	CleanupTimeoutSeconds           int      `json:"cleanupTimeoutSeconds,omitempty"`
+	OnCleanupFailure                string   `json:"onCleanupFailure,omitempty"`
+	MaxScrubFailures                int      `json:"maxScrubFailures,omitempty"`
+	MaxTasksPerPod                  int      `json:"maxTasksPerPod,omitempty"`
+	MaxPodUptimeSeconds             int      `json:"maxPodUptimeSeconds,omitempty"`
+	MaxTaskRetries                  *int     `json:"maxTaskRetries,omitempty"`
 }
 
 // PoolSyncStatus is the §15.1 GET /v1/admin/pools/{name}/sync-status
@@ -117,23 +143,28 @@ type PoolSyncStatus struct {
 
 // UpdatePoolRequest is the §15.1 PUT body.
 type UpdatePoolRequest struct {
-	RuntimeRef                       *string `json:"runtimeRef,omitempty"`
-	IsolationProfile                 *string `json:"isolationProfile,omitempty"`
-	ExecutionMode                    *string `json:"executionMode,omitempty"`
-	ResourceClass                    *string `json:"resourceClass,omitempty"`
-	WarmCount                        *int    `json:"warmCount,omitempty"`
-	MaxSessionAgeSeconds             *int    `json:"maxSessionAgeSeconds,omitempty"`
-	AllowStandardIsolation           *bool   `json:"allowStandardIsolation,omitempty"`
-	EgressProfile                    *string `json:"egressProfile,omitempty"`
-	ConcurrencyStyle                 *string `json:"concurrencyStyle,omitempty"`
-	MaxConcurrent                    *int    `json:"maxConcurrent,omitempty"`
-	AcknowledgeProcessLevelIsolation *bool   `json:"acknowledgeProcessLevelIsolation,omitempty"`
-	CleanupTimeoutSeconds            *int    `json:"cleanupTimeoutSeconds,omitempty"`
-	AllowCrossTenantReuse            *bool   `json:"allowCrossTenantReuse,omitempty"`
+	RuntimeRef                       *string            `json:"runtimeRef,omitempty"`
+	IsolationProfile                 *string            `json:"isolationProfile,omitempty"`
+	ExecutionMode                    *string            `json:"executionMode,omitempty"`
+	ResourceClass                    *string            `json:"resourceClass,omitempty"`
+	WarmCount                        *int               `json:"warmCount,omitempty"`
+	MaxSessionAgeSeconds             *int               `json:"maxSessionAgeSeconds,omitempty"`
+	AllowStandardIsolation           *bool              `json:"allowStandardIsolation,omitempty"`
+	EgressProfile                    *string            `json:"egressProfile,omitempty"`
+	ConcurrencyStyle                 *string            `json:"concurrencyStyle,omitempty"`
+	MaxConcurrent                    *int               `json:"maxConcurrent,omitempty"`
+	AcknowledgeProcessLevelIsolation *bool              `json:"acknowledgeProcessLevelIsolation,omitempty"`
+	CleanupTimeoutSeconds            *int               `json:"cleanupTimeoutSeconds,omitempty"`
+	AllowCrossTenantReuse            *bool              `json:"allowCrossTenantReuse,omitempty"`
+	TaskPolicy                       *TaskPolicyPayload `json:"taskPolicy,omitempty"`
+	// ClearTaskPolicy, when true, removes the persisted task policy block
+	// in the same PUT. A non-nil TaskPolicy with ClearTaskPolicy set is
+	// rejected (the two operations are mutually exclusive).
+	ClearTaskPolicy bool `json:"clearTaskPolicy,omitempty"`
 }
 
 func fromPool(p poolstore.Pool) PoolPayload {
-	return PoolPayload{
+	out := PoolPayload{
 		Name:                             p.Name,
 		RuntimeRef:                       p.RuntimeRef,
 		IsolationProfile:                 string(p.IsolationProfile),
@@ -152,6 +183,58 @@ func fromPool(p poolstore.Pool) PoolPayload {
 		UpdatedAt:                        rfc3339Nano(p.UpdatedAt),
 		DeletedAt:                        rfc3339Nano(p.DeletedAt),
 	}
+	if p.TaskPolicy != nil {
+		out.TaskPolicy = taskPolicyToWire(p.TaskPolicy)
+	}
+	return out
+}
+
+// taskPolicyToWire renders a stored task policy as the admin payload
+// shape. spec: §5.2 lines 398-475.
+func taskPolicyToWire(tp *poolstore.TaskPolicy) *TaskPolicyPayload {
+	if tp == nil {
+		return nil
+	}
+	out := &TaskPolicyPayload{
+		AcknowledgeBestEffortScrub:      tp.AcknowledgeBestEffortScrub,
+		MicrovmScrubMode:                string(tp.MicrovmScrubMode),
+		AcknowledgeMicrovmResidualState: tp.AcknowledgeMicrovmResidualState,
+		CleanupCommands:                 append([]string(nil), tp.CleanupCommands...),
+		CleanupTimeoutSeconds:           tp.CleanupTimeoutSeconds,
+		OnCleanupFailure:                string(tp.OnCleanupFailure),
+		MaxScrubFailures:                tp.MaxScrubFailures,
+		MaxTasksPerPod:                  tp.MaxTasksPerPod,
+		MaxPodUptimeSeconds:             tp.MaxPodUptimeSeconds,
+	}
+	if tp.MaxTaskRetries != nil {
+		n := *tp.MaxTaskRetries
+		out.MaxTaskRetries = &n
+	}
+	return out
+}
+
+// taskPolicyFromWire is the inverse of taskPolicyToWire: a nil payload
+// reads as a nil stored policy.
+func taskPolicyFromWire(in *TaskPolicyPayload) *poolstore.TaskPolicy {
+	if in == nil {
+		return nil
+	}
+	out := &poolstore.TaskPolicy{
+		AcknowledgeBestEffortScrub:      in.AcknowledgeBestEffortScrub,
+		MicrovmScrubMode:                runtimestore.MicrovmScrubMode(in.MicrovmScrubMode),
+		AcknowledgeMicrovmResidualState: in.AcknowledgeMicrovmResidualState,
+		CleanupCommands:                 append([]string(nil), in.CleanupCommands...),
+		CleanupTimeoutSeconds:           in.CleanupTimeoutSeconds,
+		OnCleanupFailure:                runtimestore.CleanupFailureDisposition(in.OnCleanupFailure),
+		MaxScrubFailures:                in.MaxScrubFailures,
+		MaxTasksPerPod:                  in.MaxTasksPerPod,
+		MaxPodUptimeSeconds:             in.MaxPodUptimeSeconds,
+	}
+	if in.MaxTaskRetries != nil {
+		n := *in.MaxTaskRetries
+		out.MaxTaskRetries = &n
+	}
+	return out
 }
 
 // WithPools wires the §15.1 pool CRUD handlers onto the Router.
@@ -252,6 +335,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		MaxSessionAgeSeconds:             body.MaxSessionAgeSeconds,
 		AllowStandardIsolation:           body.AllowStandardIsolation,
 		EgressProfile:                    egress.Profile(body.EgressProfile),
+		TaskPolicy:                       taskPolicyFromWire(body.TaskPolicy),
 		CreatedAt:                        r.clock(),
 	}
 	pl.UpdatedAt = pl.CreatedAt
@@ -561,6 +645,11 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 			"egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)", nil)
 		return
 	}
+	if body.ClearTaskPolicy && body.TaskPolicy != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"clearTaskPolicy and taskPolicy are mutually exclusive in one PUT", nil)
+		return
+	}
 	// runtimeRef cross-check.
 	if body.RuntimeRef != nil && *body.RuntimeRef != "" && r.runtimes != nil {
 		if _, err := r.runtimes.Get(req.Context(), *body.RuntimeRef); err != nil {
@@ -651,6 +740,11 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 		if body.AllowCrossTenantReuse != nil {
 			p.AllowCrossTenantReuse = *body.AllowCrossTenantReuse
 		}
+		if body.ClearTaskPolicy {
+			p.TaskPolicy = nil
+		} else if body.TaskPolicy != nil {
+			p.TaskPolicy = taskPolicyFromWire(body.TaskPolicy)
+		}
 		return nil
 	})
 	if err != nil {
@@ -740,6 +834,12 @@ func changedPoolFields(b UpdatePoolRequest) []string {
 	}
 	if b.AllowCrossTenantReuse != nil {
 		out = append(out, "allowCrossTenantReuse")
+	}
+	if b.TaskPolicy != nil {
+		out = append(out, "taskPolicy")
+	}
+	if b.ClearTaskPolicy {
+		out = append(out, "taskPolicy.cleared")
 	}
 	return out
 }
