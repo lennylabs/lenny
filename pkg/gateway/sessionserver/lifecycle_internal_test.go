@@ -223,7 +223,7 @@ func TestFailSessionEmitsTerminalLifecycle_spec_7_2_2(t *testing.T) {
 
 func TestEmitStatusChangeNoBusIsSafe_spec_7_2_2(t *testing.T) {
 	srv := New(memstore.New(), Options{})
-	srv.emitStatusChange("s", session.StateSuspended) // nil bus must not panic
+	srv.emitStatusChange("acme", "s", session.StateSuspended) // nil bus must not panic
 	srv.emitSessionComplete(sessionstore.Session{ID: "s", State: session.StateCompleted})
 }
 

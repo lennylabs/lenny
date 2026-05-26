@@ -361,7 +361,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// directly in running, so emit status_change(running) for SSE
 	// subscribers (e.g. a parent watching a delegated child) on parity
 	// with the explicit POST /start transition.
-	s.emitStatusChange(row.ID, row.State)
+	s.emitStatusChange(row.TenantID, row.ID, row.State)
 
 	base := toResponse(row)
 	base.SessionIsolationLevel = defaultIsolationLevel(isoProf)
@@ -436,7 +436,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// spec: §7.2 line 137 — surface the ready → running transition.
-	s.emitStatusChange(updated.ID, updated.State)
+	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	s.writeSession(w, http.StatusOK, updated)
 }
 
@@ -1007,7 +1007,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	// spec: §7.2 line 137 — surface the resume transition (the
 	// resume_pending → resuming → running chain collapses to the
 	// resolved state) before the richer session.resumed event below.
-	s.emitStatusChange(updated.ID, updated.State)
+	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	// spec: §4.4 line 236 — partial-manifest cleanup runs on every
 	// resume regardless of whether the underlying reassembly
 	// succeeded. The cleaner deletes the chunk objects and
@@ -1082,7 +1082,7 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 	data, _ := json.Marshal(struct {
 		Children []reattachedChild `json:"children"`
 	}{Children: children})
-	s.events.Publish(parentID, "children_reattached", string(data), s.clock())
+	s.events.PublishForTenant(tenantID, parentID, "children_reattached", string(data), s.clock())
 }
 
 // resumeOnPod restores a session onto a fresh §5 warm pod. When the
@@ -1205,7 +1205,7 @@ func (s *Server) emitResumedEvent(_ context.Context, row sessionstore.Session, m
 		ResumeMode:    string(mode),
 		WorkspaceLost: mode.WorkspaceLost(),
 	}
-	s.publishEvent(row.ID, "session.resumed", payload)
+	s.publishEvent(row.TenantID, row.ID, "session.resumed", payload)
 }
 
 // bumpRecoveryGeneration increments the §4.2 recovery_generation

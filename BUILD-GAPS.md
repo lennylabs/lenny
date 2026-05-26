@@ -4417,7 +4417,7 @@ Implementation tree audited:
 - **Impl:** No gateway code path calls `Adapter.DemoteSDK` (a grep over `pkg/gateway/**` returns zero hits). `sdkWarmBlockingPaths` matching is not implemented; the `WorkspacePlan` is never checked against any pattern list before `Bind`. `requiresDemotion` is not modeled in `ClaimOpts` (`pkg/podregistry/`).
 - **Effect:** If a runtime ever did declare `preConnect: true`, the spec's safety machinery for blocking-path demotion would silently no-op. Sessions whose workspace plans include `CLAUDE.md` / `.claude/*` would be served by a pre-connected SDK that the spec says must be torn down first.
 
-### - [ ] F-6.2.5 — 2-05 `Sandbox.spec.tenantId` write at claim time silently bypasses the §4.6.3 ownership boundary [High] — OPEN
+### - [x] F-6.2.5 — 2-05 `Sandbox.spec.tenantId` write at claim time silently bypasses the §4.6.3 ownership boundary [High] — CLOSED
 - **Spec:** §6.2 line 305 + §4.6.3 (via `pkg/admission/ownership/ownership.go:113–117`) record `Sandbox.spec.*` and `Sandbox.status.*` as exclusively owned by `WarmPoolController`. §5.2 tenant pinning is the gateway-owned exception, narrowly carved out for `status.tenantId` and `status.activeSlots` (handled by SSA with `ForceOwnership` in `pkg/gateway/podclaim/slotclaimer.go:43–58`).
 - **Impl:** Two callers write `Sandbox.status` via direct `Update` (not SSA) and without the documented carve-out:
   - `pkg/gateway/podclaim/claimer.go:68–75` writes `sb.Status.Phase = "claimed"` via `Client.Status().Update`.
@@ -4425,6 +4425,7 @@ Implementation tree audited:
   - `pkg/gateway/podsession/binder.go:493–495` writes `sb.Status.Phase = "draining"` on release.
   - `pkg/podregistry/crd.go:109` writes `sb.Status.TenantID = opts.TenantID` and `sb.Status.Phase = "claimed"` via direct `Update`.
 - **Effect:** These writes work today because admission does not yet enforce the matrix, but they violate the ownership contract that the SSA-based slot path took pains to preserve. When the §4.6.3 enforcement webhook lands they will start rejecting; meanwhile they silently strip the WPC's field-manager claim on `Sandbox.status.phase`, which is the exact regression the SSA design exists to prevent.
+- **Resolution:** New exported helper `podclaim.ApplyGatewayPhase` (SSA Apply under `FieldOwner=lenny-gateway` + `ForceOwnership`) replaces the direct Update path for every gateway-side phase write that should claim §4.6.3 ownership. `claimer.go` (idle → claimed) and the fallback claim path in `podsession/binder.go` both use it, with the CREATE of the binding `SandboxClaim` reordered ahead of the phase write so the §4.6.1 webhook + deterministic claim-`<sessionID>` name remain the authoritative single-claim guard. `binder.setPhase` (claimed → ... → attached → terminal) now also threads through `ApplyGatewayPhase`. The `drain` step intentionally keeps direct Update: per the K8s SSA spec a non-Apply request strips other managers' claims, so the WPC can re-claim `status.phase` to write `terminated` — using SSA + ForceOwnership in drain would leave the WPC's terminated-write 409ing indefinitely (the WPC reconciler does not force ownership per §4.6.3 "never force-conflicts" guidance). `pkg/podregistry/crd.go` is unreferenced outside its own tests in v1 (the gateway uses `podsession.Registry`), so left in place. Resolved in commit (this batch).
 
 ### - [ ] F-6.2.6 — 2-06 Task-mode `task_cleanup` lifecycle does not implement the §6.2 / §5.2 disposition branching [High] — OPEN
 - **Spec:** §6.2 lines 142–158 require `task_cleanup` to branch on host-schedulability, `preConnect`, `maxTasksPerPod`, `maxPodUptimeSeconds`, `maxScrubFailures`, and `onCleanupFailure` into `idle`, `idle [scrub_warning]`, `draining`, `draining [scrub_warning]`, `sdk_connecting`, `sdk_connecting [scrub_warning]`, or `failed`. The `cancelled → task_cleanup` edge (line 146) is also required.
@@ -4511,13 +4512,14 @@ Implementation tree audited:
 - **Effect:** The spec-mandated `starting_session → resume_pending` (the sole post-attached visibility path per §6.2 line 303) cannot be expressed today.
 - **Resolution:** Added `state.StartingSession` to the phase enum, `All()`, and the `CoarseState` active set. `ValidTransitions()` now routes the §6.2 line-87 pod-warm chain `running_setup → starting_session → attached` (the direct `running_setup → attached` edge is removed; no production writer existed) and adds the §6.2 line-102/103 edges `starting_session → failed` and `starting_session → resume_pending`. The CRD enum is extended in `sandbox_types.go` and both rendered CRDs (`charts/lenny/crds`, `pkg/embedded/crds`). New `TestStartingSessionPhaseAndTransitions_spec_6_2`. Resolved in commit 45566d68.
 
-### - [ ] F-6.2.19 — 2-19 Sandbox phase enum has no `input_required` value, even though the spec treats it as a sub-state of `running` [Low] — OPEN
+### - [x] F-6.2.19 — 2-19 Sandbox phase enum has no `input_required` value, even though the spec treats it as a sub-state of `running` [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.2.1 — F-6.2.19 and F-7.2.1 report the same defect: input_required missing from the externally-visible session state enum; F-7.2.23 is an Info note that the internal state package already encodes the sub-state, a distinct observation.
 
 - **Spec:** §6.2 lines 121–127, 200–212 describe `input_required` as a sub-state of `running` (pod live, agent blocked in `lenny/request_input`). The spec is explicit that it is logically sub-state, not a separate Sandbox phase.
 - **Impl:** Sandbox enum omits it (correct per spec). `pkg/task/state/state.go:18` defines `InputRequired` for the task-record state machine but never wires it to the Sandbox. `pkg/api/v1/session/session.go:46–59` also omits `input_required` from the externally-visible session state enum, though spec §6.2 describes session-level `input_required` transitions.
 - **Effect:** If a runtime calls `lenny/request_input`, the gateway has no state to report; the §6.2 sub-state model is non-observable. (Treated as Low because the spec itself notes this is "session-level visibility" with the canonical machine in §8.8.)
+- **Resolution:** Closed by F-7.2.1. The Sandbox CRD phase enum correctly stays without `input_required` (it is a sub-state of the running phase, not a separate Sandbox phase); the §15.1 externally-visible session state enum now carries `input_required` so the REST surface can report the sub-state once the §7.2 `lenny/request_input` emitter lands.
 
 ### - [x] F-6.2.20 — 2-20 Sandbox reconciler's `idle → draining` retirement edge is broader than the spec describes [Low] — CLOSED
 - **Spec:** §6.2 lines 137 (implicit), 167 list specific triggers for `idle → draining` (pool over-target by §6.2 line 96 or `maxPodUptimeSeconds`).
@@ -4525,15 +4527,17 @@ Implementation tree audited:
 - **Effect:** Behavioural divergence is benign (the pool is restored from the planner). Worth noting for spec/code reconciliation.
 - **Resolution (re-verified, no code change):** Confirmed the finding's own "benign" conclusion. `idle → draining` is a valid §6.2 edge (`ValidTransitions`), and retiring an idle Sandbox whose backing Pod is absent/failed/succeeded is a deliberate, already-documented extension of the §6.2 cleanup model: the `lifecycle.Decide` comment (`pkg/controller/sandbox/lifecycle/lifecycle.go`) records that §6.2 has no `idle → failed` edge, so a dead-pod idle Sandbox retires through `idle → draining → terminated` for the warm-pool sizer to provision a replacement (rather than stranding it or inventing an illegal edge). The trigger is sound and the edge is legal; the spec silence on the specific "backing Pod gone" trigger is a documentation nuance, not a defect, so no code change is warranted.
 
-### - [ ] F-6.2.21 — 2-21 SDK-warm circuit-breaker logic exists but no demotion signal feeds it [Low] — OPEN
+### - [ ] F-6.2.21 — 2-21 SDK-warm circuit-breaker logic exists but no demotion signal feeds it [Low] — DEFERRED
 - **Spec:** §6.1 lines 42–63 define the trip / circuit-breaker / persistence semantics; the PSC implements `circuitbreaker.go` and persists `SandboxWarmPool.status.sdkWarmCircuitBreaker` (`pkg/controller/poolscaling/circuitbreaker.go:7–185`).
 - **Impl:** The breaker decision engine is implemented but its input (`DemotionRate`) is wired only via test sources; production has no `DemotionRateSource` because there is no demotion counter populated (cross-references H-6.2-04).
 - **Effect:** The breaker can never trip in production because no path increments demotions. Recorded as Low because the engine itself is correct; the upstream gap is H-6.2-04.
+- **Deferred:** Blocked on the unbuilt SDK-warm demotion producer (F-6.2.4 — `DemoteSDK` invocation / `requiresDemotion` / `sdkWarmBlockingPaths`). Re-verified the current state: `cmd/lenny-pool-scaling-controller/main.go:131` documents that no `DemotionRateSource` is wired in v1; the breaker engine and its persistence are correct and remain on standby. Closes alongside F-6.2.4 when the demotion signal lands.
 
-### - [ ] F-6.2.22 — 2-22 `agent_pod_state` fallback claim writes `state = 'claimed'` directly, skipping the Sandbox-CRD round-trip on conflict [Low] — OPEN
+### - [x] F-6.2.22 — 2-22 `agent_pod_state` fallback claim writes `state = 'claimed'` directly, skipping the Sandbox-CRD round-trip on conflict [Low] — CLOSED
 - **Spec:** §6.2 line 305 declares the Sandbox CRD authoritative; §4.6.1 fallback claim is a best-effort reconciliation that must still flip the CRD on success.
 - **Impl:** `pkg/gateway/podsession/binder.go:419–474` does try to flip the Sandbox phase via `Client.Status().Update` after a successful Postgres claim, but tolerates conflict silently (line 469–471). It also tolerates the case where `sb.Status.Phase != "idle"` (the `if sb.Status.Phase == state.Idle` guard means the CRD is left alone in any other phase). This is mostly OK, but combined with H-6.2-05 the silent-tolerate path means the SandboxClaim CRD can exist while the Sandbox is still labeled `idle`, briefly violating the contract the `lenny-sandboxclaim-guard` PATCH rule depends on.
 - **Effect:** Low — the SandboxClaim creation already collides on the deterministic name. Worth tightening; not a primary §6.2 regression.
+- **Resolution:** The fallback path now (1) CREATEs the SandboxClaim first, (2) re-reads the Sandbox to detect a mid-fallback drain (the mirror snapshot can pre-date a §6.2 idle → draining the WPC applied while we were locking the Postgres row), (3) on a non-idle live phase deletes the orphan claim and returns `ErrNoIdlePod`, and (4) on the still-idle path calls `podclaim.ApplyGatewayPhase` (SSA Apply + ForceOwnership) — the same code path the in-cluster Claimer uses. The silent-conflict-tolerance and the `if Phase == idle` guard are both gone. Closed alongside F-6.2.5.
 
 ### - [x] F-6.2.23 — 2-23 No orphan-SandboxClaim garbage collector exists [Low] — CLOSED
 
@@ -5694,7 +5698,7 @@ Severity: High = MUST / correctness / security; Medium = SHOULD or capability un
 
 ### Findings
 
-### - [ ] F-7.2.1 — (High) — `input_required` sub-state missing from the externally-visible session state enum [Medium] — OPEN
+### - [x] F-7.2.1 — (High) — `input_required` sub-state missing from the externally-visible session state enum [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-6.2.19 — F-6.2.19 and F-7.2.1 report the same defect: input_required missing from the externally-visible session state enum; F-7.2.23 is an Info note that the internal state package already encodes the sub-state, a distinct observation.
 
@@ -5711,6 +5715,8 @@ Implementation:
 - Grep confirms zero call sites publish `status_change` or transition the row into `input_required` (see F2).
 
 Effect: external clients cannot observe that an agent is awaiting input. CI flows that watch `GET /v1/sessions/{id}` for blocked-on-input cannot wake up.
+
+**Resolution:** Added `StateInputRequired` to the §15.1 REST projection (`pkg/api/v1/session/session.go`); `AllStates()`, `nonTerminalStates()`, and the precondition matrix for `EndpointInterrupt` and `EndpointTerminate` now admit the sub-state, matching the §7.2 line 178 transition contract (`input_required → cancelled` via terminate, `input_required → suspended` via interrupt). The §7.2 status_change emitter for `input_required`/`running` is gated on the unbuilt `lenny/request_input` MCP path (F-7.2.17 / F-7.2.18); the enum addition lands now so the surface is correct when those emitters land.
 
 ---
 
@@ -5964,11 +5970,13 @@ Effect: SDK consumers must hand-roll HTTP calls for every §7.2 interactive endp
 
 ---
 
-### - [ ] F-7.2.21 — (Low) — SSE event bus is keyed by session id only; tenant isolation rests on the `events.Get` precheck [Medium] — OPEN
+### - [x] F-7.2.21 — (Low) — SSE event bus is keyed by session id only; tenant isolation rests on the `events.Get` precheck [Medium] — CLOSED
 
 Spec §7.2 implicitly assumes tenant-scoped event delivery. The implementation uses `pkg/gateway/events/events.go:39-104` keyed by `sessionID` alone. Cross-tenant leakage is prevented because every subscribe path goes through `pkg/gateway/sessionserver/events.go:39-49` which calls `s.store.Get(ctx, tenantID, id)` — a session belonging to another tenant returns `RESOURCE_NOT_FOUND`, blocking subscription. Since session IDs are random UUIDv8 prefixes (see `pkg/api/v1/session/session.go:34-40`), collision-based leakage is implausible.
 
 Effect: no current vulnerability, but the design assumes every consumer of the in-process bus performs the same tenant precheck. A future call site that subscribes without first calling `store.Get(tenantID, id)` would silently bypass tenant isolation. Worth a defensive change at some point (Bus subscribe to take tenant id).
+
+**Resolution:** `sessionevents.Bus` now records the tenant id on the first `PublishForTenant` and exposes a `SubscribeForTenant(tenantID, sessionID, …)` that returns `ErrTenantMismatch` when the bus's frozen tenant differs from the caller's. Every production publish + the SSE subscribe handler (`sessionserver/events.go`) uses the tenant-aware variants; the legacy untenanted `Publish`/`Subscribe` remain for tests and the (no-binding) permissive path. The defense-in-depth predicate now fires even if a future caller drops the `store.Get(tenantID, id)` precheck. Closed in commit (this batch).
 
 ---
 
@@ -5984,13 +5992,15 @@ Effect: the top-down control model described at lines 366-373 is unenforceable.
 
 ---
 
-### - [ ] F-7.2.23 — (Info) — `pkg/session/state/state.go` defines transitions that include `input_required` exits but no entry/exit emission [Medium] — OPEN
+### - [x] F-7.2.23 — (Info) — `pkg/session/state/state.go` defines transitions that include `input_required` exits but no entry/exit emission [Medium] — CLOSED
 
 Spec §7.2 state machine lines 176-181 list the input_required transitions. The internal package `pkg/session/state/state.go:81-92` does encode `Running → InputRequired` and exits to `Running`, `Cancelled`, `Expired`, `Failed`, `ResumePending` (the last via Running's transitions, since input_required is a sub-state). This is internally consistent.
 
 The gap is the consumer side: no production code reads `pkg/session/state` to drive the externally visible enum (F1) or to emit `status_change` (F2). The two packages diverge: the externally visible `pkg/api/v1/session.State` enum lacks `input_required` entirely.
 
 Effect: noteworthy that the internal state model already encodes the sub-state correctly; only the surface emission and external enum need wiring.
+
+**Resolution:** Closed by F-7.2.1: the externally-visible `pkg/api/v1/session.State` enum now carries `StateInputRequired`, so the internal `pkg/session/state` and the §15.1 REST projection no longer diverge on the sub-state. The `status_change(input_required)` / `status_change(running)` emission remains gated on the unbuilt `lenny/request_input` MCP path (F-7.2.17 / F-7.2.18).
 
 ---
 

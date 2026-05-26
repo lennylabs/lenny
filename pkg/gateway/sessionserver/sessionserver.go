@@ -1338,7 +1338,7 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 			// (e.g. interrupt → suspended) on the SSE stream. Terminal
 			// transitions emit status_change from recordSessionCompleted
 			// so every terminal caller is covered uniformly.
-			s.emitStatusChange(updated.ID, updated.State)
+			s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 		}
 		s.writeSession(w, http.StatusOK, updated)
 	}
@@ -1393,7 +1393,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		_ = s.uploadVerifier.ConsumeDigest(updated.UploadTokenDigest, updated.UploadTokenExpiry)
 	}
 	// spec: §7.2 line 137 — surface the created → ready transition.
-	s.emitStatusChange(updated.ID, updated.State)
+	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	s.writeSession(w, http.StatusOK, updated)
 }
 

@@ -246,12 +246,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// Publish the §15.1 session events so SSE subscribers observe
 	// the message + response live.
 	for _, m := range msgs {
-		s.publishEvent(row.ID, "message_delivered", map[string]any{
+		s.publishEvent(row.TenantID, row.ID, "message_delivered", map[string]any{
 			"role": m.Role, "content": m.Content,
 		})
 	}
 	for _, p := range out {
-		s.publishEvent(row.ID, "response", map[string]any{
+		s.publishEvent(row.TenantID, row.ID, "response", map[string]any{
 			"type": p.Type, "text": p.Text, "ref": p.Ref,
 		})
 	}

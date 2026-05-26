@@ -55,7 +55,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	afterSeq := resumeCursor(r)
-	sub := s.events.Subscribe(id, afterSeq, 64)
+	// §7.2 defense-in-depth: the bus enforces the tenant binding even
+	// if a future caller drops the store.Get precheck above.
+	sub, err := s.events.SubscribeForTenant(tenantID, id, afterSeq, 64)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+		return
+	}
 	defer sub.Close()
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -112,8 +118,11 @@ func writeSSEEvent(w http.ResponseWriter, ev sessionevents.Event) {
 
 // publishEvent is the gateway-side helper that publishes a session
 // event when the event bus is wired. eventData is marshalled to
-// JSON; a marshalling failure publishes an empty object.
-func (s *Server) publishEvent(sessionID, eventType string, payload any) {
+// JSON; a marshalling failure publishes an empty object. The tenant id
+// is recorded on the bus so SubscribeForTenant enforces the §7.2
+// tenant-isolation predicate. A non-empty tenant id is the production
+// contract; tests may pass "" for the legacy untenanted code path.
+func (s *Server) publishEvent(tenantID, sessionID, eventType string, payload any) {
 	if s.events == nil {
 		return
 	}
@@ -121,5 +130,9 @@ func (s *Server) publishEvent(sessionID, eventType string, payload any) {
 	if err != nil {
 		data = []byte("{}")
 	}
-	s.events.Publish(sessionID, eventType, string(data), s.clock())
+	if tenantID == "" {
+		s.events.Publish(sessionID, eventType, string(data), s.clock())
+		return
+	}
+	s.events.PublishForTenant(tenantID, sessionID, eventType, string(data), s.clock())
 }

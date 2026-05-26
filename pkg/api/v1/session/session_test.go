@@ -8,9 +8,10 @@ import (
 )
 
 func TestAllStatesCountMatchesSpec(t *testing.T) {
-	// §15.1 lists 12 externally-visible states.
-	if got := len(AllStates()); got != 12 {
-		t.Errorf("AllStates() returned %d, want 12 per §15.1", got)
+	// §15.1 lists 12 base states; §7.2 adds input_required as a sub-state
+	// of running that is surfaced on the REST + SSE projection.
+	if got := len(AllStates()); got != 13 {
+		t.Errorf("AllStates() returned %d, want 13 (§15.1 + §7.2 input_required)", got)
 	}
 }
 
@@ -87,12 +88,16 @@ func TestValidateStartAdmitsReadyOnly(t *testing.T) {
 	}
 }
 
-func TestValidateInterruptAdmitsRunningOnly(t *testing.T) {
-	if err := Validate(PreconditionRequest{
-		Endpoint:     EndpointInterrupt,
-		CurrentState: StateRunning,
-	}); err != nil {
-		t.Errorf("interrupt from running should be allowed, got %v", err)
+// spec: §7.2 line 178 — interrupt admits running and input_required (a
+// running sub-state) but no other state.
+func TestValidateInterruptAdmitsRunningAndInputRequired_spec_7_2(t *testing.T) {
+	for _, allowed := range []State{StateRunning, StateInputRequired} {
+		if err := Validate(PreconditionRequest{
+			Endpoint:     EndpointInterrupt,
+			CurrentState: allowed,
+		}); err != nil {
+			t.Errorf("interrupt from %q should be allowed, got %v", allowed, err)
+		}
 	}
 	for _, s := range []State{StateReady, StateSuspended, StateStarting, StateFinalizing, StateCompleted, StateFailed, StateCancelled, StateExpired} {
 		err := Validate(PreconditionRequest{

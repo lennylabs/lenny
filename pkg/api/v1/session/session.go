@@ -39,8 +39,13 @@ func NewID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// State is the externally-visible session state from §15.1. Twelve
-// values; four are terminal.
+// State is the externally-visible session state from §15.1. Four of the
+// listed values are terminal. StateInputRequired is the §7.2 sub-state of
+// StateRunning observed when a runtime calls lenny/request_input; the
+// gateway emits it on the GET /v1/sessions/{id} surface and the
+// status_change SSE stream so clients can see the agent is blocked. The
+// session state machine (pkg/session/state) is the canonical source of
+// valid transitions; this package mirrors the §15.1 REST projection.
 type State string
 
 const (
@@ -49,6 +54,7 @@ const (
 	StateReady                State = "ready"
 	StateStarting             State = "starting"
 	StateRunning              State = "running"
+	StateInputRequired        State = "input_required" // §7.2 sub-state of Running
 	StateSuspended            State = "suspended"
 	StateResumePending        State = "resume_pending"
 	StateAwaitingClientAction State = "awaiting_client_action"
@@ -62,7 +68,7 @@ const (
 func AllStates() []State {
 	return []State{
 		StateCreated, StateFinalizing, StateReady, StateStarting,
-		StateRunning, StateSuspended, StateResumePending,
+		StateRunning, StateInputRequired, StateSuspended, StateResumePending,
 		StateAwaitingClientAction, StateCompleted, StateFailed,
 		StateCancelled, StateExpired,
 	}
@@ -182,12 +188,18 @@ var preconditionTable = map[Endpoint]endpointRule{
 	EndpointFinalize: {baseStates: []State{StateCreated}},
 	EndpointStart:    {baseStates: []State{StateReady}},
 	EndpointInterrupt: {
-		baseStates: []State{StateRunning},
+		// §7.2 line 178 — input_required is a sub-state of running where
+		// the agent is blocked in lenny/request_input; an interrupt must
+		// still suspend the underlying session, so the precondition
+		// admits both running and input_required.
+		baseStates: []State{StateRunning, StateInputRequired},
 	},
 	EndpointTerminate: {
+		// §7.2 line 178 input_required → cancelled requires terminate to
+		// accept the sub-state too.
 		baseStates: []State{
 			StateCreated, StateFinalizing, StateReady, StateStarting,
-			StateRunning, StateSuspended, StateResumePending,
+			StateRunning, StateInputRequired, StateSuspended, StateResumePending,
 			StateAwaitingClientAction,
 		},
 	},

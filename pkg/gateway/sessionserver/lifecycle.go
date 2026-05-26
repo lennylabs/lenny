@@ -107,8 +107,8 @@ func auditEventTypeForTerminal(st session.State) (eventType string, ok bool) {
 //
 // spec: §7.2 line 137 — "status_change(state) | Session state
 // transition (including suspended and input_required)".
-func (s *Server) emitStatusChange(sessionID string, st session.State) {
-	s.publishEvent(sessionID, "status_change", map[string]any{"state": string(st)})
+func (s *Server) emitStatusChange(tenantID, sessionID string, st session.State) {
+	s.publishEvent(tenantID, sessionID, "status_change", map[string]any{"state": string(st)})
 }
 
 // emitSessionComplete publishes the §7.2 line 141 session_complete(result)
@@ -121,7 +121,7 @@ func (s *Server) emitStatusChange(sessionID string, st session.State) {
 // spec: §7.2 line 141 — "session_complete(result) | Session finished,
 // result available".
 func (s *Server) emitSessionComplete(sess sessionstore.Session) {
-	s.publishEvent(sess.ID, "session_complete", archivedTaskResult(sess))
+	s.publishEvent(sess.TenantID, sess.ID, "session_complete", archivedTaskResult(sess))
 }
 
 // emitTerminalLifecycle fires the client- and audit-visible signals
@@ -146,7 +146,7 @@ func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Se
 		// production, but the guard keeps the helper self-consistent.
 		return
 	}
-	s.emitStatusChange(sess.ID, sess.State)
+	s.emitStatusChange(sess.TenantID, sess.ID, sess.State)
 	s.emitSessionComplete(sess)
 	if s.lifecycleAudit != nil {
 		if et, ok := auditEventTypeForTerminal(sess.State); ok {

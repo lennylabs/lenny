@@ -21,6 +21,7 @@ package sessionevents
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -50,6 +51,14 @@ type Event struct {
 // RedisRelay is wired the Bus also fans out every publish to Redis
 // Streams so reading replicas can serve a reconnect-with-cursor
 // against the cross-replica stream.
+//
+// Tenant binding: each session id is registered to its owning tenant
+// on the first Publish, so Subscribe rejects a tenant id that does not
+// match the registration (§7.2 tenant isolation defense-in-depth).
+// Sessions IDs are random UUIDv8 prefixes (§15.1) so collisions are
+// implausible, but the Bus enforces the binding at the interface
+// boundary rather than relying on every call site to pre-check tenant
+// ownership.
 type Bus struct {
 	mu sync.Mutex
 	// seq tracks the next sequence per session.
@@ -58,6 +67,9 @@ type Bus struct {
 	history map[string][]Event
 	// subs maps a session to its active subscriber channels.
 	subs map[string][]*subscription
+	// tenant records the tenant id a session was first published under.
+	// Subscribe rejects mismatched tenant ids (§7.2 tenant isolation).
+	tenant map[string]string
 	// maxHistory bounds the per-session retained event count.
 	maxHistory int
 	// relay is the §4.4 / §12.3.7 cross-replica Redis fan-out. A nil
@@ -83,9 +95,16 @@ func NewBus(maxHistory int) *Bus {
 		seq:        map[string]uint64{},
 		history:    map[string][]Event{},
 		subs:       map[string][]*subscription{},
+		tenant:     map[string]string{},
 		maxHistory: maxHistory,
 	}
 }
+
+// ErrTenantMismatch reports that a Subscribe call presented a tenant id
+// that does not match the session's registered owner. Surfacing this
+// rather than silently delivering events to a foreign-tenant subscriber
+// is the §7.2 tenant-isolation defense-in-depth.
+var ErrTenantMismatch = errors.New("sessionevents: session belongs to a different tenant")
 
 // WithRedisRelay attaches the §4.4 / §12.3.7 cross-replica relay so
 // every Publish fans out to Redis Streams and every Subscribe
@@ -108,13 +127,35 @@ func (b *Bus) WithRedisRelay(relay *RedisRelay) *Bus {
 // subscriber. A slow subscriber whose channel is full is skipped
 // (the event remains in history for a reconnect-with-cursor).
 //
-// When the §4.4 / §12.3.7 RedisRelay is wired the published event is
-// also XADDed onto the Redis stream so reading replicas can serve a
-// reconnect from another replica against the cross-replica history.
-// The Redis fan-out is best-effort: a Redis failure logs but does
-// not roll back the in-memory publish.
+// PublishForTenant is the tenant-aware variant; Publish preserves the
+// legacy (untenanted) signature for callers in non-tenant-scoped
+// contexts (e.g. internal bus self-tests). New code SHOULD call
+// PublishForTenant so the §7.2 isolation invariant is upheld.
 func (b *Bus) Publish(sessionID, eventType, data string, now time.Time) Event {
+	return b.publish("", sessionID, eventType, data, now)
+}
+
+// PublishForTenant publishes a session event under tenantID. The
+// session's tenant is registered on the first Publish and frozen; a
+// later PublishForTenant with a different tenantID surfaces a noop
+// (the event is dropped). The frozen tenant id is the predicate
+// Subscribe enforces. spec: §7.2 tenant isolation.
+func (b *Bus) PublishForTenant(tenantID, sessionID, eventType, data string, now time.Time) Event {
+	return b.publish(tenantID, sessionID, eventType, data, now)
+}
+
+func (b *Bus) publish(tenantID, sessionID, eventType, data string, now time.Time) Event {
 	b.mu.Lock()
+	// First write wins for the tenant binding; a later publish under a
+	// different tenant is rejected so the session id cannot be hijacked.
+	if tenantID != "" {
+		if existing, ok := b.tenant[sessionID]; !ok {
+			b.tenant[sessionID] = tenantID
+		} else if existing != tenantID {
+			b.mu.Unlock()
+			return Event{}
+		}
+	}
 	b.seq[sessionID]++
 	ev := Event{
 		Seq:       b.seq[sessionID],
@@ -189,15 +230,40 @@ func (s *Subscription) Close() {
 // reconnecting client resumes exactly where it left off; live
 // events arrive on Events(). bufferSize bounds the live channel.
 //
+// Subscribe is the untenanted legacy entry point and is kept only for
+// tests; production code MUST call SubscribeForTenant so the §7.2
+// tenant-isolation predicate is enforced at the bus interface.
+func (b *Bus) Subscribe(sessionID string, afterSeq uint64, bufferSize int) *Subscription {
+	sub, _ := b.subscribe("", sessionID, afterSeq, bufferSize)
+	return sub
+}
+
+// SubscribeForTenant registers a tenant-bound subscriber for sessionID.
+// If the session has a frozen tenant (set by the first PublishForTenant)
+// and tenantID does not match it, SubscribeForTenant returns
+// ErrTenantMismatch and creates no subscription. This is the §7.2
+// defense-in-depth: even if a future caller skips the store.Get tenant
+// precheck the bus refuses to deliver foreign-tenant events.
+//
 // When the §4.4 / §12.3.7 RedisRelay is wired the Backlog merges the
 // local in-memory history with the Redis stream history so a client
 // reconnecting to this replica also sees events originally published
 // on a sibling replica.
-func (b *Bus) Subscribe(sessionID string, afterSeq uint64, bufferSize int) *Subscription {
+func (b *Bus) SubscribeForTenant(tenantID, sessionID string, afterSeq uint64, bufferSize int) (*Subscription, error) {
+	return b.subscribe(tenantID, sessionID, afterSeq, bufferSize)
+}
+
+func (b *Bus) subscribe(tenantID, sessionID string, afterSeq uint64, bufferSize int) (*Subscription, error) {
 	if bufferSize <= 0 {
 		bufferSize = 64
 	}
 	b.mu.Lock()
+	if tenantID != "" {
+		if owner, ok := b.tenant[sessionID]; ok && owner != tenantID {
+			b.mu.Unlock()
+			return nil, ErrTenantMismatch
+		}
+	}
 	sub := &subscription{ch: make(chan Event, bufferSize)}
 	b.subs[sessionID] = append(b.subs[sessionID], sub)
 
@@ -220,7 +286,7 @@ func (b *Bus) Subscribe(sessionID string, afterSeq uint64, bufferSize int) *Subs
 			backlog = mergeByCursor(backlog, remote, afterSeq)
 		}
 	}
-	return &Subscription{bus: b, sessionID: sessionID, sub: sub, Backlog: backlog}
+	return &Subscription{bus: b, sessionID: sessionID, sub: sub, Backlog: backlog}, nil
 }
 
 // mergeByCursor combines a local history slice with a remote history

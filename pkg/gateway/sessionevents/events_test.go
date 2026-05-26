@@ -147,3 +147,82 @@ func TestSlowSubscriberDoesNotBlockPublish(t *testing.T) {
 		t.Error("all events should be retained in history")
 	}
 }
+
+// spec: §7.2 tenant isolation — once a session id is published under a
+// tenant, a SubscribeForTenant from a different tenant must be rejected
+// so a future call site that drops the store.Get precheck cannot
+// silently deliver cross-tenant events.
+func TestSubscribeForTenantRejectsMismatch_spec_7_2(t *testing.T) {
+	b := sessionevents.NewBus(0)
+	b.PublishForTenant("acme", "sess_1", "message", `{}`, ts())
+
+	sub, err := b.SubscribeForTenant("globex", "sess_1", 0, 8)
+	if err == nil {
+		sub.Close()
+		t.Fatal("SubscribeForTenant with foreign tenant must fail")
+	}
+	if err != sessionevents.ErrTenantMismatch {
+		t.Errorf("err = %v, want ErrTenantMismatch", err)
+	}
+}
+
+// spec: §7.2 — the legitimate tenant can subscribe and receive events.
+func TestSubscribeForTenantMatchingTenantSucceeds_spec_7_2(t *testing.T) {
+	b := sessionevents.NewBus(0)
+	b.PublishForTenant("acme", "sess_1", "message", `{}`, ts())
+
+	sub, err := b.SubscribeForTenant("acme", "sess_1", 0, 8)
+	if err != nil {
+		t.Fatalf("SubscribeForTenant: %v", err)
+	}
+	defer sub.Close()
+	if len(sub.Backlog) != 1 {
+		t.Errorf("backlog len = %d, want 1", len(sub.Backlog))
+	}
+}
+
+// A tenant binding once set is frozen: a later PublishForTenant under
+// a different tenant is dropped (defensive against a buggy caller).
+func TestPublishForTenantFrozenAfterFirstPublish_spec_7_2(t *testing.T) {
+	b := sessionevents.NewBus(0)
+	b.PublishForTenant("acme", "sess_1", "e", `{}`, ts())
+	// Globex tries to publish on the same session id; the bus drops
+	// the event (returns zero-value).
+	ev := b.PublishForTenant("globex", "sess_1", "e", `{}`, ts())
+	if ev.Seq != 0 {
+		t.Errorf("foreign-tenant publish should be dropped, got Seq=%d", ev.Seq)
+	}
+	// History must contain only the acme event.
+	hist := b.History("sess_1", 0)
+	if len(hist) != 1 {
+		t.Errorf("history len = %d, want 1 (the dropped publish leaked)", len(hist))
+	}
+}
+
+// Untenanted Publish/Subscribe still works (legacy entry points kept
+// for tests and back-compat).
+func TestSubscribeUntenantedStillWorks(t *testing.T) {
+	b := sessionevents.NewBus(0)
+	b.Publish("sess_1", "e", `{}`, ts())
+	sub := b.Subscribe("sess_1", 0, 8)
+	defer sub.Close()
+	if len(sub.Backlog) != 1 {
+		t.Errorf("untenanted subscribe backlog len = %d, want 1", len(sub.Backlog))
+	}
+}
+
+// When no tenant has ever been registered (only untenanted Publish), a
+// SubscribeForTenant is permissive — the bus has no binding to enforce.
+// This matches the defense-in-depth design: enforcement triggers only
+// after a tenant binding exists.
+func TestSubscribeForTenantPermissiveWhenNoBinding(t *testing.T) {
+	b := sessionevents.NewBus(0)
+	b.Publish("sess_1", "e", `{}`, ts())
+	sub, err := b.SubscribeForTenant("acme", "sess_1", 0, 8)
+	if err != nil {
+		t.Errorf("SubscribeForTenant without prior binding should be permissive, got %v", err)
+	}
+	if sub != nil {
+		sub.Close()
+	}
+}
