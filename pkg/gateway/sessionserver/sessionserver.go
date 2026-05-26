@@ -42,6 +42,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
@@ -215,6 +216,17 @@ type Server struct {
 	// way. spec: §7.2 table lines 124-127; §11.7; §16.7. F-7.2.8.
 	interactionAudit InteractionAuditSink
 
+	// inputWaits, when set, makes the REST POST /v1/sessions/{id}/messages
+	// handler honor §7.2 path 1: a request body whose `inReplyTo`
+	// matches an outstanding `lenny/request_input` call resolves the
+	// blocked tool call directly instead of being delivered to the
+	// executor. Nil leaves the REST surface at path 2 only (executor
+	// delivery), matching the pre-F-7.2.14 behaviour. The same
+	// registry is shared with the MCP `lenny/send_message` /
+	// `lenny/request_input` pair so the two transports route to the
+	// same blocked tool call. spec: §7.2 line 317.
+	inputWaits *inputwait.Registry
+
 	// defaultRetention is the §7.1 line 77 default artifact-retention
 	// window stamped on every session at create time and rolled forward
 	// at the terminal transition. A non-positive value falls through to
@@ -348,6 +360,15 @@ type Options struct {
 	// emission and the resolution still proceeds.
 	// spec: §7.2 table lines 124-127. F-7.2.8.
 	InteractionAuditSink InteractionAuditSink
+
+	// InputWaits is the shared §8.5 `lenny/request_input` pending-call
+	// registry. When set, the REST POST /v1/sessions/{id}/messages
+	// handler resolves a §7.2 path 1 `inReplyTo` directly against the
+	// registry instead of routing through the executor. Production
+	// wires the same `*inputwait.Registry` instance into both the
+	// sessionserver and the MCP tools deps; tests can leave it nil for
+	// pre-F-7.2.14 behaviour. spec: §7.2 line 317. F-7.2.14.
+	InputWaits *inputwait.Registry
 
 	// DefaultRetention overrides the §7.1 line 77 default artifact-
 	// retention window. A non-positive value selects
@@ -712,6 +733,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		observeStartupPhase:    opts.ObserveStartupPhase,
 		lifecycleAudit:         opts.LifecycleAuditSink,
 		interactionAudit:       opts.InteractionAuditSink,
+		inputWaits:             opts.InputWaits,
 		defaultRetention:       opts.DefaultRetention,
 	}
 	if s.defaultRetention <= 0 {

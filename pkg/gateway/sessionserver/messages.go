@@ -80,24 +80,50 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(TranscriptResponse{SessionID: id, Entries: entries})
 }
 
-// MessageRequest is the §15.1 POST /v1/sessions/{id}/messages body.
+// MessageRequest is the §15.1 POST /v1/sessions/{id}/messages body. It
+// carries a §7.2 batch of `MessageEnvelope` payloads; the per-message
+// `delivery`, `inReplyTo`, and `slotId` semantics live on the payload
+// so a batch can mix immediate and queued messages on the same call.
+// spec: §15.4 lines 1672-1721 (`MessageEnvelope`); F-7.2.14.
 type MessageRequest struct {
 	// Messages is the §7.2 inbound message envelope batch. The
-	// gateway delivers them in order to the executor.
+	// gateway evaluates each one's `delivery`/`inReplyTo`/`slotId`
+	// fields independently and delivers them in order.
 	Messages []MessagePayload `json:"messages"`
-
-	// Delivery controls the §7.2 delivery semantics. Valid values
-	// are `immediate` (interrupt-on-suspend) and the default
-	// `queued`. The minimal gateway returns the response
-	// synchronously regardless of this flag.
-	Delivery string `json:"delivery,omitempty"`
 }
 
-// MessagePayload is one message in the batch.
+// MessagePayload is one §15.4 MessageEnvelope on the request batch.
+// The wire field names mirror the spec verbatim. spec: §15.4 lines
+// 1672-1721.
 type MessagePayload struct {
 	ID      string `json:"id,omitempty"`
 	Role    string `json:"role,omitempty"`
 	Content string `json:"content"`
+
+	// InReplyTo, when set, names a pending `lenny/request_input`
+	// request the gateway resolves directly (§7.2 path 1) instead of
+	// delivering the message to the executor. An inReplyTo that does
+	// not match a pending request falls through to executor delivery.
+	// spec: §7.2 line 317; §15.4 line 1786.
+	InReplyTo string `json:"inReplyTo,omitempty"`
+
+	// Delivery is the §15.4 line 1715 closed enum controlling
+	// interrupt behaviour. Valid values: `queued` (default) or
+	// `immediate`. Any other value is rejected with
+	// `400 INVALID_DELIVERY_VALUE`. The minimal gateway returns the
+	// response synchronously regardless of the flag; the
+	// interrupt-and-deliver / resume-and-deliver paths land with the
+	// §7.2 inbox + DLQ machinery (F-7.2.4).
+	// spec: §15.4 lines 1715-1723.
+	Delivery string `json:"delivery,omitempty"`
+
+	// SlotID is the §5.2 concurrent-workspace slot identifier. Pods
+	// in session-mode or task-mode never see it; concurrent-workspace
+	// runtimes route incoming messages by slot. The minimal gateway
+	// accepts and forwards the field but does not yet implement the
+	// slot-aware routing (tracked under F-5.2 concurrent-workspace
+	// build-out). spec: §15.4 line 1713.
+	SlotID string `json:"slotId,omitempty"`
 }
 
 // MessageResponse is the §15.1 message-injection response. It wraps
@@ -127,18 +153,37 @@ type MessageResponse struct {
 //
 //  1. Looks up the session row.
 //  2. Validates the §15.1 precondition: any non-terminal state.
-//  3. Routes the message batch to the configured executor.
-//  4. Returns a synchronous delivery receipt with the executor's
+//  3. Applies the §7.2 line 339 pre-running rejection: an external
+//     client (REST) call against a `created` / `finalizing` / `ready`
+//     / `starting` session is rejected with `409 TARGET_NOT_READY`
+//     (F-7.2.15). Inter-session messages from `lenny/send_message`
+//     buffer in the DLQ per the same table — that path is not REST.
+//  4. Validates each payload's `delivery` value against the §15.4
+//     closed enum (`queued` | `immediate`); rejects unknown values
+//     with `400 INVALID_DELIVERY_VALUE`.
+//  5. Routes §7.2 path 1: a payload whose `inReplyTo` matches a
+//     pending `lenny/request_input` is resolved directly against the
+//     shared inputwait registry instead of being delivered to the
+//     executor (F-7.2.14).
+//  6. Routes remaining payloads to the configured executor.
+//  7. Returns a synchronous delivery receipt with the executor's
 //     response output parts.
 //
 // The minimal gateway elides:
 //   - the §7.2 inter-replica `ForwardMessage` gRPC,
-//   - the §7.2 inbox + DLQ persistence,
+//   - the §7.2 inbox + DLQ persistence (F-7.2.4),
 //   - the §7.2 delivery: immediate atomic resume-and-deliver path,
-//   - cross-replica coordinator routing.
+//   - cross-replica coordinator routing,
+//   - per-slot routing for concurrent-workspace pods (the SlotID is
+//     accepted on the wire and surfaced in the publish payload, but
+//     dispatch is deferred until concurrent-workspace mode lands).
 //
 // Production wires these as the gateway moves from in-memory to
 // Redis + Postgres backings.
+//
+// spec: §7.2 paths 1-7 (lines 313-331); §7.2 line 339 (Pre-running);
+// §15.4 lines 1715-1723 (`delivery` enum); §15.4 lines 1725-1737
+// (`delivery_receipt`). F-7.2.14, F-7.2.15.
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if s.executor == nil {
 		s.writeError(w, http.StatusServiceUnavailable, "EXECUTOR_UNAVAILABLE",
@@ -161,6 +206,19 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		CurrentState: row.State,
 	}); err != nil {
 		s.writePreconditionError(w, err)
+		return
+	}
+
+	// spec: §7.2 line 339 (Pre-running row) — external-client REST
+	// calls against `created` / `finalizing` / `ready` / `starting`
+	// MUST reject with TARGET_NOT_READY so the client retries after
+	// starting the session. Inter-session `lenny/send_message`
+	// buffers in the DLQ instead — that path is the MCP tool, not
+	// this handler. F-7.2.15.
+	if isPreRunningState(row.State) {
+		s.writeError(w, http.StatusConflict, "TARGET_NOT_READY",
+			"session has not yet entered running state; retry after start",
+			map[string]any{"currentState": string(row.State)})
 		return
 	}
 
@@ -194,8 +252,42 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msgs := make([]executor.Message, 0, len(req.Messages))
-	for _, m := range req.Messages {
+	// spec: §15.4 lines 1715-1723 — `delivery` is a closed enum;
+	// unknown values reject with 400 INVALID_DELIVERY_VALUE. The
+	// check runs before any side effect so the batch is admitted
+	// atomically. F-7.2.14.
+	for i, m := range req.Messages {
+		if !isValidDelivery(m.Delivery) {
+			s.writeError(w, http.StatusBadRequest, "INVALID_DELIVERY_VALUE",
+				"message delivery envelope contains an unrecognized `delivery` field value",
+				map[string]any{"messageIndex": i, "delivery": m.Delivery})
+			return
+		}
+	}
+
+	// spec: §7.2 line 317 (path 1) — when a payload's `inReplyTo`
+	// matches an outstanding `lenny/request_input`, the gateway
+	// resolves the blocked tool call directly. No stdin/executor
+	// delivery for that payload. Path 1 wins over every other path
+	// per §7.2 line 313 "the first matching path wins". F-7.2.14.
+	deliverIdx := make([]int, 0, len(req.Messages))
+	resolvedReplies := 0
+	for i, m := range req.Messages {
+		if m.InReplyTo != "" && s.inputWaits != nil {
+			if err := s.inputWaits.Resolve(row.ID, m.InReplyTo, m.Content); err == nil {
+				resolvedReplies++
+				continue
+			}
+			// A non-matching inReplyTo falls through to normal
+			// delivery — it is then an ordinary threaded message
+			// (mirroring mcptools.go's lenny/send_message behaviour).
+		}
+		deliverIdx = append(deliverIdx, i)
+	}
+
+	msgs := make([]executor.Message, 0, len(deliverIdx))
+	for _, i := range deliverIdx {
+		m := req.Messages[i]
 		role := m.Role
 		if role == "" {
 			role = "user"
@@ -207,12 +299,16 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	out, err := s.executor.Send(r.Context(), row.ID, msgs)
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "EXECUTOR_FAILURE",
-			"executor rejected the message batch",
-			map[string]any{"reason": err.Error()})
-		return
+	var out []executor.OutputPart
+	if len(msgs) > 0 {
+		o, err := s.executor.Send(r.Context(), row.ID, msgs)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "EXECUTOR_FAILURE",
+				"executor rejected the message batch",
+				map[string]any{"reason": err.Error()})
+			return
+		}
+		out = o
 	}
 
 	// §4.8 PostAgentOutput: run the chain over the agent's output parts
@@ -220,7 +316,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// delivery (and writes the §16.7 audit row); a MODIFY rewrites the
 	// parts that are transcribed, published, and returned. spec: §4.8
 	// line 1054.
-	if s.interceptors != nil {
+	if s.interceptors != nil && len(out) > 0 {
 		modified, rejected := s.runPostAgentOutput(r.Context(), w, tenantID, row.ID, out)
 		if rejected {
 			return
@@ -270,8 +366,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// the queued / dropped / expired / rate_limited / error paths
 	// land with the §7.2 inbox + DLQ machinery (F-7.2.4). F-7.2.10.
 	messageID := ""
-	if len(msgs) > 0 {
-		messageID = msgs[0].ID
+	if len(req.Messages) > 0 {
+		messageID = req.Messages[0].ID
 	}
 	if messageID == "" {
 		messageID = "msg_" + session.NewID()
@@ -286,4 +382,27 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		},
 		Output: out,
 	})
+}
+
+// isValidDelivery reports whether v is a §15.4 line 1715
+// `MessageEnvelope.delivery` enum value. The empty string is the
+// `absent → "queued"` default per the same table.
+func isValidDelivery(v string) bool {
+	switch v {
+	case "", "queued", "immediate":
+		return true
+	}
+	return false
+}
+
+// isPreRunningState reports whether s names a pre-running session
+// state per §7.2 line 339 (the pre-running row in the routing-by-
+// target-state table). External-client REST calls against any of
+// these states reject with TARGET_NOT_READY. F-7.2.15.
+func isPreRunningState(s session.State) bool {
+	switch s {
+	case session.StateCreated, session.StateFinalizing, session.StateReady, session.StateStarting:
+		return true
+	}
+	return false
 }

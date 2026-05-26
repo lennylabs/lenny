@@ -91,3 +91,21 @@ func (r *Registry) Pending(sessionID, requestID string) bool {
 	_, ok := r.pending[k]
 	return ok
 }
+
+// PendingForSession returns every request id currently registered for
+// sessionID. The order is unspecified; callers that need a stable
+// pick (e.g. the §7.2 line 153 `ReattachedChild.pending_request_id`
+// surface) MUST sort the result themselves. Returns nil when no
+// request is pending for the session.
+func (r *Registry) PendingForSession(sessionID string) []string {
+	prefix := sessionID + "\x00"
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for k := range r.pending {
+		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
+			out = append(out, k[len(prefix):])
+		}
+	}
+	return out
+}

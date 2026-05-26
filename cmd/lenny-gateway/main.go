@@ -1449,6 +1449,13 @@ func main() {
 		Limiter: &subsystem.Limiter{MaxConcurrent: int(extractionthreshold.FromEnv().UploadHandlerActiveConcurrent)},
 	}
 
+	// §8.5 lenny/request_input pending-call registry. Shared across the
+	// sessionserver REST surface and the MCP tools so a REST
+	// POST /v1/sessions/{id}/messages with `inReplyTo` resolves the
+	// blocked tool call the MCP `lenny/request_input` registered.
+	// spec: §7.2 line 317 (path 1); F-7.2.14.
+	inputWaits := inputwait.NewRegistry()
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:          uploadIssuer,
 		UploadTokenVerifier:        uploadVerifier,
@@ -1509,6 +1516,10 @@ func main() {
 		// respond/dismiss) to the §11.7 hash-chained log, written under
 		// the session's tenant. F-7.2.8.
 		InteractionAuditSink: interactionResolutionAuditor{appender: auditAppender},
+		// §7.2 line 317 — shared inputwait registry so REST inReplyTo
+		// resolves the same pending `lenny/request_input` MCP registers.
+		// F-7.2.14.
+		InputWaits: inputWaits,
 		// §7.1 line 77 — default artifact retention window.
 		DefaultRetention: time.Duration(*sessionArtifactRetentionSeconds) * time.Second,
 		// §7.1 line 112 — seal-and-export retry window + outcome histogram.
@@ -1649,7 +1660,7 @@ func main() {
 		Interceptors:               policyChain,
 		PolicyAudit:                policyAuditSink,
 		Events:                     eventBus,
-		InputWaits:                 inputwait.NewRegistry(),
+		InputWaits:                 inputWaits,
 		TreeArchive:                treeArchive,
 		Interactions:               interactions,
 		Memory:                     memories,

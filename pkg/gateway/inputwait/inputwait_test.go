@@ -92,6 +92,37 @@ func TestRequestsAreKeyedBySessionAndID(t *testing.T) {
 	}
 }
 
+// TestPendingForSessionListsRegistrations covers the lookup used by
+// the §7.2 children_reattached emitter to surface a child's pending
+// request id back to the resumed parent.
+// spec: §7.2 line 153; F-7.2.16.
+func TestPendingForSessionListsRegistrations(t *testing.T) {
+	r := inputwait.NewRegistry()
+	if got := r.PendingForSession("sess-empty"); len(got) != 0 {
+		t.Errorf("PendingForSession on empty registry = %v, want nil", got)
+	}
+	_, _ = r.Register("sess-1", "req-a")
+	_, _ = r.Register("sess-1", "req-b")
+	_, _ = r.Register("sess-2", "req-x")
+
+	got := r.PendingForSession("sess-1")
+	if len(got) != 2 {
+		t.Fatalf("sess-1 pending count = %d, want 2", len(got))
+	}
+	seen := map[string]bool{}
+	for _, id := range got {
+		seen[id] = true
+	}
+	if !seen["req-a"] || !seen["req-b"] {
+		t.Errorf("sess-1 pending = %v, want both req-a and req-b", got)
+	}
+	// Session id is matched exactly (the NUL separator prevents
+	// session-id prefix collisions).
+	if other := r.PendingForSession("sess"); len(other) != 0 {
+		t.Errorf("sess (prefix) returned %v, want nil — session ids are exact-match", other)
+	}
+}
+
 func TestResolveNeverBlocksWhenWaiterLeft(t *testing.T) {
 	r := inputwait.NewRegistry()
 	// Register but never read the channel — Resolve must not block on

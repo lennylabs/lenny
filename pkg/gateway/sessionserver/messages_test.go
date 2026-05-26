@@ -14,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -295,19 +296,177 @@ func TestTranscriptEmptyForFreshSession(t *testing.T) {
 	}
 }
 
-func TestMessagesAcceptsCreatedSessionPerPreconditionTable(t *testing.T) {
-	srv, store := newMessagesServer(t)
-	// Created is non-terminal, so the §15.1 precondition table admits it.
-	now := time.Now()
-	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_c", TenantID: "acme", State: session.StateCreated, CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
+// TestMessagesRejectsPreRunningStatesPerSpec71Line339 covers the
+// §7.2 line 339 routing-by-target-state table: external-client REST
+// calls against a pre-running session (created / finalizing / ready /
+// starting) MUST reject with `TARGET_NOT_READY` so the client retries
+// after starting the session. The DLQ-buffered behavior is reserved
+// for inter-session `lenny/send_message` callers.
+// spec: §7.2 line 339; F-7.2.15.
+func TestMessagesRejectsPreRunningStatesPerSpec71Line339(t *testing.T) {
+	cases := []struct {
+		name  string
+		state session.State
+	}{
+		{"created", session.StateCreated},
+		{"finalizing", session.StateFinalizing},
+		{"ready", session.StateReady},
+		{"starting", session.StateStarting},
 	}
-	rr := sendMessageRequest(t, srv.Handler(), "sess_c", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Content: "early"}},
+	for _, tc := range cases {
+		t.Run(string(tc.state), func(t *testing.T) {
+			srv, store := newMessagesServer(t)
+			now := time.Now()
+			id := "sess_" + string(tc.state)
+			if err := store.Create(context.Background(), sessionstore.Session{
+				ID: id, TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now,
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			rr := sendMessageRequest(t, srv.Handler(), id, sessionserver.MessageRequest{
+				Messages: []sessionserver.MessagePayload{{Content: "early"}},
+			})
+			if rr.Code != http.StatusConflict {
+				t.Fatalf("pre-running %s: got %d, want 409; body=%s", tc.state, rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), "TARGET_NOT_READY") {
+				t.Errorf("pre-running %s: body %s, want TARGET_NOT_READY", tc.state, rr.Body.String())
+			}
+		})
+	}
+}
+
+// TestMessagesAcceptsRunningSession reasserts the spec line 622
+// running-state happy path now that pre-running is rejected.
+// spec: §15.1 line 622; §7.2 paths 2/4.
+func TestMessagesAcceptsRunningSession(t *testing.T) {
+	srv, store := newMessagesServer(t)
+	seedRunningSession(t, store, "sess_run")
+	rr := sendMessageRequest(t, srv.Handler(), "sess_run", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "live"}},
 	})
 	if rr.Code != http.StatusOK {
-		t.Errorf("created state: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+		t.Errorf("running state: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestMessagesRejectsInvalidDeliveryValue covers §15.4 line 1723.
+// spec: §15.4 line 1715-1723; §15.1 INVALID_DELIVERY_VALUE; F-7.2.14.
+func TestMessagesRejectsInvalidDeliveryValue(t *testing.T) {
+	srv, store := newMessagesServer(t)
+	seedRunningSession(t, store, "sess_d")
+	rr := sendMessageRequest(t, srv.Handler(), "sess_d", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "x", Delivery: "burst"}},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("delivery=burst: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "INVALID_DELIVERY_VALUE") {
+		t.Errorf("body: %s, want INVALID_DELIVERY_VALUE", rr.Body.String())
+	}
+}
+
+// TestMessagesAcceptsCanonicalDeliveryValues covers the closed §15.4
+// enum (queued, immediate, absent).
+// spec: §15.4 line 1715-1719; F-7.2.14.
+func TestMessagesAcceptsCanonicalDeliveryValues(t *testing.T) {
+	for _, v := range []string{"", "queued", "immediate"} {
+		t.Run("delivery="+v, func(t *testing.T) {
+			srv, store := newMessagesServer(t)
+			seedRunningSession(t, store, "sess_d_"+v)
+			rr := sendMessageRequest(t, srv.Handler(), "sess_d_"+v, sessionserver.MessageRequest{
+				Messages: []sessionserver.MessagePayload{{Content: "x", Delivery: v}},
+			})
+			if rr.Code != http.StatusOK {
+				t.Errorf("delivery=%q: got %d, want 200; body=%s", v, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+// TestMessagesInReplyToResolvesPendingRequestInput covers §7.2 path 1:
+// a payload's inReplyTo resolves a pending lenny/request_input
+// without falling through to the executor.
+// spec: §7.2 line 317; §15.4 line 1786; F-7.2.14.
+func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
+	store := memstore.New()
+	reg := inputwait.NewRegistry()
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		InputWaits:  reg,
+	})
+	seedRunningSession(t, store, "sess_rr")
+	ch, err := reg.Register("sess_rr", "req_alpha")
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	rr := sendMessageRequest(t, srv.Handler(), "sess_rr", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "answer", InReplyTo: "req_alpha"}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("inReplyTo path: got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The receipt is `delivered` and the executor is not invoked, so
+	// Output is empty.
+	var resp sessionserver.MessageResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
+		t.Errorf("status=%q, want delivered", resp.DeliveryReceipt.Status)
+	}
+	if len(resp.Output) != 0 {
+		t.Errorf("output should be empty when inReplyTo resolves: %+v", resp.Output)
+	}
+	// The waiter receives the answer.
+	select {
+	case got := <-ch:
+		if got != "answer" {
+			t.Errorf("inputwait answer=%q, want %q", got, "answer")
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("inputwait channel did not receive the answer")
+	}
+}
+
+// TestMessagesInReplyToFallsThroughOnNoMatch — a stale inReplyTo that
+// matches no pending request falls through to the executor per §7.2
+// path 1 ("no matching inReplyTo" → continue evaluating paths).
+// spec: §7.2 line 317; F-7.2.14.
+func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
+	store := memstore.New()
+	reg := inputwait.NewRegistry()
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		InputWaits:  reg,
+	})
+	seedRunningSession(t, store, "sess_fall")
+
+	rr := sendMessageRequest(t, srv.Handler(), "sess_fall", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "hi", InReplyTo: "req_missing"}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.MessageResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Output) == 0 {
+		t.Error("expected executor output on inReplyTo miss; got none")
+	}
+}
+
+// TestMessagesSlotIDFieldRoundTripsThroughBody — the §15.4 slotId is
+// accepted on the wire (concurrent-workspace routing lands with the
+// F-5.2 build-out). The minimal gateway must not reject the field.
+// spec: §15.4 line 1713; F-7.2.14.
+func TestMessagesSlotIDFieldRoundTripsThroughBody(t *testing.T) {
+	srv, store := newMessagesServer(t)
+	seedRunningSession(t, store, "sess_slot")
+	rr := sendMessageRequest(t, srv.Handler(), "sess_slot", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "ok", SlotID: "slot_01"}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("slotId accepted: got %d, body=%s", rr.Code, rr.Body.String())
 	}
 }
