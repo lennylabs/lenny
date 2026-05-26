@@ -4717,7 +4717,7 @@ The catalog has no `lenny_warmpool_sdk_demotion_duration_seconds` or similar. Th
 
 Consequence: the spec's "typically 1–3s" claim cannot be empirically tracked. Operators cannot validate whether the 1–3s estimate matches reality, nor distinguish a fast demotion (where SDK-warm is still net-positive) from a slow demotion (where the penalty erodes the saving from skipped agent start).
 
-### - [ ] F-6.3.9 — `claim-to-ready` SLO scope note's `pod_warmup_seconds` cross-reference has no metric anchor [Medium] — OPEN
+### - [x] F-6.3.9 — `claim-to-ready` SLO scope note's `pod_warmup_seconds` cross-reference has no metric anchor [Medium] — CLOSED
 
 Spec §6.3 lines 350 (`>` note): "These two numbers describe different phases and are not comparable: `pod_warmup_seconds` is a sizing input for `minWarm` (how much headroom the pool needs so that fresh replacement pods arrive before the pool empties); the 2s / 5s SLO is the observed claim-time latency after a client's request hits an already-warm pod."
 
@@ -4728,6 +4728,8 @@ The replenishment/warm-up side is partially observable:
 - The `claim-to-ready` SLO side of the comparison (the 2s / 5s P95) has no metric anchor (H-2). So the spec note about "two numbers describe different phases" can only be operated against one of the two numbers (pre-creation), not both.
 
 Consequence: an operator trying to follow the §6.3 note to disambiguate a slow-pool replenishment incident from a slow claim-to-ready incident has only the replenishment metric to work with. The claim-to-ready side returns empty.
+
+- **Resolution:** F-6.3.2 (commit 0ce97870) wired the `lenny_session_startup_duration_seconds` emitter in `pkg/gateway/sessionserver/start.go:899-902` (the §6.3 line 348 claim-to-ready metric). Both sides of the §6.3 line 350 disambiguation are now metric-anchored: `lenny_warmpool_pod_startup_duration_seconds` for pre-creation (`pod_warmup_seconds`) and `lenny_session_startup_duration_seconds` for claim-to-ready. The runbook `docs/runbooks/slo-startup-latency.md` Step 2 already drives off the per-phase metric (F-6.3.16). No further action required.
 
 ### - [ ] F-6.3.10 — `BUILD-PROGRESS.md` claims Phase 2 startup benchmark is delivered, but the delivery does not match the §6.3 normative requirement [Medium] — OPEN
 
@@ -4772,13 +4774,15 @@ Consequence: minor information-leak in the baseline file; the file is fine as a 
 
 - **Resolution:** The `Binary`/`BinaryRel` fields are removed from the harness `Result` struct and from `tests/tier7b_load_kind/baselines/startup_latency.json`. The harness rebuilds the echo binary into a fresh temp directory on every run, so the absolute path was recording-host trivia rather than a reproducibility input; it is no longer persisted. Commit 0ce97870.
 
-### - [ ] F-6.3.14 — The `startup_latency` baseline records 20 iterations and labels p99 — statistically thin for tail-latency claims [Low] — OPEN
+### - [x] F-6.3.14 — The `startup_latency` baseline records 20 iterations and labels p99 — statistically thin for tail-latency claims [Low] — CLOSED
 
 `tests/tier7_load/baselines/startup_latency.json:7`: `"iterations": 20`.
 
 20 samples is below the conventional minimum for stable p99 estimation (rule of thumb 100+ for p95, 1000+ for p99). The baseline's `p99: 3` is reported with one-sample resolution. Even for the heartbeat round-trip scope this scenario actually measures, the iteration count is too low to claim a tail-latency baseline.
 
 Consequence: even within its limited scope, the baseline's tail metric is not a defensible reference. Not a blocker for the much larger H-1/H-5 gaps; flagged for completeness.
+
+- **Resolution:** Harness defaults bumped to 200 iterations (the conventional minimum for a stable p95 at one-sample resolution per §6.3 line 348 P95-keyed SLO) and the misleading p99 column dropped — replaced with p95 in `tests/tier7b_load_kind/scenarios/startup_latency/main.go`. Baseline regenerated with P50=2ms, P90=2ms, P95=3ms over 200 iterations. New unit tests pin the percentile contract (`TestBuildResultPercentileColumns_spec_6_3_F_6_3_14`, `TestBuildResultPercentileOrdering_spec_6_3_F_6_3_14`). TESTING.md §13.3 line 1483 updated.
 
 ### - [ ] F-6.3.15 — Per-phase `runtime_class` label is also absent from `lenny_warmpool_pod_startup_duration_seconds` per §16.1 [Low] — CLOSED
 
@@ -4800,13 +4804,15 @@ Consequence: the diagnosis runbook for the §6.3 SLO has a step that returns no 
 
 - **Resolution:** Runbook Step 2 now queries `lenny_session_startup_phase_duration_seconds` (F-6.3.1) grouped by `phase,runtime_class` with the §6.3 hot-path phases (`pod_claim`, `workspace_materialization`, `setup_commands`, `credential_assignment`, `agent_session_start`), replacing the undefined `lenny_warmpool_pod_startup_phase_duration_seconds` and its unrelated pre-creation taxonomy. Commit 0ce97870.
 
-### - [ ] F-6.3.17 — The `pod_claim_latency` k6 scenario records a baseline already over the §6.3 100ms claim-and-routing budget [Info] — OPEN
+### - [x] F-6.3.17 — The `pod_claim_latency` k6 scenario records a baseline already over the §6.3 100ms claim-and-routing budget [Info] — CLOSED
 
 `tests/tier7_load/baselines/pod_claim_latency.json:9–11`: `p95: 113.4 ms`, `p99: 197.3 ms`, `p999: 797.5 ms`.
 
 §6.3 line 360 budgets pod claim and routing at ≤ 100ms P95. The recorded baseline (113 ms P95) exceeds the budget already, before any other phase is considered. Because no production code emits on `lenny_pod_claim_duration_seconds` (H-4), the breach is invisible to the burn-rate alert; it surfaces only as a Tier 7 load baseline that the gating logic does not compare against §6.3.
 
 This is a meta-observation rather than a code defect: the harness side is producing a real measurement that should fail the §6.3 budget check, but no part of the platform is checking the budget. Once H-2 and H-4 are addressed, the alert chain would fire on this baseline.
+
+- **Resolution:** §6.3 line 368 explicitly frames the budget table as indicative until validated by the Phase 2 startup benchmark harness (Tier-2 promotion gate, F-6.3.20), so the overshoot is not a gating breach — but the cross-reference must survive baseline refreshes. The shared `load.Result` struct gained an operator-edited `Notes` field with carry-over preservation in `writeBaseline` (`tests/testinfra/load/k6.go`), the `pod_claim_latency.json` baseline records the §6.3 budget context, and the scenario script header documents the §6.3 cross-reference durably. Two new unit tests (`TestWriteBaselinePreservesNotes_spec_6_3_F_6_3_17`, `TestWriteBaselineNotesOverride_spec_6_3_F_6_3_17`) pin the Notes carry-over contract.
 
 ### - [ ] F-6.3.18 — The `lenny_session_startup_duration_seconds` metric labels in §16.1 include `isolation_profile` and `runtime_class` as separate dimensions — duplicate-ish [Info] — CLOSED
 
@@ -4820,21 +4826,29 @@ Consequence: when this metric eventually gets emitted (H-2), the cardinality con
 
 - **Resolution:** Closed as by-design. §16.1 line 14 explicitly declares `lenny_session_startup_duration_seconds` labeled by `pool`, `runtime_class`, and `isolation_profile`; the emitter shipped in F-6.3.2 carries all three exactly as the spec mandates. Dropping a label to reduce cardinality would require a §16.1 change, which is out of scope (the spec is authoritative per rule B). No code defect. Commit 0ce97870.
 
-### - [ ] F-6.3.19 — The §6.3 paragraph "Estimated latency savings (targets, not benchmarks — to be validated by startup benchmark harness, see Phase 2)" is explicit about its provisional status [Info] — OPEN
+### - [x] F-6.3.19 — The §6.3 paragraph "Estimated latency savings (targets, not benchmarks — to be validated by startup benchmark harness, see Phase 2)" is explicit about its provisional status [Info] — CLOSED
 
 Spec §6.3 line 341–346: runc ~1–3s, gVisor ~2–5s, Kata ~3–8s, cold pulls +5–30s avoided. The spec frames these as engineering estimates, not measurements. The audit does not treat them as normative.
 
-### - [ ] F-6.3.20 — The §6.3 statement "All phases must be validated by the Phase 2 startup benchmark harness before targets are promoted to SLOs" (line 368) is the operative gate, and it is not satisfied [Info] — OPEN
+- **Resolution:** By-design — the spec text itself ("targets, not benchmarks — to be validated by startup benchmark harness, see Phase 2") states the provisional status. No code defect; the actual benchmark-harness coverage is tracked by F-6.3.5 / F-6.3.10 and the promotion-gate state is F-6.3.20.
+
+### - [x] F-6.3.20 — The §6.3 statement "All phases must be validated by the Phase 2 startup benchmark harness before targets are promoted to SLOs" (line 368) is the operative gate, and it is not satisfied [Info] — DEFERRED
 
 The spec author distinguishes "indicative planning targets" from "SLOs in any capacity agreement or customer-facing documentation". The latter are forbidden until the gate clears. The §16.5 alerts treat `< 2s` runc and `< 5s` gVisor as SLOs already (`pkg/alerting/rules/rules.go:1543, 1549`); strictly, those alerts are operating against the indicative budget rather than a validated SLO. The audit flags this as Info because the alerts are at least pointed at the right targets, even if the underlying data is missing (H-2). Once H-2 is addressed and the Tier 2 promotion gate is cleared, the alerts and SLO designation align.
 
-### - [ ] F-6.3.21 — The SDK-warm side of the spec's per-runtime budget table is unobservable in two compounding ways [Info] — OPEN
+- **Deferred:** H-2 has been addressed (F-6.3.2 wired the `lenny_session_startup_duration_seconds` emitter); the alert chain now feeds off real measurements. The remaining promotion-gate steps (validated P50/P95/P99 across runc/gVisor/Kata; per-phase histograms in benchmark environment; Phase 2 exit gate ADR) are the work tracked by F-6.3.5 / F-6.3.10. This finding is a status observation rather than a defect; it remains DEFERRED for whoever lands F-6.3.5.
+
+### - [x] F-6.3.21 — The SDK-warm side of the spec's per-runtime budget table is unobservable in two compounding ways [Info] — DEFERRED
 
 §6.3 line 334–339 enumerates SDK-warm hot-path phases (pod claim, routing, file upload, workspace materialization, setup, first prompt — agent session start removed). The SDK-warm path itself is unimplemented (per `6.1.md` H-1) and per-runtime-class telemetry is missing (H-1 here). So §6.3's claim that SDK-warm "eliminates agent session start latency" cannot be validated empirically by Lenny.
 
-### - [ ] F-6.3.22 — The `tests/tier7_load/scenarios/startup_latency/main.go` `scenarioVersion = "0.2.0-phase2"` suggests scope expansion is planned [Info] — OPEN
+- **Deferred:** Blocked on F-6.1.1 (SDK-warm path unimplemented end-to-end). Once SDK-warm lands, the existing `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` histogram (F-6.3.1) is structured to carry SDK-warm observations without code change. F-6.3.6 / F-6.3.11 already track the demotion-ratio observability gap; F-6.3.8 tracks the SDK teardown penalty histogram.
+
+### - [x] F-6.3.22 — The `tests/tier7_load/scenarios/startup_latency/main.go` `scenarioVersion = "0.2.0-phase2"` suggests scope expansion is planned [Info] — CLOSED
 
 The version string indicates a v0.2.0-phase2 baseline, implying a v0.3.0+ may add the per-phase / runtime-class / SDK-warm coverage. No code references that suggest the next version is in flight; the spec's Tier 2 promotion gate is the gating event.
+
+- **Resolution:** Confirmed by-design — the pre-1.0 version string is the harness's deliberate convention for tracking the §6.3 promotion-gate readiness (`TestResultDocCommentP99Rationale_spec_6_3_F_6_3_14` pins the pre-1.0 prefix). The eventual v1.0 bump aligns with the F-6.3.5 / F-6.3.10 broader harness scope expansion; the F-6.3.14 fix kept the version stable since the percentile-set change is a strict subtraction (p99 removed) and does not require a major bump.
 
 ### Cross-reference summary
 
