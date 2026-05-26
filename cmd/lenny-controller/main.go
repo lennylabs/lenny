@@ -111,6 +111,8 @@ func main() {
 		claimOrphanTimeout      time.Duration
 		workqueueMaxDepth       int
 		devMode                 bool
+		certTTL                 time.Duration
+		certExpiryThreshold     time.Duration
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -152,6 +154,10 @@ func main() {
 		"§4.6.1 controller work-queue max depth. When a controller's reconciliation queue is at this depth, new reconciliation events are dropped and lenny_controller_queue_overflow_total is incremented (requeues are never shed). A non-positive value disables work-shedding. Per-tier recommendations: 500 / 2,000 / 10,000.")
 	flag.BoolVar(&devMode, "dev-mode", os.Getenv("LENNY_DEV_MODE") == "true",
 		"§5.3 line 677 global.devMode. When true, a Sandbox that omits an isolation profile defaults its pod to `standard` (runc) so a developer can run on a cluster without gVisor installed. Production leaves this false (default `sandboxed`/gVisor).")
+	flag.DurationVar(&certTTL, "cert-ttl", 4*time.Hour,
+		"§10.3 line 338 agent-pod mTLS certificate lifetime. The §4.6.1 cert-expiry replacement derives an idle pod's certificate expiry as pod-creation-time + this TTL when the pod carries no explicit lenny.dev/cert-not-after annotation.")
+	flag.DurationVar(&certExpiryThreshold, "cert-expiry-threshold", 30*time.Minute,
+		"§4.6.1 / §10.3 line 342 proactive cert-replacement window. An idle pod whose certificate will expire within this duration is drained and recreated so a claim never lands on a pod with insufficient remaining certificate validity.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -280,6 +286,23 @@ func main() {
 		QueueFactory:            queueFactory,
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
+	}
+
+	// §4.6.1 per-pod reconciler: the WarmPoolController is the sole
+	// evaluator of per-pod host-node schedulability (the
+	// lenny.dev/host-schedulable label the §6.2 task_cleanup precondition
+	// reads) and of idle-pod certificate expiry (proactive drain-and-
+	// recreate of any idle pod inside the cert-replacement window). It
+	// watches managed Pods and Nodes; the Node watch re-labels every pod
+	// on a node when the node is cordoned or uncordoned.
+	if err := (&warmpool.PodReconciler{
+		Client:                  mgr.GetClient(),
+		CertTTL:                 certTTL,
+		CertExpiryThreshold:     certExpiryThreshold,
+		MaxConcurrentReconciles: maxConcurrentReconciles,
+		QueueFactory:            queueFactory,
+	}).SetupWithManager(mgr); err != nil {
+		log.Fatalf("lenny-controller: set up per-pod reconciler: %v", err)
 	}
 
 	// §4.6.1 mirror reconciliation on recovery and orphan-claim GC are
