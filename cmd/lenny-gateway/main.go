@@ -1110,6 +1110,14 @@ func main() {
 	gwMetrics.SetMaxSessionsPerReplica("direct", *maxSessionsPerReplica)
 	gwMetrics.SetMaxSessionsPerReplica("proxy", *maxSessionsPerReplica)
 
+	// spec: §8.10 line 1103 + §16.5 OrphanTasksPerTenantHigh — publish the
+	// configured maxOrphanTasksPerTenant cap so the alert's
+	// `scalar(lenny_max_orphan_tasks_per_tenant)` denominator resolves to
+	// the live ceiling. The default flows through the sessionserver
+	// constructor; main.go does not override yet so the default is
+	// authoritative here. F-8.10.13.
+	gwMetrics.SetMaxOrphanTasksPerTenant(sessionserver.DefaultMaxOrphanTasksPerTenant)
+
 	// §4.4 line 254 — late-binding the checkpointer's duration
 	// histogram emitter to the freshly-constructed gateway metrics.
 	// The checkpointer is constructed before gwMetrics so the Sealer

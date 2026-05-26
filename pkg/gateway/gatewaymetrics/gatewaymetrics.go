@@ -261,6 +261,13 @@ type Metrics struct {
 	// line 277; F-11.5.3.
 	idempotencyCacheSkipped *prometheus.CounterVec
 
+	// maxOrphanTasksPerTenant is the §8.10 line 1103 deployer-configured
+	// orphan-cap exposed as an unlabeled gauge so the §16.5
+	// OrphanTasksPerTenantHigh alert resolves
+	// `scalar(lenny_max_orphan_tasks_per_tenant)` to the live ceiling.
+	// F-8.10.13.
+	maxOrphanTasksPerTenant prometheus.Gauge
+
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
 	// the lenny_gateway_request_queue_depth gauge (the §4.1 SCL-026
@@ -948,6 +955,18 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert reads
+	// `scalar(lenny_max_orphan_tasks_per_tenant)` as the cap denominator.
+	// Exposing the ceiling as an unlabeled gauge lets the alert resolve
+	// without hard-coding a value, so a deployer override flows through
+	// to the rule automatically. F-8.10.13.
+	maxOrphanTasksPerTenant, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_max_orphan_tasks_per_tenant",
+		Help: "Configured maxOrphanTasksPerTenant ceiling — drives the OrphanTasksPerTenantHigh alert threshold (§8.10 line 1103).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -974,7 +993,8 @@ func New() (*Metrics, error) {
 		artifactUploadError,
 		delegationDepth, delegationWouldHaveBlocked,
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
-		idempotencyCacheWriteFailures, idempotencyCacheSkipped)
+		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
+		maxOrphanTasksPerTenant)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -1063,6 +1083,7 @@ func New() (*Metrics, error) {
 		rateLimitCounterFailure:              rateLimitCounterFailure,
 		idempotencyCacheWriteFailures:        idempotencyCacheWriteFailures,
 		idempotencyCacheSkipped:              idempotencyCacheSkipped,
+		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
 	}, nil
 }
 
@@ -1636,6 +1657,20 @@ func (m *Metrics) SetTokenServiceCircuitState(value int) {
 		return
 	}
 	m.tokenServiceCircuitState.Set(float64(value))
+}
+
+// SetMaxOrphanTasksPerTenant publishes the deployer-configured §8.10
+// line 1103 orphan-cap as the `lenny_max_orphan_tasks_per_tenant`
+// scalar gauge so the §16.5 OrphanTasksPerTenantHigh alert
+// (`lenny_orphan_tasks_active_per_tenant > 0.80 *
+// scalar(lenny_max_orphan_tasks_per_tenant)`) reads the live value.
+// Called once at gateway startup and again on a config-reload.
+// F-8.10.13.
+func (m *Metrics) SetMaxOrphanTasksPerTenant(value int) {
+	if m == nil {
+		return
+	}
+	m.maxOrphanTasksPerTenant.Set(float64(value))
 }
 
 // RecordElicitationDrop increments the §9.1 lenny_elicitation_dropped_total

@@ -9804,7 +9804,7 @@ on caller wiring; the spec's `min(...)` invariant is not enforced.
 
 ---
 
-### - [ ] F-8.10.12 — 1 — Orphan-cleanup retention follow-up not implemented [Low] — OPEN
+### - [x] F-8.10.12 — 1 — Orphan-cleanup retention follow-up not implemented [Low] — CLOSED
 
 **Severity:** Low (the spec's "Orphaned children are terminated and
 their artifacts follow standard retention policy" is implicit; the
@@ -9828,9 +9828,11 @@ explicitly invoke the retention GC.)
 retention GC — but the §8.10 prose suggests an active hand-off that is
 not present in code. Worth a documentation note or an explicit nudge.
 
+**Resolution:** Closed by F-5.2.26 (commit 8380ab72). The orphancleanup sweeper now invokes the gateway's `Server.OnSessionTerminal` (TerminalHook), which calls `recordSessionCompleted` → `emitTerminalLifecycle` → `rollRetentionOnTerminal` (`pkg/gateway/sessionserver/lifecycle.go:165,181`). That rolls `RetentionExpiresAt` forward to `terminal_time + DefaultArtifactRetention`, so orphaned children inherit the standard §7.1 retention window measured from the expiry instant.
+
 ---
 
-### - [ ] F-8.10.13 — 2 — `lenny_orphan_tasks_active_per_tenant` alert references undeclared metric [Low] — OPEN
+### - [x] F-8.10.13 — 2 — `lenny_orphan_tasks_active_per_tenant` alert references undeclared metric [Low] — CLOSED
 
 **Severity:** Low (alert-rules consistency.)
 
@@ -9844,6 +9846,8 @@ not present in code. Worth a documentation note or an explicit nudge.
 **Impact:** The alert will never fire (or will fire degenerate)
 because one operand is undefined. Either declare the metric or
 parameterize the alert.
+
+**Resolution:** Added `lenny_max_orphan_tasks_per_tenant` to the metrics catalog (`pkg/observability/metrics/catalog.go`) and the gateway metrics registry (`pkg/gateway/gatewaymetrics/gatewaymetrics.go` — registered unlabeled gauge + `SetMaxOrphanTasksPerTenant` setter). The gateway main wires the gauge from `sessionserver.DefaultMaxOrphanTasksPerTenant` at startup, so the §16.5 `OrphanTasksPerTenantHigh` alert's `scalar(...)` denominator resolves to the live ceiling.
 
 ---
 
@@ -10223,7 +10227,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - The pool CRD and `pkg/apis/lenny/v1` spec do not carry an `elicitationDepthPolicy` field, so even per-pool wiring (when added) would have nowhere to read from.
 - **Gap:** Agent-initiated elicitations at arbitrary delegation depth are admitted; the §9.2 default that limits deep-tree elicitation spam is not in effect.
 
-### - [ ] F-9.2.17 — `respond_to_elicitation` MCP tool is not registered; only the REST endpoints exist [Low] — OPEN
+### - [x] F-9.2.17 — `respond_to_elicitation` MCP tool is not registered; only the REST endpoints exist [Low] — CLOSED
 
 **Potential overlap** (confidence: high) — F-15.2.13 — Both concern §9.2 elicitation over MCP but report different gaps (missing per-kind wire-projection/elicitation-create dispatch vs the unregistered respond_to_elicitation MCP tool).
 
@@ -10234,7 +10238,9 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/mcptools/elicitation.go:260-292`: `ResolveElicitation` is the package-level helper that enforces the triple, but no MCP tool calls it (only test code does).
 - **Gap:** A client that connects over MCP cannot resolve an elicitation through that same MCP surface; the REST surface is mandatory. The §9.2 statement that "the gateway returns a 404 ELICITATION_NOT_FOUND" applies only via the REST handler.
 
-### - [ ] F-9.2.18 — `ELICITATION_TIMEOUT` is not in the §15.1 error catalog or `errorclassify` table [Low] — OPEN
+**Resolution:** Registered `lenny/respond_to_elicitation` and `lenny/dismiss_elicitation` MCP tools (`pkg/gateway/mcptools/mcptools.go`) backed by a shared `resolveElicitationTool` helper (`pkg/gateway/mcptools/elicitation.go`) that looks up the session row, applies the §9.2 (session, user, elicitation) triple via `ResolveElicitation`, and surfaces `ELICITATION_NOT_FOUND` / `INTERACTION_ALREADY_RESOLVED` MCP envelopes mirroring the §15.1 REST handler. New classifier entries keep REST/MCP `(category, retryable)` aligned.
+
+### - [x] F-9.2.18 — `ELICITATION_TIMEOUT` is not in the §15.1 error catalog or `errorclassify` table [Low] — CLOSED
 
 - **Spec:** Line 103 mentions "the elicitation is dismissed and the pod receives a timeout error that the agent can handle" but does not define an explicit code; §15.1 line 1085 only defines `ELICITATION_CONTENT_TAMPERED` and `ELICITATION_NOT_FOUND`.
 - **Evidence:**
@@ -10242,7 +10248,9 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/errorclassify/errorclassify.go`: the table does not contain `ELICITATION_TIMEOUT`. The MCP envelope therefore falls back to `INTERNAL_ERROR` + `TRANSIENT` + retryable=true.
 - **Gap:** A client that times out cannot reliably distinguish the timeout from a generic internal error. This is the same pattern flagged broadly in F-8.5.10; called out here because it bears directly on §9.2's stated timeout semantics.
 
-### - [ ] F-9.2.19 — `lenny/request_elicitation` does not enforce an `expected_domain` or `connector_id` argument [Low] — OPEN
+**Resolution:** The timeout path now returns `mcp.NewToolError("ELICITATION_TIMEOUT", ...)`; the §15.2.1 classifier was extended with `ELICITATION_TIMEOUT`, `ELICITATION_NOT_FOUND`, `ELICITATION_CONTENT_TAMPERED`, `DOMAIN_NOT_ALLOWLISTED`, and `INTERACTION_ALREADY_RESOLVED` so REST and MCP report identical `(category, retryable)` pairs. `ELICITATION_TIMEOUT` resolves to `(TRANSIENT, retryable=false)` — the original elicitation is dismissed, so a fresh elicitation must be raised under a new id.
+
+### - [x] F-9.2.19 — `lenny/request_elicitation` does not enforce an `expected_domain` or `connector_id` argument [Low] — CLOSED
 
 - **Spec:** Line 87 (control 2) + provenance table line 79. A connector-initiated elicitation declares its `connector_id` and `expected_domain`; the gateway uses these for the hard-boundary check (F-9.2.7) and the provenance stamping (F-9.2.6).
 - **Evidence:**
@@ -10250,7 +10258,9 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - A pod that claims `initiatorType: connector` is admitted to the privileged URL-mode path (`pkg/gateway/mcptools/mcptools.go:682-684`) on assertion alone, with no cryptographic or registered-identity check that the pod is in fact a gateway-registered connector.
 - **Gap:** An agent pod can self-declare `initiatorType: connector` and bypass the agent-initiated URL-mode controls. The §9.2 distinction between "gateway-initiated" connector and "agent-initiated" agent collapses into a self-asserted string at the tool surface.
 
-### - [ ] F-9.2.20 — Subtree deadlock detector does not interact with elicitation chains [Info] — OPEN
+**Resolution:** Dropped the `initiatorType` field from `lenny/request_elicitation`'s input schema. Every elicitation raised through the agent-facing MCP tool is now hard-coded as `InitiatorAgent`, so the §9.2 URL-mode allowlist always governs — a self-asserted `connector` claim no longer bypasses the per-pool allowlist. A future connector-initiated path will go through a separate gateway-authenticated surface keyed off the registered connector binding, not by an input string at this tool.
+
+### - [ ] F-9.2.20 — Subtree deadlock detector does not interact with elicitation chains [Info] — DEFERRED
 
 **Potential overlap** (confidence: medium) — F-8.8.6 — Both stem from the absent deadlock detector, but F-8.8.6 reports the missing event/DEADLOCK_TIMEOUT while F-9.2.20 reports the moot elicitation-chain interaction.
 
@@ -10259,6 +10269,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `grep -rn "DeadlockDetect\|deadlock_detect\|isDeadlocked" pkg/ cmd/` returns nothing except the `lenny_delegation_deadlock_detected_total` catalog row.
   - `grep -rn "lenny_delegation_deadlock_detected_total" pkg/gateway/` shows no emitter.
 - **Gap:** No deadlock detector exists, so the §9.2 interaction with deadlock detection is moot. This is upstream of §9.2 (the detector itself is unbuilt) and is flagged Info on the §9.2 audit because the §9.2 contract is conditional on a service that does not exist.
+
+**Resolution:** Deferred to the same batch that lands the §8.9 subtree deadlock detector (tracked under F-8.8.6 — the detector itself is unbuilt). The §9.2 elicitation-chain "non-deadlock" rule must be honored when the detector is implemented; until then there is no detector for it to interact with.
 
 ---
 

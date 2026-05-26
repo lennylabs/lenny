@@ -206,6 +206,11 @@ var metricCatalog = []MetricSpec{
 	{"lenny_orphan_tasks_terminated", TypeCounter, "Orphan tasks terminated by the cleanup job"},
 	{"lenny_orphan_tasks_active", TypeGauge, "Currently active orphan tasks awaiting cleanup"},
 	{"lenny_orphan_tasks_active_per_tenant", TypeGauge, "Per-tenant active orphan task count"},
+	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert. Reflects the
+	// configured maxOrphanTasksPerTenant ceiling so the alert's
+	// `scalar(lenny_max_orphan_tasks_per_tenant)` threshold resolves to a single
+	// series. F-8.10.13.
+	{"lenny_max_orphan_tasks_per_tenant", TypeGauge, "Configured maxOrphanTasksPerTenant ceiling — drives the OrphanTasksPerTenantHigh alert threshold"},
 	{"lenny_memory_store_operation_duration_seconds", TypeHistogram, "Memory store operation duration by operation and backend"},
 	{"lenny_memory_store_errors_total", TypeCounter, "Memory store errors by operation, backend, and error type"},
 	{"lenny_memory_store_record_count", TypeGauge, "Approximate stored memory records per tenant"},

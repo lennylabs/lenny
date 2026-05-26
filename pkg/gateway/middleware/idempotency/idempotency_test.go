@@ -163,13 +163,17 @@ func TestWrap_ErrorEnvelopeIncludesCategoryAndRetryable_spec_15_1(t *testing.T) 
 		wantRetry bool
 	}{
 		{
+			// spec: §11.5 line 277 — `INVALID_IDEMPOTENCY_KEY` is the
+			// dedicated PERMANENT envelope for malformed keys (the same
+			// key fails identically until the client picks a different
+			// one). F-15.1.30 catalogued it on the classifier.
 			name:      "INVALID_IDEMPOTENCY_KEY",
 			key:       strings.Repeat("x", idempotency.MaxKeyLength+1),
 			tenant:    "acme",
 			body:      strings.NewReader(`{}`),
 			wantCode:  "INVALID_IDEMPOTENCY_KEY",
-			wantCat:   "TRANSIENT", // unknown code → classifier fallback
-			wantRetry: true,
+			wantCat:   "PERMANENT",
+			wantRetry: false,
 		},
 		{
 			name:      "INTERNAL_ERROR_when_tenant_missing",

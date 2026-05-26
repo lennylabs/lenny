@@ -215,6 +215,29 @@ func TestScalarGaugesRegisteredAtStartup(t *testing.T) {
 // §16.5 alert rules. Each value must round-trip through /metrics so
 // the scalar(...) lookups in the alert rules resolve to the
 // configured operator value.
+// TestSetMaxOrphanTasksPerTenant_spec_8_10 verifies the §8.10 line
+// 1103 orphan-cap gauge is exposed at startup as 0 and updates to the
+// deployer-configured value once SetMaxOrphanTasksPerTenant fires. The
+// §16.5 OrphanTasksPerTenantHigh alert reads it via
+// `scalar(lenny_max_orphan_tasks_per_tenant)`. F-8.10.13.
+func TestSetMaxOrphanTasksPerTenant_spec_8_10(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_max_orphan_tasks_per_tenant 0") {
+		t.Errorf("startup /metrics missing zero gauge\n---\n%s", rr.Body.String())
+	}
+	m.SetMaxOrphanTasksPerTenant(100)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_max_orphan_tasks_per_tenant 100") {
+		t.Errorf("/metrics missing configured gauge after SetMaxOrphanTasksPerTenant\n---\n%s", rr.Body.String())
+	}
+}
+
 func TestSetScalarGaugesEmitsConfiguredValues(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
