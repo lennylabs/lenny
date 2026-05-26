@@ -1,0 +1,310 @@
+// SPDX-License-Identifier: MIT
+
+package sessionserver
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+)
+
+// spec: §7.1 lines 75, 77 (retention, isolation), §7.2 lines 137, 141
+// (status_change, session_complete), §11.7 / §16.6 (lifecycle audit).
+
+// captureLifecycleAudit records every §7.1/§16.6 session lifecycle
+// audit event the server emits, for assertion in tests.
+type captureLifecycleAudit struct{ events []SessionLifecycleEvent }
+
+func (c *captureLifecycleAudit) EmitSessionLifecycle(_ context.Context, ev SessionLifecycleEvent) {
+	c.events = append(c.events, ev)
+}
+
+// sseEventsOfType returns the bus history events of the given type for a
+// session, oldest first.
+func sseEventsOfType(bus *sessionevents.Bus, sessionID, typ string) []sessionevents.Event {
+	var out []sessionevents.Event
+	for _, e := range bus.History(sessionID, 0) {
+		if e.Type == typ {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// --- F-7.1.10: session lifecycle audit events --------------------------
+
+func TestRecordSessionCreatedEmitsAuditEvent_spec_7_1_10(t *testing.T) {
+	sink := &captureLifecycleAudit{}
+	at := time.Date(2026, 5, 26, 9, 0, 0, 0, time.UTC)
+	srv := New(memstore.New(), Options{
+		LifecycleAuditSink: sink,
+		Clock:              func() time.Time { return at },
+	})
+
+	srv.recordSessionCreated(context.Background(), sessionstore.Session{
+		ID: "sess_c", TenantID: "acme", UserID: "alice@acme.com",
+		RuntimeRef: "claude-code", State: session.StateCreated,
+	})
+
+	if len(sink.events) != 1 {
+		t.Fatalf("audit events: got %d, want 1", len(sink.events))
+	}
+	ev := sink.events[0]
+	if ev.EventType != auditSessionCreated {
+		t.Errorf("eventType = %q, want %q", ev.EventType, auditSessionCreated)
+	}
+	if ev.TenantID != "acme" || ev.SessionID != "sess_c" || ev.RuntimeRef != "claude-code" {
+		t.Errorf("audit identity fields wrong: %+v", ev)
+	}
+	if ev.State != string(session.StateCreated) {
+		t.Errorf("state = %q, want created", ev.State)
+	}
+	if !ev.At.Equal(at) {
+		t.Errorf("at = %v, want %v", ev.At, at)
+	}
+}
+
+func TestRecordSessionCompletedEmitsTerminalAuditEvent_spec_7_1_10(t *testing.T) {
+	cases := []struct {
+		state     session.State
+		eventType string
+	}{
+		{session.StateCompleted, auditSessionCompleted},
+		{session.StateFailed, auditSessionFailed},
+		{session.StateCancelled, auditSessionCancelled},
+		{session.StateExpired, auditSessionExpired},
+	}
+	for _, tc := range cases {
+		sink := &captureLifecycleAudit{}
+		srv := New(memstore.New(), Options{LifecycleAuditSink: sink})
+		row := sessionstore.Session{ID: "s", TenantID: "acme", RuntimeRef: "echo", State: tc.state}
+		if tc.state == session.StateFailed {
+			row.FailureClass = session.FailureClass("runtime_failure")
+		}
+		srv.recordSessionCompleted(context.Background(), row)
+
+		var got *SessionLifecycleEvent
+		for i := range sink.events {
+			if sink.events[i].EventType == tc.eventType {
+				got = &sink.events[i]
+			}
+		}
+		if got == nil {
+			t.Fatalf("state %q: missing audit event %q; got %+v", tc.state, tc.eventType, sink.events)
+		}
+		if tc.state == session.StateFailed && got.FailureClass != "runtime_failure" {
+			t.Errorf("failed audit failureClass = %q, want runtime_failure", got.FailureClass)
+		}
+	}
+}
+
+func TestRecordSessionCompletedNonTerminalNoAudit_spec_7_1_10(t *testing.T) {
+	sink := &captureLifecycleAudit{}
+	srv := New(memstore.New(), Options{LifecycleAuditSink: sink})
+	srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+		ID: "s", TenantID: "acme", State: session.StateRunning,
+	})
+	if len(sink.events) != 0 {
+		t.Errorf("non-terminal state emitted %d audit events, want 0", len(sink.events))
+	}
+}
+
+func TestLifecycleAuditNilSinkIsSafe_spec_7_1_10(t *testing.T) {
+	srv := New(memstore.New(), Options{})
+	// Neither path may panic with a nil sink.
+	srv.recordSessionCreated(context.Background(), sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateCreated})
+	srv.recordSessionCompleted(context.Background(), sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateFailed})
+}
+
+// --- F-7.1.11 / F-7.2.2: status_change + session_complete SSE ----------
+
+func TestTerminalTransitionEmitsStatusChangeAndComplete_spec_7_2_2(t *testing.T) {
+	for _, st := range []session.State{
+		session.StateCompleted, session.StateFailed, session.StateCancelled, session.StateExpired,
+	} {
+		bus := sessionevents.NewBus(64)
+		srv := New(memstore.New(), Options{Events: bus})
+		srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+			ID: "s", TenantID: "acme", State: st,
+		})
+
+		sc := sseEventsOfType(bus, "s", "status_change")
+		if len(sc) != 1 {
+			t.Fatalf("state %q: status_change count = %d, want 1", st, len(sc))
+		}
+		var payload struct {
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal([]byte(sc[0].Data), &payload); err != nil {
+			t.Fatalf("status_change data: %v", err)
+		}
+		if payload.State != string(st) {
+			t.Errorf("status_change state = %q, want %q", payload.State, st)
+		}
+
+		complete := sseEventsOfType(bus, "s", "session_complete")
+		if len(complete) != 1 {
+			t.Errorf("state %q: session_complete count = %d, want 1", st, len(complete))
+		}
+	}
+}
+
+func TestSessionCompleteCarriesTaskResult_spec_7_2_2(t *testing.T) {
+	bus := sessionevents.NewBus(64)
+	srv := New(memstore.New(), Options{Events: bus})
+	srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+		ID: "s", TenantID: "acme", State: session.StateFailed,
+		FailureReason: "RUNTIME_CRASH",
+	})
+	complete := sseEventsOfType(bus, "s", "session_complete")
+	if len(complete) != 1 {
+		t.Fatalf("session_complete count = %d, want 1", len(complete))
+	}
+	var body struct {
+		TaskID string `json:"taskId"`
+		State  string `json:"state"`
+		Error  *struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(complete[0].Data), &body); err != nil {
+		t.Fatalf("session_complete data: %v", err)
+	}
+	if body.TaskID != "s" || body.State != string(session.StateFailed) {
+		t.Errorf("session_complete body = %+v, want taskId=s state=failed", body)
+	}
+	if body.Error == nil || body.Error.Code != "RUNTIME_CRASH" {
+		t.Errorf("session_complete error = %+v, want code RUNTIME_CRASH", body.Error)
+	}
+}
+
+func TestNonTerminalRecordCompletedNoSSE_spec_7_2_2(t *testing.T) {
+	bus := sessionevents.NewBus(64)
+	srv := New(memstore.New(), Options{Events: bus})
+	srv.recordSessionCompleted(context.Background(), sessionstore.Session{
+		ID: "s", TenantID: "acme", State: session.StateRunning,
+	})
+	if n := len(bus.History("s", 0)); n != 0 {
+		t.Errorf("non-terminal recordSessionCompleted emitted %d SSE events, want 0", n)
+	}
+}
+
+func TestFailSessionEmitsTerminalLifecycle_spec_7_2_2(t *testing.T) {
+	// spec: §7.2 — the start-path failure (failSession) is a terminal
+	// transition and emits the same SSE + audit signals as any terminal.
+	store := memstore.New()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	bus := sessionevents.NewBus(64)
+	sink := &captureLifecycleAudit{}
+	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
+
+	srv.failSession(context.Background(), "acme", "s")
+
+	if got := sseEventsOfType(bus, "s", "status_change"); len(got) != 1 {
+		t.Errorf("failSession status_change count = %d, want 1", len(got))
+	}
+	if got := sseEventsOfType(bus, "s", "session_complete"); len(got) != 1 {
+		t.Errorf("failSession session_complete count = %d, want 1", len(got))
+	}
+	if len(sink.events) != 1 || sink.events[0].EventType != auditSessionFailed {
+		t.Errorf("failSession audit = %+v, want one session.failed", sink.events)
+	}
+}
+
+func TestEmitStatusChangeNoBusIsSafe_spec_7_2_2(t *testing.T) {
+	srv := New(memstore.New(), Options{})
+	srv.emitStatusChange("s", session.StateSuspended) // nil bus must not panic
+	srv.emitSessionComplete(sessionstore.Session{ID: "s", State: session.StateCompleted})
+}
+
+// --- F-7.1.5 / F-7.1.16: artifact retention default + terminal roll ----
+
+func TestRollRetentionOnTerminalFromZero_spec_7_1_16(t *testing.T) {
+	store := memstore.New()
+	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "s", TenantID: "acme", State: session.StateCompleted,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	srv := New(store, Options{Clock: func() time.Time { return now }})
+
+	srv.rollRetentionOnTerminal(context.Background(), sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateCompleted})
+
+	row, _ := store.Get(context.Background(), "acme", "s")
+	want := now.Add(DefaultArtifactRetention)
+	if !row.RetentionExpiresAt.Equal(want) {
+		t.Errorf("retentionExpiresAt = %v, want %v (terminal + default)", row.RetentionExpiresAt, want)
+	}
+}
+
+func TestRollRetentionRollsCreateDefaultForward_spec_7_1_16(t *testing.T) {
+	// A session whose create-time deadline (created + 7d) is earlier than
+	// terminal + 7d gets rolled forward to start the window at the
+	// terminal transition.
+	store := memstore.New()
+	created := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	terminal := created.Add(36 * time.Hour)
+	seeded := sessionstore.Session{
+		ID: "s", TenantID: "acme", State: session.StateCompleted,
+		CreatedAt:          created,
+		RetentionExpiresAt: created.Add(DefaultArtifactRetention),
+	}
+	if err := store.Create(context.Background(), seeded); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	srv := New(store, Options{Clock: func() time.Time { return terminal }})
+
+	srv.rollRetentionOnTerminal(context.Background(), seeded)
+
+	row, _ := store.Get(context.Background(), "acme", "s")
+	want := terminal.Add(DefaultArtifactRetention)
+	if !row.RetentionExpiresAt.Equal(want) {
+		t.Errorf("retentionExpiresAt = %v, want %v", row.RetentionExpiresAt, want)
+	}
+}
+
+func TestRollRetentionPreservesLongerExtension_spec_7_1_16(t *testing.T) {
+	// A client extension past terminal + default is never shortened.
+	store := memstore.New()
+	terminal := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	extended := terminal.Add(60 * 24 * time.Hour) // 60 days, > 7-day default
+	seeded := sessionstore.Session{
+		ID: "s", TenantID: "acme", State: session.StateCompleted,
+		RetentionExpiresAt: extended,
+	}
+	if err := store.Create(context.Background(), seeded); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	srv := New(store, Options{Clock: func() time.Time { return terminal }})
+
+	srv.rollRetentionOnTerminal(context.Background(), seeded)
+
+	row, _ := store.Get(context.Background(), "acme", "s")
+	if !row.RetentionExpiresAt.Equal(extended) {
+		t.Errorf("retentionExpiresAt = %v, want preserved %v", row.RetentionExpiresAt, extended)
+	}
+}
+
+func TestDefaultRetentionOptionOverride(t *testing.T) {
+	// A non-positive DefaultRetention falls through to the 7-day default;
+	// an explicit override is honoured.
+	srv := New(memstore.New(), Options{})
+	if srv.defaultRetention != DefaultArtifactRetention {
+		t.Errorf("default = %v, want %v", srv.defaultRetention, DefaultArtifactRetention)
+	}
+	custom := New(memstore.New(), Options{DefaultRetention: 48 * time.Hour})
+	if custom.defaultRetention != 48*time.Hour {
+		t.Errorf("override = %v, want 48h", custom.defaultRetention)
+	}
+}

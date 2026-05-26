@@ -186,6 +186,21 @@ type Server struct {
 	// lease delivery (the §4.9 materializedConfig path) is not yet wired;
 	// the §4.9 router resolves user sources only when this reports true.
 	userCredChecker func(ctx context.Context, tenantID, userID, provider string) bool
+
+	// lifecycleAudit, when set, receives the §7.1 / §16.6 session
+	// lifecycle audit events (session.created and the terminal
+	// session.{completed,failed,cancelled,expired}) the gateway writes
+	// to the §11.7 hash-chained audit log. Nil disables the emission;
+	// the billing and operational-event side effects are unaffected.
+	// spec: §7.1, §16.6.
+	lifecycleAudit LifecycleAuditSink
+
+	// defaultRetention is the §7.1 line 77 default artifact-retention
+	// window stamped on every session at create time and rolled forward
+	// at the terminal transition. A non-positive value falls through to
+	// DefaultArtifactRetention.
+	// spec: §7.1 line 77 — "configurable TTL (default: 7 days ...)".
+	defaultRetention time.Duration
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -298,6 +313,19 @@ type Options struct {
 	// to the §11.7 audit pipeline; nil disables the emission (and the
 	// override still applies).
 	DeriveAuditSink DeriveAuditSink
+
+	// LifecycleAuditSink, when set, receives the §7.1 / §16.6 session
+	// lifecycle audit events (session.created and the terminal
+	// session.{completed,failed,cancelled,expired}) for the §11.7
+	// hash-chained audit log. Production wires this to the audit
+	// appender; nil disables the emission.
+	LifecycleAuditSink LifecycleAuditSink
+
+	// DefaultRetention overrides the §7.1 line 77 default artifact-
+	// retention window. A non-positive value selects
+	// DefaultArtifactRetention (7 days). Deployers tune it via the
+	// gateway --session-artifact-retention-seconds flag.
+	DefaultRetention time.Duration
 
 	// UploadTokenIssuer mints the §7.1 uploadToken stamped on every
 	// successful POST /v1/sessions response. When nil, the server
@@ -633,6 +661,13 @@ func New(store sessionstore.Store, opts Options) *Server {
 		preclaimMismatch:       opts.PreclaimMismatch,
 		observeStartupDuration: opts.ObserveStartupDuration,
 		observeStartupPhase:    opts.ObserveStartupPhase,
+		lifecycleAudit:         opts.LifecycleAuditSink,
+		defaultRetention:       opts.DefaultRetention,
+	}
+	if s.defaultRetention <= 0 {
+		// spec: §7.1 line 77 — default the artifact-retention window to
+		// 7 days when the deployer leaves it unset.
+		s.defaultRetention = DefaultArtifactRetention
 	}
 	if s.warmupEstimateSeconds <= 0 {
 		s.warmupEstimateSeconds = DefaultWarmupEstimateSeconds
@@ -960,6 +995,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// individual sessions override the platform default by adjusting
 	// this field on Update.
 	row.ResumeEligibleUntil = row.CreatedAt.Add(s.resumeWindow)
+	// spec: §7.1 line 77 — stamp the default artifact-retention deadline
+	// at create so a session that never reaches a terminal state is
+	// still eligible for GC (the retention GC treats a zero deadline as
+	// ineligible, which would otherwise let the row live forever). The
+	// terminal transition rolls this forward to terminal_time + default.
+	row.RetentionExpiresAt = row.CreatedAt.Add(s.defaultRetention)
 	// §10.7: the ExperimentRouter may enroll the session in a variant,
 	// rewriting its runtime/pool before the row is persisted. It fails
 	// the creation closed when the variant pool is less isolated than
@@ -1240,6 +1281,12 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 		}
 		if session.IsTerminal(updated.State) {
 			s.recordSessionCompleted(r.Context(), updated)
+		} else {
+			// spec: §7.2 line 137 — surface a non-terminal transition
+			// (e.g. interrupt → suspended) on the SSE stream. Terminal
+			// transitions emit status_change from recordSessionCompleted
+			// so every terminal caller is covered uniformly.
+			s.emitStatusChange(updated.ID, updated.State)
 		}
 		s.writeSession(w, http.StatusOK, updated)
 	}
@@ -1293,6 +1340,8 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	if s.uploadVerifier != nil && updated.UploadTokenDigest != "" {
 		_ = s.uploadVerifier.ConsumeDigest(updated.UploadTokenDigest, updated.UploadTokenExpiry)
 	}
+	// spec: §7.2 line 137 — surface the created → ready transition.
+	s.emitStatusChange(updated.ID, updated.State)
 	s.writeSession(w, http.StatusOK, updated)
 }
 

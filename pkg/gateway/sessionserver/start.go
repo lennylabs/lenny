@@ -245,6 +245,10 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
+	// spec: §7.1 line 77 — stamp the default artifact-retention deadline
+	// at create (mirrors the plain create path) so the GC can reclaim
+	// this session's artifacts; the terminal transition rolls it forward.
+	row.RetentionExpiresAt = row.CreatedAt.Add(s.defaultRetention)
 	// §10.7: the ExperimentRouter may enroll the session in a variant,
 	// rewriting its runtime/pool before the row is persisted. It fails
 	// the creation closed when the variant pool is less isolated than
@@ -303,6 +307,12 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// spec: §7.2 line 137 — the create-and-start path lands the session
+	// directly in running, so emit status_change(running) for SSE
+	// subscribers (e.g. a parent watching a delegated child) on parity
+	// with the explicit POST /start transition.
+	s.emitStatusChange(row.ID, row.State)
 
 	resp := CreateSessionResponse{
 		SessionResponse:       toResponse(row),
@@ -368,6 +378,8 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §7.2 line 137 — surface the ready → running transition.
+	s.emitStatusChange(updated.ID, updated.State)
 	s.writeSession(w, http.StatusOK, updated)
 }
 
@@ -827,6 +839,14 @@ func (s *Server) failSession(ctx context.Context, tenantID, sessionID string) {
 	})
 	if err == nil {
 		s.archiveSettledChild(ctx, updated)
+		// spec: §7.2 lines 137, 141 / §11.7 / §7.1 line 77 — the
+		// start-path failure is a terminal transition, so it emits the
+		// same status_change/session_complete SSE events, the
+		// session.failed audit event, and the retention-window roll as
+		// any other terminal path. The heavier seal/executor-close
+		// teardown stays in recordSessionCompleted: a start-path failure
+		// never bound a workspace to seal.
+		s.emitTerminalLifecycle(ctx, updated)
 	}
 }
 
@@ -885,6 +905,10 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §7.2 line 137 — surface the resume transition (the
+	// resume_pending → resuming → running chain collapses to the
+	// resolved state) before the richer session.resumed event below.
+	s.emitStatusChange(updated.ID, updated.State)
 	// spec: §4.4 line 236 — partial-manifest cleanup runs on every
 	// resume regardless of whether the underlying reassembly
 	// succeeded. The cleaner deletes the chunk objects and

@@ -353,6 +353,9 @@ func main() {
 		"connect to MinIO over HTTPS. Override via LENNY_MINIO_USE_SSL.")
 	checkpointInterval := flag.Duration("checkpoint-interval", 10*time.Minute,
 		"§4.4 line 256 periodic-checkpoint cadence (`periodicCheckpointIntervalSeconds`). The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace. Default 10m (600s) matches the §4.4 spec value; the freshness SLO bounds workspace loss on eviction to ≤ one interval.")
+	sessionArtifactRetentionSeconds := flag.Int("session-artifact-retention-seconds",
+		envInt("LENNY_SESSION_ARTIFACT_RETENTION_SECONDS", int(sessionserver.DefaultArtifactRetention/time.Second)),
+		"§7.1 line 77 default artifact-retention window in seconds. Session workspace snapshots, logs, and transcripts stay GC-eligible until this long after the session reaches a terminal state. Default 7 days (604800s); clients extend per-session via POST /v1/sessions/{id}/extend-retention. Override via LENNY_SESSION_ARTIFACT_RETENTION_SECONDS.")
 	checkpointJitterFraction := flag.Float64("checkpoint-jitter-fraction", envFloat("LENNY_CHECKPOINT_JITTER_FRACTION", checkpointer.DefaultJitterFraction),
 		"§4.4 line 258 `periodicCheckpointJitterFraction`. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
 	noEnvPolicy := flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
@@ -1472,8 +1475,13 @@ func main() {
 		TreeArchive:     treeArchive,
 		Interceptors:    policyChain,
 		PolicyAuditSink: policyAuditSink,
-		Clock:           clockinject.Now,
-		UploadSubsystem: uploadSubsystem,
+		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
+		// hash-chained log, written under the session's tenant.
+		LifecycleAuditSink: sessionLifecycleAuditor{appender: auditAppender},
+		// §7.1 line 77 — default artifact retention window.
+		DefaultRetention: time.Duration(*sessionArtifactRetentionSeconds) * time.Second,
+		Clock:            clockinject.Now,
+		UploadSubsystem:  uploadSubsystem,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
 		// §6.3 lines 348, 372 — startup-latency histograms observed on
@@ -3054,6 +3062,42 @@ func (a mcpDelegationAuditor) EmitDelegationEvent(ctx context.Context, eventType
 		ev.ActorTenantID = p.TenantID
 	}
 	a.sink.EmitAdminEvent(ctx, ev)
+}
+
+// sessionLifecycleAuditor adapts the gateway audit appender to the
+// sessionserver.LifecycleAuditSink interface. It writes the §7.1 /
+// §16.6 session lifecycle events (session.created and the terminal
+// session.{completed,failed,cancelled,expired}) to the §11.7
+// hash-chained audit log under the session's own tenant partition. The
+// tenant is taken from the session-derived event, satisfying the §11.7
+// line 428 write-time tenant-validation rule. The OCSF mapping maps
+// these event types to API Activity (6003).
+type sessionLifecycleAuditor struct {
+	appender policy.AuditAppender
+}
+
+func (a sessionLifecycleAuditor) EmitSessionLifecycle(ctx context.Context, ev sessionserver.SessionLifecycleEvent) {
+	if a.appender == nil {
+		return
+	}
+	payload := map[string]any{
+		"session_id": ev.SessionID,
+		"user_sub":   ev.UserID,
+		"runtime":    ev.RuntimeRef,
+		"state":      ev.State,
+	}
+	if ev.FailureClass != "" {
+		payload["failure_class"] = ev.FailureClass
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	at := ev.At
+	if at.IsZero() {
+		at = clockinject.Now().UTC()
+	}
+	_, _ = a.appender.Append(ctx, ev.TenantID, ev.EventType, json.RawMessage(data), at)
 }
 
 // credentialAuditor adapts the gateway audit sink to the

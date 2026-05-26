@@ -79,6 +79,20 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 			EventType: billingstore.EventSessionCreated,
 		})
 	}
+	// §7.1 / §16.6: write the `session.created` event to the §11.7
+	// hash-chained audit log so the lifecycle has a tamper-evident
+	// record distinct from the billing event above. Best-effort.
+	if s.lifecycleAudit != nil {
+		s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{
+			EventType:  auditSessionCreated,
+			TenantID:   sess.TenantID,
+			SessionID:  sess.ID,
+			UserID:     sess.UserID,
+			RuntimeRef: sess.RuntimeRef,
+			State:      string(sess.State),
+			At:         s.clock(),
+		})
+	}
 }
 
 // terminalSessionEvent maps a terminal session state to its §16.6
@@ -130,6 +144,11 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 			})
 		}
 	}
+	// §7.2 lines 137, 141 / §11.7 / §7.1 line 77: the client- and
+	// audit-visible terminal signals (status_change, session_complete,
+	// the lifecycle audit event, and the retention-window roll). Shared
+	// with failSession so the start-path failure emits the same signals.
+	s.emitTerminalLifecycle(ctx, sess)
 	// §7.1 seal-and-export: snapshot the final workspace before the pod
 	// is released. Best-effort — it no-ops for a session that never ran
 	// on a pod, and a failed seal falls back to the latest periodic
