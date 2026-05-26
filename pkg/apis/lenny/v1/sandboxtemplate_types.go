@@ -199,6 +199,26 @@ type SandboxTemplateSpec struct {
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
 
+	// WorkspaceSizeLimitBytes is the §4.4 line 254 / §10.1 line 122 per-pod
+	// workspace-size hard limit. The pool-config webhook resolves it to the
+	// matching §10.1 tiered-checkpoint-cap (30s for ≤100 MB, 60s for
+	// ≤300 MB, 90s for ≤512 MB) when computing the
+	// `terminationGracePeriodSeconds` floor for concurrent-workspace pools
+	// (spec/05_runtime-registry-and-pool-model.md §5.2 line 516). Unset
+	// defaults to the 90s conservative tier per §10.1 line 108.
+	// +optional
+	WorkspaceSizeLimitBytes *int64 `json:"workspaceSizeLimitBytes,omitempty"`
+
+	// CheckpointBarrierAckTimeoutSeconds is the §10.1 wall-clock deadline
+	// the gateway waits for `CheckpointBarrierAck` from every coordinated
+	// pod during a rolling drain. The pool-config webhook adds it to the
+	// per-pod `terminationGracePeriodSeconds` floor for concurrent-workspace
+	// pools and additionally enforces the §10.1 line 124 BarrierAck-floor
+	// rule (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
+	// Unset defaults to the §10.1 line 122 90s.
+	// +optional
+	CheckpointBarrierAckTimeoutSeconds *int64 `json:"checkpointBarrierAckTimeoutSeconds,omitempty"`
+
 	// TaskPolicy configures task-mode pod reuse. It is required when
 	// ExecutionMode is `task`.
 	// +optional

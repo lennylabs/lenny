@@ -396,6 +396,167 @@ func TestTemplate(t *testing.T) {
 	}
 }
 
+// spec: §5.2 line 516 (spec/05_runtime-registry-and-pool-model.md) — the
+// SandboxWarmPool admission webhook enforces the per-pod
+// `terminationGracePeriodSeconds` floor for concurrent-workspace pools
+// (`maxConcurrent × max_tiered_checkpoint_cap +
+// checkpointBarrierAckTimeoutSeconds + 30`), warning at >600s and
+// rejecting when maxTerminationGracePeriodSeconds is set and breached or
+// when the deployer's terminationGracePeriodSeconds falls below the
+// floor. spec: §10.1 lines 104-124 — the tier-cap table and the
+// BarrierAck floor (`checkpointBarrierAckTimeoutSeconds ≥ tier cap`).
+func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
+	int64p := func(v int64) *int64 { return &v }
+
+	baseSpec := func() lennyv1.SandboxTemplateSpec {
+		return lennyv1.SandboxTemplateSpec{
+			RuntimeRef:       "r",
+			ExecutionMode:    "concurrent",
+			ConcurrencyStyle: "workspace",
+			MaxConcurrent:    2,
+			ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
+				AcknowledgeProcessLevelIsolation: true,
+				CleanupTimeoutSeconds:            60,
+			},
+		}
+	}
+
+	t.Run("default conservative floor under 600s admits without warning", func(t *testing.T) {
+		// maxConcurrent=2, unset workspace size → 90s tier, unset ack → 90s,
+		// floor = 2*90 + 90 + 30 = 300s.
+		d := pcv.DecideTemplate(template(baseSpec()))
+		assertAllowed(t, d)
+		if len(d.Warnings) != 0 {
+			t.Fatalf("did not expect warnings: %v", d.Warnings)
+		}
+	})
+
+	t.Run("floor above 600s emits warning but admits", func(t *testing.T) {
+		// maxConcurrent=8 → 8*90 + 90 + 30 = 840s > 600s.
+		spec := baseSpec()
+		spec.MaxConcurrent = 8
+		spec.ConcurrentWorkspacePolicy.CleanupTimeoutSeconds = 60
+		d := pcv.DecideTemplate(template(spec))
+		assertAllowed(t, d)
+		if len(d.Warnings) != 1 {
+			t.Fatalf("want one warning, got %v", d.Warnings)
+		}
+		if !strings.Contains(d.Warnings[0], "840s") || !strings.Contains(d.Warnings[0], "600s") {
+			t.Errorf("warning %q does not name the floor or the node-drain limit", d.Warnings[0])
+		}
+	})
+
+	t.Run("floor breaches maxTerminationGracePeriodSeconds → rejected", func(t *testing.T) {
+		spec := baseSpec()
+		spec.MaxConcurrent = 8
+		spec.MaxTerminationGracePeriodSeconds = int64p(600)
+		spec.ConcurrentWorkspacePolicy.CleanupTimeoutSeconds = 60
+		d := pcv.DecideTemplate(template(spec))
+		assertRejected(t, d, "exceeds spec.maxTerminationGracePeriodSeconds (600s)")
+	})
+
+	t.Run("deployer terminationGracePeriodSeconds below floor → rejected", func(t *testing.T) {
+		// floor = 300s; deployer set 200s.
+		spec := baseSpec()
+		spec.TerminationGracePeriodSeconds = int64p(200)
+		d := pcv.DecideTemplate(template(spec))
+		assertRejected(t, d, "below the §5.2 floor for this pool (300s")
+	})
+
+	t.Run("deployer terminationGracePeriodSeconds at floor → admitted", func(t *testing.T) {
+		spec := baseSpec()
+		spec.TerminationGracePeriodSeconds = int64p(300)
+		d := pcv.DecideTemplate(template(spec))
+		assertAllowed(t, d)
+	})
+
+	t.Run("workspaceSizeLimitBytes selects correct tier — 100 MB → 30s", func(t *testing.T) {
+		// maxConcurrent=2, 100 MB → 30s tier, BUT BarrierAck default 90s
+		// >= 30s tier (OK). floor = 2*30 + 90 + 30 = 180s.
+		spec := baseSpec()
+		spec.WorkspaceSizeLimitBytes = int64p(100 * 1024 * 1024)
+		spec.TerminationGracePeriodSeconds = int64p(180)
+		d := pcv.DecideTemplate(template(spec))
+		assertAllowed(t, d)
+	})
+
+	t.Run("workspaceSizeLimitBytes selects correct tier — 300 MB → 60s", func(t *testing.T) {
+		spec := baseSpec()
+		spec.WorkspaceSizeLimitBytes = int64p(300 * 1024 * 1024)
+		spec.TerminationGracePeriodSeconds = int64p(240) // 2*60 + 90 + 30
+		d := pcv.DecideTemplate(template(spec))
+		assertAllowed(t, d)
+	})
+
+	t.Run("checkpointBarrierAckTimeoutSeconds below tier cap → rejected", func(t *testing.T) {
+		// 300 MB workspace → 60s tier; ack=30s → reject.
+		spec := baseSpec()
+		spec.WorkspaceSizeLimitBytes = int64p(300 * 1024 * 1024)
+		spec.CheckpointBarrierAckTimeoutSeconds = int64p(30)
+		d := pcv.DecideTemplate(template(spec))
+		assertRejected(t, d, "must be >= max_tiered_checkpoint_cap (60s)")
+	})
+
+	t.Run("explicit barrier ack overrides default", func(t *testing.T) {
+		// 30s tier (100 MB), ack=30s → floor = 2*30 + 30 + 30 = 120s.
+		spec := baseSpec()
+		spec.WorkspaceSizeLimitBytes = int64p(100 * 1024 * 1024)
+		spec.CheckpointBarrierAckTimeoutSeconds = int64p(30)
+		spec.TerminationGracePeriodSeconds = int64p(120)
+		d := pcv.DecideTemplate(template(spec))
+		assertAllowed(t, d)
+	})
+
+	t.Run("non-concurrent pool does not run the budget check", func(t *testing.T) {
+		// A session-mode pool with a tiny deployer grace period must not
+		// be rejected — the floor rule is concurrent-workspace only.
+		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                   "r",
+			TerminationGracePeriodSeconds: int64p(1),
+		}))
+		assertAllowed(t, d)
+	})
+
+	t.Run("stateless concurrent pool does not run the budget check", func(t *testing.T) {
+		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                   "r",
+			ExecutionMode:                "concurrent",
+			ConcurrencyStyle:             "stateless",
+			TerminationGracePeriodSeconds: int64p(1),
+		}))
+		assertAllowed(t, d)
+	})
+}
+
+// spec: §10.1 lines 104-108 (spec/10_gateway-internals.md) — the tier
+// table maps workspace size to the max checkpoint cap. Unset/unknown
+// workspace size falls back to the 90s conservative tier per line 108.
+func TestMaxTieredCheckpointCapSeconds_spec_10_1_104(t *testing.T) {
+	mb := int64(1024 * 1024)
+	tests := []struct {
+		name string
+		size int64
+		want int64
+	}{
+		{"unset → 90s conservative", 0, 90},
+		{"negative → 90s conservative", -1, 90},
+		{"1 byte → 30s", 1, 30},
+		{"100 MB boundary → 30s", 100 * mb, 30},
+		{"101 MB → 60s", 100*mb + 1, 60},
+		{"300 MB boundary → 60s", 300 * mb, 60},
+		{"301 MB → 90s", 300*mb + 1, 90},
+		{"512 MB hard limit → 90s", 512 * mb, 90},
+		{"absurdly large → 90s", 1024 * 1024 * mb, 90},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pcv.MaxTieredCheckpointCapSeconds(tc.size); got != tc.want {
+				t.Errorf("MaxTieredCheckpointCapSeconds(%d) = %d, want %d", tc.size, got, tc.want)
+			}
+		})
+	}
+}
+
 // spec: §4.6.3 line 601 (spec/04_system-components.md) — rule set 2:
 // the userInfo authorization backstop admits only the
 // PoolScalingController SA and rejects every other principal with HTTP

@@ -13,12 +13,13 @@
 // invariants that are visible at the CRD layer — the relationships
 // between minWarm, maxWarm, bootstrap and schedule overrides on a
 // SandboxWarmPool, and the execution-mode acknowledgment and budget
-// rules on a SandboxTemplate. The §10.1 tiered-checkpoint-cap budget
-// inequalities reference Postgres-authoritative fields
-// (workspaceSizeLimitBytes, checkpointBarrierAckTimeoutSeconds,
-// terminationGracePeriodSeconds) that are not carried on the CRD spec;
-// those are enforced by the gateway-side admission path against the
-// pool definition rather than against the CRD object decoded here.
+// rules on a SandboxTemplate. The §5.2 line 516 per-pod
+// `terminationGracePeriodSeconds` floor for concurrent-workspace pools
+// (`maxConcurrent × max_tiered_checkpoint_cap +
+// checkpointBarrierAckTimeoutSeconds + 30`) is enforced here against
+// `spec.workspaceSizeLimitBytes`, `spec.checkpointBarrierAckTimeoutSeconds`,
+// `spec.terminationGracePeriodSeconds`, and `spec.maxTerminationGracePeriodSeconds`
+// — see decideTerminationBudget.
 //
 // The decision logic is split from the webhook HTTP/JSON-AdmissionReview
 // transport so it can be unit-tested without the controller-runtime
@@ -117,10 +118,23 @@ type Decision struct {
 	// 200 on allow, 422 for a rule-set-1 invariant violation, 400 for a
 	// malformed request.
 	Code int
+
+	// Warnings carries advisory messages the API server relays to the
+	// client without rejecting the request (AdmissionResponse.Warnings).
+	// spec: §5.2 line 516 — `terminationGracePeriodSeconds` floor above
+	// 600s emits a warning, not a rejection, unless
+	// `maxTerminationGracePeriodSeconds` is set and breached.
+	Warnings []string
 }
 
 // allow builds an admitting Decision.
 func allow() Decision { return Decision{Allowed: true, Code: 200} }
+
+// allowWithWarnings builds an admitting Decision carrying advisory
+// warnings.
+func allowWithWarnings(warnings ...string) Decision {
+	return Decision{Allowed: true, Code: 200, Warnings: warnings}
+}
 
 // reject builds a rule-set-1 rejection carrying the
 // INVALID_POOL_CONFIGURATION code and HTTP 422. The supplied message
@@ -454,12 +468,133 @@ func decideConcurrentWorkspace(spec lennyv1.SandboxTemplateSpec) Decision {
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
 	}
-	floor := int64(maxConcurrent) * 5
-	if cw.CleanupTimeoutSeconds < floor {
+	cleanupFloor := int64(maxConcurrent) * 5
+	if cw.CleanupTimeoutSeconds < cleanupFloor {
 		return reject(fmt.Sprintf(
 			"spec.concurrentWorkspacePolicy.cleanupTimeoutSeconds (%ds) divided by spec.maxConcurrent (%d) would "+
 				"produce a per-slot cleanup timeout below the 5s minimum; set cleanupTimeoutSeconds >= maxConcurrent x 5 (%ds)",
-			cw.CleanupTimeoutSeconds, maxConcurrent, floor,
+			cw.CleanupTimeoutSeconds, maxConcurrent, cleanupFloor,
+		))
+	}
+	return decideTerminationBudget(spec, maxConcurrent)
+}
+
+// MaxTieredCheckpointCapSeconds returns the §10.1 line 104 tiered
+// checkpoint cap matching workspaceSizeLimitBytes. Unknown/unset sizes
+// (workspaceSizeLimitBytes <= 0) fall back to the conservative 90s
+// maximum tier per §10.1 line 108 — the same behaviour the gateway
+// applies when last_checkpoint_workspace_bytes is NULL.
+//
+// Tier table:
+//   - ≤ 100 MB → 30s
+//   - ≤ 300 MB → 60s
+//   - any larger or unknown → 90s (the §4.4 hard cap is 512 MB)
+//
+// spec: §10.1 lines 104-108.
+func MaxTieredCheckpointCapSeconds(workspaceSizeLimitBytes int64) int64 {
+	const (
+		mb        = int64(1) << 20
+		tierSmall = 100 * mb
+		tierMid   = 300 * mb
+	)
+	if workspaceSizeLimitBytes <= 0 {
+		return 90
+	}
+	switch {
+	case workspaceSizeLimitBytes <= tierSmall:
+		return 30
+	case workspaceSizeLimitBytes <= tierMid:
+		return 60
+	default:
+		return 90
+	}
+}
+
+// defaultCheckpointBarrierAckTimeoutSeconds is the §10.1 line 122 wall-
+// clock deadline default the gateway waits for `CheckpointBarrierAck`
+// from every coordinated pod during a rolling drain.
+const defaultCheckpointBarrierAckTimeoutSeconds = 90
+
+// minStreamDrainSeconds is the §5.2 line 516 / §10.1 line 122
+// preStop-Stage-3 stream-drain budget the webhook adds to the per-slot
+// checkpoint budget when computing the terminationGracePeriodSeconds
+// floor.
+const minStreamDrainSeconds = 30
+
+// nodeDrainWarnSeconds is the §5.2 line 516 typical cluster-automation
+// node drain timeout. A computed terminationGracePeriodSeconds floor
+// above this value emits an advisory warning unless
+// MaxTerminationGracePeriodSeconds is set and breached.
+const nodeDrainWarnSeconds = 600
+
+// decideTerminationBudget enforces the §5.2 line 516 per-pod
+// `terminationGracePeriodSeconds` floor for concurrent-workspace pools.
+// The webhook computes
+//
+//	floor = maxConcurrent * max_tiered_checkpoint_cap
+//	      + checkpointBarrierAckTimeoutSeconds
+//	      + minStreamDrainSeconds
+//
+// where `max_tiered_checkpoint_cap` is resolved from
+// `spec.workspaceSizeLimitBytes` via MaxTieredCheckpointCapSeconds and
+// `checkpointBarrierAckTimeoutSeconds` defaults to 90s when unset
+// (§10.1 line 122).
+//
+// Rejection rules:
+//   - When spec.terminationGracePeriodSeconds is set and below the floor,
+//     the configuration is rejected (the deployer's declared budget
+//     would SIGKILL pods mid-checkpoint).
+//   - When spec.maxTerminationGracePeriodSeconds is set and the floor
+//     exceeds it, the configuration is rejected (deployers opt into a
+//     hard ceiling per §5.2 line 516).
+//   - When checkpointBarrierAckTimeoutSeconds < max_tiered_checkpoint_cap,
+//     the configuration is rejected per §10.1 line 124 BarrierAck-floor
+//     rule (a BarrierAck below the tier cap would declare a legitimately
+//     slow uploader unresponsive).
+//
+// Advisory warnings (admit + emit warning, not reject):
+//   - When the computed floor exceeds nodeDrainWarnSeconds (600s) without
+//     a maxTerminationGracePeriodSeconds breach, the deployer is asked to
+//     verify the cluster node-drain timeout per §5.2 line 516.
+func decideTerminationBudget(spec lennyv1.SandboxTemplateSpec, maxConcurrent int32) Decision {
+	workspaceLimit := int64(0)
+	if spec.WorkspaceSizeLimitBytes != nil {
+		workspaceLimit = *spec.WorkspaceSizeLimitBytes
+	}
+	tierCap := MaxTieredCheckpointCapSeconds(workspaceLimit)
+	barrierAck := int64(defaultCheckpointBarrierAckTimeoutSeconds)
+	if spec.CheckpointBarrierAckTimeoutSeconds != nil && *spec.CheckpointBarrierAckTimeoutSeconds > 0 {
+		barrierAck = *spec.CheckpointBarrierAckTimeoutSeconds
+	}
+	if barrierAck < tierCap {
+		return reject(fmt.Sprintf(
+			"spec.checkpointBarrierAckTimeoutSeconds (%ds) must be >= max_tiered_checkpoint_cap (%ds) for the "+
+				"configured workspaceSizeLimitBytes; increase checkpointBarrierAckTimeoutSeconds",
+			barrierAck, tierCap,
+		))
+	}
+	floor := int64(maxConcurrent)*tierCap + barrierAck + int64(minStreamDrainSeconds)
+	if spec.MaxTerminationGracePeriodSeconds != nil && floor > *spec.MaxTerminationGracePeriodSeconds {
+		return reject(fmt.Sprintf(
+			"computed terminationGracePeriodSeconds floor (%ds) exceeds spec.maxTerminationGracePeriodSeconds (%ds); "+
+				"reduce spec.maxConcurrent (%d), spec.workspaceSizeLimitBytes, or spec.checkpointBarrierAckTimeoutSeconds, "+
+				"or raise the hard ceiling",
+			floor, *spec.MaxTerminationGracePeriodSeconds, maxConcurrent,
+		))
+	}
+	if spec.TerminationGracePeriodSeconds != nil && *spec.TerminationGracePeriodSeconds < floor {
+		return reject(fmt.Sprintf(
+			"spec.terminationGracePeriodSeconds (%ds) is below the §5.2 floor for this pool (%ds = %d x %d tier cap + "+
+				"%d ack + %d drain); raise spec.terminationGracePeriodSeconds or reduce spec.maxConcurrent / "+
+				"spec.workspaceSizeLimitBytes",
+			*spec.TerminationGracePeriodSeconds, floor, maxConcurrent, tierCap, barrierAck, minStreamDrainSeconds,
+		))
+	}
+	if floor > nodeDrainWarnSeconds {
+		return allowWithWarnings(fmt.Sprintf(
+			"terminationGracePeriodSeconds floor (%ds) exceeds %ds; verify that cluster node drain timeout is "+
+				"configured to accommodate this value (Section 5.2)",
+			floor, nodeDrainWarnSeconds,
 		))
 	}
 	return allow()

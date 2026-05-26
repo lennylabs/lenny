@@ -452,6 +452,16 @@ func (in *SandboxTemplateSpec) DeepCopyInto(out *SandboxTemplateSpec) {
 		*out = new(int64)
 		**out = **in
 	}
+	if in.WorkspaceSizeLimitBytes != nil {
+		in, out := &in.WorkspaceSizeLimitBytes, &out.WorkspaceSizeLimitBytes
+		*out = new(int64)
+		**out = **in
+	}
+	if in.CheckpointBarrierAckTimeoutSeconds != nil {
+		in, out := &in.CheckpointBarrierAckTimeoutSeconds, &out.CheckpointBarrierAckTimeoutSeconds
+		*out = new(int64)
+		**out = **in
+	}
 	if in.TaskPolicy != nil {
 		in, out := &in.TaskPolicy, &out.TaskPolicy
 		*out = new(TaskPolicy)

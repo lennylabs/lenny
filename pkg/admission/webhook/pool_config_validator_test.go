@@ -175,6 +175,67 @@ func TestPoolConfigValidatorBudgetViolationPrecedesAuthz(t *testing.T) {
 	}
 }
 
+// spec: §5.2 line 516 (spec/05_runtime-registry-and-pool-model.md) — a
+// concurrent-workspace pool whose computed terminationGracePeriodSeconds
+// floor exceeds 600s is admitted with an advisory warning on the
+// AdmissionResponse, not rejected.
+func TestPoolConfigValidatorPropagatesTerminationGraceWarning_spec_5_2_516(t *testing.T) {
+	tpl := lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:       "r",
+			ExecutionMode:    "concurrent",
+			ConcurrencyStyle: "workspace",
+			MaxConcurrent:    8, // 8*90 + 90 + 30 = 840s > 600s
+			ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
+				AcknowledgeProcessLevelIsolation: true,
+				CleanupTimeoutSeconds:            60,
+			},
+		},
+	}
+	resp := webhook.PoolConfigValidator()(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	if !resp.Allowed {
+		t.Fatalf("an above-600s floor must be admitted with a warning: %+v", resp.Result)
+	}
+	if len(resp.Warnings) != 1 {
+		t.Fatalf("want one warning, got %v", resp.Warnings)
+	}
+	if !strings.Contains(resp.Warnings[0], "840s") {
+		t.Errorf("warning %q does not name the floor", resp.Warnings[0])
+	}
+}
+
+// spec: §5.2 line 516 — a deployer who sets
+// maxTerminationGracePeriodSeconds gets a hard rejection when the floor
+// breaches the ceiling.
+func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t *testing.T) {
+	ceiling := int64(600)
+	tpl := lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                       "r",
+			ExecutionMode:                    "concurrent",
+			ConcurrencyStyle:                 "workspace",
+			MaxConcurrent:                    8,
+			MaxTerminationGracePeriodSeconds: &ceiling,
+			ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
+				AcknowledgeProcessLevelIsolation: true,
+				CleanupTimeoutSeconds:            60,
+			},
+		},
+	}
+	resp := webhook.PoolConfigValidator()(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	if resp.Allowed {
+		t.Fatal("a floor above maxTerminationGracePeriodSeconds must be rejected")
+	}
+	if resp.Result == nil || resp.Result.Code != 422 {
+		t.Fatalf("rejection code = %v, want 422", resp.Result)
+	}
+	if !strings.Contains(resp.Result.Message, "spec.maxTerminationGracePeriodSeconds (600s)") {
+		t.Errorf("message = %q, want ceiling reference", resp.Result.Message)
+	}
+}
+
 func TestPoolConfigValidatorRejectsMalformedObject(t *testing.T) {
 	req := &admissionv1.AdmissionRequest{
 		UID:       "test-uid",

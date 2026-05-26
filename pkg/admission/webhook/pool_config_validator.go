@@ -64,16 +64,31 @@ func PoolConfigValidator() Decider {
 		// additionally to non-PoolScalingController writers
 		// (spec/04_system-components.md §4.6.3 line 601). userInfo is
 		// populated by the API server from the authenticated principal and
-		// cannot be spoofed by the caller.
-		return poolConfigResponse(pcv.DecideAuthorization(req.UserInfo.Username))
+		// cannot be spoofed by the caller. Rule-set-1 warnings (e.g. the
+		// §5.2 line 516 terminationGracePeriodSeconds floor advisory) are
+		// preserved on the rule-set-2 decision so they surface even when
+		// rule set 2 admits.
+		decision := pcv.DecideAuthorization(req.UserInfo.Username)
+		if decision.Allowed && len(ruleSet1.Warnings) > 0 {
+			decision.Warnings = append(decision.Warnings, ruleSet1.Warnings...)
+		}
+		return poolConfigResponse(decision)
 	}
 }
 
 // poolConfigResponse maps a pool_config_validator Decision onto an
-// AdmissionResponse.
+// AdmissionResponse. Advisory warnings are propagated onto
+// AdmissionResponse.Warnings so the API server relays them to the client
+// without rejecting the request (spec/05_runtime-registry-and-pool-model.md
+// §5.2 line 516 — `terminationGracePeriodSeconds` floor above 600s emits
+// a warning, not a rejection).
 func poolConfigResponse(decision pcv.Decision) *admissionv1.AdmissionResponse {
 	if decision.Allowed {
-		return Allow()
+		resp := Allow()
+		if len(decision.Warnings) > 0 {
+			resp.Warnings = append(resp.Warnings, decision.Warnings...)
+		}
+		return resp
 	}
 	return Deny(int32(decision.Code), decision.Reason)
 }

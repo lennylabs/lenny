@@ -3509,7 +3509,7 @@ Consequence: a Redis restart while concurrent-mode pods host active slots over-c
 
 - **Resolution:** Implemented the §5.2 "Post-recovery rehydration atomicity" path in `pkg/gateway/slotcounter`. `reserveScript` now reads the per-pod `lenny:pod:{pod}:rehydrated` flag first and returns a `REHYDRATE_REQUIRED` sentinel (-2) when it is absent; `Counter.Reserve` then seeds the counter before retrying. Seeding takes a per-pod in-process mutex plus a cross-replica `SET NX` lock on `lenny:pod:{pod}:rehydrating` (TTL = `slotRehydrationTimeoutMs`, default 2000ms, tunable via `WithRehydrationTimeout`), queries the new `SlotSource.GetActiveSlotsByPod`, and writes the count + flag atomically via `seedScript`; a replica that cannot take the lock spin-waits (bounded by the timeout) for the peer's flag and retries. The seed source is the `sessionstore.Store`: `GetActiveSlotsByPod` (new interface method, pgstore + memstore) counts non-terminal sessions bound to the pod (`pod_assignment`) cross-tenant via `InAllTenants`, backed by partial index `idx_sessions_active_by_pod` (migration 0080). `Reserve` returns a `rehydrated` bool so `podclaim.SlotClaimer.OnRehydrate` emits `lenny_slot_rehydration_total{pod,pool}` (new `gatewaymetrics.IncSlotRehydration`) exactly once per pod per restart; wired in `cmd/lenny-gateway` (`WithSlotSource(sessions)` + `Binder.Rehydration`). `Reset` clears all three sentinel keys. Closes duplicate F-12.4.19. Commit 8412834a.
 
-### - [ ] F-5.2.5 — Concurrent-workspace `terminationGracePeriodSeconds` floor is not enforced [High] — OPEN
+### - [x] F-5.2.5 — Concurrent-workspace `terminationGracePeriodSeconds` floor is not enforced [High] — CLOSED
 
 Spec §5.2 line 516 mandates that the `SandboxWarmPool` admission webhook enforce `maxConcurrent × max_tiered_checkpoint_cap + checkpointBarrierAckTimeoutSeconds + 30 ≤ terminationGracePeriodSeconds`, with a warning at > 600s, a hard rejection when `maxTerminationGracePeriodSeconds` is set and exceeded, and a serialized per-slot eviction checkpoint that subsumes a Postgres fallback budget.
 
@@ -3520,6 +3520,8 @@ Implementation:
 - `cmd/lenny-preflight/main.go` does not check this inequality (greps return nothing).
 
 Consequence: a deployer can configure `maxConcurrent: 8` with a default 30s `terminationGracePeriodSeconds` and the cluster will SIGKILL the pod mid-checkpoint, losing in-flight slot state. The CRD field is dead.
+
+- **Resolution:** Added `WorkspaceSizeLimitBytes` and `CheckpointBarrierAckTimeoutSeconds` to `SandboxTemplateSpec` (CRD + chart + embedded copy + deepcopy) and implemented the §5.2 line 516 budget invariant in `decideTerminationBudget` (`pkg/admission/pool_config_validator/validator.go`). The webhook resolves `max_tiered_checkpoint_cap` from `WorkspaceSizeLimitBytes` via the new pure `MaxTieredCheckpointCapSeconds` helper (§10.1 line 104 tier table: ≤100 MB → 30s, ≤300 MB → 60s, larger/unset → 90s conservative), defaults `checkpointBarrierAckTimeoutSeconds` to 90s when unset, and enforces (a) the §10.1 line 124 BarrierAck-floor rule (`barrierAck ≥ tier`), (b) hard rejection when the deployer-set `TerminationGracePeriodSeconds` is below the floor, (c) hard rejection when `MaxTerminationGracePeriodSeconds` is set and the floor exceeds it, and (d) an advisory warning when the floor exceeds 600s. `Decision` gained a `Warnings` field; `webhook.PoolConfigValidator` propagates rule-set-1 warnings onto the `AdmissionResponse.Warnings` even when rule-set-2 admits, so the API server relays them to `kubectl`. The serialized per-slot eviction checkpoint and the gateway-side `lenny_pool_termination_budget_exceeded_total` counter remain follow-ups (adapter-side checkpoint ordering rewrite and metrics-catalog addition). Closes F-5.2.5.
 
 ### - [x] F-5.2.6 — `CAP_NET_RAW` drop is not enforced on concurrent-workspace pods [High] — CLOSED
 
@@ -3706,17 +3708,23 @@ Spec §24 (lenny-ctl reference) — orthogonal to §5.2, but the spec's pool mod
 
 Consequence: operators must hit the admin REST API directly or build their own client.
 
-### - [ ] F-5.2.24 — `setup_commands` proto message is delivered per-session in `WorkspacePlan` [Low] — OPEN
+### - [x] F-5.2.24 — `setup_commands` proto message is delivered per-session in `WorkspacePlan` [Low] — CLOSED
 
 `pkg/proto/adapter/v1/lenny-adapter.pb.go:566` carries `SetupCommands` on `WorkspacePlan` and again on `RunSetupRequest:1148`. The split (one in the plan, one in the request) is a workable design but does not document how the adapter is supposed to know "this pod already ran its setup" — see M-7.
 
-### - [ ] F-5.2.25 — `lenny_task_pod_scrub_failure_count` is a gauge with no documented reset [Low] — OPEN
+- **Resolution:** Documented the split on the `WorkspacePlan` and `RunSetupRequest` proto definitions (`schemas/lenny-adapter.proto`). The plan-level `setup_commands` field is a transport convenience so downstream consumers (ref-resolver, audit log, partial-replay snapshot) see the plan as a single document; the adapter MUST NOT execute setup commands from the WorkspacePlan and instead runs them only on the explicit `RunSetup` RPC. The pod-level "first task" gate is owned by the task-mode lifecycle (per §5.2 line 415 the gateway issues `RunSetup` once on first session/task assignment and skips it on subsequent task-mode assignments to the same pod; that owner-tracking remains under F-5.2.18).
+
+### - [x] F-5.2.25 — `lenny_task_pod_scrub_failure_count` is a gauge with no documented reset [Low] — CLOSED
 
 The catalog (`pkg/observability/metrics/catalog.go:63`) marks it as a gauge. The spec text (line 446) treats it as a per-pod cumulative count, so a gauge labeled by `k8s_pod_name` is correct in shape, but without an emitter (H-1), the lifetime semantics are TBD.
 
-### - [ ] F-5.2.26 — `claim` for concurrent-mode does not delete on session expiry path consistently [Low] — OPEN
+- **Resolution:** Documented the per-pod cumulative semantics on the catalog entry (`pkg/observability/metrics/catalog.go`): the series is monotonically incremented over the pod's lifetime, reset to zero on a fresh pod (a new `k8s_pod_name` produces a new series), and removed when the pod is deleted. The emitter compares the running value against the pool's TaskPolicy.MaxScrubFailures (default 3) to drive pod retirement. The emitter itself lands with the task-mode lifecycle (H-1 / F-5.2.18).
+
+### - [x] F-5.2.26 — `claim` for concurrent-mode does not delete on session expiry path consistently [Low] — CLOSED
 
 `SlotClaimer.ReleaseSlot` (`pkg/gateway/podclaim/slotclaimer.go:447`) is invoked from `Binder.ReleaseSlot` but the session-expiry sweeper (`pkg/gateway/sessionserver/sessionserver.go` and friends) does not appear to call it directly. The watchdog path that expires sessions may leak slots. This is a deeper trace that warrants its own audit; flagged as Low for §5.2.
+
+- **Resolution:** Added a `TerminalHook` interface to `watchdog` and `orphancleanup`. `Server.OnSessionTerminal` exposes `recordSessionCompleted` as the canonical terminal pipeline (workspace seal, `releaseExecutor` → `PodExecutor.Release` → `binder.ReleaseSlot` → `SlotClaimer.ReleaseSlot` for concurrent-mode binds, audit, SSE, billing, archive). Gateway main now wires the hook (`watchdog.WithTerminalHook(sessionSrv)` and `orphancleanup.Options{Terminal: sessionSrv}`). When the hook is wired, the in-package billing+archive paths are skipped so a session forced terminal by background sweep emits the same signals exactly once as a session terminated by REST. Tests assert that the hook fires for both pre-running timeouts and maxSessionAge expiries (and for the orphan-cascade sweep), and that billing/archive does not double-emit. Closes F-5.2.26.
 
 ### - [x] F-5.2.27 — The `lenny-preflight` Job does not warn on the `terminationGracePeriodSeconds > 600s` condition [Low] — CLOSED
 
