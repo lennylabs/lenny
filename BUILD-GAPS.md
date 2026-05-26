@@ -5184,7 +5184,7 @@ catalogued but unproduced, leaving `WorkspaceSealStuck` dead).
 retry. The `derive_failure` / `persistDeriveFailureRows` sub-gap stays
 open under F-7.1.4.
 
-### - [ ] F-7.1.4 — Atomicity of creation steps 2–8 not enforced (no rollback) [High] — OPEN
+### - [x] F-7.1.4 — Atomicity of creation steps 2–8 not enforced (no rollback) [High] — CLOSED
 
 §7.1 line 28 "Atomicity of session creation (steps 2–8)" mandates: on
 any partial failure (pool exhaustion, credential assignment failure,
@@ -5225,6 +5225,31 @@ by `derive.go:117` comment "the derive_failure terminal-row path under
 `persistDeriveFailureRows` finds only the spec text. Acceptable as a
 documented gap, but worth noting that `FailureClass = "derive_failure"`
 is enumerated yet unreachable.
+
+**Resolution (this batch):** `createSession` now mints the §7.1 step 8
+uploadToken BEFORE `store.Create`; the digest+expiry are stamped on
+the in-memory row, and a mint failure returns `503 SESSION_CREATION_FAILED`
+with `details.reason = upload_token_issuance_failed` + `Retry-After: 5`
+and no row. A `store.Create` failure surfaces the same envelope with
+`details.reason = row_persistence_failed`. The two-write "Create then
+Update with digest" sequence that left an orphan `created` row on
+mint failure is gone. `handleCreateAndStart` is refactored to the
+mint → `startOnPod` → `store.Create` order: the bound pod is published
+via the new `registerBinding` only after the row persists, and
+`store.Create` failure rolls the bound pod back via `rollbackBinding`
+(session-mode → `Binder.Release` with `failed` disposition;
+concurrent-slot → `ReleaseSlot`) so neither a pod nor its credential
+lease leaks past the "no session_id returned" failure path. The
+legacy `failSession`-on-claim-failure write is removed from the
+create-and-start path; the start handler's resume path keeps it,
+because there the row already exists. `writePodClaimError` now takes a
+fallback-code argument: the atomic create paths pass
+`SESSION_CREATION_FAILED`, the two-step `POST /sessions/{id}/start`
+passes `STARTING_FAILED` (§6.2 line 303), and resume passes
+`RESUME_FAILED`. All three carry `Retry-After: 5`.
+`gateway.persistDeriveFailureRows` stays a documented sub-gap of
+derive (F-7.1.4 sibling); it is not in the primary create path and is
+out of scope here.
 
 ### - [x] F-7.1.5 — Default 7-day artifact retention not applied on session create [High] — CLOSED
 
@@ -5441,7 +5466,7 @@ acknowledges the elision (line 112–115) but its semantics differ:
   the parent will delete the derived session's workspace as well,
   undoing the entire purpose of derive's lineage independence.
 
-### - [ ] F-7.1.13 — Upload-token key rotation infrastructure exists but no rotator wires it [Medium] — OPEN
+### - [x] F-7.1.13 — Upload-token key rotation infrastructure exists but no rotator wires it [Medium] — CLOSED
 
 `pkg/uploadtoken/uploadtoken.go` defines `KeyRing.Rotate`,
 `KeyRing.Expire`, and constants `DefaultRotationInterval` (24 h) and
@@ -5457,6 +5482,17 @@ valid during a short overlap window (default: 5 minutes)" — the
 infrastructure for that overlap is present; no production wiring uses
 it.
 
+**Resolution (this batch):** new `uploadtoken.Rotator` (rotator.go) drives
+`KeyRing.Rotate` on the §7.1 24h cadence with a 5-minute overlap-window
+sweep that fires `KeyRing.Expire` once a displaced key's deadline
+elapses. Each `Run` loop schedules two tickers (rotation and sweep) and
+exits promptly on `ctx.Done()`. Hooks publish lifecycle events: `OnRotate(active, displaced)`
+on each rotation and `OnExpire(ids)` on each sweep. The gateway main
+now constructs the rotator alongside the boot KeyRing and spawns
+`go uploadRotator.Run(watchdogCtx)` so tokens minted just before a
+rotation continue to verify through the overlap window, as
+§7.1 line 67 requires.
+
 ### - [ ] F-7.1.14 — Coordinator-handoff fence absent [Medium] — OPEN
 
 §7.1 and §7.2 (lines 145, 214) require `coordination_generation` /
@@ -5469,7 +5505,7 @@ This is consistent with the v1 in-memory store posture, but every
 derive / replay / resume code path that the spec describes as
 "CAS-fenced" simply performs an unguarded UPDATE.
 
-### - [ ] F-7.1.15 — `Treat as a secret credential` policy for `uploadToken` not enforced [Low] — OPEN
+### - [x] F-7.1.15 — `Treat as a secret credential` policy for `uploadToken` not enforced [Low] — CLOSED
 
 §7.1 line 63: "Clients MUST treat `uploadToken` as a secret
 credential: it MUST NOT be logged, embedded in URLs, or included in
@@ -5482,6 +5518,17 @@ echoed in JSON responses only (`sessionserver.go:712`,
 `pkg/gateway/sessionserver/` do not log the token. Worth documenting
 that the redaction guarantee is enforced only at the response shape
 boundary.
+
+**Resolution (this batch):** added an explicit gateway-side
+"secret-credential handling" section to the `pkg/uploadtoken` package
+doc enumerating the response-only response-body channel, the
+digest-only row persistence, and the digest-keyed consumed-tracker
+boundary. A new regression test `TestUploadResponseNeverEchoesToken_spec_7_1_15`
+sends a sentinel-prefixed bogus token and asserts the response
+body and headers do not contain it, so any future change that
+accidentally echoes the supplied token is caught at CI. The
+existing constant-time HMAC + sentinel-error paths already keep
+the raw token off the audit and metric labels.
 
 ### - [x] F-7.1.16 — `RetentionExpiresAt` not auto-rolled on session terminal transition [Low] — CLOSED
 
@@ -5504,7 +5551,7 @@ deadline a client already extended past that instant (the `extend-retention`
 the race with a concurrent extend-retention write. Pairs with the
 create-time default floor in F-7.1.5.
 
-### - [ ] F-7.1.17 — `/finalize` does not validate staging or materialise workspace [Low] — OPEN
+### - [-] F-7.1.17 — `/finalize` does not validate staging or materialise workspace [Low] — DEFERRED
 
 §7.1 steps 12–13: "Validate staging, materialize to /workspace/current
 … Run setup commands (bounded, logged)." `transitionFinalize`
@@ -5516,6 +5563,18 @@ behaviour into step 14 but means a `/finalize` failure mode (workspace
 validation rejecting the staged upload) cannot surface; it is
 deferred until `/start` and then returns `POD_CLAIM_FAILED` rather
 than the spec-implied workspace-validation error.
+
+**Deferred (this batch):** moving materialise+setup ahead to `/finalize`
+requires either (a) a partial `Binder.Bind` that runs `PrepareWorkspace`
++ `FinalizeWorkspace` + `RunSetup` on a pod that is not yet claimed
+(no v1 surface for this), or (b) burning a warm pod claim at `/finalize`
+for a session that may never `/start`. The §7.1 step list is a
+high-level lifecycle diagram and the §15.1 precondition table only
+mandates the state transition (`created → finalizing → ready`); the
+two-step `/finalize` → `/start` collapse is documented behaviour
+under STARTING_FAILED (now §7.1 atomicity-aligned per F-7.1.4). Closing
+as DEFERRED until the adapter surfaces a separate Validate RPC or v2
+introduces eager-finalize semantics.
 
 ### - [x] F-7.1.18 — Step 7 `AssignCredentials` ordering matches §4.7, not §7.1 literal step order [Info] — CLOSED
 
@@ -5535,7 +5594,7 @@ diagram; its step 7/8 placement of AssignCredentials within the
 "creation atomic unit (steps 2-8)" does not pin the exact adapter-RPC
 interleaving. Closed as verified by-design.
 
-### - [ ] F-7.1.19 — `transcript-as-artifact` derive copy not implemented [Info] — OPEN
+### - [-] F-7.1.19 — `transcript-as-artifact` derive copy not implemented [Info] — DEFERRED
 
 §7.1 lines 79: "When deriving a new session, clients can optionally
 include the previous session's transcript as a file in the derived
@@ -5548,7 +5607,16 @@ transcript via `GET /v1/sessions/{id}/transcript` and re-inject it
 through a workspace upload. Documented as opt-in behaviour, so not a
 spec violation today, but the integration is not wired.
 
-### - [ ] F-7.1.20 — Cleanup race on `created` state expiry [Info] — OPEN
+**Deferred (this batch):** §7.1 uses "can optionally" so the
+implementation may legitimately omit the feature. The fall-back
+(client pulls the transcript and re-uploads it as a workspace blob)
+already works end-to-end. Closing as DEFERRED until a downstream
+caller asks for the integration; wiring it requires plumbing a new
+DeriveRequest field through the derive copy step and the workspace
+materialisation path, which is a self-contained but non-trivial
+follow-up.
+
+### - [x] F-7.1.20 — Cleanup race on `created` state expiry [Info] — CLOSED
 
 The spec assigns `maxCreatedStateTimeoutSeconds` (default 300 s) to
 the `created` state. The minimal gateway times out the `uploadToken`
@@ -5557,6 +5625,18 @@ at that boundary (`UploadDefaultTTL = 5 * time.Minute`,
 /finalize returns `UPLOAD_TOKEN_EXPIRED`. But the session row stays
 in `created` forever; nothing transitions it to `failed` or `expired`
 on the timeout boundary, so abandoned-create rows accumulate.
+
+**Resolution (this batch):** new `pkg/gateway/createdsweeper` runs a
+background sweep on a 1-minute cadence (operator-tunable) that drops
+any `created`-state row whose `CreatedAt` is older than
+`maxCreatedStateTimeoutSeconds` (default 300s, operator-tunable via
+the gateway flag). A zero `CreatedAt` row is never swept (the
+deadline check requires a real timestamp). The sweep iterates every
+tenant the existing `tenantsLister` reports, so multi-tenant
+deployments do not accumulate abandoned rows across the tenant
+boundary. Wired in the gateway main alongside the §7.1 retention GC;
+metrics sink interface mirrors `retentiongc.MetricsSink` so the
+operator can graph the drop count.
 
 ### Cross-cutting summary
 

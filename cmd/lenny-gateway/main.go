@@ -166,6 +166,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/createdsweeper"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
@@ -734,10 +735,14 @@ func main() {
 	billingLedger := billing
 	billing = billingPipeline
 
-	// ----- §7.1 uploadToken KeyRing -----
-	// One ephemeral signing key per process. Production deployers
-	// rotate this key on the §7.1 24-hour schedule via the KMS-backed
-	// implementation; the minimal gateway uses a random key per boot.
+	// ----- §7.1 uploadToken KeyRing + rotator -----
+	// The §7.1 line 67 contract requires the gateway to rotate signing
+	// keys on a deployer-configurable schedule (default 24h) and keep
+	// the previous key valid through a 5-minute overlap window so
+	// tokens minted just before rotation continue to verify. The boot
+	// key seeds the ring; the rotator goroutine (started below under
+	// watchdogCtx) drives subsequent rotations and the overlap sweep.
+	// spec: §7.1 line 67.
 	var seed [32]byte
 	if _, err := rand.Read(seed[:]); err != nil {
 		log.Fatalf("lenny-gateway: rand: %v", err)
@@ -746,6 +751,15 @@ func main() {
 	uploadIssuer := uploadtoken.NewIssuer(ring, nil)
 	uploadTracker := uploadtoken.NewMemoryTracker()
 	uploadVerifier := uploadtoken.NewVerifier(ring, uploadTracker, nil)
+	uploadRotator := uploadtoken.NewRotator(ring, uploadtoken.RotatorOptions{
+		OnRotate: func(active, displaced uploadtoken.SigningKey) {
+			log.Printf("lenny-gateway: §7.1 uploadToken signing key rotated; active=%s overlap=%s",
+				active.KeyID, displaced.KeyID)
+		},
+		OnExpire: func(expired []string) {
+			log.Printf("lenny-gateway: §7.1 uploadToken signing key(s) expired from overlap window: %v", expired)
+		},
+	})
 
 	// ----- §4 KMS provider -----
 	// The §4 / §12.9 envelope-encryption KEK seam. The gateway wraps
@@ -2306,6 +2320,33 @@ func main() {
 		if res.Expirations > 0 {
 			log.Printf("lenny-gateway: watchdog expired %d sessions past their §11.3 deadline",
 				res.Expirations)
+		}
+	})
+
+	// §7.1 line 67 uploadToken signing-key rotator. The default
+	// cadence rotates every 24h with a 5-minute overlap window; the
+	// rotator both installs the new key and sweeps overlap keys whose
+	// deadline has elapsed. spec: §7.1 line 67.
+	go uploadRotator.Run(watchdogCtx)
+
+	// ----- §7.1 abandoned `created`-state row sweep -----
+	// Drops Session rows that stay in `created` past
+	// maxCreatedStateTimeoutSeconds (default 300s). The §7.1 line 58
+	// uploadToken TTL closes the upload window at that instant; without
+	// this sweep the row itself lived forever, so abandoned creates
+	// accumulated under repeated client retries.
+	// spec: §7.1 line 58.
+	createdGC := createdsweeper.New(sessions, tenantsLister{tenants}, createdsweeper.Options{
+		Clock: clockinject.Now,
+	})
+	go createdGC.Run(watchdogCtx, func(dropped int, err error) {
+		if err != nil {
+			log.Printf("lenny-gateway: §7.1 created-state sweep error: %v", err)
+			return
+		}
+		if dropped > 0 {
+			log.Printf("lenny-gateway: §7.1 created-state sweep dropped %d abandoned rows past the upload-token deadline",
+				dropped)
 		}
 	})
 
