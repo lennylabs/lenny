@@ -102,6 +102,12 @@ type Metrics struct {
 	// agent_session_start) and `runtime_class`. Each phase is observed
 	// independently so a slow startup can be localized to one phase.
 	sessionStartupPhaseDuration *prometheus.HistogramVec
+	// workspaceSealDuration is the §7.1 line 112 seal-and-export
+	// completion-time histogram. Observed once per terminal session at
+	// teardown. Labels: `pool` (the session runtime) and `outcome`
+	// (success | timeout). The §16.5 WorkspaceSealStuck alert fires on a
+	// nonzero count for outcome="timeout".
+	workspaceSealDuration *prometheus.HistogramVec
 	// checkpointStorageFailure counts the §4.4 line 262 non-eviction
 	// MinIO-upload failures (all retries exhausted, the failed
 	// checkpoint is discarded). Labels: `pool`, `level`, and `trigger`.
@@ -550,6 +556,20 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §7.1 line 112 — `lenny_workspace_seal_duration_seconds` tracks
+	// seal-and-export completion time across all terminal sessions,
+	// labeled by `pool` (session runtime) and `outcome` (success |
+	// timeout). The §16.5 WorkspaceSealStuck alert fires when the
+	// outcome="timeout" count increases over a 5-minute window. Buckets
+	// span the per-attempt 5s–60s backoff and the 300s default window.
+	workspaceSealDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_workspace_seal_duration_seconds",
+		Help:    "Workspace seal-and-export completion time by outcome (§7.1 line 112).",
+		Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300},
+	}, []string{"pool", "outcome"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.4 line 262 / §12.5 ll. 303 —
 	// `lenny_checkpoint_storage_failure_total` counts non-eviction
 	// MinIO-upload failures (all retries exhausted, the failed
@@ -813,6 +833,7 @@ func New() (*Metrics, error) {
 		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, sessionStartupDuration, sessionStartupPhaseDuration,
+		workspaceSealDuration,
 		checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
 		credentialPreclaimMismatch,
@@ -880,6 +901,7 @@ func New() (*Metrics, error) {
 		checkpointEvictionPartialKeysLogged:  checkpointEvictionPartialKeysLogged,
 		checkpointDuration:                   checkpointDuration,
 		sessionStartupDuration:               sessionStartupDuration,
+		workspaceSealDuration:                workspaceSealDuration,
 		sessionStartupPhaseDuration:          sessionStartupPhaseDuration,
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
@@ -1022,6 +1044,19 @@ func (m *Metrics) ObserveSessionStartupPhase(phase, runtimeClass string, seconds
 		return
 	}
 	m.sessionStartupPhaseDuration.WithLabelValues(phase, runtimeClass).Observe(seconds)
+}
+
+// ObserveWorkspaceSealDuration records the §7.1 line 112
+// `lenny_workspace_seal_duration_seconds{pool,outcome}` histogram for one
+// terminal session's seal-and-export. outcome is "success" when the seal
+// completed or "timeout" when the retry window was exhausted. The §16.5
+// WorkspaceSealStuck alert fires on a nonzero outcome="timeout" count.
+// spec: §7.1 line 112.
+func (m *Metrics) ObserveWorkspaceSealDuration(pool, outcome string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.workspaceSealDuration.WithLabelValues(pool, outcome).Observe(seconds)
 }
 
 // IncCheckpointStorageFailure increments the §4.4 line 262

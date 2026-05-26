@@ -199,8 +199,20 @@ func (c *Checkpointer) Checkpoint(ctx context.Context, tenantID, sessionID strin
 // and records it with source `sealed`. It is the seal-and-export run
 // on session completion, distinguished from a periodic checkpoint only
 // by the recorded snapshot source.
+//
+// A session this replica holds no binding for has no live workspace to
+// seal — it either never ran on a pod or is coordinated elsewhere — so
+// Seal returns nil rather than ErrNoBinding, satisfying the Sealer
+// contract's "no-op for a session that never ran on a pod". The
+// session's final snapshot then falls back to the latest checkpoint
+// (§7.1 line 89). The §7.1 line 112 retry path therefore retries only
+// real export failures, never an inapplicable seal.
 func (c *Checkpointer) Seal(ctx context.Context, tenantID, sessionID string) error {
-	return c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotSealed)
+	err := c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotSealed)
+	if errors.Is(err, ErrNoBinding) {
+		return nil
+	}
+	return err
 }
 
 // snapshot drives the session's bound pod adapter to checkpoint its

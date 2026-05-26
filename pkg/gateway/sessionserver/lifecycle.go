@@ -54,6 +54,10 @@ type SessionLifecycleEvent struct {
 	// FailureClass is the §7.1 coarse failure classification; populated
 	// only for the session.failed terminal event.
 	FailureClass string
+	// Detail carries an event-specific human-readable note, e.g. the last
+	// MinIO error recorded on a workspaceSealFailed event (§7.1 line 112).
+	// Empty for events that need no detail.
+	Detail string
 	// At is the event wall-clock time (the gateway clock).
 	At time.Time
 }
@@ -67,6 +71,11 @@ const (
 	auditSessionFailed    = "session.failed"
 	auditSessionCancelled = "session.cancelled"
 	auditSessionExpired   = "session.expired"
+	// auditWorkspaceSealFailed is the §7.1 line 112 audit event emitted
+	// when the seal-and-export retry window is exhausted. It records the
+	// last export error in Detail. spec: §7.1 line 112 — "emits a
+	// workspaceSealFailed audit event (recording the last MinIO error)".
+	auditWorkspaceSealFailed = "session.workspace_seal_failed"
 )
 
 // auditEventTypeForTerminal maps a terminal session state to its §11.7

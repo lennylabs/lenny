@@ -155,6 +155,20 @@ func terminalSessionEvent(st session.State) (et events.EventType, severity strin
 // `session.completed` billing event. All are best-effort: a failure
 // never fails the transition that triggered it.
 func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.Session) {
+	// §7.1 seal-and-export (steps 20-23): export the final workspace
+	// before the pod is released and before the client- and audit-visible
+	// terminal signals fire below. The seal runs with the §7.1 line 112
+	// bounded exponential backoff; when the retry window is exhausted the
+	// session is re-labeled failed/workspace_seal_timeout so the
+	// session_complete event and audit row report the true outcome rather
+	// than a clean completion that silently lost its workspace. The pod is
+	// still torn down by the executor release below ("terminates the pod
+	// anyway"). The Sealer no-ops for a session that never ran on a pod.
+	if s.sealer != nil {
+		if err := s.sealWorkspace(ctx, sess); err != nil {
+			sess = s.failWorkspaceSeal(ctx, sess, err)
+		}
+	}
 	// §16.6 / §25.3: a session reaching a terminal state emits the
 	// matching session lifecycle operational event so an ops agent
 	// observes it through the event buffer. Best-effort — a nil emitter
@@ -183,14 +197,6 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	// the lifecycle audit event, and the retention-window roll). Shared
 	// with failSession so the start-path failure emits the same signals.
 	s.emitTerminalLifecycle(ctx, sess)
-	// §7.1 seal-and-export: snapshot the final workspace before the pod
-	// is released. Best-effort — it no-ops for a session that never ran
-	// on a pod, and a failed seal falls back to the latest periodic
-	// checkpoint per §7.1. The seal runs before executor.Close, which
-	// tears the pod down.
-	if s.sealer != nil {
-		_ = s.sealer.Seal(ctx, sess.TenantID, sess.ID)
-	}
 	if s.executor != nil {
 		if err := releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State)); err != nil {
 			// recordSessionCompleted is best-effort by design (a failed

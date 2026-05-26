@@ -356,6 +356,9 @@ func main() {
 	sessionArtifactRetentionSeconds := flag.Int("session-artifact-retention-seconds",
 		envInt("LENNY_SESSION_ARTIFACT_RETENTION_SECONDS", int(sessionserver.DefaultArtifactRetention/time.Second)),
 		"§7.1 line 77 default artifact-retention window in seconds. Session workspace snapshots, logs, and transcripts stay GC-eligible until this long after the session reaches a terminal state. Default 7 days (604800s); clients extend per-session via POST /v1/sessions/{id}/extend-retention. Override via LENNY_SESSION_ARTIFACT_RETENTION_SECONDS.")
+	workspaceSealMaxDurationSeconds := flag.Int("workspace-seal-max-duration-seconds",
+		envInt("LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS", int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second)),
+		"§7.1 line 112 maxWorkspaceSealDurationSeconds: the total wall-clock window the gateway retries seal-and-export (exponential backoff 5s→60s) before failing the session with workspace_seal_timeout and terminating the pod anyway. Default 300s. Override via LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS.")
 	checkpointJitterFraction := flag.Float64("checkpoint-jitter-fraction", envFloat("LENNY_CHECKPOINT_JITTER_FRACTION", checkpointer.DefaultJitterFraction),
 		"§4.4 line 258 `periodicCheckpointJitterFraction`. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
 	noEnvPolicy := flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
@@ -1480,8 +1483,11 @@ func main() {
 		LifecycleAuditSink: sessionLifecycleAuditor{appender: auditAppender},
 		// §7.1 line 77 — default artifact retention window.
 		DefaultRetention: time.Duration(*sessionArtifactRetentionSeconds) * time.Second,
-		Clock:            clockinject.Now,
-		UploadSubsystem:  uploadSubsystem,
+		// §7.1 line 112 — seal-and-export retry window + outcome histogram.
+		WorkspaceSealMaxDuration:     time.Duration(*workspaceSealMaxDurationSeconds) * time.Second,
+		ObserveWorkspaceSealDuration: gwMetrics.ObserveWorkspaceSealDuration,
+		Clock:                        clockinject.Now,
+		UploadSubsystem:              uploadSubsystem,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
 		// §6.3 lines 348, 372 — startup-latency histograms observed on
@@ -3088,6 +3094,11 @@ func (a sessionLifecycleAuditor) EmitSessionLifecycle(ctx context.Context, ev se
 	}
 	if ev.FailureClass != "" {
 		payload["failure_class"] = ev.FailureClass
+	}
+	if ev.Detail != "" {
+		// spec: §7.1 line 112 — workspaceSealFailed records the last MinIO
+		// export error in the detail field.
+		payload["detail"] = ev.Detail
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

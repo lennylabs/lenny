@@ -93,7 +93,7 @@ func TestCheckpointRecordsTheWorkspaceSnapshot(t *testing.T) {
 	srv.Runtime = stubRuntime{}
 	srv.Checkpoints = stubSink{id: "ckpt-7"}
 	client := dialAdapter(t, srv)
-	if err := client.StartSession(context.Background(), "s1", "echo", nil, nil); err != nil {
+	if err := client.StartSession(context.Background(), adapterclient.StartSessionParams{SessionID: "s1", Runtime: "echo"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 
@@ -146,7 +146,7 @@ func TestFailedCheckpointDoesNotBumpFreshnessTimestamp(t *testing.T) {
 	srv.Runtime = stubRuntime{}
 	srv.Checkpoints = stubSink{err: errors.New("artifact store down")}
 	client := dialAdapter(t, srv)
-	if err := client.StartSession(context.Background(), "s1", "echo", nil, nil); err != nil {
+	if err := client.StartSession(context.Background(), adapterclient.StartSessionParams{SessionID: "s1", Runtime: "echo"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	registry := podsession.NewRegistry()
@@ -198,13 +198,27 @@ func TestCheckpointReturnsErrNoBindingForAnUncoordinatedSession(t *testing.T) {
 	}
 }
 
+// TestSealNoOpsForAnUncoordinatedSession_spec_7_1 asserts that Seal, unlike
+// Checkpoint, returns nil for a session this replica holds no binding for:
+// such a session has no live workspace to export, so the §7.1 line 112 seal
+// retry path must not treat it as a transient export failure to retry.
+func TestSealNoOpsForAnUncoordinatedSession_spec_7_1(t *testing.T) {
+	cp := &checkpointer.Checkpointer{
+		Sessions: memstore.New(),
+		Registry: podsession.NewRegistry(), // empty
+	}
+	if err := cp.Seal(context.Background(), "acme", "s1"); err != nil {
+		t.Errorf("Seal for an uncoordinated session = %v, want nil (no-op)", err)
+	}
+}
+
 func TestCheckpointSurfacesAnAdapterFailure(t *testing.T) {
 	srv := adapter.New("checkpointer-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = stubRuntime{}
 	srv.Checkpoints = stubSink{err: errors.New("artifact store down")}
 	client := dialAdapter(t, srv)
-	if err := client.StartSession(context.Background(), "s1", "echo", nil, nil); err != nil {
+	if err := client.StartSession(context.Background(), adapterclient.StartSessionParams{SessionID: "s1", Runtime: "echo"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 
@@ -237,7 +251,7 @@ func bindSession(t *testing.T, registry *podsession.Registry, store sessionstore
 	srv.Runtime = stubRuntime{}
 	srv.Checkpoints = sink
 	client := dialAdapter(t, srv)
-	if err := client.StartSession(context.Background(), sessionID, "echo", nil, nil); err != nil {
+	if err := client.StartSession(context.Background(), adapterclient.StartSessionParams{SessionID: sessionID, Runtime: "echo"}); err != nil {
 		t.Fatalf("StartSession %s: %v", sessionID, err)
 	}
 	registry.Put(&podsession.BindResult{SessionID: sessionID, TenantID: tenantID, Adapter: client})

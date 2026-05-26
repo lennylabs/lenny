@@ -121,6 +121,19 @@ type Server struct {
 	podRegistry     *podsession.Registry
 	agentNamespace  string
 	sealer          Sealer
+	// sealMaxDuration bounds the §7.1 seal-and-export retry window
+	// (maxWorkspaceSealDurationSeconds). A non-positive value falls
+	// through to DefaultWorkspaceSealMaxDuration (300s).
+	// spec: §7.1 line 112.
+	sealMaxDuration time.Duration
+	// sealSleep waits d before the next seal retry, returning false when
+	// ctx is cancelled first. Nil selects a context-aware time.Sleep; the
+	// seam lets tests drive the backoff loop without real delays.
+	sealSleep func(ctx context.Context, d time.Duration) bool
+	// observeSealDuration, when set, records the §7.1 line 112
+	// lenny_workspace_seal_duration_seconds{pool,outcome} histogram. Nil
+	// disables the emission.
+	observeSealDuration func(pool, outcome string, seconds float64)
 	// partialManifestCleaner, when set, executes the §4.4 line 236
 	// partial-manifest cleanup after the resume path completes.
 	// Nil leaves the resume path unchanged (cleanup is deferred to
@@ -461,6 +474,24 @@ type Options struct {
 	// session reaches a terminal state. Nil disables seal-and-export.
 	Sealer Sealer
 
+	// WorkspaceSealMaxDuration bounds the §7.1 seal-and-export retry
+	// window (maxWorkspaceSealDurationSeconds). A seal that does not
+	// succeed within this window transitions the session to failed with
+	// reason workspace_seal_timeout. A non-positive value selects
+	// DefaultWorkspaceSealMaxDuration (300s, the spec default).
+	// spec: §7.1 line 112.
+	WorkspaceSealMaxDuration time.Duration
+
+	// ObserveWorkspaceSealDuration, when set, records the §7.1 line 112
+	// lenny_workspace_seal_duration_seconds{pool,outcome} histogram.
+	// outcome is "success" or "timeout". Nil disables the emission.
+	ObserveWorkspaceSealDuration func(pool, outcome string, seconds float64)
+
+	// SealSleep overrides the seal-retry backoff wait. Production leaves
+	// it nil (a context-aware time.Sleep); tests inject a no-op so the
+	// bounded-backoff loop runs without real delays.
+	SealSleep func(ctx context.Context, d time.Duration) bool
+
 	// PartialManifestCleaner, when set, executes the §4.4 line 236
 	// partial-manifest cleanup after the resume path completes. Nil
 	// leaves the resume path unchanged; the §12.5 backstop sweep
@@ -638,6 +669,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		podRegistry:            opts.PodRegistry,
 		agentNamespace:         opts.AgentNamespace,
 		sealer:                 opts.Sealer,
+		sealMaxDuration:        opts.WorkspaceSealMaxDuration,
+		sealSleep:              opts.SealSleep,
+		observeSealDuration:    opts.ObserveWorkspaceSealDuration,
 		partialManifestCleaner: opts.PartialManifestCleaner,
 		evictionStateLookup:    opts.EvictionStateLookup,
 		partialManifestLookup:  opts.PartialManifestLookup,
@@ -668,6 +702,13 @@ func New(store sessionstore.Store, opts Options) *Server {
 		// spec: §7.1 line 77 — default the artifact-retention window to
 		// 7 days when the deployer leaves it unset.
 		s.defaultRetention = DefaultArtifactRetention
+	}
+	if s.sealMaxDuration <= 0 {
+		// spec: §7.1 line 112 — maxWorkspaceSealDurationSeconds default 300s.
+		s.sealMaxDuration = DefaultWorkspaceSealMaxDuration
+	}
+	if s.sealSleep == nil {
+		s.sealSleep = sleepWithContext
 	}
 	if s.warmupEstimateSeconds <= 0 {
 		s.warmupEstimateSeconds = DefaultWarmupEstimateSeconds
