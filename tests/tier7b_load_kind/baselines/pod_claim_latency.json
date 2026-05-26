@@ -13,5 +13,6 @@
     "p999": 797.4945100000018
   },
   "error_rate": 0,
-  "throughput_per_sec": 360.2907619194329
+  "throughput_per_sec": 360.2907619194329,
+  "notes": "spec/06_warm-pod-model.md line 360 budgets pod claim and routing at P95 ≤ 100ms (indicative planning, not SLO until §6.3 Tier-2 promotion gate clears). This baseline's P95=113.4ms exceeds the budget by ~13ms; the overshoot is recorded as a measurement, not a gating breach, because §6.3 line 368 explicitly frames the table as indicative until validated by the Phase 2 startup benchmark harness (tracked by F-6.3.5 / F-6.3.20). spec-reviews: F-6.3.17."
 }

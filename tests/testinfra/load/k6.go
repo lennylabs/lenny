@@ -43,7 +43,12 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// Result is a scenario result.
+// Result is a scenario result. Notes is an operator-edited field
+// preserved across baseline refreshes — see writeBaseline. Use it to
+// record spec cross-references and known measurement gaps that the
+// numbers alone do not surface (for example the §6.3 100ms claim budget
+// vs the pod_claim_latency baseline's 113ms P95). spec-reviews:
+// F-6.3.17.
 type Result struct {
 	Scenario   string             `json:"scenario"`
 	Version    string             `json:"version"`
@@ -53,6 +58,7 @@ type Result struct {
 	MetricMS   map[string]float64 `json:"metric_ms"`
 	ErrorRate  float64            `json:"error_rate"`
 	Throughput float64            `json:"throughput_per_sec"`
+	Notes      string             `json:"notes,omitempty"`
 }
 
 // Options configures a scenario run.
@@ -282,6 +288,16 @@ func writeBaseline(t testing.TB, path string, res Result) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir baseline dir: %v", err)
+	}
+	// Preserve any operator-edited Notes on the prior baseline. The
+	// k6 run does not produce Notes; without this carry-over a
+	// LENNY_UPDATE_BASELINE=1 refresh would silently strip spec
+	// cross-references and measurement-gap annotations.
+	// spec-reviews: F-6.3.17.
+	if res.Notes == "" {
+		if prior, err := readBaseline(path); err == nil {
+			res.Notes = prior.Notes
+		}
 	}
 	body, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {

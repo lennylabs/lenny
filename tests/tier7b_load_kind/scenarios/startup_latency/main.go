@@ -29,6 +29,13 @@ import (
 
 const scenarioVersion = "0.2.0-phase2"
 
+// Result is the persisted baseline document. The percentile set reports
+// p50, p90, and p95 only: the §6.3 SLO targets are P95-keyed
+// (spec/06_warm-pod-model.md line 348, 2s runc / 5s gVisor), and p99
+// requires roughly 1000+ samples to estimate with one-sample resolution
+// — the default iteration count cannot defend a tail-latency claim, so
+// the harness omits the p99 column rather than persist a misleading
+// number. spec-reviews: F-6.3.14.
 type Result struct {
 	Scenario string `json:"scenario"`
 	Version  string `json:"version"`
@@ -47,7 +54,12 @@ type Result struct {
 func main() {
 	var (
 		binary  = flag.String("binary", "", "adapter binary to measure (built into a temp dir if empty)")
-		iters   = flag.Int("iterations", 20, "number of samples")
+		// 200 iterations are roughly the conventional minimum for a
+		// stable p95 estimate at one-sample resolution; below that the
+		// p95 column is not a defensible reference. p99 is not reported
+		// at all because it needs ~1000+ samples (see Result doc-comment).
+		// spec-reviews: F-6.3.14.
+		iters   = flag.Int("iterations", 200, "number of samples (≥ ~200 recommended for a stable p95)")
 		output  = flag.String("output", "", "write JSON to this path (default: tests/tier7b_load_kind/baselines/startup_latency.json)")
 		stdout  = flag.Bool("stdout", false, "also emit JSON to stdout")
 		warmup  = flag.Int("warmup", 3, "warm-up iterations excluded from the metric (the OS file cache cools at process start)")
@@ -111,7 +123,7 @@ func main() {
 	fmt.Printf("  iterations: %d (after %d warm-up samples discarded)\n", r.Iterations, *warmup)
 	fmt.Printf("  p50:  %d ms\n", r.MetricMS["p50"])
 	fmt.Printf("  p90:  %d ms\n", r.MetricMS["p90"])
-	fmt.Printf("  p99:  %d ms\n", r.MetricMS["p99"])
+	fmt.Printf("  p95:  %d ms\n", r.MetricMS["p95"])
 	fmt.Printf("  max:  %d ms\n", r.MetricMS["max"])
 
 	if *stdout {
@@ -172,7 +184,10 @@ func buildResult(samples []time.Duration) Result {
 	r.MetricMS["max"] = samples[len(samples)-1].Milliseconds()
 	r.MetricMS["p50"] = pct(samples, 0.50).Milliseconds()
 	r.MetricMS["p90"] = pct(samples, 0.90).Milliseconds()
-	r.MetricMS["p99"] = pct(samples, 0.99).Milliseconds()
+	// §6.3 SLO is P95-keyed (spec/06_warm-pod-model.md line 348). p99
+	// is intentionally omitted — see Result doc-comment.
+	// spec-reviews: F-6.3.14.
+	r.MetricMS["p95"] = pct(samples, 0.95).Milliseconds()
 
 	r.Iterations_raw = make([]int64, len(samples))
 	for i, s := range samples {
