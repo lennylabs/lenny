@@ -3494,7 +3494,7 @@ The integration test `tests/tier4_integration/concurrent_stateless_test.go:19` e
 
 Consequence: in production the stateless mode collapses to "the same as workspace, minus workspace materialization and setup". Operators do not get the Service-routed elasticity the spec describes; the PoolScalingController has no stateless-specific demand signal.
 
-### - [ ] F-5.2.4 — Post-recovery slot-counter rehydration is missing [High] — OPEN
+### - [x] F-5.2.4 — Post-recovery slot-counter rehydration is missing [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.4.19 — Both report that post-recovery slot-counter rehydration (rehydrated/rehydrating sentinels, GetActiveSlotsByPod seeding) is not implemented in slotcounter.go.
 
@@ -3503,6 +3503,8 @@ Spec §5.2 lines 521–522: a Lua-script `rehydrated` flag blocks slot allocatio
 Implementation: `pkg/gateway/slotcounter/slotcounter.go` only implements the steady-state GET-compare-INCR (`reserveScript`). The package doc (`slotcounter.go:14`) acknowledges: "Post-recovery rehydration (Section 5.2 \"Post-recovery rehydration atomicity\") is not yet implemented." `BUILD-GAPS.md:1485–1506` records the same gap.
 
 Consequence: a Redis restart while concurrent-mode pods host active slots over-commits the pod. The §5.2 atomicity invariant is broken on Redis recovery.
+
+- **Resolution:** Implemented the §5.2 "Post-recovery rehydration atomicity" path in `pkg/gateway/slotcounter`. `reserveScript` now reads the per-pod `lenny:pod:{pod}:rehydrated` flag first and returns a `REHYDRATE_REQUIRED` sentinel (-2) when it is absent; `Counter.Reserve` then seeds the counter before retrying. Seeding takes a per-pod in-process mutex plus a cross-replica `SET NX` lock on `lenny:pod:{pod}:rehydrating` (TTL = `slotRehydrationTimeoutMs`, default 2000ms, tunable via `WithRehydrationTimeout`), queries the new `SlotSource.GetActiveSlotsByPod`, and writes the count + flag atomically via `seedScript`; a replica that cannot take the lock spin-waits (bounded by the timeout) for the peer's flag and retries. The seed source is the `sessionstore.Store`: `GetActiveSlotsByPod` (new interface method, pgstore + memstore) counts non-terminal sessions bound to the pod (`pod_assignment`) cross-tenant via `InAllTenants`, backed by partial index `idx_sessions_active_by_pod` (migration 0080). `Reserve` returns a `rehydrated` bool so `podclaim.SlotClaimer.OnRehydrate` emits `lenny_slot_rehydration_total{pod,pool}` (new `gatewaymetrics.IncSlotRehydration`) exactly once per pod per restart; wired in `cmd/lenny-gateway` (`WithSlotSource(sessions)` + `Binder.Rehydration`). `Reset` clears all three sentinel keys. Closes duplicate F-12.4.19. Commit 8412834a.
 
 ### - [ ] F-5.2.5 — Concurrent-workspace `terminationGracePeriodSeconds` floor is not enforced [High] — OPEN
 
@@ -16918,7 +16920,7 @@ The proto carries `ERROR_CODE_PLATFORM_DEGRADED` (`pkg/proto/adapter/v1/lenny-ad
 
 `pkg/storerouter/storerouter.go:52` defines `RedisConcernDelegation = "delegation"` with the comment `budget keys ({root_session_id}:dlg:*)`. No caller invokes `RedisShard(ctx, tenantID, RedisConcernDelegation)` because there are no delegation budget Redis writes (see H8). The enum value is therefore dead; until the delegation budget Lua path lands, this constant is a forward declaration without a backing implementation.
 
-### - [ ] F-12.4.19 — Slot-counter post-recovery rehydration is unbuilt and the rehydration sentinel keys are unused [Medium] — OPEN
+### - [x] F-12.4.19 — Slot-counter post-recovery rehydration is unbuilt and the rehydration sentinel keys are unused [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-5.2.4 — Both report that post-recovery slot-counter rehydration (rehydrated/rehydrating sentinels, GetActiveSlotsByPod seeding) is not implemented in slotcounter.go.
 
@@ -16927,6 +16929,8 @@ Spec §12.4 key-prefix table rows for `lenny:pod:{pod_id}:rehydrated` and `lenny
 > Slot counter rehydration flag. **Pod-scoped.** Set to `1` after the gateway rehydrates `active_slots` from Postgres post-Redis-restart. … Checked atomically by the slot assignment Lua script; absence triggers blocking rehydration.
 
 The Lua script in `pkg/gateway/slotcounter/slotcounter.go:58-64` reads `KEYS[1]` (the active-slots key) only; it does not consult any `:rehydrated` flag. The comment at lines 14-19 acknowledges the gap and refers to `BUILD-GAPS.md` line 1487-1506, which spells out the required additions (`SessionStore.GetActiveSlotsByPod`, `SET NX` on `:rehydrating`, startup hook in `cmd/lenny-gateway/main.go`). Until that lands, the Lua script's atomicity is undermined the moment Redis is restarted while concurrent-mode pods are active: a fresh `GET` returns 0 and a pod that already has live slots receives new allocations.
+
+- **Resolution:** Closed by F-5.2.4. `reserveScript` now consults the `lenny:pod:{pod}:rehydrated` flag (`REHYDRATE_REQUIRED` sentinel on absence), the `:rehydrating` `SET NX` lock serializes the seed across replicas, `SessionStore.GetActiveSlotsByPod` supplies the count, and `cmd/lenny-gateway` wires the source into the Counter. Both sentinel keys are now load-bearing. Commit 8412834a.
 
 ### - [ ] F-12.4.20 — Quota counter reconciliation on Redis recovery (MAX rule) is not wired into a recovery path [Medium] — OPEN
 
@@ -16942,9 +16946,11 @@ Spec §12.4 "Quota counter reconciliation after fail-open": "When Redis recovers
 
 `charts/lenny/values.yaml:132-155` carries `redis.url`, `redis.tlsPort`, `redis.gatewayEgressCIDR`, `redis.gatewayEgressPort`. There is no `redis.password` or `redis.sentinelPassword` field; the deployer must embed the password in the URL. This is workable but diverges from the postgres value group, which does carry an explicit `password` field for some flows. A future operator reading the values.yaml has no signal that AUTH is mandatory; the only Helm surface that suggests it is the inline comment on the URL field.
 
-### - [ ] F-12.4.23 — `lenny:pod:` exception prefix is not documented in code comments alongside the other exceptions [Low] — OPEN
+### - [x] F-12.4.23 — `lenny:pod:` exception prefix is not documented in code comments alongside the other exceptions [Low] — CLOSED
 
 The §12.4 spec calls out four exception prefixes: `lenny:pod:`, `cb:`, `{root_session_id}:dlg:`, and per the same paragraph "the wrapper validates the calling tenant owns the `root_session_id`". The implementation comments in `pkg/gateway/slotcounter/slotcounter.go:78-83` mention `lenny:pod:` as the canonical key but do not cite the §12.4 exception-class rationale alongside the comment in `pkg/gateway/breakerstore/redisstore/redisstore.go:8-14` (which does). Aligning the package-level doc comments so every exception-prefix package cites §12.4's "three exception classes" paragraph would help future readers reconcile the table.
+
+- **Resolution:** The rewritten `slotcounter` package doc (F-5.2.4) now documents the `lenny:pod:` prefix as one of §12.4's key-prefix exception classes (pod-scoped, not tenant-scoped) and cross-references the breaker store's `cb:` prefix comment, matching the rationale that file already carries. Commit 8412834a.
 
 ### - [ ] F-12.4.24 — `TestRedisSentinelFailover` is a stub `t.Logf` placeholder [Low] — OPEN
 
