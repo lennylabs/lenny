@@ -494,6 +494,88 @@ func TestGetTaskTreeTool(t *testing.T) {
 	}
 }
 
+// TestDelegateTaskRejectsMCPTargetSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10
+// verifies that the §8.2 line 50 type rejection in `lenny/delegate_task`
+// surfaces TARGET_NOT_AN_AGENT through the §15.2.1 lenny error envelope
+// rather than falling back to INTERNAL_ERROR. spec: §15.2.1 rule 3
+// (shared error taxonomy); F-8.5.10.
+func TestDelegateTaskRejectsMCPTargetSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing.T) {
+	srv, store, rt := newMCPWithRuntimes(t)
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_parent_810", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
+		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt:  now, UpdatedAt: now,
+	})
+	_ = rt.Create(context.Background(), runtimestore.Runtime{
+		Name: "fs-mcp", Type: runtimestore.TypeMCP, Image: "lenny/fs-mcp@sha256:abc",
+	})
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent_810","runtimeRef":"fs-mcp","poolRef":"pool-b"}`)
+	result, _ := resp["result"].(map[string]any)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "TARGET_NOT_AN_AGENT" {
+		t.Errorf("envelope.code = %v, want TARGET_NOT_AN_AGENT", env["code"])
+	}
+	if env["category"] != "POLICY" {
+		t.Errorf("envelope.category = %v, want POLICY", env["category"])
+	}
+	if env["retryable"] != false {
+		t.Errorf("envelope.retryable = %v, want false", env["retryable"])
+	}
+}
+
+// TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10
+// verifies the §8.5 row `lenny/request_input` timeout surfaces
+// REQUEST_INPUT_TIMEOUT through the lenny envelope. spec: §15.2.1
+// rule 3; F-8.5.10.
+func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing.T) {
+	srv, store, _ := newMCPForInput(t, 20*time.Millisecond)
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_in", TenantID: "acme", State: session.StateRunning,
+	})
+	resp := call(t, srv.Handler(), "lenny/request_input",
+		`{"sessionId":"sess_in","requestId":"req-x","parts":[{"type":"text","text":"hi"}]}`)
+	result, _ := resp["result"].(map[string]any)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "REQUEST_INPUT_TIMEOUT" {
+		t.Errorf("envelope.code = %v, want REQUEST_INPUT_TIMEOUT", env["code"])
+	}
+	if env["category"] != "TRANSIENT" {
+		t.Errorf("envelope.category = %v, want TRANSIENT", env["category"])
+	}
+	if env["retryable"] != false {
+		t.Errorf("envelope.retryable = %v, want false", env["retryable"])
+	}
+}
+
+// TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1 verifies that
+// `lenny/get_task_tree` surfaces `runtimeRef` on every node, matching
+// the REST `/tree` projection (§15.2.1 REST↔MCP semantic equivalence).
+// spec: §8.5 line 530. F-8.5.1.
+func TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1(t *testing.T) {
+	srv, store := newMCP(t)
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_root2", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "claude",
+		CreatedAt:  now, UpdatedAt: now,
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_kid2", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "gemini", ParentSessionID: "sess_root2",
+		CreatedAt: now, UpdatedAt: now,
+	})
+	resp := call(t, srv.Handler(), "lenny/get_task_tree", `{"sessionId":"sess_root2"}`)
+	text := resultText(t, resp)
+	for _, want := range []string{`"runtimeRef":"claude"`, `"runtimeRef":"gemini"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("tree response missing %q: %q", want, text)
+		}
+	}
+}
+
 func TestDelegateTaskTool(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
@@ -621,6 +703,13 @@ func mkSession(t *testing.T, store sessionstore.Store, id string, state session.
 	}
 }
 
+// TestCancelChildTool covers the default `cancel_all` policy: every
+// non-terminal node reachable through a chain of `cancel_all` ancestors
+// is cancelled. A terminal ancestor's own cascade ran when it settled,
+// so the traversal does NOT descend through it — sess_a2x stays
+// running below the already-terminal sess_a2.
+// spec: §8.5 row for `cancel_child` ("cascades to its descendants per
+// policy"); §8.10 lines 1066-1076. F-8.5.19.
 func TestCancelChildTool(t *testing.T) {
 	srv, store := newMCP(t)
 	// sess_root → sess_a → {sess_a1 (running), sess_a2 (completed) → sess_a2x (running)}
@@ -635,15 +724,19 @@ func TestCancelChildTool(t *testing.T) {
 	resp := call(t, srv.Handler(), "lenny/cancel_child",
 		`{"parentSessionId":"sess_root","childSessionId":"sess_a"}`)
 	text := resultText(t, resp)
-	for _, want := range []string{"sess_a", "sess_a1", "sess_a2x"} {
+	for _, want := range []string{"sess_a", "sess_a1"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("cancel_child result %q missing %q", text, want)
 		}
 	}
+	if strings.Contains(text, "sess_a2x") {
+		t.Errorf("cancel_child reached sess_a2x through a terminal ancestor: %q", text)
+	}
 
-	// The child and every non-terminal descendant are cancelled — the
-	// traversal descends through the terminal sess_a2 to reach sess_a2x.
-	for _, id := range []string{"sess_a", "sess_a1", "sess_a2x"} {
+	// Non-terminal descendants reachable through cancel_all ancestors are
+	// cancelled. The terminal sess_a2 keeps its state and its cascade
+	// does not run again — sess_a2x stays running below it.
+	for _, id := range []string{"sess_a", "sess_a1"} {
 		row, err := store.Get(context.Background(), "acme", id)
 		if err != nil {
 			t.Fatalf("get %s: %v", id, err)
@@ -656,11 +749,77 @@ func TestCancelChildTool(t *testing.T) {
 	if row, _ := store.Get(context.Background(), "acme", "sess_a2"); row.State != session.StateCompleted {
 		t.Errorf("sess_a2 state = %q, want completed unchanged", row.State)
 	}
+	// sess_a2x lives below a terminal node so its cascade does not run.
+	if row, _ := store.Get(context.Background(), "acme", "sess_a2x"); row.State != session.StateRunning {
+		t.Errorf("sess_a2x state = %q, want running (under terminal sess_a2)", row.State)
+	}
 	// The calling parent and the untouched sibling stay running.
 	for _, id := range []string{"sess_root", "sess_b"} {
 		if row, _ := store.Get(context.Background(), "acme", id); row.State != session.StateRunning {
 			t.Errorf("%s state = %q, want running unchanged", id, row.State)
 		}
+	}
+}
+
+// TestCancelChildToolHonoursAwaitCompletion verifies that
+// `await_completion` on the cancelled node leaves its descendants
+// running. spec: §8.10 lines 1066-1076. F-8.5.19.
+func TestCancelChildToolHonoursAwaitCompletion(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_target", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID:  "sess_root",
+		CascadeOnFailure: session.CascadeAwaitCompletion,
+		CreatedAt:        now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed sess_target: %v", err)
+	}
+	mkSession(t, store, "sess_kid", session.StateRunning, "sess_target")
+
+	resp := call(t, srv.Handler(), "lenny/cancel_child",
+		`{"parentSessionId":"sess_root","childSessionId":"sess_target"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, "sess_target") {
+		t.Errorf("cancel_child result %q missing target", text)
+	}
+	if strings.Contains(text, "sess_kid") {
+		t.Errorf("await_completion should not cascade to sess_kid: %q", text)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "sess_target"); row.State != session.StateCancelled {
+		t.Errorf("sess_target state = %q, want cancelled", row.State)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "sess_kid"); row.State != session.StateRunning {
+		t.Errorf("sess_kid state = %q, want running (await_completion)", row.State)
+	}
+}
+
+// TestCancelChildToolHonoursDetach verifies that `detach` on the
+// cancelled node leaves its descendants running. spec: §8.10 lines
+// 1066-1076. F-8.5.19.
+func TestCancelChildToolHonoursDetach(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_target", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID:  "sess_root",
+		CascadeOnFailure: session.CascadeDetach,
+		CreatedAt:        now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed sess_target: %v", err)
+	}
+	mkSession(t, store, "sess_orphan", session.StateRunning, "sess_target")
+
+	resp := call(t, srv.Handler(), "lenny/cancel_child",
+		`{"parentSessionId":"sess_root","childSessionId":"sess_target"}`)
+	text := resultText(t, resp)
+	if strings.Contains(text, "sess_orphan") {
+		t.Errorf("detach should leave sess_orphan alone: %q", text)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "sess_orphan"); row.State != session.StateRunning {
+		t.Errorf("sess_orphan state = %q, want running (detach)", row.State)
 	}
 }
 

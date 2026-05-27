@@ -23,6 +23,9 @@ var spec167AuditEvents = []string{
 	"admission.circuit_breaker_rejected",
 	"delegation.self_recursion_allowed",
 	"delegation.cycle_warning",
+	// §11.7 line 62 — F-8.5.8 closes the gap; delegation.spawned is
+	// the §11.7-catalogued audit row for every admitted delegation.
+	"delegation.spawned",
 	"gateway.cycle_detection_mode_changed",
 	"gateway.allow_self_recursion_changed",
 	"gateway.default_max_depth_changed",

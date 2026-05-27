@@ -1718,6 +1718,11 @@ func main() {
 		// `lenny_delegation_would_have_blocked_total` through the
 		// gateway metrics registry.
 		Metrics: gwMetrics,
+		// spec: §11.7 line 62 / §16.7 — wire the §11.7 audit sink so
+		// the service emits `delegation.spawned`,
+		// `delegation.self_recursion_allowed`, and `delegation.cycle_warning`.
+		// F-8.5.8 / F-8.5.9.
+		Auditor: mcpDelegationAuditor{sink: auditSink},
 		// spec: §8.2 line 90 / §10.7 — `independent` propagation
 		// routes the child afresh through the same ExperimentRouter
 		// the top-level session-creation path uses. Wired as a

@@ -103,8 +103,12 @@ func (d *elicitationDispatcher) dispatch(
 			d.emitURLModeRejection(ctx, raising, initiator, rawURL, rej)
 			// §15.1 DOMAIN_NOT_ALLOWLISTED is the spec error code for the
 			// disallowed-domain drop; the disabled / malformed cases share
-			// the same drop semantics.
-			return dispatchResult{}, fmt.Errorf("DOMAIN_NOT_ALLOWLISTED: %w", err)
+			// the same drop semantics. spec: §15.2.1 — surface the
+			// canonical lenny code via *mcp.ToolError so REST and MCP
+			// envelopes share the same (category, retryable) pair.
+			// F-8.5.10.
+			return dispatchResult{}, mcp.NewToolError("DOMAIN_NOT_ALLOWLISTED",
+				err.Error(), map[string]any{"url": rawURL})
 		}
 		return dispatchResult{}, err
 	}
@@ -134,7 +138,11 @@ func (d *elicitationDispatcher) dispatch(
 						d.tenantID, string(elicitation.ModeEnforce),
 					)
 				}
-				return dispatchResult{}, fmt.Errorf("ELICITATION_CONTENT_TAMPERED: %w", err)
+				// spec: §15.2.1 — surface the canonical lenny code via
+				// *mcp.ToolError so REST and MCP envelopes share the
+				// same (category, retryable) pair. F-8.5.10.
+				return dispatchResult{}, mcp.NewToolError("ELICITATION_CONTENT_TAMPERED",
+					err.Error(), nil)
 			}
 		}
 		return dispatchResult{}, err

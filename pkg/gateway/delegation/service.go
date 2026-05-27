@@ -85,6 +85,20 @@ type MetricsRecorder interface {
 	IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode string)
 }
 
+// Auditor records §11.7 / §16.7 delegation audit events emitted by
+// the service: `delegation.spawned` on a successful admission,
+// `delegation.self_recursion_allowed` on an admitted self-recursive
+// hop under `enforce` mode, and `delegation.cycle_warning` on a
+// `would_have_blocked` outcome under `warn` mode. A nil Auditor makes
+// the service skip every emission.
+//
+// spec: §8.2 lines 70-79 (cycle decision matrix);
+// §11.7 line 62 (`delegation.spawned`); §16.7 catalog.
+// F-8.5.8 / F-8.5.9.
+type Auditor interface {
+	EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any)
+}
+
 // ExperimentRouter routes a delegation child afresh through the §10.7
 // ExperimentRouter when the parent's propagation mode is `independent`
 // (or the parent carries no experiment context). spec: §8.2 line 90
@@ -102,6 +116,7 @@ type Service struct {
 	runtimes         runtimestore.Store
 	policies         delegationpolicystore.Store
 	metrics          MetricsRecorder
+	auditor          Auditor
 	experimentRouter ExperimentRouter
 	clock            func() time.Time
 	idFn             func() string
@@ -179,6 +194,12 @@ type Options struct {
 	// cycle-gate observations. Nil disables emission.
 	Metrics MetricsRecorder
 
+	// Auditor, when set, receives §11.7 / §16.7 delegation audit
+	// events: `delegation.spawned`, `delegation.self_recursion_allowed`,
+	// `delegation.cycle_warning`. Nil disables emission.
+	// spec: F-8.5.8 / F-8.5.9.
+	Auditor Auditor
+
 	// ExperimentRouter, when set, routes a delegation child afresh
 	// under §8.2 line 90 `independent` propagation (or when the
 	// parent carries no experiment enrollment). Nil leaves the child
@@ -211,6 +232,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		runtimes:             opts.Runtimes,
 		policies:             opts.Policies,
 		metrics:              opts.Metrics,
+		auditor:              opts.Auditor,
 		experimentRouter:     opts.ExperimentRouter,
 		clock:                clock,
 		idFn:                 idFn,
@@ -363,6 +385,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 	}
 	decision := cycle.Decide(lineage, target, settings)
 	s.recordCycleDecision(req.PoolRef, tenantID, decision)
+	s.recordCycleAudit(ctx, tenantID, req, decision)
 	if decision.Outcome == cycle.OutcomeRejected {
 		return Result{}, cycle.ToError(decision, target)
 	}
@@ -437,7 +460,77 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 	if s.metrics != nil {
 		s.metrics.ObserveDelegationDepth(req.PoolRef, childDepth)
 	}
+	// spec: §11.7 line 62 / §16.7 — emit `delegation.spawned` after the
+	// child row is committed so audit consumers (billing, SIEM, compliance)
+	// observe the same record the store now reflects. The detail carries
+	// the §11.7 lineage attribution tuple. F-8.5.8.
+	if s.auditor != nil {
+		s.auditor.EmitDelegationEvent(ctx, "delegation.spawned", map[string]any{
+			"parent_session_id":  parent.ID,
+			"child_session_id":   child.ID,
+			"delegation_depth":   childDepth,
+			"runtime_ref":        child.RuntimeRef,
+			"pool_ref":           child.PoolRef,
+			"isolation_profile":  string(child.IsolationProfile),
+			"is_self_recursive":  decision.IsSelfRecursive,
+		})
+	}
 	return Result{Child: child, Depth: childDepth}, nil
+}
+
+// recordCycleAudit emits the §8.2 / §16.7 cycle-gate audit pair:
+//
+//   - `delegation.self_recursion_allowed` fires when the §8.2 three-layer
+//     gate admitted a self-recursive hop under `mode: enforce`.
+//   - `delegation.cycle_warning` fires when the gate would have rejected
+//     the hop but `mode: warn` admitted it anyway; the detail names the
+//     blocking layers so an operator can attribute the would-have-blocked
+//     counter row to a config knob.
+//
+// Outside the self-recursive path the function is a no-op so the audit
+// log is not polluted with every successful non-recursive admission.
+//
+// spec: §8.2 lines 70-79; §16.7 catalog. F-8.5.9.
+func (s *Service) recordCycleAudit(ctx context.Context, tenantID string, req Request, d cycle.Decision) {
+	if s.auditor == nil || !d.IsSelfRecursive {
+		return
+	}
+	switch d.Outcome {
+	case cycle.OutcomeAdmitted:
+		if d.EffectiveSettings.Mode != cycle.ModeEnforce {
+			return
+		}
+		s.auditor.EmitDelegationEvent(ctx, "delegation.self_recursion_allowed", map[string]any{
+			"parent_session_id":           req.ParentSessionID,
+			"runtime_ref":                 req.RuntimeRef,
+			"pool_ref":                    req.PoolRef,
+			"tenant_id":                   tenantID,
+			"mode":                        string(d.EffectiveSettings.Mode),
+			"platform_allow_self_rec":     d.EffectiveSettings.PlatformAllowSelfRec,
+			"runtime_allow_self_rec":      d.EffectiveSettings.RuntimeAllowSelfRec,
+			"policy_allow_self_rec":       d.EffectiveSettings.PolicyAllowSelfRec,
+		})
+	case cycle.OutcomeWouldHaveBlocked:
+		s.auditor.EmitDelegationEvent(ctx, "delegation.cycle_warning", map[string]any{
+			"parent_session_id":           req.ParentSessionID,
+			"runtime_ref":                 req.RuntimeRef,
+			"pool_ref":                    req.PoolRef,
+			"tenant_id":                   tenantID,
+			"mode":                        string(d.EffectiveSettings.Mode),
+			"blocked_by":                  string(d.BlockedBy),
+			"would_have_blocked_layers":   layersAsStrings(d.WouldHaveBlockedLayers),
+		})
+	}
+}
+
+// layersAsStrings converts a slice of cycle.Layer values to plain
+// strings so the audit Detail map carries portable JSON values.
+func layersAsStrings(in []cycle.Layer) []string {
+	out := make([]string, 0, len(in))
+	for _, l := range in {
+		out = append(out, string(l))
+	}
+	return out
 }
 
 // recordCycleDecision emits the §8.2 three-layer-gate

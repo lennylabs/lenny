@@ -87,6 +87,12 @@ var exactCatalog = map[string]ClassMapping{
 	"delegation.self_recursion_allowed": finding(ActivityCreate),
 	"delegation.cycle_warning":          finding(ActivityCreate),
 
+	// §11.7 line 62 — `delegation.spawned` records the creation of a
+	// child session via recursive delegation. API Activity (6003)
+	// because it is a successful admission rather than a security
+	// finding. spec: F-8.5.8.
+	"delegation.spawned": apiActivity(ActivityCreate),
+
 	// §16.7 elicitation content tamper → Application Security Finding.
 	"elicitation.content_tamper_detected": finding(ActivityCreate),
 

@@ -47,6 +47,14 @@ const (
 	EventDelegationSelfRecursionAllowed EventType = "delegation.self_recursion_allowed"
 	EventDelegationCycleWarning         EventType = "delegation.cycle_warning"
 
+	// §8.2 / §11.7 line 62 — `delegation.spawned` is recorded when a
+	// child session is created via recursive delegation. The §11.7 row
+	// carries `parent_session_id`, `child_session_id`, `delegation_depth`,
+	// `runtime_ref`, `pool_ref`, `isolation_profile`, and the tuple
+	// SIEM consumers use to attribute billing and lineage. spec: §8.2 /
+	// §11.7 line 62; F-8.5.8.
+	EventDelegationSpawned EventType = "delegation.spawned"
+
 	// §8.2 / §8.3 — Helm-driven cycle-detection setting changes.
 	EventGatewayCycleDetectionModeChanged EventType = "gateway.cycle_detection_mode_changed"
 	EventGatewayAllowSelfRecursionChanged EventType = "gateway.allow_self_recursion_changed"
@@ -234,6 +242,7 @@ var catalog = []EventType{
 	EventSecurityAuditWriteRejected,
 	EventAdmissionCircuitBreakerRejected, EventAdmissionCircuitBreakerCacheStale,
 	EventDelegationSelfRecursionAllowed, EventDelegationCycleWarning,
+	EventDelegationSpawned,
 	EventGatewayCycleDetectionModeChanged, EventGatewayAllowSelfRecursionChanged,
 	EventGatewayDefaultMaxDepthChanged,
 	EventCircuitBreakerStateChanged,

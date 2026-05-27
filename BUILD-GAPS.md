@@ -8556,7 +8556,7 @@ Extra (non-§8.5) tools registered alongside: `lenny/create_session` (§15.2.1 m
 
 ### Findings
 
-### - [ ] F-8.5.1 — `lenny/get_task_tree` omits per-node `runtimeRef` — High [Medium] — OPEN
+### - [x] F-8.5.1 — `lenny/get_task_tree` omits per-node `runtimeRef` — High [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.9.5 — Both report the MCP get_task_tree treeNode omitting runtimeRef (and using sessionId instead of taskId) versus the correct REST TreeNode.
 
@@ -8571,6 +8571,8 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:1112-1116` (`treeNode` struct definition)
 - `pkg/gateway/mcptools/mcptools.go:1423-1426` (`walk()` populates only the two fields)
 - `pkg/gateway/sessionserver/tree.go:14-19` (REST `TreeNode` carries `RuntimeRef`)
+
+**Resolution:** `treeNode` now carries `RuntimeRef` and `walk()` populates it from the session row; the §8.5 MCP projection matches the REST `/tree` shape. `TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1` pins the contract.
 
 ### - [ ] F-8.5.2 — `lenny/get_task_tree` ignores `treeVisibility` — High [Medium] — OPEN
 
@@ -8698,7 +8700,7 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:819-861` (no session lookup, no policy consultation)
 - `grep -r "delegationPolicyRef\|maxDelegationPolicy\|DelegationPolicy" pkg/gateway/mcptools/` returns no hits
 
-### - [ ] F-8.5.8 — `lenny/delegate_task` emits no `delegation.spawned` audit event — High [Medium] — OPEN
+### - [x] F-8.5.8 — `lenny/delegate_task` emits no `delegation.spawned` audit event — High [Medium] — CLOSED
 
 **Severity: High** (spec MUST: §11.7 catalogued audit event)
 
@@ -8713,7 +8715,9 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:982-1020` (no success-path audit call)
 - `pkg/gateway/delegation/service.go:156-232` (no audit emission)
 
-### - [ ] F-8.5.9 — `lenny/delegate_task` does not emit the §8.2 three-layer cycle audit pair (`delegation.self_recursion_allowed`, `delegation.cycle_warning`) — High [Medium] — OPEN
+**Resolution:** `delegation.Service` gains an `Auditor` interface; `Delegate` emits `delegation.spawned` after the child row is committed with `parent_session_id`, `child_session_id`, `delegation_depth`, `runtime_ref`, `pool_ref`, `isolation_profile`, and `is_self_recursive`. `EventDelegationSpawned` is added to the §16.7 catalog (+ catalog_test list) and the OCSF mapping. `cmd/lenny-gateway/main.go` wires the existing `mcpDelegationAuditor` into `delegation.Options.Auditor`. `TestDelegateEmitsSpawnedAuditEvent_spec_11_7_F_8_5_8` pins it.
+
+### - [x] F-8.5.9 — `lenny/delegate_task` does not emit the §8.2 three-layer cycle audit pair (`delegation.self_recursion_allowed`, `delegation.cycle_warning`) — High [Medium] — CLOSED
 
 **Severity: High** (spec MUST: §16.7 audit catalogue, §16.1 paired counter)
 
@@ -8729,7 +8733,9 @@ Evidence:
 - `grep -r "EventDelegationSelfRecursionAllowed\|EventDelegationCycleWarning\|delegation\.self_recursion_allowed\|delegation\.cycle_warning" pkg/gateway/` returns no emission sites (only the catalog definition + OCSF mapping).
 - `pkg/delegation/cycle/cycle.go:18-19` explicitly defers emission to the gateway: "audit emission ... lives in the gateway binary".
 
-### - [ ] F-8.5.10 — Error envelopes for §8.5 tool errors fall back to `INTERNAL_ERROR` — High [Medium] — OPEN
+**Resolution:** `delegation.Service.recordCycleAudit` fires alongside `recordCycleDecision` for every self-recursive hop: an admitted hop under `enforce` mode emits `delegation.self_recursion_allowed` with the three-layer-gate inputs; a `would_have_blocked` outcome under `warn` mode emits `delegation.cycle_warning` with `blocked_by` and the full `would_have_blocked_layers` set. The non-self-recursive admission path stays silent so the audit log is not flooded. `TestDelegateEmitsSelfRecursionAllowedAudit_spec_8_2_F_8_5_9`, `TestDelegateEmitsCycleWarningAudit_spec_8_2_F_8_5_9`, and `TestDelegateNoCycleAuditWithoutSelfRecursion_spec_F_8_5_9` pin the matrix.
+
+### - [x] F-8.5.10 — Error envelopes for §8.5 tool errors fall back to `INTERNAL_ERROR` — High [Medium] — CLOSED
 
 **Severity: High** (spec MUST: §15.2.1 REST/MCP parity on `(category, retryable)` for the same code)
 
@@ -8756,6 +8762,14 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:619,805,809,1006,957` (raw `fmt.Errorf` returns)
 - `pkg/gateway/mcptools/elicitation.go:105,135`
 - `pkg/gateway/errorclassify/errorclassify.go:56-83`
+
+**Resolution:** Every §8.5 tool error path that previously embedded a code in the message string now returns `*mcp.ToolError` carrying the canonical lenny code, so the §15.2.1 envelope surfaces `(code, category, retryable)` with the parity contract intact:
+
+- `REQUEST_INPUT_TIMEOUT`, `TARGET_NOT_AN_AGENT`, `TARGET_NOT_IN_SCOPE`, `ISOLATION_MONOTONICITY_VIOLATED`, `DELEGATION_PARENT_NO_USER` in `mcptools.go`.
+- `DOMAIN_NOT_ALLOWLISTED`, `ELICITATION_CONTENT_TAMPERED` in `elicitation.go`.
+- The service-layer `delegation.ErrTargetNotAgent` path in the delegate_task handler also surfaces `TARGET_NOT_AN_AGENT` (defence-in-depth for non-MCP callers).
+
+`pkg/gateway/errorclassify/errorclassify.go` gains entries for `REQUEST_INPUT_TIMEOUT`, `TARGET_NOT_AN_AGENT`, `TARGET_NOT_IN_SCOPE`, `CROSS_TENANT_MESSAGE_DENIED`, `SCOPE_DENIED`, `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE`, `TREE_VISIBILITY_WEAKENING`, and `DELEGATION_PARENT_NO_USER` (the codes already in the table — `ELICITATION_TIMEOUT`, `ELICITATION_CONTENT_TAMPERED`, `DOMAIN_NOT_ALLOWLISTED`, `ISOLATION_MONOTONICITY_VIOLATED`, `TRACING_CONTEXT_*` — are unchanged). `TestDelegateTaskRejectsMCPTargetSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10` and `TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10` verify the envelope on the MCP transport.
 
 ### - [x] F-8.5.11 — `lenny/output` differs from spec — emits to event stream instead of to parent/client; requires `sessionId` not in spec schema — Medium [Medium] — CLOSED
 
@@ -8897,7 +8911,7 @@ Evidence:
 
 **Resolution:** The delegation isolation-violation emit site in `mcptools.go` now uses the §11.7 field names (`parent_isolation`, `target_isolation`, `matched_policy_rule`). `matched_policy_rule` is emitted as the empty string until the §8.3 DelegationPolicy enforcement lands (F-8.5.7); the field is present so SIEM consumers can pivot on it now and pick up the populated value when the policy gate ships. The legacy `parentProfile`/`childProfile` keys are removed (codebase is pre-deployment, no backwards-compat shim needed). `TestDelegateTaskPoolIsolationMonotonicity` asserts the new keys and the absence of the legacy keys.
 
-### - [ ] F-8.5.19 — `cancel_child` cascade-on-failure policy not consulted — Medium [Medium] — OPEN
+### - [x] F-8.5.19 — `cancel_child` cascade-on-failure policy not consulted — Medium [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-8.5.15 — Both concern the cancel_child MCP tool but describe different defects: F-8.5.15 is the schema deviation (extra parentSessionId arg) while F-8.5.19 is the ignored cascadeOnFailure policy in cancelSubtree.
 
@@ -8912,7 +8926,9 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:1459-1497`
 - `spec/08_recursive-delegation.md:1068` (`cascadeOnFailure` policy applies to all terminal transitions including manual cancel)
 
-### - [ ] F-8.5.20 — `lenny/discover_agents` response shape — does not surface `type: external` agents — Medium [Medium] — OPEN
+**Resolution:** `cancelSubtree` now respects each node's `CascadeOnFailure.Resolve()`. The explicit `lenny/cancel_child` target is always cancelled (per §8.5 row); descendants are queued only when the parent's resolved policy is `cancel_all`, so `await_completion` and `detach` siblings stay running. Terminal nodes' own cascades already ran when they settled so the traversal does not descend through them. `TestCancelChildTool` updated to the spec-compliant behavior; `TestCancelChildToolHonoursAwaitCompletion` and `TestCancelChildToolHonoursDetach` exercise the new policy branches.
+
+### - [ ] F-8.5.20 — `lenny/discover_agents` response shape — does not surface `type: external` agents — Medium [Medium] — DEFERRED
 
 **Severity: Medium** (spec MUST: §8.5 / §8.3 line 244 — "Returns `type: agent` runtimes **and external agents** only")
 
@@ -8924,6 +8940,8 @@ Evidence:
 
 - `pkg/gateway/mcptools/mcptools.go:835`
 - `spec/08_recursive-delegation.md:244`
+
+**Resolution (deferred):** External-agent registration is a v1-deferred feature. Spec §8 line 23 acknowledges "external registered agent" as an opaque target type and §8 line 307 names `allowedExternalEndpoints` as the slot reserved for "future A2A support". The v1 `runtimestore.AllRuntimeTypes()` only enumerates `agent` and `mcp` — there is no third `external` type and no separate external-agent registry. Once the A2A registry lands (likely as a sibling to `runtimestore`), this finding can be re-opened to extend `discover_agents` to enumerate both sources. The `runtimeAuthorizedForCaller` gate in `lenny/delegate_task` already rejects unknown targets, so the v1 omission is a discovery gap rather than an authorisation hole.
 
 ### - [x] F-8.5.21 — `lenny/await_children` does not honour the §8.4 `approval` mode — Low (deferred in spec) [Medium] — CLOSED
 

@@ -1125,3 +1125,197 @@ func TestDelegateExplicitMaxDepthBeatsHelmFallback_spec_8_2_bis(t *testing.T) {
 		t.Errorf("DepthExceededError.Max = %d, want 2 (explicit beats fallback 10)", de.Max)
 	}
 }
+
+// recordingAuditor captures every §11.7 delegation audit event the
+// service emits.
+type recordingAuditor struct {
+	events []recordedEvent
+}
+
+type recordedEvent struct {
+	eventType string
+	detail    map[string]any
+}
+
+func (a *recordingAuditor) EmitDelegationEvent(_ context.Context, t string, d map[string]any) {
+	a.events = append(a.events, recordedEvent{t, d})
+}
+
+// TestDelegateEmitsSpawnedAuditEvent_spec_11_7_F_8_5_8 verifies that
+// a successful Delegate call records a `delegation.spawned` audit row
+// carrying the §11.7 lineage tuple. spec: §11.7 line 62; F-8.5.8.
+func TestDelegateEmitsSpawnedAuditEvent_spec_11_7_F_8_5_8(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	aud := &recordingAuditor{}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:  func() string { return "sess_child" },
+		Auditor: aud,
+		Clock:   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+	if _, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileMicrovm,
+	}); err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	var spawned *recordedEvent
+	for i := range aud.events {
+		if aud.events[i].eventType == "delegation.spawned" {
+			spawned = &aud.events[i]
+			break
+		}
+	}
+	if spawned == nil {
+		t.Fatalf("delegation.spawned not emitted: %+v", aud.events)
+	}
+	for _, k := range []string{
+		"parent_session_id", "child_session_id", "delegation_depth",
+		"runtime_ref", "pool_ref", "isolation_profile", "is_self_recursive",
+	} {
+		if _, ok := spawned.detail[k]; !ok {
+			t.Errorf("delegation.spawned detail missing %q: %+v", k, spawned.detail)
+		}
+	}
+	if spawned.detail["child_session_id"] != "sess_child" {
+		t.Errorf("child_session_id = %v, want sess_child", spawned.detail["child_session_id"])
+	}
+	if spawned.detail["delegation_depth"] != 1 {
+		t.Errorf("delegation_depth = %v, want 1", spawned.detail["delegation_depth"])
+	}
+	if spawned.detail["is_self_recursive"] != false {
+		t.Errorf("is_self_recursive = %v, want false", spawned.detail["is_self_recursive"])
+	}
+}
+
+// TestDelegateEmitsSelfRecursionAllowedAudit_spec_8_2_F_8_5_9 verifies
+// that an admitted self-recursive hop under `enforce` mode emits the
+// §8.2 `delegation.self_recursion_allowed` audit row. spec: §8.2 lines
+// 70-79; §16.7 catalog; F-8.5.9.
+func TestDelegateEmitsSelfRecursionAllowedAudit_spec_8_2_F_8_5_9(t *testing.T) {
+	store := memstore.New()
+	// Lineage so the target (claude/pool-a) re-appears.
+	seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	seedParent(t, store, "sess_parent", "sess_root", "gemini", "pool-b", isolation.ProfileSandboxed)
+	// Wire the runtime registry so the cycle gate reads the target
+	// runtime's allowSelfRecursion.
+	rt := runtimestore.NewMemory()
+	_ = rt.Create(context.Background(), runtimestore.Runtime{
+		Name: "claude", Type: runtimestore.TypeAgent, AllowSelfRecursion: true,
+	})
+	pol := delegationpolicystore.NewMemory()
+	_ = pol.Create(context.Background(), delegationpolicystore.DelegationPolicy{
+		TenantID: "acme", Name: "loose", AllowSelfRecursion: true,
+	})
+	if _, err := rt.Update(context.Background(), "claude", func(r *runtimestore.Runtime) error {
+		r.DelegationPolicyRef = "loose"
+		return nil
+	}); err != nil {
+		t.Fatalf("link runtime to policy: %v", err)
+	}
+	aud := &recordingAuditor{}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:                     func() string { return "sess_child" },
+		Runtimes:                   rt,
+		Policies:                   pol,
+		PlatformAllowSelfRecursion: true,
+		Auditor:                    aud,
+		Clock:                      func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+	if _, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "claude",
+		PoolRef:          "pool-a",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}); err != nil {
+		t.Fatalf("Delegate (self-recursion): %v", err)
+	}
+	var allowed *recordedEvent
+	for i := range aud.events {
+		if aud.events[i].eventType == "delegation.self_recursion_allowed" {
+			allowed = &aud.events[i]
+			break
+		}
+	}
+	if allowed == nil {
+		t.Fatalf("delegation.self_recursion_allowed not emitted: %+v", aud.events)
+	}
+	if allowed.detail["mode"] != "enforce" {
+		t.Errorf("mode = %v, want enforce", allowed.detail["mode"])
+	}
+	if allowed.detail["platform_allow_self_rec"] != true {
+		t.Errorf("platform_allow_self_rec = %v, want true", allowed.detail["platform_allow_self_rec"])
+	}
+}
+
+// TestDelegateEmitsCycleWarningAudit_spec_8_2_F_8_5_9 verifies that a
+// `would_have_blocked` outcome under `warn` mode emits the
+// `delegation.cycle_warning` audit row, paired with
+// `would_have_blocked_layers`. spec: §8.2 lines 70-79; §16.7 catalog;
+// F-8.5.9.
+func TestDelegateEmitsCycleWarningAudit_spec_8_2_F_8_5_9(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	seedParent(t, store, "sess_parent", "sess_root", "gemini", "pool-b", isolation.ProfileSandboxed)
+	aud := &recordingAuditor{}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:    func() string { return "sess_child" },
+		CycleMode: cycle.ModeWarn,
+		Auditor:   aud,
+		Clock:     func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+	if _, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "claude",
+		PoolRef:          "pool-a",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}); err != nil {
+		t.Fatalf("Delegate (warn-mode would-have-blocked): %v", err)
+	}
+	var warning *recordedEvent
+	for i := range aud.events {
+		if aud.events[i].eventType == "delegation.cycle_warning" {
+			warning = &aud.events[i]
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("delegation.cycle_warning not emitted: %+v", aud.events)
+	}
+	if warning.detail["mode"] != "warn" {
+		t.Errorf("mode = %v, want warn", warning.detail["mode"])
+	}
+	layers, _ := warning.detail["would_have_blocked_layers"].([]string)
+	if len(layers) == 0 {
+		t.Errorf("would_have_blocked_layers empty: %+v", warning.detail)
+	}
+}
+
+// TestDelegateNoCycleAuditWithoutSelfRecursion_spec_F_8_5_9 verifies a
+// non-self-recursive admission does NOT pollute the audit log with
+// cycle-gate events (only delegation.spawned is emitted).
+func TestDelegateNoCycleAuditWithoutSelfRecursion_spec_F_8_5_9(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	aud := &recordingAuditor{}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:  func() string { return "sess_child" },
+		Auditor: aud,
+		Clock:   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+	if _, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}); err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	for _, e := range aud.events {
+		if e.eventType == "delegation.self_recursion_allowed" || e.eventType == "delegation.cycle_warning" {
+			t.Errorf("non-self-recursive admission must not emit %q: %+v", e.eventType, e.detail)
+		}
+	}
+}

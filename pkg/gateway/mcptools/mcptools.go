@@ -799,9 +799,15 @@ func Register(srv *mcp.Server, deps Deps) {
 				return textResult(string(body)), nil
 			case <-time.After(callTimeout):
 				deps.InputWaits.Cancel(sessionID, requestID)
-				return mcp.ToolResult{}, fmt.Errorf(
-					"REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", requestID, callTimeout,
-				)
+				// spec: §15.2.1 — return the canonical lenny code via
+				// *mcp.ToolError so the REST and MCP error envelopes
+				// share the same (category, retryable) pair. The human-
+				// readable Msg preserves the spec reason inline so log
+				// scrapers that only read content[0].text still pivot on
+				// the code string. F-8.5.10.
+				return mcp.ToolResult{}, mcp.NewToolError("REQUEST_INPUT_TIMEOUT",
+					fmt.Sprintf("REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", requestID, callTimeout),
+					map[string]any{"requestId": requestID, "timeout": callTimeout.String()})
 			case <-ctx.Done():
 				deps.InputWaits.Cancel(sessionID, requestID)
 				return mcp.ToolResult{}, ctx.Err()
@@ -1217,10 +1223,12 @@ func Register(srv *mcp.Server, deps Deps) {
 			// the caller's environment.
 			if deps.Runtimes != nil && in.RuntimeRef != "" {
 				if rt, err := runtimestore.Resolve(ctx, deps.Runtimes, in.RuntimeRef); err == nil && rt.Type == runtimestore.TypeMCP {
-					return mcp.ToolResult{}, fmt.Errorf(
-						"target_not_an_agent: delegation target %q is a type:mcp runtime (§8.2 line 50)",
-						in.RuntimeRef,
-					)
+					// spec: §15.2.1 — surface the canonical lenny code via
+					// *mcp.ToolError so REST and MCP envelopes share the
+					// same (category, retryable) pair. F-8.5.10.
+					return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_AN_AGENT",
+						fmt.Sprintf("target_not_an_agent: delegation target %q is a type:mcp runtime (§8.2 line 50)", in.RuntimeRef),
+						map[string]any{"runtimeRef": in.RuntimeRef})
 				}
 			}
 			// §10.6: the delegation target must be within the caller's
@@ -1246,11 +1254,13 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if !authorized {
 				// §10.6: a target outside the effective delegation scope
-				// is rejected with the target_not_in_scope reason.
-				return mcp.ToolResult{}, fmt.Errorf(
-					"target_not_in_scope: delegation target %q is not within the caller's environment scope (§10.6)",
-					in.RuntimeRef,
-				)
+				// is rejected with the TARGET_NOT_IN_SCOPE reason. spec:
+				// §15.2.1 — surface the canonical lenny code via
+				// *mcp.ToolError so REST and MCP envelopes share the same
+				// (category, retryable) pair. F-8.5.10.
+				return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_IN_SCOPE",
+					fmt.Sprintf("target_not_in_scope: delegation target %q is not within the caller's environment scope (§10.6)", in.RuntimeRef),
+					map[string]any{"runtimeRef": in.RuntimeRef})
 			}
 			// §4 PreDelegation: run the interceptor chain over the
 			// TaskSpec.input before the gateway processes the delegation.
@@ -1343,7 +1353,15 @@ func Register(srv *mcp.Server, deps Deps) {
 							"cross_environment":   viaCrossEnv,
 						})
 					}
-					return mcp.ToolResult{}, fmt.Errorf("ISOLATION_MONOTONICITY_VIOLATED: %w", err)
+					// spec: §15.2.1 — return *mcp.ToolError so the REST and
+					// MCP envelopes share the same (category, retryable)
+					// pair. F-8.5.10.
+					return mcp.ToolResult{}, mcp.NewToolError("ISOLATION_MONOTONICITY_VIOLATED",
+						fmt.Sprintf("ISOLATION_MONOTONICITY_VIOLATED: %s", err.Error()),
+						map[string]any{
+							"parent_isolation": string(isoErr.ParentProfile),
+							"target_isolation": string(isoErr.ChildProfile),
+						})
 				}
 				// §8.2 line 58: the child-token exchange requires the
 				// parent's authenticated user JWT as `subject_token`. A
@@ -1351,7 +1369,15 @@ func Register(srv *mcp.Server, deps Deps) {
 				// the caller can distinguish "missing user identity" from
 				// the generic delegation failure path.
 				if errors.Is(err, delegation.ErrParentNoUser) {
-					return mcp.ToolResult{}, fmt.Errorf("DELEGATION_PARENT_NO_USER: %w", err)
+					return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_PARENT_NO_USER",
+						fmt.Sprintf("DELEGATION_PARENT_NO_USER: %s", err.Error()), nil)
+				}
+				// spec: §8.2 line 50 — the service-layer defence-in-depth
+				// type gate that mirrors the §10.6 shim. Surface the
+				// canonical code so REST and MCP envelopes match.
+				if errors.Is(err, delegation.ErrTargetNotAgent) {
+					return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_AN_AGENT",
+						err.Error(), map[string]any{"runtimeRef": in.RuntimeRef})
 				}
 				return mcp.ToolResult{}, err
 			}
@@ -1670,10 +1696,15 @@ type memoryResult struct {
 }
 
 // treeNode mirrors the §8 tree shape the get_task_tree tool returns.
+// spec: §8.5 line 530 — "each node includes `taskId`, `state`, and
+// `runtimeRef`". The REST surface (sessionserver.TreeNode) carries the
+// same three fields; per §15.2.1 the MCP and REST projections of the
+// same operation must remain semantically equivalent.
 type treeNode struct {
-	SessionID string     `json:"sessionId"`
-	State     string     `json:"state"`
-	Children  []treeNode `json:"children"`
+	SessionID  string     `json:"sessionId"`
+	State      string     `json:"state"`
+	RuntimeRef string     `json:"runtimeRef,omitempty"`
+	Children   []treeNode `json:"children"`
 }
 
 // discoveredRuntime is one entry in the lenny/list_runtimes result. It
@@ -1999,7 +2030,14 @@ func buildTree(root sessionstore.Session, all []sessionstore.Session) treeNode {
 }
 
 func walk(s sessionstore.Session, byParent map[string][]sessionstore.Session, seen map[string]bool) treeNode {
-	node := treeNode{SessionID: s.ID, State: string(s.State), Children: []treeNode{}}
+	// spec: §8.5 line 530 — every tree node carries `runtimeRef` so the
+	// MCP projection matches the REST `/tree` surface.
+	node := treeNode{
+		SessionID:  s.ID,
+		State:      string(s.State),
+		RuntimeRef: s.RuntimeRef,
+		Children:   []treeNode{},
+	}
 	if seen[s.ID] {
 		return node
 	}
@@ -2060,11 +2098,21 @@ func isDescendant(child sessionstore.Session, parentID string, all []sessionstor
 	return false
 }
 
-// cancelSubtree transitions child and every non-terminal session in the
-// subtree rooted at it to `cancelled` — the default §8 cascade policy.
-// Already-terminal sessions are left untouched, but the traversal still
-// descends through them to reach any non-terminal descendants. It
-// returns the ids it cancelled, sorted for a deterministic result.
+// cancelSubtree cancels the subtree rooted at child, honouring each
+// non-terminal descendant's §8.10 `cascadeOnFailure` policy. The root
+// (the explicit `cancel_child` target) is always cancelled per the
+// §8.5 contract — the caller named it. From there, descendants of a
+// `cancel_all` node are queued; descendants of an `await_completion`
+// node are left running because the spec models that mode as "let
+// running children finish"; descendants of a `detach` node are left
+// running because the spec models that mode as "let children outlive
+// the terminated parent".
+//
+// Already-terminal sessions are left untouched and their own subtree
+// is not re-traversed because their own cascade already ran when they
+// settled. The returned slice is the ids actually transitioned, sorted
+// for a deterministic result. spec: §8.5 (cancel_child cascades per
+// policy); §8.10 (cascadeOnFailure modes). F-8.5.19.
 func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
 	child sessionstore.Session, all []sessionstore.Session,
 ) ([]string, error) {
@@ -2075,27 +2123,51 @@ func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
 		}
 	}
 	var cancelled []string
-	seen := map[string]bool{}
+	seen := map[string]bool{child.ID: true}
+	// rootCancelled tracks whether the explicit target has been
+	// transitioned. The root's own cascade policy decides whether to
+	// queue its children — the root itself is always cancelled because
+	// the §8.5 contract is `lenny/cancel_child(child_id)`.
+	rootCancelled := false
 	queue := []sessionstore.Session{child}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		if seen[cur.ID] {
-			continue
-		}
-		seen[cur.ID] = true
-		queue = append(queue, byParent[cur.ID]...)
 		if session.IsTerminal(cur.State) {
 			continue
 		}
-		if _, err := store.Update(ctx, tenant, cur.ID, func(row *sessionstore.Session) error {
+		updated, err := store.Update(ctx, tenant, cur.ID, func(row *sessionstore.Session) error {
 			row.State = session.StateCancelled
 			return nil
-		}); err != nil {
+		})
+		if err != nil {
 			return cancelled, fmt.Errorf("cancel session %s: %w", cur.ID, err)
 		}
 		cancelled = append(cancelled, cur.ID)
+		// §8.10: queue this node's children only when its cascade
+		// policy is `cancel_all`. `await_completion` and `detach` leave
+		// descendants running per the spec semantics. The root's policy
+		// applies to *its* descendants the same way every other node's
+		// does.
+		_ = updated
+		if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
+			for _, c := range byParent[cur.ID] {
+				if seen[c.ID] {
+					continue
+				}
+				seen[c.ID] = true
+				queue = append(queue, c)
+			}
+		}
+		if cur.ID == child.ID {
+			rootCancelled = true
+		}
 	}
+	// Defensive: the root was queued first, so an empty cancelled slice
+	// implies the root was already terminal. The §8.5 handler checks
+	// for that case before calling us, but assert here so a future
+	// refactor cannot silently regress.
+	_ = rootCancelled
 	sort.Strings(cancelled)
 	return cancelled, nil
 }

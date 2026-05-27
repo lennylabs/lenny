@@ -207,4 +207,49 @@ var table = map[string]entry{
 	"TRACING_CONTEXT_TOO_LARGE":       {CategoryPermanent, false},
 	"TRACING_CONTEXT_SENSITIVE_KEY":   {CategoryPermanent, false},
 	"TRACING_CONTEXT_URL_NOT_ALLOWED": {CategoryPermanent, false},
+	// spec: §8.5 row for `lenny/request_input` — the wait is bounded by
+	// `maxRequestInputWaitSeconds`; expiry surfaces this code. TRANSIENT
+	// because the same request id is dismissed by the gateway on expiry,
+	// but a fresh request_input call may succeed. retryable=false: the
+	// original request id is no longer pending. F-8.5.10.
+	"REQUEST_INPUT_TIMEOUT": {CategoryTransient, false},
+	// spec: §8.2 line 50 — `lenny/delegate_task` rejects `type: mcp`
+	// targets at the type gate. POLICY (the deployer's runtime catalog
+	// type forbids the target); HTTP 422; retryable=false because the
+	// runtime's type is structural. F-8.5.10 / F-8.2.8.
+	"TARGET_NOT_AN_AGENT": {CategoryPolicy, false},
+	// spec: §10.6 — the delegation target is outside the caller's
+	// effective environment scope. POLICY (environment authorization);
+	// HTTP 403; retryable=false because the same caller/target pair
+	// stays out of scope until the deployer updates the scope graph.
+	// F-8.5.10.
+	"TARGET_NOT_IN_SCOPE": {CategoryPolicy, false},
+	// spec: §7.2 — inter-session messaging across a tenant boundary is
+	// rejected. POLICY (multi-tenant isolation rule); HTTP 403;
+	// retryable=false because the same (sender_tenant, target_tenant)
+	// pair fails identically until the §10 tenant model changes.
+	// F-8.5.10.
+	"CROSS_TENANT_MESSAGE_DENIED": {CategoryPolicy, false},
+	// spec: §7.2 / §8.3 — `lenny/send_message` rejected because the
+	// effective `messagingScope` forbids the (sender, target) relation.
+	// POLICY; HTTP 403; retryable=false because the relation is
+	// structural for this delegation tree. F-8.5.10.
+	"SCOPE_DENIED": {CategoryPolicy, false},
+	// spec: §8.2 line 90 / §8.3 — the child's effective `messagingScope`
+	// is `siblings` but the effective `treeVisibility` is not `full`, so
+	// the gateway rejects the lease at delegation time. POLICY; HTTP
+	// 422; retryable=false because the lease is rejected before any
+	// admission. F-8.5.10.
+	"TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE": {CategoryPolicy, false},
+	// spec: §8.3 line 317 — the child declares a broader `treeVisibility`
+	// than the parent's effective value. POLICY; HTTP 422; retryable=
+	// false because the weakening is rejected before admission.
+	// F-8.5.10.
+	"TREE_VISIBILITY_WEAKENING": {CategoryPolicy, false},
+	// spec: §8.2 line 58 — the delegation parent has no authenticated
+	// user identity, so the §8.2 RFC 8693 child-token exchange has no
+	// `subject_token`. PERMANENT; HTTP 422; retryable=false because the
+	// parent's identity stays empty until it is re-bound by a new
+	// session-create flow. F-8.5.10.
+	"DELEGATION_PARENT_NO_USER": {CategoryPermanent, false},
 }
