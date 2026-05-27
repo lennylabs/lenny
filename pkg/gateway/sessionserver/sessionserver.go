@@ -293,6 +293,14 @@ type Server struct {
 	// `created` state deadline. A zero value falls through to
 	// uploadtoken.DefaultTTL (300s). spec: §7.1 line 58. F-7.4.7.
 	uploadTokenTTL time.Duration
+
+	// uploadAborts is the §7.4 line 463 upload-abort registry. The
+	// upload handler registers a per-session abort signal for the
+	// duration of its body-read + blob.Put; the finalize handler closes
+	// the signal after the row transitions out of the upload-admitting
+	// state so any in-flight stream surfaces UPLOAD_CHANNEL_CLOSED.
+	// Always non-nil after New. spec: §7.4 line 463. F-7.4.16.
+	uploadAborts *uploadAbortRegistry
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -863,6 +871,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		incSessionRetry:        opts.IncSessionRetry,
 		incWarmpoolWarmupFailure: opts.IncWarmpoolWarmupFailure,
 		uploadTokenTTL:         opts.UploadTokenTTL,
+		uploadAborts:           newUploadAbortRegistry(),
 	}
 	if s.defaultRetention <= 0 {
 		// spec: §7.1 line 77 — default the artifact-retention window to
@@ -1694,6 +1703,12 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	if s.uploadVerifier != nil && updated.UploadTokenDigest != "" {
 		_ = s.uploadVerifier.ConsumeDigest(updated.UploadTokenDigest, updated.UploadTokenExpiry)
 	}
+	// §7.4 line 463: close the upload channel — abort any in-flight
+	// /upload stream for this session so it surfaces
+	// UPLOAD_CHANNEL_CLOSED and its staged blob is rolled back. A
+	// late /upload register that races finalize gets an
+	// already-closed abort signal on the next Read. F-7.4.16.
+	s.uploadAborts.closeSession(updated.ID)
 	// spec: §7.2 line 137 — surface the created → ready transition.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	// F-7.4.17: §16.6 session.finalize_workspace audit row. The row

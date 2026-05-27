@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -20,6 +21,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
+
+// UploadContentHashHeader is the §7.4 line 444 optional client-supplied
+// SHA-256 of the uploaded body. When present, the gateway verifies the
+// streamed bytes against the value and rejects with
+// `VALIDATION_ERROR` + `reason: hash_mismatch` on disagreement. Hex
+// lowercase per §4.5 line 311. F-7.4.10.
+const UploadContentHashHeader = "X-Lenny-Content-Hash"
 
 // UploadDefaultTTL is the §4.5 TTL the minimal gateway stamps on
 // blobs produced by `POST /v1/sessions/{id}/upload`. Spec leaves
@@ -206,13 +214,21 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 	body := http.MaxBytesReader(w, r.Body, UploadMaxBodyBytes)
 	defer body.Close()
 
+	// §7.4 line 463: register an abort signal for this in-flight
+	// upload. When finalize fires for this session, the registry
+	// closes the signal and the next abortableReader.Read aborts the
+	// stream with errUploadAborted so the channel "closes" semantically
+	// per the spec. F-7.4.16.
+	abortSig, releaseAbort := s.uploadAborts.register(row.ID)
+	defer releaseAbort()
+
 	// §11.2 hard stream cap: when a quota reservation is held, cap the
 	// inbound stream one byte past the headroom so a client that
 	// under-declared Content-Length cannot stream past its quota. The
 	// extra byte makes an over-stream detectable after the read.
-	var src io.Reader = body
+	var src io.Reader = newAbortableReader(body, abortSig)
 	if reservation != nil {
-		src = &io.LimitedReader{R: body, N: reservation.headroom + 1}
+		src = &io.LimitedReader{R: src, N: reservation.headroom + 1}
 	}
 
 	// spec: §12.5 ll. 295 — every URI carries the {object_type}
@@ -234,6 +250,15 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		if reservation != nil {
 			// The upload failed: release the whole reservation.
 			_ = s.storageQuota.Adjust(r.Context(), tenantID, -reservation.reserved)
+		}
+		// §7.4 line 463: a finalize fired mid-stream and closed the
+		// upload channel. The blob.Put aborted on the abortableReader's
+		// sentinel; surface UPLOAD_CHANNEL_CLOSED so the client knows
+		// the channel is no longer accepting bytes. F-7.4.16.
+		if errors.Is(err, errUploadAborted) {
+			s.writeError(w, http.StatusGone, "UPLOAD_CHANNEL_CLOSED",
+				"upload channel closed by finalize", nil)
+			return
 		}
 		// http.MaxBytesReader surfaces oversize as *http.MaxBytesError.
 		// We cannot import that type directly without bringing in
@@ -264,16 +289,68 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 
 	if reservation != nil {
 		if bytesRead.n > reservation.headroom {
-			// The client streamed past the quota headroom: abort and
-			// release the reservation. The orphaned blob ages out on
-			// its TTL.
+			// The client streamed past the quota headroom: abort,
+			// release the reservation, and SoftDelete the partial
+			// staged blob so the §7.4 line 443 invariant "any bytes
+			// already written to staging are removed" holds at abort
+			// time instead of deferring removal to the TTL ageout.
+			// F-7.4.14.
 			_ = s.storageQuota.Adjust(r.Context(), tenantID, -reservation.reserved)
+			s.softDeleteStagedBlob(uri, ref)
 			s.writeError(w, http.StatusTooManyRequests, "STORAGE_QUOTA_EXCEEDED",
 				"the upload exceeded the tenant's storage quota", nil)
 			return
 		}
 		// Reconcile the reservation to the bytes actually written.
 		_ = s.storageQuota.Adjust(r.Context(), tenantID, bytesRead.n-reservation.reserved)
+	}
+
+	// §7.4 lines 444-445: optional client-supplied SHA-256 verification.
+	// Clients that pre-computed the hash may send it via the
+	// X-Lenny-Content-Hash header; the gateway compares it against the
+	// streamed bytes' SHA-256. A mismatch aborts with hash_mismatch and
+	// removes the staged blob so the client can retry. Absent header
+	// skips the check ("optional for client uploads"). F-7.4.10.
+	if want := strings.TrimSpace(r.Header.Get(UploadContentHashHeader)); want != "" {
+		got := bytesRead.ContentHash()
+		if !strings.EqualFold(want, got) {
+			if reservation != nil {
+				_ = s.storageQuota.Adjust(r.Context(), tenantID, -bytesRead.n)
+			}
+			s.softDeleteStagedBlob(uri, ref)
+			s.writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+				"upload body hash does not match the client-supplied "+UploadContentHashHeader,
+				map[string]any{
+					"reason":   "hash_mismatch",
+					"expected": strings.ToLower(want),
+					"actual":   got,
+				})
+			return
+		}
+	}
+
+	// §7.4 line 463: race window — finalize may have committed between
+	// the pre-Put precondition check and now. Re-load the session row
+	// and re-validate; if the row no longer admits /upload, soft-delete
+	// the just-written blob, release the reservation, and surface
+	// UPLOAD_CHANNEL_CLOSED so the channel-close contract holds even
+	// when finalize lands after the upload's body Read started.
+	// F-7.4.16.
+	if post, perr := s.store.Get(r.Context(), tenantID, row.ID); perr == nil {
+		if verr := session.Validate(session.PreconditionRequest{
+			Endpoint:     session.EndpointUpload,
+			CurrentState: post.State,
+		}); verr != nil {
+			if reservation != nil {
+				// The reconcile call above left bytesRead.n bytes held;
+				// release exactly that residual on the abort path.
+				_ = s.storageQuota.Adjust(r.Context(), tenantID, -bytesRead.n)
+			}
+			s.softDeleteStagedBlob(uri, ref)
+			s.writeError(w, http.StatusGone, "UPLOAD_CHANNEL_CLOSED",
+				"upload channel closed by finalize", nil)
+			return
+		}
 	}
 
 	resp := UploadResponse{
@@ -303,6 +380,27 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// softDeleteStagedBlob best-effort removes a staged upload blob whose
+// commit must be unwound — the §7.4 line 443 STORAGE_QUOTA_EXCEEDED
+// abort path (F-7.4.14) and the §7.4 line 463 finalize-race abort
+// path (F-7.4.16) both call into it. Soft-delete is preferred over a
+// hard delete so the §12.5 lifecycle (catalog row remains for the
+// retention window) is uniform; the bytes themselves are dropped
+// immediately by the Tombstoner backends. Backends that do not
+// implement Tombstoner (or a v1 minimal-gateway with no production
+// blob store) leave the blob in place to age out on its TTL, which is
+// the pre-F-7.4.14 behavior.
+func (s *Server) softDeleteStagedBlob(uri blobstore.URI, ref string) {
+	if s.blobs == nil {
+		return
+	}
+	if tomb, ok := s.blobs.(blobstore.Tombstoner); ok {
+		_ = tomb.SoftDelete(uri)
+		return
+	}
+	_ = ref
 }
 
 // acquireUploadSlot reserves a slot in the §4.1 Upload Handler

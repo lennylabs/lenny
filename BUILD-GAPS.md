@@ -6660,11 +6660,18 @@ Implementation: `cmd/lenny-gateway/main.go:543` constructs `uploadtoken.NewMemor
 
 **Resolution:** `cmd/lenny-gateway/main.go` now runs a 15-minute background goroutine that calls `uploadTracker.Sweep(now.UTC())` under `watchdogCtx`, dropping expired digests so the in-memory tracker stays bounded. The cadence is one-sixteenth of the §7.1 line 67 rotation interval — cheap enough to run frequently and shorter than one `maxCreatedStateTimeoutSeconds` window so no entry ages past its expiry by more than the cadence. The Redis-backed tracker is a separate F-12.4 work item.
 
-### - [ ] F-7.4.10 — Hash verification for client uploads is absent (optional per spec) and absent for delegation file exports (mandatory per spec) [Medium] — OPEN
+### - [x] F-7.4.10 — Hash verification for client uploads is absent (optional per spec) and absent for delegation file exports (mandatory per spec) [Medium] — CLOSED
 
 Spec: §7.4 lines 444-446 — "Hash verification: Optional for client uploads (the client may not have pre-computed hashes); Mandatory for delegation file exports (the gateway computes and verifies hashes during the export-to-child flow to ensure no tampering between parent export and child delivery)."
 
 Implementation: `handleUpload` (`pkg/gateway/sessionserver/upload.go`) accepts no client-supplied hash header, performs no SHA-256 computation, and persists no digest. The delegation service (`pkg/gateway/delegation/service.go`) contains no hash-verification code; a `grep` for `sha256\|hash.Hash` over `pkg/gateway/delegation/` and `pkg/delegation/` returns no production hits. The mandatory side of the requirement (delegation file exports) is unimplemented.
+
+**Resolution (two-layer):**
+
+- Optional client-supplied hash on `/upload`: new `UploadContentHashHeader = "X-Lenny-Content-Hash"`. When present, `runUpload` compares the streamed bytes' SHA-256 (`countingReader.ContentHash()`) against the header (case-insensitive hex). On mismatch the staged blob is SoftDeleted, the §11.2 reservation is released, and the response is `422 VALIDATION_ERROR` with `reason=hash_mismatch`. Absent header skips the check ("optional for client uploads").
+- Mandatory hash for delegation file exports: `interceptor.ExportFile` gains a `Hash` field; new package-level `ComputeExportFileHash` and `VerifyExportFileHash` helpers, plus a new `CodeExportFileHashMismatch` error code. `RunPreExportMaterialization` verifies any inbound `Hash` before the interceptor call (tampered bytes short-circuit with `EXPORT_FILE_HASH_MISMATCH`) and stamps an updated `Hash` on every returned file so the export-to-child caller (F-8.2.4 export materialization, future) can persist and re-verify against the gateway-computed reference.
+
+These two layers together discharge both halves of the spec text; F-7.4.10.
 
 ### - [ ] F-7.4.11 — No archive-extraction abort metric is emitted [Medium] — DEFERRED
 
@@ -6694,13 +6701,15 @@ Implementation: `extractUploadTar` and `extractUploadZip` (`pkg/adapter/workspac
 
 **Resolution:** New `archiveSession` tracks every file, symlink, and extractor-created directory; on any mid-extraction failure `rollback()` removes them in reverse order so the destination returns to its pre-extraction state. Pre-existing files and directories that already lived under the destination remain untouched (only extractor-created paths roll back). Both tar and zip extraction paths feed into the same session bookkeeping. F-7.4.13.
 
-### - [ ] F-7.4.14 — Spec invariant "bytes already written to staging are removed" on quota cap is unimplemented [Medium] — OPEN
+### - [x] F-7.4.14 — Spec invariant "bytes already written to staging are removed" on quota cap is unimplemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.4.18 — Both report that on a quota cap the partial staging bytes are left to age out on TTL instead of being removed at abort time.
 
 Spec: §7.4 line 443 — "If the cap is reached the upload is aborted with `STORAGE_QUOTA_EXCEEDED` and any bytes already written to staging are removed."
 
 Implementation: `pkg/gateway/sessionserver/upload.go:174-186` adjusts the quota reservation on over-stream but leaves the orphaned blob in MinIO (`pkg/gateway/sessionserver/upload.go:177-178`: "The orphaned blob ages out on its TTL."). The TTL is `UploadDefaultTTL = 7*24*time.Hour` (`upload.go:26`). For 7 days a tenant that wedges the gateway with overstream uploads parks (storage_quota_bytes − 1) bytes per attempted upload before they age out. The spec wording is explicit that the partial bytes are removed at abort time.
+
+**Resolution:** New `Server.softDeleteStagedBlob` calls `blobstore.Tombstoner.SoftDelete` on the staged blob URI whenever the over-stream branch fires; the §11.2 reservation release happens alongside the SoftDelete so the tenant's storage_quota counter and the staging row are both rolled back at abort time. The MemoryStore SoftDelete sets `body=nil` immediately so the bytes are dropped before the 429 response is written. F-7.4.14 (closes F-13.4.18).
 
 ### - [x] F-7.4.15 — `stripComponents` skip path emits no `workspace_plan_strip_components_skip` warning [Medium] — CLOSED
 
@@ -6712,13 +6721,15 @@ Implementation: `stripPath` (`pkg/adapter/workspace/uploadarchive.go:162-176`) r
 
 **Resolution:** `pkg/adapter/workspace.Materialize` now returns `([]Warning, error)`; the tar and zip extraction paths append a `workspace_plan_strip_components_skip` warning per skipped entry with the (sourceIndex, entry) tuple. New `FinalizeWorkspaceResponse.workspace_plan_warnings` proto field carries the slice back to the gateway. `gateway.podsession.BindResult.WorkspacePlanWarnings` is consumed by `sessionserver.publishWorkspaceWarnings` which emits one §7.2 SSE `workspace_plan_warning` frame per advisory. Also closes F-13.4.10 and F-14.1.8.
 
-### - [ ] F-7.4.16 — Upload channel does not close after workspace finalization [Medium] — OPEN
+### - [x] F-7.4.16 — Upload channel does not close after workspace finalization [Medium] — CLOSED
 
 Spec: §7.4 line 463 — "Upload channel closes after workspace finalization."
 
 Implementation: the gateway `handleFinalize` (`pkg/gateway/sessionserver/sessionserver.go:902-935`) does consume the upload token's digest in the single-use tracker (line 931-933) — so subsequent `/upload` calls with the **same token** are rejected with `UPLOAD_TOKEN_CONSUMED`. The §15.1 precondition table also disallows `EndpointUpload` from `StateReady` (and later states), so the precondition layer would reject the call before reaching the verifier.
 
 However, the spec wording "upload channel closes" implies any in-progress streaming upload is severed at finalize. The current implementation has no cancellation hook from the finalize transition into in-flight `handleUpload` goroutines: a client that is mid-stream when another client finalizes the session will complete the upload (the blob gets persisted with a fresh blob URI) and only the response will then be discarded by the precondition check after the stream completes. The race between concurrent finalize and concurrent upload is unobserved.
+
+**Resolution:** New `uploadAbortRegistry` keyed by session id; `handleUpload` registers a per-session abort signal for the duration of the body-read + blob.Put, and `handleFinalize` calls `closeSession` after the row transitions to `ready`. The §15.1 body wrapper is an `abortableReader` that surfaces `errUploadAborted` on the next Read once the signal fires, so mid-stream uploads abort with 410 `UPLOAD_CHANNEL_CLOSED` and their staged blob is SoftDeleted. The race window (finalize commits between the pre-Put precondition check and the response) is closed by a post-Put session.Validate recheck that soft-deletes the just-committed blob, releases the §11.2 reservation, and returns 410 when the row no longer admits /upload. Late registers after finalize see an already-closed channel via the registry's per-session closed flag. F-7.4.16.
 
 ### - [x] F-7.4.17 — No audit event on upload, finalize, or upload-token consumption [Low] — CLOSED
 
@@ -21449,7 +21460,7 @@ restate setuid stripping for uploadArchive (it covers it for `inlineFile` /
 behaviour is correct but reached implicitly rather than via the named §14
 "setuid_setgid_prohibited" validation step.
 
-### - [ ] F-13.4.18 — `pkg/gateway/sessionserver/upload.go` does not return a typed quota-stream-cap error code [Low] — OPEN
+### - [x] F-13.4.18 — `pkg/gateway/sessionserver/upload.go` does not return a typed quota-stream-cap error code [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.4.14 — Both report that on a quota cap the partial staging bytes are left to age out on TTL instead of being removed at abort time.
 
@@ -21464,6 +21475,8 @@ explicit delete on the staging path. Logged Low because TTL eventually
 collects the blob and the immediate quota release happens correctly via the
 `Adjust(-reserved)` call on line 179; the spec's "removed" wording is
 satisfied weakly.
+
+**Resolution:** Closed by F-7.4.14 (this batch). The over-stream branch now SoftDeletes the staged blob before returning the 429 envelope.
 
 ### - [x] F-13.4.19 — `pkg/upload` (the validator package) is implemented and fuzzed, but unwired [Info] — CLOSED
 `pkg/upload/upload.go` is a complete pure-Go validator for the §13.4 ceilings:

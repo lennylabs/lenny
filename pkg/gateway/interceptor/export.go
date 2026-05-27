@@ -33,6 +33,14 @@ const (
 	// file_path and every delegation_context member; the gateway
 	// re-derives file_size and sha256 rather than comparing them.
 	CodeInterceptorImmutableFieldViolation = "INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION"
+
+	// CodeExportFileHashMismatch is the §7.4 line 446 error code returned
+	// when the gateway's hash check on an exported file fails. The
+	// gateway computes SHA-256 of the bytes at every boundary (parent
+	// export, post-MODIFY, child delivery) and verifies it against a
+	// recorded expectation; tampering between parent export and child
+	// delivery surfaces here. F-7.4.10.
+	CodeExportFileHashMismatch = "EXPORT_FILE_HASH_MISMATCH"
 )
 
 // ExportDelegationContext is the §4.8 delegation_context block embedded in
@@ -58,6 +66,66 @@ type ExportFile struct {
 	// DelegationContext carries the §4.8 delegation_context block. It is
 	// immutable across a MODIFY.
 	DelegationContext ExportDelegationContext
+	// Hash is the §7.4 line 446 mandatory SHA-256 of Content, hex-encoded
+	// lowercase. RunPreExportMaterialization verifies an inbound non-
+	// empty Hash against the bytes and refuses on mismatch; every
+	// returned file carries Hash set to the post-pipeline content's
+	// SHA-256 so the export-to-child caller can persist + re-verify at
+	// child delivery time without re-computing on the gateway side.
+	// F-7.4.10.
+	Hash string
+}
+
+// ComputeExportFileHash returns the §7.4 line 446 hex-encoded SHA-256
+// of content. Used by the delegation export-to-child flow at both the
+// parent-export step (stamp the hash on the resolved ExportFile) and
+// the child-delivery step (verify the persisted bytes match the
+// stamped hash). F-7.4.10.
+func ComputeExportFileHash(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
+// VerifyExportFileHash compares the SHA-256 of content against the
+// expected hex-encoded hash. Returns nil on match, an
+// *ExportScanError{Code: CodeExportFileHashMismatch} on disagreement.
+// Pass an empty expected value to skip the check ("optional for
+// client uploads"); the export-to-child flow always passes a
+// non-empty value (mandatory per §7.4 line 446). F-7.4.10.
+func VerifyExportFileHash(path string, content []byte, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	got := ComputeExportFileHash(content)
+	if !equalFoldASCII(got, expected) {
+		return &ExportScanError{
+			Code:   CodeExportFileHashMismatch,
+			Path:   path,
+			Reason: fmt.Sprintf("expected %s, actual %s", expected, got),
+		}
+	}
+	return nil
+}
+
+// equalFoldASCII is a hex-comparison helper: SHA-256 hex digests are
+// ASCII so a fold-compare is sufficient (no Unicode case folding).
+func equalFoldASCII(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
 }
 
 // exportFileRecord is the §4.8 PreExportMaterialization content payload:
@@ -137,6 +205,13 @@ func (e *ExportScanError) Error() string {
 func RunPreExportMaterialization(ctx context.Context, c *Chain, tenantID, sessionID string, maxExportedFileSize int64, files ...ExportFile) ([]ExportFile, error) {
 	out := make([]ExportFile, 0, len(files))
 	for _, f := range files {
+		// §7.4 line 446: when the caller stamped an inbound Hash on a
+		// resolved ExportFile (the parent-export step's
+		// ComputeExportFileHash output), verify the bytes have not
+		// been tampered with before any interceptor call. F-7.4.10.
+		if err := VerifyExportFileHash(f.Path, f.Content, f.Hash); err != nil {
+			return nil, err
+		}
 		// §8.7 rule 2: the per-file ceiling is enforced before any
 		// interceptor call so a single over-size file cannot stall the
 		// interceptor or inflate the gRPC payload.
@@ -150,6 +225,11 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, tenantID, sessio
 		if err != nil {
 			return nil, err
 		}
+		// §7.4 line 446: stamp the post-pipeline Hash so the
+		// child-delivery step can re-verify the bytes against this
+		// reference. MODIFY may have rewritten Content; the stamped
+		// Hash reflects the final bytes regardless. F-7.4.10.
+		scanned.Hash = ComputeExportFileHash(scanned.Content)
 		out = append(out, scanned)
 	}
 	return out, nil

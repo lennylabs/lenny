@@ -506,6 +506,19 @@ func (s *MemoryStore) StatIncludingTombstones(u URI) (BlobInfo, BlobState, error
 	return b.info, BlobStateActive, nil
 }
 
+// Keys returns every URI the store currently holds, including
+// tombstoned rows. The slice is unordered. Used by tests to assert
+// per-session GC and §7.4 staging-rollback invariants.
+func (s *MemoryStore) Keys() []URI {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]URI, 0, len(s.blobs))
+	for _, b := range s.blobs {
+		out = append(out, b.info.URI)
+	}
+	return out
+}
+
 // Tombstoned reports whether the blob is currently soft-deleted.
 // Used by tests to assert the SoftDelete state machine.
 func (s *MemoryStore) Tombstoned(u URI) bool {
