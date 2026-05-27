@@ -1214,8 +1214,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// state-machine paths). The validated plan is stored on the row so
 	// the start handler can materialize it onto the claimed pod and
 	// GET /v1/sessions/{id} can return it per §15.1.
-	_, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
+	parsedPlan, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
 	if !planOK {
+		return
+	}
+	// spec: §7.5 line 477 / §5.1 line 76 — runtime setupCommandPolicy.maxCommands
+	// is a per-session cap the gateway enforces before pod claim so a
+	// buggy or malicious client cannot DoS the setup phase. F-7.5.5.
+	if !s.enforceSetupCommandPolicy(w, r, req.RuntimeRef, parsedPlan) {
 		return
 	}
 

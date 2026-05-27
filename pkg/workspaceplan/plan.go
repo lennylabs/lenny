@@ -301,6 +301,23 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 	var warnings []Warning
 	var subErrs []SubErr
 
+	// spec: §14 line 99 — per-command timeoutSeconds is an unsigned
+	// duration; a negative value is meaningless and silently degrades to
+	// the "no per-command bound" path (F-7.5.6 fix) when downstream code
+	// gates on `> 0`. Reject it explicitly so a typo or sign bug surfaces
+	// at the §14 ingress instead of through observable warmpool behaviour.
+	// F-7.5.14.
+	for i, sc := range root.SetupCommands {
+		if sc.TimeoutSeconds < 0 {
+			subErrs = append(subErrs, SubErr{
+				SourceIndex: i,
+				Field:       fmt.Sprintf("setupCommands[%d].timeoutSeconds", i),
+				Reason:      ReasonNegativeDepth,
+				Message:     "timeoutSeconds must be >= 0",
+			})
+		}
+	}
+
 	for i, rawSrc := range root.Sources {
 		src, warn, err := parseSource(rawSrc, i, stored)
 		if err != nil {

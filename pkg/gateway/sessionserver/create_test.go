@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -770,5 +771,120 @@ func TestCreateAdmissionGateDisabledWhenRegistriesUnwired_spec_11_1(t *testing.T
 		authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 without env registries wired; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateRejectsSetupCommandsOverMaxCommands covers F-7.5.5 / §7.5
+// line 477 / §5.1 line 76: the gateway rejects a session whose
+// workspacePlan.setupCommands exceeds the runtime
+// setupCommandPolicy.maxCommands cap before any row is persisted or any
+// pod is claimed. The §15.1 envelope is WORKSPACE_PLAN_INVALID with a
+// structured details payload (`field`, `reason`, `maxCommands`, `count`)
+// so an operator can distinguish this rejection from setuid / path
+// rejections without parsing the human message.
+func TestCreateRejectsSetupCommandsOverMaxCommands(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "capped",
+		Type: runtimestore.TypeAgent,
+		SetupCommandPolicy: &runtimestore.SetupCommandPolicy{
+			Mode:        runtimestore.SetupCommandModeAllowlist,
+			MaxCommands: 2,
+		},
+	})
+	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+
+	plan := json.RawMessage(`{
+		"schemaVersion": 1,
+		"sources": [],
+		"setupCommands": [
+			{"cmd": "echo a"},
+			{"cmd": "echo b"},
+			{"cmd": "echo c"}
+		]
+	}`)
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "capped", WorkspacePlan: plan,
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Code != "WORKSPACE_PLAN_INVALID" {
+		t.Errorf("error code: got %q, want WORKSPACE_PLAN_INVALID", env.Error.Code)
+	}
+	if env.Error.Details["reason"] != "setup_commands_max_exceeded" {
+		t.Errorf("details.reason = %v, want setup_commands_max_exceeded", env.Error.Details["reason"])
+	}
+	if got, _ := env.Error.Details["maxCommands"].(float64); int(got) != 2 {
+		t.Errorf("details.maxCommands = %v, want 2", env.Error.Details["maxCommands"])
+	}
+	if got, _ := env.Error.Details["count"].(float64); int(got) != 3 {
+		t.Errorf("details.count = %v, want 3", env.Error.Details["count"])
+	}
+}
+
+// TestCreateAdmitsSetupCommandsWithinMaxCommands is the F-7.5.5
+// regression guard: a request whose setupCommands count is at the cap
+// must succeed so the cap is a ceiling, not a strict less-than gate.
+func TestCreateAdmitsSetupCommandsWithinMaxCommands(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "capped",
+		Type: runtimestore.TypeAgent,
+		SetupCommandPolicy: &runtimestore.SetupCommandPolicy{
+			Mode:        runtimestore.SetupCommandModeAllowlist,
+			MaxCommands: 2,
+		},
+	})
+	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+
+	plan := json.RawMessage(`{
+		"schemaVersion": 1,
+		"sources": [],
+		"setupCommands": [{"cmd": "echo a"}, {"cmd": "echo b"}]
+	}`)
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "capped", WorkspacePlan: plan,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201 (at-cap); body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateAdmitsSetupCommandsWhenPolicyUnset is the F-7.5.5 regression
+// guard for the no-policy / no-cap case: a runtime that declares no
+// setupCommandPolicy (or a policy with maxCommands == 0) admits any
+// number of setup commands, preserving the pre-F-7.5.5 behaviour.
+func TestCreateAdmitsSetupCommandsWhenPolicyUnset(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "uncapped", Type: runtimestore.TypeAgent,
+	})
+	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+
+	plan := json.RawMessage(`{
+		"schemaVersion": 1,
+		"sources": [],
+		"setupCommands": [
+			{"cmd": "echo a"}, {"cmd": "echo b"}, {"cmd": "echo c"}, {"cmd": "echo d"}
+		]
+	}`)
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "uncapped", WorkspacePlan: plan,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201 with no policy; body=%s", rr.Code, rr.Body.String())
 	}
 }

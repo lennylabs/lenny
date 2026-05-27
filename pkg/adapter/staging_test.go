@@ -3,7 +3,9 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,16 @@ import (
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
+
+// captureLogOutput redirects the stdlib logger to a buffer for the
+// duration of a test so a warning-line emit can be asserted.
+func captureLogOutput(t *testing.T) (*bytes.Buffer, func()) {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := log.Writer()
+	log.SetOutput(buf)
+	return buf, func() { log.SetOutput(prev) }
+}
 
 func runSetupReq(sessionID string, policy *adapterv1.SetupPolicy, cmds ...string) *adapterv1.RunSetupRequest {
 	req := &adapterv1.RunSetupRequest{
@@ -156,12 +168,25 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 	}
 }
 
+// spec: §5.1 lines 89-91 — onTimeout `warn` proceeds past the aggregate
+// cap rather than failing pod startup, and the §7.5 observability
+// contract requires a structured signal (operator-visible warning) so
+// "setup succeeded" and "setup truncated under warn" do not look
+// identical. The RPC reports success; the adapter logs a
+// `setup_aggregate_timeout_warn` line carrying the session id, cap, and
+// command count. F-7.5.13.
 func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
-	// §5.1: a setupPolicy with on_timeout "warn" proceeds past the cap
-	// rather than failing pod startup.
 	srv := &Server{WorkspaceRoot: t.TempDir()}
 	policy := &adapterv1.SetupPolicy{TimeoutSeconds: 1, OnTimeout: "warn"}
+
+	logBuf, restore := captureLogOutput(t)
+	defer restore()
+
 	if _, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", policy, "sleep 30")); err != nil {
 		t.Errorf("RunSetup over the cap with the warn disposition = %v, want nil", err)
+	}
+	got := logBuf.String()
+	if !strings.Contains(got, "setup_aggregate_timeout_warn") || !strings.Contains(got, "session=sess-1") {
+		t.Errorf("warn disposition should emit the setup_aggregate_timeout_warn observability line; got log: %q", got)
 	}
 }

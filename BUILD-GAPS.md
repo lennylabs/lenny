@@ -6881,13 +6881,15 @@ Evidence:
 
 Effect: the operator can see at most one error string in a gateway log line, with command stdout truncated into a Go error. The §7.5 "Fully logged" requirement is unmet. Auditors cannot reconstruct what a setup command did. The "rejection reason is included in the session's setup output" path has no carrier — there is no setup-output blob anywhere in the data model.
 
-### - [ ] F-7.5.5 — `setupCommandPolicy.maxCommands` cap is not enforced (Medium, security) [Medium] — OPEN
+### - [x] F-7.5.5 — `setupCommandPolicy.maxCommands` cap is not enforced (Medium, security) [Medium] — CLOSED
 
 Spec line 477: "Max commands per session enforced (`setupCommandPolicy.maxCommands`)."
 
 Evidence: `grep -rn "maxCommands\|MaxCommands\|len.*SetupCommand.*>" pkg cmd` returns only `pkg/workspaceplan/refresolve.go:77` which checks `len(plan.SetupCommands) > 0` (presence, not max). The `WorkspacePlan` parser at `pkg/workspaceplan/plan.go:128-131` does not cap the slice length. No `Plan.SetupCommands` length check happens in `pkg/gateway/sessionserver/start.go` or `pkg/gateway/podsession/`.
 
 Effect: the worst-case input is the only bound — Go's slice limit. A malicious client (or a buggy CI integration) can DoS the setup phase by submitting thousands of trivial commands, each of which the adapter dutifully forks under `/bin/sh -c`. Combined with F4 (no aggregate output capture) the pod can spend hours running commands the operator cannot inspect.
+
+**Resolution:** New `Server.enforceSetupCommandPolicy` resolves the §5.1 runtime, reads its `setupCommandPolicy.maxCommands`, and rejects a `len(plan.SetupCommands) > maxCommands` request before any row is persisted or pod claimed. Both `POST /v1/sessions` (handleCreate) and `POST /v1/sessions/start` (handleCreateAndStart) invoke it after the §14 plan parse. Rejection writes `WORKSPACE_PLAN_INVALID` with `details.reason = "setup_commands_max_exceeded"` plus `maxCommands` and `count` so operators can correlate the cap hit without parsing the human message. A nil/zero policy preserves the pre-fix admit-everything path.
 
 ### - [x] F-7.5.6 — Per-command default timeout deviates from spec when `timeoutSeconds` is omitted (Medium) [Medium] — CLOSED
 
@@ -6974,7 +6976,7 @@ A runtime that omits `setupPolicy.timeoutSeconds` (or that has no policy at all 
 
 Effect: a runtime that declares 50 setup commands without per-command timeouts and without a setupPolicy can pin a warm pod for 50 × 5 minutes = ~4 hours, blowing past §6.4's intended 600s `maxFinalizingTimeoutSeconds`. Without F10 (CRD modelling) and F1 (policy validation) there is no input path that enforces the §6.4 invariant.
 
-### - [ ] F-7.5.13 — Aggregate-cap "warn" disposition silently swallows incomplete setup (Low) [Medium] — OPEN
+### - [x] F-7.5.13 — Aggregate-cap "warn" disposition silently swallows incomplete setup (Low) [Medium] — CLOSED
 
 Spec §5.1 lines 89-91 / 259-261 define `setupPolicy.onTimeout: warn` as "Gateway logs a warning, proceeds to runtime start" (paraphrasing the spec text and the implementation comment). The current code returns nil and proceeds.
 
@@ -6992,9 +6994,13 @@ There is no log line, no audit row, no metric increment, no annotation on the se
 
 Effect: a runtime configured `onTimeout: warn` produces no operationally observable signal when setup is incomplete. Sessions where critical setup commands were never executed look identical to sessions where setup succeeded. The §5.1 disposition is implemented but its observability contract is unmet.
 
-### - [ ] F-7.5.14 — Per-command `timeoutSeconds` is `int` in the proto but `int32` on the wire — and the parser accepts negative values (Info) [Medium] — OPEN
+**Resolution:** `workspace.RunSetup` now returns the `ErrSetupAggregateTimeoutWarn` sentinel (wrapped with cap + command-index) when the warn disposition fires, rather than silently returning nil. The adapter's `staging.go` `RunSetup` handler unwraps via `errors.Is`, emits a structured `setup_aggregate_timeout_warn` log line (carrying session id, cap_seconds, cmd_count, and the embedded diagnostic), then reports RPC success per §5.1. Persisting an audit row / session-row annotation requires F-7.5.4's setup-output carrier and is out of scope here; the operator-visible signal closes the §5.1 observability gap.
+
+### - [x] F-7.5.14 — Per-command `timeoutSeconds` is `int` in the proto but `int32` on the wire — and the parser accepts negative values (Info) [Medium] — CLOSED
 
 `pkg/workspaceplan/plan.go:128-131` `SetupCommand.TimeoutSeconds` is `int`, but `pkg/proto/adapter/v1/lenny-adapter.pb.go:814+` `SetupCommand.TimeoutSeconds` is `int32`. The parser at `pkg/workspaceplan/plan.go` does not validate the value — a negative `timeoutSeconds` would deserialize cleanly, then `pkg/adapter/workspace/setup.go:87-89` `if c.GetTimeoutSeconds() > 0` silently substitutes the 5-minute default. Not a security gap; noted for hygiene. A defensive `if v.TimeoutSeconds < 0 { return ReasonNegativeDepth }`-shaped check would align with the gitClone-depth handling already in the file.
+
+**Resolution:** `workspaceplan.parse` now rejects every `setupCommands[i].timeoutSeconds < 0` with the `ReasonNegativeDepth` sub-error (mirroring the gitClone `depth` handling). A zero or omitted value remains the §14 line 99 "no per-command bound" form and parses cleanly. The §15.1 envelope surfaces as `WORKSPACE_PLAN_INVALID` carrying the structured `subErrors[].reason = "negative_depth"` per source.
 
 ---
 

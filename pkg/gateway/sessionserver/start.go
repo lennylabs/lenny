@@ -252,6 +252,12 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	if !planOK {
 		return
 	}
+	// spec: §7.5 line 477 / §5.1 line 76 — runtime setupCommandPolicy.maxCommands
+	// cap, enforced at the create-and-start ingress for parity with the
+	// two-step create path. F-7.5.5.
+	if !s.enforceSetupCommandPolicy(w, r, req.RuntimeRef, parsedPlan) {
+		return
+	}
 
 	// §4.8 PreRoute: run the interceptor chain over the TaskSpec after
 	// authentication and before runtime selection. A REJECT blocks the
@@ -603,6 +609,57 @@ func (s *Server) writeRefResolveError(w http.ResponseWriter, err error) {
 	}
 	s.writeError(w, http.StatusUnprocessableEntity, "GIT_CLONE_REF_UNRESOLVABLE",
 		"could not resolve a gitClone ref: "+re.Err.Error(), details)
+}
+
+// enforceSetupCommandPolicy runs the §5.1 setupCommandPolicy.maxCommands
+// cap against the client-supplied workspace plan before the row is
+// persisted. The §7.5 line 477 contract names maxCommands as a per-session
+// cap the gateway enforces; without it the worst-case input is Go's slice
+// limit, which lets a buggy or malicious client DoS the setup phase by
+// submitting thousands of trivial commands. The cap is the runtime's
+// effective (base→derived merged) setupCommandPolicy.maxCommands; zero
+// means the runtime declares no cap, and a missing policy block also
+// declares no cap. Allowlist / blocklist prefix enforcement is the
+// companion F-7.5.1 work and lives separately.
+//
+// On a cap violation the helper writes the §15.1 WORKSPACE_PLAN_INVALID
+// envelope with a structured details payload (`field`, `reason`,
+// `maxCommands`, `count`) and returns ok=false; the caller MUST abort.
+// A missing runtime store, an unresolvable runtimeRef, or a runtime
+// without a setupCommandPolicy returns ok=true so deployments that do
+// not declare the policy keep the pre-F-7.5.5 admit-everything behaviour.
+//
+// spec: §5.1 line 76, §7.5 line 477 — F-7.5.5.
+func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Request,
+	runtimeRef string, plan workspaceplan.Plan,
+) bool {
+	if s.runtimes == nil || runtimeRef == "" {
+		return true
+	}
+	rt, err := runtimestore.Resolve(r.Context(), s.runtimes, runtimeRef)
+	if err != nil {
+		// A missing or unresolvable runtime is surfaced by the §7.1
+		// session-creation path's own validation; enforceSetupCommandPolicy
+		// stays out of that error envelope and just admits the request.
+		return true
+	}
+	policy := rt.SetupCommandPolicy
+	if policy == nil || policy.MaxCommands <= 0 {
+		return true
+	}
+	if got := len(plan.SetupCommands); got > policy.MaxCommands {
+		s.writeError(w, http.StatusBadRequest, "WORKSPACE_PLAN_INVALID",
+			fmt.Sprintf("setupCommands count %d exceeds the runtime setupCommandPolicy.maxCommands cap %d",
+				got, policy.MaxCommands),
+			map[string]any{
+				"field":       "setupCommands",
+				"reason":      "setup_commands_max_exceeded",
+				"maxCommands": policy.MaxCommands,
+				"count":       got,
+			})
+		return false
+	}
+	return true
 }
 
 // experimentContextToProto converts a session's stored §10.7

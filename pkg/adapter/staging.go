@@ -4,7 +4,9 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"io"
+	"log"
 	"os"
 
 	"google.golang.org/grpc/codes"
@@ -135,6 +137,19 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 	}
 	if err := workspace.RunSetup(ctx, s.WorkspaceRoot, req.GetSetupCommands(),
 		setupOptionsFromProto(req.GetSetupPolicy(), s.WorkspaceRoot)); err != nil {
+		// spec: §5.1 lines 89-91 — setupPolicy.onTimeout = warn proceeds
+		// to runtime start past the aggregate cap. workspace.RunSetup
+		// returns ErrSetupAggregateTimeoutWarn (wrapped with cap +
+		// command-index) so the warn case is operationally observable
+		// rather than silently swallowed. Log a structured warning line
+		// and report RPC success. F-7.5.13.
+		if errors.Is(err, workspace.ErrSetupAggregateTimeoutWarn) {
+			session := req.GetSessionId().GetValue()
+			cap := req.GetSetupPolicy().GetTimeoutSeconds()
+			log.Printf("lenny-adapter: setup_aggregate_timeout_warn session=%s cap_seconds=%d cmd_count=%d: %v",
+				session, cap, len(req.GetSetupCommands()), err)
+			return &adapterv1.RunSetupResponse{}, nil
+		}
 		return nil, status.Errorf(codes.FailedPrecondition, "run setup commands: %v", err)
 	}
 	return &adapterv1.RunSetupResponse{}, nil

@@ -373,3 +373,41 @@ func TestParseMissingRequiredFieldsForEachVariant(t *testing.T) {
 		})
 	}
 }
+
+// TestParseRejectsNegativeSetupCommandTimeout covers F-7.5.14 / §14 line 99:
+// per-command timeoutSeconds is an unsigned duration. A negative value
+// must be rejected at the §14 ingress rather than silently degrading to
+// the "no per-command bound" path (the downstream `> 0` gate after the
+// F-7.5.6 fix).
+func TestParseRejectsNegativeSetupCommandTimeout(t *testing.T) {
+	body := `{
+		"schemaVersion": 1,
+		"sources": [],
+		"setupCommands": [
+			{"cmd": "echo hi", "timeoutSeconds": -1}
+		]
+	}`
+	_, _, err := parse(t, body)
+	expectErr(t, err, workspaceplan.ReasonNegativeDepth)
+}
+
+// TestParseAcceptsZeroSetupCommandTimeout: a zero or omitted timeoutSeconds
+// is the §14 line 99 "no per-command bound" form and must continue to
+// parse cleanly. Regression guard around the F-7.5.14 negative-check.
+func TestParseAcceptsZeroSetupCommandTimeout(t *testing.T) {
+	body := `{
+		"schemaVersion": 1,
+		"sources": [],
+		"setupCommands": [
+			{"cmd": "echo hi"},
+			{"cmd": "true", "timeoutSeconds": 0}
+		]
+	}`
+	plan, _, err := parse(t, body)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(plan.SetupCommands) != 2 {
+		t.Fatalf("plan.SetupCommands = %d, want 2", len(plan.SetupCommands))
+	}
+}

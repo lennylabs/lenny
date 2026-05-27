@@ -4,6 +4,7 @@ package workspace_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -110,13 +111,16 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 	}
 }
 
+// spec: §5.1 lines 89-91 — onTimeout `warn`: exceeding the aggregate cap
+// proceeds to runtime start. RunSetup signals the warn case by returning
+// ErrSetupAggregateTimeoutWarn (wrapped) so the caller can emit a
+// structured warning before treating the RPC as success. F-7.5.13.
 func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
-	// §5.1 onTimeout `warn`: exceeding the aggregate cap proceeds.
 	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("sleep 30", 60),
 	}, workspace.SetupOptions{AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
-	if err != nil {
-		t.Fatalf("RunSetup under `warn` should proceed past the aggregate cap, got %v", err)
+	if !errors.Is(err, workspace.ErrSetupAggregateTimeoutWarn) {
+		t.Fatalf("RunSetup under `warn` should signal warn via ErrSetupAggregateTimeoutWarn, got %v", err)
 	}
 }
 
@@ -126,8 +130,8 @@ func TestRunSetupAggregateTimeoutStopsLaterCommands(t *testing.T) {
 		cmd("sleep 30", 60),
 		cmd("touch reached.marker", 60),
 	}, workspace.SetupOptions{AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
-	if err != nil {
-		t.Fatalf("RunSetup under `warn`: %v", err)
+	if !errors.Is(err, workspace.ErrSetupAggregateTimeoutWarn) {
+		t.Fatalf("RunSetup under `warn`: want ErrSetupAggregateTimeoutWarn, got %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "reached.marker")); statErr == nil {
 		t.Error("a command after the aggregate cap was reached should not have run")

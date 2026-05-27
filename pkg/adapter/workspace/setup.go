@@ -13,6 +13,17 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
+// ErrSetupAggregateTimeoutWarn is the §5.1 setupPolicy.onTimeout = warn
+// signal: it is returned by RunSetup when the aggregate cap fires under
+// the warn disposition. Callers MUST treat it as a non-fatal warning
+// (the spec phrasing is "Gateway logs a warning, proceeds to runtime
+// start") — the recommended pattern is `errors.Is(err, ErrSetupAggregate
+// TimeoutWarn)` followed by a structured log line and a metric / audit
+// emission, then returning nil to the RPC. Returning it (rather than
+// silently swallowing the warn case) is what gives the §5.1 disposition
+// an operationally observable surface. spec: §5.1 lines 89-91 — F-7.5.13.
+var ErrSetupAggregateTimeoutWarn = errors.New("setup phase exceeded the aggregate cap (warn disposition)")
+
 // SetupOptions carries the §5.1 runtime setupPolicy that bounds the
 // whole setup phase. The zero value applies no aggregate cap, so only
 // the per-command timeouts constrain execution.
@@ -24,7 +35,10 @@ type SetupOptions struct {
 
 	// FailOnAggregateTimeout selects the §5.1 setupPolicy.onTimeout
 	// disposition: true is `fail` (abort pod startup), false is `warn`
-	// (proceed to runtime start despite the unfinished setup phase).
+	// (proceed to runtime start despite the unfinished setup phase). When
+	// false RunSetup returns ErrSetupAggregateTimeoutWarn (non-fatal) on
+	// cap-exceed so the caller can emit the §5.1 warn observability
+	// before unwrapping to RPC success. spec: §5.1 lines 89-91 — F-7.5.13.
 	FailOnAggregateTimeout bool
 
 	// Env, when non-nil, replaces the inherited process environment for
@@ -97,12 +111,17 @@ func RunSetup(ctx context.Context, workdir string, cmds []*adapterv1.SetupComman
 
 // aggregateTimeoutResult applies the §5.1 onTimeout disposition when
 // the setup phase exceeds its aggregate cap before command index i.
+// fail returns a fatal error; warn returns ErrSetupAggregateTimeoutWarn
+// wrapped with the cap + command-index so callers can both detect the
+// warn case (errors.Is) and surface the diagnostic context in their
+// observability emit. spec: §5.1 lines 89-91 — F-7.5.13.
 func aggregateTimeoutResult(opts SetupOptions, i int) error {
 	if opts.FailOnAggregateTimeout {
 		return fmt.Errorf("setup phase exceeded the aggregate cap of %s at command %d",
 			opts.AggregateTimeout, i)
 	}
-	return nil
+	return fmt.Errorf("setup phase exceeded the aggregate cap of %s at command %d: %w",
+		opts.AggregateTimeout, i, ErrSetupAggregateTimeoutWarn)
 }
 
 func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupCommand, opts SetupOptions) error {
