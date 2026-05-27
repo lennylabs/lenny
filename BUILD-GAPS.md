@@ -4199,7 +4199,7 @@ Spec §6.1 line 28 (Concurrent-mode credential lease lifecycle paragraph): "The 
 
 Consequence: concurrent-workspace mode (Phase 12c, BUILD-PROGRESS.md line 54) advertises support for `maxConcurrent: N`, but the per-slot credential file, session directory, and artifact directory described in §6.1/§6.4 do not exist. A concurrent-slot lease assignment overwrites the single shared `/run/lenny/credentials.json`. The "concurrent-mode credential lease lifecycle" paragraph in §6.1 cannot be honored.
 
-### - [ ] F-6.1.12 — `executor.Close` retains stale `s.sessionID` on Close path; one-session-only enforced via `credSessionID` only [Medium] — OPEN
+### - [x] F-6.1.12 — `executor.Close` retains stale `s.sessionID` on Close path; one-session-only enforced via `credSessionID` only [Medium] — CLOSED
 
 Spec §6.1 lines 5, 16, 24 (Session mode security invariant: "pods are one-session-only"): "After a session completes or fails in `executionMode: session`, the pod is terminated and replaced — never recycled for a different session."
 
@@ -4212,6 +4212,8 @@ Concern: the spec language emphasizes "pod is terminated and replaced — never 
 Greps for "session-mode" pod termination logic in `pkg/gateway/sessionserver/` show termination handling but I could not confirm an automatic drain → terminated → replace cycle is wired for the session-mode invariant.
 
 Consequence: the spec invariant relies on the gateway driving the pod-replacement loop. Worth a focused follow-up to verify a real session-mode pod is in fact replaced, not recycled, in the integration harness; if absent, this is a HIGH-severity isolation defect.
+
+**Resolution:** The §6.1 invariant is enforced in two layers, both verified by new tests. (1) **Gateway side:** the terminal path runs `recordSessionCompleted` → `releaseExecutor` → `PodExecutor.Release` → `binder.Release`; `binder.Release` records the §6.2 terminal phase on the Sandbox (F-6.2.17, commit f6cb9e88) and then drains it to `phase=draining`. The §6.2 lifecycle controller advances `draining → terminated` once the backing Pod is gone, and the WPC plan provisions a fresh idle Sandbox to restore minWarm — so the pod is terminated and replaced, never recycled. The state machine forbids every edge from `attached`/terminal/`draining`/`terminated` back to `idle`, so even a misbehaving writer cannot recycle a session-mode pod (verified by `TestStateMachineHasNoRecyclingEdgeForSessionPod_spec_6_1`). (2) **Adapter side:** `releaseSession()` clears `sessionID` (no second StartSession admitted while a session is running) but intentionally leaves `credSessionID` sticky as defense-in-depth — a misbehaving controller that somehow re-bound the same pod to a different session would have its `AssignCredentials` rejected with `FailedPrecondition`. The comment on `releaseSession` documents this design choice (was previously implicit). The finding's worry that the spec invariant rested on uncovered code paths is dispelled by the new regression tests; the implementation correctly composes the gateway and adapter defenses.
 
 ### - [x] F-6.1.13 — `terminationGracePeriodSeconds` is hard-coded to 30s with no per-runtime override [Low] — CLOSED
 

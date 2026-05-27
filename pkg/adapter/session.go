@@ -193,6 +193,16 @@ func (s *Server) claimSession(sessionID string) error {
 
 // releaseSession returns the pod to the idle state and stops the
 // session's platform MCP server, if one was started.
+//
+// credSessionID is INTENTIONALLY left set: the §6.1 lines 5/16/24
+// invariant ("After a session completes or fails in `executionMode:
+// session`, the pod is terminated and replaced — never recycled for a
+// different session") is primarily enforced by the gateway-side
+// teardown loop (binder.Release → drain → terminated → replaced); the
+// sticky credSessionID is the adapter-side defense-in-depth that
+// rejects an AssignCredentials for a different session if a pod
+// somehow survives termination. Clearing it here would weaken that
+// backstop. F-6.1.12.
 func (s *Server) releaseSession() {
 	s.mu.Lock()
 	s.sessionID = ""
