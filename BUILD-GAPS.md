@@ -6267,13 +6267,15 @@ Cross-cutting from the same section: §7.2 `session.resumed(resumeMode, workspac
 
 ### Findings
 
-### - [ ] F-7.3.1 — `retryPolicy` field is not on `CreateSession` (High) [Medium] — OPEN
+### - [x] F-7.3.1 — `retryPolicy` field is not on `CreateSession` (High) [Medium] — CLOSED
 
 Spec line 377–393: `CreateSession(runtime, pool, retryPolicy, metadata)` accepts a per-session `retryPolicy` with `mode`, `maxRetries`, `retryableFailures`, `nonRetryableFailures`, `maxSessionAgeSeconds`, `maxResumeWindowSeconds`.
 
 Evidence: `pkg/gateway/sessionserver/sessionserver.go:491–510` defines `CreateSessionRequest` with `RuntimeRef`, `UserID`, `WorkspacePlan`, `Environment`, `IsolationProfile` only. No `retryPolicy`. `start.go:22–31` `CreateAndStartRequest` matches. `pkg/gateway/sessionstore/sessionstore.go:28–137` `Session` row has no retry-policy fields. `pkg/gateway/openapi/openapi.json` has no `RetryPolicy` schema.
 
 Effect: clients cannot configure retry behaviour at all; deployer caps cannot be honoured because there is no input to clamp; the §7.3 example JSON is unreachable.
+
+**Resolution (5ff6a6d5):** New `pkg/api/v1/session.RetryPolicy` carries the closed mode enum + numeric caps + failure-class advisory lists; `ValidateRetryPolicy` rejects negative/unknown values at the gateway decode boundary, `ClampRetryPolicy(p, caps)` applies the deployer caps. `CreateSessionRequest.RetryPolicy` + `SessionResponse.RetryPolicy` plus migration `0087_sessions_retry_policy` (JSONB) round-trip the effective policy through pgstore. `cmd/lenny-gateway/main.go` wires the deployer caps from `--retry-max-retries`, `watchdog.DefaultMaxSessionAgeSeconds`, and `watchdog.DefaultMaxAwaitingClientActionSeconds`. OpenAPI gains the `RetryPolicy` schema; the §7.3 example JSON is now reachable.
 
 ### - [ ] F-7.3.2 — `recovery_generation` is unimplemented (High) [Medium] — OPEN
 
@@ -6321,13 +6323,15 @@ Evidence: `pkg/gateway/watchdog/watchdog.go:53–60` defines `DefaultMaxCreatedS
 
 Effect: a session that somehow reached `resume_pending` would sit there until the maxSessionAge cap (default 7200s) — eight times the spec's 900s default — before being swept to `expired`. The intended `resume_pending → awaiting_client_action` self-recovery edge never fires.
 
-### - [ ] F-7.3.7 — `retryCount` is not tracked (High) [Medium] — OPEN
+### - [x] F-7.3.7 — `retryCount` is not tracked (High) [Medium] — CLOSED
 
 Spec line 403: "If retryable and `retryCount < maxRetries`"; line 411: "If retries exhausted → state becomes `awaiting_client_action`."
 
 Evidence: `grep -rn "retryCount\|retry_count" pkg/gateway/sessionserver pkg/gateway/sessionstore pkg/api/v1/session` returns zero hits in the session domain (only audit-OCSF retries exist, `pkg/gateway/auditstore/translation.go:67`). The `Session` row has no counter; no increment in `handleResume`.
 
 Effect: the platform cannot decide when retries are exhausted; the `auto_then_client` mode is unimplementable; `awaiting_client_action` can only be reached by manually seeding the row.
+
+**Resolution:** Closed by prior work (migration `0055_session_retry_policy_resume`): `sessions.retry_count BIGINT NOT NULL DEFAULT 0 CHECK (retry_count >= 0)` is round-tripped through `sessionstore.Session.RetryCount`, surfaced on `SessionResponse.RetryCount`, and incremented on every `bumpRecoveryGeneration` (the v1 retry path). The remaining "auto_then_client mode is unimplementable" sub-claim is gated on F-7.3.4 (automatic transition into resume_pending), tracked separately.
 
 ### - [ ] F-7.3.8 — `POST /v1/sessions/{id}/resume` short-circuits the `resume_pending → resuming → running` chain (Medium) [Medium] — OPEN
 
@@ -6341,7 +6345,7 @@ Effect: the visible-vs-internal state distinction §7.3 documents is collapsed t
 
 **Verified duplicate of F-4.4.11** — closed in commit 870128f. The event is now published from `handleResume` in `pkg/gateway/sessionserver/start.go` for every successful resume, including the cold-start branch (no snapshot, plan-rebuilt) covered by TestResumeEmitsResumedEvenWithoutSnapshot.
 
-### - [ ] F-7.3.10 — Retry/resume metrics are catalogued but never emitted (High) [Medium] — OPEN
+### - [x] F-7.3.10 — Retry/resume metrics are catalogued but never emitted (High) [Medium] — CLOSED
 
 Spec line 76–77 of `pkg/observability/metrics/catalog.go`: `lenny_session_retry_total` and `lenny_session_resume_attempts_total` are declared. §16.1 mandates them.
 
@@ -6350,6 +6354,8 @@ Evidence: `grep -rn "session_retry_total\|session_resume_attempts"` across `pkg/
 The runbook (`docs/runbooks/pod-kill-during-session.md:65`) instructs operators to read `lenny_session_resume_after_pod_kill_total` which is not in the catalog or any source file.
 
 Effect: §16.5 alerts that depend on these counters cannot fire; SLO dashboards rendering "resume success rate" have no input.
+
+**Resolution (da51a9e6):** `gatewaymetrics.Metrics` now registers `lenny_session_retry_total{failure_class}` and `lenny_session_resume_attempts_total{pool, outcome}` with `IncSessionRetry` / `IncSessionResumeAttempt` accessors. `sessionserver.bumpRecoveryGeneration` fires the retry counter on every successful pod recovery; `sessionserver.handleResume` fires the resume-attempts counter on both the success and the failure branches. Wired through `Options.IncSessionRetry` / `Options.IncSessionResumeAttempt` from `cmd/lenny-gateway/main.go`. The runbook reference to the fictitious `lenny_session_resume_after_pod_kill_total` was fixed in F-7.3.17.
 
 ### - [ ] F-7.3.11 — `cascadeOnFailure` not applied on `awaiting_client_action → expired` (High) [Medium] — OPEN
 
@@ -6411,11 +6417,13 @@ Effect: the runbook references a non-existent metric.
 
 **Resolution:** Runbook now references the spec-named `lenny_session_resume_attempts_total{pool=<pool>, outcome="success"}` counter (§16.1) instead of the fictitious `lenny_session_resume_after_pod_kill_total`. The instrumentation of the spec-named counter remains tracked under F-7.3.10.
 
-### - [ ] F-7.3.18 — No audit emission on resume / awaiting-action / retry (Medium) [Medium] — OPEN
+### - [x] F-7.3.18 — No audit emission on resume / awaiting-action / retry (Medium) [Medium] — CLOSED
 
 The spec sections that surround §7.3 (§7.1 seal-and-export emits `workspaceSealFailed`; §10.1 generation bookkeeping; §13 audit catalog) imply audit events on the resume path. The audit catalog in `pkg/observability/audit/catalog.go` has `EventRestoreResumed = "restore.resumed"` (backup-restore domain, line 160) and `EventArtifactReplicationResumed` (line 173) but no `session.resumed`, `session.retry`, `session.awaiting_action`, or `session.resume_failed`. `pkg/gateway/sessionserver/start.go:477–521` `handleResume` emits no audit event.
 
 Effect: the resume operation is not auditable; compliance teams cannot reconstruct who/when/why a session was reattached.
+
+**Resolution (da51a9e6, plus prior 247d9f4f):** The §11.7 / §16.7 closed-catalog constants ship in F-7.3.25; the on-row strings are wired in `pkg/gateway/sessionserver/lifecycle.go` (`auditSessionResumed`, `auditSessionRetryAttempted`, `auditSessionAwaitingActionEntered`, `auditSessionExpiredInAwaitingAction`, `auditSessionCascadeApplied`). `handleResume` appends the `session.resumed` row on every successful resume; the new `recordSessionRetry` helper appends `session.retry_attempted` on every bumpRecoveryGeneration; the F-7.3.13 helpers cover the awaiting-action entry + expired-from-awaiting-action edges. The cascade-applied emitter ships separately with F-7.3.11.
 
 ### - [x] F-7.3.19 — `resuming` state absent from external API enum (Medium) [Medium] — CLOSED
 
@@ -6439,13 +6447,15 @@ Effect: client annotations cannot be carried through the session lifecycle; down
 
 **Resolution:** `CreateSessionRequest.Metadata` (flat `map[string]string`) round-trips through `sessionstore.Session.Metadata` and is echoed on the `SessionResponse`. Postgres-backed sessions persist the payload in a new `metadata JSONB NULL` column added by `migrations/0086_sessions_metadata.up.sql`; absent payloads remain NULL and the wire envelope omits the field via `omitempty`. Non-string values reject at the gateway decode boundary with 400 INVALID_REQUEST so the on-row shape stays bounded. OpenAPI schemas updated.
 
-### - [ ] F-7.3.21 — `last_checkpoint_workspace_bytes` not persisted (Medium) [Medium] — OPEN
+### - [x] F-7.3.21 — `last_checkpoint_workspace_bytes` not persisted (Medium) [Medium] — CLOSED
 
 Spec line 397 references the value being primed at handoff step 0 alongside `last_seq`. It is also the input the gateway uses to compute `workspaceRecoveryFraction` (§7.2 line 138).
 
 Evidence: `pkg/gateway/sessionstore/sessionstore.go:152–172` `WorkspaceSnapshot` carries `Ref`, `Source`, `Timestamp` only — no bytes-recovered counter. `pkg/gateway/checkpointer/checkpointer.go:117–124` records the snapshot without size. `grep -rn "last_checkpoint_workspace_bytes\|workspaceRecoveryFraction" pkg/` returns zero hits.
 
 Effect: the partial-workspace resume path cannot compute or carry forward `workspaceRecoveryFraction`; the §7.2 client signal is permanently 0/absent.
+
+**Resolution (5ff6a6d5):** New `WorkspaceSnapshot.Bytes int64` round-trips through pgstore (migration `0087_sessions_retry_policy` adds `last_checkpoint_workspace_bytes BIGINT NULL CHECK >= 0`). `checkpointer.snapshot` writes `result.SizeBytes` from the adapter's CheckpointResponse on every successful checkpoint. `prestop.RegistryEnumerator` reads the per-row value via the wired Sessions store; the postgres_null fallback only fires for sessions that have not yet recorded a checkpoint. The §7.2 line 138 `workspaceRecoveryFraction` payload still requires a partial-manifest baseline (tracked separately under §10.1).
 
 ### - [ ] F-7.3.22 — Adapter Resume RPC ignores `recovery_generation` and produces no `resumeMode` (Medium) [Medium] — OPEN
 
@@ -6463,13 +6473,15 @@ Evidence: `pkg/gateway/sessionserver/start.go:503–509` — if `s.resumeOnPod` 
 
 Effect: a transient pool exhaustion during the client's explicit retry permanently kills the session; the §7.3 "Resume anyway" affordance becomes a one-shot.
 
-### - [ ] F-7.3.24 — `maxSessionAgeSeconds` and `maxResumeWindowSeconds` are pool-level, not per-session retryPolicy (Medium) [Medium] — OPEN
+### - [x] F-7.3.24 — `maxSessionAgeSeconds` and `maxResumeWindowSeconds` are pool-level, not per-session retryPolicy (Medium) [Medium] — CLOSED
 
 Spec line 389–390 places `maxSessionAgeSeconds: 7200` and `maxResumeWindowSeconds: 900` inside the client-supplied `retryPolicy`. The deployer caps these.
 
 Evidence: `pkg/apis/lenny/v1/sandboxtemplate_types.go:167` and `pkg/gateway/admin/pools.go:25,51` define `MaxSessionAgeSeconds` as a pool/template-level field. `pkg/gateway/watchdog/watchdog.go:96–97,287` reads only the deployer-wide config (`Config.MaxSessionAgeSeconds`) and applies it uniformly. There is no per-session field, no clamp logic, no inheritance path from a `retryPolicy` to the watchdog.
 
 Effect: clients cannot request a longer or shorter session lifetime within deployer-permitted bounds.
+
+**Resolution (5ff6a6d5):** Closed alongside F-7.3.1. The §7.3 `RetryPolicy.MaxSessionAgeSeconds` and `MaxResumeWindowSeconds` are persisted on the sessions row; the gateway clamp at admission (`session.ClampRetryPolicy`) keeps them under the deployer caps. `watchdog.sweepMaxAge` calls a new `effectiveMaxSessionAge(row, platformCap)` helper that uses the per-session value when present and tighter, falling back to the platform cap otherwise; a per-session value above the platform cap is defensively clamped down even if a row landed via a path that bypassed the admission clamp. Active enforcement of `MaxResumeWindowSeconds` against `resume_pending` is still gated on F-7.3.6 (the watchdog has no resume_pending sweep yet).
 
 ### - [x] F-7.3.25 — Audit catalog has no resume/retry events (Medium — relates to F18) [Medium] — CLOSED
 
