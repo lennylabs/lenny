@@ -5936,7 +5936,7 @@ Effect: a session may message any session in its tenant's namespace (no parent/c
 
 ---
 
-### - [ ] F-7.2.7 — (High) — `interrupt` endpoint flips the row but does not signal the adapter [Medium] — OPEN
+### - [x] F-7.2.7 — (High) — `interrupt` endpoint flips the row but does not signal the adapter [Medium] — CLOSED
 
 Spec §7.2 (table line 123, state machine line 168) requires `running → suspended` via `interrupt_request + interrupt_acknowledged`, with the gateway forcibly suspending and returning `INTERRUPT_TIMEOUT` if the adapter does not ack within `deadlineMs` (state line 169).
 
@@ -5945,6 +5945,8 @@ Implementation:
 - No `deadlineMs` timer, no `INTERRUPT_TIMEOUT` return, no `interrupt_acknowledged` wait.
 
 Effect: an `interrupt` call returns success and the row reads `suspended`, but the underlying runtime continues executing its current tool call to completion. Clients that expect cancellation will see continued tool effects.
+
+**Resolution:** New dedicated `handleInterrupt` (pkg/gateway/sessionserver/interrupt.go) replaces the shared `handleTransition` for POST /v1/sessions/{id}/interrupt. The handler looks up the live binding via `podRegistry.Get(sessionID)` and calls `bind.Adapter.Interrupt(ctx, sessionID, false, DefaultInterruptDeadline)` (5s clean-interrupt deadline) before the row update. `adapterclient.Interrupt` was extended to return the typed `InterruptStatus` (ACKNOWLEDGED / INTERRUPT_TIMEOUT / BUSY / UNSPECIFIED). STATUS_ACKNOWLEDGED transitions to suspended and returns 200; STATUS_INTERRUPT_TIMEOUT transitions to suspended per §7.2 line 169 ("adapter forces suspended") and returns 200 with `interruptStatus: "timeout"` so the caller can flag the timeout; STATUS_BUSY returns 409 INTERRUPT_BUSY with the row left running for the client to retry per §4.7. Missing binding (dev posture or pre-handoff) falls back to the row-only transition. Tier-1 in pkg/gateway/sessionserver/interrupt_test.go covers all four outcomes plus the precondition reject (no adapter call when row is not in `running`) and the per-call deadline forwarding.
 
 ---
 
@@ -5994,7 +5996,7 @@ Effect: agents cannot distinguish a delivered message from a buffered one; sende
 
 ---
 
-### - [ ] F-7.2.11 — (Medium) — `gap_detected` / `checkpoint_boundary` markers on cursor-eviction are not emitted [Medium] — OPEN
+### - [x] F-7.2.11 — (Medium) — `gap_detected` / `checkpoint_boundary` markers on cursor-eviction are not emitted [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.4.1 — Both report the gap_detected frame on cursor/replay eviction is not emitted (Subscribe silently filters the backlog); F-7.2.11 also adds checkpoint_boundary but shares the eviction-marker root cause.
 
@@ -6008,6 +6010,8 @@ Implementation:
 - The SDK Go stream reader at `sdks/client/go/lenny/stream.go:236-251` simply drops duplicates and presents whatever the gateway sends; with no gap frame to consume, the SDK cannot warn callers.
 
 Effect: a client reconnecting after a long disconnect silently misses events. The §7.2 client-data-loss contract is broken in both directions (no marker emitted, no SDK plumbing to surface one if it were).
+
+**Resolution:** Added `Bus.OldestRetainedSeq(sessionID)` (pkg/gateway/sessionevents/events.go) so the SSE handler can detect when a client's `Last-Event-ID` / `afterSeq` sits below the oldest retained event. `handleEvents` now calls `writeGapMarkers` (pkg/gateway/sessionserver/events.go) ahead of the backlog when `oldestSeq > afterSeq + 1`, emitting both spec markers as bare SSE frames (no `id:` line — §7.2 line 143 specifies these are NOT SessionEvents): `gap_detected` with `{"lastSeenSeq": N, "nextSeq": M}` and `checkpoint_boundary` with `{type, cursor, events_lost, reason: "replay_window_exceeded", checkpoint_timestamp}`. Fresh connects (cursor=0) and in-buffer cursors are never gaps. Tier-1 covers the bus-level OldestRetainedSeq behaviour plus the three SSE handler cases (gap emitted, cursor in buffer, fresh connect). The `event_store_unavailable` reason variant (§7.2 line 361) lands when the durable EventStore is wired.
 
 ---
 
@@ -6121,7 +6125,7 @@ Effect: combined with F9 and F18, there is no end-to-end approval path. The sche
 
 ---
 
-### - [ ] F-7.2.20 — (Low) — SDKs lack methods for tool-use approve/deny, elicitation respond/dismiss, message injection, and transcript [Medium] — OPEN
+### - [x] F-7.2.20 — (Low) — SDKs lack methods for tool-use approve/deny, elicitation respond/dismiss, message injection, and transcript [Medium] — CLOSED
 
 Spec §7.2 and §15.1 publish the REST endpoints. The Go, Python, and TypeScript SDKs ship `CreateSession`, `GetSession`, `ListSessions`, `DeleteSession`, `Finalize`, `Start`, `Interrupt`, `Terminate`, `Resume`, and `StreamEvents` — but no SDK method targets `/messages`, `/transcript`, `/tool-use/{id}/approve|deny`, or `/elicitations/{id}/respond|dismiss`.
 
@@ -6132,6 +6136,8 @@ Implementation:
 - `grep -rn "tool-use\|tool_use\|elicitation\|/respond\|/dismiss\|/messages\|/transcript" sdks/client/` returns zero matches across the SDK packages (only MCP-tool helpers in `sdks/client/go/lenny/mcp.go`).
 
 Effect: SDK consumers must hand-roll HTTP calls for every §7.2 interactive endpoint. The §7.2 surface is unreachable through the typed SDK clients.
+
+**Resolution:** Added six methods to each SDK (Go: `SendMessages`, `GetTranscript`, `ApproveToolUse`, `DenyToolUse`, `RespondElicitation`, `DismissElicitation`; Python: snake_case + AsyncClient counterparts; TypeScript: camelCase) covering `/messages`, `/transcript`, `/tool-use/{id}/approve|deny`, `/elicitations/{id}/respond|dismiss`. New wire types: `MessagePayload`, `SendMessagesRequest`/`Response`, `DeliveryReceipt`, `OutputPart`, `TranscriptResponse`/`Entry`/`Options`, `InteractionResolution`. The Go MessagePayload mirrors the spec §15.4 lines 1672-1721 verbatim including `inReplyTo`, `delivery`, `slotId`; the Python SDK exposes `DELIVERY_QUEUED` / `DELIVERY_IMMEDIATE` constants for the §15.4 closed enum. Tier-1 in `sdks/client/go/lenny/messages_test.go` covers every method (post path, body shape, response decode, empty-batch reject).
 
 ---
 
@@ -11872,7 +11878,7 @@ through `pkg/gateway/`, `cmd/lenny-gateway/main.go`, `pkg/alerting/rules/`,
 
 ### Findings
 
-### - [ ] F-10.4.1 — 01  Per-session `gap_detected` frame on SSE eviction is absent [High] — OPEN
+### - [x] F-10.4.1 — 01  Per-session `gap_detected` frame on SSE eviction is absent [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.2.11 — Both report the gap_detected frame on cursor/replay eviction is not emitted (Subscribe silently filters the backlog); F-7.2.11 also adds checkpoint_boundary but shares the eviction-marker root cause.
 
@@ -11903,6 +11909,8 @@ Without the sentinel the client cannot distinguish "I have every event
 since my cursor" from "I silently lost events between my cursor and the
 first frame I just received," which is exactly the failure mode §10.4 sets
 out to eliminate.
+
+**Resolution:** Closed by F-7.2.11 in the same batch. `pkg/gateway/sessionserver/events.go:writeGapMarkers` emits the §10.4 line 389 `gap_detected` frame (no SeqNum, no `id:` line) ahead of the backlog whenever the SSE cursor predates the bus's oldest retained event. The new `sessionevents.Bus.OldestRetainedSeq` is the buffer-eviction detector. Tier-1 in `pkg/gateway/sessionserver/events_test.go:TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2`.
 
 ### - [ ] F-10.4.2 — 02  Coordinator-handoff reattach synthesis is unimplemented [High] — OPEN
 
