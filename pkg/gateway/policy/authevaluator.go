@@ -25,7 +25,10 @@ const AuthEvaluatorName = "AuthEvaluator"
 // auth middleware verifies the JWT before the chain runs, so this is a
 // defensive fail-closed guard rather than the primary authentication
 // path.
-const CodeAuthRequired = "AUTH_REQUIRED"
+//
+// spec: §15.1 line 986 — `UNAUTHORIZED` (HTTP 401) is the canonical
+// catalog code for "Missing or invalid authentication credentials".
+const CodeAuthRequired = "UNAUTHORIZED"
 
 // AuthEvaluator is the §4.8 built-in interceptor at PreAuth (priority
 // 100). The auth middleware verifies the bearer JWT (or dev headers)

@@ -27,8 +27,11 @@ var meService = me.NewService(adminToolCatalog())
 func (r *Router) handleMe(w http.ResponseWriter, req *http.Request) {
 	p, ok := authmw.FromContext(req.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "AUTH_REQUIRED",
-			"endpoint requires authentication", nil)
+		// spec: §15.1 line 986 — UNAUTHORIZED (401) is the canonical
+		// "missing or invalid auth" code.
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
+			"endpoint requires authentication",
+			map[string]any{"reason": "auth_required"})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -40,8 +43,11 @@ func (r *Router) handleMe(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleAuthorizedTools(w http.ResponseWriter, req *http.Request) {
 	p, ok := authmw.FromContext(req.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "AUTH_REQUIRED",
-			"endpoint requires authentication", nil)
+		// spec: §15.1 line 986 — UNAUTHORIZED (401) is the canonical
+		// "missing or invalid auth" code.
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
+			"endpoint requires authentication",
+			map[string]any{"reason": "auth_required"})
 		return
 	}
 	tools := meService.Authorized(p)

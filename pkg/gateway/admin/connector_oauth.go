@@ -136,8 +136,10 @@ type AuthorizeConnectorResponse struct {
 func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Request) {
 	principal, ok := authmw.FromContext(req.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "AUTH_REQUIRED",
-			"connector OAuth authorization requires an authenticated caller", nil)
+		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code.
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
+			"connector OAuth authorization requires an authenticated caller",
+			map[string]any{"reason": "auth_required"})
 		return
 	}
 	id := req.PathValue("id")

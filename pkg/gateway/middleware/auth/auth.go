@@ -233,7 +233,14 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 3) No credentials.
 	if m.opts.RequireAuth {
-		writeError(w, http.StatusUnauthorized, "AUTH_REQUIRED", "request requires a bearer token", nil)
+		// spec: §15.1 line 986 — UNAUTHORIZED (401) is the §15.1 catalog
+		// code for "Missing or invalid authentication credentials". The
+		// details.reason discriminates the missing-bearer case so
+		// callers scripting against the §15.1 catalog get a stable code
+		// while operators retain the diagnostic.
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
+			"request requires a bearer token",
+			map[string]any{"reason": "auth_required"})
 		return
 	}
 	m.inner.ServeHTTP(w, r)
@@ -241,7 +248,12 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token string) {
 	if m.opts.Verifier == nil {
-		writeError(w, http.StatusInternalServerError, "AUTH_NOT_CONFIGURED", "gateway has no JWT verifier wired in", nil)
+		// spec: §15.1 line 1016 — gateway misconfiguration surfaces as
+		// the canonical INTERNAL_ERROR (500); details.reason names the
+		// configuration gap for operator triage.
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"gateway has no JWT verifier wired in",
+			map[string]any{"reason": "auth_not_configured"})
 		return
 	}
 	claims, err := m.opts.Verifier.Verify(token)

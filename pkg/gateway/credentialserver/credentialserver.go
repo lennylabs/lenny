@@ -139,7 +139,9 @@ func caller(r *http.Request) (tenant, user string, ok bool) {
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		writeErr(w, http.StatusUnauthorized, "AUTH_REQUIRED", "credential endpoints require an authenticated user")
+		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// for "missing or invalid auth credentials".
+		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
 	var req RegisterRequest
@@ -177,7 +179,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		writeErr(w, http.StatusUnauthorized, "AUTH_REQUIRED", "credential endpoints require an authenticated user")
+		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// for "missing or invalid auth credentials".
+		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
 	creds, err := s.store.List(r.Context(), tenant, user)
@@ -196,7 +200,9 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		writeErr(w, http.StatusUnauthorized, "AUTH_REQUIRED", "credential endpoints require an authenticated user")
+		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// for "missing or invalid auth credentials".
+		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
 	ref := r.PathValue("ref")
@@ -236,7 +242,9 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		writeErr(w, http.StatusUnauthorized, "AUTH_REQUIRED", "credential endpoints require an authenticated user")
+		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// for "missing or invalid auth credentials".
+		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
 	ref := r.PathValue("ref")
@@ -272,7 +280,9 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		writeErr(w, http.StatusUnauthorized, "AUTH_REQUIRED", "credential endpoints require an authenticated user")
+		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// for "missing or invalid auth credentials".
+		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
 	ref := r.PathValue("ref")

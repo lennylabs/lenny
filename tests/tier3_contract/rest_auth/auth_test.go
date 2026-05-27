@@ -261,10 +261,10 @@ func TestTamperedTokenReturns401(t *testing.T) {
 	}
 }
 
-// spec: 10.2 (auth required when RequireAuth is true)
-// diagnosis: A request with no credentials proceeded. The middleware
-//
-//	must return AUTH_REQUIRED before any handler runs.
+// spec: §10.2 + §15.1 line 986 — a no-credentials request must reject
+// with the canonical UNAUTHORIZED code (401) and carry details.reason
+// = "auth_required" so callers can discriminate the missing-bearer
+// case while scripting against the §15.1 catalog.
 func TestNoCredentialsRejectedWhenAuthRequired(t *testing.T) {
 	ts, _ := newTestServer(t, authmw.Options{
 		MultiTenant: false,
@@ -275,8 +275,12 @@ func TestNoCredentialsRejectedWhenAuthRequired(t *testing.T) {
 		t.Fatalf("want 401, got %d", resp.StatusCode)
 	}
 	envelope, _ := body["error"].(map[string]any)
-	if envelope["code"] != "AUTH_REQUIRED" {
-		t.Errorf("error code: want AUTH_REQUIRED, got %v", envelope["code"])
+	if envelope["code"] != "UNAUTHORIZED" {
+		t.Errorf("error code: want UNAUTHORIZED, got %v", envelope["code"])
+	}
+	details, _ := envelope["details"].(map[string]any)
+	if details == nil || details["reason"] != "auth_required" {
+		t.Errorf("details.reason: want auth_required, got %v", details)
 	}
 }
 

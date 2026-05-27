@@ -11720,13 +11720,15 @@ Spec L225: "The gateway wraps KMS signing calls in an automatic, in-memory per-s
 
 No JWTSigner circuit breaker is wired. `pkg/alerting/rules/rules.go:780–785` defines the `KMSSigningUnavailable` alert by name but no metric increments it. The Token Service mint at `pkg/tokenservice/tokenservice.go:228–232` returns `500 server_error` on `s.signer.Sign` failure rather than the spec-mandated `503 KMS_SIGNING_UNAVAILABLE` with `retryable: true`; only the playground mint (`pkg/gateway/playground/token.go:219–256`) returns the spec code, and that is on a misconfiguration ("the playground JWT signer is not configured") path rather than a live KMS outage. There is no `Sign` retry budget, no circuit state, and no per-subsystem breaker collector for this surface.
 
-### - [ ] F-10.2.7 — Spec-mandated `auth_failure` audit event is not emitted on tenant-claim rejection — M [Medium] — OPEN
+### - [x] F-10.2.7 — Spec-mandated `auth_failure` audit event is not emitted on tenant-claim rejection — M [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.2.7 — Both report the auth_failure audit event and INFO log not emitted on tenant-claim rejection in auth.go:293-309, same evidence and fix.
 
 Spec L221: "Both rejection cases are logged at INFO level (including `user_id` and JWT `jti` for traceability) and emitted as `auth_failure` audit events."
 
 `pkg/gateway/middleware/auth/auth.go:293–309` returns the correct HTTP envelopes but emits no audit event. A grep for `auth_failure` across `pkg/` finds zero non-comment occurrences. The tenant-rejection paths produce neither the structured INFO log nor the catalogued audit row.
+
+**Resolution:** Closed as duplicate of F-4.2.7. `AuthFailureEvent` + `AuthFailureSink` + `recordAuthFailure` are wired in `pkg/gateway/middleware/auth/auth.go`; production binds `authFailureAuditAdapter` in `cmd/lenny-gateway/main.go:2407`; coverage in `pkg/gateway/middleware/auth/auth_failure_test.go` exercises all three tenant-rejection reasons.
 
 ### - [ ] F-10.2.8 — Spec-mandated `playground.bearer_mint_rejected` audit and metric are unimplemented — M [Medium] — OPEN
 
@@ -11756,9 +11758,11 @@ Spec L194: "Production: KMS-backed signing (AWS KMS, GCP Cloud KMS, HashiCorp Va
 
 **Resolution:** Closed by F-4.3.11. `pkg/kms/providerflags` is now the binary-level selector for both the gateway and the Token Service; the chart renders `kms.provider | kms.aliases | kms.awsRegion | kms.azureVaultURL | environment` onto both deployments. `--kms-provider=local` is rejected when `--environment=prod` (`ErrLocalForbidden`). The signing-key-in-process concern is independent and remains tracked under the §10.2 kmssigner notes (F-10.2.13 is still about the dev HMAC posture); the wiring-level defect this finding names is resolved.
 
-### - [ ] F-10.2.12 — Auth middleware emits no Bearer-rejection event when no token is presented — L [Medium] — OPEN
+### - [x] F-10.2.12 — Auth middleware emits no Bearer-rejection event when no token is presented — L [Medium] — CLOSED
 
 `pkg/gateway/middleware/auth/auth.go:162–167` returns `AUTH_REQUIRED` on `RequireAuth`. The spec does not catalog `AUTH_REQUIRED` as an error code (the catalog at §15 expects `TENANT_CLAIM_MISSING` / `TENANT_NOT_FOUND` / `TOKEN_INVALID` / `TOKEN_EXPIRED` / `TOKEN_REVOKED`). A caller scripting against the §15 error catalog will not have a matcher for `AUTH_REQUIRED`. The companion `AUTH_NOT_CONFIGURED` at line 172 has the same issue.
+
+**Resolution:** Renamed `AUTH_REQUIRED` → `UNAUTHORIZED` (§15.1 line 986) and `AUTH_NOT_CONFIGURED` → `INTERNAL_ERROR` (§15.1 line 1016) across every emit-site: `pkg/gateway/middleware/auth/auth.go` (the primary No-Bearer and Verifier-not-wired branches), `pkg/gateway/admin/me.go`, `pkg/gateway/admin/connector_oauth.go`, `pkg/gateway/credentialserver/credentialserver.go`, and `pkg/gateway/policy/authevaluator.go` (`CodeAuthRequired = "UNAUTHORIZED"`). `details.reason` carries the diagnostic discriminator (`auth_required`, `auth_not_configured`) so operators retain the operational meaning while clients scripting against §15.1 see only catalog codes. Tier-1 coverage in `pkg/gateway/middleware/auth/auth_unauthorized_test.go`; tier-3 contract test in `tests/tier3_contract/rest_auth/auth_test.go:TestNoCredentialsRejectedWhenAuthRequired` updated to assert the new envelope. The broader `INVALID_REQUEST` half of F-15.1.4 (30+ handlers) is out of scope for this finding and remains tracked there.
 
 ### - [ ] F-10.2.13 — Dev `HMACSigner` is the only signer in production builds — L [Medium] — OPEN
 
@@ -11770,29 +11774,41 @@ Spec L195: "Dev mode: Local HMAC-SHA256 key, enabled only when `LENNY_DEV_MODE=t
 
 `cmd/lenny-gateway/main.go:207–208` defaults `--jwks-publish` to `true`. The published JWKS for an HMAC ("oct") signer carries `Kty="oct"` with no `k` field (`pkg/auth/jwt/jwks.go:96–103`) — verifiers cannot use the entry to validate signatures. The endpoint advertises kid presence but adds no value over the embedded OIDC `well-known` discovery. The exposure is harmless (no key material leaks) but the default-on posture pre-stages a footgun if an asymmetric signer is added later without revisiting the publication gate.
 
-### - [ ] F-10.2.15 — RBAC permission matrix and tenant-admin ceiling are correctly enforced — I [Medium] — OPEN
+### - [x] F-10.2.15 — RBAC permission matrix and tenant-admin ceiling are correctly enforced — I [Medium] — CLOSED
 
 `pkg/auth/auth.go:192–218` materializes the spec's row-by-row permission map. `TenantAdminPermissions()` (line 164) excludes exactly the three platform-only operations (`PermIssueBillingCorrections`, `PermManagePlatformSettings`, `PermAccessCrossTenantData`). Custom-role validation at `pkg/gateway/customrolestore/customrolestore.go:91–98` rejects any permission outside the tenant-admin ceiling with the spec-quoted message "custom roles may not exceed tenant-admin". Custom roles are wired through the same role-name path as built-in roles (`pkg/gateway/admin/users.go:164–177`).
 
-### - [ ] F-10.2.16 — `tenant-admin` cannot grant `platform-admin` — I [Medium] — OPEN
+**Resolution:** Positive-confirmation finding; re-verified `pkg/auth/auth.go:RolePermissions(RoleTenantAdmin)` covers every category except the three platform-only ones, `pkg/gateway/customrolestore/customrolestore.go:91-99` rejects super-tenant-admin permissions, and the role-name router gates both built-in and custom roles uniformly. No code change required.
+
+### - [x] F-10.2.16 — `tenant-admin` cannot grant `platform-admin` — I [Medium] — CLOSED
 
 `pkg/gateway/admin/users.go:198–207` (Create) and 300–308 (Update) gate `RolePlatformAdmin` on the principal carrying `RolePlatformAdmin`, returning 403 otherwise.
 
-### - [ ] F-10.2.17 — `tenant_id` format validator and three rejection categories are wired correctly — I [Medium] — OPEN
+**Resolution:** Positive-confirmation finding; both `handleCreateUser` and `handleUpdateUser` in `pkg/gateway/admin/users.go` gate `RolePlatformAdmin` grants on the caller holding `RolePlatformAdmin`. No code change required.
+
+### - [x] F-10.2.17 — `tenant_id` format validator and three rejection categories are wired correctly — I [Medium] — CLOSED
 
 `pkg/auth/auth.go:239` carries the regex `^[a-zA-Z0-9_-]{1,128}$` verbatim. `ExtractTenant` at line 316 emits the three sentinel errors (`ErrTenantClaimMissing`, `*TenantIDFormatError`, `ErrTenantNotFound`). The middleware mapping at `pkg/gateway/middleware/auth/auth.go:293–309` translates them to 401 `TENANT_CLAIM_MISSING`, 401 `TENANT_CLAIM_INVALID_FORMAT`, and 403 `TENANT_NOT_FOUND`. Tier-3 contract tests at `tests/tier3_contract/rest_auth/auth_test.go:119–172` exercise all three paths against the in-process server.
 
-### - [ ] F-10.2.18 — `typ` enum is correctly enforced as a closed set — I [Medium] — OPEN
+**Resolution:** Positive-confirmation finding; the regex, the three sentinel errors, the middleware's `writeTenantError` switch, and the tier-3 contract coverage are all present and aligned with §10.2. No code change required.
+
+### - [x] F-10.2.18 — `typ` enum is correctly enforced as a closed set — I [Medium] — CLOSED
 
 `pkg/auth/auth.go:18–42` defines the four spec values and rejects unknown strings. The token-exchange validator at `pkg/tokenexchange/tokenexchange.go:80–91` reproduces the enum for import-free use. The `a2a_delegation` mint rule (`pkg/tokenexchange/tokenexchange.go:199–207`) sets the issued `typ` to `a2a_delegation` whenever `actor_token` is present, otherwise preserves the subject's `typ`. The playground type-restriction invariant (`pkg/gateway/playground/token.go:167–171`) emits the spec-named `LENNY_PLAYGROUND_BEARER_TYPE_REJECTED` with `details.subjectTyp`.
 
-### - [ ] F-10.2.19 — §10.3 key rotation, `kid` routing, JWKS publication, and 24h overlap window are present — I [Medium] — OPEN
+**Resolution:** Positive-confirmation finding; the closed enum, the token-exchange enum mirror, and the playground typ-restriction emit-site are all in place. No code change required.
+
+### - [x] F-10.2.19 — §10.3 key rotation, `kid` routing, JWKS publication, and 24h overlap window are present — I [Medium] — CLOSED
 
 `pkg/auth/jwt/rotating.go:14–19` pins `DefaultOverlapWindow = 24 * time.Hour`. `RotatingVerifier.Verify` (line 285) selects the per-kid verifier, rejects `missing_kid` / `unknown_kid`, and emits `key_retired` past the overlap window. `pkg/auth/jwt/jwks.go:165–222` serves the JWKS document at the well-known path, including current + retained previous keys; `pkg/auth/jwt/jwks.go:131–148` enumerates the `JWKSource` correctly. `pkg/gateway/jwtaudit/jwtaudit.go:30` emits `platform.jwt_signing_key_rotated` per spec L223–224.
 
-### - [ ] F-10.2.20 — Token-exchange invariants align with §13.3 (scope ⊆ subject, tenant match, audience cannot broaden, depth = parent + 1, caller_type cannot elevate, exp = min(...)) — I [Medium] — OPEN
+**Resolution:** Positive-confirmation finding; the §10.3 rotation primitives (overlap window, kid routing, JWKS publication, audit row emission) are all present. No code change required.
+
+### - [x] F-10.2.20 — Token-exchange invariants align with §13.3 (scope ⊆ subject, tenant match, audience cannot broaden, depth = parent + 1, caller_type cannot elevate, exp = min(...)) — I [Medium] — CLOSED
 
 `pkg/tokenexchange/tokenexchange.go:142–249` implements every §13.3 invariant referenced by §10.2's `typ` discriminator paragraph. `pkg/tokenservice/tokenservice.go:135–264` is the HTTP wrapper; it requires the Authorization Bearer caller token (L137–141), drives the validator, and writes the `IssuedTokenStore` record before returning the response (L234–255), satisfying the spec's "write-before-issue" rule.
+
+**Resolution:** Positive-confirmation finding; every §13.3 invariant (tenant_match, subject_expired, scope_subset, audience_no_broaden, caller_type_no_elevate, typ_no_mutate, delegation_depth, exp_min) is enforced in `tokenexchange.Validate` and the HTTP wrapper preserves the write-before-issue rule via `RecordWithAudit`. No code change required.
 
 ---
 
