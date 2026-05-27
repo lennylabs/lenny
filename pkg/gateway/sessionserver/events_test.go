@@ -178,3 +178,175 @@ func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 		}
 	}
 }
+
+// spec: §7.2 line 143 + lines 349-361 — when the client's cursor falls
+// below the oldest retained event, the SSE stream emits gap_detected
+// AND checkpoint_boundary markers ahead of the backlog so the client
+// can render a gap warning and count of events lost.
+func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(3) // small replay buffer
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_gap", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	// Publish 10 events; maxHistory=3 keeps seqs 8,9,10.
+	for i := 0; i < 10; i++ {
+		bus.Publish("sess_gap", "e", `{}`, now)
+	}
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	// Reconnect with cursor=2 → oldest retained is 8, so 5 events lost (3..7).
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_gap/events", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Last-Event-ID", "2")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	lines := make(chan string, 64)
+	go func() {
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		close(lines)
+	}()
+	deadline := time.After(3 * time.Second)
+	var sawGap, sawGapData, sawCheckpoint, sawCheckpointData bool
+	for !(sawGap && sawGapData && sawCheckpoint && sawCheckpointData) {
+		select {
+		case <-deadline:
+			t.Fatalf("gap markers not observed: gap=%v gapData=%v cb=%v cbData=%v",
+				sawGap, sawGapData, sawCheckpoint, sawCheckpointData)
+		case line, ok := <-lines:
+			if !ok {
+				t.Fatal("stream closed early")
+			}
+			switch {
+			case line == "event: gap_detected":
+				sawGap = true
+			case sawGap && !sawGapData && strings.HasPrefix(line, "data: "):
+				if !strings.Contains(line, `"lastSeenSeq":2`) || !strings.Contains(line, `"nextSeq":8`) {
+					t.Errorf("gap_detected payload: %q", line)
+				}
+				sawGapData = true
+			case line == "event: checkpoint_boundary":
+				sawCheckpoint = true
+			case sawCheckpoint && !sawCheckpointData && strings.HasPrefix(line, "data: "):
+				if !strings.Contains(line, `"events_lost":5`) ||
+					!strings.Contains(line, `"reason":"replay_window_exceeded"`) ||
+					!strings.Contains(line, `"cursor":8`) ||
+					!strings.Contains(line, `"checkpoint_timestamp":`) {
+					t.Errorf("checkpoint_boundary payload: %q", line)
+				}
+				sawCheckpointData = true
+			}
+		}
+	}
+}
+
+// spec: §7.2 line 143 — no gap markers when the cursor is current
+// (within the retained window).
+func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(10)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_ok", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	for i := 0; i < 5; i++ {
+		bus.Publish("sess_ok", "e", `{}`, now)
+	}
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_ok/events", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Last-Event-ID", "2")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	lines := make(chan string, 64)
+	go func() {
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		close(lines)
+	}()
+	// Drain a few lines; ensure no gap_detected / checkpoint_boundary appears.
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		select {
+		case <-deadline:
+			return
+		case line, ok := <-lines:
+			if !ok {
+				return
+			}
+			if strings.Contains(line, "gap_detected") || strings.Contains(line, "checkpoint_boundary") {
+				t.Errorf("unexpected gap marker on in-buffer cursor: %q", line)
+			}
+		}
+	}
+}
+
+// spec: §7.2 line 143 — a fresh connect (cursor=0) is never a gap.
+func TestEventsStreamOmitsGapMarkersOnFreshConnect_spec_7_2(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(3)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_fresh", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	for i := 0; i < 10; i++ {
+		bus.Publish("sess_fresh", "e", `{}`, now)
+	}
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	// No Last-Event-ID header → fresh connect.
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_fresh/events", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	lines := make(chan string, 64)
+	go func() {
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		close(lines)
+	}()
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		select {
+		case <-deadline:
+			return
+		case line, ok := <-lines:
+			if !ok {
+				return
+			}
+			if strings.Contains(line, "gap_detected") || strings.Contains(line, "checkpoint_boundary") {
+				t.Errorf("fresh connect emitted gap marker: %q", line)
+			}
+		}
+	}
+}

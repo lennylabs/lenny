@@ -344,6 +344,34 @@ func (b *Bus) History(sessionID string, afterSeq uint64) []Event {
 	return out
 }
 
+// OldestRetainedSeq returns the smallest Seq currently held in the
+// in-memory replay buffer for sessionID, and ok=true when the bus has
+// any retained events. The caller uses this together with a client's
+// reconnect cursor to detect the §7.2 line 143 buffer-eviction case:
+// when the client's last-seen cursor sits below the oldest retained
+// event, the gateway emits a `gap_detected` / `checkpoint_boundary`
+// marker before replaying the backlog so the client knows events were
+// dropped. The Bus does not currently track time-based replay-window
+// boundaries (§7.2 line 349); buffer-count eviction is the only path,
+// and the result here is authoritative for that case.
+//
+// When the bus has never seen sessionID (or every event for it has been
+// removed) the function returns (0, false).
+//
+// spec: §7.2 line 143 — "If the requested sequence has been evicted
+// from the gateway event replay buffer (§10.4), the adapter emits a
+// single protocol-level gap_detected frame ({\"lastSeenSeq\": N,
+// \"nextSeq\": M}) before the oldest retained event".
+func (b *Bus) OldestRetainedSeq(sessionID string) (uint64, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	hist := b.history[sessionID]
+	if len(hist) == 0 {
+		return 0, false
+	}
+	return hist[0].Seq, true
+}
+
 // ActiveSubscribers reports the total number of live SSE subscribers
 // across all sessions. The gateway uses this value as the source of
 // the §4.1 lenny_gateway_active_streams gauge — the secondary HPA

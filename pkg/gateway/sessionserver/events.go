@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -70,6 +71,18 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
+	// spec: §7.2 line 143 (gap_detected) / lines 349-361
+	// (checkpoint_boundary). When the requested cursor falls below the
+	// oldest retained sequence, the client missed evicted events;
+	// surface both spec markers ahead of the backlog so the client can
+	// render a data-loss warning. Cursor=0 is the fresh-connect path and
+	// is never a gap.
+	if afterSeq > 0 {
+		if oldestSeq, ok := s.events.OldestRetainedSeq(id); ok && oldestSeq > afterSeq+1 {
+			writeGapMarkers(w, afterSeq, oldestSeq, s.clock())
+		}
+	}
+
 	// Replay the backlog (events the client missed while
 	// disconnected) before switching to live delivery.
 	for _, ev := range sub.Backlog {
@@ -115,6 +128,63 @@ func writeSSEEvent(w http.ResponseWriter, ev sessionevents.Event) {
 	fmt.Fprintf(w, "id: %d\n", ev.Seq)
 	fmt.Fprintf(w, "event: %s\n", ev.Type)
 	fmt.Fprintf(w, "data: %s\n\n", ev.Data)
+}
+
+// writeGapMarkers emits the §7.2 line 143 `gap_detected` frame and the
+// §7.2 lines 349-361 `checkpoint_boundary` frame on the SSE stream
+// when the requested cursor sits below the oldest retained sequence
+// (events between the cursor and the buffer head were evicted).
+//
+// Neither frame is a SessionEvent: per §7.2 line 143 the markers carry
+// no SeqNum, so no `id:` line is written. The two frames carry
+// different information by design:
+//
+//   - gap_detected: the bare protocol-level marker
+//     `{"lastSeenSeq": N, "nextSeq": M}` so a client can render a gap
+//     warning without parsing the structured payload.
+//   - checkpoint_boundary: the structured marker
+//     `{type, cursor, events_lost, reason, checkpoint_timestamp}` that
+//     §7.2 lines 349-361 require so the client can surface the precise
+//     data-loss count to its user.
+//
+// The Bus currently implements count-based eviction only, so `reason`
+// is always `replay_window_exceeded`; the `event_store_unavailable`
+// branch (§7.2 line 361) lands when the durable EventStore is wired.
+func writeGapMarkers(w http.ResponseWriter, afterSeq, oldestSeq uint64, now time.Time) {
+	if oldestSeq <= afterSeq+1 {
+		return
+	}
+	eventsLost := oldestSeq - afterSeq - 1
+	gap := struct {
+		LastSeenSeq uint64 `json:"lastSeenSeq"`
+		NextSeq     uint64 `json:"nextSeq"`
+	}{LastSeenSeq: afterSeq, NextSeq: oldestSeq}
+	gapBytes, err := json.Marshal(gap)
+	if err != nil {
+		gapBytes = []byte("{}")
+	}
+	fmt.Fprintf(w, "event: gap_detected\n")
+	fmt.Fprintf(w, "data: %s\n\n", gapBytes)
+
+	cb := struct {
+		Type                string `json:"type"`
+		Cursor              uint64 `json:"cursor"`
+		EventsLost          uint64 `json:"events_lost"`
+		Reason              string `json:"reason"`
+		CheckpointTimestamp string `json:"checkpoint_timestamp"`
+	}{
+		Type:                "checkpoint_boundary",
+		Cursor:              oldestSeq,
+		EventsLost:          eventsLost,
+		Reason:              "replay_window_exceeded",
+		CheckpointTimestamp: now.UTC().Format(time.RFC3339Nano),
+	}
+	cbBytes, err := json.Marshal(cb)
+	if err != nil {
+		cbBytes = []byte("{}")
+	}
+	fmt.Fprintf(w, "event: checkpoint_boundary\n")
+	fmt.Fprintf(w, "data: %s\n\n", cbBytes)
 }
 
 // publishEvent is the gateway-side helper that publishes a session

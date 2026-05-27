@@ -226,3 +226,36 @@ func TestSubscribeForTenantPermissiveWhenNoBinding(t *testing.T) {
 		sub.Close()
 	}
 }
+
+// spec: §7.2 line 143 — OldestRetainedSeq reports the smallest Seq in
+// the buffer so the SSE handler can detect a cursor-eviction gap and
+// emit gap_detected / checkpoint_boundary before replaying the backlog.
+func TestOldestRetainedSeqAdvancesWithEviction_spec_7_2(t *testing.T) {
+	b := sessionevents.NewBus(3)
+	// Empty session: ok=false, value=0.
+	if seq, ok := b.OldestRetainedSeq("sess_1"); ok || seq != 0 {
+		t.Errorf("empty session: got (%d, %v), want (0, false)", seq, ok)
+	}
+	b.Publish("sess_1", "e", `{}`, ts())
+	if seq, ok := b.OldestRetainedSeq("sess_1"); !ok || seq != 1 {
+		t.Errorf("single event: got (%d, %v), want (1, true)", seq, ok)
+	}
+	for i := 0; i < 5; i++ {
+		b.Publish("sess_1", "e", `{}`, ts())
+	}
+	// maxHistory=3 → kept 4,5,6 (the most-recent three after eviction).
+	if seq, ok := b.OldestRetainedSeq("sess_1"); !ok || seq != 4 {
+		t.Errorf("after eviction: got (%d, %v), want (4, true)", seq, ok)
+	}
+}
+
+// spec: §7.2 line 143 — OldestRetainedSeq does not surface evictions
+// from a different session (per-session bookkeeping).
+func TestOldestRetainedSeqIsPerSession_spec_7_2(t *testing.T) {
+	b := sessionevents.NewBus(0)
+	b.Publish("sess_1", "e", `{}`, ts())
+	b.Publish("sess_1", "e", `{}`, ts())
+	if seq, ok := b.OldestRetainedSeq("sess_2"); ok || seq != 0 {
+		t.Errorf("foreign session: got (%d, %v), want (0, false)", seq, ok)
+	}
+}
