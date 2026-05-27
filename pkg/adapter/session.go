@@ -17,15 +17,17 @@ import (
 // workspace.SetupOptions bounding the setup phase. A nil policy yields
 // a zero SetupOptions — no aggregate cap. on_timeout "warn" proceeds
 // past the cap; any other value, including empty, is the conservative
-// "fail" default.
-func setupOptionsFromProto(p *adapterv1.SetupPolicy) workspace.SetupOptions {
+// "fail" default. Env is seeded with the §7.5 line 479 minimal
+// whitelist (DefaultSetupEnv) so a setup command does not see the
+// adapter's process environment. F-7.5.8.
+func setupOptionsFromProto(p *adapterv1.SetupPolicy, workdir string) workspace.SetupOptions {
+	opts := workspace.SetupOptions{Env: workspace.DefaultSetupEnv(workdir)}
 	if p == nil {
-		return workspace.SetupOptions{}
+		return opts
 	}
-	return workspace.SetupOptions{
-		AggregateTimeout:       time.Duration(p.GetTimeoutSeconds()) * time.Second,
-		FailOnAggregateTimeout: p.GetOnTimeout() != "warn",
-	}
+	opts.AggregateTimeout = time.Duration(p.GetTimeoutSeconds()) * time.Second
+	opts.FailOnAggregateTimeout = p.GetOnTimeout() != "warn"
+	return opts
 }
 
 // RuntimeProcess manages the pod's runtime process. The §4.7 adapter

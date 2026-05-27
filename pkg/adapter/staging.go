@@ -134,7 +134,7 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 			"adapter is not configured with a workspace root")
 	}
 	if err := workspace.RunSetup(ctx, s.WorkspaceRoot, req.GetSetupCommands(),
-		setupOptionsFromProto(req.GetSetupPolicy())); err != nil {
+		setupOptionsFromProto(req.GetSetupPolicy(), s.WorkspaceRoot)); err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "run setup commands: %v", err)
 	}
 	return &adapterv1.RunSetupResponse{}, nil

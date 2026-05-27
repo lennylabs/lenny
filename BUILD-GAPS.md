@@ -6889,7 +6889,7 @@ Evidence: `grep -rn "maxCommands\|MaxCommands\|len.*SetupCommand.*>" pkg cmd` re
 
 Effect: the worst-case input is the only bound — Go's slice limit. A malicious client (or a buggy CI integration) can DoS the setup phase by submitting thousands of trivial commands, each of which the adapter dutifully forks under `/bin/sh -c`. Combined with F4 (no aggregate output capture) the pod can spend hours running commands the operator cannot inspect.
 
-### - [ ] F-7.5.6 — Per-command default timeout deviates from spec when `timeoutSeconds` is omitted (Medium) [Medium] — OPEN
+### - [x] F-7.5.6 — Per-command default timeout deviates from spec when `timeoutSeconds` is omitted (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-14.1.10 — Both report that setup.go's 5-minute SetupTimeoutDefault is applied unconditionally, contradicting §14's no-independent-limit behavior when timeoutSeconds is omitted.
 
@@ -6910,7 +6910,9 @@ The adapter imposes a hard 5-minute per-command timeout regardless of what the s
 
 Effect: a client plan such as `[npm ci]` with a 30-minute `setupPolicy.timeoutSeconds: 1800` and no per-command `timeoutSeconds` will be killed at 5 minutes instead of running for the full 1800-second aggregate. The spec's documented behavior ("runs until the aggregate cap terminates the phase") cannot be obtained from any input. A defensible alternative is the spec note "Clients that need per-command bounds SHOULD set this field explicitly", but the spec explicitly states the unset default is no per-command bound.
 
-### - [ ] F-7.5.7 — A timed-out setup command does not kill its subprocesses (Medium) [Medium] — OPEN
+**Resolution:** Removed the 5-minute `SetupTimeoutDefault` constant. `runSetupCommand` now derives the per-command context with `WithTimeout` only when `c.GetTimeoutSeconds() > 0`; an omitted per-command timeout inherits only the §5.1 aggregate cap (or, when the runtime declares no aggregate cap either, only the parent ctx), exactly matching the §14 line 99 contract.
+
+### - [x] F-7.5.7 — A timed-out setup command does not kill its subprocesses (Medium) [Medium] — CLOSED
 
 The adapter spawns `/bin/sh -c <cmd>` without `SysProcAttr.Setpgid`, so when `exec.CommandContext` fires the kill on context cancellation it terminates the shell but not the descendants the shell spawned.
 
@@ -6918,13 +6920,17 @@ Evidence: `pkg/adapter/workspace/setup.go:82-105` builds the command with no `Sy
 
 Effect: a setup command that backgrounds work (`./long-running-job &`) or that uses `nohup`/`disown` (or that simply forks deep — `bash -c 'sh -c "sleep 600"'`) leaves orphan processes pinning pod CPU/memory after the aggregate cap fires. The pod is still terminated when the warm-pool controller retires it, but until then the orphan competes for resources and may keep file handles open in `/workspace/current`. The §7.5 "Time-bounded" guarantee is bypassable.
 
-### - [ ] F-7.5.8 — Setup commands inherit the adapter's process environment (Medium, security) [Medium] — OPEN
+**Resolution:** `runSetupCommand` sets `cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}` and installs a `cmd.Cancel` that `syscall.Kill(-cmd.Process.Pid, SIGKILL)`s the whole process group on ctx cancellation (with `cmd.WaitDelay = 5s` bounding I/O drain). A backgrounded `sleep` inside the command is now killed alongside the shell when the per-command or aggregate timeout fires.
+
+### - [x] F-7.5.8 — Setup commands inherit the adapter's process environment (Medium, security) [Medium] — CLOSED
 
 Spec line 479 names "non-root UID" and the pod's isolation profile as the security boundary, but does not call out environment variables. The §14 schema's `env` block in `CreateSessionRequest.env` is the client-controlled environment for the session — `workspacePlan.setupCommands` should not see arbitrary platform-internal variables.
 
 Evidence: `pkg/adapter/workspace/setup.go:82-105` does not set `cmd.Env`, so the Go default is to inherit the parent (`os.Environ()`). The adapter binary's process environment includes whatever was injected by the pod manifest — gateway gRPC addresses, manifest paths, OTLP endpoints, the platform MCP socket path, and any host-supplied tokens.
 
 Effect: a setup command can read every environment variable the adapter has, including paths to platform sockets, the runtime nonce, and OTLP collector URLs. This expands the blast radius for a malicious or compromised setup command beyond what the spec describes as the security boundary. A defensible fix is to set `cmd.Env` to the explicit session env (the client-supplied `env` map from §14 plus a minimal whitelist).
+
+**Resolution:** New `workspace.DefaultSetupEnv(workdir)` returns the minimal whitelist (`PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `PWD`, `TMPDIR`). `SetupOptions.Env` carries the env list and, when non-nil, replaces `cmd.Env` instead of inheriting the adapter process env. The adapter `setupOptionsFromProto` now seeds `Env` with `DefaultSetupEnv(WorkspaceRoot)` on every call, so platform-internal variables (gateway addresses, manifest paths, OTLP endpoints, the runtime nonce) are never visible to a setup command. Plumbing the §14 `CreateSessionRequest.env` map into setup is a separate follow-on (would require a new field on the adapter proto); the whitelist alone closes the spec-named leak.
 
 ### - [ ] F-7.5.9 — No `setup_command_failed` operational event or audit row is emitted (Medium) [Medium] — OPEN
 
@@ -21887,13 +21893,15 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 - **Impact:** Collisions that only manifest at materialization time (e.g., an `uploadArchive` extracts `foo/bar.txt`, then an `inlineFile` writes `foo/bar.txt`) emit no warning. The spec's "during materialization" wording is unambiguous; the current implementation catches only declaration-time same-path collisions.
 - **Sub-issue:** The `Warning` field names diverge from the spec (`sourceIndex` instead of separate `winningSourceIndex`/`losingSourceIndex`; `path` is in `Field` instead of a dedicated `path`).
 
-### - [ ] F-14.1.10 — Per-command setup timeout default contradicts §14 [Medium] — OPEN
+### - [x] F-14.1.10 — Per-command setup timeout default contradicts §14 [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.5.6 — Both report that setup.go's 5-minute SetupTimeoutDefault is applied unconditionally, contradicting §14's no-independent-limit behavior when timeoutSeconds is omitted.
 
 - **Spec §14 line 99:** "`workspacePlan.setupCommands[].timeoutSeconds`: Optional per-command timeout. **When omitted, the command has no independent time limit and runs until the runtime's aggregate `setupPolicy.timeoutSeconds` cap... terminates the entire setup phase.** If `setupPolicy.timeoutSeconds` is also absent the command runs until the pod is killed by an external deadline."
 - **Evidence:** `pkg/adapter/workspace/setup.go:17` defines `SetupTimeoutDefault = 5 * time.Minute`; `runSetupCommand` (lines 82-105) applies it unconditionally when `c.GetTimeoutSeconds() == 0`. There is no path where the aggregate cap alone bounds the command.
 - **Impact:** A setup command without an explicit `timeoutSeconds` is killed at 5 min even when the runtime's `setupPolicy.timeoutSeconds` is set to 30 min. The spec's contract — "the command has no independent time limit" — is silently overridden.
+
+**Resolution:** Closed by F-7.5.6 (this batch). `SetupTimeoutDefault` removed; an omitted per-command timeout inherits only the §5.1 aggregate cap or the parent ctx.
 
 ### - [ ] F-14.1.11 — Session-scope `callbackUrl` / `callbackSecret` are unimplemented [Medium] — OPEN
 - **Spec §14 lines 73-74, 108-152 (callbackUrl, callbackSecret, Webhook Delivery Model):** Defines the CloudEvents v1.0.2 webhook envelope, HMAC-SHA256 signing, replay-window enforcement, retry schedule (10s/30s/60s/300s/900s), the storage and erasure of `callbackSecret` (T3 KMS-envelope-encrypted), the SSRF mitigations (URL validation, DNS pinning, isolated callback worker, optional domain allowlist), and the per-event `data` schemas.
