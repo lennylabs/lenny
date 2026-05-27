@@ -266,6 +266,14 @@ type BindResult struct {
 	// Nil when materialization produced no warnings or when Bind
 	// returned before FinalizeWorkspace ran. F-7.4.15.
 	WorkspacePlanWarnings []*adapterv1.WorkspacePlanWarning
+	// WorkspaceRoot is the §7.3 line 408 / §6.1 absolute cwd path the
+	// pod's adapter reported on the §15.5 version handshake. The gateway
+	// persists it on the session row so a subsequent Resume can pass it
+	// back via ResumeRequest.expected_workspace_root for the adapter to
+	// assert "same absolute cwd path" before extracting any checkpoint
+	// bytes. Empty when the adapter is on an older protocol that did
+	// not report the field. F-7.3.15.
+	WorkspaceRoot string
 }
 
 // BindTimings carries the per-phase wall-clock durations a successful
@@ -329,6 +337,12 @@ type ResumeRequest struct {
 	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size cap from
 	// the SandboxTemplate. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
+	// ExpectedWorkspaceRoot is the §7.3 line 408 "same absolute cwd
+	// path" the original session ran against. The gateway records the
+	// SandboxTemplate's WorkspaceRoot at session creation; the adapter
+	// asserts on Resume that the replacement pod's WorkspaceRoot
+	// matches. Empty disables the assertion. F-7.3.15.
+	ExpectedWorkspaceRoot string
 }
 
 // ResumeResult is what Binder.Resume returns alongside the BindResult:
@@ -363,7 +377,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	// discarded (the SLO measures successful starts only).
 	var t BindTimings
 	phaseStart := time.Now()
-	sb, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
+	sb, cl, neg, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -452,6 +466,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		Adapter:               cl,
 		Timings:               t,
 		WorkspacePlanWarnings: finalizeWarnings,
+		WorkspaceRoot:         neg.WorkspaceRoot,
 	}, nil
 }
 
@@ -666,7 +681,7 @@ func uploadRefs(plan *adapterv1.WorkspacePlan) []string {
 // BindResult plus the §4.4 / §7.2 mode the adapter reported and the
 // echoed §4.2 recovery_generation. F-7.3.22.
 func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, error) {
-	sb, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
+	sb, cl, neg, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
 		return ResumeResult{}, err
 	}
@@ -681,6 +696,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 		RecoveryGeneration:      req.RecoveryGeneration,
 		ExpectedWorkspaceBytes:  req.ExpectedWorkspaceBytes,
 		WorkspaceSizeLimitBytes: req.WorkspaceSizeLimitBytes,
+		ExpectedWorkspaceRoot:   req.ExpectedWorkspaceRoot,
 	})
 	if err != nil {
 		cl.Close()
@@ -693,15 +709,26 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 	// from claimed) and the drain reclaims the pod regardless.
 	return ResumeResult{
 		Result: &BindResult{
-			SessionID:   req.SessionID,
-			TenantID:    req.TenantID,
-			SandboxName: sb.Name,
-			PodIP:       sb.Status.PodIP,
-			Adapter:     cl,
+			SessionID:     req.SessionID,
+			TenantID:      req.TenantID,
+			SandboxName:   sb.Name,
+			PodIP:         sb.Status.PodIP,
+			Adapter:       cl,
+			WorkspaceRoot: neg.WorkspaceRoot,
 		},
 		Mode:               res.Mode,
 		RecoveryGeneration: res.RecoveryGeneration,
 	}, nil
+}
+
+// negotiated bundles the handshake-reported metadata the caller needs
+// to capture from connect. It carries the §15.5 NegotiateVersion
+// response fields the gateway threads onto BindResult so downstream
+// users (session-row persistence, Resume-time assertion) can see them.
+type negotiated struct {
+	// WorkspaceRoot is the adapter's reported §7.3 line 408 cwd path.
+	// Empty when the adapter is on an older protocol. F-7.3.15.
+	WorkspaceRoot string
 }
 
 // connect claims an idle pod from the pool, resolves the claimed Sandbox,
@@ -709,7 +736,9 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 // caller owns cl and must close it once the session ends or on any later
 // failure, and owns the returned Sandbox object for chaining §6.2 phase
 // transitions. The shared claim-and-handshake path of Bind and Resume.
-func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) (sb *lennyv1.Sandbox, cl *adapterclient.Client, err error) {
+// The negotiated return value carries the handshake-reported metadata
+// (workspace root, etc.) the caller threads onto BindResult.
+func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) (sb *lennyv1.Sandbox, cl *adapterclient.Client, neg negotiated, err error) {
 	claimer := &podclaim.Claimer{Client: b.Client, Namespace: b.Namespace}
 	req := podclaim.ClaimRequest{
 		Pool:      pool,
@@ -723,33 +752,33 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 		// Postgres-backed fallback claim before surfacing the error.
 		sandboxName, err = b.fallbackClaim(ctx, req)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, negotiated{}, err
 		}
 	} else if err != nil {
-		return nil, nil, err
+		return nil, nil, negotiated{}, err
 	} else {
 		sandboxName = claim.Spec.SandboxRef
 	}
 
 	sb, err = b.resolveSandbox(ctx, sandboxName)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, negotiated{}, err
 	}
 
 	addr := net.JoinHostPort(sb.Status.PodIP, strconv.Itoa(b.AdapterPort))
 	cl, err = b.DialAdapter(addr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("podsession: dial adapter at %s: %w", addr, err)
+		return nil, nil, negotiated{}, fmt.Errorf("podsession: dial adapter at %s: %w", addr, err)
 	}
 
 	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
 	if err != nil {
 		cl.Close()
-		return nil, nil, fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err)
+		return nil, nil, negotiated{}, fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err)
 	}
 	if resp.GetIncompatible() {
 		cl.Close()
-		return nil, nil, fmt.Errorf(
+		return nil, nil, negotiated{}, fmt.Errorf(
 			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
 		)
 	}
@@ -766,7 +795,8 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 			b.ClaimAccepted(pool, rc)
 		}
 	}
-	return sb, cl, nil
+	neg = negotiated{WorkspaceRoot: resp.GetWorkspaceRoot()}
+	return sb, cl, neg, nil
 }
 
 // fallbackClaim runs the §4.6.1 Postgres-backed fallback claim after

@@ -168,6 +168,19 @@ type Session struct {
 	// spec: §4.2 line 160 — "Pod-to-session binding".
 	PodAssignment string
 
+	// WorkspaceRoot is the §7.3 line 408 absolute cwd path the original
+	// bind's adapter reported on the §15.5 version handshake. The
+	// gateway captures it once on the first non-empty Bind and never
+	// rewrites it — a subsequent Resume passes the recorded value to
+	// the replacement pod's adapter for the "same absolute cwd path"
+	// assertion, so a SandboxTemplate change between the original and
+	// replacement pods cannot silently restore into the wrong path.
+	// Empty when the session never reached a §15.5-capable adapter (a
+	// pre-bind session row or an older adapter that does not report
+	// the field), in which case the assertion is skipped.
+	// spec: §7.3 line 408 step (d). F-7.3.15.
+	WorkspaceRoot string
+
 	// RecoveryGeneration is the §4.2 recovery counter, incremented on
 	// each pod recovery. Visible to clients via the session API and the
 	// `session.resumed` events. Monotonically non-decreasing — never

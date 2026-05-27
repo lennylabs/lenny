@@ -134,3 +134,63 @@ func TestResumeReleasesThePodWhenCheckpointLoadFails(t *testing.T) {
 		t.Errorf("retry after a released pod failed: %v", err)
 	}
 }
+
+// spec: §7.3 line 408 step (d) — "Recreate same absolute `cwd` path."
+// The gateway carries the original session's WorkspaceRoot on
+// ResumeRequest.expected_workspace_root; the adapter MUST refuse a
+// Resume whose mount path disagrees with the adapter's configured
+// WorkspaceRoot. F-7.3.15.
+func TestResumeRejectsWorkspaceRootMismatch_spec_7_3_15(t *testing.T) {
+	s, _, root := sessionServer(t)
+	s.Restorer = fakeCheckpointSource{archive: archiveOf(t, map[string]string{"f": "x"})}
+	req := resumeReq("sess-1", "ckpt-1")
+	req.ExpectedWorkspaceRoot = root + "-different"
+	_, err := s.Resume(context.Background(), req)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("F-7.3.15: code = %v, want FailedPrecondition for workspace_root mismatch", status.Code(err))
+	}
+}
+
+// spec: §7.3 line 408 — a matching workspace_root passes the assertion
+// and the resume proceeds. F-7.3.15.
+func TestResumeAcceptsMatchingWorkspaceRoot_spec_7_3_15(t *testing.T) {
+	s, _, root := sessionServer(t)
+	s.Restorer = fakeCheckpointSource{archive: archiveOf(t, map[string]string{"f": "x"})}
+	req := resumeReq("sess-1", "ckpt-1")
+	req.ExpectedWorkspaceRoot = root
+	if _, err := s.Resume(context.Background(), req); err != nil {
+		t.Fatalf("F-7.3.15: matching workspace_root rejected: %v", err)
+	}
+}
+
+// spec: an empty ExpectedWorkspaceRoot disables the assertion so a
+// pre-F-7.3.15 client can resume without the hint. F-7.3.15.
+func TestResumeAcceptsEmptyExpectedWorkspaceRoot_spec_7_3_15(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	s.Restorer = fakeCheckpointSource{archive: archiveOf(t, map[string]string{"f": "x"})}
+	req := resumeReq("sess-1", "ckpt-1")
+	req.ExpectedWorkspaceRoot = ""
+	if _, err := s.Resume(context.Background(), req); err != nil {
+		t.Fatalf("F-7.3.15: empty workspace_root must be permissive, got: %v", err)
+	}
+}
+
+// spec: §7.3 line 408 — a mismatch must release the session claim so a
+// retry can land on a fresh pod without the original session being
+// stuck claimed.
+func TestResumeWorkspaceRootMismatchReleasesClaim_spec_7_3_15(t *testing.T) {
+	s, _, root := sessionServer(t)
+	s.Restorer = fakeCheckpointSource{archive: archiveOf(t, map[string]string{"f": "x"})}
+	req := resumeReq("sess-1", "ckpt-1")
+	req.ExpectedWorkspaceRoot = root + "-different"
+	if _, err := s.Resume(context.Background(), req); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("Resume: %v", err)
+	}
+	// A subsequent Resume on a different session id must succeed — the
+	// pod was released by the first failed Resume.
+	req2 := resumeReq("sess-2", "ckpt-1")
+	req2.ExpectedWorkspaceRoot = root
+	if _, err := s.Resume(context.Background(), req2); err != nil {
+		t.Errorf("F-7.3.15: pod was not released on mismatch: %v", err)
+	}
+}

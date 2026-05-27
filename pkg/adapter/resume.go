@@ -50,6 +50,23 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, err
 	}
 
+	// spec: §7.3 line 408 step (d) — "Recreate same absolute `cwd` path."
+	// The gateway carries the original session's cwd on
+	// `expected_workspace_root`; the adapter MUST refuse a Resume whose
+	// replacement pod was provisioned with a different mount path so a
+	// runtime template change between sessions cannot silently restore
+	// into the wrong absolute path. The invariant is otherwise upheld by
+	// construction (the SandboxTemplate's WorkspaceRoot is identical on
+	// the replacement pod), but the assertion is the §7.3 contractual
+	// guard called out by F-7.3.15. An empty `expected_workspace_root`
+	// disables the assertion so a pre-F-7.3.15 client can still resume.
+	if expected := req.GetExpectedWorkspaceRoot(); expected != "" && expected != s.WorkspaceRoot {
+		s.releaseSession()
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"resume rejected: workspace root mismatch (expected %q, adapter has %q)",
+			expected, s.WorkspaceRoot)
+	}
+
 	// spec: §7.3 line 397 — the gateway passes `last_checkpoint_workspace_bytes`
 	// (expected_workspace_bytes) and the §4.4 hard workspace size limit so the
 	// adapter refuses a restore that would exceed the pod's emptyDir budget

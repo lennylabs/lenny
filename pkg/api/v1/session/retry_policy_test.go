@@ -218,3 +218,109 @@ func TestClampRetryPolicyClonesFailureLists(t *testing.T) {
 		t.Errorf("NonRetryableFailures aliased input: got %q", got.NonRetryableFailures[0])
 	}
 }
+
+// spec: §7.3 lines 384-388 — ClassifyFailure recognises the three
+// platform-default retryable causes and the two non-retryable causes
+// when retryPolicy supplies no overrides.
+func TestClassifyFailureUsesPlatformDefaults(t *testing.T) {
+	cases := []struct {
+		reason string
+		want   session.FailureClassification
+	}{
+		{"pod_evicted", session.FailureRetryable},
+		{"node_lost", session.FailureRetryable},
+		{"runtime_crash", session.FailureRetryable},
+		{"workspace_validation_failed", session.FailureNonRetryable},
+		{"setup_command_failed", session.FailureNonRetryable},
+		{"sigkill", session.FailureUnknown},
+		{"", session.FailureUnclassified},
+	}
+	for _, tc := range cases {
+		if got := session.ClassifyFailure(tc.reason, nil); got != tc.want {
+			t.Errorf("ClassifyFailure(%q, nil) = %s, want %s", tc.reason, got, tc.want)
+		}
+	}
+}
+
+// spec: §7.3 line 382 — client_only forces every classifiable cause
+// to NonRetryable so the gateway surfaces the failure to the client
+// immediately as awaiting_client_action.
+func TestClassifyFailureClientOnlyModeForcesNonRetryable(t *testing.T) {
+	p := &session.RetryPolicy{Mode: session.RetryModeClientOnly}
+	if got := session.ClassifyFailure("pod_evicted", p); got != session.FailureNonRetryable {
+		t.Errorf("client_only pod_evicted = %s, want %s", got, session.FailureNonRetryable)
+	}
+	if got := session.ClassifyFailure("workspace_validation_failed", p); got != session.FailureNonRetryable {
+		t.Errorf("client_only workspace_validation_failed = %s, want %s", got, session.FailureNonRetryable)
+	}
+	if got := session.ClassifyFailure("custom_reason", p); got != session.FailureUnknown {
+		t.Errorf("client_only custom = %s, want %s (unknown stays unknown)", got, session.FailureUnknown)
+	}
+}
+
+// spec: §7.3 line 384-385 — per-session lists override the platform
+// defaults, not augment them. A retryPolicy that names only
+// retryableFailures keeps the platform-default nonRetryableFailures.
+func TestClassifyFailurePerSessionOverrides(t *testing.T) {
+	p := &session.RetryPolicy{RetryableFailures: []string{"custom_retry"}}
+	if got := session.ClassifyFailure("custom_retry", p); got != session.FailureRetryable {
+		t.Errorf("custom_retry with override = %s, want %s", got, session.FailureRetryable)
+	}
+	// Platform default no longer matches because the override replaced
+	// the list.
+	if got := session.ClassifyFailure("pod_evicted", p); got != session.FailureUnknown {
+		t.Errorf("pod_evicted with retryable override = %s, want %s", got, session.FailureUnknown)
+	}
+	// Platform-default non-retryable list still applies (no override).
+	if got := session.ClassifyFailure("workspace_validation_failed", p); got != session.FailureNonRetryable {
+		t.Errorf("workspace_validation_failed with retryable override = %s, want %s", got, session.FailureNonRetryable)
+	}
+}
+
+// spec: §7.3 lines 384/385 — DefaultRetryableFailures /
+// DefaultNonRetryableFailures expose the worked-example platform
+// defaults so callers can echo them on the response without depending
+// on the classifier internals.
+func TestDefaultRetryableFailuresMatchSpec(t *testing.T) {
+	wantR := []string{"pod_evicted", "node_lost", "runtime_crash"}
+	gotR := session.DefaultRetryableFailures()
+	if !slicesEqual(gotR, wantR) {
+		t.Errorf("DefaultRetryableFailures = %v, want %v", gotR, wantR)
+	}
+	wantN := []string{"workspace_validation_failed", "setup_command_failed"}
+	gotN := session.DefaultNonRetryableFailures()
+	if !slicesEqual(gotN, wantN) {
+		t.Errorf("DefaultNonRetryableFailures = %v, want %v", gotN, wantN)
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// FailureClassification.String returns the lower_snake label so log
+// lines / audit rows surface the disposition uniformly.
+func TestFailureClassificationString(t *testing.T) {
+	cases := []struct {
+		c    session.FailureClassification
+		want string
+	}{
+		{session.FailureUnclassified, "unclassified"},
+		{session.FailureRetryable, "retryable"},
+		{session.FailureNonRetryable, "non_retryable"},
+		{session.FailureUnknown, "unknown"},
+	}
+	for _, tc := range cases {
+		if got := tc.c.String(); got != tc.want {
+			t.Errorf("(%d).String() = %q, want %q", tc.c, got, tc.want)
+		}
+	}
+}

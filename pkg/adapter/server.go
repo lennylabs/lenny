@@ -247,6 +247,10 @@ func (s *Server) NegotiateVersion(_ context.Context, req *adapterv1.NegotiateVer
 	resp := &adapterv1.NegotiateVersionResponse{
 		Capabilities:   s.advertisedCapabilities(),
 		AdapterVersion: s.Version,
+		// spec: §7.3 line 408 — surface the absolute cwd path the adapter
+		// mounts the workspace into so the gateway can persist it for the
+		// "same absolute cwd path" assertion on Resume. F-7.3.15.
+		WorkspaceRoot: s.WorkspaceRoot,
 	}
 	selected := highestCommonVersion(req.GetAcceptedProtocolVersions(), s.ProtocolVersions)
 	if selected == "" {

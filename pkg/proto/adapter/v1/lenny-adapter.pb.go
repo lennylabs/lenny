@@ -2416,8 +2416,21 @@ type ResumeRequest struct {
 	// gateway-supplied limit (the kubelet emptyDir guard is the
 	// backstop).
 	WorkspaceSizeLimitBytes int64 `protobuf:"varint,11,opt,name=workspace_size_limit_bytes,json=workspaceSizeLimitBytes,proto3" json:"workspace_size_limit_bytes,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// expected_workspace_root is the absolute `cwd` path the original
+	// session ran against — §7.3 step (d) "Recreate same absolute `cwd`
+	// path." The gateway passes it so the adapter can assert the
+	// replacement pod was provisioned with an identical workspace mount
+	// before extracting any checkpoint bytes. A mismatch (typically caused
+	// by a SandboxTemplate or runtime workspaceRoot change between the
+	// original and replacement pods) aborts the Resume with
+	// FailedPrecondition so the gateway can surface the cause to the
+	// client rather than silently restoring into the wrong absolute path.
+	// Empty disables the assertion (the gateway has no recorded value for
+	// legacy sessions); the assertion is purely a runtime template-drift
+	// guard.
+	ExpectedWorkspaceRoot string `protobuf:"bytes,12,opt,name=expected_workspace_root,json=expectedWorkspaceRoot,proto3" json:"expected_workspace_root,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *ResumeRequest) Reset() {
@@ -2525,6 +2538,13 @@ func (x *ResumeRequest) GetWorkspaceSizeLimitBytes() int64 {
 		return x.WorkspaceSizeLimitBytes
 	}
 	return 0
+}
+
+func (x *ResumeRequest) GetExpectedWorkspaceRoot() string {
+	if x != nil {
+		return x.ExpectedWorkspaceRoot
+	}
+	return ""
 }
 
 type ResumeResponse struct {
@@ -3503,7 +3523,15 @@ type NegotiateVersionResponse struct {
 	AdapterVersion string `protobuf:"bytes,3,opt,name=adapter_version,json=adapterVersion,proto3" json:"adapter_version,omitempty"`
 	// True when the adapter could not satisfy the gateway's accepted
 	// versions. The connection should be torn down and the pod evicted.
-	Incompatible  bool `protobuf:"varint,4,opt,name=incompatible,proto3" json:"incompatible,omitempty"`
+	Incompatible bool `protobuf:"varint,4,opt,name=incompatible,proto3" json:"incompatible,omitempty"`
+	// workspace_root is the §7.3 line 408 / §6.1 absolute cwd path the
+	// adapter mounts the session workspace into — the value of
+	// `--workspace-root` on `lenny-adapter`. The gateway captures it on
+	// the first Bind and persists it on the session row so a subsequent
+	// Resume can pass it back as `expected_workspace_root` and the
+	// replacement pod's adapter can assert "same absolute cwd path".
+	// F-7.3.15.
+	WorkspaceRoot string `protobuf:"bytes,5,opt,name=workspace_root,json=workspaceRoot,proto3" json:"workspace_root,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3564,6 +3592,13 @@ func (x *NegotiateVersionResponse) GetIncompatible() bool {
 		return x.Incompatible
 	}
 	return false
+}
+
+func (x *NegotiateVersionResponse) GetWorkspaceRoot() string {
+	if x != nil {
+		return x.WorkspaceRoot
+	}
+	return ""
 }
 
 // Opaque lifecycle event envelope. The lifecycle event taxonomy is defined
@@ -3861,7 +3896,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x12CheckpointResponse\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"\x9b\x05\n" +
+	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"\xd3\x05\n" +
 	"\rResumeRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
@@ -3875,7 +3910,8 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x13recovery_generation\x18\t \x01(\x03R\x12recoveryGeneration\x128\n" +
 	"\x18expected_workspace_bytes\x18\n" +
 	" \x01(\x03R\x16expectedWorkspaceBytes\x12;\n" +
-	"\x1aworkspace_size_limit_bytes\x18\v \x01(\x03R\x17workspaceSizeLimitBytes\x1aA\n" +
+	"\x1aworkspace_size_limit_bytes\x18\v \x01(\x03R\x17workspaceSizeLimitBytes\x126\n" +
+	"\x17expected_workspace_root\x18\f \x01(\tR\x15expectedWorkspaceRoot\x1aA\n" +
 	"\x13TracingContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"|\n" +
@@ -3954,12 +3990,13 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\ademoted\x18\x01 \x01(\bR\ademoted\"\x8e\x01\n" +
 	"\x17NegotiateVersionRequest\x12<\n" +
 	"\x1aaccepted_protocol_versions\x18\x01 \x03(\tR\x18acceptedProtocolVersions\x125\n" +
-	"\x16requested_capabilities\x18\x02 \x03(\tR\x15requestedCapabilities\"\xc7\x01\n" +
+	"\x16requested_capabilities\x18\x02 \x03(\tR\x15requestedCapabilities\"\xee\x01\n" +
 	"\x18NegotiateVersionResponse\x12:\n" +
 	"\x19selected_protocol_version\x18\x01 \x01(\tR\x17selectedProtocolVersion\x12\"\n" +
 	"\fcapabilities\x18\x02 \x03(\tR\fcapabilities\x12'\n" +
 	"\x0fadapter_version\x18\x03 \x01(\tR\x0eadapterVersion\x12\"\n" +
-	"\fincompatible\x18\x04 \x01(\bR\fincompatible\">\n" +
+	"\fincompatible\x18\x04 \x01(\bR\fincompatible\x12%\n" +
+	"\x0eworkspace_root\x18\x05 \x01(\tR\rworkspaceRoot\">\n" +
 	"\x17LifecycleChannelRequest\x12#\n" +
 	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson\"?\n" +
 	"\x18LifecycleChannelResponse\x12#\n" +

@@ -208,3 +208,158 @@ func modeStrings() []string {
 	sort.Strings(out)
 	return out
 }
+
+// FailureReason is one of the §7.3 line 384/385 failure labels the
+// classifier matches against retryPolicy.retryableFailures /
+// nonRetryableFailures. The values are not a closed enum — any string
+// may appear on a session-failure report — but the worked-example
+// platform defaults below are normative.
+//
+// spec: §7.3 lines 384-388.
+type FailureReason string
+
+const (
+	// FailurePodEvicted is the §7.3 line 384 default-retryable label for
+	// a pod that lost its node (preempted, node-pressure eviction, etc.).
+	FailurePodEvicted FailureReason = "pod_evicted"
+	// FailureNodeLost is the §7.3 line 384 default-retryable label for a
+	// node that has become unreachable or has been removed from the
+	// cluster.
+	FailureNodeLost FailureReason = "node_lost"
+	// FailureRuntimeCrash is the §7.3 line 384 default-retryable label
+	// for an in-pod runtime/adapter crash.
+	FailureRuntimeCrash FailureReason = "runtime_crash"
+	// FailureWorkspaceValidationFailed is the §7.3 line 385 default-non-
+	// retryable label for an extraction/validation failure on workspace
+	// restoration.
+	FailureWorkspaceValidationFailed FailureReason = "workspace_validation_failed"
+	// FailureSetupCommandFailed is the §7.3 line 385 default-non-
+	// retryable label for a non-zero exit from a §7.5 setup command.
+	FailureSetupCommandFailed FailureReason = "setup_command_failed"
+)
+
+// DefaultRetryableFailures is the §7.3 line 384 platform default the
+// classifier consults when the per-session retryPolicy supplies an
+// empty RetryableFailures list. Returned as a fresh slice so callers
+// can mutate freely.
+func DefaultRetryableFailures() []string {
+	return []string{
+		string(FailurePodEvicted),
+		string(FailureNodeLost),
+		string(FailureRuntimeCrash),
+	}
+}
+
+// DefaultNonRetryableFailures is the §7.3 line 385 platform default the
+// classifier consults when the per-session retryPolicy supplies an
+// empty NonRetryableFailures list.
+func DefaultNonRetryableFailures() []string {
+	return []string{
+		string(FailureWorkspaceValidationFailed),
+		string(FailureSetupCommandFailed),
+	}
+}
+
+// FailureClassification is the closed enum produced by ClassifyFailure.
+// The §7.3 line 402 "Classify failure" step branches on it: Retryable
+// flows into resume_pending and the auto-retry chain, NonRetryable
+// short-circuits to awaiting_client_action, and Unknown also short-
+// circuits to awaiting_client_action so an unclassified cause cannot
+// silently consume retry budget.
+type FailureClassification int
+
+const (
+	// FailureUnclassified is the zero value reserved for an empty reason
+	// string. Callers MUST NOT branch on it as "retryable"; the resume
+	// path treats it as non-retryable (no retry budget consumed).
+	FailureUnclassified FailureClassification = iota
+	// FailureRetryable matches RetryableFailures (per-session or the
+	// platform default). §7.3 line 403 admits the auto-retry chain only
+	// for this disposition.
+	FailureRetryable
+	// FailureNonRetryable matches NonRetryableFailures or, when the
+	// retry mode is "client_only", every classifiable cause.
+	FailureNonRetryable
+	// FailureUnknown is the disposition when the reason is non-empty but
+	// matches neither list. §7.3 frames the platform-default lists as
+	// the closed set the gateway recognises; an unknown label degrades
+	// to non-retryable (no retry budget consumed) so a deployer that
+	// adds a custom cause must enumerate it explicitly.
+	FailureUnknown
+)
+
+// String returns the canonical lower_snake label so log lines and
+// audit rows surface the disposition uniformly.
+func (c FailureClassification) String() string {
+	switch c {
+	case FailureRetryable:
+		return "retryable"
+	case FailureNonRetryable:
+		return "non_retryable"
+	case FailureUnknown:
+		return "unknown"
+	default:
+		return "unclassified"
+	}
+}
+
+// ClassifyFailure resolves reason against the §7.3 retryable /
+// non-retryable lists on p. Match semantics:
+//
+//   - A nil or empty p uses the platform defaults — §7.3 line 384/385.
+//   - A non-empty per-session list replaces the corresponding platform
+//     default; the spec frames the per-session lists as overrides, not
+//     additions. A retryPolicy that names only retryableFailures keeps
+//     the platform-default nonRetryableFailures and vice versa.
+//   - Reason matching is exact and case-sensitive. Whitespace is not
+//     trimmed because the cause labels are normalised at the call site.
+//   - retryPolicy.Mode == "client_only" forces every classifiable
+//     reason to NonRetryable per §7.3 line 382 — the mode is "no auto
+//     retry; every failure surfaces to the client immediately".
+//
+// An empty reason returns FailureUnclassified — the caller MUST treat
+// this as non-retryable (no retry budget consumed).
+//
+// spec: §7.3 lines 377-393 (retry policy and lists);
+// §6.2 line 250 (non-retryable surfaces to awaiting_client_action).
+func ClassifyFailure(reason string, p *RetryPolicy) FailureClassification {
+	if reason == "" {
+		return FailureUnclassified
+	}
+	retryable := DefaultRetryableFailures()
+	nonRetryable := DefaultNonRetryableFailures()
+	if p != nil {
+		if len(p.RetryableFailures) > 0 {
+			retryable = p.RetryableFailures
+		}
+		if len(p.NonRetryableFailures) > 0 {
+			nonRetryable = p.NonRetryableFailures
+		}
+	}
+	if p != nil && p.Mode == RetryModeClientOnly {
+		// spec: §7.3 line 382 — client_only suppresses the auto-retry
+		// chain; every classifiable cause behaves as non-retryable. An
+		// unknown label still degrades to FailureUnknown so the caller
+		// can log the gap rather than treat it as an explicit choice.
+		if containsString(retryable, reason) || containsString(nonRetryable, reason) {
+			return FailureNonRetryable
+		}
+		return FailureUnknown
+	}
+	if containsString(retryable, reason) {
+		return FailureRetryable
+	}
+	if containsString(nonRetryable, reason) {
+		return FailureNonRetryable
+	}
+	return FailureUnknown
+}
+
+func containsString(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}

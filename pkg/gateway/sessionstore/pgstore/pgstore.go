@@ -78,7 +78,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	execution_mode, scrub_policy,
 	metadata,
 	retry_policy, last_checkpoint_workspace_bytes,
-	last_seq`
+	last_seq,
+	workspace_root`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -122,7 +123,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		execution_mode, scrub_policy,
 		metadata,
 		retry_policy, last_checkpoint_workspace_bytes,
-		last_seq
+		last_seq,
+		workspace_root
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
@@ -135,7 +137,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$36, $37,
 		$38::jsonb,
 		$39::jsonb, $40,
-		$41
+		$41,
+		$42
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -164,7 +167,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			metadataArg(sess.Metadata),
 			retryPolicyArg(sess.RetryPolicy),
 			workspaceBytesArg(sess.WorkspaceSnapshot),
-			sess.LastSeq)
+			sess.LastSeq,
+			sess.WorkspaceRoot)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -233,7 +237,11 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		metadata = $36::jsonb,
 		retry_policy = $37::jsonb,
 		last_checkpoint_workspace_bytes = $38,
-		last_seq = GREATEST(last_seq, $39)
+		last_seq = GREATEST(last_seq, $39),
+		workspace_root = CASE
+			WHEN $40 = '' THEN workspace_root
+			ELSE $40
+		END
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -302,6 +310,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			retryPolicyArg(sess.RetryPolicy),
 			workspaceBytesArg(sess.WorkspaceSnapshot),
 			sess.LastSeq,
+			sess.WorkspaceRoot,
 		); err != nil {
 			return err
 		}
@@ -472,6 +481,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §7.3 line 397 last_seq durable counter from migration 0088
 		// (F-7.3.3).
 		&s.LastSeq,
+		// §7.3 line 408 workspace_root recorded at first bind from
+		// migration 0089 (F-7.3.15).
+		&s.WorkspaceRoot,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

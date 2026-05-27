@@ -857,6 +857,13 @@ func (s *Server) registerBinding(ctx context.Context, result *podsession.BindRes
 	}
 	s.podRegistry.Put(result)
 	s.persistPodAssignment(ctx, result.TenantID, result.SessionID, result.SandboxName)
+	// spec: §7.3 line 408 — capture the adapter's reported WorkspaceRoot
+	// from the §15.5 handshake (carried through BindResult) on the first
+	// non-empty bind so a subsequent Resume can assert the replacement
+	// pod's WorkspaceRoot matches. The pgstore guard ignores an empty
+	// payload so a later bind without the field never overwrites a
+	// recorded value. F-7.3.15.
+	s.persistWorkspaceRoot(ctx, result.TenantID, result.SessionID, result.WorkspaceRoot)
 	// F-7.4.15: republish any §14 advisory warnings the adapter raised
 	// during FinalizeWorkspace materialization. The
 	// `workspace_plan_strip_components_skip` warning per §7.4 line 459
@@ -962,6 +969,33 @@ func (s *Server) persistPodAssignment(ctx context.Context, tenantID, sessionID, 
 	})
 	if err != nil {
 		log.Printf("sessionserver: persist pod_assignment for session %s: %v", sessionID, err)
+	}
+}
+
+// persistWorkspaceRoot records the adapter-reported absolute cwd path on
+// the session row at the first non-empty bind. The pgstore-side write
+// guard ignores empty payloads so a follow-on bind that did not capture
+// a value (older adapter, replay path) cannot clobber a recorded one.
+// The recorded value feeds the §7.3 line 408 "same absolute cwd path"
+// assertion on a subsequent Resume — the gateway reads row.WorkspaceRoot
+// and passes it via ResumeRequest.expected_workspace_root for the
+// replacement pod's adapter to compare against its own WorkspaceRoot.
+// Best-effort: a store failure logs and continues; the in-memory
+// BindResult still carries the value for the current replica.
+//
+// spec: §7.3 line 408 step (d). F-7.3.15.
+func (s *Server) persistWorkspaceRoot(ctx context.Context, tenantID, sessionID, root string) {
+	if root == "" {
+		return
+	}
+	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		if row.WorkspaceRoot == "" {
+			row.WorkspaceRoot = root
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("sessionserver: persist workspace_root for session %s: %v", sessionID, err)
 	}
 }
 
@@ -1338,6 +1372,13 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		RecoveryGeneration:      row.RecoveryGeneration,
 		ExpectedWorkspaceBytes:  expectedBytes,
 		WorkspaceSizeLimitBytes: match.WorkspaceSizeLimitBytes,
+		// spec: §7.3 line 408 step (d) — "Recreate same absolute `cwd`
+		// path." The gateway carries the original session's adapter-
+		// reported WorkspaceRoot (captured on the §15.5 handshake and
+		// persisted at first bind) on every Resume. An empty value
+		// (legacy row, adapter on an older protocol) disables the
+		// assertion on the adapter side. F-7.3.15.
+		ExpectedWorkspaceRoot: row.WorkspaceRoot,
 	})
 	if err != nil {
 		return "", err

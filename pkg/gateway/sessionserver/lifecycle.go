@@ -23,6 +23,18 @@ import (
 // configurable TTL (default: 7 days, deployer-configurable)".
 const DefaultArtifactRetention = 7 * 24 * time.Hour
 
+// DefaultExpectedWorkspaceRoot is the §7.3 line 408 / §6.1 platform
+// convention for the absolute `cwd` path mounted into every agent pod.
+// The lenny-adapter's `--workspace-root` flag defaults to this same
+// value; the gateway passes it on Resume so the adapter can assert that
+// the replacement pod was provisioned with an identical mount path
+// before extracting any checkpoint bytes. A deployer that customises
+// the flag on either side will see the §7.3 step (d) assertion fire.
+//
+// spec: §7.3 line 408 — "Recreate same absolute `cwd` path";
+// §6.1 — workspace volume convention. F-7.3.15.
+const DefaultExpectedWorkspaceRoot = "/workspace/current"
+
 // LifecycleAuditSink receives the §7.1 / §16.6 session-lifecycle audit
 // events the gateway writes to the §11.7 hash-chained audit log. The
 // server composes with the audit subsystem through this interface

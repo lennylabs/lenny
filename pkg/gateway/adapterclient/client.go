@@ -327,6 +327,14 @@ type ResumeParams struct {
 	// resolved from the SandboxTemplate. Zero disables the
 	// gateway-supplied limit. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
+	// ExpectedWorkspaceRoot is the §7.3 line 408 "same absolute cwd
+	// path" the original session ran against. The gateway passes it so
+	// the adapter can refuse a Resume whose replacement pod was
+	// provisioned with a different mount path — the §7.3 step (d)
+	// contractual guard against runtime template drift. Empty leaves
+	// the adapter without a hint (the §7.3 line 408 invariant is then
+	// upheld by construction only). F-7.3.15.
+	ExpectedWorkspaceRoot string
 }
 
 // ResumeResult is the adapter's response to a Resume call. The §4.4 /
@@ -358,6 +366,7 @@ func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, erro
 		RecoveryGeneration:      p.RecoveryGeneration,
 		ExpectedWorkspaceBytes:  p.ExpectedWorkspaceBytes,
 		WorkspaceSizeLimitBytes: p.WorkspaceSizeLimitBytes,
+		ExpectedWorkspaceRoot:   p.ExpectedWorkspaceRoot,
 	})
 	if err != nil {
 		return ResumeResult{}, err

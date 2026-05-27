@@ -6305,7 +6305,7 @@ Effect: a coordinator handoff or replica restart loses the counter, violating th
 
 **Resolution (45997ecb):** Migration `0088_sessions_last_seq` adds `sessions.last_seq BIGINT NOT NULL DEFAULT 0 CHECK (last_seq >= 0)`. The new `sessionstore.Session.LastSeq` field round-trips through `memstore` and `pgstore` (the pgstore's `UPDATE` uses `GREATEST(last_seq, $39)` so a late writer from a sibling replica cannot rewind a freshly published Seq; both stores also clamp the in-memory copy). The `sessionevents.Bus` gains two optional hooks — `LastSeqPersister` (asynchronous `AdvanceLastSeq` on every Publish) and `LastSeqLoader` (called on the first publish for a session to seed the in-memory counter from Postgres — the §7.3 / §10.4 "primed from Postgres at handoff step 0" contract). The gateway's `cmd/lenny-gateway/main.go` wires a `lastSeqStore` shim backed by `sessionstore.Store` so production deployments persist + seed automatically; dev mode without Postgres degrades to the in-memory counter without dropping events. This also covers the durable-counter aspect of F-7.2.13 / F-10.4.3.
 
-### - [ ] F-7.3.4 — No automatic transition into `resume_pending` (High) [Medium] — OPEN
+### - [x] F-7.3.4 — No automatic transition into `resume_pending` (High) [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-6.2.14 — Both concern the resume_pending flow but report different defects (missing resuming/resume_pending watchdog caps vs missing automatic transition into resume_pending).
 
@@ -6315,13 +6315,17 @@ Evidence: `pkg/api/v1/session/session.go:194` declares `EndpointResume: {baseSta
 
 Effect: sessions whose pods die never enter `resume_pending` and never reach `awaiting_client_action`. The user-facing recovery path is dead code. `POST /v1/sessions/{id}/resume` can only be invoked against a row a test seeded directly into `awaiting_client_action`.
 
-### - [ ] F-7.3.5 — Failure classification (retryable / non-retryable) absent (High) [Medium] — OPEN
+**Resolution:** New `Server.ReportSessionFailure(ctx, FailureReport)` is the §7.3 line 401 "Gateway detects session failure" entry-point: it runs the §7.3 classifier (F-7.3.5) against the row's effective retry policy and drives the state-machine edge — Retryable+budget → `resume_pending` (and bumps RetryCount + fires §16.1 retry metric + §11.7 audit row); Retryable+exhausted → `awaiting_client_action` (with the §7.3 line 427 webhook + §16.6 op event + §11.7 audit row); NonRetryable from running → `failed` (per §6.2 line 174); NonRetryable from resuming → `awaiting_client_action` (per §6.2 line 250). Unknown reasons degrade to non-retryable so an untagged cause cannot consume retry budget. The method is the single API surface a controller-side or gateway-side detector calls into; the controller-side Sandbox CR watcher wire-up that actually invokes it on pod-failure events is tracked separately.
+
+### - [x] F-7.3.5 — Failure classification (retryable / non-retryable) absent (High) [Medium] — CLOSED
 
 Spec line 384–388: `retryableFailures: ["pod_evicted", "node_lost", "runtime_crash"]`; `nonRetryableFailures: ["workspace_validation_failed", "setup_command_failed"]`. Spec line 402 step 2: "Classify failure (retryable vs. non-retryable)".
 
 Evidence: `grep -rn "pod_evicted\|node_lost\|runtime_crash\|workspace_validation_failed\|setup_command_failed"` across `pkg/` returns only test fixtures (`pkg/gateway/sessionserver/opsevent_internal_test.go:40`). No classifier function exists, no `RetryableFailure` enum, no comparison against the policy lists.
 
 Effect: even if pod failure were detected, the gateway has no rule to choose `resume_pending` vs straight-to-`failed`.
+
+**Resolution:** New `session.ClassifyFailure(reason string, p *RetryPolicy) FailureClassification` in `pkg/api/v1/session/retry_policy.go`. Recognised classifications are `FailureRetryable`, `FailureNonRetryable`, `FailureUnknown`, and `FailureUnclassified` (empty reason). The per-session `RetryableFailures` / `NonRetryableFailures` lists override the §7.3 platform defaults (`DefaultRetryableFailures` / `DefaultNonRetryableFailures` mirror lines 384/385 verbatim). `RetryMode == "client_only"` forces every classifiable cause to NonRetryable per §7.3 line 382. The classifier feeds `Server.ReportSessionFailure` (F-7.3.4); unit tests cover the platform defaults, per-session overrides, client_only mode, and the unclassified/unknown edges.
 
 ### - [x] F-7.3.6 — `maxResumeWindowSeconds` timer is not implemented (High) [Medium] — CLOSED
 
@@ -6369,13 +6373,15 @@ Effect: §16.5 alerts that depend on these counters cannot fire; SLO dashboards 
 
 **Resolution (da51a9e6):** `gatewaymetrics.Metrics` now registers `lenny_session_retry_total{failure_class}` and `lenny_session_resume_attempts_total{pool, outcome}` with `IncSessionRetry` / `IncSessionResumeAttempt` accessors. `sessionserver.bumpRecoveryGeneration` fires the retry counter on every successful pod recovery; `sessionserver.handleResume` fires the resume-attempts counter on both the success and the failure branches. Wired through `Options.IncSessionRetry` / `Options.IncSessionResumeAttempt` from `cmd/lenny-gateway/main.go`. The runbook reference to the fictitious `lenny_session_resume_after_pod_kill_total` was fixed in F-7.3.17.
 
-### - [ ] F-7.3.11 — `cascadeOnFailure` not applied on `awaiting_client_action → expired` (High) [Medium] — OPEN
+### - [x] F-7.3.11 — `cascadeOnFailure` not applied on `awaiting_client_action → expired` (High) [Medium] — CLOSED
 
 Spec line 424: "After expiry the session transitions to `expired` — a terminal state. The gateway applies the session's `cascadeOnFailure` policy to all active children (same behavior as terminal failure after retry exhaustion)."
 
 Evidence: `pkg/gateway/watchdog/watchdog.go:247–275` `sweepAwaitingClientAction` updates the row to `StateExpired` and calls `recordCompleted` (which archives the session and emits a billing event). It does NOT walk descendants or apply the parent's `CascadeOnFailure` to children. `pkg/api/v1/session/session.go:90–129` defines `CascadePolicy` and `Resolve()`, but no expiry path invokes it; `grep -rn "CascadeOnFailure\|CascadePolicy" pkg/gateway/watchdog/` returns no matches.
 
 Effect: a parent expiring in `awaiting_client_action` leaves its children running forever (or until they hit their own caps), contradicting the §8.10 cascade semantics §7.3 explicitly inherits.
+
+**Resolution:** Verified closed by the F-5.2.26 TerminalHook wiring (commit `2b826d1b`). The watchdog's `sweepAwaitingClientAction` calls `w.recordCompleted` (watchdog.go:657) which, when the production TerminalHook is wired (`WithTerminalHook(sessionSrv)` at `cmd/lenny-gateway/main.go:2477`), delegates to `Server.OnSessionTerminal` → `recordSessionCompleted` → `cascadeToChildren` (usage.go:266). The cascadeToChildren walks descendants and applies the parent's `CascadeOnFailure` policy (cancel_all walks children; detach leaves them running; await_completion lets them finish). New regression tests `TestAwaitingExpiredAppliesCascadeViaTerminalHook_spec_7_3_11` and `TestAwaitingExpiredDetachLeavesChildrenRunning_spec_7_3_11` exercise the full integration path.
 
 ### - [ ] F-7.3.12 — DLQ drain on terminal transition is unimplemented (High) [Medium] — OPEN
 
@@ -6403,7 +6409,7 @@ Evidence: `pkg/adapter/resume.go:30–80` calls `workspace.Extract(s.WorkspaceRo
 
 Effect: full and embedded checkpoint paths cannot rehydrate native SDK session state. The "native SDK resume or fresh session with carried state" branch (spec line 410) collapses to "fresh".
 
-### - [ ] F-7.3.15 — Same absolute cwd recreation is implicit, not enforced (Low) [Medium] — OPEN
+### - [x] F-7.3.15 — Same absolute cwd recreation is implicit, not enforced (Low) [Medium] — CLOSED
 
 Spec line 408 step d: "Recreate same absolute `cwd` path."
 
@@ -6411,13 +6417,17 @@ Evidence: `pkg/adapter/resume.go:38–62` writes the archive into `s.WorkspaceRo
 
 Effect: minor; an explicit check that the replacement pod's adapter reports the same `WorkspaceRoot` as the original would harden the contract.
 
-### - [ ] F-7.3.16 — `awaiting_client_action` reached only by manual seeding (High) [Medium] — OPEN
+**Resolution:** Adapter `NegotiateVersionResponse` gains a `workspace_root` field carrying the adapter's `--workspace-root` value; gateway's `podsession.Binder.connect` captures it from the §15.5 handshake into `BindResult.WorkspaceRoot`; `sessionserver.registerBinding` persists it on the session row via the new `persistWorkspaceRoot` helper (first non-empty bind wins — a replacement bind cannot overwrite the original's value). Migration `0089_sessions_workspace_root` adds `sessions.workspace_root TEXT` (with the pgstore UPDATE CASE-when guarding against empty-payload overwrite). On Resume, `resumeOnPod` reads `row.WorkspaceRoot` and passes it via `ResumeRequest.expected_workspace_root`; `adapter.Resume` asserts equality against its own `WorkspaceRoot` before quiescing the runtime — a mismatch returns FailedPrecondition and releases the just-claimed pod so a retry can land on a fresh one. Empty values (legacy rows, older adapter) disable the assertion on the adapter side.
+
+### - [x] F-7.3.16 — `awaiting_client_action` reached only by manual seeding (High) [Medium] — CLOSED
 
 Spec line 423 enumerates the two entry paths: auto-retry exhaustion and `resume_pending` timeout.
 
 Evidence: combining F4 (no auto-transition to `resume_pending`) and F6 (no `maxResumeWindowSeconds` watchdog), neither documented entry path is implemented. The only writes of `StateAwaitingClientAction` outside test setup are tests themselves (`grep -rn "StateAwaitingClientAction" pkg/gateway/sessionserver` lists only `tree_archive_test.go`, `start_pod_test.go`).
 
 Effect: in a deployed gateway no session ever organically reaches `awaiting_client_action`, so the entire §7.3 client-recovery surface (`POST /v1/sessions/{id}/resume`, Start-fresh, Download artifacts, Fork) is unreachable for non-test sessions.
+
+**Resolution:** Closed by F-7.3.4 (the auto-retry exhaustion entry path) and F-6.2.14 (the `resume_pending` wall-clock timeout entry path, commit `ce6bfa37`). With both wired, every §7.3 line 423 entry path now writes `StateAwaitingClientAction` organically: F-7.3.4's `Server.ReportSessionFailure` covers the retryable-exhausted and the non-retryable-mid-resume edges; F-6.2.14's watchdog `sweepResumePending` + `sweepResuming` covers the wall-clock + retries-exhausted edges. Both call into the F-7.3.13 `emitAwaitingClientActionEntered` helper so the §7.3 line 427 webhook + §16.6 op event + §11.7 audit row + §7.2 status_change SSE fire on every entry.
 
 ### - [x] F-7.3.17 — `lenny_session_resume_after_pod_kill_total` referenced by runbook is undefined (Medium) [Medium] — CLOSED
 
