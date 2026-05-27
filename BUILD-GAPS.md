@@ -11658,7 +11658,7 @@ Legend: **H** = High (MUST/correctness/security), **M** = Medium (SHOULD/capabil
 
 ### Findings
 
-### - [ ] F-10.2.1 — `permissiveRegistry{}` short-circuits the §10.2 `TENANT_NOT_FOUND` rejection — H [Medium] — OPEN
+### - [x] F-10.2.1 — `permissiveRegistry{}` short-circuits the §10.2 `TENANT_NOT_FOUND` rejection — H [Medium] — CLOSED
 
 Spec L219: "Claim present but tenant not registered → Request rejected: `403 Forbidden`, error code `TENANT_NOT_FOUND`." L221: "There is no silent fallback to the `default` tenant in multi-tenant mode — an absent or unrecognized claim is always a hard rejection."
 
@@ -11678,6 +11678,8 @@ The `tenants` store wired at lines 375–381 already satisfies `auth.TenantRegis
 
 The auth-package extractor (`pkg/auth/auth.go:316` `ExtractTenant`) and the middleware (`pkg/gateway/middleware/auth/auth.go:192–199`) are correct; the gap is the gateway's wiring choice.
 
+**Resolution:** `cmd/lenny-gateway/main.go` now installs a new `bearerTenantRegistry{store: tenants}` adapter when `--multi-tenant` is true — the wired `tenantstore.Store` (memory or pgstore) is consulted on every Bearer claim, and a soft-deleted or unknown tenant is rejected with `403 TENANT_NOT_FOUND` per §10.2 line 219. The `default` tenant is admitted unconditionally so the §17.4 Embedded Mode bootstrap-Job seeding sequence still resolves. Single-tenant mode retains the permissive registry (the dev-header flip to multi-tenant has no Postgres tenant rows to consult). The new `auth` import wires `auth.DefaultTenantID`.
+
 ### - [x] F-10.2.2 — JWT `Verify` does not enforce `aud`, `iss`, or `nbf` — H [Medium] — CLOSED
 
 Spec L237 (and the broader §10.2 / §13.3 / §27.3.1 token chain) treats `aud`, `iss`, `exp`, and `nbf` as load-bearing identity-binding claims; the playground OIDC integration documents that the IdP ID-token validator MUST cover "signature, iss, aud, exp, nbf" (`pkg/gateway/playground/oidc.go:69, 108`). The Token Service stamps `Issuer = s.issuer` and `Audience = issued.Audience` on every minted token (`pkg/tokenservice/tokenservice.go:215, 218`); the playground mint sets `Issuer: "https://lenny.dev.local/playground"`, `Audience: []string{"lenny-gateway"}`, `NotBefore: now.Unix()` (`pkg/gateway/playground/token.go:236–250`).
@@ -11688,13 +11690,15 @@ Embedded OIDC enforces its own audience (`pkg/embedded/oidc/oidc.go:172–174`),
 
 **Resolution:** `HMACSigner.Verify` now enforces `nbf` alongside `exp` (with the same ±JWTSkewAllowance window), rejecting future-dated tokens with `VerifyError{Reason: "not_yet_valid"}` (`pkg/auth/jwt/jwt.go`). New `jwt.ClaimChecker` Verifier wrapper layers `iss` + `aud` enforcement on top of any inner verifier (`pkg/auth/jwt/claimchecker.go`); `cmd/lenny-gateway/main.go` wraps the bearer chain with `ClaimChecker` whenever the operator sets `--bearer-expected-issuer` or `--bearer-expected-audiences` (comma-separated), so dev deployments retain the no-op posture while production can pin both claims. Tier-1 coverage in `pkg/auth/jwt/claimchecker_test.go`: matching, issuer-mismatch, audience-disjoint, empty-expected-skipped, inner-error-passthrough, plus `TestHMACVerifyRejectsFutureNotBefore` / `AcceptsPastNotBefore` / `AcceptsNotBeforeWithinSkew`.
 
-### - [ ] F-10.2.3 — Bearer middleware does not consult the platform-managed user → role mapping — H [Medium] — OPEN
+### - [x] F-10.2.3 — Bearer middleware does not consult the platform-managed user → role mapping — H [Medium] — CLOSED
 
 Spec L294: "When both sources are present, the platform-managed mapping takes precedence, allowing tenant-admins to override OIDC-derived roles within their tenant."
 
 The middleware copies roles verbatim from the JWT claim (`pkg/gateway/middleware/auth/auth.go:207`). No code path merges or overrides them with the stored `userstore.User.Roles` row. `pkg/gateway/sessionserver/user_gate.go:34` looks the row up for `IsActive` / `ProcessingRestricted` but discards `user.Roles`. As a result the spec's "platform-managed override" mechanism is unimplemented: an OIDC-derived `platform-admin` claim cannot be downgraded by a `tenant-admin`'s assignment, and a stored role assignment cannot grant a permission the OIDC token omitted.
 
 Custom-role lookup at `pkg/gateway/admin/users.go:113–135` and `pkg/gateway/sessionserver/rbac_gate.go:64–94` only resolves the *name* of a claimed role against the registry; it does not introduce roles the token did not carry.
+
+**Resolution:** New `auth.Options.PlatformRoles` (`PlatformRoleResolver` interface) consults the §11.4 user registry per request; when a `(tenantID, subject)` row exists, its `Roles` slice fully replaces the JWT claim (an empty stored slice downgrades a platform-admin OIDC claim, the documented tenant-admin override path). A row not found leaves the OIDC claim authoritative; a transport error fails closed with `500 INTERNAL_ERROR` so an unavailable Postgres cannot silently re-instate a downgraded role. `cmd/lenny-gateway/main.go` wires the new `userstorePlatformRoles{store: users}` adapter. Tier-1 coverage in `pkg/gateway/middleware/auth/platform_roles_test.go`: override, absent row falls through, lookup error → 500, empty row downgrades.
 
 ### - [x] F-10.2.4 — Session RBAC gate admits a no-role principal as if authenticated — H [Medium] — CLOSED
 
@@ -11720,11 +11724,13 @@ Spec L210: "the admin API rejects any `tenant_id` that does not match the patter
 
 **Resolution:** `handleCreateTenant` in `pkg/gateway/admin/tenants.go` now writes `400 INVALID_TENANT_ID` for the missing-id and `auth.ValidateTenantID` failure branches. Tier-1 coverage in `pkg/gateway/admin/tenants_test.go` (`TestCreateTenantRejectsInvalidID` + `TestCreateTenantRejectsMissingID`) asserts the envelope `code` is `INVALID_TENANT_ID`.
 
-### - [ ] F-10.2.6 — JWTSigner circuit breaker and `KMS_SIGNING_UNAVAILABLE` response are partial — H [Medium] — OPEN
+### - [x] F-10.2.6 — JWTSigner circuit breaker and `KMS_SIGNING_UNAVAILABLE` response are partial — H [Medium] — CLOSED
 
 Spec L225: "The gateway wraps KMS signing calls in an automatic, in-memory per-subsystem circuit breaker. When the `JWTSigner` circuit breaker trips to open state (> 3 consecutive signing failures within 30s), all new session creation is rejected with `KMS_SIGNING_UNAVAILABLE` until the circuit resets."
 
 No JWTSigner circuit breaker is wired. `pkg/alerting/rules/rules.go:780–785` defines the `KMSSigningUnavailable` alert by name but no metric increments it. The Token Service mint at `pkg/tokenservice/tokenservice.go:228–232` returns `500 server_error` on `s.signer.Sign` failure rather than the spec-mandated `503 KMS_SIGNING_UNAVAILABLE` with `retryable: true`; only the playground mint (`pkg/gateway/playground/token.go:219–256`) returns the spec code, and that is on a misconfiguration ("the playground JWT signer is not configured") path rather than a live KMS outage. There is no `Sign` retry budget, no circuit state, and no per-subsystem breaker collector for this surface.
+
+**Resolution:** New `jwt.BreakerSigner` wraps any `Signer` with the §10.2 line 225 in-memory breaker — > 3 consecutive failures inside a 30s rolling window trip it open; subsequent `Sign` calls short-circuit to `jwt.ErrSigningUnavailable`. After a 30s cooldown a half-open probe is admitted; success closes the breaker, failure reopens it. `pkg/tokenservice/tokenservice.go` maps the sentinel to the §15.1 `KMS_SIGNING_UNAVAILABLE` envelope (HTTP 503, `retryable: true`, `Retry-After: 30`). `cmd/lenny-gateway/main.go` and `cmd/lenny-token-service/main.go` wrap the KMS-backed signer with `BreakerSigner`; only `Sign` goes through the breaker — verification keeps using the inner signer so verify never gates on KMS health. New `gatewaymetrics.RecordKMSSigningError(reason)` + `SetKMSSigningCircuitState(value)` feed `lenny_gateway_kms_signing_errors_total{reason}` and `lenny_gateway_kms_signing_circuit_state` (the §16.5 `KMSSigningUnavailable` alert reads the counter). Tier-1 coverage in `pkg/auth/jwt/breakersigner_test.go` (trip > threshold, half-open probe success closes, failures age out window, success resets count, ErrSigningUnavailable export, Verify delegation) and `pkg/tokenservice/kms_unavailable_test.go` (503 envelope with `retryable: true` and `Retry-After` once the breaker opens).
 
 ### - [x] F-10.2.7 — Spec-mandated `auth_failure` audit event is not emitted on tenant-claim rejection — M [Medium] — CLOSED
 
@@ -11752,11 +11758,13 @@ The main bearer chain reads `claims.TenantID` from the static JSON tag `tenant_i
 
 **Resolution:** `jwt.Claims` now captures every payload claim as `Extras map[string]json.RawMessage` during `Verify`, with a `ClaimString(name)` helper that prefers typed Claims fields and falls back to `Extras`. Auth middleware `Options.TenantClaimName` selects the OIDC claim used for tenant extraction (default `tenant_id`). `cmd/lenny-gateway/main.go` plumbs `--tenant-id-claim` (env `LENNY_TENANT_ID_CLAIM`) and the Helm chart adds `auth.tenantIdClaim` (default `tenant_id`) → renders `--tenant-id-claim=…` on the gateway Deployment. Tier-1 coverage: `TestBearerHonoursConfigurableTenantClaim` (alt claim resolves; default claim still rejects as `TENANT_CLAIM_MISSING`) + `TestClaimsClaimStringResolvesAcrossFields` (typed-precedence, raw fallback, non-string, absent, nil-safe).
 
-### - [ ] F-10.2.10 — Pod → gateway path lacks the spec-promised audience-bound JWT verification — M [Medium] — OPEN
+### - [ ] F-10.2.10 — Pod → gateway path lacks the spec-promised audience-bound JWT verification — M [Medium] — DEFERRED
 
 Spec L189–190: the boundary table specifies pod ↔ gateway uses "mTLS + projected service account token (audience-bound, short TTL)" and "Pod → Gateway: Projected service account token (audience: deployment-specific, short TTL)". L227: "Pods cannot forge or extend this token. The gateway validates the signature on every pod→gateway request."
 
 Pod-identity enforcement in the codebase is mTLS + the `MCPNonce` (`pkg/adapter/manifest.go:17–18, 81–86`) plus the SPIFFE credential-lease binding (`pkg/credential/lease.go:82–84`). There is no Kubernetes TokenReview, no audience-claim check on pod-presented bearer JWTs, and no shared verifier wiring `global.saTokenAudience` into a per-request validator. `cmd/lenny-preflight/main.go:69–70` and `pkg/preflight/networkpolicy_identity.go:70–92` enforce the *uniqueness* of the audience at install time, but no runtime validator consumes the resulting `lenny.dev/sa-token-audience` annotation. The spec's "validates the signature on every pod→gateway request" invariant has no in-code counterpart for SA-token signatures; mTLS plus the nonce is the only enforcement.
+
+**Resolution:** Deferred — runtime SA-token validation requires (a) the adapter to read `/var/run/secrets/lenny.dev/serviceaccount/token` and attach it to each outbound gRPC call, (b) the gateway to install a streaming/unary gRPC interceptor that verifies the projected token via Kubernetes TokenReview against the configured audience, and (c) a fail-closed posture aligned with the existing mTLS layer. This is sizeable enough to warrant its own batch in the §10.3 mTLS/SA-identity cluster (alongside F-10.3.1, F-10.3.20). The mTLS + MCPNonce posture in v1 remains an authenticated channel; the token-audience layer is a defense-in-depth addition tracked here.
 
 ### - [x] F-10.2.11 — KMS signer is locked to the in-process `kms.Local` provider — M [Medium] — CLOSED
 

@@ -179,6 +179,30 @@ type Options struct {
 	// REJECT blocks the request with 403 INTERCEPTOR_REJECTED. nil skips
 	// the phase. spec: §4.8 lines 972, 1023, 1046.
 	Interceptors *interceptor.Chain
+
+	// PlatformRoles, when set, resolves the §10.2 line 294
+	// platform-managed user→role mapping. The middleware consults it for
+	// every Bearer principal whose Subject is non-empty; when a mapping
+	// row exists for (TenantID, Subject), its Roles fully replace the
+	// roles claimed by the JWT, allowing tenant-admins to override
+	// OIDC-derived roles within their tenant. Absent the mapping the JWT
+	// roles claim stays authoritative.
+	// spec: §10.2 line 294. F-10.2.3.
+	PlatformRoles PlatformRoleResolver
+}
+
+// PlatformRoleResolver is the §10.2 line 294 platform-managed
+// user→role mapping. The auth middleware consults it for every
+// authenticated Bearer principal; when a mapping row exists, its Roles
+// override the JWT claim.
+type PlatformRoleResolver interface {
+	// ResolveRoles returns the platform-managed roles for
+	// (tenantID, subject). The found return is true when a mapping row
+	// exists for the principal (in which case Roles fully replaces the
+	// OIDC claim); false means no mapping exists and the OIDC claim
+	// stays authoritative. Implementations return the underlying error
+	// on transport-level failures so the middleware can fail closed.
+	ResolveRoles(ctx context.Context, tenantID, subject string) (roles []auth.Role, found bool, err error)
 }
 
 // RevocationChecker reports whether a token's jti has been revoked.
@@ -323,6 +347,24 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		Roles:      append([]auth.Role(nil), claims.Roles...),
 		Groups:     append([]string(nil), claims.Groups...),
 		Scopes:     scopeSet,
+	}
+	// spec: §10.2 line 294 — the platform-managed user→role mapping
+	// takes precedence over OIDC-derived roles. When the resolver
+	// returns a row for (tenant, subject), its Roles override the JWT
+	// claim wholesale; on a transport error the request fails closed
+	// (we cannot safely fall back to the unmodified OIDC roles when we
+	// do not know whether a platform override exists). F-10.2.3.
+	if m.opts.PlatformRoles != nil && p.Subject != "" {
+		roles, found, perr := m.opts.PlatformRoles.ResolveRoles(r.Context(), p.TenantID, p.Subject)
+		if perr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"platform role resolution failed: "+perr.Error(),
+				map[string]any{"reason": "platform_role_lookup_failed"})
+			return
+		}
+		if found {
+			p.Roles = append([]auth.Role(nil), roles...)
+		}
 	}
 	ctx := WithPrincipal(r.Context(), p)
 	// Echo the resolved tenant via the dev header path so handlers

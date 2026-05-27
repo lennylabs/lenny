@@ -47,6 +47,15 @@ type Metrics struct {
 	experimentIsoRej          *prometheus.CounterVec
 	noEnvPolicyAllowAll       *prometheus.CounterVec
 	gcPauseP99Ms              prometheus.Gauge
+	// kmsSigningErrors counts §10.2 line 225 JWTSigner failures. The
+	// §16.5 KMSSigningUnavailable alert keys on
+	// `rate(lenny_gateway_kms_signing_errors_total[30s]) > 1`. The
+	// `reason` label discriminates `inner` (KMS surfaced an error) from
+	// `rejected` (breaker open). spec: §10.2 line 225. F-10.2.6.
+	kmsSigningErrors *prometheus.CounterVec
+	// kmsSigningCircuitState is the §10.2 line 225 JWTSigner breaker
+	// gauge: 0=closed, 1=half-open, 2=open. F-10.2.6.
+	kmsSigningCircuitState prometheus.Gauge
 	// tokenServiceCircuitState reflects the §4.3 / §4.1 Token Service
 	// per-subsystem circuit-breaker state (0 closed, 1 half-open, 2
 	// open). The §16.5 TokenServiceUnavailable alert reads it via
@@ -546,6 +555,22 @@ func New() (*Metrics, error) {
 	tokenServiceCircuitState, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_token_service_circuit_state",
 		Help: "§4.3 Token Service circuit breaker state: 0=closed, 1=half-open, 2=open.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §10.2 line 225 / §16.5 KMSSigningUnavailable alert reads
+	// rate(lenny_gateway_kms_signing_errors_total[30s]) > 1. F-10.2.6.
+	kmsSigningErrors, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_gateway_kms_signing_errors_total",
+		Help: "§10.2 JWTSigner signing failures. Labels: reason ∈ {inner, rejected}.",
+	}, []string{"reason"})
+	if err != nil {
+		return nil, err
+	}
+	kmsSigningCircuitState, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_kms_signing_circuit_state",
+		Help: "§10.2 JWTSigner circuit breaker state: 0=closed, 1=half-open, 2=open.",
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -1132,6 +1157,7 @@ func New() (*Metrics, error) {
 		cbRejections, cbRejectionsSuppressed, elicitationDropped,
 		elicitationTamperDetected, experimentIsoRej,
 		noEnvPolicyAllowAll, tokenServiceCircuitState,
+		kmsSigningErrors, kmsSigningCircuitState,
 		checkpointStaleSessions,
 		partialManifestCleanup, checkpointPartialManifestsSuperseded,
 		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
@@ -1178,6 +1204,7 @@ func New() (*Metrics, error) {
 		minReplicas, streamCeiling, replicaCount, llmProxyActiveConnections)
 
 	tokenServiceCircuitChild := tokenServiceCircuitState.WithLabelValues()
+	kmsSigningCircuitChild := kmsSigningCircuitState.WithLabelValues()
 	return &Metrics{
 		reg:                                  reg,
 		requestsTotal:                        requestsTotal,
@@ -1204,6 +1231,8 @@ func New() (*Metrics, error) {
 		noEnvPolicyAllowAll:                  noEnvPolicyAllowAll,
 		gcPauseP99Ms:                         gcPause,
 		tokenServiceCircuitState:             tokenServiceCircuitChild,
+		kmsSigningErrors:                     kmsSigningErrors,
+		kmsSigningCircuitState:               kmsSigningCircuitChild,
 		checkpointStaleSessions:              checkpointStaleSessions,
 		partialManifestCleanup:               partialManifestCleanup,
 		checkpointPartialManifestsSuperseded: checkpointPartialManifestsSuperseded,
@@ -2032,6 +2061,29 @@ func (m *Metrics) SetCheckpointStaleSessions(pool, level string, count int) {
 		return
 	}
 	m.checkpointStaleSessions.WithLabelValues(pool, level).Set(float64(count))
+}
+
+// RecordKMSSigningError increments the §10.2 line 225
+// `lenny_gateway_kms_signing_errors_total{reason}` counter. The
+// `reason` label distinguishes a downstream KMS failure (`inner`) from
+// a breaker short-circuit (`rejected`). F-10.2.6.
+func (m *Metrics) RecordKMSSigningError(reason string) {
+	if m == nil {
+		return
+	}
+	m.kmsSigningErrors.WithLabelValues(reason).Inc()
+}
+
+// SetKMSSigningCircuitState publishes the §10.2 line 225 JWTSigner
+// breaker state to `lenny_gateway_kms_signing_circuit_state`. The
+// §16.5 KMSSigningUnavailable alert fires on the error-rate counter
+// rather than the gauge, but the gauge is useful for dashboards.
+// F-10.2.6.
+func (m *Metrics) SetKMSSigningCircuitState(value int) {
+	if m == nil {
+		return
+	}
+	m.kmsSigningCircuitState.Set(float64(value))
 }
 
 // SetTokenServiceCircuitState updates the §4.3 / §4.1

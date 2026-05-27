@@ -133,10 +133,15 @@ func main() {
 	}
 	log.Printf("lenny-token-service: §4 KMS provider = %s (environment=%s)",
 		kmsOpts.Provider, kmsOpts.Environment)
-	signer, err := jwt.NewKMSSigner(ctx, kmsProvider, jwt.TokenServiceKEKAlias, "dev-1")
+	kmsBackedSigner, err := jwt.NewKMSSigner(ctx, kmsProvider, jwt.TokenServiceKEKAlias, "dev-1")
 	if err != nil {
 		log.Fatalf("lenny-token-service: kms-backed signer: %v", err)
 	}
+	// spec: §10.2 line 225 — wrap the KMS-backed signer in the
+	// JWTSigner circuit breaker so KMS outages convert to
+	// KMS_SIGNING_UNAVAILABLE rather than hanging the request path.
+	// F-10.2.6.
+	signer := &jwt.BreakerSigner{Inner: kmsBackedSigner}
 
 	// §16.1 Prometheus metric vectors. The §16.5
 	// TokenServiceUnavailable alert reads

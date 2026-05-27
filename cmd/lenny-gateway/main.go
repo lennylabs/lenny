@@ -43,6 +43,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -65,6 +66,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
@@ -801,9 +803,22 @@ func main() {
 	// sealed under a KMS KEK rather than being a plaintext per-process
 	// dev secret. The token-service handler mounted below serves POST
 	// /v1/oauth/token (RFC 8693).
-	jwtSigner, err := jwt.NewKMSSigner(context.Background(), kmsProvider, jwt.TokenServiceKEKAlias, "boot")
+	kmsBackedSigner, err := jwt.NewKMSSigner(context.Background(), kmsProvider, jwt.TokenServiceKEKAlias, "boot")
 	if err != nil {
 		log.Fatalf("lenny-gateway: kms-backed jwt signer: %v", err)
+	}
+	// spec: §10.2 line 225 — wrap the KMS-backed signer in the
+	// JWTSigner circuit breaker. More than 3 consecutive Sign failures
+	// inside a 30s window trips the breaker open; subsequent Sign calls
+	// short-circuit to ErrSigningUnavailable until the cooldown elapses.
+	// The Token Service handler maps the sentinel to 503
+	// KMS_SIGNING_UNAVAILABLE with retryable: true. The Observer is
+	// wired after gatewaymetrics.New() below so the breaker can push the
+	// signing-error counter and circuit-state gauge. F-10.2.6.
+	kmsBreakerObs := &kmsBreakerObserver{}
+	jwtSigner := &jwt.BreakerSigner{
+		Inner:    kmsBackedSigner,
+		Observer: kmsBreakerObs,
 	}
 
 	// ----- §10.3 RotatingVerifier -----
@@ -815,7 +830,10 @@ func main() {
 	// lands, JWKSHandler advertises exactly that key and the bearer
 	// path verifies against it. The §13.3 24h overlap window is the
 	// jwt.DefaultOverlapWindow default.
-	rotatingVerifier := jwt.NewRotatingVerifier(jwtSigner, jwt.DefaultOverlapWindow)
+	// Verifier uses kmsBackedSigner directly: verification is local
+	// memory and doesn't reach KMS, so it must not gate on the §10.2
+	// signing breaker. F-10.2.6.
+	rotatingVerifier := jwt.NewRotatingVerifier(kmsBackedSigner, jwt.DefaultOverlapWindow)
 
 	// ----- §10.2 Bearer verifier -----
 	// The Token Service signer verifies tokens it minted itself. A
@@ -1129,6 +1147,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("lenny-gateway: metrics: %v", err)
 	}
+	// spec: §10.2 line 225 — back-fill the JWTSigner breaker observer
+	// with the freshly-built metrics so signing failures and circuit
+	// transitions land on `lenny_gateway_kms_signing_errors_total` and
+	// `lenny_gateway_kms_signing_circuit_state`. F-10.2.6.
+	kmsBreakerObs.SetMetrics(gwMetrics)
 	// §4.6.1: record fallback-claim skips on the gateway metrics registry.
 	// Wired after gatewaymetrics.New() because the binder is constructed
 	// earlier in the agent-namespace block.
@@ -2244,8 +2267,12 @@ func main() {
 			log.Fatalf("lenny-gateway: §27.8 playground metrics: %v", err)
 		}
 		pg := playground.New(pgCfg, playground.Options{
+			// spec: §10.2 line 225 — Sign goes through the breaker so
+			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE;
+			// Verify uses the inner signer (verification is local memory
+			// and never reaches KMS). F-10.2.6.
 			Signer:   jwtSigner,
-			Verifier: jwtSigner,
+			Verifier: kmsBackedSigner,
 			Tenants:  playgroundTenantRegistry{store: tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
@@ -2456,14 +2483,26 @@ func main() {
 		// §4.8 line 1046: run the PreAuth chain (AuthEvaluator) after the
 		// principal resolves and before the request reaches the handler.
 		Interceptors: policyChain,
+		// spec: §10.2 line 294 — platform-managed user→role mapping
+		// overrides OIDC-derived roles. The userstore-backed adapter
+		// returns the user's stored Roles when the row exists; missing
+		// rows fall through to the JWT claim. F-10.2.3.
+		PlatformRoles: userstorePlatformRoles{store: users},
 	}
 	if !*multiTenant {
 		// Even in single-tenant mode, dev-header callers carry the
 		// tenant header. Flip to multi-tenant with a permissive
 		// registry so the header round-trips.
 		authOpts.MultiTenant = true
+		authOpts.Registry = permissiveRegistry{}
+	} else {
+		// spec: §10.2 lines 219-221 — in multi-tenant mode, an
+		// unregistered `tenant_id` claim is a hard 403 TENANT_NOT_FOUND.
+		// The bearer chain consults the real tenantstore so unprovisioned
+		// callers cannot ride a signature-valid token into the platform.
+		// F-10.2.1.
+		authOpts.Registry = bearerTenantRegistry{store: tenants}
 	}
-	authOpts.Registry = permissiveRegistry{}
 	handler = authmw.Wrap(handler, authOpts)
 
 	// §16.1 request metrics, outermost wrap so every request — including
@@ -3329,13 +3368,112 @@ func resolveReplicaID() string {
 }
 
 // permissiveRegistry accepts every tenant. The minimal gateway uses
-// this so dev-header transports can name an arbitrary tenant during
-// integration tests without operator pre-provisioning. Production
-// swaps in a Postgres-backed Registry (e.g., the in-memory
-// tenantstore.Memory which also satisfies auth.TenantRegistry).
+// this in single-tenant mode (where the §10.2 dev-header transport
+// flips to MultiTenant=true to round-trip the tenant header).
+// Multi-tenant production deployments use bearerTenantRegistry
+// instead, which consults the real tenantstore.
 type permissiveRegistry struct{}
 
 func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil }
+
+// kmsBreakerObserver routes the §10.2 line 225 JWTSigner breaker
+// transitions and signing failures onto gatewaymetrics so the §16.5
+// KMSSigningUnavailable alert reads them. The metrics pointer is wired
+// in after gatewaymetrics.New() returns; pre-wire calls are no-ops.
+// spec: §10.2 line 225. F-10.2.6.
+type kmsBreakerObserver struct {
+	mu sync.Mutex
+	m  *gatewaymetrics.Metrics
+}
+
+func (o *kmsBreakerObserver) SetMetrics(m *gatewaymetrics.Metrics) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.m = m
+}
+
+func (o *kmsBreakerObserver) metrics() *gatewaymetrics.Metrics {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.m
+}
+
+func (o *kmsBreakerObserver) OnSigningFailure() {
+	if m := o.metrics(); m != nil {
+		m.RecordKMSSigningError("inner")
+	}
+}
+
+func (o *kmsBreakerObserver) OnRejected() {
+	if m := o.metrics(); m != nil {
+		m.RecordKMSSigningError("rejected")
+	}
+}
+
+func (o *kmsBreakerObserver) OnCircuitOpen() {
+	if m := o.metrics(); m != nil {
+		m.SetKMSSigningCircuitState(2)
+	}
+}
+
+func (o *kmsBreakerObserver) OnCircuitClosed() {
+	if m := o.metrics(); m != nil {
+		m.SetKMSSigningCircuitState(0)
+	}
+}
+
+// userstorePlatformRoles adapts a userstore.Store into the §10.2 line
+// 294 platform-managed role resolver consulted by the auth middleware.
+// When a row exists for (tenantID, subject) — including a row whose
+// Roles slice is empty — its Roles fully replace the OIDC claim, so
+// tenant-admins can downgrade a user with an over-broad OIDC claim by
+// recording an explicit (possibly empty) assignment. A row not found
+// leaves the JWT claim authoritative.
+// spec: §10.2 line 294. F-10.2.3.
+type userstorePlatformRoles struct {
+	store userstore.Store
+}
+
+func (r userstorePlatformRoles) ResolveRoles(ctx context.Context, tenantID, subject string) ([]auth.Role, bool, error) {
+	if r.store == nil {
+		return nil, false, nil
+	}
+	row, err := r.store.Get(ctx, tenantID, subject)
+	if errors.Is(err, userstore.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return append([]auth.Role(nil), row.Roles...), true, nil
+}
+
+// bearerTenantRegistry is the §10.2 line 219 multi-tenant bearer-chain
+// adapter. It consults the wired tenantstore so a Bearer JWT whose
+// `tenant_id` claim names a tenant that is not provisioned (or is
+// soft-deleted) is rejected with TENANT_NOT_FOUND. The built-in
+// `default` tenant is admitted unconditionally so the Embedded-Mode
+// quickstart (which seeds the default row via the bootstrap Job) works
+// even before the row is persisted; once the row exists, the active
+// flag (IsActive) governs.
+// spec: §10.2 lines 219-221. F-10.2.1.
+type bearerTenantRegistry struct {
+	store tenantstore.Store
+}
+
+func (r bearerTenantRegistry) IsRegistered(tenantID string) (bool, error) {
+	if tenantID == auth.DefaultTenantID {
+		return true, nil
+	}
+	row, err := r.store.Get(context.Background(), tenantID)
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return row.IsActive(), nil
+}
 
 // sessionArtifactDeleter is implemented by session-scoped stores that
 // expose the per-session DeleteBySession adapter — the transcript and
