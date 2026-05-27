@@ -3,6 +3,9 @@
 package sessionevents_test
 
 import (
+	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -259,3 +262,162 @@ func TestOldestRetainedSeqIsPerSession_spec_7_2(t *testing.T) {
 		t.Errorf("foreign session: got (%d, %v), want (0, false)", seq, ok)
 	}
 }
+
+// fakeLastSeqStore implements both LastSeqPersister and LastSeqLoader
+// for the §7.3 line 397 durable counter wiring tests. F-7.3.3.
+type fakeLastSeqStore struct {
+	mu       sync.Mutex
+	persisted map[string]int64
+	loadErr  error
+	loadCount int
+	advCount  int
+}
+
+func newFakeLastSeqStore() *fakeLastSeqStore {
+	return &fakeLastSeqStore{persisted: map[string]int64{}}
+}
+
+func (f *fakeLastSeqStore) seed(tenantID, sessionID string, seq int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.persisted[tenantID+"/"+sessionID] = seq
+}
+
+func (f *fakeLastSeqStore) LoadLastSeq(_ context.Context, tenantID, sessionID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.loadCount++
+	if f.loadErr != nil {
+		return 0, f.loadErr
+	}
+	return f.persisted[tenantID+"/"+sessionID], nil
+}
+
+func (f *fakeLastSeqStore) AdvanceLastSeq(_ context.Context, tenantID, sessionID string, seq int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.advCount++
+	k := tenantID + "/" + sessionID
+	if seq > f.persisted[k] {
+		f.persisted[k] = seq
+	}
+	return nil
+}
+
+func (f *fakeLastSeqStore) snapshot(tenantID, sessionID string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.persisted[tenantID+"/"+sessionID]
+}
+
+func (f *fakeLastSeqStore) loads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.loadCount
+}
+
+func (f *fakeLastSeqStore) advances() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.advCount
+}
+
+// TestPublishAdvancesPersistedLastSeq_spec_7_3 covers F-7.3.3 / §7.3
+// line 397: every Publish must durably advance the per-session
+// monotonic counter so the value survives replica restart and
+// coordinator handoff. The Bus calls AdvanceLastSeq asynchronously so
+// the test polls until the writer drains.
+func TestPublishAdvancesPersistedLastSeq_spec_7_3(t *testing.T) {
+	store := newFakeLastSeqStore()
+	b := sessionevents.NewBus(0).
+		WithLastSeqPersister(store).
+		WithLastSeqLoader(store)
+	for i := 0; i < 3; i++ {
+		b.PublishForTenant("tenant_a", "sess_1", "event", `{}`, ts())
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if store.snapshot("tenant_a", "sess_1") == 3 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := store.snapshot("tenant_a", "sess_1"); got != 3 {
+		t.Errorf("persisted last_seq = %d, want 3", got)
+	}
+}
+
+// TestPublishSeedsFromPersistedLastSeq_spec_7_3 covers F-7.3.3 / §7.3
+// line 397 + §10.4 coordinator-handoff: a fresh replica picking up a
+// session whose persisted last_seq is 5 must continue with Seq=6 on
+// its next publish (never rewinding).
+func TestPublishSeedsFromPersistedLastSeq_spec_7_3(t *testing.T) {
+	store := newFakeLastSeqStore()
+	store.seed("tenant_a", "sess_1", 5)
+	b := sessionevents.NewBus(0).
+		WithLastSeqPersister(store).
+		WithLastSeqLoader(store)
+	ev := b.PublishForTenant("tenant_a", "sess_1", "event", `{}`, ts())
+	if ev.Seq != 6 {
+		t.Errorf("first publish after seed: Seq = %d, want 6", ev.Seq)
+	}
+}
+
+// TestSeedLookupRunsAtMostOncePerSession_spec_7_3 verifies the seed
+// loader is consulted only on the first publish for a session — later
+// publishes must use the in-memory counter so a fresh Postgres lookup
+// does not run on every event.
+func TestSeedLookupRunsAtMostOncePerSession_spec_7_3(t *testing.T) {
+	store := newFakeLastSeqStore()
+	b := sessionevents.NewBus(0).
+		WithLastSeqPersister(store).
+		WithLastSeqLoader(store)
+	for i := 0; i < 4; i++ {
+		b.PublishForTenant("tenant_a", "sess_1", "event", `{}`, ts())
+	}
+	if got := store.loads(); got != 1 {
+		t.Errorf("LoadLastSeq invocations = %d, want 1", got)
+	}
+}
+
+// TestSeedLoadErrorLeavesCounterAtZero_spec_7_3 covers the
+// "best-effort, degrade to local" posture: a loader failure leaves the
+// Bus on its local counter starting at 1 so a Postgres outage cannot
+// stall publishes.
+func TestSeedLoadErrorLeavesCounterAtZero_spec_7_3(t *testing.T) {
+	store := newFakeLastSeqStore()
+	store.loadErr = errLoadFailed
+	b := sessionevents.NewBus(0).
+		WithLastSeqLoader(store)
+	ev := b.PublishForTenant("tenant_a", "sess_1", "event", `{}`, ts())
+	if ev.Seq != 1 {
+		t.Errorf("first publish after load error: Seq = %d, want 1 (loader degrades to local)", ev.Seq)
+	}
+}
+
+// TestPersisterAndLoaderAreNoopWhenUnwired_spec_7_3 ensures the
+// single-replica default path keeps working without either hook.
+func TestPersisterAndLoaderAreNoopWhenUnwired_spec_7_3(t *testing.T) {
+	b := sessionevents.NewBus(0)
+	ev := b.PublishForTenant("tenant_a", "sess_1", "event", `{}`, ts())
+	if ev.Seq != 1 {
+		t.Errorf("unwired Bus Seq = %d, want 1", ev.Seq)
+	}
+}
+
+// TestUntenantedPublishSkipsPersistence_spec_7_3 covers the
+// tenant-isolation contract: the durable persister is only invoked for
+// tenant-scoped publishes (the legacy untenanted entry point is kept
+// for internal bus self-tests only).
+func TestUntenantedPublishSkipsPersistence_spec_7_3(t *testing.T) {
+	store := newFakeLastSeqStore()
+	b := sessionevents.NewBus(0).WithLastSeqPersister(store)
+	b.Publish("sess_1", "event", `{}`, ts())
+	// Give the goroutine pool a chance to run (if it were going to).
+	time.Sleep(10 * time.Millisecond)
+	if got := store.advances(); got != 0 {
+		t.Errorf("AdvanceLastSeq invoked for untenanted publish: %d", got)
+	}
+}
+
+var errLoadFailed = errors.New("sessionevents_test: load failed")

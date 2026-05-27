@@ -247,6 +247,18 @@ type Session struct {
 	// paths then fall back to their respective config values. F-7.3.1.
 	// spec: §7.3 lines 377-393.
 	RetryPolicy *session.RetryPolicy
+
+	// LastSeq is the §7.3 line 397 sessions.last_seq durable counter —
+	// the authoritative per-session monotonic SessionEvent.SeqNum value.
+	// The gateway advances it atomically with each persisted event so
+	// the counter survives coordinator handoff, replica restart, and
+	// resume_pending → resuming → running recovery without rewinds.
+	// Monotonically non-decreasing; the pgstore enforces the floor on
+	// Update via GREATEST and the DB CHECK constraint catches the
+	// impossible negative. Coordinator-local Bus counters are advisory
+	// caches primed from this column at handoff step 0. F-7.3.3.
+	// spec: §7.3 line 397; §10.4 coordinator-handoff replay; §15 SSE.
+	LastSeq int64
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a

@@ -77,7 +77,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	COALESCE(workspace_snapshot_hash, ''),
 	execution_mode, scrub_policy,
 	metadata,
-	retry_policy, last_checkpoint_workspace_bytes`
+	retry_policy, last_checkpoint_workspace_bytes,
+	last_seq`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -120,7 +121,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		workspace_snapshot_hash,
 		execution_mode, scrub_policy,
 		metadata,
-		retry_policy, last_checkpoint_workspace_bytes
+		retry_policy, last_checkpoint_workspace_bytes,
+		last_seq
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
@@ -132,7 +134,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		NULLIF($35, ''),
 		$36, $37,
 		$38::jsonb,
-		$39::jsonb, $40
+		$39::jsonb, $40,
+		$41
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -160,7 +163,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			sess.ExecutionMode, sess.ScrubPolicy,
 			metadataArg(sess.Metadata),
 			retryPolicyArg(sess.RetryPolicy),
-			workspaceBytesArg(sess.WorkspaceSnapshot))
+			workspaceBytesArg(sess.WorkspaceSnapshot),
+			sess.LastSeq)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -207,6 +211,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 	// (F-7.3.20). Clauses $37 and $38 are the §7.3 retry_policy +
 	// last_checkpoint_workspace_bytes pair added in migration 0087
 	// (F-7.3.1 / F-7.3.21).
+	// last_seq is GREATEST-floored so a late writer from a sibling
+	// replica cannot rewind a freshly published Seq; the DB CHECK
+	// constraint catches the impossible negative. F-7.3.3.
 	const updateSQL = `UPDATE sessions SET
 		user_id = $3, state = $4, runtime_ref = $5, pool_ref = $6,
 		isolation_profile = $7, parent_session_id = NULLIF($8, '')::uuid,
@@ -225,7 +232,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		execution_mode = $34, scrub_policy = $35,
 		metadata = $36::jsonb,
 		retry_policy = $37::jsonb,
-		last_checkpoint_workspace_bytes = $38
+		last_checkpoint_workspace_bytes = $38,
+		last_seq = GREATEST(last_seq, $39)
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -241,6 +249,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		prevRecoveryGen := sess.RecoveryGeneration
 		prevCoordGen := sess.CoordinationGeneration
 		prevRetryCount := sess.RetryCount
+		prevLastSeq := sess.LastSeq
 		if err := mutate(&sess); err != nil {
 			return err
 		}
@@ -258,6 +267,14 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		}
 		if sess.RetryCount < prevRetryCount {
 			sess.RetryCount = prevRetryCount
+		}
+		// spec: §7.3 line 397 — sessions.last_seq is monotonic. The
+		// GREATEST in updateSQL is the cross-replica floor; this
+		// callback-level guard keeps the in-memory copy consistent so
+		// the returned Session never reports a rewound LastSeq even if
+		// the mutate callback explicitly zeroes it. F-7.3.3.
+		if sess.LastSeq < prevLastSeq {
+			sess.LastSeq = prevLastSeq
 		}
 		sess.UpdatedAt = pgtenant.MonotonicNext(prevUpdated, time.Now())
 		ref, src, at, hash := snapshotCols(sess.WorkspaceSnapshot)
@@ -284,6 +301,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			metadataArg(sess.Metadata),
 			retryPolicyArg(sess.RetryPolicy),
 			workspaceBytesArg(sess.WorkspaceSnapshot),
+			sess.LastSeq,
 		); err != nil {
 			return err
 		}
@@ -451,6 +469,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §7.3 retry_policy + last_checkpoint_workspace_bytes from
 		// migration 0087 (F-7.3.1 / F-7.3.21).
 		&retryPolicyJSON, &lastCheckpointBytes,
+		// §7.3 line 397 last_seq durable counter from migration 0088
+		// (F-7.3.3).
+		&s.LastSeq,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

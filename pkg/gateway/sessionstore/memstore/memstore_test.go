@@ -227,6 +227,54 @@ func TestUpdateClampsGenerationCountersMonotonically(t *testing.T) {
 	}
 }
 
+// TestUpdateClampsLastSeqMonotonically covers F-7.3.3 / §7.3 line 397:
+// sessions.last_seq is monotonic and an accidental rollback in the
+// mutate callback must be clamped back to the prior value. The
+// production pgstore enforces the same floor via GREATEST in updateSQL.
+func TestUpdateClampsLastSeqMonotonically(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{
+		ID: "sess_1", TenantID: "acme", State: session.StateRunning,
+		LastSeq: 42,
+	})
+	updated, err := s.Update(ctx, "acme", "sess_1", func(row *sessionstore.Session) error {
+		row.LastSeq = 7
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.LastSeq != 42 {
+		t.Errorf("LastSeq: want 42 (clamped), got %d", updated.LastSeq)
+	}
+}
+
+// TestUpdateAdvancesLastSeq covers F-7.3.3 / §7.3 line 397: a legitimate
+// advance writes through the store and round-trips on subsequent reads.
+func TestUpdateAdvancesLastSeq(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_1", TenantID: "acme", State: session.StateRunning})
+	updated, err := s.Update(ctx, "acme", "sess_1", func(row *sessionstore.Session) error {
+		row.LastSeq = 5
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.LastSeq != 5 {
+		t.Errorf("LastSeq: want 5, got %d", updated.LastSeq)
+	}
+	got, err := s.Get(ctx, "acme", "sess_1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.LastSeq != 5 {
+		t.Errorf("after re-read, LastSeq: want 5, got %d", got.LastSeq)
+	}
+}
+
 // spec: §4.2 line 156 — both counters advance monotonically on
 // legitimate increments.
 func TestUpdateAdvancesGenerationCounters(t *testing.T) {

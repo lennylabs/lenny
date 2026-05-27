@@ -86,6 +86,7 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	prevRecoveryGen := row.RecoveryGeneration
 	prevCoordGen := row.CoordinationGeneration
 	prevRetryCount := row.RetryCount
+	prevLastSeq := row.LastSeq
 	if err := mutate(&row); err != nil {
 		return sessionstore.Session{}, err
 	}
@@ -103,6 +104,13 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	}
 	if row.RetryCount < prevRetryCount {
 		row.RetryCount = prevRetryCount
+	}
+	// spec: §7.3 line 397 — sessions.last_seq is monotonic;
+	// GREATEST-floor semantics match the pgstore so a late writer from
+	// a sibling replica cannot rewind a freshly published Seq.
+	// F-7.3.3.
+	if row.LastSeq < prevLastSeq {
+		row.LastSeq = prevLastSeq
 	}
 	if row.SchemaVersion == 0 {
 		row.SchemaVersion = 1

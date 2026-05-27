@@ -75,6 +75,41 @@ type Bus struct {
 	// relay is the §4.4 / §12.3.7 cross-replica Redis fan-out. A nil
 	// relay reduces the Bus to the single-replica path.
 	relay *RedisRelay
+	// lastSeqPersister, when set, durably advances the session row's
+	// last_seq counter on every Publish. The persister is best-effort
+	// and asynchronous so a Postgres outage does not stall in-memory
+	// subscribers. F-7.3.3.
+	lastSeqPersister LastSeqPersister
+	// seedLoader, when set, is consulted on the first Publish for a
+	// session to seed the in-memory counter from the persisted
+	// last_seq — the §7.3 line 397 "coordinator-local copy is an
+	// advisory cache primed from Postgres at handoff step 0" contract.
+	// A nil loader leaves the counter at 0 (single-replica or no
+	// prior coordinator). F-7.3.3.
+	seedLoader LastSeqLoader
+	// seeded records the sessions whose counter has been primed from
+	// Postgres so the seed lookup runs at most once per (replica,
+	// session). F-7.3.3.
+	seeded map[string]struct{}
+}
+
+// LastSeqPersister durably advances the §7.3 line 397 sessions.last_seq
+// counter for a session. Implementations MUST treat the value as a
+// monotonic floor — a write that would rewind an existing higher value
+// is a no-op (the Postgres pgstore enforces this via GREATEST). The
+// publish path invokes the persister asynchronously so a Postgres
+// slowdown cannot stall in-memory subscribers. F-7.3.3.
+type LastSeqPersister interface {
+	AdvanceLastSeq(ctx context.Context, tenantID, sessionID string, seq int64) error
+}
+
+// LastSeqLoader returns the persisted §7.3 line 397 sessions.last_seq
+// counter for a session, used to seed the Bus's in-memory counter on
+// the first publish for that session (the §7.3 / §10.4 "primed from
+// Postgres at handoff step 0" contract). A miss returns (0, nil) so the
+// Bus starts at 1 for a freshly-created session. F-7.3.3.
+type LastSeqLoader interface {
+	LoadLastSeq(ctx context.Context, tenantID, sessionID string) (int64, error)
 }
 
 // subscription is one active SSE client.
@@ -96,8 +131,34 @@ func NewBus(maxHistory int) *Bus {
 		history:    map[string][]Event{},
 		subs:       map[string][]*subscription{},
 		tenant:     map[string]string{},
+		seeded:     map[string]struct{}{},
 		maxHistory: maxHistory,
 	}
+}
+
+// WithLastSeqPersister wires the §7.3 line 397 durable counter writer.
+// Every Publish schedules an asynchronous AdvanceLastSeq so the
+// persisted sessions.last_seq advances atomically with each event
+// without blocking subscribers. A nil persister keeps the Bus's local
+// counter advisory-only (the single-replica posture). F-7.3.3.
+func (b *Bus) WithLastSeqPersister(p LastSeqPersister) *Bus {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.lastSeqPersister = p
+	return b
+}
+
+// WithLastSeqLoader wires the §7.3 line 397 / §10.4 handoff seed
+// loader. On the first Publish for a session the Bus consults the
+// loader to prime its in-memory counter from the persisted last_seq,
+// so a fresh replica picking up a session never rewinds. A nil loader
+// keeps the Bus on the single-replica path (counter starts at 0).
+// F-7.3.3.
+func (b *Bus) WithLastSeqLoader(l LastSeqLoader) *Bus {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.seedLoader = l
+	return b
 }
 
 // ErrTenantMismatch reports that a Subscribe call presented a tenant id
@@ -156,6 +217,28 @@ func (b *Bus) publish(tenantID, sessionID, eventType, data string, now time.Time
 			return Event{}
 		}
 	}
+	// spec: §7.3 line 397 / §10.4 — prime the local counter from the
+	// persisted last_seq on the first publish for the session so a
+	// fresh replica picking up the session after a coordinator handoff
+	// never rewinds. The seed is best-effort: a loader miss / error
+	// leaves the counter at 0 (the single-replica or new-session
+	// posture); the persister's GREATEST floor still prevents a
+	// downstream rewind. F-7.3.3.
+	if _, primed := b.seeded[sessionID]; !primed {
+		b.seeded[sessionID] = struct{}{}
+		if loader := b.seedLoader; loader != nil && tenantID != "" {
+			// Drop the lock during the load so a slow Postgres lookup
+			// does not stall sibling sessions' publishes.
+			b.mu.Unlock()
+			persisted, err := loader.LoadLastSeq(context.Background(), tenantID, sessionID)
+			b.mu.Lock()
+			if err == nil && persisted > 0 {
+				if cur := b.seq[sessionID]; uint64(persisted) > cur {
+					b.seq[sessionID] = uint64(persisted)
+				}
+			}
+		}
+	}
 	b.seq[sessionID]++
 	ev := Event{
 		Seq:       b.seq[sessionID],
@@ -181,11 +264,22 @@ func (b *Bus) publish(tenantID, sessionID, eventType, data string, now time.Time
 		}
 	}
 	relay := b.relay
+	persister := b.lastSeqPersister
 	b.mu.Unlock()
 	if relay != nil {
 		// Fan-out outside the lock so a slow Redis client does not
 		// stall in-memory subscribers on the same replica.
 		relay.PublishEvent(context.Background(), ev)
+	}
+	// spec: §7.3 line 397 — durably advance the per-session
+	// monotonic counter. Best-effort and asynchronous so a Postgres
+	// outage does not stall subscribers; the persister's GREATEST
+	// floor keeps the persisted value monotonic across replicas.
+	// F-7.3.3.
+	if persister != nil && tenantID != "" {
+		go func(seq int64) {
+			_ = persister.AdvanceLastSeq(context.Background(), tenantID, sessionID, seq)
+		}(int64(ev.Seq))
 	}
 	return ev
 }
