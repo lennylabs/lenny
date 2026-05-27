@@ -94,6 +94,15 @@ Node-pool pressure. Scale the node pool or adjust pod resource requests so the s
 
 Long setup commands are a warm-pod design anti-pattern; the warm pod exists precisely to pre-pay setup cost. Move the work into the base image. See Spec §6 (warm-pod model).
 
+The §6.3 setup-command budget is ≤ 3s for runc and ≤ 1s for gVisor (recommended). Query the per-runtime-class setup-command p95 with:
+
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_session_startup_phase_duration_seconds_bucket{phase="setup_commands"}[5m]))&groupBy=runtime_class&window=1h
+```
+
+A p95 above 3s (runc) or 1s (gVisor) indicates the deployer-controlled setup commands are eating into the 10s TTFT SLO budget. Setup commands are excluded from the platform startup budget but counted against TTFT.
+
 ### Step 4 — gVisor-specific
 
 gVisor startup is heavier by construction. If the SLO target is not tier-appropriate for gVisor:

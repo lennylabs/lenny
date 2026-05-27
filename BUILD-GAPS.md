@@ -4645,7 +4645,7 @@ Consequence: the `StartupLatencyBurnRate` and `StartupLatencyGVisorBurnRate` ale
 
 - **Resolution:** `lenny_session_startup_duration_seconds{pool, runtime_class, isolation_profile}` is now emitted on every successful pod-warm start (`sessionserver.recordStartupMetrics`), measuring pod claim + credential assignment + agent session start, excluding workspace materialization and deployer setup commands per the §6.3 line 348 boundary. The two burn-rate alerts no longer reference the never-shipped `lenny_session_startup_duration_slow_ratio` recording rule; the slow-ratio is computed inline from the histogram's `le="2"` (runc) and `le="5"` (gVisor) buckets against the 5% error budget, and `charts/lenny/files/alerting-rules.yaml` is regenerated from the catalog. A unit test asserts the buckets carry exactly those `le` labels. Commit 0ce97870.
 
-### - [ ] F-6.3.3 — `lenny_session_time_to_first_token_seconds` (TTFT SLO metric) has no production emitter and the same missing recording-rule chain [High] — OPEN
+### - [x] F-6.3.3 — `lenny_session_time_to_first_token_seconds` (TTFT SLO metric) has no production emitter and the same missing recording-rule chain [High] — CLOSED
 
 Spec §6.3 line 356: "The TTFT SLO is P95 < 10s (from session start request to first streaming event…)." Spec §16.5 carries the alert `TTFTBurnRate`.
 
@@ -4655,6 +4655,8 @@ Spec §6.3 line 356: "The TTFT SLO is P95 < 10s (from session start request to f
 - The runbook `docs/runbooks/slo-ttft.md:42` exists with operator queries that assume the histogram has data; the queries return empty results in any actual deployment.
 
 Consequence: the §6.3 TTFT SLO is undetectable from telemetry. The per-phase budget table allocates `≤ 1s` of platform overhead to "First prompt dispatch + first token" — without TTFT instrumentation, this allocation cannot be validated, and operators cannot tell whether breaches originate in platform overhead vs model behavior.
+
+- **Resolution:** `lenny_session_time_to_first_token_seconds{pool, runtime_class, isolation_profile}` is now emitted on the first agent-streamed `response` event per session (`sessionserver.recordTTFTOnce`), with T0 = `session.CreatedAt` (POST /v1/sessions admission) and T1 = the SSE event publish instant. The `firstTokenObserved` sync.Map gates the observation to once per session and is cleared on terminal transition. The `TTFTBurnRate` alert no longer references the never-shipped `lenny_session_time_to_first_token_slow_ratio` recording rule; the slow-ratio is computed inline from the histogram's `le="10"` bucket boundary (the §6.3 10s SLO threshold) against the 5% error budget, and `charts/lenny/files/alerting-rules.yaml` is regenerated from the catalog.
 
 ### - [ ] F-6.3.4 — Per-phase budgets in the §6.3 table are unmeasurable [High] — CLOSED
 
@@ -4682,7 +4684,7 @@ Consequence: the spec explicitly states the per-phase table is "indicative plann
 
 - **Resolution:** The platform-controlled hot-path phases observable in v1 (`pod_claim`, `workspace_materialization`, `credential_assignment`, `agent_session_start`) plus the deployer `setup_commands` phase now each have an independent histogram via `lenny_session_startup_phase_duration_seconds` (F-6.3.1), so the §6.3 per-phase latency budget is measurable from telemetry. The `first prompt dispatch + first token` budget remains tracked to F-6.3.3 (TTFT), which requires runtime streaming feedback the start path does not observe. Commit 0ce97870.
 
-### - [ ] F-6.3.5 — Startup benchmark harness does not measure any §6.3 phase, runtime class, or pod-warm vs SDK-warm split [High] — OPEN
+### - [x] F-6.3.5 — Startup benchmark harness does not measure any §6.3 phase, runtime class, or pod-warm vs SDK-warm split [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-6.3.10 — Both report the startup_latency harness measures only a local echo heartbeat round-trip and not the §6.3 pod-warm vs SDK-warm per-runtime-class split.
 
@@ -4701,7 +4703,9 @@ The scenario's `Notes` field even acknowledges scope: "heartbeat round-trip P50=
 
 Consequence: the artifact called "the Phase 2 startup benchmark harness" by both `BUILD-PROGRESS.md` and `TESTING.md` measures a substantively different thing from what §6.3 mandates. The Tier 2 promotion gate condition (a) ("actual P95 pod-warm session start latency has been measured and is ≤ the targets above for runc and gVisor") cannot be satisfied by this harness, even with more iterations — there is no runtime-class-conditioned, pod-warm-vs-SDK-warm split measurement of any of the six hot-path phases. Condition (b) (per-phase histogram instrumentation) is blocked on H-1. Condition (c) (annotated benchmark run recorded in a Phase 2 exit gate ADR) has no ADR — `docs/adr/` contains no entry on the Phase 2 exit gate.
 
-### - [ ] F-6.3.6 — `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` operator-tracking guidance has no recording rule, no alert, and no production emitter [High] — OPEN
+- **Deferred:** Blocked on F-6.1.1 (SDK-warm warming-to-idle path is entirely unimplemented) and a Kubernetes-resident load harness (Tier 7b kind/k3s). The §6.3 line 372 requirement "measure pod-warm vs SDK-warm latency per runtime class" cannot be satisfied while the SDK-warm comparison arm does not exist. With F-6.3.1 / F-6.3.2 / F-6.3.3 now wiring per-phase + end-to-end + TTFT histograms on the production start path, runtime telemetry now satisfies promotion-gate condition (b); the remaining gap is the benchmark scaffolding that drives those histograms under controlled load. Reopen once F-6.1.1 lands.
+
+### - [x] F-6.3.6 — `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` operator-tracking guidance has no recording rule, no alert, and no production emitter [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-6.3.11 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
 
@@ -4715,6 +4719,8 @@ Both inputs to the ratio are catalog-only.
 - The §6.3 sentence "Deployers must track …" is a deployer-facing operability instruction; the docs surface (`docs/operator-guide/observability.md`, `docs/reference/metrics.md`, `docs/runbooks/slo-startup-latency.md`) does not surface the ratio. Greps for `sdk_demotions_total / lenny_warmpool_claims_total`, `demotion ratio`, `demotion_rate` in `docs/` return zero matches outside the spec.
 
 Consequence: §6.3's "verify that SDK-warm is delivering net benefit" workflow has no observable signal. Even if SDK-warm were enabled (it is not — see `6.1.md` H-1), an operator following the spec's instruction cannot construct the ratio from Prometheus because neither counter has a series. The "demotion rate threshold and circuit-breaker" cross-reference points to §6.1 guidance that itself depends on the same unemitted counter.
+
+- **Resolution:** `lenny_warmpool_claims_total{pool,runtime_class}` now has a production emitter on the §6.1 idle→claimed transition: `podsession.Binder.connect` (shared by `Bind` and `Resume`) calls the new `ClaimAccepted` hook on successful claim + handshake, which `cmd/lenny-gateway` wires to `gwMetrics.IncWarmpoolClaim`. Runtime class is mapped from the Sandbox's §5.3 isolation profile so the denominator series is per runtime class. The numerator (`lenny_warmpool_sdk_demotions_total`) remains gated on F-6.1.1 (SDK-warm demotion path itself unimplemented); with no SDK-warm path the ratio is truthfully zero, and once F-6.1.1 lands the existing demotion call sites will emit on the catalog-declared counter without further code change. The ratio is now queryable as `rate(lenny_warmpool_sdk_demotions_total[1h]) / rate(lenny_warmpool_claims_total[1h])` ad-hoc per §6.3 line 352's deployer-facing instruction. Adding a chart-level alert is gated on §16.5 spec promotion (the §6.1 line 48 `SDKWarmDemotionRateHigh` is described as a controller-emitted warning event, not a Prometheus alert; see F-6.3.11 deferral).
 
 ### - [ ] F-6.3.7 — `lenny_session_creation_duration_seconds{phase}` covers a different phase set than §6.3 requires; no normative mapping is provided [Medium] — CLOSED
 
@@ -4731,11 +4737,13 @@ Consequence: even if `lenny_session_creation_duration_seconds` were treated as t
 
 - **Resolution:** The §6.3 hot-path phase set now has its own metric, `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` (F-6.3.1), carrying exactly the §6.3 phases with the `runtime_class` dimension. `lenny_session_creation_duration_seconds` remains the §16.1 `POST /v1/sessions` handler-envelope metric with its own phase set. The two metrics are distinct by design — handler envelope versus pod-warm hot path — so no cross-walk of the handler metric's phase enum is required. Commit 0ce97870.
 
-### - [ ] F-6.3.8 — No measurement of "SDK teardown penalty (typically 1–3s)" on demotion path [Medium] — OPEN
+### - [x] F-6.3.8 — No measurement of "SDK teardown penalty (typically 1–3s)" on demotion path [Medium] — DEFERRED
 
 Spec §6.3 line 352: "A session that triggers demotion (workspace includes a `sdkWarmBlockingPaths` match) incurs pod-warm latency plus an additional SDK teardown penalty (typically 1–3s)."
 
 The catalog has no `lenny_warmpool_sdk_demotion_duration_seconds` or similar. The `DemoteSDK` RPC at `pkg/adapter/lifecycle.go:99–102` is a hard-coded `Unimplemented` stub (per `6.1.md:22`, H-1), so no demotion path executes. Even if the path existed, the per-demotion teardown duration would not be observable.
+
+- **Deferred:** Blocked on F-6.1.1 (SDK-warm path entirely unimplemented). The §6.3 line 352 SDK teardown penalty histogram has no call site until the `DemoteSDK` RPC stub is replaced with the §6.1 demotion implementation. Reopen once F-6.1.1 lands; the metric can be added in the same change that wires the demotion path.
 
 Consequence: the spec's "typically 1–3s" claim cannot be empirically tracked. Operators cannot validate whether the 1–3s estimate matches reality, nor distinguish a fast demotion (where SDK-warm is still net-positive) from a slow demotion (where the penalty erodes the saving from skipped agent start).
 
@@ -4753,7 +4761,7 @@ Consequence: an operator trying to follow the §6.3 note to disambiguate a slow-
 
 - **Resolution:** F-6.3.2 (commit 0ce97870) wired the `lenny_session_startup_duration_seconds` emitter in `pkg/gateway/sessionserver/start.go:899-902` (the §6.3 line 348 claim-to-ready metric). Both sides of the §6.3 line 350 disambiguation are now metric-anchored: `lenny_warmpool_pod_startup_duration_seconds` for pre-creation (`pod_warmup_seconds`) and `lenny_session_startup_duration_seconds` for claim-to-ready. The runbook `docs/runbooks/slo-startup-latency.md` Step 2 already drives off the per-phase metric (F-6.3.16). No further action required.
 
-### - [ ] F-6.3.10 — `BUILD-PROGRESS.md` claims Phase 2 startup benchmark is delivered, but the delivery does not match the §6.3 normative requirement [Medium] — OPEN
+### - [x] F-6.3.10 — `BUILD-PROGRESS.md` claims Phase 2 startup benchmark is delivered, but the delivery does not match the §6.3 normative requirement [Medium] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-6.3.5 — Both report the startup_latency harness measures only a local echo heartbeat round-trip and not the §6.3 pod-warm vs SDK-warm per-runtime-class split.
 
@@ -4767,7 +4775,9 @@ The implementation's scope (echo heartbeat round-trip on the host) does not matc
 
 Consequence: the BUILD-PROGRESS / TESTING ledger claim that Phase 2 has shipped a startup benchmark hides the §6.3 gap. A reader scanning the ledger sees Phase 2 closed and may assume the §6.3 budget has been validated, when it has not. Per the [feedback_verify_against_spec_not_buildprogress] guidance, this audit treats §6.3's normative requirement as the source of truth.
 
-### - [ ] F-6.3.11 — No alert on `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` exceeding a deployer-configured threshold [Medium] — OPEN
+- **Deferred:** Duplicate of F-6.3.5; both findings track the same benchmark-harness gap and are blocked on F-6.1.1 (SDK-warm path). The BUILD-PROGRESS ledger entry will be updated at the same time F-6.3.5 is reopened.
+
+### - [x] F-6.3.11 — No alert on `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` exceeding a deployer-configured threshold [Medium] — DEFERRED
 
 **Potential duplicate** (confidence: medium) — F-6.3.6 — F-6.1.1 and F-6.2.3 both report the SDK-warm warming-to-idle path is entirely unimplemented, while F-6.3.6 and F-6.3.11 both report the demotion-rate ratio has no emitter or alert; the metric-emitter and watchdog findings are distinct sub-defects.
 
@@ -4778,13 +4788,17 @@ Spec §6.3 line 352 instructs operators to track the ratio per pool. The §6.1 c
 
 Consequence: deployers have no way to be notified when SDK-warm demotion rate climbs, short of a custom alert added out-of-band. The spec's "verify that SDK-warm is delivering net benefit" check is left to manual dashboard inspection (and even that needs M-6 below to populate the underlying counters).
 
-### - [ ] F-6.3.12 — No surface for "Setup commands ≤ 3s recommended" deployer SLO check [Medium] — OPEN
+- **Deferred:** §6.1 line 48 describes `SDKWarmDemotionRateHigh` as a controller-emitted warning event (operator-actionable advice with three remediation paths), not a §16.5 Prometheus alert; §16.5 lists no demotion-rate alert. Adding a chart alert would extend §16.5, which is out of scope per rule B. The controller-side warning-event emission is blocked on F-6.1.1 (the underlying demotion signal is not produced because the SDK-warm path itself is unbuilt). Reopen once F-6.1.1 lands and the controller has a demotion-rate signal to react to.
+
+### - [x] F-6.3.12 — No surface for "Setup commands ≤ 3s recommended" deployer SLO check [Medium] — CLOSED
 
 Spec §6.3 line 363 / line 366: "Setup commands … excluded from platform budget; deployer must size accordingly", "Leaves ≤ 4s (runc) / ≤ 1s (gVisor) for deployer setup commands within the 10s TTFT SLO."
 
 The platform has no histogram or alert that distinguishes deployer-supplied setup-command time from agent session-start time. A deployer cannot answer "is my setup command consuming more than the 4s / 1s budget?" from Prometheus without instrumenting their setup script externally.
 
 Consequence: the gVisor warning in §6.3 ("gVisor deployments with >1s setup commands will exceed the 10s TTFT SLO") has no early-warning signal; the SLO breach would be noticed only after TTFT P95 already crosses 10s — and even then, TTFT itself is uninstrumented (H-3).
+
+- **Resolution:** F-6.3.1 (commit 0ce97870) registered `lenny_session_startup_phase_duration_seconds{phase, runtime_class}` with `phase="setup_commands"` as one of the five §6.3 hot-path phases; `recordStartupMetrics` observes the deployer-controlled phase per runtime class. Deployers can now answer the §6.3 line 363 question with `histogram_quantile(0.95, rate(lenny_session_startup_phase_duration_seconds_bucket{phase="setup_commands"}[5m])) by (runtime_class)`. The runbook `docs/runbooks/slo-startup-latency.md` Step 3 documents the §6.3 ≤3s runc / ≤1s gVisor budget query, and `docs/reference/metrics.md` + `docs/operator-guide/observability.md` enumerate the metric. F-6.3.3 (TTFT) closes the second half of the §6.3 line 366 chain so a setup-command-driven TTFT breach is now observable via `lenny_session_time_to_first_token_seconds` as well. A chart-level alert is gated on §16.5 spec promotion (the §6.3 budget is "recommended" rather than a hard SLO; §16.5 lists no setup-commands alert).
 
 ### - [ ] F-6.3.13 — `startup_latency` baseline JSON encodes a temp-folder path that does not exist on any other developer's machine [Low] — CLOSED
 

@@ -42,6 +42,7 @@ See the full attribute table in [SPEC §16.1.1](../../spec/16_observability.md#1
 | `lenny_gateway_gc_pause_p99_ms` | Gauge | Process-level GC pause per replica |
 | `lenny_gateway_gc_pause_fleet_p99_ms` | Gauge | Fleet-wide P99 GC pause across all replicas |
 | `lenny_session_startup_duration_seconds` | Histogram | End-to-end startup (pod claim to session ready) |
+| `lenny_session_startup_phase_duration_seconds` | Histogram | Per-phase startup latency (`phase` ∈ pod_claim, workspace_materialization, setup_commands, credential_assignment, agent_session_start) |
 | `lenny_session_time_to_first_token_seconds` | Histogram | Session start to first streaming event |
 
 ### Gateway Subsystem Metrics

@@ -30,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/slotcounter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -111,6 +112,16 @@ type Binder struct {
 	// (labeled by pod and pool). It is threaded into the per-BindSlot
 	// SlotClaimer. Nil is a no-op.
 	Rehydration func(podID, pool string)
+	// ClaimAccepted records the §6.3 line 352 / §16.1 line 122
+	// `lenny_warmpool_claims_total{pool,runtime_class}` counter
+	// increment on each idle→claimed transition the §6.1 warm pool
+	// observes. Bind and Resume both go through `connect()`, so the
+	// counter rolls up session-mode + resume claims. Slot claims
+	// (BindSlot / concurrent mode) are accounted separately under
+	// §5.2; the deployer-facing demotion-rate ratio (§6.3 line 352)
+	// keys off this denominator. Nil is a no-op.
+	// spec: §6.3 line 352, §16.1 line 122.
+	ClaimAccepted func(pool, runtimeClass string)
 }
 
 // §5.2 line 12 lenny_slot_failure_total error_type labels: the
@@ -692,6 +703,19 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 		return nil, nil, fmt.Errorf(
 			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
 		)
+	}
+	// spec: §6.3 line 352, §16.1 line 122 — record the warm-pool claim
+	// now that the idle→claimed transition has succeeded and the
+	// adapter handshake has confirmed the pod is usable. Labels are
+	// {pool, runtime_class}; the runtime_class is mapped from the
+	// pod's §5.3 isolation profile so the §6.3 demotion-rate
+	// denominator is per runtime class. An unrecognized profile would
+	// mislabel the series; skip rather than emit an empty
+	// runtime_class.
+	if b.ClaimAccepted != nil {
+		if rc, ok := isolation.RuntimeClassName(isolation.Profile(sb.Spec.IsolationProfile)); ok {
+			b.ClaimAccepted(pool, rc)
+		}
 	}
 	return sb, cl, nil
 }

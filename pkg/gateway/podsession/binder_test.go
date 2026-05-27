@@ -445,6 +445,101 @@ func TestResumeReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 	}
 }
 
+// spec: §6.3 line 352, §16.1 line 122 — a successful Bind records one
+// idle→claimed transition on `lenny_warmpool_claims_total{pool,
+// runtime_class}`. The runtime_class label is mapped from the pod's
+// §5.3 isolation profile so the §6.3 demotion-rate ratio per runtime
+// class is observable from telemetry.
+func TestBindRecordsWarmpoolClaim_spec_6_3_F_6_3_6(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = rt
+
+	sb := idleSandbox("sbx-1", "10.244.1.7")
+	sb.Spec.IsolationProfile = "standard" // → runc
+	c := k8sClient(t, sb)
+	binder := newBinder(c, adapterDialer(t, srv))
+	var claims []struct {
+		Pool         string
+		RuntimeClass string
+	}
+	binder.ClaimAccepted = func(pool, runtimeClass string) {
+		claims = append(claims, struct {
+			Pool         string
+			RuntimeClass string
+		}{pool, runtimeClass})
+	}
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	if len(claims) != 1 {
+		t.Fatalf("want 1 ClaimAccepted call, got %d (%+v)", len(claims), claims)
+	}
+	if claims[0].Pool != testPool {
+		t.Errorf("pool label: got %q, want %q", claims[0].Pool, testPool)
+	}
+	if claims[0].RuntimeClass != "runc" {
+		t.Errorf("runtime_class label: got %q, want %q (standard maps to runc)", claims[0].RuntimeClass, "runc")
+	}
+}
+
+// spec: §6.3 line 352 — Bind that fails after the claim does not record
+// the claim. This matches the §6.3 line 348 SLO semantics: only
+// successful claim transitions are counted.
+func TestBindSkipsWarmpoolClaimOnAdapterDialFailure_spec_6_3_F_6_3_6(t *testing.T) {
+	sb := idleSandbox("sbx-1", "") // no PodIP → connect fails on dial
+	c := k8sClient(t, sb)
+	binder := newBinder(c, adapterDialer(t, adapter.New("adapter-test")))
+	var claims int
+	binder.ClaimAccepted = func(_, _ string) { claims++ }
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1",
+	})
+	if err == nil {
+		t.Fatal("Bind succeeded for a pod with no PodIP; want a failure")
+	}
+	if claims != 0 {
+		t.Errorf("ClaimAccepted called %d times on failed Bind; want 0", claims)
+	}
+}
+
+// spec: §6.3 line 352 — an unrecognized isolation profile is skipped
+// rather than emitting an empty `runtime_class` series. The series
+// must stay low-cardinality and meaningful.
+func TestBindSkipsWarmpoolClaimOnUnknownIsolation_spec_6_3_F_6_3_6(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = rt
+
+	sb := idleSandbox("sbx-1", "10.244.1.7")
+	// IsolationProfile left empty: RuntimeClassName(empty) returns ok=false.
+	c := k8sClient(t, sb)
+	binder := newBinder(c, adapterDialer(t, srv))
+	var claims int
+	binder.ClaimAccepted = func(_, _ string) { claims++ }
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	if claims != 0 {
+		t.Errorf("ClaimAccepted called %d times for unresolved runtime_class; want 0", claims)
+	}
+}
+
 func TestBindReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	binder := newBinder(k8sClient(t), adapterDialer(t, srv))
