@@ -6283,7 +6283,7 @@ Effect: clients cannot configure retry behaviour at all; deployer caps cannot be
 
 **Resolution (5ff6a6d5):** New `pkg/api/v1/session.RetryPolicy` carries the closed mode enum + numeric caps + failure-class advisory lists; `ValidateRetryPolicy` rejects negative/unknown values at the gateway decode boundary, `ClampRetryPolicy(p, caps)` applies the deployer caps. `CreateSessionRequest.RetryPolicy` + `SessionResponse.RetryPolicy` plus migration `0087_sessions_retry_policy` (JSONB) round-trip the effective policy through pgstore. `cmd/lenny-gateway/main.go` wires the deployer caps from `--retry-max-retries`, `watchdog.DefaultMaxSessionAgeSeconds`, and `watchdog.DefaultMaxAwaitingClientActionSeconds`. OpenAPI gains the `RetryPolicy` schema; the §7.3 example JSON is now reachable.
 
-### - [ ] F-7.3.2 — `recovery_generation` is unimplemented (High) [Medium] — OPEN
+### - [x] F-7.3.2 — `recovery_generation` is unimplemented (High) [Medium] — CLOSED
 
 Spec line 395: "Each recovery creates a new `recovery_generation` of the same logical session."
 
@@ -6291,7 +6291,9 @@ Evidence: `grep -rn "recovery_generation\|recoveryGeneration"` across `pkg/` and
 
 Effect: no audit trail for which recovery attempt produced an outcome; partial-checkpoint manifests cannot carry the generation tag the spec mandates in §7.2 ("partial-checkpoint manifest row … carries both `coordination_generation` and `recovery_generation`"); monotonic-never-decrease invariant referenced in §7.2 cannot be verified.
 
-### - [ ] F-7.3.3 — `sessions.last_seq` durable counter is not persisted (High) [Medium] — OPEN
+**Resolution:** Verified closed by prior work — migration 0050 adds `sessions.recovery_generation BIGINT NOT NULL DEFAULT 0 CHECK >= 0` (monotonic floor enforced in both `sessionstore/memstore` and `sessionstore/pgstore` Update paths) and `sessionserver.bumpRecoveryGeneration` increments it on every successful pod recovery; the counter round-trips through `SessionResponse.RecoveryGeneration` (§15.1 envelope) and through `partialmanifeststore.Record.Generation` (the §10.1 `partial-checkpoint manifest row … carries … recovery_generation` tag). The Resume RPC now also re-delivers the value to the adapter so per-pod traces carry the (coordination, recovery) tuple (F-7.3.22, commit fdf4f9e7).
+
+### - [x] F-7.3.3 — `sessions.last_seq` durable counter is not persisted (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.4.3, F-7.2.13 — All three report the missing durable sessions.last_seq column, with the per-session counter held only in process memory; the handoff-synthesis aspect shares the same root cause and fix.
 
@@ -6300,6 +6302,8 @@ Spec line 397: "`sessions.last_seq` … bigint column that is the authoritative 
 Evidence: `pkg/gateway/events/events.go:42–104` `Bus.seq` is a per-replica `map[string]uint64`, lives in process memory; `Publish` increments under a mutex but never touches Postgres. `pkg/gateway/sessionstore/sessionstore.go:28–137` `Session` row has no `LastSeq` field. `pkg/gateway/sessionstore/pgstore/pgstore.go` does not persist a sequence. `grep -rn "last_seq\|LastSeq"` across `pkg/` and `migrations/` returns zero hits.
 
 Effect: a coordinator handoff or replica restart loses the counter, violating the "source of truth on any disagreement" rule and the "never rewinding or duplicating" guarantee §7.2 places on the synthesised reattach frames.
+
+**Resolution (45997ecb):** Migration `0088_sessions_last_seq` adds `sessions.last_seq BIGINT NOT NULL DEFAULT 0 CHECK (last_seq >= 0)`. The new `sessionstore.Session.LastSeq` field round-trips through `memstore` and `pgstore` (the pgstore's `UPDATE` uses `GREATEST(last_seq, $39)` so a late writer from a sibling replica cannot rewind a freshly published Seq; both stores also clamp the in-memory copy). The `sessionevents.Bus` gains two optional hooks — `LastSeqPersister` (asynchronous `AdvanceLastSeq` on every Publish) and `LastSeqLoader` (called on the first publish for a session to seed the in-memory counter from Postgres — the §7.3 / §10.4 "primed from Postgres at handoff step 0" contract). The gateway's `cmd/lenny-gateway/main.go` wires a `lastSeqStore` shim backed by `sessionstore.Store` so production deployments persist + seed automatically; dev mode without Postgres degrades to the in-memory counter without dropping events. This also covers the durable-counter aspect of F-7.2.13 / F-10.4.3.
 
 ### - [ ] F-7.3.4 — No automatic transition into `resume_pending` (High) [Medium] — OPEN
 
@@ -6465,7 +6469,7 @@ Effect: the partial-workspace resume path cannot compute or carry forward `works
 
 **Resolution (5ff6a6d5):** New `WorkspaceSnapshot.Bytes int64` round-trips through pgstore (migration `0087_sessions_retry_policy` adds `last_checkpoint_workspace_bytes BIGINT NULL CHECK >= 0`). `checkpointer.snapshot` writes `result.SizeBytes` from the adapter's CheckpointResponse on every successful checkpoint. `prestop.RegistryEnumerator` reads the per-row value via the wired Sessions store; the postgres_null fallback only fires for sessions that have not yet recorded a checkpoint. The §7.2 line 138 `workspaceRecoveryFraction` payload still requires a partial-manifest baseline (tracked separately under §10.1).
 
-### - [ ] F-7.3.22 — Adapter Resume RPC ignores `recovery_generation` and produces no `resumeMode` (Medium) [Medium] — OPEN
+### - [x] F-7.3.22 — Adapter Resume RPC ignores `recovery_generation` and produces no `resumeMode` (Medium) [Medium] — CLOSED
 
 Spec §7.3 governs the recovery; §7.2 mandates the `resumeMode` is computed and surfaced. The adapter's Resume RPC is the place that knows whether the checkpoint was a full or partial snapshot.
 
@@ -6473,13 +6477,17 @@ Evidence: `pkg/adapter/resume.go:30–80` returns only `ResumeResponse{RestoredB
 
 Effect: even if the gateway later wires `session.resumed` emission (F9), it has no input to populate `resumeMode` or `workspaceRecoveryFraction`. The adapter cannot signal `partial_workspace` or `conversation_only` outcomes.
 
-### - [ ] F-7.3.23 — `POD_CLAIM_FAILED` on resume marks row `failed`, bypassing `awaiting_client_action` (Medium) [Medium] — OPEN
+**Resolution (fdf4f9e7):** `schemas/lenny-adapter.proto` extends `ResumeRequest` with `recovery_generation`, `expected_workspace_bytes`, and `workspace_size_limit_bytes`, and `ResumeResponse` with `mode` + the echoed `recovery_generation`. The adapter populates `mode = "full"` on a healthy full-checkpoint restore (the §10.1 partial-manifest reassembly remains gateway-driven). The gateway threads `row.RecoveryGeneration` and `row.WorkspaceSnapshot.Bytes` through `podsession.Binder.Resume` (new `podsession.ResumeResult`) into the adapter, and `sessionserver.classifyResumeWithAdapter` lets a stronger gateway-side classification (eviction → conversation_only, partial manifest → partial_workspace) override a plain `full` from the adapter while otherwise carrying the adapter mode onto the `session.resumed` event.
+
+### - [x] F-7.3.23 — `POD_CLAIM_FAILED` on resume marks row `failed`, bypassing `awaiting_client_action` (Medium) [Medium] — CLOSED
 
 Spec line 406 mandates `resume_pending → awaiting_client_action` when no pod is available within the resume window. The client-driven `POST /resume` (spec line 411 "Resume anyway") is supposed to launch a fresh retry attempt.
 
 Evidence: `pkg/gateway/sessionserver/start.go:503–509` — if `s.resumeOnPod` fails (e.g., `POD_CLAIM_FAILED`), `handleResume` calls `s.failSession(...)` to mark the row `failed` and returns 503. The row is now in a terminal state and cannot be re-resumed. The spec instead expects the row to stay in `awaiting_client_action` so the operator/client can retry once warm pods are available.
 
 Effect: a transient pool exhaustion during the client's explicit retry permanently kills the session; the §7.3 "Resume anyway" affordance becomes a one-shot.
+
+**Resolution (fdf4f9e7):** New `sessionserver.isTransientPodClaimError` predicate covers the §5.2 line 519 `WARM_POOL_EXHAUSTED` (`podclaim.ErrNoIdlePod`, `ErrNoConcurrentSlot`, `ErrTenantMismatch`), §4.9 lines 1218/1220 `CREDENTIAL_POOL_EXHAUSTED` (`credrouter.ErrNoCredentialAvailable`, `podsession.CredentialAssignmentError`), §4.3 `TOKEN_SERVICE_UNAVAILABLE` (`credassign.ErrTokenServiceUnavailable`), and §5.2 lines 602-625 `RUNTIME_UNAVAILABLE` (`podsession.PoolWarmingError`) causes. `handleResume` no longer calls `failSession` when the resume failure is transient; the row stays in `awaiting_client_action` so a follow-up `POST /resume` can succeed once the pool frees up. Non-retryable causes (workspace validation, setup-command failure, runtime registry errors) still demote the row to failed.
 
 ### - [x] F-7.3.24 — `maxSessionAgeSeconds` and `maxResumeWindowSeconds` are pool-level, not per-session retryPolicy (Medium) [Medium] — CLOSED
 
@@ -6499,13 +6507,15 @@ Effect: SIEM / SOC dashboards cannot filter or alert on the §7.3 lifecycle. Clo
 
 **Resolution:** `pkg/observability/audit/catalog.go` adds the five §7.3 retry/resume event constants (`session.resumed`, `session.retry_attempted`, `session.awaiting_action_entered`, `session.expired_in_awaiting_action`, `session.cascade_applied`) and registers them in the closed catalog. `sessionserver/lifecycle.go` mirrors the on-row strings as `auditSessionAwaitingActionEntered` / `auditSessionExpiredInAwaitingAction`, emitted by the new `emitAwaitingClientActionEntered` / `emitAwaitingClientActionExpired` helpers (F-7.3.13). The watchdog's `awaiting_client_action → expired` sweep fires the awaiting-action audit row before the generic terminal hook via the new `AwaitingClientActionExpiryNotifier` optional interface.
 
-### - [ ] F-7.3.26 — Workspace size pre-check on resume is not invoked (Low) [Medium] — OPEN
+### - [x] F-7.3.26 — Workspace size pre-check on resume is not invoked (Low) [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-4.4.10 — Both concern the uninvoked WorkspaceSizePreCheck function but on different paths: F-4.4.10 the pre-checkpoint write path and F-7.3.26 the resume/restore read path.
 
 `pkg/checkpoint/checkpoint.go:220–249` defines `WorkspaceSizePreCheck`. Spec §4.4 requires it before quiescing the runtime for a checkpoint; the resume path benefits from the symmetric check (to refuse a restore whose archive exceeds the limit). Adapter Resume (`pkg/adapter/resume.go:30–80`) extracts the archive without verifying size.
 
 Effect: a runaway restore can exhaust the pod's `emptyDir`. Minor because the kubelet guard backstops it, but spec invariants in §4.4 are not enforced on the read side.
+
+**Resolution (fdf4f9e7):** `ResumeRequest` carries the gateway-side `expected_workspace_bytes` (sourced from `WorkspaceSnapshot.Bytes`) and `workspace_size_limit_bytes` (sourced from the SandboxTemplate's `WorkspaceSizeLimitBytes`); `podsession.ResolvePool` copies the limit onto `PoolMatch`. `pkg/adapter/resume.go` calls `checkpoint.WorkspaceSizePreCheck` before claiming the session so an oversize restore is refused with `FailedPrecondition` (the gateway maps this to a retryable 503 via `writePodClaimError`'s default branch). The kubelet emptyDir guard remains the backstop when the gateway has no recorded size or no template limit.
 
 ---
 
@@ -12002,7 +12012,7 @@ post-handoff reconnect are symmetric from the client's perspective. The
 implementation is missing in two layers: the synthesis path itself and the
 durable state it would read from.
 
-### - [ ] F-10.4.3 — 03  `sessions.last_seq` durable counter does not exist [High] — OPEN
+### - [x] F-10.4.3 — 03  `sessions.last_seq` durable counter does not exist [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.2.13, F-7.3.3 — All three report the missing durable sessions.last_seq column, with the per-session counter held only in process memory; the handoff-synthesis aspect shares the same root cause and fix.
 
@@ -12028,6 +12038,8 @@ storage. Without a `sessions.last_seq` column or an equivalent, every
 handoff (rolling restart included) silently rewinds the cursor space and
 makes the spec's `gap_detected`/synthesis contract unenforceable even if
 the synthesis path is later wired.
+
+**Resolution (45997ecb):** Closed by F-7.3.3 — migration `0088_sessions_last_seq` adds the column with `GREATEST` monotonic floor, plumbed through `sessionstore.Session.LastSeq`, advanced asynchronously on every `sessionevents.Bus.Publish`, and seeded on the first publish for a session via the new `LastSeqLoader` hook (the §10.4 "primed from Postgres at handoff step 0" contract).
 
 ### - [ ] F-10.4.4 — 04  PodDisruptionBudget for the gateway is not rendered [High] — OPEN
 
