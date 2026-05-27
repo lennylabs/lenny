@@ -6570,7 +6570,7 @@ There is no Upload Handler subsystem in the gateway. No goroutine pool, no concu
 
 This regresses the §13.4 trust model (`spec/13_security-model.md:652`: "Upload-side validation is enforced by the gateway's Upload Handler subsystem … pod binaries neither decompress archives nor canonicalize paths on untrusted input").
 
-### - [ ] F-7.4.2 — §13.4 archive ceilings are not enforced at extraction [High] — OPEN
+### - [x] F-7.4.2 — §13.4 archive ceilings are not enforced at extraction [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.4.2 — Both describe the §13.4 archive ceilings being defined in pkg/upload but not enforced on the actual extraction path.
 
@@ -6584,7 +6584,9 @@ $ grep -rn '"github.com/lennylabs/lenny/pkg/upload"' . — no hits outside the p
 
 The actual extractor (`pkg/adapter/workspace/uploadarchive.go`) applies only the `maxExtractBytes = 2 << 30` (2 GiB) total cap defined in `pkg/adapter/workspace/extract.go:17`. None of the per-entry size, decompression ratio, entry count, path depth, or path length caps are enforced. A 10 000 000-entry zip with 100 000:1 compression ratio extracts unchecked up to the 2 GiB cap.
 
-### - [ ] F-7.4.3 — Non-regular archive entries are silently skipped instead of aborting [High] — OPEN
+**Resolution:** `extractUploadTar` and `extractUploadZip` now call `upload.ValidateEntry` per entry (path-length, path-depth, per-entry-size, kind, symlink-target) and `upload.ValidateArchive` after the last entry (entry-count, decompressed-bytes, decompression-ratio). gzip-tar streams wrap the staged file in a `byteCounter` so the 100:1 ratio check has its compressed numerator; zip pulls the compressed total from the central directory. F-7.4.2.
+
+### - [x] F-7.4.3 — Non-regular archive entries are silently skipped instead of aborting [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.4.6 — Both report that non-regular archive entries (hardlink, char/block device, FIFO) are silently skipped instead of aborting with non_regular_entry.
 
@@ -6594,13 +6596,17 @@ Implementation: `pkg/adapter/workspace/uploadarchive.go:91-104` for tar handles 
 
 The spec requires an abort with `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` (`details.reason = "non_regular_entry"`). Silent skip is the wrong remediation: a malicious archive that interleaves a hardlink/symlink between legitimate entries lands the legitimate entries with no signal to the operator.
 
-### - [ ] F-7.4.4 — Symlinks in tar archives are silently dropped; the §13.4 symlink target invariants are unenforced [High] — OPEN
+**Resolution:** New `classifyTarKind` and `classifyZipKind` helpers map every typeflag / mode bit onto `upload.EntryKind`; hardlink, char-device, block-device, FIFO, socket, and unknown-typeflag entries return `abort=true`, which surfaces a `*upload.ValidationError{Reason: ReasonNonRegularEntry}` to the caller. F-7.4.3 (closes F-13.4.6).
+
+### - [x] F-7.4.4 — Symlinks in tar archives are silently dropped; the §13.4 symlink target invariants are unenforced [High] — CLOSED
 
 Spec: §7.4 line 458 — "Symlinks within archives are rejected by default. A `allowSymlinks: true` option can be set per Runtime … even then symlinks must resolve within the workspace root and the target must not traverse into … `/proc`, `/sys`, `/dev`, `/run/lenny`. … after the atomic staging→current promotion, the gateway re-validates every symlink in the promoted tree."
 
 Implementation: `pkg/adapter/workspace/uploadarchive.go` does not branch on `tar.TypeSymlink` at all — symlinks fall into the "skipped" default branch. There is no per-Runtime `allowSymlinks` opt-in plumbed through the WorkspacePlan or RuntimeRegistry. There is no post-promotion re-validation pass.
 
 The `ValidateSymlinkTarget` function (`pkg/upload/upload.go:208-233`) does enforce the four forbidden-path-traversal targets, but, as in F2, it is never invoked.
+
+**Resolution:** New `ArchivePolicy{AllowSymlinks, WorkspaceRoot}` carrier on the wire (proto `FinalizeWorkspaceRequest.archive_policy`), in the runtime registry (`runtimestore.Runtime.ArchivePolicy`), and on the Runtime CRD (`lennyv1.RuntimeSpec.ArchivePolicy`). The §10.6 base/derived merge keeps it Override (§5.1 merge table). The adapter feeds it into `upload.ValidateEntry`/`ValidateSymlinkTarget` so symlinks are rejected by default, admitted only when AllowSymlinks=true, and target-canonicalized against the workspace root (rejecting `/proc`, `/sys`, `/dev`, `/run/lenny`). The post-promotion re-validation pass is staging→current-promotion territory and remains tracked under F-7.4.12. F-7.4.4.
 
 ### - [x] F-7.4.5 — No `upload-archive` REST endpoint; uploadArchive sources cannot be supplied via the §15.1 surface [High] — CLOSED
 
@@ -6680,11 +6686,13 @@ Implementation: the adapter has a single `WorkspaceRoot` (`pkg/adapter/server.go
 
 The `StagingDir` (`pkg/adapter/staging.go:25-30`) is a tempdir holding raw upload payloads keyed by a SHA-256 of the upload ref — it is **not** the §7.4 `/workspace/staging` filesystem the spec describes; nothing is "promoted" from it.
 
-### - [ ] F-7.4.13 — No atomic cleanup of partial extraction on failure [Medium] — OPEN
+### - [x] F-7.4.13 — No atomic cleanup of partial extraction on failure [Medium] — CLOSED
 
 Spec: §7.4 line 460 — "If extraction fails at any point (invalid path, size limit, format error, non-regular entry, limit exceeded), all already-extracted files are removed from staging before the error is returned. The staging directory is returned to its pre-extraction state."
 
 Implementation: `extractUploadTar` and `extractUploadZip` (`pkg/adapter/workspace/uploadarchive.go`) return early on any error without invoking `os.RemoveAll` or any other cleanup against the target directory. Partial extraction debris persists in `/workspace/current`. Combined with F12 (no staging/current separation), the agent runtime can observe a partially-written workspace.
+
+**Resolution:** New `archiveSession` tracks every file, symlink, and extractor-created directory; on any mid-extraction failure `rollback()` removes them in reverse order so the destination returns to its pre-extraction state. Pre-existing files and directories that already lived under the destination remain untouched (only extractor-created paths roll back). Both tar and zip extraction paths feed into the same session bookkeeping. F-7.4.13.
 
 ### - [ ] F-7.4.14 — Spec invariant "bytes already written to staging are removed" on quota cap is unimplemented [Medium] — OPEN
 
@@ -6736,11 +6744,11 @@ Implementation: irrelevant until F6 lands. Once mid-session upload is wired, the
 
 **Deferred:** explicitly gated on F-7.4.6 (mid-session upload runtime capability). Will pair with that work.
 
-### - [ ] F-7.4.20 — `pkg/upload` package is dead code [Info] — DEFERRED
+### - [x] F-7.4.20 — `pkg/upload` package is dead code [Info] — CLOSED
 
 `pkg/upload/upload.go` is a 282-line normative validator with extensive fuzz tests (`pkg/upload/fuzz_test.go`). No production code path imports it. Either the gateway Upload Handler subsystem ships and depends on this package (closing F1-F4), or this package is removed. The current state — implemented, tested, never invoked — is the worst of both options because reviewers and SRE tooling see green tests without behavioral coverage.
 
-**Deferred:** the validator is the §13.4 archive-validator the gateway needs once extraction moves into the gateway (F-7.4.1). It is already exercised by the tier-7a scenario `oversized_request_rejection_recovery` so removing it would lose tier-7a coverage. Wire it into the gateway extraction pipeline when F-7.4.1 lands.
+**Resolution:** Closed by F-7.4.2 / F-7.4.3 / F-7.4.4 (this batch). The adapter extractor in `pkg/adapter/workspace/uploadarchive.go` now imports `pkg/upload` and calls `ValidateEntry`, `ValidateArchive`, and `ValidateSymlinkTarget` on every entry, so the package is no longer dead code. Migrating extraction itself to the gateway remains tracked under F-7.4.1, but the validator no longer waits on it.
 
 ### Coverage-by-clause table
 
@@ -21074,7 +21082,7 @@ spec assigns to the gateway's isolated subsystem instead runs in the pod, with
 no isolation from the agent process. Cluster-wide DoS bounds are also lost
 because there is no per-gateway upload concurrency cap.
 
-### - [ ] F-13.4.2 — None of the §13.4 normative archive ceilings are enforced on the extraction path [High] — OPEN
+### - [x] F-13.4.2 — None of the §13.4 normative archive ceilings are enforced on the extraction path [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.4.2 — Both describe the §13.4 archive ceilings being defined in pkg/upload but not enforced on the actual extraction path.
 
@@ -21116,7 +21124,11 @@ of components deep. Each of these is a documented zip-bomb / resource-
 exhaustion vector that §13.4 categorically forbids. The unit-tested ceilings
 in `pkg/upload` are dead code on the production path.
 
-### - [ ] F-13.4.3 — `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` is never returned and `lenny_upload_extraction_aborted_total` is never emitted [High] — OPEN
+**Resolution:** Closed by F-7.4.2 (this batch). The extractor now feeds every
+entry through `upload.ValidateEntry` (path-length / path-depth / per-entry-
+size / kind / symlink-target) and the post-loop `upload.ValidateArchive`
+(entry-count / decompressed-bytes / decompression-ratio). The 2 GiB
+`maxExtractBytes` cap remains as a defense-in-depth ceiling.
 
 **Potential duplicate** (confidence: high) — F-7.4.11 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
@@ -21149,7 +21161,7 @@ documented way for a client SDK to distinguish a zip-bomb rejection from any
 other invalid workspace plan, and operators have no time-series signal on
 archive-abort categories. The §16.1 metric is non-functional.
 
-### - [ ] F-13.4.4 — Symlink handling does not match §13.4: `allowSymlinks` opt-in is unwired and post-promotion re-validation is absent [High] — OPEN
+### - [x] F-13.4.4 — Symlink handling does not match §13.4: `allowSymlinks` opt-in is unwired and post-promotion re-validation is absent [High] — CLOSED
 Spec §13.4 line 665: "Symlinks rejected by default; if a Runtime opts in via
 `allowSymlinks: true`, the target must canonicalize inside `/workspace/current`
 and must not traverse `/proc`, `/sys`, `/dev`, or `/run/lenny`. Post-promotion
@@ -21185,6 +21197,16 @@ Effect: §13.4's symlink mitigation surface is partially absent (no opt-in
 plumbing, no post-promotion re-walk) and partially silently degraded (the
 extractor drops rather than rejects, so the runtime adapter cannot honour an
 `allowSymlinks: true` declaration even when added later).
+
+**Resolution:** Closed by F-7.4.4 (this batch). `allowSymlinks` is now
+plumbed through the wire (proto `FinalizeWorkspaceRequest.archive_policy`),
+the runtime registry (`runtimestore.Runtime.ArchivePolicy`), the CRD
+(`lennyv1.RuntimeSpec.ArchivePolicy`), and the §10.6 Override merge.
+Symlinks abort by default with `ReasonSymlink`; when opted-in, the target
+is canonicalized via `upload.ValidateSymlinkTarget` (rejecting `/proc`,
+`/sys`, `/dev`, `/run/lenny`). The §4.4 snapshot-restore `Extract` path
+also enforces the same forbidden-mount list. The post-promotion re-walk
+remains tracked under F-7.4.12 (atomic staging→current promotion).
 
 ### - [ ] F-13.4.5 — The staging → validation → promotion pattern is not implemented for uploadArchive extraction [High] — OPEN
 
@@ -21225,7 +21247,7 @@ are never accounted for in the §11.2 quota reservation reconciliation
 (`pkg/gateway/sessionserver/upload.go` reconciliation is on the blob upload,
 not on the post-materialisation footprint).
 
-### - [ ] F-13.4.6 — `tar.TypeLink`, `tar.TypeChar`, `tar.TypeBlock`, `tar.TypeFifo` entries are silently dropped instead of being rejected with `non_regular_entry` [High] — OPEN
+### - [x] F-13.4.6 — `tar.TypeLink`, `tar.TypeChar`, `tar.TypeBlock`, `tar.TypeFifo` entries are silently dropped instead of being rejected with `non_regular_entry` [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.4.3 — Both report that non-regular archive entries (hardlink, char/block device, FIFO) are silently skipped instead of aborting with non_regular_entry.
 
@@ -21251,7 +21273,12 @@ present. The §15.1 error code surface (which carries `details.reason =
 "non_regular_entry"`) is unreachable. Per the spec, the extraction must
 **abort**; today it silently elides the entry and continues processing.
 
-### - [ ] F-13.4.7 — Decompression ratio bomb defence is entirely absent in the extraction loop [High] — OPEN
+**Resolution:** Closed by F-7.4.3 (this batch). `classifyTarKind` /
+`classifyZipKind` reject every forbidden kind with a typed
+`*upload.ValidationError{Reason: ReasonNonRegularEntry}`; the extraction
+session also rolls back any partially-written entries before returning.
+
+### - [x] F-13.4.7 — Decompression ratio bomb defence is entirely absent in the extraction loop [High] — CLOSED
 Spec §7.4 line 451: "all decompressor `Read()` calls are wrapped with a per-
 call size cap (e.g., `io.LimitedReader` with a 1 MiB bound) to prevent a
 single read from allocating unbounded memory."
@@ -21268,6 +21295,13 @@ Implementation:
 Effect: a 10 KiB `.tar.gz` payload can decompress to multiple GiB before any
 size accounting catches up; the only backstop is the `maxExtractBytes = 2 GiB`
 hard cap (H2) which itself exceeds the §13.4 ceiling.
+
+**Resolution:** Closed by F-7.4.2 (this batch). The gzip path is wrapped in
+a `byteCounter{r: f}` so `upload.ValidateArchive` has its compressed
+numerator for the 100:1 ratio rule; the decoder output is then wrapped in a
+`readCap{maxRead: 1 MiB}` so a single decompressor Read cannot allocate
+unbounded memory. Zip's compressed total is pulled from the central
+directory.
 
 ### - [ ] F-13.4.8 — No audit-trail event is emitted for upload extraction outcomes [High] — OPEN
 Spec §13.4 routes validator violations to the §15.1 error reference (which is
@@ -21431,7 +21465,7 @@ collects the blob and the immediate quota release happens correctly via the
 `Adjust(-reserved)` call on line 179; the spec's "removed" wording is
 satisfied weakly.
 
-### - [ ] F-13.4.19 — `pkg/upload` (the validator package) is implemented and fuzzed, but unwired [Info] — OPEN
+### - [x] F-13.4.19 — `pkg/upload` (the validator package) is implemented and fuzzed, but unwired [Info] — CLOSED
 `pkg/upload/upload.go` is a complete pure-Go validator for the §13.4 ceilings:
 constants match the spec values exactly (`TestNormativeCeilingsMatchSpec`),
 every per-entry rule is covered (`TestValidateEntryRejects*`), the symlink-
@@ -21440,6 +21474,10 @@ target denylist is enforced against `/proc`, `/sys`, `/dev`, `/run/lenny`
 both `ValidateEntry` and `ValidateSymlinkTarget` against arbitrary inputs.
 The package is well-formed and ready to be plumbed into the gateway upload
 handler; today nothing calls it (see H1, H2).
+
+**Resolution:** Closed by F-7.4.2 / F-7.4.3 / F-7.4.4 (this batch). The
+adapter extractor now imports `pkg/upload` and calls `ValidateEntry`,
+`ValidateArchive`, and `ValidateSymlinkTarget` on every uploadArchive entry.
 
 ### - [ ] F-13.4.20 — `pkg/uploadtoken` correctly implements the §7.1 single-use HMAC scheme [Info] — OPEN
 `pkg/uploadtoken/uploadtoken.go` implements the wire format

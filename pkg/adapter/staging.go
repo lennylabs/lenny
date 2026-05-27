@@ -100,8 +100,21 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
-	warnings, err := workspace.Materialize(s.WorkspaceRoot, s.StagingDir,
-		req.GetWorkspacePlan().GetSources())
+	// spec: §7.4 lines 458, 462 — F-7.4.4. The gateway delivers the
+	// per-Runtime allowSymlinks opt-in plus the absolute workspace root
+	// (slot-scoped paths in §6.4 concurrent runtimes) on FinalizeWorkspace.
+	// An unset workspace_root falls back to the adapter's configured root
+	// so the §13.4 symlink-target check still has a basis when the gateway
+	// delivers no override.
+	archive := workspace.ArchivePolicy{
+		AllowSymlinks: req.GetArchivePolicy().GetAllowSymlinks(),
+		WorkspaceRoot: req.GetArchivePolicy().GetWorkspaceRoot(),
+	}
+	if archive.WorkspaceRoot == "" {
+		archive.WorkspaceRoot = s.WorkspaceRoot
+	}
+	warnings, err := workspace.MaterializeWithPolicy(s.WorkspaceRoot, s.StagingDir,
+		req.GetWorkspacePlan().GetSources(), archive)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
 	}

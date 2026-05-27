@@ -52,6 +52,11 @@ type SlotBindRequest struct {
 	// SetupPolicy bounds the §5.1 setup phase. Honored only in
 	// workspace-concurrent mode. Nil when the runtime declares no cap.
 	SetupPolicy *adapterv1.SetupPolicy
+	// ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
+	// block. Honored only in workspace-concurrent mode (stateless-
+	// concurrent materializes no workspace). Nil leaves the platform
+	// default (symlinks rejected). spec: §7.4 lines 458, 462 — F-7.4.4.
+	ArchivePolicy *adapterv1.ArchivePolicy
 	// CredentialPools names the §4.9 credential pools to lease from,
 	// keyed by provider. Per §6 a concurrent-mode slot holds an
 	// independent per-slot credential lease. Empty when the session
@@ -108,7 +113,7 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 			return nil, fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err)
 		}
-		warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan)
+		warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan, req.ArchivePolicy)
 		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)

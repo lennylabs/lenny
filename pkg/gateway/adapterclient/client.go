@@ -197,14 +197,20 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.
 // with uploadFile or uploadArchive sources, PrepareWorkspace must have
 // staged their content first.
 //
+// archive is the §13.4 per-Runtime archive-extraction opt-in surface
+// (AllowSymlinks toggle, workspace root for symlink-target validation).
+// Nil delivers the platform defaults (symlinks rejected) on the wire.
+// spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+//
 // The returned []*WorkspacePlanWarning carries any §14 non-fatal
 // advisories the adapter raised during materialization (per §7.4 line
 // 459 `workspace_plan_strip_components_skip`). The slice is nil when
 // the materialization had nothing to report. F-7.4.15.
-func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan) ([]*adapterv1.WorkspacePlanWarning, error) {
+func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy) ([]*adapterv1.WorkspacePlanWarning, error) {
 	resp, err := c.rpc.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		WorkspacePlan: plan,
+		ArchivePolicy: archive,
 	})
 	if err != nil {
 		return nil, err

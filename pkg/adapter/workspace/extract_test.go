@@ -128,6 +128,20 @@ func TestExtractRejectsEscapingRelativeSymlink(t *testing.T) {
 	}
 }
 
+// TestExtractRejectsSymlinkToForbiddenMount covers F-13.4.4: §7.4 line
+// 458 / §13.4 line 665 — even for snapshot restore, a symlink whose
+// target is /proc, /sys, /dev, or /run/lenny is rejected.
+func TestExtractRejectsSymlinkToForbiddenMount(t *testing.T) {
+	for _, target := range []string{"/proc/self/environ", "/sys/kernel", "/dev/sda1", "/run/lenny/credentials"} {
+		t.Run(target, func(t *testing.T) {
+			archive := buildArchive(t, tarEntry{name: "link", typeflag: tar.TypeSymlink, body: target})
+			if _, err := workspace.Extract(t.TempDir(), bytes.NewReader(archive)); err == nil {
+				t.Errorf("Extract restored a symlink to %q (forbidden by §13.4 line 665)", target)
+			}
+		})
+	}
+}
+
 func TestExtractRejectsUnsupportedEntryType(t *testing.T) {
 	archive := buildArchive(t, tarEntry{name: "dev", typeflag: tar.TypeFifo})
 	if _, err := workspace.Extract(t.TempDir(), bytes.NewReader(archive)); err == nil {

@@ -48,20 +48,45 @@ type Warning struct {
 	Message string
 }
 
-// Materialize writes the workspace sources into root in order. It
-// handles every §14 source type: inlineFile and mkdir write directly;
+// ArchivePolicy is the §13.4 per-Runtime archive-extraction policy the
+// gateway hands the adapter on FinalizeWorkspace. AllowSymlinks lifts the
+// §7.4 line 458 default-deny on symlink entries; WorkspaceRoot is the
+// absolute path symlink targets are canonicalized against. spec: §7.4
+// lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+type ArchivePolicy struct {
+	AllowSymlinks bool
+	WorkspaceRoot string
+}
+
+// Materialize writes the workspace sources into root in order under
+// the platform default §13.4 archive policy (symlinks rejected). It is
+// a shorthand for MaterializeWithPolicy with an empty ArchivePolicy.
+func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) ([]Warning, error) {
+	return MaterializeWithPolicy(root, stagingDir, sources, ArchivePolicy{WorkspaceRoot: root})
+}
+
+// MaterializeWithPolicy writes the workspace sources into root in order.
+// It handles every §14 source type: inlineFile and mkdir write directly;
 // uploadFile and uploadArchive extract content staged under stagingDir
 // by PrepareWorkspace; gitClone extracts the repository archive the
 // gateway cloned and staged under stagingDir.
 //
+// archive carries the §13.4 per-Runtime opt-ins (allowSymlinks +
+// workspace root for symlink-target validation). It is consulted only
+// by the uploadArchive and gitClone extractors. An empty WorkspaceRoot
+// falls back to root.
+//
 // Non-fatal advisory warnings (per-entry strip-components skips,
 // future §14 warning codes) are appended to the returned slice rather
 // than aborting materialization, per §7.4 line 459. spec: §7.4 line
-// 459. F-7.4.15.
-func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) ([]Warning, error) {
+// 459; §7.4 lines 458, 462; §13.4 — F-7.4.4, F-7.4.15.
+func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
+	if archive.WorkspaceRoot == "" {
+		archive.WorkspaceRoot = root
+	}
 	var warnings []Warning
 	for i, src := range sources {
-		w, err := materializeSource(root, stagingDir, i, src)
+		w, err := materializeSource(root, stagingDir, i, src, archive)
 		warnings = append(warnings, w...)
 		if err != nil {
 			return warnings, fmt.Errorf("workspace source %d (type %q): %w", i, src.GetType(), err)
@@ -70,7 +95,7 @@ func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) 
 	return warnings, nil
 }
 
-func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource) ([]Warning, error) {
+func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
 	switch src.GetType() {
 	case "inlineFile":
 		return nil, writeInlineFile(root, src)
@@ -79,7 +104,7 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 	case "uploadFile":
 		return nil, writeUploadFile(root, stagingDir, src)
 	case "uploadArchive":
-		return extractUploadArchive(root, stagingDir, sourceIndex, src)
+		return extractUploadArchive(root, stagingDir, sourceIndex, src, archive)
 	case "gitClone":
 		return nil, extractGitClone(root, stagingDir, src)
 	default:

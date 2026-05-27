@@ -90,6 +90,29 @@ type RuntimeSpec struct {
 	// admit-everything path). F-7.5.10.
 	// +optional
 	SetupCommandPolicy *SetupCommandPolicy `json:"setupCommandPolicy,omitempty"`
+
+	// ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
+	// block: AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+	// entries inside uploadArchive sources. An empty block leaves the
+	// platform default (symlinks rejected). spec: §7.4 lines 458, 462;
+	// §13.4 lines 663-672 — F-7.4.4.
+	// +optional
+	ArchivePolicy *ArchivePolicy `json:"archivePolicy,omitempty"`
+}
+
+// ArchivePolicy mirrors the §13.4 archivePolicy block onto the Runtime CRD
+// so an operator can opt a runtime into symlink-bearing upload archives
+// declaratively. The runtime controller plumbs it into the gateway
+// registry; the gateway then forwards it to the adapter on
+// FinalizeWorkspace so uploadArchive symlink entries are admitted (and
+// target-validated) per §7.4 line 458 and §13.4. spec: §7.4 lines 458, 462
+// — F-7.4.4.
+type ArchivePolicy struct {
+	// AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+	// entries inside uploadArchive sources. When false (the default),
+	// extraction aborts on any symlink with details.reason = "symlink".
+	// +optional
+	AllowSymlinks bool `json:"allowSymlinks,omitempty"`
 }
 
 // SetupCommandPolicy mirrors the §5.1 / §7.5 setupCommandPolicy block onto

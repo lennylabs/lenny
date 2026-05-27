@@ -213,6 +213,12 @@ type BindRequest struct {
 	// SetupPolicy is the §5.1 runtime setupPolicy bounding the setup
 	// phase. Nil when the runtime declares no aggregate cap.
 	SetupPolicy *adapterv1.SetupPolicy
+	// ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
+	// block. The Binder forwards it to the adapter on FinalizeWorkspace so
+	// uploadArchive symlink entries are admitted (and target-validated)
+	// only for runtimes that opt in. Nil leaves the platform default
+	// (symlinks rejected). spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+	ArchivePolicy *adapterv1.ArchivePolicy
 	// CredentialPools names the §4.9 credential pool to lease from for
 	// each authorized provider, keyed by provider. The caller resolves it
 	// from the §4.9 intersection of the Runtime's supportedProviders and
@@ -432,7 +438,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: phase finalizing_workspace on pod %s: %w", sandboxName, err)
 	}
-	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan)
+	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan, req.ArchivePolicy)
 	if err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()

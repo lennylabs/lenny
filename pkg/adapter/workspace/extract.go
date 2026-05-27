@@ -104,7 +104,9 @@ func extractRegular(dest string, r io.Reader, mode os.FileMode, remaining int64)
 }
 
 // extractSymlink restores a symlink entry, rejecting a target that
-// resolves outside the workspace root.
+// resolves outside the workspace root or that traverses any of the
+// §13.4 forbidden pseudo-filesystem mounts (`/proc`, `/sys`, `/dev`,
+// `/run/lenny`). spec: §7.4 line 458; §13.4 line 665 — F-13.4.4.
 func extractSymlink(rootClean, dest, linkname string) error {
 	if linkname == "" {
 		return fmt.Errorf("symlink target is empty")
@@ -116,6 +118,11 @@ func extractSymlink(rootClean, dest, linkname string) error {
 	target = filepath.Clean(target)
 	if target != rootClean && !pathWithin(rootClean, target) {
 		return fmt.Errorf("symlink target %q escapes the workspace root", linkname)
+	}
+	for _, forbidden := range []string{"/proc", "/sys", "/dev", "/run/lenny"} {
+		if target == forbidden || pathWithin(forbidden, target) {
+			return fmt.Errorf("symlink target %q traverses forbidden directory %q", linkname, forbidden)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err

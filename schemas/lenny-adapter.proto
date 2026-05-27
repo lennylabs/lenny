@@ -358,6 +358,32 @@ message PrepareWorkspaceResponse {
 message FinalizeWorkspaceRequest {
   SessionId session_id = 1;
   WorkspacePlan workspace_plan = 2;
+  // archive_policy is the §13.4 per-Runtime opt-in surface the gateway
+  // delivers to the adapter for uploadArchive extraction. An unset
+  // message means "platform defaults" (symlinks rejected). spec: §7.4
+  // lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+  ArchivePolicy archive_policy = 3;
+}
+
+// ArchivePolicy carries the §13.4 per-Runtime archive-extraction opts.
+// The platform ceilings (256 MiB / 100:1 / 10 000 entries / 64 MiB per
+// entry / depth 32 / path 4096 bytes) are normative and non-tunable
+// per §13.4 — only the per-Runtime AllowSymlinks toggle and the
+// adapter's workspace_root path travel on the wire. spec: §7.4 lines
+// 448-462; §13.4 — F-7.4.2, F-7.4.4.
+message ArchivePolicy {
+  // allow_symlinks lifts the §7.4 line 458 default-deny on symlink
+  // entries. The adapter still validates every symlink target with
+  // pkg/upload.ValidateSymlinkTarget (relative-to-workspace canonical
+  // path; rejects /proc, /sys, /dev, /run/lenny). False (the default)
+  // aborts extraction on any symlink with details.reason = "symlink".
+  bool allow_symlinks = 1;
+  // workspace_root is the adapter's absolute workspace path. The
+  // gateway derives it from the SandboxTemplate so the per-Runtime
+  // workspace-tier and slot-scoped paths flow through correctly. The
+  // adapter falls back to its own configured root when this field is
+  // empty (workspaces materialized into /workspace/current). F-7.4.4.
+  string workspace_root = 2;
 }
 
 // FinalizeWorkspaceResponse carries per-source advisory warnings the

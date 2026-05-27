@@ -230,6 +230,11 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	// the CRD so the §7.5 gateway-side enforcement (F-7.5.1) reads the same
 	// policy the deployer declared on the Runtime resource. F-7.5.10.
 	dst.SetupCommandPolicy = setupCommandPolicyFromCRD(rt.Spec.SetupCommandPolicy)
+	// spec: §7.4 lines 458, 462; §13.4 — archivePolicy is mirrored from
+	// the CRD so the adapter's uploadArchive extractor reads the same
+	// AllowSymlinks toggle the deployer declared on the Runtime resource.
+	// F-7.4.4.
+	dst.ArchivePolicy = archivePolicyFromCRD(rt.Spec.ArchivePolicy)
 	dst.Labels = domainLabels(rt.Labels)
 }
 
@@ -260,6 +265,18 @@ func setupCommandPolicyFromCRD(p *lennyv1.SetupCommandPolicy) *runtimestore.Setu
 		Allowlist:   append([]string(nil), p.Allowlist...),
 		Blocklist:   append([]string(nil), p.Blocklist...),
 		MaxCommands: int(p.MaxCommands),
+	}
+}
+
+// archivePolicyFromCRD maps the §13.4 archivePolicy block. A nil CRD block
+// mirrors to a nil registry block (no opt-in declared; symlinks rejected
+// per §7.4 line 458). spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+func archivePolicyFromCRD(p *lennyv1.ArchivePolicy) *runtimestore.ArchivePolicy {
+	if p == nil {
+		return nil
+	}
+	return &runtimestore.ArchivePolicy{
+		AllowSymlinks: p.AllowSymlinks,
 	}
 }
 

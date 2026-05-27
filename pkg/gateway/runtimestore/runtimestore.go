@@ -141,6 +141,14 @@ type Runtime struct {
 	// when the runtime declares no setupCommandPolicy block.
 	SetupCommandPolicy *SetupCommandPolicy
 
+	// ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
+	// block: the AllowSymlinks toggle the gateway delivers to the adapter
+	// on FinalizeWorkspace so uploadArchive symlink entries are admitted
+	// (and target-validated) only for runtimes that explicitly opt in. A
+	// nil block means platform defaults (symlinks rejected). spec: §7.4
+	// lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+	ArchivePolicy *ArchivePolicy
+
 	// DefaultPoolConfig is the §5.1 defaultPoolConfig block: the
 	// runtime-declared default pool sizing the §5.2 pool resolver consults
 	// before falling back to platform defaults. The §5.1 merge table
@@ -728,6 +736,25 @@ func hasCommandPrefix(cmd, prefix string) bool {
 	return false
 }
 
+// ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
+// block. AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+// entries; even when true, the adapter still resolves the target through
+// pkg/upload.ValidateSymlinkTarget (target must canonicalize under the
+// runtime's workspace root and must not traverse /proc, /sys, /dev, or
+// /run/lenny). spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+type ArchivePolicy struct {
+	AllowSymlinks bool `json:"allowSymlinks,omitempty"`
+}
+
+// Clone returns a deep copy of the policy. A nil receiver clones to nil.
+func (p *ArchivePolicy) Clone() *ArchivePolicy {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	return &cp
+}
+
 // DefaultPoolConfig is the §5.1 defaultPoolConfig block on a runtime: the
 // default pool sizing the §5.2 pool resolver consults before falling back
 // to platform defaults. The §5.1 merge table classifies it Override.
@@ -1202,6 +1229,7 @@ func cloneRuntime(r Runtime) Runtime {
 	r.TaskPolicy = r.TaskPolicy.Clone()
 	r.Limits = r.Limits.Clone()
 	r.SetupCommandPolicy = r.SetupCommandPolicy.Clone()
+	r.ArchivePolicy = r.ArchivePolicy.Clone()
 	r.DefaultPoolConfig = r.DefaultPoolConfig.Clone()
 	r.WorkspaceDefaults = r.WorkspaceDefaults.Clone()
 	if r.RuntimeOptionsSchema != nil {

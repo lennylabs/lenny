@@ -126,6 +126,12 @@ func Merge(base, derived Runtime) Runtime {
 	if derived.SetupCommandPolicy == nil {
 		eff.SetupCommandPolicy = cb.SetupCommandPolicy.Clone()
 	}
+	// §13.4 archivePolicy is Override: the derived runtime's opt-in block
+	// wholly replaces the base block; the base applies otherwise. The
+	// platform default (no symlinks) is encoded as a nil block. F-7.4.4.
+	if derived.ArchivePolicy == nil {
+		eff.ArchivePolicy = cb.ArchivePolicy.Clone()
+	}
 	if derived.DefaultPoolConfig == nil {
 		eff.DefaultPoolConfig = cb.DefaultPoolConfig.Clone()
 	}

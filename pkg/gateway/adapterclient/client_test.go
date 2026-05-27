@@ -276,7 +276,7 @@ func TestClientFinalizeWorkspace(t *testing.T) {
 		Sources: []*adapterv1.WorkspaceSource{
 			{Type: "inlineFile", Path: "CLAUDE.md", Content: "notes", Mode: "644"},
 		},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("FinalizeWorkspace: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "CLAUDE.md")); err != nil {
@@ -294,7 +294,7 @@ func TestClientFinalizeWorkspaceRejectsBadPlan(t *testing.T) {
 		Sources: []*adapterv1.WorkspaceSource{
 			{Type: "inlineFile", Path: "../escape", Content: "x", Mode: "644"},
 		},
-	})
+	}, nil)
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("FinalizeWorkspace with an escaping path = %v, want InvalidArgument", err)
 	}

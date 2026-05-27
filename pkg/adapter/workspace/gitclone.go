@@ -9,6 +9,7 @@ import (
 	"os"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/upload"
 )
 
 // GitCloneStagingRef is the staging-area key for a §14 gitClone
@@ -41,14 +42,21 @@ func extractGitClone(root, stagingDir string, src *adapterv1.WorkspaceSource) er
 		return fmt.Errorf("open staged repository archive: %w", err)
 	}
 	defer f.Close()
-	gz, err := gzip.NewReader(f)
+	counter := &byteCounter{r: f}
+	gz, err := gzip.NewReader(counter)
 	if err != nil {
 		return fmt.Errorf("open gzip stream: %w", err)
 	}
 	defer gz.Close()
+	capped := &readCap{r: gz, maxRead: decompressorPerReadCap}
 	// gitClone never raises a strip-components skip — strip=0 cannot
 	// drop any entry — so any returned warnings are spurious; discard
 	// them rather than mix them into the parent Materialize slice.
-	_, err = extractUploadTar(root, src.GetPath(), 0, 0, gz)
+	// Git histories often carry symlinks (e.g., monorepos, vendored
+	// repos), so gitClone opts in to symlinks unconditionally; the
+	// validator still resolves every target through ValidateSymlinkTarget
+	// using the workspace root. spec: §7.4 line 458; §13.4 — F-7.4.4.
+	allow := upload.RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: root}
+	_, err = extractUploadTar(root, src.GetPath(), 0, 0, capped, counter, allow)
 	return err
 }

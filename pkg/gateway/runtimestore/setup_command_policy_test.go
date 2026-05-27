@@ -143,3 +143,22 @@ func TestSetupCommandPolicyClonePreservesBlocklist(t *testing.T) {
 		t.Errorf("Clone() Blocklist aliases the source slice: %v", out.Blocklist)
 	}
 }
+
+// TestArchivePolicyClone covers F-7.4.4: the §13.4 archivePolicy block
+// is deep-copied so the store never aliases a caller's input. The Clone
+// receiver also handles nil and the round-trip yields an independent
+// value.
+func TestArchivePolicyClone(t *testing.T) {
+	if got := (*runtimestore.ArchivePolicy)(nil).Clone(); got != nil {
+		t.Errorf("nil ArchivePolicy clone = %+v, want nil", got)
+	}
+	in := &runtimestore.ArchivePolicy{AllowSymlinks: true}
+	out := in.Clone()
+	if out == nil || !out.AllowSymlinks {
+		t.Fatalf("Clone() = %+v, want a copy with AllowSymlinks=true", out)
+	}
+	in.AllowSymlinks = false
+	if !out.AllowSymlinks {
+		t.Errorf("Clone() AllowSymlinks aliased to source mutation")
+	}
+}

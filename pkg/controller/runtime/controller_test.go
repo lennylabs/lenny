@@ -196,6 +196,37 @@ func TestApplyCRDFields_MirrorsSetupCommandPolicy_spec_7_5(t *testing.T) {
 	}
 }
 
+// TestApplyCRDFields_MirrorsArchivePolicy_spec_7_4 verifies the §7.4 /
+// §13.4 archivePolicy mirror from the CRD onto the runtimestore runtime:
+// the AllowSymlinks field round-trips, a nil CRD block mirrors to a nil
+// registry block, and applyCRDFields plumbs the field end-to-end.
+// spec: §7.4 lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+func TestApplyCRDFields_MirrorsArchivePolicy_spec_7_4(t *testing.T) {
+	if got := archivePolicyFromCRD(nil); got != nil {
+		t.Errorf("nil archivePolicy CRD block mapped to %+v, want nil", got)
+	}
+	src := &lennyv1.ArchivePolicy{AllowSymlinks: true}
+	got := archivePolicyFromCRD(src)
+	if got == nil {
+		t.Fatal("archivePolicyFromCRD(non-nil) = nil")
+	}
+	if !got.AllowSymlinks {
+		t.Errorf("AllowSymlinks = %v, want true", got.AllowSymlinks)
+	}
+
+	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+		Type:             "agent",
+		Image:            "img@sha256:" + hex64,
+		IntegrationLevel: "basic",
+		ArchivePolicy:    src,
+	}}
+	var dst runtimestore.Runtime
+	applyCRDFields(&dst, rt)
+	if dst.ArchivePolicy == nil || !dst.ArchivePolicy.AllowSymlinks {
+		t.Errorf("applyCRDFields did not plumb ArchivePolicy: %+v", dst.ArchivePolicy)
+	}
+}
+
 // TestCredentialCapabilitiesFromCRD verifies the nil-block mapping and
 // that the proxyDialect slice is copied, not aliased to the CRD slice.
 func TestCredentialCapabilitiesFromCRD(t *testing.T) {
