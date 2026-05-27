@@ -217,6 +217,10 @@ func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Se
 		}
 	}
 	s.rollRetentionOnTerminal(ctx, sess)
+	// spec: §6.3 line 356 — the §6.3 TTFT tracker is in-memory only.
+	// On terminal, drop the entry so the map size scales with
+	// concurrently-streaming sessions rather than lifetime sessions.
+	s.firstTokenObserved.Delete(sess.ID)
 }
 
 // rollRetentionOnTerminal applies the §7.1 line 77 default artifact-

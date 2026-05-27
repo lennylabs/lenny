@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -196,6 +197,18 @@ type Server struct {
 	// observeStartupPhase, when set, records the §6.3 line 372 latency
 	// of one hot-path startup phase. Nil disables the emission.
 	observeStartupPhase func(phase, runtimeClass string, seconds float64)
+	// observeTimeToFirstToken, when set, records the §6.3 line 356 /
+	// §16.1 line 15 end-to-end TTFT histogram on the first
+	// agent-streamed response event of each session. Nil disables
+	// the emission.
+	observeTimeToFirstToken func(pool, runtimeClass, isolationProfile string, seconds float64)
+	// firstTokenObserved tracks sessions that already recorded their
+	// §6.3 / §16.1 TTFT observation. Entries are added on the first
+	// qualifying response event and cleared on the terminal lifecycle
+	// transition so the map size scales with concurrently-streaming
+	// sessions, not lifetime sessions. Keyed by session id, value is
+	// a sentinel struct{} placeholder. spec: §6.3 line 356.
+	firstTokenObserved sync.Map
 	// userCredChecker reports whether a usable user-scoped credential
 	// exists for (tenant, user, provider). Nil in v1 because user-source
 	// lease delivery (the §4.9 materializedConfig path) is not yet wired;
@@ -697,6 +710,13 @@ type Options struct {
 	// workspace_materialization, setup_commands, credential_assignment,
 	// agent_session_start). Nil disables it. spec: §6.3 line 372.
 	ObserveStartupPhase func(phase, runtimeClass string, seconds float64)
+
+	// ObserveTimeToFirstToken, when set, records the §6.3 line 356 /
+	// §16.1 line 15 TTFT histogram on the first agent-streamed
+	// response event of each session: session start request to first
+	// streaming event emitted to the client. Nil disables the
+	// emission. spec: §16.1 line 15, §6.3 line 356.
+	ObserveTimeToFirstToken func(pool, runtimeClass, isolationProfile string, seconds float64)
 }
 
 // New returns a Server bound to the supplied store.
@@ -754,8 +774,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		warmupEstimateSeconds:  opts.WarmupEstimateSeconds,
 		credRouter:             opts.CredentialRouter,
 		preclaimMismatch:       opts.PreclaimMismatch,
-		observeStartupDuration: opts.ObserveStartupDuration,
-		observeStartupPhase:    opts.ObserveStartupPhase,
+		observeStartupDuration:  opts.ObserveStartupDuration,
+		observeStartupPhase:     opts.ObserveStartupPhase,
+		observeTimeToFirstToken: opts.ObserveTimeToFirstToken,
 		lifecycleAudit:         opts.LifecycleAuditSink,
 		interactionAudit:       opts.InteractionAuditSink,
 		inputWaits:             opts.InputWaits,

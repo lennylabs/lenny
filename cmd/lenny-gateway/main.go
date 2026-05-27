@@ -1090,6 +1090,10 @@ func main() {
 		// §5.2 line 521: record post-recovery slot-counter rehydration
 		// events on lenny_slot_rehydration_total (pod, pool).
 		podBinder.Rehydration = gwMetrics.IncSlotRehydration
+		// §6.3 line 352 / §16.1 line 122: emit lenny_warmpool_claims_total
+		// on each idle→claimed transition so deployers can read the
+		// denominator of the SDK-warm demotion-rate ratio.
+		podBinder.ClaimAccepted = gwMetrics.IncWarmpoolClaim
 	}
 	// §16.1 lines 51, 53, 55: emit credential-lease assignment, lease
 	// duration, and pool-utilization telemetry from the in-process
@@ -1540,6 +1544,9 @@ func main() {
 		// each successful pod-warm start.
 		ObserveStartupDuration: gwMetrics.ObserveSessionStartupDuration,
 		ObserveStartupPhase:    gwMetrics.ObserveSessionStartupPhase,
+		// §6.3 line 356, §16.1 line 15 — TTFT histogram observed on
+		// the first agent-streamed response event per session.
+		ObserveTimeToFirstToken: gwMetrics.ObserveSessionTimeToFirstToken,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

@@ -1293,7 +1293,7 @@ groups:
             slo: Startup latency P95 < 5s (gVisor)
             summary: Slow-window error-budget burn for Startup latency P95 < 5s (gVisor)
         - alert: TTFTBurnRate
-          expr: lenny_session_time_to_first_token_slow_ratio / 0.05 > 14
+          expr: (1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05 > 14
           for: 1h
           labels:
             severity: critical
@@ -1303,7 +1303,7 @@ groups:
             slo: Time to first token P95 < 10s
             summary: Fast-window error-budget burn for Time to first token P95 < 10s
         - alert: TTFTBurnRateSlow
-          expr: lenny_session_time_to_first_token_slow_ratio / 0.05 > 3
+          expr: (1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05 > 3
           for: 6h
           labels:
             severity: warning

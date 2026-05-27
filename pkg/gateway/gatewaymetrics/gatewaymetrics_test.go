@@ -844,6 +844,85 @@ func TestSessionStartupDurationBucketBoundaries_spec_16_5(t *testing.T) {
 	}
 }
 
+// spec: §16.1 line 15 / §6.3 line 356 — the TTFT histogram registers
+// and exposes its series under the
+// pool/runtime_class/isolation_profile label triple.
+func TestSessionTimeToFirstTokenExposed_spec_6_3_F_6_3_3(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ObserveSessionTimeToFirstToken("pool-a", "runc", "standard", 0.8)
+	m.ObserveSessionTimeToFirstToken("pool-b", "gvisor", "sandboxed", 3.2)
+
+	body := scrapeMetrics(t, m)
+	for _, want := range []string{
+		`lenny_session_time_to_first_token_seconds_count{isolation_profile="standard",pool="pool-a",runtime_class="runc"} 1`,
+		`lenny_session_time_to_first_token_seconds_count{isolation_profile="sandboxed",pool="pool-b",runtime_class="gvisor"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q", want)
+		}
+	}
+}
+
+// spec: §16.5 line 637 / §6.3 line 356 — the TTFTBurnRate alert reads
+// the histogram's le="10" (10s TTFT SLO) bucket boundary. The recorded
+// buckets must carry exactly that le label or the alert PromQL silently
+// selects no series.
+func TestSessionTimeToFirstTokenBucketBoundary_spec_6_3_F_6_3_3(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ObserveSessionTimeToFirstToken("pool-a", "runc", "standard", 1.0)
+
+	body := scrapeMetrics(t, m)
+	needle := `lenny_session_time_to_first_token_seconds_bucket{`
+	found := false
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, needle) && strings.Contains(line, `le="10"`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("TTFT histogram has no bucket with le=\"10\"; the TTFTBurnRate alert expr would match no series")
+	}
+}
+
+// spec: §6.3 line 352, §16.1 line 122 — lenny_warmpool_claims_total is
+// emitted per pool/runtime_class so deployers can compute the §6.3
+// SDK-warm demotion-rate ratio (denominator). The catalog declares the
+// metric labels; the test confirms the production counter exposes the
+// expected series.
+func TestIncWarmpoolClaim_spec_6_3_F_6_3_6(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncWarmpoolClaim("pool-a", "runc")
+	m.IncWarmpoolClaim("pool-a", "runc")
+	m.IncWarmpoolClaim("pool-b", "gvisor")
+
+	body := scrapeMetrics(t, m)
+	for _, want := range []string{
+		`lenny_warmpool_claims_total{pool="pool-a",runtime_class="runc"} 2`,
+		`lenny_warmpool_claims_total{pool="pool-b",runtime_class="gvisor"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q", want)
+		}
+	}
+}
+
+// IncWarmpoolClaim is nil-safe so callers can pass a nil *Metrics
+// without guarding (mirrors the pattern used by other emitters).
+func TestIncWarmpoolClaimNilSafe_spec_6_3_F_6_3_6(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncWarmpoolClaim("pool-a", "runc") // must not panic
+}
+
 // spec: §8.2 / §16.1 line 27 — lenny_delegation_depth histogram
 // observation labelled by `pool`.
 func TestObserveDelegationDepth_spec_8_2(t *testing.T) {

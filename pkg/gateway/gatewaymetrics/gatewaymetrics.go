@@ -102,6 +102,20 @@ type Metrics struct {
 	// agent_session_start) and `runtime_class`. Each phase is observed
 	// independently so a slow startup can be localized to one phase.
 	sessionStartupPhaseDuration *prometheus.HistogramVec
+	// sessionTimeToFirstToken is the §16.1 line 15 / §6.3 line 356
+	// end-to-end TTFT histogram: session start request (POST
+	// /v1/sessions admission) through the first agent-streamed
+	// response event emitted to the SSE client. Labels: `pool`,
+	// `runtime_class`, `isolation_profile`. Consumed by the
+	// TTFTBurnRate alert via an inline expression against the le="10"
+	// bucket boundary (the §6.3 10s SLO threshold).
+	sessionTimeToFirstToken *prometheus.HistogramVec
+	// warmpoolClaims is the §16.1 line 122 / §6.3 line 352
+	// `lenny_warmpool_claims_total{pool,runtime_class}` counter:
+	// incremented on each idle→claimed transition in the §6.1 warm
+	// pool. It is the denominator of the §6.3 line 352 SDK-warm
+	// demotion-rate ratio. spec: §6.3 line 352, §16.1 line 122.
+	warmpoolClaims *prometheus.CounterVec
 	// workspaceSealDuration is the §7.1 line 112 seal-and-export
 	// completion-time histogram. Observed once per terminal session at
 	// teardown. Labels: `pool` (the session runtime) and `outcome`
@@ -644,6 +658,32 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 line 15 / §6.3 line 356 —
+	// `lenny_session_time_to_first_token_seconds` measures session
+	// start request (POST /v1/sessions admission) through the first
+	// agent-streamed response event. Explicit buckets straddle the
+	// 10s TTFT SLO threshold so the TTFTBurnRate alert reads the
+	// le="10" bucket boundary directly. spec: §16.1 line 15; §6.3
+	// line 356.
+	sessionTimeToFirstToken, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_session_time_to_first_token_seconds",
+		Help:    "End-to-end time to first token: session start request to first agent-streamed response event (§6.3 line 356, §16.1 line 15).",
+		Buckets: []float64{0.1, 0.5, 1, 2, 3, 5, 8, 10, 15, 30, 60},
+	}, []string{"pool", "runtime_class", "isolation_profile"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 line 122 / §6.3 line 352 — `lenny_warmpool_claims_total`
+	// counts the idle→claimed transitions in the §6.1 warm pool and
+	// is the denominator of the SDK-warm demotion-rate ratio
+	// (`lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total`).
+	warmpoolClaims, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_warmpool_claims_total",
+		Help: "Idle→claimed warm-pool transitions per pool (§6.3 line 352, §16.1 line 122).",
+	}, []string{"pool", "runtime_class"})
+	if err != nil {
+		return nil, err
+	}
 	// §7.1 line 112 — `lenny_workspace_seal_duration_seconds` tracks
 	// seal-and-export completion time across all terminal sessions,
 	// labeled by `pool` (session runtime) and `outcome` (success |
@@ -1046,6 +1086,7 @@ func New() (*Metrics, error) {
 		checkpointOrphanedObjects, checkpointSizeExceeded, sessionEvictionTotalLoss,
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, sessionStartupDuration, sessionStartupPhaseDuration,
+		sessionTimeToFirstToken, warmpoolClaims,
 		workspaceSealDuration,
 		checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
@@ -1121,6 +1162,8 @@ func New() (*Metrics, error) {
 		sessionStartupDuration:               sessionStartupDuration,
 		workspaceSealDuration:                workspaceSealDuration,
 		sessionStartupPhaseDuration:          sessionStartupPhaseDuration,
+		sessionTimeToFirstToken:              sessionTimeToFirstToken,
+		warmpoolClaims:                       warmpoolClaims,
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
@@ -1415,6 +1458,38 @@ func (m *Metrics) ObserveSessionStartupPhase(phase, runtimeClass string, seconds
 		return
 	}
 	m.sessionStartupPhaseDuration.WithLabelValues(phase, runtimeClass).Observe(seconds)
+}
+
+// ObserveSessionTimeToFirstToken records the §6.3 line 356 / §16.1
+// line 15 end-to-end TTFT: wall-clock seconds from session start
+// request (POST /v1/sessions admission, i.e. session.CreatedAt) to
+// the first agent-streamed response event emitted to the SSE client.
+// Observed once per session — the first qualifying response event
+// records, all subsequent events for the same session are ignored.
+// The TTFTBurnRate alert reads the P95 of this histogram via an
+// inline expression against the le="10" bucket (the 10s SLO
+// threshold). spec: §6.3 line 356, §16.1 line 15.
+func (m *Metrics) ObserveSessionTimeToFirstToken(pool, runtimeClass, isolationProfile string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.sessionTimeToFirstToken.WithLabelValues(pool, runtimeClass, isolationProfile).Observe(seconds)
+}
+
+// IncWarmpoolClaim increments the §6.3 line 352 / §16.1 line 122
+// `lenny_warmpool_claims_total{pool,runtime_class}` counter on each
+// idle→claimed transition in the §6.1 warm pool. This counter is the
+// denominator of the §6.3 SDK-warm demotion-rate ratio
+// (`lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total`)
+// that deployers must track to verify SDK-warm net benefit. The
+// numerator (`lenny_warmpool_sdk_demotions_total`) is gated on the
+// SDK-warm demotion path itself; see F-6.1.1 for the §4.7 DemoteSDK
+// stub. spec: §6.3 line 352, §16.1 line 122.
+func (m *Metrics) IncWarmpoolClaim(pool, runtimeClass string) {
+	if m == nil {
+		return
+	}
+	m.warmpoolClaims.WithLabelValues(pool, runtimeClass).Inc()
 }
 
 // ObserveWorkspaceSealDuration records the §7.1 line 112

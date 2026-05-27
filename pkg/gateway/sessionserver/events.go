@@ -11,6 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // handleEvents implements GET /v1/sessions/{id}/events per §15.1 —
@@ -135,4 +136,33 @@ func (s *Server) publishEvent(tenantID, sessionID, eventType string, payload any
 		return
 	}
 	s.events.PublishForTenant(tenantID, sessionID, eventType, string(data), s.clock())
+}
+
+// recordTTFTOnce observes the §6.3 line 356 / §16.1 line 15 TTFT
+// histogram the first time row receives an agent-originated streaming
+// event (the gateway's `response` event type). T0 is the session's
+// `CreatedAt` (the POST /v1/sessions admission instant per §15.1).
+// Subsequent events for the same session are no-ops so the histogram
+// only counts each session once. spec: §6.3 line 356, §16.1 line 15.
+func (s *Server) recordTTFTOnce(row sessionstore.Session, eventType string) {
+	if s.observeTimeToFirstToken == nil {
+		return
+	}
+	if eventType != "response" {
+		return
+	}
+	if _, loaded := s.firstTokenObserved.LoadOrStore(row.ID, struct{}{}); loaded {
+		return
+	}
+	runtimeClass, ok := isolation.RuntimeClassName(row.IsolationProfile)
+	if !ok {
+		// A row with no resolved isolation profile would mislabel the
+		// histogram; skip rather than emit an empty runtime_class.
+		return
+	}
+	seconds := s.clock().Sub(row.CreatedAt).Seconds()
+	if seconds < 0 {
+		seconds = 0
+	}
+	s.observeTimeToFirstToken(row.PoolRef, runtimeClass, string(row.IsolationProfile), seconds)
 }

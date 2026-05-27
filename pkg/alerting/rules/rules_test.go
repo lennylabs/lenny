@@ -309,6 +309,40 @@ func TestPostgresWriteBurstIopsCalibration(t *testing.T) {
 	}
 }
 
+// spec: §6.3 line 356, §16.5 line 637 — TTFTBurnRate must reference
+// the lenny_session_time_to_first_token_seconds histogram directly
+// via the le="10" bucket (the 10s TTFT SLO). The earlier
+// lenny_session_time_to_first_token_slow_ratio recording rule was
+// never shipped and the alert silently matched no series.
+func TestTTFTBurnRateUsesInlineHistogramExpression_spec_6_3_F_6_3_3(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "TTFTBurnRate" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatalf("TTFTBurnRate not found in Catalog")
+	}
+	wantFragments := []string{
+		"lenny_session_time_to_first_token_seconds_bucket",
+		`le="10"`,
+		"lenny_session_time_to_first_token_seconds_count",
+		"/ 0.05",
+		"> 14",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(got.Expr, frag) {
+			t.Errorf("TTFTBurnRate expression %q is missing required fragment %q", got.Expr, frag)
+		}
+	}
+	notWant := "lenny_session_time_to_first_token_slow_ratio"
+	if strings.Contains(got.Expr, notWant) {
+		t.Errorf("TTFTBurnRate still references the never-shipped recording rule %q", notWant)
+	}
+}
+
 // TestBurnRateRulesAreDualWindow asserts each burn-rate SLO is rendered
 // as a fast-window critical rule and a slow-window warning rule, per
 // the §16.5 multi-window burn-rate requirement.

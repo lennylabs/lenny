@@ -356,6 +356,11 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		s.publishEvent(row.TenantID, row.ID, "response", map[string]any{
 			"type": p.Type, "text": p.Text, "ref": p.Ref,
 		})
+		// spec: §6.3 line 356, §16.1 line 15 — the first agent-streamed
+		// `response` event observed on this session is the §6.3 TTFT
+		// signal. recordTTFTOnce LoadOrStores so only the first event
+		// per session triggers the histogram observation.
+		s.recordTTFTOnce(row, "response")
 	}
 
 	// spec: §15.4 lines 1725-1737 — every send_message call returns a

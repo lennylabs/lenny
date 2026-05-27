@@ -1566,9 +1566,16 @@ func burnRateAlerts() []Rule {
 			slug: "startup-latency-gvisor-burn-rate",
 		},
 		{
+			// The slow ratio is computed inline from the
+			// lenny_session_time_to_first_token_seconds histogram (§6.3
+			// line 356, emitted by sessionserver on first agent-streamed
+			// response event): the fraction of starts slower than the
+			// 10s SLO threshold, against the 5% error budget. The
+			// le="10" bucket boundary is one of the histogram's explicit
+			// buckets. spec: §16.5 line 637, §6.3 line 356.
 			name: "TTFTBurnRate",
 			slo:  "Time to first token P95 < 10s",
-			expr: `lenny_session_time_to_first_token_slow_ratio / 0.05`,
+			expr: `(1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05`,
 			slug: "ttft-burn-rate",
 		},
 		{
