@@ -153,11 +153,13 @@ import (
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
+	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
+	"github.com/lennylabs/lenny/pkg/gateway/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -432,6 +434,21 @@ func main() {
 		"§4.1 / §16.5 gateway HPA minReplicas floor (§17.8.2 SCL-036). Emitted at startup on the lenny_gateway_min_replicas gauge so the GatewayNoHealthyReplicas alert (§16.5) can evaluate via scalar(lenny_gateway_min_replicas). Override via LENNY_MIN_REPLICAS.")
 	streamCeiling := flag.Int("stream-ceiling", envInt("LENNY_STREAM_CEILING", 100),
 		"§4.1 / §16.5 per-replica streaming-connection ceiling. Emitted at startup on the lenny_gateway_stream_ceiling gauge so the GatewayActiveStreamsHigh alert (§16.5) can evaluate via scalar(lenny_gateway_stream_ceiling). Override via LENNY_STREAM_CEILING.")
+	// spec: §10.4 line 385 / §16.5 PDBBlockedEvictions — the §10.4 PDB
+	// status poller addresses the gateway's PodDisruptionBudget object
+	// by namespace+name. The chart sets --gateway-namespace from the
+	// release namespace and --gateway-pdb-name to `lenny-gateway`.
+	// F-10.4.4.
+	gatewayNamespace := flag.String("gateway-namespace", envOr("LENNY_GATEWAY_NAMESPACE", os.Getenv("POD_NAMESPACE")),
+		"§10.4 namespace holding the gateway PodDisruptionBudget for the periodic poller (defaults to POD_NAMESPACE). Override via LENNY_GATEWAY_NAMESPACE.")
+	gatewayPDBName := flag.String("gateway-pdb-name", envOr("LENNY_GATEWAY_PDB_NAME", "lenny-gateway"),
+		"§10.4 name of the gateway PodDisruptionBudget object for the periodic poller. Override via LENNY_GATEWAY_PDB_NAME.")
+	// spec: §10.4 line 389 — operator-tunable SSE replay-buffer depth.
+	// Default 512 events matches the §10.4 reconnect-window assumption
+	// (60s at 10 events/s). The 64..4096 envelope is the spec-mandated
+	// range. F-10.4.5.
+	sessionEventReplayBufferDepth := flag.Int("session-event-replay-buffer-depth", envInt("LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH", 512),
+		"§10.4 line 389 per-session SSE replay buffer depth (events). Default 512 matches the §10.4 60s reconnect window at 10 events/s; accepted range 64..4096. Override via LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH.")
 	// spec: §4.2 line 165 — LENNY_POOLER_MODE names the deployment
 	// posture for the Postgres pooler. The gateway honours the value
 	// at the application layer (logging it at startup so operators can
@@ -989,6 +1006,10 @@ func main() {
 		podBinder     *podsession.Binder
 		podRegistry   *podsession.Registry
 		checkpointSvc *checkpointer.Checkpointer
+		// clusterClient is the controller-runtime client used by the
+		// session-start path and by the §10.4 PDB poller (F-10.4.4). It
+		// stays nil when --agent-namespace is unset (single-process dev).
+		clusterClient client.Client
 	)
 	if *agentNamespace != "" {
 		cfg, err := ctrl.GetConfig()
@@ -1017,6 +1038,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: build cluster client: %v", err)
 		}
+		clusterClient = k8sClient
 		dialOpt, err := adapter.TLSClientOption(*adapterTLSCert, *adapterTLSKey, *adapterCA)
 		if err != nil {
 			log.Fatalf("lenny-gateway: adapter TLS: %v", err)
@@ -1098,7 +1120,9 @@ func main() {
 		sessionSealer = checkpointSvc
 	}
 
-	eventBus := sessionevents.NewBus(0)
+	// spec: §10.4 line 389 — replay buffer depth is operator-tunable
+	// via gateway.sessionEventReplayBufferDepth. F-10.4.5.
+	eventBus := sessionevents.NewBus(*sessionEventReplayBufferDepth)
 	// §4.4 line 225 / §12.3.7: when Redis is wired, attach the
 	// cross-replica relay so a client reconnecting via Last-Event-ID
 	// to a different replica sees prior events (the §15.1 streaming-
@@ -1280,6 +1304,10 @@ func main() {
 	}
 	if *streamCeiling <= 0 {
 		log.Fatalf("lenny-gateway: --stream-ceiling must be > 0 (got %d) (§4.1 / §16.5)", *streamCeiling)
+	}
+	// spec: §10.4 line 389 — accepted range 64..4096 events.
+	if *sessionEventReplayBufferDepth < 64 || *sessionEventReplayBufferDepth > 4096 {
+		log.Fatalf("lenny-gateway: --session-event-replay-buffer-depth must be in [64, 4096] (got %d) (§10.4 line 389)", *sessionEventReplayBufferDepth)
 	}
 	gwMetrics.SetMinReplicas(*minReplicas)
 	gwMetrics.SetStreamCeiling(*streamCeiling)
@@ -2505,10 +2533,19 @@ func main() {
 	}
 	handler = authmw.Wrap(handler, authOpts)
 
-	// §16.1 request metrics, outermost wrap so every request — including
-	// auth rejections — is counted. The route label collapses
+	// §16.1 request metrics, wrapped before recovery so panics still
+	// surface in the request_total / request_duration histograms with
+	// the resulting 500 status. The route label collapses
 	// high-cardinality path segments to a stable template.
 	handler = gwMetrics.Middleware(handler, routeTemplate)
+
+	// spec: §10.4 line 377 — handler-goroutine panic must surface as
+	// an explicit 500 response and a structured log line rather than
+	// the net/http default of silent recover + truncated response. The
+	// recovery wrapper is the outermost middleware so it catches a
+	// panic from any inner handler (auth, rate limit, business
+	// handlers, SSE writers). F-10.4.9.
+	handler = recovermw.Middleware(handler)
 
 	httpSrv := &http.Server{
 		Addr:              *addr,
@@ -3019,6 +3056,26 @@ func main() {
 	// (`max(...)`) of this gauge to gate Tier 3 promotion.
 	gcCollector := &gcpause.Collector{Gauge: gwMetrics}
 	go gcCollector.Run(watchdogCtx)
+
+	// spec: §10.4 line 385 / §16.5 PDBBlockedEvictions — periodic PDB
+	// status poller. Each cycle that observes Status.DisruptionsAllowed
+	// == 0 on the gateway PDB increments the
+	// lenny_pdb_blocked_evictions_total counter so the §16.5 alert can
+	// fire when the PDB sustains blocking. The poller activates only
+	// when the cluster client is wired (production install with
+	// --agent-namespace) and when --gateway-namespace is set so the
+	// poller can address the right PDB object. F-10.4.4.
+	if clusterClient != nil && *gatewayNamespace != "" {
+		watcher := pdbwatcher.New(pdbwatcher.Config{
+			Client:    clusterClient,
+			Namespace: *gatewayNamespace,
+			PDBName:   *gatewayPDBName,
+			Sink:      gwMetrics,
+		})
+		go watcher.Run(watchdogCtx)
+		log.Printf("lenny-gateway: §10.4 PDB poller watching %s/%s",
+			*gatewayNamespace, *gatewayPDBName)
+	}
 
 	// §4.1 per-subsystem state publisher. Periodically reads the
 	// queue depth, in-flight count, and circuit state from every
@@ -3893,6 +3950,11 @@ func exportHPAGauges(ctx context.Context, sessions sessionstore.Store, lister te
 	// in-flight SSE subscribers on this replica's sessionevents bus.
 	if bus != nil {
 		m.SetActiveStreams(bus.ActiveSubscribers())
+		// spec: §10.4 line 389 / §16 catalog — sample the worst
+		// per-session SSE replay buffer utilization so the
+		// lenny_event_bus_replay_buffer_utilization gauge tracks the
+		// pressure on the §10.4 reconnect-window assumption. F-10.4.11.
+		m.SetReplayBufferUtilization(bus.MaxReplayBufferUtilization())
 	}
 
 	// Active sessions — the §16.5 GatewaySessionBudgetNearExhaustion

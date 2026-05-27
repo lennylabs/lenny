@@ -485,3 +485,29 @@ func (b *Bus) ActiveSubscribers() int {
 	}
 	return n
 }
+
+// MaxReplayBufferUtilization returns the worst-case ratio of retained
+// events to the configured maxHistory across every session whose
+// replay buffer is currently non-empty. The result is in [0, 1]; 1.0
+// means at least one session's replay buffer is full and oldest events
+// are being evicted. Returns 0 when the bus has no retained events.
+//
+// The gateway samples this value periodically to feed the §16.1
+// lenny_event_bus_replay_buffer_utilization gauge so the §10.4 line
+// 389 buffer-depth knob has a feedback signal. F-10.4.11.
+//
+// spec: §16 observability catalog `lenny_event_bus_replay_buffer_utilization`.
+func (b *Bus) MaxReplayBufferUtilization() float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.maxHistory <= 0 {
+		return 0
+	}
+	var worst int
+	for _, hist := range b.history {
+		if len(hist) > worst {
+			worst = len(hist)
+		}
+	}
+	return float64(worst) / float64(b.maxHistory)
+}

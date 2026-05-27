@@ -12278,7 +12278,7 @@ the synthesis path is later wired.
 
 **Resolution (45997ecb):** Closed by F-7.3.3 — migration `0088_sessions_last_seq` adds the column with `GREATEST` monotonic floor, plumbed through `sessionstore.Session.LastSeq`, advanced asynchronously on every `sessionevents.Bus.Publish`, and seeded on the first publish for a session via the new `LastSeqLoader` hook (the §10.4 "primed from Postgres at handoff step 0" contract).
 
-### - [ ] F-10.4.4 — 04  PodDisruptionBudget for the gateway is not rendered [High] — OPEN
+### - [x] F-10.4.4 — 04  PodDisruptionBudget for the gateway is not rendered [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.1.1, F-17.3.2, F-4.1.1 — Four members report the gateway Deployment renders no PodDisruptionBudget; F-4.1.12 covers only the separate topology-spread gap.
 
@@ -12305,7 +12305,9 @@ returns no emitter for the counter the alert reads.
 gap is also self-evident inside the chart because both an alert rule and
 a docs page reference an object that does not exist.
 
-### - [ ] F-10.4.5 — 05  `gateway.sessionEventReplayBufferDepth` Helm value and flag are missing [High] — OPEN
+**Resolution:** Chart already renders the PDB by default (`gateway.podDisruptionBudget.enabled: true`, `maxUnavailable: 1`) per the templated `PodDisruptionBudget` block in `charts/lenny/templates/gateway-deployment.yaml`. The missing emitter for `lenny_pdb_blocked_evictions_total` is filled by the new `pkg/gateway/pdbwatcher` periodic poller, wired in `cmd/lenny-gateway/main.go` and gated on the cluster client + `--gateway-namespace` (defaulted from `POD_NAMESPACE` via downward API). Each polling cycle that observes `Status.DisruptionsAllowed == 0` advances the `lenny_pdb_blocked_evictions_total{pdb,controller="poller"}` counter via the new `gatewaymetrics.IncPDBBlockedEvictions` so the §16.5 `PDBBlockedEvictions` alert (`increase(...) > 5 over 10m`) has a live source. Docs updated to point at the actual chart key (`gateway.podDisruptionBudget.maxUnavailable` rather than the stale `gateway.pdb.minAvailable`).
+
+### - [x] F-10.4.5 — 05  `gateway.sessionEventReplayBufferDepth` Helm value and flag are missing [High] — CLOSED
 
 **Spec:** §10.4 line 389 — "Buffer depth is set by
 `gateway.sessionEventReplayBufferDepth` (Helm value, default 512 events,
@@ -12325,6 +12327,8 @@ of an operator-tunable Helm value together violate
 defaults must be flag-overridable and documented as operator-tunable).
 A misconfigured buffer breaks the §10.4 reconnect-window assumption (60 s
 at 10 events/s).
+
+**Resolution:** `--session-event-replay-buffer-depth` (env: `LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH`) is wired in `cmd/lenny-gateway/main.go` with default 512 and `[64, 4096]` range validation (fatal startup error outside the envelope); the value flows into `sessionevents.NewBus(*sessionEventReplayBufferDepth)`. The chart adds `gateway.sessionEventReplayBufferDepth: 512` to `values.yaml` and renders the flag in `gateway-deployment.yaml`.
 
 ### - [ ] F-10.4.6 — 06  Liveness/readiness probe target does not reflect dependent backend health [High] — OPEN
 
@@ -12384,7 +12388,7 @@ practice — a `kubectl rollout restart` mid-checkpoint loses
 un-checkpointed state because the new coordinator has no signal that the
 old replica is in mid-drain.
 
-### - [ ] F-10.4.8 — 08  No multi-zone / multi-node placement constraints on the gateway [Medium] — OPEN
+### - [x] F-10.4.8 — 08  No multi-zone / multi-node placement constraints on the gateway [Medium] — CLOSED
 
 **Spec:** §10.4 line 384 — "Multiple replicas across zones/nodes."
 
@@ -12404,7 +12408,9 @@ node/zone failure) is not satisfied without anti-affinity or topology
 spread. This is operator-tunable and is documented elsewhere as expected
 behavior.
 
-### - [ ] F-10.4.9 — 09  No HTTP panic-recovery middleware [Medium] — OPEN
+**Resolution:** The chart already provides both control surfaces as opt-in Helm values: `gateway.topologySpread.enabled` (default false; tier-3 preset enables a `topology.kubernetes.io/zone` `maxSkew: 1` spread) and `gateway.podAntiAffinity.enabled` (default false; tier-3 preset enables a soft `kubernetes.io/hostname` anti-affinity rule). The chart templates render the rules from those values per `charts/lenny/templates/gateway-deployment.yaml`. The §17.8.2 narrative places these controls at Tier 3 explicitly; Tier 1/2 single-zone installs render without them per `feedback_v1_no_tier_splitting.md` (operator opt-in, not a tier-dependent code path). Verify-closed.
+
+### - [x] F-10.4.9 — 09  No HTTP panic-recovery middleware [Medium] — CLOSED
 
 **Spec:** §10.4 line 377 sets the design principle that gateway pod
 failure must cause a broken stream and reconnect, never session loss.
@@ -12427,7 +12433,9 @@ streaming handlers, which `net/http` does not flush cleanly on a
 goroutine recover. A request-scoped recovery wrapper is a low-cost
 addition that matches the spirit of §10.4.
 
-### - [ ] F-10.4.10 — 10  Capacity-signal gauges referenced by §10.4-adjacent alerts are unemitted [Medium] — OPEN
+**Resolution:** New `pkg/gateway/middleware/recover` package wraps every request with a deferred `recover()` so a handler-goroutine panic surfaces as a structured INFO log line plus a 500 `INTERNAL_ERROR` envelope (or a no-op when the inner handler already started the body, so SSE/streaming framing stays valid). `http.ErrAbortHandler` is re-panicked per the net/http contract. Wired in `cmd/lenny-gateway/main.go` as the outermost middleware so it catches panics from any inner handler.
+
+### - [x] F-10.4.10 — 10  Capacity-signal gauges referenced by §10.4-adjacent alerts are unemitted [Medium] — CLOSED
 
 **Spec:** §10.4 references the §10.1 horizontal-scaling mechanism that
 underpins "Rolling updates preserve capacity." The alert catalog at
@@ -12450,7 +12458,9 @@ without them, and the chart-level alerts targeting them fire 0 alerts
 today because the divisor expressions evaluate against zero or missing
 series.
 
-### - [ ] F-10.4.11 — 11  Replay buffer utilization metric unemitted [Medium] — OPEN
+**Resolution:** Closed as duplicate of F-4.1.13 / F-4.1.4. `cmd/lenny-gateway/main.go` already calls `gwMetrics.SetMaxSessionsPerReplica("direct"/"proxy", *maxSessionsPerReplica)`, `gwMetrics.SetMinReplicas(*minReplicas)`, `gwMetrics.SetStreamCeiling(*streamCeiling)`, and `gwMetrics.SetReplicaCount(1)` at startup; the four §16.5-adjacent denominator gauges are live in /metrics.
+
+### - [x] F-10.4.11 — 11  Replay buffer utilization metric unemitted [Medium] — CLOSED
 
 **Spec:** §10.4 line 389 sets `gateway.sessionEventReplayBufferDepth`
 as the control surface; observability of buffer pressure is the only
@@ -12467,6 +12477,8 @@ returns matches only in the catalog and a runbook). The
 referenced in `spec/16_observability.md` line 233 and
 `docs/runbooks/audit-pipeline-degraded.md`, but it is not emitted, so
 the runbook step that depends on it returns no data.
+
+**Resolution:** New `sessionevents.Bus.MaxReplayBufferUtilization()` returns the worst per-session ratio of `len(history)/maxHistory` across all live sessions. The gateway's `exportHPAGauges` periodic loop in `cmd/lenny-gateway/main.go` samples it on every tick and pushes to `gwMetrics.SetReplayBufferUtilization`, which feeds the registered `lenny_event_bus_replay_buffer_utilization` gauge. The series is pre-materialized at startup (initial 0) so the alert query never sees a missing series.
 
 ### - [ ] F-10.4.12 — 12  Coordination lease holder is not persisted at handoff for §10.4 audit trail [Low] — OPEN
 
@@ -12488,7 +12500,7 @@ correlating two stores rather than reading one.
 audit-trail columns; this is a forensics gap rather than a normative
 violation.
 
-### - [ ] F-10.4.13 — 13  In-process event bus instead of cross-replica fan-out [Info] — OPEN
+### - [x] F-10.4.13 — 13  In-process event bus instead of cross-replica fan-out [Info] — CLOSED
 
 **Spec:** §10.4 line 389 says "the coordinating gateway replica
 maintains a per-session ring buffer." The wording supports a
@@ -12510,6 +12522,8 @@ cross-replica fan-out is the structural reason §10.4's
 synthesis-on-handoff machinery is necessary in the first place — once
 the synthesis path is implemented (F-10.4-02), this design is the
 "correct" v1 shape.
+
+**Resolution:** Verify-closed per finding text: the in-process design matches §10.4 line 389's "coordinating gateway replica maintains a per-session ring buffer" wording. The Redis-backed CloudEvents bus serves the audit/billing path; the session SSE bus stays single-replica-coordinator with handoff synthesis covering the cross-replica reconnect contract. No code change required.
 
 ### Summary
 
@@ -26816,7 +26830,7 @@ assertions to bound the rendered inventory per template.
 
 ### Findings
 
-### - [ ] F-17.1.1 — 01 — Gateway PodDisruptionBudget is not rendered [High] — OPEN
+### - [x] F-17.1.1 — 01 — Gateway PodDisruptionBudget is not rendered [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.4.4, F-17.3.2, F-4.1.1 — Four members report the gateway Deployment renders no PodDisruptionBudget; F-4.1.12 covers only the separate topology-spread gap.
 
@@ -26838,6 +26852,8 @@ Consequence: a Tier 3 `kubectl drain` of any node hosting more than one
 gateway pod will violate the spec ceiling on concurrent voluntary
 evictions; the HPA scale-down rate that §17.1 pins to "1 pod / 60s"
 because the PDB is the binding limit has no backing PDB to bind it.
+
+**Resolution:** Closed by F-10.4.4. The chart renders `kind: PodDisruptionBudget` (gated on `gateway.podDisruptionBudget.enabled`, defaulting true) with `maxUnavailable: 1`, and the rolling-update strategy is also rendered with `maxUnavailable: 1, maxSurge: 25%` per `gateway.rollingUpdate`. The metric emitter for `lenny_pdb_blocked_evictions_total` is wired via `pkg/gateway/pdbwatcher`.
 
 ### - [ ] F-17.1.2 — 02 — Gateway Ingress is not rendered [Medium] — OPEN
 
@@ -27382,7 +27398,7 @@ post-restore reconcile blocked) do not exist.
 
 ### - [ ] F-17.3.1 — MUST / correctness / security [High] — OPEN
 
-### - [ ] F-17.3.2 — 3.1 — Gateway Deployment has no topology spread or PodDisruptionBudget [High] — OPEN
+### - [x] F-17.3.2 — 3.1 — Gateway Deployment has no topology spread or PodDisruptionBudget [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-10.4.4, F-17.1.1, F-4.1.1 — Four members report the gateway Deployment renders no PodDisruptionBudget; F-4.1.12 covers only the separate topology-spread gap.
 
@@ -27405,6 +27421,8 @@ replica because the scheduler is free to colocate them onto one
 zone, and any node-drain / voluntary disruption can take them all
 down because no PDB caps simultaneous evictions. The §17.3
 "surviving replicas absorb traffic" property is not enforceable.
+
+**Resolution:** Closed by F-10.4.4 / F-10.4.8. The chart renders the gateway PDB (`gateway.podDisruptionBudget` default `enabled: true`, `maxUnavailable: 1`), plus opt-in `gateway.topologySpread` and `gateway.podAntiAffinity` helm values that the tier-3 preset enables. The `lenny_pdb_blocked_evictions_total` emitter lands via `pkg/gateway/pdbwatcher`.
 
 ---
 

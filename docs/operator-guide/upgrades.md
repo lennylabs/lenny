@@ -35,12 +35,13 @@ The Helm upgrade executes in order:
 
 ### PodDisruptionBudget
 
-The gateway PDB limits simultaneous disruptions during rolling updates. Configure via:
+The gateway PDB limits simultaneous disruptions during rolling updates. The chart renders the PDB by default with `maxUnavailable: 1`. Configure via:
 
 ```yaml
 gateway:
-  pdb:
-    minAvailable: 1    # Or use maxUnavailable
+  podDisruptionBudget:
+    enabled: true       # Default; set false only during a controlled migration
+    maxUnavailable: 1   # §17.1 mandates 1 at every tier
 ```
 
 ### CheckpointBarrier During Rolling Updates

@@ -421,3 +421,48 @@ func TestUntenantedPublishSkipsPersistence_spec_7_3(t *testing.T) {
 }
 
 var errLoadFailed = errors.New("sessionevents_test: load failed")
+
+// spec: §10.4 line 389 / §16 catalog lenny_event_bus_replay_buffer_utilization.
+// F-10.4.11.
+func TestMaxReplayBufferUtilization_Empty(t *testing.T) {
+	b := sessionevents.NewBus(64)
+	if got := b.MaxReplayBufferUtilization(); got != 0 {
+		t.Errorf("empty bus utilization: got %v want 0", got)
+	}
+}
+
+func TestMaxReplayBufferUtilization_PartialFill_spec_10_4(t *testing.T) {
+	b := sessionevents.NewBus(8)
+	for i := 0; i < 2; i++ {
+		b.Publish("sess_a", "e", `{}`, ts())
+	}
+	// 2/8 = 0.25
+	if got := b.MaxReplayBufferUtilization(); got != 0.25 {
+		t.Errorf("partial-fill utilization: got %v want 0.25", got)
+	}
+}
+
+func TestMaxReplayBufferUtilization_FullBuffer_spec_10_4(t *testing.T) {
+	b := sessionevents.NewBus(4)
+	for i := 0; i < 10; i++ {
+		b.Publish("sess_a", "e", `{}`, ts())
+	}
+	// Bounded at 4; ratio is 1.0 once full.
+	if got := b.MaxReplayBufferUtilization(); got != 1.0 {
+		t.Errorf("full-buffer utilization: got %v want 1.0", got)
+	}
+}
+
+func TestMaxReplayBufferUtilization_WorstAcrossSessions_spec_10_4(t *testing.T) {
+	b := sessionevents.NewBus(8)
+	for i := 0; i < 2; i++ {
+		b.Publish("sess_quiet", "e", `{}`, ts())
+	}
+	for i := 0; i < 6; i++ {
+		b.Publish("sess_busy", "e", `{}`, ts())
+	}
+	// Worst is sess_busy at 6/8 = 0.75.
+	if got := b.MaxReplayBufferUtilization(); got != 0.75 {
+		t.Errorf("worst-across-sessions utilization: got %v want 0.75", got)
+	}
+}

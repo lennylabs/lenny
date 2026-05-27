@@ -866,6 +866,13 @@ gateway:
   # at most one active stream; operators with a different ratio should
   # set this explicitly. Override via LENNY_STREAM_CEILING.
   streamCeiling: ""
+  # sessionEventReplayBufferDepth bounds the §10.4 line 389 per-session
+  # SSE replay buffer (events). The default of 512 matches the §10.4
+  # 60s reconnect window at 10 events/s; accepted range is 64..4096.
+  # Operators with sustained event rates above 10/s should raise this
+  # so a client reconnecting at the 60s edge still sees prior events.
+  # Override via LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH.
+  sessionEventReplayBufferDepth: 512
   # terminationGracePeriodSeconds bounds the §4.4 line 263 / §10.1
   # preStop drain. The default 240s leaves a 30s safety margin above
   # the 210s worst-case preStop budget (90s tier cap + 90s BarrierAck

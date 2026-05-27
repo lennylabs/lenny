@@ -1123,6 +1123,48 @@ func TestTaskReuseNilSafe_spec_5_2_569(t *testing.T) {
 	}
 }
 
+// spec: §10.4 line 389 / §16 catalog — the gauge series exists at
+// startup so /metrics never returns a missing series for the alert
+// query. F-10.4.11.
+func TestReplayBufferUtilizationExposedAtStartup_spec_10_4(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	body := scrapeMetrics(t, m)
+	if !strings.Contains(body, "lenny_event_bus_replay_buffer_utilization 0") {
+		t.Errorf("/metrics missing replay-buffer utilization series at startup: %s", body)
+	}
+	m.SetReplayBufferUtilization(0.42)
+	body = scrapeMetrics(t, m)
+	if !strings.Contains(body, "lenny_event_bus_replay_buffer_utilization 0.42") {
+		t.Errorf("/metrics did not reflect updated utilization: %s", body)
+	}
+}
+
+// spec: §10.4 / §16.5 PDBBlockedEvictions — each increment surfaces on
+// /metrics with the pdb and controller labels. F-10.4.4.
+func TestIncPDBBlockedEvictions_spec_10_4(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncPDBBlockedEvictions("lenny-gateway", "poller")
+	m.IncPDBBlockedEvictions("lenny-gateway", "poller")
+	body := scrapeMetrics(t, m)
+	if !strings.Contains(body, `lenny_pdb_blocked_evictions_total{controller="poller",pdb="lenny-gateway"} 2`) {
+		t.Errorf("/metrics missing labelled PDB counter sample: %s", body)
+	}
+}
+
+// Nil-receiver safety so a missing Metrics does not crash the watcher
+// or the periodic poller. F-10.4.4 / F-10.4.11.
+func TestReplayBufferAndPDBNilSafe_spec_10_4(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.SetReplayBufferUtilization(0.9)
+	m.IncPDBBlockedEvictions("any", "poller")
+}
+
 func scrapeMetrics(t *testing.T, m *gatewaymetrics.Metrics) string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)

@@ -324,6 +324,14 @@ spec:
                   --agent-namespace is set. */}}
             - --checkpoint-interval={{ .Values.gateway.periodicCheckpointIntervalSeconds }}s
             - --checkpoint-jitter-fraction={{ .Values.gateway.periodicCheckpointJitterFraction }}
+            # §10.4 line 389 — per-session SSE replay buffer depth.
+            # F-10.4.5.
+            - --session-event-replay-buffer-depth={{ .Values.gateway.sessionEventReplayBufferDepth }}
+            # §10.4 line 385 / §16.5 PDBBlockedEvictions — name the
+            # gateway PDB so the in-process poller can address it. The
+            # namespace defaults to the gateway pod's own namespace via
+            # POD_NAMESPACE (env var below). F-10.4.4.
+            - --gateway-pdb-name=lenny-gateway
             {{- with .Values.sandbox.defaultIsolationProfile }}
             - --default-isolation-profile={{ . }}
             {{- end }}
@@ -351,6 +359,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # §10.4 line 385 — the §10.4 PDB poller reads POD_NAMESPACE
+            # as the default gateway-namespace so the chart does not
+            # need to repeat the release namespace in the args list.
+            # F-10.4.4.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             # §4.1 gateway.maxSessionsPerReplica — per-replica capacity
             # ceiling used as the denominator of the §16.5
             # GatewaySessionBudgetNearExhaustion alert and the §17.8.2

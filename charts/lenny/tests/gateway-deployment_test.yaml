@@ -354,18 +354,22 @@ tests:
       # POD_NAME + LENNY_MAX_SESSIONS_PER_REPLICA + LENNY_MIN_REPLICAS
       # + LENNY_STREAM_CEILING + LENNY_TERMINATION_GRACE_SECONDS
       # + 8 extraction-threshold gauges + LENNY_POOLER_MODE
-      # (§4.2 line 165) = 14.
+      # (§4.2 line 165) + POD_NAMESPACE (§10.4 PDB poller) = 15.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 14
+          count: 15
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
+      # §10.4 PDB poller — POD_NAMESPACE via downward API.
       - equal:
           path: spec.template.spec.containers[0].env[1].name
+          value: POD_NAMESPACE
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
           value: LENNY_MAX_SESSIONS_PER_REPLICA
       - equal:
-          path: spec.template.spec.containers[0].env[1].value
+          path: spec.template.spec.containers[0].env[2].value
           value: "50"
       # §4.1 / §16.5 GatewayNoHealthyReplicas alert denominator gauge.
       - contains:

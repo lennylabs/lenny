@@ -47,6 +47,20 @@ type Metrics struct {
 	experimentIsoRej          *prometheus.CounterVec
 	noEnvPolicyAllowAll       *prometheus.CounterVec
 	gcPauseP99Ms              prometheus.Gauge
+	// replayBufferUtilization is the §16.1
+	// lenny_event_bus_replay_buffer_utilization gauge — ratio of the
+	// in-memory replay buffer in use relative to capacity (0..1; 1.0
+	// means the buffer is full and oldest events are being evicted).
+	// The gateway samples the worst per-session ratio across the
+	// session SSE bus periodically. spec: §10.4 line 389, §16 catalog.
+	// F-10.4.11.
+	replayBufferUtilization prometheus.Gauge
+	// pdbBlockedEvictions is the §16.1
+	// lenny_pdb_blocked_evictions_total counter labelled by `pdb` and
+	// `controller`; increments each time the §10.4 PDB-status poller
+	// observes the PDB blocking (DisruptionsAllowed=0). spec: §16
+	// catalog. F-10.4.4.
+	pdbBlockedEvictions *prometheus.CounterVec
 	// kmsSigningErrors counts §10.2 line 225 JWTSigner failures. The
 	// §16.5 KMSSigningUnavailable alert keys on
 	// `rate(lenny_gateway_kms_signing_errors_total[30s]) > 1`. The
@@ -464,6 +478,27 @@ func New() (*Metrics, error) {
 		Name: "lenny_gateway_gc_pause_p99_ms",
 		Help: "Process-level GC pause p99 (ms) over the last sliding window (§4.1).",
 	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §10.4 line 389 / §16 catalog — operator-facing visibility
+	// signal for the per-session SSE replay buffer. The gateway samples
+	// MaxReplayBufferUtilization on the periodic poller cadence. F-10.4.11.
+	replayBufferUtilization, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_event_bus_replay_buffer_utilization",
+		Help: "Ratio of in-memory replay buffer in use relative to capacity (0..1); 1.0 means full and oldest events are being evicted (§10.4 line 389 / §16).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16 catalog / §10.4 — PDB-blocking observation. Incremented
+	// per polling sample where the gateway PDB has DisruptionsAllowed=0;
+	// the §16.5 PDBBlockedEvictions alert evaluates a 10-minute rate.
+	// F-10.4.4.
+	pdbBlockedEvictions, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pdb_blocked_evictions_total",
+		Help: "PodDisruptionBudget-blocked evictions; labelled by `pdb` (resource name) and `controller` (eviction source).",
+	}, []string{"pdb", "controller"})
 	if err != nil {
 		return nil, err
 	}
@@ -1198,10 +1233,15 @@ func New() (*Metrics, error) {
 	minReplicasChild := minReplicas.WithLabelValues()
 	streamCeilingChild := streamCeiling.WithLabelValues()
 	replicaCountChild := replicaCount.WithLabelValues()
+	// spec: §10.4 / §16 — pre-materialize the unlabelled replay buffer
+	// utilization gauge so /metrics emits the series even before the
+	// gateway has published any session events. F-10.4.11.
+	replayBufferUtilizationChild := replayBufferUtilization.WithLabelValues()
 	llmProxyConns := llmProxyActiveConnections.WithLabelValues()
 	reg.MustRegister(activeSessions, activeStreams, requestQueueDepth,
 		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms,
-		minReplicas, streamCeiling, replicaCount, llmProxyActiveConnections)
+		minReplicas, streamCeiling, replicaCount, llmProxyActiveConnections,
+		replayBufferUtilization, pdbBlockedEvictions)
 
 	tokenServiceCircuitChild := tokenServiceCircuitState.WithLabelValues()
 	kmsSigningCircuitChild := kmsSigningCircuitState.WithLabelValues()
@@ -1230,6 +1270,8 @@ func New() (*Metrics, error) {
 		experimentIsoRej:                     experimentIsoRej,
 		noEnvPolicyAllowAll:                  noEnvPolicyAllowAll,
 		gcPauseP99Ms:                         gcPause,
+		replayBufferUtilization:              replayBufferUtilizationChild,
+		pdbBlockedEvictions:                  pdbBlockedEvictions,
 		tokenServiceCircuitState:             tokenServiceCircuitChild,
 		kmsSigningErrors:                     kmsSigningErrors,
 		kmsSigningCircuitState:               kmsSigningCircuitChild,
@@ -2298,6 +2340,28 @@ func (m *Metrics) SetExtractionThreshold(subsystem, metric string, value float64
 // alert can evaluate.
 func (m *Metrics) SetGCPauseP99Ms(value float64) {
 	m.gcPauseP99Ms.Set(value)
+}
+
+// SetReplayBufferUtilization updates the §16 catalog
+// lenny_event_bus_replay_buffer_utilization gauge. The caller samples
+// the worst per-session ratio across the session SSE replay buffer
+// periodically; ratio is in [0,1]. spec: §10.4 line 389. F-10.4.11.
+func (m *Metrics) SetReplayBufferUtilization(ratio float64) {
+	if m == nil {
+		return
+	}
+	m.replayBufferUtilization.Set(ratio)
+}
+
+// IncPDBBlockedEvictions advances the §16 catalog
+// lenny_pdb_blocked_evictions_total counter for a PDB observed as
+// blocking by the periodic poller. spec: §10.4 / §16.5
+// PDBBlockedEvictions. F-10.4.4.
+func (m *Metrics) IncPDBBlockedEvictions(pdb, controller string) {
+	if m == nil {
+		return
+	}
+	m.pdbBlockedEvictions.WithLabelValues(pdb, controller).Inc()
 }
 
 // Middleware returns an http.Handler that records the §16.1 request
