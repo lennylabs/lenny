@@ -73,11 +73,21 @@ export type {
 export type {
   CreateSessionRequest,
   CreateSessionResult,
+  DeliveryMode,
+  DeliveryReceipt,
+  InteractionResolution,
   IsolationLevel,
   ListOptions,
+  MessagePayload,
+  OutputPart,
+  SendMessagesRequest,
+  SendMessagesResponse,
   Session,
   SessionPage,
   State,
+  TranscriptEntry,
+  TranscriptOptions,
+  TranscriptResponse,
 } from './types.js';
 
 export {

@@ -37,9 +37,14 @@ from .stream import (
 from .types import (
     CreateSessionRequest,
     CreateSessionResult,
+    InteractionResolution,
     ListOptions,
+    MessagePayload,
+    SendMessagesResponse,
     Session,
     SessionPage,
+    TranscriptOptions,
+    TranscriptResponse,
 )
 
 #: Identifies the SDK in the ``User-Agent`` request header.
@@ -306,6 +311,138 @@ class Client:
         """
         return self._transition("POST", session_id, "resume", options)
 
+    # -- messages / transcript / interactions ---------------------------
+
+    def send_messages(
+        self,
+        session_id: str,
+        messages: list[MessagePayload],
+        options: Optional[RequestOptions] = None,
+    ) -> SendMessagesResponse:
+        """Call ``POST /v1/sessions/{id}/messages``.
+
+        Returns the section 15.4 delivery receipt plus the executor's
+        synchronous output. Each payload may carry ``inReplyTo``,
+        ``delivery``, and ``slotId``; see :class:`MessagePayload`.
+
+        spec: section 15.1; section 15.4 lines 1725-1737;
+        section 7.2 line 345.
+        """
+        if not messages:
+            raise ValueError("lenny: send_messages requires at least one message")
+        body = {"messages": [m.to_wire() for m in messages]}
+        path = "/v1/sessions/" + urllib.parse.quote(session_id, safe="") + "/messages"
+        raw = self._do("POST", path, body, options)
+        return SendMessagesResponse.from_wire(raw or {})
+
+    def get_transcript(
+        self,
+        session_id: str,
+        opt: Optional[TranscriptOptions] = None,
+        options: Optional[RequestOptions] = None,
+    ) -> TranscriptResponse:
+        """Call ``GET /v1/sessions/{id}/transcript``.
+
+        spec: section 15.1.
+        """
+        opt = opt or TranscriptOptions()
+        query: dict[str, str] = {}
+        if opt.after_seq > 0:
+            query["afterSeq"] = str(opt.after_seq)
+        if opt.limit > 0:
+            query["limit"] = str(opt.limit)
+        path = "/v1/sessions/" + urllib.parse.quote(session_id, safe="") + "/transcript"
+        if query:
+            path += "?" + urllib.parse.urlencode(query)
+        raw = self._do("GET", path, None, options)
+        return TranscriptResponse.from_wire(raw or {})
+
+    def approve_tool_use(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        options: Optional[RequestOptions] = None,
+    ) -> InteractionResolution:
+        """Call ``POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve``.
+
+        spec: section 7.2 table line 124; section 15.1.
+        """
+        path = (
+            "/v1/sessions/"
+            + urllib.parse.quote(session_id, safe="")
+            + "/tool-use/"
+            + urllib.parse.quote(tool_call_id, safe="")
+            + "/approve"
+        )
+        raw = self._do("POST", path, {}, options)
+        return InteractionResolution.from_wire(raw or {})
+
+    def deny_tool_use(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        reason: str = "",
+        options: Optional[RequestOptions] = None,
+    ) -> InteractionResolution:
+        """Call ``POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny``.
+
+        spec: section 7.2 table line 125; section 15.1.
+        """
+        body: dict[str, Any] = {}
+        if reason:
+            body["reason"] = reason
+        path = (
+            "/v1/sessions/"
+            + urllib.parse.quote(session_id, safe="")
+            + "/tool-use/"
+            + urllib.parse.quote(tool_call_id, safe="")
+            + "/deny"
+        )
+        raw = self._do("POST", path, body, options)
+        return InteractionResolution.from_wire(raw or {})
+
+    def respond_elicitation(
+        self,
+        session_id: str,
+        elicitation_id: str,
+        response: Any,
+        options: Optional[RequestOptions] = None,
+    ) -> InteractionResolution:
+        """Call ``POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond``.
+
+        spec: section 7.2 table line 126; section 9.2; section 15.1.
+        """
+        body = {"response": response}
+        path = (
+            "/v1/sessions/"
+            + urllib.parse.quote(session_id, safe="")
+            + "/elicitations/"
+            + urllib.parse.quote(elicitation_id, safe="")
+            + "/respond"
+        )
+        raw = self._do("POST", path, body, options)
+        return InteractionResolution.from_wire(raw or {})
+
+    def dismiss_elicitation(
+        self,
+        session_id: str,
+        elicitation_id: str,
+        options: Optional[RequestOptions] = None,
+    ) -> InteractionResolution:
+        """Call ``POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss``.
+
+        spec: section 7.2 table line 127; section 9.2; section 15.1.
+        """
+        path = (
+            "/v1/sessions/"
+            + urllib.parse.quote(session_id, safe="")
+            + "/elicitations/"
+            + urllib.parse.quote(elicitation_id, safe="")
+            + "/dismiss"
+        )
+        raw = self._do("POST", path, {}, options)
+        return InteractionResolution.from_wire(raw or {})
+
     # -- internals --------------------------------------------------------
 
     def _transition(
@@ -564,6 +701,74 @@ class AsyncClient:
     ) -> Session:
         """Await ``POST /v1/sessions/{id}/resume``."""
         return await self._run(self._sync.resume, session_id, options)
+
+    async def send_messages(
+        self,
+        session_id: str,
+        messages: list[MessagePayload],
+        options: Optional[RequestOptions] = None,
+    ) -> SendMessagesResponse:
+        """Await ``POST /v1/sessions/{id}/messages``."""
+        return await self._run(self._sync.send_messages, session_id, messages, options)
+
+    async def get_transcript(
+        self,
+        session_id: str,
+        opt: Optional[TranscriptOptions] = None,
+        options: Optional[RequestOptions] = None,
+    ) -> TranscriptResponse:
+        """Await ``GET /v1/sessions/{id}/transcript``."""
+        return await self._run(self._sync.get_transcript, session_id, opt, options)
+
+    async def approve_tool_use(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        options: Optional[RequestOptions] = None,
+    ) -> InteractionResolution:
+        """Await ``POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve``."""
+        return await self._run(
+            self._sync.approve_tool_use, session_id, tool_call_id, options
+        )
+
+    async def deny_tool_use(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        reason: str = "",
+        options: Optional[RequestOptions] = None,
+    ) -> InteractionResolution:
+        """Await ``POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny``."""
+        return await self._run(
+            self._sync.deny_tool_use, session_id, tool_call_id, reason, options
+        )
+
+    async def respond_elicitation(
+        self,
+        session_id: str,
+        elicitation_id: str,
+        response: Any,
+        options: Optional[RequestOptions] = None,
+    ) -> InteractionResolution:
+        """Await ``POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond``."""
+        return await self._run(
+            self._sync.respond_elicitation,
+            session_id,
+            elicitation_id,
+            response,
+            options,
+        )
+
+    async def dismiss_elicitation(
+        self,
+        session_id: str,
+        elicitation_id: str,
+        options: Optional[RequestOptions] = None,
+    ) -> InteractionResolution:
+        """Await ``POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss``."""
+        return await self._run(
+            self._sync.dismiss_elicitation, session_id, elicitation_id, options
+        )
 
     @staticmethod
     async def _run(func: Callable[..., _T], *args: Any) -> _T:

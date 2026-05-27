@@ -220,3 +220,201 @@ class SessionPage:
             next_cursor=next_cursor,
             has_more=has_more,
         )
+
+
+# spec: section 15.4 lines 1715-1723 -- delivery is a closed enum on the
+# inbound message payload. Surface the values as constants so the SDK
+# consumer does not stringly type them.
+DELIVERY_QUEUED = "queued"
+DELIVERY_IMMEDIATE = "immediate"
+
+
+@dataclass
+class MessagePayload:
+    """One section 15.4 inbound MessageEnvelope.
+
+    Mirrors the spec field names verbatim; only ``content`` is required
+    by the gateway. spec: section 15.4 lines 1672-1721.
+    """
+
+    #: Optional client-supplied message id; the gateway stamps
+    #: ``msg_<random>`` when absent.
+    id: str = ""
+
+    #: Message role (``user``, ``assistant``, ...). The runtime
+    #: interprets it.
+    role: str = ""
+
+    #: The message body delivered to the runtime.
+    content: str = ""
+
+    #: When set, names a pending ``lenny/request_input`` request the
+    #: gateway resolves directly (section 7.2 path 1).
+    in_reply_to: str = ""
+
+    #: Section 15.4 closed enum: ``queued`` (default) or ``immediate``.
+    delivery: str = ""
+
+    #: Section 5.2 concurrent-workspace slot identifier.
+    slot_id: str = ""
+
+    def to_wire(self) -> dict[str, Any]:
+        """Return the JSON payload the gateway expects."""
+        body: dict[str, Any] = {"content": self.content}
+        if self.id:
+            body["id"] = self.id
+        if self.role:
+            body["role"] = self.role
+        if self.in_reply_to:
+            body["inReplyTo"] = self.in_reply_to
+        if self.delivery:
+            body["delivery"] = self.delivery
+        if self.slot_id:
+            body["slotId"] = self.slot_id
+        return body
+
+
+@dataclass
+class DeliveryReceipt:
+    """The section 15.4 ``delivery_receipt`` envelope.
+
+    spec: section 15.4 lines 1725-1737; section 7.2 line 345.
+    """
+
+    #: Gateway-stamped or sender-supplied message id.
+    message_id: str = ""
+    #: One of ``delivered`` | ``queued`` | ``dropped`` | ``expired`` |
+    #: ``rate_limited`` | ``error``.
+    status: str = ""
+    #: RFC 3339 timestamp the gateway accepted the message. Empty when
+    #: ``status`` is not ``delivered``.
+    delivered_at: str = ""
+    #: Optional disposition reason for a non-``delivered`` status
+    #: (``target_terminated``, ``dlq_overflow``, ...).
+    reason: str = ""
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> "DeliveryReceipt":
+        """Decode a section 15.4 delivery_receipt envelope."""
+        return cls(
+            message_id=str(raw.get("messageId", "")),
+            status=str(raw.get("status", "")),
+            delivered_at=str(raw.get("deliveredAt", "")),
+            reason=str(raw.get("reason", "")),
+        )
+
+
+@dataclass
+class OutputPart:
+    """One section 8.5 OutputPart returned alongside a delivery receipt."""
+
+    type: str = ""
+    text: str = ""
+    data: Optional[dict[str, Any]] = None
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> "OutputPart":
+        """Decode a section 8.5 OutputPart."""
+        return cls(
+            type=str(raw.get("type", "")),
+            text=str(raw.get("text", "")),
+            data=raw.get("data"),
+        )
+
+
+@dataclass
+class SendMessagesResponse:
+    """``POST /v1/sessions/{id}/messages`` response.
+
+    spec: section 15.1 messages endpoint; section 15.4 delivery_receipt;
+    section 7.2 line 345.
+    """
+
+    delivery_receipt: DeliveryReceipt = field(default_factory=DeliveryReceipt)
+    output: list[OutputPart] = field(default_factory=list)
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> "SendMessagesResponse":
+        """Decode the section 15.1 messages response."""
+        return cls(
+            delivery_receipt=DeliveryReceipt.from_wire(
+                raw.get("deliveryReceipt") or {}
+            ),
+            output=[OutputPart.from_wire(p) for p in raw.get("output") or []],
+        )
+
+
+@dataclass
+class TranscriptEntry:
+    """One row of the section 15.1 transcript page."""
+
+    seq: int = 0
+    role: str = ""
+    content: str = ""
+    created_at: str = ""
+    metadata: Optional[dict[str, Any]] = None
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> "TranscriptEntry":
+        """Decode a section 15.1 transcript entry."""
+        return cls(
+            seq=int(raw.get("seq", 0) or 0),
+            role=str(raw.get("role", "")),
+            content=str(raw.get("content", "")),
+            created_at=str(raw.get("createdAt", "")),
+            metadata=raw.get("metadata"),
+        )
+
+
+@dataclass
+class TranscriptResponse:
+    """The section 15.1 ``GET /v1/sessions/{id}/transcript`` envelope."""
+
+    session_id: str = ""
+    entries: list[TranscriptEntry] = field(default_factory=list)
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> "TranscriptResponse":
+        """Decode the section 15.1 transcript envelope."""
+        return cls(
+            session_id=str(raw.get("sessionId", "")),
+            entries=[
+                TranscriptEntry.from_wire(e) for e in raw.get("entries") or []
+            ],
+        )
+
+
+@dataclass
+class TranscriptOptions:
+    """Narrows ``GET /v1/sessions/{id}/transcript``."""
+
+    #: Returns only entries with ``seq > after_seq``.
+    after_seq: int = 0
+    #: Caps the page size. Zero leaves the gateway default in place.
+    limit: int = 0
+
+
+@dataclass
+class InteractionResolution:
+    """Response from a section 15.1 interaction-resolution endpoint.
+
+    Returned by tool-use approve/deny and elicitation respond/dismiss.
+    spec: section 7.2 table lines 124-127; section 15.1.
+    """
+
+    #: Interaction id (``tool_call_id`` or ``elicitation_id``).
+    id: str = ""
+    #: New interaction phase (``approved``, ``denied``, ``responded``,
+    #: ``dismissed``).
+    phase: str = ""
+    #: RFC 3339 resolution timestamp.
+    resolved_at: str = ""
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> "InteractionResolution":
+        """Decode the section 15.1 interaction-resolution envelope."""
+        return cls(
+            id=str(raw.get("id", "")),
+            phase=str(raw.get("phase", "")),
+            resolved_at=str(raw.get("resolvedAt", "")),
+        )

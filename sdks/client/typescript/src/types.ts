@@ -124,3 +124,131 @@ export interface SessionPage {
   /** Whether more pages follow this one. */
   hasMore: boolean;
 }
+
+/**
+ * The §15.4 lines 1715-1723 delivery enum on an inbound MessagePayload.
+ * Unknown values reject with `400 INVALID_DELIVERY_VALUE`.
+ */
+export type DeliveryMode = 'queued' | 'immediate';
+
+/**
+ * One §15.4 inbound MessageEnvelope on the
+ * POST /v1/sessions/{id}/messages batch. spec: §15.4 lines 1672-1721.
+ */
+export interface MessagePayload {
+  /** Optional client-supplied id; gateway stamps `msg_<random>` when absent. */
+  id?: string;
+
+  /** Message role (`user`, `assistant`, ...). The runtime interprets it. */
+  role?: string;
+
+  /** The message body delivered to the runtime. */
+  content: string;
+
+  /**
+   * When set, names a pending `lenny/request_input` request the gateway
+   * resolves directly (§7.2 path 1) instead of delivering to the
+   * executor.
+   */
+  inReplyTo?: string;
+
+  /** §15.4 closed enum: `queued` (default) or `immediate`. */
+  delivery?: DeliveryMode;
+
+  /** §5.2 concurrent-workspace slot identifier. */
+  slotId?: string;
+}
+
+/**
+ * The body of POST /v1/sessions/{id}/messages.
+ */
+export interface SendMessagesRequest {
+  /** The inbound batch. At least one entry is required. */
+  messages: MessagePayload[];
+}
+
+/**
+ * The §15.4 lines 1725-1737 delivery_receipt envelope. spec: §7.2 line
+ * 345.
+ */
+export interface DeliveryReceipt {
+  /** Gateway-stamped or sender-supplied message id. */
+  messageId: string;
+
+  /**
+   * One of `delivered` | `queued` | `dropped` | `expired` |
+   * `rate_limited` | `error`.
+   */
+  status: string;
+
+  /**
+   * RFC 3339 timestamp the gateway accepted the message. Empty when
+   * status is not `delivered`.
+   */
+  deliveredAt?: string;
+
+  /**
+   * Optional disposition reason for a non-`delivered` status
+   * (`target_terminated`, `dlq_overflow`, ...).
+   */
+  reason?: string;
+}
+
+/**
+ * One §8.5 OutputPart returned alongside a delivery receipt.
+ */
+export interface OutputPart {
+  type: string;
+  text?: string;
+  data?: unknown;
+}
+
+/**
+ * The POST /v1/sessions/{id}/messages response.
+ */
+export interface SendMessagesResponse {
+  deliveryReceipt: DeliveryReceipt;
+  output?: OutputPart[];
+}
+
+/**
+ * One row of the §15.1 transcript page.
+ */
+export interface TranscriptEntry {
+  seq: number;
+  role?: string;
+  content?: string;
+  createdAt?: string;
+  metadata?: unknown;
+}
+
+/**
+ * The §15.1 GET /v1/sessions/{id}/transcript envelope.
+ */
+export interface TranscriptResponse {
+  sessionId: string;
+  entries: TranscriptEntry[];
+}
+
+/**
+ * Filters for GET /v1/sessions/{id}/transcript.
+ */
+export interface TranscriptOptions {
+  /** Returns only entries with seq > afterSeq. */
+  afterSeq?: number;
+  /** Caps the page size. Unset leaves the gateway default in place. */
+  limit?: number;
+}
+
+/**
+ * The response from a §15.1 interaction-resolution endpoint (tool-use
+ * approve/deny, elicitation respond/dismiss).
+ */
+export interface InteractionResolution {
+  /** Interaction id (tool_call_id or elicitation_id). */
+  id: string;
+  /** New phase (`approved`, `denied`, `responded`, `dismissed`). */
+  phase: string;
+  /** RFC 3339 resolution timestamp. */
+  resolvedAt: string;
+}

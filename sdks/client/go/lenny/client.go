@@ -266,6 +266,107 @@ func (c *Client) transition(ctx context.Context, method, id, action string, opts
 	return &out, nil
 }
 
+// SendMessages calls POST /v1/sessions/{id}/messages with the supplied
+// batch and returns the §15.4 delivery receipt plus the executor's
+// synchronous output. Each payload may carry `inReplyTo`, `delivery`,
+// and `slotId`; see MessagePayload.
+//
+// spec: §15.1 messages endpoint; §15.4 lines 1725-1737 delivery_receipt;
+// §7.2 line 345.
+func (c *Client) SendMessages(ctx context.Context, id string, req SendMessagesRequest, opts ...RequestOption) (*SendMessagesResponse, error) {
+	if len(req.Messages) == 0 {
+		return nil, errors.New("lenny: SendMessages requires at least one message")
+	}
+	var out SendMessagesResponse
+	path := "/v1/sessions/" + url.PathEscape(id) + "/messages"
+	if err := c.do(ctx, http.MethodPost, path, req, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetTranscript calls GET /v1/sessions/{id}/transcript with optional
+// afterSeq / limit filters. spec: §15.1.
+func (c *Client) GetTranscript(ctx context.Context, id string, opt TranscriptOptions, opts ...RequestOption) (*TranscriptResponse, error) {
+	q := url.Values{}
+	if opt.AfterSeq > 0 {
+		q.Set("afterSeq", strconv.FormatUint(opt.AfterSeq, 10))
+	}
+	if opt.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opt.Limit))
+	}
+	path := "/v1/sessions/" + url.PathEscape(id) + "/transcript"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out TranscriptResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ApproveToolUse calls POST /v1/sessions/{id}/tool-use/{toolCallID}/approve
+// to resolve a pending tool-use interaction the agent is blocked on.
+//
+// spec: §7.2 table line 124; §15.1.
+func (c *Client) ApproveToolUse(ctx context.Context, id, toolCallID string, opts ...RequestOption) (*InteractionResolution, error) {
+	path := "/v1/sessions/" + url.PathEscape(id) + "/tool-use/" + url.PathEscape(toolCallID) + "/approve"
+	var out InteractionResolution
+	if err := c.do(ctx, http.MethodPost, path, struct{}{}, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DenyToolUse calls POST /v1/sessions/{id}/tool-use/{toolCallID}/deny
+// with an optional human-readable reason recorded in the audit row.
+//
+// spec: §7.2 table line 125; §15.1.
+func (c *Client) DenyToolUse(ctx context.Context, id, toolCallID, reason string, opts ...RequestOption) (*InteractionResolution, error) {
+	path := "/v1/sessions/" + url.PathEscape(id) + "/tool-use/" + url.PathEscape(toolCallID) + "/deny"
+	body := struct {
+		Reason string `json:"reason,omitempty"`
+	}{Reason: reason}
+	var out InteractionResolution
+	if err := c.do(ctx, http.MethodPost, path, body, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RespondElicitation calls
+// POST /v1/sessions/{id}/elicitations/{elicitationID}/respond with the
+// supplied response value. The runtime receives the value and unblocks
+// the pending `lenny/request_elicitation` call.
+//
+// spec: §7.2 table line 126; §9.2; §15.1.
+func (c *Client) RespondElicitation(ctx context.Context, id, elicitationID string, response any, opts ...RequestOption) (*InteractionResolution, error) {
+	path := "/v1/sessions/" + url.PathEscape(id) + "/elicitations/" + url.PathEscape(elicitationID) + "/respond"
+	body := struct {
+		Response any `json:"response"`
+	}{Response: response}
+	var out InteractionResolution
+	if err := c.do(ctx, http.MethodPost, path, body, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DismissElicitation calls
+// POST /v1/sessions/{id}/elicitations/{elicitationID}/dismiss to
+// cancel a pending elicitation request.
+//
+// spec: §7.2 table line 127; §9.2; §15.1.
+func (c *Client) DismissElicitation(ctx context.Context, id, elicitationID string, opts ...RequestOption) (*InteractionResolution, error) {
+	path := "/v1/sessions/" + url.PathEscape(id) + "/elicitations/" + url.PathEscape(elicitationID) + "/dismiss"
+	var out InteractionResolution
+	if err := c.do(ctx, http.MethodPost, path, struct{}{}, &out, opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // do executes one REST call with retry. It marshals body to JSON
 // (when non-nil), sends the request, retries retryable failures per
 // the Client's retry policy, and decodes a 2xx response into out.

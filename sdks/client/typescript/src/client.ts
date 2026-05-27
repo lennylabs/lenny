@@ -17,9 +17,14 @@ import {
 import type {
   CreateSessionRequest,
   CreateSessionResult,
+  InteractionResolution,
   ListOptions,
+  SendMessagesRequest,
+  SendMessagesResponse,
   Session,
   SessionPage,
+  TranscriptOptions,
+  TranscriptResponse,
 } from './types.js';
 
 /** The SDK identity sent in the User-Agent request header. */
@@ -314,6 +319,139 @@ export class Client {
    */
   async resume(id: string, opts: RequestOptions = {}): Promise<Session> {
     return this.transition('POST', id, 'resume', opts);
+  }
+
+  /**
+   * sendMessages calls POST /v1/sessions/{id}/messages with the
+   * supplied batch and returns the §15.4 delivery receipt plus the
+   * executor's synchronous output. Each payload may carry `inReplyTo`,
+   * `delivery`, and `slotId`; see {@link MessagePayload}.
+   *
+   * spec: §15.1 messages endpoint; §15.4 lines 1725-1737
+   * delivery_receipt; §7.2 line 345.
+   */
+  async sendMessages(
+    id: string,
+    req: SendMessagesRequest,
+    opts: RequestOptions = {},
+  ): Promise<SendMessagesResponse> {
+    if (!req.messages || req.messages.length === 0) {
+      throw new Error('lenny: sendMessages requires at least one message');
+    }
+    return this.do<SendMessagesResponse>(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(id)}/messages`,
+      req,
+      opts,
+    );
+  }
+
+  /**
+   * getTranscript calls GET /v1/sessions/{id}/transcript with optional
+   * afterSeq / limit filters. spec: §15.1.
+   */
+  async getTranscript(
+    id: string,
+    opt: TranscriptOptions = {},
+    opts: RequestOptions = {},
+  ): Promise<TranscriptResponse> {
+    const q = new URLSearchParams();
+    if (opt.afterSeq !== undefined && opt.afterSeq > 0) {
+      q.set('afterSeq', String(opt.afterSeq));
+    }
+    if (opt.limit !== undefined && opt.limit > 0) {
+      q.set('limit', String(opt.limit));
+    }
+    const encoded = q.toString();
+    let path = `/v1/sessions/${encodeURIComponent(id)}/transcript`;
+    if (encoded) {
+      path += `?${encoded}`;
+    }
+    return this.do<TranscriptResponse>('GET', path, undefined, opts);
+  }
+
+  /**
+   * approveToolUse calls
+   * POST /v1/sessions/{id}/tool-use/{toolCallId}/approve to resolve a
+   * pending tool-use interaction the agent is blocked on.
+   *
+   * spec: §7.2 table line 124; §15.1.
+   */
+  async approveToolUse(
+    id: string,
+    toolCallId: string,
+    opts: RequestOptions = {},
+  ): Promise<InteractionResolution> {
+    return this.do<InteractionResolution>(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(id)}/tool-use/${encodeURIComponent(toolCallId)}/approve`,
+      {},
+      opts,
+    );
+  }
+
+  /**
+   * denyToolUse calls
+   * POST /v1/sessions/{id}/tool-use/{toolCallId}/deny with an optional
+   * human-readable reason recorded in the audit row.
+   *
+   * spec: §7.2 table line 125; §15.1.
+   */
+  async denyToolUse(
+    id: string,
+    toolCallId: string,
+    reason = '',
+    opts: RequestOptions = {},
+  ): Promise<InteractionResolution> {
+    const body = reason ? { reason } : {};
+    return this.do<InteractionResolution>(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(id)}/tool-use/${encodeURIComponent(toolCallId)}/deny`,
+      body,
+      opts,
+    );
+  }
+
+  /**
+   * respondElicitation calls
+   * POST /v1/sessions/{id}/elicitations/{elicitationId}/respond with
+   * the supplied response value. The runtime receives the value and
+   * unblocks the pending `lenny/request_elicitation` call.
+   *
+   * spec: §7.2 table line 126; §9.2; §15.1.
+   */
+  async respondElicitation(
+    id: string,
+    elicitationId: string,
+    response: unknown,
+    opts: RequestOptions = {},
+  ): Promise<InteractionResolution> {
+    return this.do<InteractionResolution>(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(id)}/elicitations/${encodeURIComponent(elicitationId)}/respond`,
+      { response },
+      opts,
+    );
+  }
+
+  /**
+   * dismissElicitation calls
+   * POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss to
+   * cancel a pending elicitation request.
+   *
+   * spec: §7.2 table line 127; §9.2; §15.1.
+   */
+  async dismissElicitation(
+    id: string,
+    elicitationId: string,
+    opts: RequestOptions = {},
+  ): Promise<InteractionResolution> {
+    return this.do<InteractionResolution>(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(id)}/elicitations/${encodeURIComponent(elicitationId)}/dismiss`,
+      {},
+      opts,
+    );
   }
 
   /**
