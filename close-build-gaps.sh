@@ -83,7 +83,7 @@ E. **Code and tests reference the relevant spec sections.** Same citation form a
 
 F. **Commit after each batch — or more frequently when appropriate.** Prefer one logical group per commit. Between commits, run `go build ./...` so a disconnect leaves the working tree buildable.
 
-G. **Run regression tests — focus on tiers relevant to the change.** Always include tier-0 (static: `go build`, `go vet`) and tier-1 (unit: `go test ./pkg/...` scoped to the packages you touched). Add higher tiers only when the contract you changed warrants them; running every tier on every batch is too slow.
+G. **Run regression tests — focus on tiers relevant to the change and dependent packages.** Always include tier-0 (static: `go build`, `go vet`) and tier-1 (unit: `go test ./pkg/...` scoped to the packages you touched). Add higher tiers only when the contract you changed warrants them; running every tier on every batch is too slow.
 
 H. **Best practices.** Modular code, reuse over duplication, sensible package structure, comments only when they explain *why* (not what), small functions, small modules.
 
