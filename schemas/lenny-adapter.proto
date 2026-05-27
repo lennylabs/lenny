@@ -108,6 +108,31 @@ service Adapter {
   // the runtime — the replacement-pod counterpart of StartSession.
   rpc Resume(ResumeRequest) returns (ResumeResponse) {}
 
+  // CoordinatorFence announces a new `coordination_generation` to the pod
+  // on coordinator handoff (§4.7 line 632, §10.1). The pod records the new
+  // generation and from this point rejects any RPC carrying an older one.
+  // Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
+  // received generation skips one or more values relative to the last
+  // acknowledged fence, the adapter cancels and discards every in-flight
+  // RPC received under the missing generation(s), resets transient
+  // tool-call state, and logs a `coordinator_generation_gap` event before
+  // acknowledging the new generation. The first call on a pod's lifetime
+  // is never treated as a gap regardless of value.
+  rpc CoordinatorFence(CoordinatorFenceRequest) returns (CoordinatorFenceResponse) {}
+
+  // CheckpointBarrier dispatches a barrier signal during gateway graceful
+  // drain (§4.7 line 631, §10.1). The adapter validates the request's
+  // `coordination_generation` against the last fenced generation, quiesces
+  // tool-call dispatch, flushes a best-effort checkpoint, and acknowledges
+  // via `CheckpointBarrierAck` on the LifecycleChannel control stream
+  // (§4.7 line 660 — fields: `barrier_id`, `last_tool_call_id`,
+  // `checkpoint_ref`). The RPC return value mirrors the ack so a
+  // synchronous caller has the same information; the control-stream emit
+  // is the canonical surface for the gateway's barrier-target reconciler.
+  // The single wall-clock deadline `checkpointBarrierAckTimeoutSeconds`
+  // is enforced by the gateway across all coordinated pods.
+  rpc CheckpointBarrier(CheckpointBarrierRequest) returns (CheckpointBarrierResponse) {}
+
   // ExportPaths packages files from /workspace/current for delegation,
   // rebased per the export spec (§8.7). The adapter resolves each export
   // source glob inside the workspace root, rejects any matched file whose
@@ -711,6 +736,68 @@ message ResumeResponse {
   // ResumeRequest.recovery_generation so the gateway can verify the
   // adapter consumed the right generation under split-brain.
   int64 recovery_generation = 3;
+}
+
+// CoordinatorFenceRequest announces a new coordination generation to the
+// pod (§4.7 line 632 / §10.1). The pod records the new generation and
+// from this point rejects every RPC carrying a strictly older generation
+// with FailedPrecondition + a `coordinator_handoff_stale` detail string,
+// which the gateway counts on `lenny_coordinator_handoff_stale_total`.
+message CoordinatorFenceRequest {
+  SessionId session_id = 1;
+  // coordination_generation is the new generation the acquiring
+  // coordinator wrote to Postgres in step 1 of the §10.1 handoff
+  // protocol. Strictly monotonic on the pod side per session.
+  int64 coordination_generation = 2;
+}
+
+// CoordinatorFenceResponse acknowledges the new generation. accepted is
+// true when the pod records the generation; false when the supplied
+// generation is not greater than the last fenced generation (the
+// gateway should re-read Postgres and re-issue). gap_detected reports
+// that the new generation skips one or more values relative to the last
+// fenced generation; the adapter still acknowledges (the new coordinator
+// can proceed) but logged a `coordinator_generation_gap` event and
+// reset transient tool-call state per §10.1 line 36.
+message CoordinatorFenceResponse {
+  bool accepted = 1;
+  int64 last_fenced_generation = 2;
+  bool gap_detected = 3;
+}
+
+// CheckpointBarrierRequest dispatches a barrier during gateway graceful
+// drain (§4.7 line 631 / §10.1). barrier_id is the gateway's unique
+// identifier for this barrier (echoed in the ack). coordination_generation
+// must match the last fenced generation, or the adapter rejects with
+// FailedPrecondition; this is the same generation gate Coordinator
+// Fence installs.
+message CheckpointBarrierRequest {
+  SessionId session_id = 1;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation. The adapter rejects with FailedPrecondition
+  // when this is not strictly equal to the last fenced generation.
+  int64 coordination_generation = 2;
+  // barrier_id is the gateway's correlation id for this barrier. Echoed
+  // verbatim in the CheckpointBarrierAck.
+  string barrier_id = 3;
+}
+
+// CheckpointBarrierResponse is the synchronous mirror of the
+// CheckpointBarrierAck event emitted on the LifecycleChannel control
+// stream (§4.7 line 660). barrier_id echoes the request. last_tool_call_id
+// is the id of the last tool call the adapter dispatched before
+// quiescing; the gateway uses it to deduplicate replays on resume per
+// §10.1 line 173. checkpoint_ref is the storage reference of the
+// best-effort checkpoint flushed during the barrier (empty when the
+// adapter could not flush one — e.g. checkpoint sink unwired or
+// archive failed). quiesced_ms reports the wall-clock the adapter spent
+// quiescing the runtime; the gateway records it on
+// `lenny_checkpoint_barrier_ack_duration_seconds`.
+message CheckpointBarrierResponse {
+  string barrier_id = 1;
+  string last_tool_call_id = 2;
+  string checkpoint_ref = 3;
+  int64 quiesced_ms = 4;
 }
 
 // ExportSpec is one §8.7 file-export entry: a source glob resolved

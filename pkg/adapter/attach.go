@@ -65,10 +65,20 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			// §15.4.1: an adapter-local tool_call is answered by the
 			// adapter itself and never relayed to the gateway.
 			if result, handled := HandleToolCall(line, s.WorkspaceRoot); handled {
+				if id := extractToolCallID(line); id != "" {
+					s.SetLastToolCallID(id)
+				}
 				if err := s.Runtime.WriteEnvelope(sessionID, result); err != nil {
 					return status.Errorf(codes.Internal, "deliver tool result to runtime: %v", err)
 				}
 				continue
+			}
+			// spec: §10.1 line 173 — record the most recent tool_call id
+			// so a subsequent CheckpointBarrier ack can carry it for the
+			// gateway's resume-deduplication path. Best-effort: a malformed
+			// frame leaves the prior last_tool_call_id unchanged.
+			if id := extractToolCallID(line); id != "" {
+				s.SetLastToolCallID(id)
 			}
 			if err := stream.Send(&adapterv1.AttachResponse{EnvelopeJson: stripRuntimeFrom(line)}); err != nil {
 				return err

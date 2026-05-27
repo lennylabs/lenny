@@ -48,6 +48,8 @@ const (
 	Adapter_Interrupt_FullMethodName          = "/lenny.adapter.v1.Adapter/Interrupt"
 	Adapter_Checkpoint_FullMethodName         = "/lenny.adapter.v1.Adapter/Checkpoint"
 	Adapter_Resume_FullMethodName             = "/lenny.adapter.v1.Adapter/Resume"
+	Adapter_CoordinatorFence_FullMethodName   = "/lenny.adapter.v1.Adapter/CoordinatorFence"
+	Adapter_CheckpointBarrier_FullMethodName  = "/lenny.adapter.v1.Adapter/CheckpointBarrier"
 	Adapter_ExportPaths_FullMethodName        = "/lenny.adapter.v1.Adapter/ExportPaths"
 	Adapter_ReportUsage_FullMethodName        = "/lenny.adapter.v1.Adapter/ReportUsage"
 	Adapter_Shutdown_FullMethodName           = "/lenny.adapter.v1.Adapter/Shutdown"
@@ -134,6 +136,29 @@ type AdapterClient interface {
 	// rebuilds /workspace/current from the named checkpoint, and starts
 	// the runtime — the replacement-pod counterpart of StartSession.
 	Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error)
+	// CoordinatorFence announces a new `coordination_generation` to the pod
+	// on coordinator handoff (§4.7 line 632, §10.1). The pod records the new
+	// generation and from this point rejects any RPC carrying an older one.
+	// Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
+	// received generation skips one or more values relative to the last
+	// acknowledged fence, the adapter cancels and discards every in-flight
+	// RPC received under the missing generation(s), resets transient
+	// tool-call state, and logs a `coordinator_generation_gap` event before
+	// acknowledging the new generation. The first call on a pod's lifetime
+	// is never treated as a gap regardless of value.
+	CoordinatorFence(ctx context.Context, in *CoordinatorFenceRequest, opts ...grpc.CallOption) (*CoordinatorFenceResponse, error)
+	// CheckpointBarrier dispatches a barrier signal during gateway graceful
+	// drain (§4.7 line 631, §10.1). The adapter validates the request's
+	// `coordination_generation` against the last fenced generation, quiesces
+	// tool-call dispatch, flushes a best-effort checkpoint, and acknowledges
+	// via `CheckpointBarrierAck` on the LifecycleChannel control stream
+	// (§4.7 line 660 — fields: `barrier_id`, `last_tool_call_id`,
+	// `checkpoint_ref`). The RPC return value mirrors the ack so a
+	// synchronous caller has the same information; the control-stream emit
+	// is the canonical surface for the gateway's barrier-target reconciler.
+	// The single wall-clock deadline `checkpointBarrierAckTimeoutSeconds`
+	// is enforced by the gateway across all coordinated pods.
+	CheckpointBarrier(ctx context.Context, in *CheckpointBarrierRequest, opts ...grpc.CallOption) (*CheckpointBarrierResponse, error)
 	// ExportPaths packages files from /workspace/current for delegation,
 	// rebased per the export spec (§8.7). The adapter resolves each export
 	// source glob inside the workspace root, rejects any matched file whose
@@ -313,6 +338,26 @@ func (c *adapterClient) Resume(ctx context.Context, in *ResumeRequest, opts ...g
 	return out, nil
 }
 
+func (c *adapterClient) CoordinatorFence(ctx context.Context, in *CoordinatorFenceRequest, opts ...grpc.CallOption) (*CoordinatorFenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CoordinatorFenceResponse)
+	err := c.cc.Invoke(ctx, Adapter_CoordinatorFence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adapterClient) CheckpointBarrier(ctx context.Context, in *CheckpointBarrierRequest, opts ...grpc.CallOption) (*CheckpointBarrierResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckpointBarrierResponse)
+	err := c.cc.Invoke(ctx, Adapter_CheckpointBarrier_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adapterClient) ExportPaths(ctx context.Context, in *ExportPathsRequest, opts ...grpc.CallOption) (*ExportPathsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ExportPathsResponse)
@@ -454,6 +499,29 @@ type AdapterServer interface {
 	// rebuilds /workspace/current from the named checkpoint, and starts
 	// the runtime — the replacement-pod counterpart of StartSession.
 	Resume(context.Context, *ResumeRequest) (*ResumeResponse, error)
+	// CoordinatorFence announces a new `coordination_generation` to the pod
+	// on coordinator handoff (§4.7 line 632, §10.1). The pod records the new
+	// generation and from this point rejects any RPC carrying an older one.
+	// Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
+	// received generation skips one or more values relative to the last
+	// acknowledged fence, the adapter cancels and discards every in-flight
+	// RPC received under the missing generation(s), resets transient
+	// tool-call state, and logs a `coordinator_generation_gap` event before
+	// acknowledging the new generation. The first call on a pod's lifetime
+	// is never treated as a gap regardless of value.
+	CoordinatorFence(context.Context, *CoordinatorFenceRequest) (*CoordinatorFenceResponse, error)
+	// CheckpointBarrier dispatches a barrier signal during gateway graceful
+	// drain (§4.7 line 631, §10.1). The adapter validates the request's
+	// `coordination_generation` against the last fenced generation, quiesces
+	// tool-call dispatch, flushes a best-effort checkpoint, and acknowledges
+	// via `CheckpointBarrierAck` on the LifecycleChannel control stream
+	// (§4.7 line 660 — fields: `barrier_id`, `last_tool_call_id`,
+	// `checkpoint_ref`). The RPC return value mirrors the ack so a
+	// synchronous caller has the same information; the control-stream emit
+	// is the canonical surface for the gateway's barrier-target reconciler.
+	// The single wall-clock deadline `checkpointBarrierAckTimeoutSeconds`
+	// is enforced by the gateway across all coordinated pods.
+	CheckpointBarrier(context.Context, *CheckpointBarrierRequest) (*CheckpointBarrierResponse, error)
 	// ExportPaths packages files from /workspace/current for delegation,
 	// rebased per the export spec (§8.7). The adapter resolves each export
 	// source glob inside the workspace root, rejects any matched file whose
@@ -534,6 +602,12 @@ func (UnimplementedAdapterServer) Checkpoint(context.Context, *CheckpointRequest
 }
 func (UnimplementedAdapterServer) Resume(context.Context, *ResumeRequest) (*ResumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Resume not implemented")
+}
+func (UnimplementedAdapterServer) CoordinatorFence(context.Context, *CoordinatorFenceRequest) (*CoordinatorFenceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CoordinatorFence not implemented")
+}
+func (UnimplementedAdapterServer) CheckpointBarrier(context.Context, *CheckpointBarrierRequest) (*CheckpointBarrierResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckpointBarrier not implemented")
 }
 func (UnimplementedAdapterServer) ExportPaths(context.Context, *ExportPathsRequest) (*ExportPathsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExportPaths not implemented")
@@ -785,6 +859,42 @@ func _Adapter_Resume_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Adapter_CoordinatorFence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CoordinatorFenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).CoordinatorFence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_CoordinatorFence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).CoordinatorFence(ctx, req.(*CoordinatorFenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Adapter_CheckpointBarrier_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckpointBarrierRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).CheckpointBarrier(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_CheckpointBarrier_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).CheckpointBarrier(ctx, req.(*CheckpointBarrierRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Adapter_ExportPaths_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ExportPathsRequest)
 	if err := dec(in); err != nil {
@@ -932,6 +1042,14 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Resume",
 			Handler:    _Adapter_Resume_Handler,
+		},
+		{
+			MethodName: "CoordinatorFence",
+			Handler:    _Adapter_CoordinatorFence_Handler,
+		},
+		{
+			MethodName: "CheckpointBarrier",
+			Handler:    _Adapter_CheckpointBarrier_Handler,
 		},
 		{
 			MethodName: "ExportPaths",

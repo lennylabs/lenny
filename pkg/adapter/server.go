@@ -200,6 +200,11 @@ type Server struct {
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock
 
+	// coord holds the §10.1 coordinator generation gate the
+	// CoordinatorFence RPC installs and the CheckpointBarrier RPC
+	// validates. See pkg/adapter/coordination.go.
+	coord coordinationState
+
 	// controlMu guards controlSink.
 	controlMu sync.Mutex
 	// controlSink is the queue feeding the active §4.7 adapter→gateway

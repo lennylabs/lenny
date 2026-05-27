@@ -24,6 +24,24 @@ type toolResultFrame struct {
 	IsError bool             `json:"isError"`
 }
 
+// extractToolCallID returns the id field of a JSONL tool_call frame, or
+// the empty string when the frame is not a tool_call or cannot be
+// parsed. Used to record the §10.1 line 173 last_tool_call_id on the
+// adapter so a subsequent CheckpointBarrier ack surfaces it.
+func extractToolCallID(frame []byte) string {
+	var probe struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	if err := json.Unmarshal(frame, &probe); err != nil {
+		return ""
+	}
+	if probe.Type != "tool_call" {
+		return ""
+	}
+	return probe.ID
+}
+
 // HandleToolCall inspects one stdout frame from the runtime. When the
 // frame is a tool_call for an adapter-local tool (read_file,
 // write_file, list_dir, delete_file), it runs the tool via

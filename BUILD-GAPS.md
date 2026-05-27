@@ -1487,7 +1487,7 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 
 ---
 
-### - [ ] F-4.7.2 — `CheckpointBarrier` and `CoordinatorFence` RPCs absent from proto and adapter [Medium] — OPEN
+### - [x] F-4.7.2 — `CheckpointBarrier` and `CoordinatorFence` RPCs absent from proto and adapter [Medium] — CLOSED
 
 **Severity: High.** Both are stated as gateway→adapter RPCs in §4.7 and are referenced from §10.1's horizontal scaling protocol.
 
@@ -1500,6 +1500,8 @@ Also notable: the snake_case shape used in `schemas/lifecycle-events.schema.json
 **Gap:** The §10.1 rolling-update protocol that depends on these RPCs cannot land without them. Coordinator-handoff fencing is essential to the "single coordinator per session" invariant.
 
 **Suggested resolution:** Add `CheckpointBarrier`, `CheckpointBarrierAck`, and `CoordinatorFence` to the proto with the documented fields, implement the adapter-side state machine (per-session `coordination_generation` gate, quiesce/checkpoint on barrier, 5 s fence deadline), and emit `CheckpointBarrierAck` (`barrier_id`, `last_tool_call_id`, `checkpoint_ref`) via the lifecycle stream.
+
+**Resolution:** Added `CoordinatorFence` and `CheckpointBarrier` RPCs plus their request/response messages to `schemas/lenny-adapter.proto`; ack carries `barrier_id`, `last_tool_call_id`, `checkpoint_ref`, `quiesced_ms`. `pkg/adapter/coordination.go` implements the adapter-side state machine: a per-pod `coordinationState` holds `lastFenced`, `initialized`, and `lastToolCallID`. `CoordinatorFence` records a strictly-monotonic generation, rejects equal-or-lower with FailedPrecondition + `coordinator_handoff_stale` detail, and on a §10.1 line 36 gap (skipped generations) logs `coordinator_generation_gap`, resets transient tool-call state, then acknowledges with `gap_detected: true`. The first fence on a pod's lifetime is exempt from gap detection per §10.1 line 36. `CheckpointBarrier` validates the request's generation against the last fenced value, runs a best-effort flush through the existing `archiveAndStore` pipeline (a sink failure yields an empty `checkpoint_ref` rather than aborting the barrier), and emits `CheckpointBarrierAck` on the existing §4.7 control stream as well as the synchronous RPC return. `pkg/adapter/attach.go` records the most recent tool_call id via the new `SetLastToolCallID` so the ack's `last_tool_call_id` is meaningful for the gateway's §10.1 line 173 resume-deduplication path. The broader §10.1 gateway-side controller flow (Postgres CAS, Redis lease handoff, preStop drain, ack-budget enforcement) stays tracked under F-10.1.1–F-10.1.7, F-10.1.9–F-10.1.17.
 
 ---
 
