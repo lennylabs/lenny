@@ -414,9 +414,46 @@ message RunSetupRequest {
   SetupPolicy setup_policy = 3;
 }
 
-// RunSetupResponse is empty: RunSetup either completes the setup phase
-// or returns a gRPC error.
-message RunSetupResponse {}
+// RunSetupResponse reports the per-command setup output the adapter
+// captured. The §7.5 line 475 contract requires "Fully logged
+// (stdout/stderr captured)" so the gateway can persist the trail on the
+// session row and surface it through the §15.1 GET /v1/sessions/{id}
+// envelope and the §11.7 audit log. The returned outputs preserve the
+// submission order and include every executed command — including the
+// one whose non-zero exit aborted the phase. RunSetup still returns a
+// gRPC error on aggregate-cap fail or a per-command non-zero exit; the
+// error path's outputs ride in the trailer metadata (`outputs`) for the
+// gateway to recover them after a failure. F-7.5.4.
+message RunSetupResponse {
+  repeated SetupCommandOutput outputs = 1;
+}
+
+// SetupCommandOutput is the structured record of one §7.5 setup command's
+// execution: the command text, captured stdout and stderr, the exit code,
+// and the wall-clock duration. The adapter truncates each stream to a
+// bounded byte budget before returning so a chatty command cannot blow
+// the gRPC message size. F-7.5.4 / F-7.5.11.
+message SetupCommandOutput {
+  // cmd echoes the submitted command text so a downstream consumer can
+  // correlate the record with the WorkspacePlan entry.
+  string cmd = 1;
+  // exit_code is the §7.5 line 475 captured exit status. 0 is a clean
+  // exit; non-zero is a failure (the §7.3 setup_command_failed signal).
+  int32 exit_code = 2;
+  // stdout is the captured standard output, truncated to a per-stream
+  // budget the adapter declares. UTF-8 lossy on non-text bytes.
+  string stdout = 3;
+  // stderr is the captured standard error, truncated to a per-stream
+  // budget the adapter declares.
+  string stderr = 4;
+  // duration_ms is the wall-clock duration of the command in
+  // milliseconds.
+  int64 duration_ms = 5;
+  // truncated reports whether stdout or stderr were truncated by the
+  // adapter's per-stream budget. When true a downstream consumer should
+  // surface that fact alongside the captured bytes.
+  bool truncated = 6;
+}
 
 message StartSessionRequest {
   // Field 3 (workspace_plan) and field 7 (setup_policy) were removed

@@ -23,7 +23,7 @@ func cmd(c string, timeout int32) *adapterv1.SetupCommand {
 
 func TestRunSetupExecutesCommandsInOrder(t *testing.T) {
 	dir := t.TempDir()
-	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("echo first > a.txt", 30),
 		cmd("echo second > b.txt", 30),
 	}, workspace.SetupOptions{Shell: true})
@@ -39,7 +39,7 @@ func TestRunSetupExecutesCommandsInOrder(t *testing.T) {
 
 func TestRunSetupRunsInWorkdir(t *testing.T) {
 	dir := t.TempDir()
-	if err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	if _, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("touch in-workdir.marker", 30),
 	}, workspace.SetupOptions{Shell: true}); err != nil {
 		t.Fatalf("RunSetup: %v", err)
@@ -53,7 +53,7 @@ func TestRunSetupRunsInWorkdir(t *testing.T) {
 
 func TestRunSetupStopsAtFirstFailure(t *testing.T) {
 	dir := t.TempDir()
-	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("exit 3", 30),
 		cmd("echo unreached > reached.txt", 30),
 	}, workspace.SetupOptions{Shell: true})
@@ -67,7 +67,7 @@ func TestRunSetupStopsAtFirstFailure(t *testing.T) {
 
 func TestRunSetupEnforcesTimeout(t *testing.T) {
 	dir := t.TempDir()
-	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("sleep 30", 1),
 	}, workspace.SetupOptions{Shell: true})
 	if err == nil {
@@ -76,7 +76,7 @@ func TestRunSetupEnforcesTimeout(t *testing.T) {
 }
 
 func TestRunSetupRejectsEmptyCommand(t *testing.T) {
-	if err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+	if _, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("", 30),
 	}, workspace.SetupOptions{Shell: true}); err == nil {
 		t.Fatal("RunSetup should reject an empty command")
@@ -84,7 +84,7 @@ func TestRunSetupRejectsEmptyCommand(t *testing.T) {
 }
 
 func TestRunSetupAcceptsNoCommands(t *testing.T) {
-	if err := workspace.RunSetup(context.Background(), t.TempDir(), nil, workspace.SetupOptions{Shell: true}); err != nil {
+	if _, err := workspace.RunSetup(context.Background(), t.TempDir(), nil, workspace.SetupOptions{Shell: true}); err != nil {
 		t.Errorf("RunSetup with no commands should succeed, got %v", err)
 	}
 }
@@ -92,7 +92,7 @@ func TestRunSetupAcceptsNoCommands(t *testing.T) {
 func TestRunSetupWithinAggregateTimeout(t *testing.T) {
 	// Fast commands complete well within a generous aggregate cap.
 	dir := t.TempDir()
-	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("echo a > a.txt", 30),
 		cmd("echo b > b.txt", 30),
 	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 30 * time.Second, FailOnAggregateTimeout: true})
@@ -103,7 +103,7 @@ func TestRunSetupWithinAggregateTimeout(t *testing.T) {
 
 func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 	// §5.1 onTimeout `fail`: exceeding the aggregate cap aborts.
-	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("sleep 30", 60),
 	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: true})
 	if err == nil {
@@ -116,7 +116,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 // ErrSetupAggregateTimeoutWarn (wrapped) so the caller can emit a
 // structured warning before treating the RPC as success. F-7.5.13.
 func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
-	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("sleep 30", 60),
 	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
 	if !errors.Is(err, workspace.ErrSetupAggregateTimeoutWarn) {
@@ -126,7 +126,7 @@ func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
 
 func TestRunSetupAggregateTimeoutStopsLaterCommands(t *testing.T) {
 	dir := t.TempDir()
-	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("sleep 30", 60),
 		cmd("touch reached.marker", 60),
 	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
@@ -146,7 +146,7 @@ func TestRunSetupOmittedPerCommandTimeoutBoundsByAggregate(t *testing.T) {
 	// long sleep is terminated by the aggregate, not by a (removed) 5m
 	// per-command default.
 	start := time.Now()
-	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("sleep 30", 0),
 	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 100 * time.Millisecond, FailOnAggregateTimeout: true})
 	if err == nil {
@@ -163,7 +163,7 @@ func TestRunSetupOmittedPerCommandTimeoutCancelsOnContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	err := workspace.RunSetup(ctx, t.TempDir(), []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(ctx, t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("sleep 30", 0),
 	}, workspace.SetupOptions{Shell: true})
 	if err == nil {
@@ -184,7 +184,7 @@ func TestRunSetupTimeoutKillsDescendants(t *testing.T) {
 	// process-group kill the backgrounded sleep is also terminated;
 	// without it, the sleep keeps running for the full 30s.
 	start := time.Now()
-	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("sh -c 'sleep 30 & echo $! > "+pidFile+"; sleep 30'", 1),
 	}, workspace.SetupOptions{Shell: true})
 	if err == nil {
@@ -229,7 +229,7 @@ func TestRunSetupAppliesEnvWhitelist(t *testing.T) {
 	// see when opts.Env is set.
 	t.Setenv("LENNY_SECRET_SENTINEL", "leaked")
 	env := append(workspace.DefaultSetupEnv(dir), "EXTRA=ok")
-	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("env > env.txt", 30),
 	}, workspace.SetupOptions{Shell: true, Env: env})
 	if err != nil {
@@ -288,7 +288,7 @@ func TestRunSetupArgvModeNeutersShellMetacharacters(t *testing.T) {
 	// file.txt and exits 0. In argv mode the `>` becomes a literal argv
 	// element passed to /bin/echo, which simply prints `hello > file.txt`
 	// to stdout and exits 0 — no file.txt is created.
-	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("echo hello > should-not-be-created.txt", 30),
 	}, workspace.SetupOptions{Shell: false, Env: workspace.DefaultSetupEnv(dir)})
 	if err != nil {
@@ -302,7 +302,7 @@ func TestRunSetupArgvModeNeutersShellMetacharacters(t *testing.T) {
 // spec: §7.5 line 490 — F-7.5.2. Argv-mode splits the command string on
 // whitespace and execs argv[0] with argv[1:]; an empty argv is rejected.
 func TestRunSetupArgvModeRejectsEmptyAfterSplit(t *testing.T) {
-	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("   ", 30),
 	}, workspace.SetupOptions{Shell: false, Env: workspace.DefaultSetupEnv("")})
 	if err == nil {
@@ -319,7 +319,7 @@ func TestRunSetupArgvModeRejectsEmptyAfterSplit(t *testing.T) {
 func TestRunSetupArgvModeRunsMultiTokenCommand(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "marker.txt")
-	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+	_, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("touch "+target, 30),
 	}, workspace.SetupOptions{Shell: false, Env: workspace.DefaultSetupEnv(dir)})
 	if err != nil {
@@ -327,5 +327,79 @@ func TestRunSetupArgvModeRunsMultiTokenCommand(t *testing.T) {
 	}
 	if _, statErr := os.Stat(target); statErr != nil {
 		t.Errorf("argv-mode did not run multi-token command: %v", statErr)
+	}
+}
+
+// spec: §7.5 line 475 — F-7.5.4. Every executed command must surface a
+// SetupCommandOutput record with the captured stdout, stderr, exit code,
+// and duration so the gateway can persist the trail.
+func TestRunSetupReturnsPerCommandOutputs(t *testing.T) {
+	dir := t.TempDir()
+	outputs, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("echo hello", 30),
+		cmd("echo world >&2", 30),
+	}, workspace.SetupOptions{Shell: true, Env: workspace.DefaultSetupEnv(dir)})
+	if err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	if len(outputs) != 2 {
+		t.Fatalf("outputs len = %d, want 2", len(outputs))
+	}
+	if !strings.Contains(outputs[0].Stdout, "hello") {
+		t.Errorf("outputs[0].Stdout = %q, want to contain hello", outputs[0].Stdout)
+	}
+	if outputs[0].ExitCode != 0 {
+		t.Errorf("outputs[0].ExitCode = %d, want 0", outputs[0].ExitCode)
+	}
+	if !strings.Contains(outputs[1].Stderr, "world") {
+		t.Errorf("outputs[1].Stderr = %q, want to contain world", outputs[1].Stderr)
+	}
+}
+
+// spec: §7.5 line 475 — F-7.5.4. A failing command's transcript is
+// preserved so the gateway can persist what was captured before the
+// abort. The function returns an error AND the partial outputs.
+func TestRunSetupReturnsPartialOutputsOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	outputs, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("echo first", 30),
+		cmd("echo failing-stderr >&2; exit 7", 30),
+		cmd("echo unreached", 30),
+	}, workspace.SetupOptions{Shell: true, Env: workspace.DefaultSetupEnv(dir)})
+	if err == nil {
+		t.Fatal("RunSetup should return an error when a command exits non-zero")
+	}
+	// Two outputs: the successful first command and the failing second.
+	// The third command must NOT have run.
+	if len(outputs) != 2 {
+		t.Fatalf("partial outputs len = %d, want 2 (first + failing)", len(outputs))
+	}
+	if outputs[1].ExitCode == 0 {
+		t.Errorf("failing-command outputs[1].ExitCode = %d, want non-zero", outputs[1].ExitCode)
+	}
+	if !strings.Contains(outputs[1].Stderr, "failing-stderr") {
+		t.Errorf("outputs[1].Stderr = %q, want to contain failing-stderr", outputs[1].Stderr)
+	}
+}
+
+// spec: §7.5 line 475 — F-7.5.4. The per-stream byte budget must apply
+// so a chatty setup command cannot blow the gRPC response.
+func TestRunSetupTruncatesLargeOutput(t *testing.T) {
+	dir := t.TempDir()
+	// Emit 128KB on stdout — beyond the 64KB SetupStreamCapBytes budget.
+	outputs, err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd(`head -c 131072 /dev/zero | tr '\0' a`, 30),
+	}, workspace.SetupOptions{Shell: true, Env: workspace.DefaultSetupEnv(dir)})
+	if err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	if len(outputs) != 1 {
+		t.Fatalf("outputs len = %d, want 1", len(outputs))
+	}
+	if !outputs[0].Truncated {
+		t.Error("outputs[0].Truncated should be true when stdout > SetupStreamCapBytes")
+	}
+	if !strings.Contains(outputs[0].Stdout, "[truncated]") {
+		t.Error("truncated stdout should carry the [truncated] suffix")
 	}
 }

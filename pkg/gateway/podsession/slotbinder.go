@@ -99,6 +99,7 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 	}
 
 	var finalizeWarnings []*adapterv1.WorkspacePlanWarning
+	var setupOutputs []*adapterv1.SetupCommandOutput
 	if req.Style == podclaim.StyleWorkspace {
 		// Workspace-concurrent: the slot has its own per-slot workspace
 		// (§6.4). Run the full §4.7 workspace-and-start sequence.
@@ -114,11 +115,13 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 			return nil, fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err)
 		}
 		finalizeWarnings = warnings
-		if err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy); err != nil {
+		outs, err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy)
+		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
-			return nil, fmt.Errorf("podsession: run slot setup on pod %s: %w", sandboxName, err)
+			return nil, &SetupCommandFailure{Pod: sandboxName, Cause: err, Outputs: outs}
 		}
+		setupOutputs = outs
 	}
 	// Stateless-concurrent skips the workspace path entirely: §5.2
 	// stateless mode materializes no workspace and runs no setup.
@@ -148,6 +151,7 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		SlotID:                slotID,
 		Adapter:               cl,
 		WorkspacePlanWarnings: finalizeWarnings,
+		SetupOutputs:          setupOutputs,
 	}, nil
 }
 

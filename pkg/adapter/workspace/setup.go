@@ -25,6 +25,30 @@ import (
 // an operationally observable surface. spec: §5.1 lines 89-91 — F-7.5.13.
 var ErrSetupAggregateTimeoutWarn = errors.New("setup phase exceeded the aggregate cap (warn disposition)")
 
+// SetupCommandOutput is the structured record of one §7.5 setup command:
+// the command text, captured stdout and stderr, the exit code, the
+// wall-clock duration, and whether the streams were truncated by the
+// per-stream budget. RunSetup populates one entry per executed command in
+// submission order so the gateway can persist the trail on the session
+// row and surface it through the §15.1 session envelope, the §11.7
+// audit log, and the §7.5 line 488 "rejection reason in the session's
+// setup output" surface. spec: §7.5 line 475 — F-7.5.4 / F-7.5.11.
+type SetupCommandOutput struct {
+	Cmd        string
+	ExitCode   int32
+	Stdout     string
+	Stderr     string
+	Duration   time.Duration
+	Truncated  bool
+}
+
+// SetupStreamCapBytes bounds each captured stream (stdout, stderr) per
+// command so a chatty setup command cannot blow the gRPC response message
+// size. The cap is conservative; the adapter truncates with the suffix
+// `\n... [truncated]` so a downstream reader can detect the truncation
+// out-of-band. spec: §7.5 line 475 — F-7.5.4.
+const SetupStreamCapBytes = 64 * 1024
+
 // SetupOptions carries the §5.1 runtime setupPolicy that bounds the
 // whole setup phase. The zero value applies no aggregate cap, so only
 // the per-command timeouts constrain execution.
@@ -96,27 +120,36 @@ func DefaultSetupEnv(workdir string) []string {
 // the agent user; the pod sandbox is the isolation boundary. RunSetup
 // bounds each command in wall-clock time so a hung command cannot pin
 // a warm pod indefinitely.
-func RunSetup(ctx context.Context, workdir string, cmds []*adapterv1.SetupCommand, opts SetupOptions) error {
+func RunSetup(ctx context.Context, workdir string, cmds []*adapterv1.SetupCommand, opts SetupOptions) ([]SetupCommandOutput, error) {
 	if opts.AggregateTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, opts.AggregateTimeout)
 		defer cancel()
 	}
+	outputs := make([]SetupCommandOutput, 0, len(cmds))
 	for i, c := range cmds {
 		// §5.1 aggregate cap tripped between commands.
 		if opts.AggregateTimeout > 0 && ctx.Err() != nil {
-			return aggregateTimeoutResult(opts, i)
+			return outputs, aggregateTimeoutResult(opts, i)
 		}
-		if err := runSetupCommand(ctx, workdir, c, opts); err != nil {
+		out, err := runSetupCommand(ctx, workdir, c, opts)
+		// Always record the per-command output: the §7.5 line 475 "Fully
+		// logged" requirement applies whether the command succeeded, was
+		// terminated by the per-command/aggregate cap, or exited non-zero.
+		// F-7.5.4.
+		if out.Cmd != "" || err != nil {
+			outputs = append(outputs, out)
+		}
+		if err != nil {
 			// §5.1 aggregate cap tripped during this command — the
 			// derived per-command context inherits the expired deadline.
 			if opts.AggregateTimeout > 0 && ctx.Err() == context.DeadlineExceeded {
-				return aggregateTimeoutResult(opts, i)
+				return outputs, aggregateTimeoutResult(opts, i)
 			}
-			return fmt.Errorf("setup command %d (%q): %w", i, c.GetCmd(), err)
+			return outputs, fmt.Errorf("setup command %d (%q): %w", i, c.GetCmd(), err)
 		}
 	}
-	return nil
+	return outputs, nil
 }
 
 // aggregateTimeoutResult applies the §5.1 onTimeout disposition when
@@ -134,10 +167,11 @@ func aggregateTimeoutResult(opts SetupOptions, i int) error {
 		opts.AggregateTimeout, i, ErrSetupAggregateTimeoutWarn)
 }
 
-func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupCommand, opts SetupOptions) error {
+func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupCommand, opts SetupOptions) (SetupCommandOutput, error) {
 	if c.GetCmd() == "" {
-		return errors.New("command is empty")
+		return SetupCommandOutput{}, errors.New("command is empty")
 	}
+	out := SetupCommandOutput{Cmd: c.GetCmd()}
 	// spec: §14 line 99 — an omitted per-command timeoutSeconds carries
 	// no independent time limit; the §5.1 setupPolicy.timeoutSeconds
 	// aggregate cap (encoded in ctx by RunSetup) is the only bound.
@@ -160,7 +194,7 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 	// interpolation) are inert. F-7.5.2.
 	cmd, buildErr := buildSetupCmd(cctx, c.GetCmd(), opts.Shell)
 	if buildErr != nil {
-		return buildErr
+		return out, buildErr
 	}
 	cmd.Dir = workdir
 	if opts.Env != nil {
@@ -184,18 +218,66 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 	}
 	cmd.WaitDelay = 5 * time.Second
 
-	out, err := cmd.CombinedOutput()
+	// spec: §7.5 line 475 — capture stdout and stderr separately so the
+	// gateway can persist the full transcript on the session row and the
+	// §11.7 audit log distinguishes the two streams. The per-stream cap
+	// keeps a chatty command from blowing the gRPC response. F-7.5.4.
+	stdoutBuf := &cappedBuffer{cap: SetupStreamCapBytes}
+	stderrBuf := &cappedBuffer{cap: SetupStreamCapBytes}
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
+
+	start := time.Now()
+	err := cmd.Run()
+	out.Duration = time.Since(start)
+	out.Stdout = stdoutBuf.String()
+	out.Stderr = stderrBuf.String()
+	out.Truncated = stdoutBuf.truncated || stderrBuf.truncated
+	if cmd.ProcessState != nil {
+		out.ExitCode = int32(cmd.ProcessState.ExitCode())
+	}
 
 	if cctx.Err() == context.DeadlineExceeded {
 		if timeout > 0 {
-			return fmt.Errorf("timed out after %s", timeout)
+			return out, fmt.Errorf("timed out after %s", timeout)
 		}
-		return errors.New("timed out under the setup phase aggregate cap")
+		return out, errors.New("timed out under the setup phase aggregate cap")
 	}
 	if err != nil {
-		return fmt.Errorf("exited with error: %w (output: %s)", err, out)
+		return out, fmt.Errorf("exited with error: %w", err)
 	}
-	return nil
+	return out, nil
+}
+
+// cappedBuffer is an io.Writer that retains at most cap bytes; further
+// writes are recorded as truncated. The truncated bytes are silently
+// dropped — the suffix is added at render time so the in-memory shape
+// stays bounded. spec: §7.5 line 475 — F-7.5.4.
+type cappedBuffer struct {
+	cap       int
+	buf       []byte
+	truncated bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if remaining := b.cap - len(b.buf); remaining > 0 {
+		take := len(p)
+		if take > remaining {
+			take = remaining
+			b.truncated = true
+		}
+		b.buf = append(b.buf, p[:take]...)
+		return len(p), nil
+	}
+	b.truncated = true
+	return len(p), nil
+}
+
+func (b *cappedBuffer) String() string {
+	if !b.truncated {
+		return string(b.buf)
+	}
+	return string(b.buf) + "\n... [truncated]"
 }
 
 // buildSetupCmd returns the exec.Cmd that runs cmdLine according to the

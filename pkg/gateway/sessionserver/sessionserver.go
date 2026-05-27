@@ -281,6 +281,12 @@ type Server struct {
 	// Nil disables the emission. spec: §16.1 catalog. F-7.3.10.
 	incSessionRetry func(failureClass string)
 
+	// incWarmpoolWarmupFailure, when set, increments the §16.1 line 124
+	// lenny_warmpool_warmup_failure_total{error_type} counter for one
+	// warm-pool startup failure. Nil disables the emission. spec: §16.1
+	// line 124, §7.3 line 387 — F-7.5.9.
+	incWarmpoolWarmupFailure func(errorType string)
+
 	// uploadTokenTTL is the §7.1 line 58 upload-token expiry stamped on
 	// every minted token. The gateway sets this equal to
 	// `maxCreatedStateTimeoutSeconds` so the token deadline matches the
@@ -780,6 +786,14 @@ type Options struct {
 	// "unknown" for a session that has no recorded class. Nil disables
 	// the emission. spec: §16.1 catalog. F-7.3.10.
 	IncSessionRetry func(failureClass string)
+
+	// IncWarmpoolWarmupFailure, when set, increments the §16.1 line 124
+	// lenny_warmpool_warmup_failure_total{error_type} counter for a
+	// warm-pool startup failure. error_type is the §7.3 line 387
+	// non-retryable failure category the gateway classified
+	// (`setup_command_failed`, etc.). Nil disables the emission.
+	// spec: §16.1 line 124, §7.3 line 387 — F-7.5.9.
+	IncWarmpoolWarmupFailure func(errorType string)
 }
 
 // New returns a Server bound to the supplied store.
@@ -847,6 +861,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		retryPolicyCaps:        opts.RetryPolicyCaps,
 		incSessionResumeAttempt: opts.IncSessionResumeAttempt,
 		incSessionRetry:        opts.IncSessionRetry,
+		incWarmpoolWarmupFailure: opts.IncWarmpoolWarmupFailure,
 		uploadTokenTTL:         opts.UploadTokenTTL,
 	}
 	if s.defaultRetention <= 0 {
@@ -1083,6 +1098,27 @@ type SessionResponse struct {
 	// when the session was created with no override. F-7.3.1.
 	// spec: §7.3 lines 377-393.
 	RetryPolicy *session.RetryPolicy `json:"retryPolicy,omitempty"`
+
+	// SetupOutput is the §7.5 line 475 captured per-command output the
+	// adapter returned at setup time, plus any §7.5 line 488 synthetic
+	// rejection-reason entries the gateway recorded when it rejected a
+	// command at admission. Omitted when no setup commands ran and the
+	// gateway never rejected one. F-7.5.4 / F-7.5.11.
+	// spec: §7.5 lines 475, 488.
+	SetupOutput []SetupOutputEntry `json:"setupOutput,omitempty"`
+}
+
+// SetupOutputEntry is one §7.5 setup-command record on the §15.1 session
+// envelope. spec: §7.5 lines 475, 488 — F-7.5.4 / F-7.5.11.
+type SetupOutputEntry struct {
+	Cmd             string `json:"cmd"`
+	ExitCode        int32  `json:"exitCode"`
+	Stdout          string `json:"stdout,omitempty"`
+	Stderr          string `json:"stderr,omitempty"`
+	DurationMs      int64  `json:"durationMs,omitempty"`
+	Truncated       bool   `json:"truncated,omitempty"`
+	Rejected        bool   `json:"rejected,omitempty"`
+	RejectionReason string `json:"rejectionReason,omitempty"`
 }
 
 // CreateSessionResponse is the §15.1 POST /v1/sessions response
@@ -1828,6 +1864,23 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	// client can confirm what was clamped. F-7.3.1.
 	if row.RetryPolicy != nil {
 		out.RetryPolicy = cloneRetryPolicy(row.RetryPolicy)
+	}
+	// spec: §7.5 lines 475, 488 — echo the captured / rejected setup
+	// outputs. F-7.5.4 / F-7.5.11.
+	if len(row.SetupOutput) > 0 {
+		out.SetupOutput = make([]SetupOutputEntry, 0, len(row.SetupOutput))
+		for _, e := range row.SetupOutput {
+			out.SetupOutput = append(out.SetupOutput, SetupOutputEntry{
+				Cmd:             e.Cmd,
+				ExitCode:        e.ExitCode,
+				Stdout:          e.Stdout,
+				Stderr:          e.Stderr,
+				DurationMs:      e.DurationMs,
+				Truncated:       e.Truncated,
+				Rejected:        e.Rejected,
+				RejectionReason: e.RejectionReason,
+			})
+		}
 	}
 	return out
 }

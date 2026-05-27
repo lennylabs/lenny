@@ -306,13 +306,20 @@ func TestClientRunSetup(t *testing.T) {
 	srv.WorkspaceRoot = root
 	cl := dialAdapter(t, srv)
 
-	if err := cl.RunSetup(context.Background(), "sess-1", []*adapterv1.SetupCommand{
+	outputs, err := cl.RunSetup(context.Background(), "sess-1", []*adapterv1.SetupCommand{
 		{Cmd: "touch setup.done", TimeoutSeconds: 30},
-	}, nil); err != nil {
+	}, &adapterv1.SetupPolicy{Shell: true})
+	if err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "setup.done")); err != nil {
 		t.Errorf("RunSetup did not run the setup command: %v", err)
+	}
+	// spec: §7.5 line 475 — every executed command must surface a record
+	// on RunSetupResponse.outputs so the gateway can persist the trail.
+	// F-7.5.4.
+	if len(outputs) != 1 || outputs[0].GetCmd() != "touch setup.done" {
+		t.Errorf("RunSetup outputs = %+v, want one entry for touch setup.done", outputs)
 	}
 }
 
@@ -321,10 +328,19 @@ func TestClientRunSetupFailingCommand(t *testing.T) {
 	srv.WorkspaceRoot = t.TempDir()
 	cl := dialAdapter(t, srv)
 
-	err := cl.RunSetup(context.Background(), "sess-1",
-		[]*adapterv1.SetupCommand{{Cmd: "exit 7"}}, nil)
+	outputs, err := cl.RunSetup(context.Background(), "sess-1",
+		[]*adapterv1.SetupCommand{{Cmd: "exit 7"}}, &adapterv1.SetupPolicy{Shell: true})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("RunSetup with a failing command = %v, want FailedPrecondition", err)
+	}
+	// spec: §7.5 line 475 / §7.5 line 488 — partial outputs survive the
+	// failure so the gateway can persist them and surface the rejection
+	// reason. F-7.5.4.
+	if len(outputs) == 0 {
+		t.Error("RunSetup with a failing command should surface partial outputs in status details")
+	}
+	if len(outputs) > 0 && outputs[0].GetExitCode() == 0 {
+		t.Errorf("failing command should report a non-zero exit code, got %d", outputs[0].GetExitCode())
 	}
 }
 

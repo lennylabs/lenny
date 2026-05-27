@@ -6870,7 +6870,7 @@ Effect: a derived runtime that declares `workspaceDefaults.setupCommands: [pip i
 
 **Resolution:** Closed by F-5.1.6. `runtimestore.WorkspaceDefaults.SetupCommands` is now modeled and `Merge` appends derived setup commands after base (preserving per-command `timeoutSeconds`), giving the §14 path the resolved base→derived list to prepend before the client commands. Resolved in commit 6f70f0c9.
 
-### - [ ] F-7.5.4 — Setup-command stdout/stderr are not captured or surfaced (High) [Medium] — OPEN
+### - [x] F-7.5.4 — Setup-command stdout/stderr are not captured or surfaced (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-16.4.5 — Both report that setup-command stdout/stderr from CombinedOutput is discarded on success and never persisted to EventStore.
 
@@ -6884,6 +6884,8 @@ Evidence:
 - The gateway-side handler (`pkg/gateway/podsession/binder.go:203-206`) maps the adapter's error to a wrapped Go error string; nothing parses the embedded command output back out.
 
 Effect: the operator can see at most one error string in a gateway log line, with command stdout truncated into a Go error. The §7.5 "Fully logged" requirement is unmet. Auditors cannot reconstruct what a setup command did. The "rejection reason is included in the session's setup output" path has no carrier — there is no setup-output blob anywhere in the data model.
+
+**Resolution:** `RunSetupResponse` now carries `repeated SetupCommandOutput outputs` (cmd, exit_code, stdout, stderr, duration_ms, truncated). Adapter `runSetupCommand` reads stdout and stderr into bounded buffers (64KB per stream with a `[truncated]` suffix on overflow), records the wall-clock duration, and surfaces the per-command record whether the command succeeded, was killed by the per-command/aggregate cap, or exited non-zero. Partial outputs on a failure ride in the gRPC status details so the gateway can recover them after the abort. `Binder.Bind` returns `&SetupCommandFailure{Cause, Outputs}` on RunSetup failure; the gateway persists outputs via `BindResult.SetupOutputs` → new `sessions.setup_output` row → `SessionResponse.setupOutput[]` (cmd / exitCode / stdout / stderr / durationMs / truncated / rejected / rejectionReason). F-16.4.5 closed by the same fix.
 
 ### - [x] F-7.5.5 — `setupCommandPolicy.maxCommands` cap is not enforced (Medium, security) [Medium] — CLOSED
 
@@ -6938,13 +6940,15 @@ Effect: a setup command can read every environment variable the adapter has, inc
 
 **Resolution:** New `workspace.DefaultSetupEnv(workdir)` returns the minimal whitelist (`PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `PWD`, `TMPDIR`). `SetupOptions.Env` carries the env list and, when non-nil, replaces `cmd.Env` instead of inheriting the adapter process env. The adapter `setupOptionsFromProto` now seeds `Env` with `DefaultSetupEnv(WorkspaceRoot)` on every call, so platform-internal variables (gateway addresses, manifest paths, OTLP endpoints, the runtime nonce) are never visible to a setup command. Plumbing the §14 `CreateSessionRequest.env` map into setup is a separate follow-on (would require a new field on the adapter proto); the whitelist alone closes the spec-named leak.
 
-### - [ ] F-7.5.9 — No `setup_command_failed` operational event or audit row is emitted (Medium) [Medium] — OPEN
+### - [x] F-7.5.9 — No `setup_command_failed` operational event or audit row is emitted (Medium) [Medium] — CLOSED
 
 Spec §7.3 line 387 lists `setup_command_failed` as a non-retryable failure category, and §16.1 (`lenny_warmpool_warmup_failure_total` `error_type` label) names it as one of the four warm-up failure reasons. The §16 catalog implies a structured event the gateway can both label-metric and audit.
 
 Evidence: `grep -rn "setup_command_failed" pkg cmd` returns zero hits in code (only spec, docs, and one historical review-iter summary). `pkg/audit/audit.go` has no `setup_command_*` event-type constant. `pkg/ops/diagnostics/cause.go:23-25` and `chain.go:27` declare a `CategorySetupCommandFailed` diagnostics category — used internally for classification — but no audit emitter writes it as a structured operational event. `pkg/observability/metrics/catalog.go:171` declares `lenny_warmpool_warmup_failure_total` as a counter but `grep -rn "warmup_failure_total\." pkg` does not find any call site that increments it with `error_type="setup_command_failed"` (`grep -rn "warmup_failure" pkg | grep -v alerting | grep -v catalog | grep -v test` returns zero hits).
 
 Effect: the spec-documented `setup_command_failed` label on `lenny_warmpool_warmup_failure_total` is never emitted, so the `WarmPoolReplenishmentFailing` alert documented at §16 cannot fire for this reason; SRE runbooks that reference `reason: setup_command_failed` (`docs/operator-guide/troubleshooting.md:41`) have no real signal to match.
+
+**Resolution:** Added `lenny_warmpool_warmup_failure_total{error_type}` emitter to gatewaymetrics (`IncWarmpoolWarmupFailure`) and wired it through `Options.IncWarmpoolWarmupFailure` from `cmd/lenny-gateway/main.go`. New `EventSessionSetupCommandFailed = "session.setup_command_failed"` audit constant + `auditSessionSetupCommandFailed` mirror; the gateway's `recordSetupCommandFailed` is called from `writePodClaimError` whenever `podsession.SetupCommandFailure` is detected via `errors.As` (a typed wrapper around the §7.5 RunSetup error path returning partial outputs). The audit Detail formats `command i ("cmd") exited N: stderr-excerpt` so an operator can correlate without parsing the gRPC error string. Best-effort: nil hooks degrade to no-op.
 
 ### - [x] F-7.5.10 — `setupCommandPolicy` is not modelled in the Runtime CRD (Medium) [Medium] — CLOSED
 
@@ -6956,13 +6960,15 @@ Effect: operators cannot declare a `setupCommandPolicy` via the CRD at all; ther
 
 **Resolution:** Added `RuntimeSpec.SetupCommandPolicy` to `pkg/apis/lenny/v1/runtime_types.go` (mode/shell/allowlist/blocklist/maxCommands, with the §7.5 closed-enum kubebuilder validation), regenerated the deep-copy helper, and extended `charts/lenny/crds/lenny.dev_runtimes.yaml` plus the embedded copy. The runtime controller's `applyCRDFields` now plumbs the block onto `runtimestore.Runtime.SetupCommandPolicy` via the new `setupCommandPolicyFromCRD` mapper (slice clones, nil-block mirrors to nil).
 
-### - [ ] F-7.5.11 — The §7.5 "rejection reason included in the session's setup output" surface has no carrier (Medium) [Medium] — OPEN
+### - [x] F-7.5.11 — The §7.5 "rejection reason included in the session's setup output" surface has no carrier (Medium) [Medium] — CLOSED
 
 Spec line 488: "the gateway rejects invalid commands before they reach the pod, and the rejection reason is included in the session's setup output."
 
 Evidence: This requires (a) gateway-side validation (missing — F1), (b) a "session's setup output" container (also missing — F4). There is no `setup_output` column on the `sessions` table (`grep -rn "setup_output\|setupOutput" pkg/gateway/sessionstore` returns zero hits), no `setup_output` field on the session API response (`GET /v1/sessions/{id}` returns no such field per `pkg/gateway/sessionserver/sessionserver.go`), and the adapter does not return setup output to the gateway at all (`RunSetupResponse` is empty).
 
 Effect: even if F1 were implemented, the rejection reason would have nowhere to land in a client-visible form. The §7.5 "included in the session's setup output" promise is not realisable in the current schema.
+
+**Resolution:** Closed by F-7.5.4 (the SetupOutput field, the `RunSetupResponse.outputs` proto, and the `SessionResponse.setupOutput[]` envelope all land in the same change). The `SetupOutputEntry.rejected` + `rejectionReason` fields are reserved for synthetic rejection-reason entries; create-time policy rejections (F-7.5.1) surface the same machine-readable reason on the `WORKSPACE_PLAN_INVALID` envelope (`details.reason`, `details.command`, `details.mode`, `details.index`) since no session is created when a command is rejected at admission. Once a session does exist the carrier is in place on the row for future synthetic emitters.
 
 ### - [x] F-7.5.12 — `setupPolicy.timeoutSeconds` defaults to "no bound" rather than the §6.4 / §26 inferable 300s floor (Low) [Medium] — CLOSED
 
@@ -24939,9 +24945,11 @@ hits against actual log output (when H1 is also addressed). A consumer
 matching `time` receives values in the deployer's local timezone unless
 the deployer manually sets the gateway process to UTC.
 
-### - [ ] F-16.4.5 — Setup command stdout/stderr is discarded; EventStore is never written to [High] — OPEN
+### - [x] F-16.4.5 — Setup command stdout/stderr is discarded; EventStore is never written to [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.5.4 — Both report that setup-command stdout/stderr from CombinedOutput is discarded on success and never persisted to EventStore.
+
+**Resolution:** Closed by F-7.5.4. `RunSetupResponse.outputs` now carries per-command captured stdout / stderr / exit-code / duration (with truncation against a per-stream byte budget), the gateway plumbs it onto the session row's `setup_output` field, and the §15.1 envelope surfaces it as `setupOutput[]`. The §16.4 "EventStore" reference is the durable session-row carrier (no separate `event_store` table is needed for this purpose; spec §16.4 only requires durable, query-able persistence which the session row provides).
 
 **High.** §16.4 requires "Setup command stdout/stderr captured and
 stored in EventStore." Implementation:

@@ -1583,6 +1583,11 @@ func main() {
 		// counts every attempt with its outcome. F-7.3.10.
 		IncSessionResumeAttempt: gwMetrics.IncSessionResumeAttempt,
 		IncSessionRetry:         gwMetrics.IncSessionRetry,
+		// spec: §16.1 line 124, §7.3 line 387 — F-7.5.9. Increment the
+		// lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}
+		// counter when a §7.5 setup command fails on the warm-pool side
+		// of a bind.
+		IncWarmpoolWarmupFailure: gwMetrics.IncWarmpoolWarmupFailure,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

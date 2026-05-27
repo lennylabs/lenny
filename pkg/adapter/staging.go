@@ -5,6 +5,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -126,7 +127,10 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 // StartSession): the workspace has already been materialized into
 // WorkspaceRoot by the time RunSetup runs, so this RPC neither claims
 // the session nor touches pod assignment state. The §5.1 setupPolicy in
-// the request bounds the aggregate setup phase.
+// the request bounds the aggregate setup phase. The response carries
+// the per-command setup output the §7.5 line 475 "Fully logged" contract
+// requires; the gateway persists this on the session row so a client can
+// see it via §15.1 GET /v1/sessions/{id}. F-7.5.4.
 func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
 	if req.GetSessionId().GetValue() == "" {
 		return nil, status.Error(codes.InvalidArgument, "RunSetup requires a session id")
@@ -135,8 +139,10 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
-	if err := workspace.RunSetup(ctx, s.WorkspaceRoot, req.GetSetupCommands(),
-		setupOptionsFromProto(req.GetSetupPolicy(), s.WorkspaceRoot)); err != nil {
+	outputs, err := workspace.RunSetup(ctx, s.WorkspaceRoot, req.GetSetupCommands(),
+		setupOptionsFromProto(req.GetSetupPolicy(), s.WorkspaceRoot))
+	resp := &adapterv1.RunSetupResponse{Outputs: setupOutputsToProto(outputs)}
+	if err != nil {
 		// spec: §5.1 lines 89-91 — setupPolicy.onTimeout = warn proceeds
 		// to runtime start past the aggregate cap. workspace.RunSetup
 		// returns ErrSetupAggregateTimeoutWarn (wrapped with cap +
@@ -148,9 +154,38 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 			cap := req.GetSetupPolicy().GetTimeoutSeconds()
 			log.Printf("lenny-adapter: setup_aggregate_timeout_warn session=%s cap_seconds=%d cmd_count=%d: %v",
 				session, cap, len(req.GetSetupCommands()), err)
-			return &adapterv1.RunSetupResponse{}, nil
+			return resp, nil
 		}
-		return nil, status.Errorf(codes.FailedPrecondition, "run setup commands: %v", err)
+		// On a hard failure the partial outputs survive in the gRPC status
+		// details so the gateway can persist what was captured before the
+		// failure. The error itself is a FailedPrecondition status.
+		st := status.New(codes.FailedPrecondition,
+			fmt.Sprintf("run setup commands: %v", err))
+		if stWithDetails, dErr := st.WithDetails(resp); dErr == nil {
+			return nil, stWithDetails.Err()
+		}
+		return nil, st.Err()
 	}
-	return &adapterv1.RunSetupResponse{}, nil
+	return resp, nil
+}
+
+// setupOutputsToProto converts the workspace-layer SetupCommandOutput
+// slice to the wire form the §15.1 session-envelope plumbing consumes.
+// spec: §7.5 line 475 — F-7.5.4.
+func setupOutputsToProto(outs []workspace.SetupCommandOutput) []*adapterv1.SetupCommandOutput {
+	if len(outs) == 0 {
+		return nil
+	}
+	wire := make([]*adapterv1.SetupCommandOutput, 0, len(outs))
+	for _, o := range outs {
+		wire = append(wire, &adapterv1.SetupCommandOutput{
+			Cmd:        o.Cmd,
+			ExitCode:   o.ExitCode,
+			Stdout:     o.Stdout,
+			Stderr:     o.Stderr,
+			DurationMs: o.Duration.Milliseconds(),
+			Truncated:  o.Truncated,
+		})
+	}
+	return wire
 }

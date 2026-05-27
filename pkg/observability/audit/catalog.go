@@ -101,6 +101,14 @@ const (
 	EventSessionAwaitingActionEntered  EventType = "session.awaiting_action_entered"
 	EventSessionExpiredInAwaitingAction EventType = "session.expired_in_awaiting_action"
 	EventSessionCascadeApplied         EventType = "session.cascade_applied"
+	// EventSessionSetupCommandFailed is the §7.5 / §7.3 line 387
+	// non-retryable failure category, emitted by the gateway when a
+	// setup command exits non-zero or is killed by the per-command /
+	// aggregate cap. The audit Detail carries `cmd`, `exitCode`,
+	// `stderr_excerpt`, `index`, and `duration_ms` so an operator can
+	// reconstruct what happened without parsing the gRPC error string.
+	// spec: §7.5 line 475, §7.3 line 387 — F-7.5.9.
+	EventSessionSetupCommandFailed EventType = "session.setup_command_failed"
 )
 
 // The §16.7 / §25.4 lenny-ops remediation-lock and escalation audit

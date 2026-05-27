@@ -64,7 +64,21 @@ const minWarmupRetryAfterSeconds = 30
 func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCode, fallbackMsg string) {
 	var warming *podsession.PoolWarmingError
 	var credAssign *podsession.CredentialAssignmentError
+	var setupFail *podsession.SetupCommandFailure
 	switch {
+	case errors.As(err, &setupFail):
+		// spec: §7.5 line 475, §7.3 line 387, §16.1 line 124 — the
+		// gateway records the setup_command_failed audit row + metric so
+		// the §16 alert can fire and operators can correlate the
+		// rejection reason with the per-command stdout/stderr trail. The
+		// envelope itself is the fallback (SESSION_CREATION_FAILED /
+		// STARTING_FAILED) since §7.5 has no dedicated client-facing code.
+		// F-7.5.9.
+		s.recordSetupCommandFailed(setupFail)
+		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
+			fallbackMsg+": "+err.Error(),
+			map[string]any{"reason": "setup_command_failed"})
 	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
 		s.writeTokenServiceUnavailable(w, err)
 	case errors.As(err, &warming):
@@ -358,6 +372,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		bound = result
 		if bound != nil {
 			row.PodAssignment = bound.SandboxName
+			row.SetupOutput = setupOutputsFromBind(bound.SetupOutputs)
 		}
 	}
 
@@ -445,6 +460,21 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.registerBinding(r.Context(), result)
+		// spec: §7.5 line 475 — persist the per-command setup output the
+		// adapter captured so a subsequent GET /v1/sessions/{id} can
+		// surface it. F-7.5.4.
+		if result != nil && len(result.SetupOutputs) > 0 {
+			outs := setupOutputsFromBind(result.SetupOutputs)
+			if _, uerr := s.store.Update(r.Context(), tenantID, id, func(rr *sessionstore.Session) error {
+				rr.SetupOutput = outs
+				return nil
+			}); uerr != nil {
+				// Persistence failure is non-fatal; the §7.5 trail is
+				// best-effort. Log via the diagnostics path.
+				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", uerr.Error(), nil)
+				return
+			}
+		}
 	}
 
 	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
@@ -729,6 +759,27 @@ func (s *Server) runtimeManifestFields(ctx context.Context, runtimeName string) 
 		}
 	}
 	return agentInterface, rt.MinPlatformVersion
+}
+
+// setupOutputsFromBind converts the §7.5 line 475 adapter-side setup
+// outputs into the sessionstore row form so the gateway can persist the
+// trail. F-7.5.4 / F-7.5.11.
+func setupOutputsFromBind(outs []*adapterv1.SetupCommandOutput) []sessionstore.SetupCommandOutput {
+	if len(outs) == 0 {
+		return nil
+	}
+	row := make([]sessionstore.SetupCommandOutput, 0, len(outs))
+	for _, o := range outs {
+		row = append(row, sessionstore.SetupCommandOutput{
+			Cmd:        o.GetCmd(),
+			ExitCode:   o.GetExitCode(),
+			Stdout:     o.GetStdout(),
+			Stderr:     o.GetStderr(),
+			DurationMs: o.GetDurationMs(),
+			Truncated:  o.GetTruncated(),
+		})
+	}
+	return row
 }
 
 // DefaultSetupPolicyTimeoutSeconds is the §6.4 / §26 inferable default
@@ -1606,6 +1657,58 @@ func (s *Server) bumpRecoveryGeneration(ctx context.Context, tenantID, sessionID
 		return
 	}
 	s.recordSessionRetry(ctx, updated)
+}
+
+// recordSetupCommandFailed emits the §7.5 / §7.3 line 387 audit event
+// and the §16.1 line 124 warm-pool warmup_failure metric for a
+// setup-command-failed bind. The audit Detail carries the cmd, exit
+// code, stderr excerpt, and command index pulled from the partial
+// per-command outputs the adapter returned alongside the failure so
+// operators can reconstruct what happened without parsing the gRPC
+// error string. Best-effort: nil hooks degrade to a no-op.
+//
+// spec: §7.5 line 475, §7.3 line 387, §16.1 line 124 — F-7.5.9.
+func (s *Server) recordSetupCommandFailed(failure *podsession.SetupCommandFailure) {
+	if failure == nil {
+		return
+	}
+	if s.incWarmpoolWarmupFailure != nil {
+		s.incWarmpoolWarmupFailure("setup_command_failed")
+	}
+	if s.lifecycleAudit == nil {
+		return
+	}
+	detail := setupCommandFailedDetail(failure)
+	s.lifecycleAudit.EmitSessionLifecycle(context.Background(), SessionLifecycleEvent{
+		EventType:    auditSessionSetupCommandFailed,
+		FailureClass: "setup_command_failed",
+		Detail:       detail,
+		At:           s.clock(),
+	})
+}
+
+// setupCommandFailedDetail formats the failure's partial per-command
+// outputs into a one-line Detail string for the §11.7 audit row. The
+// failing command is the last entry the adapter returned before aborting,
+// so the helper reports its cmd / exit code / stderr excerpt.
+// spec: §7.5 line 475 — F-7.5.9.
+func setupCommandFailedDetail(failure *podsession.SetupCommandFailure) string {
+	if failure == nil {
+		return ""
+	}
+	if len(failure.Outputs) == 0 {
+		if failure.Cause != nil {
+			return failure.Cause.Error()
+		}
+		return ""
+	}
+	last := failure.Outputs[len(failure.Outputs)-1]
+	stderr := last.GetStderr()
+	if len(stderr) > 512 {
+		stderr = stderr[:512] + "..."
+	}
+	return fmt.Sprintf("command %d (%q) exited %d: %s",
+		len(failure.Outputs)-1, last.GetCmd(), last.GetExitCode(), stderr)
 }
 
 // recordSessionRetry fires the §16.1 lenny_session_retry_total metric

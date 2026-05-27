@@ -127,6 +127,14 @@ type Metrics struct {
 	// every POST /v1/sessions/{id}/resume that passes the precondition
 	// gate bumps it once with outcome "success" or "failure". F-7.3.10.
 	sessionResumeAttempts *prometheus.CounterVec
+	// warmpoolWarmupFailure is the §16.1 line 124
+	// `lenny_warmpool_warmup_failure_total{error_type}` counter:
+	// incremented whenever a warm-pool-side §6.3 startup phase
+	// (workspace prep, setup_command, credential assignment, etc.)
+	// fails. error_type is the §7.3 non-retryable failure category
+	// the gateway classified. F-7.5.9.
+	// spec: §16.1 line 124, §7.3 line 387.
+	warmpoolWarmupFailure *prometheus.CounterVec
 	// workspaceSealDuration is the §7.1 line 112 seal-and-export
 	// completion-time histogram. Observed once per terminal session at
 	// teardown. Labels: `pool` (the session runtime) and `outcome`
@@ -717,6 +725,16 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 line 124 — `lenny_warmpool_warmup_failure_total{error_type}`
+	// counts warm-pool-side startup failures by §7.3 non-retryable
+	// failure category. F-7.5.9.
+	warmpoolWarmupFailure, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_warmpool_warmup_failure_total",
+		Help: "Warm-pool warm-up failures by error_type (§16.1 line 124, §7.3 line 387).",
+	}, []string{"error_type"})
+	if err != nil {
+		return nil, err
+	}
 	// §7.1 line 112 — `lenny_workspace_seal_duration_seconds` tracks
 	// seal-and-export completion time across all terminal sessions,
 	// labeled by `pool` (session runtime) and `outcome` (success |
@@ -1121,6 +1139,7 @@ func New() (*Metrics, error) {
 		checkpointDuration, sessionStartupDuration, sessionStartupPhaseDuration,
 		sessionTimeToFirstToken, warmpoolClaims,
 		sessionRetryTotal, sessionResumeAttempts,
+		warmpoolWarmupFailure,
 		workspaceSealDuration,
 		checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
@@ -1200,6 +1219,7 @@ func New() (*Metrics, error) {
 		warmpoolClaims:                       warmpoolClaims,
 		sessionRetryTotal:                    sessionRetryTotal,
 		sessionResumeAttempts:                sessionResumeAttempts,
+		warmpoolWarmupFailure:                warmpoolWarmupFailure,
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
@@ -1555,6 +1575,19 @@ func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
 		return
 	}
 	m.sessionResumeAttempts.WithLabelValues(pool, outcome).Inc()
+}
+
+// IncWarmpoolWarmupFailure increments the §16.1 line 124
+// `lenny_warmpool_warmup_failure_total{error_type}` counter for one warm-
+// pool startup failure. error_type is the §7.3 line 387 non-retryable
+// failure category the gateway classified (`setup_command_failed`,
+// `workspace_plan_invalid`, `runtime_image_pull_failed`,
+// `network_policy_denied`). spec: §16.1 line 124, §7.3 line 387 — F-7.5.9.
+func (m *Metrics) IncWarmpoolWarmupFailure(errorType string) {
+	if m == nil {
+		return
+	}
+	m.warmpoolWarmupFailure.WithLabelValues(errorType).Inc()
 }
 
 // ObserveWorkspaceSealDuration records the §7.1 line 112

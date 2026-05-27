@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -214,14 +215,29 @@ func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *
 // RunSetup executes the §14 WorkspacePlan setup commands in the pod's
 // workspace (§4.7, the third session-assignment RPC). setupPolicy
 // bounds the aggregate setup phase per §5.1; a nil policy applies no
-// aggregate cap.
-func (c *Client) RunSetup(ctx context.Context, sessionID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy) error {
-	_, err := c.rpc.RunSetup(ctx, &adapterv1.RunSetupRequest{
+// aggregate cap. The returned outputs carry the §7.5 line 475 captured
+// stdout / stderr / exit code for each executed command in submission
+// order; on a hard failure the adapter may attach partial outputs in
+// the gRPC status details — the caller can extract them with
+// `status.FromError(err).Details()`. F-7.5.4.
+func (c *Client) RunSetup(ctx context.Context, sessionID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy) ([]*adapterv1.SetupCommandOutput, error) {
+	resp, err := c.rpc.RunSetup(ctx, &adapterv1.RunSetupRequest{
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		SetupCommands: setupCommands,
 		SetupPolicy:   setupPolicy,
 	})
-	return err
+	if err != nil {
+		// Try to recover partial outputs from the gRPC status details.
+		if st, ok := status.FromError(err); ok {
+			for _, d := range st.Details() {
+				if r, isResp := d.(*adapterv1.RunSetupResponse); isResp {
+					return r.GetOutputs(), err
+				}
+			}
+		}
+		return nil, err
+	}
+	return resp.GetOutputs(), nil
 }
 
 // SendMessage forwards a pre-encoded §15.4.1 message envelope to the

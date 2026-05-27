@@ -99,6 +99,10 @@ const (
 	auditSessionAwaitingActionEntered   = "session.awaiting_action_entered"
 	auditSessionExpiredInAwaitingAction = "session.expired_in_awaiting_action"
 	auditSessionCascadeApplied          = "session.cascade_applied"
+	// auditSessionSetupCommandFailed is the §7.5 / §7.3 line 387 audit
+	// row emitted when a setup command exits non-zero or is killed by
+	// the per-command / aggregate cap. F-7.5.9.
+	auditSessionSetupCommandFailed = "session.setup_command_failed"
 
 	// Interaction-resolution audit event types written by the §15.1
 	// approve/deny/respond/dismiss endpoints. The strings match the

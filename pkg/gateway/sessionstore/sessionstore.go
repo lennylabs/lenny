@@ -272,6 +272,50 @@ type Session struct {
 	// caches primed from this column at handoff step 0. F-7.3.3.
 	// spec: §7.3 line 397; §10.4 coordinator-handoff replay; §15 SSE.
 	LastSeq int64
+
+	// SetupOutput carries the §7.5 line 475 captured stdout/stderr/exit
+	// for each setup command the adapter ran (success or failure), plus
+	// the §7.5 line 488 synthetic rejection-reason entries the gateway
+	// records when it rejects a command at admission. Nil when the
+	// session ran no setup commands. F-7.5.4 / F-7.5.11.
+	// spec: §7.5 lines 475, 488.
+	SetupOutput []SetupCommandOutput
+}
+
+// SetupCommandOutput is one §7.5 line 475 setup-command record retained
+// on the session row: the submitted command, captured stdout and stderr,
+// exit code, duration, whether the streams were truncated, and (when the
+// gateway rejected the command at admission per §7.5 line 488) a
+// machine-readable rejection reason. Synthetic entries (Rejected=true)
+// are produced by the gateway and carry RejectionReason; executed entries
+// (Rejected=false) carry adapter-captured runtime data. spec: §7.5 lines
+// 475, 488 — F-7.5.4 / F-7.5.11.
+type SetupCommandOutput struct {
+	// Cmd is the submitted setup-command text.
+	Cmd string
+	// ExitCode is the captured process exit code (0 = success; non-zero
+	// = failure). Zero is also reported for a §7.5 line 488 rejected
+	// entry that never executed; Rejected disambiguates.
+	ExitCode int32
+	// Stdout is the adapter-captured stdout, truncated to a per-stream
+	// budget. Empty for a §7.5 line 488 rejection record.
+	Stdout string
+	// Stderr is the adapter-captured stderr, truncated to a per-stream
+	// budget. Empty for a §7.5 line 488 rejection record.
+	Stderr string
+	// DurationMs is the wall-clock execution time in milliseconds.
+	// Zero for a rejected entry that never executed.
+	DurationMs int64
+	// Truncated reports whether the adapter truncated stdout or stderr
+	// against its per-stream byte budget.
+	Truncated bool
+	// Rejected is true when the gateway rejected this command at
+	// admission per §7.5 line 488 (the command never reached the pod).
+	Rejected bool
+	// RejectionReason is the machine-readable §7.5 line 488 rejection
+	// reason (e.g. `setup_command_policy_violation`,
+	// `setup_commands_max_exceeded`). Empty for executed entries.
+	RejectionReason string
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a

@@ -274,7 +274,35 @@ type BindResult struct {
 	// bytes. Empty when the adapter is on an older protocol that did
 	// not report the field. F-7.3.15.
 	WorkspaceRoot string
+	// SetupOutputs carries the §7.5 line 475 captured stdout/stderr/exit
+	// for each setup command the adapter ran. The gateway persists this
+	// trail on the session row so it is visible through §15.1
+	// GET /v1/sessions/{id} and the §11.7 audit log. F-7.5.4 / F-7.5.11.
+	SetupOutputs []*adapterv1.SetupCommandOutput
 }
+
+// SetupCommandFailure wraps a §7.5 setup-command failure with the partial
+// captured output the adapter returned before the abort. The gateway
+// unwraps it on the §7.3 setup_command_failed classification path to
+// persist the trail on the session row and to emit the §16.1
+// `lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}`
+// counter. spec: §7.5 line 475, §7.3 line 387 — F-7.5.4 / F-7.5.9.
+type SetupCommandFailure struct {
+	// Pod is the sandbox name the failure was observed on.
+	Pod string
+	// Cause is the adapter-side error (a gRPC FailedPrecondition).
+	Cause error
+	// Outputs is the per-command transcript captured up to the failure,
+	// including the failing command's stdout/stderr/exit code when
+	// available.
+	Outputs []*adapterv1.SetupCommandOutput
+}
+
+func (e *SetupCommandFailure) Error() string {
+	return fmt.Sprintf("podsession: run setup on pod %s: %v", e.Pod, e.Cause)
+}
+
+func (e *SetupCommandFailure) Unwrap() error { return e.Cause }
 
 // BindTimings carries the per-phase wall-clock durations a successful
 // Bind measured, so the caller can attribute the §6.3 line 358 latency
@@ -417,10 +445,17 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: phase running_setup on pod %s: %w", sandboxName, err)
 	}
-	if err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy); err != nil {
+	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy)
+	if err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()
-		return nil, fmt.Errorf("podsession: run setup on pod %s: %w", sandboxName, err)
+		// spec: §7.5 line 488 — partial outputs ride alongside the failure
+		// so the gateway can persist what was captured before the abort.
+		return nil, &SetupCommandFailure{
+			Pod:     sandboxName,
+			Cause:   err,
+			Outputs: setupOutputs,
+		}
 	}
 	t.SetupCommands = time.Since(phaseStart)
 
@@ -467,6 +502,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		Timings:               t,
 		WorkspacePlanWarnings: finalizeWarnings,
 		WorkspaceRoot:         neg.WorkspaceRoot,
+		SetupOutputs:          setupOutputs,
 	}, nil
 }
 
