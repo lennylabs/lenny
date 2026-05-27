@@ -109,6 +109,15 @@ var spec167AuditEvents = []string{
 	"legal_hold.escrow_released",
 	// §12.8 line 739 — legal-hold reconciler gap-detection event.
 	"legal_hold.checkpoint_gap_detected",
+	// §7.3 retry/resume lifecycle. F-7.3.25 closes the gap that the
+	// resume/retry/awaiting-action/cascade events §7.3 implies were
+	// missing from the §16.7 catalog; the catalog now tracks them
+	// alongside the rest of the closed enum.
+	"session.resumed",
+	"session.retry_attempted",
+	"session.awaiting_action_entered",
+	"session.expired_in_awaiting_action",
+	"session.cascade_applied",
 }
 
 func TestCatalogIsNonEmpty(t *testing.T) {

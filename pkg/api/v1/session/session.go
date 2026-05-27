@@ -62,6 +62,24 @@ const (
 	StateFailed               State = "failed"
 	StateCancelled            State = "cancelled"
 	StateExpired              State = "expired"
+
+	// StateResuming is the §7.2 line 195 internal transient between
+	// resume_pending and running. §15.1 line 621 normalises the GET
+	// /v1/sessions/{id} envelope's `state` field to `resume_pending` →
+	// `running` so the resuming value is never returned from a polling
+	// read. It does, however, appear on the wire in two cases:
+	//   - the §10.4 coordinator-handoff reattach synthesises a
+	//     `status_change(resuming)` SSE frame so a reattaching client
+	//     observes the transient on the event stream, and
+	//   - the §6.2 pod-state-machine `resuming` failure transitions
+	//     surface it on internal traces.
+	// The constant lives in the §15.1 surface so the SSE emitter can
+	// reference it without depending on the internal pkg/session/state
+	// package; it is intentionally NOT a member of AllStates() because
+	// the §15.1 polling envelope never returns it.
+	// spec: §7.2 line 195; §15.1 line 621; §10.4 coordinator-handoff
+	// reattach synthesis.
+	StateResuming State = "resuming"
 )
 
 // AllStates returns every canonical state in §15.1 table order.

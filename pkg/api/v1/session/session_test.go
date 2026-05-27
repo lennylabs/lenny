@@ -247,6 +247,45 @@ func TestValidateUnknownEndpointErrors(t *testing.T) {
 	}
 }
 
+// spec: §7.2 line 195; §15.1 line 621 — `resuming` is an internal
+// transient that the API surface normalises to resume_pending → running
+// on the GET envelope but synthesises onto the §10.4 coordinator-handoff
+// `status_change` SSE frame. The constant must exist in the external
+// API package so the SSE emitter can reference it without depending on
+// the internal pkg/session/state. F-7.3.19.
+func TestResumingStateConstantExposed(t *testing.T) {
+	if StateResuming != "resuming" {
+		t.Errorf("F-7.3.19: StateResuming = %q, want \"resuming\"", StateResuming)
+	}
+	// §15.1 line 621 — the GET envelope normalises resuming away, so
+	// AllStates() (which is the closed §15.1 polling enum) does NOT
+	// include it.
+	for _, s := range AllStates() {
+		if s == StateResuming {
+			t.Errorf("F-7.3.19: AllStates() must omit resuming per §15.1 line 621 normalisation rule, got %v", AllStates())
+		}
+	}
+	// resuming is non-terminal so accidental terminal-state plumbing
+	// cannot leak it into the terminal set.
+	if IsTerminal(StateResuming) {
+		t.Errorf("F-7.3.19: resuming must not be terminal")
+	}
+}
+
+// spec: §15.1 line 621 — `POST /v1/sessions/{id}/resume` admits only
+// awaiting_client_action; resuming is the internal-only transient the
+// API never accepts as a precondition. F-7.3.19 must not regress the
+// precondition table.
+func TestValidateResumeRejectsResumingState(t *testing.T) {
+	err := Validate(PreconditionRequest{
+		Endpoint:     EndpointResume,
+		CurrentState: StateResuming,
+	})
+	if err == nil {
+		t.Errorf("F-7.3.19: resume from resuming must be rejected per §15.1 line 621")
+	}
+}
+
 // AllowedStates is callable with no current state context; useful for
 // API documentation and error envelopes.
 func TestAllowedStatesIncludesGatedWhenCapabilityHeld(t *testing.T) {

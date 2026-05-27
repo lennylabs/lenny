@@ -62,7 +62,7 @@ The `AgentPodKilledDuringActiveSession` alert fires when:
 ## Verification
 
 - The replacement pod reaches `Ready` and the session transitions to `running` again.
-- `lenny_session_resume_after_pod_kill_total{result="success"}` advances by one for the affected pool.
+- `lenny_session_resume_attempts_total{pool=<pool>, outcome="success"}` advances by one for the affected pool. The spec-named counter (§16.1) covers every retry/resume attempt and yields the resume success rate as `outcome="success"` over the total.
 
 ## Escalation
 

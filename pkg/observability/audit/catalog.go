@@ -89,6 +89,18 @@ const (
 	// carries the lenny.dev/drain-force: "true" override and the
 	// eviction is admitted despite a degraded artifact store.
 	EventNodeDrainForced EventType = "node.drain.forced"
+
+	// §7.3 retry/resume lifecycle audit events. The catalog already
+	// covers the regular session-lifecycle terminals through the
+	// session.created/completed/failed/cancelled/expired strings emitted
+	// by sessionserver lifecycle.go; the events below cover the §7.3
+	// auto-retry, resume, awaiting-client-action, and cascade transitions
+	// that sit between create and terminal. F-7.3.25.
+	EventSessionResumed                EventType = "session.resumed"
+	EventSessionRetryAttempted         EventType = "session.retry_attempted"
+	EventSessionAwaitingActionEntered  EventType = "session.awaiting_action_entered"
+	EventSessionExpiredInAwaitingAction EventType = "session.expired_in_awaiting_action"
+	EventSessionCascadeApplied         EventType = "session.cascade_applied"
 )
 
 // The §16.7 / §25.4 lenny-ops remediation-lock and escalation audit
@@ -225,6 +237,10 @@ var catalog = []EventType{
 	EventComplianceProfileDecommissioned,
 	EventDeploymentFeatureFlagDowngradeAcknowledged,
 	EventNodeDrainForced,
+
+	// §7.3 retry/resume lifecycle. F-7.3.25.
+	EventSessionResumed, EventSessionRetryAttempted, EventSessionAwaitingActionEntered,
+	EventSessionExpiredInAwaitingAction, EventSessionCascadeApplied,
 
 	EventRemediationLockAcquired, EventRemediationLockExtended, EventRemediationLockReleased,
 	EventRemediationLockExpired, EventRemediationLockStolen, EventRemediationLockSplitBrainDetected,

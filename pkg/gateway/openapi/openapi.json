@@ -115,13 +115,19 @@
           "environment": { "type": "string" },
           "state": {
             "type": "string",
-            "enum": ["created","finalizing","ready","starting","running","suspended","resume_pending","awaiting_client_action","completed","failed","cancelled","expired"]
+            "description": "§15.1 session state. `resuming` is an internal transient that the GET /v1/sessions/{id} envelope normalises to `resume_pending` → `running`; it appears only on the §10.4 coordinator-handoff `status_change` SSE frame and is included in the enum for SSE wire compatibility.",
+            "enum": ["created","finalizing","ready","starting","running","input_required","suspended","resume_pending","resuming","awaiting_client_action","completed","failed","cancelled","expired"]
           },
           "createdAt":  { "type": "string", "format": "date-time" },
           "updatedAt":  { "type": "string", "format": "date-time" },
           "failureClass": {
             "type": "string",
             "enum": ["runtime_failure","starting_timeout","budget_keys_expired","workspace_seal_timeout","derive_failure"]
+          },
+          "metadata": {
+            "type": "object",
+            "description": "§7.1 line 6 client-supplied CreateSession metadata, a flat string→string map echoed verbatim across the session lifetime.",
+            "additionalProperties": { "type": "string" }
           }
         }
       },
@@ -133,7 +139,12 @@
           "userId":           { "type": "string" },
           "environment":      { "type": "string" },
           "workspacePlan":    { "type": "object", "additionalProperties": true },
-          "isolationProfile": { "type": "string", "enum": ["standard","sandboxed","microvm"] }
+          "isolationProfile": { "type": "string", "enum": ["standard","sandboxed","microvm"] },
+          "metadata": {
+            "type": "object",
+            "description": "§7.1 line 6 client annotations preserved verbatim for the session lifetime. Must be a flat string→string map; non-string values reject with 400 INVALID_REQUEST.",
+            "additionalProperties": { "type": "string" }
+          }
         }
       },
       "CreateSessionResponse": {
