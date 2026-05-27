@@ -1225,6 +1225,25 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	// pool/credential exhaustion keeps the row in awaiting_client_action
 	// so the client can re-issue `POST /resume` once pods are available;
 	// only a non-retryable cause demotes the row to failed. F-7.3.23.
+	//
+	// spec: §7.3 lines 470-472 — internally the row traverses
+	// `awaiting_client_action → resume_pending → resuming → running`;
+	// the API view collapses to `awaiting_client_action → running`.
+	// Writing the `resuming` transient before resumeOnPod makes the
+	// §7.2 line 197 / 198 mid-resume terminal-collapse edges
+	// (resuming → cancelled, resuming → completed) reachable by
+	// concurrent DELETE / cascade / failure-report observers, and the
+	// §6.2 line 249 watchdog uses it as the entry signal for the
+	// resuming wall-clock timeout. F-7.3.8.
+	if s.podBinder != nil {
+		if _, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
+			row.State = session.StateResuming
+			return nil
+		}); err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+	}
 	var adapterReportedResumeMode string
 	if s.podBinder != nil {
 		mode, err := s.resumeOnPod(r.Context(), row)
@@ -1236,13 +1255,26 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 			if s.incSessionResumeAttempt != nil {
 				s.incSessionResumeAttempt(row.PoolRef, "failure")
 			}
+			// spec: §7.2 line 214 (a) — the row was in `resuming` when
+			// the resumeOnPod call started; bump the
+			// coordination_generation before unwinding so any stale
+			// coordinator's subsequent RPC fails the §4.2
+			// CoordinatorFence check. F-7.1.14 / F-7.3.8.
+			s.bumpCoordinationGenerationOnSnapshotClose(r.Context(), tenantID, id)
 			// spec: §7.3 line 423 — `awaiting_client_action` is the
 			// "client intervention required" holding state; the explicit
 			// `POST /resume` retry is the client action. A transient pod
 			// claim failure must leave the row in awaiting_client_action
 			// so the client can retry once the pool frees up; only a
 			// non-retryable cause demotes the row to failed. F-7.3.23.
-			if !isTransientPodClaimError(err) {
+			if isTransientPodClaimError(err) {
+				if _, uerr := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
+					row.State = session.StateAwaitingClientAction
+					return nil
+				}); uerr != nil {
+					log.Printf("sessionserver: revert resuming → awaiting_client_action for session %s: %v", id, uerr)
+				}
+			} else {
 				s.failSession(r.Context(), tenantID, id)
 			}
 			// spec: §7.3 — a resume claim failure surfaces as a retryable

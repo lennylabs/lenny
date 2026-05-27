@@ -6372,13 +6372,27 @@ Effect: the platform cannot decide when retries are exhausted; the `auto_then_cl
 
 **Resolution:** Closed by prior work (migration `0055_session_retry_policy_resume`): `sessions.retry_count BIGINT NOT NULL DEFAULT 0 CHECK (retry_count >= 0)` is round-tripped through `sessionstore.Session.RetryCount`, surfaced on `SessionResponse.RetryCount`, and incremented on every `bumpRecoveryGeneration` (the v1 retry path). The remaining "auto_then_client mode is unimplementable" sub-claim is gated on F-7.3.4 (automatic transition into resume_pending), tracked separately.
 
-### - [ ] F-7.3.8 — `POST /v1/sessions/{id}/resume` short-circuits the `resume_pending → resuming → running` chain (Medium) [Medium] — OPEN
+### - [x] F-7.3.8 — `POST /v1/sessions/{id}/resume` short-circuits the `resume_pending → resuming → running` chain (Medium) [Medium] — CLOSED
 
 Spec line 470–472: "The API-reported transition is `resume_pending` → `running`; the `resume_pending` and `resuming` states between are internal transients."
 
 Evidence: `pkg/gateway/sessionserver/sessionserver.go:949–952` `transitionResume` writes `StateRunning` directly from `StateAwaitingClientAction`. The internal `resume_pending` and `resuming` states are never written even transiently. `pkg/api/v1/session/session.go` does not even declare a `StateResuming` constant — the `Resuming` state from §7.2 only exists in the internal `pkg/session/state/state.go:28` and `pkg/sandbox/state/state.go`. Consequence: there is no place for the §7.2 `resuming → cancelled` / `resuming → completed` mid-resume terminal-collapse semantics to execute, and the §7.2 "snapshot-close semantics" sequence (abort restoration RPCs, skip live seal, release replacement pod, generation bookkeeping, run terminal handling) has nowhere to live.
 
 Effect: the visible-vs-internal state distinction §7.3 documents is collapsed to a single instantaneous write. The mid-resume terminal edges from §7.2 are unreachable, and the snapshot-close `final_workspace_ref` / `recovery_generation` / `coordination_generation` bookkeeping is moot.
+
+**Resolution (this batch):** `handleResume` now writes the `resuming`
+transient before invoking `resumeOnPod` and reverts to
+`awaiting_client_action` on a transient pool/credential failure so the
+client's next retry sees the spec-mandated holding state. On
+non-retryable resumeOnPod failure the path bumps
+coordination_generation via the §7.1.14 snapshot-close fence and
+demotes via `failSession`. The §7.2 line 197/198 mid-resume
+terminal-collapse edges (resuming → cancelled via DELETE, resuming →
+awaiting_client_action or resume_pending via ReportSessionFailure) are
+now reachable through both the external API surface (DELETE accepts
+StateResuming per F-7.1.14's EndpointDelete update) and the gateway's
+own internal failure-collapse path. The API view still collapses to
+`awaiting_client_action → running` on success per spec line 470-472.
 
 ### - [x] F-7.3.9 — `session.resumed` event is not emitted (High) [Medium] — CLOSED
 
