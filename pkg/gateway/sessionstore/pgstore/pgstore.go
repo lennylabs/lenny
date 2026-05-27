@@ -54,10 +54,13 @@ var _ sessionstore.Store = (*Store)(nil)
 // `last_successful_checkpoint_at` — the §4.4 line 258 freshness
 // timestamp the gauge / `lenny_checkpoint_stale_sessions` reaper keys
 // off.
-// The final column (workspace_snapshot_hash) is the §4.5 line 311
+// The column (workspace_snapshot_hash) is the §4.5 line 311
 // content-addressed snapshot hash added in migration 0068. The
-// trailing execution_mode and scrub_policy columns are the §7.1
+// execution_mode and scrub_policy columns are the §7.1
 // line 75 sessionIsolationLevel halves added in migration 0084.
+// The trailing metadata column is the §7.1 line 6 client-supplied
+// CreateSession(..., metadata) payload added in migration 0086
+// (F-7.3.20).
 const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
@@ -70,7 +73,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	retry_count, policy_enforcement_state, resume_eligible_until,
 	last_successful_checkpoint_at,
 	COALESCE(workspace_snapshot_hash, ''),
-	execution_mode, scrub_policy`
+	execution_mode, scrub_policy,
+	metadata`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -94,7 +98,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	// line 311 content-addressed snapshot hash added in
 	// migration 0068. Binds $36 and $37 are the §7.1 line 75
 	// execution_mode and scrub_policy halves of sessionIsolationLevel
-	// added in migration 0084.
+	// added in migration 0084. Bind $38 is the §7.1 line 6
+	// client-supplied metadata payload added in migration 0086
+	// (F-7.3.20).
 	const insertSQL = `INSERT INTO sessions (
 		id, tenant_id, user_id, state, runtime_ref, pool_ref, isolation_profile,
 		parent_session_id, root_session_id, failure_class, failure_reason,
@@ -107,7 +113,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		retry_count, policy_enforcement_state, resume_eligible_until,
 		last_successful_checkpoint_at,
 		workspace_snapshot_hash,
-		execution_mode, scrub_policy
+		execution_mode, scrub_policy,
+		metadata
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
@@ -117,7 +124,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$31, $32::jsonb, $33,
 		$34,
 		NULLIF($35, ''),
-		$36, $37
+		$36, $37,
+		$38::jsonb
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -142,7 +150,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			pgtenant.NullTime(sess.ResumeEligibleUntil),
 			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt),
 			hash,
-			sess.ExecutionMode, sess.ScrubPolicy)
+			sess.ExecutionMode, sess.ScrubPolicy,
+			metadataArg(sess.Metadata))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -184,7 +193,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 	// resume window added in migration 0055. Clause $32 is the §4.4
 	// line 258 freshness timestamp added in migration 0061. Clause
 	// $33 is the §4.5 line 311 content-addressed snapshot hash
-	// added in migration 0068.
+	// added in migration 0068. Clause $36 is the §7.1 line 6
+	// client-supplied metadata payload added in migration 0086
+	// (F-7.3.20).
 	const updateSQL = `UPDATE sessions SET
 		user_id = $3, state = $4, runtime_ref = $5, pool_ref = $6,
 		isolation_profile = $7, parent_session_id = NULLIF($8, '')::uuid,
@@ -200,7 +211,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		resume_eligible_until = $31,
 		last_successful_checkpoint_at = $32,
 		workspace_snapshot_hash = NULLIF($33, ''),
-		execution_mode = $34, scrub_policy = $35
+		execution_mode = $34, scrub_policy = $35,
+		metadata = $36::jsonb
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -256,6 +268,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt),
 			hash,
 			sess.ExecutionMode, sess.ScrubPolicy,
+			metadataArg(sess.Metadata),
 		); err != nil {
 			return err
 		}
@@ -388,6 +401,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §4.5 line 311 content-addressed snapshot hash from
 		// migration 0068.
 		wsHash string
+		// §7.1 line 6 client-supplied metadata payload from migration
+		// 0086 (F-7.3.20).
+		metadataJSON []byte
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -410,11 +426,18 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		&wsHash,
 		// §7.1 line 75 sessionIsolationLevel halves from migration 0084.
 		&s.ExecutionMode, &s.ScrubPolicy,
+		// §7.1 line 6 client metadata from migration 0086 (F-7.3.20).
+		&metadataJSON,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
 	if len(policyJSON) > 0 {
 		s.PolicyEnforcementState = policyJSON
+	}
+	if len(metadataJSON) > 0 {
+		if md, err := decodeMetadata(metadataJSON); err == nil && len(md) > 0 {
+			s.Metadata = md
+		}
 	}
 	if resumeUntil != nil {
 		s.ResumeEligibleUntil = *resumeUntil
@@ -493,6 +516,33 @@ func policyEnforcementArg(raw json.RawMessage) string {
 		return "{}"
 	}
 	return string(raw)
+}
+
+// metadataArg renders the §7.1 line 6 client-supplied metadata map as
+// a jsonb argument. A nil or empty map stores SQL NULL so the read
+// path can distinguish "client supplied nothing" from "client supplied
+// {}" — the §15.1 GET envelope omits the field in both cases. F-7.3.20.
+func metadataArg(md map[string]string) any {
+	if len(md) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(md)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
+// decodeMetadata parses the JSONB payload back into a string→string
+// map. A malformed payload returns an error so the caller can surface
+// the corruption; in practice the gateway's decode boundary rejects
+// non-string values before they reach Postgres. F-7.3.20.
+func decodeMetadata(raw []byte) (map[string]string, error) {
+	var out map[string]string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // normalizeMiss maps pgx.ErrNoRows and the invalid-UUID-text error to

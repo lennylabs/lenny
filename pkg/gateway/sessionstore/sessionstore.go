@@ -229,6 +229,17 @@ type Session struct {
 	// Postgres, updated on every successful checkpoint regardless
 	// of trigger (periodic, eviction, pre-drain)".
 	LastSuccessfulCheckpointAt time.Time
+
+	// Metadata is the §7.1 line 6 client-supplied
+	// CreateSession(..., metadata) payload — a flat string→string map
+	// of caller annotations preserved verbatim for the session
+	// lifetime. Nil when the caller submitted no payload, in which
+	// case the field is omitted from the GET envelope. Non-string
+	// values are rejected at the gateway decode boundary so the on-row
+	// shape stays bounded. F-7.3.20.
+	// spec: §7.1 line 6 — "CreateSession(runtime, pool, retryPolicy,
+	// metadata)"; §15.1 GET /v1/sessions/{id} surface.
+	Metadata map[string]string
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a

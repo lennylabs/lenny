@@ -179,6 +179,19 @@ type TerminalHook interface {
 	OnSessionTerminal(ctx context.Context, sess sessionstore.Session)
 }
 
+// AwaitingClientActionExpiryNotifier is an optional hook on TerminalHook
+// implementations. The watchdog invokes it for the
+// `awaiting_client_action → expired` edge BEFORE the generic
+// OnSessionTerminal so the §11.7 / §16.7 session.expired_in_awaiting_action
+// audit row carries the awaiting-action context (which the generic
+// terminal hook cannot derive from the post-update row alone).
+//
+// spec: §7.3 line 423 — `awaiting_client_action → expired` entry path;
+// §11.7 / §16.7 audit row. F-7.3.25.
+type AwaitingClientActionExpiryNotifier interface {
+	OnSessionExpiredFromAwaitingClientAction(ctx context.Context, sess sessionstore.Session)
+}
+
 // Watchdog drives the periodic sweep.
 type Watchdog struct {
 	store    sessionstore.Store
@@ -349,6 +362,13 @@ func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string,
 			return err
 		}
 		if updated.State == session.StateExpired {
+			// spec: §7.3 line 423 — fire the awaiting-action-specific
+			// audit hook BEFORE the generic terminal hook so the
+			// `session.expired_in_awaiting_action` row precedes the
+			// `session.expired` row in the §11.7 chain. F-7.3.25.
+			if notifier, ok := w.terminal.(AwaitingClientActionExpiryNotifier); ok {
+				notifier.OnSessionExpiredFromAwaitingClientAction(ctx, updated)
+			}
 			res.Expirations++
 			w.recordCompleted(ctx, updated)
 		}

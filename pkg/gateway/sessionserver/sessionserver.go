@@ -914,6 +914,17 @@ type CreateSessionRequest struct {
 	// `targetPool`'s pool definition; the minimal gateway accepts it
 	// from the body so SEC-001 monotonicity tests have a knob to drive.
 	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
+
+	// Metadata is the §7.1 line 6 client-supplied
+	// CreateSession(..., metadata) payload — a flat string→string map
+	// of caller annotations preserved verbatim for the session
+	// lifetime. Non-string values rejected at decode with
+	// 400 VALIDATION_ERROR so the on-row shape stays bounded. The §15.1
+	// GET envelope echoes this back so a client that lost the create
+	// response can retrieve its own annotations. F-7.3.20.
+	// spec: §7.1 line 6 — "CreateSession(runtime, pool, retryPolicy,
+	// metadata)".
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // SessionResponse is the §15.1 GET /v1/sessions/{id} envelope.
@@ -983,6 +994,12 @@ type SessionResponse struct {
 	// sessionIsolationLevel in the session metadata ... does not change
 	// for the lifetime of the session".
 	SessionIsolationLevel SessionIsolationLevel `json:"sessionIsolationLevel"`
+
+	// Metadata echoes the §7.1 line 6 client-supplied metadata payload
+	// the session was created with. Omitted from the envelope when the
+	// client submitted no metadata. F-7.3.20.
+	// spec: §7.1 line 6.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // CreateSessionResponse is the §15.1 POST /v1/sessions response
@@ -1138,6 +1155,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		ExecutionMode:    level.ExecutionMode,
 		ScrubPolicy:      level.ScrubPolicy,
 		WorkspacePlan:    planJSON,
+		Metadata:         cloneMetadata(req.Metadata),
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
@@ -1667,6 +1685,27 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	// spec: §4.2 line 159 — emit the resume window only when set.
 	if !row.ResumeEligibleUntil.IsZero() {
 		out.ResumeEligibleUntil = row.ResumeEligibleUntil.UTC().Format(time.RFC3339Nano)
+	}
+	// spec: §7.1 line 6 — echo the client metadata so a client that
+	// lost the create response can recover its own annotations.
+	// F-7.3.20.
+	if len(row.Metadata) > 0 {
+		out.Metadata = cloneMetadata(row.Metadata)
+	}
+	return out
+}
+
+// cloneMetadata returns a defensive copy of the §7.1 line 6 metadata
+// payload so mutations in the request or row never leak across the
+// gateway/store boundary. A nil input maps to nil so the wire envelope
+// honours `omitempty`. F-7.3.20.
+func cloneMetadata(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
 	}
 	return out
 }

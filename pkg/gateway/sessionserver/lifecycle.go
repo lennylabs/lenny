@@ -4,9 +4,11 @@ package sessionserver
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
 
@@ -76,6 +78,12 @@ const (
 	// last export error in Detail. spec: §7.1 line 112 — "emits a
 	// workspaceSealFailed audit event (recording the last MinIO error)".
 	auditWorkspaceSealFailed = "session.workspace_seal_failed"
+
+	// §7.3 retry/resume lifecycle audit event types. F-7.3.25 catalogs
+	// the matching closed §16.7 constants in pkg/observability/audit;
+	// these mirrors are the on-row strings the gateway emits.
+	auditSessionAwaitingActionEntered  = "session.awaiting_action_entered"
+	auditSessionExpiredInAwaitingAction = "session.expired_in_awaiting_action"
 
 	// Interaction-resolution audit event types written by the §15.1
 	// approve/deny/respond/dismiss endpoints. The strings match the
@@ -221,6 +229,84 @@ func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Se
 	// On terminal, drop the entry so the map size scales with
 	// concurrently-streaming sessions rather than lifetime sessions.
 	s.firstTokenObserved.Delete(sess.ID)
+}
+
+// emitAwaitingClientActionEntered fires the §16.6 / §11.7 / §7.2 signals
+// every transition into `awaiting_client_action` must produce:
+//   - the §7.2 line 137 status_change(awaiting_client_action) SSE frame,
+//   - the §16.6 EventSessionAwaitingAction operational event (delivered to
+//     a §14 callbackUrl webhook and the §25.5 subscription stream so CI
+//     systems can react without polling per §7.3 line 427), and
+//   - the §11.7 / §16.7 session.awaiting_action_entered audit row.
+//
+// Every step is best-effort: a nil collaborator or marshal failure must
+// never roll back the state transition that triggered it. The caller
+// must only invoke this when sess.State == StateAwaitingClientAction.
+//
+// spec: §7.3 line 427 (callbackUrl session.awaiting_action emission);
+// §16.6 (operational event); §11.7 / §16.7 audit row; §7.2 line 137
+// status_change. F-7.3.13 / F-7.3.25 (audit row).
+func (s *Server) emitAwaitingClientActionEntered(ctx context.Context, sess sessionstore.Session) {
+	if sess.State != session.StateAwaitingClientAction {
+		// Defensive — the helper is only meaningful when the row is in
+		// the awaiting state. Callers in production already guard, but
+		// the no-op keeps the helper self-consistent if a future caller
+		// invokes it from a state mutation that ran a concurrent compare-
+		// and-swap and lost.
+		return
+	}
+	s.emitStatusChange(sess.TenantID, sess.ID, sess.State)
+	if s.opsEmitter != nil {
+		payload := map[string]any{
+			"sessionId": sess.ID,
+			"runtime":   sess.RuntimeRef,
+			"tenantId":  sess.TenantID,
+		}
+		data, _ := json.Marshal(payload)
+		_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
+			Source:          "/v1/sessions",
+			Type:            events.EventSessionAwaitingAction.CloudEventsType(),
+			Severity:        "warning",
+			DataContentType: "application/json",
+			Data:            data,
+		})
+	}
+	if s.lifecycleAudit != nil {
+		s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{
+			EventType:  auditSessionAwaitingActionEntered,
+			TenantID:   sess.TenantID,
+			SessionID:  sess.ID,
+			UserID:     sess.UserID,
+			RuntimeRef: sess.RuntimeRef,
+			State:      string(sess.State),
+			At:         s.clock(),
+		})
+	}
+}
+
+// emitAwaitingClientActionExpired writes the §11.7 audit row for the
+// `awaiting_client_action → expired` edge — the §7.3 line 423 entry path
+// the watchdog drives on inactivity. The terminal lifecycle helpers
+// (emitTerminalLifecycle, recordSessionCompleted) already cover the
+// status_change(expired) / session_complete / session.expired writes;
+// this helper adds only the distinct §7.3 audit row so SIEM/SOC
+// dashboards can filter on the cause of the expiry.
+//
+// spec: §7.3 line 423 (awaiting_client_action → expired entry path);
+// §11.7 / §16.7 audit row. F-7.3.25.
+func (s *Server) emitAwaitingClientActionExpired(ctx context.Context, sess sessionstore.Session) {
+	if s.lifecycleAudit == nil {
+		return
+	}
+	s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{
+		EventType:  auditSessionExpiredInAwaitingAction,
+		TenantID:   sess.TenantID,
+		SessionID:  sess.ID,
+		UserID:     sess.UserID,
+		RuntimeRef: sess.RuntimeRef,
+		State:      string(sess.State),
+		At:         s.clock(),
+	})
 }
 
 // rollRetentionOnTerminal applies the §7.1 line 77 default artifact-

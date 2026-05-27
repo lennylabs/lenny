@@ -160,6 +160,16 @@ func (s *Server) OnSessionTerminal(ctx context.Context, sess sessionstore.Sessio
 	s.recordSessionCompleted(ctx, sess)
 }
 
+// OnSessionExpiredFromAwaitingClientAction is the watchdog's
+// awaiting-action-specific audit hook (§7.3 line 423 entry path). The
+// watchdog fires it before the generic OnSessionTerminal so the §11.7
+// session.expired_in_awaiting_action row precedes the generic
+// session.expired row in the hash-chained audit log. spec: §7.3 line
+// 423; §11.7 / §16.7. F-7.3.25.
+func (s *Server) OnSessionExpiredFromAwaitingClientAction(ctx context.Context, sess sessionstore.Session) {
+	s.emitAwaitingClientActionExpired(ctx, sess)
+}
+
 // recordSessionCompleted runs the side effects of a session reaching a
 // terminal state: it takes the §7.1 final workspace snapshot, releases
 // the session's executor state — for a pod-backed session this shuts
