@@ -82,8 +82,11 @@ const (
 	// §7.3 retry/resume lifecycle audit event types. F-7.3.25 catalogs
 	// the matching closed §16.7 constants in pkg/observability/audit;
 	// these mirrors are the on-row strings the gateway emits.
-	auditSessionAwaitingActionEntered  = "session.awaiting_action_entered"
+	auditSessionResumed                 = "session.resumed"
+	auditSessionRetryAttempted          = "session.retry_attempted"
+	auditSessionAwaitingActionEntered   = "session.awaiting_action_entered"
 	auditSessionExpiredInAwaitingAction = "session.expired_in_awaiting_action"
+	auditSessionCascadeApplied          = "session.cascade_applied"
 
 	// Interaction-resolution audit event types written by the §15.1
 	// approve/deny/respond/dismiss endpoints. The strings match the

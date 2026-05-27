@@ -999,6 +999,13 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	// retryable 503.
 	if s.podBinder != nil {
 		if err := s.resumeOnPod(r.Context(), row); err != nil {
+			// spec: §16.1 catalog — record the failed resume attempt
+			// before unwinding so the {pool, outcome="failure"} counter
+			// advances even when the row transitions straight to failed.
+			// F-7.3.10.
+			if s.incSessionResumeAttempt != nil {
+				s.incSessionResumeAttempt(row.PoolRef, "failure")
+			}
 			s.failSession(r.Context(), tenantID, id)
 			// spec: §7.3 — a resume claim failure surfaces as a retryable
 			// 503; the row was already persisted (resume requires it), so
@@ -1016,6 +1023,28 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
+	}
+	// spec: §16.1 catalog — every resume call increments the
+	// `lenny_session_resume_attempts_total{pool, outcome="success"}`
+	// counter; the matching {outcome="failure"} branch fires above on
+	// the resumeOnPod error path. F-7.3.10.
+	if s.incSessionResumeAttempt != nil {
+		s.incSessionResumeAttempt(updated.PoolRef, "success")
+	}
+	// spec: §11.7 / §16.7 — the session.resumed audit row is appended
+	// after every successful resume so SIEM dashboards can filter on
+	// the §7.3 recovery surface. The matching SSE `session.resumed`
+	// event below is the client-facing signal. F-7.3.18.
+	if s.lifecycleAudit != nil {
+		s.lifecycleAudit.EmitSessionLifecycle(r.Context(), SessionLifecycleEvent{
+			EventType:  auditSessionResumed,
+			TenantID:   updated.TenantID,
+			SessionID:  updated.ID,
+			UserID:     updated.UserID,
+			RuntimeRef: updated.RuntimeRef,
+			State:      string(updated.State),
+			At:         s.clock(),
+		})
 	}
 	// spec: §7.2 line 137 — surface the resume transition (the
 	// resume_pending → resuming → running chain collapses to the
@@ -1268,10 +1297,19 @@ func (s *Server) emitResumedEvent(_ context.Context, row sessionstore.Session, m
 // is responsible for both counters, and a recovery onto a fresh pod
 // is the v1 retry path. retry_count is bumped in the same
 // transaction; the store enforces monotonicity on both columns.
+//
+// On a successful bump, the §16.1 lenny_session_retry_total counter is
+// incremented with the row's FailureClass as the label (or "unknown"
+// when no class is recorded), and the §11.7 / §16.7
+// session.retry_attempted audit row is appended. Both side effects are
+// best-effort and gated on their respective hooks being wired.
+//
 // spec: §4.2 line 156 — "incremented on each pod recovery".
 // spec: §4.2 line 158 — "Retry counters and policy enforcement".
+// spec: §16.1 catalog — lenny_session_retry_total. F-7.3.10.
+// spec: §11.7 / §16.7 — session.retry_attempted audit. F-7.3.18.
 func (s *Server) bumpRecoveryGeneration(ctx context.Context, tenantID, sessionID, podAssignment string) {
-	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.RecoveryGeneration++
 		row.RetryCount++
 		if podAssignment != "" {
@@ -1281,5 +1319,35 @@ func (s *Server) bumpRecoveryGeneration(ctx context.Context, tenantID, sessionID
 	})
 	if err != nil {
 		log.Printf("sessionserver: bump recovery_generation for session %s: %v", sessionID, err)
+		return
+	}
+	s.recordSessionRetry(ctx, updated)
+}
+
+// recordSessionRetry fires the §16.1 lenny_session_retry_total metric
+// and the §11.7 / §16.7 session.retry_attempted audit row for one
+// retry attempt. Best-effort: a nil hook degrades to a no-op without
+// rolling back the row update that triggered it.
+//
+// spec: §16.1 catalog (F-7.3.10); §11.7 / §16.7 (F-7.3.18).
+func (s *Server) recordSessionRetry(ctx context.Context, row sessionstore.Session) {
+	failureClass := string(row.FailureClass)
+	if failureClass == "" {
+		failureClass = "unknown"
+	}
+	if s.incSessionRetry != nil {
+		s.incSessionRetry(failureClass)
+	}
+	if s.lifecycleAudit != nil {
+		s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{
+			EventType:    auditSessionRetryAttempted,
+			TenantID:     row.TenantID,
+			SessionID:    row.ID,
+			UserID:       row.UserID,
+			RuntimeRef:   row.RuntimeRef,
+			State:        string(row.State),
+			FailureClass: failureClass,
+			At:           s.clock(),
+		})
 	}
 }

@@ -116,6 +116,17 @@ type Metrics struct {
 	// pool. It is the denominator of the §6.3 line 352 SDK-warm
 	// demotion-rate ratio. spec: §6.3 line 352, §16.1 line 122.
 	warmpoolClaims *prometheus.CounterVec
+	// sessionRetryTotal counts the §16.1 / §7.3
+	// `lenny_session_retry_total{failure_class}` retries of a logical
+	// session. Each successful pod recovery (the v1 retry path) bumps
+	// the counter; the failure_class label echoes the row's §7.1
+	// FailureClass at retry time. F-7.3.10.
+	sessionRetryTotal *prometheus.CounterVec
+	// sessionResumeAttempts counts the §16.1 / §7.3
+	// `lenny_session_resume_attempts_total{pool, outcome}` counter:
+	// every POST /v1/sessions/{id}/resume that passes the precondition
+	// gate bumps it once with outcome "success" or "failure". F-7.3.10.
+	sessionResumeAttempts *prometheus.CounterVec
 	// workspaceSealDuration is the §7.1 line 112 seal-and-export
 	// completion-time histogram. Observed once per terminal session at
 	// teardown. Labels: `pool` (the session runtime) and `outcome`
@@ -684,6 +695,28 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 / §7.3 — `lenny_session_retry_total{failure_class}` counts
+	// the retries of a logical session. Each pod-recovery retry bumps
+	// the counter with the failure_class label echoing the row's §7.1
+	// FailureClass at retry time. F-7.3.10.
+	sessionRetryTotal, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_retry_total",
+		Help: "Session-level retry attempts by failure class (§7.3, §16.1).",
+	}, []string{"failure_class"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 / §7.3 — `lenny_session_resume_attempts_total{pool, outcome}`
+	// counts every POST /v1/sessions/{id}/resume call that passes the
+	// precondition gate. Outcome is "success" when the row transitions
+	// to running or "failure" when the pod-claim step fails. F-7.3.10.
+	sessionResumeAttempts, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_resume_attempts_total",
+		Help: "Session resume attempts by outcome (§7.3, §16.1).",
+	}, []string{"pool", "outcome"})
+	if err != nil {
+		return nil, err
+	}
 	// §7.1 line 112 — `lenny_workspace_seal_duration_seconds` tracks
 	// seal-and-export completion time across all terminal sessions,
 	// labeled by `pool` (session runtime) and `outcome` (success |
@@ -1087,6 +1120,7 @@ func New() (*Metrics, error) {
 		checkpointEvictionPartialKeysLogged,
 		checkpointDuration, sessionStartupDuration, sessionStartupPhaseDuration,
 		sessionTimeToFirstToken, warmpoolClaims,
+		sessionRetryTotal, sessionResumeAttempts,
 		workspaceSealDuration,
 		checkpointStorageFailure,
 		checkpointEvictionFallback, podClaimFallbackSkipped, slotAssignmentConflict,
@@ -1164,6 +1198,8 @@ func New() (*Metrics, error) {
 		sessionStartupPhaseDuration:          sessionStartupPhaseDuration,
 		sessionTimeToFirstToken:              sessionTimeToFirstToken,
 		warmpoolClaims:                       warmpoolClaims,
+		sessionRetryTotal:                    sessionRetryTotal,
+		sessionResumeAttempts:                sessionResumeAttempts,
 		checkpointStorageFailure:             checkpointStorageFailure,
 		checkpointEvictionFallback:           checkpointEvictionFallback,
 		podClaimFallbackSkipped:              podClaimFallbackSkipped,
@@ -1490,6 +1526,35 @@ func (m *Metrics) IncWarmpoolClaim(pool, runtimeClass string) {
 		return
 	}
 	m.warmpoolClaims.WithLabelValues(pool, runtimeClass).Inc()
+}
+
+// IncSessionRetry increments the §16.1 / §7.3
+// `lenny_session_retry_total{failure_class}` counter for one retry of
+// a logical session. Each successful pod recovery (the v1 retry path,
+// fired by sessionserver.bumpRecoveryGeneration) bumps it once. The
+// failure_class label echoes the session's §7.1 FailureClass at retry
+// time; the caller supplies "unknown" for a session with no recorded
+// class so the label cardinality stays bounded by the §7.1 closed
+// enum. spec: §7.3, §16.1. F-7.3.10.
+func (m *Metrics) IncSessionRetry(failureClass string) {
+	if m == nil {
+		return
+	}
+	m.sessionRetryTotal.WithLabelValues(failureClass).Inc()
+}
+
+// IncSessionResumeAttempt increments the §16.1 / §7.3
+// `lenny_session_resume_attempts_total{pool, outcome}` counter for one
+// POST /v1/sessions/{id}/resume call. Outcome is "success" when the
+// row transitions to running or "failure" when the pod-claim step
+// fails. The pool label echoes the session's §5.2 PoolRef at resume
+// time (empty for a session whose pool was never resolved). spec:
+// §7.3, §16.1. F-7.3.10.
+func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
+	if m == nil {
+		return
+	}
+	m.sessionResumeAttempts.WithLabelValues(pool, outcome).Inc()
 }
 
 // ObserveWorkspaceSealDuration records the §7.1 line 112
