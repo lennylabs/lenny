@@ -1,0 +1,61 @@
+suite: kyverno share-process-namespace ClusterPolicy (§6.4 line 420)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - admission-policies/kyverno-share-process-namespace-policy.yaml
+tests:
+  - it: renders nothing when the kyverno admission-policy block is disabled
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing when only the parent kyverno block is disabled
+    set:
+      admissionPolicies.kyverno.enabled: false
+      admissionPolicies.kyverno.shareProcessNamespace.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing when the shareProcessNamespace sub-rule is disabled
+    set:
+      admissionPolicies.kyverno.enabled: true
+      admissionPolicies.kyverno.shareProcessNamespace.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the kyverno ClusterPolicy when both flags are enabled
+    set:
+      admissionPolicies.kyverno.enabled: true
+      admissionPolicies.kyverno.shareProcessNamespace.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ClusterPolicy
+      - equal:
+          path: apiVersion
+          value: kyverno.io/v1
+      - equal:
+          path: metadata.name
+          value: lenny-disallow-share-process-namespace
+
+  - it: scopes the policy to agent namespaces in Enforce mode
+    set:
+      admissionPolicies.kyverno.enabled: true
+      admissionPolicies.kyverno.shareProcessNamespace.enabled: true
+    asserts:
+      - equal:
+          path: spec.validationFailureAction
+          value: Enforce
+      - equal:
+          path: spec.rules[0].match.any[0].resources.kinds[0]
+          value: Pod
+      - equal:
+          path: spec.rules[0].match.any[0].resources.namespaceSelector.matchExpressions[0].key
+          value: lenny.dev/agent-namespace
+      - equal:
+          path: spec.rules[0].match.any[0].resources.namespaceSelector.matchExpressions[0].values[0]
+          value: "true"

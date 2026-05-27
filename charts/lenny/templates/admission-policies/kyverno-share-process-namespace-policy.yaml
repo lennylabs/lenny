@@ -1,0 +1,72 @@
+{{- /*
+Kyverno ClusterPolicy that rejects `shareProcessNamespace: true` on any
+pod in an agent namespace, satisfying the spec §6.4 line 420 enforcement
+clause:
+
+  "shareProcessNamespace: false is not enforceable via Pod Security
+   Standards; a Kyverno or Gatekeeper policy must be deployed to reject
+   pods in agent namespaces that set shareProcessNamespace: true, as
+   part of the RuntimeClass-aware admission policies described in
+   [Section 17.2]."
+
+This template renders only when both:
+
+  - admissionPolicies.kyverno.enabled is true, AND
+  - admissionPolicies.kyverno.shareProcessNamespace.enabled is true (the
+    default when the Kyverno block is enabled).
+
+The policy is `validate.failureAction: Enforce`, so a matching pod with
+`shareProcessNamespace: true` is rejected at admission. It complements the
+in-tree lenny-pod-security ValidatingAdmissionWebhook (which already
+performs the same rejection); the spec's normative wording names a Kyverno
+or Gatekeeper policy specifically, so the chart ships this as the
+second line of defense.
+
+Operators using Gatekeeper instead of Kyverno should leave
+admissionPolicies.kyverno.enabled at its default (false) and configure an
+equivalent ConstraintTemplate / Constraint pair using the rule documented
+below. The Kyverno CRDs must be present in the cluster for this manifest
+to be accepted by the API server.
+*/ -}}
+{{- if and .Values.admissionPolicies.kyverno.enabled .Values.admissionPolicies.kyverno.shareProcessNamespace.enabled }}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: lenny-disallow-share-process-namespace
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    policies.kyverno.io/title: "Lenny: disallow shareProcessNamespace: true in agent namespaces"
+    policies.kyverno.io/category: "Lenny / §6.4 Pod Filesystem Layout"
+    policies.kyverno.io/severity: "high"
+    policies.kyverno.io/subject: "Pod"
+    policies.kyverno.io/description: >-
+      Spec §6.4 line 420: a Kyverno or Gatekeeper policy must reject pods
+      in agent namespaces that set shareProcessNamespace: true. The
+      in-tree lenny-pod-security webhook performs the same rejection; this
+      policy is the named second line of defense.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: deny-share-process-namespace
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchExpressions:
+                  - key: lenny.dev/agent-namespace
+                    operator: In
+                    values:
+                      - "true"
+      validate:
+        message: >-
+          shareProcessNamespace: true is forbidden on pods in agent
+          namespaces (spec §6.4, §13.1; lenny-pod-security
+          POD_SPEC_HOST_SHARING_FORBIDDEN).
+        pattern:
+          spec:
+            =(shareProcessNamespace): "false"
+{{- end }}

@@ -88,6 +88,33 @@ admissionWebhooks:
       cpu: 200m
       memory: 128Mi
 
+# admissionPolicies configures the §6.4 / §17.2 third-party admission
+# policies the chart can render alongside the in-tree ValidatingWebhook
+# stack. Each block is gated by `.enabled` and produces resources for an
+# external policy controller the deployer is expected to operate (Kyverno
+# or Gatekeeper). The chart does not deploy the policy controller itself;
+# the resources render only when the deployer has the corresponding CRDs
+# installed in the cluster.
+admissionPolicies:
+  # kyverno renders Kyverno ClusterPolicy resources that mirror the
+  # in-tree lenny-pod-security webhook's host-sharing rejection, satisfying
+  # the §6.4 line 420 requirement that "a Kyverno or Gatekeeper policy
+  # must be deployed to reject pods in agent namespaces that set
+  # shareProcessNamespace: true". The deployer must have Kyverno installed
+  # (kyverno.io/v1 ClusterPolicy CRD present) for these manifests to be
+  # accepted by the API server.
+  kyverno:
+    # enabled gates rendering of every Kyverno policy in this block.
+    enabled: false
+    # shareProcessNamespace forbids `shareProcessNamespace: true` on any
+    # pod in an agent namespace (selected by the `lenny.dev/agent-namespace`
+    # label the chart stamps on each namespace). Pairs with the in-tree
+    # lenny-pod-security webhook as a defense-in-depth second layer; the
+    # spec is satisfied even with only the webhook, but a deployer who
+    # disables the webhook keeps the rejection by enabling this policy.
+    shareProcessNamespace:
+      enabled: true
+
 # webhookIngressCIDR is the source CIDR allowed to reach the admission
 # webhook pods (§13.2). The kube-apiserver calls webhooks from a node
 # or control-plane IP that is impractical to pin without cloud-specific
