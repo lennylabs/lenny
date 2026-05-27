@@ -5656,7 +5656,7 @@ now constructs the rotator alongside the boot KeyRing and spawns
 rotation continue to verify through the overlap window, as
 §7.1 line 67 requires.
 
-### - [ ] F-7.1.14 — Coordinator-handoff fence absent [Medium] — OPEN
+### - [x] F-7.1.14 — Coordinator-handoff fence absent [Medium] — CLOSED
 
 §7.1 and §7.2 (lines 145, 214) require `coordination_generation` /
 `recovery_generation` CAS fencing for derive failure writes and
@@ -5667,6 +5667,27 @@ all return zero matches.
 This is consistent with the v1 in-memory store posture, but every
 derive / replay / resume code path that the spec describes as
 "CAS-fenced" simply performs an unguarded UPDATE.
+
+**Resolution (this batch):** The finding's "zero matches" claim was
+stale — recovery_generation/CoordinationGeneration columns and the
+adapter CoordinatorFence/CheckpointBarrier RPCs landed in earlier
+batches (F-7.3.3, F-4.7.2). The remaining gap was the §7.2 line 214
+(a) snapshot-close fence on mid-resume terminal collapse. New
+`Server.bumpCoordinationGenerationOnSnapshotClose` increments
+coordination_generation in a CAS-checked store update; it fires
+whenever a row exits `resuming` (the in-flight resume is aborted),
+including DELETE → cancelled (handleDelete), POST /terminate →
+completed (handleTransition), and the §7.3 ReportSessionFailure paths
+(applyFailureFromResuming → resume_pending or awaiting_client_action).
+`recovery_generation` is intentionally left frozen per §7.2 line 214
+(b). Tests cover the bump on every exit-from-resuming branch and the
+no-bump invariant for pre-attach resume_pending → terminal (§7.2 lines
+219-225). EndpointDelete's precondition table was extended to admit
+`StateResuming` per §7.2 line 197 — without it the snapshot-close path
+was unreachable via the external API. The derive-failure-INSERT fence
+(§7.1 line 145 under `gateway.persistDeriveFailureRows: true`) remains
+documented in derive.go; the same bump helper covers it the day the
+opt-in is wired.
 
 ### - [x] F-7.1.15 — `Treat as a secret credential` policy for `uploadToken` not enforced [Low] — CLOSED
 
@@ -7206,7 +7227,7 @@ dependency; `grep -rn "tokenexchange\.\|tokenservice\." pkg/gateway`
 shows the only consumer is `pkg/gateway/credassign/client.go` (the
 credential-lease path).
 
-### - [ ] F-8.1.3 — 1-F3 (Medium) — Three-layer cycle gate hard-codes platform=false (N1, N3, follow-on §8.2) [Medium] — OPEN
+### - [x] F-8.1.3 — 1-F3 (Medium) — Three-layer cycle gate hard-codes platform=false (N1, N3, follow-on §8.2) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.2.3 — Both report that delegation/service.go:192 passes only Mode, leaving the three AllowSelfRec layer booleans at false and collapsing the cycle gate's three-layer AND.
 
@@ -7241,7 +7262,20 @@ Evidence: `pkg/gateway/delegation/service.go` line 192:
 `grep -rn "PlatformAllowSelfRec" pkg/gateway` returns only the cycle
 package itself; the gateway never sets these flags.
 
-### - [ ] F-8.1.4 — 1-F4 (Medium) — `maxDepth` precedence chain is not resolved at admission (N1, follow-on §8.2.bis) [Medium] — OPEN
+**Resolution (this batch):** `delegation.Options` gained
+`PlatformAllowSelfRecursion bool` and `Policies delegationpolicystore.Store`.
+`Delegate` now builds the §8.2 three-layer cycle Settings with
+PlatformAllowSelfRec from Options (Helm value `gateway.allowSelfRecursion`),
+RuntimeAllowSelfRec from the resolved runtime's `AllowSelfRecursion`,
+and PolicyAllowSelfRec from the runtime's `DelegationPolicyRef` looked
+up in the policy store (an absent ref, missing store, or unresolvable
+policy leaves the layer at the conservative false default). The
+gateway main wires `--gateway-allow-self-recursion`
+(LENNY_GATEWAY_ALLOW_SELF_RECURSION) and shares the same
+`delegationPolicies` handle the admin CRUD already uses. F-8.2.3 is
+closed by the same wiring.
+
+### - [x] F-8.1.4 — 1-F4 (Medium) — `maxDepth` precedence chain is not resolved at admission (N1, follow-on §8.2.bis) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.2.6 — Both report the maxDepth precedence chain not being fully wired so maxDepth is taken verbatim from the caller rather than resolved/enforced.
 
@@ -7280,6 +7314,20 @@ always enforced)".
 Evidence: `pkg/gateway/delegation/service.go` line 199:
 `if req.MaxDepth > 0 { ... }` makes depth enforcement conditional on
 the caller setting it; `grep -rn "ResolveMaxDepth" pkg/gateway` empty.
+
+**Resolution (this batch):** `delegation.Options` gained
+`DefaultMaxDepth int` (and a compile-time `delegation.DefaultMaxDepth = 10`
+matching the spec §8.2.bis line 89 Helm fallback). `Delegate` now
+always calls `lease.ResolveMaxDepth` with the available precedence
+inputs (explicit caller MaxDepth, future policy ceiling slot, Helm
+fallback) and then `lease.CheckDepth` against the resolved value, so
+every admitted lease carries a positive integer maxDepth even when the
+caller omits it. Gateway main wires `--delegation-default-max-depth`
+(LENNY_DELEGATION_DEFAULT_MAX_DEPTH). DelegationPolicy lacks a
+MaxDepth column in v1 so layer 4 stays at zero (no policy-imposed
+ceiling) and the precedence chain falls through to the Helm fallback;
+the policy-ceiling slot is reserved in code for the future extension.
+F-8.2.6 closed by the same wiring.
 
 ### - [x] F-8.1.5 — 1-F5 (Info) — Isolation-monotonicity (N3.c) is implemented and tested [Medium] — CLOSED
 
@@ -7404,7 +7452,7 @@ Implementation:
 
 Consequence: §8.2's "the gateway rejects any `lease_slice` that exceeds the parent's remaining budget" is not enforced. A child session is admitted with no budget binding regardless of what the parent has remaining. The pure lease package exists but is dead code from the gateway path.
 
-### - [ ] F-8.2.3 — `lease.PolicyAllowSelfRec` and `lease.RuntimeAllowSelfRec` are hard-coded `false` — cycle gate's three-layer AND is structurally collapsed to "reject every self-recursion under enforce" [High] — OPEN
+### - [x] F-8.2.3 — `lease.PolicyAllowSelfRec` and `lease.RuntimeAllowSelfRec` are hard-coded `false` — cycle gate's three-layer AND is structurally collapsed to "reject every self-recursion under enforce" [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.1.3 — Both report that delegation/service.go:192 passes only Mode, leaving the three AllowSelfRec layer booleans at false and collapsing the cycle gate's three-layer AND.
 
@@ -7422,6 +7470,12 @@ The three layer-allowSelfRec booleans (`PlatformAllowSelfRec`, `RuntimeAllowSelf
 - A platform that intentionally enables self-recursion (e.g., a "decompose-then-recurse" pattern within the same runtime) cannot do so without flipping `mode` to `permissive`, which disables cycle detection entirely.
 
 The pure `cycle.Decide` is correct; the failure is at the call site, which never reads the Runtime resource's `allowSelfRecursion`, the effective `DelegationPolicy.allowSelfRecursion`, or the Helm value `gateway.allowSelfRecursion`.
+
+**Resolution:** Closed by F-8.1.3 (same wiring). `delegation.Service`
+now builds `cycle.Settings` with all three layer booleans: platform
+from `Options.PlatformAllowSelfRecursion`, runtime from
+`runtimestore.Resolve(...).AllowSelfRecursion`, policy from
+`delegationpolicystore.Get(rt.DelegationPolicyRef).AllowSelfRecursion`.
 
 ### - [ ] F-8.2.4 — File-export materialization (steps 3, 4, 6, 7 of the §8.2 flow) is entirely unimplemented [High] — OPEN
 
@@ -7460,7 +7514,7 @@ Implementation:
 
 Consequence: the operator-facing "where is my admission going?" surface is dark. A deployer running `mode: warn` to scope a rollout has no signal at all (no event, no counter); a deployer running `mode: enforce` cannot see which self-recursion was admitted by the three-layer AND gate because none ever is (see H-3) and the audit trail does not record the decision.
 
-### - [ ] F-8.2.6 — Cycle-detection runs on the parent's lineage but `delegationLease.maxDepth` precedence chain is not fully wired; `maxDepth` is taken verbatim from the caller [High] — OPEN
+### - [x] F-8.2.6 — Cycle-detection runs on the parent's lineage but `delegationLease.maxDepth` precedence chain is not fully wired; `maxDepth` is taken verbatim from the caller [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.1.4 — Both report the maxDepth precedence chain not being fully wired so maxDepth is taken verbatim from the caller rather than resolved/enforced.
 
@@ -7481,6 +7535,16 @@ Implementation:
 - There is no representation of a `delegationLease` document anywhere in the session store: the Session row carries `ParentSessionID`, `IsolationProfile`, and `TracingContext`, but no `MaxDepth`, no `MaxTokenBudget`, no `MaxChildrenTotal`, no `delegationPolicyRef`. Even if a precedence chain were wired, there is nowhere to persist the resolved value on the child for future hops to consult.
 
 Consequence: the §8.2.bis "no chain can grow without bound under any mode" invariant is unenforced when the caller passes 0. The pure resolver is dead code.
+
+**Resolution:** Closed by F-8.1.4 (same wiring). `delegation.Delegate`
+now always calls `lease.ResolveMaxDepth` (followed by
+`lease.EnforcePolicyCeiling` and `lease.CheckDepth`) with the explicit
+caller value, the future policy-ceiling slot, and the Helm fallback
+(`Options.DefaultMaxDepth`, default `delegation.DefaultMaxDepth = 10`).
+Layers 2 (preset) and 3 (runtime default lease) remain reserved for the
+delegation-lease persistence work that ships with F-8.1.1 / F-8.2.2;
+the v1 chain always resolves through caller → Helm fallback so an
+omitted caller value still receives a positive bounded maxDepth.
 
 ### - [ ] F-8.2.7 — Token Service token-exchange leg of child minting (§8.2 lines 59–63) is not invoked by the delegation path [High] — OPEN
 

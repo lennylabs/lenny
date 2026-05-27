@@ -344,3 +344,102 @@ func TestReportSessionFailureStampsPodAssignment(t *testing.T) {
 		t.Errorf("PodAssignment = %q, want evicted-pod-1", got.PodAssignment)
 	}
 }
+
+// spec: §7.2 line 214 (a) — every exit from `resuming` that aborts
+// the in-flight resume bumps coordination_generation by exactly one in
+// the same logical write that records the new state. The bump fences
+// any stale coordinator still mid-restore against the prior generation
+// so its next operational RPC fails the §4.2 CoordinatorFence check.
+// recovery_generation is frozen — the interrupted resume is not retried
+// (the next /resume call mints a fresh one). F-7.1.14.
+func TestReportSessionFailureBumpsCoordinationOnExitFromResuming_spec_7_2_F_7_1_14(t *testing.T) {
+	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
+	row := sessionstore.Session{
+		ID: "sess-cg1", TenantID: "acme", RuntimeRef: "claude-code",
+		State: session.StateResuming, RetryCount: 0,
+		CoordinationGeneration: 7, RecoveryGeneration: 3,
+	}
+	seedRow(t, store, row)
+	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+		TenantID: "acme", SessionID: "sess-cg1", Reason: "workspace_validation_failed",
+	})
+	if err != nil {
+		t.Fatalf("ReportSessionFailure: %v", err)
+	}
+	if disp.To != session.StateAwaitingClientAction {
+		t.Fatalf("To = %q, want awaiting_client_action", disp.To)
+	}
+	got, err := store.Get(context.Background(), "acme", "sess-cg1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CoordinationGeneration != 8 {
+		t.Errorf("CoordinationGeneration = %d, want 8 (bumped by 1)", got.CoordinationGeneration)
+	}
+	if got.RecoveryGeneration != 3 {
+		t.Errorf("RecoveryGeneration = %d, want 3 (frozen on snapshot-close)", got.RecoveryGeneration)
+	}
+}
+
+// spec: §7.2 line 214 — the bump also fires on the retryable+budget
+// branch (resuming → resume_pending) because the in-flight resume is
+// aborted before the next attempt; without the fence, a stale
+// coordinator could still race the new resume_pending → resuming
+// transition. F-7.1.14.
+func TestReportSessionFailureBumpsCoordinationOnResumingToResumePending_spec_7_2_F_7_1_14(t *testing.T) {
+	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
+	row := sessionstore.Session{
+		ID: "sess-cg2", TenantID: "acme", RuntimeRef: "claude-code",
+		State: session.StateResuming, RetryCount: 0,
+		CoordinationGeneration: 1,
+	}
+	seedRow(t, store, row)
+	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+		TenantID: "acme", SessionID: "sess-cg2", Reason: "pod_evicted",
+	})
+	if err != nil {
+		t.Fatalf("ReportSessionFailure: %v", err)
+	}
+	if disp.To != session.StateResumePending {
+		t.Fatalf("To = %q, want resume_pending", disp.To)
+	}
+	got, err := store.Get(context.Background(), "acme", "sess-cg2")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CoordinationGeneration != 2 {
+		t.Errorf("CoordinationGeneration = %d, want 2 (bumped on resuming → resume_pending)", got.CoordinationGeneration)
+	}
+}
+
+// spec: §7.2 line 219-225 — the pre-attach terminal-collapse path
+// (resume_pending → cancelled/completed) intentionally does NOT bump
+// coordination_generation: no pod is attached, no CoordinatorFence
+// round-trip is pending, so the bump is unnecessary. Verify that a
+// failure report from resume_pending bumps RetryCount but leaves the
+// CG counter untouched. F-7.1.14.
+func TestReportSessionFailureDoesNotBumpCoordinationFromResumePending_spec_7_2_F_7_1_14(t *testing.T) {
+	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
+	row := sessionstore.Session{
+		ID: "sess-cg3", TenantID: "acme", RuntimeRef: "claude-code",
+		State: session.StateResumePending, RetryCount: 0,
+		CoordinationGeneration: 11,
+	}
+	seedRow(t, store, row)
+	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+		TenantID: "acme", SessionID: "sess-cg3", Reason: "pod_evicted",
+	})
+	if err != nil {
+		t.Fatalf("ReportSessionFailure: %v", err)
+	}
+	if disp.From != session.StateResumePending {
+		t.Fatalf("From = %q, want resume_pending", disp.From)
+	}
+	got, err := store.Get(context.Background(), "acme", "sess-cg3")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CoordinationGeneration != 11 {
+		t.Errorf("CoordinationGeneration = %d, want 11 (pre-attach collapse must NOT bump)", got.CoordinationGeneration)
+	}
+}

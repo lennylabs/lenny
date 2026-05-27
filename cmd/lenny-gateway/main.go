@@ -284,6 +284,10 @@ func main() {
 		"§4.8 cumulative fail-open escalation ceiling: when a fail-open interceptor errors more than this many times in a rolling 5-minute window, the gateway auto-escalates it to fail-closed and emits interceptor.fail_open_escalated.")
 	delegationMaxInputSize := flag.Int("delegation-max-input-size", envInt("LENNY_DELEGATION_MAX_INPUT_SIZE", delegationpolicystore.DefaultMaxInputSize),
 		"§8.3 default contentPolicy.maxInputSize: the hard byte cap on TaskSpec.input the §4.8 DelegationPolicyEvaluator (PreDelegation, priority 250) enforces. A delegation exceeding it is rejected with INPUT_TOO_LARGE before pod allocation. Defaults to the §8.3 128 KiB. Override via LENNY_DELEGATION_MAX_INPUT_SIZE.")
+	delegationDefaultMaxDepth := flag.Int("delegation-default-max-depth", envInt("LENNY_DELEGATION_DEFAULT_MAX_DEPTH", delegation.DefaultMaxDepth),
+		"§8.2.bis line 89 Helm fallback for delegationLease.maxDepth (gateway.delegation.defaultMaxDepth). Every effective delegation lease MUST carry a positive integer maxDepth; this value is consulted last in the precedence chain (client → preset → runtime default → policy ceiling → Helm fallback), so a delegation request that omits maxDepth still receives a bounded chain. Default 10. Override via LENNY_DELEGATION_DEFAULT_MAX_DEPTH.")
+	gatewayAllowSelfRecursion := flag.Bool("gateway-allow-self-recursion", envFlag("LENNY_GATEWAY_ALLOW_SELF_RECURSION"),
+		"§8.2 LayerPlatform input to the cycle-detection three-layer AND gate (Helm value gateway.allowSelfRecursion). A self-recursive delegation hop (same runtime+pool tuple appears earlier in the lineage) is admitted under mode=enforce iff this flag, the resolved Runtime.allowSelfRecursion, and the resolved DelegationPolicy.allowSelfRecursion are all true. Default false. Override via LENNY_GATEWAY_ALLOW_SELF_RECURSION.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
@@ -1690,10 +1694,25 @@ func main() {
 	}
 
 	// ----- MCP adapter -----
+	// spec: §8.3 — the DelegationPolicy registry feeds both the
+	// admin CRUD surface (below) and the delegation admission gate so
+	// the §8.2 LayerPolicy AllowSelfRecursion input and the §8.2.bis
+	// policy ceiling can both consult the same store. Construct it
+	// here so delegationSvc can read it; the admin router below shares
+	// the same handle.
+	var delegationPolicies delegationpolicystore.Store = delegationpolicystore.NewMemory()
+	if pgPool != nil {
+		delegationPolicies = delegationpolicypg.New(pgPool)
+	}
 	delegationSvc := delegation.NewService(sessions, delegation.Options{
 		Experiments: experiments,
 		Runtimes:    runtimes,
+		Policies:    delegationPolicies,
 		Clock:       clockinject.Now,
+		// §8.2 LayerPlatform — Helm value gateway.allowSelfRecursion.
+		PlatformAllowSelfRecursion: *gatewayAllowSelfRecursion,
+		// §8.2.bis line 89 — Helm value gateway.delegation.defaultMaxDepth.
+		DefaultMaxDepth: *delegationDefaultMaxDepth,
 		// §8.2 / §16.1: the delegation service emits
 		// `lenny_delegation_depth` and
 		// `lenny_delegation_would_have_blocked_total` through the
@@ -1810,10 +1829,9 @@ func main() {
 	}
 
 	// ----- Admin API -----
-	var delegationPolicies delegationpolicystore.Store = delegationpolicystore.NewMemory()
-	if pgPool != nil {
-		delegationPolicies = delegationpolicypg.New(pgPool)
-	}
+	// delegationPolicies was constructed above so the delegation
+	// admission gate (§8.2 LayerPolicy) and the admin CRUD share one
+	// store handle.
 	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
 		WithRuntimes(runtimes).
 		WithUsers(users).

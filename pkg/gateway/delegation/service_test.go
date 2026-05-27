@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -840,5 +841,287 @@ func TestDelegateAdmitsTypeAgentTarget_spec_8_2_F_8_2_8(t *testing.T) {
 	}
 	if res.Child.ID != "sess_child" {
 		t.Errorf("child = %+v, want admitted", res.Child)
+	}
+}
+
+// TestDelegatePlatformLayerWiredFromOptions verifies the §8.2 LayerPlatform
+// input to the three-layer cycle gate flows from
+// Options.PlatformAllowSelfRecursion. The platform layer is one of the
+// three AND gates: a self-recursive hop is admitted only when every
+// layer is true.
+//
+// spec: §8.2 line 73 (LayerPlatform); F-8.1.3 / F-8.2.3.
+func TestDelegatePlatformLayerWiredFromOptions_spec_8_2_F_8_1_3(t *testing.T) {
+	newSvc := func(platformAllow, rtAllow, polAllow bool) *delegation.Service {
+		store := memstore.New()
+		seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
+		seedParent(t, store, "sess_parent", "sess_root", "gemini", "pool-b", isolation.ProfileSandboxed)
+		runtimes := runtimestore.NewMemory()
+		if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+			Name:                "claude",
+			Image:               "lenny/claude@sha256:abc",
+			AllowSelfRecursion:  rtAllow,
+			DelegationPolicyRef: "policy-x",
+		}); err != nil {
+			t.Fatalf("seed runtime: %v", err)
+		}
+		policies := delegationpolicystore.NewMemory()
+		if err := policies.Create(context.Background(), delegationpolicystore.DelegationPolicy{
+			TenantID: "acme", Name: "policy-x", AllowSelfRecursion: polAllow,
+		}); err != nil {
+			t.Fatalf("seed policy: %v", err)
+		}
+		return delegation.NewService(store, delegation.Options{
+			Clock:                      func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+			IDFunc:                     func() string { return "sess_child" },
+			Runtimes:                   runtimes,
+			Policies:                   policies,
+			PlatformAllowSelfRecursion: platformAllow,
+		})
+	}
+
+	selfRec := delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "claude",
+		PoolRef:          "pool-a",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}
+
+	// All three layers true — the hop is admitted under enforce.
+	res, err := newSvc(true, true, true).Delegate(context.Background(), "acme", selfRec)
+	if err != nil {
+		t.Fatalf("all-true: got %v, want admitted", err)
+	}
+	if res.Child.ID == "" {
+		t.Error("all-true: child must be created")
+	}
+
+	// Platform false — the hop is rejected with BlockedBy=platform.
+	_, err = newSvc(false, true, true).Delegate(context.Background(), "acme", selfRec)
+	var rej *cycle.Rejection
+	if !errors.As(err, &rej) {
+		t.Fatalf("platform-false: got %v, want cycle.Rejection", err)
+	}
+	if rej.EffectiveSettings.PlatformAllowSelfRec {
+		t.Error("PlatformAllowSelfRec must be false when the option is false")
+	}
+	if rej.BlockedBy != cycle.LayerPlatform {
+		t.Errorf("BlockedBy = %q, want %q (platform-first canonical order)", rej.BlockedBy, cycle.LayerPlatform)
+	}
+}
+
+// TestDelegatePolicyLayerWiredFromStore verifies the §8.2 LayerPolicy
+// input reads DelegationPolicy.AllowSelfRecursion when the resolved
+// Runtime carries a DelegationPolicyRef. With platform+runtime both
+// true, the policy layer alone decides admission.
+//
+// spec: §8.2 line 75 (LayerPolicy); F-8.1.3 / F-8.2.3.
+func TestDelegatePolicyLayerWiredFromStore_spec_8_2_F_8_2_3(t *testing.T) {
+	build := func(polRef string, polAllow bool, withPolicy bool) *delegation.Service {
+		store := memstore.New()
+		seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
+		seedParent(t, store, "sess_parent", "sess_root", "gemini", "pool-b", isolation.ProfileSandboxed)
+		runtimes := runtimestore.NewMemory()
+		if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+			Name:                "claude",
+			Image:               "lenny/claude@sha256:abc",
+			AllowSelfRecursion:  true,
+			DelegationPolicyRef: polRef,
+		}); err != nil {
+			t.Fatalf("seed runtime: %v", err)
+		}
+		opts := delegation.Options{
+			IDFunc:                     func() string { return "sess_child" },
+			Runtimes:                   runtimes,
+			PlatformAllowSelfRecursion: true,
+		}
+		if withPolicy {
+			policies := delegationpolicystore.NewMemory()
+			if err := policies.Create(context.Background(), delegationpolicystore.DelegationPolicy{
+				TenantID: "acme", Name: "policy-x", AllowSelfRecursion: polAllow,
+			}); err != nil {
+				t.Fatalf("seed policy: %v", err)
+			}
+			opts.Policies = policies
+		}
+		return delegation.NewService(store, opts)
+	}
+	req := delegation.Request{
+		ParentSessionID: "sess_parent", RuntimeRef: "claude", PoolRef: "pool-a",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}
+
+	t.Run("policy-true admits", func(t *testing.T) {
+		if _, err := build("policy-x", true, true).Delegate(context.Background(), "acme", req); err != nil {
+			t.Fatalf("policy-true: got %v, want admitted", err)
+		}
+	})
+	t.Run("policy-false blocks at policy layer", func(t *testing.T) {
+		_, err := build("policy-x", false, true).Delegate(context.Background(), "acme", req)
+		var rej *cycle.Rejection
+		if !errors.As(err, &rej) {
+			t.Fatalf("policy-false: got %v, want cycle.Rejection", err)
+		}
+		if rej.EffectiveSettings.PolicyAllowSelfRec {
+			t.Error("PolicyAllowSelfRec must be false when the policy declares false")
+		}
+		if rej.BlockedBy != cycle.LayerPolicy {
+			t.Errorf("BlockedBy = %q, want %q", rej.BlockedBy, cycle.LayerPolicy)
+		}
+	})
+	t.Run("missing policy ref leaves layer false", func(t *testing.T) {
+		// Runtime carries no DelegationPolicyRef and the policy store is
+		// nil — the policy layer remains at its conservative false default.
+		_, err := build("", false, false).Delegate(context.Background(), "acme", req)
+		var rej *cycle.Rejection
+		if !errors.As(err, &rej) {
+			t.Fatalf("missing-ref: got %v, want cycle.Rejection", err)
+		}
+		if rej.EffectiveSettings.PolicyAllowSelfRec {
+			t.Error("PolicyAllowSelfRec must default false when no DelegationPolicyRef is set")
+		}
+	})
+	t.Run("unresolvable policy leaves layer false", func(t *testing.T) {
+		// Runtime references a policy that does not exist in the store.
+		// The lookup fails and the layer remains false.
+		_, err := build("missing-policy", true, true).Delegate(context.Background(), "acme", req)
+		var rej *cycle.Rejection
+		if !errors.As(err, &rej) {
+			t.Fatalf("missing-policy: got %v, want cycle.Rejection", err)
+		}
+		if rej.EffectiveSettings.PolicyAllowSelfRec {
+			t.Error("PolicyAllowSelfRec must default false when the policy ref is unresolvable")
+		}
+	})
+}
+
+// TestDelegateMaxDepthFallsThroughToHelmDefault verifies §8.2.bis line 89:
+// a delegation that omits explicit MaxDepth still receives a bounded
+// chain via the Helm fallback (DefaultMaxDepth). A child at depth equal
+// to the fallback is rejected; a child below it is admitted.
+//
+// spec: §8.2.bis line 89; F-8.1.4 / F-8.2.6.
+func TestDelegateMaxDepthFallsThroughToHelmDefault_spec_8_2_bis_F_8_1_4(t *testing.T) {
+	mk := func(fallback int, lineageLen int) (*delegation.Service, string) {
+		store := memstore.New()
+		parent := ""
+		for i := 0; i < lineageLen; i++ {
+			id := "sess_" + string(rune('a'+i))
+			seedParent(t, store, id, parent, "r"+string(rune('0'+i)), "p"+string(rune('0'+i)), isolation.ProfileSandboxed)
+			parent = id
+		}
+		return delegation.NewService(store, delegation.Options{
+			Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+			IDFunc:          func() string { return "sess_child" },
+			DefaultMaxDepth: fallback,
+		}), parent
+	}
+
+	t.Run("caller omits MaxDepth — Helm fallback admits within budget", func(t *testing.T) {
+		// 3-deep lineage (root → a → b), parent depth = 2; fallback=10
+		// admits a child at depth 3.
+		svc, parentID := mk(10, 3)
+		res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+			ParentSessionID:  parentID,
+			RuntimeRef:       "r9",
+			PoolRef:          "p9",
+			IsolationProfile: isolation.ProfileSandboxed,
+			// MaxDepth omitted — Helm fallback applies.
+		})
+		if err != nil {
+			t.Fatalf("Delegate: %v", err)
+		}
+		if res.Depth != 3 {
+			t.Errorf("Depth = %d, want 3", res.Depth)
+		}
+	})
+	t.Run("caller omits MaxDepth — Helm fallback rejects at the cap", func(t *testing.T) {
+		// Lineage depth equal to fallback (parent at depth fallback-1
+		// = 2 with fallback=3) — a child would be depth 3, exceeding 3.
+		// Actually depth-3 admission requires CheckDepth(parent=2,
+		// resolvedMax=3) which succeeds, so build a 4-deep lineage:
+		// parent depth = 3, fallback = 3 → child at depth 4 > 3 rejects.
+		svc, parentID := mk(3, 4)
+		_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+			ParentSessionID:  parentID,
+			RuntimeRef:       "r9",
+			PoolRef:          "p9",
+			IsolationProfile: isolation.ProfileSandboxed,
+		})
+		var de *lease.DepthExceededError
+		if !errors.As(err, &de) {
+			t.Fatalf("got %v, want DepthExceededError under Helm fallback", err)
+		}
+		if de.Max != 3 {
+			t.Errorf("DepthExceededError.Max = %d, want 3", de.Max)
+		}
+	})
+	t.Run("zero Options.DefaultMaxDepth resolves to compile-time DefaultMaxDepth (10)", func(t *testing.T) {
+		// fallback=0 must round up to delegation.DefaultMaxDepth (10) so
+		// no chain grows unbounded.
+		svc, parentID := mk(0, 3)
+		res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+			ParentSessionID:  parentID,
+			RuntimeRef:       "r9",
+			PoolRef:          "p9",
+			IsolationProfile: isolation.ProfileSandboxed,
+		})
+		if err != nil {
+			t.Fatalf("Delegate: %v", err)
+		}
+		if res.Depth != 3 {
+			t.Errorf("Depth = %d, want 3", res.Depth)
+		}
+		// And an 11-deep lineage (parent depth 10) hits the
+		// DefaultMaxDepth=10 ceiling: child would be depth 11 > 10.
+		// Use a fresh runtime/pool tuple for the child so cycle
+		// detection (each ancestor uses r{i}/p{i}) does not fire and
+		// the depth check is the only gate.
+		deepSvc, deepParent := mk(0, 11)
+		_, err = deepSvc.Delegate(context.Background(), "acme", delegation.Request{
+			ParentSessionID:  deepParent,
+			RuntimeRef:       "rZ",
+			PoolRef:          "pZ",
+			IsolationProfile: isolation.ProfileSandboxed,
+		})
+		var de *lease.DepthExceededError
+		if !errors.As(err, &de) {
+			t.Fatalf("got %v, want DepthExceededError at the DefaultMaxDepth ceiling", err)
+		}
+		if de.Max != delegation.DefaultMaxDepth {
+			t.Errorf("DepthExceededError.Max = %d, want %d", de.Max, delegation.DefaultMaxDepth)
+		}
+	})
+}
+
+// TestDelegateExplicitMaxDepthBeatsHelmFallback verifies §8.2.bis
+// precedence: the explicit client-supplied MaxDepth overrides the Helm
+// fallback. A small explicit value can reject a chain the fallback
+// would have admitted.
+//
+// spec: §8.2.bis lines 81-89; F-8.1.4 / F-8.2.6.
+func TestDelegateExplicitMaxDepthBeatsHelmFallback_spec_8_2_bis(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_root", "", "r0", "p0", isolation.ProfileSandboxed)
+	seedParent(t, store, "sess_a", "sess_root", "r1", "p1", isolation.ProfileSandboxed)
+	seedParent(t, store, "sess_parent", "sess_a", "r2", "p2", isolation.ProfileSandboxed)
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:          func() string { return "sess_child" },
+		DefaultMaxDepth: 10,
+	})
+	// Parent depth = 2; explicit MaxDepth=2 rejects (child would be 3).
+	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "r3",
+		PoolRef:          "p3",
+		IsolationProfile: isolation.ProfileSandboxed,
+		MaxDepth:         2,
+	})
+	var de *lease.DepthExceededError
+	if !errors.As(err, &de) {
+		t.Fatalf("got %v, want DepthExceededError under explicit MaxDepth=2", err)
+	}
+	if de.Max != 2 {
+		t.Errorf("DepthExceededError.Max = %d, want 2 (explicit beats fallback 10)", de.Max)
 	}
 }

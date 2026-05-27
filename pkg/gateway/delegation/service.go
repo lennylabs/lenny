@@ -24,11 +24,20 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/experiment"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
+
+// DefaultMaxDepth is the §8.2.bis Helm fallback for
+// `gateway.delegation.defaultMaxDepth`. The spec mandates a positive
+// integer maxDepth on every effective lease, so the service uses this
+// when no preceding precedence layer supplied one.
+//
+// spec: §8.2.bis line 89.
+const DefaultMaxDepth = 10
 
 // Request is a §8.5 `lenny/delegate_task` invocation.
 type Request struct {
@@ -91,11 +100,23 @@ type Service struct {
 	store            sessionstore.Store
 	experiments      experimentstore.Store
 	runtimes         runtimestore.Store
+	policies         delegationpolicystore.Store
 	metrics          MetricsRecorder
 	experimentRouter ExperimentRouter
 	clock            func() time.Time
 	idFn             func() string
 	mode             cycle.Mode
+	// platformAllowSelfRec is the §8.2 Layer-1 platform-level opt-in
+	// for self-recursive delegation hops (Helm value
+	// `gateway.allowSelfRecursion`, default false). When false the
+	// platform layer of the three-layer AND gate rejects every
+	// self-recursive hop regardless of runtime / policy opt-ins.
+	platformAllowSelfRec bool
+	// defaultMaxDepth is the §8.2.bis Helm fallback maxDepth applied
+	// when no explicit caller / preset / runtime-default / policy
+	// ceiling supplied one. Always positive (DefaultMaxDepth when the
+	// caller passed 0).
+	defaultMaxDepth int
 }
 
 // Options configures a Service.
@@ -124,6 +145,36 @@ type Options struct {
 	// hops regardless of the target runtime's declared value.
 	Runtimes runtimestore.Store
 
+	// Policies, when set, supplies the §8.3 DelegationPolicy registry
+	// so the §8.2 cycle-detection gate reads the effective policy's
+	// allowSelfRecursion (the LayerPolicy input) and the §8.2.bis
+	// maxDepth precedence chain can consult the policy ceiling. Nil
+	// leaves the policy layer at its conservative false default,
+	// rejecting self-recursive hops regardless of the policy's
+	// declared value.
+	//
+	// spec: §8.2 line 75 (LayerPolicy); §8.2.bis line 86 (policy ceiling).
+	Policies delegationpolicystore.Store
+
+	// PlatformAllowSelfRecursion drives the §8.2 LayerPlatform input
+	// to the three-layer AND gate (Helm value
+	// `gateway.allowSelfRecursion`). Defaults to false — the platform
+	// layer rejects every self-recursive hop unless the operator
+	// explicitly opts in.
+	//
+	// spec: §8.2 line 73 (LayerPlatform).
+	PlatformAllowSelfRecursion bool
+
+	// DefaultMaxDepth is the §8.2.bis Helm fallback for
+	// `gateway.delegation.defaultMaxDepth`. Defaults to DefaultMaxDepth
+	// (10) when zero. The §8.2.bis precedence chain consults it last so
+	// every admitted delegation lease carries a positive integer
+	// maxDepth, even when the caller and the policy ceiling are both
+	// unset.
+	//
+	// spec: §8.2.bis line 89.
+	DefaultMaxDepth int
+
 	// Metrics, when set, receives §8.2 delegation admission and
 	// cycle-gate observations. Nil disables emission.
 	Metrics MetricsRecorder
@@ -150,15 +201,22 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 	if mode == "" {
 		mode = cycle.ModeEnforce
 	}
+	maxDepth := opts.DefaultMaxDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxDepth
+	}
 	return &Service{
-		store:            store,
-		experiments:      opts.Experiments,
-		runtimes:         opts.Runtimes,
-		metrics:          opts.Metrics,
-		experimentRouter: opts.ExperimentRouter,
-		clock:            clock,
-		idFn:             idFn,
-		mode:             mode,
+		store:                store,
+		experiments:          opts.Experiments,
+		runtimes:             opts.Runtimes,
+		policies:             opts.Policies,
+		metrics:              opts.Metrics,
+		experimentRouter:     opts.ExperimentRouter,
+		clock:                clock,
+		idFn:                 idFn,
+		mode:                 mode,
+		platformAllowSelfRec: opts.PlatformAllowSelfRecursion,
+		defaultMaxDepth:      maxDepth,
 	}
 }
 
@@ -261,21 +319,46 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 	}
 
 	target := cycle.Identity{RuntimeName: req.RuntimeRef, PoolName: req.PoolRef}
-	// §5.1 / §8.2: the runtime layer of the three-layer cycle gate reads
-	// the resolved target runtime's allowSelfRecursion. A missing
-	// registry or an unresolvable runtime leaves the layer false (the
-	// conservative default that rejects self-recursive hops). The
-	// resolved runtime is also the §8.2 line 50 type gate: a
+	// §8.2 three-layer AND gate (spec lines 66-79). Each layer defaults
+	// to the conservative false (rejects self-recursive hops). A layer
+	// flips true only when the operator explicitly opted in:
+	//   - Layer 1 (Platform): Helm value `gateway.allowSelfRecursion`,
+	//     carried on the Service as platformAllowSelfRec.
+	//   - Layer 2 (Runtime): the resolved target Runtime's
+	//     allowSelfRecursion field (§5.1 line 69). A missing registry
+	//     or unresolvable runtime leaves the layer false.
+	//   - Layer 3 (Policy): the resolved DelegationPolicy's
+	//     allowSelfRecursion field (§8.3 line 100). The policy is
+	//     named on the runtime via DelegationPolicyRef; a missing
+	//     reference, missing policy, or absent policy registry leaves
+	//     the layer false.
+	//
+	// The resolved runtime is also the §8.2 line 50 type gate: a
 	// `type: mcp` runtime is rejected here as defence-in-depth so a
 	// caller that bypasses the MCP shim (REST / non-MCP entry points)
 	// still cannot delegate onto a non-agent target.
-	settings := cycle.Settings{Mode: s.mode}
+	settings := cycle.Settings{
+		Mode:                 s.mode,
+		PlatformAllowSelfRec: s.platformAllowSelfRec,
+	}
+	var policyCeiling int
 	if s.runtimes != nil {
 		if rt, err := runtimestore.Resolve(ctx, s.runtimes, req.RuntimeRef); err == nil {
 			if rt.Type == runtimestore.TypeMCP {
 				return Result{}, ErrTargetNotAgent
 			}
 			settings.RuntimeAllowSelfRec = rt.AllowSelfRecursion
+			if s.policies != nil && rt.DelegationPolicyRef != "" {
+				if pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef); err == nil && pol.IsActive() {
+					settings.PolicyAllowSelfRec = pol.AllowSelfRecursion
+					// §8.2.bis layer 4 ceiling. DelegationPolicy has no
+					// dedicated MaxDepth field in v1; the policy-ceiling
+					// slot remains zero (no policy-imposed ceiling) and
+					// the precedence chain falls through to the Helm
+					// fallback. Reserved for the §8.3 ceiling extension.
+					policyCeiling = 0
+				}
+			}
 		}
 	}
 	decision := cycle.Decide(lineage, target, settings)
@@ -284,12 +367,25 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		return Result{}, cycle.ToError(decision, target)
 	}
 
-	// §8.2.bis depth check. The child's depth is the parent's depth
-	// + 1; CheckDepth rejects when that would exceed MaxDepth.
-	if req.MaxDepth > 0 {
-		if err := lease.CheckDepth(depth, req.MaxDepth); err != nil {
-			return Result{}, err
-		}
+	// §8.2.bis depth check (lines 81-89). The precedence chain is
+	// explicit-client → preset → runtime-default → policy-ceiling →
+	// Helm-fallback. v1 wires layers 1, 4, 5 (caller, policy ceiling,
+	// Helm fallback); presets and runtime-level default leases are
+	// future work. ResolveMaxDepth returns the first positive value,
+	// always falling through to defaultMaxDepth so the resolved value
+	// is positive. CheckDepth then enforces "the child's depth +1 must
+	// not exceed maxDepth".
+	resolvedDepth, err := lease.ResolveMaxDepth(lease.MaxDepthInputs{
+		ExplicitClient: req.MaxDepth,
+		PolicyCeiling:  policyCeiling,
+		HelmFallback:   s.defaultMaxDepth,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	resolvedDepth = lease.EnforcePolicyCeiling(resolvedDepth, policyCeiling)
+	if err := lease.CheckDepth(depth, resolvedDepth); err != nil {
+		return Result{}, err
 	}
 
 	userID := req.UserID

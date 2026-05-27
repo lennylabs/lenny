@@ -1598,6 +1598,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		s.writePreconditionError(w, err)
 		return
 	}
+	fromState := row.State
 	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
 		row.State = session.StateCancelled
 		return nil
@@ -1605,6 +1606,14 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
+	}
+	// spec: §7.2 line 214 (a) — DELETE during the internal `resuming`
+	// transient is the canonical resuming → cancelled snapshot-close
+	// edge (§7.2 line 197). Bump coordination_generation in the same
+	// logical write so any stale coordinator's subsequent RPC fails
+	// the §4.2 CoordinatorFence check. F-7.1.14.
+	if fromState == session.StateResuming {
+		s.bumpCoordinationGenerationOnSnapshotClose(r.Context(), tenantID, id)
 	}
 	s.recordSessionCompleted(r.Context(), updated)
 	s.writeSession(w, http.StatusOK, updated)
@@ -1634,6 +1643,7 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 			s.writePreconditionError(w, err)
 			return
 		}
+		fromState := row.State
 		updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
 			transition(row)
 			return nil
@@ -1643,6 +1653,18 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 			return
 		}
 		if session.IsTerminal(updated.State) {
+			// spec: §7.2 line 214 (a) — when the terminal write
+			// collapses an in-flight resume (resuming → cancelled /
+			// completed / failed), bump coordination_generation in the
+			// same logical write so any stale coordinator's subsequent
+			// RPC fails the CoordinatorFence check. The pre-attach
+			// counterparts (resume_pending → cancelled / completed,
+			// §7.2 lines 219-225) intentionally do NOT bump because no
+			// pod is attached and no CoordinatorFence round-trip is
+			// pending. F-7.1.14.
+			if fromState == session.StateResuming {
+				s.bumpCoordinationGenerationOnSnapshotClose(r.Context(), tenantID, id)
+			}
 			s.recordSessionCompleted(r.Context(), updated)
 		} else {
 			// spec: §7.2 line 137 — surface a non-terminal transition

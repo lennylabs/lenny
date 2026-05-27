@@ -1622,6 +1622,47 @@ func (s *Server) emitResumedEvent(_ context.Context, row sessionstore.Session, m
 	s.publishEvent(row.TenantID, row.ID, "session.resumed", payload)
 }
 
+// bumpCoordinationGenerationOnSnapshotClose increments the §4.2
+// coordination_generation counter on a session row as part of the §7.2
+// line 214 snapshot-close terminal-collapse sequence. The bump runs in
+// the same store update that writes the terminal state, fencing any
+// stale coordinator still attempting resume against the prior
+// generation — per §4.2 CoordinatorFence preconditions, any subsequent
+// operational RPC carrying a lower coordination_generation is rejected.
+// recovery_generation is intentionally left untouched: the interrupted
+// resume attempt is recorded as failed-by-terminal and is not retried,
+// so no new recovery is minted (§7.2 line 214 (b)).
+//
+// This helper is the gateway's authoritative CAS-fence primitive for
+// the resuming → {cancelled, completed, failed} edges (§7.2 lines
+// 209-216). The store's monotonicity floor (sessionstore/pgstore guards
+// + memstore guards) blocks any update that tries to decrement the
+// counter, so a duplicate concurrent transition observes the second
+// generation rather than the first.
+//
+// The bump is best-effort: a store error is logged and the caller's
+// terminal write is already durable, so the only consequence is that
+// a stale coordinator's next RPC might pass the CG check (degrading to
+// the next layer of defence). The session's state is the authoritative
+// barrier; the bump is the §7.2 belt-and-braces fence.
+//
+// Returns whether the bump succeeded. Callers may use the boolean for
+// metric / audit emission; v1 only logs on failure.
+//
+// spec: §7.2 line 214 (a) — snapshot-close coordination_generation bump.
+// spec: §4.2 line 158 — CoordinatorFence preconditions. F-7.1.14.
+func (s *Server) bumpCoordinationGenerationOnSnapshotClose(ctx context.Context, tenantID, sessionID string) bool {
+	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		row.CoordinationGeneration++
+		return nil
+	})
+	if err != nil {
+		log.Printf("sessionserver: bump coordination_generation for session %s: %v", sessionID, err)
+		return false
+	}
+	return true
+}
+
 // bumpRecoveryGeneration increments the §4.2 recovery_generation
 // counter and persists the recovered pod assignment in the same
 // transaction. The store's monotonicity floor ensures the counter

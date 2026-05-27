@@ -235,7 +235,14 @@ var preconditionTable = map[Endpoint]endpointRule{
 		},
 	},
 	EndpointDelete: {
-		baseStates: nonTerminalStates(),
+		// spec: §7.2 line 197 — `resuming → cancelled` via DELETE is
+		// the canonical mid-resume cancel edge. StateResuming is
+		// excluded from AllStates() (per §15.1 line 621 collapse rule)
+		// so nonTerminalStates() does not pick it up; admit it
+		// explicitly so a DELETE landing during the internal
+		// `resuming` transient drives the §7.2 line 214 snapshot-close
+		// fence. F-7.1.14.
+		baseStates: append(nonTerminalStates(), StateResuming),
 	},
 }
 

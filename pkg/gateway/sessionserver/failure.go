@@ -196,19 +196,31 @@ func (s *Server) applyFailureFromActive(ctx context.Context, row sessionstore.Se
 // re-enter resume_pending; retryable-exhausted writes
 // awaiting_client_action. The resuming watchdog has the same disposition
 // on timeout, but a direct failure report shortcuts the timeout wait.
+//
+// spec: §7.2 line 214 (a) — every exit from `resuming` that aborts the
+// in-flight resume bumps coordination_generation so any stale
+// coordinator's subsequent RPC fails the §4.2 CoordinatorFence check.
+// Both branches (re-enter resume_pending, write awaiting_client_action)
+// abort the in-flight resume's restoration RPCs, so both bump. F-7.1.14.
 func (s *Server) applyFailureFromResuming(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int) (FailureDisposition, error) {
 	from := row.State
 	retryable := classification == session.FailureRetryable
 	budgetLeft := row.RetryCount < int64(maxRetries)
+	var disp FailureDisposition
+	var err error
 	switch {
 	case retryable && budgetLeft:
-		return s.transitionToResumePending(ctx, row, rep, classification, maxRetries)
+		disp, err = s.transitionToResumePending(ctx, row, rep, classification, maxRetries)
 	default:
 		// Both retryable-exhausted and non-retryable from resuming go
 		// to awaiting_client_action per §6.2 line 250.
-		return s.transitionToAwaitingClientAction(ctx, row, rep, classification, maxRetries, from)
+		disp, err = s.transitionToAwaitingClientAction(ctx, row, rep, classification, maxRetries, from)
 	}
+	if err == nil && disp.From == session.StateResuming && disp.To != session.StateResuming {
+		s.bumpCoordinationGenerationOnSnapshotClose(ctx, row.TenantID, row.ID)
+	}
+	return disp, err
 }
 
 // transitionToResumePending writes from → resume_pending, bumps
