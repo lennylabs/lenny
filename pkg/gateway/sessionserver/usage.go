@@ -170,6 +170,33 @@ func (s *Server) OnSessionExpiredFromAwaitingClientAction(ctx context.Context, s
 	s.emitAwaitingClientActionExpired(ctx, sess)
 }
 
+// OnSessionEnteredAwaitingClientAction is the watchdog's
+// awaiting-action ENTRY hook (§6.2 lines 249, 292 — resume_pending
+// wall-clock cap and resuming retries-exhausted branch). The hook
+// drives the §7.3 line 427 session.awaiting_action webhook, the §16.6
+// operational event, and the §11.7 / §16.7
+// session.awaiting_action_entered audit row through the existing
+// emitAwaitingClientActionEntered helper. Best-effort: a nil
+// collaborator never rolls back the watchdog's state transition.
+// spec: §6.2 line 249/292 (entry from resuming/resume_pending);
+// §7.3 line 427 (webhook); §11.7 / §16.7. F-6.2.14.
+func (s *Server) OnSessionEnteredAwaitingClientAction(ctx context.Context, sess sessionstore.Session) {
+	s.emitAwaitingClientActionEntered(ctx, sess)
+}
+
+// OnSessionRetryAttempt is the watchdog's resuming → resume_pending
+// retry hook (§6.2 line 249). The watchdog fires it after the row
+// update so the §16.1 lenny_session_retry_total counter and the §11.7
+// / §16.7 session.retry_attempted audit row see the watchdog-initiated
+// retry alongside the gateway-initiated retries the
+// bumpRecoveryGeneration path already covers.
+// spec: §6.2 line 249 (resuming → resume_pending retry path);
+// §16.1 lenny_session_retry_total; §11.7 / §16.7 session.retry_attempted.
+// F-6.2.14.
+func (s *Server) OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Session) {
+	s.recordSessionRetry(ctx, sess)
+}
+
 // recordSessionCompleted runs the side effects of a session reaching a
 // terminal state: it takes the §7.1 final workspace snapshot, releases
 // the session's executor state — for a pod-backed session this shuts

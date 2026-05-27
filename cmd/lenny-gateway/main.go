@@ -286,6 +286,12 @@ func main() {
 		"§8.3 default contentPolicy.maxInputSize: the hard byte cap on TaskSpec.input the §4.8 DelegationPolicyEvaluator (PreDelegation, priority 250) enforces. A delegation exceeding it is rejected with INPUT_TOO_LARGE before pod allocation. Defaults to the §8.3 128 KiB. Override via LENNY_DELEGATION_MAX_INPUT_SIZE.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
+	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
+		envInt("LENNY_MAX_RESUME_PENDING_SECONDS", watchdog.DefaultMaxResumePendingSeconds),
+		"§6.2 line 292 wall-clock cap on resume_pending: a session that has waited this long for a pod to become available transitions to awaiting_client_action. Mirrors the per-session retryPolicy.maxResumeWindowSeconds default; the per-session value tightens the platform cap. Default 900s. Override via LENNY_MAX_RESUME_PENDING_SECONDS.")
+	maxResumingSeconds := flag.Int("max-resuming-seconds",
+		envInt("LENNY_MAX_RESUMING_SECONDS", watchdog.DefaultMaxResumingSeconds),
+		"§6.2 line 249 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS.")
 	agentNamespace := flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	clusterQPS := flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
@@ -1559,7 +1565,7 @@ func main() {
 		RetryPolicyCaps: session.RetryPolicyCaps{
 			MaxRetries:             *retryMaxRetries,
 			MaxSessionAgeSeconds:   watchdog.DefaultMaxSessionAgeSeconds,
-			MaxResumeWindowSeconds: watchdog.DefaultMaxAwaitingClientActionSeconds,
+			MaxResumeWindowSeconds: *maxResumePendingSeconds,
 		},
 		// §7.3 / §16.1 — retry + resume metric emitters. The
 		// watchdog/coordinator path bumps retryCount on each pod
@@ -2443,8 +2449,18 @@ func main() {
 	// the watchdog so its `created`-state budget matches the
 	// uploadToken TTL and the createdsweeper deadline.
 	// spec: §7.1 line 58.
+	// F-6.2.14: thread the §6.2 line 249 resuming watchdog and §6.2 line
+	// 292 resume_pending wall-clock cap into the gateway watchdog. The
+	// resume_pending cap defaults to maxResumeWindowSeconds (which the
+	// per-session retryPolicy.maxResumeWindowSeconds tightens); resuming
+	// is the §6.2 fixed 300s budget. MaxRetries falls through to the
+	// same deployer flag the §4.8 RetryPolicyEvaluator uses so the
+	// resuming → resume_pending retry counts against the same budget.
 	wd := watchdog.New(sessions, tenantsLister{tenants}, watchdog.Config{
-		MaxCreatedSeconds: *maxCreatedStateTimeoutSeconds,
+		MaxCreatedSeconds:       *maxCreatedStateTimeoutSeconds,
+		MaxResumePendingSeconds: *maxResumePendingSeconds,
+		MaxResumingSeconds:      *maxResumingSeconds,
+		MaxRetries:              *retryMaxRetries,
 	}, nil).
 		WithBilling(billing).
 		WithTreeArchive(treeArchive).
@@ -2463,6 +2479,14 @@ func main() {
 		if res.Expirations > 0 {
 			log.Printf("lenny-gateway: watchdog expired %d sessions past their §11.3 deadline",
 				res.Expirations)
+		}
+		if res.ResumePendingTimeouts > 0 {
+			log.Printf("lenny-gateway: watchdog transitioned %d resume_pending sessions to awaiting_client_action per §6.2 line 292",
+				res.ResumePendingTimeouts)
+		}
+		if res.ResumingTimeouts > 0 {
+			log.Printf("lenny-gateway: watchdog fired §6.2 line 249 resuming watchdog on %d sessions: %v",
+				res.ResumingTimeouts, res.PerResumingOutcome)
 		}
 	})
 

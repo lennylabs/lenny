@@ -4514,13 +4514,15 @@ Implementation tree audited:
 - **Impl:** The adapter speaks the `interrupt_request` / `interrupt_acknowledged` lifecycle channel (`pkg/adapter/lifecyclechannel.go:182`) and the proto carries `STATUS_INTERRUPT_TIMEOUT` (`pkg/adapter/lifecycle.go:87`), but no gateway handler converts an interrupt into a Sandbox phase change. There is no `/v1/sessions/{id}/interrupt` HTTP handler, no session-state `suspended` writer, no `maxSuspendedPodHoldSeconds` timer.
 - **Effect:** Interrupts surface to the adapter but do not produce the suspended-state semantics §6.2 describes. The `suspended → resume_pending` path (lines 220–228) is unreachable.
 
-### - [ ] F-6.2.14 — 2-14 `resume_pending` wall-clock cap and `resuming` 300s watchdog not implemented [Medium] — OPEN
+### - [x] F-6.2.14 — 2-14 `resume_pending` wall-clock cap and `resuming` 300s watchdog not implemented [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-7.3.4 — Both concern the resume_pending flow but report different defects (missing resuming/resume_pending watchdog caps vs missing automatic transition into resume_pending).
 
 - **Spec:** §6.2 lines 246–254 require a 300-second watchdog on `resuming` and `maxResumeWindowSeconds` (default 900s) on `resume_pending` (line 292). On expiry the session must transition to `awaiting_client_action` and emit `session.awaiting_action`.
 - **Impl:** The gateway watchdog (`pkg/gateway/watchdog/watchdog.go`) sweeps `created`, `finalizing`, `ready`, `starting`, `awaiting_client_action`, and total `maxSessionAge` — but not `resuming` or `resume_pending`. `pkg/api/v1/session/session.go:46–59` defines the states but no sweep applies a 300s or 900s cap.
 - **Effect:** A wedged `resuming` session stays wedged; a `resume_pending` session that the warm pool can never satisfy never escalates to client action.
+
+**Resolution:** Watchdog grows two new sweeps. `sweepResumePending` (§6.2 line 292) transitions a `resume_pending` row past `MaxResumePendingSeconds` (default 900s, per-session `retryPolicy.maxResumeWindowSeconds` tightens) to `awaiting_client_action`. `sweepResuming` (§6.2 line 249) applies the 300s budget to `resuming` rows; on expiry it branches on `RetryCount < effectiveMaxRetries` — retries remain → `resume_pending` (RetryCount++); exhausted → `awaiting_client_action`. Two new optional hooks on `TerminalHook` — `AwaitingClientActionEntryNotifier` and `RetryAttemptNotifier` — let the sessionserver drive the §7.3 line 427 webhook + §16.6 op event + §11.7 audit row + §16.1 retry counter exactly once per watchdog-driven transition. CLI flags `--max-resume-pending-seconds` and `--max-resuming-seconds` make the budgets operator-tunable; the deployer cap also flows into `session.RetryPolicyCaps.MaxResumeWindowSeconds`.
 
 ### - [ ] F-6.2.15 — 2-15 Per-slot sub-state tracking (`slot_assigned, receiving_uploads, running, slot_cleanup, released, leaked`) not implemented [Medium] — OPEN
 - **Spec:** §6.2 lines 170–176 require per-`slotId` sub-states with their own transitions; line 179 requires a `leaked_slots` count, `lenny_adapter_leaked_slots` gauge, and inclusion in the unhealthy-pod threshold (`failed_slots + leaked_slots >= ceil(maxConcurrent/2)`).
