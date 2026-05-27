@@ -5,6 +5,7 @@ package environmentstore_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/environment"
@@ -169,6 +170,78 @@ func TestCloneIsolatesNestedState(t *testing.T) {
 	}
 	if reread.RuntimeSelector.MatchLabels["team"] != "security" {
 		t.Error("mutating a returned selector map reached into stored state")
+	}
+}
+
+// spec: §10.6 lines 613-625 — the outbound declaration names a
+// literal target environment; "*" is described only for inbound. The
+// admission validator rejects a "*" outbound target so admins reading
+// the inbound wildcard example and generalising to outbound fail
+// loudly rather than write a silent no-op rule. F-10.6.13.
+func TestCreateRejectsOutboundWildcardTargetEnvironment(t *testing.T) {
+	m := environmentstore.NewMemory()
+	bad := validEnvironment("acme", "wild-outbound")
+	bad.CrossEnvOutbound = []environmentstore.CrossEnvRule{{
+		Environment: "*",
+		Runtimes:    environment.Selector{MatchLabels: map[string]string{"shared": "true"}},
+	}}
+	err := m.Create(context.Background(), bad)
+	if err == nil {
+		t.Fatal("Create accepted an outbound rule with targetEnvironment=*")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "outbound[0].targetEnvironment") {
+		t.Errorf("error %q does not surface the targetEnvironment field", err)
+	}
+}
+
+// spec: §10.6 — outbound rules name a literal target; an empty
+// targetEnvironment is a malformed rule. F-10.6.13.
+func TestCreateRejectsOutboundEmptyTargetEnvironment(t *testing.T) {
+	m := environmentstore.NewMemory()
+	bad := validEnvironment("acme", "empty-outbound")
+	bad.CrossEnvOutbound = []environmentstore.CrossEnvRule{{
+		Environment: "",
+		Runtimes:    environment.Selector{MatchLabels: map[string]string{"shared": "true"}},
+	}}
+	err := m.Create(context.Background(), bad)
+	if err == nil {
+		t.Fatal("Create accepted an outbound rule with empty targetEnvironment")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "outbound[0].targetEnvironment") {
+		t.Errorf("error %q does not surface the targetEnvironment field", err)
+	}
+}
+
+// spec: §10.6 line 619 — inbound rules accept "*" for any source; an
+// empty sourceEnvironment is a malformed rule. F-10.6.13.
+func TestCreateRejectsInboundEmptySourceEnvironment(t *testing.T) {
+	m := environmentstore.NewMemory()
+	bad := validEnvironment("acme", "empty-inbound")
+	bad.CrossEnvInbound = []environmentstore.CrossEnvRule{{
+		Environment: "",
+		Runtimes:    environment.Selector{MatchLabels: map[string]string{"shared": "true"}},
+	}}
+	err := m.Create(context.Background(), bad)
+	if err == nil {
+		t.Fatal("Create accepted an inbound rule with empty sourceEnvironment")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "inbound[0].sourceEnvironment") {
+		t.Errorf("error %q does not surface the sourceEnvironment field", err)
+	}
+}
+
+// spec: §10.6 line 619 — inbound "*" wildcard MUST remain admissible.
+// Asserts the positive case so the F-10.6.13 outbound rejection does
+// not regress the inbound wildcard contract. F-10.6.13.
+func TestCreateAcceptsInboundWildcardSourceEnvironment(t *testing.T) {
+	m := environmentstore.NewMemory()
+	ok := validEnvironment("acme", "wild-inbound")
+	ok.CrossEnvInbound = []environmentstore.CrossEnvRule{{
+		Environment: "*",
+		Runtimes:    environment.Selector{MatchLabels: map[string]string{"shared": "true"}},
+	}}
+	if err := m.Create(context.Background(), ok); err != nil {
+		t.Fatalf("Create rejected an inbound rule with sourceEnvironment=*: %v", err)
 	}
 }
 

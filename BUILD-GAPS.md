@@ -11495,13 +11495,15 @@ Evidence was gathered via grep/find across `pkg/`, `cmd/lenny-gateway/`, `charts
 
 ### Findings
 
-### - [ ] F-10.1.1 — Gateway never updates the HPA scale-out gauges. (High) [Medium] — OPEN
+### - [x] F-10.1.1 — Gateway never updates the HPA scale-out gauges. (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.1.3 — Both report the gateway HPA scale-out gauges are registered but never updated by any production code path; F-4.1.3 is marked CLOSED.
 
 Spec: lines 63 ("Each gateway replica exposes `lenny_gateway_active_streams`…"), 93 (leading-indicator queue depth and rejection rate "surface both through the Prometheus Adapter or KEDA"), and 65 (queue depth is the **primary HPA scale-out trigger**).
 
 Implementation: `/Users/joan/projects/lenny/pkg/gateway/gatewaymetrics/gatewaymetrics.go` lines 76–96 declare the three gauges. Lines 277–296 define `SetActiveStreams`, `SetRequestQueueDepth`, `SetRejectionRate`. A full grep across `pkg/` and `cmd/` returns only `gatewaymetrics.go` and `gatewaymetrics_test.go`; no production code path calls any of the three setters. Result: every gateway replica exposes the three metrics with a constant 0 on `/metrics`. The HPA scale-out trigger (primary), the alternative secondary metric, and the second leading-indicator metric are all wired into the Helm autoscaler (`/Users/joan/projects/lenny/charts/lenny/templates/autoscaling-gateway.yaml` lines 56–82, 148–157) but the input signals are flat. The autoscaler will never observe queue pressure and will not scale out before CPU rises, which is the explicit mechanism (a) in §10.1 lines 77–78. `SetActiveSessions` (line 271) is in the same state — only `gatewaymetrics_test.go` calls it. The catalog declares but does not emit `lenny_gateway_replica_count`, `lenny_gateway_max_sessions_per_replica`, and `lenny_gateway_min_replicas` (referenced by `pkg/alerting/rules/rules.go:181` and `:579`); the `GatewaySessionBudgetNearExhaustion` and gateway-replica-count alerts are therefore inert.
+
+**Resolution:** Closed by F-4.1.3. `cmd/lenny-gateway/main.go:2914-2923` runs `exportHPAGauges` at startup and on a 5-second cadence; the poller refreshes `lenny_gateway_request_queue_depth`, `lenny_gateway_active_streams`, and `lenny_gateway_active_sessions` from live in-process state (inflight-request middleware counter, sessionevents.Bus subscriber count, sessionstore non-terminal walk). The §16.5 capacity-ceiling alerts now see real values.
 
 ### - [ ] F-10.1.2 — Postgres coordination fallback is not implemented. (High) [Medium] — OPEN
 
@@ -11569,7 +11571,7 @@ Spec: line 89 ("Prometheus Adapter: set `metricsRelistInterval: 15s` and `cacheM
 
 Implementation: the chart does not deploy the Prometheus Adapter (it is an external dependency the operator installs), and the README/docs do not document the required adapter settings. `grep -rn "metricsRelistInterval\|cacheMetricResolutionPeriod"` across the whole tree returns zero matches. The spec recommendation is an operator-facing constraint that is not surfaced in any operator-facing artifact (chart values, runbook, or preset). On the HPA-provider path (Tier 1 default), pipeline lag remains at the 60s spec-described worst case.
 
-### - [ ] F-10.1.12 — `gateway.maxSessionsPerReplica` is unenforced inside the binary. (Medium) [Medium] — OPEN
+### - [x] F-10.1.12 — `gateway.maxSessionsPerReplica` is unenforced inside the binary. (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.1.4 — Both report gateway.maxSessionsPerReplica is never plumbed into the gateway binary so the capacity-ceiling gauge/alert cannot function; F-4.1.4 is CLOSED but describes the identical defect.
 
@@ -11577,13 +11579,17 @@ Spec: line 65 ("`lenny_gateway_active_sessions / gateway.maxSessionsPerReplica` 
 
 Implementation: `gateway.maxSessionsPerReplica` is defined in `/Users/joan/projects/lenny/charts/lenny/values.yaml:546` (default 50; tier 2 = 200; tier 3 = 400). `grep -rn "MaxSessionsPerReplica\|max-sessions-per-replica\|maxSessionsPerReplica"` in `cmd/lenny-gateway/` and `pkg/gateway/` returns zero matches. The binary has no flag bridge, no admission cap, and no metric emission for this ceiling. `lenny_gateway_max_sessions_per_replica` is referenced by `pkg/alerting/rules/rules.go:579` (`GatewaySessionBudgetNearExhaustion` alert) but is not in the metric catalog and is never emitted, so the alert will never fire on the configured ceiling.
 
-### - [ ] F-10.1.13 — `lenny_gateway_replica_count` and `lenny_gateway_min_replicas` referenced by alerts are not emitted. (Medium) [Medium] — OPEN
+**Resolution:** Closed by F-4.1.4. `cmd/lenny-gateway/main.go:1138-1139` calls `gwMetrics.SetMaxSessionsPerReplica` for both `delivery_mode="direct"` and `delivery_mode="proxy"` from the `--max-sessions-per-replica` flag (env `LENNY_MAX_SESSIONS_PER_REPLICA`, default 50), and the chart renders the Helm value into the container env so the §10.1 capacity-ceiling alert evaluates against the configured ceiling.
+
+### - [x] F-10.1.13 — `lenny_gateway_replica_count` and `lenny_gateway_min_replicas` referenced by alerts are not emitted. (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.1.13 — Both report lenny_gateway_replica_count / lenny_gateway_min_replicas not being emitted, leaving the replica-floor alert inert.
 
 Spec: line 65 cross-references §4.1 metric roles; the §16.5 alert `pkg/alerting/rules/rules.go:181` expects `lenny_gateway_replica_count < scalar(lenny_gateway_min_replicas)`.
 
 Implementation: `lenny_gateway_replica_count` is in the catalog at `pkg/observability/metrics/catalog.go:83` but no production code emits it (`grep -rn "lenny_gateway_replica_count"` returns only the catalog and the rule). `lenny_gateway_min_replicas` is referenced by the rule at line 181 but is not in the catalog. The replica-floor alert is consequently inert.
+
+**Resolution:** Closed by F-4.1.13. `cmd/lenny-gateway/main.go:1230-1232` emits `lenny_gateway_min_replicas` (from the `--min-replicas` flag / `LENNY_MIN_REPLICAS` env), `lenny_gateway_stream_ceiling`, and `lenny_gateway_replica_count` at startup via the registered `Set*` gauges on `pkg/gateway/gatewaymetrics/gatewaymetrics.go:414-431`. `sum(lenny_gateway_replica_count)` becomes the fleet-wide ready-replica numerator for the `GatewayNoHealthyReplicas` alert.
 
 ### - [ ] F-10.1.14 — Custom-metrics pipeline is not deployed by the chart. (Low) [Medium] — OPEN
 
@@ -11597,11 +11603,13 @@ Spec: line 161 ("monitor the `lenny_gateway_sigkill_streams_total` metric (strea
 
 Implementation: catalog-only entry at `pkg/observability/metrics/catalog.go:98`. No emitter exists, which follows from F6 (no preStop hook to drive the metric).
 
-### - [ ] F-10.1.16 — `lenny_coordinator_handoff_stale_total` not emitted. (Medium) [Medium] — OPEN
+### - [ ] F-10.1.16 — `lenny_coordinator_handoff_stale_total` not emitted. (Medium) [Medium] — DEFERRED
 
 Spec: line 61 ("increment the `lenny_coordinator_handoff_stale_total` counter for observability").
 
 Implementation: catalog-only entry at `pkg/observability/metrics/catalog.go:221`. No emitter exists, which follows from F2/F4 (no fence/generation enforcement to detect stale rejections).
+
+**Deferred:** The adapter-side `CoordinatorFence` and `CheckpointBarrier` server handlers (`pkg/adapter/coordination.go:117/182`) return `coordinator_handoff_stale` on stale-generation rejections (added by F-4.7.2 / F-10.1.7-precursor commit `d353a8ef`), but `pkg/gateway/adapterclient/client.go` has no `CoordinatorFence` / `CheckpointBarrier` wrappers yet, so no gateway code path observes such a rejection. The counter activates when the gateway gains those callers — pairs with the still-OPEN F-10.1.7 (CheckpointBarrier protocol). Deferring until that wiring lands.
 
 ### - [ ] F-10.1.17 — Concurrent-workspace pod connection-loss whole-pod replacement trigger uncovered. (Low) [Medium] — OPEN
 
@@ -11609,11 +11617,13 @@ Spec: line 54 ("When the gateway loses connection to a concurrent-workspace pod�
 
 Implementation: the §5.2 Lua slot counter and rehydration land in `pkg/gateway/slotcounter/` and `pkg/gateway/sessionstore/` (recent commits `9b5ba3e` and `b035e6a` cover atomic reset and post-recovery slot rehydration). Whether the connection-loss path actually invokes the rehydration was not exhaustively verified by this audit; the surrounding `lenny_slot_pod_replacement_total` counter exists in the catalog, but the whole-pod replacement trigger on total connection loss (independent of the per-slot failure or leak count) needs separate confirmation. Flagged as Low pending a dedicated §5.2 audit.
 
-### - [ ] F-10.1.18 — Stateless-replica diagram and sticky-routing note are informational only. (Info) [Medium] — OPEN
+### - [x] F-10.1.18 — Stateless-replica diagram and sticky-routing note are informational only. (Info) [Medium] — CLOSED
 
 Spec: lines 5–22 (architecture diagram, `Correctness rule: Sticky routing is an optimization`).
 
 Implementation: no `sessionAffinity` is configured on the `lenny-gateway` Service (`charts/lenny/templates/gateway-deployment.yaml:255–280`); this is consistent with the spec because sticky routing is an optimization, not a requirement. `StoreRouter.SessionShard` is implemented and exercised by `tests/tier2_component/stores/storerouter_test.go`, so shard routing by session-ID prefix is in place. No action required.
+
+**Resolution (positive confirmation, no code change):** Informational finding; the implementation is spec-aligned. `charts/lenny/templates/gateway-deployment.yaml` Service block sets no `sessionAffinity` (the spec's Correctness rule treats sticky routing as optimization), and `pkg/storerouter` carries `SessionShard` for prefix-based routing. The finding's own conclusion ("No action required") stands.
 
 ### Severity summary
 
@@ -13079,7 +13089,7 @@ substitution makes audit trails harder to reconcile (the request body
 disagrees with the persisted row, but the API returned 201/200 without
 a warning). Description length is unbounded.
 
-### - [ ] F-10.6.13 — 13  `targetEnvironment: "*"` wildcard semantics asymmetric with inbound `sourceEnvironment: "*"` [Low] — OPEN
+### - [x] F-10.6.13 — 13  `targetEnvironment: "*"` wildcard semantics asymmetric with inbound `sourceEnvironment: "*"` [Low] — CLOSED
 
 **Potential overlap** (confidence: high) — F-10.6.4 — F-10.6.4 is the wire field-name deviation (environment vs targetEnvironment/sourceEnvironment) while F-10.6.13 is the outbound wildcard asymmetry; same subsystem, different defects.
 
@@ -13105,7 +13115,9 @@ the admission validator does not reject a `*` target as malformed,
 which leaves a footgun for admins reading the spec example and
 generalizing.
 
-### - [ ] F-10.6.14 — 14  `Description` validation, audit interceptor advisory, and access-report identity expansion implemented [Info] — OPEN
+**Resolution:** `Environment.Validate` (`pkg/gateway/environmentstore/environmentstore.go`) now rejects outbound rules with `targetEnvironment == "*"` or empty, and inbound rules with empty `sourceEnvironment` — `"*"` remains admissible inbound per §10.6 line 619. The admission error surfaces the specific field (`outbound[i].targetEnvironment` / `inbound[i].sourceEnvironment`) so admins writing the wrong form fail loudly rather than ship a silent no-op rule. Tier-1 cases: outbound-wildcard rejection, outbound-empty rejection, inbound-empty rejection, inbound-wildcard happy path.
+
+### - [x] F-10.6.14 — 14  `Description` validation, audit interceptor advisory, and access-report identity expansion implemented [Info] — CLOSED
 
 The audit interceptor `lenny-noenvironmentpolicy-audit` at
 `/Users/joan/projects/lenny/pkg/gateway/admin/rbac_config.go` lines 14–18
@@ -13151,6 +13163,8 @@ produces the cross-environment identity-by-environment matrix.
 Postgres persistence of environments is RLS-protected per migration
 0028 with the `lenny_tenant_guard` trigger and the
 `lenny_tenant_isolation` policy.
+
+**Resolution (positive confirmation, no code change):** Informational finding cataloguing §10.6 surfaces already aligned with spec — `lenny-noenvironmentpolicy-audit` interceptor, platform/tenant `noEnvironmentPolicy` semantics (fatal-startup vs deny-all default), live cross-env reachability checks, isolation-monotonicity emission with `cross_environment` boolean, transparent runtime filtering, and the access-report identity-by-environment matrix. Code paths cited in the finding are still in place. No action required.
 
 ### Summary
 

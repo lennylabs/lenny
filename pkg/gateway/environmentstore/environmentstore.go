@@ -117,11 +117,32 @@ func (e Environment) Validate() error {
 		}
 	}
 	for i, r := range e.CrossEnvOutbound {
+		// spec: §10.6 lines 613-625 — the outbound declaration names a
+		// literal target environment. The "*" wildcard is described
+		// only for inbound rules; admitting it outbound would create a
+		// silent no-op (the envaccess outboundPermits matcher compares
+		// rule.Environment to a literal target environment name and
+		// would never hit). Reject it at admission so admins reading
+		// the inbound wildcard example and generalising to outbound
+		// fail loudly rather than write a rule that never matches.
+		// F-10.6.13.
+		if r.Environment == "*" {
+			v = append(v, fmt.Sprintf("crossEnvironmentDelegation.outbound[%d].targetEnvironment: %q wildcard is not supported (use literal target environment names)", i, r.Environment))
+		}
+		if strings.TrimSpace(r.Environment) == "" {
+			v = append(v, fmt.Sprintf("crossEnvironmentDelegation.outbound[%d].targetEnvironment is required", i))
+		}
 		if err := r.Runtimes.Validate(); err != nil {
 			v = append(v, fmt.Sprintf("crossEnvironmentDelegation.outbound[%d].runtimes: %v", i, err))
 		}
 	}
 	for i, r := range e.CrossEnvInbound {
+		// spec: §10.6 line 619 — inbound rules accept "*" wildcard
+		// for sourceEnvironment. Any other empty value is a
+		// malformed rule. F-10.6.13.
+		if strings.TrimSpace(r.Environment) == "" {
+			v = append(v, fmt.Sprintf("crossEnvironmentDelegation.inbound[%d].sourceEnvironment is required (use %q for any source)", i, "*"))
+		}
 		if err := r.Runtimes.Validate(); err != nil {
 			v = append(v, fmt.Sprintf("crossEnvironmentDelegation.inbound[%d].runtimes: %v", i, err))
 		}
