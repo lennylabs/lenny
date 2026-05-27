@@ -6367,13 +6367,15 @@ Evidence: `grep -rn "DLQ\|message_expired\|target_terminated" pkg/` returns aler
 
 Effect: senders that delivered to a session via the queueing path before it died receive no `message_expired` notification — they sit blocked indefinitely. The "only acknowledged silent-data-loss path" mentioned in `pkg/alerting/rules/rules.go:1190–1191` is currently every path.
 
-### - [ ] F-7.3.13 — `session.awaiting_action` webhook event never published (Medium) [Medium] — OPEN
+### - [x] F-7.3.13 — `session.awaiting_action` webhook event never published (Medium) [Medium] — CLOSED
 
 Spec line 427: "The webhook system (Section 14, `callbackUrl`) also fires a `session.awaiting_action` event so CI systems can react without polling."
 
 Evidence: `pkg/gateway/opsevents/catalog.go:31` declares `EventSessionAwaitingAction EventType = "session_awaiting_action"`. `grep -rn "EventSessionAwaitingAction"` excluding the catalog itself returns zero hits — nothing publishes it. The watchdog's `sweepAwaitingClientAction` updates the row to `expired` without firing the awaiting-action event (the spec wants the event when the state is *entered*, but neither entry path exists in code).
 
 Effect: even if a session reached `awaiting_client_action`, no CI webhook would fire; clients must poll.
+
+**Resolution:** New `emitAwaitingClientActionEntered` helper in `pkg/gateway/sessionserver/lifecycle.go` publishes the §16.6 EventSessionAwaitingAction operational event (consumed by the §14 callbackUrl webhook and the §25.5 subscription stream), the §11.7 / §16.7 `session.awaiting_action_entered` audit row, and the §7.2 line 137 `status_change(awaiting_client_action)` SSE frame as one atomic best-effort emission. The future F-7.3.4/F-7.3.6 entry paths into `awaiting_client_action` call into the helper. Watchdog also gains a sibling `OnSessionExpiredFromAwaitingClientAction` optional hook on TerminalHook so the `awaiting_client_action → expired` edge writes the distinct §7.3 audit row before the generic terminal hook fires.
 
 ### - [ ] F-7.3.14 — Resume flow does not restore the session file (Medium) [Medium] — OPEN
 
@@ -6399,7 +6401,7 @@ Evidence: combining F4 (no auto-transition to `resume_pending`) and F6 (no `maxR
 
 Effect: in a deployed gateway no session ever organically reaches `awaiting_client_action`, so the entire §7.3 client-recovery surface (`POST /v1/sessions/{id}/resume`, Start-fresh, Download artifacts, Fork) is unreachable for non-test sessions.
 
-### - [ ] F-7.3.17 — `lenny_session_resume_after_pod_kill_total` referenced by runbook is undefined (Medium) [Medium] — OPEN
+### - [x] F-7.3.17 — `lenny_session_resume_after_pod_kill_total` referenced by runbook is undefined (Medium) [Medium] — CLOSED
 
 `docs/runbooks/pod-kill-during-session.md:65` reads "`lenny_session_resume_after_pod_kill_total{result=\"success\"}` advances by one for the affected pool."
 
@@ -6407,13 +6409,15 @@ Evidence: `grep -rn "lenny_session_resume_after_pod_kill_total" pkg/` returns ze
 
 Effect: the runbook references a non-existent metric.
 
+**Resolution:** Runbook now references the spec-named `lenny_session_resume_attempts_total{pool=<pool>, outcome="success"}` counter (§16.1) instead of the fictitious `lenny_session_resume_after_pod_kill_total`. The instrumentation of the spec-named counter remains tracked under F-7.3.10.
+
 ### - [ ] F-7.3.18 — No audit emission on resume / awaiting-action / retry (Medium) [Medium] — OPEN
 
 The spec sections that surround §7.3 (§7.1 seal-and-export emits `workspaceSealFailed`; §10.1 generation bookkeeping; §13 audit catalog) imply audit events on the resume path. The audit catalog in `pkg/observability/audit/catalog.go` has `EventRestoreResumed = "restore.resumed"` (backup-restore domain, line 160) and `EventArtifactReplicationResumed` (line 173) but no `session.resumed`, `session.retry`, `session.awaiting_action`, or `session.resume_failed`. `pkg/gateway/sessionserver/start.go:477–521` `handleResume` emits no audit event.
 
 Effect: the resume operation is not auditable; compliance teams cannot reconstruct who/when/why a session was reattached.
 
-### - [ ] F-7.3.19 — `resuming` state absent from external API enum (Medium) [Medium] — OPEN
+### - [x] F-7.3.19 — `resuming` state absent from external API enum (Medium) [Medium] — CLOSED
 
 Spec §7.2 enumerates `resuming` (line 191–198) and §7.3 mentions it as an internal transient (line 471).
 
@@ -6423,13 +6427,17 @@ While the spec calls `resuming` an internal transient, §7.2 / §10.4 require it
 
 Effect: the synthesised handoff state-frame sequence in §10.4 / §7.2 cannot carry the `resuming` value through the SessionEvent envelope.
 
-### - [ ] F-7.3.20 — `metadata` field on CreateSession is unimplemented (Low) [Medium] — OPEN
+**Resolution:** `pkg/api/v1/session/session.go` exports `StateResuming` with a doc note describing the §15.1 line 621 normalisation (GET envelope reports `resume_pending` → `running`) and the §10.4 coordinator-handoff `status_change(resuming)` synthesis path. `StateResuming` is intentionally not a member of `AllStates()` so the §15.1 polling enum remains the 13-state set. The OpenAPI `Session.state` enum lists `resuming` (and `input_required`) so the SSE wire format is valid. The §15.1 `EndpointResume` precondition table still rejects `resuming` (only `awaiting_client_action` is admitted).
+
+### - [x] F-7.3.20 — `metadata` field on CreateSession is unimplemented (Low) [Medium] — CLOSED
 
 Spec line 6 (§7.1 normal flow signature): `CreateSession(runtime, pool, retryPolicy, metadata)` carries a `metadata` payload. §7.3 inherits the signature.
 
 Evidence: `pkg/gateway/sessionserver/sessionserver.go:495–510` `CreateSessionRequest` has no `Metadata` field. `Session` row in `pkg/gateway/sessionstore/sessionstore.go:28–137` has no metadata column.
 
 Effect: client annotations cannot be carried through the session lifecycle; downstream §16.1 metrics that label by metadata key cannot be populated.
+
+**Resolution:** `CreateSessionRequest.Metadata` (flat `map[string]string`) round-trips through `sessionstore.Session.Metadata` and is echoed on the `SessionResponse`. Postgres-backed sessions persist the payload in a new `metadata JSONB NULL` column added by `migrations/0086_sessions_metadata.up.sql`; absent payloads remain NULL and the wire envelope omits the field via `omitempty`. Non-string values reject at the gateway decode boundary with 400 INVALID_REQUEST so the on-row shape stays bounded. OpenAPI schemas updated.
 
 ### - [ ] F-7.3.21 — `last_checkpoint_workspace_bytes` not persisted (Medium) [Medium] — OPEN
 
@@ -6463,11 +6471,13 @@ Evidence: `pkg/apis/lenny/v1/sandboxtemplate_types.go:167` and `pkg/gateway/admi
 
 Effect: clients cannot request a longer or shorter session lifetime within deployer-permitted bounds.
 
-### - [ ] F-7.3.25 — Audit catalog has no resume/retry events (Medium — relates to F18) [Medium] — OPEN
+### - [x] F-7.3.25 — Audit catalog has no resume/retry events (Medium — relates to F18) [Medium] — CLOSED
 
 `pkg/observability/audit/catalog.go` enumerates session-level events for delegation, derivation, and admin operations, but the only `*.resumed` event types are `restore.resumed` (backup domain) and `artifact_replication.resumed`. There is no `session.resumed`, `session.retry_attempted`, `session.awaiting_action_entered`, `session.expired_in_awaiting_action`, or `session.cascade_applied`.
 
 Effect: SIEM / SOC dashboards cannot filter or alert on the §7.3 lifecycle. Closed-enum spec contract is broken.
+
+**Resolution:** `pkg/observability/audit/catalog.go` adds the five §7.3 retry/resume event constants (`session.resumed`, `session.retry_attempted`, `session.awaiting_action_entered`, `session.expired_in_awaiting_action`, `session.cascade_applied`) and registers them in the closed catalog. `sessionserver/lifecycle.go` mirrors the on-row strings as `auditSessionAwaitingActionEntered` / `auditSessionExpiredInAwaitingAction`, emitted by the new `emitAwaitingClientActionEntered` / `emitAwaitingClientActionExpired` helpers (F-7.3.13). The watchdog's `awaiting_client_action → expired` sweep fires the awaiting-action audit row before the generic terminal hook via the new `AwaitingClientActionExpiryNotifier` optional interface.
 
 ### - [ ] F-7.3.26 — Workspace size pre-check on resume is not invoked (Low) [Medium] — OPEN
 
