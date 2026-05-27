@@ -104,6 +104,38 @@ func TestApplyCRDFields_PreservesNonCRDFields_spec_5_1(t *testing.T) {
 	}
 }
 
+// TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9 verifies the §12.9 /
+// §6.4 workspaceTier mirror: a `T4` Runtime CRD value mirrors onto the
+// registry runtime so §5.2 cross-tenant-reuse rejection (line 396) and
+// the §6.4 T4 dedicated-node injection both see the same value the
+// deployer declared. An empty CRD value falls back to the empty
+// (registry T3 default) value.
+func TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   string
+		want runtimestore.WorkspaceTier
+	}{
+		{"t4-explicit", "T4", runtimestore.WorkspaceTierT4},
+		{"t3-explicit", "T3", runtimestore.WorkspaceTierT3},
+		{"empty-defaults-to-t3", "", runtimestore.WorkspaceTier("")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+				Type:             "agent",
+				Image:            "img@sha256:" + hex64,
+				IntegrationLevel: "basic",
+				WorkspaceTier:    c.in,
+			}}
+			var dst runtimestore.Runtime
+			applyCRDFields(&dst, rt)
+			if dst.WorkspaceTier != c.want {
+				t.Errorf("WorkspaceTier = %q, want %q", dst.WorkspaceTier, c.want)
+			}
+		})
+	}
+}
+
 // TestCredentialCapabilitiesFromCRD verifies the nil-block mapping and
 // that the proxyDialect slice is copied, not aliased to the CRD slice.
 func TestCredentialCapabilitiesFromCRD(t *testing.T) {

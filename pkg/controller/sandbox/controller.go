@@ -292,6 +292,13 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// zero-RBAC agent ServiceAccount.
 		SATokenAudience:    r.SATokenAudience,
 		ServiceAccountName: r.AgentServiceAccountName,
+		// spec: §6.4 lines 416-419 — pass the Runtime's workspaceTier through
+		// so the pod builder stamps the `lenny.dev/workspace-tier: t4` label,
+		// the T4 nodeSelector, and the T4 NoSchedule toleration when the
+		// Runtime declares T4. The lenny-t4-node-isolation admission webhook
+		// (failurePolicy: Fail) rejects any T4 pod missing these constraints
+		// with the §6.4 STR-003 message.
+		WorkspaceTier: rt.Spec.WorkspaceTier,
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)

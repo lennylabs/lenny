@@ -638,3 +638,104 @@ func TestBuildMountsTheWorkspaceVolume_spec_6_4(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildInjectsT4NodeIsolation_spec_6_4 confirms the §6.4 lines 416-419
+// dedicated-node injection: a Runtime declared at `workspaceTier: T4`
+// produces a pod carrying the `lenny.dev/workspace-tier: t4` label, the T4
+// nodeSelector, and the T4 NoSchedule toleration so the
+// lenny-t4-node-isolation admission webhook admits it onto a T4 node pool.
+func TestBuildInjectsT4NodeIsolation_spec_6_4(t *testing.T) {
+	for _, model := range []string{"", "embedded"} {
+		in := inputs()
+		in.DeploymentModel = model
+		in.WorkspaceTier = "T4"
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(%q): %v", model, err)
+		}
+		if got := pod.Labels["lenny.dev/workspace-tier"]; got != "t4" {
+			t.Errorf("model %q: pod label lenny.dev/workspace-tier = %q, want %q", model, got, "t4")
+		}
+		if got := pod.Spec.NodeSelector["lenny.dev/workspace-tier"]; got != "t4" {
+			t.Errorf("model %q: nodeSelector lenny.dev/workspace-tier = %q, want %q", model, got, "t4")
+		}
+		var found bool
+		for _, tol := range pod.Spec.Tolerations {
+			if tol.Key == "lenny.dev/workspace-tier" &&
+				tol.Operator == corev1.TolerationOpEqual &&
+				tol.Value == "t4" &&
+				tol.Effect == corev1.TaintEffectNoSchedule {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("model %q: tolerations = %+v, want one lenny.dev/workspace-tier=t4:NoSchedule entry",
+				model, pod.Spec.Tolerations)
+		}
+	}
+}
+
+// TestBuildLeavesNonT4PodsAlone_spec_6_4 confirms a non-T4 Runtime (T3
+// default) produces a pod with no T4 label, no T4 nodeSelector, and no T4
+// toleration. The webhook rejects a non-T4 pod that carries any of those —
+// see pkg/admission/t4_node_isolation — so the injection must be strictly
+// gated on the WorkspaceTier value.
+func TestBuildLeavesNonT4PodsAlone_spec_6_4(t *testing.T) {
+	for _, tier := range []string{"", "T3"} {
+		in := inputs()
+		in.WorkspaceTier = tier
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build(tier=%q): %v", tier, err)
+		}
+		if _, ok := pod.Labels["lenny.dev/workspace-tier"]; ok {
+			t.Errorf("tier %q: pod carries lenny.dev/workspace-tier label, want absent", tier)
+		}
+		if _, ok := pod.Spec.NodeSelector["lenny.dev/workspace-tier"]; ok {
+			t.Errorf("tier %q: nodeSelector carries lenny.dev/workspace-tier, want absent", tier)
+		}
+		for _, tol := range pod.Spec.Tolerations {
+			if tol.Key == "lenny.dev/workspace-tier" {
+				t.Errorf("tier %q: pod tolerates lenny.dev/workspace-tier, want absent (got %+v)", tier, tol)
+			}
+		}
+	}
+}
+
+// TestBuildT4InjectionPreservesDeployerNodeSelector_spec_6_4 confirms the
+// T4 injection is additive: a Runtime declared at T4 with a
+// deployer-supplied label on the Pod retains its other labels and the T4
+// label is merged in. The same additive property must hold for the
+// nodeSelector and toleration — the latter must not duplicate when applied
+// twice.
+func TestBuildT4InjectionPreservesDeployerNodeSelector_spec_6_4(t *testing.T) {
+	in := inputs()
+	in.Labels = map[string]string{"lenny.dev/pool": "claude-worker"}
+	in.WorkspaceTier = "T4"
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if pod.Labels["lenny.dev/pool"] != "claude-worker" {
+		t.Errorf("pre-existing label dropped after T4 injection: labels = %v", pod.Labels)
+	}
+	if pod.Labels["lenny.dev/workspace-tier"] != "t4" {
+		t.Errorf("T4 label missing after merge: labels = %v", pod.Labels)
+	}
+
+	// Idempotence: a second injection (e.g., a re-reconcile that calls Build
+	// again on the same Inputs) must not produce a duplicate toleration.
+	pod2, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build (second call): %v", err)
+	}
+	var count int
+	for _, tol := range pod2.Spec.Tolerations {
+		if tol.Key == "lenny.dev/workspace-tier" && tol.Value == "t4" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("T4 toleration count after second Build = %d, want exactly 1", count)
+	}
+}

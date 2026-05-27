@@ -221,6 +221,11 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	dst.AllowedResourceClasses = append([]string(nil), rt.Spec.AllowedResourceClasses...)
 	dst.SupportedProviders = append([]string(nil), rt.Spec.SupportedProviders...)
 	dst.CredentialCapabilities = credentialCapabilitiesFromCRD(rt.Spec.CredentialCapabilities)
+	// spec: §12.9 line 1025 — workspaceTier is mirrored from the CRD into the
+	// gateway registry so §5.2 cross-tenant-reuse rejection (line 396) and the
+	// §6.4 T4 dedicated-node injection both see the same value the deployer
+	// declared on the Runtime resource.
+	dst.WorkspaceTier = runtimestore.WorkspaceTier(rt.Spec.WorkspaceTier)
 	dst.Labels = domainLabels(rt.Labels)
 }
 

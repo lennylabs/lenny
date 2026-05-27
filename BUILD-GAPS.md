@@ -4237,13 +4237,15 @@ Consequence: the cap is not Lenny-enforced; deployers cannot reason about /dev/s
 
 **Resolution:** The pod builder now adds a `dshm` memory-backed emptyDir with an explicit `64Mi` `SizeLimit` (`podVolumes`) and mounts it at `/dev/shm` in every agent container (adapter, runtime, embedded runtime, and the test-only egress-capture sidecar). The §6.4 line 420 cap is now Lenny-controlled rather than dependent on the container runtime default. (commit e9ff206d)
 
-### - [ ] F-6.1.15 — `shareProcessNamespace: false` is left as a forbidden-by-omission default — `Implemented` but worth noting [Low] — OPEN
+### - [x] F-6.1.15 — `shareProcessNamespace: false` is left as a forbidden-by-omission default — `Implemented` but worth noting [Low] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-17.2.2, F-6.4.8 — F-6.4.8 and F-6.1.15 both note shareProcessNamespace:true is enforced only by the in-tree webhook with no Kyverno/Gatekeeper policy; F-17.2.2 is the broader PSS-enforcement-model gap (full Restricted/RuntimeClass-relaxed policies absent).
 
 Spec §6.4 references: "`shareProcessNamespace: false` when using sidecar containers. `shareProcessNamespace: false` is not enforceable via Pod Security Standards; a Kyverno or Gatekeeper policy must be deployed to reject pods in agent namespaces that set `shareProcessNamespace: true`."
 
 `pkg/controller/sandbox/podspec/podspec.go:29–30` documents: "The §13.1 host-sharing flags … are left unset, which is forbidden-by-omission." `pkg/podsecurity/podsecurity.go:114` rejects `shareProcessNamespace: true` at the admission webhook. Good defense in depth, but the §6.4 explicit call for a Kyverno/Gatekeeper policy is satisfied by the Lenny admission webhook only — operators who bypass the webhook see no out-of-band enforcement. This is consistent with the §13.1 model; flagged only because §6.4 specifically references third-party policy.
+
+**Resolution:** Closed by F-6.4.8 — the chart now renders the `lenny-disallow-share-process-namespace` Kyverno ClusterPolicy as the §6.4-named second line of defense, opt-in through `admissionPolicies.kyverno.enabled` + `admissionPolicies.kyverno.shareProcessNamespace.enabled`.
 
 ### - [x] F-6.1.16 — `procfs` and `sysfs` are not explicitly masked/read-only in the pod spec [Low] — CLOSED
 
@@ -4975,7 +4977,7 @@ The `Runtime` CRD type (`pkg/apis/lenny/v1/runtime_types.go:12–59`) has no `Sh
 
 Consequence: the spec's `EROFS` kernel-level write boundary on shared assets does not exist. A concurrent-mode runtime expecting `/workspace/shared/` to exist sees `ENOENT`, and there is no operator path to populate cross-slot read-only assets. The "even empty, mount it read-only" defensive scrub-space prevention is also absent.
 
-### - [ ] F-6.4.4 — T4 dedicated-node enforcement is webhook-only — pool controller does not inject `lenny.dev/workspace-tier: t4`, the T4 `nodeSelector`, or the T4 toleration; the `Runtime` CRD has no `workspaceTier` field [High] — OPEN
+### - [x] F-6.4.4 — T4 dedicated-node enforcement is webhook-only — pool controller does not inject `lenny.dev/workspace-tier: t4`, the T4 `nodeSelector`, or the T4 toleration; the `Runtime` CRD has no `workspaceTier` field [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.9.2 — Both report the pool controller not injecting lenny.dev/workspace-tier:t4, making the T4 node-isolation webhook predicate unreachable.
 
@@ -4995,6 +4997,8 @@ Evidence in the implementation:
 Consequence: the webhook is *functionally undriven*. No code path produces a pod carrying `lenny.dev/workspace-tier: t4`, so the webhook never rejects a T4 pod (because no T4 pod exists), and a Runtime author who registers a "T4 runtime" gets a regular pod placed on a regular node with no node isolation. The §6.4 blast-radius guarantee ("a node compromise exposes every T4 tenant co-located on that node") is not bounded. The §12.9 cross-tenant key-isolation invariant the §6.4 dedicated-node rule was designed to backstop is silently relaxed.
 
 The §6.4 STR-003 enforcement is also unreachable from the pool-config webhook side: a T4 Runtime cannot be declared in the API (no `workspaceTier` field), and even if a `SandboxTemplate` carried a `nodeSelector` (the type does carry `TopologySpreadConstraints` at `pkg/apis/lenny/v1/sandboxtemplate_types.go:197`, but no `NodeSelector` or `Tolerations` fields), the validator has no `decide` branch that checks the selector for T4 alignment.
+
+**Resolution:** Closed in pair with F-6.4.9. With the CRD field in place, the sandbox reconciler now threads `rt.Spec.WorkspaceTier` through `podspec.Inputs.WorkspaceTier`, and `podspec.basePod` calls `applyT4NodeIsolation` whenever the value equals `T4`. The helper stamps the `lenny.dev/workspace-tier: t4` pod label the §6.4 webhook predicate keys on, adds the T4 entry to `pod.Spec.NodeSelector`, and appends the `lenny.dev/workspace-tier=t4:NoSchedule` toleration (idempotent on repeated reconciles, additive against deployer-supplied entries). Regression: `TestBuildInjectsT4NodeIsolation_spec_6_4`, `TestBuildLeavesNonT4PodsAlone_spec_6_4`, `TestBuildT4InjectionPreservesDeployerNodeSelector_spec_6_4`, plus the end-to-end `TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4` / `TestReconcileNonT4RuntimeOmitsT4Injection_spec_6_4` envtest pair confirming the CRD → reconciler → pod chain. The deployer-side "the pool controller rejects pool creation/update without selector" pool-config-validator branch is moot when the controller is the writer of the selector; the lenny-t4-node-isolation webhook (failurePolicy: Fail) remains the second line of defense if the injection ever regresses.
 
 ### - [x] F-6.4.5 — `lenny-adapter` has no `--staging-dir` flag; `PrepareWorkspace` returns `FailedPrecondition` in production [High] — CLOSED
 
@@ -5040,7 +5044,7 @@ Consequence: the §6.4 spec's IPC- and information-leak controls are absent on t
 
 - **Resolution:** Closed (re-verified) by commit `e9ff206d` (F-6.1.14 + F-6.1.16). The pod builder mounts a memory-backed `/dev/shm` emptyDir with an explicit 64Mi `SizeLimit` in every agent container, and `containerSecurityContext` sets `ProcMount: Default` alongside `ReadOnlyRootFilesystem: true`, so procfs keeps the kubelet's masked set and sysfs is read-only. Regression coverage in `TestBuildCapsDevShm_spec_6_4` and `TestBuildMasksProc_spec_6_4`. The finding's evidence grep predated those commits.
 
-### - [ ] F-6.4.8 — `shareProcessNamespace: true` rejection policy is enforced only by the in-tree `lenny-pod-security` webhook; no Kyverno/Gatekeeper policy is shipped [Medium] — OPEN
+### - [x] F-6.4.8 — `shareProcessNamespace: true` rejection policy is enforced only by the in-tree `lenny-pod-security` webhook; no Kyverno/Gatekeeper policy is shipped [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-17.2.2, F-6.1.15 — F-6.4.8 and F-6.1.15 both note shareProcessNamespace:true is enforced only by the in-tree webhook with no Kyverno/Gatekeeper policy; F-17.2.2 is the broader PSS-enforcement-model gap (full Restricted/RuntimeClass-relaxed policies absent).
 
@@ -5052,7 +5056,9 @@ But the spec's named mechanism ("a Kyverno or Gatekeeper policy must be deployed
 
 This is *Partial*: the outcome is enforced but via a different mechanism (an in-tree ValidatingAdmissionWebhook) than the spec names. If the deployer disables `lenny-pod-security` for any reason, the §6.4 invariant collapses with no second line of defense. The spec's language is normative ("a Kyverno or Gatekeeper policy must be deployed"), so this is a SHOULD-grade gap.
 
-### - [ ] F-6.4.9 — `Runtime.spec.workspaceTier` field is absent from the CRD [Medium] — OPEN
+**Resolution:** Added the chart-rendered Kyverno `ClusterPolicy` named `lenny-disallow-share-process-namespace` (`charts/lenny/templates/admission-policies/kyverno-share-process-namespace-policy.yaml`). It scopes to namespaces labeled `lenny.dev/agent-namespace=true`, runs in `validationFailureAction: Enforce`, and pattern-rejects any pod whose `spec.shareProcessNamespace` is not `false`. Rendering is gated by the new Helm values `admissionPolicies.kyverno.enabled` + `admissionPolicies.kyverno.shareProcessNamespace.enabled`; both are off by default so a stock dev install does not require Kyverno CRDs. Pairs with the in-tree `lenny-pod-security` webhook as the §6.4 named second line of defense. Chart unittests in `tests/kyverno-share-process-namespace-policy_test.yaml` exercise the gating flags and the policy shape. Gatekeeper operators can configure an equivalent `ConstraintTemplate` using the same rule; the chart ships Kyverno as the more commonly deployed alternative.
+
+### - [x] F-6.4.9 — `Runtime.spec.workspaceTier` field is absent from the CRD [Medium] — CLOSED
 
 Spec §6.4 line 414 references "tenants with `workspaceTier: T4`" as a configurable runtime-level attribute, and §6.4 lines 416–419 build the entire T4 enforcement chain around the assumption that a Runtime declares `workspaceTier: T4`. §5.1 (referenced via §5.2 in §6.4) defines `workspaceTier` as a Runtime field.
 
@@ -5062,6 +5068,8 @@ This is the upstream cause of H-4 (no T4 pod label injection): the controller ca
 
 This is medium severity rather than high because it is a strict prerequisite of H-4 (already counted High) and the dependent §12.9 paths route through tenant-level `workspaceTier` (which does exist — see `pkg/controller/tenantdeletion/controller.go:124`), not runtime-level.
 
+**Resolution:** Added `workspaceTier` to `RuntimeSpec` (enum `T3`/`T4`, optional, defaults to `T3`) with the matching CRD schema entry in `charts/lenny/crds/lenny.dev_runtimes.yaml`. The runtime controller's `applyCRDFields` mirrors the value onto the gateway-side `runtimestore.WorkspaceTier` so the §5.2 cross-tenant-reuse rejection and the §6.4 dedicated-node injection both observe the deployer's declaration. Regression: `TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9`. Unblocks F-6.4.4.
+
 ### - [ ] F-6.4.10 — Concurrent-mode per-slot credentials path (`/run/lenny/slots/{slotId}/credentials.json`) is not implemented [Medium] — OPEN
 
 Spec §6.1 line 28 (cross-referenced by §6.4's per-slot layout): "The adapter writes per-slot credential files at `/run/lenny/slots/{slotId}/credentials.json` (mode `0440`, tmpfs-backed, with the same adapter-owner + `lenny-cred-readers` group-ownership scheme as the single-slot file …) rather than a single global `/run/lenny/credentials.json`."
@@ -5070,9 +5078,11 @@ Spec §6.1 line 28 (cross-referenced by §6.4's per-slot layout): "The adapter w
 
 Consequence: combined with H-2, concurrent-mode credential leasing cannot honor §6.1's "Each active slot holds an independent credential lease … This ensures `maxConcurrentSessions` on pool credentials accurately reflects slot-level concurrency". The credential rotation isolation guarantee ("Other slots' LLM requests are unaffected by a rotation on a sibling slot") is unreachable because a rotation rewrites the single global file all (would-be) slots read from.
 
-### - [ ] F-6.4.11 — `lenny_warmpool_sdk_demotions_total` and the demotion-rate operator guidance feed an unbuilt enforcement path [Medium] — OPEN
+### - [-] F-6.4.11 — `lenny_warmpool_sdk_demotions_total` and the demotion-rate operator guidance feed an unbuilt enforcement path [Medium] — DEFERRED
 
 Spec §6.4 references the §6.1 SDK-warm demotion guidance only obliquely; the metric itself is the §6.1 contract. This audit notes it as `Info` because it surfaces in the §6.3 audit; carrying it forward here clarifies that the §6.4 layout doesn't depend on demotion behaviour. See `6.3.md` for the detailed gap.
+
+**Deferred:** The §6.4 surface does not depend on the demotion metric (the finding itself says so). The producer-side gap is the §6.1 SDK-warm path, tracked under F-6.1.1 / F-6.1.5; closing those will retire this §6.4 cross-reference without any new work here.
 
 ### - [x] F-6.4.12 — The pod-spec builder hardcodes the per-runtime workspace cwd to `/workspace/current` even in embedded mode [Low] — CLOSED
 

@@ -299,6 +299,79 @@ func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
 	}
 }
 
+// TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4 confirms the
+// §6.4 lines 416-419 enforcement chain: a Runtime declared at
+// `workspaceTier: T4` causes the sandbox reconciler to stamp the
+// `lenny.dev/workspace-tier: t4` pod label the lenny-t4-node-isolation
+// admission webhook keys on, pin the pod to a T4 node via nodeSelector,
+// and tolerate the T4 NoSchedule taint. Without that triple, the webhook
+// rejects the pod and a T4 Runtime cannot back any pool. spec: §6.4
+// lines 416-419.
+func TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4(t *testing.T) {
+	s := newScheme(t)
+	rt := runtimeCR()
+	rt.Spec.WorkspaceTier = "T4"
+	c := newClient(t, s, sandboxCR(""), rt)
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+		t.Fatalf("expected a backing pod to be created: %v", err)
+	}
+	if got := pod.Labels["lenny.dev/workspace-tier"]; got != "t4" {
+		t.Errorf("pod label lenny.dev/workspace-tier = %q, want %q", got, "t4")
+	}
+	if got := pod.Spec.NodeSelector["lenny.dev/workspace-tier"]; got != "t4" {
+		t.Errorf("nodeSelector lenny.dev/workspace-tier = %q, want %q", got, "t4")
+	}
+	var matched bool
+	for _, tol := range pod.Spec.Tolerations {
+		if tol.Key == "lenny.dev/workspace-tier" &&
+			tol.Operator == corev1.TolerationOpEqual &&
+			tol.Value == "t4" &&
+			tol.Effect == corev1.TaintEffectNoSchedule {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Errorf("tolerations = %+v, want one lenny.dev/workspace-tier=t4:NoSchedule entry",
+			pod.Spec.Tolerations)
+	}
+}
+
+// TestReconcileNonT4RuntimeOmitsT4Injection_spec_6_4 confirms a Runtime
+// without an explicit T4 tier (the default T3 path) does not pick up the
+// T4 dedicated-node injection, so a non-T4 pod cannot accidentally
+// schedule onto a T4-dedicated node. The webhook rejects a non-T4 pod that
+// carries the T4 label/selector/toleration. spec: §6.4 lines 416-419.
+func TestReconcileNonT4RuntimeOmitsT4Injection_spec_6_4(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, sandboxCR(""), runtimeCR())
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	if _, ok := pod.Labels["lenny.dev/workspace-tier"]; ok {
+		t.Errorf("non-T4 pod carries lenny.dev/workspace-tier label, want absent (labels=%v)", pod.Labels)
+	}
+	if _, ok := pod.Spec.NodeSelector["lenny.dev/workspace-tier"]; ok {
+		t.Errorf("non-T4 pod carries lenny.dev/workspace-tier nodeSelector, want absent (selector=%v)",
+			pod.Spec.NodeSelector)
+	}
+	for _, tol := range pod.Spec.Tolerations {
+		if tol.Key == "lenny.dev/workspace-tier" {
+			t.Errorf("non-T4 pod tolerates lenny.dev/workspace-tier (got %+v), want absent", tol)
+		}
+	}
+}
+
 func TestReconcileAdvancesWarmingToIdleWhenPodReady(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))

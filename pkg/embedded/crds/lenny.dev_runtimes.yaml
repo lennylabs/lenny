@@ -106,7 +106,14 @@ spec:
                 - concurrent
                 type: string
               image:
-                description: Image is the OCI image reference the warm pool launches.
+                description: |-
+                  Image is the OCI image reference the warm pool launches. Per §5.3
+                  images must be pinned by digest, not tag: the reference must
+                  contain an `@sha256:<64-hex>` digest. The Pattern enforces the
+                  §5.3 supply-chain MUST at the CRD layer so a `kubectl apply` of a
+                  tag-pinned Runtime is rejected by the API server, matching the
+                  admin-API digest check.
+                pattern: '@sha256:[A-Fa-f0-9]{64}$'
                 type: string
               integrationLevel:
                 description: |-
@@ -139,6 +146,21 @@ spec:
                 enum:
                 - agent
                 - mcp
+                type: string
+              workspaceTier:
+                description: |-
+                  WorkspaceTier is the §12.9 / §5.2 data-classification tier this
+                  runtime processes. The default workspace classification is `T3`
+                  (Confidential); runtimes that handle Restricted data (PHI, regulated
+                  credentials) declare `T4`. A `T4` Runtime forbids cross-tenant pod
+                  reuse (§5.2 line 396) and triggers the §6.4 dedicated-node controls:
+                  the sandbox reconciler injects the `lenny.dev/workspace-tier: t4`
+                  pod label, the T4 nodeSelector, and the T4 NoSchedule toleration so
+                  the lenny-t4-node-isolation admission webhook admits the pod onto a
+                  dedicated T4 node pool. An empty value is treated as `T3`.
+                enum:
+                - T3
+                - T4
                 type: string
             required:
             - image

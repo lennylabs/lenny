@@ -69,6 +69,19 @@ type RuntimeSpec struct {
 	// deliveryMode: proxy, and empty for direct-mode-only runtimes.
 	// +optional
 	CredentialCapabilities *CredentialCapabilities `json:"credentialCapabilities,omitempty"`
+
+	// WorkspaceTier is the §12.9 / §5.2 data-classification tier this
+	// runtime processes. The default workspace classification is `T3`
+	// (Confidential); runtimes that handle Restricted data (PHI, regulated
+	// credentials) declare `T4`. A `T4` Runtime forbids cross-tenant pod
+	// reuse (§5.2 line 396) and triggers the §6.4 dedicated-node controls:
+	// the sandbox reconciler injects the `lenny.dev/workspace-tier: t4`
+	// pod label, the T4 nodeSelector, and the T4 NoSchedule toleration so
+	// the lenny-t4-node-isolation admission webhook admits the pod onto a
+	// dedicated T4 node pool. An empty value is treated as `T3`.
+	// +kubebuilder:validation:Enum=T3;T4
+	// +optional
+	WorkspaceTier string `json:"workspaceTier,omitempty"`
 }
 
 // CredentialCapabilities is the §5.1 credentialCapabilities block on a
