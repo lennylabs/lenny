@@ -6319,7 +6319,7 @@ Evidence: `grep -rn "pod_evicted\|node_lost\|runtime_crash\|workspace_validation
 
 Effect: even if pod failure were detected, the gateway has no rule to choose `resume_pending` vs straight-to-`failed`.
 
-### - [ ] F-7.3.6 — `maxResumeWindowSeconds` timer is not implemented (High) [Medium] — OPEN
+### - [x] F-7.3.6 — `maxResumeWindowSeconds` timer is not implemented (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-11.3.8 — Both report that maxResumeWindowSeconds is not implemented; the watchdog never sweeps StateResumePending with a dedicated timer.
 
@@ -6328,6 +6328,8 @@ Spec line 404: "Transition to `resume_pending`; start `maxResumeWindowSeconds` w
 Evidence: `pkg/gateway/watchdog/watchdog.go:53–60` defines `DefaultMaxCreatedStateSeconds`, `DefaultMaxFinalizingStateSeconds`, `DefaultMaxReadyStateSeconds`, `DefaultMaxStartingStateSeconds`, `DefaultMaxSessionAgeSeconds`, `DefaultMaxAwaitingClientActionSeconds` — there is no `DefaultMaxResumeWindowSeconds` constant. The watchdog `budgetFor()` switch (`watchdog.go:406–419`) returns `0` for `StateResumePending`, meaning the state is unbounded. `grep -rn "maxResumeWindowSeconds\|max_resume_window" pkg/` returns zero hits.
 
 Effect: a session that somehow reached `resume_pending` would sit there until the maxSessionAge cap (default 7200s) — eight times the spec's 900s default — before being swept to `expired`. The intended `resume_pending → awaiting_client_action` self-recovery edge never fires.
+
+**Resolution:** Closed by F-6.2.14 (commit ce6bfa37). Watchdog grows `MaxResumePendingSeconds` (default 900s) with `sweepResumePending`; per-session `retryPolicy.maxResumeWindowSeconds` tightens the platform cap. Transition fires the `session.awaiting_action` webhook via the new `AwaitingClientActionEntryNotifier` hook.
 
 ### - [x] F-7.3.7 — `retryCount` is not tracked (High) [Medium] — CLOSED
 
@@ -14512,13 +14514,15 @@ Implementation:
 
 Consequence: a non-playground session can sit idle indefinitely (bounded only by `maxSessionAge` at 2h). The §11.3 control to reclaim warm pods from abandoned non-playground sessions is missing.
 
-### - [ ] F-11.3.8 — `maxResumeWindowSeconds` is not implemented [High] — OPEN
+### - [x] F-11.3.8 — `maxResumeWindowSeconds` is not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.3.6 — Both report that maxResumeWindowSeconds is not implemented; the watchdog never sweeps StateResumePending with a dedicated timer.
 
 Spec §11.3 line 200 lists `maxResumeWindow` (default 900s, "Yes" configurable). Resume window enforcement bounds how long a session may remain in `resume_pending`.
 
 Implementation: `grep -rn "maxResumeWindow\|MaxResumeWindow\|ResumeWindow" --include="*.go"` returns zero hits. The watchdog does not sweep `StateResumePending` — `pkg/gateway/watchdog/watchdog.go:196-201` enumerates only `created`, `finalizing`, `ready`, `starting`; the `maxSessionAge` sweep at line 282-309 covers `resume_pending` only via the umbrella 2h cap, not via the dedicated 900s window.
+
+**Resolution:** Closed by F-6.2.14 (commit ce6bfa37). Identical fix as F-7.3.6.
 
 ### - [ ] F-11.3.9 — Cancellation/expiration does not invoke `executor.Close` for cancelled non-terminal cascades or for /interrupt; pods leak under cascade cancel [High] — OPEN
 
