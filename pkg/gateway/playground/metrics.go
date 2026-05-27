@@ -19,6 +19,12 @@ type Metrics struct {
 	revocations         *prometheus.CounterVec
 	revocationProp      *prometheus.HistogramVec
 	devTenantNotSeededC prometheus.Counter
+
+	// mintRejected counts §10.2 line 243 playground mint rejections,
+	// labelled by the invariant id (subject_typ_invalid,
+	// tenant_claim_missing, tenant_claim_invalid_format,
+	// tenant_not_found, …).
+	mintRejected *prometheus.CounterVec
 }
 
 // NewMetrics registers the §27.8 playground metrics against reg and
@@ -69,8 +75,17 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// spec: §10.2 line 243 — emit on every rejected playground mint,
+	// labelled by the §10.2 invariant id.
+	mintRejected, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_playground_bearer_mint_rejected_total",
+		Help: "Playground mints rejected at a §10.2 invariant, labelled by reason (§10.2 line 243).",
+	}, []string{"reason"})
+	if err != nil {
+		return nil, err
+	}
 	for _, c := range []prometheus.Collector{
-		pageViews, sessionsCreated, wsConnect, revocations, revocationProp, devTenantNotSeeded,
+		pageViews, sessionsCreated, wsConnect, revocations, revocationProp, devTenantNotSeeded, mintRejected,
 	} {
 		if err := reg.Register(c); err != nil {
 			return nil, err
@@ -83,7 +98,19 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		revocations:         revocations,
 		revocationProp:      revocationProp,
 		devTenantNotSeededC: devTenantNotSeeded.WithLabelValues(),
+		mintRejected:        mintRejected,
 	}, nil
+}
+
+// bearerMintRejected increments
+// lenny_playground_bearer_mint_rejected_total{reason}. Nil-safe.
+//
+// spec: §10.2 line 243.
+func (m *Metrics) bearerMintRejected(reason string) {
+	if m == nil {
+		return
+	}
+	m.mintRejected.WithLabelValues(reason).Inc()
 }
 
 // pageView increments lenny_playground_page_views_total for the

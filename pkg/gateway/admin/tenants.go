@@ -854,12 +854,17 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if body.ID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "id is required",
+		// spec: §10.2 line 210 — the admin API rejects any tenant_id
+		// that does not match the format with `400 INVALID_TENANT_ID`.
+		// A missing id is a format violation (the regex requires at
+		// least one character), so it routes through the same code.
+		writeError(w, http.StatusBadRequest, "INVALID_TENANT_ID", "id is required",
 			map[string]any{"field": "id"})
 		return
 	}
 	if err := auth.ValidateTenantID(body.ID); err != nil {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+		// spec: §10.2 line 210.
+		writeError(w, http.StatusBadRequest, "INVALID_TENANT_ID", err.Error(),
 			map[string]any{"field": "id"})
 		return
 	}

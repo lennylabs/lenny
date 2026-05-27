@@ -232,6 +232,10 @@ func main() {
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
 	bearerTrustHMACKeyFile := flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
 		"path to an additional HMAC-SHA256 signing key the §10.2 Bearer path trusts, on top of the Token Service signer. Unset in a production install; §17.4 Embedded Mode sets it so the gateway accepts the embedded OIDC provider's tokens. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
+	bearerExpectedIssuer := flag.String("bearer-expected-issuer", os.Getenv("LENNY_BEARER_EXPECTED_ISSUER"),
+		"§10.2 line 237 expected iss claim on every Bearer JWT. When set, a token whose iss differs is rejected with TOKEN_INVALID (reason=issuer_mismatch). Empty (default) skips the check, matching the existing wiring. Override via LENNY_BEARER_EXPECTED_ISSUER.")
+	bearerExpectedAudiences := flag.String("bearer-expected-audiences", os.Getenv("LENNY_BEARER_EXPECTED_AUDIENCES"),
+		"§10.2 line 237 comma-separated set of acceptable aud claims on Bearer JWTs. A token whose aud intersects this set is admitted; a token whose aud is disjoint is rejected with TOKEN_INVALID (reason=audience_mismatch). Empty (default) skips the check. Override via LENNY_BEARER_EXPECTED_AUDIENCES.")
 	jwksPublish := flag.Bool("jwks-publish", envFlagDefault("LENNY_JWKS_PUBLISH", true),
 		"§10.3 publish the gateway's JWT signing keys as a JWK Set at /.well-known/jwks.json. Defaults on; clients caching the document verify tokens minted under the current key plus every retained previous key during the §10.3 24h overlap window. Set to false to suppress the endpoint (the endpoint returns 404). Override via LENNY_JWKS_PUBLISH.")
 	runtimeBin := flag.String("runtime-bin", "",
@@ -833,6 +837,20 @@ func main() {
 		bearerVerifier = jwt.NewMultiVerifier(rotatingVerifier, trusted)
 		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s)",
 			*bearerTrustHMACKeyFile, trusted.KeyID())
+	}
+	// spec: §10.2 line 237 — wrap the verifier so the standard auth
+	// chain enforces iss / aud alongside signature / exp / nbf when an
+	// operator configures the expected values. An unset flag skips
+	// the corresponding check so dev deployments retain their existing
+	// posture.
+	expectedAuds := splitCSV(*bearerExpectedAudiences)
+	if *bearerExpectedIssuer != "" || len(expectedAuds) > 0 {
+		bearerVerifier = jwt.NewClaimChecker(bearerVerifier, jwt.ExpectedClaims{
+			Issuer:    *bearerExpectedIssuer,
+			Audiences: expectedAuds,
+		})
+		log.Printf("lenny-gateway: §10.2 bearer iss/aud enforced iss=%q audiences=%v",
+			*bearerExpectedIssuer, expectedAuds)
 	}
 	// §13.3 canonical surface: the gateway does NOT mint tokens
 	// in-process. The /v1/oauth/* HTTP path is reverse-proxied to
@@ -3599,6 +3617,14 @@ type playgroundAuditEmitter struct{}
 
 func (playgroundAuditEmitter) EmitPlaygroundEvent(_ context.Context, ev playground.AuditEvent) {
 	log.Printf("lenny-gateway: §27 audit %s tenant=%s user=%s jti=%s", ev.Type, ev.TenantID, ev.UserID, ev.BearerJTI)
+}
+
+// EmitMintRejected logs the §10.2 line 243
+// playground.bearer_mint_rejected event so a rejected mint surfaces in
+// the gateway log alongside the metric increment.
+func (playgroundAuditEmitter) EmitMintRejected(_ context.Context, ev playground.MintRejectedEvent) {
+	log.Printf("lenny-gateway: §10.2 audit playground.bearer_mint_rejected tenant=%s subject_jti=%s subject_typ=%s invariant=%s ingress=%s",
+		ev.TenantID, ev.SubjectJTI, ev.SubjectTyp, ev.InvariantViolated, ev.IngressPath)
 }
 
 // splitCSV splits a comma-separated flag value into a trimmed,

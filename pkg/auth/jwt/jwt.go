@@ -182,11 +182,19 @@ func (s *HMACSigner) Verify(token string) (Claims, error) {
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return Claims{}, &VerifyError{Reason: "malformed", Detail: fmt.Sprintf("payload not JSON: %v", err)}
 	}
+	now := time.Now().Unix()
 	if claims.Expiry > 0 {
-		now := time.Now().Unix()
 		// §13.3 ±JWTSkewAllowance skew allowance.
 		if claims.Expiry+int64(JWTSkewAllowance/time.Second) < now {
 			return Claims{}, &VerifyError{Reason: "expired"}
+		}
+	}
+	// spec: §10.2 line 237 — the standard auth chain validates nbf
+	// alongside signature/exp. A token whose not-before lies in the
+	// future (beyond the ±skew window) is rejected as not-yet-valid.
+	if claims.NotBefore > 0 {
+		if claims.NotBefore-int64(JWTSkewAllowance/time.Second) > now {
+			return Claims{}, &VerifyError{Reason: "not_yet_valid"}
 		}
 	}
 	return claims, nil

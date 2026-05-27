@@ -11678,13 +11678,15 @@ The `tenants` store wired at lines 375–381 already satisfies `auth.TenantRegis
 
 The auth-package extractor (`pkg/auth/auth.go:316` `ExtractTenant`) and the middleware (`pkg/gateway/middleware/auth/auth.go:192–199`) are correct; the gap is the gateway's wiring choice.
 
-### - [ ] F-10.2.2 — JWT `Verify` does not enforce `aud`, `iss`, or `nbf` — H [Medium] — OPEN
+### - [x] F-10.2.2 — JWT `Verify` does not enforce `aud`, `iss`, or `nbf` — H [Medium] — CLOSED
 
 Spec L237 (and the broader §10.2 / §13.3 / §27.3.1 token chain) treats `aud`, `iss`, `exp`, and `nbf` as load-bearing identity-binding claims; the playground OIDC integration documents that the IdP ID-token validator MUST cover "signature, iss, aud, exp, nbf" (`pkg/gateway/playground/oidc.go:69, 108`). The Token Service stamps `Issuer = s.issuer` and `Audience = issued.Audience` on every minted token (`pkg/tokenservice/tokenservice.go:215, 218`); the playground mint sets `Issuer: "https://lenny.dev.local/playground"`, `Audience: []string{"lenny-gateway"}`, `NotBefore: now.Unix()` (`pkg/gateway/playground/token.go:236–250`).
 
 `pkg/auth/jwt/jwt.go:161–192` (`HMACSigner.Verify`) validates only the signature and `exp` (with the ±1s skew from line 188). It does NOT cross-check `iss`, `aud`, or `nbf`. `KMSSigner.Verify` at `pkg/auth/jwt/kmssigner.go:137` and `RotatingVerifier.Verify` at `pkg/auth/jwt/rotating.go:285` delegate to the same inner signer, so no path in the bearer chain enforces these claims. A token minted by a peer Token Service in a different deployment (or by a stolen embedded-OIDC HMAC key carrying the wrong audience) signature-verifies and is admitted. The `nbf` gap permits a token from a future window to verify the moment the gateway sees it.
 
 Embedded OIDC enforces its own audience (`pkg/embedded/oidc/oidc.go:172–174`), but that check applies only when callers go through `oidc.Provider.Verify`; the general bearer middleware bypasses it.
+
+**Resolution:** `HMACSigner.Verify` now enforces `nbf` alongside `exp` (with the same ±JWTSkewAllowance window), rejecting future-dated tokens with `VerifyError{Reason: "not_yet_valid"}` (`pkg/auth/jwt/jwt.go`). New `jwt.ClaimChecker` Verifier wrapper layers `iss` + `aud` enforcement on top of any inner verifier (`pkg/auth/jwt/claimchecker.go`); `cmd/lenny-gateway/main.go` wraps the bearer chain with `ClaimChecker` whenever the operator sets `--bearer-expected-issuer` or `--bearer-expected-audiences` (comma-separated), so dev deployments retain the no-op posture while production can pin both claims. Tier-1 coverage in `pkg/auth/jwt/claimchecker_test.go`: matching, issuer-mismatch, audience-disjoint, empty-expected-skipped, inner-error-passthrough, plus `TestHMACVerifyRejectsFutureNotBefore` / `AcceptsPastNotBefore` / `AcceptsNotBeforeWithinSkew`.
 
 ### - [ ] F-10.2.3 — Bearer middleware does not consult the platform-managed user → role mapping — H [Medium] — OPEN
 
@@ -11708,11 +11710,13 @@ Custom-role lookup at `pkg/gateway/admin/users.go:113–135` and `pkg/gateway/se
 
 A request whose Bearer JWT verifies but carries no `roles` claim, or a request that arrived through the dev-headers path without `AllowDevRoles`, is admitted to every session-mutating endpoint regardless of the §10.2 permission requirement. The fall-through is documented as "minimal gateway runs without an OIDC provider", but the spec's permission matrix is unconditional: a `billing-viewer` and a no-role caller MUST receive identical (rejected) treatment on `manage_own_sessions` operations. The fail-open is a security-class deviation in multi-tenant deployments — the `permissiveRegistry` bypass (F1) makes it trivial to mint such a no-role token.
 
-### - [ ] F-10.2.5 — Admin tenant creation returns `VALIDATION_ERROR`, not `INVALID_TENANT_ID` — H [Medium] — OPEN
+### - [x] F-10.2.5 — Admin tenant creation returns `VALIDATION_ERROR`, not `INVALID_TENANT_ID` — H [Medium] — CLOSED
 
 Spec L210: "the admin API rejects any `tenant_id` that does not match the pattern with `400 INVALID_TENANT_ID`."
 
 `pkg/gateway/admin/tenants.go:762–766` calls `auth.ValidateTenantID` and emits `writeError(w, 400, "VALIDATION_ERROR", err.Error(), ...)`. The error code in the envelope is `VALIDATION_ERROR`, not `INVALID_TENANT_ID`. The OIDC-extraction path at `pkg/gateway/middleware/auth/auth.go:302` returns the spec-matching `TENANT_CLAIM_INVALID_FORMAT`, so this is solely an admin-surface code mismatch. A client matching on the catalogued code (per the §15 error catalog) will treat the rejection as a generic validation failure rather than the specific format violation.
+
+**Resolution:** `handleCreateTenant` in `pkg/gateway/admin/tenants.go` now writes `400 INVALID_TENANT_ID` for the missing-id and `auth.ValidateTenantID` failure branches. Tier-1 coverage in `pkg/gateway/admin/tenants_test.go` (`TestCreateTenantRejectsInvalidID` + `TestCreateTenantRejectsMissingID`) asserts the envelope `code` is `INVALID_TENANT_ID`.
 
 ### - [ ] F-10.2.6 — JWTSigner circuit breaker and `KMS_SIGNING_UNAVAILABLE` response are partial — H [Medium] — OPEN
 
@@ -11730,11 +11734,13 @@ Spec L221: "Both rejection cases are logged at INFO level (including `user_id` a
 
 **Resolution:** Closed as duplicate of F-4.2.7. `AuthFailureEvent` + `AuthFailureSink` + `recordAuthFailure` are wired in `pkg/gateway/middleware/auth/auth.go`; production binds `authFailureAuditAdapter` in `cmd/lenny-gateway/main.go:2407`; coverage in `pkg/gateway/middleware/auth/auth_failure_test.go` exercises all three tenant-rejection reasons.
 
-### - [ ] F-10.2.8 — Spec-mandated `playground.bearer_mint_rejected` audit and metric are unimplemented — M [Medium] — OPEN
+### - [x] F-10.2.8 — Spec-mandated `playground.bearer_mint_rejected` audit and metric are unimplemented — M [Medium] — CLOSED
 
 Spec L243: "Rejected playground mints emit a `playground.bearer_mint_rejected` audit event (fields: `tenant_id`, `subject_jti`, `subject_typ`, `invariant_violated`, `ingress_path`) ... and increment `lenny_playground_bearer_mint_rejected_total{reason=<invariant_id>}` for operability dashboards."
 
 `pkg/gateway/playground/audit.go` defines `playground.bearer_minted` and `playground.bearer_revoked` only; no `bearer_mint_rejected` constant or emit-site exists. `pkg/gateway/playground/token.go:167–171` writes the `LENNY_PLAYGROUND_BEARER_TYPE_REJECTED` HTTP response but does not invoke the audit emitter. `pkg/gateway/playground/metrics.go:15–22` registers `lenny_playground_page_views_total`, `_sessions_created_total`, `_ws_connect_total`, `_session_revocations_total`, `_session_revocation_propagation_seconds`, and `_dev_tenant_not_seeded_total`; the spec-named `lenny_playground_bearer_mint_rejected_total{reason}` is absent.
+
+**Resolution:** Added `playground.MintRejectedEvent` + `AuditEmitter.EmitMintRejected` (`pkg/gateway/playground/audit.go`), registered `lenny_playground_bearer_mint_rejected_total{reason}` and the `Metrics.bearerMintRejected` helper (`pkg/gateway/playground/metrics.go`), and wired emission from every mint-rejection branch in `pkg/gateway/playground/token.go` (subject_typ_invalid, tenant_claim_missing, tenant_claim_invalid_format, tenant_not_found). Gateway adapter `playgroundAuditEmitter` in `cmd/lenny-gateway/main.go` logs the new event. Tier-1 coverage: extended `TestAPIKeyModeRejectsNonUserBearer` to assert the audit payload + new `TestAPIKeyModeTenantClaimRejectionsEmitMintRejected` covers all three tenant-claim branches.
 
 ### - [ ] F-10.2.9 — `auth.tenantIdClaim` Helm value is not configurable on the main bearer path — M [Medium] — OPEN
 

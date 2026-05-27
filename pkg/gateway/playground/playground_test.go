@@ -207,12 +207,14 @@ func TestAPIKeyModeRejectsNonUserBearer(t *testing.T) {
 		Subject:  "alice",
 		TenantID: "acme",
 		Typ:      auth.TokenSessionCapability,
+		JWTID:    "subject-jti-cap",
 		Expiry:   time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatalf("sign cap token: %v", err)
 	}
-	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: signer})
+	audit := NewMemoryAuditEmitter()
+	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: signer}).WithAuditEmitter(audit)
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
 
@@ -231,6 +233,107 @@ func TestAPIKeyModeRejectsNonUserBearer(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&env)
 	if env.Error.Code != "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED" {
 		t.Fatalf("error code = %q, want LENNY_PLAYGROUND_BEARER_TYPE_REJECTED", env.Error.Code)
+	}
+	// spec: §10.2 line 243 — every rejected mint emits the
+	// playground.bearer_mint_rejected audit event with the canonical
+	// payload (tenant_id, subject_jti, subject_typ, invariant_violated,
+	// ingress_path).
+	rejs := audit.MintRejections()
+	if len(rejs) != 1 {
+		t.Fatalf("mint-rejected emissions: got %d, want 1", len(rejs))
+	}
+	ev := rejs[0]
+	if ev.InvariantViolated != "subject_typ_invalid" {
+		t.Fatalf("invariant: got %q, want subject_typ_invalid", ev.InvariantViolated)
+	}
+	if ev.SubjectTyp != string(auth.TokenSessionCapability) {
+		t.Fatalf("subject_typ: got %q, want %q", ev.SubjectTyp, auth.TokenSessionCapability)
+	}
+	if ev.SubjectJTI != "subject-jti-cap" {
+		t.Fatalf("subject_jti: got %q, want subject-jti-cap", ev.SubjectJTI)
+	}
+	if ev.TenantID != "acme" {
+		t.Fatalf("tenant_id: got %q, want acme", ev.TenantID)
+	}
+	if ev.IngressPath != "/v1/playground/token" {
+		t.Fatalf("ingress_path: got %q, want /v1/playground/token", ev.IngressPath)
+	}
+	if ev.At.IsZero() {
+		t.Fatal("emit-time stamp not set")
+	}
+}
+
+// spec: §10.2 line 243 — the multi-tenant tenant-claim rejection paths
+// (claim missing, malformed, unknown) all emit the canonical
+// playground.bearer_mint_rejected audit event with the invariant id as
+// the metric reason label.
+func TestAPIKeyModeTenantClaimRejectionsEmitMintRejected(t *testing.T) {
+	signer := devSigner()
+	mint := func(claims jwt.Claims) string {
+		t.Helper()
+		s, err := signer.Sign(claims)
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		return s
+	}
+	cases := []struct {
+		name     string
+		claims   jwt.Claims
+		tenants  TenantRegistry
+		wantCode string
+		wantInv  string
+	}{
+		{
+			name:     "claim missing",
+			claims:   jwt.Claims{Subject: "alice", Typ: auth.TokenUserBearer, JWTID: "jti-1", Expiry: time.Now().Add(time.Hour).Unix()},
+			tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+			wantCode: "TENANT_CLAIM_MISSING",
+			wantInv:  "tenant_claim_missing",
+		},
+		{
+			name:     "claim malformed",
+			claims:   jwt.Claims{Subject: "alice", TenantID: "with space", Typ: auth.TokenUserBearer, JWTID: "jti-2", Expiry: time.Now().Add(time.Hour).Unix()},
+			tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+			wantCode: "TENANT_CLAIM_INVALID_FORMAT",
+			wantInv:  "tenant_claim_invalid_format",
+		},
+		{
+			name:     "claim unknown",
+			claims:   jwt.Claims{Subject: "alice", TenantID: "ghost", Typ: auth.TokenUserBearer, JWTID: "jti-3", Expiry: time.Now().Add(time.Hour).Unix()},
+			tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+			wantCode: "TENANT_NOT_FOUND",
+			wantInv:  "tenant_not_found",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			audit := NewMemoryAuditEmitter()
+			h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey, MultiTenant: true}, Options{
+				Signer:  signer,
+				Tenants: tc.tenants,
+			}).WithAuditEmitter(audit)
+			srv := httptest.NewServer(h.TokenRoutes())
+			defer srv.Close()
+
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/playground/token", strings.NewReader("{}"))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+mint(tc.claims))
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("POST: %v", err)
+			}
+			defer resp.Body.Close()
+			var env errorEnvelope
+			_ = json.NewDecoder(resp.Body).Decode(&env)
+			if env.Error.Code != tc.wantCode {
+				t.Fatalf("code: got %q, want %q", env.Error.Code, tc.wantCode)
+			}
+			rejs := audit.MintRejections()
+			if len(rejs) != 1 || rejs[0].InvariantViolated != tc.wantInv {
+				t.Fatalf("mint-rejected events: got %+v, want one with invariant=%q", rejs, tc.wantInv)
+			}
+		})
 	}
 }
 

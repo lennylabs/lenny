@@ -342,6 +342,8 @@ func TestCreateTenantRejectsNegativeStorageQuota(t *testing.T) {
 	}
 }
 
+// spec: §10.2 line 210 — bad-format tenant_id rejects with
+// `400 INVALID_TENANT_ID` (not the generic `VALIDATION_ERROR`).
 func TestCreateTenantRejectsInvalidID(t *testing.T) {
 	router, _ := newAdminServer(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "with space"})
@@ -349,10 +351,28 @@ func TestCreateTenantRejectsInvalidID(t *testing.T) {
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rr.Code)
+		t.Fatalf("status: got %d, want 400", rr.Code)
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if env.Error.Code != "INVALID_TENANT_ID" {
+		t.Fatalf("code: got %q, want INVALID_TENANT_ID", env.Error.Code)
+	}
+	if env.Error.Details["field"] != "id" {
+		t.Fatalf("details.field: got %v, want id", env.Error.Details["field"])
 	}
 }
 
+// spec: §10.2 line 210 — a missing tenant_id violates the format regex
+// (which requires {1,128} characters) and so rejects with the same
+// `400 INVALID_TENANT_ID` code as a malformed one.
 func TestCreateTenantRejectsMissingID(t *testing.T) {
 	router, _ := newAdminServer(t)
 	body, _ := json.Marshal(admin.TenantPayload{})
@@ -360,7 +380,18 @@ func TestCreateTenantRejectsMissingID(t *testing.T) {
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rr.Code)
+		t.Fatalf("status: got %d, want 400", rr.Code)
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if env.Error.Code != "INVALID_TENANT_ID" {
+		t.Fatalf("code: got %q, want INVALID_TENANT_ID", env.Error.Code)
 	}
 }
 

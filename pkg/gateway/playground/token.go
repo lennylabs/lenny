@@ -135,14 +135,18 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// §10.2 tenant-claim extraction. In multi-tenant mode the tenant
-	// claim is required and must name a provisioned tenant.
+	// claim is required and must name a provisioned tenant. Each
+	// rejection emits the §10.2 line 243
+	// `playground.bearer_mint_rejected` audit event + metric.
 	if h.cfg.MultiTenant {
 		if claims.TenantID == "" {
+			h.emitMintRejected(r, "", claims.JWTID, string(claims.Typ), "tenant_claim_missing")
 			writeError(w, http.StatusUnauthorized, "TENANT_CLAIM_MISSING",
 				"the pasted bearer token carries no tenant_id claim", nil)
 			return
 		}
 		if !tenantIDPattern.MatchString(claims.TenantID) {
+			h.emitMintRejected(r, claims.TenantID, claims.JWTID, string(claims.Typ), "tenant_claim_invalid_format")
 			writeError(w, http.StatusUnauthorized, "TENANT_CLAIM_INVALID_FORMAT",
 				"the pasted bearer token tenant_id claim fails the format regex", nil)
 			return
@@ -154,6 +158,7 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !ok {
+				h.emitMintRejected(r, claims.TenantID, claims.JWTID, string(claims.Typ), "tenant_not_found")
 				writeError(w, http.StatusForbidden, "TENANT_NOT_FOUND",
 					"the pasted bearer token tenant_id does not name a provisioned tenant", nil)
 				return
@@ -164,7 +169,9 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 	// MUST be user_bearer. A session_capability, a2a_delegation, or
 	// service_token is rejected so a narrowly-scoped capability JWT
 	// cannot be re-minted into a broader playground JWT.
+	// spec: §10.2 lines 235-243 (invariant 1 + reject-audit contract).
 	if claims.Typ != auth.TokenUserBearer {
+		h.emitMintRejected(r, claims.TenantID, claims.JWTID, string(claims.Typ), "subject_typ_invalid")
 		writeError(w, http.StatusUnauthorized, "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED",
 			"the pasted bearer token typ must be user_bearer, got "+string(claims.Typ),
 			map[string]any{"presentedTyp": string(claims.Typ)})

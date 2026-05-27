@@ -41,12 +41,55 @@ type AuditEvent struct {
 	At time.Time
 }
 
+// MintRejectedEvent is the §10.2 line 243 playground.bearer_mint_rejected
+// audit event. It is emitted on every rejected playground mint —
+// whether the rejection happens in the §10.2 tenant-claim chain
+// (TENANT_CLAIM_MISSING / TENANT_CLAIM_INVALID_FORMAT / TENANT_NOT_FOUND)
+// or against one of the §10.2 mint invariants (the typ restriction
+// being the only one with a dedicated error envelope today). Fields
+// match the spec's audit payload contract.
+//
+// spec: §10.2 line 243.
+type MintRejectedEvent struct {
+	// TenantID is the tenant the subject token claimed. Empty when the
+	// rejection fires before tenant extraction (no token presented or a
+	// malformed token).
+	TenantID string
+
+	// SubjectJTI is the subject token's jti claim if parseable. Empty
+	// when no token was presented or its claims were unreadable.
+	SubjectJTI string
+
+	// SubjectTyp is the subject token's typ claim. Carried even on the
+	// typ-restriction rejection so the dashboard can see what was
+	// pasted.
+	SubjectTyp string
+
+	// InvariantViolated names the §10.2 mint invariant or §10.2
+	// tenant-claim failure that triggered the rejection. The value is
+	// the metric reason label (subject_typ_invalid, tenant_claim_missing,
+	// tenant_claim_invalid_format, tenant_not_found, …).
+	InvariantViolated string
+
+	// IngressPath is the request URL path; the spec names it explicitly
+	// so operators can tell apart cookie-to-bearer (/v1/playground/token)
+	// from the apiKey paste path (same URL, distinct admission mode).
+	IngressPath string
+
+	// At is the gateway clock instant the rejection fired.
+	At time.Time
+}
+
 // AuditEmitter receives playground audit events. The gateway wires an
 // implementation backed by its §11.7 audit sink; a nil AuditEmitter
 // disables emission. The contract is fire-and-forget: Emit must not
 // block the request path.
 type AuditEmitter interface {
 	EmitPlaygroundEvent(ctx context.Context, event AuditEvent)
+	// EmitMintRejected receives a §10.2 line 243
+	// playground.bearer_mint_rejected event. Implementations route it
+	// to the same audit sink as EmitPlaygroundEvent.
+	EmitMintRejected(ctx context.Context, event MintRejectedEvent)
 }
 
 // WithAuditEmitter returns a copy of the handler that emits §27.3.1
@@ -79,6 +122,27 @@ func (h *Handler) emitBearerMintedAudit(r *http.Request, tenant, user, jti strin
 	})
 }
 
+// emitMintRejected emits the §10.2 line 243
+// playground.bearer_mint_rejected event for an invariant or
+// tenant-claim rejection. It also bumps the
+// lenny_playground_bearer_mint_rejected_total{reason} counter.
+// Both calls are nil-safe (a no-op when the audit or metrics sinks
+// are unwired). spec: §10.2 line 243.
+func (h *Handler) emitMintRejected(r *http.Request, tenant, subjectJTI, subjectTyp, invariant string) {
+	h.metrics.bearerMintRejected(invariant)
+	if h.audit == nil {
+		return
+	}
+	h.audit.EmitMintRejected(r.Context(), MintRejectedEvent{
+		TenantID:          tenant,
+		SubjectJTI:        subjectJTI,
+		SubjectTyp:        subjectTyp,
+		InvariantViolated: invariant,
+		IngressPath:       r.URL.Path,
+		At:                h.now(),
+	})
+}
+
 // emitBearerRevokedAudit emits the §27.3.1 step-6
 // playground.bearer_revoked event for a logout or revocation.
 func (h *Handler) emitBearerRevokedAudit(ctx context.Context, tenant, user, cookieID string, jtis []string) {
@@ -102,8 +166,9 @@ func (h *Handler) emitBearerRevokedAudit(ctx context.Context, tenant, user, cook
 // emitted event. It backs the package tests and a gateway running
 // without a durable audit sink.
 type MemoryAuditEmitter struct {
-	mu     sync.Mutex
-	events []AuditEvent
+	mu             sync.Mutex
+	events         []AuditEvent
+	mintRejections []MintRejectedEvent
 }
 
 // NewMemoryAuditEmitter returns an empty MemoryAuditEmitter.
@@ -120,11 +185,26 @@ func (m *MemoryAuditEmitter) EmitPlaygroundEvent(_ context.Context, event AuditE
 	m.events = append(m.events, event)
 }
 
+// EmitMintRejected implements AuditEmitter.
+func (m *MemoryAuditEmitter) EmitMintRejected(_ context.Context, event MintRejectedEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mintRejections = append(m.mintRejections, event)
+}
+
 // Events returns a copy of every event emitted so far.
 func (m *MemoryAuditEmitter) Events() []AuditEvent {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]AuditEvent(nil), m.events...)
+}
+
+// MintRejections returns a copy of every mint-rejected event emitted so
+// far.
+func (m *MemoryAuditEmitter) MintRejections() []MintRejectedEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]MintRejectedEvent(nil), m.mintRejections...)
 }
 
 // jtiCounter backs the monotonic component of newJTI.
