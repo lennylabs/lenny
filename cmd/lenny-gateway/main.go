@@ -1699,6 +1699,12 @@ func main() {
 		// `lenny_delegation_would_have_blocked_total` through the
 		// gateway metrics registry.
 		Metrics: gwMetrics,
+		// spec: §8.2 line 90 / §10.7 — `independent` propagation
+		// routes the child afresh through the same ExperimentRouter
+		// the top-level session-creation path uses. Wired as a
+		// pointer to *sessionserver.Server, which implements
+		// delegation.ExperimentRouter via ApplyExperimentRouting.
+		ExperimentRouter: sessionSrv,
 	})
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{

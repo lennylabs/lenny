@@ -19,7 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// variantIsolationError is returned by applyExperimentRouting when the
+// variantIsolationError is returned by ApplyExperimentRouting when the
 // §10.7 ExperimentRouter fails closed: the assigned variant pool's
 // isolation profile is weaker than the session's. The handler maps it
 // to 422 VARIANT_ISOLATION_UNAVAILABLE.
@@ -61,7 +61,7 @@ type ExperimentIsolationRejection struct {
 	VariantPoolIsolation string
 }
 
-// applyExperimentRouting runs the §10.7 ExperimentRouter over a
+// ApplyExperimentRouting runs the §10.7 ExperimentRouter over a
 // session at creation. The tenant's experiments whose baseRuntime
 // matches the session's requested runtime are evaluated in created_at
 // order; the first one that buckets the session to a non-control
@@ -70,12 +70,18 @@ type ExperimentIsolationRejection struct {
 // recorded. A session that no experiment enrolls is left unchanged and
 // runs the base runtime.
 //
+// spec: §8.2 line 90 / §10.7 — the delegation path invokes this same
+// routing function on a child whose parent's propagation mode is
+// `independent` (or whose parent carries no experimentContext), so
+// the child is routed afresh through the ExperimentRouter rather than
+// silently unenrolled.
+//
 // §10.7 ExperimentRouter isolation monotonicity: when the assigned
 // variant pool's isolation profile is weaker than the session's, the
 // router fails closed — it returns a *variantIsolationError and the
 // session is not created, rather than silently routing the session
 // into a less-isolated pool.
-func (s *Server) applyExperimentRouting(ctx context.Context, row *sessionstore.Session) error {
+func (s *Server) ApplyExperimentRouting(ctx context.Context, row *sessionstore.Session) error {
 	if s.experiments == nil {
 		return nil
 	}
@@ -284,7 +290,7 @@ func (s *Server) emitExperimentUnknownVariant(ctx context.Context, row *sessions
 // response and returns false; the caller must then abort. It returns
 // true when the session may proceed to persistence.
 func (s *Server) routeExperiment(w http.ResponseWriter, r *http.Request, row *sessionstore.Session) bool {
-	err := s.applyExperimentRouting(r.Context(), row)
+	err := s.ApplyExperimentRouting(r.Context(), row)
 	if err == nil {
 		return true
 	}

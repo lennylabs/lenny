@@ -7281,7 +7281,7 @@ Evidence: `pkg/gateway/delegation/service.go` line 199:
 `if req.MaxDepth > 0 { ... }` makes depth enforcement conditional on
 the caller setting it; `grep -rn "ResolveMaxDepth" pkg/gateway` empty.
 
-### - [ ] F-8.1.5 — 1-F5 (Info) — Isolation-monotonicity (N3.c) is implemented and tested [Medium] — OPEN
+### - [x] F-8.1.5 — 1-F5 (Info) — Isolation-monotonicity (N3.c) is implemented and tested [Medium] — CLOSED
 
 `pkg/sandbox/isolation/profile.go::AtLeastAsRestrictive` encodes the
 §5.3 ordering (`standard < sandboxed < microvm`).
@@ -7299,7 +7299,12 @@ ISOLATION_MONOTONICITY_VIOLATED MCP error envelope
 Recording as `Info` because §8.1 N3.c is the one of the three N3
 invariants that is fully wired and tested.
 
-### - [ ] F-8.1.6 — 1-F6 (Info) — N1 / N2 claims have no separable testable surface [Medium] — OPEN
+**Resolution (this batch):** The finding's own evidence confirms
+implementation and test coverage of `AtLeastAsRestrictive` + the
+mapping to `ISOLATION_MONOTONICITY_VIOLATED`. No further work is
+required — closing as documented.
+
+### - [x] F-8.1.6 — 1-F6 (Info) — N1 / N2 claims have no separable testable surface [Medium] — CLOSED
 
 §8.1's "platform primitive" (N1) and "every pod runs the same
 orchestration-capable runtime" (N2) framings are design observations
@@ -7316,6 +7321,11 @@ reports `SupportsDelegation: true` and the §8.5 tool surface registers
 unconditionally for every session. The "delegating orchestrator vs
 pure worker" choice is purely a runtime-author decision, which matches
 §8.1.
+
+**Resolution (this batch):** The finding's own analysis concludes
+"there is no separate gap here at the §8.1 philosophy level". N1/N2
+are observations rather than testable requirements; the operational
+consequences are already covered. No code change required.
 
 ### Summary
 
@@ -7490,7 +7500,7 @@ Implementation:
 
 Consequence: the actor-token freshness check that closes the "stale parent mints a long-lived child" race is structurally absent. The delegation path does not produce a token at all, so the rest of the platform that depends on the `act` chain (audit attribution, scope enforcement at the LLM proxy, the recursive-revocation propagation in §13.3) is bypassed for delegated children. The child session runs unauthenticated relative to the §13 trust model, or — if the runtime adapter mints its own — without an `act` claim linking it to the parent.
 
-### - [ ] F-8.2.8 — `target_not_an_agent` rejection of `type: mcp` targets is not enforced [High] — OPEN
+### - [x] F-8.2.8 — `target_not_an_agent` rejection of `type: mcp` targets is not enforced [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.5.4 — Both report that lenny/delegate_task does not reject type: mcp targets with target_not_an_agent, citing the same §8.2 line 50.
 
@@ -7502,6 +7512,14 @@ Implementation:
 - Discovery hides `type: mcp` runtimes from `lenny/discover_agents` (line 835), but a runtime that learns an mcp runtime's name out of band can hand it to `lenny/delegate_task` directly and the call proceeds.
 
 Consequence: a non-agent runtime (an MCP server registered for tool use only) can be coerced into being a delegation target. The error catalog code `target_not_an_agent` is never returned.
+
+**Resolution (this batch):** The MCP shim now resolves the target
+runtime via `runtimestore.Resolve` and rejects `type: mcp` with the
+`target_not_an_agent` reason before the §10.6 scope check
+(`pkg/gateway/mcptools/mcptools.go` delegate_task handler). The
+delegation `Service.Delegate` enforces the same rule (new
+`ErrTargetNotAgent`) as defence-in-depth so REST and other non-MCP
+entry points cannot bypass the gate.
 
 ### - [ ] F-8.2.9 — `contentPolicy.maxInputSize` and `contentPolicy.interceptorRef` are not enforced on the delegation path [High] — OPEN
 
@@ -7517,7 +7535,7 @@ Implementation:
 
 Consequence: a runtime can submit an arbitrarily large `taskInput` and the gateway will accept it; deployer-configured content interceptors named on the `DelegationPolicy` are bypassed. The prompt-injection mitigation §8.3 names as primary is non-functional on the delegation hop.
 
-### - [ ] F-8.2.10 — `independent` experiment-context propagation is not routed afresh through the `ExperimentRouter` [High] — OPEN
+### - [x] F-8.2.10 — `independent` experiment-context propagation is not routed afresh through the `ExperimentRouter` [High] — CLOSED
 
 Spec §8.2 line 90 (referencing §10.7): "under `independent` the `ExperimentRouter` evaluates the child for experiment eligibility independently (it may land in a different experiment or none)."
 
@@ -7526,6 +7544,20 @@ Implementation:
 - `applyExperimentRouting` at `pkg/gateway/sessionserver/experimentrouter.go:78-133` is the function that actually evaluates the `ExperimentRouter` over a session. It is invoked only from the REST `POST /v1/sessions` start path (`routeExperiment`). `grep -rn applyExperimentRouting pkg/gateway/delegation` is empty.
 
 Consequence: a delegating tree with `propagation: independent` produces children that are silently unenrolled rather than independently routed. The runtime cannot tag traces by independently-assigned variants because the child has no variant.
+
+**Resolution (this batch):** Renamed
+`sessionserver.Server.applyExperimentRouting` →
+`ApplyExperimentRouting` so it can satisfy a new
+`delegation.ExperimentRouter` interface. `delegation.Options.ExperimentRouter`
+plumbs the session server into the delegation service; `Delegate`
+calls the router whenever `propagateExperimentContext` returned no
+inherited context (the `independent` mode and the unenrolled-parent
+case), so the §8.2 step 2b PreRoute pass runs against the child's
+runtime and may enroll it in a different experiment. A router
+failure (e.g. §10.7 fail-closed isolation check) now aborts the
+delegation rather than persisting an unenrolled child. The MCP shim
+already injects the same `sessionSrv` value as the router, so REST
+and MCP delegation share the routing logic.
 
 ### - [ ] F-8.2.11 — Virtual MCP child interface and its lifecycle (storage, replay on resume, pending-elicitation hold) is not implemented [Medium] — OPEN
 
@@ -8503,7 +8535,7 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:917-1021`
 - `pkg/gateway/delegation/service.go:33-59` (`Request` struct lacks both)
 
-### - [ ] F-8.5.4 — `lenny/delegate_task` does not reject `type: mcp` targets with `target_not_an_agent` — High [Medium] — OPEN
+### - [x] F-8.5.4 — `lenny/delegate_task` does not reject `type: mcp` targets with `target_not_an_agent` — High [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.2.8 — Both report that lenny/delegate_task does not reject type: mcp targets with target_not_an_agent, citing the same §8.2 line 50.
 
@@ -8519,6 +8551,10 @@ Evidence:
 
 - `pkg/gateway/mcptools/mcptools.go:935-960` (no type check in delegate path)
 - `pkg/gateway/delegation/service.go:156-232` (no `Type` check in `Delegate`)
+
+**Resolution:** Closed by F-8.2.8 (same MCP shim + delegation
+`Service.Delegate` `target_not_an_agent` rejection; the §8.2 line 50
+contract is now enforced at both layers).
 
 ### - [ ] F-8.5.5 — `lenny/await_children` is polling, not streaming, and does not yield `input_required` partials — High [Medium] — OPEN
 

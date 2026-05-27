@@ -76,15 +76,26 @@ type MetricsRecorder interface {
 	IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode string)
 }
 
+// ExperimentRouter routes a delegation child afresh through the §10.7
+// ExperimentRouter when the parent's propagation mode is `independent`
+// (or the parent carries no experiment context). spec: §8.2 line 90
+// (independent propagation evaluates the child for experiment
+// eligibility independently). The session server's
+// `*Server.ApplyExperimentRouting` implements this interface.
+type ExperimentRouter interface {
+	ApplyExperimentRouting(ctx context.Context, row *sessionstore.Session) error
+}
+
 // Service creates child sessions from a delegation request.
 type Service struct {
-	store       sessionstore.Store
-	experiments experimentstore.Store
-	runtimes    runtimestore.Store
-	metrics     MetricsRecorder
-	clock       func() time.Time
-	idFn        func() string
-	mode        cycle.Mode
+	store            sessionstore.Store
+	experiments      experimentstore.Store
+	runtimes         runtimestore.Store
+	metrics          MetricsRecorder
+	experimentRouter ExperimentRouter
+	clock            func() time.Time
+	idFn             func() string
+	mode             cycle.Mode
 }
 
 // Options configures a Service.
@@ -116,6 +127,13 @@ type Options struct {
 	// Metrics, when set, receives §8.2 delegation admission and
 	// cycle-gate observations. Nil disables emission.
 	Metrics MetricsRecorder
+
+	// ExperimentRouter, when set, routes a delegation child afresh
+	// under §8.2 line 90 `independent` propagation (or when the
+	// parent carries no experiment enrollment). Nil leaves the child
+	// at the propagated context only, which silently unenrolls the
+	// child under `independent`.
+	ExperimentRouter ExperimentRouter
 }
 
 // NewService returns a delegation Service.
@@ -133,13 +151,14 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		mode = cycle.ModeEnforce
 	}
 	return &Service{
-		store:       store,
-		experiments: opts.Experiments,
-		runtimes:    opts.Runtimes,
-		metrics:     opts.Metrics,
-		clock:       clock,
-		idFn:        idFn,
-		mode:        mode,
+		store:            store,
+		experiments:      opts.Experiments,
+		runtimes:         opts.Runtimes,
+		metrics:          opts.Metrics,
+		experimentRouter: opts.ExperimentRouter,
+		clock:            clock,
+		idFn:             idFn,
+		mode:             mode,
 	}
 }
 
@@ -160,6 +179,12 @@ var (
 	// userless child would silently downgrade every one of those
 	// invariants for the entire subtree.
 	ErrParentNoUser = errors.New("delegation: parent session has no authenticated user identity")
+
+	// ErrTargetNotAgent — the delegation target resolves to a
+	// `type: mcp` runtime. spec: §8.2 line 50 mandates `lenny/
+	// delegate_task` reject these with `target_not_an_agent` before any
+	// child session is admitted.
+	ErrTargetNotAgent = errors.New("delegation: target_not_an_agent: target runtime is type:mcp (§8.2)")
 )
 
 // IsolationViolationError reports a §8.3 SEC-001 monotonicity
@@ -239,10 +264,17 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 	// §5.1 / §8.2: the runtime layer of the three-layer cycle gate reads
 	// the resolved target runtime's allowSelfRecursion. A missing
 	// registry or an unresolvable runtime leaves the layer false (the
-	// conservative default that rejects self-recursive hops).
+	// conservative default that rejects self-recursive hops). The
+	// resolved runtime is also the §8.2 line 50 type gate: a
+	// `type: mcp` runtime is rejected here as defence-in-depth so a
+	// caller that bypasses the MCP shim (REST / non-MCP entry points)
+	// still cannot delegate onto a non-agent target.
 	settings := cycle.Settings{Mode: s.mode}
 	if s.runtimes != nil {
 		if rt, err := runtimestore.Resolve(ctx, s.runtimes, req.RuntimeRef); err == nil {
+			if rt.Type == runtimestore.TypeMCP {
+				return Result{}, ErrTargetNotAgent
+			}
 			settings.RuntimeAllowSelfRec = rt.AllowSelfRecursion
 		}
 	}
@@ -282,6 +314,21 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		ExperimentContext: s.propagateExperimentContext(ctx, tenantID, parent),
 		CreatedAt:         now,
 		UpdatedAt:         now,
+	}
+	// spec: §8.2 line 90 / §10.7 — under `independent` propagation
+	// (or when the parent carries no experimentContext), the
+	// ExperimentRouter evaluates the child afresh and may newly
+	// enroll it. propagateExperimentContext returned nil in those
+	// cases; running the router here completes the §10.7 routing
+	// path that §8.2 step 2b mandates. `inherit` and `control`
+	// leave the child with the propagated context and skip the
+	// router. The router enforces isolation-monotonicity itself, so
+	// a fail-closed *variantIsolationError aborts the delegation
+	// rather than creating an unenrolled child.
+	if s.experimentRouter != nil && child.ExperimentContext == nil {
+		if err := s.experimentRouter.ApplyExperimentRouting(ctx, &child); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := s.store.Create(ctx, child); err != nil {
 		return Result{}, err

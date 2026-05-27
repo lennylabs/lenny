@@ -651,3 +651,194 @@ func TestDelegatePermissiveModeSkipsAttribution(t *testing.T) {
 		t.Errorf("permissive-mode depths = %+v, want one observation", rec.depths)
 	}
 }
+
+// fakeExperimentRouter is a delegation.ExperimentRouter test double:
+// the routing closure is provided per-test so behaviour can be set.
+type fakeExperimentRouter struct {
+	calls int
+	route func(row *sessionstore.Session) error
+}
+
+func (f *fakeExperimentRouter) ApplyExperimentRouting(_ context.Context, row *sessionstore.Session) error {
+	f.calls++
+	if f.route != nil {
+		return f.route(row)
+	}
+	return nil
+}
+
+// spec: §8.2 line 90 / §10.7 — under `independent` propagation the
+// gateway invokes the §10.7 ExperimentRouter on the child afresh; the
+// child may newly enroll in a different experiment. F-8.2.10.
+func TestDelegateIndependentRoutesChildAfresh_spec_8_2_F_8_2_10(t *testing.T) {
+	store := memstore.New()
+	exps := experimentstore.NewMemory()
+	seedExperiment(t, exps, "exp_parent", experiment.PropagationIndependent)
+	seedEnrolledParent(t, store, "exp_parent")
+	router := &fakeExperimentRouter{route: func(row *sessionstore.Session) error {
+		row.ExperimentContext = &sessionstore.ExperimentContext{
+			ExperimentID: "exp_child", VariantID: "treatment",
+		}
+		return nil
+	}}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:           func() string { return "sess_child" },
+		Experiments:      exps,
+		ExperimentRouter: router,
+	})
+
+	child := delegateChild(t, svc)
+	if router.calls != 1 {
+		t.Fatalf("router called %d times, want 1 under independent propagation", router.calls)
+	}
+	if child.ExperimentContext == nil ||
+		child.ExperimentContext.ExperimentID != "exp_child" ||
+		child.ExperimentContext.VariantID != "treatment" {
+		t.Errorf("child context = %+v, want fresh routing onto exp_child/treatment", child.ExperimentContext)
+	}
+}
+
+// spec: §8.2 line 90 / §10.7 — when the parent carries no experiment
+// context, the child is still evaluated by the ExperimentRouter so it
+// may pick up a newly matching experiment.
+func TestDelegateUnenrolledParentRoutesChildAfresh_spec_8_2_F_8_2_10(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	router := &fakeExperimentRouter{route: func(row *sessionstore.Session) error {
+		row.ExperimentContext = &sessionstore.ExperimentContext{
+			ExperimentID: "exp_child", VariantID: "treatment",
+		}
+		return nil
+	}}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:           func() string { return "sess_child" },
+		ExperimentRouter: router,
+	})
+	child := delegateChild(t, svc)
+	if router.calls != 1 {
+		t.Fatalf("router called %d times, want 1 (parent unenrolled)", router.calls)
+	}
+	if child.ExperimentContext == nil ||
+		child.ExperimentContext.ExperimentID != "exp_child" {
+		t.Errorf("child context = %+v, want fresh routing", child.ExperimentContext)
+	}
+}
+
+// spec: §8.2 line 90 / §10.7 — `inherit` and `control` propagation
+// modes leave the child with the parent's context and skip the
+// ExperimentRouter (the child must adopt the parent's variant
+// verbatim, not be re-routed).
+func TestDelegateInheritSkipsExperimentRouter_spec_8_2_F_8_2_10(t *testing.T) {
+	for _, mode := range []experiment.Propagation{
+		experiment.PropagationInherit,
+		experiment.PropagationControl,
+	} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			store := memstore.New()
+			exps := experimentstore.NewMemory()
+			seedExperiment(t, exps, "exp_p", mode)
+			seedEnrolledParent(t, store, "exp_p")
+			router := &fakeExperimentRouter{}
+			svc := delegation.NewService(store, delegation.Options{
+				IDFunc:           func() string { return "sess_child" },
+				Experiments:      exps,
+				ExperimentRouter: router,
+			})
+			child := delegateChild(t, svc)
+			if router.calls != 0 {
+				t.Errorf("router called %d times under %s, want 0", router.calls, mode)
+			}
+			if child.ExperimentContext == nil ||
+				child.ExperimentContext.ExperimentID != "exp_p" {
+				t.Errorf("child context = %+v, want propagated parent context", child.ExperimentContext)
+			}
+		})
+	}
+}
+
+// spec: §8.2 line 90 — when the router fails closed (e.g. §10.7
+// VARIANT_ISOLATION_UNAVAILABLE), the delegation must abort rather
+// than create an unenrolled child.
+func TestDelegateRouterFailureAbortsDelegation_spec_8_2_F_8_2_10(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	failure := errors.New("variant_isolation_unavailable")
+	router := &fakeExperimentRouter{route: func(_ *sessionstore.Session) error { return failure }}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:           func() string { return "sess_child" },
+		ExperimentRouter: router,
+	})
+	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("Delegate err = %v, want router failure to propagate", err)
+	}
+	if _, gerr := store.Get(context.Background(), "acme", "sess_child"); gerr == nil {
+		t.Error("a router-aborted delegation must not persist the child")
+	}
+}
+
+// spec: §8.2 line 50 — `lenny/delegate_task` rejects `type: mcp`
+// targets with `target_not_an_agent`. The delegation Service is the
+// defence-in-depth call site so non-MCP entry points (REST, future
+// SDKs) cannot bypass the check. F-8.2.8 / F-8.5.4.
+func TestDelegateRejectsTypeMCPTarget_spec_8_2_F_8_2_8(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "fs-mcp", Type: runtimestore.TypeMCP, Image: "lenny/fs-mcp@sha256:abc",
+	}); err != nil {
+		t.Fatalf("seed mcp runtime: %v", err)
+	}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:   func() string { return "sess_child" },
+		Runtimes: runtimes,
+	})
+	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "fs-mcp",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if !errors.Is(err, delegation.ErrTargetNotAgent) {
+		t.Fatalf("Delegate err = %v, want ErrTargetNotAgent", err)
+	}
+	if _, gerr := store.Get(context.Background(), "acme", "sess_child"); gerr == nil {
+		t.Error("a type:mcp delegation must not create a child session")
+	}
+}
+
+// An agent runtime resolves normally — the type check is targeted, not
+// a catch-all.
+func TestDelegateAdmitsTypeAgentTarget_spec_8_2_F_8_2_8(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "gemini", Type: runtimestore.TypeAgent, Image: "lenny/gemini@sha256:def",
+	}); err != nil {
+		t.Fatalf("seed agent runtime: %v", err)
+	}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:   func() string { return "sess_child" },
+		Runtimes: runtimes,
+	})
+	res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	if res.Child.ID != "sess_child" {
+		t.Errorf("child = %+v, want admitted", res.Child)
+	}
+}

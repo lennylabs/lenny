@@ -177,6 +177,52 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	}
 }
 
+// spec: §8.2 line 50 — `lenny/delegate_task` rejects `type: mcp`
+// targets with `target_not_an_agent`. The MCP shim is the primary
+// rejection site; the delegation Service enforces it again as
+// defence-in-depth. F-8.2.8 / F-8.5.4.
+func TestDelegateTaskRejectsTypeMCPTarget_spec_8_2_F_8_2_8(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:    store,
+		Runtimes: runtimes,
+		Delegation: delegation.NewService(store, delegation.Options{
+			IDFunc:   func() string { return "sess_child" },
+			Runtimes: runtimes,
+		}),
+		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:   func() string { return "sess_mcp" },
+		TenantID: "acme",
+	})
+	ctxbg := context.Background()
+	_ = runtimes.Create(ctxbg, runtimestore.Runtime{
+		Name: "fs-mcp", Type: runtimestore.TypeMCP, Image: "lenny/fs-mcp@sha256:abc",
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_ = store.Create(ctxbg, sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
+		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt:  now, UpdatedAt: now,
+	})
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"fs-mcp","poolRef":"pool-b"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("delegation to a type:mcp runtime must be a tool error: %+v", resp)
+	}
+	content, _ := result["content"].([]any)
+	c0, _ := content[0].(map[string]any)
+	if text, _ := c0["text"].(string); !strings.Contains(text, "target_not_an_agent") {
+		t.Errorf("rejection should carry target_not_an_agent reason: %q", text)
+	}
+	if _, gerr := store.Get(ctxbg, "acme", "sess_child"); gerr == nil {
+		t.Error("a target_not_an_agent rejection must not create a child session")
+	}
+}
+
 // auditedEvent is one event a fakeDelegationAuditor recorded.
 type auditedEvent struct {
 	eventType string

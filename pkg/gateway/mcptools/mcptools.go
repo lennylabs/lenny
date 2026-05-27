@@ -1210,6 +1210,19 @@ func Register(srv *mcp.Server, deps Deps) {
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 			}
+			// spec: §8.2 line 50 — `lenny/delegate_task` rejects
+			// `type: mcp` targets with `target_not_an_agent`. The check
+			// runs before the §10.6 scope filter so a caller cannot
+			// reach an MCP-only runtime even if it happens to share
+			// the caller's environment.
+			if deps.Runtimes != nil && in.RuntimeRef != "" {
+				if rt, err := runtimestore.Resolve(ctx, deps.Runtimes, in.RuntimeRef); err == nil && rt.Type == runtimestore.TypeMCP {
+					return mcp.ToolResult{}, fmt.Errorf(
+						"target_not_an_agent: delegation target %q is a type:mcp runtime (§8.2 line 50)",
+						in.RuntimeRef,
+					)
+				}
+			}
 			// §10.6: the delegation target must be within the caller's
 			// environment scope — the same transparent-filter boundary
 			// lenny/discover_agents applies, enforced so a hard-coded
