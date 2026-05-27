@@ -316,6 +316,34 @@ type ResumeRequest struct {
 	// fields to the restored runtime, matching BindRequest.
 	AgentInterface     []byte
 	MinPlatformVersion string
+	// RecoveryGeneration is the session's §4.2 / §7.3 pod-recovery
+	// counter at issue time. Echoed back from the adapter on
+	// ResumeResult so the gateway can verify the adapter consumed the
+	// fenced generation. F-7.3.22.
+	RecoveryGeneration int64
+	// ExpectedWorkspaceBytes is the session's
+	// last_checkpoint_workspace_bytes from sessionstore. Passed to the
+	// adapter so it can run the §4.4 / §7.3 line 397 symmetric
+	// workspace size pre-check before extraction. F-7.3.26.
+	ExpectedWorkspaceBytes int64
+	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size cap from
+	// the SandboxTemplate. F-7.3.26.
+	WorkspaceSizeLimitBytes int64
+}
+
+// ResumeResult is what Binder.Resume returns alongside the BindResult:
+// the §4.4 / §7.2 mode the adapter reported and the recovery generation
+// it echoed back. F-7.3.22.
+type ResumeResult struct {
+	// Result is the standard claim-and-handshake outcome.
+	Result *BindResult
+	// Mode is the adapter-reported §4.4 / §7.2 ResumeMode. Empty when
+	// the adapter is on an older protocol and did not report one; the
+	// gateway falls back to its own classification.
+	Mode string
+	// RecoveryGeneration is the value the adapter echoed back. Equal
+	// to ResumeRequest.RecoveryGeneration on a healthy round-trip.
+	RecoveryGeneration int64
 }
 
 // Bind claims an idle pod for the request's session, resolves the
@@ -633,34 +661,46 @@ func uploadRefs(plan *adapterv1.WorkspacePlan) []string {
 // when a suspended session's original pod was released and the session
 // must be rebuilt on a replacement pod. Any failure after the claim is
 // returned so the gateway can retry on a fresh pod.
-func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (*BindResult, error) {
+//
+// The returned ResumeResult carries the standard claim-and-handshake
+// BindResult plus the §4.4 / §7.2 mode the adapter reported and the
+// echoed §4.2 recovery_generation. F-7.3.22.
+func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, error) {
 	sb, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
-		return nil, err
+		return ResumeResult{}, err
 	}
-	if _, err := cl.Resume(ctx, adapterclient.ResumeParams{
-		SessionID:          req.SessionID,
-		Runtime:            req.Runtime,
-		CheckpointID:       req.CheckpointID,
-		ExperimentContext:  req.ExperimentContext,
-		TracingContext:     req.TracingContext,
-		AgentInterface:     req.AgentInterface,
-		MinPlatformVersion: req.MinPlatformVersion,
-	}); err != nil {
+	res, err := cl.Resume(ctx, adapterclient.ResumeParams{
+		SessionID:               req.SessionID,
+		Runtime:                 req.Runtime,
+		CheckpointID:            req.CheckpointID,
+		ExperimentContext:       req.ExperimentContext,
+		TracingContext:          req.TracingContext,
+		AgentInterface:          req.AgentInterface,
+		MinPlatformVersion:      req.MinPlatformVersion,
+		RecoveryGeneration:      req.RecoveryGeneration,
+		ExpectedWorkspaceBytes:  req.ExpectedWorkspaceBytes,
+		WorkspaceSizeLimitBytes: req.WorkspaceSizeLimitBytes,
+	})
+	if err != nil {
 		cl.Close()
-		return nil, fmt.Errorf("podsession: resume session on pod %s: %w", sb.Name, err)
+		return ResumeResult{}, fmt.Errorf("podsession: resume session on pod %s: %w", sb.Name, err)
 	}
 	// The resumed pod's §6.2 phase chain (resume_pending → resuming →
 	// attached) is driven by the resume watchdog path, tracked separately; the
 	// fresh pod stays in `claimed` here. Release's IsValid guard handles that
 	// gracefully (it skips the terminal-disposition write when no edge exists
 	// from claimed) and the drain reclaims the pod regardless.
-	return &BindResult{
-		SessionID:   req.SessionID,
-		TenantID:    req.TenantID,
-		SandboxName: sb.Name,
-		PodIP:       sb.Status.PodIP,
-		Adapter:     cl,
+	return ResumeResult{
+		Result: &BindResult{
+			SessionID:   req.SessionID,
+			TenantID:    req.TenantID,
+			SandboxName: sb.Name,
+			PodIP:       sb.Status.PodIP,
+			Adapter:     cl,
+		},
+		Mode:               res.Mode,
+		RecoveryGeneration: res.RecoveryGeneration,
 	}, nil
 }
 

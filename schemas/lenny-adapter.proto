@@ -587,10 +587,46 @@ message ResumeRequest {
   string task_id = 6;
   bytes agent_interface = 7;
   string min_platform_version = 8;
+  // recovery_generation is the session's §4.2 / §7.3 pod-recovery
+  // counter at the time the gateway issued this Resume. Re-delivered
+  // to the adapter so per-pod traces, logs, and any partial-manifest
+  // row the adapter writes can carry the (coordination, recovery)
+  // tuple that authored the replay. Zero when the gateway has not
+  // recorded a generation for the session.
+  int64 recovery_generation = 9;
+  // expected_workspace_bytes is the session's
+  // `last_checkpoint_workspace_bytes` recorded on the gateway side —
+  // the uncompressed total the adapter is expected to extract for
+  // this Resume. The adapter compares it against
+  // `workspace_size_limit_bytes` (the §4.4 hard workspace size limit)
+  // before quiescing the runtime to refuse a restore whose archive
+  // would blow past the pod's emptyDir budget. Zero when the gateway
+  // has no recorded size; the adapter then falls back to the kubelet
+  // emptyDir guard.
+  int64 expected_workspace_bytes = 10;
+  // workspace_size_limit_bytes is the §4.4 / §10.1 per-pod hard
+  // workspace size cap the SandboxTemplate or runtime resolves to.
+  // The adapter uses it together with expected_workspace_bytes for
+  // the symmetric pre-extraction size check. Zero disables the
+  // gateway-supplied limit (the kubelet emptyDir guard is the
+  // backstop).
+  int64 workspace_size_limit_bytes = 11;
 }
 
 message ResumeResponse {
   int64 restored_bytes = 1;  // uncompressed workspace bytes restored
+  // mode reports how the adapter restored the workspace per §4.4 /
+  // §7.2 ResumeMode: "full" when the named checkpoint was extracted
+  // intact, "partial_workspace" when only a partial manifest was
+  // available, "conversation_only" when no workspace was restored,
+  // or "coordinator_handoff" for the §10.4 reattach path. Empty when
+  // the adapter cannot classify the resume; the gateway falls back to
+  // its own classification.
+  string mode = 2;
+  // recovery_generation echoes the value the gateway supplied on
+  // ResumeRequest.recovery_generation so the gateway can verify the
+  // adapter consumed the right generation under split-brain.
+  int64 recovery_generation = 3;
 }
 
 // ExportSpec is one §8.7 file-export entry: a source glob resolved

@@ -4,12 +4,14 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -48,6 +50,23 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, err
 	}
 
+	// spec: §7.3 line 397 — the gateway passes `last_checkpoint_workspace_bytes`
+	// (expected_workspace_bytes) and the §4.4 hard workspace size limit so the
+	// adapter refuses a restore that would exceed the pod's emptyDir budget
+	// before quiescing the runtime. The kubelet emptyDir guard remains the
+	// backstop; this is the symmetric pre-extraction check called out by
+	// F-7.3.26.
+	if err := checkpoint.WorkspaceSizePreCheck(
+		req.GetExpectedWorkspaceBytes(), req.GetWorkspaceSizeLimitBytes()); err != nil {
+		var sizeErr *checkpoint.WorkspaceSizeExceededError
+		s.releaseSession()
+		if errors.As(err, &sizeErr) {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"resume rejected: %s", sizeErr.Error())
+		}
+		return nil, status.Errorf(codes.Internal, "workspace size precheck: %v", err)
+	}
+
 	rc, err := s.Restorer.LoadCheckpoint(ctx, req.GetCheckpointId())
 	if err != nil {
 		s.releaseSession()
@@ -83,5 +102,16 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
-	return &adapterv1.ResumeResponse{RestoredBytes: restored}, nil
+	// spec: §4.4 / §7.2 ResumeMode — the adapter restored the workspace
+	// from the named full checkpoint. The §10.1 partial-manifest reassembly
+	// is gateway-driven; the adapter never assembles partials directly, so
+	// it reports `full` here unconditionally. The gateway's
+	// `classifyResume` upgrades this to `partial_workspace` /
+	// `conversation_only` when its own lookups indicate so. F-7.3.22.
+	mode := string(checkpoint.ResumeFull)
+	return &adapterv1.ResumeResponse{
+		RestoredBytes:      restored,
+		Mode:               mode,
+		RecoveryGeneration: req.GetRecoveryGeneration(),
+	}, nil
 }

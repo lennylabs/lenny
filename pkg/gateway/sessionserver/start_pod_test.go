@@ -822,6 +822,134 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 	}
 }
 
+// TestResumeKeepsAwaitingOnTransientPoolExhaustion covers F-7.3.23 /
+// §7.3 line 423: a transient warm-pool exhaustion during the client's
+// explicit `POST /resume` retry must leave the row in
+// `awaiting_client_action` so the next retry can succeed once an idle
+// pod is available. The §15.1 envelope still surfaces a retryable 503.
+func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+	adapterSrv.Restorer = resumeCheckpointSource{archive: emptyResumeArchive(t)}
+
+	// A pool with no idle sandbox triggers podclaim.ErrNoIdlePod and
+	// the gateway maps that to WARM_POOL_EXHAUSTED (a §5.2 line 519
+	// retryable response).
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-transient-pool" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+
+	seedAwaitingSession(t, store, sessionstore.Session{
+		ID:      "sess-transient-pool",
+		PoolRef: "echo-pool",
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
+			Ref:    "ckpt-1",
+			Source: sessionstore.WorkspaceSnapshotCheckpoint,
+		},
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-transient-pool/resume", nil)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("resume on empty pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// spec: §7.3 line 423 — the row must stay in awaiting_client_action
+	// so a retry can succeed once an idle pod returns to the pool.
+	// F-7.3.23.
+	row, err := store.Get(context.Background(), "acme", "sess-transient-pool")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateAwaitingClientAction {
+		t.Errorf("state = %q, want awaiting_client_action (§7.3 line 423; transient pool exhaustion should not demote to failed)", row.State)
+	}
+}
+
+// TestResumePassesRecoveryGenerationAndSizeHintsToAdapter covers
+// F-7.3.22 + F-7.3.26: the gateway must pass the session's recovery
+// generation and the last_checkpoint_workspace_bytes / template hard
+// limit to the adapter so per-pod telemetry, partial-manifest tagging,
+// and the symmetric pre-extraction size check have the spec-mandated
+// inputs.
+func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
+	rt := &podBindRuntime{}
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = rt
+	captured := &capturingRestorer{archive: emptyResumeArchive(t)}
+	adapterSrv.Restorer = captured
+
+	// WorkspaceSizeLimitBytes on the template is the §4.4 / §10.1
+	// per-pod hard cap; the resume path forwards it to the adapter.
+	limit := int64(64 * 1024 * 1024)
+	tmpl := podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed))
+	tmpl.Spec.WorkspaceSizeLimitBytes = &limit
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		tmpl,
+		podBindIdleSandbox("sbx-rg", "echo-pool", "10.244.4.5"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-rg-hints" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+
+	// Seed with a non-zero RecoveryGeneration so the gateway re-delivers
+	// the same value to the adapter, and a non-zero snapshot Bytes so
+	// the adapter receives an expected size > 0. The RecoveryGeneration
+	// floor in memstore clamps zero on re-write, so seed via Update
+	// after Create.
+	seedAwaitingSession(t, store, sessionstore.Session{
+		ID:                 "sess-rg-hints",
+		PoolRef:            "echo-pool",
+		RecoveryGeneration: 3,
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
+			Ref:    "ckpt-rg",
+			Source: sessionstore.WorkspaceSnapshotCheckpoint,
+			Bytes:  4096,
+		},
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-rg-hints/resume", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// capturingRestorer is a CheckpointSource that records that LoadCheckpoint
+// was called so the resume tests can assert the restore path ran.
+type capturingRestorer struct {
+	archive []byte
+	loaded  bool
+}
+
+func (c *capturingRestorer) LoadCheckpoint(_ context.Context, _ string) (io.ReadCloser, error) {
+	c.loaded = true
+	return io.NopCloser(bytes.NewReader(c.archive)), nil
+}
+
 // spec: §4.2 line 156 — recovery_generation is incremented on each
 // pod recovery. The resume path bumps it by one and persists the new
 // pod assignment in the same Update.

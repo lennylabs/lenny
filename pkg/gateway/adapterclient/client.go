@@ -312,28 +312,61 @@ type ResumeParams struct {
 	TracingContext     map[string]string
 	AgentInterface     []byte
 	MinPlatformVersion string
+	// RecoveryGeneration is the session's §4.2 / §7.3 pod-recovery
+	// counter at issue time. Re-delivered to the adapter so per-pod
+	// telemetry and any partial-manifest the adapter writes carry the
+	// (coordination, recovery) tuple that authored the replay.
+	// F-7.3.22.
+	RecoveryGeneration int64
+	// ExpectedWorkspaceBytes is the session's
+	// last_checkpoint_workspace_bytes — the size the adapter is
+	// expected to extract. Zero leaves the adapter without a hint and
+	// the kubelet emptyDir guard is the only backstop. F-7.3.26.
+	ExpectedWorkspaceBytes int64
+	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size cap
+	// resolved from the SandboxTemplate. Zero disables the
+	// gateway-supplied limit. F-7.3.26.
+	WorkspaceSizeLimitBytes int64
+}
+
+// ResumeResult is the adapter's response to a Resume call. The §4.4 /
+// §7.2 mode and the echoed recovery_generation surface back to the
+// gateway so the `session.resumed` event payload carries the resume
+// mode that actually executed on the pod. F-7.3.22.
+type ResumeResult struct {
+	RestoredBytes      int64
+	Mode               string
+	RecoveryGeneration int64
 }
 
 // Resume asks the pod's adapter to restore the session workspace from the
 // named §4.4 checkpoint and start the runtime (§4.7, §7.1) — the
 // replacement-pod counterpart of StartSession. The params re-deliver the
 // §15.4 manifest fields to the restored runtime. It returns the
-// uncompressed workspace bytes restored.
-func (c *Client) Resume(ctx context.Context, p ResumeParams) (int64, error) {
+// adapter's ResumeResult, including the §4.4 / §7.2 mode label and the
+// echoed §4.2 recovery_generation. F-7.3.22, F-7.3.26.
+func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, error) {
 	resp, err := c.rpc.Resume(ctx, &adapterv1.ResumeRequest{
-		SessionId:          &adapterv1.SessionId{Value: p.SessionID},
-		Runtime:            p.Runtime,
-		CheckpointId:       p.CheckpointID,
-		TaskId:             p.TaskID,
-		ExperimentContext:  p.ExperimentContext,
-		TracingContext:     p.TracingContext,
-		AgentInterface:     p.AgentInterface,
-		MinPlatformVersion: p.MinPlatformVersion,
+		SessionId:               &adapterv1.SessionId{Value: p.SessionID},
+		Runtime:                 p.Runtime,
+		CheckpointId:            p.CheckpointID,
+		TaskId:                  p.TaskID,
+		ExperimentContext:       p.ExperimentContext,
+		TracingContext:          p.TracingContext,
+		AgentInterface:          p.AgentInterface,
+		MinPlatformVersion:      p.MinPlatformVersion,
+		RecoveryGeneration:      p.RecoveryGeneration,
+		ExpectedWorkspaceBytes:  p.ExpectedWorkspaceBytes,
+		WorkspaceSizeLimitBytes: p.WorkspaceSizeLimitBytes,
 	})
 	if err != nil {
-		return 0, err
+		return ResumeResult{}, err
 	}
-	return resp.GetRestoredBytes(), nil
+	return ResumeResult{
+		RestoredBytes:      resp.GetRestoredBytes(),
+		Mode:               resp.GetMode(),
+		RecoveryGeneration: resp.GetRecoveryGeneration(),
+	}, nil
 }
 
 // UsageReport is the §4.7 token and wall-clock accounting a pod's

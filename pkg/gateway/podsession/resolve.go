@@ -79,6 +79,12 @@ type PoolMatch struct {
 	// (warm count minus ready count on the SandboxWarmPool status). It
 	// populates the 503 response's details.podsWarming.
 	PodsWarming int32
+	// WorkspaceSizeLimitBytes is the §4.4 / §10.1 per-pod hard workspace
+	// size limit declared on the SandboxTemplate. Zero leaves the cap
+	// unset (the kubelet emptyDir guard remains the backstop). The
+	// resume path forwards it to the adapter for the §7.3 line 397
+	// pre-extraction symmetric size check. F-7.3.26.
+	WorkspaceSizeLimitBytes int64
 }
 
 // poolWarming derives the §5.2 PoolWarmingUp signal and the warming-pod
@@ -138,6 +144,12 @@ func ResolvePool(ctx context.Context, reader client.Reader, namespace, runtimeRe
 		if tp := tmpl.Spec.TaskPolicy; tp != nil {
 			m.AllowCrossTenantReuse = tp.AllowCrossTenantReuse
 			m.MicrovmScrubMode = tp.MicrovmScrubMode
+		}
+		// spec: §4.4 line 254 / §10.1 line 122 — copy the per-pod hard
+		// workspace size cap so the resume path can pass it to the adapter
+		// for the §7.3 line 397 symmetric pre-extraction check. F-7.3.26.
+		if tmpl.Spec.WorkspaceSizeLimitBytes != nil {
+			m.WorkspaceSizeLimitBytes = *tmpl.Spec.WorkspaceSizeLimitBytes
 		}
 		matches = append(matches, m)
 	}

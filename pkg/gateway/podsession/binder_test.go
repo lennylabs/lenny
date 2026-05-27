@@ -415,13 +415,22 @@ func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	defer res.Adapter.Close()
+	if res.Result == nil {
+		t.Fatalf("Resume: nil BindResult")
+	}
+	defer res.Result.Adapter.Close()
 
-	if res.SandboxName != "sbx-1" || res.PodIP != "10.244.1.7" {
-		t.Errorf("result = %+v, want sbx-1 / 10.244.1.7", res)
+	if res.Result.SandboxName != "sbx-1" || res.Result.PodIP != "10.244.1.7" {
+		t.Errorf("result = %+v, want sbx-1 / 10.244.1.7", res.Result)
 	}
 	if rt.started != "sess-1" {
 		t.Errorf("runtime started for %q, want sess-1 — Resume must start the runtime", rt.started)
+	}
+	// spec: §4.4 / §7.2 — the adapter signals mode=full on a healthy
+	// full-checkpoint restore so the gateway can carry it onto the
+	// session.resumed event. F-7.3.22.
+	if res.Mode != "full" {
+		t.Errorf("Mode = %q, want %q", res.Mode, "full")
 	}
 
 	var sb lennyv1.Sandbox
@@ -1116,10 +1125,13 @@ func TestResumeFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resume via fallback: %v", err)
 	}
-	defer res.Adapter.Close()
+	if res.Result == nil {
+		t.Fatalf("Resume via fallback: nil BindResult")
+	}
+	defer res.Result.Adapter.Close()
 
-	if res.SandboxName != "sbx-fb" {
-		t.Errorf("resumed onto %q, want sbx-fb claimed via the fallback", res.SandboxName)
+	if res.Result.SandboxName != "sbx-fb" {
+		t.Errorf("resumed onto %q, want sbx-fb claimed via the fallback", res.Result.SandboxName)
 	}
 	// Resume and Bind share connect, so the fallback benefits both.
 	var claim lennyv1.SandboxClaim

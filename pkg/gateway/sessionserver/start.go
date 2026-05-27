@@ -1025,10 +1025,14 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	// that state after its pod failed and automatic recovery was
 	// abandoned. When the gateway is wired with a pod binder, restore
 	// the session onto a fresh pod before the row transitions to
-	// running. A claim failure marks the row failed and surfaces a
-	// retryable 503.
+	// running. A claim failure is reported as a retryable 503. Transient
+	// pool/credential exhaustion keeps the row in awaiting_client_action
+	// so the client can re-issue `POST /resume` once pods are available;
+	// only a non-retryable cause demotes the row to failed. F-7.3.23.
+	var adapterReportedResumeMode string
 	if s.podBinder != nil {
-		if err := s.resumeOnPod(r.Context(), row); err != nil {
+		mode, err := s.resumeOnPod(r.Context(), row)
+		if err != nil {
 			// spec: §16.1 catalog — record the failed resume attempt
 			// before unwinding so the {pool, outcome="failure"} counter
 			// advances even when the row transitions straight to failed.
@@ -1036,14 +1040,26 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 			if s.incSessionResumeAttempt != nil {
 				s.incSessionResumeAttempt(row.PoolRef, "failure")
 			}
-			s.failSession(r.Context(), tenantID, id)
+			// spec: §7.3 line 423 — `awaiting_client_action` is the
+			// "client intervention required" holding state; the explicit
+			// `POST /resume` retry is the client action. A transient pod
+			// claim failure must leave the row in awaiting_client_action
+			// so the client can retry once the pool frees up; only a
+			// non-retryable cause demotes the row to failed. F-7.3.23.
+			if !isTransientPodClaimError(err) {
+				s.failSession(r.Context(), tenantID, id)
+			}
 			// spec: §7.3 — a resume claim failure surfaces as a retryable
 			// 503; the row was already persisted (resume requires it), so
 			// `RESUME_FAILED` is the analogous spec-named fallback to
-			// `SESSION_CREATION_FAILED` and `STARTING_FAILED`.
+			// `SESSION_CREATION_FAILED` and `STARTING_FAILED`. The
+			// underlying transient codes (WARM_POOL_EXHAUSTED,
+			// CREDENTIAL_POOL_EXHAUSTED, etc.) are surfaced directly so
+			// the client receives a spec-defined retry hint.
 			s.writePodClaimError(w, err, "RESUME_FAILED", "could not resume the session on a warm pod")
 			return
 		}
+		adapterReportedResumeMode = mode
 	}
 
 	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
@@ -1097,10 +1113,77 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	// spec: §7.2 line 138 — `session.resumed` precedes
 	// `children_reattached`. The event fires from the resume handler
 	// (rather than from resumeOnPod) so dev-mode / unit-test
-	// deployments without a pod binder still emit the event.
-	s.emitResumedEvent(r.Context(), updated, s.classifyResume(r.Context(), updated))
+	// deployments without a pod binder still emit the event. The
+	// adapter-reported mode (when present) is fed into classifyResume so
+	// gateway-side eviction / partial-manifest state can still upgrade
+	// it to a stronger label, but a plain `full` adapter signal cannot
+	// silently override a `conversation_only` gateway classification.
+	// F-7.3.22.
+	mode := s.classifyResumeWithAdapter(r.Context(), updated, adapterReportedResumeMode)
+	s.emitResumedEvent(r.Context(), updated, mode)
 	s.emitChildrenReattached(r.Context(), tenantID, id)
 	s.writeSession(w, http.StatusOK, updated)
+}
+
+// isTransientPodClaimError reports whether err is a known §5.2 / §4.9
+// pool/credential exhaustion or a §4.3 Token Service outage — failures
+// that the spec catalogues as retryable. The §7.3 `awaiting_client_action`
+// holding state is preserved across these so the explicit client retry
+// (`POST /v1/sessions/{id}/resume`) can succeed once the pool frees up.
+// Any other failure (workspace_validation_failed, setup_command_failed,
+// runtime registry errors) is treated as non-retryable and the row is
+// demoted to failed. F-7.3.23.
+//
+// spec: §5.2 line 519 (WARM_POOL_EXHAUSTED), §4.9 lines 1218/1220
+// (CREDENTIAL_POOL_EXHAUSTED), §4.3 line 214 (TOKEN_SERVICE_UNAVAILABLE),
+// §5.2 lines 602-625 (RUNTIME_UNAVAILABLE pool-warming).
+func isTransientPodClaimError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var warming *podsession.PoolWarmingError
+	var credAssign *podsession.CredentialAssignmentError
+	switch {
+	case errors.As(err, &warming):
+		return true
+	case errors.As(err, &credAssign):
+		return true
+	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
+		return true
+	case errors.Is(err, credrouter.ErrNoCredentialAvailable):
+		return true
+	case errors.Is(err, podclaim.ErrNoIdlePod):
+		return true
+	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
+		return true
+	}
+	return false
+}
+
+// classifyResumeWithAdapter combines the gateway-side classification
+// (eviction / partial-manifest lookups) with the §4.4 / §7.2 mode the
+// adapter reported on its ResumeResponse. The gateway-side classifier
+// remains authoritative for `conversation_only` (eviction record) and
+// `partial_workspace` (partial-manifest record) because those signals
+// are stored in Postgres and outlive the adapter's view of the resume.
+// When the gateway classifier picked `full` and the adapter reported a
+// distinct mode, the adapter's mode is preferred (e.g., the
+// `coordinator_handoff` synthesis path). F-7.3.22.
+func (s *Server) classifyResumeWithAdapter(
+	ctx context.Context, row sessionstore.Session, adapterMode string,
+) checkpoint.ResumeMode {
+	gateway := s.classifyResume(ctx, row)
+	if gateway != checkpoint.ResumeFull {
+		return gateway
+	}
+	if adapterMode == "" {
+		return gateway
+	}
+	m := checkpoint.ResumeMode(adapterMode)
+	if m.IsValid() {
+		return m
+	}
+	return gateway
 }
 
 // reattachedChild is the §7.1 ReattachedChild schema carried in the
@@ -1206,47 +1289,66 @@ func (s *Server) lookupPendingRequest(ctx context.Context, tenantID, sessionID s
 // (derived from the resume mode) so clients can detect a degraded
 // resume.
 //
+// The returned adapterReportedResumeMode is the §4.4 / §7.2 mode the
+// adapter signalled (empty when the snapshot path was not taken or the
+// adapter is on an older protocol). The caller passes it to
+// `classifyResume` so a gateway-side eviction / partial-manifest record
+// can upgrade `full` to `conversation_only` / `partial_workspace` while
+// still letting the adapter signal a stronger classification when it
+// has one. F-7.3.22.
+//
 // spec: §4.4 line 263, §7.2 line 138, §10.1 partial-manifest path.
-func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) error {
+func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (string, error) {
 	if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
 		plan, err := storedWorkspacePlan(row)
 		if err != nil {
-			return err
+			return "", err
 		}
 		result, err := s.startOnPod(ctx, row, plan)
 		if err != nil {
-			return err
+			return "", err
 		}
 		s.registerBinding(ctx, result)
-		return nil
+		return "", nil
 	}
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile))
 	if err != nil {
-		return err
+		return "", err
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
+	// spec: §7.3 line 397 — surface last_checkpoint_workspace_bytes and the
+	// §4.4 hard workspace size cap so the adapter can refuse a restore
+	// whose archive would exceed the pod's emptyDir budget before
+	// quiescing the runtime. F-7.3.26.
+	var expectedBytes int64
+	if row.WorkspaceSnapshot != nil {
+		expectedBytes = row.WorkspaceSnapshot.Bytes
+	}
 	result, err := s.podBinder.Resume(ctx, podsession.ResumeRequest{
-		Pool:               match.Pool,
-		SessionID:          row.ID,
-		TenantID:           row.TenantID,
-		Runtime:            row.RuntimeRef,
-		CheckpointID:       row.WorkspaceSnapshot.Ref,
-		ExperimentContext:  experimentContextToProto(row.ExperimentContext),
-		TracingContext:     row.TracingContext,
-		AgentInterface:     agentInterface,
-		MinPlatformVersion: minPlatformVersion,
+		Pool:                    match.Pool,
+		SessionID:               row.ID,
+		TenantID:                row.TenantID,
+		Runtime:                 row.RuntimeRef,
+		CheckpointID:            row.WorkspaceSnapshot.Ref,
+		ExperimentContext:       experimentContextToProto(row.ExperimentContext),
+		TracingContext:          row.TracingContext,
+		AgentInterface:          agentInterface,
+		MinPlatformVersion:      minPlatformVersion,
+		RecoveryGeneration:      row.RecoveryGeneration,
+		ExpectedWorkspaceBytes:  expectedBytes,
+		WorkspaceSizeLimitBytes: match.WorkspaceSizeLimitBytes,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
-	s.podRegistry.Put(result)
+	s.podRegistry.Put(result.Result)
 	// spec: §4.2 line 156 — recovery_generation is incremented on each
 	// pod recovery. Persist the new pod assignment in the same update
 	// so a fresh replica picks up the recovered binding without
 	// re-running resume.
-	s.bumpRecoveryGeneration(ctx, row.TenantID, row.ID, result.SandboxName)
-	return nil
+	s.bumpRecoveryGeneration(ctx, row.TenantID, row.ID, result.Result.SandboxName)
+	return result.Mode, nil
 }
 
 // classifyResume picks the §4.4 / §7.2 ResumeMode for a resume of the

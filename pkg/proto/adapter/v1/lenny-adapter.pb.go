@@ -2392,8 +2392,32 @@ type ResumeRequest struct {
 	TaskId             string `protobuf:"bytes,6,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	AgentInterface     []byte `protobuf:"bytes,7,opt,name=agent_interface,json=agentInterface,proto3" json:"agent_interface,omitempty"`
 	MinPlatformVersion string `protobuf:"bytes,8,opt,name=min_platform_version,json=minPlatformVersion,proto3" json:"min_platform_version,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// recovery_generation is the session's §4.2 / §7.3 pod-recovery
+	// counter at the time the gateway issued this Resume. Re-delivered
+	// to the adapter so per-pod traces, logs, and any partial-manifest
+	// row the adapter writes can carry the (coordination, recovery)
+	// tuple that authored the replay. Zero when the gateway has not
+	// recorded a generation for the session.
+	RecoveryGeneration int64 `protobuf:"varint,9,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
+	// expected_workspace_bytes is the session's
+	// `last_checkpoint_workspace_bytes` recorded on the gateway side —
+	// the uncompressed total the adapter is expected to extract for
+	// this Resume. The adapter compares it against
+	// `workspace_size_limit_bytes` (the §4.4 hard workspace size limit)
+	// before quiescing the runtime to refuse a restore whose archive
+	// would blow past the pod's emptyDir budget. Zero when the gateway
+	// has no recorded size; the adapter then falls back to the kubelet
+	// emptyDir guard.
+	ExpectedWorkspaceBytes int64 `protobuf:"varint,10,opt,name=expected_workspace_bytes,json=expectedWorkspaceBytes,proto3" json:"expected_workspace_bytes,omitempty"`
+	// workspace_size_limit_bytes is the §4.4 / §10.1 per-pod hard
+	// workspace size cap the SandboxTemplate or runtime resolves to.
+	// The adapter uses it together with expected_workspace_bytes for
+	// the symmetric pre-extraction size check. Zero disables the
+	// gateway-supplied limit (the kubelet emptyDir guard is the
+	// backstop).
+	WorkspaceSizeLimitBytes int64 `protobuf:"varint,11,opt,name=workspace_size_limit_bytes,json=workspaceSizeLimitBytes,proto3" json:"workspace_size_limit_bytes,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *ResumeRequest) Reset() {
@@ -2482,11 +2506,44 @@ func (x *ResumeRequest) GetMinPlatformVersion() string {
 	return ""
 }
 
+func (x *ResumeRequest) GetRecoveryGeneration() int64 {
+	if x != nil {
+		return x.RecoveryGeneration
+	}
+	return 0
+}
+
+func (x *ResumeRequest) GetExpectedWorkspaceBytes() int64 {
+	if x != nil {
+		return x.ExpectedWorkspaceBytes
+	}
+	return 0
+}
+
+func (x *ResumeRequest) GetWorkspaceSizeLimitBytes() int64 {
+	if x != nil {
+		return x.WorkspaceSizeLimitBytes
+	}
+	return 0
+}
+
 type ResumeResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RestoredBytes int64                  `protobuf:"varint,1,opt,name=restored_bytes,json=restoredBytes,proto3" json:"restored_bytes,omitempty"` // uncompressed workspace bytes restored
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// mode reports how the adapter restored the workspace per §4.4 /
+	// §7.2 ResumeMode: "full" when the named checkpoint was extracted
+	// intact, "partial_workspace" when only a partial manifest was
+	// available, "conversation_only" when no workspace was restored,
+	// or "coordinator_handoff" for the §10.4 reattach path. Empty when
+	// the adapter cannot classify the resume; the gateway falls back to
+	// its own classification.
+	Mode string `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
+	// recovery_generation echoes the value the gateway supplied on
+	// ResumeRequest.recovery_generation so the gateway can verify the
+	// adapter consumed the right generation under split-brain.
+	RecoveryGeneration int64 `protobuf:"varint,3,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ResumeResponse) Reset() {
@@ -2522,6 +2579,20 @@ func (*ResumeResponse) Descriptor() ([]byte, []int) {
 func (x *ResumeResponse) GetRestoredBytes() int64 {
 	if x != nil {
 		return x.RestoredBytes
+	}
+	return 0
+}
+
+func (x *ResumeResponse) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *ResumeResponse) GetRecoveryGeneration() int64 {
+	if x != nil {
+		return x.RecoveryGeneration
 	}
 	return 0
 }
@@ -3790,7 +3861,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x12CheckpointResponse\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"\xf3\x03\n" +
+	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"\x9b\x05\n" +
 	"\rResumeRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
@@ -3800,12 +3871,18 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x0ftracing_context\x18\x05 \x03(\v23.lenny.adapter.v1.ResumeRequest.TracingContextEntryR\x0etracingContext\x12\x17\n" +
 	"\atask_id\x18\x06 \x01(\tR\x06taskId\x12'\n" +
 	"\x0fagent_interface\x18\a \x01(\fR\x0eagentInterface\x120\n" +
-	"\x14min_platform_version\x18\b \x01(\tR\x12minPlatformVersion\x1aA\n" +
+	"\x14min_platform_version\x18\b \x01(\tR\x12minPlatformVersion\x12/\n" +
+	"\x13recovery_generation\x18\t \x01(\x03R\x12recoveryGeneration\x128\n" +
+	"\x18expected_workspace_bytes\x18\n" +
+	" \x01(\x03R\x16expectedWorkspaceBytes\x12;\n" +
+	"\x1aworkspace_size_limit_bytes\x18\v \x01(\x03R\x17workspaceSizeLimitBytes\x1aA\n" +
 	"\x13TracingContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"7\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"|\n" +
 	"\x0eResumeResponse\x12%\n" +
-	"\x0erestored_bytes\x18\x01 \x01(\x03R\rrestoredBytes\"E\n" +
+	"\x0erestored_bytes\x18\x01 \x01(\x03R\rrestoredBytes\x12\x12\n" +
+	"\x04mode\x18\x02 \x01(\tR\x04mode\x12/\n" +
+	"\x13recovery_generation\x18\x03 \x01(\x03R\x12recoveryGeneration\"E\n" +
 	"\n" +
 	"ExportSpec\x12\x16\n" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1f\n" +

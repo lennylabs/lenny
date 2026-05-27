@@ -715,7 +715,7 @@ func TestResumeRestoresTheWorkspace(t *testing.T) {
 	srv.Restorer = stubCheckpointSource{archive: archived.Bytes()}
 	cl := dialAdapter(t, srv)
 
-	n, err := cl.Resume(context.Background(), adapterclient.ResumeParams{
+	res, err := cl.Resume(context.Background(), adapterclient.ResumeParams{
 		SessionID:    "sess-r",
 		Runtime:      "echo",
 		CheckpointID: "ckpt-1",
@@ -723,8 +723,68 @@ func TestResumeRestoresTheWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	if n != int64(len("restored")) {
-		t.Errorf("restored bytes = %d, want %d", n, len("restored"))
+	if res.RestoredBytes != int64(len("restored")) {
+		t.Errorf("restored bytes = %d, want %d", res.RestoredBytes, len("restored"))
+	}
+	// spec: §4.4 / §7.2 — the adapter reports mode=full when it
+	// restored the named checkpoint intact. F-7.3.22.
+	if res.Mode != "full" {
+		t.Errorf("Mode = %q, want %q", res.Mode, "full")
+	}
+}
+
+// TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck covers
+// F-7.3.22 (adapter echoes recovery_generation) and F-7.3.26 (adapter
+// honours the §7.3 line 397 symmetric pre-extraction size check before
+// extracting the archive). spec: §4.4 / §7.3 line 397.
+func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "w.txt"), []byte("restored"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var archived bytes.Buffer
+	if _, err := workspace.Archive(src, &archived); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.Restorer = stubCheckpointSource{archive: archived.Bytes()}
+	cl := dialAdapter(t, srv)
+
+	// Healthy round-trip: a configured size limit above expected bytes
+	// admits the resume, and the adapter echoes recovery_generation.
+	res, err := cl.Resume(context.Background(), adapterclient.ResumeParams{
+		SessionID:               "sess-rg",
+		Runtime:                 "echo",
+		CheckpointID:            "ckpt-1",
+		RecoveryGeneration:      7,
+		ExpectedWorkspaceBytes:  10,
+		WorkspaceSizeLimitBytes: 1024,
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if res.RecoveryGeneration != 7 {
+		t.Errorf("RecoveryGeneration echo = %d, want 7", res.RecoveryGeneration)
+	}
+
+	// Pre-extraction refusal: expected_bytes above the limit must
+	// fail with FailedPrecondition before any extraction work begins.
+	srv2 := adapter.New("adapter-test-build")
+	srv2.WorkspaceRoot = t.TempDir()
+	srv2.Runtime = &fakeRuntime{}
+	srv2.Restorer = stubCheckpointSource{archive: archived.Bytes()}
+	cl2 := dialAdapter(t, srv2)
+	if _, err := cl2.Resume(context.Background(), adapterclient.ResumeParams{
+		SessionID:               "sess-too-big",
+		Runtime:                 "echo",
+		CheckpointID:            "ckpt-1",
+		ExpectedWorkspaceBytes:  2048,
+		WorkspaceSizeLimitBytes: 1024,
+	}); err == nil {
+		t.Error("Resume with oversize expected_bytes succeeded, want pre-extraction refusal")
 	}
 }
 
