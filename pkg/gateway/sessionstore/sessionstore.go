@@ -240,6 +240,13 @@ type Session struct {
 	// spec: §7.1 line 6 — "CreateSession(runtime, pool, retryPolicy,
 	// metadata)"; §15.1 GET /v1/sessions/{id} surface.
 	Metadata map[string]string
+
+	// RetryPolicy is the §7.3 client-supplied retry policy, clamped at
+	// admission against the deployer caps. Nil when the caller did not
+	// override the deployer defaults; the watchdog and retry-evaluator
+	// paths then fall back to their respective config values. F-7.3.1.
+	// spec: §7.3 lines 377-393.
+	RetryPolicy *session.RetryPolicy
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a
@@ -289,6 +296,16 @@ type WorkspaceSnapshot struct {
 	// and identified by a content-addressed hash (SHA-256 of the
 	// tar archive)".
 	ContentHash string
+
+	// Bytes is the §7.3 line 397 / §10.1 coordinator-handoff
+	// `last_checkpoint_workspace_bytes` value: the compressed size of
+	// the stored workspace archive reported by the adapter at
+	// checkpoint time. Zero when the adapter did not report a size
+	// (legacy snapshots or the seal-on-never-ran fast path); the §10.1
+	// preStop tiered-cap selection treats zero the same as a NULL
+	// column and falls back to the conservative 90s tier.
+	// spec: §7.3 line 397; §10.1 preStop Stage 2 session enumeration.
+	Bytes int64
 }
 
 // WorkspaceSnapshotSource is the closed §7.1 enum recording how a

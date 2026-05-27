@@ -255,6 +255,14 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 			Ref:       result.CheckpointID,
 			Source:    source,
 			Timestamp: now,
+			// spec: §7.3 line 397 / §10.1 coordinator-handoff step 0 —
+			// persist the adapter-reported compressed size as the
+			// authoritative last_checkpoint_workspace_bytes value so the
+			// §7.2 line 138 workspaceRecoveryFraction and the §10.1
+			// preStop tiered-cap selection both have a non-NULL input.
+			// A zero size is treated the same as NULL by the storage
+			// layer and the preStop fallback. F-7.3.21.
+			Bytes: result.SizeBytes,
 		}
 		// spec: §4.4 line 258 — "The gateway tracks
 		// last_successful_checkpoint_at on the session record in

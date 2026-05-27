@@ -135,6 +135,15 @@ func TestCheckpointRecordsTheWorkspaceSnapshot(t *testing.T) {
 	if !row.LastSuccessfulCheckpointAt.Equal(when) {
 		t.Errorf("LastSuccessfulCheckpointAt = %v, want %v", row.LastSuccessfulCheckpointAt, when)
 	}
+	// spec: §7.3 line 397 — the adapter-reported compressed byte size
+	// flows into WorkspaceSnapshot.Bytes so the §10.1 preStop
+	// tiered-cap selection and §7.2 line 138 workspaceRecoveryFraction
+	// both have a non-NULL input. The bufconn adapter wrote no bytes
+	// (the stub workspace is empty), so any non-negative value is
+	// acceptable. F-7.3.21.
+	if row.WorkspaceSnapshot.Bytes < 0 {
+		t.Errorf("WorkspaceSnapshot.Bytes = %d, want >= 0", row.WorkspaceSnapshot.Bytes)
+	}
 }
 
 // spec: §4.4 line 258 — a failed adapter checkpoint must NOT bump

@@ -58,9 +58,11 @@ var _ sessionstore.Store = (*Store)(nil)
 // content-addressed snapshot hash added in migration 0068. The
 // execution_mode and scrub_policy columns are the §7.1
 // line 75 sessionIsolationLevel halves added in migration 0084.
-// The trailing metadata column is the §7.1 line 6 client-supplied
+// The metadata column is the §7.1 line 6 client-supplied
 // CreateSession(..., metadata) payload added in migration 0086
-// (F-7.3.20).
+// (F-7.3.20). The trailing two columns are the §7.3
+// retry_policy + last_checkpoint_workspace_bytes pair added in
+// migration 0087 (F-7.3.1 / F-7.3.21).
 const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
@@ -74,7 +76,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	last_successful_checkpoint_at,
 	COALESCE(workspace_snapshot_hash, ''),
 	execution_mode, scrub_policy,
-	metadata`
+	metadata,
+	retry_policy, last_checkpoint_workspace_bytes`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -100,7 +103,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	// execution_mode and scrub_policy halves of sessionIsolationLevel
 	// added in migration 0084. Bind $38 is the §7.1 line 6
 	// client-supplied metadata payload added in migration 0086
-	// (F-7.3.20).
+	// (F-7.3.20). Binds $39 and $40 are the §7.3 retry_policy +
+	// last_checkpoint_workspace_bytes pair added in migration 0087
+	// (F-7.3.1 / F-7.3.21).
 	const insertSQL = `INSERT INTO sessions (
 		id, tenant_id, user_id, state, runtime_ref, pool_ref, isolation_profile,
 		parent_session_id, root_session_id, failure_class, failure_reason,
@@ -114,7 +119,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		last_successful_checkpoint_at,
 		workspace_snapshot_hash,
 		execution_mode, scrub_policy,
-		metadata
+		metadata,
+		retry_policy, last_checkpoint_workspace_bytes
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
@@ -125,7 +131,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$34,
 		NULLIF($35, ''),
 		$36, $37,
-		$38::jsonb
+		$38::jsonb,
+		$39::jsonb, $40
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -151,7 +158,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			pgtenant.NullTime(sess.LastSuccessfulCheckpointAt),
 			hash,
 			sess.ExecutionMode, sess.ScrubPolicy,
-			metadataArg(sess.Metadata))
+			metadataArg(sess.Metadata),
+			retryPolicyArg(sess.RetryPolicy),
+			workspaceBytesArg(sess.WorkspaceSnapshot))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -195,7 +204,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 	// $33 is the §4.5 line 311 content-addressed snapshot hash
 	// added in migration 0068. Clause $36 is the §7.1 line 6
 	// client-supplied metadata payload added in migration 0086
-	// (F-7.3.20).
+	// (F-7.3.20). Clauses $37 and $38 are the §7.3 retry_policy +
+	// last_checkpoint_workspace_bytes pair added in migration 0087
+	// (F-7.3.1 / F-7.3.21).
 	const updateSQL = `UPDATE sessions SET
 		user_id = $3, state = $4, runtime_ref = $5, pool_ref = $6,
 		isolation_profile = $7, parent_session_id = NULLIF($8, '')::uuid,
@@ -212,7 +223,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		last_successful_checkpoint_at = $32,
 		workspace_snapshot_hash = NULLIF($33, ''),
 		execution_mode = $34, scrub_policy = $35,
-		metadata = $36::jsonb
+		metadata = $36::jsonb,
+		retry_policy = $37::jsonb,
+		last_checkpoint_workspace_bytes = $38
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -269,6 +282,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			hash,
 			sess.ExecutionMode, sess.ScrubPolicy,
 			metadataArg(sess.Metadata),
+			retryPolicyArg(sess.RetryPolicy),
+			workspaceBytesArg(sess.WorkspaceSnapshot),
 		); err != nil {
 			return err
 		}
@@ -404,6 +419,11 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §7.1 line 6 client-supplied metadata payload from migration
 		// 0086 (F-7.3.20).
 		metadataJSON []byte
+		// §7.3 client-supplied retry policy and
+		// last_checkpoint_workspace_bytes columns from migration 0087
+		// (F-7.3.1 / F-7.3.21).
+		retryPolicyJSON []byte
+		lastCheckpointBytes *int64
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -428,6 +448,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		&s.ExecutionMode, &s.ScrubPolicy,
 		// §7.1 line 6 client metadata from migration 0086 (F-7.3.20).
 		&metadataJSON,
+		// §7.3 retry_policy + last_checkpoint_workspace_bytes from
+		// migration 0087 (F-7.3.1 / F-7.3.21).
+		&retryPolicyJSON, &lastCheckpointBytes,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
@@ -437,6 +460,11 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	if len(metadataJSON) > 0 {
 		if md, err := decodeMetadata(metadataJSON); err == nil && len(md) > 0 {
 			s.Metadata = md
+		}
+	}
+	if len(retryPolicyJSON) > 0 {
+		if rp, err := decodeRetryPolicy(retryPolicyJSON); err == nil && rp != nil {
+			s.RetryPolicy = rp
 		}
 	}
 	if resumeUntil != nil {
@@ -462,7 +490,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	if upExp != nil {
 		s.UploadTokenExpiry = *upExp
 	}
-	if wsRef != "" || wsSrc != "" || wsAt != nil || wsHash != "" {
+	if wsRef != "" || wsSrc != "" || wsAt != nil || wsHash != "" || (lastCheckpointBytes != nil && *lastCheckpointBytes > 0) {
 		ws := &sessionstore.WorkspaceSnapshot{
 			Ref:         wsRef,
 			Source:      sessionstore.WorkspaceSnapshotSource(wsSrc),
@@ -470,6 +498,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		}
 		if wsAt != nil {
 			ws.Timestamp = *wsAt
+		}
+		if lastCheckpointBytes != nil {
+			ws.Bytes = *lastCheckpointBytes
 		}
 		s.WorkspaceSnapshot = ws
 	}
@@ -543,6 +574,48 @@ func decodeMetadata(raw []byte) (map[string]string, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// retryPolicyArg renders the §7.3 RetryPolicy as a JSONB argument. A
+// nil pointer stores SQL NULL so the read path can distinguish "client
+// supplied no override" from "client supplied an explicit object". An
+// unmarshalable payload (the in-memory struct is by-construction
+// well-formed, but defensive) stores NULL rather than fail the write.
+// spec: §7.3 lines 377-393.
+func retryPolicyArg(p *session.RetryPolicy) any {
+	if p == nil {
+		return nil
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
+// decodeRetryPolicy parses the JSONB payload back into a RetryPolicy.
+// A malformed payload returns an error so the caller can surface the
+// corruption; in practice the gateway writes only ClampRetryPolicy
+// output, so the on-row payload is well-formed by construction.
+// spec: §7.3 lines 377-393.
+func decodeRetryPolicy(raw []byte) (*session.RetryPolicy, error) {
+	var out session.RetryPolicy
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// workspaceBytesArg surfaces the §7.3 line 397
+// last_checkpoint_workspace_bytes column value from the snapshot. A nil
+// snapshot or a zero size stores SQL NULL so the read path treats
+// "never checkpointed" the same as "no size reported", matching the
+// §10.1 preStop tiered-cap fallback rule. spec: §7.3 line 397; §10.1.
+func workspaceBytesArg(ws *sessionstore.WorkspaceSnapshot) any {
+	if ws == nil || ws.Bytes <= 0 {
+		return nil
+	}
+	return ws.Bytes
 }
 
 // normalizeMiss maps pgx.ErrNoRows and the invalid-UUID-text error to

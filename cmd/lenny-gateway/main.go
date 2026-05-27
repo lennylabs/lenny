@@ -1547,6 +1547,21 @@ func main() {
 		// §6.3 line 356, §16.1 line 15 — TTFT histogram observed on
 		// the first agent-streamed response event per session.
 		ObserveTimeToFirstToken: gwMetrics.ObserveSessionTimeToFirstToken,
+		// §7.3 lines 377-393 — clamp the client-supplied retry policy
+		// against the deployer caps so the per-session value can never
+		// exceed the watchdog's platform-wide bounds. F-7.3.1 /
+		// F-7.3.24.
+		RetryPolicyCaps: session.RetryPolicyCaps{
+			MaxRetries:             *retryMaxRetries,
+			MaxSessionAgeSeconds:   watchdog.DefaultMaxSessionAgeSeconds,
+			MaxResumeWindowSeconds: watchdog.DefaultMaxAwaitingClientActionSeconds,
+		},
+		// §7.3 / §16.1 — retry + resume metric emitters. The
+		// watchdog/coordinator path bumps retryCount on each pod
+		// recovery (the v1 retry path); the explicit /resume endpoint
+		// counts every attempt with its outcome. F-7.3.10.
+		IncSessionResumeAttempt: gwMetrics.IncSessionResumeAttempt,
+		IncSessionRetry:         gwMetrics.IncSessionRetry,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
@@ -2189,6 +2204,7 @@ func main() {
 	prestopHook := &prestop.Hook{
 		Sessions: &prestop.RegistryEnumerator{
 			Registry:    podRegistry,
+			Sessions:    sessions,
 			DefaultPool: "default",
 		},
 		Checkpoint:        prestop.CheckpointFnFor(prestopCheckpointer),

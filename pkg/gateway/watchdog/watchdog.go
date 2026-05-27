@@ -377,18 +377,27 @@ func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string,
 }
 
 // sweepMaxAge expires every non-terminal session for the tenant whose
-// total lifetime, measured from CreatedAt, exceeds the §11.3
-// maxSessionAge cap. The pre-running per-state budgets are tighter and
-// run first, so this sweep effectively bounds the long-lived states
-// (running, suspended, resume_pending, awaiting_client_action).
+// total lifetime, measured from CreatedAt, exceeds the effective
+// maxSessionAge cap. The §11.3 platform-wide cap (w.cfg.MaxSessionAgeSeconds)
+// is the upper bound; a session whose §7.3 retryPolicy.maxSessionAgeSeconds
+// is tighter expires earlier (the clamp at gateway admission already
+// ensures the per-session value can never exceed the platform cap, so
+// this sweep applies the per-session value when it is smaller — F-7.3.24).
+//
+// The pre-running per-state budgets are tighter and run first, so this
+// sweep effectively bounds the long-lived states (running, suspended,
+// resume_pending, awaiting_client_action).
 func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{})
 	if err != nil {
 		return err
 	}
-	maxAge := time.Duration(w.cfg.MaxSessionAgeSeconds) * time.Second
+	platformCap := time.Duration(w.cfg.MaxSessionAgeSeconds) * time.Second
 	for _, row := range rows {
-		if session.IsTerminal(row.State) || now.Sub(row.CreatedAt) <= maxAge {
+		if session.IsTerminal(row.State) {
+			continue
+		}
+		if now.Sub(row.CreatedAt) <= effectiveMaxSessionAge(row, platformCap) {
 			continue
 		}
 		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
@@ -408,6 +417,25 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 		}
 	}
 	return nil
+}
+
+// effectiveMaxSessionAge resolves the §7.3 per-session retryPolicy
+// override against the deployer cap. A nil policy or a zero value
+// falls through to the platform cap; a positive override clamps to
+// the smaller of the two so the per-session value can never exceed
+// the platform bound regardless of how the row was persisted.
+//
+// spec: §7.3 lines 389-390 (retryPolicy.maxSessionAgeSeconds);
+// §11.3 maxSessionAge cap. F-7.3.24.
+func effectiveMaxSessionAge(row sessionstore.Session, platformCap time.Duration) time.Duration {
+	if row.RetryPolicy == nil || row.RetryPolicy.MaxSessionAgeSeconds <= 0 {
+		return platformCap
+	}
+	override := time.Duration(row.RetryPolicy.MaxSessionAgeSeconds) * time.Second
+	if platformCap > 0 && override > platformCap {
+		return platformCap
+	}
+	return override
 }
 
 // Run drives the watchdog with a time.Ticker until ctx is cancelled.

@@ -128,7 +128,8 @@
             "type": "object",
             "description": "§7.1 line 6 client-supplied CreateSession metadata, a flat string→string map echoed verbatim across the session lifetime.",
             "additionalProperties": { "type": "string" }
-          }
+          },
+          "retryPolicy": { "$ref": "#/components/schemas/RetryPolicy" }
         }
       },
       "CreateSessionRequest": {
@@ -144,7 +145,20 @@
             "type": "object",
             "description": "§7.1 line 6 client annotations preserved verbatim for the session lifetime. Must be a flat string→string map; non-string values reject with 400 INVALID_REQUEST.",
             "additionalProperties": { "type": "string" }
-          }
+          },
+          "retryPolicy": { "$ref": "#/components/schemas/RetryPolicy" }
+        }
+      },
+      "RetryPolicy": {
+        "type": "object",
+        "description": "§7.3 client-supplied retry policy. The gateway clamps each populated field against the deployer caps at admission; a missing/zero value falls through to the cap as the effective value. Negative values reject with 400 VALIDATION_ERROR.",
+        "properties": {
+          "mode": { "type": "string", "enum": ["auto_then_client", "client_only"], "description": "§7.3 line 382 retry mode. Defaults to auto_then_client." },
+          "maxRetries": { "type": "integer", "minimum": 0, "description": "§7.3 line 383 auto-retry budget." },
+          "retryableFailures": { "type": "array", "items": { "type": "string" }, "description": "§7.3 line 384 retryable failure class advisory list." },
+          "nonRetryableFailures": { "type": "array", "items": { "type": "string" }, "description": "§7.3 line 385 non-retryable failure class advisory list." },
+          "maxSessionAgeSeconds": { "type": "integer", "minimum": 0, "description": "§7.3 line 389 per-session total-lifetime cap, clamped against the deployer cap." },
+          "maxResumeWindowSeconds": { "type": "integer", "minimum": 0, "description": "§7.3 line 390 resume-window timer, clamped against the deployer cap." }
         }
       },
       "CreateSessionResponse": {

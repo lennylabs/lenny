@@ -260,6 +260,26 @@ type Server struct {
 	// DefaultArtifactRetention.
 	// spec: §7.1 line 77 — "configurable TTL (default: 7 days ...)".
 	defaultRetention time.Duration
+
+	// retryPolicyCaps holds the §7.3 deployer caps applied to every
+	// client-supplied RetryPolicy at admission. A zero field in the cap
+	// disables that clamp so deployer "unlimited" semantics survive. The
+	// gateway wires these to the watchdog config so a session's clamped
+	// caps cannot exceed the platform-wide bounds the watchdog itself
+	// enforces. F-7.3.1 / F-7.3.24.
+	// spec: §7.3 lines 377-393.
+	retryPolicyCaps session.RetryPolicyCaps
+
+	// incSessionResumeAttempt, when set, increments the §16.1
+	// lenny_session_resume_attempts_total{pool, outcome} counter for the
+	// resume call. Nil disables the emission. spec: §16.1 catalog.
+	// F-7.3.10.
+	incSessionResumeAttempt func(pool, outcome string)
+
+	// incSessionRetry, when set, increments the §16.1
+	// lenny_session_retry_total{failure_class} counter for the retry.
+	// Nil disables the emission. spec: §16.1 catalog. F-7.3.10.
+	incSessionRetry func(failureClass string)
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -717,6 +737,33 @@ type Options struct {
 	// streaming event emitted to the client. Nil disables the
 	// emission. spec: §16.1 line 15, §6.3 line 356.
 	ObserveTimeToFirstToken func(pool, runtimeClass, isolationProfile string, seconds float64)
+
+	// RetryPolicyCaps holds the §7.3 deployer caps applied to a
+	// client-supplied RetryPolicy at admission. The gateway clamps each
+	// populated client field against the matching cap and falls through
+	// to the cap as the effective value when the client supplied nothing.
+	// A zero field skips that clamp so deployer "unlimited" semantics
+	// survive. Production wires these to the watchdog config so the
+	// per-session cap can never exceed the platform-wide bound. F-7.3.1.
+	// spec: §7.3 lines 377-393.
+	RetryPolicyCaps session.RetryPolicyCaps
+
+	// IncSessionResumeAttempt, when set, increments the §16.1
+	// lenny_session_resume_attempts_total{pool, outcome} counter on
+	// every POST /v1/sessions/{id}/resume call (after the precondition
+	// check passes). outcome is "success" when the row transitions to
+	// running, "failure" when the pod-claim step fails. Nil disables
+	// the emission. spec: §16.1 catalog. F-7.3.10.
+	IncSessionResumeAttempt func(pool, outcome string)
+
+	// IncSessionRetry, when set, increments the §16.1
+	// lenny_session_retry_total{failure_class} counter on every retry
+	// of a logical session (a successful resume that bumps the
+	// recovery_generation counter is the v1 retry path). The failure
+	// class label echoes the row's §7.1 FailureClass at retry time —
+	// "unknown" for a session that has no recorded class. Nil disables
+	// the emission. spec: §16.1 catalog. F-7.3.10.
+	IncSessionRetry func(failureClass string)
 }
 
 // New returns a Server bound to the supplied store.
@@ -781,6 +828,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		interactionAudit:       opts.InteractionAuditSink,
 		inputWaits:             opts.InputWaits,
 		defaultRetention:       opts.DefaultRetention,
+		retryPolicyCaps:        opts.RetryPolicyCaps,
+		incSessionResumeAttempt: opts.IncSessionResumeAttempt,
+		incSessionRetry:        opts.IncSessionRetry,
 	}
 	if s.defaultRetention <= 0 {
 		// spec: §7.1 line 77 — default the artifact-retention window to
@@ -925,6 +975,16 @@ type CreateSessionRequest struct {
 	// spec: §7.1 line 6 — "CreateSession(runtime, pool, retryPolicy,
 	// metadata)".
 	Metadata map[string]string `json:"metadata,omitempty"`
+
+	// RetryPolicy is the §7.3 client-supplied retry policy. The gateway
+	// clamps each field against the deployer caps (RetryPolicyCaps) at
+	// admission so a client cannot grow its budget past the platform
+	// bounds; an unset/zero value falls through to the corresponding
+	// cap as the effective value. Negative values reject as
+	// 400 VALIDATION_ERROR. The §15.1 GET envelope echoes the clamped
+	// policy back. F-7.3.1.
+	// spec: §7.3 lines 377-393.
+	RetryPolicy *session.RetryPolicy `json:"retryPolicy,omitempty"`
 }
 
 // SessionResponse is the §15.1 GET /v1/sessions/{id} envelope.
@@ -1000,6 +1060,12 @@ type SessionResponse struct {
 	// client submitted no metadata. F-7.3.20.
 	// spec: §7.1 line 6.
 	Metadata map[string]string `json:"metadata,omitempty"`
+
+	// RetryPolicy echoes the §7.3 effective retry policy resolved at
+	// session creation (the client-supplied object after clamp). Omitted
+	// when the session was created with no override. F-7.3.1.
+	// spec: §7.3 lines 377-393.
+	RetryPolicy *session.RetryPolicy `json:"retryPolicy,omitempty"`
 }
 
 // CreateSessionResponse is the §15.1 POST /v1/sessions response
@@ -1136,6 +1202,27 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		return
 	}
 
+	// spec: §7.3 lines 377-393 — validate the client-supplied retry
+	// policy before any side effect, then clamp against the deployer
+	// caps so the persisted value is the effective upper bound. A nil
+	// input stays nil; a non-nil input always lands on the row with
+	// the deployer cap as the floor for unset fields. F-7.3.1.
+	if err := session.ValidateRetryPolicy(req.RetryPolicy); err != nil {
+		var rpErr *session.RetryPolicyValidationError
+		if errors.As(err, &rpErr) {
+			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+				map[string]any{"field": "retryPolicy." + rpErr.Field, "reason": rpErr.Reason})
+			return
+		}
+		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	var effectiveRetry *session.RetryPolicy
+	if req.RetryPolicy != nil {
+		clamped := session.ClampRetryPolicy(req.RetryPolicy, s.retryPolicyCaps)
+		effectiveRetry = &clamped
+	}
+
 	// spec: §7.1 line 75 — resolve the pool-derived isolation level
 	// once at create time so the executionMode / scrubPolicy halves can
 	// be persisted on the row alongside isolationProfile. GET / List
@@ -1156,6 +1243,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		ScrubPolicy:      level.ScrubPolicy,
 		WorkspacePlan:    planJSON,
 		Metadata:         cloneMetadata(req.Metadata),
+		RetryPolicy:      effectiveRetry,
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
@@ -1692,6 +1780,11 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	if len(row.Metadata) > 0 {
 		out.Metadata = cloneMetadata(row.Metadata)
 	}
+	// spec: §7.3 lines 377-393 — echo the effective retry policy so a
+	// client can confirm what was clamped. F-7.3.1.
+	if row.RetryPolicy != nil {
+		out.RetryPolicy = cloneRetryPolicy(row.RetryPolicy)
+	}
 	return out
 }
 
@@ -1708,6 +1801,24 @@ func cloneMetadata(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// cloneRetryPolicy returns a defensive copy of the §7.3 RetryPolicy so
+// the wire envelope cannot mutate the persisted row or the in-flight
+// request through a shared pointer. A nil input maps to nil so the
+// envelope honours `omitempty`. F-7.3.1.
+func cloneRetryPolicy(in *session.RetryPolicy) *session.RetryPolicy {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if len(in.RetryableFailures) > 0 {
+		out.RetryableFailures = append([]string(nil), in.RetryableFailures...)
+	}
+	if len(in.NonRetryableFailures) > 0 {
+		out.NonRetryableFailures = append([]string(nil), in.NonRetryableFailures...)
+	}
+	return &out
 }
 
 // randomSessionID returns a fresh §12.6 UUIDv8 session identifier.
