@@ -3,6 +3,7 @@
 package sessionserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -87,6 +88,15 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	// spec: §7.2 line 137 — surface the running → suspended transition
 	// on the SSE stream alongside the row update.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
+	// spec: §6.2 line 214 — project the row's `running → suspended`
+	// transition onto Sandbox.status.phase so the operator-visible
+	// state matches the session row. The pod stays held while
+	// suspended (line 220+); the §6.2 line 234
+	// maxSuspendedPodHoldSeconds graceful-release path runs later.
+	// Best-effort: a Sandbox phase write that races with a concurrent
+	// recovery transition is logged but does not roll back the row
+	// transition that already advanced the session. F-6.2.13.
+	s.suspendSandboxForInterrupt(r.Context(), updated.ID)
 	if timedOut {
 		// spec: §7.2 line 169 / §4.7 InterruptResponse.Status.
 		// Surface INTERRUPT_TIMEOUT to the caller so a UI can flag that
@@ -134,6 +144,27 @@ func (s *Server) signalAdapterInterrupt(r *http.Request, row sessionstore.Sessio
 		return adapterclient.InterruptStatusUnspecified, false, true
 	}
 	return st, st == adapterclient.InterruptStatusTimeout, true
+}
+
+// suspendSandboxForInterrupt drives the §6.2 line 214 `attached →
+// suspended` Sandbox phase transition after the interrupt handler has
+// written the session row to `suspended`. The gateway looks up the
+// session's bound Sandbox via the pod registry; a session with no live
+// binding (single-replica without a pod, or a coordinator handoff has
+// not re-bound) is the dev/minimal-gateway posture where no Sandbox
+// exists to update. Best-effort: a Sandbox phase write failure does not
+// roll back the row update. F-6.2.13.
+func (s *Server) suspendSandboxForInterrupt(ctx context.Context, sessionID string) {
+	if s.podBinder == nil || s.podRegistry == nil {
+		return
+	}
+	bind, ok := s.podRegistry.Get(sessionID)
+	if !ok || bind == nil || bind.SandboxName == "" {
+		return
+	}
+	if err := s.podBinder.Suspend(ctx, bind.SandboxName); err != nil {
+		log.Printf("sessionserver: suspend sandbox %s for session %s: %v", bind.SandboxName, sessionID, err)
+	}
 }
 
 // interruptDeadline returns the §4.7 deadline the gateway grants the

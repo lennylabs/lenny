@@ -889,6 +889,55 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, terminal state
 	return b.drain(ctx, &sb)
 }
 
+// Suspend records the §6.2 line 214 `attached → suspended` Sandbox
+// transition after the adapter has acknowledged (or forced) the
+// interrupt. The pod is NOT released — `suspended` is a hold state
+// where the pod stays bound until `maxSuspendedPodHoldSeconds` (§6.2
+// line 234) fires or the client takes another action.
+//
+// The transition is best-effort by design: a failure to write the phase
+// does not roll back the session-row update that already advanced the
+// session to `suspended`. The Sandbox phase is the operator-visible
+// projection of session state; if the gateway loses it transiently, the
+// session row is the source of truth and the WPC reconciler resyncs.
+//
+// The state machine guards the edge — `attached → suspended` is the
+// only legal source phase, so a sandbox already in `suspended`,
+// `resume_pending`, `draining`, or any other terminal/intermediate
+// phase short-circuits to a no-op rather than returning an error that
+// would mask the interrupt's successful execution.
+//
+// spec: §6.2 line 214 (`running → suspended` interrupt path) projected
+// onto Sandbox.status.phase per §6.2 lines 305-313. F-6.2.13.
+func (b *Binder) Suspend(ctx context.Context, sandboxName string) error {
+	if b.Client == nil || sandboxName == "" {
+		return nil
+	}
+	var sb lennyv1.Sandbox
+	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("podsession: get sandbox %s for suspend: %w", sandboxName, err)
+	}
+	from := state.State(sb.Status.Phase)
+	if from == state.Suspended {
+		return nil
+	}
+	if err := state.IsValid(from, state.Suspended); err != nil {
+		// Either the sandbox has already moved past attached (e.g. a
+		// concurrent recovery race), or the gateway has lost coherence
+		// with the cluster. Either way the session row is the source of
+		// truth; the spec-visible Sandbox.phase loss is best-effort.
+		log.Printf("podsession: suspend sandbox %s: invalid edge from %s: %v", sandboxName, from, err)
+		return nil
+	}
+	if err := podclaim.ApplyGatewayPhase(ctx, b.Client, &sb, state.Suspended); err != nil {
+		return fmt.Errorf("podsession: record suspended phase on sandbox %s: %w", sandboxName, err)
+	}
+	return nil
+}
+
 // resolveSandbox reads the claimed Sandbox and verifies it carries a pod
 // address. The Sandbox reconciler records status.podIP once the pod is
 // running, so a pod that was idle when claimed carries an address. The full
