@@ -51,7 +51,7 @@ func TestMaterializeGitClone(t *testing.T) {
 	staging := t.TempDir()
 	stageUpload(t, staging, workspace.GitCloneStagingRef(src), archive)
 
-	if err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{src}); err != nil {
+	if _, err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{src}); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(root, "vendor", "lib", "src", "main.go"))
@@ -69,7 +69,7 @@ func TestMaterializeGitClone(t *testing.T) {
 func TestMaterializeGitCloneWithoutStagingDir(t *testing.T) {
 	src := gitCloneSource(".", "https://example.com/acme/lib.git",
 		"0123456789abcdef0123456789abcdef01234567")
-	if err := workspace.Materialize(t.TempDir(), "", []*adapterv1.WorkspaceSource{src}); err == nil {
+	if _, err := workspace.Materialize(t.TempDir(), "", []*adapterv1.WorkspaceSource{src}); err == nil {
 		t.Fatal("Materialize should fail for a gitClone source with no staging directory")
 	}
 }
@@ -78,7 +78,7 @@ func TestMaterializeGitCloneMissingArchive(t *testing.T) {
 	// The gateway did not stage the repository archive.
 	src := gitCloneSource(".", "https://example.com/acme/lib.git",
 		"0123456789abcdef0123456789abcdef01234567")
-	if err := workspace.Materialize(t.TempDir(), t.TempDir(),
+	if _, err := workspace.Materialize(t.TempDir(), t.TempDir(),
 		[]*adapterv1.WorkspaceSource{src}); err == nil {
 		t.Fatal("Materialize should fail when the gitClone archive is absent from staging")
 	}

@@ -28,34 +28,62 @@ import (
 // recognized §14 source type.
 var ErrUnknownSourceType = errors.New("unknown workspace source type")
 
+// Warning is one non-fatal §14 advisory the adapter raised against a
+// workspace source during materialization. The fields mirror the
+// proto WorkspacePlanWarning so the adapter Server can transcribe a
+// slice straight onto FinalizeWorkspaceResponse.
+//
+// spec: §7.4 line 459 (workspace_plan_strip_components_skip); §14
+// WarningCode. F-7.4.15.
+type Warning struct {
+	// Code is the §14 WarningCode enum value (e.g.
+	// `workspace_plan_strip_components_skip`).
+	Code string
+	// SourceIndex is the 0-based plan source index the warning refers to.
+	SourceIndex int
+	// Entry is the archive entry path that triggered the warning.
+	// Empty when the warning is not entry-scoped.
+	Entry string
+	// Message is a human-readable explanation.
+	Message string
+}
+
 // Materialize writes the workspace sources into root in order. It
 // handles every §14 source type: inlineFile and mkdir write directly;
 // uploadFile and uploadArchive extract content staged under stagingDir
 // by PrepareWorkspace; gitClone extracts the repository archive the
 // gateway cloned and staged under stagingDir.
-func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) error {
+//
+// Non-fatal advisory warnings (per-entry strip-components skips,
+// future §14 warning codes) are appended to the returned slice rather
+// than aborting materialization, per §7.4 line 459. spec: §7.4 line
+// 459. F-7.4.15.
+func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) ([]Warning, error) {
+	var warnings []Warning
 	for i, src := range sources {
-		if err := materializeSource(root, stagingDir, src); err != nil {
-			return fmt.Errorf("workspace source %d (type %q): %w", i, src.GetType(), err)
+		w, err := materializeSource(root, stagingDir, i, src)
+		warnings = append(warnings, w...)
+		if err != nil {
+			return warnings, fmt.Errorf("workspace source %d (type %q): %w", i, src.GetType(), err)
 		}
 	}
-	return nil
+	return warnings, nil
 }
 
-func materializeSource(root, stagingDir string, src *adapterv1.WorkspaceSource) error {
+func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource) ([]Warning, error) {
 	switch src.GetType() {
 	case "inlineFile":
-		return writeInlineFile(root, src)
+		return nil, writeInlineFile(root, src)
 	case "mkdir":
-		return makeDir(root, src)
+		return nil, makeDir(root, src)
 	case "uploadFile":
-		return writeUploadFile(root, stagingDir, src)
+		return nil, writeUploadFile(root, stagingDir, src)
 	case "uploadArchive":
-		return extractUploadArchive(root, stagingDir, src)
+		return extractUploadArchive(root, stagingDir, sourceIndex, src)
 	case "gitClone":
-		return extractGitClone(root, stagingDir, src)
+		return nil, extractGitClone(root, stagingDir, src)
 	default:
-		return ErrUnknownSourceType
+		return nil, ErrUnknownSourceType
 	}
 }
 

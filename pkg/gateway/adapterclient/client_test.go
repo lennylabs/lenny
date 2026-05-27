@@ -271,7 +271,7 @@ func TestClientFinalizeWorkspace(t *testing.T) {
 	srv.WorkspaceRoot = root
 	cl := dialAdapter(t, srv)
 
-	if err := cl.FinalizeWorkspace(context.Background(), "sess-1", &adapterv1.WorkspacePlan{
+	if _, err := cl.FinalizeWorkspace(context.Background(), "sess-1", &adapterv1.WorkspacePlan{
 		SchemaVersion: 1,
 		Sources: []*adapterv1.WorkspaceSource{
 			{Type: "inlineFile", Path: "CLAUDE.md", Content: "notes", Mode: "644"},
@@ -289,7 +289,7 @@ func TestClientFinalizeWorkspaceRejectsBadPlan(t *testing.T) {
 	srv.WorkspaceRoot = t.TempDir()
 	cl := dialAdapter(t, srv)
 
-	err := cl.FinalizeWorkspace(context.Background(), "sess-1", &adapterv1.WorkspacePlan{
+	_, err := cl.FinalizeWorkspace(context.Background(), "sess-1", &adapterv1.WorkspacePlan{
 		SchemaVersion: 1,
 		Sources: []*adapterv1.WorkspaceSource{
 			{Type: "inlineFile", Path: "../escape", Content: "x", Mode: "644"},

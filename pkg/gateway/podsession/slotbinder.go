@@ -98,6 +98,7 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		return nil, err
 	}
 
+	var finalizeWarnings []*adapterv1.WorkspacePlanWarning
 	if req.Style == podclaim.StyleWorkspace {
 		// Workspace-concurrent: the slot has its own per-slot workspace
 		// (§6.4). Run the full §4.7 workspace-and-start sequence.
@@ -106,11 +107,13 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 			return nil, fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err)
 		}
-		if err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan); err != nil {
+		warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan)
+		if err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 			return nil, fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err)
 		}
+		finalizeWarnings = warnings
 		if err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy); err != nil {
 			cl.Close()
 			b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
@@ -138,12 +141,13 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 		return nil, fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err)
 	}
 	return &BindResult{
-		SessionID:   req.SessionID,
-		TenantID:    req.TenantID,
-		SandboxName: sandboxName,
-		PodIP:       podIP,
-		SlotID:      slotID,
-		Adapter:     cl,
+		SessionID:             req.SessionID,
+		TenantID:              req.TenantID,
+		SandboxName:           sandboxName,
+		PodIP:                 podIP,
+		SlotID:                slotID,
+		Adapter:               cl,
+		WorkspacePlanWarnings: finalizeWarnings,
 	}, nil
 }
 

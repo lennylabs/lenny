@@ -259,6 +259,13 @@ type BindResult struct {
 	// zero value for a BindSlot result, where the concurrent-mode
 	// startup path is timed separately.
 	Timings BindTimings
+	// WorkspacePlanWarnings carries the §14 non-fatal advisories the
+	// adapter raised during FinalizeWorkspace materialization. The
+	// caller republishes each as an SSE event so clients see the §7.4
+	// line 459 `workspace_plan_strip_components_skip` per-entry notice.
+	// Nil when materialization produced no warnings or when Bind
+	// returned before FinalizeWorkspace ran. F-7.4.15.
+	WorkspacePlanWarnings []*adapterv1.WorkspacePlanWarning
 }
 
 // BindTimings carries the per-phase wall-clock durations a successful
@@ -355,7 +362,8 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: phase finalizing_workspace on pod %s: %w", sandboxName, err)
 	}
-	if err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan); err != nil {
+	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan)
+	if err != nil {
 		b.failPhase(ctx, sb)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
@@ -409,12 +417,13 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	t.AgentSessionStart = time.Since(phaseStart)
 
 	return &BindResult{
-		SessionID:   req.SessionID,
-		TenantID:    req.TenantID,
-		SandboxName: sandboxName,
-		PodIP:       sb.Status.PodIP,
-		Adapter:     cl,
-		Timings:     t,
+		SessionID:             req.SessionID,
+		TenantID:              req.TenantID,
+		SandboxName:           sandboxName,
+		PodIP:                 sb.Status.PodIP,
+		Adapter:               cl,
+		Timings:               t,
+		WorkspacePlanWarnings: finalizeWarnings,
 	}, nil
 }
 

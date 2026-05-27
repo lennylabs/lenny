@@ -46,5 +46,9 @@ func extractGitClone(root, stagingDir string, src *adapterv1.WorkspaceSource) er
 		return fmt.Errorf("open gzip stream: %w", err)
 	}
 	defer gz.Close()
-	return extractUploadTar(root, src.GetPath(), 0, gz)
+	// gitClone never raises a strip-components skip — strip=0 cannot
+	// drop any entry — so any returned warnings are spurious; discard
+	// them rather than mix them into the parent Materialize slice.
+	_, err = extractUploadTar(root, src.GetPath(), 0, 0, gz)
+	return err
 }

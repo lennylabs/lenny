@@ -360,9 +360,40 @@ message FinalizeWorkspaceRequest {
   WorkspacePlan workspace_plan = 2;
 }
 
-// FinalizeWorkspaceResponse is empty: FinalizeWorkspace either
-// materializes the workspace or returns a gRPC error.
-message FinalizeWorkspaceResponse {}
+// FinalizeWorkspaceResponse carries per-source advisory warnings the
+// adapter raised during materialization. The adapter returns a gRPC
+// error only on fatal materialization failures; non-fatal §14 plan
+// warnings (entries the §7.4 line 459 strip-components rule skipped,
+// etc.) ride here so the gateway can republish them on the session's
+// SSE event stream and append them to the §11.7 audit trail.
+message FinalizeWorkspaceResponse {
+  // workspace_plan_warnings transcribes the §14 closed warning enum
+  // for the adapter side of materialization. The §7.4 line 459
+  // `workspace_plan_strip_components_skip` warning per skipped archive
+  // entry is the only producer in v1; future codes ride the same
+  // surface so the proto need not grow per warning kind. F-7.4.15.
+  repeated WorkspacePlanWarning workspace_plan_warnings = 1;
+}
+
+// WorkspacePlanWarning is one §14 advisory the adapter raised against
+// a workspace source during FinalizeWorkspace materialization. The
+// (code, source_index, entry) tuple is the same shape the
+// workspaceplan parser emits; an empty entry signals the warning
+// applies to the source as a whole rather than to a specific archive
+// entry. F-7.4.15.
+message WorkspacePlanWarning {
+  // code is the §14 WarningCode enum value, e.g.
+  // `workspace_plan_strip_components_skip`.
+  string code = 1;
+  // source_index is the workspace plan's 0-based source index the
+  // warning refers to.
+  int32 source_index = 2;
+  // entry is the archive entry path that triggered the warning. Empty
+  // when the warning is not entry-scoped.
+  string entry = 3;
+  // message carries a human-readable explanation for the warning.
+  string message = 4;
+}
 
 // RunSetupRequest carries the §14 WorkspacePlan setup commands the
 // adapter runs against the materialized workspace. setup_policy bounds

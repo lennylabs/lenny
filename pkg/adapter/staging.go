@@ -97,11 +97,25 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
-	if err := workspace.Materialize(s.WorkspaceRoot, s.StagingDir,
-		req.GetWorkspacePlan().GetSources()); err != nil {
+	warnings, err := workspace.Materialize(s.WorkspaceRoot, s.StagingDir,
+		req.GetWorkspacePlan().GetSources())
+	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
 	}
-	return &adapterv1.FinalizeWorkspaceResponse{}, nil
+	// F-7.4.15: transcribe the §14 advisory warnings onto the
+	// FinalizeWorkspaceResponse so the gateway can republish the
+	// §7.4 line 459 `workspace_plan_strip_components_skip` per-entry
+	// warning event without redoing the archive walk in two places.
+	resp := &adapterv1.FinalizeWorkspaceResponse{}
+	for _, w := range warnings {
+		resp.WorkspacePlanWarnings = append(resp.WorkspacePlanWarnings, &adapterv1.WorkspacePlanWarning{
+			Code:        w.Code,
+			SourceIndex: int32(w.SourceIndex),
+			Entry:       w.Entry,
+			Message:     w.Message,
+		})
+	}
+	return resp, nil
 }
 
 // RunSetup executes the §14 WorkspacePlan setup commands against the

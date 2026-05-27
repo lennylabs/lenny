@@ -27,17 +27,22 @@ import (
 // entry writes through. Every destination is re-checked for containment
 // within the workspace root, and the total uncompressed size is bounded
 // by maxExtractBytes.
-func extractUploadArchive(root, stagingDir string, src *adapterv1.WorkspaceSource) error {
+//
+// The returned []Warning carries the §7.4 line 459
+// `workspace_plan_strip_components_skip` advisory: one entry per
+// archive entry the strip-components rule discarded. spec: §7.4 line
+// 459. F-7.4.15.
+func extractUploadArchive(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource) ([]Warning, error) {
 	if stagingDir == "" {
-		return errors.New("uploadArchive source requires a staging directory")
+		return nil, errors.New("uploadArchive source requires a staging directory")
 	}
 	staged, err := StagingPath(stagingDir, src.GetUploadRef())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	strip := int(src.GetStripComponents())
 	if strip < 0 {
-		return fmt.Errorf("stripComponents %d is negative", strip)
+		return nil, fmt.Errorf("stripComponents %d is negative", strip)
 	}
 	prefix := src.GetPath()
 
@@ -45,84 +50,103 @@ func extractUploadArchive(root, stagingDir string, src *adapterv1.WorkspaceSourc
 	case "tar":
 		f, err := os.Open(staged)
 		if err != nil {
-			return fmt.Errorf("open staged archive: %w", err)
+			return nil, fmt.Errorf("open staged archive: %w", err)
 		}
 		defer f.Close()
-		return extractUploadTar(root, prefix, strip, f)
+		return extractUploadTar(root, prefix, strip, sourceIndex, f)
 	case "tar.gz":
 		f, err := os.Open(staged)
 		if err != nil {
-			return fmt.Errorf("open staged archive: %w", err)
+			return nil, fmt.Errorf("open staged archive: %w", err)
 		}
 		defer f.Close()
 		gz, err := gzip.NewReader(f)
 		if err != nil {
-			return fmt.Errorf("open gzip stream: %w", err)
+			return nil, fmt.Errorf("open gzip stream: %w", err)
 		}
 		defer gz.Close()
-		return extractUploadTar(root, prefix, strip, gz)
+		return extractUploadTar(root, prefix, strip, sourceIndex, gz)
 	case "zip":
-		return extractUploadZip(root, prefix, strip, staged)
+		return extractUploadZip(root, prefix, strip, sourceIndex, staged)
 	default:
-		return fmt.Errorf("unsupported archive format %q", src.GetFormat())
+		return nil, fmt.Errorf("unsupported archive format %q", src.GetFormat())
 	}
 }
 
-func extractUploadTar(root, prefix string, strip int, r io.Reader) error {
+func extractUploadTar(root, prefix string, strip, sourceIndex int, r io.Reader) ([]Warning, error) {
 	tr := tar.NewReader(r)
 	var written int64
+	var warnings []Warning
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return nil
+			return warnings, nil
 		}
 		if err != nil {
-			return fmt.Errorf("read tar entry: %w", err)
+			return warnings, fmt.Errorf("read tar entry: %w", err)
 		}
 		rel, ok := stripPath(hdr.Name, strip)
 		if !ok {
-			// §14: an entry with too few segments is skipped, not fatal.
+			// spec: §7.4 line 459 — an entry with too few segments after
+			// stripComponents is skipped without aborting extraction and
+			// emits a workspace_plan_strip_components_skip warning event
+			// per skipped entry. F-7.4.15.
+			warnings = append(warnings, Warning{
+				Code:        stripComponentsSkipCode,
+				SourceIndex: sourceIndex,
+				Entry:       hdr.Name,
+				Message:     fmt.Sprintf("entry has fewer than stripComponents=%d segments", strip),
+			})
 			continue
 		}
 		dst, err := resolvePath(root, filepath.Join(prefix, rel))
 		if err != nil {
-			return err
+			return warnings, err
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(dst, 0o755); err != nil {
-				return fmt.Errorf("create archive directory: %w", err)
+				return warnings, fmt.Errorf("create archive directory: %w", err)
 			}
 		case tar.TypeReg:
 			n, err := extractRegular(dst, tr, archiveMode(os.FileMode(hdr.Mode)), maxExtractBytes-written)
 			written += n
 			if err != nil {
-				return err
+				return warnings, err
 			}
 		}
 		// Non-regular, non-directory entries are skipped.
 	}
 }
 
-func extractUploadZip(root, prefix string, strip int, archivePath string) error {
+func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath string) ([]Warning, error) {
 	zr, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return fmt.Errorf("open zip archive: %w", err)
+		return nil, fmt.Errorf("open zip archive: %w", err)
 	}
 	defer zr.Close()
 	var written int64
+	var warnings []Warning
 	for _, entry := range zr.File {
 		rel, ok := stripPath(entry.Name, strip)
 		if !ok {
+			// spec: §7.4 line 459 — strip-components skip per entry.
+			// F-7.4.15.
+			warnings = append(warnings, Warning{
+				Code:        stripComponentsSkipCode,
+				SourceIndex: sourceIndex,
+				Entry:       entry.Name,
+				Message:     fmt.Sprintf("entry has fewer than stripComponents=%d segments", strip),
+			})
 			continue
 		}
 		dst, err := resolvePath(root, filepath.Join(prefix, rel))
 		if err != nil {
-			return err
+			return warnings, err
 		}
 		if entry.FileInfo().IsDir() {
 			if err := os.MkdirAll(dst, 0o755); err != nil {
-				return fmt.Errorf("create archive directory: %w", err)
+				return warnings, fmt.Errorf("create archive directory: %w", err)
 			}
 			continue
 		}
@@ -131,17 +155,24 @@ func extractUploadZip(root, prefix string, strip int, archivePath string) error 
 		}
 		rc, err := entry.Open()
 		if err != nil {
-			return fmt.Errorf("open zip entry: %w", err)
+			return warnings, fmt.Errorf("open zip entry: %w", err)
 		}
 		n, err := extractRegular(dst, rc, archiveMode(entry.Mode()), maxExtractBytes-written)
 		_ = rc.Close()
 		written += n
 		if err != nil {
-			return err
+			return warnings, err
 		}
 	}
-	return nil
+	return warnings, nil
 }
+
+// stripComponentsSkipCode is the §14 closed-enum WarningCode for the
+// §7.4 line 459 "entries with fewer than N segments are skipped"
+// advisory. The string matches pkg/workspaceplan.WarnStripComponentsSkip
+// so a future deduplication can drop one of the two definitions.
+// F-7.4.15.
+const stripComponentsSkipCode = "workspace_plan_strip_components_skip"
 
 // archiveMode reduces an archive entry mode to its permission bits,
 // dropping setuid, setgid, and sticky bits. A zero mode (an archive

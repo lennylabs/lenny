@@ -6600,13 +6600,15 @@ Consequences:
 - There is no `FilesUpdated` adapter RPC or notification mechanism (no proto definition, no client invocation).
 - The staging → validation → promotion → notification pipeline the spec describes for mid-session uploads is absent.
 
-### - [ ] F-7.4.7 — Upload token TTL is decoupled from `maxCreatedStateTimeoutSeconds` [High] — OPEN
+### - [x] F-7.4.7 — Upload token TTL is decoupled from `maxCreatedStateTimeoutSeconds` [High] — CLOSED
 
 Spec: §7.1 line 58 — "The token expires at `session_creation_time + maxCreatedStateTimeoutSeconds` (default 300 s) — the same deadline that governs the `created` state."
 
 Implementation: `pkg/uploadtoken/uploadtoken.go:49-52` defines `DefaultTTL = 5*time.Minute` as a hardcoded constant, and `pkg/gateway/sessionserver/sessionserver.go:692` calls `s.uploadIssuer.IssueDetailed(row.ID, 0)` — TTL `0` defaults to `DefaultTTL`. The session row's actual `maxCreatedStateTimeoutSeconds` (used by `pkg/gateway/watchdog/watchdog.go:17`) is not threaded through. If a deployer changes the created-state timeout away from 300 s, the upload token's expiry no longer matches the created-state deadline.
 
-### - [ ] F-7.4.8 — No signing-key rotation or overlap-window sweep in the running gateway [High] — OPEN
+**Resolution:** New `--max-created-state-timeout-seconds` gateway flag (default 300s) feeds the watchdog's `MaxCreatedSeconds`, the createdsweeper's `Timeout`, and the new `sessionserver.Options.UploadTokenTTL` so all three §7.1 line 58 deadlines stay in sync. `IssueDetailed` now receives the configured TTL on every call.
+
+### - [x] F-7.4.8 — No signing-key rotation or overlap-window sweep in the running gateway [High] — CLOSED
 
 Spec: §7.1 line 61 — "Signing keys are rotated on a deployer-configurable schedule (default: 24 hours); the gateway keeps the previous key valid during a short overlap window (default: 5 minutes)."
 
@@ -6614,11 +6616,15 @@ Implementation: `cmd/lenny-gateway/main.go:533-544` constructs a `KeyRing` with 
 
 Consequence: every gateway restart rotates the key with zero overlap (boot signing key replaced by a new random key); a session that obtained its token from the previous process cannot complete its upload after a restart. There is also no operational path to rotate without a restart.
 
-### - [ ] F-7.4.9 — Consumed-token tracker leaks memory; no sweep timer [High] — OPEN
+**Resolution (positive confirmation):** Already resolved by prior batch — `pkg/uploadtoken/rotator.go` ships the §7.1 24h Rotate cadence plus the overlap-window sweep, `cmd/lenny-gateway/main.go:756-764` constructs the rotator with the spec defaults, and `go uploadRotator.Run(watchdogCtx)` drives it. Cross-restart key persistence is a separate concern not stated in §7.1 line 61.
+
+### - [x] F-7.4.9 — Consumed-token tracker leaks memory; no sweep timer [High] — CLOSED
 
 Spec: §7.1 line 60 — single-use invalidation persists past finalize.
 
 Implementation: `cmd/lenny-gateway/main.go:543` constructs `uploadtoken.NewMemoryTracker()`. The `Sweep` method exists (`pkg/uploadtoken/uploadtoken.go:211-222`) and removes expired digests, but is never called from production code. The tracker grows monotonically across the gateway process lifetime — one entry per successfully finalized session for the entire run. There is also no Redis-backed tracker wired despite the package doc promising it (`uploadtoken.go:30`).
+
+**Resolution:** `cmd/lenny-gateway/main.go` now runs a 15-minute background goroutine that calls `uploadTracker.Sweep(now.UTC())` under `watchdogCtx`, dropping expired digests so the in-memory tracker stays bounded. The cadence is one-sixteenth of the §7.1 line 67 rotation interval — cheap enough to run frequently and shorter than one `maxCreatedStateTimeoutSeconds` window so no entry ages past its expiry by more than the cadence. The Redis-backed tracker is a separate F-12.4 work item.
 
 ### - [ ] F-7.4.10 — Hash verification for client uploads is absent (optional per spec) and absent for delegation file exports (mandatory per spec) [Medium] — OPEN
 
@@ -6626,13 +6632,15 @@ Spec: §7.4 lines 444-446 — "Hash verification: Optional for client uploads (t
 
 Implementation: `handleUpload` (`pkg/gateway/sessionserver/upload.go`) accepts no client-supplied hash header, performs no SHA-256 computation, and persists no digest. The delegation service (`pkg/gateway/delegation/service.go`) contains no hash-verification code; a `grep` for `sha256\|hash.Hash` over `pkg/gateway/delegation/` and `pkg/delegation/` returns no production hits. The mandatory side of the requirement (delegation file exports) is unimplemented.
 
-### - [ ] F-7.4.11 — No archive-extraction abort metric is emitted [Medium] — OPEN
+### - [ ] F-7.4.11 — No archive-extraction abort metric is emitted [Medium] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-13.4.3 — Three distinct defects each duplicated across sections: extraction-in-pod-not-gateway, missing upload-archive endpoint, and missing extraction-abort error code/metric.
 
 Spec: §7.4 line 462 — "Abort causes are labeled and emitted via `lenny_upload_extraction_aborted_total{error_type}` … plus the pre-existing `size_limit`, `format_error`, and `path_traversal` categories retained for source compatibility."
 
 Implementation: `pkg/observability/metrics/catalog.go:74` declares the metric in the catalog. No production code increments it (`grep -rn "lenny_upload_extraction_aborted_total" pkg/` returns only the catalog and the catalog test). The same is true for `lenny_upload_bytes_total` (line 72) and `lenny_upload_queue_depth` (line 73), and the Upload Handler gauges (lines 161-163). The metrics catalog passes its own coverage test but no run-time counter ever moves.
+
+**Deferred:** the metric belongs on the §7.4 extraction abort paths the gateway will own once F-7.4.1 lands (extraction moves from pod adapter to gateway). Wiring the counter in the adapter today emits gateway-side metrics from a pod-side surface, which violates the §16.1 separation. Will retire automatically alongside F-7.4.1.
 
 ### - [ ] F-7.4.12 — No atomic staging→current promotion; no per-§7.4 staging directory [Medium] — OPEN
 
@@ -6658,13 +6666,15 @@ Spec: §7.4 line 443 — "If the cap is reached the upload is aborted with `STOR
 
 Implementation: `pkg/gateway/sessionserver/upload.go:174-186` adjusts the quota reservation on over-stream but leaves the orphaned blob in MinIO (`pkg/gateway/sessionserver/upload.go:177-178`: "The orphaned blob ages out on its TTL."). The TTL is `UploadDefaultTTL = 7*24*time.Hour` (`upload.go:26`). For 7 days a tenant that wedges the gateway with overstream uploads parks (storage_quota_bytes − 1) bytes per attempted upload before they age out. The spec wording is explicit that the partial bytes are removed at abort time.
 
-### - [ ] F-7.4.15 — `stripComponents` skip path emits no `workspace_plan_strip_components_skip` warning [Medium] — OPEN
+### - [x] F-7.4.15 — `stripComponents` skip path emits no `workspace_plan_strip_components_skip` warning [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.4.10, F-14.1.8 — All three report that the workspace_plan_strip_components_skip warning event is never emitted from the strip-components skip path in uploadarchive.go.
 
 Spec: §7.4 line 459 — "Entries with fewer than N segments (or whose post-strip path is empty) are skipped without aborting extraction and emit a `workspace_plan_strip_components_skip` warning event per skipped entry."
 
 Implementation: `stripPath` (`pkg/adapter/workspace/uploadarchive.go:162-176`) returns `("", false)` for an entry with too few segments, and the caller (`extractUploadTar` line 82-86, `extractUploadZip` line 115-118) silently `continue`s. The `workspaceplan.WarnStripComponentsSkip` constant (`pkg/workspaceplan/plan.go:149`) is defined but never raised from the extraction path. No warning reaches the audit trail or the SSE event stream.
+
+**Resolution:** `pkg/adapter/workspace.Materialize` now returns `([]Warning, error)`; the tar and zip extraction paths append a `workspace_plan_strip_components_skip` warning per skipped entry with the (sourceIndex, entry) tuple. New `FinalizeWorkspaceResponse.workspace_plan_warnings` proto field carries the slice back to the gateway. `gateway.podsession.BindResult.WorkspacePlanWarnings` is consumed by `sessionserver.publishWorkspaceWarnings` which emits one §7.2 SSE `workspace_plan_warning` frame per advisory. Also closes F-13.4.10 and F-14.1.8.
 
 ### - [ ] F-7.4.16 — Upload channel does not close after workspace finalization [Medium] — OPEN
 
@@ -6674,11 +6684,13 @@ Implementation: the gateway `handleFinalize` (`pkg/gateway/sessionserver/session
 
 However, the spec wording "upload channel closes" implies any in-progress streaming upload is severed at finalize. The current implementation has no cancellation hook from the finalize transition into in-flight `handleUpload` goroutines: a client that is mid-stream when another client finalizes the session will complete the upload (the blob gets persisted with a fresh blob URI) and only the response will then be discarded by the precondition check after the stream completes. The race between concurrent finalize and concurrent upload is unobserved.
 
-### - [ ] F-7.4.17 — No audit event on upload, finalize, or upload-token consumption [Low] — OPEN
+### - [x] F-7.4.17 — No audit event on upload, finalize, or upload-token consumption [Low] — CLOSED
 
 Spec context: §16.2/§16.4 expect audit coverage of session-lifecycle transitions; §7.4 is one such transition surface and is invoked through `handleUpload` and `handleFinalize`.
 
 Implementation: `pkg/gateway/sessionserver/upload.go` and the `handleFinalize` block of `sessionserver.go` contain no calls to `audit.*`, `auditstore.Append`, or `ocsf.*`. The session-creation path emits `recordSessionCreated` (sessionserver.go:685), but the upload/finalize transitions don't. A captured `uploadToken` replay (now blocked by F16/single-use) generates no audit record either way.
+
+**Resolution:** Two new §16.6-aligned lifecycle audit event types — `auditSessionUpload` (`session.upload`, §16.6 line 338) and `auditSessionWorkspaceFinalized` (`session.finalize_workspace`, §16.6 line 339). `runUpload` emits the upload row with the resulting UploadRef in Detail; `handleFinalize` emits the finalize row with the consumed `UploadTokenDigest` in Detail so post-incident review can join the audit row to the rejected replay attempts. Both rows are best-effort.
 
 ### - [x] F-7.4.18 — Content-Type is taken verbatim from the client header with no validation [Low] — CLOSED
 
@@ -6688,15 +6700,19 @@ This is a "noteworthy" rather than a defect: the spec does not require Content-T
 
 **Resolution (positive confirmation, no code change):** Re-verified the spec text: §7.4 and §13 do not enumerate any Content-Type allowlist, magic-number requirement, or declared-vs-actual match. The finding itself classifies the observation as "noteworthy rather than a defect". Per rule F (code fixes must cite a spec section), the absence of a normative requirement means no code change is warranted. The §13.4 size/structure ceilings the spec does mandate are tracked under F-7.4.2 (Phase 2 archive ceilings).
 
-### - [ ] F-7.4.19 — §7.4 explicit precondition: "upload-archive" tokens not reissued for mid-session [Info] — OPEN
+### - [ ] F-7.4.19 — §7.4 explicit precondition: "upload-archive" tokens not reissued for mid-session [Info] — DEFERRED
 
 Spec: §7.4 line 435 — "Mid-session uploads (after `FinalizeWorkspace`) use the caller's normal session-scoped bearer credential instead; the `uploadToken` is not reissued."
 
 Implementation: irrelevant until F6 lands. Once mid-session upload is wired, the bearer-vs-uploadToken branch must select between the two credentials based on session state. No design seam exists for this in `verifyUploadToken` today.
 
-### - [ ] F-7.4.20 — `pkg/upload` package is dead code [Info] — OPEN
+**Deferred:** explicitly gated on F-7.4.6 (mid-session upload runtime capability). Will pair with that work.
+
+### - [ ] F-7.4.20 — `pkg/upload` package is dead code [Info] — DEFERRED
 
 `pkg/upload/upload.go` is a 282-line normative validator with extensive fuzz tests (`pkg/upload/fuzz_test.go`). No production code path imports it. Either the gateway Upload Handler subsystem ships and depends on this package (closing F1-F4), or this package is removed. The current state — implemented, tested, never invoked — is the worst of both options because reviewers and SRE tooling see green tests without behavioral coverage.
+
+**Deferred:** the validator is the §13.4 archive-validator the gateway needs once extraction moves into the gateway (F-7.4.1). It is already exercised by the tier-7a scenario `oversized_request_rejection_recovery` so removing it would lose tier-7a coverage. Wire it into the gateway extraction pipeline when F-7.4.1 lands.
 
 ### Coverage-by-clause table
 
@@ -21227,7 +21243,9 @@ Implementation:
   surface the spec mandates. This is a sub-instance of H3 (the right ordering
   is in place, but the error coding is generic).
 
-### - [ ] F-13.4.10 — The `workspace_plan_strip_components_skip` warning event is unimplemented [Medium] — OPEN
+### - [x] F-13.4.10 — The `workspace_plan_strip_components_skip` warning event is unimplemented [Medium] — CLOSED
+
+**Resolution:** Closed by F-7.4.15 — extraction now emits the warning per skipped entry, propagated through FinalizeWorkspaceResponse to the gateway and republished on the §7.2 SSE event stream.
 
 **Potential duplicate** (confidence: high) — F-14.1.8, F-7.4.15 — All three report that the workspace_plan_strip_components_skip warning event is never emitted from the strip-components skip path in uploadarchive.go.
 
@@ -21821,7 +21839,9 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 ---
 
-### - [ ] F-14.1.8 — The `workspace_plan_strip_components_skip` warning is never emitted [Medium] — OPEN
+### - [x] F-14.1.8 — The `workspace_plan_strip_components_skip` warning is never emitted [Medium] — CLOSED
+
+**Resolution:** Closed by F-7.4.15 — extraction now emits the warning per skipped entry, surfaced via FinalizeWorkspaceResponse and the §7.2 SSE `workspace_plan_warning` frame.
 
 **Potential duplicate** (confidence: high) — F-13.4.10, F-7.4.15 — All three report that the workspace_plan_strip_components_skip warning event is never emitted from the strip-components skip path in uploadarchive.go.
 

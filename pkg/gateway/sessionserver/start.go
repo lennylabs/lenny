@@ -325,7 +325,8 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// the session row" contract. On store.Create failure the bound pod
 	// is released to the §6.2 reclaim path so no pod or credential
 	// lease leaks past the failure.
-	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, 0)
+	// spec: §7.1 line 58 — TTL = maxCreatedStateTimeoutSeconds. F-7.4.7.
+	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
 	if err != nil {
 		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
 			"upload token issuance failed: "+err.Error())
@@ -856,6 +857,35 @@ func (s *Server) registerBinding(ctx context.Context, result *podsession.BindRes
 	}
 	s.podRegistry.Put(result)
 	s.persistPodAssignment(ctx, result.TenantID, result.SessionID, result.SandboxName)
+	// F-7.4.15: republish any §14 advisory warnings the adapter raised
+	// during FinalizeWorkspace materialization. The
+	// `workspace_plan_strip_components_skip` warning per §7.4 line 459
+	// is the only producer in v1; SSE subscribers see one event per
+	// skipped archive entry so a client can audit the strip-components
+	// rule.
+	s.publishWorkspaceWarnings(result)
+}
+
+// publishWorkspaceWarnings emits one SSE `workspace_plan_warning`
+// frame per §14 advisory the adapter returned from FinalizeWorkspace.
+// The handler is a no-op when the bind produced no warnings.
+//
+// spec: §7.4 line 459; §14 WarningCode. F-7.4.15.
+func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
+	if result == nil || len(result.WorkspacePlanWarnings) == 0 {
+		return
+	}
+	for _, w := range result.WorkspacePlanWarnings {
+		if w == nil {
+			continue
+		}
+		s.publishEvent(result.TenantID, result.SessionID, "workspace_plan_warning", map[string]any{
+			"code":        w.GetCode(),
+			"sourceIndex": w.GetSourceIndex(),
+			"entry":       w.GetEntry(),
+			"message":     w.GetMessage(),
+		})
+	}
 }
 
 // rollbackBinding releases a successful startOnPod result whose

@@ -195,12 +195,20 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.
 // workspace root (§4.7, the second session-assignment RPC). For a plan
 // with uploadFile or uploadArchive sources, PrepareWorkspace must have
 // staged their content first.
-func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan) error {
-	_, err := c.rpc.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+//
+// The returned []*WorkspacePlanWarning carries any §14 non-fatal
+// advisories the adapter raised during materialization (per §7.4 line
+// 459 `workspace_plan_strip_components_skip`). The slice is nil when
+// the materialization had nothing to report. F-7.4.15.
+func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan) ([]*adapterv1.WorkspacePlanWarning, error) {
+	resp, err := c.rpc.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		WorkspacePlan: plan,
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetWorkspacePlanWarnings(), nil
 }
 
 // RunSetup executes the §14 WorkspacePlan setup commands in the pod's

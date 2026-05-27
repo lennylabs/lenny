@@ -280,6 +280,13 @@ type Server struct {
 	// lenny_session_retry_total{failure_class} counter for the retry.
 	// Nil disables the emission. spec: §16.1 catalog. F-7.3.10.
 	incSessionRetry func(failureClass string)
+
+	// uploadTokenTTL is the §7.1 line 58 upload-token expiry stamped on
+	// every minted token. The gateway sets this equal to
+	// `maxCreatedStateTimeoutSeconds` so the token deadline matches the
+	// `created` state deadline. A zero value falls through to
+	// uploadtoken.DefaultTTL (300s). spec: §7.1 line 58. F-7.4.7.
+	uploadTokenTTL time.Duration
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -446,6 +453,15 @@ type Options struct {
 	// session rows directly. Production wires this to the same
 	// KeyRing that backs UploadTokenIssuer.
 	UploadTokenVerifier *uploadtoken.Verifier
+
+	// UploadTokenTTL overrides the upload-token expiry stamped on every
+	// minted token. Per §7.1 line 58 the token TTL equals
+	// `maxCreatedStateTimeoutSeconds`; the gateway threads the same
+	// configured timeout through this field, the watchdog's
+	// MaxCreatedSeconds, and the createdsweeper's Timeout so the three
+	// budgets never drift. A non-positive value falls through to
+	// uploadtoken.DefaultTTL (300s). spec: §7.1 line 58. F-7.4.7.
+	UploadTokenTTL time.Duration
 
 	// Blobs is the §4.5 blob store backing
 	// `POST /v1/sessions/{id}/upload` and `GET /v1/blobs/{ref}`.
@@ -831,6 +847,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		retryPolicyCaps:        opts.RetryPolicyCaps,
 		incSessionResumeAttempt: opts.IncSessionResumeAttempt,
 		incSessionRetry:        opts.IncSessionRetry,
+		uploadTokenTTL:         opts.UploadTokenTTL,
 	}
 	if s.defaultRetention <= 0 {
 		// spec: §7.1 line 77 — default the artifact-retention window to
@@ -1275,9 +1292,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// directly on the row that will be persisted, replacing the legacy
 	// "Create then Update with digest" sequence that left an orphan
 	// `created`-state row when the mint failed.
-	// TTL = maxCreatedStateTimeoutSeconds (uploadtoken.DefaultTTL —
-	// 300 s).
-	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, 0)
+	// spec: §7.1 line 58 — TTL = maxCreatedStateTimeoutSeconds; the
+	// gateway threads the configured value through s.uploadTokenTTL so
+	// the token deadline matches the watchdog's MaxCreatedSeconds and the
+	// createdsweeper's Timeout. F-7.4.7.
+	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
 	if err != nil {
 		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
 			"upload token issuance failed: "+err.Error())
@@ -1635,6 +1654,25 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	}
 	// spec: §7.2 line 137 — surface the created → ready transition.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
+	// F-7.4.17: §16.6 session.finalize_workspace audit row. The row
+	// records the finalize transition and the consumption of the
+	// single-use uploadToken so SIEM post-incident review can join the
+	// upload-token consumption event to the session lifecycle. Detail
+	// carries the persisted digest so SOC analysts can correlate the
+	// audit row with the rejected /upload calls that follow it.
+	// spec: §16.6 line 339; §7.1 line 60 (single-use); §11.7. F-7.4.17.
+	if s.lifecycleAudit != nil {
+		s.lifecycleAudit.EmitSessionLifecycle(r.Context(), SessionLifecycleEvent{
+			EventType:  auditSessionWorkspaceFinalized,
+			TenantID:   updated.TenantID,
+			SessionID:  updated.ID,
+			UserID:     updated.UserID,
+			RuntimeRef: updated.RuntimeRef,
+			State:      string(updated.State),
+			Detail:     updated.UploadTokenDigest,
+			At:         s.clock(),
+		})
+	}
 	s.writeSession(w, http.StatusOK, updated)
 }
 

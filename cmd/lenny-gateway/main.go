@@ -358,6 +358,9 @@ func main() {
 	sessionArtifactRetentionSeconds := flag.Int("session-artifact-retention-seconds",
 		envInt("LENNY_SESSION_ARTIFACT_RETENTION_SECONDS", int(sessionserver.DefaultArtifactRetention/time.Second)),
 		"§7.1 line 77 default artifact-retention window in seconds. Session workspace snapshots, logs, and transcripts stay GC-eligible until this long after the session reaches a terminal state. Default 7 days (604800s); clients extend per-session via POST /v1/sessions/{id}/extend-retention. Override via LENNY_SESSION_ARTIFACT_RETENTION_SECONDS.")
+	maxCreatedStateTimeoutSeconds := flag.Int("max-created-state-timeout-seconds",
+		envInt("LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxCreatedStateSeconds),
+		"§7.1 line 58 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL, the watchdog's `created`-state budget, and the createdsweeper's abandoned-row timeout so the three deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
 	workspaceSealMaxDurationSeconds := flag.Int("workspace-seal-max-duration-seconds",
 		envInt("LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS", int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second)),
 		"§7.1 line 112 maxWorkspaceSealDurationSeconds: the total wall-clock window the gateway retries seal-and-export (exponential backoff 5s→60s) before failing the session with workspace_seal_timeout and terminating the pod anyway. Default 300s. Override via LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS.")
@@ -1464,6 +1467,8 @@ func main() {
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:          uploadIssuer,
 		UploadTokenVerifier:        uploadVerifier,
+		// F-7.4.7: §7.1 line 58 TTL = maxCreatedStateTimeoutSeconds.
+		UploadTokenTTL:             time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
 		Blobs:                      blobs,
 		Executor:                   exec,
 		Transcripts:                transcripts,
@@ -2434,7 +2439,13 @@ func main() {
 	// SSE, billing, archive — so the watchdog-driven path emits the same
 	// signals exactly once as the REST-driven terminal path. Closes
 	// F-5.2.26.
-	wd := watchdog.New(sessions, tenantsLister{tenants}, watchdog.Config{}, nil).
+	// F-7.4.7: thread the configured maxCreatedStateTimeoutSeconds into
+	// the watchdog so its `created`-state budget matches the
+	// uploadToken TTL and the createdsweeper deadline.
+	// spec: §7.1 line 58.
+	wd := watchdog.New(sessions, tenantsLister{tenants}, watchdog.Config{
+		MaxCreatedSeconds: *maxCreatedStateTimeoutSeconds,
+	}, nil).
 		WithBilling(billing).
 		WithTreeArchive(treeArchive).
 		WithTerminalHook(sessionSrv)
@@ -2461,6 +2472,31 @@ func main() {
 	// deadline has elapsed. spec: §7.1 line 67.
 	go uploadRotator.Run(watchdogCtx)
 
+	// F-7.4.9: §7.1 single-use upload-token tracker sweep. The memory
+	// tracker holds one entry per consumed token's digest until its
+	// expiry timestamp; without a periodic Sweep the map grows
+	// monotonically with the gateway's process lifetime. The cadence is
+	// the watchdog tick interval — cheap enough to run frequently and
+	// short enough that a sweep happens well within one
+	// maxCreatedStateTimeoutSeconds window. spec: §7.1 line 60.
+	go func() {
+		tick := time.NewTicker(uploadtoken.DefaultRotationInterval / 96) // 15m at the default 24h
+		if tick == nil {
+			return
+		}
+		defer tick.Stop()
+		for {
+			select {
+			case <-watchdogCtx.Done():
+				return
+			case now := <-tick.C:
+				if n := uploadTracker.Sweep(now.UTC()); n > 0 {
+					log.Printf("lenny-gateway: §7.1 upload-token tracker swept %d expired digests", n)
+				}
+			}
+		}
+	}()
+
 	// ----- §7.1 abandoned `created`-state row sweep -----
 	// Drops Session rows that stay in `created` past
 	// maxCreatedStateTimeoutSeconds (default 300s). The §7.1 line 58
@@ -2469,7 +2505,11 @@ func main() {
 	// accumulated under repeated client retries.
 	// spec: §7.1 line 58.
 	createdGC := createdsweeper.New(sessions, tenantsLister{tenants}, createdsweeper.Options{
-		Clock: clockinject.Now,
+		// F-7.4.7: pinned to the same maxCreatedStateTimeoutSeconds the
+		// watchdog and the uploadToken issuer use.
+		// spec: §7.1 line 58.
+		Timeout: time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
+		Clock:   clockinject.Now,
 	})
 	go createdGC.Run(watchdogCtx, func(dropped int, err error) {
 		if err != nil {

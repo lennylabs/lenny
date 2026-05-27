@@ -95,6 +95,15 @@ const (
 	auditToolUseDenied        = "tool_use.denied"
 	auditElicitationResponded = "elicitation.responded"
 	auditElicitationDismissed = "elicitation.dismissed"
+
+	// §7.4 / §16.6 workspace lifecycle audit event types. The strings
+	// follow the §16.6 OCSF mapping prefixes — `session.upload` (line
+	// 338) covers the `POST /v1/sessions/{id}/upload` and
+	// `/upload-archive` blob-commit boundary; `session.finalize_workspace`
+	// (line 339) covers the `POST /v1/sessions/{id}/finalize` transition
+	// that consumes the upload token's digest. F-7.4.17.
+	auditSessionUpload             = "session.upload"
+	auditSessionWorkspaceFinalized = "session.finalize_workspace"
 )
 
 // InteractionAuditSink receives the §7.2 / §11.7 / §16.7

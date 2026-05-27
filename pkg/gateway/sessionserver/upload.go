@@ -283,6 +283,23 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		ContentHash: bytesRead.ContentHash(),
 		IsArchive:   kind == UploadKindArchive,
 	}
+	// F-7.4.17: §16.6 session.upload audit row. One row per successful
+	// blob commit, regardless of UploadKindBlob vs UploadKindArchive —
+	// downstream SOC tooling joins the row to a finalize/extract event
+	// via the resulting UploadRef carried in Detail. spec: §16.6 line
+	// 338; §11.7. F-7.4.17.
+	if s.lifecycleAudit != nil {
+		s.lifecycleAudit.EmitSessionLifecycle(r.Context(), SessionLifecycleEvent{
+			EventType:  auditSessionUpload,
+			TenantID:   row.TenantID,
+			SessionID:  row.ID,
+			UserID:     row.UserID,
+			RuntimeRef: row.RuntimeRef,
+			State:      string(row.State),
+			Detail:     ref,
+			At:         s.clock(),
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)

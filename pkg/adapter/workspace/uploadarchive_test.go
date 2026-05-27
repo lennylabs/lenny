@@ -68,6 +68,15 @@ func buildZip(t *testing.T, entries map[string]string) []byte {
 
 func materializeArchive(t *testing.T, format, prefix string, strip int, archive []byte) (string, error) {
 	t.Helper()
+	root, _, err := materializeArchiveWithWarnings(t, format, prefix, strip, archive)
+	return root, err
+}
+
+// materializeArchiveWithWarnings runs Materialize and surfaces both the
+// resulting workspace root and the §14 advisory warnings the
+// strip-components rule emitted. F-7.4.15.
+func materializeArchiveWithWarnings(t *testing.T, format, prefix string, strip int, archive []byte) (string, []workspace.Warning, error) {
+	t.Helper()
 	root := t.TempDir()
 	staging := t.TempDir()
 	stageUpload(t, staging, "arch", archive)
@@ -78,7 +87,8 @@ func materializeArchive(t *testing.T, format, prefix string, strip int, archive 
 		Format:          format,
 		StripComponents: int32(strip),
 	}
-	return root, workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{src})
+	warnings, err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{src})
+	return root, warnings, err
 }
 
 func TestMaterializeUploadArchiveTar(t *testing.T) {
@@ -203,7 +213,7 @@ func TestMaterializeUploadArchiveWithoutStagingDir(t *testing.T) {
 	src := &adapterv1.WorkspaceSource{
 		Type: "uploadArchive", UploadRef: "arch", Format: "tar",
 	}
-	if err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{src}); err == nil {
+	if _, err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{src}); err == nil {
 		t.Fatal("Materialize should fail for an uploadArchive source with no staging directory")
 	}
 }
