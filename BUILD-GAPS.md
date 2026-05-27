@@ -12726,15 +12726,19 @@ Implementation:
 
 This is Low because v1 has no Phase 3 migrations and the rule is operational guidance. It becomes High the moment a real Phase 3 lands.
 
-### - [ ] F-10.5.12 — 12  §10.5 line 437 `x-kubernetes-preserve-unknown-fields` is acceptable to omit while CRDs are single-version [Info] — OPEN
+### - [x] F-10.5.12 — 12  §10.5 line 437 `x-kubernetes-preserve-unknown-fields` is acceptable to omit while CRDs are single-version [Info] — CLOSED
 
 The spec's preserve-unknown-fields guidance (line 437) is conditional on having multiple controller versions running against multiple CRD versions during a rolling deploy. The current single-`v1alpha1` posture means a controller running an older version cannot observe a newer field. The omission documented in F-10.5-06 is consistent with the current single-version posture; the gap is the absence of the controls **at the moment the second version lands**. No action required for v1, but the kubebuilder markers should land alongside the first multi-version CRD.
 
-### - [ ] F-10.5.13 — 13  `golang-migrate` advisory lock satisfies §10.5 line 432 "Locking" [Info] — OPEN
+**Resolution:** Verified — every CRD in `charts/lenny/crds/` declares a single `versions:` entry (`grep -c "name: v" charts/lenny/crds/*.yaml` returns 1 each for `lenny.dev_runtimes.yaml`, `lenny.dev_sandboxclaims.yaml`, `lenny.dev_sandboxes.yaml`, `lenny.dev_sandboxtemplates.yaml`, `lenny.dev_sandboxwarmpools.yaml`). The finding's own conclusion ("No action required for v1") holds; preserve-unknown-fields markers belong with whichever change first introduces a second served CRD version.
+
+### - [x] F-10.5.13 — 13  `golang-migrate` advisory lock satisfies §10.5 line 432 "Locking" [Info] — CLOSED
 
 §10.5 line 432: "golang-migrate uses Postgres advisory locks to prevent concurrent migrations. The lock is released on completion or failure."
 
 `cmd/lenny-migrate/main.go:126–151` constructs a `migrate.Migrate` against `embed.FS` + the Postgres driver. The Postgres driver acquires `pg_advisory_lock(advisoryLockID)` on `Lock()` and releases it on `Unlock()` by default. The platform inherits this behavior from the library. Verified by reading the Go import (`migrate/v4/database/postgres`) and the runner construction. This claim is met.
+
+**Resolution:** Confirmed via re-read of `cmd/lenny-migrate/main.go:126-151` — `migratepg.WithInstance(db, &migratepg.Config{})` with an empty config inherits the `golang-migrate/v4/database/postgres` default `Lock()`/`Unlock()` via `pg_advisory_lock(advisoryLockID)`. No code change required; the finding is a positive verification of the §10.5 line 432 invariant.
 
 ---
 
