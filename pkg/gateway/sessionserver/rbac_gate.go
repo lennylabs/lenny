@@ -33,13 +33,22 @@ import (
 // caller whose roles do not grant the permission — a tenant-viewer or
 // billing-viewer token presented to a session-mutating endpoint
 // receives 403 FORBIDDEN. A request that carries no authenticated
-// principal, or a principal with no roles, is admitted: the minimal
-// gateway runs without an OIDC provider (single-tenant dev mode, the
-// X-Lenny-Tenant-ID dev header, pre-RBAC service tokens), and §10.2
-// RBAC governs callers whose token actually carries roles. This mirrors
-// the requireActiveUser admission rule for principals with no
-// user-registry row. A caller that does authenticate with a role is
-// always held to the matrix.
+// principal is admitted: the minimal gateway runs without an OIDC
+// provider (single-tenant dev mode, the X-Lenny-Tenant-ID dev header,
+// pre-RBAC service tokens), and §10.2 RBAC governs callers whose token
+// actually carries roles. A caller that does authenticate with a role
+// is always held to the matrix.
+//
+// Multi-tenant fail-closed (F-10.2.4): when the server was constructed
+// with `MultiTenant=true` (mirroring auth.multiTenant), an authenticated
+// principal that carries no roles is rejected even though it has a
+// validated tenant claim. The §10.2 matrix is unconditional in
+// multi-tenant deployments, so a Bearer JWT whose `roles` claim is
+// absent or empty cannot exercise any session permission. Single-tenant
+// deployments retain the historical fall-through so a `lenny up`-style
+// no-OIDC posture, the X-Lenny-Tenant-ID dev-header path, and pre-RBAC
+// service tokens still reach the handler.
+// spec: §10.2 lines 256–264.
 
 // requireSessionPermission wraps a session handler with the §10.2
 // permission check for perm. It returns the http.HandlerFunc the mux
@@ -63,8 +72,21 @@ func (s *Server) requireSessionPermission(perm auth.Permission, next http.Handle
 // built-in or tenant custom — grants perm.
 func (s *Server) sessionPermissionGranted(r *http.Request, perm auth.Permission) bool {
 	p, ok := getPrincipal(r)
-	if !ok || len(p.Roles) == 0 {
+	if !ok {
+		// No authenticated principal on the request: the no-OIDC dev
+		// posture admits. The chain's RequireAuth gate already rejected
+		// missing-credential requests when the deployment expects auth.
 		return true
+	}
+	if len(p.Roles) == 0 {
+		// spec: §10.2 lines 256–264. Multi-tenant deployments fail
+		// closed for an authenticated principal with an empty roles
+		// claim — the permission matrix is unconditional and a
+		// no-role caller is outside every row. Single-tenant
+		// deployments retain the historical fall-through (single-
+		// tenant dev mode, dev-header transport, pre-RBAC service
+		// tokens). F-10.2.4.
+		return !s.multiTenant
 	}
 	if auth.RolesGrant(p.Roles, perm) {
 		return true

@@ -80,6 +80,70 @@ type Claims struct {
 	// §27.8 origin=playground dashboard slice, and any §11 policy rule
 	// matching on it. It is empty on every non-playground token.
 	Origin string `json:"origin,omitempty"`
+
+	// Extras captures every payload claim verbatim so callers can read
+	// claims under a deployment-configurable name (the §10.2
+	// `auth.tenantIdClaim` Helm value defaults to `tenant_id` but maps
+	// to a different OIDC claim in many IdPs). Verify populates this
+	// from the raw JWT payload; Sign leaves it nil. Use ClaimString to
+	// resolve a string claim by name across the union of the typed
+	// fields above and Extras.
+	// spec: §10.2 line 212. F-10.2.9.
+	Extras map[string]json.RawMessage `json:"-"`
+}
+
+// ClaimString returns the string value of the JWT payload claim named
+// name. Standard typed fields take precedence over the raw Extras map
+// so `tenant_id` resolves identically regardless of which path
+// populated the value. Returns "" when the claim is absent or non-
+// string. spec: §10.2 line 212. F-10.2.9.
+func (c Claims) ClaimString(name string) string {
+	switch name {
+	case "tenant_id":
+		if c.TenantID != "" {
+			return c.TenantID
+		}
+	case "sub":
+		if c.Subject != "" {
+			return c.Subject
+		}
+	case "iss":
+		if c.Issuer != "" {
+			return c.Issuer
+		}
+	case "jti":
+		if c.JWTID != "" {
+			return c.JWTID
+		}
+	case "session_id":
+		if c.SessionID != "" {
+			return c.SessionID
+		}
+	case "caller_type":
+		if c.CallerType != "" {
+			return c.CallerType
+		}
+	case "scope":
+		if c.Scope != "" {
+			return c.Scope
+		}
+	case "origin":
+		if c.Origin != "" {
+			return c.Origin
+		}
+	}
+	if c.Extras == nil {
+		return ""
+	}
+	raw, ok := c.Extras[name]
+	if !ok || len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
 }
 
 // HasRole reports whether c carries r in its Roles slice. Useful for
@@ -181,6 +245,16 @@ func (s *HMACSigner) Verify(token string) (Claims, error) {
 	var claims Claims
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return Claims{}, &VerifyError{Reason: "malformed", Detail: fmt.Sprintf("payload not JSON: %v", err)}
+	}
+	// spec: §10.2 line 212. Capture every payload claim verbatim so the
+	// auth middleware can read tenant under a deployment-configurable
+	// claim name (the `auth.tenantIdClaim` Helm value defaults to
+	// `tenant_id`). The typed Claims fields above stay authoritative for
+	// `tenant_id`; Extras is the fallback for non-default names.
+	// F-10.2.9.
+	extras := map[string]json.RawMessage{}
+	if err := json.Unmarshal(payload, &extras); err == nil {
+		claims.Extras = extras
 	}
 	now := time.Now().Unix()
 	if claims.Expiry > 0 {

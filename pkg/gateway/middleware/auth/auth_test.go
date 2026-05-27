@@ -3,6 +3,10 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,6 +16,33 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
+
+// signJWTWithExtras builds an HS256 JWT carrying the supplied payload
+// map verbatim. The standard Claims.Sign path cannot stamp claims under
+// non-default names (the Claims struct tags are fixed), so the
+// F-10.2.9 test exercises the alt-claim path by hand-crafting the
+// payload.
+// spec: §10.2 line 212. F-10.2.9.
+func signJWTWithExtras(t *testing.T, secret []byte, kid string, payload map[string]any) string {
+	t.Helper()
+	header := map[string]any{"alg": "HS256", "typ": "JWT"}
+	if kid != "" {
+		header["kid"] = kid
+	}
+	hb, err := json.Marshal(header)
+	if err != nil {
+		t.Fatalf("marshal header: %v", err)
+	}
+	pb, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	signing := base64.RawURLEncoding.EncodeToString(hb) + "." +
+		base64.RawURLEncoding.EncodeToString(pb)
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(signing))
+	return signing + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
 
 // spec: §10.2 RBAC + role-claim propagation.
 
@@ -139,6 +170,112 @@ func TestDevHeadersPropagatesRolesOnlyWhenAllowDevRolesIsSet(t *testing.T) {
 		if got.HasRole(pkgauth.RolePlatformAdmin) {
 			t.Errorf("X-Lenny-Roles must be dropped when AllowDevRoles is false; got %v", got.Roles)
 		}
+	}
+}
+
+// TestBearerHonoursConfigurableTenantClaim asserts the §10.2 line 212
+// `auth.tenantIdClaim` Helm value flows through: an OIDC token whose
+// tenant identifier lives under a non-default claim name is admitted
+// when TenantClaimName matches it, and rejected as TENANT_CLAIM_MISSING
+// otherwise. spec: §10.2 line 212. F-10.2.9.
+func TestBearerHonoursConfigurableTenantClaim(t *testing.T) {
+	secret := []byte("secret")
+	signer := jwt.NewHMACSigner("test", secret)
+	// Hand-crafted JWT: no `tenant_id` claim, tenant identifier lives
+	// under the operator-configured alt claim `acme_tenant`.
+	tok := signJWTWithExtras(t, secret, "test", map[string]any{
+		"sub":         "alice@acme.com",
+		"exp":         time.Now().Add(time.Hour).Unix(),
+		"typ":         string(pkgauth.TokenUserBearer),
+		"acme_tenant": "acme",
+	})
+
+	// With TenantClaimName="acme_tenant" the request resolves to tenant
+	// "acme" via Extras.
+	inner, got := captureHandler()
+	h := Wrap(inner, Options{
+		Verifier:        signer,
+		MultiTenant:     true,
+		TenantClaimName: "acme_tenant",
+		Registry:        permissiveRegistry{},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("configurable claim resolves: status = %d, want 204; body=%s", rr.Code, rr.Body.String())
+	}
+	if got.TenantID != "acme" {
+		t.Errorf("configurable claim tenant: got %q, want acme", got.TenantID)
+	}
+
+	// With the default claim name (`tenant_id`) the alt-named claim is
+	// invisible and the request is rejected with TENANT_CLAIM_MISSING.
+	inner2, _ := captureHandler()
+	h2 := Wrap(inner2, Options{
+		Verifier:    signer,
+		MultiTenant: true,
+		Registry:    permissiveRegistry{},
+	})
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+	req2.Header.Set("Authorization", "Bearer "+tok)
+	h2.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusUnauthorized {
+		t.Errorf("default claim name + alt-named token: status = %d, want 401", rr2.Code)
+	}
+}
+
+// TestClaimsClaimStringResolvesAcrossFields covers the typed-field /
+// Extras precedence on Claims.ClaimString. spec: §10.2 line 212. F-10.2.9.
+func TestClaimsClaimStringResolvesAcrossFields(t *testing.T) {
+	secret := []byte("secret")
+	signer := jwt.NewHMACSigner("k", secret)
+	// Typed field via Sign + parse round-trip.
+	tok, err := signer.Sign(jwt.Claims{
+		TenantID: "from-typed",
+		Subject:  "alice",
+	})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	cl, err := signer.Verify(tok)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if got := cl.ClaimString("tenant_id"); got != "from-typed" {
+		t.Errorf("typed precedence: got %q, want from-typed", got)
+	}
+	if got := cl.ClaimString("sub"); got != "alice" {
+		t.Errorf("sub typed: got %q, want alice", got)
+	}
+	if got := cl.ClaimString("missing"); got != "" {
+		t.Errorf("absent claim: got %q, want empty", got)
+	}
+
+	// Extras-only claim via hand-crafted payload.
+	raw := signJWTWithExtras(t, secret, "k", map[string]any{
+		"sub":        "alice@acme.com",
+		"exp":        time.Now().Add(time.Hour).Unix(),
+		"acme_claim": "acme",
+		"num":        42,
+	})
+	cl2, err := signer.Verify(raw)
+	if err != nil {
+		t.Fatalf("Verify raw: %v", err)
+	}
+	if got := cl2.ClaimString("acme_claim"); got != "acme" {
+		t.Errorf("extras string: got %q, want acme", got)
+	}
+	if got := cl2.ClaimString("num"); got != "" {
+		t.Errorf("non-string claim: got %q, want empty", got)
+	}
+
+	// Nil Extras + unknown claim returns empty (no panic).
+	zero := jwt.Claims{}
+	if got := zero.ClaimString("anything"); got != "" {
+		t.Errorf("nil Extras: got %q, want empty", got)
 	}
 }
 

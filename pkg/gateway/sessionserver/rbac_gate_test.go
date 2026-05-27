@@ -324,9 +324,10 @@ func TestSessionEndpointCrossTenantRejection(t *testing.T) {
 // TestSessionEndpointAdmitsRolelessPrincipal documents the minimal
 // gateway's no-OIDC dev posture: a request that carries no role claim
 // (the X-Lenny-Tenant-ID dev-header path, a pre-RBAC service token) is
-// admitted. The §10.2 gate governs callers whose token actually carries
-// roles; a caller that does authenticate with a role is always held to
-// the matrix (asserted by TestSessionEndpointAuthorizationMatrix).
+// admitted in single-tenant mode. The §10.2 gate governs callers whose
+// token actually carries roles; a caller that does authenticate with a
+// role is always held to the matrix (asserted by
+// TestSessionEndpointAuthorizationMatrix).
 func TestSessionEndpointAdmitsRolelessPrincipal(t *testing.T) {
 	srv, _ := newRBACSessionServer(t, nil)
 	// No principal at all — only the dev tenant header.
@@ -339,7 +340,8 @@ func TestSessionEndpointAdmitsRolelessPrincipal(t *testing.T) {
 		t.Errorf("roleless dev-header request: got 403, want admit (no-OIDC dev posture)")
 	}
 
-	// A principal present but carrying no roles is likewise admitted.
+	// A principal present but carrying no roles is likewise admitted in
+	// single-tenant mode.
 	req = httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_rbac", nil)
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
 		Subject: "svc@acme.com", TenantID: "acme",
@@ -348,6 +350,83 @@ func TestSessionEndpointAdmitsRolelessPrincipal(t *testing.T) {
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code == http.StatusForbidden {
 		t.Errorf("roleless principal: got 403, want admit (no-OIDC dev posture)")
+	}
+}
+
+// TestSessionEndpointMultiTenantRejectsRolelessPrincipal asserts the
+// F-10.2.4 fail-closed: with the server in multi-tenant mode, a Bearer
+// JWT that authenticated successfully but carries no `roles` claim — and
+// a dev-header path without AllowDevRoles — both fail the §10.2 RBAC
+// gate. The matrix is unconditional in multi-tenant deployments, so a
+// no-role principal cannot exercise any session permission.
+// spec: §10.2 lines 256–264.
+func TestSessionEndpointMultiTenantRejectsRolelessPrincipal(t *testing.T) {
+	store := memstore.New()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_rbac", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Clock:       func() time.Time { return now },
+		IDFunc:      func() string { return "sess_new" },
+		MultiTenant: true,
+	})
+	cases := []struct {
+		op           string
+		method, path string
+		body         any
+	}{
+		{"create", http.MethodPost, "/v1/sessions", sessionserver.CreateSessionRequest{RuntimeRef: "echo"}},
+		{"get", http.MethodGet, "/v1/sessions/sess_rbac", nil},
+		{"list", http.MethodGet, "/v1/sessions", nil},
+		{"cancel", http.MethodDelete, "/v1/sessions/sess_rbac", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.op, func(t *testing.T) {
+			var rdr *bytes.Reader
+			if c.body != nil {
+				b, _ := json.Marshal(c.body)
+				rdr = bytes.NewReader(b)
+			} else {
+				rdr = bytes.NewReader(nil)
+			}
+			req := httptest.NewRequest(c.method, c.path, rdr)
+			req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
+				Subject: "svc@acme.com", TenantID: "acme",
+			}))
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, req)
+			if rr.Code != http.StatusForbidden {
+				t.Errorf("multi-tenant + roleless %s: got %d, want 403 FORBIDDEN", c.op, rr.Code)
+				return
+			}
+			var env struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			_ = json.Unmarshal(rr.Body.Bytes(), &env)
+			if env.Error.Code != "FORBIDDEN" {
+				t.Errorf("multi-tenant + roleless %s: code=%q, want FORBIDDEN", c.op, env.Error.Code)
+			}
+		})
+	}
+
+	// No-principal case still admits even in multi-tenant mode: the
+	// auth middleware's RequireAuth gate is the layer that rejects
+	// missing credentials; the session gate fall-through here covers
+	// callers that the middleware admitted (healthchecks, etc.).
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code == http.StatusForbidden {
+		t.Errorf("multi-tenant + no principal: got 403, want admit (middleware-level rejection)")
 	}
 }
 

@@ -269,6 +269,12 @@ spec:
             - --addr=:{{ .Values.gateway.internalPort }}
             - --grpc-addr=:{{ .Values.gateway.grpcPort }}
             - --no-environment-policy={{ .Values.gateway.noEnvironmentPolicy }}
+            # §10.2 line 212 — OIDC claim the gateway extracts the
+            # tenant identifier from. Operator-configurable so an
+            # upstream IdP that stamps tenant identity under a non-
+            # canonical claim name still works without a code change.
+            # F-10.2.9.
+            - --tenant-id-claim={{ .Values.auth.tenantIdClaim }}
             # §4.3 trust boundary: the gateway materializes every §4.9
             # credential lease through lenny-token-service over mTLS;
             # the in-process MintLease path is reserved for dev mode.

@@ -664,6 +664,18 @@ tenancy:
   # and deliveryMode proxy with spiffeBinding disabled.
   mode: single
 
+# auth configures the §10.2 authentication chain.
+auth:
+  # tenantIdClaim is the OIDC ID-token claim the gateway extracts the
+  # tenant identifier from on every Bearer JWT (§10.2 line 212). The
+  # default `tenant_id` matches the canonical Lenny claim shape; set to
+  # the upstream IdP's tenant claim name when it differs (e.g. a
+  # namespaced URI such as `https://acme.example/tenant`). The value
+  # flows to the gateway binary as --tenant-id-claim. The single-tenant
+  # path (tenancy.mode=single) ignores this value and stamps the
+  # built-in `default` tenant on every request.
+  tenantIdClaim: tenant_id
+
 # global holds chart-wide settings shared across components.
 global:
   # devMode relaxes the multi-tenant admission controls for local

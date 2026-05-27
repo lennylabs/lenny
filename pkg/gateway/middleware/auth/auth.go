@@ -116,6 +116,18 @@ type Options struct {
 	// "default" tenant.
 	MultiTenant bool
 
+	// TenantClaimName is the JWT payload claim the middleware reads the
+	// tenant identifier from in multi-tenant mode. Defaults to
+	// "tenant_id" when empty (the §10.2 canonical name). Operators set
+	// this via the `auth.tenantIdClaim` Helm value / `--tenant-id-claim`
+	// gateway flag when their OIDC provider stamps tenant identity under
+	// a different claim name. The middleware reads the standard
+	// `claims.TenantID` field when the name is "tenant_id"; for other
+	// names it resolves the claim via Claims.ClaimString so it picks up
+	// the value from the raw JWT payload.
+	// spec: §10.2 line 212. F-10.2.9.
+	TenantClaimName string
+
 	// AllowDevHeaders, when true, permits the X-Lenny-Tenant-ID /
 	// X-Lenny-User-ID dev-mode headers as a transport. Convenient
 	// for the existing tier-3 contract suites that predate the JWT
@@ -273,13 +285,24 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 			"the presented token has been revoked", nil)
 		return
 	}
+	// spec: §10.2 line 212 — the OIDC claim used to derive tenant_id is
+	// configurable via `auth.tenantIdClaim`. Default is `tenant_id`; an
+	// operator can point at any string claim. F-10.2.9.
+	claimName := m.opts.TenantClaimName
+	if claimName == "" {
+		claimName = "tenant_id"
+	}
+	rawTenant := claims.TenantID
+	if claimName != "tenant_id" {
+		rawTenant = claims.ClaimString(claimName)
+	}
 	tenant, terr := auth.ExtractTenant(auth.ExtractRequest{
 		MultiTenant: m.opts.MultiTenant,
-		Claim:       claims.TenantID,
+		Claim:       rawTenant,
 		Registry:    m.opts.Registry,
 	})
 	if terr != nil {
-		m.writeTenantError(r.Context(), w, terr, claims.TenantID, claims.Subject, claims.JWTID)
+		m.writeTenantError(r.Context(), w, terr, rawTenant, claims.Subject, claims.JWTID)
 		return
 	}
 	// §25.1: parse the RFC 9068 scope claim into a typed Set. A

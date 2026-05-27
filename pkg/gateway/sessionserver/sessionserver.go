@@ -120,6 +120,13 @@ type Server struct {
 	storageQuota    storagequota.Counter
 	defaultIsoProf  isolation.Profile
 	devMode         bool
+	// multiTenant mirrors the §10.2 auth.multiTenant Helm value. When
+	// true, the §10.2 RBAC gate fails closed for an authenticated
+	// principal that carries no roles (the matrix is unconditional in
+	// multi-tenant deployments). When false (single-tenant or no-OIDC
+	// dev), the gate retains the historical fall-through.
+	// spec: §10.2 lines 256–264, F-10.2.4.
+	multiTenant bool
 	podBinder       *podsession.Binder
 	podRegistry     *podsession.Registry
 	agentNamespace  string
@@ -556,6 +563,17 @@ type Options struct {
 	// DefaultIsolationProfile is configured.
 	DevMode bool
 
+	// MultiTenant mirrors the gateway's `--multi-tenant` flag /
+	// `auth.multiTenant` Helm value. When true, the §10.2 RBAC gate on
+	// session-mutating and session-read endpoints fails closed for an
+	// authenticated principal that carries no roles (the §10.2
+	// permission matrix is unconditional in multi-tenant deployments).
+	// When false, the historical no-role fall-through is preserved so
+	// the single-tenant minimal gateway (no OIDC, dev-header path) and
+	// pre-RBAC service tokens still reach the handler.
+	// spec: §10.2 lines 256–264. F-10.2.4.
+	MultiTenant bool
+
 	// Users is the §10.2 user registry consulted to enforce §11.4 user
 	// invalidation on the session-creation path: a soft-disabled,
 	// hard-disabled, or fully-revoked user is denied new sessions.
@@ -831,6 +849,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		storageQuota:           opts.StorageQuota,
 		defaultIsoProf:         opts.DefaultIsolationProfile,
 		devMode:                opts.DevMode,
+		multiTenant:            opts.MultiTenant,
 		podBinder:              opts.PodBinder,
 		podRegistry:            opts.PodRegistry,
 		agentNamespace:         opts.AgentNamespace,

@@ -11696,7 +11696,7 @@ The middleware copies roles verbatim from the JWT claim (`pkg/gateway/middleware
 
 Custom-role lookup at `pkg/gateway/admin/users.go:113–135` and `pkg/gateway/sessionserver/rbac_gate.go:64–94` only resolves the *name* of a claimed role against the registry; it does not introduce roles the token did not carry.
 
-### - [ ] F-10.2.4 — Session RBAC gate admits a no-role principal as if authenticated — H [Medium] — OPEN
+### - [x] F-10.2.4 — Session RBAC gate admits a no-role principal as if authenticated — H [Medium] — CLOSED
 
 `pkg/gateway/sessionserver/rbac_gate.go:64–68`:
 
@@ -11709,6 +11709,8 @@ Custom-role lookup at `pkg/gateway/admin/users.go:113–135` and `pkg/gateway/se
 ```
 
 A request whose Bearer JWT verifies but carries no `roles` claim, or a request that arrived through the dev-headers path without `AllowDevRoles`, is admitted to every session-mutating endpoint regardless of the §10.2 permission requirement. The fall-through is documented as "minimal gateway runs without an OIDC provider", but the spec's permission matrix is unconditional: a `billing-viewer` and a no-role caller MUST receive identical (rejected) treatment on `manage_own_sessions` operations. The fail-open is a security-class deviation in multi-tenant deployments — the `permissiveRegistry` bypass (F1) makes it trivial to mint such a no-role token.
+
+**Resolution:** Added `MultiTenant` option on `sessionserver.Options` (mirrored to `Server.multiTenant`); the §10.2 RBAC gate now fails closed for an authenticated principal with empty `Roles` when the server runs in multi-tenant mode. The historical fall-through is preserved for single-tenant deployments (no-OIDC dev posture, the dev-header path, pre-RBAC service tokens). `cmd/lenny-gateway/main.go` wires the new field from `--multi-tenant`. Tier-1 coverage: new `TestSessionEndpointMultiTenantRejectsRolelessPrincipal` (4 endpoint table) plus the pre-existing single-tenant `TestSessionEndpointAdmitsRolelessPrincipal` regression remains green.
 
 ### - [x] F-10.2.5 — Admin tenant creation returns `VALIDATION_ERROR`, not `INVALID_TENANT_ID` — H [Medium] — CLOSED
 
@@ -11742,11 +11744,13 @@ Spec L243: "Rejected playground mints emit a `playground.bearer_mint_rejected` a
 
 **Resolution:** Added `playground.MintRejectedEvent` + `AuditEmitter.EmitMintRejected` (`pkg/gateway/playground/audit.go`), registered `lenny_playground_bearer_mint_rejected_total{reason}` and the `Metrics.bearerMintRejected` helper (`pkg/gateway/playground/metrics.go`), and wired emission from every mint-rejection branch in `pkg/gateway/playground/token.go` (subject_typ_invalid, tenant_claim_missing, tenant_claim_invalid_format, tenant_not_found). Gateway adapter `playgroundAuditEmitter` in `cmd/lenny-gateway/main.go` logs the new event. Tier-1 coverage: extended `TestAPIKeyModeRejectsNonUserBearer` to assert the audit payload + new `TestAPIKeyModeTenantClaimRejectionsEmitMintRejected` covers all three tenant-claim branches.
 
-### - [ ] F-10.2.9 — `auth.tenantIdClaim` Helm value is not configurable on the main bearer path — M [Medium] — OPEN
+### - [x] F-10.2.9 — `auth.tenantIdClaim` Helm value is not configurable on the main bearer path — M [Medium] — CLOSED
 
 Spec L212: "The OIDC claim used to derive the tenant identifier is configurable via the `auth.tenantIdClaim` Helm value (default: `tenant_id`)."
 
 The main bearer chain reads `claims.TenantID` from the static JSON tag `tenant_id` in `pkg/auth/jwt/jwt.go:55`. `pkg/gateway/middleware/auth/auth.go:192–196` passes this single field straight to `ExtractTenant`. There is no `--tenant-id-claim` flag in `cmd/lenny-gateway/main.go`, no `auth.tenantIdClaim` Helm key in `charts/lenny/values.yaml`, and no configurable claim-name plumbing in the middleware. Only the playground OIDC exchanger (`pkg/gateway/playground/oidc.go:95–97, 129–131`) exposes `TenantIDClaim`; that surface validates ID tokens against the configured external IdP and is independent of the bearer JWT chain. Operators using a non-default tenant claim name in their OIDC token must transform the token upstream of the gateway.
+
+**Resolution:** `jwt.Claims` now captures every payload claim as `Extras map[string]json.RawMessage` during `Verify`, with a `ClaimString(name)` helper that prefers typed Claims fields and falls back to `Extras`. Auth middleware `Options.TenantClaimName` selects the OIDC claim used for tenant extraction (default `tenant_id`). `cmd/lenny-gateway/main.go` plumbs `--tenant-id-claim` (env `LENNY_TENANT_ID_CLAIM`) and the Helm chart adds `auth.tenantIdClaim` (default `tenant_id`) → renders `--tenant-id-claim=…` on the gateway Deployment. Tier-1 coverage: `TestBearerHonoursConfigurableTenantClaim` (alt claim resolves; default claim still rejects as `TENANT_CLAIM_MISSING`) + `TestClaimsClaimStringResolvesAcrossFields` (typed-precedence, raw fallback, non-string, absent, nil-safe).
 
 ### - [ ] F-10.2.10 — Pod → gateway path lacks the spec-promised audience-bound JWT verification — M [Medium] — OPEN
 
@@ -11770,15 +11774,19 @@ Spec L194: "Production: KMS-backed signing (AWS KMS, GCP Cloud KMS, HashiCorp Va
 
 **Resolution:** Renamed `AUTH_REQUIRED` → `UNAUTHORIZED` (§15.1 line 986) and `AUTH_NOT_CONFIGURED` → `INTERNAL_ERROR` (§15.1 line 1016) across every emit-site: `pkg/gateway/middleware/auth/auth.go` (the primary No-Bearer and Verifier-not-wired branches), `pkg/gateway/admin/me.go`, `pkg/gateway/admin/connector_oauth.go`, `pkg/gateway/credentialserver/credentialserver.go`, and `pkg/gateway/policy/authevaluator.go` (`CodeAuthRequired = "UNAUTHORIZED"`). `details.reason` carries the diagnostic discriminator (`auth_required`, `auth_not_configured`) so operators retain the operational meaning while clients scripting against §15.1 see only catalog codes. Tier-1 coverage in `pkg/gateway/middleware/auth/auth_unauthorized_test.go`; tier-3 contract test in `tests/tier3_contract/rest_auth/auth_test.go:TestNoCredentialsRejectedWhenAuthRequired` updated to assert the new envelope. The broader `INVALID_REQUEST` half of F-15.1.4 (30+ handlers) is out of scope for this finding and remains tracked there.
 
-### - [ ] F-10.2.13 — Dev `HMACSigner` is the only signer in production builds — L [Medium] — OPEN
+### - [x] F-10.2.13 — Dev `HMACSigner` is the only signer in production builds — L [Medium] — CLOSED
 
 Spec L195: "Dev mode: Local HMAC-SHA256 key, enabled only when `LENNY_DEV_MODE=true`. This backend must never be used in production deployments."
 
 `KMSSigner` wraps an internal `HMACSigner` (`pkg/auth/jwt/kmssigner.go:38–87`) — the on-the-wire algorithm is always HS256, the key is held in memory after the boot-time unwrap, and `LENNY_DEV_MODE` does not toggle the signer (it only toggles `AllowDevRoles` for the X-Lenny-Roles dev header — `cmd/lenny-gateway/main.go:1502`). The signer used in non-dev deployments is structurally a "KMS-envelope-around-HMAC" rather than the spec's "KMS-backed signing where the signing key never exists in gateway memory". This is the same root cause as F11 but the spec wording explicitly contrasts production vs. dev, and the production path does not match.
 
-### - [ ] F-10.2.14 — `jwks-publish` defaults on without operator gating — L [Medium] — OPEN
+**Resolution:** The KMS-envelope signing posture is the wiring-level resolution under F-10.2.11 (F-4.3.11 rejects `--kms-provider=local` when `--environment=prod`). For the remaining bare-HMAC trust seam, `cmd/lenny-gateway/main.go` now requires `--dev-mode` whenever `--bearer-trust-hmac-key-file` is set (the §17.4 Embedded Mode hook). A production install that leaves dev-mode off and accidentally points the flag at an HMAC key file fails closed at startup with the §10.2 line 195 quote. No new tests beyond the fatal log path; the existing Embedded Mode wiring already exercises the dev-mode-on branch.
+
+### - [x] F-10.2.14 — `jwks-publish` defaults on without operator gating — L [Medium] — CLOSED
 
 `cmd/lenny-gateway/main.go:207–208` defaults `--jwks-publish` to `true`. The published JWKS for an HMAC ("oct") signer carries `Kty="oct"` with no `k` field (`pkg/auth/jwt/jwks.go:96–103`) — verifiers cannot use the entry to validate signatures. The endpoint advertises kid presence but adds no value over the embedded OIDC `well-known` discovery. The exposure is harmless (no key material leaks) but the default-on posture pre-stages a footgun if an asymmetric signer is added later without revisiting the publication gate.
+
+**Resolution:** `--jwks-publish` now defaults to `false`. Operators opt into the metadata advertisement explicitly (env `LENNY_JWKS_PUBLISH=true` or flag). When the flag is set the publication site logs an operator notice via the new `jwksAdvertisesAsymmetric` helper if every retained key is `kty: oct`, so operators are told that the published document is metadata-only (no signature-validation material). Tier-1 coverage in `cmd/lenny-gateway/jwks_publish_test.go` covers empty / HMAC-only / RSA-present / EC-only inputs.
 
 ### - [x] F-10.2.15 — RBAC permission matrix and tenant-admin ceiling are correctly enforced — I [Medium] — CLOSED
 

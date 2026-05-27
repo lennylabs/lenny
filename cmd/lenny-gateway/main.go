@@ -228,6 +228,8 @@ const adapterGRPCPort = 50051
 func main() {
 	addr := flag.String("addr", ":8080", "address to bind (host:port)")
 	multiTenant := flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
+	tenantIDClaim := flag.String("tenant-id-claim", envOr("LENNY_TENANT_ID_CLAIM", "tenant_id"),
+		"§10.2 line 212 OIDC claim name the gateway reads the tenant identifier from. Defaults to `tenant_id` (matches the canonical Lenny claim shape); set to e.g. `https://acme.example/tenant` when the upstream IdP stamps tenant identity under a different claim. Mirrors the `auth.tenantIdClaim` Helm value. F-10.2.9.")
 	devMode := flag.Bool("dev-mode", envFlag("LENNY_DEV_MODE"),
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
 	bearerTrustHMACKeyFile := flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
@@ -236,8 +238,8 @@ func main() {
 		"§10.2 line 237 expected iss claim on every Bearer JWT. When set, a token whose iss differs is rejected with TOKEN_INVALID (reason=issuer_mismatch). Empty (default) skips the check, matching the existing wiring. Override via LENNY_BEARER_EXPECTED_ISSUER.")
 	bearerExpectedAudiences := flag.String("bearer-expected-audiences", os.Getenv("LENNY_BEARER_EXPECTED_AUDIENCES"),
 		"§10.2 line 237 comma-separated set of acceptable aud claims on Bearer JWTs. A token whose aud intersects this set is admitted; a token whose aud is disjoint is rejected with TOKEN_INVALID (reason=audience_mismatch). Empty (default) skips the check. Override via LENNY_BEARER_EXPECTED_AUDIENCES.")
-	jwksPublish := flag.Bool("jwks-publish", envFlagDefault("LENNY_JWKS_PUBLISH", true),
-		"§10.3 publish the gateway's JWT signing keys as a JWK Set at /.well-known/jwks.json. Defaults on; clients caching the document verify tokens minted under the current key plus every retained previous key during the §10.3 24h overlap window. Set to false to suppress the endpoint (the endpoint returns 404). Override via LENNY_JWKS_PUBLISH.")
+	jwksPublish := flag.Bool("jwks-publish", envFlagDefault("LENNY_JWKS_PUBLISH", false),
+		"§10.3 publish the gateway's JWT signing keys as a JWK Set at /.well-known/jwks.json. Defaults off (F-10.2.14): the v1 JWT backend is HMAC and the published entries carry `kty: oct` with no `k` field — verifiers cannot use them to validate signatures, so the endpoint advertises only the kid/alg of the current and previous keys. Set to true to opt into the metadata advertisement, or once an asymmetric signing backend lands (so the document carries usable public-key material). Override via LENNY_JWKS_PUBLISH.")
 	runtimeBin := flag.String("runtime-bin", "",
 		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor.")
 	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
@@ -830,6 +832,17 @@ func main() {
 	// verifying through the overlap window without a code change here.
 	var bearerVerifier jwt.Verifier = rotatingVerifier
 	if *bearerTrustHMACKeyFile != "" {
+		// spec: §10.2 line 195. The bare HMAC signer is the dev-mode
+		// backend; the spec is explicit that it "must never be used in
+		// production deployments". --bearer-trust-hmac-key-file is the
+		// §17.4 Embedded Mode hook that trusts the bundled OIDC
+		// provider's HMAC key; it has no production use case. Refuse
+		// to load it when --dev-mode is off so a misconfigured chart
+		// fails closed at startup instead of silently widening the
+		// trust set. F-10.2.13.
+		if !*devMode {
+			log.Fatalf("lenny-gateway: --bearer-trust-hmac-key-file requires --dev-mode (§10.2 line 195: the dev HMAC backend must never be used in production)")
+		}
 		trusted, err := jwt.LoadHMACKeyFile(*bearerTrustHMACKeyFile)
 		if err != nil {
 			log.Fatalf("lenny-gateway: --bearer-trust-hmac-key-file: %v", err)
@@ -1538,6 +1551,9 @@ func main() {
 		AgentNamespace:          *agentNamespace,
 		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
 		DevMode:                 *devMode,
+		// spec: §10.2 lines 256–264. F-10.2.4. Multi-tenant deployments
+		// fail closed on a no-role principal at the session RBAC gate.
+		MultiTenant: *multiTenant,
 		Sealer:                  sessionSealer,
 		// §4.4 line 236 — the resume path delegates partial-manifest
 		// cleanup to this adapter. Deleter is nil for v1 (no chunk
@@ -2115,8 +2131,18 @@ func main() {
 	if *jwksPublish {
 		jwksHandler := jwt.NewJWKSHandler(rotatingVerifier)
 		mux.Handle("/.well-known/jwks.json", jwksHandler)
+		// spec: §10.2 line 195 / F-10.2.14. The v1 signer is HMAC; the
+		// published JWKS entries carry `kty: oct` with no `k` field, so
+		// the document advertises kid/alg only. Log a notice when the
+		// endpoint is mounted on top of an HMAC-only key set so
+		// operators understand that JWKS verification of the actual
+		// signature is not possible against the published document
+		// (the secret must be obtained out of band).
 		log.Printf("lenny-gateway: §10.3 JWKS published at /.well-known/jwks.json (current kid %s)",
 			rotatingVerifier.CurrentKeyID())
+		if !jwksAdvertisesAsymmetric(jwksHandler.Document()) {
+			log.Printf("lenny-gateway: §10.2 line 195 / F-10.2.14: published JWKS contains only `kty: oct` entries (HMAC). The document advertises kid/alg only; verifiers cannot validate signatures against it.")
+		}
 	}
 	// §15.0 ExternalAdapterRegistry. Each built-in adapter registers
 	// through the registry and the registry mounts its HTTPHandler on
@@ -2417,6 +2443,9 @@ func main() {
 	// verifier.
 	authOpts := authmw.Options{
 		MultiTenant:     *multiTenant,
+		// spec: §10.2 line 212 — operator-configurable OIDC tenant claim
+		// name (`auth.tenantIdClaim` Helm value). F-10.2.9.
+		TenantClaimName: *tenantIDClaim,
 		AllowDevHeaders: true,
 		AllowDevRoles:   *devMode,
 		Verifier:        bearerVerifier,
@@ -3637,6 +3666,23 @@ func splitCSV(raw string) []string {
 		}
 	}
 	return out
+}
+
+// jwksAdvertisesAsymmetric reports whether doc contains at least one
+// asymmetric (`kty: RSA` or `kty: EC`) entry. The HMAC-only case
+// produces only `kty: oct` entries with no `k` field, so the document
+// advertises kid/alg metadata that a verifier cannot use to validate a
+// signature. F-10.2.14 keys the §10.3 publication notice on this check
+// so an operator who opts into --jwks-publish on top of the v1 HMAC
+// signer is told that the JWKS document is metadata-only.
+// spec: §10.2 line 195. F-10.2.14.
+func jwksAdvertisesAsymmetric(doc jwt.JWKSet) bool {
+	for _, k := range doc.Keys {
+		if k.Kty != "" && k.Kty != "oct" {
+			return true
+		}
+	}
+	return false
 }
 
 // sweepIdempotencyKeys runs one §11.5 TTL garbage-collection pass,
