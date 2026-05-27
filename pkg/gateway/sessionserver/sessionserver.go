@@ -864,8 +864,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/sessions/{id}", manage(s.handleDelete))
 	mux.HandleFunc("POST /v1/sessions/{id}/finalize", manage(s.handleFinalize))
 	mux.HandleFunc("POST /v1/sessions/{id}/start", manage(s.handleStart))
-	mux.HandleFunc("POST /v1/sessions/{id}/interrupt",
-		manage(s.handleTransition(session.EndpointInterrupt, transitionInterrupt)))
+	// spec: §7.2 lines 168-169 — the interrupt path signals the runtime
+	// through the pod's adapter and waits for `interrupt_acknowledged`
+	// within deadlineMs, rather than collapsing the transition to a
+	// row-only flip.
+	mux.HandleFunc("POST /v1/sessions/{id}/interrupt", manage(s.handleInterrupt))
 	mux.HandleFunc("POST /v1/sessions/{id}/terminate",
 		manage(s.handleTransition(session.EndpointTerminate, transitionTerminate)))
 	mux.HandleFunc("POST /v1/sessions/{id}/resume", manage(s.handleResume))

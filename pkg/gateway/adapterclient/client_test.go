@@ -441,12 +441,12 @@ func TestInterruptDeliversTheSignalToTheRuntime(t *testing.T) {
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	ack, err := cl.Interrupt(ctx, "sess-x", true, 2*time.Second)
+	status, err := cl.Interrupt(ctx, "sess-x", true, 2*time.Second)
 	if err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
-	if !ack {
-		t.Error("Interrupt was not acknowledged")
+	if status != adapterclient.InterruptStatusAcknowledged {
+		t.Errorf("Interrupt status = %v, want STATUS_ACKNOWLEDGED", status)
 	}
 	if !rt.interrupted || !rt.interruptedHard {
 		t.Errorf("runtime interrupted=%t hard=%t, want a hard interrupt", rt.interrupted, rt.interruptedHard)

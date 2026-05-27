@@ -226,11 +226,31 @@ func (c *Client) SendMessage(ctx context.Context, sessionID string, envelope []b
 	return err
 }
 
+// InterruptStatus mirrors the §4.7 InterruptResponse.Status the adapter
+// returns from the Interrupt RPC: STATUS_ACKNOWLEDGED when the runtime
+// reached a safe stop point, STATUS_INTERRUPT_TIMEOUT when the deadline
+// elapsed without an acknowledgement (§7.2 line 169: the gateway moves
+// the session to suspended anyway), STATUS_BUSY when the adapter's per-
+// session operation lock rejected the call so the gateway can retry, and
+// STATUS_UNSPECIFIED for the zero value.
+//
+// spec: §4.7 InterruptResponse.Status.
+type InterruptStatus int32
+
+const (
+	InterruptStatusUnspecified InterruptStatus = 0
+	InterruptStatusAcknowledged InterruptStatus = 1
+	InterruptStatusTimeout      InterruptStatus = 2
+	InterruptStatusBusy         InterruptStatus = 3
+)
+
 // Interrupt asks the pod's runtime to pause (§4.7). A hard interrupt
 // sends SIGKILL; a clean interrupt sends SIGTERM and grants the runtime
-// deadline to pause and checkpoint. The returned bool reports whether
-// the adapter acknowledged the interrupt.
-func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, deadline time.Duration) (bool, error) {
+// deadline to pause and checkpoint. The returned status carries the
+// §4.7 InterruptResponse.Status disposition so the caller can branch on
+// ACKNOWLEDGED, INTERRUPT_TIMEOUT (still transitions to suspended per
+// §7.2 line 169), or BUSY (retry).
+func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, deadline time.Duration) (InterruptStatus, error) {
 	mode := adapterv1.InterruptRequest_MODE_CLEAN
 	if hard {
 		mode = adapterv1.InterruptRequest_MODE_HARD
@@ -241,9 +261,9 @@ func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, dea
 		DeadlineMs: int32(deadline.Milliseconds()),
 	})
 	if err != nil {
-		return false, err
+		return InterruptStatusUnspecified, err
 	}
-	return resp.GetAcknowledged(), nil
+	return InterruptStatus(resp.GetStatus()), nil
 }
 
 // CheckpointResult reports the §4.4 checkpoint a pod's adapter stored.
