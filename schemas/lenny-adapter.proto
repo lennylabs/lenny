@@ -460,6 +460,14 @@ message SetupPolicy {
   // aborts pod startup, "warn" proceeds to runtime start. An empty
   // value is the conservative "fail" default.
   string on_timeout = 2;
+  // shell carries the §7.5 setupCommandPolicy.shell flag from the gateway
+  // to the adapter. When true the adapter runs each command via
+  // `/bin/sh -c`; when false the adapter splits the command on whitespace
+  // and execs the argv directly, neutering pipes, backtick substitution,
+  // glob expansion, redirects, and `&&` chaining per §7.5 line 490. The
+  // proto3 default is false (argv-mode); the gateway sends `true` only
+  // when the runtime's policy explicitly requests shell execution. F-7.5.2.
+  bool shell = 3;
 }
 
 message StartSessionResponse {

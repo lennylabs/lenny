@@ -1486,7 +1486,15 @@ type SetupPolicy struct {
 	// on_timeout is the §5.1 disposition when the cap is hit: "fail"
 	// aborts pod startup, "warn" proceeds to runtime start. An empty
 	// value is the conservative "fail" default.
-	OnTimeout     string `protobuf:"bytes,2,opt,name=on_timeout,json=onTimeout,proto3" json:"on_timeout,omitempty"`
+	OnTimeout string `protobuf:"bytes,2,opt,name=on_timeout,json=onTimeout,proto3" json:"on_timeout,omitempty"`
+	// shell carries the §7.5 setupCommandPolicy.shell flag from the gateway
+	// to the adapter. When true the adapter runs each command via
+	// `/bin/sh -c`; when false the adapter splits the command on whitespace
+	// and execs the argv directly, neutering pipes, backtick substitution,
+	// glob expansion, redirects, and `&&` chaining per §7.5 line 490. The
+	// proto3 default is false (argv-mode); the gateway sends `true` only
+	// when the runtime's policy explicitly requests shell execution. F-7.5.2.
+	Shell         bool `protobuf:"varint,3,opt,name=shell,proto3" json:"shell,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1533,6 +1541,13 @@ func (x *SetupPolicy) GetOnTimeout() string {
 		return x.OnTimeout
 	}
 	return ""
+}
+
+func (x *SetupPolicy) GetShell() bool {
+	if x != nil {
+		return x.Shell
+	}
+	return false
 }
 
 type StartSessionResponse struct {
@@ -3820,11 +3835,12 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aA\n" +
 	"\x13TracingContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x03\x10\x04J\x04\b\a\x10\bR\x0eworkspace_planR\fsetup_policy\"U\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x03\x10\x04J\x04\b\a\x10\bR\x0eworkspace_planR\fsetup_policy\"k\n" +
 	"\vSetupPolicy\x12'\n" +
 	"\x0ftimeout_seconds\x18\x01 \x01(\x05R\x0etimeoutSeconds\x12\x1d\n" +
 	"\n" +
-	"on_timeout\x18\x02 \x01(\tR\tonTimeout\"=\n" +
+	"on_timeout\x18\x02 \x01(\tR\tonTimeout\x12\x14\n" +
+	"\x05shell\x18\x03 \x01(\bR\x05shell\"=\n" +
 	"\x14StartSessionResponse\x12%\n" +
 	"\x0erefusal_reason\x18\x01 \x01(\tR\rrefusalReason\"\xa8\x01\n" +
 	"\x12SendMessageRequest\x12:\n" +

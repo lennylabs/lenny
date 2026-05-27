@@ -15,18 +15,25 @@ import (
 
 // setupOptionsFromProto converts the §5.1 setupPolicy message into the
 // workspace.SetupOptions bounding the setup phase. A nil policy yields
-// a zero SetupOptions — no aggregate cap. on_timeout "warn" proceeds
-// past the cap; any other value, including empty, is the conservative
-// "fail" default. Env is seeded with the §7.5 line 479 minimal
-// whitelist (DefaultSetupEnv) so a setup command does not see the
-// adapter's process environment. F-7.5.8.
+// a near-zero SetupOptions — no aggregate cap, shell mode (legacy
+// `/bin/sh -c`). on_timeout "warn" proceeds past the cap; any other
+// value, including empty, is the conservative "fail" default. Env is
+// seeded with the §7.5 line 479 minimal whitelist (DefaultSetupEnv) so
+// a setup command does not see the adapter's process environment.
+// Shell mirrors the §7.5 line 490 setupCommandPolicy.shell flag the
+// gateway sets per runtime (true→`/bin/sh -c`, false→exec argv). spec:
+// §7.5 line 490 — F-7.5.2 / F-7.5.8.
 func setupOptionsFromProto(p *adapterv1.SetupPolicy, workdir string) workspace.SetupOptions {
-	opts := workspace.SetupOptions{Env: workspace.DefaultSetupEnv(workdir)}
+	opts := workspace.SetupOptions{
+		Env:   workspace.DefaultSetupEnv(workdir),
+		Shell: true,
+	}
 	if p == nil {
 		return opts
 	}
 	opts.AggregateTimeout = time.Duration(p.GetTimeoutSeconds()) * time.Second
 	opts.FailOnAggregateTimeout = p.GetOnTimeout() != "warn"
+	opts.Shell = p.GetShell()
 	return opts
 }
 

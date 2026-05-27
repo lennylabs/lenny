@@ -162,6 +162,52 @@ spec:
                 - T3
                 - T4
                 type: string
+              setupCommandPolicy:
+                description: |-
+                  SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block: the
+                  per-runtime command allow/block list, shell-execution flag, and
+                  per-session command cap the gateway enforces at session create-time
+                  (§7.5 line 488). An empty block declares no policy (the legacy
+                  admit-everything path). F-7.5.10.
+                properties:
+                  mode:
+                    description: |-
+                      Mode selects allowlist (deny-by-default) or blocklist
+                      (allow-by-default) §7.5 prefix matching. An empty value disables
+                      the prefix gate but the rest of the policy (shell, maxCommands)
+                      still applies.
+                    enum:
+                    - allowlist
+                    - blocklist
+                    type: string
+                  shell:
+                    description: |-
+                      Shell selects shell-vs-argv setup-command execution. False splits
+                      on whitespace and execs the argv directly, neutering shell
+                      metacharacters per §7.5 line 490.
+                    type: boolean
+                  allowlist:
+                    description: |-
+                      Allowlist is the set of permitted §7.5 command prefixes when Mode
+                      is allowlist.
+                    items:
+                      type: string
+                    type: array
+                  blocklist:
+                    description: |-
+                      Blocklist is the set of rejected §7.5 command prefixes when Mode
+                      is blocklist.
+                    items:
+                      type: string
+                    type: array
+                  maxCommands:
+                    description: |-
+                      MaxCommands caps the number of setup commands per session. Zero
+                      declares no cap.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
             required:
             - image
             - integrationLevel

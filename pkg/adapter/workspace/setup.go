@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -49,6 +50,15 @@ type SetupOptions struct {
 	// A nil value preserves the legacy "inherit os.Environ()" behaviour
 	// for tests that have not been updated yet.
 	Env []string
+
+	// Shell selects the §7.5 line 490 execution mode: true wraps each
+	// command in `/bin/sh -c` (the legacy behaviour); false splits the
+	// command string on whitespace and execs the argv directly, so shell
+	// metacharacters (backticks, pipes, redirects, `&&`, glob expansion,
+	// variable interpolation) are inert. Argv-mode is the most restrictive
+	// mode and is recommended alongside `allowlist` for multi-tenant
+	// deployments. spec: §7.5 line 490 — F-7.5.2.
+	Shell bool
 }
 
 // DefaultSetupEnv returns the §7.5 line 479 minimal env whitelist a
@@ -143,7 +153,15 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(cctx, "/bin/sh", "-c", c.GetCmd())
+	// spec: §7.5 line 490 — when opts.Shell is true the command runs via
+	// `/bin/sh -c` (legacy behaviour); when false the command string is
+	// split on whitespace and execed directly so shell metacharacters
+	// (pipes, redirects, backticks, `&&`, glob expansion, variable
+	// interpolation) are inert. F-7.5.2.
+	cmd, buildErr := buildSetupCmd(cctx, c.GetCmd(), opts.Shell)
+	if buildErr != nil {
+		return buildErr
+	}
 	cmd.Dir = workdir
 	if opts.Env != nil {
 		cmd.Env = opts.Env
@@ -178,4 +196,24 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 		return fmt.Errorf("exited with error: %w (output: %s)", err, out)
 	}
 	return nil
+}
+
+// buildSetupCmd returns the exec.Cmd that runs cmdLine according to the
+// §7.5 shell-mode setting. In shell mode the command is wrapped in
+// `/bin/sh -c`, preserving the legacy behaviour. In argv mode the command
+// string is split on whitespace and execed directly; shell metacharacters
+// in the argv survive as literal arguments and so cannot trigger pipes,
+// redirects, backtick substitution, variable interpolation, or glob
+// expansion. An empty argv-mode command is rejected with a typed error
+// so the caller surfaces the §7.5 line 488 rejection reason. spec: §7.5
+// line 490 — F-7.5.2.
+func buildSetupCmd(ctx context.Context, cmdLine string, shell bool) (*exec.Cmd, error) {
+	if shell {
+		return exec.CommandContext(ctx, "/bin/sh", "-c", cmdLine), nil
+	}
+	argv := strings.Fields(cmdLine)
+	if len(argv) == 0 {
+		return nil, errors.New("argv-mode setup command is empty after whitespace split")
+	}
+	return exec.CommandContext(ctx, argv[0], argv[1:]...), nil
 }

@@ -45,6 +45,30 @@ func TestSetupOptionsFromProtoEmptyDispositionIsFail(t *testing.T) {
 	}
 }
 
+// spec: §7.5 line 490 — F-7.5.2. A nil policy preserves the legacy
+// shell=true (`/bin/sh -c`) execution mode so a runtime that does not
+// declare a setupCommandPolicy at all still runs setup the legacy way.
+func TestSetupOptionsFromProtoNilDefaultsShellTrue(t *testing.T) {
+	got := setupOptionsFromProto(nil, "/workspace/current")
+	if !got.Shell {
+		t.Error("setupOptionsFromProto(nil) must default Shell=true (legacy /bin/sh -c)")
+	}
+}
+
+// spec: §7.5 line 490 — F-7.5.2. An explicit Shell flag on the wire
+// (proto3 bool) is mirrored onto SetupOptions so the runtime's
+// setupCommandPolicy.shell choice survives the gateway → adapter hop.
+func TestSetupOptionsFromProtoHonorsShellFlag(t *testing.T) {
+	argv := setupOptionsFromProto(&adapterv1.SetupPolicy{Shell: false}, "/workspace/current")
+	if argv.Shell {
+		t.Error("setupOptionsFromProto with proto Shell=false must set SetupOptions.Shell=false")
+	}
+	shell := setupOptionsFromProto(&adapterv1.SetupPolicy{Shell: true}, "/workspace/current")
+	if !shell.Shell {
+		t.Error("setupOptionsFromProto with proto Shell=true must set SetupOptions.Shell=true")
+	}
+}
+
 func assertEnvWhitelist(t *testing.T, env []string) {
 	t.Helper()
 	if env == nil {

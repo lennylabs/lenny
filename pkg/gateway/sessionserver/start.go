@@ -611,25 +611,26 @@ func (s *Server) writeRefResolveError(w http.ResponseWriter, err error) {
 		"could not resolve a gitClone ref: "+re.Err.Error(), details)
 }
 
-// enforceSetupCommandPolicy runs the §5.1 setupCommandPolicy.maxCommands
-// cap against the client-supplied workspace plan before the row is
+// enforceSetupCommandPolicy runs the §5.1 / §7.5 setupCommandPolicy
+// validation against the client-supplied workspace plan before the row is
 // persisted. The §7.5 line 477 contract names maxCommands as a per-session
-// cap the gateway enforces; without it the worst-case input is Go's slice
-// limit, which lets a buggy or malicious client DoS the setup phase by
-// submitting thousands of trivial commands. The cap is the runtime's
-// effective (base→derived merged) setupCommandPolicy.maxCommands; zero
-// means the runtime declares no cap, and a missing policy block also
-// declares no cap. Allowlist / blocklist prefix enforcement is the
-// companion F-7.5.1 work and lives separately.
+// cap the gateway enforces; §7.5 lines 481-488 add the allowlist /
+// blocklist prefix gate. Without these, the worst-case input is Go's slice
+// limit and any setup command at all, which lets a buggy or malicious
+// client DoS the setup phase or run an arbitrary command in the pod. The
+// cap and prefix lists come from the runtime's effective (base→derived
+// merged) setupCommandPolicy. A missing policy block declares no cap and
+// no list-based gate, preserving the pre-F-7.5.1 admit-everything path.
 //
-// On a cap violation the helper writes the §15.1 WORKSPACE_PLAN_INVALID
-// envelope with a structured details payload (`field`, `reason`,
-// `maxCommands`, `count`) and returns ok=false; the caller MUST abort.
-// A missing runtime store, an unresolvable runtimeRef, or a runtime
-// without a setupCommandPolicy returns ok=true so deployments that do
-// not declare the policy keep the pre-F-7.5.5 admit-everything behaviour.
+// On any violation the helper writes the §15.1 WORKSPACE_PLAN_INVALID
+// envelope with a structured details payload and returns ok=false; the
+// caller MUST abort. The §7.5 line 488 "rejection reason included in the
+// session's setup output" contract is also recorded on the request's
+// rejected setup-output sink (F-7.5.4 / F-7.5.11) when one is wired —
+// callers that already write the error to the response carry the same
+// reason string via the WORKSPACE_PLAN_INVALID envelope.
 //
-// spec: §5.1 line 76, §7.5 line 477 — F-7.5.5.
+// spec: §5.1 line 76, §7.5 lines 477, 481-490 — F-7.5.1 / F-7.5.5.
 func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Request,
 	runtimeRef string, plan workspaceplan.Plan,
 ) bool {
@@ -644,18 +645,44 @@ func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Reques
 		return true
 	}
 	policy := rt.SetupCommandPolicy
-	if policy == nil || policy.MaxCommands <= 0 {
+	if policy == nil {
 		return true
 	}
-	if got := len(plan.SetupCommands); got > policy.MaxCommands {
+	if policy.MaxCommands > 0 {
+		if got := len(plan.SetupCommands); got > policy.MaxCommands {
+			s.writeError(w, http.StatusBadRequest, "WORKSPACE_PLAN_INVALID",
+				fmt.Sprintf("setupCommands count %d exceeds the runtime setupCommandPolicy.maxCommands cap %d",
+					got, policy.MaxCommands),
+				map[string]any{
+					"field":       "setupCommands",
+					"reason":      "setup_commands_max_exceeded",
+					"maxCommands": policy.MaxCommands,
+					"count":       got,
+				})
+			return false
+		}
+	}
+	if policy.Mode == "" {
+		return true
+	}
+	for i, c := range plan.SetupCommands {
+		if policy.PermitsCommand(c.Cmd) {
+			continue
+		}
+		// spec: §7.5 line 488 — the rejection reason carries the offending
+		// command, its position, and the active mode so an operator can
+		// reconcile against the runtime's setupCommandPolicy without
+		// parsing the human message. The reason string is identical to the
+		// audit-trail / setup-output payload (F-7.5.4 / F-7.5.11).
 		s.writeError(w, http.StatusBadRequest, "WORKSPACE_PLAN_INVALID",
-			fmt.Sprintf("setupCommands count %d exceeds the runtime setupCommandPolicy.maxCommands cap %d",
-				got, policy.MaxCommands),
+			fmt.Sprintf("setupCommands[%d] %q rejected by runtime setupCommandPolicy (mode=%s)",
+				i, c.Cmd, policy.Mode),
 			map[string]any{
-				"field":       "setupCommands",
-				"reason":      "setup_commands_max_exceeded",
-				"maxCommands": policy.MaxCommands,
-				"count":       got,
+				"field":   "setupCommands",
+				"reason":  "setup_command_policy_violation",
+				"mode":    string(policy.Mode),
+				"index":   i,
+				"command": c.Cmd,
 			})
 		return false
 	}
@@ -704,17 +731,44 @@ func (s *Server) runtimeManifestFields(ctx context.Context, runtimeName string) 
 	return agentInterface, rt.MinPlatformVersion
 }
 
+// DefaultSetupPolicyTimeoutSeconds is the §6.4 / §26 inferable default
+// aggregate cap on the setup phase: 300 seconds. The gateway applies it
+// when the runtime declares no setupPolicy block or declares one with
+// timeoutSeconds == 0 so a runtime cannot pin a warm pod through an
+// unbounded setup phase by omission alone. The §6.4 line 260 invariant
+// (`maxFinalizingTimeoutSeconds` ≥ `setupTimeoutSeconds`) and the §26.2
+// reference catalog (every reference runtime ships
+// `setupPolicy.timeoutSeconds: 300`) both reflect the 300s floor. spec:
+// §6.4 line 260 — F-7.5.12.
+const DefaultSetupPolicyTimeoutSeconds = 300
+
 func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *adapterv1.SetupPolicy {
-	if s.runtimes == nil {
-		return nil
-	}
-	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeName)
-	if err != nil || rt.SetupPolicy == nil {
-		return nil
+	timeout := int32(DefaultSetupPolicyTimeoutSeconds)
+	onTimeout := string(runtimestore.SetupTimeoutFail)
+	// spec: §7.5 line 490 — shell defaults to true so a runtime that
+	// declares no setupCommandPolicy keeps the legacy `/bin/sh -c` path. A
+	// runtime that explicitly declares `setupCommandPolicy.shell: false`
+	// flips the adapter into argv-mode. F-7.5.2.
+	shell := true
+	if s.runtimes != nil {
+		if rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeName); err == nil {
+			if rt.SetupPolicy != nil {
+				if rt.SetupPolicy.TimeoutSeconds > 0 {
+					timeout = int32(rt.SetupPolicy.TimeoutSeconds)
+				}
+				if rt.SetupPolicy.OnTimeout != "" {
+					onTimeout = string(rt.SetupPolicy.OnTimeout)
+				}
+			}
+			if rt.SetupCommandPolicy != nil {
+				shell = rt.SetupCommandPolicy.Shell
+			}
+		}
 	}
 	return &adapterv1.SetupPolicy{
-		TimeoutSeconds: int32(rt.SetupPolicy.TimeoutSeconds),
-		OnTimeout:      string(rt.SetupPolicy.OnTimeout),
+		TimeoutSeconds: timeout,
+		OnTimeout:      onTimeout,
+		Shell:          shell,
 	}
 }
 

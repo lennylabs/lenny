@@ -485,7 +485,8 @@ func validateSetupCommandPolicy(p *runtimestore.SetupCommandPolicy) error {
 		return nil
 	}
 	if p.Mode != "" && !p.Mode.IsValid() {
-		return errors.New("setupCommandPolicy.mode must be allowlist or shell")
+		// spec: §7.5 lines 483-486 — F-7.5.1.
+		return errors.New("setupCommandPolicy.mode must be allowlist or blocklist")
 	}
 	if p.MaxCommands < 0 {
 		return errors.New("setupCommandPolicy.maxCommands must not be negative")

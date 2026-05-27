@@ -610,21 +610,24 @@ func (l *Limits) Clone() *Limits {
 	return &cp
 }
 
-// SetupCommandMode is the §5.1 setupCommandPolicy.mode enum: whether the
-// runtime restricts setup commands to an explicit allowlist or runs them
-// through a shell.
+// SetupCommandMode is the §5.1 / §7.5 setupCommandPolicy.mode enum: whether
+// the runtime restricts setup commands to an explicit allowlist (deny-by-
+// default) or to an explicit blocklist (allow-by-default). spec: §7.5 lines
+// 483-486 — F-7.5.1.
 type SetupCommandMode string
 
 const (
-	// SetupCommandModeAllowlist permits only the listed commands.
+	// SetupCommandModeAllowlist permits only commands whose §7.5 prefix
+	// match is present in Allowlist. Everything else is rejected.
 	SetupCommandModeAllowlist SetupCommandMode = "allowlist"
-	// SetupCommandModeShell runs setup commands through a shell.
-	SetupCommandModeShell SetupCommandMode = "shell"
+	// SetupCommandModeBlocklist rejects commands whose §7.5 prefix match
+	// is present in Blocklist. Everything else is allowed.
+	SetupCommandModeBlocklist SetupCommandMode = "blocklist"
 )
 
 // AllSetupCommandModes returns the closed enum.
 func AllSetupCommandModes() []SetupCommandMode {
-	return []SetupCommandMode{SetupCommandModeAllowlist, SetupCommandModeShell}
+	return []SetupCommandMode{SetupCommandModeAllowlist, SetupCommandModeBlocklist}
 }
 
 // IsValid reports whether m is a known setup-command mode.
@@ -637,33 +640,92 @@ func (m SetupCommandMode) IsValid() bool {
 	return false
 }
 
-// SetupCommandPolicy is the §5.1 setupCommandPolicy block on a runtime: the
-// command allowlist or shell mode the gateway enforces at pod startup
-// (§6.4). The §5.1 merge table classifies it Override.
+// SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block on a
+// runtime: the command allow/block list, the shell-execution flag, and the
+// per-session command cap the gateway enforces against the client-supplied
+// workspace plan at create-time (§7.5 line 488). The §5.1 merge table
+// classifies it Override. spec: §7.5 lines 481-490 — F-7.5.1.
 type SetupCommandPolicy struct {
-	// Mode selects allowlist or shell enforcement.
+	// Mode selects allowlist (deny-by-default) or blocklist (allow-by-
+	// default) prefix matching.
 	Mode SetupCommandMode `json:"mode,omitempty"`
 
-	// Shell reports whether setup commands run through a shell.
+	// Shell selects shell-vs-argv execution: true wraps commands in
+	// `/bin/sh -c`; false splits on whitespace and execs the argv directly,
+	// neutering shell metacharacters per §7.5 line 490. F-7.5.2.
 	Shell bool `json:"shell,omitempty"`
 
-	// Allowlist is the set of permitted setup commands when Mode is
-	// allowlist.
+	// Allowlist is the set of permitted §7.5 command prefixes when Mode is
+	// allowlist. A command matches when its raw text is the prefix or
+	// begins with `prefix + space` so `curl` matches `curl -s http://...`
+	// but not `curl-other`.
 	Allowlist []string `json:"allowlist,omitempty"`
+
+	// Blocklist is the set of rejected §7.5 command prefixes when Mode is
+	// blocklist. Prefix-match semantics are identical to Allowlist.
+	Blocklist []string `json:"blocklist,omitempty"`
 
 	// MaxCommands caps the number of setup commands. Zero declares no cap.
 	MaxCommands int `json:"maxCommands,omitempty"`
 }
 
 // Clone returns a deep copy of the policy so the store never shares the
-// Allowlist slice with a caller. A nil receiver clones to nil.
+// Allowlist or Blocklist slice with a caller. A nil receiver clones to nil.
 func (p *SetupCommandPolicy) Clone() *SetupCommandPolicy {
 	if p == nil {
 		return nil
 	}
 	cp := *p
 	cp.Allowlist = append([]string(nil), p.Allowlist...)
+	cp.Blocklist = append([]string(nil), p.Blocklist...)
 	return &cp
+}
+
+// PermitsCommand reports whether cmd is admitted by the policy under §7.5
+// prefix-match semantics. A nil receiver (no policy declared) admits every
+// command, preserving the pre-F-7.5.1 behaviour. An empty Mode also admits
+// (the policy declares no mode, so neither list is consulted). When Mode is
+// allowlist the empty Allowlist denies everything; when Mode is blocklist
+// the empty Blocklist allows everything. spec: §7.5 line 488 — F-7.5.1.
+func (p *SetupCommandPolicy) PermitsCommand(cmd string) bool {
+	if p == nil || p.Mode == "" {
+		return true
+	}
+	matched := false
+	switch p.Mode {
+	case SetupCommandModeAllowlist:
+		for _, entry := range p.Allowlist {
+			if hasCommandPrefix(cmd, entry) {
+				matched = true
+				break
+			}
+		}
+		return matched
+	case SetupCommandModeBlocklist:
+		for _, entry := range p.Blocklist {
+			if hasCommandPrefix(cmd, entry) {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
+// hasCommandPrefix returns true when cmd equals prefix or begins with
+// `prefix + " "`. A literal `curl` matches `curl -s http://...` but not
+// `curl-other`. An empty prefix never matches.
+func hasCommandPrefix(cmd, prefix string) bool {
+	if prefix == "" {
+		return false
+	}
+	if cmd == prefix {
+		return true
+	}
+	if len(cmd) > len(prefix) && cmd[:len(prefix)] == prefix && cmd[len(prefix)] == ' ' {
+		return true
+	}
+	return false
 }
 
 // DefaultPoolConfig is the §5.1 defaultPoolConfig block on a runtime: the

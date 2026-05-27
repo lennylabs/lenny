@@ -136,6 +136,66 @@ func TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9(t *testing.T) {
 	}
 }
 
+// TestApplyCRDFields_MirrorsSetupCommandPolicy_spec_7_5 verifies the §5.1
+// / §7.5 setupCommandPolicy mirror from the CRD onto the runtimestore
+// runtime: every field (mode, shell, allowlist, blocklist, maxCommands)
+// round-trips, slices are copied (not aliased), and a nil CRD block
+// mirrors to a nil registry block (no policy declared). spec: §7.5 lines
+// 481-490 — F-7.5.10.
+func TestApplyCRDFields_MirrorsSetupCommandPolicy_spec_7_5(t *testing.T) {
+	if got := setupCommandPolicyFromCRD(nil); got != nil {
+		t.Errorf("nil setupCommandPolicy CRD block mapped to %+v, want nil", got)
+	}
+	src := &lennyv1.SetupCommandPolicy{
+		Mode:        "allowlist",
+		Shell:       false,
+		Allowlist:   []string{"npm", "make"},
+		Blocklist:   []string{"curl"},
+		MaxCommands: 5,
+	}
+	got := setupCommandPolicyFromCRD(src)
+	if got == nil {
+		t.Fatal("setupCommandPolicyFromCRD(non-nil) = nil")
+	}
+	if got.Mode != runtimestore.SetupCommandModeAllowlist {
+		t.Errorf("Mode = %q, want allowlist", got.Mode)
+	}
+	if got.Shell != false {
+		t.Errorf("Shell = %v, want false", got.Shell)
+	}
+	if got.MaxCommands != 5 {
+		t.Errorf("MaxCommands = %d, want 5", got.MaxCommands)
+	}
+	if len(got.Allowlist) != 2 || got.Allowlist[0] != "npm" || got.Allowlist[1] != "make" {
+		t.Errorf("Allowlist = %v, want [npm make]", got.Allowlist)
+	}
+	if len(got.Blocklist) != 1 || got.Blocklist[0] != "curl" {
+		t.Errorf("Blocklist = %v, want [curl]", got.Blocklist)
+	}
+	// Slice aliasing must not leak back into the CRD source.
+	got.Allowlist[0] = "tampered"
+	got.Blocklist[0] = "tampered"
+	if src.Allowlist[0] != "npm" {
+		t.Error("Allowlist slice aliased to CRD: mutation leaked back")
+	}
+	if src.Blocklist[0] != "curl" {
+		t.Error("Blocklist slice aliased to CRD: mutation leaked back")
+	}
+
+	// And exercise the applyCRDFields path end-to-end.
+	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+		Type:               "agent",
+		Image:              "img@sha256:" + hex64,
+		IntegrationLevel:   "basic",
+		SetupCommandPolicy: src,
+	}}
+	var dst runtimestore.Runtime
+	applyCRDFields(&dst, rt)
+	if dst.SetupCommandPolicy == nil || dst.SetupCommandPolicy.MaxCommands != 5 {
+		t.Errorf("applyCRDFields did not plumb SetupCommandPolicy: %+v", dst.SetupCommandPolicy)
+	}
+}
+
 // TestCredentialCapabilitiesFromCRD verifies the nil-block mapping and
 // that the proxyDialect slice is copied, not aliased to the CRD slice.
 func TestCredentialCapabilitiesFromCRD(t *testing.T) {

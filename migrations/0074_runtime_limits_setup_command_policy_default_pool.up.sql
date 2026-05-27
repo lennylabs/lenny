@@ -6,9 +6,10 @@
 --  "maxRequestInputWaitSeconds": int}. The §11.3 inter-agent
 -- lenny/request_input timeout reads maxRequestInputWaitSeconds.
 --
--- setup_command_policy is the §5.1 setupCommandPolicy object:
--- {"mode": "allowlist"|"shell", "shell": bool, "allowlist": [string],
---  "maxCommands": int}. The gateway enforces it at pod startup (§6.4).
+-- setup_command_policy is the §5.1 / §7.5 setupCommandPolicy object:
+-- {"mode": "allowlist"|"blocklist", "shell": bool, "allowlist": [string],
+--  "blocklist": [string], "maxCommands": int}. The gateway enforces it at
+-- session create-time (§7.5 line 488).
 --
 -- default_pool_config is the §5.1 defaultPoolConfig object:
 -- {"warmCount": int, "resourceClass": string, "egressProfile": string}.

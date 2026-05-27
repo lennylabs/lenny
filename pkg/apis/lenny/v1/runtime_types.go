@@ -82,6 +82,51 @@ type RuntimeSpec struct {
 	// +kubebuilder:validation:Enum=T3;T4
 	// +optional
 	WorkspaceTier string `json:"workspaceTier,omitempty"`
+
+	// SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block: the
+	// per-runtime command allow/block list, shell-execution flag, and
+	// per-session command cap the gateway enforces at session create-time
+	// (§7.5 line 488). An empty block declares no policy (the legacy
+	// admit-everything path). F-7.5.10.
+	// +optional
+	SetupCommandPolicy *SetupCommandPolicy `json:"setupCommandPolicy,omitempty"`
+}
+
+// SetupCommandPolicy mirrors the §5.1 / §7.5 setupCommandPolicy block onto
+// the Runtime CRD so an operator can declare the policy declaratively. The
+// runtime controller plumbs every field into the gateway registry's
+// runtimestore.SetupCommandPolicy at reconciliation time. spec: §7.5 lines
+// 481-490 — F-7.5.10.
+type SetupCommandPolicy struct {
+	// Mode selects allowlist (deny-by-default) or blocklist
+	// (allow-by-default) §7.5 prefix matching. An empty value disables the
+	// prefix gate but the rest of the policy (shell, maxCommands) still
+	// applies.
+	// +kubebuilder:validation:Enum=allowlist;blocklist
+	// +optional
+	Mode string `json:"mode,omitempty"`
+
+	// Shell selects shell-vs-argv setup-command execution. False splits on
+	// whitespace and execs the argv directly, neutering shell
+	// metacharacters per §7.5 line 490.
+	// +optional
+	Shell bool `json:"shell,omitempty"`
+
+	// Allowlist is the set of permitted §7.5 command prefixes when Mode is
+	// allowlist.
+	// +optional
+	Allowlist []string `json:"allowlist,omitempty"`
+
+	// Blocklist is the set of rejected §7.5 command prefixes when Mode is
+	// blocklist.
+	// +optional
+	Blocklist []string `json:"blocklist,omitempty"`
+
+	// MaxCommands caps the number of setup commands per session. Zero
+	// declares no cap.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxCommands int32 `json:"maxCommands,omitempty"`
 }
 
 // CredentialCapabilities is the §5.1 credentialCapabilities block on a

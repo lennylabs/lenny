@@ -226,6 +226,10 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	// §6.4 T4 dedicated-node injection both see the same value the deployer
 	// declared on the Runtime resource.
 	dst.WorkspaceTier = runtimestore.WorkspaceTier(rt.Spec.WorkspaceTier)
+	// spec: §5.1 / §7.5 lines 481-490 — setupCommandPolicy is mirrored from
+	// the CRD so the §7.5 gateway-side enforcement (F-7.5.1) reads the same
+	// policy the deployer declared on the Runtime resource. F-7.5.10.
+	dst.SetupCommandPolicy = setupCommandPolicyFromCRD(rt.Spec.SetupCommandPolicy)
 	dst.Labels = domainLabels(rt.Labels)
 }
 
@@ -239,6 +243,23 @@ func credentialCapabilitiesFromCRD(c *lennyv1.CredentialCapabilities) *runtimest
 	return &runtimestore.CredentialCapabilities{
 		HotRotation:  c.HotRotation,
 		ProxyDialect: append([]string(nil), c.ProxyDialect...),
+	}
+}
+
+// setupCommandPolicyFromCRD maps the §5.1 / §7.5 setupCommandPolicy block.
+// A nil CRD block mirrors to a nil registry block (no policy declared, the
+// pre-F-7.5.1 admit-everything path remains). spec: §7.5 lines 481-490 —
+// F-7.5.10.
+func setupCommandPolicyFromCRD(p *lennyv1.SetupCommandPolicy) *runtimestore.SetupCommandPolicy {
+	if p == nil {
+		return nil
+	}
+	return &runtimestore.SetupCommandPolicy{
+		Mode:        runtimestore.SetupCommandMode(p.Mode),
+		Shell:       p.Shell,
+		Allowlist:   append([]string(nil), p.Allowlist...),
+		Blocklist:   append([]string(nil), p.Blocklist...),
+		MaxCommands: int(p.MaxCommands),
 	}
 }
 

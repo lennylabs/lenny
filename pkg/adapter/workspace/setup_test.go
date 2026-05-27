@@ -26,7 +26,7 @@ func TestRunSetupExecutesCommandsInOrder(t *testing.T) {
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("echo first > a.txt", 30),
 		cmd("echo second > b.txt", 30),
-	}, workspace.SetupOptions{})
+	}, workspace.SetupOptions{Shell: true})
 	if err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestRunSetupRunsInWorkdir(t *testing.T) {
 	dir := t.TempDir()
 	if err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("touch in-workdir.marker", 30),
-	}, workspace.SetupOptions{}); err != nil {
+	}, workspace.SetupOptions{Shell: true}); err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
 	// A relative path resolves against the command's working directory;
@@ -56,7 +56,7 @@ func TestRunSetupStopsAtFirstFailure(t *testing.T) {
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("exit 3", 30),
 		cmd("echo unreached > reached.txt", 30),
-	}, workspace.SetupOptions{})
+	}, workspace.SetupOptions{Shell: true})
 	if err == nil {
 		t.Fatal("RunSetup should return an error when a command exits non-zero")
 	}
@@ -69,7 +69,7 @@ func TestRunSetupEnforcesTimeout(t *testing.T) {
 	dir := t.TempDir()
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("sleep 30", 1),
-	}, workspace.SetupOptions{})
+	}, workspace.SetupOptions{Shell: true})
 	if err == nil {
 		t.Fatal("RunSetup should return an error when a command exceeds its timeout")
 	}
@@ -78,13 +78,13 @@ func TestRunSetupEnforcesTimeout(t *testing.T) {
 func TestRunSetupRejectsEmptyCommand(t *testing.T) {
 	if err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("", 30),
-	}, workspace.SetupOptions{}); err == nil {
+	}, workspace.SetupOptions{Shell: true}); err == nil {
 		t.Fatal("RunSetup should reject an empty command")
 	}
 }
 
 func TestRunSetupAcceptsNoCommands(t *testing.T) {
-	if err := workspace.RunSetup(context.Background(), t.TempDir(), nil, workspace.SetupOptions{}); err != nil {
+	if err := workspace.RunSetup(context.Background(), t.TempDir(), nil, workspace.SetupOptions{Shell: true}); err != nil {
 		t.Errorf("RunSetup with no commands should succeed, got %v", err)
 	}
 }
@@ -95,7 +95,7 @@ func TestRunSetupWithinAggregateTimeout(t *testing.T) {
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("echo a > a.txt", 30),
 		cmd("echo b > b.txt", 30),
-	}, workspace.SetupOptions{AggregateTimeout: 30 * time.Second, FailOnAggregateTimeout: true})
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 30 * time.Second, FailOnAggregateTimeout: true})
 	if err != nil {
 		t.Fatalf("RunSetup within the aggregate cap: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 	// §5.1 onTimeout `fail`: exceeding the aggregate cap aborts.
 	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("sleep 30", 60),
-	}, workspace.SetupOptions{AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: true})
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: true})
 	if err == nil {
 		t.Fatal("RunSetup should fail when the setup phase exceeds the aggregate cap under `fail`")
 	}
@@ -118,7 +118,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
 	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("sleep 30", 60),
-	}, workspace.SetupOptions{AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
 	if !errors.Is(err, workspace.ErrSetupAggregateTimeoutWarn) {
 		t.Fatalf("RunSetup under `warn` should signal warn via ErrSetupAggregateTimeoutWarn, got %v", err)
 	}
@@ -129,7 +129,7 @@ func TestRunSetupAggregateTimeoutStopsLaterCommands(t *testing.T) {
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("sleep 30", 60),
 		cmd("touch reached.marker", 60),
-	}, workspace.SetupOptions{AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
 	if !errors.Is(err, workspace.ErrSetupAggregateTimeoutWarn) {
 		t.Fatalf("RunSetup under `warn`: want ErrSetupAggregateTimeoutWarn, got %v", err)
 	}
@@ -148,7 +148,7 @@ func TestRunSetupOmittedPerCommandTimeoutBoundsByAggregate(t *testing.T) {
 	start := time.Now()
 	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("sleep 30", 0),
-	}, workspace.SetupOptions{AggregateTimeout: 100 * time.Millisecond, FailOnAggregateTimeout: true})
+	}, workspace.SetupOptions{Shell: true, AggregateTimeout: 100 * time.Millisecond, FailOnAggregateTimeout: true})
 	if err == nil {
 		t.Fatal("RunSetup should fail when the setup phase exceeds the aggregate cap")
 	}
@@ -165,7 +165,7 @@ func TestRunSetupOmittedPerCommandTimeoutCancelsOnContext(t *testing.T) {
 	start := time.Now()
 	err := workspace.RunSetup(ctx, t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("sleep 30", 0),
-	}, workspace.SetupOptions{})
+	}, workspace.SetupOptions{Shell: true})
 	if err == nil {
 		t.Fatal("RunSetup should fail when the parent ctx is cancelled")
 	}
@@ -186,7 +186,7 @@ func TestRunSetupTimeoutKillsDescendants(t *testing.T) {
 	start := time.Now()
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("sh -c 'sleep 30 & echo $! > "+pidFile+"; sleep 30'", 1),
-	}, workspace.SetupOptions{})
+	}, workspace.SetupOptions{Shell: true})
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -231,7 +231,7 @@ func TestRunSetupAppliesEnvWhitelist(t *testing.T) {
 	env := append(workspace.DefaultSetupEnv(dir), "EXTRA=ok")
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("env > env.txt", 30),
-	}, workspace.SetupOptions{Env: env})
+	}, workspace.SetupOptions{Shell: true, Env: env})
 	if err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
@@ -274,5 +274,58 @@ func TestDefaultSetupEnv(t *testing.T) {
 		if strings.HasPrefix(e, "PWD=") || strings.HasPrefix(e, "TMPDIR=") {
 			t.Errorf("DefaultSetupEnv(\"\") should omit PWD/TMPDIR, got %q", e)
 		}
+	}
+}
+
+// spec: §7.5 line 490 — F-7.5.2. Argv-mode execution must run the command
+// via direct exec rather than `/bin/sh -c`. A shell metacharacter like `>`
+// survives as a literal argument to the program; if the adapter were
+// running the command through a shell it would be interpreted as a
+// redirect instead.
+func TestRunSetupArgvModeNeutersShellMetacharacters(t *testing.T) {
+	dir := t.TempDir()
+	// In shell mode, `echo hello > file.txt` redirects stdout into
+	// file.txt and exits 0. In argv mode the `>` becomes a literal argv
+	// element passed to /bin/echo, which simply prints `hello > file.txt`
+	// to stdout and exits 0 — no file.txt is created.
+	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("echo hello > should-not-be-created.txt", 30),
+	}, workspace.SetupOptions{Shell: false, Env: workspace.DefaultSetupEnv(dir)})
+	if err != nil {
+		t.Fatalf("RunSetup argv-mode: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "should-not-be-created.txt")); statErr == nil {
+		t.Error("argv-mode incorrectly invoked shell redirection (file.txt was created)")
+	}
+}
+
+// spec: §7.5 line 490 — F-7.5.2. Argv-mode splits the command string on
+// whitespace and execs argv[0] with argv[1:]; an empty argv is rejected.
+func TestRunSetupArgvModeRejectsEmptyAfterSplit(t *testing.T) {
+	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+		cmd("   ", 30),
+	}, workspace.SetupOptions{Shell: false, Env: workspace.DefaultSetupEnv("")})
+	if err == nil {
+		t.Fatal("argv-mode with a whitespace-only command must reject")
+	}
+	if !strings.Contains(err.Error(), "argv-mode setup command is empty") &&
+		!strings.Contains(err.Error(), "command is empty") {
+		t.Errorf("argv-mode empty-after-split error = %v, want a typed rejection", err)
+	}
+}
+
+// spec: §7.5 line 490 — F-7.5.2. Argv-mode also accepts multi-token
+// commands; the split is whitespace-only.
+func TestRunSetupArgvModeRunsMultiTokenCommand(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "marker.txt")
+	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("touch "+target, 30),
+	}, workspace.SetupOptions{Shell: false, Env: workspace.DefaultSetupEnv(dir)})
+	if err != nil {
+		t.Fatalf("RunSetup argv-mode: %v", err)
+	}
+	if _, statErr := os.Stat(target); statErr != nil {
+		t.Errorf("argv-mode did not run multi-token command: %v", statErr)
 	}
 }

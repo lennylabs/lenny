@@ -6820,7 +6820,7 @@ Spec: `spec/07_session-lifecycle.md` lines 467–490.
 
 ### Findings
 
-### - [ ] F-7.5.1 — `setupCommandPolicy` is entirely unimplemented (High, security) [Medium] — OPEN
+### - [x] F-7.5.1 — `setupCommandPolicy` is entirely unimplemented (High, security) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.2.7 — Both report that setupCommandPolicy (allowlist/blocklist/shell/maxCommands) is entirely unimplemented with no admission enforcement.
 
@@ -6836,7 +6836,9 @@ Evidence:
 
 Effect: any client-supplied setup command runs verbatim in the pod. The §7.5 defense-in-depth allowlist/blocklist layer is missing entirely. `maxCommands` is not enforced (clients can submit arbitrarily many commands). `mode: none` cannot be detected, so the §26.2 "MUST NOT set `mode: none` for coding-agent runtimes in multi-tenant deployments" floor is unenforceable. The "rejection reason is included in the session's setup output" contract has no implementation because nothing is rejected at the gateway boundary.
 
-### - [ ] F-7.5.2 — `shell: false` argv-mode execution is unimplemented (High, security) [Medium] — OPEN
+**Resolution:** `runtimestore.SetupCommandPolicy` now models the §7.5 closed enum (`allowlist|blocklist`, replacing the prior `allowlist|shell` misnomer) plus the `Blocklist []string` field; the new `PermitsCommand` method applies the §7.5 line 488 prefix-match semantics (literal match or `prefix + space`). The gateway's `enforceSetupCommandPolicy` (already wiring `maxCommands` from F-7.5.5) now also rejects any command that fails the mode-specific prefix gate with `WORKSPACE_PLAN_INVALID` carrying `reason=setup_command_policy_violation`, `mode`, `index`, and `command` so the §7.5 line 488 "rejection reason included in the session's setup output" contract surfaces a machine-readable cause. Admin validator updated. F-26.2.7 closed by the same fix (`mode: none` is no longer a valid value; admin handler rejects it).
+
+### - [x] F-7.5.2 — `shell: false` argv-mode execution is unimplemented (High, security) [Medium] — CLOSED
 
 Spec line 490 specifies that when `shell: false` is set on the `setupCommandPolicy`, commands are executed directly via `exec` with the command string split into an argv array, so backtick substitution, pipes, redirects, glob expansion, and variable interpolation are inert.
 
@@ -6849,6 +6851,8 @@ cmd := exec.CommandContext(cctx, "/bin/sh", "-c", c.GetCmd())
 There is no branch on a shell-mode flag; the proto's `SetupCommand` message has no `shell` field; the `SetupPolicy` message has no `shell` field; and `pkg/adapter/session.go:21-29` `setupOptionsFromProto` only carries `AggregateTimeout` and `FailOnAggregateTimeout`. `grep -rn "shell.*false\|argv\|exec.Command(.*Split" pkg/adapter` confirms no argv-mode path exists.
 
 Effect: the "most restrictive execution mode" promised by §7.5 cannot be selected. A runtime declaring `shell: false` for a multi-tenant coding-agent pool gets shell-mode execution anyway. The §26.2 reference runtime catalog explicitly ships `shell: false` for coding-agent runtimes (`spec/26_reference-runtime-catalog.md:53`) — that expectation is silently ignored.
+
+**Resolution:** Added `SetupPolicy.shell` (proto3 bool, field 3) to the adapter proto so the gateway can plumb the §7.5 line 490 mode through to the adapter. `runtimeSetupPolicy` reads `runtimestore.SetupCommandPolicy.Shell` and stamps it on every gateway → adapter RunSetup call; absent policies keep the legacy `shell=true` path. The adapter's `runSetupCommand` now branches via the new `buildSetupCmd` helper: shell-mode wraps in `/bin/sh -c` (legacy), argv-mode does `strings.Fields(cmd)` and execs `argv[0]` with `argv[1:]` so backticks, pipes, redirects, `&&` chaining, and glob expansion stay literal arguments. `SetupOptions.Shell` is the runtime-level toggle; an empty argv-mode command rejects with a typed error so the §7.5 line 488 rejection reason surfaces upstream.
 
 ### - [x] F-7.5.3 — `workspaceDefaults.setupCommands` (base + derived runtime defaults) are never merged into the executed list (High) [Medium] — CLOSED
 
@@ -6942,13 +6946,15 @@ Evidence: `grep -rn "setup_command_failed" pkg cmd` returns zero hits in code (o
 
 Effect: the spec-documented `setup_command_failed` label on `lenny_warmpool_warmup_failure_total` is never emitted, so the `WarmPoolReplenishmentFailing` alert documented at §16 cannot fire for this reason; SRE runbooks that reference `reason: setup_command_failed` (`docs/operator-guide/troubleshooting.md:41`) have no real signal to match.
 
-### - [ ] F-7.5.10 — `setupCommandPolicy` is not modelled in the Runtime CRD (Medium) [Medium] — OPEN
+### - [x] F-7.5.10 — `setupCommandPolicy` is not modelled in the Runtime CRD (Medium) [Medium] — CLOSED
 
 §5.1 declares `setupCommandPolicy` as a first-class Runtime field with `mode`, `shell`, `allowlist[]` / `blocklist[]`, and `maxCommands`. The CRD is the declarative source for the gateway registry per §4.6.
 
 Evidence: `pkg/apis/lenny/v1/runtime_types.go:12-59` `RuntimeSpec` ends after `SupportedProviders` — no `SetupCommandPolicy` field. `pkg/apis/lenny/v1/runtime_types.go` comment at line 28 ("Only the v1 essential fields are modelled; extension fields (capabilities, providers, setup policy) are admitted but not strictly validated by this store") in `pkg/gateway/runtimestore/runtimestore.go:27-30` confirms the gap is intentional but unresolved.
 
 Effect: operators cannot declare a `setupCommandPolicy` via the CRD at all; there is no field for the gateway to read. The CRD-driven configuration story is incomplete; the `Runtime` resource cannot describe its own policy.
+
+**Resolution:** Added `RuntimeSpec.SetupCommandPolicy` to `pkg/apis/lenny/v1/runtime_types.go` (mode/shell/allowlist/blocklist/maxCommands, with the §7.5 closed-enum kubebuilder validation), regenerated the deep-copy helper, and extended `charts/lenny/crds/lenny.dev_runtimes.yaml` plus the embedded copy. The runtime controller's `applyCRDFields` now plumbs the block onto `runtimestore.Runtime.SetupCommandPolicy` via the new `setupCommandPolicyFromCRD` mapper (slice clones, nil-block mirrors to nil).
 
 ### - [ ] F-7.5.11 — The §7.5 "rejection reason included in the session's setup output" surface has no carrier (Medium) [Medium] — OPEN
 
@@ -6958,7 +6964,7 @@ Evidence: This requires (a) gateway-side validation (missing — F1), (b) a "ses
 
 Effect: even if F1 were implemented, the rejection reason would have nowhere to land in a client-visible form. The §7.5 "included in the session's setup output" promise is not realisable in the current schema.
 
-### - [ ] F-7.5.12 — `setupPolicy.timeoutSeconds` defaults to "no bound" rather than the §6.4 / §26 inferable 300s floor (Low) [Medium] — OPEN
+### - [x] F-7.5.12 — `setupPolicy.timeoutSeconds` defaults to "no bound" rather than the §6.4 / §26 inferable 300s floor (Low) [Medium] — CLOSED
 
 Spec §6.4 line 260 names `setupTimeoutSeconds` (default 300s, `runtime.setupTimeoutSeconds`) as the inner bound on the setup phase, and `maxFinalizingTimeoutSeconds` must be ≥ `setupTimeoutSeconds`. §26.2 (`spec/26_reference-runtime-catalog.md`) ships every reference runtime with `setupPolicy.timeoutSeconds: 300`. The gateway's runtimestore allows `TimeoutSeconds: 0` (no aggregate cap) per `pkg/gateway/runtimestore/runtimestore.go:420-422`.
 
@@ -6975,6 +6981,8 @@ if opts.AggregateTimeout > 0 {
 A runtime that omits `setupPolicy.timeoutSeconds` (or that has no policy at all — F10) runs setup with no aggregate cap. The per-command 5-minute fallback (F6) is the only bound left, and it is per-command, not aggregate.
 
 Effect: a runtime that declares 50 setup commands without per-command timeouts and without a setupPolicy can pin a warm pod for 50 × 5 minutes = ~4 hours, blowing past §6.4's intended 600s `maxFinalizingTimeoutSeconds`. Without F10 (CRD modelling) and F1 (policy validation) there is no input path that enforces the §6.4 invariant.
+
+**Resolution:** Exported `DefaultSetupPolicyTimeoutSeconds = 300` in `pkg/gateway/sessionserver` per §6.4 line 260 / §26.2 reference catalog. `runtimeSetupPolicy` now always returns a non-nil `SetupPolicy`: a runtime that declares no `setupPolicy` (or one with `timeoutSeconds==0`) gets the 300s aggregate cap with `onTimeout=fail`. Explicit values override the default per field. Combined with F-7.5.6 (no per-command 5-minute fallback) this caps unbounded setup phases at 300s by default.
 
 ### - [x] F-7.5.13 — Aggregate-cap "warn" disposition silently swallows incomplete setup (Low) [Medium] — CLOSED
 
@@ -37031,9 +37039,11 @@ This is a v1 platform deliverable: the built-in `github` provider, the HTTPS cre
 
 ---
 
-### - [ ] F-26.2.7 — 2-07 — `setupCommandPolicy` allowlist enforcement is unimplemented and "mode: none MUST NOT" for multi-tenant deployments is not gated [Low] — OPEN
+### - [x] F-26.2.7 — 2-07 — `setupCommandPolicy` allowlist enforcement is unimplemented and "mode: none MUST NOT" for multi-tenant deployments is not gated [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.5.1 — Both report that setupCommandPolicy (allowlist/blocklist/shell/maxCommands) is entirely unimplemented with no admission enforcement.
+
+**Resolution:** Closed by F-7.5.1 (gateway enforcement) + F-7.5.10 (CRD plumbing). The §7.5 closed enum is now `allowlist|blocklist` (no `none` value), so the §26.2 "MUST NOT set `mode: none` in multi-tenant deployments" floor is structurally unbreakable — a runtime that tries to declare `mode: none` is rejected by the admin validator (`setupCommandPolicy.mode must be allowlist or blocklist`) before the registry sees it.
 
 **Spec:** §26.2 line 53:
 
