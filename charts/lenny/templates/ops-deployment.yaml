@@ -21,6 +21,18 @@ wired from values via the LENNY_POSTGRES_DSN and LENNY_REDIS_URL
 environment variables the binary reads, left unset by default so a
 stock render runs lenny-ops in the §25.4 degraded single-process mode.
 */ -}}
+{{- /* §17.8.5 line 1323: "Attempts to disable lenny-ops via Helm values
+   are rejected at chart validation." The chart has no ops.enabled key;
+   an operator who supplies one (e.g., ops.enabled: false) gets a hard
+   render failure rather than silent acceptance. The lenny-ops surface
+   is mandatory in every Lenny installation regardless of tier. */ -}}
+{{- if hasKey (.Values.ops | default dict) "enabled" -}}
+{{- if not .Values.ops.enabled -}}
+{{- fail "§17.8.5 line 1323: lenny-ops is mandatory in every Lenny installation; ops.enabled: false is rejected. Remove the override or omit the ops.enabled key." -}}
+{{- else -}}
+{{- fail "§17.8.5 line 1323: ops.enabled is not a supported Helm value (lenny-ops is mandatory); remove the ops.enabled key from your values." -}}
+{{- end -}}
+{{- end -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:

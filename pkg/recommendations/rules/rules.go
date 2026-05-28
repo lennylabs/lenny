@@ -179,5 +179,34 @@ func Catalog() []Rule {
 			Description: "More than 5 percent of session-creation requests were rejected by the tenant quota over the 24h window. Recommend increasing the tenant session quota.",
 			SpecRef:     "§25.3",
 		},
+		{
+			// spec: §17.8.2 line 1103 first-week monitoring workflow:
+			// "if idle pod-minutes per hour exceeds `minWarm × 30` ...
+			// `minWarm` is oversized; reduce by 25%."
+			Name:      "WarmPoolOversized",
+			Category:  CategoryWarmPoolSizing,
+			Condition: `increase(lenny_warmpool_idle_pod_minutes[1h]) > 30 * lenny_pool_min_warm`,
+			Window:    1 * time.Hour,
+			Summary:   "Warm pool idle-pod-minutes per hour exceed minWarm × 30 — reduce minWarm by 25%",
+			Description: "First-week tuning (§17.8.2): a pool whose hourly idle pod-minutes " +
+				"exceed `minWarm × 30` is oversized. Recommend reducing `minWarm` by 25% and " +
+				"re-monitoring for one hour before further adjustment.",
+			SpecRef: "§17.8.2 line 1103",
+		},
+		{
+			// spec: §17.8.2 line 1104 first-week monitoring workflow:
+			// "P99 claim latency exceeds 2s, the pool is not keeping up
+			// with demand; increase `minWarm` or investigate pod startup".
+			Name:     "WarmPoolClaimLatencyHigh",
+			Category: CategoryWarmPoolSizing,
+			Condition: `histogram_quantile(0.99, sum by (le, pool) (rate(lenny_pod_claim_queue_wait_seconds_bucket[5m]))) > 2`,
+			Window:   5 * time.Minute,
+			Summary:  "Warm pool P99 claim latency exceeds 2s — raise minWarm or investigate pod startup",
+			Description: "First-week tuning (§17.8.2): P99 claim queue wait above 2s indicates " +
+				"the warm pool is not keeping up with demand. Recommend raising `minWarm` (by ~25%) " +
+				"or, when P99 pod-startup time is also rising, investigating image pull and runtime " +
+				"warmup before increasing the pool size.",
+			SpecRef: "§17.8.2 line 1104",
+		},
 	}
 }

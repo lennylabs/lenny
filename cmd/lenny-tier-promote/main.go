@@ -43,6 +43,18 @@ func main() {
 		"set when Postgres is wired to a managed endpoint (RDS, Cloud SQL, Azure Database)")
 	redisExternal := flag.Bool("redis-external", false,
 		"set when Redis is wired to a managed endpoint (ElastiCache, Memorystore, Azure Cache)")
+	autoscalingProvider := flag.String("autoscaling-provider", "",
+		"rendered chart's autoscaling.provider value (\"hpa\" or \"keda\"; KEDA is mandatory at Tier 3 per §17.8.3 line 1285)")
+	minReplicas := flag.Int("min-replicas", 0,
+		"rendered chart's autoscaling.minReplicas value (§17.8.2 SCL-036 burst-absorption floor)")
+	maxSessionsPerReplica := flag.Int("max-sessions-per-replica", 0,
+		"rendered chart's gateway.maxSessionsPerReplica value (§17.8.2 SCL-036 input)")
+	llmProxyAttested := flag.Bool("llm-proxy-extraction-attested", false,
+		"operator attestation that the Phase 13.5 LLM Proxy extraction ratio benchmark passed (§17.8.3 line 1263)")
+	gcPauseAttested := flag.Bool("gc-pause-attested", false,
+		"operator attestation that the Phase 13.5 gateway GC pause P99 below 50 ms benchmark passed (§17.8.3 line 1264)")
+	maxSessionsCalibrated := flag.Bool("max-sessions-per-replica-calibrated", false,
+		"operator attestation that gateway.maxSessionsPerReplica was empirically calibrated (§17.8.3 line 1265)")
 	flag.Parse()
 
 	if *from == "" || *to == "" {
@@ -66,12 +78,18 @@ func main() {
 	gatherer := &tierpromotion.ClusterGatherer{
 		Reader: cl,
 		Options: tierpromotion.GatherOptions{
-			Namespace:                *namespace,
-			ChartValuesTier:          chartT,
-			AuditRetainDays:          *retainDays,
-			SecretEncryptionVerified: *secretEncryption,
-			PostgresExternal:         *postgresExternal,
-			RedisExternal:            *redisExternal,
+			Namespace:                       *namespace,
+			ChartValuesTier:                 chartT,
+			AuditRetainDays:                 *retainDays,
+			SecretEncryptionVerified:        *secretEncryption,
+			PostgresExternal:                *postgresExternal,
+			RedisExternal:                   *redisExternal,
+			AutoscalingProvider:             *autoscalingProvider,
+			MinReplicas:                     *minReplicas,
+			MaxSessionsPerReplica:           *maxSessionsPerReplica,
+			LLMProxyExtractionAttested:      *llmProxyAttested,
+			GatewayGCPauseAttested:          *gcPauseAttested,
+			MaxSessionsPerReplicaCalibrated: *maxSessionsCalibrated,
 		},
 	}
 	report, err := tierpromotion.Validate(context.Background(), gatherer, fromT, toT)

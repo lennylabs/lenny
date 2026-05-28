@@ -84,6 +84,31 @@ type GatherOptions struct {
 	// SecretEncryptionVerified is the operator's attestation that etcd
 	// Secret encryption-at-rest is configured (§4.9).
 	SecretEncryptionVerified bool
+	// AutoscalingProvider is the rendered chart's autoscaling.provider
+	// value (`hpa` or `keda`). §17.8.3 line 1285 makes KEDA a NO-GO
+	// criterion at Tier 3; the operator supplies the value from the
+	// values file they are applying.
+	AutoscalingProvider string
+	// MinReplicas is the rendered chart's autoscaling.minReplicas value.
+	// The SCL-036 burst-absorption check evaluates it against the
+	// §17.8.2 line 950 formula.
+	MinReplicas int
+	// MaxSessionsPerReplica is the rendered chart's
+	// gateway.maxSessionsPerReplica value. The SCL-036 formula uses it
+	// as the sessions_per_replica term.
+	MaxSessionsPerReplica int
+	// LLMProxyExtractionAttested is the operator's attestation that
+	// the Phase 13.5 LLM Proxy extraction-ratio benchmark passed
+	// (§17.8.3 line 1263 / 1282).
+	LLMProxyExtractionAttested bool
+	// GatewayGCPauseAttested is the operator's attestation that the
+	// Phase 13.5 gateway GC pressure benchmark passed (§17.8.3 line
+	// 1264 / 1283).
+	GatewayGCPauseAttested bool
+	// MaxSessionsPerReplicaCalibrated is the operator's attestation
+	// that gateway.maxSessionsPerReplica has been empirically
+	// calibrated (§17.8.3 line 1265 / 1284).
+	MaxSessionsPerReplicaCalibrated bool
 }
 
 // ClusterGatherer implements Gatherer over a sigs.k8s.io/controller-
@@ -103,11 +128,17 @@ type ClusterGatherer struct {
 func (g *ClusterGatherer) Gather(ctx context.Context, from, to Tier) (Inputs, error) {
 	opts := g.Options.withDefaults()
 	in := Inputs{
-		From:                     from,
-		To:                       to,
-		ChartValuesTier:          opts.ChartValuesTier,
-		AuditRetainDays:          opts.AuditRetainDays,
-		SecretEncryptionVerified: opts.SecretEncryptionVerified,
+		From:                            from,
+		To:                              to,
+		ChartValuesTier:                 opts.ChartValuesTier,
+		AuditRetainDays:                 opts.AuditRetainDays,
+		SecretEncryptionVerified:        opts.SecretEncryptionVerified,
+		AutoscalingProvider:             opts.AutoscalingProvider,
+		MinReplicas:                     opts.MinReplicas,
+		MaxSessionsPerReplica:           opts.MaxSessionsPerReplica,
+		LLMProxyExtractionAttested:      opts.LLMProxyExtractionAttested,
+		GatewayGCPauseAttested:          opts.GatewayGCPauseAttested,
+		MaxSessionsPerReplicaCalibrated: opts.MaxSessionsPerReplicaCalibrated,
 	}
 
 	gw, err := readDeploymentReady(ctx, g.Reader, opts.Namespace, opts.GatewayDeployment)

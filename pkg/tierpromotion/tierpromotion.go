@@ -164,6 +164,52 @@ type Inputs struct {
 	// injected CA bundle. The gate uses the same projection the §17.6
 	// preflight Job uses (see pkg/preflight).
 	AdmissionWebhooks []WebhookPosture
+
+	// AutoscalingProvider is the rendered chart's
+	// `autoscaling.provider` value (e.g., "hpa" or "keda"). §17.8.3
+	// line 1285 makes KEDA a NO-GO criterion at Tier 3: a promotion
+	// whose chart renders the Prometheus Adapter path fails the gate.
+	// spec: §17.8.3 line 1285, §17.8.2 Path A header line 963.
+	AutoscalingProvider string
+
+	// MinReplicas is the rendered chart's `autoscaling.minReplicas`
+	// value. The SCL-036 burst-absorption check verifies it satisfies
+	// the §17.8.2 line 950 formula for the active autoscaling provider.
+	// spec: §17.8.2 line 950 (SCL-036).
+	MinReplicas int
+
+	// MaxSessionsPerReplica is the rendered chart's
+	// `gateway.maxSessionsPerReplica` value. The SCL-036 burst-absorption
+	// check uses it as the formula's `sessions_per_replica` term, and
+	// the Phase 13.5 calibration attestation must be set before a
+	// Tier 3 promotion uses the 400-session provisional value.
+	// spec: §17.8.2 line 950 (SCL-036), §17.8.3 line 1284.
+	MaxSessionsPerReplica int
+
+	// LLMProxyExtractionAttested is the operator's attestation that
+	// the Phase 13.5 LLM Proxy extraction ratio benchmark passed (the
+	// `lenny_gateway_llm_proxy_active_connections / lenny_gateway_-
+	// active_sessions` ratio remains sustainably below 0.3:1 at Tier 2
+	// peak load). §17.8.3 line 1282 marks an unattested ratio above
+	// 0.3:1 as a NO-GO for Tier 3 promotion.
+	// spec: §17.8.3 lines 1263, 1273, 1282.
+	LLMProxyExtractionAttested bool
+
+	// GatewayGCPauseAttested is the operator's attestation that the
+	// Phase 13.5 gateway GC pressure benchmark passed
+	// (`lenny_gateway_gc_pause_p99_ms` remained below 50 ms at Tier 2
+	// peak load). §17.8.3 line 1283 marks an unattested GC pause as a
+	// NO-GO for Tier 3 promotion.
+	// spec: §17.8.3 lines 1264, 1274, 1283.
+	GatewayGCPauseAttested bool
+
+	// MaxSessionsPerReplicaCalibrated is the operator's attestation
+	// that the deployed `gateway.maxSessionsPerReplica` value has been
+	// empirically calibrated by the Phase 13.5 benchmark harness, as
+	// opposed to remaining at its §4.1 provisional baseline. §17.8.3
+	// line 1284 makes calibration a NO-GO for Tier 3 promotion.
+	// spec: §17.8.3 lines 1265, 1275, 1284.
+	MaxSessionsPerReplicaCalibrated bool
 }
 
 // WebhookPosture is the inspected state of one deployed
@@ -257,6 +303,9 @@ func ValidateInputs(in Inputs) Report {
 		CheckSecretEncryption(in),
 		CheckAuditRetention(in),
 		CheckAdmissionPosture(in),
+		CheckAutoscalingProvider(in),
+		CheckBurstAbsorption(in),
+		CheckPhase135Attestations(in),
 	}
 }
 
@@ -289,6 +338,9 @@ func skipAll(from, to Tier) Report {
 		"secret-encryption",
 		"audit-retention",
 		"admission-webhook-posture",
+		"autoscaling-provider",
+		"burst-absorption",
+		"phase-13.5-attestations",
 	}
 	sort.Strings(names)
 	out := make(Report, 0, len(names))

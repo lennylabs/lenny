@@ -39,6 +39,41 @@ var idlePodMinutes = func() *prometheus.CounterVec {
 	return c
 }()
 
+// idlePods is the §16.1 lenny_warmpool_idle_pods gauge: instantaneous
+// count of warm pods in the idle (claimable) state, labeled by pool.
+// spec: §17.8.2 line 1101 "First-week monitoring workflow" instructs
+// operators to read this metric as a gauge ("if consistently near zero,
+// minWarm is too low"). Multiple §16.5 alerting rules also join against
+// it (WarmPoolExhausted, WarmPoolLow, PodClaimQueueBacklog). The
+// WarmPoolController is the sole writer and refreshes the gauge on
+// every reconcile; the §16.1 catalog declares it Gauge.
+var idlePods = func() *prometheus.GaugeVec {
+	g, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_warmpool_idle_pods",
+		Help: "Warm pods available in the idle state (instantaneous, per pool).",
+	}, []string{"pool"})
+	if err != nil {
+		panic(fmt.Sprintf("warmpool: build idle-pods gauge: %v", err))
+	}
+	metrics.MustRegister(ctrlmetrics.Registry, g)
+	return g
+}()
+
+// setIdlePods publishes the pool's current idle-pod count to the §16.1
+// lenny_warmpool_idle_pods gauge. Called once per reconcile so a
+// controller restart re-establishes the series.
+// spec: §17.8.2 line 1101.
+func setIdlePods(pool string, count int) {
+	idlePods.WithLabelValues(pool).Set(float64(count))
+}
+
+// forgetIdlePods clears a deleted pool's idle-pods gauge series so a
+// removed pool does not leave a stale `lenny_warmpool_idle_pods` series
+// behind.
+func forgetIdlePods(pool string) {
+	idlePods.DeleteLabelValues(pool)
+}
+
 // idleSample records the idle pod count observed for a pool at a point
 // in time. The meter integrates idle pods over wall-clock time using
 // the count observed at the start of each interval (a left-Riemann

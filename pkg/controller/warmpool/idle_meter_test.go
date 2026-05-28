@@ -84,6 +84,37 @@ func TestIdleMeterForgetRebaselines(t *testing.T) {
 	}
 }
 
+// spec: §16.1 catalog (lenny_warmpool_idle_pods Gauge) and §17.8.2 line
+// 1101 first-week monitoring workflow. setIdlePods must publish the
+// current pool's idle-pod count to the §16.1 gauge.
+func TestSetIdlePodsPublishesGauge_spec_17_8_2_1101(t *testing.T) {
+	const pool = "pool-idle-gauge"
+	t.Cleanup(func() { forgetIdlePods(pool) })
+	setIdlePods(pool, 7)
+	if got := testutil.ToFloat64(idlePods.WithLabelValues(pool)); got != 7 {
+		t.Errorf("idlePods gauge for %q = %v, want 7", pool, got)
+	}
+	// Subsequent reconciles must refresh the gauge to the current count.
+	setIdlePods(pool, 0)
+	if got := testutil.ToFloat64(idlePods.WithLabelValues(pool)); got != 0 {
+		t.Errorf("idlePods gauge for %q after refresh = %v, want 0", pool, got)
+	}
+}
+
+// spec: §16.1 — a removed pool must not leave a stale gauge series
+// behind. forgetIdlePods deletes the labeled series.
+func TestForgetIdlePodsClearsSeries_spec_16_1(t *testing.T) {
+	const pool = "pool-idle-forget"
+	setIdlePods(pool, 4)
+	forgetIdlePods(pool)
+	// Re-creating the labeled series via Set initializes it to a fresh
+	// zero baseline; the previous value of 4 must not survive a forget.
+	if got := testutil.ToFloat64(idlePods.WithLabelValues(pool)); got != 0 {
+		t.Errorf("idlePods gauge for %q survived forget at %v, want 0", pool, got)
+	}
+	forgetIdlePods(pool)
+}
+
 func TestIdleMeterClockSkewNeverDecrements(t *testing.T) {
 	clk := time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC)
 	m := &idleMeter{now: func() time.Time { return clk }}

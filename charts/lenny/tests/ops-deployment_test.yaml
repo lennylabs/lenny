@@ -160,3 +160,25 @@ tests:
           content:
             name: http
             containerPort: 8090
+
+  # spec: §17.8.5 line 1323 — F-17.8.12. The chart MUST reject any
+  # attempt to disable lenny-ops via Helm values: the operability
+  # surface is mandatory in every Lenny installation regardless of tier.
+  - it: rejects ops.enabled=false at chart validation per §17.8.5
+    set:
+      ops:
+        enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.8.5 line 1323: lenny-ops is mandatory in every Lenny installation; ops.enabled: false is rejected. Remove the override or omit the ops.enabled key."
+
+  # spec: §17.8.5 line 1323 — F-17.8.12. ops.enabled is not a supported
+  # Helm value; even an explicit true is rejected so the chart stays
+  # the single source of truth on the §17.8.5 mandatoriness.
+  - it: rejects ops.enabled=true at chart validation per §17.8.5
+    set:
+      ops:
+        enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "§17.8.5 line 1323: ops.enabled is not a supported Helm value (lenny-ops is mandatory); remove the ops.enabled key from your values."

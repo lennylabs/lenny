@@ -202,6 +202,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			r.idle.forget(req.NamespacedName.String())
 			r.fill.forget(req.NamespacedName.String(), req.NamespacedName.Name)
 			forgetPoolWarmingUp(req.NamespacedName.Name)
+			forgetIdlePods(req.NamespacedName.Name)
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -285,6 +286,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		resourceClass = "unspecified"
 	}
 	r.idle.observe(req.NamespacedName.String(), pool.Name, resourceClass, decision.ReadyCount)
+
+	// Publish the §16.1 lenny_warmpool_idle_pods gauge — the
+	// instantaneous idle-pod count keyed by pool. §17.8.2 line 1101's
+	// first-week monitoring workflow reads it directly ("if consistently
+	// near zero, minWarm is too low") and several §16.5 alerts join
+	// against it (WarmPoolExhausted, WarmPoolLow, PodClaimQueueBacklog).
+	// spec: §16.1, §17.8.2 line 1101.
+	setIdlePods(pool.Name, decision.ReadyCount)
 
 	// Track §4.6.1 cold-start fill: record the fill duration once the
 	// pool first reaches minWarm ready pods, and publish the grace-active

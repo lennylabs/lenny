@@ -56,7 +56,7 @@ The pre-promotion gates verify that the source posture is healthy and that the t
          --to tier2 \
          --namespace lenny-system
 
-   The validator checks chart-values diff, deployed-replicas, persistent-storage class, secret-encryption posture, audit-retention, and §13.1/§13.2 admission-webhook coverage. A `FAIL` on any check aborts the promotion; the diagnostic detail identifies the offending resource.
+   The validator checks chart-values diff, deployed-replicas, persistent-storage class, secret-encryption posture, audit-retention, §13.1/§13.2 admission-webhook coverage, the autoscaling provider (§17.8.3 line 1285), the SCL-036 burst-absorption floor (§17.8.2 line 950), and the Phase 13.5 attestations required by §17.8.3 (LLM Proxy extraction ratio, gateway GC pause, `maxSessionsPerReplica` calibration). A `FAIL` on any check aborts the promotion; the diagnostic detail identifies the offending resource.
 
 3. Take a fresh backup via `POST /v1/admin/backups` (see [backup-and-restore.md](backup-and-restore.md)). Record the backup id; the promotion procedure rolls back to this snapshot on a Phase 4 failure.
 
@@ -123,4 +123,19 @@ If a post-check fails, roll back to the pre-promotion release.
 
 The promotion is a one-way operation in the sense that tier 1's single-tenant defaults do not satisfy tier 2's multi-tenant invariants. A 2→1 demotion is supported by the same CLI for incident recovery but requires acknowledgment of the data-loss implications (`--acknowledge-demotion`).
 
-Tier 3 promotion additionally enables the §10.3 mTLS PKI, the §11.7 SIEM forwarder, and the §25.11 backup-retention extension to 90 days. Run `tier-promotion validate --from tier2 --to tier3` to enumerate the additional gates.
+Tier 3 promotion additionally enables the §10.3 mTLS PKI, the §11.7 SIEM forwarder, and the §25.11 backup-retention extension to 90 days. The §17.8.3 line 1285 NO-GO criterion makes KEDA mandatory at Tier 3; the validator rejects a chart that still renders `autoscaling.provider: hpa`. Before invoking the Tier 3 gate, run the Phase 13.5 benchmark harness and attest each result on the CLI:
+
+    lenny-tier-promote \
+      --from tier2 --to tier3 \
+      --namespace lenny-system \
+      --chart-values-tier tier3 \
+      --audit-retain-days 90 \
+      --secret-encryption-verified \
+      --autoscaling-provider keda \
+      --min-replicas 5 \
+      --max-sessions-per-replica 400 \
+      --llm-proxy-extraction-attested \
+      --gc-pause-attested \
+      --max-sessions-per-replica-calibrated
+
+The three attestation flags correspond one-to-one with the §17.8.3 Step 1 benchmarks: `--llm-proxy-extraction-attested` (line 1263), `--gc-pause-attested` (line 1264), and `--max-sessions-per-replica-calibrated` (line 1265).

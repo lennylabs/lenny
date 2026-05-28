@@ -22,19 +22,27 @@ import (
 
 // goodInputs returns an Inputs fixture that passes every check for a
 // Tier 2 → Tier 3 promotion. Test cases override individual fields to
-// stage targeted failures.
+// stage targeted failures. The §17.8.3 Phase 13.5 attestations are all
+// set; the §17.8.2 SCL-036 inputs match the Tier 3 KEDA preset
+// (minReplicas: 5 via the §17.8.2 line 975 carve-out).
 func goodInputs() tierpromotion.Inputs {
 	return tierpromotion.Inputs{
-		From:                          tierpromotion.Tier2,
-		To:                            tierpromotion.Tier3,
-		ChartValuesTier:               tierpromotion.Tier3,
-		GatewayReplicas:               5,
-		ControllerReplicas:            3,
-		OpsReplicas:                   3,
-		PostgresUsesPersistentStorage: true,
-		RedisUsesPersistentStorage:    true,
-		SecretEncryptionVerified:      true,
-		AuditRetainDays:               90,
+		From:                            tierpromotion.Tier2,
+		To:                              tierpromotion.Tier3,
+		ChartValuesTier:                 tierpromotion.Tier3,
+		GatewayReplicas:                 5,
+		ControllerReplicas:              3,
+		OpsReplicas:                     3,
+		PostgresUsesPersistentStorage:   true,
+		RedisUsesPersistentStorage:      true,
+		SecretEncryptionVerified:        true,
+		AuditRetainDays:                 90,
+		AutoscalingProvider:             "keda",
+		MinReplicas:                     5,
+		MaxSessionsPerReplica:           400,
+		LLMProxyExtractionAttested:      true,
+		GatewayGCPauseAttested:          true,
+		MaxSessionsPerReplicaCalibrated: true,
 		AdmissionWebhooks: []tierpromotion.WebhookPosture{
 			{Name: "lenny-label-immutability", FailurePolicy: "Fail", HasCABundle: true},
 			{Name: "lenny-pod-security", FailurePolicy: "Fail", HasCABundle: true},
@@ -79,8 +87,8 @@ func TestValidateInputsPassesGoodFixture(t *testing.T) {
 	if !report.Passed() {
 		t.Errorf("good fixture failed the gate: %v", report.Failures())
 	}
-	if len(report) != 6 {
-		t.Errorf("report has %d checks; want 6", len(report))
+	if len(report) != 9 {
+		t.Errorf("report has %d checks; want 9", len(report))
 	}
 }
 
@@ -225,13 +233,16 @@ func TestValidateInputsTier1ToTier2SkipsPostTier1ChecksOnlyWhenAppropriate(t *te
 	// encryption to be set; this asserts the SKIP carve-out only
 	// applies to a Tier 1 target.
 	in := tierpromotion.Inputs{
-		From:               tierpromotion.Tier1,
-		To:                 tierpromotion.Tier2,
-		ChartValuesTier:    tierpromotion.Tier2,
-		GatewayReplicas:    3,
-		ControllerReplicas: 2,
-		OpsReplicas:        2,
-		AuditRetainDays:    30,
+		From:                  tierpromotion.Tier1,
+		To:                    tierpromotion.Tier2,
+		ChartValuesTier:       tierpromotion.Tier2,
+		GatewayReplicas:       3,
+		ControllerReplicas:    2,
+		OpsReplicas:           2,
+		AuditRetainDays:       30,
+		AutoscalingProvider:   "keda",
+		MinReplicas:           3,
+		MaxSessionsPerReplica: 200,
 		AdmissionWebhooks: []tierpromotion.WebhookPosture{
 			{Name: "lenny-pod-security", FailurePolicy: "Fail", HasCABundle: true},
 		},
@@ -243,6 +254,232 @@ func TestValidateInputsTier1ToTier2SkipsPostTier1ChecksOnlyWhenAppropriate(t *te
 	}
 	failuresByName(t, report, "persistent-storage")
 	failuresByName(t, report, "secret-encryption")
+}
+
+// spec: §17.8.3 line 1285 — F-17.8.10. The Tier 3 gate must reject a
+// deployment whose chart still carries autoscaling.provider: hpa.
+func TestValidateInputsRejectsHPAProviderAtTier3_spec_17_8_3_1285(t *testing.T) {
+	in := goodInputs()
+	in.AutoscalingProvider = "hpa"
+	report := tierpromotion.ValidateInputs(in)
+	failed := failuresByName(t, report, "autoscaling-provider")
+	if !strings.Contains(failed.Detail, "KEDA") && !strings.Contains(failed.Detail, "keda") {
+		t.Errorf("autoscaling-provider detail %q does not name KEDA", failed.Detail)
+	}
+	if !strings.Contains(failed.Detail, "hpa") {
+		t.Errorf("autoscaling-provider detail %q does not name the offending provider", failed.Detail)
+	}
+}
+
+// spec: §17.8.3 line 1285 — F-17.8.10. An unset autoscaling.provider
+// fails the Tier 3 gate (the rendered chart did not commit to a path).
+func TestValidateInputsRejectsUnsetProviderAtTier3_spec_17_8_3_1285(t *testing.T) {
+	in := goodInputs()
+	in.AutoscalingProvider = ""
+	report := tierpromotion.ValidateInputs(in)
+	failed := failuresByName(t, report, "autoscaling-provider")
+	if !strings.Contains(failed.Detail, "unset") {
+		t.Errorf("autoscaling-provider detail %q does not flag the unset value", failed.Detail)
+	}
+}
+
+// spec: §17.8.2 line 963 — F-17.8.10. KEDA is optional at Tier 1 / 2,
+// so the autoscaling-provider check SKIPs when the target is not Tier 3.
+func TestValidateInputsSkipsProviderCheckBelowTier3_spec_17_8_2_963(t *testing.T) {
+	in := tierpromotion.Inputs{
+		From:                  tierpromotion.Tier1,
+		To:                    tierpromotion.Tier2,
+		ChartValuesTier:       tierpromotion.Tier2,
+		GatewayReplicas:       3,
+		ControllerReplicas:    2,
+		OpsReplicas:           2,
+		AuditRetainDays:       30,
+		AutoscalingProvider:   "hpa", // permitted at Tier 1 / 2
+		MinReplicas:           9,
+		MaxSessionsPerReplica: 200,
+		PostgresUsesPersistentStorage: true,
+		RedisUsesPersistentStorage:    true,
+		SecretEncryptionVerified:      true,
+		AdmissionWebhooks: []tierpromotion.WebhookPosture{
+			{Name: "lenny-pod-security", FailurePolicy: "Fail", HasCABundle: true},
+		},
+	}
+	report := tierpromotion.ValidateInputs(in)
+	found := false
+	for _, c := range report {
+		if c.Name == "autoscaling-provider" {
+			found = true
+			if c.Status != tierpromotion.StatusSkip {
+				t.Errorf("autoscaling-provider at Tier 2 target = %s, want SKIP", c.Status)
+			}
+		}
+	}
+	if !found {
+		t.Error("report missing autoscaling-provider entry")
+	}
+}
+
+// spec: §17.8.3 line 1282 — F-17.8.11. The Tier 3 gate must reject a
+// promotion when the LLM Proxy extraction-ratio benchmark has not been
+// attested.
+func TestValidateInputsRejectsUnattestedLLMProxy_spec_17_8_3_1282(t *testing.T) {
+	in := goodInputs()
+	in.LLMProxyExtractionAttested = false
+	report := tierpromotion.ValidateInputs(in)
+	failed := failuresByName(t, report, "phase-13.5-attestations")
+	if !strings.Contains(failed.Detail, "LLM Proxy") {
+		t.Errorf("phase-13.5-attestations detail %q does not name LLM Proxy", failed.Detail)
+	}
+}
+
+// spec: §17.8.3 line 1283 — F-17.8.11. The Tier 3 gate must reject a
+// promotion when the gateway GC pause benchmark has not been attested.
+func TestValidateInputsRejectsUnattestedGCPause_spec_17_8_3_1283(t *testing.T) {
+	in := goodInputs()
+	in.GatewayGCPauseAttested = false
+	report := tierpromotion.ValidateInputs(in)
+	failed := failuresByName(t, report, "phase-13.5-attestations")
+	if !strings.Contains(failed.Detail, "GC pause") {
+		t.Errorf("phase-13.5-attestations detail %q does not name GC pause", failed.Detail)
+	}
+}
+
+// spec: §17.8.3 line 1284 — F-17.8.11. The Tier 3 gate must reject a
+// promotion when the maxSessionsPerReplica calibration has not been
+// attested (i.e., the provisional value is still in place).
+func TestValidateInputsRejectsUncalibratedMaxSessions_spec_17_8_3_1284(t *testing.T) {
+	in := goodInputs()
+	in.MaxSessionsPerReplicaCalibrated = false
+	report := tierpromotion.ValidateInputs(in)
+	failed := failuresByName(t, report, "phase-13.5-attestations")
+	if !strings.Contains(failed.Detail, "maxSessionsPerReplica") {
+		t.Errorf("phase-13.5-attestations detail %q does not name maxSessionsPerReplica", failed.Detail)
+	}
+}
+
+// spec: §17.8.3 Phase 13.5 — F-17.8.11. Tier 2 promotions do not gate
+// on Phase 13.5 attestations; the check SKIPs.
+func TestValidateInputsSkipsPhase135BelowTier3_spec_17_8_3(t *testing.T) {
+	in := tierpromotion.Inputs{
+		From:                  tierpromotion.Tier1,
+		To:                    tierpromotion.Tier2,
+		ChartValuesTier:       tierpromotion.Tier2,
+		GatewayReplicas:       3,
+		ControllerReplicas:    2,
+		OpsReplicas:           2,
+		AuditRetainDays:       30,
+		AutoscalingProvider:   "keda",
+		MinReplicas:           3,
+		MaxSessionsPerReplica: 200,
+		PostgresUsesPersistentStorage: true,
+		RedisUsesPersistentStorage:    true,
+		SecretEncryptionVerified:      true,
+		AdmissionWebhooks: []tierpromotion.WebhookPosture{
+			{Name: "lenny-pod-security", FailurePolicy: "Fail", HasCABundle: true},
+		},
+	}
+	report := tierpromotion.ValidateInputs(in)
+	for _, c := range report {
+		if c.Name == "phase-13.5-attestations" && c.Status != tierpromotion.StatusSkip {
+			t.Errorf("phase-13.5-attestations at Tier 2 target = %s, want SKIP", c.Status)
+		}
+	}
+}
+
+// spec: §17.8.2 line 950 (SCL-036) — F-17.8.13. The KEDA path's
+// pipeline-lag is 20s; raising maxSessionsPerReplica without raising
+// minReplicas at Tier 3 must trip the burst-absorption check below the
+// §17.8.2 line 975 carve-out of 5.
+func TestValidateInputsRejectsKEDAMinReplicasBelowFloor_spec_17_8_2_SCL_036(t *testing.T) {
+	in := goodInputs()
+	// Tier 3 / KEDA / maxSessionsPerReplica=400: raw floor = ceil(200*20/400) = 10.
+	// The §17.8.2 line 975 carve-out drops the required floor to 5.
+	// minReplicas=4 sits below that carve-out and must fail.
+	in.MinReplicas = 4
+	report := tierpromotion.ValidateInputs(in)
+	failed := failuresByName(t, report, "burst-absorption")
+	if !strings.Contains(failed.Detail, "minReplicas=4") {
+		t.Errorf("burst-absorption detail %q does not name the offending minReplicas", failed.Detail)
+	}
+	if !strings.Contains(failed.Detail, "carve-out") {
+		t.Errorf("burst-absorption detail %q does not flag the §17.8.2 line 975 carve-out", failed.Detail)
+	}
+}
+
+// spec: §17.8.2 line 975 (KEDA Tier 3 carve-out) — F-17.8.13. The
+// carve-out lets Tier 3 KEDA deployments set minReplicas=5 even though
+// the raw SCL-036 floor is 10.
+func TestValidateInputsAcceptsTier3KEDACarveOut_spec_17_8_2_975(t *testing.T) {
+	in := goodInputs()
+	in.MinReplicas = 5
+	report := tierpromotion.ValidateInputs(in)
+	for _, c := range report {
+		if c.Name == "burst-absorption" && c.Status == tierpromotion.StatusFail {
+			t.Errorf("Tier 3 KEDA minReplicas=5 should pass the carve-out, got FAIL: %s", c.Detail)
+		}
+	}
+}
+
+// spec: §17.8.2 line 989-991 (HPA Tier 3 non-viable) — F-17.8.13. The
+// Prometheus Adapter path at Tier 3 needs minReplicas=30 (the raw
+// SCL-036 floor with pipeline_lag=60s and maxSessionsPerReplica=400);
+// no carve-out applies, so a deployment that left the HPA path on with
+// minReplicas=5 fails the burst-absorption check. (The
+// autoscaling-provider check also fails separately at Tier 3.)
+func TestValidateInputsRejectsHPATier3UnderfloorMinReplicas_spec_17_8_2_991(t *testing.T) {
+	in := goodInputs()
+	in.AutoscalingProvider = "hpa"
+	in.MinReplicas = 5
+	report := tierpromotion.ValidateInputs(in)
+	failed := failuresByName(t, report, "burst-absorption")
+	if !strings.Contains(failed.Detail, "minReplicas=5") {
+		t.Errorf("burst-absorption detail %q does not name the offending minReplicas", failed.Detail)
+	}
+	if !strings.Contains(failed.Detail, "30") {
+		t.Errorf("burst-absorption detail %q does not name the SCL-036 floor 30 for HPA Tier 3", failed.Detail)
+	}
+}
+
+// spec: §17.8.2 line 950 (SCL-036) — F-17.8.13. A zero
+// maxSessionsPerReplica is a malformed deployment; the gate refuses to
+// run the formula and reports the missing input.
+func TestValidateInputsRejectsZeroMaxSessions_spec_17_8_2_950(t *testing.T) {
+	in := goodInputs()
+	in.MaxSessionsPerReplica = 0
+	report := tierpromotion.ValidateInputs(in)
+	failed := failuresByName(t, report, "burst-absorption")
+	if !strings.Contains(failed.Detail, "maxSessionsPerReplica") {
+		t.Errorf("burst-absorption detail %q does not name the missing input", failed.Detail)
+	}
+}
+
+// spec: §17.8.2 line 988 — F-17.8.13. The Prometheus Adapter path at
+// Tier 2 needs minReplicas >= ceil(30*60/200) = 9. The gate honors the
+// HPA-path lag of 60s when the rendered chart selects provider=hpa.
+func TestValidateInputsHPAPathUsesProperLag_spec_17_8_2_988(t *testing.T) {
+	in := tierpromotion.Inputs{
+		From:                          tierpromotion.Tier1,
+		To:                            tierpromotion.Tier2,
+		ChartValuesTier:               tierpromotion.Tier2,
+		GatewayReplicas:               3,
+		ControllerReplicas:            2,
+		OpsReplicas:                   2,
+		AuditRetainDays:               30,
+		AutoscalingProvider:           "hpa",
+		MinReplicas:                   3, // below the HPA Tier 2 floor of 9
+		MaxSessionsPerReplica:         200,
+		PostgresUsesPersistentStorage: true,
+		RedisUsesPersistentStorage:    true,
+		SecretEncryptionVerified:      true,
+		AdmissionWebhooks: []tierpromotion.WebhookPosture{
+			{Name: "lenny-pod-security", FailurePolicy: "Fail", HasCABundle: true},
+		},
+	}
+	report := tierpromotion.ValidateInputs(in)
+	failed := failuresByName(t, report, "burst-absorption")
+	if !strings.Contains(failed.Detail, "9") {
+		t.Errorf("burst-absorption detail %q does not name the HPA Tier 2 floor 9", failed.Detail)
+	}
 }
 
 func TestValidateRejectsInvalidTransition(t *testing.T) {
@@ -307,9 +544,15 @@ func TestClusterGathererReadsCanonicalDeploymentsAndWebhooks(t *testing.T) {
 	g := &tierpromotion.ClusterGatherer{
 		Reader: cl,
 		Options: tierpromotion.GatherOptions{
-			ChartValuesTier:          tierpromotion.Tier3,
-			AuditRetainDays:          90,
-			SecretEncryptionVerified: true,
+			ChartValuesTier:                 tierpromotion.Tier3,
+			AuditRetainDays:                 90,
+			SecretEncryptionVerified:        true,
+			AutoscalingProvider:             "keda",
+			MinReplicas:                     5,
+			MaxSessionsPerReplica:           400,
+			LLMProxyExtractionAttested:      true,
+			GatewayGCPauseAttested:          true,
+			MaxSessionsPerReplicaCalibrated: true,
 		},
 	}
 	in, err := g.Gather(context.Background(), tierpromotion.Tier2, tierpromotion.Tier3)

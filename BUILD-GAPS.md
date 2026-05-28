@@ -31043,7 +31043,7 @@ Evidence:
 
 ---
 
-### - [ ] F-17.8.10 — 8-01 — Tier-promotion gate does not enforce KEDA mandatory for Tier 3 [Low] — OPEN
+### - [x] F-17.8.10 — 8-01 — Tier-promotion gate does not enforce KEDA mandatory for Tier 3 [Low] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-17.8.11 — Both concern missing §17.8.3 tier-promotion gate checks, but F-17.8.10 is specifically the KEDA-mandatory check while F-17.8.11 covers the LLM-Proxy extraction and GC-pressure checks; different specific checks within the same gate.
 
@@ -31053,7 +31053,9 @@ Evidence:
 - `/Users/joan/projects/lenny/pkg/tierpromotion/checks.go` (six check functions; none reference KEDA)
 - `/Users/joan/projects/lenny/pkg/tierpromotion/tierpromotion.go:249–261` (ValidateInputs)
 
-### - [ ] F-17.8.11 — 8-02 — Tier-promotion gate does not enforce LLM-Proxy extraction or GC pressure checks [Low] — OPEN
+- **Resolution:** Added `CheckAutoscalingProvider` in `pkg/tierpromotion/phase135.go` and wired through `Inputs.AutoscalingProvider`, `GatherOptions.AutoscalingProvider`, and the `--autoscaling-provider` flag on `lenny-tier-promote`. The check SKIPs for Tier 1 / Tier 2 (KEDA optional per §17.8.2 line 963) and rejects `provider: hpa` / unset values at Tier 3.
+
+### - [x] F-17.8.11 — 8-02 — Tier-promotion gate does not enforce LLM-Proxy extraction or GC pressure checks [Low] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-17.8.10 — Both concern missing §17.8.3 tier-promotion gate checks, but F-17.8.10 is specifically the KEDA-mandatory check while F-17.8.11 covers the LLM-Proxy extraction and GC-pressure checks; different specific checks within the same gate.
 
@@ -31063,7 +31065,9 @@ Evidence:
 - `/Users/joan/projects/lenny/pkg/tierpromotion/checks.go` (no Prometheus reader, no `maxSessionsPerReplica` field on `Inputs`)
 - `/Users/joan/projects/lenny/pkg/tierpromotion/tierpromotion.go:116–167` (Inputs)
 
-### - [ ] F-17.8.12 — 8-03 — `lenny-ops` mandatoriness is "by absence", not by chart-validation rejection [Low] — OPEN
+- **Resolution:** Added `CheckPhase135Attestations` in `pkg/tierpromotion/phase135.go` and three operator-attested booleans on `Inputs` (`LLMProxyExtractionAttested`, `GatewayGCPauseAttested`, `MaxSessionsPerReplicaCalibrated`) wired through the gatherer and the CLI flags `--llm-proxy-extraction-attested`, `--gc-pause-attested`, `--max-sessions-per-replica-calibrated`. The Tier 3 gate refuses to pass without all three attestations; lower tiers SKIP.
+
+### - [x] F-17.8.12 — 8-03 — `lenny-ops` mandatoriness is "by absence", not by chart-validation rejection [Low] — CLOSED
 
 §17.8.5 line 1323 states: "Attempts to disable `lenny-ops` via Helm values are rejected at chart validation." The chart has no `ops.enabled` key and the `templates/ops-deployment.yaml` is rendered unconditionally (no `{{- if .Values.ops.* }}` wrapper). A user who sets `ops.enabled: false` in their values file gets silent acceptance — the chart still renders ops, but the user's intent is neither warned about nor rejected. A literal reading of §17.8.5 calls for an explicit `fail` in a chart template (e.g., `if (hasKey .Values.ops "enabled") and (not .Values.ops.enabled) then fail …`) so operators are not led to believe they have toggled the service off.
 
@@ -31071,7 +31075,9 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/templates/ops-deployment.yaml` (top of file, no enabled gate)
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:748–774` (no `ops.enabled` key)
 
-### - [ ] F-17.8.13 — 8-04 — SCL-036 minReplicas burst-absorption formula is documented, not enforced [Low] — OPEN
+- **Resolution:** Added a top-of-template `fail` guard in `charts/lenny/templates/ops-deployment.yaml` that detects `hasKey .Values.ops "enabled"` and rejects both `false` (mandatoriness violation) and `true` (unsupported key). Helm-unittest cases in `tests/ops-deployment_test.yaml` cover both rejections.
+
+### - [x] F-17.8.13 — 8-04 — SCL-036 minReplicas burst-absorption formula is documented, not enforced [Low] — CLOSED
 
 §17.8.2 line 950 names "SCL-036" and gives the formula `minReplicas >= ceil(burst_arrival_rate * pipeline_lag_seconds / sessions_per_replica)`. Each tier preset hard-codes a number into `autoscaling.minReplicas` derived from this formula in a comment (`presets/values-tier1.yaml:36–43`, `tier2.yaml:36–44`, `tier3.yaml:35–48`). Nothing in code or chart validation re-derives the value or refuses an inconsistent `(minReplicas, maxSessionsPerReplica)` pairing. A user who lowers `gateway.maxSessionsPerReplica` to 25 at Tier 3 without raising `autoscaling.minReplicas` from 5 will silently underprovision; no preflight check flags it.
 
@@ -31079,19 +31085,25 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/presets/values-tier{1,2,3}.yaml`
 - `/Users/joan/projects/lenny/charts/lenny/templates/autoscaling-gateway.yaml`
 
-### - [ ] F-17.8.14 — 8-05 — First-week monitoring metrics referenced by §17.8.2 are partially unemitted [Low] — OPEN
+- **Resolution:** Added `CheckBurstAbsorption` in `pkg/tierpromotion/phase135.go` and two new fields (`Inputs.MinReplicas`, `Inputs.MaxSessionsPerReplica`) wired through the gatherer and the CLI flags `--min-replicas`, `--max-sessions-per-replica`. The check evaluates `ceil(burst * pipeline_lag / sessions_per_replica)` for the active provider (KEDA: 20s lag, HPA: 60s lag) and honors the §17.8.2 line 975 Tier 3 KEDA carve-out (minReplicas=5 when the raw floor is 10).
+
+### - [x] F-17.8.14 — 8-05 — First-week monitoring metrics referenced by §17.8.2 are partially unemitted [Low] — CLOSED
 
 §17.8.2 "First-week monitoring workflow" (lines 1099–1106) instructs operators to monitor `lenny_warmpool_idle_pods`, `WarmPoolLow`, `lenny_warmpool_idle_pod_minutes`, and `lenny_pod_claim_queue_wait_seconds`. `WarmPoolLow` and the histograms `lenny_pod_claim_queue_wait_seconds` and `lenny_warmpool_idle_pod_minutes` are in the catalog and emitted; `lenny_warmpool_idle_pods` does not appear in the metrics catalog as a distinct name (`grep -n "lenny_warmpool_idle_pods" pkg/observability` returns no exact match). The closest analogue, `lenny_warmpool_idle_pod_minutes`, is a cumulative counter, not the instantaneous gauge the spec implies. The instruction "if consistently near zero, `minWarm` is too low" reads naturally as a gauge query.
 
 Evidence:
 - `/Users/joan/projects/lenny/pkg/observability/metrics/catalog.go:170–185`
 
-### - [ ] F-17.8.15 — 8-06 — Recommendations catalog does not cover §17.8.2 first-week tuning advice [Low] — OPEN
+- **Resolution:** Added the `lenny_warmpool_idle_pods` instantaneous gauge in `pkg/controller/warmpool/idle_meter.go` (registered against the controller-runtime registry) and wired `setIdlePods(pool, decision.ReadyCount)` into the warm-pool reconcile loop with a matching `forgetIdlePods` on pool deletion. The §16.1 catalog entry already declared the metric; it now has a live producer.
+
+### - [x] F-17.8.15 — 8-06 — Recommendations catalog does not cover §17.8.2 first-week tuning advice [Low] — CLOSED
 
 `pkg/recommendations/rules/rules.go:127–183` ships six rules (`WarmPoolUndersized`, `CredentialPoolUndersized`, `GatewayScalingPressure`, `ResourceLimitsMemoryPressure`, `RetentionTuningStoragePressure`, `QuotaAdjustmentRejections`). The §17.8.2 first-week heuristics — "idle pod-minutes per hour exceeds `minWarm × 30` → reduce minWarm by 25%" (oversized pool) and "P99 claim latency exceeds 2s → increase minWarm or investigate startup" — have no corresponding rule. The recommendation surface satisfies the §25.3 substrate contract but does not yet implement the §17.8.2 tuning callouts.
 
 Evidence:
 - `/Users/joan/projects/lenny/pkg/recommendations/rules/rules.go:127–183`
+
+- **Resolution:** Added `WarmPoolOversized` and `WarmPoolClaimLatencyHigh` rules to `pkg/recommendations/rules/rules.go` Catalog with PromQL conditions matching the §17.8.2 line 1103 / 1104 heuristics; both validate as well-formed and cite `§17.8.2 line 1103` / `§17.8.2 line 1104`.
 
 ---
 

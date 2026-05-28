@@ -84,3 +84,28 @@ func TestCatalogRulesAllValidate(t *testing.T) {
 		seen[r.Name] = true
 	}
 }
+
+// spec: §17.8.2 lines 1103-1104 — the first-week monitoring workflow
+// names two tuning heuristics that the recommendations catalog must
+// cover.
+func TestCatalogIncludesFirstWeekTuningRules_spec_17_8_2(t *testing.T) {
+	cat := rules.Catalog()
+	required := map[string]bool{
+		"WarmPoolOversized":        false,
+		"WarmPoolClaimLatencyHigh": false,
+	}
+	for _, r := range cat {
+		if _, ok := required[r.Name]; ok {
+			required[r.Name] = true
+			if r.Category != rules.CategoryWarmPoolSizing {
+				t.Errorf("%s: category = %q, want %q",
+					r.Name, r.Category, rules.CategoryWarmPoolSizing)
+			}
+		}
+	}
+	for name, present := range required {
+		if !present {
+			t.Errorf("catalog missing §17.8.2 first-week tuning rule %q", name)
+		}
+	}
+}
