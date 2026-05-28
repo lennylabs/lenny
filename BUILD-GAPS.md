@@ -7680,7 +7680,7 @@ Implementation:
 
 Consequence: the spec's "long-running trees with many completed branches do not accumulate unbounded memory" guarantee depends on M-2 and this offload mechanism; both are absent.
 
-### - [ ] F-8.2.14 — Delegation tracing (§8.2 line 52 "automatic `tracingContext` injection") is implemented in memory but not persisted on Postgres-backed sessions [Medium] — OPEN
+### - [x] F-8.2.14 — Delegation tracing (§8.2 line 52 "automatic `tracingContext` injection") is implemented in memory but not persisted on Postgres-backed sessions [Medium] — CLOSED
 
 Spec §8.2 line 52 says the gateway automatically attaches the parent's registered `tracingContext` to the child's delegation lease, and §8.3 line 286 (referenced from §8.2) requires the child runtime to receive it via the adapter manifest.
 
@@ -7694,7 +7694,9 @@ Implementation:
 
 Consequence: in production (Postgres-backed) the parent's `tracingContext` is dropped on persistence. A pod restart that triggers a session reload from Postgres returns a child with empty `tracingContext`, so the child runtime cannot stitch its traces into the parent's trace tree. The in-memory `memstore` (used in tests) preserves it, so the unit tests pass while production behavior diverges.
 
-### - [ ] F-8.2.15 — `cascadeOnFailure` is declared on the Session struct but not stored on Postgres rows [Medium] — OPEN
+**Resolution (this batch):** Added migration `0090_sessions_tracing_and_cascade` (JSONB `tracing_context` column on `sessions`); extended `pkg/gateway/sessionstore/pgstore/pgstore.go` `selectList`, INSERT, UPDATE, and `scanSession` to round-trip the column via new `tracingContextArg` / `decodeTracingContext` helpers. A nil/empty map stores SQL NULL and reads back as nil so the "no context registered" case is preserved. The adapter-manifest delivery leg remains tracked separately under the §15.5 NegotiateVersion handshake.
+
+### - [x] F-8.2.15 — `cascadeOnFailure` is declared on the Session struct but not stored on Postgres rows [Medium] — CLOSED
 
 Spec §8.2 line 110 (referencing §8.10) says the gateway reconstructs virtual children on parent failure from a task tree in SessionStore that "records all child session IDs, states, and pending results." The `cascadeOnFailure` lease field (§8.3 line 266) drives whether a parent's terminal state cascades to its children.
 
@@ -7704,6 +7706,8 @@ Implementation:
 - No migration adds the column.
 
 Consequence: the §8.10 cascade behavior cannot be tuned per-tree on Postgres-backed deployments; a freshly-loaded session always carries the zero value.
+
+**Resolution (this batch):** Same migration `0090_sessions_tracing_and_cascade` adds the `cascade_on_failure` TEXT column with a CHECK constraint enumerating `{'', cancel_all, await_completion, detach}` (empty preserves the in-Go "empty resolves to §8.10 default `cancel_all`" convention). pgstore writes `string(sess.CascadeOnFailure)` on INSERT/UPDATE and casts back to `session.CascadePolicy` on scan. Tier-2 tests cover round-trip with `await_completion`, Update to `detach`, and absent-resolves-to-cancel_all via `CascadePolicy.Resolve()`.
 
 ### - [x] F-8.2.16 — Lineage construction walks the session chain at every `delegate_task` call without a depth cap or cycle guard against a pathological store — `Info`/`Partial` [Medium] — CLOSED
 

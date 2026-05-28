@@ -418,6 +418,137 @@ func TestSessionStoreContract(t *testing.T) {
 			t.Errorf("LastSuccessfulCheckpointAt = %v, want zero", got.LastSuccessfulCheckpointAt)
 		}
 	})
+
+	// spec: §8.2 line 52 / §8.3 line 286 — the gateway copies the
+	// parent's registered tracingContext onto every delegated child so
+	// child traces stitch into the parent's trace tree. A pod restart
+	// that triggers a Postgres reload must round-trip the context.
+	// F-8.2.14.
+	t.Run("tracing_context round-trip through pgstore F_8_2_14", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		want := map[string]string{
+			"traceparent": "00-1234567890abcdef1234567890abcdef-1234567890abcdef-01",
+			"tracestate":  "acme=stitched",
+		}
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			TracingContext: want,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !reflect.DeepEqual(got.TracingContext, want) {
+			t.Errorf("TracingContext = %#v, want %#v", got.TracingContext, want)
+		}
+
+		// Update writes a new key and a missing key drops on read.
+		next := map[string]string{"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"}
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.TracingContext = next
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if !reflect.DeepEqual(updated.TracingContext, next) {
+			t.Errorf("Update TracingContext = %#v, want %#v", updated.TracingContext, next)
+		}
+		got, err = store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get reload: %v", err)
+		}
+		if !reflect.DeepEqual(got.TracingContext, next) {
+			t.Errorf("reload TracingContext = %#v, want %#v", got.TracingContext, next)
+		}
+	})
+
+	// spec: §8.2 line 52 — a session registered with no tracingContext
+	// reads back as a nil map (the "no context registered" case). The
+	// pgstore stores SQL NULL for that case. F-8.2.14.
+	t.Run("tracing_context absent reads as nil F_8_2_14", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.TracingContext != nil {
+			t.Errorf("TracingContext = %#v, want nil", got.TracingContext)
+		}
+	})
+
+	// spec: §8.3 line 266 / §8.10 — cascadeOnFailure persists per-tree
+	// so a Postgres-backed reload returns the same policy the lease
+	// declared. F-8.2.15.
+	t.Run("cascade_on_failure round-trip through pgstore F_8_2_15", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			CascadeOnFailure: session.CascadeAwaitCompletion,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CascadeOnFailure != session.CascadeAwaitCompletion {
+			t.Errorf("CascadeOnFailure = %q, want %q", got.CascadeOnFailure, session.CascadeAwaitCompletion)
+		}
+
+		// Update flips to `detach`.
+		updated, err := store.Update(ctx, tenant, id, func(s *sessionstore.Session) error {
+			s.CascadeOnFailure = session.CascadeDetach
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if updated.CascadeOnFailure != session.CascadeDetach {
+			t.Errorf("Update CascadeOnFailure = %q, want %q", updated.CascadeOnFailure, session.CascadeDetach)
+		}
+		got, err = store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get reload: %v", err)
+		}
+		if got.CascadeOnFailure != session.CascadeDetach {
+			t.Errorf("reload CascadeOnFailure = %q, want %q", got.CascadeOnFailure, session.CascadeDetach)
+		}
+	})
+
+	// spec: §8.10 — an unset cascadeOnFailure reads back as the empty
+	// CascadePolicy so the in-Go convention "empty resolves to default"
+	// (cancel_all per session.DefaultCascadePolicy) keeps applying after
+	// a Postgres reload. F-8.2.15.
+	t.Run("cascade_on_failure absent resolves to default F_8_2_15", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CascadeOnFailure != "" {
+			t.Errorf("CascadeOnFailure = %q, want empty", got.CascadeOnFailure)
+		}
+		if got.CascadeOnFailure.Resolve() != session.CascadeCancelAll {
+			t.Errorf("CascadeOnFailure.Resolve() = %q, want %q", got.CascadeOnFailure.Resolve(), session.CascadeCancelAll)
+		}
+	})
 }
 
 // insertMessage writes one session_messages row under the tenant

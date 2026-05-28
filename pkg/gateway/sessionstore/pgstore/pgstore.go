@@ -60,9 +60,12 @@ var _ sessionstore.Store = (*Store)(nil)
 // line 75 sessionIsolationLevel halves added in migration 0084.
 // The metadata column is the §7.1 line 6 client-supplied
 // CreateSession(..., metadata) payload added in migration 0086
-// (F-7.3.20). The trailing two columns are the §7.3
+// (F-7.3.20). The next two columns are the §7.3
 // retry_policy + last_checkpoint_workspace_bytes pair added in
-// migration 0087 (F-7.3.1 / F-7.3.21).
+// migration 0087 (F-7.3.1 / F-7.3.21). The trailing two columns are
+// the §8.2 line 52 delegation tracing_context and the §8.3 line 266 /
+// §8.10 cascade_on_failure lease policy added in migration 0090
+// (F-8.2.14 / F-8.2.15).
 const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
@@ -79,7 +82,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	metadata,
 	retry_policy, last_checkpoint_workspace_bytes,
 	last_seq,
-	workspace_root`
+	workspace_root,
+	tracing_context, cascade_on_failure`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -107,7 +111,10 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	// client-supplied metadata payload added in migration 0086
 	// (F-7.3.20). Binds $39 and $40 are the §7.3 retry_policy +
 	// last_checkpoint_workspace_bytes pair added in migration 0087
-	// (F-7.3.1 / F-7.3.21).
+	// (F-7.3.1 / F-7.3.21). Binds $43 and $44 are the §8.2 line 52
+	// delegation tracing_context and the §8.3 line 266 / §8.10
+	// cascade_on_failure lease policy added in migration 0090
+	// (F-8.2.14 / F-8.2.15).
 	const insertSQL = `INSERT INTO sessions (
 		id, tenant_id, user_id, state, runtime_ref, pool_ref, isolation_profile,
 		parent_session_id, root_session_id, failure_class, failure_reason,
@@ -124,7 +131,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		metadata,
 		retry_policy, last_checkpoint_workspace_bytes,
 		last_seq,
-		workspace_root
+		workspace_root,
+		tracing_context, cascade_on_failure
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
@@ -138,7 +146,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$38::jsonb,
 		$39::jsonb, $40,
 		$41,
-		$42
+		$42,
+		$43::jsonb, $44
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -168,7 +177,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			retryPolicyArg(sess.RetryPolicy),
 			workspaceBytesArg(sess.WorkspaceSnapshot),
 			sess.LastSeq,
-			sess.WorkspaceRoot)
+			sess.WorkspaceRoot,
+			tracingContextArg(sess.TracingContext),
+			string(sess.CascadeOnFailure))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -214,7 +225,10 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 	// client-supplied metadata payload added in migration 0086
 	// (F-7.3.20). Clauses $37 and $38 are the §7.3 retry_policy +
 	// last_checkpoint_workspace_bytes pair added in migration 0087
-	// (F-7.3.1 / F-7.3.21).
+	// (F-7.3.1 / F-7.3.21). Clauses $41 and $42 are the §8.2 line 52
+	// delegation tracing_context and the §8.3 line 266 / §8.10
+	// cascade_on_failure lease policy added in migration 0090
+	// (F-8.2.14 / F-8.2.15).
 	// last_seq is GREATEST-floored so a late writer from a sibling
 	// replica cannot rewind a freshly published Seq; the DB CHECK
 	// constraint catches the impossible negative. F-7.3.3.
@@ -241,7 +255,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		workspace_root = CASE
 			WHEN $40 = '' THEN workspace_root
 			ELSE $40
-		END
+		END,
+		tracing_context = $41::jsonb,
+		cascade_on_failure = $42
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -311,6 +327,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			workspaceBytesArg(sess.WorkspaceSnapshot),
 			sess.LastSeq,
 			sess.WorkspaceRoot,
+			tracingContextArg(sess.TracingContext),
+			string(sess.CascadeOnFailure),
 		); err != nil {
 			return err
 		}
@@ -451,6 +469,11 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// (F-7.3.1 / F-7.3.21).
 		retryPolicyJSON []byte
 		lastCheckpointBytes *int64
+		// §8.2 line 52 delegation tracing_context and §8.3 line 266 /
+		// §8.10 cascade_on_failure lease policy from migration 0090
+		// (F-8.2.14 / F-8.2.15).
+		tracingContextJSON []byte
+		cascadeOnFailure   string
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -484,6 +507,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §7.3 line 408 workspace_root recorded at first bind from
 		// migration 0089 (F-7.3.15).
 		&s.WorkspaceRoot,
+		// §8.2 line 52 / §8.10 — tracing_context + cascade_on_failure
+		// from migration 0090 (F-8.2.14 / F-8.2.15).
+		&tracingContextJSON, &cascadeOnFailure,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
@@ -499,6 +525,22 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		if rp, err := decodeRetryPolicy(retryPolicyJSON); err == nil && rp != nil {
 			s.RetryPolicy = rp
 		}
+	}
+	// spec: §8.2 line 52 / §8.3 line 286 — decode the delegation
+	// tracing_context back into the in-memory string→string map so a
+	// Postgres-backed reload returns the same context the parent
+	// registered. A nil/empty payload yields a nil map, matching the
+	// "no context registered" case the in-memory store models. F-8.2.14.
+	if len(tracingContextJSON) > 0 {
+		if tc, err := decodeTracingContext(tracingContextJSON); err == nil && len(tc) > 0 {
+			s.TracingContext = tc
+		}
+	}
+	// spec: §8.3 line 266 / §8.10 — cascade_on_failure persisted as TEXT;
+	// the empty string preserves the in-Go convention "empty resolves to
+	// the §8.10 default (cancel_all)". F-8.2.15.
+	if cascadeOnFailure != "" {
+		s.CascadeOnFailure = session.CascadePolicy(cascadeOnFailure)
 	}
 	if resumeUntil != nil {
 		s.ResumeEligibleUntil = *resumeUntil
@@ -649,6 +691,35 @@ func workspaceBytesArg(ws *sessionstore.WorkspaceSnapshot) any {
 		return nil
 	}
 	return ws.Bytes
+}
+
+// tracingContextArg renders the §8.2 line 52 / §8.3 line 286 delegation
+// tracingContext map as a JSONB argument. A nil or empty map stores SQL
+// NULL so the read path returns nil (the "no context registered" case)
+// rather than the empty map. F-8.2.14.
+// spec: §8.2 line 52, §8.3 line 286.
+func tracingContextArg(tc map[string]string) any {
+	if len(tc) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(tc)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
+// decodeTracingContext parses the JSONB payload back into the in-memory
+// string→string map. The gateway writes only well-formed values (the map
+// originates as a Go map[string]string via lenny/set_tracing_context), so
+// a malformed payload returns an error the caller can surface. F-8.2.14.
+// spec: §8.2 line 52.
+func decodeTracingContext(raw []byte) (map[string]string, error) {
+	var out map[string]string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // normalizeMiss maps pgx.ErrNoRows and the invalid-UUID-text error to
