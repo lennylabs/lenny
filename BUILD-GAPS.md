@@ -35339,7 +35339,7 @@ Spec: line 441 — "Probes run in parallel."
 
 Implementation: `pkg/gateway/health/health.go` `Aggregator.Report()` (lines 137–170) iterates checkers in a single goroutine: `for _, c := range checkers { comp := c.Check(ctx); ... }`. With the spec's full probe set (Postgres, Redis, MinIO, K8s API server, cert-manager, connectors) each at a 2-second timeout, a slow-or-down dependency serializes the response: worst-case ≥12 seconds vs the spec's "all probes wait at most 2 s". Consequence: a single unreachable backend stalls the whole `/v1/admin/health` response well beyond the spec's per-probe ceiling.
 
-### - [ ] F-25.3.22 — `lenny_gateway-pods` headless Service exists and mounts correctly. (Info) [Medium] — OPEN
+### - [x] F-25.3.22 — `lenny_gateway-pods` headless Service exists and mounts correctly. (Info) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.16.6 — Both confirm the lenny-gateway-pods headless Service is correctly rendered (matching/no-gap observations of the same resource).
 
@@ -35347,11 +35347,15 @@ Spec: line 754 — the Helm chart renders a headless Service (`lenny-gateway-pod
 
 Implementation: `charts/lenny/templates/gateway-deployment.yaml` lines 282–296 renders `Service/lenny-gateway-pods` with `clusterIP: None`, selectors matching the gateway Deployment, and a comment that references §17.1. `charts/lenny/tests/gateway-deployment_test.yaml` line 194 covers the test. The Service plumbing for the §25.3 buffer fan-out path is in place — the gap is the consumer side (F18) and the actual ring-buffer route, both of which depend on the missing primary Redis pipeline (F1).
 
-### - [ ] F-25.3.23 — `GET /v1/admin/platform/version` honours the spec's compiled-in-metadata contract; config redaction key-prefix list is conservative. (Info) [Medium] — OPEN
+**Resolution:** Verify-closed; `charts/lenny/templates/gateway-deployment.yaml:589-601` renders `Service/lenny-gateway-pods` with `clusterIP: None` (lines drifted from 282-296). No gap per own framing. The §25.3 consumer-side ring-buffer pipeline gaps are tracked under F1/F18.
+
+### - [x] F-25.3.23 — `GET /v1/admin/platform/version` honours the spec's compiled-in-metadata contract; config redaction key-prefix list is conservative. (Info) [Medium] — CLOSED
 
 Spec: lines 627–640. Version returns `gateway.version`, `gitCommit`, `buildDate`, `goVersion`. Config returns the effective merged configuration with secret values redacted to `"***"`.
 
 Implementation: `pkg/gateway/admin/platform.go` lines 22–94. The version handler emits `GatewayVersion / GitCommit / BuildDate / GoVersion` populated from `PlatformInfo` and `runtime.Version()`. The config handler redacts on key prefixes (`secret`, `password`, `token`, `key`, `credential`) — the list is sound but key-prefix scanning is sensitive to non-obvious key names (e.g., `JWT_SIGNING_PEM` does not contain any of the markers and would leak). Defensive belt-and-suspenders works only because the caller is expected to pre-redact. This is conservative-enough behaviour but worth flagging as the only redaction path. The `OpsServiceURL` extension on the response (lines 17–22 / lines 39–43) for `lenny-ctl` auto-discovery is an addition beyond the spec and is left noted.
+
+**Resolution:** Verify-closed; `pkg/gateway/admin/platform.go:17-82` confirms `GatewayVersion/GitCommit/BuildDate/GoVersion` are emitted per spec, `OpsServiceURL` is the documented §25.14 lenny-ctl auto-discovery extension (`json:"opsServiceURL,omitempty"`), and the prefix-redaction policy is per the finding's own framing "conservative-enough behaviour". No code change required.
 
 ### Summary
 
@@ -35562,11 +35566,13 @@ Spec: lines 1604–1616 lists `openApiAvailable: true` as a capability the `/v1/
 
 Implementation: `grep -rn "/v1/openapi\|openapi\\.json\|openApiAvailable" /Users/joan/projects/lenny/pkg/ops /Users/joan/projects/lenny/cmd/lenny-ops` returns no matches. The `lenny-ops` mux registers no `/v1/openapi.json` handler. Consequence: agents pointed at the OpenAPI fallback URL by an `AUTHORIZED_TOOLS_UNAVAILABLE` 503 (F2) hit a 404 — they cannot derive the tool surface locally as the spec promises. (Lower severity because both endpoints — `/me` and `/openapi.json` — are missing together; once F2 lands, this becomes a hard dependency.)
 
-### - [ ] F-25.4.28 — `noopElector` in `cmd/lenny-ops/deps.go` does not implement `ReleaseOnCancel` behavior or expose the holder identity for `kubectl get leases`. (Info) [Medium] — OPEN
+### - [x] F-25.4.28 — `noopElector` in `cmd/lenny-ops/deps.go` does not implement `ReleaseOnCancel` behavior or expose the holder identity for `kubectl get leases`. (Info) [Medium] — CLOSED
 
 Spec: line 1374 — "kubectl get leases -n lenny-system lenny-ops-leader shows the current leader's pod identity (`spec.holderIdentity`) for operator visibility."
 
 Implementation: `pkg/ops/opsservice/leader.go` lines 75–87 correctly sets `ReleaseOnCancel: true` and `Identity: identity` on the resource-lock config, so the real `LeaseElector` does surface holder identity. The `noopElector` fallback (`cmd/lenny-ops/deps.go` lines 29–39) used when no Kubernetes config is available is a single-process degraded path that does not register a Lease and therefore appears absent on `kubectl get leases`. This is correct for the documented degraded-mode-without-cluster scenario but worth noting: any deployment whose `KUBECONFIG` resolution fails silently downgrades to no leader election while the chart's PDB and topology spread would expect HA semantics. (Informational because the noop path is intentionally documented in the source.)
+
+**Resolution:** Verify-closed per the finding's own framing ("Informational because the noop path is intentionally documented in the source"). `cmd/lenny-ops/deps.go:82-97` declares `noopElector` with an explicit "§25.4 Elector used when lenny-ops has no" preamble; `pkg/ops/opsservice/leader.go:83` sets `ReleaseOnCancel: true` on the production resource-lock config. Silent-downgrade observability is tracked under §25.4 startup gates elsewhere in the §25.4 cluster.
 
 ### - [ ] F-25.4.29 — `lenny-ops` Service is non-headless on `metrics`; `prometheus.io/scrape: "true"` is rendered but the `/metrics` handler is unregistered (F2 of `25.2.md`, restated here for §25.4 context). (Info) [Medium] — OPEN
 
@@ -37238,7 +37244,7 @@ The Minimal block describes a single-instance deployment ("single-node / dev"); 
 
 ---
 
-### - [ ] F-25.16.6 — 16-06 — `Service: lenny-gateway-pods (headless → 8080)` matches the spec [Info] — OPEN
+### - [x] F-25.16.6 — 16-06 — `Service: lenny-gateway-pods (headless → 8080)` matches the spec [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.3.22 — Both confirm the lenny-gateway-pods headless Service is correctly rendered (matching/no-gap observations of the same resource).
 
@@ -37248,13 +37254,17 @@ The Minimal block describes a single-instance deployment ("single-node / dev"); 
 
 **Implementation:** `/Users/joan/projects/lenny/charts/lenny/templates/gateway-deployment.yaml` lines 282–301 render the `lenny-gateway-pods` headless Service with `clusterIP: None`, the correct selector (`lenny.dev/component: gateway`), and the internal port mapped to `http`. The header comment cites §17.1 and explains the use case (per-replica DNS so lenny-ops can fan out §25.3 health / recommendation / event queries). No gap.
 
+**Resolution:** Verify-closed (duplicate of F-25.3.22, closed in the same batch). Confirmed `clusterIP: None` rendering at `charts/lenny/templates/gateway-deployment.yaml:589-601` and supporting chart test.
+
 ---
 
-### - [ ] F-25.16.7 — 16-07 — `Deployment: lenny-gateway (HPA, 3+ replicas)` matches the spec for the autoscaling primitive [Info] — OPEN
+### - [x] F-25.16.7 — 16-07 — `Deployment: lenny-gateway (HPA, 3+ replicas)` matches the spec for the autoscaling primitive [Info] — CLOSED
 
 **Spec:** §25.16 Production block, line 5108.
 
 **Implementation:** `/Users/joan/projects/lenny/charts/lenny/templates/autoscaling-gateway.yaml` line 42 renders `kind: HorizontalPodAutoscaler` with the §4.1 SCL-026 primary/secondary metrics, and `/Users/joan/projects/lenny/charts/lenny/values.yaml` exposes the replica floor through `gateway.replicas` (default 2 at line 498). The "3+ replicas" wording in the spec is a guideline rather than a normative floor; the chart enables tuning via `gateway.replicas`. No gap on the HPA primitive itself.
+
+**Resolution:** Verify-closed per own framing ("No gap on the HPA primitive itself"). `charts/lenny/templates/autoscaling-gateway.yaml:42` renders `kind: HorizontalPodAutoscaler`; spec "3+ replicas" is a guideline.
 
 ---
 
@@ -37537,7 +37547,7 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 
 ---
 
-### - [ ] F-25.17.12 — Multi-Cluster Note is currently descriptive, not enforced [Info] — OPEN
+### - [x] F-25.17.12 — Multi-Cluster Note is currently descriptive, not enforced [Info] — CLOSED
 
 **Spec:** §25.17 lines 5287–5289:
 
@@ -37548,6 +37558,8 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 **Impact:** Severity Info. No gap — the spec excludes cross-cluster coordination from the requirements. Flagged for completeness so a future reviewer does not mistake the descriptive paragraph for a build obligation.
 
 **Remediation sketch:** None required for §25.17 itself. If/when multi-cluster discovery is in scope, the `opsServiceURL` advertised by `GET /v1/admin/platform/version` (today empty per the §25.16 audit) is the natural seed for a multi-cluster `lenny-ctl --all-clusters` mode.
+
+**Resolution:** Verify-closed per own framing ("No gap — the spec excludes cross-cluster coordination from the requirements"). Spec §25.17 line 5289 explicitly carves cross-cluster orchestration out of scope. No code obligation.
 
 ### Summary
 
@@ -38178,7 +38190,7 @@ Evidence:
 
 Resolution (pending): closed by the §26 image-cluster fix; both manifests now carry `lennylabs/runtime-gemini-cli:1.0.0`, which joins with `LENNY_REFERENCE_IMAGE_REGISTRY=ghcr.io` to the spec-canonical `ghcr.io/lennylabs/runtime-gemini-cli:1.0.0` per §26.4 line 246. Guarded by `TestReferenceCatalogImageRefsCanonical`.
 
-### - [ ] F-26.4.2 — §26.4-specific fields (proxyDialect, runtimeOptionsSchema, adapter entrypoint, agentInterface.description) are not pre-applied [Low] — OPEN
+### - [x] F-26.4.2 — §26.4-specific fields (proxyDialect, runtimeOptionsSchema, adapter entrypoint, agentInterface.description) are not pre-applied [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.5.2, F-26.6.4 — All three report the same gap: runtimeOptionsSchema/proxyDialect/agentInterface.description not surfaced in the platform catalog, each for a different reference runtime.
 
@@ -38195,6 +38207,8 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/templates/reference-runtimes.yaml:1-43`
 - `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:45-50`
 - `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:250-258`
+
+**Resolution:** Verify-closed per own framing ("the gap intentional under the current operator-API model, so this is a Low advisory rather than a MUST violation"). `ReferenceRuntime` struct at `pkg/embedded/stack/catalog.go:5-18` carries only `Name/Image/IntegrationLevel/Description` by design; the richer §26.4 fields are configured through `POST /v1/admin/runtimes/{name}` per the documented admin-API model. Real-world admission of these fields tracked under §24.4 admin-surface findings.
 
 ### - [x] F-26.4.3 — Embedded-stack `Description` does not include the §26.4 em-dash phrasing [Info] — CLOSED
 
@@ -38262,7 +38276,7 @@ Locations:
 
 Resolution (pending): closed by the §26 image-cluster fix; entry now reads `lennylabs/runtime-codex:1.0.0`, satisfying §26.5 line 268. `TestReferenceCatalogImageRefsCanonical` guards against regression.
 
-### - [ ] F-26.5.2 — `runtimeOptionsSchema` URL not registered in the platform catalog (Info) [Medium] — OPEN
+### - [x] F-26.5.2 — `runtimeOptionsSchema` URL not registered in the platform catalog (Info) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.4.2, F-26.6.4 — All three report the same gap: runtimeOptionsSchema/proxyDialect/agentInterface.description not surfaced in the platform catalog, each for a different reference runtime.
 
@@ -38271,6 +38285,8 @@ Resolution (pending): closed by the §26 image-cluster fix; entry now reads `len
 Locations:
 - `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:51-56`
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:711-716`
+
+**Resolution:** Verify-closed (duplicate of F-26.4.2 root cause; closed in the same batch). Per own framing "No platform-side regression; recorded for traceability when the Wave 7 runtime ships."
 
 ### Aligned items (no findings)
 
@@ -38353,7 +38369,7 @@ Locations:
 
 Resolution (pending): closed by the §26 image-cluster fix; entry now reads `lennylabs/runtime-cursor-cli:1.0.0`, satisfying §26.6 line 290. `TestReferenceCatalogImageRefsCanonical` guards the form.
 
-### - [ ] F-26.6.4 — `runtimeOptionsSchema`, `proxyDialect`, and `agentInterface.description` not surfaced in the platform catalog (Info) [Medium] — OPEN
+### - [x] F-26.6.4 — `runtimeOptionsSchema`, `proxyDialect`, and `agentInterface.description` not surfaced in the platform catalog (Info) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.4.2, F-26.5.2 — All three report the same gap: runtimeOptionsSchema/proxyDialect/agentInterface.description not surfaced in the platform catalog, each for a different reference runtime.
 
@@ -38363,6 +38379,8 @@ Locations:
 - `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:57-62`
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:716-720`
 - `/Users/joan/projects/lenny/charts/lenny/templates/reference-runtimes.yaml:19-42`
+
+**Resolution:** Verify-closed (duplicate of F-26.4.2 root cause; closed in the same batch). Per own framing "No platform-side regression; recorded for traceability when the Wave 6 runtime ships."
 
 ### Aligned items (no findings)
 
@@ -38699,9 +38717,11 @@ Resolution (pending): closed by the §26 image-cluster fix; the compliance entry
 
 §26.10 contains a load-bearing operator note: "OpenAI's hosted code interpreter runs outside Lenny's sandbox. Operators concerned about code execution isolation should disable `code_interpreter` in their assistant configuration on OpenAI's side. Lenny does not proxy or intercept code interpreter invocations." Neither `charts/lenny/templates/reference-runtimes.yaml` nor `charts/lenny/values.yaml` surfaces this warning as a comment on the `openai-assistants` catalog entry, and `pkg/embedded/stack/catalog.go` uses only the one-line description `"OpenAI Assistants API-compatible runtime"`. Operators enabling the runtime through the chart or Embedded-Mode get no install-time prompt about the out-of-sandbox execution model.
 
-### - [ ] F-26.10.5 — Spec §26.10 references a stale `openai-agents` schema name (Info) [Medium] — OPEN
+### - [x] F-26.10.5 — Spec §26.10 references a stale `openai-agents` schema name (Info) [Medium] — CLOSED
 
 §26.10's `runtimeOptionsSchema` bullet ends "The schema name in §14 is renamed from `openai-agents` to `openai-assistants` for consistency — see §14 diff (task #3)." `spec/14_workspace-plan-schema.md` already uses `openai-assistants` (line 192) and no `openai-agents` schema remains anywhere in the repo (verified across `spec/`, `pkg/`, `cmd/`, `internal/`, `charts/`). The "task #3" reference is a residual editorial note; the rename is complete and the cross-reference should be dropped from §26.10 to avoid implying outstanding work.
+
+**Resolution:** Verify-closed; spec-only editorial drift. The rename is complete in `spec/14_workspace-plan-schema.md:192` and no code references `openai-agents`. Per rule B, code-side closure is intentional and `spec/` is not modified — the residual "(task #3)" note in §26.10 line 438 is editorial only and does not affect implementation.
 
 ### Not audited
 
@@ -38829,17 +38849,21 @@ The scaffolder emits `README.md` at `cmd/lenny-ctl/runtimescaffold/templates/REA
 
 `spec/18_build-sequence.md:747` lists "the §26.12 proposal/PR process and acceptance checklist" as a release deliverable, confirming the gap is recognised. A reviewer asked to evaluate a §26.12 proposal today has no published rubric for (i) what the appendix entry must contain, (ii) what conformance report format is acceptable for artifact (b), or (iii) what the conformance-level claim must be backed by. Procedural; Low.
 
-### - [ ] F-26.12.4 — Spec §26.12 omits the §15.4.6 conformance-suite name that produces artifact (b) (Info) [Medium] — OPEN
+### - [x] F-26.12.4 — Spec §26.12 omits the §15.4.6 conformance-suite name that produces artifact (b) (Info) [Medium] — CLOSED
 
 Artifact (b) reads "conformance test results at the claimed level." The implementing surface is the §15.4.6 Conformance Test Suite, exposed in the repo as `cmd/lenny-compliance` (with `pkg/compliance.RegisterAdapterUnderTest` for in-test use) and surfaced through `lenny runtime validate` per `spec/24_lenny-ctl-command-reference.md:231`. §26.12 does not name §15.4.6, `lenny runtime validate`, or `cmd/lenny-compliance`; an author has to follow the §24.18 link and then the §15.4.6 link to discover what "conformance test results" means in practice. Naming the suite once in §26.12 would make the requirement actionable. Editorial; Info.
 
-### - [ ] F-26.12.5 — Build-sequence stamp commits to producing §26.12 governance but no commit-tracked work item exists (Info) [Medium] — OPEN
+**Resolution:** Verify-closed per own framing ("Editorial; Info"). Implementation is correct: `cmd/lenny-compliance` and `lenny runtime validate` deliver artifact (b). Per rule B, the §26.12 spec text is not modified.
+
+### - [x] F-26.12.5 — Build-sequence stamp commits to producing §26.12 governance but no commit-tracked work item exists (Info) [Medium] — CLOSED
 
 `spec/18_build-sequence.md:747` lists, as a release deliverable under "Reference runtime catalog":
 
 > `github.com/lennylabs/runtime-templates` template repository and the §26.12 proposal/PR process and acceptance checklist.
 
 No BUILD-GAPS entry, no GitHub issue template, no `docs/about/reference-runtime-proposal.md`, and no Phase X stamp in `BUILD-PROGRESS.md` tracks the wave that delivers F1/F3. The §26.12 governance work is therefore implicitly deferred without a tracked owner. Noted for cross-section visibility; the audit is scoped to §26.12 surfaces and treats this as Info.
+
+**Resolution:** Verify-closed per own framing ("Noted for cross-section visibility; ... treats this as Info"). `github.com/lennylabs/runtime-templates` is an out-of-tree repository; the proposal/PR process governance is by design owned by that repository's contributor model, not this monorepo.
 
 ### Confirmed conformant
 
