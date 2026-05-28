@@ -37619,7 +37619,7 @@ The §26.1 catalog overview itself does not require those fields, but §26.2–�
 
 ---
 
-### - [ ] F-26.1.5 — Helm chart does not auto-grant default-tenant access (correct vs §26.1) [Info] — OPEN
+### - [x] F-26.1.5 — Helm chart does not auto-grant default-tenant access (correct vs §26.1) [Info] — CLOSED
 
 **Spec:** §26.1 lines 28–30 specifies that the `local` profile's `lenny up` auto-grants the `default` tenant access to every reference runtime, while the install path leaves runtimes without default grants.
 
@@ -37631,9 +37631,11 @@ The §26.1 catalog overview itself does not require those fields, but §26.2–�
 
 This is informational: the implementation correctly distinguishes the two install paths' tenant-access posture.
 
+**Resolution:** Verify-closed; `charts/lenny/templates/reference-runtimes.yaml` emits only the `Runtime` kind (no `RuntimeTenantAccess`), `cmd/lenny-ctl/install.go` does not auto-grant, and `pkg/embedded/stack/runtimes.go:52-65` only the embedded `lenny up` path POSTs `/v1/admin/runtimes/<name>/tenant-access`. Behavior matches §26.1 line 30.
+
 ---
 
-### - [ ] F-26.1.6 — Every catalog entry is `type: agent`, no `type: mcp` (correct vs §26.1) [Info] — OPEN
+### - [x] F-26.1.6 — Every catalog entry is `type: agent`, no `type: mcp` (correct vs §26.1) [Info] — CLOSED
 
 **Spec:** §26.1 line 28: "All reference runtimes are `type: agent`. No reference runtime is `type: mcp` ..."
 
@@ -37645,9 +37647,11 @@ This is informational: the implementation correctly distinguishes the two instal
 
 Informational: the implementation enforces the spec's `type: agent`-only invariant for the reference catalog in code and in test.
 
+**Resolution:** Verify-closed; `charts/lenny/templates/reference-runtimes.yaml:30` and `pkg/embedded/stack/runtimes.go:124` both hard-code `agent` so no template branch or catalog entry can emit `type: mcp`.
+
 ---
 
-### - [ ] F-26.1.7 — Catalog cardinality matches the spec (nine entries) [Info] — OPEN
+### - [x] F-26.1.7 — Catalog cardinality matches the spec (nine entries) [Info] — CLOSED
 
 **Spec:** §26.1 table enumerates nine entries.
 
@@ -37659,6 +37663,8 @@ Informational: the implementation enforces the spec's `type: agent`-only invaria
 - `/Users/joan/projects/lenny/charts/lenny/tests/reference-runtimes_test.yaml` line 8 asserts `hasDocuments: count: 9`.
 
 Informational: the three implementation surfaces and the chart test all converge on nine entries with matching names. Only the chat integration level diverges (see H-26.1-01).
+
+**Resolution:** Verify-closed; `pkg/embedded/stack/catalog.go` carries nine `ReferenceRuntime` literals (claude-code, gemini-cli, codex, cursor-cli, chat, langgraph, mastra, openai-assistants, crewai), `charts/lenny/values.yaml:1188-1228` lists the same nine names, and `charts/lenny/tests/reference-runtimes_test.yaml:8` asserts `hasDocuments: count: 9`.
 
 ### Summary
 
@@ -37834,7 +37840,7 @@ This is a v1 platform deliverable: the built-in `github` provider, the HTTPS cre
 
 ---
 
-### - [ ] F-26.2.8 — Workspace filesystem layout (`/workspace/current`, `/workspace/output`, `/workspace/shared`) is correctly modelled [Info] — OPEN
+### - [x] F-26.2.8 — Workspace filesystem layout (`/workspace/current`, `/workspace/output`, `/workspace/shared`) is correctly modelled [Info] — CLOSED
 
 **Spec:** §26.2 lines 40–45 require `/workspace/current/` as repo root, `/workspace/shared/` for `concurrent` pools, `/workspace/output/` for retrievable artifacts.
 
@@ -37847,13 +37853,17 @@ This is a v1 platform deliverable: the built-in `github` provider, the HTTPS cre
 
 The filesystem layout is internally consistent with §26.2.
 
+**Resolution:** Verify-closed; `cmd/lenny-adapter/main.go:90` (default `--workspace-root=/workspace/current`), `pkg/gateway/runtimestore/runtimestore.go:176,860-897` (sharedAssets → `/workspace/shared`), and the three coding scaffolder templates (`workspaceCurrent`/`workspaceOutput`/`WORKSPACE_*` constants) all match §26.2 lines 40–45.
+
 ---
 
-### - [ ] F-26.2.9 — Embedded `lenny up` correctly grants default-tenant access to reference runtimes [Info] — OPEN
+### - [x] F-26.2.9 — Embedded `lenny up` correctly grants default-tenant access to reference runtimes [Info] — CLOSED
 
 **Spec:** §26.1 line 30 / §26.2 line 130: "For `local` profile installations, `lenny up` auto-grants access to the `default` tenant for every reference runtime it installs so the developer can invoke them without additional setup."
 
 **Implementation:** `/Users/joan/projects/lenny/pkg/embedded/stack/runtimes.go` lines 54–69 iterates the catalog and POSTs to `/v1/admin/runtimes/<name>/tenant-access` with the default-tenant id for each entry. The grant is idempotent. Behaviour matches the §26.1/§26.2 expectation.
+
+**Resolution:** Verify-closed; `pkg/embedded/stack/runtimes.go:52-65` confirmed — `installReferenceRuntimes` iterates `referenceRuntimes` and POSTs `{"tenantId":"default"}` to `/v1/admin/runtimes/<name>/tenant-access` (idempotent), matching §26.1 line 30 and §26.2 line 130.
 
 ---
 
@@ -38043,7 +38053,7 @@ the image string matches `ghcr.io/lennylabs/runtime-claude-code:1.0.0`.
 A regression that drops `aws_bedrock` or shifts the image would not be
 caught.
 
-### - [ ] F-26.3.9 — 9  Adapter binary and runtime image are not in this repo (expected) [Info] — OPEN
+### - [x] F-26.3.9 — 9  Adapter binary and runtime image are not in this repo (expected) [Info] — CLOSED
 
 Spec §26.3 lines 224, 237–238 say the runtime image (entrypoint
 `/usr/local/bin/lenny-claude-code-adapter`) and its Dockerfile live in
@@ -38054,7 +38064,9 @@ matches the spec (`cmd/runtimes/` contains only `cred-shell-echo`,
 `mcp-reference`, `streaming-echo`). Recording as informational; no
 finding.
 
-### - [ ] F-26.3.10 — 10  Lifecycle / bootstrap behavior (§26.3 lines 215–223) is not directly verifiable from the spec repo [Info] — OPEN
+**Resolution:** Verify-closed; `ls cmd/runtimes/` shows only the seven echo/reference runtimes (no `claude-code` subdirectory), matching §26.3 lines 237–238. Per the finding's own framing: "no finding."
+
+### - [x] F-26.3.10 — 10  Lifecycle / bootstrap behavior (§26.3 lines 215–223) is not directly verifiable from the spec repo [Info] — CLOSED
 
 The spec describes the bootstrap flow (warm-pool pull → adapter
 READY → workspace materialization → `claude --no-tty --print
@@ -38064,6 +38076,8 @@ Verification belongs in the runtime repo's conformance tests
 `lenny-test conformance --image` against the published image. No
 finding inside this repo, recorded as informational so the gap is
 visible to anyone reading the audit.
+
+**Resolution:** Verify-closed; the bootstrap flow at §26.3 lines 217–223 binds to the runtime image's adapter (lives in `github.com/lennylabs/runtime-claude-code` per F-26.3.9). Per the finding's own framing: "no finding inside this repo."
 
 ### Summary
 
@@ -38146,13 +38160,15 @@ Evidence:
 - `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:45-50`
 - `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:250-258`
 
-### - [ ] F-26.4.3 — Embedded-stack `Description` does not include the §26.4 em-dash phrasing [Info] — OPEN
+### - [x] F-26.4.3 — Embedded-stack `Description` does not include the §26.4 em-dash phrasing [Info] — CLOSED
 
 `pkg/embedded/stack/catalog.go` line 49 stores `Description: "Google's Gemini CLI inside a Lenny-managed sandbox"`. §26.4 line 257 specifies `agentInterface.description: "Gemini CLI — Google's general-purpose coding agent"`. The embedded-stack `Description` field is a catalog-level summary distinct from the Runtime CR `agentInterface.description`, and the chart's reference-runtimes template does not populate `agentInterface` at all (per F2). The embedded description therefore is not the spec field, and the spec field is not set anywhere in the codebase. Listed as Info because it documents the same gap visible from a different angle.
 
 Evidence:
 - `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:45-50`
 - `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:257`
+
+**Resolution:** Verify-closed; second-order consequence of F-26.4.2 (the `agentInterface.description` field is not pre-applied because `RuntimeSpec` has no `agentInterface` block yet). The embedded `Description` is a separate catalog summary string and the spec doesn't constrain it. Per the finding's own framing: "Info because it documents the same gap visible from a different angle."
 
 ### Conformance verdict
 
