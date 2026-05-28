@@ -18749,7 +18749,8 @@ silently. Subsequent uploads will succeed regardless of stored bytes until the
 counter naturally re-grows from Adjust calls. The storage-quota guarantee
 §12.5 line 309 names is unenforceable across Redis restarts.
 
-### - [ ] F-12.5.15 — `artifact_store.size_bytes` column name diverges from the spec's `artifact_size_bytes` (§12.5 line 309) [High] — OPEN
+### - [x] F-12.5.15 — `artifact_store.size_bytes` column name diverges from the spec's `artifact_size_bytes` (§12.5 line 309) [High] — CLOSED
+- **Resolution:** Renamed the column `size_bytes → artifact_size_bytes` in `migrations/0049_artifact_store.up.sql` and the three `artifactcatalog` SQL statements (Insert/Get/ListBySession), plus the `evictionfallback` schema doc comment, so the §12.4 line 210 / §11.2 storage-quota rehydration query references the spec column name. A tier-1 migration-content guard (`TestArtifactStoreSizeColumnMatchesSpec_spec_12_5_309`) prevents regression. (commit `e20de488`)
 
 §12.5 line 309 names the column `artifact_size_bytes`. Migration
 `0049_artifact_store.up.sql:19` defines it as `size_bytes`.
@@ -18838,7 +18839,8 @@ Evidence:
 - The §12.8 erasure controller (`pkg/controller/tenantdeletion/controller.go`)
   contains no hook that triggers a tenant-scoped GC sweep on completion.
 
-### - [ ] F-12.5.19 — `gc.cycleIntervalSeconds` and `gc.tombstoneRetentionSeconds` Helm values are absent (§12.5 lines 317, 341) [Medium] — OPEN
+### - [x] F-12.5.19 — `gc.cycleIntervalSeconds` and `gc.tombstoneRetentionSeconds` Helm values are absent (§12.5 lines 317, 341) [Medium] — CLOSED
+- **Resolution:** Added the `gc:` chart section (`cycleIntervalSeconds: 900`, `tombstoneRetentionSeconds: 86400`) rendered as `LENNY_GC_CYCLE_INTERVAL_SECONDS` / `LENNY_GC_TOMBSTONE_RETENTION_SECONDS`, plus `--gc-cycle-interval-seconds` / `--gc-tombstone-retention-seconds` gateway flags. The cadence now drives both the §7.1 retention sweep and the §12.5 line 341 hard-prune ticker (previously hard-coded to `DefaultSweepInterval`), and `retentiongc.ClampSweepInterval` enforces the 60s floor. The tombstone-retention window passed to `SoftDeleteSession` was corrected from the §7.1 7-day `DerivedSnapshotTTL` to the §12.5 line 341 24h default. New `MinSweepInterval` / `DefaultTombstoneRetention` constants. (commit `e20de488`)
 
 Line 317 defines `gc.cycleIntervalSeconds` (default 900, minimum 60). Line 341
 defines `gc.tombstoneRetentionSeconds` (default 86400, operators may extend).
@@ -18877,7 +18879,8 @@ jurisdiction mismatch (the controller's `fail` path) is dead code. The
 `lenny_minio_replication_residency_violation_total` counter the controller
 emits never fire.
 
-### - [ ] F-12.5.21 — gateway `--minio-use-ssl` defaults to false; spec mandates TLS (§12.5 line 279) [Medium] — OPEN
+### - [x] F-12.5.21 — gateway `--minio-use-ssl` defaults to false; spec mandates TLS (§12.5 line 279) [Medium] — CLOSED
+- **Resolution:** The chart-side TLS mandate (`minio.tls.enabled` default true, render-time `fail` for non-embedded backends and regulated `complianceProfile`s, `LENNY_MINIO_USE_SSL` rendered from it) was already implemented by F-4.5.16/F-12.5.5 (commit `2d97f85`). This batch additionally flipped the gateway binary default for `--minio-use-ssl` from false to true (`envFlagDefault("LENNY_MINIO_USE_SSL", true)`), matching `lenny-preflight` and the §12.5 line 279 "all other backends enforce TLS" posture, so even a raw binary invocation with `--minio-endpoint` set defaults to HTTPS. The `minio.endpoint` empty default is a deliberate bring-your-own-MinIO design choice documented in `values.yaml`. (commit `e20de488`)
 
 Line 279: "MinIO connections MUST use TLS (`https://` endpoint). The Helm
 chart sets `minio.endpoint` to `https://minio.lenny-system:9000` by default.
@@ -18990,7 +18993,8 @@ two extra mutations expose new race windows (a second writer that wins
 re-`soft_deleted`, but the binary spec predicate would treat the soft-delete
 attempt as a safe no-op.
 
-### - [ ] F-12.5.26 — `mc ilm add` post-install Job mandated by §12.5 line 280 is absent (§12.5 line 280) [Medium] — OPEN
+### - [x] F-12.5.26 — `mc ilm add` post-install Job mandated by §12.5 line 280 is absent (§12.5 line 280) [Medium] — CLOSED
+- **Resolution:** Closed by F-4.5.16/F-12.5.5 (commit `2d97f85`). `charts/lenny/templates/minio-bucket-lifecycle-job.yaml` is a post-install/post-upgrade Helm hook that runs `mc mb`, `mc anonymous set none`, `mc version enable`, and `mc ilm add --expired-object-delete-marker --noncurrentversion-expiration-days {{ noncurrentExpirationDays }}` with no prefix filter (bucket-wide scope, per §12.5 line 280). The finding's evidence (zero `mc ilm` hits) is stale. Re-verified during the F-12.5.19 batch. (commit `e20de488`)
 
 Line 280: "The Helm chart post-install Job configures this rule via
 `mc ilm add` with no prefix filter (bucket-wide scope)."
