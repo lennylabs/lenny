@@ -337,6 +337,23 @@ type Metrics struct {
 	// F-8.10.13.
 	maxOrphanTasksPerTenant prometheus.Gauge
 
+	// §8.10 / §16.1 orphan-cleanup and tree-recovery observability.
+	// orphanCleanupRuns counts the §8.10 line 1091 background sweep
+	// invocations; one Inc per Tick regardless of outcome. orphanTasksTerminated
+	// counts the per-sweep terminated-orphan count (in lockstep with the
+	// existing log line). orphanTasksActive is the fleet-wide active orphan
+	// gauge (sum over tenants); orphanTasksActivePerTenant is the per-tenant
+	// gauge the OrphanTasksPerTenantHigh alert reads. treeRecoveryDuration
+	// observes one wall-clock duration per tree-recovery operation;
+	// treeRecoveryTimeout counts the per-timeout-type rollups.
+	// spec: §8.10 lines 1091, 1093-1101, 1103; §16.1 lines 144-149. F-8.10.7.
+	orphanCleanupRuns          prometheus.Counter
+	orphanTasksTerminated      prometheus.Counter
+	orphanTasksActive          prometheus.Gauge
+	orphanTasksActivePerTenant *prometheus.GaugeVec
+	treeRecoveryDuration       *prometheus.HistogramVec
+	treeRecoveryTimeout        *prometheus.CounterVec
+
 	// statelessRequests is the §5.2 line 573 cumulative request count
 	// arriving at the pool's Kubernetes Service in concurrent-stateless
 	// mode. The PoolScalingController reads
@@ -1225,6 +1242,45 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// spec: §8.10 lines 1091, 1093-1101, 1103; §16.1 lines 144-149 — the
+	// orphan-cleanup + tree-recovery observability surface. F-8.10.7.
+	orphanCleanupRuns := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_orphan_cleanup_runs_total",
+		Help: "Background orphan cleanup job executions (§8.10 line 1091 / §16.1).",
+	})
+	orphanTasksTerminated := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_orphan_tasks_terminated",
+		Help: "Orphan tasks terminated by the §8.10 cleanup job (§16.1).",
+	})
+	orphanTasksActive, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_orphan_tasks_active",
+		Help: "Currently active orphan tasks awaiting cleanup, summed across tenants (§8.10 / §16.1).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	orphanTasksActivePerTenant, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_orphan_tasks_active_per_tenant",
+		Help: "Per-tenant active orphan task count; drives the OrphanTasksPerTenantHigh alert (§8.10 line 1103 / §16.1).",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
+	treeRecoveryDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_delegation_tree_recovery_duration_seconds",
+		Help:    "Delegation tree-recovery wall-clock duration by outcome (§8.10 / §16.1 line 144).",
+		Buckets: []float64{0.5, 1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800},
+	}, []string{"pool", "outcome"})
+	if err != nil {
+		return nil, err
+	}
+	treeRecoveryTimeout, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_delegation_tree_recovery_timeout_total",
+		Help: "Delegation tree-recovery timeouts by timeout type (`level` | `tree`) (§8.10 / §16.1 line 145).",
+	}, []string{"pool", "timeout_type"})
+	if err != nil {
+		return nil, err
+	}
 	// §5.2 line 573 — `lenny_stateless_requests_total` is the cumulative
 	// request count arriving at a concurrent-stateless pool's Kubernetes
 	// Service; the PoolScalingController reads
@@ -1364,6 +1420,9 @@ func New() (*Metrics, error) {
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		maxOrphanTasksPerTenant,
+		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
+		orphanTasksActivePerTenant,
+		treeRecoveryDuration, treeRecoveryTimeout,
 		statelessRequests, statelessConcurrentActive, taskReuseCount,
 		delegationLeaseExtension,
 		memoryStoreOperationDuration, memoryStoreErrors,
@@ -1487,6 +1546,12 @@ func New() (*Metrics, error) {
 		idempotencyCacheWriteFailures:        idempotencyCacheWriteFailures,
 		idempotencyCacheSkipped:              idempotencyCacheSkipped,
 		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
+		orphanCleanupRuns:                    orphanCleanupRuns,
+		orphanTasksTerminated:                orphanTasksTerminated,
+		orphanTasksActive:                    orphanTasksActive.WithLabelValues(),
+		orphanTasksActivePerTenant:           orphanTasksActivePerTenant,
+		treeRecoveryDuration:                 treeRecoveryDuration,
+		treeRecoveryTimeout:                  treeRecoveryTimeout,
 		statelessRequests:                    statelessRequests,
 		statelessConcurrentActive:            statelessConcurrentActive,
 		taskReuseCount:                       taskReuseCount,
@@ -2350,6 +2415,76 @@ func (m *Metrics) SetMaxOrphanTasksPerTenant(value int) {
 		return
 	}
 	m.maxOrphanTasksPerTenant.Set(float64(value))
+}
+
+// IncOrphanCleanupRun increments the §8.10 line 1091 / §16.1 line 146
+// `lenny_orphan_cleanup_runs_total` counter — one tick per sweep
+// invocation regardless of outcome. spec: §8.10 line 1091; F-8.10.7.
+func (m *Metrics) IncOrphanCleanupRun() {
+	if m == nil {
+		return
+	}
+	m.orphanCleanupRuns.Inc()
+}
+
+// AddOrphanTasksTerminated bumps the §8.10 / §16.1 line 147
+// `lenny_orphan_tasks_terminated` counter by the per-sweep terminated
+// count (the cleanup tick's return value). A zero-count sweep is a no-op.
+// spec: §8.10 / §16.1 line 147; F-8.10.7.
+func (m *Metrics) AddOrphanTasksTerminated(n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.orphanTasksTerminated.Add(float64(n))
+}
+
+// SetOrphanTasksActive publishes the fleet-wide active orphan count as
+// `lenny_orphan_tasks_active` per §8.10 / §16.1 line 148. Operators
+// alert when the gauge exceeds a deployment-specific threshold
+// (suggested 50 per §8.10 line 1101). spec: §16.1 line 148; F-8.10.7.
+func (m *Metrics) SetOrphanTasksActive(value int) {
+	if m == nil {
+		return
+	}
+	m.orphanTasksActive.Set(float64(value))
+}
+
+// SetOrphanTasksActivePerTenant publishes the per-tenant active orphan
+// count as `lenny_orphan_tasks_active_per_tenant{tenant_id}`. The §16.5
+// OrphanTasksPerTenantHigh alert reads `value > 0.80 *
+// scalar(lenny_max_orphan_tasks_per_tenant)`. The cleanup sweep calls
+// this for every tenant on every Tick so a tenant whose orphan count
+// drops to zero re-publishes a zero value. spec: §8.10 line 1103;
+// §16.1 line 149; F-8.10.7.
+func (m *Metrics) SetOrphanTasksActivePerTenant(tenantID string, value int) {
+	if m == nil {
+		return
+	}
+	m.orphanTasksActivePerTenant.WithLabelValues(tenantID).Set(float64(value))
+}
+
+// ObserveTreeRecoveryDuration records one wall-clock duration on the
+// §8.10 / §16.1 line 144 `lenny_delegation_tree_recovery_duration_seconds`
+// histogram. `pool` is the root session's pool; `outcome` is one of
+// `full_success`, `partial_failure`, or `total_timeout`. spec: §8.10 /
+// §16.1 line 144; F-8.10.7.
+func (m *Metrics) ObserveTreeRecoveryDuration(pool, outcome string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.treeRecoveryDuration.WithLabelValues(pool, outcome).Observe(seconds)
+}
+
+// IncTreeRecoveryTimeout increments the §8.10 / §16.1 line 145
+// `lenny_delegation_tree_recovery_timeout_total{pool, timeout_type}`
+// counter. `timeout_type` is `level` (one tree-level budget exhausted)
+// or `tree` (the whole-tree budget exhausted). spec: §8.10 / §16.1 line
+// 145; F-8.10.7.
+func (m *Metrics) IncTreeRecoveryTimeout(pool, timeoutType string) {
+	if m == nil {
+		return
+	}
+	m.treeRecoveryTimeout.WithLabelValues(pool, timeoutType).Inc()
 }
 
 // RecordElicitationDrop increments the §9.1 lenny_elicitation_dropped_total

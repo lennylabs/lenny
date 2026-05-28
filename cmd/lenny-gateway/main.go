@@ -430,6 +430,33 @@ func main() {
 	delegationUsageQuiescenceTimeoutSeconds := flag.Int("delegation-usage-quiescence-timeout-seconds",
 		envInt("LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS", 5),
 		"§11.3 line 224 delegation.usageQuiescenceTimeoutSeconds: the wall-clock window the §8.10 tree-recovery path waits after the last child usage report before declaring the delegation tree quiescent. Default 5s. Override via LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS.")
+	// spec: §8.10 lines 1022-1023 / 1042 — operator-tunable per-level and
+	// whole-tree recovery deadlines. The default (120s / 600s) matches
+	// `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds`. Deployers
+	// running deep trees apply the §8.10 line 1032 formula to raise the
+	// tree cap. F-8.10.6.
+	delegationMaxLevelRecoverySeconds := flag.Int("delegation-max-level-recovery-seconds",
+		envInt("LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS", int(recovery.DefaultLevelTimeout/time.Second)),
+		"§8.10 line 1022 delegation.maxLevelRecoverySeconds: maximum time the gateway waits for all nodes at a single tree depth to complete recovery before marking the unrecovered ones as terminally failed. Default 120s. Override via LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS.")
+	delegationMaxTreeRecoverySeconds := flag.Int("delegation-max-tree-recovery-seconds",
+		envInt("LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS", int(recovery.DefaultTreeTimeout/time.Second)),
+		"§8.10 line 1023 / line 1042 delegation.maxTreeRecoverySeconds: total wall-clock bound for recovering the full delegation tree; overrides per-level budgets. Default 600s. Deployers running deep trees should apply the §8.10 line 1032 formula. Override via LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS.")
+	// spec: §8.10 line 1078 — cascadeTimeoutSeconds is the deployer-tuned
+	// wall-clock bound an `await_completion` child may run after parent
+	// failure and how long a `detach` orphan persists before cleanup.
+	// F-8.10.9.
+	delegationCascadeTimeoutSeconds := flag.Int("delegation-cascade-timeout-seconds",
+		envInt("LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS", int(orphancleanup.DefaultCascadeTimeout/time.Second)),
+		"§8.10 line 1078 delegation.cascadeTimeoutSeconds: deployer-wide cap on how long an `await_completion` child may run after parent failure and how long a `detach` orphan persists before §8.10 cleanup. Default 3600s (1h). Override via LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS.")
+	// spec: §8.10 line 1103 — maxOrphanTasksPerTenant caps a tenant's
+	// active orphan tasks; when exceeded, the `detach` cascade falls back
+	// to `cancel_all`. The §16.5 OrphanTasksPerTenantHigh alert reads
+	// `scalar(lenny_max_orphan_tasks_per_tenant)` as the denominator;
+	// publishing the configured value at startup makes the alert evaluate
+	// against the live cap. F-8.10.10.
+	delegationMaxOrphanTasksPerTenant := flag.Int("delegation-max-orphan-tasks-per-tenant",
+		envInt("LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT", sessionserver.DefaultMaxOrphanTasksPerTenant),
+		"§8.10 line 1103 delegation.maxOrphanTasksPerTenant: per-tenant cap on active orphan tasks; when the count would exceed this, the gateway falls back from `detach` to `cancel_all`. Default 100. Override via LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT.")
 	// spec: §11.3 line 215 — credentials.expiryWarningLeadSeconds,
 	// operator-tunable. Each tracked credential lease fires a structured
 	// expiry-warning log line once when now is within this window of the
@@ -592,11 +619,21 @@ func main() {
 	// The recovery package exposes the Config field; the gateway-side
 	// orchestrator threads `delegationQuiescenceCfg` to keep one source
 	// of truth. F-11.3.19.
+	//
+	// spec: §8.10 lines 1022-1023 / 1042 — extend the same Config to
+	// carry `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds` so the
+	// recovery package consumes the live operator overrides. F-8.10.6.
 	delegationQuiescenceCfg := recovery.Config{
+		LevelTimeout:           time.Duration(*delegationMaxLevelRecoverySeconds) * time.Second,
+		TreeTimeout:            time.Duration(*delegationMaxTreeRecoverySeconds) * time.Second,
 		UsageQuiescenceTimeout: time.Duration(*delegationUsageQuiescenceTimeoutSeconds) * time.Second,
 	}
 	log.Printf("lenny-gateway: delegation.usageQuiescenceTimeoutSeconds=%ds (§11.3 line 224)",
 		int(delegationQuiescenceCfg.QuiescenceDeadline(time.Time{}).Sub(time.Time{}).Seconds()))
+	log.Printf("lenny-gateway: delegation.maxLevelRecoverySeconds=%ds delegation.maxTreeRecoverySeconds=%ds (§8.10 lines 1022-1023)",
+		*delegationMaxLevelRecoverySeconds, *delegationMaxTreeRecoverySeconds)
+	log.Printf("lenny-gateway: delegation.cascadeTimeoutSeconds=%ds delegation.maxOrphanTasksPerTenant=%d (§8.10 lines 1078, 1103)",
+		*delegationCascadeTimeoutSeconds, *delegationMaxOrphanTasksPerTenant)
 	_ = delegationQuiescenceCfg
 
 	// ----- Stores -----
@@ -1356,10 +1393,12 @@ func main() {
 	// spec: §8.10 line 1103 + §16.5 OrphanTasksPerTenantHigh — publish the
 	// configured maxOrphanTasksPerTenant cap so the alert's
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` denominator resolves to
-	// the live ceiling. The default flows through the sessionserver
-	// constructor; main.go does not override yet so the default is
-	// authoritative here. F-8.10.13.
-	gwMetrics.SetMaxOrphanTasksPerTenant(sessionserver.DefaultMaxOrphanTasksPerTenant)
+	// the live ceiling. The Helm-driven flag is the source of truth; the
+	// sessionserver constructor also receives the same value via the
+	// Options.MaxOrphanTasksPerTenant field so the detach-cascade fallback
+	// path and the alert evaluate against one shared cap. F-8.10.10 /
+	// F-8.10.13.
+	gwMetrics.SetMaxOrphanTasksPerTenant(*delegationMaxOrphanTasksPerTenant)
 
 	// §4.4 line 254 — late-binding the checkpointer's duration
 	// histogram emitter to the freshly-constructed gateway metrics.
@@ -1711,6 +1750,13 @@ func main() {
 	inputWaits := inputwait.NewRegistry()
 
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
+		// spec: §8.10 line 1103 — operator-tunable per-tenant orphan cap.
+		// The default (100) flows through the constructor when the flag
+		// is unset; an override surfaces both on the sessionserver
+		// detach-cascade fallback and on the §16.5
+		// OrphanTasksPerTenantHigh alert (the scalar() denominator below
+		// is re-emitted from the same flag). F-8.10.10.
+		MaxOrphanTasksPerTenant:    *delegationMaxOrphanTasksPerTenant,
 		UploadTokenIssuer:          uploadIssuer,
 		UploadTokenVerifier:        uploadVerifier,
 		// F-7.4.7: §7.1 line 58 TTL = maxCreatedStateTimeoutSeconds.
@@ -2958,9 +3004,19 @@ func main() {
 	orphanSweeper := orphancleanup.New(sessions, tenantsLister{tenants}, orphancleanup.Options{
 		Archive: treeArchive,
 		Clock:   clockinject.Now,
+		// spec: §8.10 line 1078 — operator-tunable cascade timeout. The
+		// per-deploy cap is the Sweeper's wall-clock window an orphan may
+		// persist past its root's terminal state. F-8.10.9.
+		CascadeTimeout: time.Duration(*delegationCascadeTimeoutSeconds) * time.Second,
 		// F-5.2.26: same terminal pipeline as the watchdog so an orphan
 		// terminated by background sweep also releases its slot/pod.
 		Terminal: sessionSrv,
+		// spec: §8.10 lines 1091, 1093-1101, 1103; §16.1 lines 146-149 —
+		// publish the cleanup-runs counter, the cumulative terminated
+		// counter, the fleet-wide active gauge, and the per-tenant active
+		// gauge so the §16.5 OrphanTasksPerTenantHigh alert evaluates.
+		// F-8.10.7.
+		Metrics: gwMetrics,
 	})
 	go orphanSweeper.Run(watchdogCtx, func(terminated int, err error) {
 		if err != nil {

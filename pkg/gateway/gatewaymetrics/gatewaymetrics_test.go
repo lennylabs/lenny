@@ -305,6 +305,59 @@ func TestSetMaxOrphanTasksPerTenant_spec_8_10(t *testing.T) {
 	}
 }
 
+// TestOrphanCleanupAndTreeRecoveryMetricsRegistered_spec_8_10_7 covers
+// the §8.10 / §16.1 lines 144-149 metric surface — the orphan-cleanup
+// counters, the per-tenant active gauge, and the tree-recovery duration
+// histogram + timeout counter must be registered and visible on
+// /metrics. F-8.10.7.
+func TestOrphanCleanupAndTreeRecoveryMetricsRegistered_spec_8_10_7(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncOrphanCleanupRun()
+	m.AddOrphanTasksTerminated(3)
+	m.SetOrphanTasksActive(2)
+	m.SetOrphanTasksActivePerTenant("acme", 4)
+	m.ObserveTreeRecoveryDuration("warm-pool-a", "full_success", 12.5)
+	m.IncTreeRecoveryTimeout("warm-pool-a", "level")
+	m.IncTreeRecoveryTimeout("warm-pool-a", "tree")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"lenny_orphan_cleanup_runs_total 1",
+		"lenny_orphan_tasks_terminated 3",
+		"lenny_orphan_tasks_active 2",
+		`lenny_orphan_tasks_active_per_tenant{tenant_id="acme"} 4`,
+		`lenny_delegation_tree_recovery_duration_seconds_count{outcome="full_success",pool="warm-pool-a"} 1`,
+		`lenny_delegation_tree_recovery_timeout_total{pool="warm-pool-a",timeout_type="level"} 1`,
+		`lenny_delegation_tree_recovery_timeout_total{pool="warm-pool-a",timeout_type="tree"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// TestOrphanMetricsNilSafe pins the nil-receiver short-circuits on the
+// §8.10 setters so a caller without a metrics handle does not panic.
+// F-8.10.7.
+func TestOrphanMetricsNilSafe(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncOrphanCleanupRun()
+	m.AddOrphanTasksTerminated(1)
+	m.AddOrphanTasksTerminated(0) // no-op even with a non-nil receiver
+	m.SetOrphanTasksActive(0)
+	m.SetOrphanTasksActivePerTenant("acme", 0)
+	m.ObserveTreeRecoveryDuration("pool", "outcome", 1.0)
+	m.IncTreeRecoveryTimeout("pool", "level")
+}
+
 func TestSetScalarGaugesEmitsConfiguredValues(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {

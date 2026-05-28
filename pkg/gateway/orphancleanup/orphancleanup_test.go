@@ -213,6 +213,85 @@ func TestTickWithTerminalHookSkipsInPackageArchive(t *testing.T) {
 	}
 }
 
+// fakeMetricsSink captures §8.10 / §16.1 sweeper observations.
+type fakeMetricsSink struct {
+	runs         int
+	terminated   int
+	active       int
+	perTenant    map[string]int
+}
+
+func (m *fakeMetricsSink) IncOrphanCleanupRun()                { m.runs++ }
+func (m *fakeMetricsSink) AddOrphanTasksTerminated(n int)      { m.terminated += n }
+func (m *fakeMetricsSink) SetOrphanTasksActive(value int)      { m.active = value }
+func (m *fakeMetricsSink) SetOrphanTasksActivePerTenant(tenantID string, value int) {
+	if m.perTenant == nil {
+		m.perTenant = map[string]int{}
+	}
+	m.perTenant[tenantID] = value
+}
+
+// TestTickEmitsOrphanCleanupMetrics_spec_8_10_1091 covers the §8.10 /
+// §16.1 lines 146-149 orphan-cleanup observability surface — one
+// IncOrphanCleanupRun per Tick, terminated counter += per-sweep return,
+// fleet-wide active gauge sums the per-tenant remaining counts, and the
+// per-tenant gauge re-publishes a value for every tenant. F-8.10.7.
+func TestTickEmitsOrphanCleanupMetrics_spec_8_10_1091(t *testing.T) {
+	store := memstore.New()
+	base := time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC)
+	seed(t, store, "sess_root", "", session.StateCompleted, base)
+	seed(t, store, "sess_child", "sess_root", session.StateRunning, base)
+	sink := &fakeMetricsSink{}
+	sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"}, orphancleanup.Options{
+		Metrics: sink,
+	})
+
+	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if sink.runs != 1 {
+		t.Errorf("IncOrphanCleanupRun calls = %d, want 1", sink.runs)
+	}
+	if sink.terminated != 1 {
+		t.Errorf("AddOrphanTasksTerminated total = %d, want 1", sink.terminated)
+	}
+	if sink.active != 0 {
+		t.Errorf("SetOrphanTasksActive = %d, want 0 (the child was terminated this Tick)", sink.active)
+	}
+	if got := sink.perTenant["acme"]; got != 0 {
+		t.Errorf("SetOrphanTasksActivePerTenant[acme] = %d, want 0", got)
+	}
+}
+
+// TestTickPublishesActiveOrphansInsideCascadeWindow_spec_8_10_1103
+// verifies the per-tenant gauge counts orphans that are still inside
+// the cascade window — the alert source must observe a non-zero
+// population during the deferral. F-8.10.7.
+func TestTickPublishesActiveOrphansInsideCascadeWindow_spec_8_10_1103(t *testing.T) {
+	store := memstore.New()
+	base := time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC)
+	seed(t, store, "sess_root", "", session.StateCompleted, base)
+	seed(t, store, "sess_child", "sess_root", session.StateRunning, base)
+	sink := &fakeMetricsSink{}
+	sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"}, orphancleanup.Options{
+		Metrics: sink,
+	})
+
+	// 10m after root termination — still inside the default 3600s window.
+	if _, err := sw.Tick(context.Background(), base.Add(10*time.Minute)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if sink.terminated != 0 {
+		t.Errorf("AddOrphanTasksTerminated = %d, want 0 — sweep deferred", sink.terminated)
+	}
+	if sink.active != 1 {
+		t.Errorf("SetOrphanTasksActive = %d, want 1", sink.active)
+	}
+	if got := sink.perTenant["acme"]; got != 1 {
+		t.Errorf("SetOrphanTasksActivePerTenant[acme] = %d, want 1", got)
+	}
+}
+
 func TestTickIsIdempotent(t *testing.T) {
 	store := memstore.New()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

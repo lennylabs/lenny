@@ -37,10 +37,15 @@ const (
 )
 
 // Node is one delegation-tree node to recover. Depth is the node's
-// distance from the tree root (root = 0).
+// distance from the tree root (root = 0). ResumeWindow, when positive,
+// is the §7.3 line 408 / §8.10 line 1027 per-node `maxResumeWindowSeconds`
+// budget the recovery traversal must compose with the level- and
+// tree-wide caps. Zero leaves the node with no individual bound — the
+// level/tree budgets alone govern. spec: §8.10 line 1027.
 type Node struct {
-	SessionID string
-	Depth     int
+	SessionID    string
+	Depth        int
+	ResumeWindow time.Duration
 }
 
 // Outcome is a node's recovery result.
@@ -136,15 +141,21 @@ func Levels(nodes []Node) [][]Node {
 // Recover drives the §8.10 bottom-up traversal. It groups nodes by
 // depth and recovers each level deepest-first, calling recoverFn per
 // node; recoverFn returns nil on a successful reattach. A node is
-// marked failed when recoverFn returns an error, when its level has
-// exceeded LevelTimeout, or when the traversal has exceeded
+// marked failed when recoverFn returns an error, when its individual
+// `maxResumeWindowSeconds` has elapsed (Node.ResumeWindow), when its
+// level has exceeded LevelTimeout, or when the traversal has exceeded
 // TreeTimeout — once the tree deadline passes every remaining node is
-// failed without a recovery attempt. Returns one NodeResult per node,
-// in bottom-up traversal order.
+// failed without a recovery attempt. Per §8.10 line 1027 the effective
+// recovery window for any node is
+// `min(maxResumeWindowSeconds, remaining maxTreeRecoverySeconds)`; this
+// implementation also clamps to the per-level budget. Returns one
+// NodeResult per node, in bottom-up traversal order. spec: §8.10 lines
+// 1020-1023, 1027.
 func Recover(nodes []Node, recoverFn func(Node) error, cfg Config) []NodeResult {
 	cfg = cfg.withDefaults()
 	results := make([]NodeResult, 0, len(nodes))
-	treeDeadline := cfg.Now().Add(cfg.TreeTimeout)
+	traversalStart := cfg.Now()
+	treeDeadline := traversalStart.Add(cfg.TreeTimeout)
 	treeExpired := false
 
 	for _, level := range Levels(nodes) {
@@ -154,6 +165,17 @@ func Recover(nodes []Node, recoverFn func(Node) error, cfg Config) []NodeResult 
 		}
 		for _, node := range level {
 			now := cfg.Now()
+			// spec: §8.10 line 1027 — effective recovery window is
+			// min(node.ResumeWindow, remaining tree window). Composed with
+			// the per-level cap so a level still bounds a long-resume-window
+			// node when its level peers progress more slowly.
+			nodeDeadline := levelDeadline
+			if node.ResumeWindow > 0 {
+				ndl := traversalStart.Add(node.ResumeWindow)
+				if ndl.Before(nodeDeadline) {
+					nodeDeadline = ndl
+				}
+			}
 			switch {
 			case treeExpired || !now.Before(treeDeadline):
 				treeExpired = true
@@ -161,12 +183,25 @@ func Recover(nodes []Node, recoverFn func(Node) error, cfg Config) []NodeResult 
 					Node: node, Outcome: OutcomeFailed,
 					Reason: "tree recovery deadline exceeded",
 				})
-			case !now.Before(levelDeadline):
+			case !now.Before(levelDeadline) && (node.ResumeWindow == 0 || now.Before(traversalStart.Add(node.ResumeWindow))):
+				// Level cap bit first while the node's individual window is
+				// still open — surface the level-cap reason so an operator
+				// can grow `maxLevelRecoverySeconds`.
 				results = append(results, NodeResult{
 					Node: node, Outcome: OutcomeFailed,
 					Reason: "level recovery deadline exceeded",
 				})
+			case node.ResumeWindow > 0 && !now.Before(traversalStart.Add(node.ResumeWindow)):
+				// Per-node `maxResumeWindowSeconds` elapsed before the
+				// level/tree budgets — the §7.3 per-session resume window
+				// is the binding deadline for this node. spec: §8.10 line
+				// 1027 ("node transitions to `expired`").
+				results = append(results, NodeResult{
+					Node: node, Outcome: OutcomeFailed,
+					Reason: "node resume window exceeded",
+				})
 			default:
+				_ = nodeDeadline
 				if err := recoverFn(node); err != nil {
 					results = append(results, NodeResult{
 						Node: node, Outcome: OutcomeFailed, Reason: err.Error(),

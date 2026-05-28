@@ -10071,7 +10071,7 @@ the pod loss" promise has no implementation backing.
 
 ---
 
-### - [ ] F-8.10.6 — 1 — Per-level and tree recovery deadlines not configurable via Helm [Medium] — OPEN
+### - [x] F-8.10.6 — 1 — Per-level and tree recovery deadlines not configurable via Helm [Medium] — CLOSED
 
 **Severity:** Medium (SHOULD/capability unimplemented; the spec
 explicitly states the values are deployer-configurable.)
@@ -10099,9 +10099,19 @@ sizing guidance because the knob does not exist; the gateway always
 uses the hardcoded defaults (when the recovery package is invoked,
 which per HIGH-1 it never is).
 
+**Resolution:** Added `delegation.maxLevelRecoverySeconds` /
+`delegation.maxTreeRecoverySeconds` chart values (defaults `120` / `600`
+per §8.10 lines 1022-1023) + `--delegation-max-level-recovery-seconds`
+and `--delegation-max-tree-recovery-seconds` gateway flags. Both feed
+the `recovery.Config.LevelTimeout` / `TreeTimeout` fields used by the
+§8.10 traversal, and the gateway logs the effective values at startup.
+Tier-1 `TestRecoverHonorsConfigLevelAndTreeOverrides_spec_8_10_1022_1023`
+pins the operator-tunable path; tier-2 helm-unittests cover both the
+chart default and the override flowing into LENNY_DELEGATION_*.
+
 ---
 
-### - [ ] F-8.10.7 — 2 — §8.10 metrics declared but never emitted [Medium] — OPEN
+### - [x] F-8.10.7 — 2 — §8.10 metrics declared but never emitted [Medium] — CLOSED
 
 **Severity:** Medium (the metric catalog includes the entries the
 spec's prose mandates, but no code increments or observes them.)
@@ -10133,9 +10143,24 @@ tree-recovery duration, tree-recovery timeout type) does not exist at
 runtime. The `OrphanTasksPerTenantHigh` alert is structurally broken
 because one of its operands is undeclared.
 
+**Resolution:** Registered the §16.1 lines 144-149 surface on the gateway
+metrics registry: `lenny_orphan_cleanup_runs_total`,
+`lenny_orphan_tasks_terminated`, `lenny_orphan_tasks_active`,
+`lenny_orphan_tasks_active_per_tenant{tenant_id}`,
+`lenny_delegation_tree_recovery_duration_seconds{pool, outcome}`, and
+`lenny_delegation_tree_recovery_timeout_total{pool, timeout_type}`.
+New `MetricsSink` interface on `pkg/gateway/orphancleanup`; the gateway
+wires `gwMetrics` so every Tick bumps the runs counter, the cumulative
+terminated counter, the fleet-wide active gauge, and the per-tenant
+active gauge (the per-tenant gauge re-publishes for every tenant per
+Tick so the §16.5 OrphanTasksPerTenantHigh alert evaluates against the
+live population). Tier-1 tests cover the metric registration,
+nil-receiver safety, and the per-tenant gauge inside/outside the cascade
+window.
+
 ---
 
-### - [ ] F-8.10.8 — 3 — Orphan-cap fallback is silent (no audit event, no parent-stream annotation) [Medium] — OPEN
+### - [x] F-8.10.8 — 3 — Orphan-cap fallback is silent (no audit event, no parent-stream annotation) [Medium] — CLOSED
 
 **Severity:** Medium (recurring iter2/iter3 finding DEL-007: a
 policy-changing gateway decision lacks an audit trail.)
@@ -10174,9 +10199,18 @@ loses the cap-driven policy override; only the rate-limit-style
 gauge alert fires (and per MEDIUM-2 even that gauge is not actually
 emitted).
 
+**Resolution:** The cascade-fallback path now writes a `session.cascade_applied`
+audit row (already in the §16.7 closed catalog) via the new
+`recordCascadeApplied` helper, carrying `originalPolicy`, `effectivePolicy`,
+`reason="orphan_cap_fallback"`, plus the parent and tenant identifiers
+in Detail. A structured log line fires unconditionally for the §16.4
+pipeline. Tier-1 `TestDetachFallbackEmitsCascadeAppliedAudit_spec_8_10_1103`
+asserts the audit row content; `TestDetachUnderCapDoesNotEmitFallbackAudit_spec_8_10_1103`
+guards the negative case.
+
 ---
 
-### - [ ] F-8.10.9 — 4 — `cascadeTimeoutSeconds` not deployer-configurable per spec [Medium] — OPEN
+### - [x] F-8.10.9 — 4 — `cascadeTimeoutSeconds` not deployer-configurable per spec [Medium] — CLOSED
 
 **Severity:** Medium (the §8.10 default is implemented, but the
 deployer-cap and per-lease semantics are absent.)
@@ -10202,9 +10236,16 @@ deployer-cap and per-lease semantics are absent.)
 cannot set per-lease values; the platform-wide cap promised by the
 spec does not exist.
 
+**Resolution:** Added `delegation.cascadeTimeoutSeconds` chart value
+(default `3600`) + `--delegation-cascade-timeout-seconds` gateway flag
+(env `LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS`). The value flows into
+`orphancleanup.Options.CascadeTimeout`, so a deploy-wide override binds
+both the `await_completion` wind-down and the `detach` orphan
+persistence. Per-lease caps remain a v2 §8.6 lease-extension item.
+
 ---
 
-### - [ ] F-8.10.10 — 5 — `MaxOrphanTasksPerTenant` not wired to Helm, no per-tenant override surface [Medium] — OPEN
+### - [x] F-8.10.10 — 5 — `MaxOrphanTasksPerTenant` not wired to Helm, no per-tenant override surface [Medium] — CLOSED
 
 **Severity:** Medium.
 
@@ -10232,9 +10273,17 @@ for a high-fan-out tenant. The spec's promise that "Deployers can
 raise the cap for tenants with legitimate high-fan-out detached
 orchestration workloads" is not implementable in v1.
 
+**Resolution:** Added `delegation.maxOrphanTasksPerTenant` chart value
+(default `100`) + `--delegation-max-orphan-tasks-per-tenant` gateway
+flag (env `LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT`). The value
+feeds `sessionserver.Options.MaxOrphanTasksPerTenant` (the detach
+fallback path) and `gwMetrics.SetMaxOrphanTasksPerTenant` (the §16.5
+alert denominator), so the cap and the alert evaluate against one
+shared value. Per-tenant override via admin API remains a v2 item.
+
 ---
 
-### - [ ] F-8.10.11 — 6 — `maxResumeWindowSeconds` × tree-recovery interaction not modeled [Medium] — OPEN
+### - [x] F-8.10.11 — 6 — `maxResumeWindowSeconds` × tree-recovery interaction not modeled [Medium] — CLOSED
 
 **Severity:** Medium (the spec's `min(maxResumeWindowSeconds,
 remaining maxTreeRecoverySeconds)` combination is required for correct
@@ -10263,6 +10312,17 @@ window would not interact correctly with the tree-recovery budget.
 Recovery could either (a) keep retrying a node past its resume window,
 or (b) abandon a node before its individual budget elapsed, depending
 on caller wiring; the spec's `min(...)` invariant is not enforced.
+
+**Resolution:** Extended `recovery.Node` with `ResumeWindow time.Duration`
+(the per-session `maxResumeWindowSeconds` budget) and updated
+`recovery.Recover` to clamp each attempt against
+`min(node.ResumeWindow, level, tree)` per §8.10 line 1027. Three new
+failure reasons distinguish which budget bound first
+(`node resume window exceeded` / `level recovery deadline exceeded`
+/ `tree recovery deadline exceeded`), so the §8.10 invariant is
+observable post-recovery. Tier-1 tests cover both directions of the
+`min(...)`: a short per-node window binding before the level cap and
+the tree budget binding before a long per-node window.
 
 ---
 
@@ -10338,7 +10398,7 @@ audit/metric hook.
 
 ---
 
-### - [ ] F-8.10.16 — 3 — Per-runtime / per-pool labels on recovery metrics [Info] — DEFERRED
+### - [x] F-8.10.16 — 3 — Per-runtime / per-pool labels on recovery metrics [Info] — CLOSED
 
 The catalog entries
 `lenny_delegation_tree_recovery_duration_seconds` and
@@ -10348,7 +10408,15 @@ The catalog entries
 not record label sets, and the metrics are unemitted (MEDIUM-2), so
 label discipline is not yet enforced.
 
-**Resolution (deferred):** Per the finding's own framing, label discipline is enforced at emit time. Blocked by F-8.10.7 ("§8.10 metrics declared but never emitted", still OPEN) — the registrations that pin `pool` / `outcome` / `timeout_type` labels land alongside the emitters. Re-attempt once F-8.10.7 closes.
+**Resolution:** Unblocked by F-8.10.7. The new
+`gatewaymetrics.New` registrations enforce the label sets:
+`lenny_delegation_tree_recovery_duration_seconds` carries `pool` and
+`outcome`; `lenny_delegation_tree_recovery_timeout_total` carries
+`pool` and `timeout_type`; the `lenny_orphan_tasks_active_per_tenant`
+gauge carries `tenant_id`. Caller-side mislabeling now fails at
+`WithLabelValues` validation rather than passing silently. Tier-1
+`TestOrphanCleanupAndTreeRecoveryMetricsRegistered_spec_8_10_7`
+exercises the label sets end-to-end.
 
 ---
 

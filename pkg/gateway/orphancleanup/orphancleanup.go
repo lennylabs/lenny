@@ -60,6 +60,24 @@ type TerminalHook interface {
 	OnSessionTerminal(ctx context.Context, sess sessionstore.Session)
 }
 
+// MetricsSink receives the §8.10 / §16.1 orphan-cleanup and per-tenant
+// orphan-gauge observations a sweep generates. Implementations are
+// best-effort and must not block the sweep. spec: §8.10 lines 1091,
+// 1093-1101, 1103; §16.1 lines 146-149. F-8.10.7.
+type MetricsSink interface {
+	// IncOrphanCleanupRun bumps the per-sweep counter; one Inc per Tick.
+	IncOrphanCleanupRun()
+	// AddOrphanTasksTerminated bumps the cumulative terminated counter by
+	// the per-sweep return value.
+	AddOrphanTasksTerminated(n int)
+	// SetOrphanTasksActive publishes the fleet-wide active orphan count.
+	SetOrphanTasksActive(value int)
+	// SetOrphanTasksActivePerTenant publishes the per-tenant active orphan
+	// count; the sweep calls it for every tenant per Tick so a tenant
+	// whose count drops to zero re-publishes zero.
+	SetOrphanTasksActivePerTenant(tenantID string, value int)
+}
+
 // Sweeper runs the periodic §8.10 orphan-cleanup sweep.
 type Sweeper struct {
 	store          sessionstore.Store
@@ -69,6 +87,7 @@ type Sweeper struct {
 	interval       time.Duration
 	clock          func() time.Time
 	terminal       TerminalHook
+	metrics        MetricsSink
 }
 
 // Options configures a Sweeper. A zero field selects its §8.10
@@ -86,6 +105,9 @@ type Options struct {
 	// Terminal, when set, supersedes the in-package archive emission with
 	// the gateway-side terminal-side-effects pipeline. See TerminalHook.
 	Terminal TerminalHook
+	// Metrics, when set, receives the §8.10 / §16.1 orphan-cleanup
+	// observability hooks each Tick. spec: §8.10 / §16.1; F-8.10.7.
+	Metrics MetricsSink
 }
 
 // New returns a Sweeper.
@@ -98,6 +120,7 @@ func New(store sessionstore.Store, tenants TenantLister, opts Options) *Sweeper 
 		interval:       opts.Interval,
 		clock:          opts.Clock,
 		terminal:       opts.Terminal,
+		metrics:        opts.Metrics,
 	}
 	if s.cascadeTimeout <= 0 {
 		s.cascadeTimeout = DefaultCascadeTimeout
@@ -114,33 +137,57 @@ func New(store sessionstore.Store, tenants TenantLister, opts Options) *Sweeper 
 // Tick runs one sweep at now and returns the count of orphaned
 // children it terminated. An orphan is a non-terminal session whose
 // delegation tree root is terminal and whose root has been terminal
-// for longer than cascadeTimeout.
+// for longer than cascadeTimeout. Per §16.1 lines 146-149 every Tick
+// also bumps the cleanup-runs counter, the cumulative terminated
+// counter, the fleet-wide active gauge, and the per-tenant active gauge
+// when a MetricsSink is wired.
 func (s *Sweeper) Tick(ctx context.Context, now time.Time) (int, error) {
+	if s.metrics != nil {
+		s.metrics.IncOrphanCleanupRun()
+	}
 	tenants, err := s.tenants.ListTenants(ctx)
 	if err != nil {
 		return 0, err
 	}
 	terminated := 0
+	totalActive := 0
 	for _, tenant := range tenants {
-		n, err := s.sweepTenant(ctx, tenant, now)
+		n, remaining, err := s.sweepTenant(ctx, tenant, now)
 		terminated += n
+		totalActive += remaining
+		if s.metrics != nil {
+			s.metrics.SetOrphanTasksActivePerTenant(tenant, remaining)
+		}
 		if err != nil {
+			if s.metrics != nil {
+				s.metrics.AddOrphanTasksTerminated(terminated)
+				s.metrics.SetOrphanTasksActive(totalActive)
+			}
 			return terminated, err
 		}
+	}
+	if s.metrics != nil {
+		s.metrics.AddOrphanTasksTerminated(terminated)
+		s.metrics.SetOrphanTasksActive(totalActive)
 	}
 	return terminated, nil
 }
 
-func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time) (int, error) {
+// sweepTenant scans tenant rows and terminates orphans whose cascade
+// window has elapsed. It returns the number terminated this Tick and
+// the count of orphan rows remaining in a non-terminal state under the
+// tenant's tree (the post-sweep gauge value).
+func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time) (int, int, error) {
 	rows, err := s.store.List(ctx, tenant, sessionstore.ListFilter{})
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	byID := make(map[string]sessionstore.Session, len(rows))
 	for _, r := range rows {
 		byID[r.ID] = r
 	}
 	terminated := 0
+	activeOrphans := 0
 	for _, row := range rows {
 		if session.IsTerminal(row.State) || row.ParentSessionID == "" {
 			continue
@@ -149,6 +196,10 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 		if !session.IsTerminal(root.State) {
 			continue // the tree is still active
 		}
+		// spec: §8.10 line 1103 — `lenny_orphan_tasks_active_per_tenant`
+		// counts every non-terminal child whose root is terminal,
+		// regardless of whether the cascade window has elapsed. F-8.10.7.
+		activeOrphans++
 		if now.Sub(root.UpdatedAt) <= s.cascadeTimeout {
 			continue // still inside the cascade window
 		}
@@ -167,10 +218,12 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 			return nil
 		})
 		if err != nil {
-			return terminated, err
+			return terminated, activeOrphans, err
 		}
 		if updated.State == session.StateExpired {
 			terminated++
+			// The row left the active-orphan set as part of this Tick.
+			activeOrphans--
 			if s.terminal != nil {
 				// Gateway-side terminal pipeline — release the executor
 				// (drains the pod, returns concurrent-mode slots per §5.2
@@ -181,7 +234,7 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 			}
 		}
 	}
-	return terminated, nil
+	return terminated, activeOrphans, nil
 }
 
 // treeRoot walks the ParentSessionID chain up from row to the tree

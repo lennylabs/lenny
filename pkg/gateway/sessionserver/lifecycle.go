@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -310,6 +311,49 @@ func (s *Server) emitAwaitingClientActionEntered(ctx context.Context, sess sessi
 			At:         s.clock(),
 		})
 	}
+}
+
+// recordCascadeApplied writes the §11.7 / §16.7 `session.cascade_applied`
+// audit row and emits a structured log line whenever the gateway
+// downgrades or otherwise rewrites a parent's cascade policy at
+// termination time. The §8.10 line 1103 maxOrphanTasksPerTenant
+// fallback is the load-bearing caller: an orchestrator that configured
+// `detach` deliberately needs an audit and log trail when the cap forces
+// the gateway to apply `cancel_all` instead. Best-effort: a nil sink or
+// marshal error never rolls back the cascade.
+//
+// spec: §8.10 line 1103 (orphan-cap fallback); §11.7 / §16.7
+// session.cascade_applied. F-8.10.8.
+func (s *Server) recordCascadeApplied(ctx context.Context, sess sessionstore.Session, original, effective session.CascadePolicy, reason string) {
+	// Structured log line so the §11.3 / §16.4 logging pipeline carries the
+	// downgrade reason even when no audit sink is wired.
+	log.Printf("lenny-gateway: §8.10 cascade_applied session=%s tenant=%s original=%s effective=%s reason=%s",
+		sess.ID, sess.TenantID, original, effective, reason)
+	if s.lifecycleAudit == nil {
+		return
+	}
+	detail, err := json.Marshal(map[string]any{
+		"reason":          reason,
+		"originalPolicy":  string(original),
+		"effectivePolicy": string(effective),
+		"sessionId":       sess.ID,
+		"parentSessionId": sess.ParentSessionID,
+	})
+	if err != nil {
+		// json.Marshal on a static map never fails; defensive guard so a
+		// future field that does fail does not panic the cascade.
+		return
+	}
+	s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{
+		EventType:  auditSessionCascadeApplied,
+		TenantID:   sess.TenantID,
+		SessionID:  sess.ID,
+		UserID:     sess.UserID,
+		RuntimeRef: sess.RuntimeRef,
+		State:      string(sess.State),
+		Detail:     string(detail),
+		At:         s.clock(),
+	})
 }
 
 // emitAwaitingClientActionExpired writes the §11.7 audit row for the

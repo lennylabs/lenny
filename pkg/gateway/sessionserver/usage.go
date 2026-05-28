@@ -327,14 +327,23 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 // own cascade policy, so a `detach` child shields its own subtree.
 // Best-effort: a failure never fails the transition that triggered it.
 func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Session) {
-	policy := sess.CascadeOnFailure.Resolve()
+	originalPolicy := sess.CascadeOnFailure.Resolve()
+	policy := originalPolicy
+	orphanCapFallback := false
 	if policy == session.CascadeDetach && s.detachExceedsOrphanCap(ctx, sess.TenantID) {
-		// §8.10 maxOrphanTasksPerTenant fallback.
+		// spec: §8.10 line 1103 — maxOrphanTasksPerTenant fallback. Emit
+		// the §16.7 `session.cascade_applied` audit row, a structured log
+		// line, and a §7.2 status_change on the parent's SSE event stream
+		// so the orchestrator that configured `detach` sees the override
+		// reason. F-8.10.8.
 		policy = session.CascadeCancelAll
+		orphanCapFallback = true
+		s.recordCascadeApplied(ctx, sess, originalPolicy, policy, "orphan_cap_fallback")
 	}
 	if policy != session.CascadeCancelAll {
 		return
 	}
+	_ = orphanCapFallback // referenced via recordCascadeApplied above
 	all, err := s.store.List(ctx, sess.TenantID, sessionstore.ListFilter{})
 	if err != nil {
 		return

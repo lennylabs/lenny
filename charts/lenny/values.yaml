@@ -1122,6 +1122,42 @@ gateway:
   # first cycle. Rendered via the --checkpoint-jitter-fraction flag.
   periodicCheckpointJitterFraction: 0.2
 
+# delegation surfaces the §8.10 deployer-tunable knobs the gateway honors
+# for recursive delegation: per-level and whole-tree recovery deadlines,
+# the cascade timeout, and the per-tenant orphan cap. The defaults match
+# the §8.10 line 1022/1023/1078/1103 spec defaults; deployers running
+# deep delegation trees should raise maxTreeRecoverySeconds per the
+# §8.10 line 1032 formula and may raise maxOrphanTasksPerTenant for
+# tenants with legitimate high-fan-out detached orchestration workloads.
+# F-8.10.6 / F-8.10.9 / F-8.10.10.
+delegation:
+  # maxLevelRecoverySeconds is the §8.10 line 1022 per-tree-level bound.
+  # Nodes unrecovered when the level deadline elapses are marked
+  # terminally failed and the traversal continues upward. Override via
+  # LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS.
+  maxLevelRecoverySeconds: 120
+  # maxTreeRecoverySeconds is the §8.10 line 1023 / line 1042 total
+  # wall-clock bound for recovering the full delegation tree; overrides
+  # per-level budgets. For trees at depth 5 or greater, raise this per
+  # the §8.10 line 1032 formula:
+  #   maxTreeRecoverySeconds >= maxResumeWindowSeconds
+  #                            + (maxDepth - 1) * maxLevelRecoverySeconds
+  #                            + buffer
+  # The 600s default sizes for trees up to ~4 levels deep. Override via
+  # LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS.
+  maxTreeRecoverySeconds: 600
+  # cascadeTimeoutSeconds is the §8.10 line 1078 platform-wide cap on
+  # how long an `await_completion` child may run after parent failure
+  # and how long a `detach` orphan persists before §8.10 cleanup. The
+  # default is one hour. Override via LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS.
+  cascadeTimeoutSeconds: 3600
+  # maxOrphanTasksPerTenant is the §8.10 line 1103 per-tenant orphan
+  # cap. When a `detach` cascade would cause the tenant's active orphan
+  # count to exceed this, the gateway falls back to `cancel_all`. The
+  # §16.5 OrphanTasksPerTenantHigh alert fires above 80% of this value.
+  # Override via LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT.
+  maxOrphanTasksPerTenant: 100
+
 # autoscaling configures the §10.1 gateway horizontal scaler. The chart
 # renders exactly one scaler resource, selected by autoscaling.provider:
 #

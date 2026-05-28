@@ -234,6 +234,101 @@ func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 	}
 }
 
+// orphanCapAuditSink captures session-lifecycle audit rows so the
+// §8.10 line 1103 fallback case can assert on the emitted event.
+type orphanCapAuditSink struct {
+	events []sessionserver.SessionLifecycleEvent
+}
+
+func (s *orphanCapAuditSink) EmitSessionLifecycle(_ context.Context, ev sessionserver.SessionLifecycleEvent) {
+	s.events = append(s.events, ev)
+}
+
+// TestDetachFallbackEmitsCascadeAppliedAudit_spec_8_10_1103 covers the
+// orphan-cap fallback audit row — the §11.7 / §16.7
+// `session.cascade_applied` event must fire with the downgrade reason
+// and the original/effective cascade policies in Detail so the
+// orchestrator that configured `detach` deliberately sees why the
+// gateway cancelled its subtree. F-8.10.8.
+func TestDetachFallbackEmitsCascadeAppliedAudit_spec_8_10_1103(t *testing.T) {
+	store := memstore.New()
+	sink := &orphanCapAuditSink{}
+	srv := sessionserver.New(store, sessionserver.Options{
+		MaxOrphanTasksPerTenant: 1,
+		LifecycleAuditSink:      sink,
+	})
+	now := time.Now()
+	// Pre-existing orphan to push the tenant over the cap.
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "old_root", TenantID: "acme", State: session.StateCompleted,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed old root: %v", err)
+	}
+	seedTreeSession(t, store, "old_child", "old_root")
+	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
+	seedTreeSession(t, store, "sess_child", "sess_parent")
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var found *sessionserver.SessionLifecycleEvent
+	for i := range sink.events {
+		if sink.events[i].EventType == "session.cascade_applied" {
+			found = &sink.events[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("session.cascade_applied audit not emitted; events = %+v", sink.events)
+	}
+	if found.SessionID != "sess_parent" {
+		t.Errorf("audit SessionID = %q, want sess_parent", found.SessionID)
+	}
+	if found.TenantID != "acme" {
+		t.Errorf("audit TenantID = %q, want acme", found.TenantID)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal([]byte(found.Detail), &detail); err != nil {
+		t.Fatalf("audit Detail not JSON: %v (%q)", err, found.Detail)
+	}
+	if detail["reason"] != "orphan_cap_fallback" {
+		t.Errorf("audit reason = %v, want orphan_cap_fallback", detail["reason"])
+	}
+	if detail["originalPolicy"] != string(session.CascadeDetach) {
+		t.Errorf("audit originalPolicy = %v, want detach", detail["originalPolicy"])
+	}
+	if detail["effectivePolicy"] != string(session.CascadeCancelAll) {
+		t.Errorf("audit effectivePolicy = %v, want cancel_all", detail["effectivePolicy"])
+	}
+}
+
+// TestDetachUnderCapDoesNotEmitFallbackAudit_spec_8_10_1103 covers the
+// negative case — when the tenant is under the orphan cap, the §8.10
+// detach proceeds without emitting a `session.cascade_applied` row.
+// F-8.10.8.
+func TestDetachUnderCapDoesNotEmitFallbackAudit_spec_8_10_1103(t *testing.T) {
+	store := memstore.New()
+	sink := &orphanCapAuditSink{}
+	srv := sessionserver.New(store, sessionserver.Options{
+		MaxOrphanTasksPerTenant: 100,
+		LifecycleAuditSink:      sink,
+	})
+	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
+	seedTreeSession(t, store, "sess_child", "sess_parent")
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	for _, ev := range sink.events {
+		if ev.EventType == "session.cascade_applied" {
+			t.Errorf("session.cascade_applied audit must not fire under the orphan cap: %+v", ev)
+		}
+	}
+}
+
 func TestDetachProceedsUnderOrphanCap(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{MaxOrphanTasksPerTenant: 10})

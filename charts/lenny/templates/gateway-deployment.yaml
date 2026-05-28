@@ -451,6 +451,30 @@ spec:
             - name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
               value: {{ .Values.gateway.rateLimitFailOpenMaxSeconds | quote }}
             {{- end }}
+            {{- with .Values.delegation }}
+            # §8.10 lines 1022-1023 / 1042 — operator-tunable per-level and
+            # whole-tree recovery deadlines feed recovery.Config. F-8.10.6.
+            {{- if hasKey . "maxLevelRecoverySeconds" }}
+            - name: LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS
+              value: {{ .maxLevelRecoverySeconds | quote }}
+            {{- end }}
+            {{- if hasKey . "maxTreeRecoverySeconds" }}
+            - name: LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS
+              value: {{ .maxTreeRecoverySeconds | quote }}
+            {{- end }}
+            # §8.10 line 1078 — cascadeTimeoutSeconds. F-8.10.9.
+            {{- if hasKey . "cascadeTimeoutSeconds" }}
+            - name: LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS
+              value: {{ .cascadeTimeoutSeconds | quote }}
+            {{- end }}
+            # §8.10 line 1103 — maxOrphanTasksPerTenant. Feeds both the
+            # sessionserver detach-cascade fallback and the §16.5
+            # OrphanTasksPerTenantHigh alert denominator. F-8.10.10.
+            {{- if hasKey . "maxOrphanTasksPerTenant" }}
+            - name: LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT
+              value: {{ .maxOrphanTasksPerTenant | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.gateway.extractionThresholds }}
             # §4.1 extractionThresholds — per-subsystem extraction
             # thresholds surfaced from Helm so operators can calibrate
