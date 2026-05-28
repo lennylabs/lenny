@@ -11483,7 +11483,7 @@ Verdict: **PARTIAL** — the default `HashingEmbedder` is correct by constructio
 
 ---
 
-### - [ ] F-9.4.9 — (Low) — No `Memory.deleted` / `Memory.write` audit emission [Low] — OPEN
+### - [x] F-9.4.9 — (Low) — No `Memory.deleted` / `Memory.write` audit emission [Low] — CLOSED
 
 Spec wording (§9.4 does not explicitly require audit emission for memory writes/queries, but the cross-cutting §11.7 audit contract covers user-data lifecycle events, and the §12.8 erasure pipeline emits per-store delete counts).
 
@@ -11502,6 +11502,8 @@ Evidence:
   The result is that a tenant's GDPR erasure receipt records "memory: 0 rows" even when thousands were deleted, which is misleading for compliance audit. The signature mismatch is upstream of this report and could be considered a §9.4 interface-design Low — the spec defines `DeleteByUser(ctx, tenantID, userID) error` without a count return.
 
 Verdict: **NOTEWORTHY** — the §9.4 signature returns no count, so the erasure receipt under-reports memory deletions. Demoted to Low because the spec literally specifies the no-count signature; raising it would require a spec change rather than a code fix.
+
+**Resolution:** Verify-closed per the finding's own framing ("raising it would require a spec change rather than a code fix"). Rule B blocks spec edits, so the §9.4 `DeleteByUser(ctx, tenantID, userID) error` no-count signature stands; the erasure adapter at `cmd/lenny-gateway/main.go:1194-1199` faithfully reports the count it cannot supply as 0 with an inline comment citing the §9.4 interface design.
 
 ---
 
@@ -14792,9 +14794,11 @@ Spec §11.2.1 controls applicable to both categories: "anomaly alerting: a `Bill
 
 `pkg/alerting/rules/rules.go:1024`: `Expr: lenny_billing_correction_rate_24h > 0.05`. The threshold is baked into the PromQL rule rather than parameterized by a chart value the operator can override. Minor — the alert is hard-coded to the default.
 
-### - [ ] F-11.2.24 — Storage quota `ContentLength` header enforcement implicit; spec implies an explicit reject [Low] — OPEN
+### - [x] F-11.2.24 — Storage quota `ContentLength` header enforcement implicit; spec implies an explicit reject [Low] — CLOSED
 
 Spec §11.2 storage-quota mechanism: "for workspace uploads the client supplies a `Content-Length` header (enforced by the gateway)". `sessionserver/upload.go:119` calls `s.reserveStorageQuota` without an explicit "missing Content-Length → reject" branch; if `Content-Length` is absent or zero the reservation uses zero and the `LimitedReader` does the runtime cap. Functionally safe (the stream cap catches it), but the spec implies the gateway should reject a missing header up front.
+
+**Resolution:** Stale evidence. `pkg/gateway/sessionserver/upload.go:488-492` in `reserveStorageQuota` already performs the explicit reject when a tenant has a storage quota: `incoming := r.ContentLength; if incoming < 0 { writeError(400, VALIDATION_ERROR, "a Content-Length header is required for uploads under a storage quota") }`. Go's `net/http` sets `Request.ContentLength` to -1 when the header is absent, so the missing-header path is fail-closed. A literal `Content-Length: 0` (the only "zero" case left) is a legitimate zero-byte upload and is admitted by design.
 
 ### - [x] F-11.2.25 — Append-only billing immutability trigger is correctly installed [Info] — CLOSED
 
@@ -27935,7 +27939,7 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.17 — 2-17  Phase-stamp ConfigMap chart writes camelCase flag keys; spec uses slug form in alert / docs [Low] — OPEN
+### - [x] F-17.2.17 — 2-17  Phase-stamp ConfigMap chart writes camelCase flag keys; spec uses slug form in alert / docs [Low] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-17.2.5 — Both report the phase-stamp ConfigMap renders camelCase flag labels rather than the slug/-enabled form the alert PromQL and docs expect.
 
@@ -27945,14 +27949,18 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 **Impact:** Same root cause as Finding 17.2-5, surfaced here for completeness: the camelCase data key versus slug label is internally inconsistent across the implementation. The spec text in §17.2 line 74 itself does not dictate the slug form, but the alert PromQL and docs do — the chart needs to either rename to slug form with `-enabled` suffix or the alert/docs need to drop the `-enabled` suffix and use camelCase.
 
+**Resolution:** Verify-closed; explicit duplicate of F-17.2.5 (High, still OPEN) per the finding's own framing ("Same root cause as Finding 17.2-5, surfaced here for completeness"). Phase-stamp/alert label coherence is owned by the §17.2 High remediation.
+
 ---
 
-### - [ ] F-17.2.18 — 2-18  Restricted PSS labels apply via implicit chart wiring rather than via `.Values.agentNamespaces` per-namespace setting [Low] — OPEN
+### - [x] F-17.2.18 — 2-18  Restricted PSS labels apply via implicit chart wiring rather than via `.Values.agentNamespaces` per-namespace setting [Low] — CLOSED
 **Spec requirement** (§17.2 lines 90–95): "Namespace-level PSS labels remain at `warn` + `audit` (not `enforce`)" and the two label keys are explicitly named.
 
 **Implementation:** `/Users/joan/projects/lenny/charts/lenny/templates/agent-namespaces.yaml` lines 25–26 stamps `pod-security.kubernetes.io/warn: restricted` and `pod-security.kubernetes.io/audit: restricted` unconditionally on every agent namespace. No `pod-security.kubernetes.io/enforce` is set, matching spec. The labels are hard-coded; there is no per-namespace override knob if a deployer needs a different posture for one namespace. Consistent with §17.2 but worth flagging that any future per-namespace PSS variation requires a chart change rather than a values override.
 
 **Impact:** Informational; current behavior is correct.
+
+**Resolution:** Verify-closed per the finding's own framing ("Informational; current behavior is correct"). §17.2 lines 90-95 mandate `warn`+`audit`-only PSS labels (no `enforce`); the chart's unconditional stamping at `agent-namespaces.yaml:25-26` is the strictest reading of the spec. A future per-namespace override knob would be a v2 extension, not a v1 normative gap.
 
 ---
 
@@ -30204,7 +30212,7 @@ both spellings; helm-unittest updated to assert the new flag form.
 
 ---
 
-### - [ ] F-17.6.17 — `bootstrap.tenant` (singular, with `name` + `displayName`) vs `bootstrap.tenants[]` (plural, with `id`) [Low] — OPEN
+### - [x] F-17.6.17 — `bootstrap.tenant` (singular, with `name` + `displayName`) vs `bootstrap.tenants[]` (plural, with `id`) [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.1.8 — Both report the singular bootstrap.tenant (with name) spec form versus the plural bootstrap.tenants[] (with id) implemented in chart and bootstrap.go.
 
@@ -30236,6 +30244,8 @@ which form is authoritative would help.
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:1024`
 - `/Users/joan/projects/lenny/pkg/gateway/admin/bootstrap.go:107-115`
+
+**Resolution:** Verify-closed; explicit duplicate of F-24.1.8 (Medium, still OPEN) per the finding's own header. The canonical singular-vs-plural decision lives in §24.1; the §17.6 surface inherits whatever F-24.1.8 resolves.
 
 ---
 
@@ -30287,7 +30297,7 @@ cover the default and an operator-supplied override
 
 ---
 
-### - [ ] F-17.6.20 — `lenny-preflight` does not log the `--skip-preflight` warning line [Low] — OPEN
+### - [x] F-17.6.20 — `lenny-preflight` does not log the `--skip-preflight` warning line [Low] — CLOSED
 
 **Spec:** §17.6 line 532: `"Preflight validation skipped — infrastructure
 misconfigurations may cause runtime failures."` printed when
@@ -30296,6 +30306,8 @@ misconfigurations may cause runtime failures."` printed when
 **Impl:** N/A because the `preflight.enabled` knob doesn't exist (M4).
 
 **Severity:** Low (subsumed by M4).
+
+**Resolution:** Verify-closed per the finding's own framing ("subsumed by M4"). The §17.6 `preflight.enabled` knob is owned by the unresolved Medium F-17.6 ("M4"); the warning-line emission depends on that knob existing and lands with the M4 remediation.
 
 ---
 
@@ -31787,7 +31799,7 @@ implementation does not honour.
 
 ---
 
-### - [ ] F-17.9.16 — Wizard prompts for `objectStorage.bucket` but `composeValues` requires `objectStorage.endpoint` OR `objectStorage.bucket` to be non-empty before emitting either [Low] — OPEN
+### - [x] F-17.9.16 — Wizard prompts for `objectStorage.bucket` but `composeValues` requires `objectStorage.endpoint` OR `objectStorage.bucket` to be non-empty before emitting either [Low] — CLOSED
 
 **Spec:** §17.9.3 line 1413 shows bucket and region as the
 deployer-facing knobs for S3 / GCS / ABS, even when the provider
@@ -31810,6 +31822,8 @@ answer is silently dropped.
 **Files:**
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:484-493`
 - `/Users/joan/projects/lenny/charts/lenny/templates/datastore-secret.yaml:25,43-46`
+
+**Resolution:** `validateAnswers` now rejects `objectStorage.bucket` set with `objectStorage.endpoint` empty (`cmd/lenny-ctl/install.go`), and `composeValues` gates the entire `minio:` block on `endpoint` being supplied so a bucket-only answer can no longer slip through silently. Tier-1 `TestValidateAnswersRejectsBucketWithoutEndpoint_spec_17_9_3_1413` + `TestComposeValuesOmitsMinioWhenEndpointEmpty_spec_17_9_3_1413` cover both halves.
 
 ---
 

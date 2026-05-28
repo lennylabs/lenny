@@ -460,6 +460,17 @@ func validateAnswers(a installAnswers) []string {
 			))
 		}
 	}
+	// spec: §17.9.3 line 1413 — the chart's MinIO/object-store wiring
+	// (`templates/datastore-secret.yaml`, `gateway-deployment.yaml`)
+	// gates every LENNY_MINIO_* env on `minio.endpoint` being set.
+	// A bucket-only answer is silently dropped at chart-render time,
+	// so reject it during validation rather than letting the operator
+	// believe their bucket choice took effect.
+	if a.ObjectStorage.Bucket != "" && a.ObjectStorage.Endpoint == "" {
+		errs = append(errs,
+			"objectStorage.bucket is set but objectStorage.endpoint is empty; "+
+				"the chart wires MinIO/S3 only when endpoint is supplied")
+	}
 	return errs
 }
 
@@ -484,11 +495,14 @@ func composeValues(a installAnswers) ([]byte, error) {
 	if a.Redis.URL != "" {
 		values["redis"] = map[string]any{"url": a.Redis.URL}
 	}
-	if a.ObjectStorage.Endpoint != "" || a.ObjectStorage.Bucket != "" {
-		minio := map[string]any{}
-		if a.ObjectStorage.Endpoint != "" {
-			minio["endpoint"] = a.ObjectStorage.Endpoint
-		}
+	// spec: §17.9.3 line 1413 — emit the `minio:` block only when
+	// `endpoint` is supplied. The chart's MinIO wiring
+	// (`charts/lenny/templates/{datastore-secret,gateway-deployment}.yaml`)
+	// gates every LENNY_MINIO_* env on a non-empty endpoint, so a
+	// bucket-only entry would otherwise be silently dropped.
+	// `validateAnswers` rejects bucket-without-endpoint upstream.
+	if a.ObjectStorage.Endpoint != "" {
+		minio := map[string]any{"endpoint": a.ObjectStorage.Endpoint}
 		if a.ObjectStorage.Bucket != "" {
 			minio["bucket"] = a.ObjectStorage.Bucket
 		}

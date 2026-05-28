@@ -234,6 +234,56 @@ func TestValidateAnswersRejectsBadNamespace(t *testing.T) {
 	}
 }
 
+// spec: §17.9.3 line 1413 — the chart's MinIO/S3 wiring gates every
+// LENNY_MINIO_* env on `minio.endpoint` being set, so a bucket-only
+// wizard answer would silently disappear at render time. Validation
+// must surface the inconsistency.
+func TestValidateAnswersRejectsBucketWithoutEndpoint_spec_17_9_3_1413(t *testing.T) {
+	a := installAnswers{
+		Environment:   "local",
+		Tier:          "tier1",
+		Auth:          installAuth{Mode: "dev"},
+		ObjectStorage: installObjectStorage{Bucket: "my-bucket"},
+	}
+	errs := validateAnswers(a)
+	if len(errs) == 0 {
+		t.Fatal("bucket without endpoint should be rejected")
+	}
+	var found bool
+	for _, e := range errs {
+		if strings.Contains(e, "objectStorage.bucket") && strings.Contains(e, "endpoint") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected bucket/endpoint validation message, got: %v", errs)
+	}
+}
+
+// spec: §17.9.3 line 1413 — composeValues must not emit a `minio:`
+// block when only `bucket` is provided; the chart would drop it.
+func TestComposeValuesOmitsMinioWhenEndpointEmpty_spec_17_9_3_1413(t *testing.T) {
+	a := installAnswers{
+		Release:       installRelease{Name: "lenny", Namespace: "lenny-system"},
+		Environment:   "prod",
+		Tier:          "tier2",
+		Auth:          installAuth{Mode: "oidc", OIDCIssuer: "x", OIDCClientID: "y"},
+		ObjectStorage: installObjectStorage{Bucket: "stray"},
+	}
+	out, err := composeValues(a)
+	if err != nil {
+		t.Fatalf("composeValues: %v", err)
+	}
+	var v map[string]any
+	if err := yaml.Unmarshal(out, &v); err != nil {
+		t.Fatalf("composed values are not valid YAML: %v", err)
+	}
+	if _, present := v["minio"]; present {
+		t.Errorf("minio block should be omitted when endpoint is empty: %+v", v)
+	}
+}
+
 func TestComposeValuesEmitsDataStoreOverrides(t *testing.T) {
 	a := installAnswers{
 		Release:       installRelease{Name: "lenny", Namespace: "lenny-system"},
