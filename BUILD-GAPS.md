@@ -32334,13 +32334,15 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 ---
 
-### - [ ] F-24.1.10 — (Info) — Embedded Mode `--dev-tenant`/`--dev-roles` auth path is functional but non-spec [Medium] — OPEN
+### - [x] F-24.1.10 — (Info) — Embedded Mode `--dev-tenant`/`--dev-roles` auth path is functional but non-spec [Medium] — CLOSED
 
 **Spec (R3):** Min role is `platform-admin`.
 
 **Implementation:**
 - `cmd/lenny-ctl/main.go:215-227` accepts `--dev-tenant`/`--dev-roles` global flags. `charts/lenny/templates/bootstrap-job.yaml:69-72` defaults to that path when no `operatorTokenSecret` is configured.
 - The gateway honors `X-Lenny-Roles: platform-admin` only when dev-mode is enabled, so the min-role gate still holds. This is consistent with §17.4 Embedded Mode but is not called out in §24.1 — informational only.
+
+**Resolution:** Verify-closed per finding's own framing ("informational only"). Confirmed `--dev-tenant`/`--dev-roles` at `cmd/lenny-ctl/main.go:134-135,224-231`; the comment at line 29 acknowledges Embedded Mode. The min-role gate (gateway dev-mode gates `X-Lenny-Roles`) is intact; consistent with §17.4. No code change.
 
 ---
 
@@ -32526,7 +32528,7 @@ The current codebase has no equivalent "feature detection then fall back to loca
 
 ---
 
-### - [ ] F-24.2.9 — (Info) — Admission-plane checks exist in `pkg/preflight/` but are not reachable from a CLI [Medium] — OPEN
+### - [x] F-24.2.9 — (Info) — Admission-plane checks exist in `pkg/preflight/` but are not reachable from a CLI [Medium] — CLOSED
 
 **Spec:** §17.9 (referenced by §24.2's "CLI equivalent" phrasing) defines the admission-plane check inventory.
 
@@ -32535,6 +32537,8 @@ The current codebase has no equivalent "feature detection then fall back to loca
 - These checks are good building blocks for the standalone-mode admission-plane subset of `lenny-ctl preflight`. When F1 is fixed, the implementation can wire `pkg/preflight.Run` (with a `client.Reader` against the operator's `KUBECONFIG`) behind the new subcommand and add the missing Postgres/Redis/MinIO probes (F4). No new infrastructure is required for the admission-plane half; only the CLI surface, the values.yaml parser, and the storage probes.
 
 **Impact:** Informational only — flags an integration opportunity that reduces the F1 fix scope. The existing `pkg/preflight` checks are runtime-agnostic (operate on a `client.Reader`) so the CLI can supply an in-cluster or kubeconfig-based reader equivalently.
+
+**Resolution:** Verify-closed per finding's own framing ("Informational only — flags an integration opportunity"). Confirmed admission-plane checks present at `pkg/preflight/run.go:95-155` (admission-webhook-inventory, networkpolicy-selector-consistency, etc.). Integration scope is downstream of F-24.2.1; this Info finding is documentary only. No code change.
 
 ---
 
@@ -32692,7 +32696,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.3.8 — (Info) — §24.3 implicit prerequisite: `WithTenantAccess` wiring must be present or all three endpoints are unmounted [Medium] — OPEN
+### - [x] F-24.3.8 — (Info) — §24.3 implicit prerequisite: `WithTenantAccess` wiring must be present or all three endpoints are unmounted [Medium] — CLOSED
 
 **Spec context:** §24.3 assumes the endpoints are available; §15.1:778-780 says they exist.
 
@@ -32701,6 +32705,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - The store interface always returns a value (`NewMemory()` is the default at `cmd/lenny-gateway/main.go:870`), so the safe configuration is the default; deployments that explicitly disable the store via configuration would silently lose the §24.3 surface.
 
 **Impact:** Not user-visible today, but the §24.3 surface is conditionally registered. Informational.
+
+**Resolution:** Verify-closed per finding's own framing ("Not user-visible today … Informational"). Confirmed `tenantAccess` field at `pkg/gateway/admin/tenants.go:117` and conditional mount at `:553` (lines drifted from 459-465). `NewMemory()` is the default so safe wiring is the default. No code change.
 
 ---
 
@@ -32960,7 +32966,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.4.11 — (Info) — `pkg/gateway/poolstore/pgstore/` exists but is not exercised by the §24.4 surface [Medium] — OPEN
+### - [x] F-24.4.11 — (Info) — `pkg/gateway/poolstore/pgstore/` exists but is not exercised by the §24.4 surface [Medium] — CLOSED
 
 **Spec context:** §24.4 commands operate against persistent state; the spec assumes a Postgres store underlies the admin API in production deployments (§17.6, §12.3).
 
@@ -32968,15 +32974,19 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - `pkg/gateway/poolstore/pgstore/` directory contains the Postgres-backed `Store` implementation; `cmd/lenny-gateway/main.go` selects between `poolstore.NewMemory()` and `pgstore.New(...)` based on the deployment mode.
 - The §24.4 surface is built atop this `Store` interface, which is correct. Informational.
 
+**Resolution:** Verify-closed per finding's own framing ("Informational"). Confirmed `pkg/gateway/poolstore/pgstore/pgstore.go` ships (13KB). The §24.4 surface absence is tracked under F-24.4.1..F-24.4.6 (High/Medium); pgstore presence is documentary. No code change.
+
 ---
 
-### - [ ] F-24.4.12 — (Info) — `pkg/embedded/stack` does not seed any pool grants for the reference runtimes; `lenny up` produces only ungranted runtimes [Medium] — OPEN
+### - [x] F-24.4.12 — (Info) — `pkg/embedded/stack` does not seed any pool grants for the reference runtimes; `lenny up` produces only ungranted runtimes [Medium] — CLOSED
 
 **Spec context:** §17.4 promises a single-binary embedded deployment that runs a full Lenny installation; §24.4 grant-access is part of multi-tenant onboarding but not part of `lenny up`'s default seed (`pkg/embedded/stack/runtimes.go`).
 
 **Implementation:**
 - `pkg/embedded/stack/runtimes.go:55-71` (the only in-tree call site of `POST /v1/admin/runtimes/{name}/tenant-access`) grants runtime access for reference runtimes but does not grant pool access. The embedded gateway therefore exposes the runtimes but not their pre-warmed pools to a tenant-admin caller.
 - This is a documented in-flight gap rather than a §24.4 violation. Informational.
+
+**Resolution:** Verify-closed per finding's own framing ("documented in-flight gap rather than a §24.4 violation. Informational"). Confirmed `pkg/embedded/stack/runtimes.go:58` POSTs only `/v1/admin/runtimes/<name>/tenant-access`; no pool-access POST. Pool-grant absence is downstream of F-24.4.1 (CLI surface missing). No code change.
 
 ---
 
@@ -33230,7 +33240,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.5.11 — (Info) — `diagnose credential-pool` exists and partially substitutes for §24.5 row 2 [Medium] — OPEN
+### - [x] F-24.5.11 — (Info) — `diagnose credential-pool` exists and partially substitutes for §24.5 row 2 [Medium] — CLOSED
 
 **Spec context:** §24.5 row 2 is the admin Get; §25.6 diagnostic endpoints (referenced from `lenny-ctl diagnose credential-pool`) provide an alternative health view.
 
@@ -33239,6 +33249,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - This is a §25.6 surface, not a §24.5 surface — the spec keeps them separate, and the ops diagnosis returns pool-level utilization, not per-credential health scores (per F4). It is informational because it does substitute for *some* of the operator-investigation use cases that §24.5 row 2 would otherwise serve, even though it does not replace the §24.5 surface.
 
 **Impact:** Operators investigating a credential-pool issue today fall back to `lenny-ctl diagnose credential-pool <name>`, which returns the §25.6 view (utilization, hot keys, rate-limited flag, suggested actions). It is the only working CLI path for credential-pool health investigation; the §24.5 admin path is unbuilt.
+
+**Resolution:** Verify-closed per finding's own framing ("informational because it does substitute for *some* of the operator-investigation use cases"). Confirmed `lenny-ctl diagnose credential-pool` at `cmd/lenny-ctl/ops.go:185-190` calling `/v1/admin/diagnostics/credential-pools/{name}`. §24.5 admin-surface gaps tracked under F-24.5.1..F-24.5.10. No code change.
 
 ---
 
@@ -33589,7 +33601,7 @@ client-side error message would more usefully read "circuit-breakers open
 requires --scope" rather than the gateway's `scope.<tier>: required` reply.
 This is Low because the safety property still holds.
 
-### - [ ] F-24.7.3 — (Info) — §24.7 does not bind a CLI command to `GET /v1/admin/circuit-breakers/{name}` [Medium] — OPEN
+### - [x] F-24.7.3 — (Info) — §24.7 does not bind a CLI command to `GET /v1/admin/circuit-breakers/{name}` [Medium] — CLOSED
 
 The §15.1 admin surface
 (`/Users/joan/projects/lenny/spec/15_external-api-surface.md:887`) exposes
@@ -33600,7 +33612,9 @@ circuit-breakers get <name>` subcommand, so the CLI omission is consistent
 with §24.7. Listed here because the audit brief expected a `get` command;
 the absence is by §24.7 design.
 
-### - [ ] F-24.7.4 — (Info) — §24.7 description references the `operation_type` closed set; the CLI does not pre-validate it [Medium] — OPEN
+**Resolution:** Verify-closed per finding's own framing ("the absence is by §24.7 design"). Confirmed GET handler at `pkg/gateway/admin/breakers.go:166-177`; `grep "circuit-breakers get" cmd/lenny-ctl/` returns zero hits. No spec violation. No code change.
+
+### - [x] F-24.7.4 — (Info) — §24.7 description references the `operation_type` closed set; the CLI does not pre-validate it [Medium] — CLOSED
 
 Spec §24.7 line 106 states `operation_type` scope values are drawn from the
 closed set `uploads | delegation_depth | session_creation | message_injection`.
@@ -33611,6 +33625,8 @@ returned as `INVALID_BREAKER_SCOPE` at `breakers.go:116-121`). §24.7 does
 not require the CLI to validate the closed set ahead of the gateway call,
 so this is informational; the validation happens, just one network hop
 later than it could.
+
+**Resolution:** Verify-closed per finding's own framing ("§24.7 does not require the CLI to validate the closed set ahead of the gateway call, so this is informational"). Confirmed `OperationType.IsValid()` at `pkg/circuitbreaker/circuitbreaker.go:51-52` and `INVALID_BREAKER_SCOPE` (422) returned at `pkg/gateway/admin/breakers.go:112-120`. No code change.
 
 ### Severity summary
 
