@@ -5,6 +5,10 @@ package tracing
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -156,3 +160,102 @@ func TestSpanNamesCatalogIsExhaustive(t *testing.T) {
 		}
 	}
 }
+
+// TestSpanNamesCatalogMatchesSpec163Table asserts the Go SpanName set
+// is byte-identical to the §16.3 "Span boundaries (instrumented):"
+// markdown table. A new span row added to the spec without a Go
+// constant — or vice versa — fails this test.
+//
+// spec: spec/16_observability.md §16.3 line 332 ("Span boundaries
+// (instrumented):") through the closing blank line of the table.
+func TestSpanNamesCatalogMatchesSpec163Table(t *testing.T) {
+	specNames, err := readSpec163SpanTable(t)
+	if err != nil {
+		t.Fatalf("read §16.3 span table: %v", err)
+	}
+	if len(specNames) == 0 {
+		t.Fatalf("§16.3 span table parsed empty; check the table delimiters in spec/16_observability.md")
+	}
+	goSet := map[string]bool{}
+	for _, n := range SpanNames() {
+		goSet[string(n)] = true
+	}
+	specSet := map[string]bool{}
+	for _, n := range specNames {
+		specSet[n] = true
+	}
+	for name := range specSet {
+		if !goSet[name] {
+			t.Errorf("§16.3 span %q has no Go SpanName constant; add it to pkg/observability/tracing/tracing.go", name)
+		}
+	}
+	for name := range goSet {
+		if !specSet[name] {
+			t.Errorf("Go SpanName %q is not in the §16.3 spec table; either remove the constant or add the row", name)
+		}
+	}
+}
+
+// repoRootFromTest walks upward from the test working directory until
+// it finds go.mod.
+func repoRootFromTest(t testing.TB) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	dir := wd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("repoRootFromTest: walked past filesystem root looking for go.mod (started at %s)", wd)
+		}
+		dir = parent
+	}
+}
+
+// readSpec163SpanTable extracts the `Span boundaries (instrumented):`
+// table from spec/16_observability.md. It returns the list of span
+// names (the backtick-quoted first column) in spec order.
+//
+// spec: spec/16_observability.md §16.3 line 332-357.
+func readSpec163SpanTable(t testing.TB) ([]string, error) {
+	root := repoRootFromTest(t)
+	path := filepath.Join(root, "spec", "16_observability.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	const marker = "Span boundaries (instrumented):"
+	idx := strings.Index(string(raw), marker)
+	if idx < 0 {
+		return nil, &specParseError{path: path, msg: "marker \"" + marker + "\" not found"}
+	}
+	tail := string(raw)[idx:]
+	// Stop at the next section heading or the §16.3 trailing prose
+	// ("**Sampling and backend:**" follows the table). Any
+	// double-newline-then-bold or markdown heading ends the table.
+	if end := strings.Index(tail, "\n**Sampling"); end > 0 {
+		tail = tail[:end]
+	}
+	rowRE := regexp.MustCompile("^\\|\\s*`([a-z][a-z0-9_.]*)`")
+	var names []string
+	for _, line := range strings.Split(tail, "\n") {
+		m := rowRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		names = append(names, m[1])
+	}
+	return names, nil
+}
+
+type specParseError struct {
+	path string
+	msg  string
+}
+
+func (e *specParseError) Error() string { return e.path + ": " + e.msg }

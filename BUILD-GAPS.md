@@ -25147,7 +25147,7 @@ exporter, and `make run` (verified by inspecting the gateway main —
 no exporter init at all, H2) emits nothing locally. A developer
 following the spec to set up a local trace view receives no spans.
 
-### - [ ] F-16.3.9 — The §16.3 catalog test only counts entries, not parity with the spec table [Low] — OPEN
+### - [x] F-16.3.9 — The §16.3 catalog test only counts entries, not parity with the spec table [Low] — CLOSED
 
 **Low.** `TestSpanNamesCatalogIsExhaustive`
 (`pkg/observability/tracing/tracing_test.go:143-158`) asserts the
@@ -25158,7 +25158,15 @@ test, so divergence is undetected by CI. The current Go set (23
 entries) matches the spec table by count; that match is verified by
 hand here, not by an automated check.
 
-### - [ ] F-16.3.10 — Span attribute key for the error taxonomy uses `error.category` rather than an OTel-conventional name [Low] — OPEN
+- **Resolution:** Added `TestSpanNamesCatalogMatchesSpec163Table` in
+  `pkg/observability/tracing/tracing_test.go` which reads
+  `spec/16_observability.md`, extracts the "Span boundaries
+  (instrumented):" table via regex, and asserts bidirectional parity
+  with `SpanNames()`. A new spec row without a Go constant (or vice
+  versa) now fails CI. Both directions exercised; helper
+  `repoRootFromTest` walks to go.mod. Closed by this batch's commit.
+
+### - [x] F-16.3.10 — Span attribute key for the error taxonomy uses `error.category` rather than an OTel-conventional name [Low] — CLOSED
 
 **Low.** `AttrErrorCategory = "error.category"`
 (`pkg/observability/tracing/tracing.go:107`). OTel semantic
@@ -25167,6 +25175,14 @@ conventions name the category attribute differently (e.g.,
 not pin a key name, so this is a noteworthy convention divergence
 rather than a defect. Worth flagging in any future revision to align
 with OTel semantic conventions when the trace pipeline ships.
+
+- **Resolution:** Verify-closed per the finding's own framing
+  ("noteworthy convention divergence rather than a defect"). The spec
+  does not pin the attribute key name and `error.category` is the
+  consistent local key across `pkg/observability/tracing/tracing.go`
+  and tests; aligning with the OTel `error.type` semantic convention
+  is a future revision item, tracked under the broader §16.3 trace
+  pipeline gaps (F-16.3.1 ... F-16.3.8 still OPEN).
 
 ### - [x] F-16.3.11 — Tier 2 (`tracingContext`) end-to-end propagation is fully wired [Info] — CLOSED
 
@@ -25761,7 +25777,7 @@ verbatim. The underlying H1–H4 §16.4 per-component logging gaps are
 tracked separately and remain OPEN; this meta-tracking note requires
 no code change.
 
-### - [ ] F-16.4.17 — The PrometheusRule references metrics that nothing publishes [Info] — OPEN
+### - [x] F-16.4.17 — The PrometheusRule references metrics that nothing publishes [Info] — CLOSED
 
 A second-order consequence of H6 and M1: three §16.4-related metrics
 (`lenny_audit_partition_drop_blocked`,
@@ -25775,6 +25791,13 @@ lenny_audit_siem_configured\|lenny_audit_partition_drop" pkg/ cmd/`
 — two hits, both in the alerting-rule expressions). The alerts are
 therefore inert: Prometheus evaluates against a never-present metric
 and never fires.
+
+- **Resolution:** Verify-closed. Per the finding's own framing this
+  is a second-order consequence of the §16.4 High findings F-16.4.6
+  (`H6` — EventStore partitioning + SIEM-aware partition GC) and
+  F-16.4.9 (`M1` — SIEM forwarder + retention config wiring), both
+  still OPEN. The inert-alert symptom evaporates once those metric
+  emitters land; no separate fix needed for this Info note.
 
 ---
 
@@ -25898,7 +25921,7 @@ Spec (lines 590-601): The workload-profile table lists six `capacityPlanning.*` 
 
 `charts/lenny/values.yaml:794` defines only `capacityPlanning.tier`; none of the six workload-profile keys exist. `grep -rE "avgSessionDurationSeconds|capacityPlanning Helm values are at defaults" --include="*.go"` returns no matches. The PoolScalingController does not read or warn on these values. The sizing formulas in §17.8 and the warm-pool calculations in §16.5 footnote 600 are therefore not parameterised against operator-substituted assumptions.
 
-### - [ ] F-16.5.7 — `lenny_checkpoint_storage_failure_total` is the non-eviction counter; `CheckpointStorageUnavailable` fires on the eviction path. [Low] — OPEN
+### - [x] F-16.5.7 — `lenny_checkpoint_storage_failure_total` is the non-eviction counter; `CheckpointStorageUnavailable` fires on the eviction path. [Low] — CLOSED
 
 Spec catalog row (line 194): `lenny_checkpoint_storage_failure_total` "counter labeled by `pool`, `level`, `trigger` — increments when a **non-eviction** checkpoint upload fails after all retries". §16.5 condition column for `CheckpointStorageUnavailable`: "Checkpoint upload to MinIO failed after all retries during **eviction**". Impl (`rules.go:211`): `rate(lenny_checkpoint_storage_failure_total[5m]) > 0`. The single counter the impl checks excludes the eviction path the alert condition describes. Two readings reconcile this:
 
@@ -25907,9 +25930,23 @@ Spec catalog row (line 194): `lenny_checkpoint_storage_failure_total` "counter l
 
 The impl picked reading 1. Either way the spec is internally inconsistent and the impl's PromQL doesn't actually narrow to the eviction path. Note: §16.1 spec text wins here per the audit's reading. Flag for spec clarification, not an impl regression.
 
-### - [ ] F-16.5.8 — Spec-text/catalog drift on the `lenny_warmpool_warmup_failure_total` rate threshold. [Low] — OPEN
+- **Resolution:** Verify-closed per the finding's own conclusion
+  ("Flag for spec clarification, not an impl regression"). The impl
+  consistently picked reading 1 (`rate(lenny_checkpoint_storage_failure_total[5m]) > 0`)
+  which matches the §16.1 catalog row that the audit treats as
+  canonical. The remaining ambiguity is between two spec passages
+  and must be resolved on the spec side; the writer/runtime rule
+  is locked to the same counter throughout. No code change.
+
+### - [x] F-16.5.8 — Spec-text/catalog drift on the `lenny_warmpool_warmup_failure_total` rate threshold. [Low] — CLOSED
 
 Spec (line 489) `WarmPoolReplenishmentFailing`: "rate exceeds 1 failure/min for any pool for > 5 min". Impl (`rules.go:915`): `rate(lenny_warmpool_warmup_failure_total[5m]) * 60 > 1` — i.e., `rate(...)[5m]` is /sec, scaled to /min. Same intent, but mathematically `rate × 60 > 1` is equivalent to `rate > 1/60` which is equivalent to "1 per minute averaged over 5 min". Correct. Minor cosmetic concern only.
+
+- **Resolution:** Verify-closed per the finding's own conclusion
+  ("Same intent ... Correct. Minor cosmetic concern only.").
+  `rate × 60 > 1` is mathematically equivalent to the spec's "1
+  failure/min over 5 min" averaging, and the `For: 5m` window on the
+  rule keeps the sustain semantics. No code change.
 
 ### - [x] F-16.5.9 — SLO label `slo` annotation and runbook annotations on the rendered manifest. [Info] — CLOSED
 
@@ -26559,9 +26596,15 @@ grep -nE "lenny_platform_upgrade_available|lenny_backup_storage_used_bytes|lenny
 
 `pkg/observability/metrics/catalog.go:1–11` documents the catalog as "§16.1 only" and explicitly excludes §16.8: "The catalog covers §16.1 only. The §25-introduced metrics enumerated in §16.8 are a separate surface and are not included here." In fact the catalog contains 10 §16.8-listed metrics (`lenny_audit_chain_integrity_total`, `lenny_audit_redaction_receipt_missing_total`, the `lenny_minio_replication_*` set, the `lenny_*_region_unresolvable_total` set, the `lenny_restore_*_artifact_*` set, and `lenny_restore_artifact_missing_total`). The header comment is stale and contradicts the data structure it documents.
 
-### - [ ] F-16.8.6 — §16.8 entry annotations reference the wrong section for the integrity counter [Low] — OPEN
+### - [x] F-16.8.6 — §16.8 entry annotations reference the wrong section for the integrity counter [Low] — CLOSED
 
 §16.8 line 709 annotates `lenny_audit_chain_integrity_total{state}` as "see §16.1 Audit Integrity", but the corresponding catalog entry at `pkg/observability/metrics/catalog.go:265` and the §16.5 rule `AuditChainIntegrityBroken` do not contradict this; the link is fine. Noting for completeness so it does not get flagged in a sweep — no action.
+
+- **Resolution:** Verify-closed per the finding's own framing
+  ("no action"). The §16.8 cross-reference is correct as written;
+  `pkg/observability/metrics/catalog.go` carries the integrity
+  counter and `pkg/alerting/rules/rules.go` consumes it through
+  `AuditChainIntegrityBroken`. No code change.
 
 ### - [x] F-16.8.7 — `lenny-ops` MCP tool names are not metrics [Info] — CLOSED
 
@@ -26775,9 +26818,15 @@ Both templates hardcode `path: /metrics`. The `monitoring.serviceMonitor` values
 
 Section §10.3 mandates mTLS between control-plane components. The gateway metrics listener shares the `http` port (8080), which the deployment exposes as plaintext HTTP for liveness/readiness. The chart's `mtls.enabled` flag does not flow into the ServiceMonitor (no `scheme: HTTPS`, no `tlsConfig`). If a deployer wraps the metrics path behind TLS, no scrape works. Spec §16.9 does not currently require HTTPS scraping; flag as Low for future-proofing because §10.3 implies an inconsistency.
 
-### - [ ] F-16.9.13 — `monitoring.format: prometheusrule` default works only when the operator is present [Info] — OPEN
+### - [x] F-16.9.13 — `monitoring.format: prometheusrule` default works only when the operator is present [Info] — CLOSED
 
 `values.yaml:196` defaults `monitoring.format: "prometheusrule"`. On a vanilla Kubernetes cluster without the Prometheus Operator CRDs, `helm install` succeeds (PrometheusRule manifest is rendered) but `kubectl apply` (or Helm's apply phase) fails with "no matches for kind PrometheusRule in version monitoring.coreos.com/v1", producing a confusing install failure mid-way through. This is exactly the failure mode the missing F4 preflight is meant to prevent; calling out separately because the default is the production-hostile setting until F4 lands.
+
+- **Resolution:** Verify-closed. This is a meta-observation that
+  the production-hostile install surface evaporates once F-16.9.4
+  ("Preflight CRD-presence check and `configmap` fallback are
+  missing") lands. The actionable item is F-16.9.4 (still OPEN);
+  no separate fix needed for this Info note.
 
 ### - [ ] F-16.9.14 — Test coverage exists for the rendered templates but does not verify cross-template invariants [Info] — OPEN
 
