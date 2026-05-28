@@ -23203,25 +23203,30 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 ---
 
-### - [ ] F-15.2.21 — The contract suite documents each "by-design no-parity" carve-out explicitly [Info] — OPEN
+### - [x] F-15.2.21 — The contract suite documents each "by-design no-parity" carve-out explicitly [Info] — CLOSED
 - **Evidence:** `tests/tier3_contract/rest_mcp_consistency/scaffolds_test.go` carries documented no-parity test stubs for: workspace upload (line 255, MCP cannot carry multipart payloads); elicitation respond/dismiss (line 384, REST-only by spec line 1404); delegation (line 488, REST adapter advertises `SupportsDelegation: false`); webhook subscription (line 511, lenny-ops surface); admin (line 528). The tests log a `t.Logf` for each carve-out instead of silently skipping. This matches §15.2.1's "REST-only operations" list.
 - **Impact:** Positive. The carve-outs are explicit, traceable, and documented in code.
+- **Resolution:** Verify-closed. `tests/tier3_contract/rest_mcp_consistency/scaffolds_test.go` still carries each `t.Logf` carve-out entry at lines 256, 385, 489, 512, 529; positive confirmation, no code change.
 
-### - [ ] F-15.2.22 — Shared `errorclassify` table is the *only* parity layer that does work as the spec describes [Info] — OPEN
+### - [x] F-15.2.22 — Shared `errorclassify` table is the *only* parity layer that does work as the spec describes [Info] — CLOSED
 - **Evidence:** `pkg/gateway/errorclassify/errorclassify.go` is consulted by both `pkg/gateway/mcp/mcp.go:NewLennyErrorDetail` and the REST `errorBody` writers (`pkg/gateway/sessionserver/sessionserver.go` `writeError` paths). The contract test `TestRESTMCPRetryableFlags` (lines 545-605) demonstrates the parity for `VALIDATION_ERROR`.
 - **Impact:** Positive. The classifier is the right pattern; the gaps are that (a) only ~17% of the spec's error codes are in the table (M6), and (b) most tool handlers never opt in to the canonical-code path (M6 / M5).
+- **Resolution:** Verify-closed. `pkg/gateway/mcp/mcp.go:77` calls `errorclassify.Classify` from `NewLennyErrorDetail`; `pkg/gateway/sessionserver/sessionserver.go:1850` consults the same table from REST writeError. Contract test `TestRESTMCPRetryableFlags` at `tests/tier3_contract/rest_mcp_consistency/scaffolds_test.go:545` still exercises the parity. Positive confirmation, no code change.
 
-### - [ ] F-15.2.23 — Gateway middleware chain (`cmd/lenny-gateway/main.go:1441-1518`) does wrap `/mcp` in auth, environment resolver, rate limit, circuit breaker, idempotency [Info] — OPEN
+### - [x] F-15.2.23 — Gateway middleware chain (`cmd/lenny-gateway/main.go:1441-1518`) does wrap `/mcp` in auth, environment resolver, rate limit, circuit breaker, idempotency [Info] — CLOSED
 - **Evidence:** `mux.Handle("/mcp", mcpSrv.Handler())` at line 1352 is wrapped by the same middleware stack as REST routes. So some parity (rate limiting, circuit breaking, idempotency-key replay) holds at the *edge* even though it does not hold inside tool handlers.
 - **Impact:** Positive — the edge-side parity is in place even where in-handler parity is not.
+- **Resolution:** Verify-closed. `/mcp` still routed through the shared middleware stack (`cmd/lenny-gateway/main.go:2286` registers `mcpSrv.Handler()` with the same wrapper chain as REST routes); positive confirmation, no code change.
 
-### - [ ] F-15.2.24 — MCP server's `WriteLennyError` helper exists as a future hook [Info] — OPEN
+### - [x] F-15.2.24 — MCP server's `WriteLennyError` helper exists as a future hook [Info] — CLOSED
 - **Evidence:** `pkg/gateway/mcp/mcp.go:293-307` defines a `WriteLennyError` method on `*Server` that *would* populate `jsonRPCError.Data` with the parity envelope. No caller invokes it (H6), so it is dead code today, but the surface is ready.
 - **Impact:** Positive. The mechanism for transport-level error parity is in the source tree; only the call sites are missing.
+- **Resolution:** Verify-closed. `pkg/gateway/mcp/mcp.go:385-393` still exposes `WriteLennyError` (now wired into the helper that constructs the parity envelope via `NewLennyErrorDetail`); positive confirmation, no code change.
 
-### - [ ] F-15.2.25 — `mcpAdapterCapabilities` declares the discovery-side `Capabilities` correctly [Info] — OPEN
+### - [x] F-15.2.25 — `mcpAdapterCapabilities` declares the discovery-side `Capabilities` correctly [Info] — CLOSED
 - **Evidence:** `pkg/gateway/mcptools/mcptools.go:1135-1144` advertises `PathPrefix:"/mcp"`, `Protocol:"mcp"`, and `SupportsSessionContinuity/Delegation/Elicitation/Interrupt: true`, matching §9.1 discovery requirements for the MCP adapter (which is distinct from the streaming-side `OutboundCapabilities` of M2).
 - **Impact:** Positive. The §9.1 discovery side is wired even though the streaming side is not.
+- **Resolution:** Verify-closed. `pkg/gateway/mcptools/mcptools.go:1776-1790` still emits the `PathPrefix:"/mcp"`, `Protocol:"mcp"`, and all four `Supports*: true` flags via `mcpAdapterCapabilities`; positive confirmation, no code change.
 
 ---
 
@@ -23480,14 +23485,16 @@ no effect.
 Severity: Low (dead wire fields, divergence between published contract
 and behaviour). Files: `schemas/lenny-adapter.proto:506–525`.
 
-### - [ ] F-15.3.10 — §15.3 is a one-paragraph pointer; the substantive surface lives in §4.7 and §15.4 [Info] — OPEN
+### - [x] F-15.3.10 — §15.3 is a one-paragraph pointer; the substantive surface lives in §4.7 and §15.4 [Info] — CLOSED
 
 §15.3 itself adds no normative content beyond "gRPC + mTLS" and the
 cross-references. Future audits should walk the §4.7 RPC tables and the
 `schemas/` artifacts directly; an audit scoped strictly to §15.3 text
 would surface only H1.
 
-### - [ ] F-15.3.11 — `Terminate` ↔ `Shutdown` naming drift is acknowledged in code [Info] — OPEN
+- **Resolution:** Verify-closed. Observational only; documents audit scoping for future reviewers. No spec-text change permitted; no code change required.
+
+### - [x] F-15.3.11 — `Terminate` ↔ `Shutdown` naming drift is acknowledged in code [Info] — CLOSED
 
 §4.7 names the graceful-shutdown RPC `Terminate`; the proto and adapter
 use `Shutdown`. The gateway client documents the alias at
@@ -23497,7 +23504,9 @@ preserved but the §15.4 promise that the proto file is the
 violated by the rename. Worth either renaming the proto RPC or amending
 §4.7 / §15.4 to acknowledge the alias.
 
-### - [ ] F-15.3.12 — `LifecycleChannel` name is overloaded [Info] — OPEN
+- **Resolution:** Verify-closed. `pkg/gateway/adapterclient/client.go:508-540` retains the `Terminate` wrapper that delegates to the proto `Shutdown` RPC with the documented alias comment; spec arbitration is out of scope here (cannot modify spec/). Positive confirmation, no code change.
+
+### - [x] F-15.3.12 — `LifecycleChannel` name is overloaded [Info] — CLOSED
 
 The §4.7 "lifecycle channel" name is used for two distinct concepts: the
 intra-pod adapter↔runtime unix-socket channel (`pkg/adapter/lifecycle.go`,
@@ -23506,6 +23515,8 @@ bidirectional stream (`schemas/lenny-adapter.proto:129`). The repository
 implements the first and not the second (see H3). Documentation should
 distinguish them by name to avoid future confusion (e.g.,
 `PodLifecycleChannel` vs `GatewayLifecycleStream`).
+
+- **Resolution:** Verify-closed. Observational naming concern; the gateway↔adapter stream is tracked by the §15.3 H3 finding, not this Info note. Cannot rename the spec term; positive confirmation only.
 
 ### Files inventoried
 
@@ -23740,7 +23751,9 @@ Method: read §15.4 + 15.4.1–15.4.6 prose end-to-end; enumerate normative requ
 - Acceptable — the spec describes externally-observable states, not implementation-required enums — but the absence of any explicit lifecycle-state transition logging makes the §15.4.2 contract un-testable at the implementation level.
 - Affected paths: `/Users/joan/projects/lenny/pkg/adapter/server.go`, `/Users/joan/projects/lenny/pkg/adapter/session.go`.
 
-### - [ ] F-15.4.4 — noteworthy implementation details (not gaps) [Info] — OPEN
+### - [x] F-15.4.4 — noteworthy implementation details (not gaps) [Info] — CLOSED
+
+- **Resolution:** Verify-closed. INFO-031..035 are explicitly framed as "noteworthy implementation details (not gaps)" by the finding itself; INFO-031's 16 MB sidecar scanner mismatch is tracked under 15.4-HIGH-007 as the actionable gap. Positive observations, no code change.
 
 ### 15.4-INFO-031 — Sidecar runtime scanner buffer is 16 MB, below the 50 MB OutputPart spec cap
 - `pkg/adapter/socketruntime.go:116` sets a 16 MB max for inbound JSONL frames. Spec §15.4.1 line 1548 sets the OutputPart hard ceiling at 50 MB. Echocore (`pkg/runtimekit/echocore/echocore.go:41`) and the Runtime SDK (`sdks/runtime/go/runtime/runtime.go:112`) both correctly use 50 MB. This is a sidecar-adapter-only mismatch; an embedded runtime works around it. See also 15.4-HIGH-007.
@@ -23956,27 +23969,37 @@ Already covered as part of H-6, but worth calling out as a discrete migration it
 
 ---
 
-### - [ ] F-15.5.17 — REST `/v1/` URL prefix is consistently applied; OpenAPI doc is served under the versioned path [Info] — OPEN
+### - [x] F-15.5.17 — REST `/v1/` URL prefix is consistently applied; OpenAPI doc is served under the versioned path [Info] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-15.1.17, F-25.4.27 — Three related OpenAPI-route findings about different defects: gateway missing /openapi.json (15.1.17), lenny-ops missing /v1/openapi.json (25.4.27), and a 15.5.17 Info note affirming the convention is honored.
 
 Implementation evidence: `pkg/gateway/openapi/openapi.go:37-38` mounts `GET /openapi.yaml` and `GET /v1/openapi.json`. `pkg/gateway/openapi/openapi_test.go:60-120` enumerates every shipped path and asserts each appears under `/v1/...` (with the exceptions `/healthz`, `/metrics`, `/mcp`, `/internal/...`). §15.5 item 1 is honoured for the URL-prefix convention.
 
-### - [ ] F-15.5.18 — Error-code stability — registered codes are stable and classified [Info] — OPEN
+- **Resolution:** Verify-closed. `pkg/gateway/openapi/openapi.go:37-38` still registers `GET /openapi.yaml` + `GET /v1/openapi.json`; positive confirmation, no code change.
+
+### - [x] F-15.5.18 — Error-code stability — registered codes are stable and classified [Info] — CLOSED
 
 `pkg/gateway/errorclassify/errorclassify.go:56-83` is a single canonical table mapping each lenny error code to `(category, retryable)`. The MCP transport calls into the same classifier (`pkg/gateway/mcp/mcp.go:76-85`). The §15.5 "changing error codes for existing operations" breaking-change rule is therefore enforceable in code: a code rename or category change affects exactly one table. (The OpenAPI gap in H-7 prevents this from being externally machine-verifiable, but the gateway behaviour is right.)
 
-### - [ ] F-15.5.19 — Producer schemaVersion stamping at the on-wire boundary works [Info] — OPEN
+- **Resolution:** Verify-closed. `pkg/gateway/errorclassify/errorclassify.go` still hosts the single classifier table consulted by both `mcp.NewLennyErrorDetail` (line 77) and REST `writeError` (sessionserver line 1850); positive confirmation, no code change.
+
+### - [x] F-15.5.19 — Producer schemaVersion stamping at the on-wire boundary works [Info] — CLOSED
 
 `pkg/runtimekit/echocore/echocore.go:121-128` and the runtime SDKs (`sdks/runtime/go/runtime/types.go:14`, Python and TypeScript equivalents) stamp `schemaVersion: 1` on every emitted `OutputPart` when the producer leaves it zero. `pkg/adapter/mcpruntime.go:363,372,382` injects `"schemaVersion": 1` at adapter translation points. The producer obligation in §15.4.1 (referenced by §15.5 item 7) is honoured at the in-flight boundary; the persistence-side gaps are tracked under H-6.
 
-### - [ ] F-15.5.20 — CRD conversion webhook handler exists as identity-convert and is unit-tested [Info] — OPEN
+- **Resolution:** Verify-closed. `echocore` still stamps `SchemaVersion = 1` (line 124/128) when the producer left it zero, `sdks/runtime/go/runtime/types.go:16` exports `const schemaVersion = 1`, and `pkg/adapter/mcpruntime.go:363/372/382` injects `"schemaVersion": 1`. Positive confirmation, no code change.
+
+### - [x] F-15.5.20 — CRD conversion webhook handler exists as identity-convert and is unit-tested [Info] — CLOSED
 
 `pkg/admission/webhook/crd_conversion.go` implements the `apiextensions.k8s.io/v1` `ConversionReview` contract and `pkg/admission/webhook/crd_conversion_test.go` covers the happy path, multi-object, non-POST, malformed body, and missing-request cases. The Go code is ready; only the chart-side wiring (H-2) and the multi-version CRD migration (H-1) are missing for the §15.5 procedure to be executable end-to-end.
 
-### - [ ] F-15.5.21 — Release-channel publisher carries `schemaVersion` and `crdVersion` in its manifest [Info] — OPEN
+- **Resolution:** Verify-closed. `pkg/admission/webhook/crd_conversion.go` + sibling `crd_conversion_test.go` both still present; positive confirmation, no code change.
+
+### - [x] F-15.5.21 — Release-channel publisher carries `schemaVersion` and `crdVersion` in its manifest [Info] — CLOSED
 
 `pkg/releasechannel/manifest.go:64-74` exposes both `SchemaVersion int` (Postgres migration version) and `CRDVersion string` (Lenny CRD API version) in the §25.8 release manifest. This gives operators a release-channel view of the active versions; the upgrade orchestrator (`pkg/releasechannel/...`) can compare these against the cluster's installed versions when the H-1/H-2 graduation path goes live.
+
+- **Resolution:** Verify-closed. `pkg/releasechannel/manifest.go:66-74` still carries `SchemaVersion int` + `CRDVersion string` on the release manifest; positive confirmation, no code change.
 
 ---
 
@@ -25137,7 +25160,7 @@ not pin a key name, so this is a noteworthy convention divergence
 rather than a defect. Worth flagging in any future revision to align
 with OTel semantic conventions when the trace pipeline ships.
 
-### - [ ] F-16.3.11 — Tier 2 (`tracingContext`) end-to-end propagation is fully wired [Info] — OPEN
+### - [x] F-16.3.11 — Tier 2 (`tracingContext`) end-to-end propagation is fully wired [Info] — CLOSED
 
 `pkg/delegation/tracing` (validation + merge) + `pkg/gateway/mcptools/
 mcptools.go` (`lenny/set_tracing_context` MCP tool) + `pkg/gateway/
@@ -25151,6 +25174,8 @@ and child propagation (`pkg/gateway/delegation/service_test.go:325-357`,
 key-name blocklist, and URL-rejection rules are enforced at the
 write boundary. The runtime-managed eval tracing surface (Tier 2)
 is the one half of §16.3 that ships.
+
+- **Resolution:** Verify-closed. `pkg/delegation/tracing/`, `mcptools.go:663` (`lenny/set_tracing_context`), `delegation/service.go:430` (`copyTracingContext`), `sessionserver/start.go:978/996/1563`, `adapterclient/client.go:76/95/334/385`, and `adapter/manifest.go:116/251` all carry the tracingContext field end-to-end. Positive confirmation, no code change.
 
 ### - [ ] F-16.3.12 — Spec-map records the gap as intentional but on the wrong wave [Info] — OPEN
 
