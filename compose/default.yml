@@ -66,6 +66,14 @@ services:
       timeout: 3s
       retries: 20
 
+  # §12.4 mandates AUTH and TLS for production Redis. This compose
+  # deliberately omits both (no --requirepass, no --tls-*-file) because
+  # compose is the dev/test harness only — the production posture is
+  # the Helm chart at charts/lenny/templates/redis-* together with a
+  # Kubernetes Redis Sentinel operator. Do not re-use this command line
+  # in any deployment that admits a real tenant; the Helm path applies
+  # the AUTH password (charts/lenny/values.yaml redis.url query param)
+  # plus the in-cluster TLS port (redis.tlsPort) per §12.4 contract.
   redis:
     image: redis:7-alpine
     container_name: lenny-redis

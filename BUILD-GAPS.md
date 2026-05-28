@@ -18206,9 +18206,11 @@ Spec §12.4 "Quota counter reconciliation after fail-open": "When Redis recovers
 
 `quota.ReconcileMax` (`pkg/quota/quota.go:223`) is a pure function. The only invocations are in `tests/tier4_integration/quota_test.go:149`. No gateway component watches Redis recovery transitions and runs the MAX-rule reconciliation across active sessions; the gateway has no recovery state machine for Redis at all (`grep -rn 'redis.*recovery\|onRedisRecovery'` returns nothing). The promise that "Reconciliation runs automatically when Redis becomes available" is unfulfilled.
 
-### - [ ] F-12.4.21 — Compose Redis runs without AUTH, TLS, or `requirepass`, with no acknowledgement [Low] — OPEN
+### - [x] F-12.4.21 — Compose Redis runs without AUTH, TLS, or `requirepass`, with no acknowledgement [Low] — CLOSED
 
 `compose/default.yml:69-79` starts Redis with `--appendonly no --save ""` and no `--requirepass`. The Sentinel topology likewise has no AUTH. While compose is dev/test only, the §12.4 "AUTH and TLS required" mandate is absolute. The compose file should either (a) require both even for local testing, or (b) carry an inline comment that explicitly defers the production posture and points the reader at the Helm/Terraform paths.
+
+**Resolution:** Took remediation option (b) — added a §12.4 deferral comment block immediately above the `redis` service in `compose/default.yml` that names AUTH/TLS as production mandates, identifies compose as the dev/test harness only, and points readers at `charts/lenny/templates/redis-*` plus `redis.url` (AUTH) / `redis.tlsPort` (TLS) as the production posture.
 
 ### - [ ] F-12.4.22 — Helm chart values lack a dedicated `password` field for Redis [Low] — OPEN
 
