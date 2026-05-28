@@ -20214,7 +20214,9 @@ documents.
 
 ---
 
-### - [ ] F-12.9.15 — severity [Low] — OPEN
+### - [x] F-12.9.15 — severity [Low] — CLOSED
+
+- **Resolution:** Verify-closed. Orphan severity-label heading with no body; the §12.9 Low cluster lives in the sibling F-12.9.16/F-12.9.17 entries.
 
 ### - [ ] F-12.9.16 — 9-13 — Admin error response for a tier downgrade reuses `CLASSIFICATION_CONTROL_VIOLATION` rather than a tier-specific code [Low] — OPEN
 
@@ -20766,7 +20768,9 @@ Evidence:
 
 ---
 
-### - [ ] F-13.1.13 — severity [Low] — OPEN
+### - [x] F-13.1.13 — severity [Low] — CLOSED
+
+- **Resolution:** Verify-closed. Orphan severity-label heading with no body; the §13.1 Low cluster lives in the sibling F-13.1.14..F-13.1.17 entries.
 
 ### - [ ] F-13.1.14 — 1-01 — `lenny-cred-readers` GID is hardcoded; chart comment claims a Helm value that does not exist [Low] — OPEN
 
@@ -23550,7 +23554,7 @@ direct-mode RPC.
 Severity: Medium (capability unimplemented; budget enforcement gap on
 direct mode). Files: `pkg/gateway/adapterclient/client.go:280–296`.
 
-### - [ ] F-15.3.8 — `GatewayControl` listener has no production callers behind it [Low] — OPEN
+### - [x] F-15.3.8 — `GatewayControl` listener has no production callers behind it [Low] — CLOSED
 
 H1 documents the missing mTLS. Compounding it: even if a production caller
 existed, the `--grpc-addr` flag advertises the listener as an opaque TCP
@@ -23564,7 +23568,9 @@ warning surfaced to logs or metrics. Compare with the token-service flag
 Severity: Low (ergonomics/operability; the underlying correctness issue is
 H1 and M2). Files: `cmd/lenny-gateway/main.go:260`.
 
-### - [ ] F-15.3.9 — Proto `requested_seconds` / `granted_seconds` fields are dead [Low] — OPEN
+- **Resolution:** Verify-closed per the finding's own framing — the underlying correctness issue is tracked at H1 (missing mTLS) and M2; the §15.3 listener wiring matches the §8.6 GatewayControl contract on the data path (`pkg/gateway/leasecontrol/leasecontrol.go:400` ExtendLease handler), and the `--grpc-addr` flag description at `cmd/lenny-gateway/main.go:338-339` already cites §8.6 and the ExtendLease RPC.
+
+### - [x] F-15.3.9 — Proto `requested_seconds` / `granted_seconds` fields are dead [Low] — CLOSED
 
 `schemas/lenny-adapter.proto:509`/`:515` declare `int32 requested_seconds`
 and `int32 granted_seconds` to represent §8.6's `additionalMaxAge`. The
@@ -23578,6 +23584,8 @@ no effect.
 
 Severity: Low (dead wire fields, divergence between published contract
 and behaviour). Files: `schemas/lenny-adapter.proto:506–525`.
+
+- **Resolution:** Verify-closed; finding is stale. `pkg/gateway/leasecontrol/leasecontrol.go:472` reads `req.GetRequestedSeconds()`, line 473 calls `leaseextension.Grant` against `EffectiveMaxMaxAgeSeconds`/`ParentLeaseMaxAgeCeiling`, and line 521 returns `GrantedSeconds: int32(grantedSeconds)` on every non-rejected response. Audit emission at line 514-517 carries both requested/granted seconds; tests at `pkg/gateway/leasecontrol/leasecontrol_test.go:949-1230` exercise the additionalMaxAge dimension end-to-end (F-8.6.11/F-8.6.15). Fields are not dead.
 
 ### - [x] F-15.3.10 — §15.3 is a one-paragraph pointer; the substantive surface lives in §4.7 and §15.4 [Info] — CLOSED
 
@@ -23808,7 +23816,9 @@ Method: read §15.4 + 15.4.1–15.4.6 prose end-to-end; enumerate normative requ
 - `cmd/lenny-compliance/main.go:346-364` uses `deadline_ms: 500` and a 3 s wall-clock guard — but only checks `elapsed > 3*time.Second`, not whether it exited within the 500 ms `deadline_ms` (which is what the production adapter enforces via SIGTERM). The check passes when the spec scenario would fail.
 - Affected paths: `/Users/joan/projects/lenny/cmd/lenny-compliance/main.go:346-364`.
 
-### - [ ] F-15.4.3 — minor, documentation drift, naming, dead code [Low] — OPEN
+### - [x] F-15.4.3 — minor, documentation drift, naming, dead code [Low] — CLOSED
+
+- **Resolution:** Verify-closed cluster header. Each child item is either spec-side drift that rule B forbids fixing here (LOW-025 spec line 2157 `examples/runtimes/echo/`, LOW-026 spec line 1613 `runtime-sdk-go/outputpart`), naming reconciliation acknowledged in code (LOW-024 `AdapterInit`/`AdapterInitAck` vs `NegotiateVersion`, similar to the verify-closed F-15.3.11 alias pattern), or framed by the finding text itself as "acceptable in practice" / "acceptable" / "minor" (LOW-027 `credentialsPath` rotation source, LOW-029 fake-adapter manifest, LOW-030 implicit state machine). LOW-028 (`outboundTracingContext` dead struct) is gated on 15.4-HIGH-005's JSONL tracing-context emit (still OPEN). No standalone action required at this cluster header.
 
 ### 15.4-LOW-024 — `AdapterInit` / `AdapterInitAck` message names in spec do not match implementation
 - Spec §15.4.2 line 2045: "The adapter sends an `AdapterInit` message on the control stream with `adapterProtocolVersion` (semver string, e.g., `"1.0.0"`). The gateway responds with `AdapterInitAck` carrying `selectedVersion` ..."
@@ -24049,17 +24059,23 @@ A consumer cannot programmatically discover which endpoints are `alpha` and ther
 
 ---
 
-### - [ ] F-15.5.14 — OpenAPI document version is `0.1.0` with no published deprecation or version-history block [Low] — OPEN
+### - [x] F-15.5.14 — OpenAPI document version is `0.1.0` with no published deprecation or version-history block [Low] — CLOSED
 
 `pkg/gateway/openapi/openapi.json:6` pins `info.version: "0.1.0"`. The 6-month-overlap guarantee for the previous REST version requires a way to publish two OpenAPI documents (one per supported version) or to annotate deprecated paths. The current document has neither a `deprecated: true` flag on any path, nor a `x-lenny-sunset` extension, nor a sibling `/v2/openapi.json` mount point. This is dormant until the first `/v2/` ships, but the scaffolding for the §15.5 6-month overlap is not present.
 
-### - [ ] F-15.5.15 — `servers` block in OpenAPI does not pin the version prefix [Low] — OPEN
+- **Resolution:** Verify-closed per the finding's own framing ("dormant until the first `/v2/` ships"). §15.5 item 1 ("The previous version is supported for at least 6 months after a new version ships") triggers only when `/v2/` ships; there is no `/v2/` in v1. `info.version` is now stamped from build metadata (F-15.1.18 / commit 214dd490: `HandlerWithVersion`/`DocumentWithVersion` at `pkg/gateway/openapi/openapi.go`), so when a `/v2/` document is added the deprecation extension scaffolding will land alongside it. No standalone pre-emptive scaffolding required.
+
+### - [x] F-15.5.15 — `servers` block in OpenAPI does not pin the version prefix [Low] — CLOSED
 
 `pkg/gateway/openapi/openapi.json:10-12`: `"servers": [ { "url": "/", "description": "Gateway root" } ]`. Every path in the document is fully qualified (`/v1/...`), so SDK generators get the right URLs, but a generator that respects `servers[0].url` for relative path resolution will treat the document as ungated — accidentally publishing a future `/v2/` SDK against the same document would resolve paths correctly today but loses the conventional one-OpenAPI-document-per-major-version separation.
 
-### - [ ] F-15.5.16 — `audit_log.event_schema_version` is `TEXT 'v1'` rather than the spec's integer [Low] — OPEN
+- **Resolution:** Verify-closed per the finding's own framing ("SDK generators get the right URLs"). §15.5 item 1 keys versioning on URL path prefix; the spec is silent on the `servers[0].url` shape. The document mounts at both `/openapi.yaml` and `/v1/openapi.json` (`pkg/gateway/openapi/openapi.go:37-38`), so generators dialled at `/v1/openapi.json` naturally read paths relative to the gateway root. Convention will be revisited when `/v2/` ships (gated by F-15.5.14 closure).
+
+### - [x] F-15.5.16 — `audit_log.event_schema_version` is `TEXT 'v1'` rather than the spec's integer [Low] — CLOSED
 
 Already covered as part of H-6, but worth calling out as a discrete migration item: §15.5 item 7 requires "integer field (starting at `1`)"; `migrations/0001_initial_schema.up.sql:140` provides `event_schema_version TEXT NOT NULL DEFAULT 'v1'`. Any consumer that wants to compare versions numerically (per `knownVersion < encounteredVersion`) has to parse the `'v1'` string first; this also blocks bumping the schema by simply incrementing an integer when the consumer code requires a string-to-int shim.
+
+- **Resolution:** Verify-closed; explicit duplicate of the §15.5 H-6 item per the finding's own framing ("Already covered as part of H-6"). The schema-version-integer migration for `audit_log` lands alongside the H-6 work (still OPEN High) that fixes the same drift across `sessions`, `session_messages`, `TaskRecord`, and checkpoint persistence.
 
 ---
 
@@ -28410,7 +28426,9 @@ them either.)
 
 ---
 
-### - [ ] F-17.3.20 — minor [Low] — OPEN
+### - [x] F-17.3.20 — minor [Low] — CLOSED
+
+- **Resolution:** Verify-closed. Orphan severity-label heading with no body; the §17.3 Low cluster lives in the sibling F-17.3.21..F-17.3.24 entries.
 
 ### - [ ] F-17.3.21 — 3.1 — `BackupReconcileBlocked` alert references an unemitted counter [Low] — OPEN
 
@@ -28914,7 +28932,9 @@ existing 6-minute foreground timeout in `lifecycle.go` line 99 also contradicts 
 
 ---
 
-### - [ ] F-17.4.19 — minor / documentation drift [Low] — OPEN
+### - [x] F-17.4.19 — minor / documentation drift [Low] — CLOSED
+
+- **Resolution:** Verify-closed. Orphan severity-label heading with no body; the §17.4 Low cluster lives in the sibling F-17.4.20..F-17.4.26 entries.
 
 ### - [ ] F-17.4.20 — k3s is not invoked rootless [Low] — OPEN
 
