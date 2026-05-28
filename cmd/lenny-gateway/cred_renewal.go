@@ -283,6 +283,20 @@ func (w *credRenewalWiring) emitCredentialPoolExhausted(lease credrenewal.Lease,
 	})
 }
 
+// logCredentialExpiryWarning emits the §11.3 line 215 expiry-warning
+// log line once per lease when the renewal worker reports the lease has
+// entered its `credentials.expiryWarningLeadSeconds` window. The log is
+// the deployer-facing surface for impending lease expiry — operators
+// pipe stdout into the cluster logging stack to drive alerts before the
+// §4.9 fault-rotation fall-through is consumed. F-11.3.20.
+func logCredentialExpiryWarning(lease credrenewal.Lease) {
+	log.Printf(
+		"lenny-gateway: §11.3 line 215 credential lease %s for session %s (credential %s) expires at %s — expiry warning lead reached",
+		lease.LeaseID, lease.SessionID, lease.CredentialID,
+		lease.ExpiresAt.UTC().Format(time.RFC3339),
+	)
+}
+
 // errNoPoolBinding reports that a lease handed to Renew was never
 // registered through track, so the worker has no pool to re-mint from.
 var errNoPoolBinding = errNoPoolBindingErr{}

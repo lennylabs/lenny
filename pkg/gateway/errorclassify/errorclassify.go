@@ -186,6 +186,14 @@ var table = map[string]entry{
 	// (a new elicitation_id) may succeed; not retryable as-is because
 	// the original elicitation has already been dismissed. F-9.2.18.
 	"ELICITATION_TIMEOUT": {CategoryTransient, false},
+	// spec: §11.3 line 211; §9.1 line 104 — per-hop forwarding deadline
+	// (30 s, hard-coded) blew on the elicitation chain walk. The agent
+	// receives this structured error so it can either give up or raise a
+	// fresh elicitation. TRANSIENT — the same chain may succeed on a
+	// retry if the underlying session-store stall clears; retryable=
+	// false because the original elicitation_id has been dropped by the
+	// gateway. F-11.3.16.
+	"ELICITATION_PER_HOP_TIMEOUT": {CategoryTransient, false},
 	// spec: §9.2 line 87 — agent-initiated url-mode elicitation dropped
 	// because the URL's effective host does not match any entry in the
 	// pool's `urlModeElicitation.domainAllowlist`. POLICY, retryable=

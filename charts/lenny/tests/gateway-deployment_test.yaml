@@ -421,13 +421,17 @@ tests:
     asserts:
       # POD_NAME + LENNY_MAX_SESSIONS_PER_REPLICA + LENNY_MIN_REPLICAS
       # + LENNY_STREAM_CEILING + LENNY_TERMINATION_GRACE_SECONDS
+      # + LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS (§11.3 line 215,
+      #   F-11.3.20)
+      # + LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS (§11.3 line 222,
+      #   F-11.3.22)
       # + 8 extraction-threshold gauges + LENNY_POOLER_MODE
       # (§4.2 line 165) + POD_NAMESPACE (§10.4 PDB poller)
       # + LENNY_BILLING_CORRECTION_RATE_THRESHOLD (§11.2.1 line 187,
-      #   F-11.2.23) = 16.
+      #   F-11.2.23) = 18.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 16
+          count: 18
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -582,6 +586,63 @@ tests:
           content:
             name: LENNY_MIN_REPLICAS
             value: "7"
+
+  # spec: §11.3 line 222 — rateLimitFailOpenMaxSeconds (default 60s)
+  # flows through to LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS. F-11.3.22.
+  - it: wires LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS from the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
+            value: "60"
+
+  # spec: §11.3 line 222 — operator override propagates to the binary.
+  # F-11.3.22.
+  - it: wires LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS from a gateway.rateLimitFailOpenMaxSeconds override
+    set:
+      gateway.rateLimitFailOpenMaxSeconds: 30
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
+            value: "30"
+
+  # spec: §11.3 line 215 — credentials.expiryWarningLeadSeconds (default
+  # 3600s) flows through to LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS.
+  # F-11.3.20.
+  - it: wires LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS from the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS
+            value: "3600"
+
+  # spec: §11.3 line 215 — operator override propagates to the binary.
+  # F-11.3.20.
+  - it: wires LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS from a credentials.expiryWarningLeadSeconds override
+    set:
+      credentials.expiryWarningLeadSeconds: 7200
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS
+            value: "7200"
 
   # spec: §4.1 / §16.5 — when gateway.streamCeiling is set explicitly
   # it overrides the maxSessionsPerReplica fallback.

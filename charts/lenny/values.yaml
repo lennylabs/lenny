@@ -975,6 +975,14 @@ gateway:
   # provisional values are 50 (Tier 1), 200 (Tier 2), and 400 (Tier 3);
   # the tier presets override this value.
   maxSessionsPerReplica: 50
+  # rateLimitFailOpenMaxSeconds — §11.3 line 222 / §12.4 line 220. Once
+  # the §11.1 admission middleware has been in fail-open for this long
+  # within a single counter-error episode, it switches to fail-closed
+  # so a sustained Redis outage cannot keep the gateway in unbounded
+  # allow-all mode. Negative disables the cap (legacy unbounded
+  # behaviour). 0 selects the binary default (60s).
+  # F-11.3.22.
+  rateLimitFailOpenMaxSeconds: 60
   # streamCeiling is the §4.1 / §16.5 per-replica streaming-connection
   # ceiling read by the GatewayActiveStreamsHigh alert via
   # scalar(lenny_gateway_stream_ceiling). When unset the chart falls
@@ -1482,6 +1490,18 @@ resourceGovernance:
     default:
       cpu: "2"
       memory: "2Gi"
+
+# credentials carries the §11.3 / §4.9 operator-tunable knobs for the
+# credential-leasing path. F-11.3.20.
+credentials:
+  # expiryWarningLeadSeconds — §11.3 line 215. When a tracked credential
+  # lease is within this window of its ExpiresAt, the gateway emits a
+  # structured warning log line so deployers see impending lease expiry
+  # before §4.9 proactive renewal exhausts its retries. Default 3600
+  # (1 hour). Set to 0 to disable warning emission. The lenny-gateway
+  # accepts the value via --credentials-expiry-warning-lead-seconds
+  # (env LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS).
+  expiryWarningLeadSeconds: 3600
 
 # etcdEncryption controls the §13.1 etcd encryption-at-rest posture.
 # When enabled (the default), the chart renders the lenny-etcd-encryption

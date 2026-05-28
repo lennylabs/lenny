@@ -7,12 +7,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
+
+// ElicitationPerHopForwardingTimeout caps a single forwarding hop on
+// the §9.2 elicitation chain. The §11.3 line 211 / §9.1 line 104 contract
+// is hard-coded at 30s in v1 ("not configurable" per the §11.3 table):
+// if a hop does not complete its forward within the deadline the gateway
+// treats it as a failure and returns ELICITATION_PER_HOP_TIMEOUT to the
+// originating pod so the agent can either give up or raise a fresh
+// elicitation. v1's chain walk is server-internal, so the bound is
+// applied to each ancestor session lookup; that is the only point where
+// the walk can block waiting on an external dependency (the session
+// store). spec: §11.3 line 211; §9.1 line 104.
+const ElicitationPerHopForwardingTimeout = 30 * time.Second
 
 // elicitationDispatcher drives the §9.2 hop-by-hop elicitation chain.
 // It is the bridge between the pure pkg/elicitation chain walk and
@@ -49,6 +62,13 @@ type elicitationDispatcher struct {
 	// observer is responsible for incrementing
 	// lenny_elicitation_content_tamper_detected_total{tenant_id}.
 	tamperMetrics ElicitationTamperRecorder
+
+	// perHopTimeout overrides the §11.3 line 211 hard-coded 30s per-hop
+	// forwarding deadline used by buildHops on each ancestor lookup.
+	// Tests set this to a small duration so they can drive the timeout
+	// branch deterministically; production binaries leave it zero,
+	// which selects ElicitationPerHopForwardingTimeout.
+	perHopTimeout time.Duration
 }
 
 // ElicitationTamperRecorder is the metric-emission hook the gateway
@@ -164,6 +184,13 @@ func (d *elicitationDispatcher) dispatch(
 // is marked human-facing — a delegation-tree root's client is the
 // human edge. A malformed cyclic stored chain is defended against
 // with a visited set.
+//
+// Each ancestor lookup is bounded by the §11.3 line 211 per-hop
+// forwarding deadline (ElicitationPerHopForwardingTimeout, 30s by
+// default). A hop that does not complete its lookup within the
+// deadline aborts the walk and surfaces ELICITATION_PER_HOP_TIMEOUT
+// to the originating pod so the agent can either give up or raise a
+// fresh elicitation. spec: §11.3 line 211; §9.1 line 104.
 func (d *elicitationDispatcher) buildHops(ctx context.Context, raising sessionstore.Session) ([]elicitation.Hop, error) {
 	var chain []sessionstore.Session
 	visited := map[string]bool{}
@@ -177,10 +204,23 @@ func (d *elicitationDispatcher) buildHops(ctx context.Context, raising sessionst
 		if cur.ParentSessionID == "" {
 			break
 		}
-		parent, err := d.store.Get(ctx, d.tenantID, cur.ParentSessionID)
+		parent, err := d.lookupAncestor(ctx, cur.ParentSessionID)
 		if err != nil {
 			if errors.Is(err, sessionstore.ErrNotFound) {
 				break // ancestor GC'd — treat current as the root
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				// spec: §11.3 line 211 — per-hop forwarding deadline.
+				// The forwarding pod (cur.ID) is the hop whose lookup
+				// did not complete; the originating pod sees its
+				// elicitation fail with ELICITATION_PER_HOP_TIMEOUT.
+				return nil, mcp.NewToolError("ELICITATION_PER_HOP_TIMEOUT",
+					fmt.Sprintf("forwarding hop %s did not complete within %s", cur.ID, d.effectivePerHopTimeout()),
+					map[string]any{
+						"hopSessionId":   cur.ID,
+						"timeout":        d.effectivePerHopTimeout().String(),
+						"timeoutSeconds": d.effectivePerHopTimeout().Seconds(),
+					})
 			}
 			return nil, fmt.Errorf("elicitation chain: ancestor lookup: %w", err)
 		}
@@ -206,6 +246,26 @@ func (d *elicitationDispatcher) buildHops(ctx context.Context, raising sessionst
 		})
 	}
 	return hops, nil
+}
+
+// effectivePerHopTimeout returns the §11.3 line 211 30s deadline the
+// dispatcher applies per forwarding hop, defaulting to the package
+// constant when the test override is unset.
+func (d *elicitationDispatcher) effectivePerHopTimeout() time.Duration {
+	if d.perHopTimeout > 0 {
+		return d.perHopTimeout
+	}
+	return ElicitationPerHopForwardingTimeout
+}
+
+// lookupAncestor performs one §9.2 forwarding hop's ancestor lookup
+// under the per-hop deadline. The deadline is layered onto the
+// caller's context — if the caller's deadline is sooner, that one
+// wins. spec: §11.3 line 211; §9.1 line 104.
+func (d *elicitationDispatcher) lookupAncestor(ctx context.Context, parentID string) (sessionstore.Session, error) {
+	hopCtx, cancel := context.WithTimeout(ctx, d.effectivePerHopTimeout())
+	defer cancel()
+	return d.store.Get(hopCtx, d.tenantID, parentID)
 }
 
 // emitURLModeRejection records the §11.7 audit event for a §9.2

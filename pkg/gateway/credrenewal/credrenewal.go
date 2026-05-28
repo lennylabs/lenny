@@ -28,6 +28,15 @@ const DefaultInterval = 30 * time.Second
 // the worker gives up and the lease falls through to fault rotation.
 const MaxRenewalRetries = 3
 
+// DefaultExpiryWarningLead is the §11.3 line 215
+// `credentials.expiryWarningLeadSeconds` default (1h). When a lease is
+// within this window of its ExpiresAt, the worker fires OnExpiryWarning
+// once so a deployer-facing observer (log, metric, audit hook) can
+// surface impending lease expiry before the §4.9 proactive renewal
+// fully runs out of retries.
+// spec: §11.3 line 215.
+const DefaultExpiryWarningLead = 3600 * time.Second
+
 // Lease is the subset of a §4.9 CredentialLease the renewal worker
 // tracks.
 type Lease struct {
@@ -67,15 +76,30 @@ type Options struct {
 	// time proactive renewal rotates a lease onto a fresh credential.
 	// It is the §25.3 credential_rotated signal.
 	OnRenewed func(renewed Lease)
+
+	// ExpiryWarningLead overrides DefaultExpiryWarningLead. The §11.3
+	// line 215 contract: when a tracked lease is within this window of
+	// its ExpiresAt, the worker fires OnExpiryWarning exactly once. Set
+	// to a negative value to disable warnings outright.
+	ExpiryWarningLead time.Duration
+
+	// OnExpiryWarning, when set, is called the first time a tracked
+	// lease enters the warning window (now >= expiresAt -
+	// ExpiryWarningLead). It is the §11.3 deployer-tunable lead-time
+	// hook used to surface impending lease expiry to logs / metrics /
+	// audit before the §4.9 fault-rotation path is consumed.
+	OnExpiryWarning func(lease Lease)
 }
 
 // Worker is the §4.9 CredentialRenewalWorker. It is goroutine-safe.
 type Worker struct {
-	renewer     Renewer
-	interval    time.Duration
-	clock       func() time.Time
-	onExhausted func(Lease)
-	onRenewed   func(Lease)
+	renewer           Renewer
+	interval          time.Duration
+	clock             func() time.Time
+	onExhausted       func(Lease)
+	onRenewed         func(Lease)
+	expiryWarningLead time.Duration
+	onExpiryWarning   func(Lease)
 
 	mu      sync.Mutex
 	tracked map[string]*trackedLease
@@ -84,26 +108,34 @@ type Worker struct {
 
 // trackedLease pairs a lease with its proactive-renewal retry count.
 type trackedLease struct {
-	lease   Lease
-	retries int
+	lease           Lease
+	retries         int
+	expiryWarningFired bool
 }
 
 // New returns a Worker that renews via renewer.
 func New(renewer Renewer, opts Options) *Worker {
 	w := &Worker{
-		renewer:     renewer,
-		interval:    opts.Interval,
-		clock:       opts.Clock,
-		onExhausted: opts.OnExhausted,
-		onRenewed:   opts.OnRenewed,
-		tracked:     map[string]*trackedLease{},
-		revoked:     map[string]bool{},
+		renewer:           renewer,
+		interval:          opts.Interval,
+		clock:             opts.Clock,
+		onExhausted:       opts.OnExhausted,
+		onRenewed:         opts.OnRenewed,
+		expiryWarningLead: opts.ExpiryWarningLead,
+		onExpiryWarning:   opts.OnExpiryWarning,
+		tracked:           map[string]*trackedLease{},
+		revoked:           map[string]bool{},
 	}
 	if w.interval <= 0 {
 		w.interval = DefaultInterval
 	}
 	if w.clock == nil {
 		w.clock = func() time.Time { return time.Now() }
+	}
+	// spec: §11.3 line 215 — zero selects the platform default; a
+	// negative override disables warning emission outright.
+	if w.expiryWarningLead == 0 {
+		w.expiryWarningLead = DefaultExpiryWarningLead
 	}
 	return w
 }
@@ -154,16 +186,35 @@ func (w *Worker) Tick(ctx context.Context, now time.Time) int {
 	w.mu.Lock()
 	due := make([]*trackedLease, 0)
 	revokedLeases := make([]Lease, 0)
+	warnings := make([]Lease, 0)
+	// spec: §11.3 line 215 — fire the expiry warning once per lease
+	// when now is inside the deployer-tunable warning window. The
+	// warning fires regardless of whether the lease is due for renewal,
+	// so a deployer sees impending expiry even when the proactive-
+	// renewal retry path is in flight.
 	for _, tl := range w.tracked {
 		if w.revoked[tl.lease.CredentialID] {
 			revokedLeases = append(revokedLeases, tl.lease)
 			continue
+		}
+		if w.expiryWarningLead > 0 && !tl.expiryWarningFired {
+			warningAt := tl.lease.ExpiresAt.Add(-w.expiryWarningLead)
+			if !now.Before(warningAt) {
+				tl.expiryWarningFired = true
+				warnings = append(warnings, tl.lease)
+			}
 		}
 		if !now.Before(tl.lease.RenewBefore) {
 			due = append(due, tl)
 		}
 	}
 	w.mu.Unlock()
+
+	for _, lease := range warnings {
+		if w.onExpiryWarning != nil {
+			w.onExpiryWarning(lease)
+		}
+	}
 
 	for _, lease := range revokedLeases {
 		w.exhaust(lease)

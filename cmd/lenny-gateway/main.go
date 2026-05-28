@@ -272,6 +272,13 @@ func main() {
 		"§11.1 global requests-per-minute admission limit. Zero disables the global rate limit.")
 	rlPerUserPerMin := flag.Int("rate-limit-per-user-per-min", 0,
 		"§11.1 per-user requests-per-minute admission limit. Zero disables the per-user rate limit.")
+	// spec: §11.3 line 222 — rateLimitFailOpenMaxSeconds, operator-tunable.
+	// Once a fail-open episode (counter-error window) has run past this
+	// cap, the middleware switches to fail-closed and rejects requests
+	// with 429 RATE_LIMITED until the counter recovers. F-11.3.22.
+	rlFailOpenMaxSeconds := flag.Int("rate-limit-failopen-max-seconds",
+		envInt("LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS", int(ratelimitmw.DefaultFailOpenMaxSeconds/time.Second)),
+		"§11.3 line 222 rateLimitFailOpenMaxSeconds: cap on a single fail-open episode in the §11.1 admission middleware. Negative disables the cap. Default 60s. Override via LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS.")
 	globalTokenQuota := flag.Int64("global-token-quota-per-window", 0,
 		"§11.2 platform-wide LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the global scope. Zero disables the global token cap. Only active when --redis-url is set.")
 	userTokenQuota := flag.Int64("user-token-quota-per-window", 0,
@@ -423,6 +430,14 @@ func main() {
 	delegationUsageQuiescenceTimeoutSeconds := flag.Int("delegation-usage-quiescence-timeout-seconds",
 		envInt("LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS", 5),
 		"§11.3 line 224 delegation.usageQuiescenceTimeoutSeconds: the wall-clock window the §8.10 tree-recovery path waits after the last child usage report before declaring the delegation tree quiescent. Default 5s. Override via LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS.")
+	// spec: §11.3 line 215 — credentials.expiryWarningLeadSeconds,
+	// operator-tunable. Each tracked credential lease fires a structured
+	// expiry-warning log line once when now is within this window of the
+	// lease's ExpiresAt, so deployers see impending expiry before the
+	// §4.9 fault-rotation path is consumed. F-11.3.20.
+	credentialsExpiryWarningLeadSeconds := flag.Int("credentials-expiry-warning-lead-seconds",
+		envInt("LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS", int(credrenewal.DefaultExpiryWarningLead/time.Second)),
+		"§11.3 line 215 credentials.expiryWarningLeadSeconds: how long before a credential lease's ExpiresAt the gateway fires a structured warning log. Set to 0 to disable. Default 3600 (1h). Override via LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS.")
 	workspaceSealMaxDurationSeconds := flag.Int("workspace-seal-max-duration-seconds",
 		envInt("LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS", int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second)),
 		"§7.1 line 112 maxWorkspaceSealDurationSeconds: the total wall-clock window the gateway retries seal-and-export (exponential backoff 5s→60s) before failing the session with workspace_seal_timeout and terminating the pod anyway. Default 300s. Override via LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS.")
@@ -2039,6 +2054,10 @@ func main() {
 		log.Printf("lenny-gateway: credential-lease revocation pub/sub publish failed: %v", err)
 	}))
 	if credRenewal != nil {
+		// spec: §11.3 line 215 — credentials.expiryWarningLeadSeconds.
+		// 0 disables warnings; -1 keeps the package default; any other
+		// non-negative value is the explicit operator override.
+		expiryWarningLead := time.Duration(*credentialsExpiryWarningLeadSeconds) * time.Second
 		credRenewalWorker = credrenewal.New(credRenewal, credrenewal.Options{
 			// §4.9: a proactive renewal that rotates a lease onto a fresh
 			// credential pushes it to the lease's pod via RotateCredentials.
@@ -2048,7 +2067,12 @@ func main() {
 			// pool binding.
 			OnExhausted: credRenewal.onExhausted,
 			Clock:       clockinject.Now,
+			// spec: §11.3 line 215 — operator-tunable expiry-warning lead.
+			// F-11.3.20.
+			ExpiryWarningLead: expiryWarningLead,
+			OnExpiryWarning:   logCredentialExpiryWarning,
 		})
+		log.Printf("lenny-gateway: §11.3 line 215 credentials.expiryWarningLeadSeconds=%ds", int(expiryWarningLead/time.Second))
 		// Every §4.9 credential lease the assignment service mints — at
 		// session start and at fault rotation — is tracked by the renewal
 		// worker so its renewBefore deadline drives a proactive renewal.
@@ -2638,6 +2662,9 @@ func main() {
 		GlobalPerMinute:  *rlGlobalPerMin,
 		PerUserPerMinute: *rlPerUserPerMin,
 		Metrics:          gwMetrics,
+		// spec: §11.3 line 222 / §12.4 line 220 — operator-tunable cap on
+		// the fail-open episode. F-11.3.22.
+		FailOpenMax: time.Duration(*rlFailOpenMaxSeconds) * time.Second,
 	})
 
 	// §10.6 transparent-filtering environment resolver — runs

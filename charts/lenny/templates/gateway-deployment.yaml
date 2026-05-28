@@ -433,6 +433,24 @@ spec:
             # gateway honors the same deadline Kubernetes enforces.
             - name: LENNY_TERMINATION_GRACE_SECONDS
               value: {{ .Values.gateway.terminationGracePeriodSeconds | default 240 | quote }}
+            # §11.3 line 215 — credentials.expiryWarningLeadSeconds. The
+            # renewal worker emits a structured warning log when a tracked
+            # lease enters this window of its ExpiresAt. 0 disables.
+            # F-11.3.20.
+            {{- with .Values.credentials }}
+            {{- if hasKey . "expiryWarningLeadSeconds" }}
+            - name: LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS
+              value: {{ .expiryWarningLeadSeconds | quote }}
+            {{- end }}
+            {{- end }}
+            # §11.3 line 222 — rateLimitFailOpenMaxSeconds. The §11.1
+            # admission middleware fails closed once a single fail-open
+            # episode has run past this cap. Negative disables the cap.
+            # F-11.3.22.
+            {{- if hasKey .Values.gateway "rateLimitFailOpenMaxSeconds" }}
+            - name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
+              value: {{ .Values.gateway.rateLimitFailOpenMaxSeconds | quote }}
+            {{- end }}
             {{- with .Values.gateway.extractionThresholds }}
             # §4.1 extractionThresholds — per-subsystem extraction
             # thresholds surfaced from Helm so operators can calibrate

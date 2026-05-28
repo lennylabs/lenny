@@ -229,3 +229,15 @@ func TestTickPropagatesCatalogError(t *testing.T) {
 		t.Errorf("no audit rows must be written when the candidate list fails")
 	}
 }
+
+// TestDefaultSweepIntervalMatchesSpec11_3_231 pins the §11.3 line 231
+// `legalHoldCheckpointReconcilerInterval` value (900s, hard-coded in
+// v1). The reconciler is co-located with the §12.8 line 739 GC sweep
+// at the same cadence; both lines name the 15-minute value. A change
+// here is a spec edit and should not slip in silently. F-11.3.21.
+func TestDefaultSweepIntervalMatchesSpec11_3_231(t *testing.T) {
+	if legalholdreconciler.DefaultSweepInterval != 900*time.Second {
+		t.Errorf("DefaultSweepInterval = %s, want 900s per §11.3 line 231 / §12.8 line 739",
+			legalholdreconciler.DefaultSweepInterval)
+	}
+}

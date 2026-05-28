@@ -232,3 +232,115 @@ func (r *flakyRenewer) Renew(_ context.Context, lease credrenewal.Lease) (credre
 		ExpiresAt:   lease.RenewBefore.Add(r.ttl).Add(5 * time.Minute),
 	}, nil
 }
+
+// TestDefaultExpiryWarningLeadIsOneHour_spec_11_3_215 pins the §11.3
+// line 215 default (3600s) at the package layer so any future drift
+// breaks the test rather than silently shrinking the lead time.
+// F-11.3.20.
+func TestDefaultExpiryWarningLeadIsOneHour_spec_11_3_215(t *testing.T) {
+	if credrenewal.DefaultExpiryWarningLead != 3600*time.Second {
+		t.Errorf("DefaultExpiryWarningLead = %s, want 3600s per §11.3 line 215",
+			credrenewal.DefaultExpiryWarningLead)
+	}
+}
+
+// TestTickFiresOnExpiryWarningOncePerLease_spec_11_3_215 proves the
+// warning hook fires exactly once when a tracked lease crosses into
+// the expiry-warning window. A second tick after the warning has fired
+// does not re-emit. F-11.3.20.
+func TestTickFiresOnExpiryWarningOncePerLease_spec_11_3_215(t *testing.T) {
+	r := &fakeRenewer{ttl: time.Hour}
+	var warned []credrenewal.Lease
+	w := credrenewal.New(r, credrenewal.Options{
+		ExpiryWarningLead: 30 * time.Minute,
+		OnExpiryWarning:   func(l credrenewal.Lease) { warned = append(warned, l) },
+	})
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-warn", SessionID: "sess-1",
+		RenewBefore: base.Add(2 * time.Hour),
+		ExpiresAt:   base.Add(time.Hour),
+	})
+	// 31 minutes past base — exactly inside the 30m warning window
+	// (expiresAt - lead = base + 30m). The warning fires.
+	w.Tick(context.Background(), base.Add(31*time.Minute))
+	if len(warned) != 1 || warned[0].LeaseID != "lease-warn" {
+		t.Fatalf("OnExpiryWarning: got %+v, want a single warning for lease-warn", warned)
+	}
+	// A second tick still inside the same window must not re-fire.
+	w.Tick(context.Background(), base.Add(45*time.Minute))
+	if len(warned) != 1 {
+		t.Errorf("OnExpiryWarning fired %d times, want exactly 1 per lease lifetime", len(warned))
+	}
+}
+
+// TestTickHoldsBackExpiryWarningOutsideWindow_spec_11_3_215 proves the
+// warning hook is silent when now is before expiresAt-lead. F-11.3.20.
+func TestTickHoldsBackExpiryWarningOutsideWindow_spec_11_3_215(t *testing.T) {
+	r := &fakeRenewer{ttl: time.Hour}
+	fired := false
+	w := credrenewal.New(r, credrenewal.Options{
+		ExpiryWarningLead: 30 * time.Minute,
+		OnExpiryWarning:   func(credrenewal.Lease) { fired = true },
+	})
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-far", SessionID: "sess-1",
+		RenewBefore: base.Add(2 * time.Hour),
+		ExpiresAt:   base.Add(time.Hour),
+	})
+	// 25 minutes past base — 35 minutes until expiry, outside the 30m
+	// warning window (warningAt = base + 30m).
+	w.Tick(context.Background(), base.Add(25*time.Minute))
+	if fired {
+		t.Error("OnExpiryWarning fired before the lease crossed into its warning window")
+	}
+}
+
+// TestTickHonorsZeroExpiryWarningLead_spec_11_3_215 proves a negative
+// lead value disables warning emission entirely (an operator opt-out).
+// The package-default normalization happens only when the option is
+// exactly zero. F-11.3.20.
+func TestTickHonorsZeroExpiryWarningLead_spec_11_3_215(t *testing.T) {
+	r := &fakeRenewer{ttl: time.Hour}
+	fired := false
+	w := credrenewal.New(r, credrenewal.Options{
+		ExpiryWarningLead: -1,
+		OnExpiryWarning:   func(credrenewal.Lease) { fired = true },
+	})
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-off", SessionID: "sess-1",
+		RenewBefore: base.Add(time.Hour),
+		ExpiresAt:   base.Add(time.Minute),
+	})
+	w.Tick(context.Background(), base.Add(time.Second))
+	if fired {
+		t.Error("OnExpiryWarning fired with a negative ExpiryWarningLead override (warnings disabled)")
+	}
+}
+
+// TestTickFiresExpiryWarningEvenWhenRenewalSucceeds_spec_11_3_215 proves
+// the warning is a separate signal from the renewal lifecycle: a lease
+// in the warning window with a non-due renewBefore still fires the
+// warning, so operators get the heads-up before the renewal worker
+// completes. F-11.3.20.
+func TestTickFiresExpiryWarningEvenWhenRenewalSucceeds_spec_11_3_215(t *testing.T) {
+	r := &fakeRenewer{ttl: time.Hour}
+	var warned []credrenewal.Lease
+	var renewed []credrenewal.Lease
+	w := credrenewal.New(r, credrenewal.Options{
+		ExpiryWarningLead: 30 * time.Minute,
+		OnExpiryWarning:   func(l credrenewal.Lease) { warned = append(warned, l) },
+		OnRenewed:         func(l credrenewal.Lease) { renewed = append(renewed, l) },
+	})
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-1", SessionID: "sess-1",
+		RenewBefore: base.Add(2 * time.Hour),    // not due
+		ExpiresAt:   base.Add(45 * time.Minute), // inside the warning window
+	})
+	w.Tick(context.Background(), base.Add(20*time.Minute))
+	if len(warned) != 1 {
+		t.Errorf("OnExpiryWarning: got %d warnings, want 1", len(warned))
+	}
+	if len(renewed) != 0 {
+		t.Errorf("OnRenewed fired for a lease whose renewBefore is in the future")
+	}
+}

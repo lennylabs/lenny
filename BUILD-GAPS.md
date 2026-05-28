@@ -15026,25 +15026,33 @@ Consequence: a half-open TCP connection between a gateway replica and a pod can 
 
 **Resolution:** `cmd/lenny-gateway/main.go` now ships `--adapter-keepalive-time-ms` (default 10000) and `--adapter-keepalive-timeout-ms` (default 5000) plus `LENNY_ADAPTER_KEEPALIVE_TIME_MS` / `LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS` env vars, threading the values through `grpc.WithKeepaliveParams(keepalive.ClientParameters{...})` on the binder's adapter dials. `cmd/lenny-adapter/main.go` mirrors the flag surface and applies both `KeepaliveParams` (matching server timer) and `KeepaliveEnforcementPolicy` so the gateway pings are accepted. Tier-1 `TestEnvIntOr_spec_11_3` covers the env-helper edges. Committed in this batch.
 
-### - [ ] F-11.3.13 — Coordinator-hold timeout (`adapter.coordinatorHoldTimeoutSeconds`, 120s) is absent [Medium] — OPEN
+### - [x] F-11.3.13 — Coordinator-hold timeout (`adapter.coordinatorHoldTimeoutSeconds`, 120s) is absent [Medium] — DEFERRED
 
 Spec §11.3 line 207: the adapter holds in `coordinator_hold` for up to 120s awaiting a new coordinator before failing.
 
 The metric `lenny_adapter_coordinator_hold` is declared (`pkg/observability/metrics/catalog.go:223`), but `grep -rn "coordinatorHold\|CoordinatorHold\|adapter.*hold" --include="*.go" pkg/adapter pkg/gateway` returns no implementation. There is no `coordinator_hold` state in the adapter (`pkg/adapter/server.go`) and no timer that fails a hold past 120s.
 
-### - [ ] F-11.3.14 — `CoordinatorFence` RPC and its 5s hard-coded timeout are not implemented [Medium] — OPEN
+**Deferred:** gated on F-10.4.2 (Coordinator-handoff reattach synthesis, High, OPEN). The `coordinator_hold` adapter state only exists once the gateway-side coordinator-handoff path lands; until that lands the 120s timer has nothing to fail-out.
+
+### - [x] F-11.3.14 — `CoordinatorFence` RPC and its 5s hard-coded timeout are not implemented [Medium] — DEFERRED
 
 Spec §11.3 line 209: the `CoordinatorFence` RPC has a 5s hard-coded timeout. Metrics for it exist (`lenny_coordinator_fence_retry_total`, `lenny_coordinator_fence_relinquished_total` — `pkg/observability/metrics/catalog.go:225-226`), but `grep -rn "CoordinatorFence" --include="*.go" --include="*.proto"` matches only the metric catalogue. No RPC, no client, no enforcement.
 
-### - [ ] F-11.3.15 — `checkpointBarrierAckTimeoutSeconds` (90s) is not implemented [Medium] — OPEN
+**Deferred:** gated on F-10.4.2 / F-10.1.7 (Coordinator-handoff and CheckpointBarrier, both High, OPEN). The `CoordinatorFence` RPC is the §10.1 hand-off arbitration step; landing it before the parent paths exist is premature.
+
+### - [x] F-11.3.15 — `checkpointBarrierAckTimeoutSeconds` (90s) is not implemented [Medium] — DEFERRED
 
 Spec §11.3 line 210. The pool-config validator (`pkg/admission/pool_config_validator/validator.go:18`) defers it as a Postgres-authoritative field, and metric catalog entries exist (`pkg/observability/metrics/catalog.go:93-94`). There is no gateway-side enforcement: `grep -rn "BarrierAck\|barrier_ack" --include="*.go" pkg/` returns only the metric registrations and the validator comment.
 
-### - [ ] F-11.3.16 — Elicitation per-hop forwarding timeout (30s, hard-coded) is absent [Medium] — OPEN
+**Deferred:** gated on F-10.1.7 (CheckpointBarrier protocol unimplemented, High, OPEN). The 90s timer is the per-replica ACK budget for that protocol; landing it without the protocol is meaningless.
+
+### - [x] F-11.3.16 — Elicitation per-hop forwarding timeout (30s, hard-coded) is absent [Medium] — CLOSED
 
 Spec §11.3 line 211: a 30s hard-coded per-hop forwarding budget.
 
 Implementation: `pkg/gateway/mcptools/elicitation.go` walks the elicitation chain via `dispatcher.dispatch` and verifies content digests at each hop, but there is no per-hop timeout — `grep -rn "forwarding.*timeout\|per-hop\|hop.*timeout\|forwardTimeout" pkg/` returns zero hits. The Walk uses the caller's context only.
+
+**Resolution:** added `mcptools.ElicitationPerHopForwardingTimeout = 30 * time.Second` (spec-cited at §11.3 line 211) and a `perHopTimeout` override on `elicitationDispatcher` so tests can drive the timeout deterministically. `buildHops` now wraps every ancestor lookup in `context.WithTimeout(ctx, effectivePerHopTimeout())`; a hop whose lookup runs past the cap surfaces `ELICITATION_PER_HOP_TIMEOUT` (registered in the §15.2.1 error classifier as `CategoryTransient`, `retryable=false`) with `details.{hopSessionId, timeout, timeoutSeconds}` to the originating pod. Tier-1 `TestElicitationPerHopForwardingTimeoutDefaultConstant_spec_11_3_211`, `TestBuildHopsAncestorLookupTimeoutReturnsPerHopError_spec_11_3_211`, `TestBuildHopsFastAncestorLookupSucceeds_spec_11_3_211`, `TestEffectivePerHopTimeoutDefaultsToConstant_spec_11_3_211`, `TestEffectivePerHopTimeoutHonorsOverride_spec_11_3_211` exercise the constant, the timeout branch, the happy path, and the override semantics.
 
 ### - [x] F-11.3.17 — `maxSuspendedPodHoldSeconds` (900s, deploy + tenant) is not implemented [Medium] — CLOSED
 
@@ -15052,9 +15060,11 @@ Spec §11.3 line 233. `grep -rn "MaxSuspended\|maxSuspended\|suspendedPodHold" -
 
 **Resolution:** added `watchdog.DefaultMaxSuspendedPodHoldSeconds` (900) plus a `MaxSuspendedPodHoldSeconds` field on `watchdog.Config` with default-fill in `withDefaults`. `cmd/lenny-gateway/main.go` exposes `--max-suspended-pod-hold-seconds` (env `LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS`) and threads the value into the watchdog Config. The "more restrictive of deploy + tenant" §11.3 line 233 contract — both caps available, the smaller wins — is now expressible; the per-tenant tightener still depends on the tenant-config plumbing tracked separately. Tier-1 `TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables/MaxSuspendedPodHoldSeconds` covers the default. Committed in this batch.
 
-### - [ ] F-11.3.18 — `task_complete_acknowledged` 30s hard-coded timeout is absent [Medium] — OPEN
+### - [x] F-11.3.18 — `task_complete_acknowledged` 30s hard-coded timeout is absent [Medium] — DEFERRED
 
 Spec §11.3 line 232. The `task_complete` / `task_complete_acknowledged` / `task_ready` lifecycle messages (§4.7) themselves are unimplemented: `grep -rn "task_complete\|TaskComplete" pkg/ --include="*.go" --include="*.proto"` returns only schema examples in `tests/tier0_static/schemas_test.go`. With no message, there is no timeout. Task-mode pod reuse cannot land without this.
+
+**Deferred:** gated on F-5.2.1 (Task-mode lifecycle entirely absent, High, OPEN). The 30s `task_complete_acknowledged` timer is meaningful only after the §4.7 lifecycle messages exist; landing the timer before the messages is dead code.
 
 ### - [x] F-11.3.19 — `delegation.usageQuiescenceTimeoutSeconds` (5s) is not implemented [Medium] — CLOSED
 
@@ -15062,19 +15072,25 @@ Spec §11.3 line 224. `grep -rn "usageQuiescence\|UsageQuiescence" --include="*.
 
 **Resolution:** `pkg/delegation/recovery/recovery.go` now declares `DefaultUsageQuiescenceTimeout = 5 * time.Second` and the `Config.UsageQuiescenceTimeout` field plus a `QuiescenceDeadline(lastReport)` helper so the §8.10 tree-recovery orchestrator threads one canonical knob. `cmd/lenny-gateway/main.go` exposes `--delegation-usage-quiescence-timeout-seconds` (env `LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS`), logs the effective value at startup, and constructs `recovery.Config{UsageQuiescenceTimeout: ...}` so the same value reaches the orchestrator. Tier-1 `TestQuiescenceDeadlineUsesDefault_spec_11_3_224` / `TestQuiescenceDeadlineHonorsOverride_spec_11_3_224` cover default and override paths. Committed in this batch.
 
-### - [ ] F-11.3.20 — `credentials.expiryWarningLeadSeconds` (1h) is not implemented [Medium] — OPEN
+### - [x] F-11.3.20 — `credentials.expiryWarningLeadSeconds` (1h) is not implemented [Medium] — CLOSED
 
 Spec §11.3 line 215. `grep -rn "expiryWarning\|ExpiryWarning\|leaseExpiryWarning" --include="*.go"` returns zero hits. The credential renewal worker (`pkg/gateway/credrenewal/`) renews leases, but no separate warning event fires 1h before cert expiry.
 
-### - [ ] F-11.3.21 — `legalHoldCheckpointReconcilerInterval` (900s, hard-coded) is not implemented [Medium] — OPEN
+**Resolution:** `credrenewal.DefaultExpiryWarningLead = 3600 * time.Second` (cited at §11.3 line 215) plus new `Options.ExpiryWarningLead` / `Options.OnExpiryWarning` and a per-tracked-lease `expiryWarningFired` latch so the warning hook fires exactly once when `now >= ExpiresAt - lead`. `cmd/lenny-gateway/main.go` exposes `--credentials-expiry-warning-lead-seconds` (env `LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS`) and threads `logCredentialExpiryWarning` (structured stdout WARN) into the worker. Chart adds `credentials.expiryWarningLeadSeconds` (default 3600), rendered as the env var on the gateway Deployment. Tier-1 suite covers default-constant + window-entered + outside-window + negative-disables + renewal-orthogonal cases (`TestDefaultExpiryWarningLeadIsOneHour_spec_11_3_215`, `TestTickFiresOnExpiryWarningOncePerLease_spec_11_3_215`, `TestTickHoldsBackExpiryWarningOutsideWindow_spec_11_3_215`, `TestTickHonorsZeroExpiryWarningLead_spec_11_3_215`, `TestTickFiresExpiryWarningEvenWhenRenewalSucceeds_spec_11_3_215`); tier-2 helm-unittest covers default + override.
+
+### - [x] F-11.3.21 — `legalHoldCheckpointReconcilerInterval` (900s, hard-coded) is not implemented [Medium] — CLOSED
 
 Spec §11.3 line 231. `grep -rn "legalHoldCheckpointReconciler\|legal.*reconciler" --include="*.go"` returns no matches. Legal-hold metrics exist but no periodic reconciler is wired.
 
-### - [ ] F-11.3.22 — `rateLimitFailOpenMaxSeconds` (60s) and `quotaFailOpenCumulativeMaxSeconds` (300s) are not bounded by a cumulative wall-clock window [Medium] — OPEN
+**Resolution:** verify-closed; the finding's evidence is stale. `pkg/gateway/legalholdreconciler` exists (`DefaultSweepInterval = 15 * time.Minute` = 900s, matching §11.3 line 231 / §12.8 line 739) and `cmd/lenny-gateway/main.go:3055` wires it via `legalholdreconciler.New(artifactCatalog, auditAppender, gwMetrics, ...).Run(...)`; it emits `legal_hold.checkpoint_gap_detected` audit events and bumps `lenny_legal_hold_checkpoint_gaps_total`. Tier-1 `TestDefaultSweepIntervalMatchesSpec11_3_231` pins the 900s constant against any future drift.
+
+### - [x] F-11.3.22 — `rateLimitFailOpenMaxSeconds` (60s) and `quotaFailOpenCumulativeMaxSeconds` (300s) are not bounded by a cumulative wall-clock window [Medium] — CLOSED
 
 Spec §11.3 lines 222-223 establish a cumulative time budget for the fail-open path. The implementation (`pkg/gateway/middleware/ratelimit/ratelimit.go` fail-open at `pkg/gateway/middleware/ratelimit/ratelimit_test.go:131-140`) is binary: counter errors → allow. There is no clock that says "we have been fail-open for 60s, now fail-closed" — `grep -rn "FailOpenMax\|cumulativeMax\|rateLimitFailOpenMax" --include="*.go"` returns zero matches. The alert rules (`pkg/alerting/rules/rules.go:630`) measure the fact but do not enforce a cap.
 
 Consequence: a long Redis outage keeps the gateway fail-open indefinitely; the spec's protective ceiling is unenforced.
+
+**Resolution:** added `ratelimitmw.DefaultFailOpenMaxSeconds = 60 * time.Second` (§11.3 line 222) plus `Options.FailOpenMax` and a per-middleware `failOpenSince` timer guarded by `failOpenSinceMu`. `ServeHTTP` records the start of every fail-open episode (any counter error) and, on a counter-failed request whose elapsed episode exceeds the cap, calls `writeFailOpenExceeded` to return 429 RATE_LIMITED with `details.{scope:failopen_exceeded, failOpenMaxSeconds}` and bumps the per-scope rejected counter under `failopen_exceeded`. The recovery edge (`onCounterSuccess`) clears `failOpenSince` so a subsequent outage starts a fresh window. `cmd/lenny-gateway/main.go` exposes `--rate-limit-failopen-max-seconds` (env `LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS`) and threads it into `ratelimitmw.Options.FailOpenMax`; chart adds `gateway.rateLimitFailOpenMaxSeconds` (default 60). A negative override disables the cap so prior unbounded tests still pass. Tier-1 suite (`TestDefaultFailOpenMaxIsSixtySeconds_spec_11_3_222`, `TestFailOpenEpisodeBoundedFailsClosed_spec_11_3_222`, `TestFailOpenEpisodeResetsOnRecovery_spec_11_3_222`, `TestFailOpenCapNegativeDisablesCheck_spec_11_3_222`); tier-2 helm-unittest covers default + override. The §11.3 line 223 `quotaFailOpenCumulativeMaxSeconds` (rolling 1-hour cumulative window per §12.4 line 224) is a quota-path concern tracked under F-11.2.6 (per-replica quota fail-open accounting + cumulative timer, High, OPEN) — that finding owns the rolling sliding-window arithmetic and file-persistence parts the §12.4 paragraph specifies.
 
 ### - [x] F-11.3.23 — `request_input` timeout error wording omits the `expiredAt` ISO timestamp and the structured error code [Medium] — CLOSED
 
