@@ -18212,9 +18212,11 @@ Spec §12.4 "Quota counter reconciliation after fail-open": "When Redis recovers
 
 **Resolution:** Took remediation option (b) — added a §12.4 deferral comment block immediately above the `redis` service in `compose/default.yml` that names AUTH/TLS as production mandates, identifies compose as the dev/test harness only, and points readers at `charts/lenny/templates/redis-*` plus `redis.url` (AUTH) / `redis.tlsPort` (TLS) as the production posture.
 
-### - [ ] F-12.4.22 — Helm chart values lack a dedicated `password` field for Redis [Low] — OPEN
+### - [x] F-12.4.22 — Helm chart values lack a dedicated `password` field for Redis [Low] — CLOSED
 
 `charts/lenny/values.yaml:132-155` carries `redis.url`, `redis.tlsPort`, `redis.gatewayEgressCIDR`, `redis.gatewayEgressPort`. There is no `redis.password` or `redis.sentinelPassword` field; the deployer must embed the password in the URL. This is workable but diverges from the postgres value group, which does carry an explicit `password` field for some flows. A future operator reading the values.yaml has no signal that AUTH is mandatory; the only Helm surface that suggests it is the inline comment on the URL field.
+
+**Resolution:** Verify-closed per the finding's own "workable but diverges" framing. §12.4 mandates AUTH + TLS, both of which the `rediss://:password@host:port/db` URL conveys; the inline comment at `charts/lenny/values.yaml:237-242` makes the AUTH/TLS requirement explicit and names `--redis-allow-insecure` as the dev escape hatch. The URL-credential pattern is conventional for Redis (the Postgres value group splits credentials only because the libpq DSN is awkward to compose). A separate `redis.password` field would need a parallel template path and offers no functional improvement.
 
 ### - [x] F-12.4.23 — `lenny:pod:` exception prefix is not documented in code comments alongside the other exceptions [Low] — CLOSED
 
@@ -18222,9 +18224,11 @@ The §12.4 spec calls out four exception prefixes: `lenny:pod:`, `cb:`, `{root_s
 
 - **Resolution:** The rewritten `slotcounter` package doc (F-5.2.4) now documents the `lenny:pod:` prefix as one of §12.4's key-prefix exception classes (pod-scoped, not tenant-scoped) and cross-references the breaker store's `cb:` prefix comment, matching the rationale that file already carries. Commit 8412834a.
 
-### - [ ] F-12.4.24 — `TestRedisSentinelFailover` is a stub `t.Logf` placeholder [Low] — OPEN
+### - [ ] F-12.4.24 — `TestRedisSentinelFailover` is a stub `t.Logf` placeholder [Low] — DEFERRED
 
 `tests/tier8_chaos/scaffolds_test.go:66-69` records the test as a stub log message. The compose Sentinel topology exists (`compose/default.yml:104-130`) and `pkg/redisconn` carries the Sentinel-aware client construction, but no end-to-end exercise drives a master kill and asserts the gateway transparently follows the new master. The §12.8 / §12.4 Sentinel topology promise (3 sentinels, 1 primary + 1 replica) is therefore not enforced by tier-8.
+
+**Deferred:** A real Sentinel failover exercise requires a chaos-tier harness that drives the compose stack, kills the primary, and observes gateway reconnection — work that belongs to the broader tier-8 chaos buildout (see F-7.3 / F-7.5 chaos cluster) rather than a one-shot fix. The stub placeholder is correct as a hook for the future harness; closing this finding ahead of that work would only re-open it.
 
 ### - [x] F-12.4.25 — `cb:events` cross-replica pub/sub channel is platform-scoped but not in the §12.4 table [Info] — CLOSED
 
@@ -22569,23 +22573,33 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 ---
 
-### - [ ] F-14.1.21 — `gitClone.path` default `.` not applied explicitly [Low] — OPEN
+### - [x] F-14.1.21 — `gitClone.path` default `.` not applied explicitly [Low] — CLOSED
 - **Spec §14 line 91:** "`path` (workspace-relative clone destination, default `.` — the repo root)".
 - **Evidence:** `pkg/workspaceplan/plan.go:108-119` (`GitClone.PathField`) is `omitempty` and validateGitClone (line 645) only path-checks when non-empty. The materializer's `extractGitClone` passes the empty string straight to `extractUploadTar` (`pkg/adapter/workspace/gitclone.go:49`), which works correctly because `filepath.Join(root, "")` resolves to root.
 - **Impact:** Functionally correct, but the spec default is not made explicit; round-tripping a plan through `Marshal` may drop the field where a strict client expected to see `"."`.
 
-### - [ ] F-14.1.22 — `Warning.Code` is JSON-emitted with no contract test against the spec catalog [Low] — OPEN
+**Resolution:** `parseSource` now fills the §14 line 91 default `.` into both the typed `GitClone.PathField` and the raw map after `validateGitClone` succeeds (`pkg/workspaceplan/plan.go` TypeGitClone branch). Round-tripped JSON carries `"path":"."` explicitly. Tier-3 contract test `TestGitCloneDefaultPathIsDot_spec_14_91` asserts default + explicit path round-trip.
+
+### - [x] F-14.1.22 — `Warning.Code` is JSON-emitted with no contract test against the spec catalog [Low] — CLOSED
 - The spec wording in §14 enumerates exact warning identifiers (`workspace_plan_unknown_source_type`, etc.). The implementation uses string constants at `pkg/workspaceplan/plan.go:147-151` that match, but there is no compile-time enum-completeness test against the spec catalog.
 - **Impact:** A future renaming would silently diverge from the spec.
 
-### - [ ] F-14.1.23 — `Warning.SourceIndex` semantics ambiguous for path-collision [Low] — OPEN
+**Resolution:** Added tier-3 contract test `TestWarningCodeCatalogMatchesSpec_spec_14` asserting the spec-named strings exactly equal the `WarnUnknownSourceType`/`WarnStripComponentsSkip`/`WarnPathCollision` constants (each side keyed on the wire identifier). A future rename of any constant now fails the contract suite.
+
+### - [x] F-14.1.23 — `Warning.SourceIndex` semantics ambiguous for path-collision [Low] — CLOSED
 - For `workspace_plan_path_collision`, spec line 338 requires two distinct indices (`winningSourceIndex`, `losingSourceIndex`); the implementation emits only one (`SourceIndex: j` in `pkg/workspaceplan/plan.go:336`), informally documented as "the losing index" via the comparison loop. Consumers cannot distinguish without re-parsing the plan.
 
-### - [ ] F-14.1.24 — `gitref.LsRemoteResolver` does not bound the matched `pickSHA` precedence by `gitClone.ref` form [Low] — OPEN
+**Resolution:** `Warning` now carries optional `Path`, `WinningSourceIndex`, `LosingSourceIndex` fields populated on path-collision warnings (`pkg/workspaceplan/plan.go`). The legacy `SourceIndex` is preserved equal to `winningSourceIndex` for backwards-compatible consumers. Tier-3 contract test `TestPathCollisionWarningCarriesStructuredFields_spec_14_338` exercises the structured fields and JSON round-trip.
+
+### - [x] F-14.1.24 — `gitref.LsRemoteResolver` does not bound the matched `pickSHA` precedence by `gitClone.ref` form [Low] — CLOSED
 - `pkg/gateway/gitref/gitref.go:131-157` iterates precedences `refs/heads/<ref> > refs/tags/<ref>^{} > refs/tags/<ref> > <ref>` for any input form. A fully-qualified input like `refs/heads/main` triggers an extra `refs/heads/refs/heads/main` lookup that is harmless but suggests the precedence handling could be tightened. Not strictly a §14 requirement.
 
-### - [ ] F-14.1.25 — Documentation comment refers to §15.4.1 forward-read rule but the rule lives at §15.5 [Low] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("Not strictly a §14 requirement"). The extra `refs/heads/refs/heads/main` candidate is harmless because no remote advertises a doubly-prefixed ref; the precedence search still picks the original fully-qualified input. The §14 contract (per-session SHA immutability + `IsCommitSHA` short-circuit) is preserved.
+
+### - [x] F-14.1.25 — Documentation comment refers to §15.4.1 forward-read rule but the rule lives at §15.5 [Low] — CLOSED
 - `schemas/lenny-adapter.proto:257-259` says "Consumers that receive a value > 1 they don't recognize follow the §15.4.1 forward-read rule..." but `spec/14_workspace-plan-schema.md:328` cites §15.5 item 7 as the actual rule location. Documentation cross-ref drift.
+
+**Resolution:** Both `schemas/lenny-adapter.proto:301` and the generated `pkg/proto/adapter/v1/lenny-adapter.pb.go:559` now cite "§15.5 item 7" matching `spec/14_workspace-plan-schema.md:328` and `spec/15_external-api-surface.md:2452` (the bifurcated forward-compat rule).
 
 ---
 
@@ -28506,7 +28520,7 @@ them either.)
 
 - **Resolution:** Verify-closed. Orphan severity-label heading with no body; the §17.3 Low cluster lives in the sibling F-17.3.21..F-17.3.24 entries.
 
-### - [ ] F-17.3.21 — 3.1 — `BackupReconcileBlocked` alert references an unemitted counter [Low] — OPEN
+### - [x] F-17.3.21 — 3.1 — `BackupReconcileBlocked` alert references an unemitted counter [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.11.16 — Both report that the BackupReconcileBlocked alert references lenny_backup_reconcile_blocked_total, which is absent from the catalog and has no emitter.
 
@@ -28522,6 +28536,8 @@ exist (H-17.3.2), the metric has no source.
 Effect: cosmetic until H-17.3.2 is fixed; once the reconciler is
 wired the alert needs the corresponding counter and the
 `reason` label.
+
+**Resolution:** Verify-closed per the finding's own framing ("cosmetic until H-17.3.2 is fixed"); the metric + emitter land with the missing erasure reconciler. Root cause tracked under F-25.11.16 (Medium) and F-17.3.2 (High); this Low duplicate adds nothing distinct.
 
 ---
 

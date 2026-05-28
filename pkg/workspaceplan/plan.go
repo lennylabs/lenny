@@ -59,8 +59,10 @@ type Source struct {
 type SourceVariant interface {
 	sourceVariantTag()
 	// Path returns the workspace-relative destination this variant
-	// writes to (or "" for variants like gitClone whose path field
-	// is optional and not always set).
+	// writes to. The parser fills in §14 spec defaults for optional
+	// path fields (e.g., gitClone.path defaults to "." per §14 line
+	// 91) so the returned value is always non-empty for a validated
+	// source.
 	Path() string
 }
 
@@ -151,11 +153,30 @@ const (
 )
 
 // Warning is a non-fatal advisory the parser raised against a plan.
+//
+// The per-warning structured-field set follows §14:
+//   - `workspace_plan_unknown_source_type`: `sourceIndex`, `field`,
+//     `message` (the legacy index points at the unknown entry).
+//   - `workspace_plan_path_collision`: `path`, `winningSourceIndex`,
+//     `losingSourceIndex` per §14 line 338; `sourceIndex` is preserved
+//     equal to `winningSourceIndex` for backwards-compatibility with
+//     pre-§14-line-338 single-index consumers.
+//
+// The strip-components-skip warning is emitted by the adapter
+// materializer (see pkg/adapter/workspace) and carries its own per-
+// entry fields there.
 type Warning struct {
 	Code        WarningCode `json:"code"`
 	SourceIndex int         `json:"sourceIndex"`
 	Field       string      `json:"field,omitempty"`
 	Message     string      `json:"message"`
+
+	// Structured fields per §14 line 338 (`workspace_plan_path_collision`).
+	// Optional; populated only on collision warnings so the JSON output
+	// is unchanged for the other warning codes.
+	Path               string `json:"path,omitempty"`
+	WinningSourceIndex *int   `json:"winningSourceIndex,omitempty"`
+	LosingSourceIndex  *int   `json:"losingSourceIndex,omitempty"`
 }
 
 // ValidationError is the §14 `400 WORKSPACE_PLAN_INVALID` envelope
@@ -338,7 +359,13 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 	}
 
 	// Collision detection: emit a warning when two known sources write
-	// to the same workspace-relative path. Last-writer-wins per §14.
+	// to the same workspace-relative path. Last-writer-wins per §14
+	// line 338, which mandates the structured fields `path`,
+	// `winningSourceIndex` (the later, winning entry — `j` here), and
+	// `losingSourceIndex` (the earlier, overwritten entry — `i`).
+	// `SourceIndex` is preserved equal to `winningSourceIndex` for
+	// backwards-compatibility with existing consumers that read the
+	// pre-§14-line-338 single-index field.
 	for i := 0; i < len(plan.Sources); i++ {
 		for j := i + 1; j < len(plan.Sources); j++ {
 			pi := plan.Sources[i].Variant.Path()
@@ -347,11 +374,16 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 				continue
 			}
 			if pi == pj {
+				winIdx := j
+				loseIdx := i
 				warnings = append(warnings, Warning{
-					Code:        WarnPathCollision,
-					SourceIndex: j,
-					Field:       "path",
-					Message:     fmt.Sprintf("path %q collides with sources[%d]; last-writer-wins per §14", pj, i),
+					Code:               WarnPathCollision,
+					SourceIndex:        winIdx,
+					Field:              "path",
+					Message:            fmt.Sprintf("path %q at sources[%d] is overwritten by sources[%d]; last-writer-wins per §14", pj, loseIdx, winIdx),
+					Path:               pj,
+					WinningSourceIndex: &winIdx,
+					LosingSourceIndex:  &loseIdx,
 				})
 			}
 		}
@@ -438,6 +470,19 @@ func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *Su
 		}
 		if subErr := validateGitClone(&v, i, stored); subErr != nil {
 			return Source{}, nil, subErr
+		}
+		// spec: §14 line 91 — `path` default is `.` (the repo root) when
+		// omitted. Apply the default explicitly here so the parsed Plan
+		// and the round-tripped JSON both carry the spec-named default
+		// rather than the empty-string ambiguity the parser would
+		// otherwise leak downstream.
+		if v.PathField == "" {
+			v.PathField = "."
+			if rawMap != nil {
+				if _, present := rawMap["path"]; !present {
+					rawMap["path"] = "."
+				}
+			}
 		}
 		return Source{Type: head.Type, Variant: v, Raw: rawMap}, nil, nil
 

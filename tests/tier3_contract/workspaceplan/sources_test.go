@@ -159,6 +159,127 @@ func TestParserEmitsPathCollisionWarning(t *testing.T) {
 	}
 }
 
+// spec: §14 line 338 — workspace_plan_path_collision warning carries
+// the structured fields `path`, `winningSourceIndex`, and
+// `losingSourceIndex` so consumers can distinguish overwriter from
+// overwritten without re-parsing the plan. F-14.1.23.
+func TestPathCollisionWarningCarriesStructuredFields_spec_14_338(t *testing.T) {
+	body := `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "inlineFile", "path": "shared/file", "content": "first"},
+			{"type": "inlineFile", "path": "shared/file", "content": "second"}
+		]
+	}`
+	_, warnings, err := workspaceplan.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(warnings) != 1 || warnings[0].Code != workspaceplan.WarnPathCollision {
+		t.Fatalf("collision warning: got %+v", warnings)
+	}
+	w := warnings[0]
+	if w.Path != "shared/file" {
+		t.Errorf("warning.path: got %q, want %q", w.Path, "shared/file")
+	}
+	if w.WinningSourceIndex == nil || *w.WinningSourceIndex != 1 {
+		t.Errorf("warning.winningSourceIndex: got %v, want 1", w.WinningSourceIndex)
+	}
+	if w.LosingSourceIndex == nil || *w.LosingSourceIndex != 0 {
+		t.Errorf("warning.losingSourceIndex: got %v, want 0", w.LosingSourceIndex)
+	}
+	// The structured fields must round-trip via JSON so the gateway
+	// can forward them to the client per §14 "consumer-warning enum".
+	out, err := json.Marshal(w)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		`"path":"shared/file"`,
+		`"winningSourceIndex":1`,
+		`"losingSourceIndex":0`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("warning JSON missing %q; got %s", want, s)
+		}
+	}
+}
+
+// spec: §14 — the WarningCode constants the parser emits MUST match
+// the spec catalog character-for-character so observability sinks
+// (events, dashboards, alerts) key on the spec-named values. A future
+// rename would silently diverge from the spec; this test traps the
+// drift at compile time. F-14.1.22.
+func TestWarningCodeCatalogMatchesSpec_spec_14(t *testing.T) {
+	// The closed §14 catalog: line 100 (strip-components-skip),
+	// line 334 (unknown-source-type), line 338 (path-collision).
+	want := map[string]workspaceplan.WarningCode{
+		"workspace_plan_unknown_source_type":   workspaceplan.WarnUnknownSourceType,
+		"workspace_plan_strip_components_skip": workspaceplan.WarnStripComponentsSkip,
+		"workspace_plan_path_collision":        workspaceplan.WarnPathCollision,
+	}
+	for specName, got := range want {
+		if string(got) != specName {
+			t.Errorf("WarningCode for %q: got %q, want exact match", specName, string(got))
+		}
+	}
+	// Cross-check the corpus from the spec wire side: every code the
+	// parser emits today is one of the catalog members. The
+	// path-collision branch is exercised by
+	// TestPathCollisionWarningCarriesStructuredFields above; the
+	// unknown-type branch is exercised by TestParserSkipsUnknownSourceType
+	// later in this file; the strip-components-skip branch is emitted
+	// by the materializer (pkg/adapter/workspace) and covered by
+	// pkg/adapter/workspace/strip_skip_warnings_test.go.
+}
+
+// spec: §14 line 91 — gitClone.path default is `.` (the repo root).
+// The parser must surface the default explicitly so the round-tripped
+// plan stored in Postgres carries the canonical value and downstream
+// consumers do not need to mirror the spec default themselves.
+// F-14.1.21.
+func TestGitCloneDefaultPathIsDot_spec_14_91(t *testing.T) {
+	body := `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "gitClone", "url": "https://example.com/a.git", "ref": "main"}
+		]
+	}`
+	plan, _, err := workspaceplan.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(plan.Sources) != 1 {
+		t.Fatalf("sources: got %d, want 1", len(plan.Sources))
+	}
+	gc, ok := plan.Sources[0].Variant.(workspaceplan.GitClone)
+	if !ok {
+		t.Fatalf("variant: got %T, want GitClone", plan.Sources[0].Variant)
+	}
+	if gc.PathField != "." {
+		t.Errorf("gitClone.path default: got %q, want %q", gc.PathField, ".")
+	}
+	if got := plan.Sources[0].Variant.Path(); got != "." {
+		t.Errorf("variant.Path(): got %q, want %q", got, ".")
+	}
+	// Explicit non-default value must round-trip unchanged.
+	body = `{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "gitClone", "url": "https://example.com/a.git", "ref": "main", "path": "vendor/a"}
+		]
+	}`
+	plan, _, err = workspaceplan.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("Parse (explicit path): %v", err)
+	}
+	gc = plan.Sources[0].Variant.(workspaceplan.GitClone)
+	if gc.PathField != "vendor/a" {
+		t.Errorf("gitClone.path explicit: got %q, want %q", gc.PathField, "vendor/a")
+	}
+}
+
 // spec: §14 mode-field notes
 // diagnosis: §14 prohibits setuid (04xxx) and setgid (02xxx) on every
 // source variant. The parser must reject these with the §14

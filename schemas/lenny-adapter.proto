@@ -298,7 +298,7 @@ message SlotId {
 // accepts. Per §14.1 the only currently-valid value is 1; a 0 value
 // (the proto3 default for an unset field) is rejected by the gateway
 // validator at ingress with WORKSPACE_PLAN_INVALID. Consumers that
-// receive a value > 1 they don't recognize follow the §15.4.1
+// receive a value > 1 they don't recognize follow the §15.5 item 7
 // forward-read rule: keep the field, log a degraded-fidelity event,
 // and proceed.
 //
