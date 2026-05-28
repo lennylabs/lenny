@@ -29,6 +29,16 @@ func newLifecycleID() string {
 // version the adapter advertises in the lifecycle_capabilities frame.
 const lifecycleProtocolVersion = "1.0"
 
+// errLifecycleVersionIncompatible is returned by the handshake when the
+// runtime advertises a protocolVersion the adapter cannot speak. spec:
+// §15.5 line 2431 (item 3) — "The adapter advertises a protocol version
+// at INIT; the gateway selects a compatible version." Today the adapter
+// speaks `1.x`; a runtime that names a different major version is
+// rejected before any signal frames flow so a forward-compat mismatch
+// surfaces at handshake rather than as silent missing capabilities.
+// F-15.5.9.
+var errLifecycleVersionIncompatible = errors.New("lifecycle protocol version incompatible")
+
 // lifecycleCapabilities are the §4.7 lifecycle signals the adapter can
 // drive on any pod. The adapter advertises them in the
 // lifecycle_capabilities handshake; the runtime replies with
@@ -280,6 +290,18 @@ func (lc *LifecycleChannel) handshake(r *bufio.Reader) error {
 	if frame.Type != "lifecycle_support" {
 		return fmt.Errorf("lifecycle handshake: expected lifecycle_support, got %q", frame.Type)
 	}
+	// spec: §15.5 line 2431 (item 3) — the runtime advertises a
+	// `protocolVersion` at INIT and the gateway selects a compatible
+	// version. The adapter speaks `1.x`; a runtime that names a
+	// different major version is rejected before any signal frames
+	// flow. An empty `protocolVersion` is accepted for forward
+	// compatibility with runtimes that pre-date this field. F-15.5.9.
+	if frame.ProtocolVersion != "" {
+		if !lifecycleVersionsCompatible(lifecycleProtocolVersion, frame.ProtocolVersion) {
+			return fmt.Errorf("%w: runtime advertised %q, adapter speaks %q",
+				errLifecycleVersionIncompatible, frame.ProtocolVersion, lifecycleProtocolVersion)
+		}
+	}
 	supported := make(map[string]bool, len(frame.Capabilities))
 	for _, c := range frame.Capabilities {
 		supported[c] = true
@@ -288,6 +310,40 @@ func (lc *LifecycleChannel) handshake(r *bufio.Reader) error {
 	lc.supported = supported
 	lc.mu.Unlock()
 	return nil
+}
+
+// lifecycleVersionsCompatible reports whether the adapter version and
+// the runtime version share a major number. v1 only ships `1.x`, so the
+// compat rule is "same major"; minor differences are forward-readable.
+//
+// spec: §15.5 line 2431 — "Major version changes are breaking."
+// F-15.5.9.
+func lifecycleVersionsCompatible(adapter, runtime string) bool {
+	return lifecycleMajor(adapter) == lifecycleMajor(runtime)
+}
+
+// lifecycleMajor extracts the major number from a `M.m` version string;
+// it returns -1 for malformed input so a typo on the runtime side
+// surfaces as a compat rejection rather than silently matching "0".
+func lifecycleMajor(v string) int {
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c == '.' {
+			if i == 0 {
+				return -1
+			}
+			n := 0
+			for j := 0; j < i; j++ {
+				if v[j] < '0' || v[j] > '9' {
+					return -1
+				}
+				n = n*10 + int(v[j]-'0')
+			}
+			return n
+		}
+	}
+	// No dot at all is malformed for a `M.m` version.
+	return -1
 }
 
 // readLoop dispatches inbound frames until the connection closes. The

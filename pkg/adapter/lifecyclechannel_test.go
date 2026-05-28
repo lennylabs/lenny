@@ -460,3 +460,91 @@ func TestLifecycleChannelAcceptsReconnect_spec_4_7(t *testing.T) {
 	}
 	roundTrip(fr2, "int-2")
 }
+
+// spec: §15.5 line 2431 (item 3) — when the runtime advertises a
+// matching `protocolVersion` in `lifecycle_support`, the handshake
+// completes and the channel exposes the runtime's capability set.
+// F-15.5.9.
+func TestLifecycleVersionNegotiation_AcceptsCompatible_spec_15_5_2431(t *testing.T) {
+	lc, fr := startLifecycleChannel(t)
+	caps := fr.read()
+	if caps.Type != "lifecycle_capabilities" {
+		t.Fatalf("first frame = %q, want lifecycle_capabilities", caps.Type)
+	}
+	fr.write(lifecycleFrame{
+		Type:            "lifecycle_support",
+		ProtocolVersion: "1.7",
+		Capabilities:    caps.Capabilities,
+	})
+	select {
+	case <-lc.currentReady():
+	case <-time.After(3 * time.Second):
+		t.Fatal("compatible-version handshake did not complete")
+	}
+}
+
+// spec: §15.5 line 2431 (item 3) — an empty `protocolVersion` is
+// accepted for forward compatibility with runtimes that pre-date the
+// field. F-15.5.9.
+func TestLifecycleVersionNegotiation_AcceptsEmpty_spec_15_5_2431(t *testing.T) {
+	lc, fr := startLifecycleChannel(t)
+	caps := fr.read()
+	if caps.Type != "lifecycle_capabilities" {
+		t.Fatalf("first frame = %q, want lifecycle_capabilities", caps.Type)
+	}
+	fr.write(lifecycleFrame{
+		Type:         "lifecycle_support",
+		Capabilities: caps.Capabilities,
+	})
+	select {
+	case <-lc.currentReady():
+	case <-time.After(3 * time.Second):
+		t.Fatal("missing-version handshake did not complete")
+	}
+}
+
+// spec: §15.5 line 2431 (item 3) — a runtime advertising a different
+// major version is rejected; the handshake never marks the channel
+// ready. F-15.5.9.
+func TestLifecycleVersionNegotiation_RejectsIncompatibleMajor_spec_15_5_2431(t *testing.T) {
+	lc, fr := startLifecycleChannel(t)
+	caps := fr.read()
+	if caps.Type != "lifecycle_capabilities" {
+		t.Fatalf("first frame = %q, want lifecycle_capabilities", caps.Type)
+	}
+	fr.write(lifecycleFrame{
+		Type:            "lifecycle_support",
+		ProtocolVersion: "2.0",
+		Capabilities:    caps.Capabilities,
+	})
+	select {
+	case <-lc.currentReady():
+		t.Fatal("incompatible-version handshake unexpectedly completed")
+	case <-time.After(250 * time.Millisecond):
+		// Expected: connection was dropped before ready fires.
+	}
+}
+
+// spec: §15.5 line 2431 (item 3) — malformed `protocolVersion` strings
+// (no dot, leading dot, non-numeric prefix) are rejected so a typo
+// surfaces at handshake. F-15.5.9.
+func TestLifecycleVersionsCompatible_MalformedRejected(t *testing.T) {
+	cases := []struct {
+		runtime string
+		want    bool
+	}{
+		{"1.0", true},
+		{"1.7", true},
+		{"2.0", false},
+		{"", false},   // direct compat predicate test; the handshake handles "" separately.
+		{"abc", false},
+		{".5", false},
+		{"1", false},
+		{"1.0.0", true}, // extra trailing segments still parse to major=1 via the first dot.
+	}
+	for _, tc := range cases {
+		if got := lifecycleVersionsCompatible(lifecycleProtocolVersion, tc.runtime); got != tc.want {
+			t.Errorf("lifecycleVersionsCompatible(%q, %q) = %v, want %v", lifecycleProtocolVersion, tc.runtime, got, tc.want)
+		}
+	}
+}

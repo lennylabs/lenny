@@ -52,17 +52,25 @@ func Text(s string) OutputPart {
 // MessageEnvelope is the §15.4.1 unified inbound message format. The
 // adapter populates From, and the gateway populates SchemaVersion and ID
 // when omitted. Basic-level handlers typically read only Input.
+//
+// Annotations carries the §15.5 line 2461 degradation-annotation
+// catalog (`schema_version_ahead`, `durable_schema_version_ahead`,
+// `mcp_protocol_version_retired`). Producers stamp them via the
+// pkg/degradation helpers when forward-read or retirement defects
+// occur. The field is open metadata so future annotations can land
+// without a schema-version bump. F-15.5.5.
 type MessageEnvelope struct {
-	SchemaVersion   int          `json:"schemaVersion,omitempty"`
-	Type            string       `json:"type"`
-	ID              string       `json:"id"`
-	From            *MessageFrom `json:"from,omitempty"`
-	InReplyTo       string       `json:"inReplyTo,omitempty"`
-	ThreadID        string       `json:"threadId,omitempty"`
-	Delivery        string       `json:"delivery,omitempty"`
-	DelegationDepth int          `json:"delegationDepth,omitempty"`
-	SlotID          string       `json:"slotId,omitempty"`
-	Input           []OutputPart `json:"input,omitempty"`
+	SchemaVersion   int            `json:"schemaVersion,omitempty"`
+	Type            string         `json:"type"`
+	ID              string         `json:"id"`
+	From            *MessageFrom   `json:"from,omitempty"`
+	InReplyTo       string         `json:"inReplyTo,omitempty"`
+	ThreadID        string         `json:"threadId,omitempty"`
+	Delivery        string         `json:"delivery,omitempty"`
+	DelegationDepth int            `json:"delegationDepth,omitempty"`
+	SlotID          string         `json:"slotId,omitempty"`
+	Input           []OutputPart   `json:"input,omitempty"`
+	Annotations     map[string]any `json:"annotations,omitempty"`
 }
 
 // MessageFrom is the §15.4.1 from object. Kind is one of client, agent,

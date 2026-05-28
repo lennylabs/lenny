@@ -21,15 +21,18 @@
     "schemas": {
       "Error": {
         "type": "object",
+        "description": "§15.1 line 972 / §15.2.1 line 1376 REST↔MCP error envelope. Every gateway error response carries this shape verbatim; SDK generators must surface category and retryable so callers can distinguish a transient network blip from a permanent validation failure.",
         "required": ["error"],
         "properties": {
           "error": {
             "type": "object",
-            "required": ["code", "message"],
+            "required": ["code", "category", "message", "retryable"],
             "properties": {
-              "code":    { "type": "string" },
-              "message": { "type": "string" },
-              "details": { "type": "object", "additionalProperties": true }
+              "code":      { "type": "string", "description": "§15.1 canonical error code (e.g. VALIDATION_ERROR, AUTH_REQUIRED, MCP_PROTOCOL_VERSION_RETIRED)." },
+              "category":  { "type": "string", "enum": ["VALIDATION", "AUTH", "AUTHZ", "NOT_FOUND", "CONFLICT", "TRANSIENT", "RATE_LIMIT", "INTERNAL", "UNAVAILABLE", "TIMEOUT"], "description": "§15.1 line 972 — coarse classification used by SDK retry logic." },
+              "message":   { "type": "string", "description": "Human-readable failure summary." },
+              "retryable": { "type": "boolean", "description": "§15.1 line 972 — true when the client should retry, with backoff bounded by suggestedRetryAfter when present." },
+              "details":   { "type": "object", "additionalProperties": true, "description": "Optional structured per-error context (fields, runbook, suggestedRetryAfter, …)." }
             }
           }
         }

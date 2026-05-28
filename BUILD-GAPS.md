@@ -23071,7 +23071,7 @@ malformed JSON and missing-bearer responses. SDK retry/backoff logic
 also breaks because the code is unknown to the classifier the spec
 references in §16.3.
 
-### - [ ] F-15.1.5 — OpenAPI error envelope drops `category` and `retryable` [High] — OPEN
+### - [x] F-15.1.5 — OpenAPI error envelope drops `category` and `retryable` [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-15.5.7 — Both report the published OpenAPI Error schema omits category and retryable while the Go handler emits them, same root cause and fix.
 
@@ -23086,6 +23086,8 @@ OpenAPI document — which §15.1 line 589 explicitly designates as the
 canonical SDK-generator input — does not advertise the two fields. SDK
 generators emit `RetryableError` clients that never see `retryable` or
 `category` populated and that fail validation.
+
+- **Resolution:** Closed by F-15.5.7. The `Error` schema in `pkg/gateway/openapi/openapi.json` now requires `code`, `category`, `message`, and `retryable`, with a closed `category` enum (`VALIDATION`, `AUTH`, `AUTHZ`, `NOT_FOUND`, `CONFLICT`, `TRANSIENT`, `RATE_LIMIT`, `INTERNAL`, `UNAVAILABLE`, `TIMEOUT`) covering the §15.1 line 972 / §15.2.1 REST↔MCP parity contract. CI test `TestErrorEnvelopeRequiresCategoryAndRetryable_spec_15_1_972` guards the surface.
 
 ### - [ ] F-15.1.6 — The §15.1 cursor-based pagination envelope is not used [High] — OPEN
 Spec (§15.1 "Cursor-based pagination", lines 1228–1253) is normative:
@@ -24346,7 +24348,7 @@ case "initialize":
 
 Additional discrepancy: the gateway's `2025-06-18` is itself unsupported by the spec text, which names `2025-03-26` (current) and `2024-11-05` (previous). The intra-pod platform-MCP server (`pkg/adapter/mcp/server.go:15`) uses `2025-03-26`. The gateway and the adapter therefore disagree on which MCP revision they speak.
 
-### - [ ] F-15.5.5 — Degradation annotation catalog is absent from `MessageEnvelope` and from gateway/SDK code paths [High] — OPEN
+### - [x] F-15.5.5 — Degradation annotation catalog is absent from `MessageEnvelope` and from gateway/SDK code paths [High] — CLOSED
 
 `spec/15_external-api-surface.md:2461-2469` defines three degradation annotations (`schema_version_ahead`, `durable_schema_version_ahead`, `mcp_protocol_version_retired`) that MUST appear on `MessageEnvelope` when the corresponding trigger fires. These signals are normative — observability dashboards "MUST treat them as separate kinds."
 
@@ -24359,6 +24361,8 @@ Concretely:
 - The `schema_version_ahead` live-consumer forward-read path is unimplemented — every consumer either accepts or hard-rejects.
 - `durable_schema_version_ahead` queue-for-manual-review is unimplemented — there is no operator alert channel for schema-strict sink failures.
 - `mcp_protocol_version_retired` cannot fire because MCP version retirement itself is not implemented (H-4); even the prerequisite `MCP_PROTOCOL_VERSION_RETIRED` error code is only registered in the classifier table (`pkg/gateway/errorclassify/errorclassify.go:79`) and never raised by any handler.
+
+- **Resolution:** New `pkg/degradation` package exports the §15.5 line 2461 catalog: `AnnotationSchemaVersionAhead`, `AnnotationDurableSchemaVersionAhead`, `AnnotationMcpProtocolVersionRetired`, the three body constructors (`SchemaVersionAhead(known, encountered)`, `DurableSchemaVersionAhead(known, encountered, recordType)`, `McpProtocolVersionRetired(retired, current[])` — sorted), plus `Stamp` / `Has` helpers. `MessageEnvelope.Annotations map[string]any` is now wired on both the Go runtime SDK (`sdks/runtime/go/runtime/types.go`) and Python runtime SDK (`sdks/runtime/python/lenny_runtime/types.py`) so producers and consumers agree on the wire shape. `pkg/workspaceplan.ParseStored` exercises the catalog by stamping the `durable_schema_version_ahead` body shape into the new `WarnDurableSchemaVersionAhead` warning (see F-15.5.8). 8 tier-1 tests in the new package + a Go-SDK round-trip test (`TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461`) and omit-empty guard. `mcp_protocol_version_retired` emission stays gated on F-15.5.4 (MCP version negotiation), which owns the retirement defect surface.
 
 ### - [ ] F-15.5.6 — Persisted record types are missing the mandated `schemaVersion` field [High] — OPEN
 
@@ -24377,7 +24381,7 @@ Schema audit (`migrations/0001_initial_schema.up.sql` and downstream migrations)
 
 Spec text on the `MessageEnvelope` field at §15.4.1 (line 1694) explicitly says: "Every `MessageEnvelope` persisted to the `session_messages` table carries this field." The table does not carry it.
 
-### - [ ] F-15.5.7 — REST error envelope OpenAPI schema is missing `category` and `retryable` [High] — OPEN
+### - [x] F-15.5.7 — REST error envelope OpenAPI schema is missing `category` and `retryable` [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-15.1.5 — Both report the published OpenAPI Error schema omits category and retryable while the Go handler emits them, same root cause and fix.
 
@@ -24405,9 +24409,11 @@ The published OpenAPI document does not. `pkg/gateway/openapi/openapi.json:23-37
 
 `category` and `retryable` are absent. Every SDK generated from this OpenAPI document will lose the §15.2.1 parity fields. The error-envelope **stability** clause in §15.5 ("changing error codes for existing operations" is breaking) presumes the envelope itself is part of the published contract; right now it is not.
 
+- **Resolution:** The `Error` schema in `pkg/gateway/openapi/openapi.json` now declares `code`, `category`, `message`, `retryable` as required with the §15.1 closed `category` enum and a typed `retryable: boolean`. `TestErrorEnvelopeRequiresCategoryAndRetryable_spec_15_1_972` exercises the schema. Closes F-15.1.5 (duplicate) in the same change.
+
 ---
 
-### - [ ] F-15.5.8 — Durable-consumer forward-read on `WorkspacePlan` is implemented as a hard reject [Medium] — OPEN
+### - [x] F-15.5.8 — Durable-consumer forward-read on `WorkspacePlan` is implemented as a hard reject [Medium] — CLOSED
 
 `spec/15_external-api-surface.md:2471-2475` (item 7) requires durable consumers (reading already-persisted records) to forward-read unrecognized `schemaVersion`s, preserving unknown fields verbatim, and only emit `durable_schema_version_ahead` to an operator alert channel when the sink cannot pass through unknown fields.
 
@@ -24424,13 +24430,17 @@ default:
 
 `pkg/workspaceplan/plan.go:466-485` calls `json.Decoder.DisallowUnknownFields()` even on stored-source decoding. A stored plan with a field a future gateway introduces will fail at re-read time. Today `SchemaVersion = 1` is the only version so this is dormant, but as soon as a `schemaVersion: 2` is introduced and a gateway downgrade or rolling redeploy occurs, the older gateway will fail to read its own valid records. The forward-read rule needs a separate read-path decoder that preserves unknown fields and surfaces a `durable_schema_version_ahead` annotation; today there is one strict decoder shared by ingress and re-read.
 
-### - [ ] F-15.5.9 — Runtime-adapter protocol does not negotiate; INIT advertises a fixed version [Medium] — OPEN
+- **Resolution:** `pkg/workspaceplan.parse` now branches on a `forward` flag: when the caller is `ParseStored` and the stored plan's `schemaVersion` is greater than the gateway-known `SchemaVersion`, the parser accepts the plan, threads `forward=true` through `parseSource` → `decodeVariant` (which drops `json.Decoder.DisallowUnknownFields()` on this read path), and emits a `workspace_plan_durable_schema_version_ahead` warning whose `knownVersion` / `encounteredVersion` body mirrors the §15.5 line 2466 catalog from `pkg/degradation` (F-15.5.5). Unknown fields stay verbatim in `Source.Raw`, satisfying the §15.5 line 2473 pass-through obligation. Fresh ingress (`Parse`) still hard-rejects so a client uploading a future-version plan gets a 400; stored input with `schemaVersion < known` (negative, etc.) still hard-rejects. 4 tier-1 tests in `pkg/workspaceplan/plan_test.go` exercise the four corner cases (forward-read happy path, unknown-field preservation, fresh-ingress reject, lower-version reject) plus a tolerant-variant-fields test.
+
+### - [x] F-15.5.9 — Runtime-adapter protocol does not negotiate; INIT advertises a fixed version [Medium] — CLOSED
 
 `spec/15_external-api-surface.md:2431` (item 3): "The adapter advertises a protocol version at INIT; the gateway selects a compatible version."
 
 `pkg/adapter/lifecyclechannel.go:26-28` declares `const lifecycleProtocolVersion = "1.0"` and `handshake()` at lines 141-164 writes this version into the `lifecycle_capabilities` frame. The runtime's `lifecycle_support` reply is read for the `capabilities` list only — `frame.ProtocolVersion` from the runtime side is never compared, validated, or stored. There is no compatibility check, no rejection of an incompatible runtime, and no `selectCompatibleVersion` step.
 
 For v1 this is benign (only one version exists). The spec's "selects a compatible version" claim is unimplemented and will need a real negotiation layer the moment a `1.1` or `2.0` runtime appears.
+
+- **Resolution:** `pkg/adapter/lifecyclechannel.go::handshake` now consults the runtime's `lifecycle_support.protocolVersion` and calls the new `lifecycleVersionsCompatible(adapter, runtime)` helper — same-major (parses major digit via `lifecycleMajor`); empty `protocolVersion` is accepted for forward compatibility with runtimes that pre-date the field. A different-major runtime is rejected with `errLifecycleVersionIncompatible` before any signal frames flow, so the gateway never sends a checkpoint/interrupt to an incompatible binary. 4 tier-1 tests cover the accept-compatible, accept-empty, reject-different-major, and malformed-version-string cases.
 
 ### - [x] F-15.5.10 — Stability tiers (`stable`, `beta`, `alpha`) are not modeled in OpenAPI, MCP tool descriptors, or any registry [Medium] — CLOSED
 

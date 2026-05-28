@@ -120,6 +120,12 @@ class MessageEnvelope:
     The adapter populates ``from_``, and the gateway populates
     ``schema_version`` and ``id`` when omitted. Basic-level handlers
     typically read only ``input``.
+
+    ``annotations`` carries the §15.5 line 2461 degradation-annotation
+    catalog (``schema_version_ahead``, ``durable_schema_version_ahead``,
+    ``mcp_protocol_version_retired``). Producers stamp them when forward-
+    read or retirement defects occur; the field is open metadata so new
+    annotations can land without a schema-version bump. F-15.5.5.
     """
 
     type: str
@@ -132,11 +138,16 @@ class MessageEnvelope:
     delegation_depth: int = 0
     slot_id: str | None = None
     input: list[OutputPart] = field(default_factory=list)
+    annotations: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_wire(cls, raw: dict[str, Any]) -> MessageEnvelope:
         """Build a MessageEnvelope from a §15.4.1 message frame."""
         sender = raw.get("from")
+        annotations_raw = raw.get("annotations")
+        annotations: dict[str, Any] = (
+            dict(annotations_raw) if isinstance(annotations_raw, dict) else {}
+        )
         return cls(
             type=str(raw.get("type", "")),
             id=str(raw.get("id", "")),
@@ -153,6 +164,7 @@ class MessageEnvelope:
             delegation_depth=int(raw.get("delegationDepth", 0)),
             slot_id=raw.get("slotId"),
             input=[OutputPart.from_wire(p) for p in raw.get("input", [])],
+            annotations=annotations,
         )
 
 

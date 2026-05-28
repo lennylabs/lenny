@@ -147,9 +147,10 @@ const (
 type WarningCode string
 
 const (
-	WarnUnknownSourceType   WarningCode = "workspace_plan_unknown_source_type"
-	WarnStripComponentsSkip WarningCode = "workspace_plan_strip_components_skip"
-	WarnPathCollision       WarningCode = "workspace_plan_path_collision"
+	WarnUnknownSourceType         WarningCode = "workspace_plan_unknown_source_type"
+	WarnStripComponentsSkip       WarningCode = "workspace_plan_strip_components_skip"
+	WarnPathCollision             WarningCode = "workspace_plan_path_collision"
+	WarnDurableSchemaVersionAhead WarningCode = "workspace_plan_durable_schema_version_ahead"
 )
 
 // Warning is a non-fatal advisory the parser raised against a plan.
@@ -164,6 +165,13 @@ const (
 //     `winningSourceIndex`, `losingSourceIndex`. `sourceIndex` is
 //     preserved equal to `winningSourceIndex` for backwards-compatible
 //     pre-§14-line-338 single-index consumers.
+//   - `workspace_plan_durable_schema_version_ahead` (spec: §15.5 lines
+//     2466, 2471-2474): emitted by ParseStored when a persisted plan
+//     carries a `schemaVersion` higher than this gateway understands.
+//     The warning carries `knownVersion` (this gateway's schema) and
+//     `encounteredVersion` (the persisted plan's schema) so durable
+//     consumer alerts can route on the §15.5 catalog's
+//     `durable_schema_version_ahead` body shape. F-15.5.5, F-15.5.8.
 //
 // The strip-components-skip warning is emitted by the adapter
 // materializer (see pkg/adapter/workspace) and carries its own per-
@@ -187,6 +195,15 @@ type Warning struct {
 	Path               string `json:"path,omitempty"`
 	WinningSourceIndex *int   `json:"winningSourceIndex,omitempty"`
 	LosingSourceIndex  *int   `json:"losingSourceIndex,omitempty"`
+
+	// Structured fields per §15.5 line 2466
+	// (`workspace_plan_durable_schema_version_ahead`). Optional; populated
+	// only on the durable-forward-read warning so the JSON output is
+	// unchanged for the other warning codes. KnownVersion is this
+	// gateway's `SchemaVersion`; EncounteredVersion is the schemaVersion
+	// the stored plan carried. F-15.5.5, F-15.5.8.
+	KnownVersion       *int `json:"knownVersion,omitempty"`
+	EncounteredVersion *int `json:"encounteredVersion,omitempty"`
 }
 
 // ValidationError is the §14 `400 WORKSPACE_PLAN_INVALID` envelope
@@ -278,7 +295,11 @@ func ParseStored(raw []byte) (Plan, []Warning, error) { return parse(raw, true) 
 
 // parse is the shared §14 decoder. When stored is true the
 // gateway-written resolvedCommitSha field is accepted on gitClone
-// sources.
+// sources, and the §15.5 durable-consumer forward-read rule applies:
+// a schemaVersion higher than known returns a Plan plus a
+// `workspace_plan_durable_schema_version_ahead` warning rather than a
+// hard reject, with unknown fields preserved verbatim in
+// `Source.Raw`. F-15.5.8.
 func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 	// Step 1 — root structural decode.
 	var root struct {
@@ -300,6 +321,14 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 			Message: "schemaVersion is required",
 		}
 	}
+	// forward is true when this parse is operating in §15.5
+	// durable-consumer forward-read mode: stored input whose
+	// schemaVersion exceeds this gateway's known revision. The fork
+	// preserves unknown variant fields verbatim (via Source.Raw) and
+	// emits a `workspace_plan_durable_schema_version_ahead` warning.
+	// F-15.5.5, F-15.5.8.
+	var forward bool
+	var schemaWarning *Warning
 	switch *root.SchemaVersion {
 	case 0:
 		return Plan{}, nil, &ValidationError{
@@ -310,17 +339,38 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 	case SchemaVersion:
 		// ok
 	default:
-		// Future versions: return the §14.1 spec-aligned error.
-		// schemaVersion > known → WORKSPACE_PLAN_SCHEMA_UNSUPPORTED.
-		// schemaVersion < known (e.g., negative) → INVALID.
-		reason := ReasonInvalidSchemaVersion
-		if *root.SchemaVersion > SchemaVersion {
-			reason = ReasonUnsupportedSchemaVersion
-		}
-		return Plan{}, nil, &ValidationError{
-			Reason:  reason,
-			Field:   "schemaVersion",
-			Message: fmt.Sprintf("schemaVersion %d is not supported by this gateway (known: %d)", *root.SchemaVersion, SchemaVersion),
+		if stored && *root.SchemaVersion > SchemaVersion {
+			// spec: §15.5 lines 2471-2474 — durable consumers MUST
+			// forward-read records with unrecognized `schemaVersion`.
+			// Rejection at read time creates compliance gaps; the
+			// gateway emits a `durable_schema_version_ahead`
+			// annotation-shaped warning instead. F-15.5.8.
+			forward = true
+			known := SchemaVersion
+			encountered := *root.SchemaVersion
+			schemaWarning = &Warning{
+				Code:    WarnDurableSchemaVersionAhead,
+				Field:   "schemaVersion",
+				Message: fmt.Sprintf("stored plan schemaVersion %d exceeds gateway-known %d; forward-reading per §15.5 durable-consumer rule", encountered, known),
+				// Mirror the §15.5 line 2466 catalog body verbatim so a
+				// durable consumer can route on the same field shape it
+				// sees in MessageEnvelope.annotations.
+				KnownVersion:       &known,
+				EncounteredVersion: &encountered,
+			}
+		} else {
+			// Future versions: return the §14.1 spec-aligned error.
+			// schemaVersion > known → WORKSPACE_PLAN_SCHEMA_UNSUPPORTED.
+			// schemaVersion < known (e.g., negative) → INVALID.
+			reason := ReasonInvalidSchemaVersion
+			if *root.SchemaVersion > SchemaVersion {
+				reason = ReasonUnsupportedSchemaVersion
+			}
+			return Plan{}, nil, &ValidationError{
+				Reason:  reason,
+				Field:   "schemaVersion",
+				Message: fmt.Sprintf("schemaVersion %d is not supported by this gateway (known: %d)", *root.SchemaVersion, SchemaVersion),
+			}
 		}
 	}
 
@@ -330,6 +380,9 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 	}
 
 	var warnings []Warning
+	if schemaWarning != nil {
+		warnings = append(warnings, *schemaWarning)
+	}
 	var subErrs []SubErr
 
 	// spec: §14 line 99 — per-command timeoutSeconds is an unsigned
@@ -350,7 +403,7 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 	}
 
 	for i, rawSrc := range root.Sources {
-		src, warn, err := parseSource(rawSrc, i, stored)
+		src, warn, err := parseSource(rawSrc, i, stored, forward)
 		if err != nil {
 			subErrs = append(subErrs, *err)
 			continue
@@ -415,7 +468,12 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 //   - (src, &Warning{Unknown}, nil) on a known structure with an
 //     unknown discriminator value (open-string passthrough per §14)
 //   - ({}, nil, *SubErr) on a hard validation error
-func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *SubErr) {
+//
+// `forward` is the §15.5 durable-consumer forward-read flag: when true,
+// unknown fields inside a known variant are preserved verbatim in
+// `Source.Raw` instead of triggering a hard `unknown_field` reject.
+// F-15.5.8.
+func parseSource(raw json.RawMessage, i int, stored, forward bool) (Source, *Warning, *SubErr) {
 	// Peek at type discriminator.
 	var head struct {
 		Type string `json:"type"`
@@ -443,7 +501,7 @@ func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *Su
 	switch head.Type {
 	case TypeInlineFile:
 		var v InlineFile
-		if subErr := decodeVariant(raw, i, head.Type, &v); subErr != nil {
+		if subErr := decodeVariant(raw, i, head.Type, &v, forward); subErr != nil {
 			return Source{}, nil, subErr
 		}
 		if subErr := validateInlineFile(&v, i); subErr != nil {
@@ -453,7 +511,7 @@ func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *Su
 
 	case TypeUploadFile:
 		var v UploadFile
-		if subErr := decodeVariant(raw, i, head.Type, &v); subErr != nil {
+		if subErr := decodeVariant(raw, i, head.Type, &v, forward); subErr != nil {
 			return Source{}, nil, subErr
 		}
 		if subErr := validateUploadFile(&v, i); subErr != nil {
@@ -463,7 +521,7 @@ func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *Su
 
 	case TypeUploadArchive:
 		var v UploadArchive
-		if subErr := decodeVariant(raw, i, head.Type, &v); subErr != nil {
+		if subErr := decodeVariant(raw, i, head.Type, &v, forward); subErr != nil {
 			return Source{}, nil, subErr
 		}
 		if subErr := validateUploadArchive(&v, i); subErr != nil {
@@ -473,7 +531,7 @@ func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *Su
 
 	case TypeMkdir:
 		var v Mkdir
-		if subErr := decodeVariant(raw, i, head.Type, &v); subErr != nil {
+		if subErr := decodeVariant(raw, i, head.Type, &v, forward); subErr != nil {
 			return Source{}, nil, subErr
 		}
 		if subErr := validateMkdir(&v, i); subErr != nil {
@@ -483,7 +541,7 @@ func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *Su
 
 	case TypeGitClone:
 		var v GitClone
-		if subErr := decodeVariant(raw, i, head.Type, &v); subErr != nil {
+		if subErr := decodeVariant(raw, i, head.Type, &v, forward); subErr != nil {
 			return Source{}, nil, subErr
 		}
 		if subErr := validateGitClone(&v, i, stored); subErr != nil {
@@ -526,7 +584,13 @@ func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *Su
 // "Per-variant field strictness" rule. The `type` discriminator is
 // stripped before the strict decode so the per-variant struct does
 // not need to carry a no-op Type field.
-func decodeVariant(raw json.RawMessage, i int, typ string, out any) *SubErr {
+//
+// `forward` is the §15.5 durable-consumer forward-read flag: when true
+// the decoder allows unknown fields so a future schemaVersion's added
+// fields don't break re-reads of a stored plan. The `Source.Raw` map
+// preserves the original bytes verbatim, so the unknown fields are
+// still available to any downstream pass-through consumer. F-15.5.8.
+func decodeVariant(raw json.RawMessage, i int, typ string, out any, forward bool) *SubErr {
 	var asMap map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &asMap); err != nil {
 		return &SubErr{
@@ -547,7 +611,9 @@ func decodeVariant(raw json.RawMessage, i int, typ string, out any) *SubErr {
 		}
 	}
 	dec := json.NewDecoder(strings.NewReader(string(stripped)))
-	dec.DisallowUnknownFields()
+	if !forward {
+		dec.DisallowUnknownFields()
+	}
 	if err := dec.Decode(out); err != nil {
 		return &SubErr{
 			SourceIndex: i,

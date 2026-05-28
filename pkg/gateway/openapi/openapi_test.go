@@ -306,6 +306,71 @@ func TestAdminRequiredRolesAreFromAuthEnum_spec_15_1_933(t *testing.T) {
 	}
 }
 
+// spec: §15.1 line 972 / §15.2.1 line 1376 — the published Error
+// envelope must require `code`, `category`, `message`, and `retryable`
+// so SDK generators surface every field the Go handler emits. F-15.5.7,
+// F-15.1.5.
+func TestErrorEnvelopeRequiresCategoryAndRetryable_spec_15_1_972(t *testing.T) {
+	doc := openapi.Document()
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	schemas, _ := parsed["components"].(map[string]any)["schemas"].(map[string]any)
+	errSchema, _ := schemas["Error"].(map[string]any)
+	if errSchema == nil {
+		t.Fatal("components.schemas.Error missing")
+	}
+	inner, _ := errSchema["properties"].(map[string]any)["error"].(map[string]any)
+	if inner == nil {
+		t.Fatal("Error.properties.error missing")
+	}
+	requiredAny, _ := inner["required"].([]any)
+	required := map[string]bool{}
+	for _, r := range requiredAny {
+		if s, ok := r.(string); ok {
+			required[s] = true
+		}
+	}
+	for _, want := range []string{"code", "category", "message", "retryable"} {
+		if !required[want] {
+			t.Errorf("Error.error.required missing %q (spec §15.1 line 972)", want)
+		}
+	}
+	props, _ := inner["properties"].(map[string]any)
+	category, _ := props["category"].(map[string]any)
+	if category == nil {
+		t.Fatal("Error.error.properties.category missing")
+	}
+	if category["type"] != "string" {
+		t.Errorf("category.type: got %v, want \"string\"", category["type"])
+	}
+	enumAny, _ := category["enum"].([]any)
+	if len(enumAny) == 0 {
+		t.Error("category.enum must list the §15.1 canonical category set")
+	}
+	wantCats := map[string]bool{"VALIDATION": false, "AUTH": false, "TRANSIENT": false, "INTERNAL": false}
+	for _, e := range enumAny {
+		if s, ok := e.(string); ok {
+			if _, ok := wantCats[s]; ok {
+				wantCats[s] = true
+			}
+		}
+	}
+	for k, present := range wantCats {
+		if !present {
+			t.Errorf("category.enum missing canonical value %q", k)
+		}
+	}
+	retryable, _ := props["retryable"].(map[string]any)
+	if retryable == nil {
+		t.Fatal("Error.error.properties.retryable missing")
+	}
+	if retryable["type"] != "boolean" {
+		t.Errorf("retryable.type: got %v, want \"boolean\"", retryable["type"])
+	}
+}
+
 func TestDocumentReturnsCopy(t *testing.T) {
 	a := openapi.Document()
 	b := openapi.Document()

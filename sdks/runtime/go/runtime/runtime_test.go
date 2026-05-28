@@ -277,3 +277,67 @@ func TestShorthandPartsAreCanonical(t *testing.T) {
 		t.Fatalf("text part = %v, want {text hello}", part)
 	}
 }
+
+// TestMessageEnvelopeAnnotationsRoundTrip asserts the §15.4.1 wire
+// MessageEnvelope carries the §15.5 line 2461 degradation-annotation
+// map verbatim. A runtime author reading
+// `env.Annotations[degradation.AnnotationSchemaVersionAhead]` must
+// see the producer's `{knownVersion, encounteredVersion}` body without
+// custom decoding.
+//
+// spec: §15.5 line 2461. F-15.5.5.
+func TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461(t *testing.T) {
+	wire := []byte(`{
+		"type": "message",
+		"id": "m1",
+		"schemaVersion": 1,
+		"input": [{"type": "text", "inline": "hi"}],
+		"annotations": {
+			"schema_version_ahead": {"knownVersion": 1, "encounteredVersion": 3}
+		}
+	}`)
+	env, err := decodeMessage(wire)
+	if err != nil {
+		t.Fatalf("decodeMessage: %v", err)
+	}
+	if env.Annotations == nil {
+		t.Fatal("Annotations is nil; spec §15.5 line 2461 catalog dropped")
+	}
+	body, ok := env.Annotations["schema_version_ahead"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema_version_ahead body = %T, want map[string]any", env.Annotations["schema_version_ahead"])
+	}
+	if v, _ := body["knownVersion"].(float64); v != 1 {
+		t.Errorf("knownVersion = %v, want 1", body["knownVersion"])
+	}
+	if v, _ := body["encounteredVersion"].(float64); v != 3 {
+		t.Errorf("encounteredVersion = %v, want 3", body["encounteredVersion"])
+	}
+
+	// Round-trip back to JSON so producers can re-emit the envelope
+	// downstream without losing the annotation.
+	out, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(out), "schema_version_ahead") {
+		t.Errorf("annotation key dropped on re-marshal: %s", out)
+	}
+}
+
+// TestMessageEnvelopeAnnotationsOmitEmpty asserts the annotation field
+// is omitted on the wire when no annotations are present. The §15.5
+// catalog is opt-in: an unannotated envelope must not appear with an
+// empty `annotations: {}` object.
+//
+// spec: §15.4.1 / §15.5 line 2461. F-15.5.5.
+func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_4_1(t *testing.T) {
+	env := MessageEnvelope{Type: "message", ID: "m1"}
+	out, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), "annotations") {
+		t.Errorf("annotations rendered when empty: %s", out)
+	}
+}

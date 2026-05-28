@@ -464,3 +464,116 @@ func TestParseAcceptsZeroSetupCommandTimeout(t *testing.T) {
 		t.Fatalf("plan.SetupCommands = %d, want 2", len(plan.SetupCommands))
 	}
 }
+
+// spec: §15.5 lines 2471-2474 — durable consumers MUST forward-read
+// records with unrecognized `schemaVersion`. A stored plan whose
+// schemaVersion exceeds this gateway's known revision is parsed (not
+// rejected) and surfaces a `workspace_plan_durable_schema_version_ahead`
+// warning carrying knownVersion + encounteredVersion so durable-
+// consumer alerts route on the §15.5 line 2466 catalog body shape.
+// F-15.5.8.
+func TestParseStoredForwardReadsNewerSchemaVersion_spec_15_5_2474(t *testing.T) {
+	body := `{"schemaVersion": 99, "sources": [
+		{"type": "inlineFile", "path": "hello.txt", "content": "hi"}
+	]}`
+	plan, warns, err := workspaceplan.ParseStored([]byte(body))
+	if err != nil {
+		t.Fatalf("ParseStored: %v", err)
+	}
+	if plan.SchemaVersion != 99 {
+		t.Errorf("plan.SchemaVersion = %d, want 99 (forward-read preserves stamped version)", plan.SchemaVersion)
+	}
+	if len(plan.Sources) != 1 {
+		t.Fatalf("plan.Sources len = %d, want 1", len(plan.Sources))
+	}
+	var got *workspaceplan.Warning
+	for i := range warns {
+		if warns[i].Code == workspaceplan.WarnDurableSchemaVersionAhead {
+			got = &warns[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("expected durable_schema_version_ahead warning, got %+v", warns)
+	}
+	if got.KnownVersion == nil || *got.KnownVersion != workspaceplan.SchemaVersion {
+		t.Errorf("warning.KnownVersion = %v, want %d", got.KnownVersion, workspaceplan.SchemaVersion)
+	}
+	if got.EncounteredVersion == nil || *got.EncounteredVersion != 99 {
+		t.Errorf("warning.EncounteredVersion = %v, want 99", got.EncounteredVersion)
+	}
+}
+
+// spec: §15.5 lines 2471-2473 — the durable forward-read MUST preserve
+// unknown fields verbatim so a downstream pass-through consumer (e.g.
+// a controller that re-reads a stored plan) sees the future-version
+// payload intact. F-15.5.8.
+func TestParseStoredForwardReadsPreservesUnknownFields_spec_15_5_2473(t *testing.T) {
+	body := `{"schemaVersion": 99, "sources": [
+		{"type": "inlineFile", "path": "hello.txt", "content": "hi", "futureField": {"x": 1}}
+	]}`
+	plan, _, err := workspaceplan.ParseStored([]byte(body))
+	if err != nil {
+		t.Fatalf("ParseStored: %v", err)
+	}
+	if plan.Sources[0].Raw == nil {
+		t.Fatal("Source.Raw is nil; unknown fields lost")
+	}
+	if _, ok := plan.Sources[0].Raw["futureField"]; !ok {
+		t.Errorf("Source.Raw missing futureField; got keys %v", keys(plan.Sources[0].Raw))
+	}
+}
+
+// spec: §15.5 line 2474 — durable consumers MUST NOT silently discard
+// records based solely on an unrecognized schemaVersion. The fresh
+// ingress path (Parse) must still hard-reject so a client uploading a
+// future-version plan gets a 400, not silent acceptance. F-15.5.8.
+func TestParseFreshIngressStillRejectsNewerSchemaVersion_spec_14(t *testing.T) {
+	body := `{"schemaVersion": 99, "sources": []}`
+	_, _, err := workspaceplan.Parse([]byte(body))
+	if err == nil {
+		t.Fatal("Parse must reject a fresh client request at schemaVersion > known")
+	}
+	verr, _ := err.(*workspaceplan.ValidationError)
+	if verr == nil || verr.Reason != workspaceplan.ReasonUnsupportedSchemaVersion {
+		t.Errorf("got reason %v, want unsupported_schema_version", err)
+	}
+}
+
+// spec: §15.5 — stored input whose schemaVersion is lower than known
+// (e.g. negative due to a bug or older write that bypassed validation)
+// must still hard-reject; forward-read covers only the new-writer →
+// old-reader direction. F-15.5.8.
+func TestParseStoredStillRejectsLowerSchemaVersion(t *testing.T) {
+	body := `{"schemaVersion": -1, "sources": []}`
+	_, _, err := workspaceplan.ParseStored([]byte(body))
+	if err == nil {
+		t.Fatal("ParseStored must reject a negative schemaVersion")
+	}
+	verr, _ := err.(*workspaceplan.ValidationError)
+	if verr == nil || verr.Reason != workspaceplan.ReasonInvalidSchemaVersion {
+		t.Errorf("got reason %v, want invalid_schema_version", err)
+	}
+}
+
+// spec: §15.5 line 2473 — when forward-reading, unknown fields inside
+// a known variant MUST NOT trigger a hard reject. F-15.5.8.
+func TestParseStoredForwardReadsTolerantToUnknownVariantFields(t *testing.T) {
+	body := `{"schemaVersion": 99, "sources": [
+		{"type": "uploadFile", "path": "a", "uploadRef": "ref1", "newOption": true}
+	]}`
+	plan, _, err := workspaceplan.ParseStored([]byte(body))
+	if err != nil {
+		t.Fatalf("ParseStored unexpectedly rejected forward-read variant: %v", err)
+	}
+	if len(plan.Sources) != 1 {
+		t.Fatalf("plan.Sources len = %d, want 1", len(plan.Sources))
+	}
+}
+
+func keys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
