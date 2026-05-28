@@ -682,6 +682,39 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --playground-bearer-ttl-seconds=900
 
+  # spec: §9.4 line 202 — the chart's memory block renders the
+  # --memory-max-per-user and --memory-record-count-interval flags on
+  # the Deployment so deployers can tune both knobs without editing
+  # the binary. F-9.4.5 / F-9.4.1.
+  - it: renders memory store knobs from the memory block by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --memory-max-per-user=10000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --memory-record-count-interval=60s
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --memory-enabled=false
+
+  # spec: §9.4 / §12.8 line 746 — memory.enabled: false renders the
+  # explicit --memory-enabled=false flag so the gateway skips the
+  # MemoryStore wiring and the §12.8 preflight. F-9.4.7.
+  - it: renders --memory-enabled=false when the memory store is disabled
+    set:
+      memory.enabled: false
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --memory-enabled=false
+
   # spec: §4.1 / §17.1 — a stock render carries no
   # topologySpreadConstraints and no podAntiAffinity so Tier 1
   # single-zone installs work without extra schedulable nodes.

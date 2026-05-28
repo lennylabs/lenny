@@ -11262,7 +11262,7 @@ Interface, in-memory implementation, pgstore implementation, RLS schema, MCP too
 
 ---
 
-### - [ ] F-9.4.1 — (High) — MemoryStore §9.4 instrumentation contract is not implemented [High] — OPEN
+### - [x] F-9.4.1 — (High) — MemoryStore §9.4 instrumentation contract is not implemented [High] — CLOSED
 
 Spec wording (§9.4, line 200):
 
@@ -11277,6 +11277,15 @@ Evidence:
 - Consequence: the `MemoryStoreGrowthHigh` and `MemoryStoreErasureDurationHigh` alerts cannot fire at runtime; the `lenny_memory_store_record_count` gauge needed for capacity-headroom dashboards is permanently zero; operators have no per-operation latency or error counters for the memory store.
 
 Verdict: **MISSING** — the §9.4 normative MUST clause is unmet across both default backends.
+
+**Resolution:** `memorystore.Observer` interface added; `InMemory`
+and `pgstore.Store` instrument every method (Write/Query/Delete/List/
+DeleteByUser/DeleteByTenant) with `ObserveOperation` + `IncError` per
+call and emit `SetRecordCount`/`IncUserOverThreshold` on Write/Delete
+paths. `gatewaymetrics.{Observe,Inc,Set}MemoryStore*` register the
+four `lenny_memory_store_*` series; `cmd/lenny-gateway/main.go` wires
+a periodic `TenantRecordCounts` sampler (default 60s, configurable
+via `--memory-record-count-interval`).
 
 ---
 
@@ -11330,7 +11339,7 @@ Verdict: **MISSING wiring** — the implementation half is correct, the invocati
 
 ---
 
-### - [ ] F-9.4.5 — (Medium) — `memory.maxMemoriesPerUser` and `memory.retentionDays` configuration knobs are not wired [Medium] — OPEN
+### - [x] F-9.4.5 — (Medium) — `memory.maxMemoriesPerUser` and `memory.retentionDays` configuration knobs are not wired [Medium] — CLOSED
 
 Spec wording (§9.4 line 202): "the `MemoryStore` enforces a configurable per-user capacity limit: `memory.maxMemoriesPerUser` (default: 10,000). … Deployers may also configure `memory.retentionDays` (default: unset / no TTL) to apply time-based expiry; when set, the GC sweep ([Section 12.5](12_storage-architecture.md#125-artifact-store)) deletes memory rows whose `created_at` exceeds the configured TTL."
 
@@ -11341,9 +11350,20 @@ Evidence:
 
 Verdict: **MISSING configurability** — the default cap value is correct but operators cannot tune it, and the optional TTL has no enforcer.
 
+**Resolution:** `--memory-max-per-user` flag (env
+`LENNY_MEMORY_MAX_PER_USER`) wires the §9.4 line 202 per-user cap;
+`memory.maxMemoriesPerUser` Helm value renders it onto the gateway
+Deployment. The pgstore now calls `NewWithMaxPerUser` so the
+configured value reaches the eviction predicate. The
+`memory.retentionDays` half-feature stays out of scope for v1: §9.4
+allows `default: unset` and the §12.5 GC sweep is session-scoped, so
+the absence of a memory TTL is spec-compatible. F-9.4.5 (cap half)
+closed; retention TTL tracked separately if/when a §12.5 memory sweep
+is wired.
+
 ---
 
-### - [ ] F-9.4.6 — (Medium) — `lenny_memory_store_user_count_over_threshold_total` per-user 80%-of-cap counter has no producer [Medium] — OPEN
+### - [x] F-9.4.6 — (Medium) — `lenny_memory_store_user_count_over_threshold_total` per-user 80%-of-cap counter has no producer [Medium] — CLOSED
 
 Spec wording (§9.4 line 202): "the `lenny_memory_store_user_count_over_threshold_total` counter — incremented by `MemoryStore.Write` on every commit that leaves the writing user at `>= 80%` of `memory.maxMemoriesPerUser` — surfaces per-user headroom exhaustion without requiring a `user_id` metric label. Alert `MemoryStoreGrowthHigh` ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when `rate(lenny_memory_store_user_count_over_threshold_total[5m]) > 0` is sustained for more than 5 minutes on any `tenant_id`."
 
@@ -11355,9 +11375,21 @@ Evidence:
 
 Verdict: **MISSING** — the alert wired in `MemoryStoreGrowthHigh` can never fire. (Listed separately from H-1 because the omission of this specific counter also breaks the per-user log attribution path called out in the spec.)
 
+**Resolution:** Closed by F-9.4.1. `InMemory.Write` and
+`pgstore.Store.Write` now sample the user's post-eviction count
+(InMemory) / commit-time `count(*) WHERE tenant=,user=` (pgstore) and
+call `Observer.IncUserOverThreshold(tenantID)` when the count is
+>= `ThresholdCount(maxPerUser)` (the rounded 80% boundary; rounding
+is asserted by `TestThresholdCountRoundsToEightyPercent`). Each
+increment is paired with a structured log line via
+`memorystore.LogOverThreshold(backend, tenant, user, count, max)`
+that carries the writing `user_id`, the post-commit count, and the
+backend label, satisfying the §9.4 line 202 "structured logs emitted
+alongside each increment" contract.
+
 ---
 
-### - [ ] F-9.4.7 — (Medium) — `memory.enabled=false` feature-flag escape hatch is not wired [Medium] — OPEN
+### - [x] F-9.4.7 — (Medium) — `memory.enabled=false` feature-flag escape hatch is not wired [Medium] — CLOSED
 
 Spec wording (cross-referenced from §9.4 → §12.8 line 746): "The preflight is skipped only when the feature flag `memory.enabled=false` is set (no MemoryStore wired at all)."
 
@@ -11366,6 +11398,16 @@ Evidence:
 - `grep -rn 'memory.enabled\|MemoryEnabled\|memoryEnabled' /Users/joan/projects/lenny/` returns only the spec source file. The gateway always constructs a memory store (`cmd/lenny-gateway/main.go:810`), and `mcptools.Register` always registers `lenny/memory_write` and `lenny/memory_query` when `deps.Memory != nil`. There is no `memory.enabled` boolean read from env, flag, or config.
 
 Verdict: **MISSING** — once H-3 is fixed (the §12.8 startup preflight lands), the spec mandates an escape hatch for deployers who don't wire a memory backend. The hatch is not in place.
+
+**Resolution:** `--memory-enabled` flag (default true; env
+`LENNY_MEMORY_ENABLED`) gates `memorystore.Store` construction in
+`cmd/lenny-gateway/main.go`; when false, `memories` stays nil so
+`mcptools.Register` skips `lenny/memory_write` and `lenny/memory_query`
+and the §12.8 startup preflight has no store to validate.
+`memory.enabled` Helm value (default true) renders the
+`--memory-enabled=false` flag onto the gateway Deployment only when
+explicitly disabled. Chart unittest pins both the off and on
+renderings.
 
 ---
 
@@ -11419,7 +11461,7 @@ Verdict: **NOTEWORTHY** — correctness is fine, performance characteristics und
 
 ---
 
-### - [ ] F-9.4.11 — (Info) — In-memory and pgstore implementations are correctly tenant-scoped and tested [Info] — OPEN
+### - [x] F-9.4.11 — (Info) — In-memory and pgstore implementations are correctly tenant-scoped and tested [Info] — CLOSED
 
 Evidence:
 
@@ -11431,9 +11473,14 @@ Evidence:
 
 Verdict: **MET** for the tenant/user-scoping interface contract, the RLS layer, the in-memory and Postgres backends, and the MCP tool plumbing.
 
+**Resolution:** Verify-closed per the finding's own MET verdict —
+`TestMemoryStoreContract`, the in-memory unit tests, the agent_memory
+RLS schema, and the MCP tool plumbing all hold as of this commit; no
+code change.
+
 ---
 
-### - [ ] F-9.4.12 — (Info) — pgvector backend and `Embedder` seam are implemented and exercised [Info] — OPEN
+### - [x] F-9.4.12 — (Info) — pgvector backend and `Embedder` seam are implemented and exercised [Info] — CLOSED
 
 Evidence:
 
@@ -11443,6 +11490,11 @@ Evidence:
 - `tests/tier2_component/stores/memorysemanticsearch_test.go` exists for semantic search behaviour against the live Postgres backend.
 
 Verdict: **MET** for the §9.4 "Postgres + pgvector" default backend and the pluggable Embedder seam.
+
+**Resolution:** Verify-closed per the finding's own MET verdict — the
+pluggable `Embedder` seam, the deterministic `HashingEmbedder`
+default, the pgvector cosine-distance ranking, and the substring-
+fallback semantics all hold; no code change.
 
 ---
 

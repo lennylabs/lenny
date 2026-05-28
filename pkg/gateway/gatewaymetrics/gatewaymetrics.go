@@ -353,6 +353,29 @@ type Metrics struct {
 	// task-mode lifecycle (F-5.2.1 / F-5.2.18).
 	taskReuseCount *prometheus.HistogramVec
 
+	// memoryStoreOperationDuration is the §9.4 / §16.1 line 151
+	// MemoryStore per-operation duration histogram. Labels: `operation`
+	// (one of write, query, delete, list, delete_by_user,
+	// delete_by_tenant) and `backend` (`postgres` | `custom` | `memory`
+	// for the test backend). The §16.5 MemoryStoreErasureDurationHigh
+	// alert reads the `delete_by_user` / `delete_by_tenant` quantiles.
+	// F-9.4.1.
+	memoryStoreOperationDuration *prometheus.HistogramVec
+	// memoryStoreErrors is the §9.4 / §16.1 line 152 MemoryStore per-
+	// operation error counter. Labels: `operation`, `backend`,
+	// `error_type`. F-9.4.1.
+	memoryStoreErrors *prometheus.CounterVec
+	// memoryStoreRecordCount is the §9.4 / §16.1 line 153 approximate
+	// per-tenant gauge of stored memory records. Labelled by `tenant_id`
+	// only — per-user resolution is forbidden by §16.1.1; the per-user
+	// headroom signal is the threshold counter below. F-9.4.1.
+	memoryStoreRecordCount *prometheus.GaugeVec
+	// memoryStoreUserOverThreshold is the §9.4 / §16.1 line 154 counter
+	// of MemoryStore.Write commits that left the writing user at >= 80%
+	// of memory.maxMemoriesPerUser. Labels: `tenant_id` and `backend`.
+	// Drives the §16.5 MemoryStoreGrowthHigh alert. F-9.4.6.
+	memoryStoreUserOverThreshold *prometheus.CounterVec
+
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
 	// the lenny_gateway_request_queue_depth gauge (the §4.1 SCL-026
@@ -1185,6 +1208,51 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §9.4 line 200 / §16.1 line 151 — MemoryStore per-operation
+	// duration histogram. Six operation labels (write, query, delete,
+	// list, delete_by_user, delete_by_tenant); backend distinguishes
+	// the default Postgres backend from custom implementations.
+	// Buckets span the per-record write/query path through the whole-
+	// scope erasure SLO (§16.5 alert fires at 60s for delete_by_user,
+	// 300s for delete_by_tenant).
+	memoryStoreOperationDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_memory_store_operation_duration_seconds",
+		Help:    "MemoryStore per-operation duration (§9.4 line 200 / §16.1 line 151).",
+		Buckets: []float64{0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 5, 30, 60, 300, 900},
+	}, []string{"operation", "backend"})
+	if err != nil {
+		return nil, err
+	}
+	// §9.4 line 200 / §16.1 line 152 — MemoryStore per-operation error
+	// counter.
+	memoryStoreErrors, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_memory_store_errors_total",
+		Help: "MemoryStore per-operation errors (§9.4 line 200 / §16.1 line 152).",
+	}, []string{"operation", "backend", "error_type"})
+	if err != nil {
+		return nil, err
+	}
+	// §9.4 line 202 / §16.1 line 153 — MemoryStore per-tenant
+	// approximate record count gauge. tenant_id only; user_id is on the
+	// §16.1.1 forbidden-label list as a cardinality hot-spot.
+	memoryStoreRecordCount, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_memory_store_record_count",
+		Help: "Approximate stored memory records per tenant (§9.4 line 202 / §16.1 line 153).",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
+	// §9.4 line 202 / §16.1 line 154 — MemoryStore per-user 80% headroom
+	// counter. Increments on each Write commit that leaves the writing
+	// user at >= 80% of memory.maxMemoriesPerUser. Labels: tenant_id
+	// and backend; no user_id label (forbidden by §16.1.1).
+	memoryStoreUserOverThreshold, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_memory_store_user_count_over_threshold_total",
+		Help: "MemoryStore writes that leave a user at >= 80% of memory.maxMemoriesPerUser (§9.4 line 202 / §16.1 line 154).",
+	}, []string{"tenant_id", "backend"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -1217,7 +1285,9 @@ func New() (*Metrics, error) {
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		maxOrphanTasksPerTenant,
-		statelessRequests, statelessConcurrentActive, taskReuseCount)
+		statelessRequests, statelessConcurrentActive, taskReuseCount,
+		memoryStoreOperationDuration, memoryStoreErrors,
+		memoryStoreRecordCount, memoryStoreUserOverThreshold)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -1325,6 +1395,10 @@ func New() (*Metrics, error) {
 		statelessRequests:                    statelessRequests,
 		statelessConcurrentActive:            statelessConcurrentActive,
 		taskReuseCount:                       taskReuseCount,
+		memoryStoreOperationDuration:         memoryStoreOperationDuration,
+		memoryStoreErrors:                    memoryStoreErrors,
+		memoryStoreRecordCount:               memoryStoreRecordCount,
+		memoryStoreUserOverThreshold:         memoryStoreUserOverThreshold,
 	}, nil
 }
 
@@ -2362,6 +2436,49 @@ func (m *Metrics) IncPDBBlockedEvictions(pdb, controller string) {
 		return
 	}
 	m.pdbBlockedEvictions.WithLabelValues(pdb, controller).Inc()
+}
+
+// ObserveMemoryStoreOperation records one observation on the §9.4 /
+// §16.1 line 151 lenny_memory_store_operation_duration_seconds
+// histogram. The operation label is one of write, query, delete, list,
+// delete_by_user, delete_by_tenant; backend is the implementation tag.
+// F-9.4.1.
+func (m *Metrics) ObserveMemoryStoreOperation(operation, backend string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.memoryStoreOperationDuration.WithLabelValues(operation, backend).Observe(seconds)
+}
+
+// IncMemoryStoreError advances the §9.4 / §16.1 line 152
+// lenny_memory_store_errors_total counter. error_type is the caller's
+// error classification. F-9.4.1.
+func (m *Metrics) IncMemoryStoreError(operation, backend, errorType string) {
+	if m == nil {
+		return
+	}
+	m.memoryStoreErrors.WithLabelValues(operation, backend, errorType).Inc()
+}
+
+// SetMemoryStoreRecordCount updates the §9.4 / §16.1 line 153
+// lenny_memory_store_record_count gauge for tenantID. The caller is the
+// periodic sampler. F-9.4.1.
+func (m *Metrics) SetMemoryStoreRecordCount(tenantID string, count int) {
+	if m == nil {
+		return
+	}
+	m.memoryStoreRecordCount.WithLabelValues(tenantID).Set(float64(count))
+}
+
+// IncMemoryStoreUserOverThreshold advances the §9.4 / §16.1 line 154
+// lenny_memory_store_user_count_over_threshold_total counter. The
+// MemoryStore.Write path increments it once per commit that leaves the
+// writing user at >= 80% of memory.maxMemoriesPerUser. F-9.4.6.
+func (m *Metrics) IncMemoryStoreUserOverThreshold(tenantID, backend string) {
+	if m == nil {
+		return
+	}
+	m.memoryStoreUserOverThreshold.WithLabelValues(tenantID, backend).Inc()
 }
 
 // Middleware returns an http.Handler that records the §16.1 request

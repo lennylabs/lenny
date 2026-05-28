@@ -449,6 +449,24 @@ func main() {
 	// range. F-10.4.5.
 	sessionEventReplayBufferDepth := flag.Int("session-event-replay-buffer-depth", envInt("LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH", 512),
 		"§10.4 line 389 per-session SSE replay buffer depth (events). Default 512 matches the §10.4 60s reconnect window at 10 events/s; accepted range 64..4096. Override via LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH.")
+	// spec: §9.4 line 202 — `memory.maxMemoriesPerUser` (default
+	// 10,000) bounds the per-user record count; a Write that exceeds
+	// it evicts the oldest by created_at. F-9.4.5.
+	memoryMaxPerUser := flag.Int("memory-max-per-user", envInt("LENNY_MEMORY_MAX_PER_USER", memorystore.DefaultMaxMemoriesPerUser),
+		"§9.4 line 202 per-user memory cap before oldest-first eviction. Override via LENNY_MEMORY_MAX_PER_USER.")
+	// spec: §9.4 line 196 / §12.8 line 746 — `memory.enabled=false`
+	// is the escape hatch that disables the MemoryStore entirely;
+	// the lenny/memory_write and lenny/memory_query MCP tools are
+	// not registered, the §12.8 erasure preflight is skipped, and
+	// no `agent_memory` rows are written. Default true. F-9.4.7.
+	memoryEnabled := flag.Bool("memory-enabled", envFlagDefault("LENNY_MEMORY_ENABLED", true),
+		"§9.4 / §12.8 line 746 MemoryStore feature flag. false disables the lenny/memory_* MCP tools and skips the preflight. Override via LENNY_MEMORY_ENABLED.")
+	// spec: §9.4 line 202 / §16.1 line 153 — periodic sampler for the
+	// `lenny_memory_store_record_count` gauge. The store-specific
+	// implementation walks tenants and emits the per-tenant count.
+	// Default 60s aligns with the §16.5 alert windows; zero disables.
+	memoryRecordCountInterval := flag.Duration("memory-record-count-interval", envDuration("LENNY_MEMORY_RECORD_COUNT_INTERVAL", 60*time.Second),
+		"§9.4 line 202 / §16.1 line 153 periodic sampler interval for the MemoryStore record-count gauge. 0 disables. Override via LENNY_MEMORY_RECORD_COUNT_INTERVAL.")
 	// spec: §4.2 line 165 — LENNY_POOLER_MODE names the deployment
 	// posture for the Postgres pooler. The gateway honours the value
 	// at the application layer (logging it at startup so operators can
@@ -1161,9 +1179,21 @@ func main() {
 	if pgPool != nil {
 		experiments = experimentpg.New(pgPool)
 	}
-	var memories memorystore.Store = memorystore.NewInMemory(0, nil)
-	if pgPool != nil {
-		memories = memorypg.New(pgPool)
+	// spec: §9.4 line 196 / §12.8 line 746 — when the feature flag
+	// disables the MemoryStore, construct no store. The MCP tools
+	// short-circuit on a nil Memory in mcptools.Deps. F-9.4.7.
+	var memories memorystore.Store
+	var memoryBackendLabel string
+	if *memoryEnabled {
+		if pgPool != nil {
+			pgmem := memorypg.NewWithMaxPerUser(pgPool, *memoryMaxPerUser)
+			memories = pgmem
+			memoryBackendLabel = "postgres"
+		} else {
+			inMem := memorystore.NewInMemory(*memoryMaxPerUser, nil)
+			memories = inMem
+			memoryBackendLabel = "memory"
+		}
 	}
 
 	// ----- §16.1 Prometheus metrics -----
@@ -1202,6 +1232,20 @@ func main() {
 	// §16.1 metrics on its registry.
 	if inProcessAssign != nil {
 		inProcessAssign.SetMetrics(gwMetrics)
+	}
+	// spec: §9.4 line 200 / §16.1 lines 151-154 — wire the MemoryStore
+	// Observer once gatewaymetrics is ready. The §16.1 `backend` label
+	// is the bound implementation tag (`postgres` for the pgvector
+	// backend, `memory` for the in-process test backend). F-9.4.1 /
+	// F-9.4.6.
+	if memories != nil {
+		obs := memoryStoreObserver{metrics: gwMetrics, backend: memoryBackendLabel}
+		switch s := memories.(type) {
+		case *memorystore.InMemory:
+			s.SetObserver(obs)
+		case *memorypg.Store:
+			s.SetObserver(obs)
+		}
 	}
 	// §4.1 / §16.1: emit the per-replica capacity ceiling as a startup-set
 	// gauge so the §16.5 GatewaySessionBudgetNearExhaustion alert can
@@ -3057,6 +3101,46 @@ func main() {
 	gcCollector := &gcpause.Collector{Gauge: gwMetrics}
 	go gcCollector.Run(watchdogCtx)
 
+	// spec: §9.4 line 202 / §16.1 line 153 — periodic per-tenant
+	// MemoryStore record-count sampler. Walks the store's tenants and
+	// emits `lenny_memory_store_record_count{tenant_id}` on the
+	// configured interval (default 60s); 0 disables. The contract is a
+	// best-effort approximate gauge sampled periodically. F-9.4.1.
+	if memories != nil && *memoryRecordCountInterval > 0 {
+		if counter, ok := memories.(interface {
+			TenantRecordCounts(context.Context) (map[string]int, error)
+		}); ok {
+			interval := *memoryRecordCountInterval
+			go func() {
+				ticker := time.NewTicker(interval)
+				defer ticker.Stop()
+				sample := func() {
+					ctx, cancel := context.WithTimeout(watchdogCtx, 30*time.Second)
+					defer cancel()
+					counts, err := counter.TenantRecordCounts(ctx)
+					if err != nil {
+						log.Printf("lenny-gateway: §9.4 record-count sampler: %v", err)
+						return
+					}
+					for tenantID, n := range counts {
+						gwMetrics.SetMemoryStoreRecordCount(tenantID, n)
+					}
+				}
+				sample()
+				for {
+					select {
+					case <-watchdogCtx.Done():
+						return
+					case <-ticker.C:
+						sample()
+					}
+				}
+			}()
+			log.Printf("lenny-gateway: §9.4 record-count sampler interval=%s backend=%s",
+				interval, memoryBackendLabel)
+		}
+	}
+
 	// spec: §10.4 line 385 / §16.5 PDBBlockedEvictions — periodic PDB
 	// status poller. Each cycle that observes Status.DisruptionsAllowed
 	// == 0 on the gateway PDB increments the
@@ -3477,6 +3561,31 @@ func (o *kmsBreakerObserver) OnCircuitClosed() {
 	if m := o.metrics(); m != nil {
 		m.SetKMSSigningCircuitState(0)
 	}
+}
+
+// memoryStoreObserver adapts the gatewaymetrics emitters into the §9.4
+// MemoryStore Observer contract so the in-memory and Postgres
+// backends route their per-operation metrics through one bound
+// `backend` label. spec: §9.4 line 200 / §16.1 line 151–154. F-9.4.1.
+type memoryStoreObserver struct {
+	metrics *gatewaymetrics.Metrics
+	backend string
+}
+
+func (o memoryStoreObserver) ObserveOperation(op string, seconds float64) {
+	o.metrics.ObserveMemoryStoreOperation(op, o.backend, seconds)
+}
+
+func (o memoryStoreObserver) IncError(op, errorType string) {
+	o.metrics.IncMemoryStoreError(op, o.backend, errorType)
+}
+
+func (o memoryStoreObserver) SetRecordCount(tenantID string, count int) {
+	o.metrics.SetMemoryStoreRecordCount(tenantID, count)
+}
+
+func (o memoryStoreObserver) IncUserOverThreshold(tenantID string) {
+	o.metrics.IncMemoryStoreUserOverThreshold(tenantID, o.backend)
 }
 
 // userstorePlatformRoles adapts a userstore.Store into the §10.2 line
@@ -4125,6 +4234,21 @@ func envInt(name string, def int) int {
 		return def
 	}
 	return n
+}
+
+// envDuration mirrors envInt for time.Duration-valued flags. Accepts
+// any value time.ParseDuration parses ("60s", "5m", "1h"); returns def
+// on missing or unparseable env vars.
+func envDuration(name string, def time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+	return d
 }
 
 // envInt64 mirrors envInt for int64-valued flags (idempotency body

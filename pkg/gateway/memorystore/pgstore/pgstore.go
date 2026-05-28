@@ -43,7 +43,15 @@ type Store struct {
 	pool       *pgxpool.Pool
 	maxPerUser int
 	embedder   memorystore.Embedder
+	// observer receives the §9.4 / §16.1 instrumentation events; nil
+	// disables emission. SetObserver wires it after construction.
+	observer memorystore.Observer
 }
+
+// backendLabel is the §16.1 `backend` label this Store stamps on
+// every Observer call. The §9.4 default is Postgres + pgvector;
+// `postgres` matches the catalog enum in §16.1 lines 151–154.
+const backendLabel = "postgres"
 
 // New returns a Store backed by pool, enforcing the §9.4 default
 // per-user capacity limit and embedding memory content with
@@ -73,6 +81,30 @@ func NewWithOptions(pool *pgxpool.Pool, maxPerUser int, embedder memorystore.Emb
 	return &Store{pool: pool, maxPerUser: maxPerUser, embedder: embedder}
 }
 
+// SetObserver wires the §9.4 / §16.1 instrumentation hook. A nil
+// value clears it. The §16.1 backend label is fixed at `postgres`.
+func (s *Store) SetObserver(obs memorystore.Observer) {
+	s.observer = obs
+}
+
+// MaxPerUser returns the §9.4 line 202 per-user capacity bound.
+func (s *Store) MaxPerUser() int {
+	return s.maxPerUser
+}
+
+// observe records the §16.1 line 151 duration histogram observation
+// and (on a non-nil error) the §16.1 line 152 error counter. A nil
+// observer is a no-op.
+func (s *Store) observe(op string, start time.Time, err *error) {
+	if s.observer == nil {
+		return
+	}
+	s.observer.ObserveOperation(op, time.Since(start).Seconds())
+	if err != nil && *err != nil {
+		s.observer.IncError(op, memorystore.ClassifyError(*err))
+	}
+}
+
 var _ memorystore.Store = (*Store)(nil)
 
 // selectList is the column projection for reads, in scanMemory order.
@@ -89,7 +121,8 @@ const selectList = `id, tenant_id, user_id, agent_type, session_id,
 // the §9.4 per-user capacity limit. A write whose id is already
 // present overwrites the existing record, exactly like the in-memory
 // map upsert.
-func (s *Store) Write(ctx context.Context, scope memorystore.MemoryScope, memories []memorystore.Memory) error {
+func (s *Store) Write(ctx context.Context, scope memorystore.MemoryScope, memories []memorystore.Memory) (err error) {
+	defer s.observe(memorystore.OpWrite, time.Now(), &err)
 	if scope.TenantID == "" {
 		return memorystore.ErrEmptyTenant
 	}
@@ -97,7 +130,11 @@ func (s *Store) Write(ctx context.Context, scope memorystore.MemoryScope, memori
 		return memorystore.ErrEmptyUser
 	}
 	now := time.Now().UTC()
-	return pgtenant.InTx(ctx, s.pool, scope.TenantID, func(tx pgx.Tx) error {
+	var (
+		userCount   int
+		tenantCount int
+	)
+	err = pgtenant.InTx(ctx, s.pool, scope.TenantID, func(tx pgx.Tx) error {
 		for _, mem := range memories {
 			mem.TenantID = scope.TenantID
 			mem.UserID = scope.UserID
@@ -135,8 +172,61 @@ func (s *Store) Write(ctx context.Context, scope memorystore.MemoryScope, memori
 				return err
 			}
 		}
-		return evictOldest(ctx, tx, scope.TenantID, scope.UserID, s.maxPerUser)
+		if err := evictOldest(ctx, tx, scope.TenantID, scope.UserID, s.maxPerUser); err != nil {
+			return err
+		}
+		// Sample the post-commit user and tenant counts inside the
+		// transaction so the §9.4 line 202 over-threshold check and
+		// record-count gauge land in the same snapshot.
+		if s.observer != nil {
+			c, err := countUser(ctx, tx, scope.TenantID, scope.UserID)
+			if err != nil {
+				return err
+			}
+			userCount = c
+			tc, err := countTenant(ctx, tx, scope.TenantID)
+			if err != nil {
+				return err
+			}
+			tenantCount = tc
+		}
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if s.observer != nil {
+		if userCount >= memorystore.ThresholdCount(s.maxPerUser) {
+			s.observer.IncUserOverThreshold(scope.TenantID)
+			memorystore.LogOverThreshold(backendLabel, scope.TenantID, scope.UserID, userCount, s.maxPerUser)
+		}
+		s.observer.SetRecordCount(scope.TenantID, tenantCount)
+	}
+	return nil
+}
+
+// countUser returns the agent_memory row count for (tenantID,
+// userID). The query runs under the §12.3 tenant context already set
+// by the enclosing pgtenant.InTx.
+func countUser(ctx context.Context, tx pgx.Tx, tenantID, userID string) (int, error) {
+	var n int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM agent_memory WHERE tenant_id = $1 AND user_id = $2`,
+		tenantID, userID).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// countTenant returns the agent_memory row count for tenantID.
+func countTenant(ctx context.Context, tx pgx.Tx, tenantID string) (int, error) {
+	var n int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM agent_memory WHERE tenant_id = $1`,
+		tenantID).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // evictOldest trims (tenantID, userID) down to maxPerUser records,
@@ -165,7 +255,8 @@ func evictOldest(ctx context.Context, tx pgx.Tx, tenantID, userID string, maxPer
 // that vector, with rows that carry no embedding sorted after the
 // embedded ones by recency. When no Embedder is configured, or the
 // query embeds to nil, every match falls back to newest-first.
-func (s *Store) Query(ctx context.Context, scope memorystore.MemoryScope, query string, limit int) ([]memorystore.Memory, error) {
+func (s *Store) Query(ctx context.Context, scope memorystore.MemoryScope, query string, limit int) (_ []memorystore.Memory, err error) {
+	defer s.observe(memorystore.OpQuery, time.Now(), &err)
 	if scope.TenantID == "" {
 		return nil, memorystore.ErrEmptyTenant
 	}
@@ -217,7 +308,8 @@ func (s *Store) embedQuery(query string) []float32 {
 
 // List returns the scope's memories, newest first, narrowed by the
 // filter. A zero filter Limit means no cap.
-func (s *Store) List(ctx context.Context, scope memorystore.MemoryScope, filter memorystore.MemoryFilter) ([]memorystore.Memory, error) {
+func (s *Store) List(ctx context.Context, scope memorystore.MemoryScope, filter memorystore.MemoryFilter) (_ []memorystore.Memory, err error) {
+	defer s.observe(memorystore.OpList, time.Now(), &err)
 	if scope.TenantID == "" {
 		return nil, memorystore.ErrEmptyTenant
 	}
@@ -281,7 +373,8 @@ func (s *Store) queryMemories(ctx context.Context, tenantID, q string, args []an
 // memory is removed only when its (tenant_id, user_id) matches the
 // scope: an id belonging to another tenant or user is never deleted,
 // mirroring memorystore.InMemory.
-func (s *Store) Delete(ctx context.Context, scope memorystore.MemoryScope, ids []string) error {
+func (s *Store) Delete(ctx context.Context, scope memorystore.MemoryScope, ids []string) (err error) {
+	defer s.observe(memorystore.OpDelete, time.Now(), &err)
 	if scope.TenantID == "" {
 		return memorystore.ErrEmptyTenant
 	}
@@ -291,44 +384,119 @@ func (s *Store) Delete(ctx context.Context, scope memorystore.MemoryScope, ids [
 	if len(ids) == 0 {
 		return nil
 	}
-	return pgtenant.InTx(ctx, s.pool, scope.TenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx,
+	var tenantCount int
+	err = pgtenant.InTx(ctx, s.pool, scope.TenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
 			`DELETE FROM agent_memory
 			 WHERE tenant_id = $1 AND user_id = $2 AND id = ANY($3)`,
-			scope.TenantID, scope.UserID, ids)
-		return err
+			scope.TenantID, scope.UserID, ids); err != nil {
+			return err
+		}
+		if s.observer != nil {
+			tc, err := countTenant(ctx, tx, scope.TenantID)
+			if err != nil {
+				return err
+			}
+			tenantCount = tc
+		}
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if s.observer != nil {
+		s.observer.SetRecordCount(scope.TenantID, tenantCount)
+	}
+	return nil
 }
 
 // DeleteByUser removes every memory keyed to (tenantID, userID) — the
 // §12.8 GDPR-erasure primitive. It is idempotent and rejects empty
 // ids.
-func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) error {
+func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (err error) {
+	defer s.observe(memorystore.OpDeleteByUser, time.Now(), &err)
 	if tenantID == "" {
 		return memorystore.ErrEmptyTenant
 	}
 	if userID == "" {
 		return memorystore.ErrEmptyUser
 	}
-	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx,
+	var tenantCount int
+	err = pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
 			`DELETE FROM agent_memory WHERE tenant_id = $1 AND user_id = $2`,
-			tenantID, userID)
-		return err
+			tenantID, userID); err != nil {
+			return err
+		}
+		if s.observer != nil {
+			tc, err := countTenant(ctx, tx, tenantID)
+			if err != nil {
+				return err
+			}
+			tenantCount = tc
+		}
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if s.observer != nil {
+		s.observer.SetRecordCount(tenantID, tenantCount)
+	}
+	return nil
 }
 
 // DeleteByTenant removes every memory scoped to tenantID — the §12.8
 // tenant-deletion primitive. It is idempotent and rejects an empty id.
-func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) error {
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (err error) {
+	defer s.observe(memorystore.OpDeleteByTenant, time.Now(), &err)
 	if tenantID == "" {
 		return memorystore.ErrEmptyTenant
 	}
-	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	err = pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
 			`DELETE FROM agent_memory WHERE tenant_id = $1`, tenantID)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	if s.observer != nil {
+		// The tenant's rows are fully purged; emit 0 to drop the
+		// gauge without waiting for the next periodic sample.
+		s.observer.SetRecordCount(tenantID, 0)
+	}
+	return nil
+}
+
+// TenantRecordCounts returns the per-tenant agent_memory record count.
+// The §9.4 line 202 record-count gauge sampler calls this method to
+// refresh the gauge.
+func (s *Store) TenantRecordCounts(ctx context.Context) (map[string]int, error) {
+	out := map[string]int{}
+	// pgtenant.InAllTenants opts the __all__ sentinel scan through
+	// the §4.2 tenant guard. Used here for a periodic admin-style
+	// poll; the caller is the gateway's record-count sampler.
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT tenant_id, count(*) FROM agent_memory GROUP BY tenant_id`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var tenantID string
+			var n int
+			if err := rows.Scan(&tenantID, &n); err != nil {
+				return err
+			}
+			out[tenantID] = n
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // scanMemory reads one row in selectList order into a Memory.

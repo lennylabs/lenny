@@ -373,6 +373,17 @@ spec:
             - --playground-gateway-host={{ . }}
             {{- end }}
             {{- end }}
+            {{- if hasKey .Values "memory" }}
+            {{- if not .Values.memory.enabled }}
+            - --memory-enabled=false
+            {{- end }}
+            {{- with .Values.memory.maxMemoriesPerUser }}
+            - --memory-max-per-user={{ . }}
+            {{- end }}
+            {{- if hasKey .Values.memory "recordCountIntervalSeconds" }}
+            - --memory-record-count-interval={{ .Values.memory.recordCountIntervalSeconds }}s
+            {{- end }}
+            {{- end }}
           env:
             - name: POD_NAME
               valueFrom:

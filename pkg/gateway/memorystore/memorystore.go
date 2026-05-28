@@ -116,6 +116,10 @@ type InMemory struct {
 	maxPerUser int
 	clock      func() time.Time
 	embedder   Embedder
+	// observer receives the §9.4 instrumentation events: per-operation
+	// duration, error counter, record-count gauge, over-threshold
+	// counter. Nil disables emission (the default for unit tests).
+	observer Observer
 }
 
 // NewInMemory returns an empty store. A non-positive maxPerUser
@@ -146,8 +150,30 @@ func NewInMemoryWithEmbedder(maxPerUser int, clock func() time.Time, embedder Em
 	}
 }
 
-// Write implements Store.
-func (m *InMemory) Write(_ context.Context, scope MemoryScope, memories []Memory) error {
+// SetObserver wires the §9.4 instrumentation hook. A nil value clears
+// it. The default backend is "memory"; callers (the gateway) can
+// override via SetObserverBackend to surface the correct backend
+// label.
+func (m *InMemory) SetObserver(obs Observer) {
+	m.observer = obs
+}
+
+// MaxPerUser returns the §9.4 line 202 per-user capacity bound. It is
+// the value used when evaluating whether a Write commit crossed the
+// 80%-of-cap headroom threshold.
+func (m *InMemory) MaxPerUser() int {
+	return m.maxPerUser
+}
+
+// inMemoryBackendLabel is the §16.1 `backend` label the InMemory
+// store stamps on every observation. Tests assert it; production never
+// reaches this code path (the gateway uses the Postgres backend when a
+// pool is configured).
+const inMemoryBackendLabel = "memory"
+
+// Write implements Store. spec: §9.4 line 200.
+func (m *InMemory) Write(_ context.Context, scope MemoryScope, memories []Memory) (err error) {
+	defer m.observe(OpWrite, time.Now(), &err)
 	if scope.TenantID == "" {
 		return ErrEmptyTenant
 	}
@@ -178,7 +204,58 @@ func (m *InMemory) Write(_ context.Context, scope MemoryScope, memories []Memory
 		m.memories[mem.ID] = cloneMemory(mem)
 	}
 	m.evictOldest(scope.TenantID, scope.UserID)
+	// §9.4 line 202 — surface the per-user 80% headroom counter once
+	// the write has committed. The user's count is computed against
+	// the post-eviction map so an unbounded series of writes never
+	// double-counts the threshold crossing.
+	userCount := m.countUserLocked(scope.TenantID, scope.UserID)
+	tenantCount := m.countTenantLocked(scope.TenantID)
+	if m.observer != nil {
+		if userCount >= ThresholdCount(m.maxPerUser) {
+			m.observer.IncUserOverThreshold(scope.TenantID)
+			LogOverThreshold(inMemoryBackendLabel, scope.TenantID, scope.UserID, userCount, m.maxPerUser)
+		}
+		m.observer.SetRecordCount(scope.TenantID, tenantCount)
+	}
 	return nil
+}
+
+// countUserLocked returns the in-memory map's record count for
+// (tenantID, userID). The caller holds the lock.
+func (m *InMemory) countUserLocked(tenantID, userID string) int {
+	n := 0
+	for _, mem := range m.memories {
+		if mem.TenantID == tenantID && mem.UserID == userID {
+			n++
+		}
+	}
+	return n
+}
+
+// countTenantLocked returns the in-memory map's record count for
+// tenantID. The caller holds the lock.
+func (m *InMemory) countTenantLocked(tenantID string) int {
+	n := 0
+	for _, mem := range m.memories {
+		if mem.TenantID == tenantID {
+			n++
+		}
+	}
+	return n
+}
+
+// observe records the §16.1 line 151 duration histogram observation
+// and (when err points at a non-nil error) the §16.1 line 152 error
+// counter. The caller defers it at function entry. A nil observer is
+// a no-op.
+func (m *InMemory) observe(op string, start time.Time, err *error) {
+	if m.observer == nil {
+		return
+	}
+	m.observer.ObserveOperation(op, time.Since(start).Seconds())
+	if err != nil && *err != nil {
+		m.observer.IncError(op, ClassifyError(*err))
+	}
 }
 
 // evictOldest trims the user's memories down to the capacity limit,
@@ -207,7 +284,8 @@ func (m *InMemory) evictOldest(tenantID, userID string) {
 // candidates without an embedding, and every match when no Embedder is
 // configured, fall back to newest-first. The result is capped at
 // limit (0 means no cap).
-func (m *InMemory) Query(_ context.Context, scope MemoryScope, query string, limit int) ([]Memory, error) {
+func (m *InMemory) Query(_ context.Context, scope MemoryScope, query string, limit int) (_ []Memory, err error) {
+	defer m.observe(OpQuery, time.Now(), &err)
 	if scope.TenantID == "" {
 		return nil, ErrEmptyTenant
 	}
@@ -268,7 +346,8 @@ func (m *InMemory) rankByEmbedding(matches []Memory, query string) {
 }
 
 // Delete implements Store.
-func (m *InMemory) Delete(_ context.Context, scope MemoryScope, ids []string) error {
+func (m *InMemory) Delete(_ context.Context, scope MemoryScope, ids []string) (err error) {
+	defer m.observe(OpDelete, time.Now(), &err)
 	if scope.TenantID == "" {
 		return ErrEmptyTenant
 	}
@@ -284,11 +363,15 @@ func (m *InMemory) Delete(_ context.Context, scope MemoryScope, ids []string) er
 			delete(m.memories, id)
 		}
 	}
+	if m.observer != nil {
+		m.observer.SetRecordCount(scope.TenantID, m.countTenantLocked(scope.TenantID))
+	}
 	return nil
 }
 
 // List implements Store.
-func (m *InMemory) List(_ context.Context, scope MemoryScope, filter MemoryFilter) ([]Memory, error) {
+func (m *InMemory) List(_ context.Context, scope MemoryScope, filter MemoryFilter) (_ []Memory, err error) {
+	defer m.observe(OpList, time.Now(), &err)
 	if scope.TenantID == "" {
 		return nil, ErrEmptyTenant
 	}
@@ -308,7 +391,8 @@ func (m *InMemory) List(_ context.Context, scope MemoryScope, filter MemoryFilte
 }
 
 // DeleteByUser implements Store.
-func (m *InMemory) DeleteByUser(_ context.Context, tenantID, userID string) error {
+func (m *InMemory) DeleteByUser(_ context.Context, tenantID, userID string) (err error) {
+	defer m.observe(OpDeleteByUser, time.Now(), &err)
 	if tenantID == "" {
 		return ErrEmptyTenant
 	}
@@ -322,11 +406,15 @@ func (m *InMemory) DeleteByUser(_ context.Context, tenantID, userID string) erro
 			delete(m.memories, id)
 		}
 	}
+	if m.observer != nil {
+		m.observer.SetRecordCount(tenantID, m.countTenantLocked(tenantID))
+	}
 	return nil
 }
 
 // DeleteByTenant implements Store.
-func (m *InMemory) DeleteByTenant(_ context.Context, tenantID string) error {
+func (m *InMemory) DeleteByTenant(_ context.Context, tenantID string) (err error) {
+	defer m.observe(OpDeleteByTenant, time.Now(), &err)
 	if tenantID == "" {
 		return ErrEmptyTenant
 	}
@@ -337,7 +425,26 @@ func (m *InMemory) DeleteByTenant(_ context.Context, tenantID string) error {
 			delete(m.memories, id)
 		}
 	}
+	if m.observer != nil {
+		// The tenant's records are fully purged; emit 0 so the gauge
+		// reflects the post-condition without waiting for the next
+		// periodic sample.
+		m.observer.SetRecordCount(tenantID, 0)
+	}
 	return nil
+}
+
+// TenantRecordCounts returns the per-tenant memory record count map.
+// The §9.4 line 202 record-count gauge sampler calls this method to
+// refresh the gauge.
+func (m *InMemory) TenantRecordCounts(_ context.Context) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := map[string]int{}
+	for _, mem := range m.memories {
+		out[mem.TenantID]++
+	}
+	return out, nil
 }
 
 // inScope reports whether a memory falls within the scope: the tenant

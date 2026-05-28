@@ -1147,6 +1147,24 @@ playground:
   # connect-src CSP directive. Leave empty to omit the directive host.
   gatewayHost: ""
 
+# memory configures the §9.4 MemoryStore. The gateway reads these
+# values as its --memory-* flags. enabled=false is the §12.8 line 746
+# escape hatch that disables the store and skips the erasure
+# preflight; maxMemoriesPerUser is the §9.4 line 202 per-user cap.
+memory:
+  # enabled turns the §9.4 MemoryStore on. true wires the
+  # lenny/memory_write and lenny/memory_query MCP tools and runs the
+  # §12.8 startup preflight. false skips both. F-9.4.7.
+  enabled: true
+  # maxMemoriesPerUser bounds the per-user record count; oldest-first
+  # eviction kicks in when a Write would exceed it. Default 10000 per
+  # §9.4 line 202. F-9.4.5.
+  maxMemoriesPerUser: 10000
+  # recordCountIntervalSeconds is the periodic sampler interval for
+  # the §9.4 line 202 lenny_memory_store_record_count gauge. 0
+  # disables. Default 60s aligns with the §16.5 alert windows.
+  recordCountIntervalSeconds: 60
+
 # referenceRuntimes is the §26 reference-runtime catalog. When enabled,
 # helm install registers each entry as a platform-global Runtime
 # record. Per §26.1 the records carry no default tenant access; an
