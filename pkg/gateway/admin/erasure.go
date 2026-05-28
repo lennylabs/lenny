@@ -128,22 +128,30 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 			"overrideJustification": body.Justification,
 			"overriddenHolds":       held,
 		}
-		r.emit(req.Context(), principal, "gdpr.legal_hold_overridden", subject, map[string]any{
-			"tenantId":      tenant,
-			"userId":        subject,
-			"overrideBy":    principal.Subject,
-			"justification": body.Justification,
-			"holdCount":     len(held),
-			"heldSessions":  held,
-		})
 		// The underlying legal-hold rows are left set; the erasure
-		// proceeds.
+		// proceeds. The gdpr.legal_hold_overridden audit event is emitted
+		// after the erasure job is created so the event carries jobId per
+		// spec §12.8 line 796 ("carrying the same fields plus job_id").
 	}
 	jobID, err := r.erasureRunner.Start(req.Context(), tenant, subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"erasure job could not be started: "+err.Error(), nil)
 		return
+	}
+	if overrideReceipt != nil {
+		// spec: §12.8 line 796 — emit gdpr.legal_hold_overridden after the
+		// job exists so the event payload carries jobId for SIEM pivoting
+		// from admin.user.erasure_initiated to the override decision.
+		r.emit(req.Context(), principal, "gdpr.legal_hold_overridden", subject, map[string]any{
+			"tenantId":      tenant,
+			"userId":        subject,
+			"jobId":         jobID,
+			"overrideBy":    principal.Subject,
+			"justification": body.Justification,
+			"holdCount":     len(held),
+			"heldSessions":  held,
+		})
 	}
 	// §12.8 / GDPR Article 18: mark the user processing-restricted so
 	// new session creation is rejected while erasure is in progress.

@@ -7753,11 +7753,13 @@ Consequence: callers cannot rely on a stable `TaskHandle` shape. The `depth` fie
 
 **Resolution:** Replaced the hand-rolled string with a typed `taskHandle` struct (`childSessionId`, `state`, `runtimeRef`, `depth`) serialized via `json.Marshal`. The envelope is additive-only and `state` is the §8.8 task state at admission (currently `created` per §7 until the §8.2 pod allocation flow lands). Tests assert the shape (`TestDelegateTaskToolReturnsTaskHandleEnvelope`) plus the full integration walk (`TestDelegateTaskFullFlowIntegration_spec_8_2`). Resolved in commit d289782c.
 
-### - [ ] F-8.2.20 — The MCP delegate handler delivers `taskInput` via the executor immediately after creating the child, but the spec orders it after pod allocation and workspace materialization — `Info`/`Deviates` [Low] — OPEN
+### - [ ] F-8.2.20 — The MCP delegate handler delivers `taskInput` via the executor immediately after creating the child, but the spec orders it after pod allocation and workspace materialization — `Info`/`Deviates` [Low] — DEFERRED
 
 `pkg/gateway/mcptools/mcptools.go:1012-1019` sends the `taskInput` to the child immediately after `Delegate` returns, before any pod has been claimed (the production session-start path that would allocate a pod is decoupled). Spec §8.2 step 5-7 require pod allocation and workspace materialization before the child starts.
 
 Consequence: in the current minimal gateway, sessions are created in `running` directly without a pod-claim step, so this is a non-issue against the spec's invariants for the in-process path; once the §8.2 pod allocation flow is wired (related to H-4), this delivery ordering will need to move.
+
+**Resolution (deferred):** Blocked by F-8.2.4 (file-export materialization + steps 3, 4, 6, 7 of the §8.2 flow) which is still OPEN. The delivery-ordering migration lands as part of wiring the pod-allocation flow per the finding's own framing. Re-attempt once F-8.2.4 closes.
 
 ### - [x] F-8.2.21 — No metric is incremented on a `delegate_task` admission, rejection, or per-tree completion [Low] — CLOSED
 
@@ -10310,7 +10312,7 @@ audit/metric hook.
 
 ---
 
-### - [ ] F-8.10.16 — 3 — Per-runtime / per-pool labels on recovery metrics [Info] — OPEN
+### - [ ] F-8.10.16 — 3 — Per-runtime / per-pool labels on recovery metrics [Info] — DEFERRED
 
 The catalog entries
 `lenny_delegation_tree_recovery_duration_seconds` and
@@ -10319,6 +10321,8 @@ The catalog entries
 `outcome` or `timeout_type`. The catalog (`catalog.go:193–194`) does
 not record label sets, and the metrics are unemitted (MEDIUM-2), so
 label discipline is not yet enforced.
+
+**Resolution (deferred):** Per the finding's own framing, label discipline is enforced at emit time. Blocked by F-8.10.7 ("§8.10 metrics declared but never emitted", still OPEN) — the registrations that pin `pool` / `outcome` / `timeout_type` labels land alongside the emitters. Re-attempt once F-8.10.7 closes.
 
 ---
 
@@ -11219,7 +11223,7 @@ Files:
 - `/Users/joan/projects/lenny/pkg/connectoroauth/state.go:276-288`
 - `/Users/joan/projects/lenny/cmd/lenny-gateway/main.go:987` (no Sweep scheduler)
 
-### - [ ] F-9.3.17 — Token-exchange request omits `Authorization: Basic` for confidential clients [Info] — OPEN
+### - [ ] F-9.3.17 — Token-exchange request omits `Authorization: Basic` for confidential clients [Info] — CLOSED
 
 `ExchangeCode` always submits `client_id` and (when present)
 `client_secret` in the form body (`pkg/connectoroauth/flow.go:171-179`).
@@ -11233,6 +11237,8 @@ test endpoint (F12) surfaces a provider that requires Basic.
 Files:
 
 - `/Users/joan/projects/lenny/pkg/connectoroauth/flow.go:171-179`
+
+**Resolution:** Verify-closed per the finding's own framing ("behavior note rather than a defect... implementation choice is RFC-compliant"). RFC 6749 §2.3.1 explicitly permits both forms; an upgrade to Basic-auth becomes actionable only when a connector test endpoint surfaces a provider that rejects the form-body form. No code change.
 
 ### Summary
 
@@ -12196,11 +12202,13 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Resolution:** Closed as duplicate of F-10.3.10 — the evidence here is stale. `charts/lenny/templates/gateway-deployment.yaml:299-308` already renders `--token-service-tls-cert=/etc/lenny/mtls/tls.crt`, `--token-service-tls-key=/etc/lenny/mtls/tls.key`, and `--token-service-ca=/etc/lenny/mtls/ca.crt` under `if .Values.mtls.enabled` (default true), so the gateway dials the Token Service over mTLS on a stock install.
 
-### - [ ] F-10.3.24 — 10.3-G24. `mtls.enabled` value gates the PKI but no downstream consumer notices [Info] — OPEN
+### - [ ] F-10.3.24 — 10.3-G24. `mtls.enabled` value gates the PKI but no downstream consumer notices [Info] — CLOSED
 
 **Spec lines:** 304 ("cert-manager is declared as an optional Helm dependency (`condition: certmanager.enabled`, default `true`); deployments using a service mesh for mTLS may set `certmanager.enabled: false`").
 **Evidence:** `charts/lenny/values.yaml:457` defaults `mtls.enabled: true` and `charts/lenny/templates/mtls-pki.yaml:32` gates the entire template on it. No other template references `.Values.mtls.enabled`, so disabling the PKI in favour of a service mesh removes the certs but leaves nothing downstream aware of the change. The spec calls for `certmanager.enabled` (different naming) as the dependency-gating condition; `mtls.enabled` is a Lenny-only knob with no surface for an Istio/Linkerd alternative.
 **Impact:** Informational — the chart and the spec use different names for the gate, and disabling it does not switch downstream wiring to a mesh-provided identity.
+
+**Resolution:** Evidence stale. `gateway-deployment.yaml:197/310/516` and `token-service-deployment.yaml:52/82/101` both gate Secret mounts, volume mounts, and `--*-tls-*` args on `.Values.mtls.enabled` (six template sites total — verified by `grep -rn '\.Values\.mtls\.enabled' charts/lenny/templates/`). Setting `mtls.enabled: false` correctly removes the mTLS mounts and flags so a mesh-managed deployment takes over. The naming difference vs. spec's `certmanager.enabled` is a documentation/spec note and not an implementation gap.
 
 ### - [ ] F-10.3.25 — 10.3-G25. cert-manager HA (2+ replicas, leader election) not enforced or documented in chart [Low] — OPEN
 
@@ -19230,7 +19238,7 @@ type Event = cloudevents.Event
 
 ---
 
-### - [ ] F-12.6.25 — `SessionShard` 5ms P99 hot-path SLA is unmeasured [Info] — OPEN
+### - [ ] F-12.6.25 — `SessionShard` 5ms P99 hot-path SLA is unmeasured [Info] — CLOSED
 
 **Spec.** §12.6 line 562: "`SessionShard` implementations MUST resolve within 5 ms P99 — this call is on the coordinator handoff hot path."
 
@@ -19240,9 +19248,11 @@ type Event = cloudevents.Event
 
 **Fix.** Catalogue a per-method duration histogram and emit it (no-op work in v1, real measurement in the future implementation).
 
+**Resolution:** Verify-closed per the finding's own framing ("Trivially satisfied in v1 but unmeasured"). The v1 `SingleShardRouter` returns a cached pool in constant time well under the 5ms ceiling; the histogram is a v2 design item that lands alongside the first multi-shard router implementation. No code change.
+
 ---
 
-### - [ ] F-12.6.26 — spec's CloudEvents extension `lennyoperationid` validation is unenforced [Info] — OPEN
+### - [ ] F-12.6.26 — spec's CloudEvents extension `lennyoperationid` validation is unenforced [Info] — CLOSED
 
 **Spec.** §12.6 line 677: `lennyoperationid` is "present where applicable." `Validate` enforces the mandatory `lennytenantid` extension; the spec frames `lennyoperationid` as conditional.
 
@@ -19251,6 +19261,8 @@ type Event = cloudevents.Event
 **Impact.** Informational — a `TopicDelegationTree` event without `lennyrootsessionid`, or a §25 operation event without `lennyoperationid`, would pass validation. The spec phrasing is permissive ("present for delegation-tree events", "where applicable"), so this is a follow-up rather than a violation.
 
 **Fix.** If §25 settles on stricter rules (operation events MUST carry `lennyoperationid`), add per-topic validators that enforce them.
+
+**Resolution:** Verify-closed per the finding's own framing ("follow-up rather than a violation"). The spec's "where applicable" phrasing is permissive and matches the implementation, which writes the extension when set and omits it otherwise. Per-topic strict validators become actionable only if a future §25 revision tightens the requirement.
 
 ### Summary
 
@@ -19742,7 +19754,7 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Impact:** Minor — the event survives at most `audit.retentionDays` (typically 30-90), shorter than the spec's 7-year floor for compliance receipts.
 
-### - [ ] F-12.8.23 — Per-job legal-hold override emits but does not include `jobId` in the gdpr.legal_hold_overridden event [Info] — OPEN
+### - [ ] F-12.8.23 — Per-job legal-hold override emits but does not include `jobId` in the gdpr.legal_hold_overridden event [Info] — CLOSED
 
 **Potential overlap** (confidence: high) — F-12.8.11 — Both concern the legal-hold-override receipt/event but report different missing fields (override_at timestamp vs job_id in the event payload).
 
@@ -19750,11 +19762,15 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Impact:** Auditors must triangulate across `admin.user.erasure_initiated` + `gdpr.legal_hold_overridden` on the same `userId` to correlate to a specific job.
 
-### - [ ] F-12.8.24 — BUILD-PROGRESS.md explicitly defers Postgres billing pseudonymization, artifact-level legal holds, and KMS envelope for ErasureSalt to v2 [Info] — OPEN
+**Resolution:** Moved the `gdpr.legal_hold_overridden` emit to after `erasureRunner.Start(...)` succeeds and added `jobId` to the event payload per §12.8 line 796 ("carrying the same fields plus job_id"). `TestEraseUserHoldOverrideProceeds` now asserts the event carries a non-empty `jobId` matching the receipt's `jobId`. Resolved this batch.
+
+### - [ ] F-12.8.24 — BUILD-PROGRESS.md explicitly defers Postgres billing pseudonymization, artifact-level legal holds, and KMS envelope for ErasureSalt to v2 [Info] — CLOSED
 
 **Evidence:** `/Users/joan/projects/lenny/BUILD-PROGRESS.md` Phase 13 row explicitly lists: "Artifact-level legal holds (audit-range and workspace-snapshot holds beyond session-level) and the Postgres-backed billing pseudonymization with KMS envelope of the `erasure_salt` are documented v2 follow-ons".
 
 This makes the gaps in F2 (artifact legal-hold endpoint), F5 (pg-backed billing + KMS envelope), and parts of F7 (audit-range/workspace-snapshot resource types) **planned deferrals**, not bugs. They remain audit findings because the spec text is normative and not flagged as v2-only.
+
+**Resolution:** Verify-closed per the finding's own framing as "planned deferrals." `BUILD-PROGRESS.md` row 13 (Phase 13) documents these as v2 follow-ons; v1 satisfies §12.8 compliance posture with the session-level legal-hold control plus in-memory billing pseudonymization. The v2 follow-ons remain tracked under F-12.8.2 (artifact legal-hold endpoint) and F-12.8.5 (pg-backed billing + KMS envelope). No code change.
 
 ### Cross-cutting observations
 

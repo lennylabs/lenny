@@ -453,10 +453,21 @@ func TestEraseUserHoldOverrideProceeds(t *testing.T) {
 	if override.Detail["justification"] != "court order lifted, ticket-9" {
 		t.Errorf("override event justification = %v", override.Detail["justification"])
 	}
+	// spec: §12.8 line 796 — the legal-hold-override event payload carries
+	// the same fields as the erasure receipt plus jobId, so an auditor can
+	// pivot from admin.user.erasure_initiated to the override decision
+	// without triangulating on userId alone.
+	jobID, ok := override.Detail["jobId"].(string)
+	if !ok || jobID == "" {
+		t.Errorf("override event jobId = %v (want non-empty string per §12.8 line 796)", override.Detail["jobId"])
+	}
 	// The completion receipt records that an override was exercised.
 	receipt := awaitAuditEvent(t, audit, "gdpr.erasure_completed")
 	if receipt.Detail["legalHoldOverride"] != true {
 		t.Errorf("completion receipt should record legalHoldOverride: %+v", receipt.Detail)
+	}
+	if receipt.Detail["jobId"] != jobID {
+		t.Errorf("override event jobId %q diverges from receipt jobId %v", jobID, receipt.Detail["jobId"])
 	}
 }
 
