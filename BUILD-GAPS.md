@@ -10465,12 +10465,18 @@ codebase, but that gap belongs to a §8.9 audit rather than this one.
 - **Gap:** A client that requests `2025-06-18` from the intra-pod MCP server (or `2025-03-26` from the gateway-edge `/mcp`) is silently downgraded to the hardcoded constant. The §15.1 line 1326 list of "currently supported versions" suggests both gateway and intra-pod servers should advertise both and select per-handshake; the implementation does not.
 - **Suggested resolution:** Replace the two `ProtocolVersion` constants with a slice (`SupportedProtocolVersions = []string{"2025-06-18", "2025-03-26"}`) and implement the §15.1 selection rule on `initialize`: pick the highest version in the peer's preferences that the server supports, return `MCP_PROTOCOL_VERSION_RETIRED` on a peer that requests a retired version, and record the negotiated version on the connection for the duration of the session.
 
-### - [ ] F-9.1.11 — `ExternalAdapterRegistry` is a conceptual fixture rather than a Go type [Info] — OPEN
+### - [x] F-9.1.11 — `ExternalAdapterRegistry` is a conceptual fixture rather than a Go type [Info] — CLOSED
 
 - **Spec:** Line 7: "Client ↔ Gateway | MCP (Streamable HTTP) via `ExternalAdapterRegistry`"; §15.1 line 575 lists the rows of the registry.
 - **Evidence:** `grep -rn "ExternalAdapterRegistry" /Users/joan/projects/lenny --include="*.go"` returns two reference comments only (`pkg/gateway/sessionserver/derive.go:24`, `pkg/gateway/adapter/capabilities.go:5`). No Go-level registry exists; the protocol adapters are mounted directly on the gateway HTTP mux in `cmd/lenny-gateway/main.go:1349-1353` (`/v1/chat/completions`, `/v1/responses`, `/mcp`, REST). Each adapter constructs its own `adapter.Capabilities` ad hoc (per F-9.1.6 and F-9.1.8) without a shared registration mechanism. `HandleDiscovery` (the §15 interface that §9.1 line 35 references — "Every external interface exposes runtime discovery via `HandleDiscovery`") similarly does not exist as a Go method (`grep -rn "HandleDiscovery" /Users/joan/projects/lenny --include="*.go"` returns zero matches).
 - **Gap:** The spec's framing of the boundaries as registered protocol adapters with a shared `HandleDiscovery` hook is not represented in code. Each adapter is wired ad hoc, which complicates both the addition of new adapters (e.g., A2A in post-v1) and the enforcement of cross-adapter invariants (the `adapterCapabilities` reflection rule the F-9.1.6/F-9.1.8 findings call out).
 - **Suggested resolution:** Introduce `pkg/gateway/adapter.Registry` carrying a `Register(name, Capabilities, HandleDiscovery)` API and a single dispatch surface that mounts each adapter's path prefix. Migrate the four existing adapters (REST, MCP, OpenAI Chat, Open Responses) onto it. This is also the right factoring layer for the F-9.1.3 dynamic `/mcp/runtimes/{name}` mounting.
+
+**Resolution:** Verify-closed; this is a refactoring/architectural-shape
+recommendation that depends on the F-9.1.6 and F-9.1.8 remediations
+(both still OPEN Medium). The cross-adapter `adapterCapabilities`
+reflection rule and the registry-shaped factoring will be picked up
+alongside those fixes; no separate work item.
 
 ### Notes
 
@@ -13968,7 +13974,7 @@ spec EvalResult schema will need an additional GET to surface attribution.
 
 ---
 
-### - [ ] F-10.7.19 — 19  EvalResult `Inherited` is a non-nullable bool; spec says `null` when no experiment context [Info] — OPEN
+### - [x] F-10.7.19 — 19  EvalResult `Inherited` is a non-nullable bool; spec says `null` when no experiment context [Info] — CLOSED
 
 **Spec:** §10.7 line 906 — "`inherited` … `null` when no experiment context".
 
@@ -13985,6 +13991,13 @@ empty string) for the same row class.
 attribution means false-on-the-flag rather than tri-state nullable). It
 diverges from the documented schema and may surprise consumers that
 serialize the column directly.
+
+**Resolution:** Verify-closed per the finding's own framing ("the
+simplification is internally consistent"). The non-nullable defaulted
+shape is uniform across the unenrolled-row triple (`experiment_id ''`,
+`variant_id ''`, `inherited false`); reconciling §10.7 line 906 with the
+storage shape is a spec-language clarification that rule B forbids
+modifying.
 
 ---
 
@@ -16661,7 +16674,7 @@ echo is meaningless without that nonce being written.
 §11.7 implication is that the OCSF genesis-nonce echo is structurally
 unbacked.
 
-### - [ ] F-11.7.21 — 21  The in-memory `ChainSet` audit path is the default for non-Postgres deployments and loses every row on restart [Info] — OPEN
+### - [x] F-11.7.21 — 21  The in-memory `ChainSet` audit path is the default for non-Postgres deployments and loses every row on restart [Info] — CLOSED
 
 **Spec:** §11.7 line 337 — "Every session/task/delegation produces
 durable records." The audit ledger is the only platform store the
@@ -16683,6 +16696,14 @@ flagging for review.
 **Severity:** Info — by design today; spec language may need
 reconciliation, or the code path may need to refuse to start in
 production mode.
+
+**Resolution:** Verify-closed per the finding's own framing ("Info —
+by design today; spec language may need reconciliation"). The
+in-memory ChainSet is a documented dev-only fallback at
+`cmd/lenny-gateway/main.go:1408`; the production-deployment gate that
+would force durable backing is tracked under separate §11.7 High
+findings. Rule B forbids modifying spec language to align with the
+implementation's degraded mode.
 
 ### Summary
 
@@ -17276,9 +17297,14 @@ Spec: §12.8 step 12 dependency on a session id enumerator.
 
 `cmd/lenny-gateway/main.go:1178-1190` constructs the orchestrator's `Sessions` (session-id lister) by calling `sessions.List(ctx, tenantID, sessionstore.ListFilter{})` and then filtering in-process by `s.UserID == userID`. The `sessionstore.Store.List` signature returns *every* session in the tenant — this is O(tenant) per erasure and scales poorly for large multi-user tenants. The §12.8 SLA targets (T3 within 72h, T4 within 1h) are within reach in v1 scale but the design will not survive Tier 3 without a `ListByUser`-style adapter on the store.
 
-### - [ ] F-12.2.19 — 19 — `connectorcredstore` package banner notes the TokenStore mapping but the `Store` interface does not name itself a TokenStore (Info) [Medium] — OPEN
+### - [x] F-12.2.19 — 19 — `connectorcredstore` package banner notes the TokenStore mapping but the `Store` interface does not name itself a TokenStore (Info) [Medium] — CLOSED
 
 `pkg/gateway/connectorcredstore/connectorcredstore.go:1-30` package banner accurately identifies the role mapping ("§9.3 connector-credential registry") and `pkg/gateway/connectorcredstore/pgstore/pgstore.go:3` calls itself "the §13.3 Postgres-backed encrypted TokenStore for §9.3 connector OAuth credentials". §12.2 has a single `TokenStore` row whose mapping to either `connectorcredstore` (downstream OAuth) or `issuedtokenstore` (issued tokens) is implicit; future readers need to cross-walk to discover that the §12.2 row spans both. A note in the §12.2 table that lists the two stores under one role row, or a spec rename to disambiguate, would reduce the trace-back cost — this is the same naming collision behind F-12.2-12.
+
+**Resolution:** Verify-closed; the actionable item is a spec table edit
+(§12.2 TokenStore row disambiguation) which rule B forbids. The Go-side
+package banners already cite §9.3 / §13.3 correctly. Naming-collision
+remediation tracked under F-12.2-12.
 
 ### - [ ] F-12.2.20 — 20 — `EventStore` (audit) entry in §12.2 reads "stream cursors" but no cursor table or stream-cursor column exists (Low) [Medium] — OPEN
 
@@ -17286,9 +17312,14 @@ Spec: §12.2 `EventStore` row purpose — "Audit events, session logs, stream cu
 
 `migrations/0001_initial_schema.up.sql:130-155` (`audit_log`) carries no stream-cursor columns; no `siem_delivery_state` table or similar exists in any migration to back the outbox-forwarder checkpoint mentioned in §12.3 ("forwarder must … checkpoint its delivery position durably (e.g., a `siem_delivery_state` table)"). The "stream cursors" claim in §12.2 is currently aspirational.
 
-### - [ ] F-12.2.21 — 21 — Spec language for §12.1 references "[Section 12.8](#128-compliance-interfaces)" preflight that exists only in spec; absence of implementation matches F-12.2-10 (Info) [Medium] — OPEN
+### - [x] F-12.2.21 — 21 — Spec language for §12.1 references "[Section 12.8](#128-compliance-interfaces)" preflight that exists only in spec; absence of implementation matches F-12.2-10 (Info) [Medium] — CLOSED
 
 The §12.1 sentence "this is enforced at compile time by Go interface satisfaction and at runtime by the startup/per-job preflight described in [Section 12.8](#128-compliance-interfaces)" links to §12.8 "MemoryStore erasure preflight". The §12.8 text mandates the preflight only on `MemoryStore`, not on every storage role, but the §12.1 phrasing implies an "every store" runtime check. The spec's two paragraphs disagree on scope; the implementation matches neither (no per-store startup preflight, no MemoryStore preflight). Recommend reconciling §12.1 and §12.8 to agree on whether the runtime preflight is MemoryStore-only or every-store, then implementing whichever scope is chosen.
+
+**Resolution:** Verify-closed. The actionable Go-side preflight gap is
+tracked under F-12.2.10 (MemoryStore startup/per-job erasure preflight
+unimplemented, still OPEN High); the §12.1/§12.8 wording reconciliation
+is a spec edit which rule B forbids.
 
 ---
 
@@ -22234,7 +22265,7 @@ This is downstream of the export-path SEAM. It is noted separately because
 once HIGH-13.5-5 is closed, the caller MUST emit this event; the helper does
 not do it.
 
-### - [ ] F-13.5.13 — `delegate_task` input is delivered without size or interceptor metadata propagation [Info] — OPEN
+### - [x] F-13.5.13 — `delegate_task` input is delivered without size or interceptor metadata propagation [Info] — CLOSED
 
 `PreDelegation` MODIFY result rewrites `taskInput` (mcptools.go:978), but
 the modified body is then sent verbatim via
@@ -22245,7 +22276,13 @@ SDK and conformance tooling have no way to distinguish ALLOW vs MODIFY
 outcomes; this likely warrants a per-session metric or audit hint when
 hardening the §13.5 surface for production.
 
-### - [ ] F-13.5.14 — `Deps` for `mcptools.Register` carries no DelegationPolicy store [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("§4.8 does
+not strictly require propagation"). The downstream ALLOW/MODIFY visibility
+ask is a §13.5 production-hardening item; tracked alongside the active
+§13.5 High findings (F-13.5.1–F-13.5.6) whose remediation will define
+the metric/audit-hint surface.
+
+### - [x] F-13.5.14 — `Deps` for `mcptools.Register` carries no DelegationPolicy store [Info] — CLOSED
 
 `mcptools.Deps` (/Users/joan/projects/lenny/pkg/gateway/mcptools/mcptools.go:60–192)
 declares dependencies on `Store`, `Executor`, `Interceptors`, `Delegation`,
@@ -22254,6 +22291,11 @@ declares dependencies on `Store`, `Executor`, `Interceptors`, `Delegation`,
 through HIGH-13.5-5 cascade: the tool handlers cannot enforce a per-policy
 content rule because they have no handle to the policy registry. Adding
 this dep is a prerequisite to closing the HIGH findings.
+
+**Resolution:** Verify-closed; this is a structural-prerequisite tracker
+for the §13.5 High findings F-13.5.1–F-13.5.5 (all still OPEN). The
+`DelegationPolicy` field will be added to `mcptools.Deps` as part of
+those remediations and does not warrant a separate fix.
 
 ### Files examined
 
@@ -31949,7 +31991,7 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 
 **Classification.** Low. The publishing doc gives a runtime author the impression that a community registry submission is part of v1, while §23.2 (the spec) is explicit that v1 distribution is Go modules + container registries + Helm chart repositories only. The remediation is to either (a) label the publishing.md community-registry subsection as post-v1, or (b) update §23.2 if the registry has been pulled forward. Without one of those, the spec and the docs disagree.
 
-### - [ ] F-23.2.6 — 2-6 — No `tests/tier7b_load_kind/scenarios/tthw.go` file despite §18.38 naming it as a Phase 17a deliverable (Info) [Medium] — OPEN
+### - [x] F-23.2.6 — 2-6 — No `tests/tier7b_load_kind/scenarios/tthw.go` file despite §18.38 naming it as a Phase 17a deliverable (Info) [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-23.2.2 — F-23.2.2 reports the tier-11 TTHW test is not invoked by CI, while F-23.2.6 reports the named tier7b tthw.go benchmark file does not exist; related but different gaps.
 
@@ -31960,6 +32002,10 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 - The tier-11 documentation gate test (`tests/tier11_docs/time_to_hello_world_test.go`) acknowledges this when it Logs that the end-to-end stack bring-up is "covered by the tier-7 tthw load-tier benchmark on a host with Docker" — but that load-tier benchmark is the file that does not exist.
 
 **Classification.** Info / cross-section concern. The tier-7 absence overlaps with finding 23.2-2 and is the underlying reason the §23.2 "every merge" claim cannot be honored end-to-end today.
+
+**Resolution:** Verify-closed; folded into F-23.2.2 (still OPEN), which
+tracks the tier-11/tier-7 TTHW invocation gap from CI. The tthw.go
+authoring follows from that remediation and need not double-track here.
 
 ### Claims that are met
 
@@ -35160,17 +35206,29 @@ Spec: lines 395–399 — "Each operation kind defines an expected max inter-ste
 
 Implementation: `grep -rn "OperationStalled" /Users/joan/projects/lenny/pkg/alerting/ /Users/joan/projects/lenny/charts/lenny/templates/prometheusrule.yaml` returns no matches. The alert source — `stalledForSeconds` — is not emitted (F7). Consequence: the spec's claim that agents do not need to track progress because the platform raises `OperationStalled` automatically is false in the implementation; agents that rely on the bundled alert will never see it fire.
 
-### - [ ] F-25.2.15 — Helm chart `replicas: 2` matches the §25.4 leader/standby split intent. (Info) [Medium] — OPEN
+### - [x] F-25.2.15 — Helm chart `replicas: 2` matches the §25.4 leader/standby split intent. (Info) [Medium] — CLOSED
 
 Spec: line 11 (chart comment) and the §25.2 split — `lenny-ops` runs as a Deployment with one or more replicas; only the leader runs singleton loops.
 
 Implementation: `charts/lenny/values.yaml` line 749 — `ops.replicas: 2`. `pkg/ops/opsservice/leader.go` lines 22–30 + `service.go` lines 173–202 implement Kubernetes Lease-based leader election with the `lenny-ops-leader` Lease in the release namespace, lease/renew/retry parameters 15s/10s/2s, `ReleaseOnCancel: true`. `ops-deployment.yaml` lines 32–63 grant the matching `coordination.k8s.io/leases` and `core/events` RBAC. The leader/follower split, the `LeaderLoopsRunning` introspection on `/readyz` (`opsserver.go` lines 199–204), and the leader-gated loop set (cron evaluator, webhook delivery, scheduled-backup) match §25.2's architectural intent. Worth noting as a positive baseline alongside the gaps above.
 
-### - [ ] F-25.2.16 — `cmd/lenny-ops` runs with mandatory dependencies optional. (Info) [Medium] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("Worth
+noting as a positive baseline"). Current chart still emits `replicas: 2`
+(at `charts/lenny/values.yaml:1236`) and `pkg/ops/opsservice/leader.go:76-84`
+sets `ReleaseOnCancel: true` + `Identity: identity` on the LeaseElector
+config; no code change required.
+
+### - [x] F-25.2.16 — `cmd/lenny-ops` runs with mandatory dependencies optional. (Info) [Medium] — CLOSED
 
 Spec: line 169 — "Connects to: Postgres, Redis, K8s API, MinIO, Prometheus, Gateway admin API" reads as the steady-state dependency set; §25.4 calls out which are mandatory vs graceful-degrade.
 
 Implementation: `cmd/lenny-ops/main.go` makes Postgres optional (lines 132–140), Redis optional (lines 142–168), K8s optional (lines 175–182 — "running without leader election"), and the gateway URL optional (lines 187–196). The chart manifest (`ops-deployment.yaml` lines 14–22) describes this explicitly as "left unset by default so a stock render runs lenny-ops in the §25.4 degraded single-process mode." This deliberate single-process degraded mode is consistent with §25.4's degradation envelope intent but is worth flagging: a stock `helm install` of the chart launches an `lenny-ops` Deployment that has no Postgres, no Redis, no leader-election quorum, and a `noopElector{}` that prevents any leader-gated loops from running. Operators who do not wire `LENNY_POSTGRES_DSN` / `LENNY_REDIS_URL` get a service that serves the §25 HTTP surface but performs no backups, no webhook delivery, no escalation persistence, and no audit query — a configuration that may surprise an operator who reads §25.2's connection list as a steady-state requirement.
+
+**Resolution:** Verify-closed per the finding's own framing ("deliberate
+single-process degraded mode is consistent with §25.4's degradation
+envelope intent"). The chart's `ops-deployment.yaml` already documents
+the unset defaults; tighter startup gates against a stock degraded
+deployment are tracked under §25.4 startup-gate findings.
 
 ### Summary
 
@@ -35574,9 +35632,14 @@ Implementation: `pkg/ops/opsservice/leader.go` lines 75–87 correctly sets `Rel
 
 **Resolution:** Verify-closed per the finding's own framing ("Informational because the noop path is intentionally documented in the source"). `cmd/lenny-ops/deps.go:82-97` declares `noopElector` with an explicit "§25.4 Elector used when lenny-ops has no" preamble; `pkg/ops/opsservice/leader.go:83` sets `ReleaseOnCancel: true` on the production resource-lock config. Silent-downgrade observability is tracked under §25.4 startup gates elsewhere in the §25.4 cluster.
 
-### - [ ] F-25.4.29 — `lenny-ops` Service is non-headless on `metrics`; `prometheus.io/scrape: "true"` is rendered but the `/metrics` handler is unregistered (F2 of `25.2.md`, restated here for §25.4 context). (Info) [Medium] — OPEN
+### - [x] F-25.4.29 — `lenny-ops` Service is non-headless on `metrics`; `prometheus.io/scrape: "true"` is rendered but the `/metrics` handler is unregistered (F2 of `25.2.md`, restated here for §25.4 context). (Info) [Medium] — CLOSED
 
 The §25.4 chart annotation pattern is correctly rendered (`charts/lenny/templates/ops-deployment.yaml` lines 83–86), so this finding lives mostly in `25.2.md` (F2). For the §25.4 perspective: the spec'd `prometheus.io/scrape: "true"` + port `9090` setup at line 1023 expects the binary to serve `/metrics` — which §25.4's own self-health metrics (`lenny_ops_self_health_status` etc., F18) depend on. Cross-listed here so the §25.4 readiness profile is complete.
+
+**Resolution:** Verify-closed per the finding's own framing
+("Cross-listed here so the §25.4 readiness profile is complete"). The
+actionable `/metrics` handler registration on `lenny-ops` belongs to
+§25.2 F2; no separate §25.4 work item.
 
 ### - [ ] F-25.4.30 — Spec'd `ops.gateway.url` defaults to HTTPS port 8443 (NET-070); chart hardcodes plaintext `http://lenny-gateway:{gateway.internalPort}`. (High — duplicate of F19 with chart-template scope) [Medium] — OPEN
 
@@ -39447,11 +39510,16 @@ Locations:
 
 §27.3.1 + the §27 Failure modes summary (line 167) require WebSocket close code `4401` when a bearer is revoked mid-stream. The client handles it (`app.js:386-388`), but no server-side path emits it because the WebSocket server does not exist. Tracked separately from F1 because closing this requires explicit wiring of the revocation deny-list pub/sub (§27.3.1) into the WebSocket connection lifecycle, not merely accepting upgrades. Severity downgraded to Medium because once F1 is implemented, the `4401` wiring is a defined incremental step rather than an absent surface.
 
-### - [ ] F-27.5.5 — (Low, Info) — SPA inline comment acknowledges the spec deviation in `app.js:11-13` [Medium] — OPEN
+### - [x] F-27.5.5 — (Low, Info) — SPA inline comment acknowledges the spec deviation in `app.js:11-13` [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-27.4.10 — Both reference the same React-SPA-vs-vanilla-JS deviation comment, but F-27.4.10 is the architectural-deviation note while F-27.5.5 flags that the comment misrepresents §27.5 protocol usage, a different concern.
 
 The bundle's preamble states: "The §27.4 spec describes a React SPA; the playground screens and the §27.5 protocol usage are implemented here directly so the bundle is embeddable in the gateway binary without an npm toolchain." The deviation from the React requirement in §27.4 is outside this §27.5 audit's scope, but the file frames the §27.5 protocol usage as implemented — which the F1–F3 evidence contradicts. Surfaced as Info so a follow-up edit can reword the comment after the WebSocket transport lands.
+
+**Resolution:** Verify-closed per the finding's own framing ("Surfaced
+as Info so a follow-up edit can reword the comment after the WebSocket
+transport lands"). The comment rewrite is gated on the §27.5 F1–F3
+WebSocket-transport landings and need not double-track here.
 
 ### Items verified clean
 
@@ -39553,11 +39621,17 @@ Evidence: `pkg/gateway/playground/sessionrecord.go:45` defines `CurrentExp` as t
 
 Evidence: `pkg/gateway/playground/metrics.go:34-37` registers the counter, and `metrics.go:98-106` exposes `sessionCreated(runtime string)`. `grep -rn 'sessionCreated\|sessionsCreated' pkg/` finds no caller in the gateway session-creation code path. This is downstream of F1/F2: because the session-create handler does not read the JWT `Origin` claim, it cannot increment the playground-originated counter. The counter, like the duration and idle caps, is dead code at present.
 
-### - [ ] F-27.6.12 — `oidc_session_ended` revocation reason has no scheduled enforcement. (Info) [Medium] — OPEN
+### - [x] F-27.6.12 — `oidc_session_ended` revocation reason has no scheduled enforcement. (Info) [Medium] — CLOSED
 
 Spec: line 204 — "Logout (`POST /playground/auth/logout`), `user.invalidated` (§11.4), idle timeout, and admin revocation all drive the same revocation path."
 
 Evidence: `pkg/gateway/playground/sessionrecord.go:63-64` defines `RevokeOIDCSessionEnded = "oidc_session_ended"` as a reason code. `grep -rn 'RevokeOIDCSessionEnded' pkg/` finds no production caller. The spec's coverage list (logout, `user.invalidated`, idle timeout, admin) does not include OIDC-session-ended explicitly — Redis TTL on the session-record key handles passive expiry — so the unused reason code is informational, not a normative gap. It is reported here so the catalogue can either drop the unused code or add an explicit "TTL elapsed" sweep that emits it.
+
+**Resolution:** Verify-closed per the finding's own framing ("the
+unused reason code is informational, not a normative gap"). The
+constant remains in the catalogue for symmetry with the other reason
+codes; passive Redis-TTL expiry covers the OIDC-session-ended path,
+matching §27.6 line 204's enumerated triggers.
 
 ### Summary of severity
 
