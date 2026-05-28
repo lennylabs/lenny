@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
@@ -1267,7 +1268,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			// SpawnChild is one of the six §11.5 critical operations and
 			// the MCP path is its only client surface. spec: F-11.5.1,
 			// F-11.5.6.
-			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			var in struct {
 				ParentSessionID string `json:"parentSessionId"`
@@ -1275,6 +1276,11 @@ func Register(srv *mcp.Server, deps Deps) {
 				PoolRef         string `json:"poolRef"`
 				MaxDepth        int    `json:"maxDepth"`
 				TaskInput       string `json:"taskInput"`
+				// ApprovalMode is the §8.4 lease enum forwarded
+				// verbatim onto the delegation Request; the service
+				// validates the closed enum and short-circuits on
+				// "deny" before any side effects. F-8.4.1, F-8.4.2.
+				ApprovalMode string `json:"approvalMode,omitempty"`
 				// IdempotencyKey is read by the MCP idempotency hook
 				// before the handler runs and is intentionally accepted
 				// + ignored here. spec: §11.5 line 277; F-11.5.1,
@@ -1283,6 +1289,16 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			}
+			// §8.4: validate the closed enum at the MCP boundary so a
+			// malformed value (typo, casing, post-v1 mode) is rejected
+			// with INVALID_LEASE_FIELD before the parent lookup runs.
+			// The service repeats the check as defence-in-depth.
+			// F-8.4.2.
+			if err := lease.ValidateApprovalMode(lease.ApprovalMode(in.ApprovalMode)); err != nil {
+				return mcp.ToolResult{}, mcp.NewToolError("INVALID_LEASE_FIELD",
+					err.Error(),
+					map[string]any{"field": "approvalMode", "value": in.ApprovalMode})
 			}
 			// spec: §8.2 line 50 — `lenny/delegate_task` rejects
 			// `type: mcp` targets with `target_not_an_agent`. The check
@@ -1394,6 +1410,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				PoolRef:          in.PoolRef,
 				MaxDepth:         in.MaxDepth,
 				IsolationProfile: resolvePoolIsolation(ctx, deps, in.PoolRef),
+				ApprovalMode:     lease.ApprovalMode(in.ApprovalMode),
 			})
 			if err != nil {
 				// §10.6 / §8.3: a SEC-001 isolation-monotonicity failure
@@ -1411,6 +1428,15 @@ func Register(srv *mcp.Server, deps Deps) {
 						// matched_policy_rule is emitted as the empty
 						// string until F-8.5.7 lands the policy-scoped
 						// filtering and can attribute the matching rule.
+						// §8.4 / F-8.4.3: the declared approvalMode rides
+						// the rejection audit so the post-incident replay
+						// can distinguish whether the violation occurred
+						// under a policy or v1 `approval` (aliased)
+						// authorisation.
+						declaredApproval := in.ApprovalMode
+						if declaredApproval == "" {
+							declaredApproval = string(lease.ApprovalModePolicy)
+						}
 						deps.Audit.EmitDelegationEvent(ctx, "delegation.isolation_violation", map[string]any{
 							"parentSessionId":     in.ParentSessionID,
 							"runtimeRef":          in.RuntimeRef,
@@ -1419,6 +1445,7 @@ func Register(srv *mcp.Server, deps Deps) {
 							"target_isolation":    string(isoErr.ChildProfile),
 							"matched_policy_rule": "",
 							"cross_environment":   viaCrossEnv,
+							"approval_mode":       declaredApproval,
 						})
 					}
 					// spec: §15.2.1 — return *mcp.ToolError so the REST and
@@ -1439,6 +1466,28 @@ func Register(srv *mcp.Server, deps Deps) {
 				if errors.Is(err, delegation.ErrParentNoUser) {
 					return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_PARENT_NO_USER",
 						fmt.Sprintf("DELEGATION_PARENT_NO_USER: %s", err.Error()), nil)
+				}
+				// §8.4 line 521: an `approvalMode: "deny"` lease is
+				// the platform-provided mechanism for an operator to opt
+				// a lease out of delegation entirely. spec: §15.2.1 —
+				// surface the canonical lenny code via *mcp.ToolError
+				// so REST and MCP envelopes share the same (category,
+				// retryable) pair. F-8.4.1.
+				if errors.Is(err, delegation.ErrDelegationDenied) {
+					return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_DENIED",
+						err.Error(),
+						map[string]any{"approvalMode": in.ApprovalMode})
+				}
+				// §8.4: a structurally invalid approvalMode survives the
+				// MCP-layer validator only if the service is invoked
+				// from another code path. Map the typed error so the
+				// MCP envelope is the canonical INVALID_LEASE_FIELD.
+				// F-8.4.2.
+				var iameErr *lease.InvalidApprovalModeError
+				if errors.As(err, &iameErr) {
+					return mcp.ToolResult{}, mcp.NewToolError("INVALID_LEASE_FIELD",
+						err.Error(),
+						map[string]any{"field": "approvalMode", "value": iameErr.Value})
 				}
 				// spec: §8.2 line 50 — the service-layer defence-in-depth
 				// type gate that mirrors the §10.6 shim. Surface the

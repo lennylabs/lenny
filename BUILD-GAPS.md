@@ -8438,7 +8438,7 @@ Evidence collected from the implementation directories the audit was asked to co
 
 ### Findings
 
-### - [ ] F-8.4.1 — `approvalMode` field is not modelled, parsed, or enforced anywhere in v1 [High] — OPEN
+### - [x] F-8.4.1 — `approvalMode` field is not modelled, parsed, or enforced anywhere in v1 [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-8.4.2, F-8.4.3 — All three concern approvalMode in §8.4 but describe distinct gaps: missing modeling/enforcement, missing ingest enum validation, and missing audit emission.
 
@@ -8471,9 +8471,11 @@ Evidence collected from the implementation directories the audit was asked to co
 - At delegation evaluation, branch on the mode: `policy` and `approval` (per the v1 aliasing rule) take today's auto-approval path; `deny` short-circuits with a `DELEGATION_DENIED` (or equivalent §15.1 catalog) error before pod allocation and before the PreDelegation interceptor.
 - Audit emission should record the effective `approvalMode` on the existing delegation audit event so operators can confirm that a v1 `approval` value is being treated as `policy`.
 
+**Resolution:** Added `ApprovalMode` type + `ApprovalModePolicy`/`ApprovalModeApproval`/`ApprovalModeDeny` constants + `ValidateApprovalMode` + `EffectiveApprovalMode` (alias `approval → policy`) in `pkg/delegation/lease/lease.go`. `delegation.Request.ApprovalMode` field threads through `Service.Delegate`, which validates the closed enum at the boundary and short-circuits `deny` with new `ErrDelegationDenied` before parent lookup. `lenny/delegate_task` MCP handler exposes the field on the input schema (enum-constrained to `policy`/`approval`/`deny`), maps `ErrDelegationDenied → DELEGATION_DENIED`, and maps `*lease.InvalidApprovalModeError → INVALID_LEASE_FIELD`.
+
 ---
 
-### - [ ] F-8.4.2 — No closed-enum validation at admin/API ingest for `approvalMode` [Medium] — OPEN
+### - [x] F-8.4.2 — No closed-enum validation at admin/API ingest for `approvalMode` [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-8.4.1, F-8.4.3 — All three concern approvalMode in §8.4 but describe distinct gaps: missing modeling/enforcement, missing ingest enum validation, and missing audit emission.
 
@@ -8488,9 +8490,11 @@ Evidence collected from the implementation directories the audit was asked to co
 
 **Why Medium.** The validator omission is the lighter half of 8.4-001 (acceptance + alias to `policy` without enforcement of `deny`). Even before `deny` is wired, a closed-enum validator would let operators discover authoring mistakes immediately rather than at the next security review.
 
+**Resolution:** Closed alongside F-8.4.1. `ValidateApprovalMode` (in `pkg/delegation/lease`) is invoked at both the `lenny/delegate_task` MCP boundary (mapping a malformed value to `INVALID_LEASE_FIELD` with `details.field=approvalMode`, `details.value=<input>`) and at the `delegation.Service.Delegate` boundary as defence-in-depth. `Validate*` accepts only `""` / `"policy"` / `"approval"` / `"deny"` and returns `*lease.InvalidApprovalModeError` on any other input. The §8.5 input schema's `enum` keyword also documents the accepted values.
+
 ---
 
-### - [ ] F-8.4.3 — Audit emissions for delegation do not record the (would-be) `approvalMode` [Medium] — OPEN
+### - [x] F-8.4.3 — Audit emissions for delegation do not record the (would-be) `approvalMode` [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-8.4.1, F-8.4.2 — All three concern approvalMode in §8.4 but describe distinct gaps: missing modeling/enforcement, missing ingest enum validation, and missing audit emission.
 
@@ -8505,6 +8509,8 @@ Evidence collected from the implementation directories the audit was asked to co
 **Behavioural consequence.** Even if 8.4-001 is fixed and `deny` begins rejecting deliveries, operators auditing the delegation chain cannot determine, after the fact, whether a given child session was approved by `policy` mode or by the v1-aliased `approval` mode. When the post-v1 `approval` mode actually ships, distinguishing the two in the audit log will be the only way to confirm a back-fill or staged rollout.
 
 **Why Medium.** Audit lineage matters even before the dedicated `approval` API exists, because the spec's v1 contract is that `approval` is *accepted as input* and *recorded as having been input* even while the gateway processes it identically to `policy`. Without the audit field, the v1 aliasing is invisible.
+
+**Resolution:** Closed alongside F-8.4.1. `delegation.spawned` audit detail now carries `approval_mode` (the declared value, with the empty default reported as `"policy"`) and `effective_approval_mode` (the post-alias value the gateway evaluated — `approval → policy`, `deny → deny`). `delegation.isolation_violation` detail also carries `approval_mode` so the post-incident replay can reconstruct the authorisation. `delegation.self_recursion_allowed` / `delegation.cycle_warning` continue to use the cycle-only attribution set introduced under F-8.5.9; the spawned event covers the per-hop approval lineage.
 
 ---
 

@@ -143,3 +143,54 @@ func TestCheckDepthRejectsZeroMax(t *testing.T) {
 		t.Errorf("zero maxDepth must error as unresolved, got %v", err)
 	}
 }
+
+// spec: §8.4 lines 515-521 — the §8.4 closed enum admits "policy",
+// "approval", "deny", and the empty string (which the gateway aliases
+// to ApprovalModePolicy at evaluation time per the v1 default).
+// F-8.4.1, F-8.4.2.
+func TestValidateApprovalModeAcceptsClosedEnum_spec_8_4(t *testing.T) {
+	cases := []ApprovalMode{"", ApprovalModePolicy, ApprovalModeApproval, ApprovalModeDeny}
+	for _, m := range cases {
+		if err := ValidateApprovalMode(m); err != nil {
+			t.Errorf("ValidateApprovalMode(%q) = %v, want nil", m, err)
+		}
+	}
+}
+
+// spec: §8.4 — the closed-enum validator MUST reject any value outside
+// the three documented modes so an operator authoring a typo
+// (approvalMode: "Approval", "polic", "ALLOW") is told immediately
+// rather than silently falling through to the default. F-8.4.2.
+func TestValidateApprovalModeRejectsUnknownValue_spec_8_4(t *testing.T) {
+	cases := []ApprovalMode{"Approval", "polic", "ALLOW", "auto", "Policy"}
+	for _, m := range cases {
+		err := ValidateApprovalMode(m)
+		if err == nil {
+			t.Errorf("ValidateApprovalMode(%q) = nil, want InvalidApprovalModeError", m)
+			continue
+		}
+		var ime *InvalidApprovalModeError
+		if !errors.As(err, &ime) {
+			t.Errorf("ValidateApprovalMode(%q) returned %T, want *InvalidApprovalModeError", m, err)
+		}
+	}
+}
+
+// spec: §8.4 line 520 — `approval` is accepted at registration time
+// but the gateway treats it identically to `policy` mode in v1.
+// EffectiveApprovalMode encodes the alias so the §8.5 service can
+// share the policy auto-approval path for both inputs. F-8.4.1.
+func TestEffectiveApprovalModeAliasesApprovalToPolicy_spec_8_4(t *testing.T) {
+	if got := EffectiveApprovalMode(ApprovalModeApproval); got != ApprovalModePolicy {
+		t.Errorf("EffectiveApprovalMode(approval) = %q, want policy", got)
+	}
+	if got := EffectiveApprovalMode(""); got != ApprovalModePolicy {
+		t.Errorf("EffectiveApprovalMode(\"\") = %q, want policy (default)", got)
+	}
+	if got := EffectiveApprovalMode(ApprovalModePolicy); got != ApprovalModePolicy {
+		t.Errorf("EffectiveApprovalMode(policy) = %q, want policy", got)
+	}
+	if got := EffectiveApprovalMode(ApprovalModeDeny); got != ApprovalModeDeny {
+		t.Errorf("EffectiveApprovalMode(deny) = %q, want deny (no alias)", got)
+	}
+}

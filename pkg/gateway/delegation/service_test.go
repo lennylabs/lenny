@@ -1393,3 +1393,160 @@ func TestDelegateNoCycleAuditWithoutSelfRecursion_spec_F_8_5_9(t *testing.T) {
 		}
 	}
 }
+
+// TestDelegateRejectsDenyApprovalMode_spec_8_4_521 verifies §8.4 line
+// 521: an `approvalMode: "deny"` lease short-circuits the delegation
+// path before pod allocation and before the §4 PreDelegation
+// interceptor. The parent lookup, child token mint, lineage walk, and
+// store INSERT MUST NOT run; the service returns ErrDelegationDenied.
+// F-8.4.1.
+func TestDelegateRejectsDenyApprovalMode_spec_8_4_521(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	aud := &recordingAuditor{}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:  func() string { return "sess_child" },
+		Auditor: aud,
+		Clock:   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+		ApprovalMode:     lease.ApprovalModeDeny,
+	})
+	if !errors.Is(err, delegation.ErrDelegationDenied) {
+		t.Fatalf("Delegate(approvalMode=deny) = %v, want ErrDelegationDenied", err)
+	}
+	// §8.4: a denied delegation must not commit a child row.
+	if _, err := store.Get(context.Background(), "acme", "sess_child"); err == nil {
+		t.Errorf("ErrDelegationDenied must not commit a child row; sess_child exists")
+	}
+	// §8.4: no `delegation.spawned` audit row must fire for a denied
+	// delegation; the spawn event is reserved for committed children.
+	for _, e := range aud.events {
+		if e.eventType == "delegation.spawned" {
+			t.Errorf("denied delegation must not emit delegation.spawned: %+v", e.detail)
+		}
+	}
+}
+
+// TestDelegateAcceptsApprovalAliasedToPolicy_spec_8_4_520 verifies
+// §8.4 line 520: `approvalMode: "approval"` is accepted at lease
+// evaluation time and the gateway treats it identically to `policy`
+// mode in v1. The child session MUST be created and the audit record
+// MUST preserve `approval` so the v1 alias is observable. F-8.4.1,
+// F-8.4.3.
+func TestDelegateAcceptsApprovalAliasedToPolicy_spec_8_4_520(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	aud := &recordingAuditor{}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:  func() string { return "sess_child" },
+		Auditor: aud,
+		Clock:   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+	res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+		ApprovalMode:     lease.ApprovalModeApproval,
+	})
+	if err != nil {
+		t.Fatalf("Delegate(approvalMode=approval): %v", err)
+	}
+	if res.Child.ID != "sess_child" {
+		t.Errorf("child id = %q, want sess_child", res.Child.ID)
+	}
+	var spawned *recordedEvent
+	for i := range aud.events {
+		if aud.events[i].eventType == "delegation.spawned" {
+			spawned = &aud.events[i]
+			break
+		}
+	}
+	if spawned == nil {
+		t.Fatalf("delegation.spawned not emitted: %+v", aud.events)
+	}
+	// F-8.4.3: the declared mode survives onto the audit row so the
+	// v1 `approval → policy` alias is auditable.
+	if got := spawned.detail["approval_mode"]; got != string(lease.ApprovalModeApproval) {
+		t.Errorf("audit approval_mode = %v, want %q", got, lease.ApprovalModeApproval)
+	}
+	if got := spawned.detail["effective_approval_mode"]; got != string(lease.ApprovalModePolicy) {
+		t.Errorf("audit effective_approval_mode = %v, want %q", got, lease.ApprovalModePolicy)
+	}
+}
+
+// TestDelegateRejectsUnknownApprovalMode_spec_8_4 verifies §8.4: a
+// value outside the closed enum is rejected at the service boundary
+// with *lease.InvalidApprovalModeError, before any side effects (no
+// parent lookup, no store write, no audit emission). F-8.4.2.
+func TestDelegateRejectsUnknownApprovalMode_spec_8_4(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	aud := &recordingAuditor{}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:  func() string { return "sess_child" },
+		Auditor: aud,
+		Clock:   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+		ApprovalMode:     "ALLOW",
+	})
+	var ime *lease.InvalidApprovalModeError
+	if !errors.As(err, &ime) {
+		t.Fatalf("Delegate(approvalMode=ALLOW) = %v, want *lease.InvalidApprovalModeError", err)
+	}
+	if ime.Value != "ALLOW" {
+		t.Errorf("InvalidApprovalModeError.Value = %q, want ALLOW", ime.Value)
+	}
+	if len(aud.events) != 0 {
+		t.Errorf("invalid approvalMode must not emit audit: %+v", aud.events)
+	}
+}
+
+// TestDelegateSpawnedAuditRecordsDefaultApprovalMode_spec_8_4 verifies
+// §8.4: a delegation that omits approvalMode is recorded with the
+// spec-default ("policy") on the audit row so the audit shape is
+// stable regardless of caller input. F-8.4.3.
+func TestDelegateSpawnedAuditRecordsDefaultApprovalMode_spec_8_4(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	aud := &recordingAuditor{}
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc:  func() string { return "sess_child" },
+		Auditor: aud,
+		Clock:   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+	if _, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}); err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	var spawned *recordedEvent
+	for i := range aud.events {
+		if aud.events[i].eventType == "delegation.spawned" {
+			spawned = &aud.events[i]
+			break
+		}
+	}
+	if spawned == nil {
+		t.Fatalf("delegation.spawned not emitted: %+v", aud.events)
+	}
+	if got := spawned.detail["approval_mode"]; got != string(lease.ApprovalModePolicy) {
+		t.Errorf("audit approval_mode = %v, want %q", got, lease.ApprovalModePolicy)
+	}
+	if got := spawned.detail["effective_approval_mode"]; got != string(lease.ApprovalModePolicy) {
+		t.Errorf("audit effective_approval_mode = %v, want %q", got, lease.ApprovalModePolicy)
+	}
+}

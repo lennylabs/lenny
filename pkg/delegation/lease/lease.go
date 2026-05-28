@@ -234,3 +234,91 @@ type DepthExceededError struct {
 func (e *DepthExceededError) Error() string {
 	return fmt.Sprintf("delegation lease: depth %d + 1 exceeds maxDepth %d", e.Current, e.Max)
 }
+
+// ApprovalMode is the §8.4 closed enum on a delegation lease that
+// governs whether a delegation hop is auto-approved, queued for
+// approval, or unconditionally rejected. The empty string and the
+// three documented values are the only admissible inputs; any other
+// string is a registration-time error.
+//
+// spec: §8.4 lines 515-521.
+// F-8.4.1, F-8.4.2.
+type ApprovalMode string
+
+const (
+	// ApprovalModePolicy auto-approves every delegation that passes
+	// the lease constraints (PreDelegation interceptor, isolation
+	// monotonicity, cycle detection, depth + budget arithmetic).
+	// This is the v1 default and the spec-conformant behaviour when
+	// the field is absent.
+	//
+	// spec: §8.4 line 519.
+	ApprovalModePolicy ApprovalMode = "policy"
+
+	// ApprovalModeApproval is the v1-reserved, post-v1-deferred mode.
+	// It MUST be accepted at registration time so that operators can
+	// author leases with `approval` today; in v1 the gateway aliases
+	// it to ApprovalModePolicy at evaluation time. The audit record
+	// preserves the original mode so a back-fill or staged rollout is
+	// auditable.
+	//
+	// spec: §8.4 line 520.
+	ApprovalModeApproval ApprovalMode = "approval"
+
+	// ApprovalModeDeny short-circuits the delegation path before pod
+	// allocation and before the §4 PreDelegation interceptor chain.
+	// It is the platform-provided mechanism for an operator to opt a
+	// lease out of delegation entirely, distinct from omitting the
+	// delegation tools or setting maxDepth=0.
+	//
+	// spec: §8.4 line 521.
+	ApprovalModeDeny ApprovalMode = "deny"
+)
+
+// ValidateApprovalMode reports whether m is one of the §8.4 closed
+// enum values (or the empty string, which resolves to
+// ApprovalModePolicy at evaluation time). Returns a typed error so
+// the admin ingress and the §8.5 lenny/delegate_task handler can
+// surface INVALID_LEASE_FIELD before any side effects.
+//
+// spec: §8.4. F-8.4.1, F-8.4.2.
+func ValidateApprovalMode(m ApprovalMode) error {
+	switch m {
+	case "", ApprovalModePolicy, ApprovalModeApproval, ApprovalModeDeny:
+		return nil
+	}
+	return &InvalidApprovalModeError{Value: string(m)}
+}
+
+// InvalidApprovalModeError is returned by ValidateApprovalMode when
+// the input is outside the §8.4 closed enum. The gateway maps it to
+// INVALID_LEASE_FIELD at the admin / §8.5 lenny/delegate_task ingress.
+type InvalidApprovalModeError struct {
+	Value string
+}
+
+func (e *InvalidApprovalModeError) Error() string {
+	return fmt.Sprintf("delegation lease: approvalMode %q is not one of %q, %q, %q",
+		e.Value, ApprovalModePolicy, ApprovalModeApproval, ApprovalModeDeny)
+}
+
+// EffectiveApprovalMode applies the v1 aliasing rule: the empty
+// string resolves to ApprovalModePolicy (the spec-conformant default
+// at lease evaluation time), and ApprovalModeApproval aliases to
+// ApprovalModePolicy because the dedicated approval API is post-v1.
+// ApprovalModeDeny is preserved as-is so the caller can short-circuit
+// the delegation path.
+//
+// The original declared mode is reported separately by audit emission
+// so an auditor can tell whether a child session was approved via
+// ApprovalModePolicy or via the v1-aliased ApprovalModeApproval.
+//
+// spec: §8.4 lines 519-521. F-8.4.1, F-8.4.3.
+func EffectiveApprovalMode(declared ApprovalMode) ApprovalMode {
+	switch declared {
+	case ApprovalModeDeny:
+		return ApprovalModeDeny
+	default:
+		return ApprovalModePolicy
+	}
+}

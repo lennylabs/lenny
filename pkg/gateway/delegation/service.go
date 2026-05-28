@@ -66,6 +66,18 @@ type Request struct {
 	// UserID owns the child session. Inherits the parent's when
 	// blank.
 	UserID string
+
+	// ApprovalMode is the §8.4 closed enum on the delegation lease.
+	// The empty string and "policy"/"approval" share the auto-approval
+	// path (with "approval" recorded verbatim on audit per the v1
+	// alias rule); "deny" short-circuits with ErrDelegationDenied
+	// before pod allocation and before the §4 PreDelegation
+	// interceptor chain runs. Any other value is rejected with
+	// *lease.InvalidApprovalModeError so the §8.5 lenny/delegate_task
+	// handler can surface INVALID_LEASE_FIELD.
+	//
+	// spec: §8.4 lines 515-521. F-8.4.1, F-8.4.2, F-8.4.3.
+	ApprovalMode lease.ApprovalMode
 }
 
 // Result is the outcome of a successful Delegate call.
@@ -265,6 +277,14 @@ var (
 	// delegate_task` reject these with `target_not_an_agent` before any
 	// child session is admitted.
 	ErrTargetNotAgent = errors.New("delegation: target_not_an_agent: target runtime is type:mcp (§8.2)")
+
+	// ErrDelegationDenied — the §8.4 lease declares `approvalMode:
+	// "deny"`, which short-circuits the delegation path before pod
+	// allocation and before the §4 PreDelegation interceptor chain.
+	// The gateway surfaces this as `DELEGATION_DENIED` per §15.1.
+	//
+	// spec: §8.4 line 521. F-8.4.1.
+	ErrDelegationDenied = errors.New("delegation: lease approvalMode=deny rejects this hop (§8.4)")
 )
 
 // IsolationViolationError reports a §8.3 SEC-001 monotonicity
@@ -292,6 +312,21 @@ func (e *IsolationViolationError) Error() string {
 //  4. §8.2.bis depth check against MaxDepth.
 //  5. atomic child-session INSERT with ParentSessionID set.
 func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (Result, error) {
+	// §8.4: validate the closed enum at the service boundary so a
+	// malformed value is rejected with *lease.InvalidApprovalModeError
+	// before any side effects (parent lookup, audit emission, store
+	// writes). The §8.5 lenny/delegate_task handler maps the typed
+	// error to INVALID_LEASE_FIELD. F-8.4.2.
+	if err := lease.ValidateApprovalMode(req.ApprovalMode); err != nil {
+		return Result{}, err
+	}
+	// §8.4 line 521: an `approvalMode: "deny"` lease short-circuits
+	// the delegation path before pod allocation and before the §4
+	// PreDelegation interceptor. The gateway maps ErrDelegationDenied
+	// to DELEGATION_DENIED at the §8.5 handler. F-8.4.1.
+	if req.ApprovalMode == lease.ApprovalModeDeny {
+		return Result{}, ErrDelegationDenied
+	}
 	parent, err := s.store.Get(ctx, tenantID, req.ParentSessionID)
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
@@ -464,15 +499,29 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 	// child row is committed so audit consumers (billing, SIEM, compliance)
 	// observe the same record the store now reflects. The detail carries
 	// the §11.7 lineage attribution tuple. F-8.5.8.
+	//
+	// §8.4 / F-8.4.3: the audit record names both `approval_mode`
+	// (the value declared by the lease, including the v1 `approval`
+	// alias) and `effective_approval_mode` (the value the gateway
+	// actually evaluated) so an auditor can confirm a v1 `approval`
+	// is being treated as `policy`. An empty declared mode is
+	// recorded as `policy` (the spec-default at evaluation time) so
+	// the field is always populated.
+	declaredMode := req.ApprovalMode
+	if declaredMode == "" {
+		declaredMode = lease.ApprovalModePolicy
+	}
 	if s.auditor != nil {
 		s.auditor.EmitDelegationEvent(ctx, "delegation.spawned", map[string]any{
-			"parent_session_id":  parent.ID,
-			"child_session_id":   child.ID,
-			"delegation_depth":   childDepth,
-			"runtime_ref":        child.RuntimeRef,
-			"pool_ref":           child.PoolRef,
-			"isolation_profile":  string(child.IsolationProfile),
-			"is_self_recursive":  decision.IsSelfRecursive,
+			"parent_session_id":       parent.ID,
+			"child_session_id":        child.ID,
+			"delegation_depth":        childDepth,
+			"runtime_ref":             child.RuntimeRef,
+			"pool_ref":                child.PoolRef,
+			"isolation_profile":       string(child.IsolationProfile),
+			"is_self_recursive":       decision.IsSelfRecursive,
+			"approval_mode":           string(declaredMode),
+			"effective_approval_mode": string(lease.EffectiveApprovalMode(req.ApprovalMode)),
 		})
 	}
 	return Result{Child: child, Depth: childDepth}, nil
