@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
@@ -17,15 +18,19 @@ import (
 )
 
 // spec: §11.2.1 / §15.1 GET /v1/metering/events.
+//
+// The canonical §15.1 line 1228 envelope shape is {items, cursor,
+// hasMore}; the metering wire schema honours both `eventType` and
+// per-event fields below as it surfaces §11.2.1 billing events.
 
 type meteringPageJSON struct {
-	Events []struct {
+	Items []struct {
 		SequenceNumber uint64 `json:"sequenceNumber"`
 		EventType      string `json:"eventType"`
 		TenantID       string `json:"tenantId"`
-	} `json:"events"`
-	NextCursor string `json:"nextCursor"`
-	HasMore    bool   `json:"hasMore"`
+	} `json:"items"`
+	Cursor  string `json:"cursor"`
+	HasMore bool   `json:"hasMore"`
 }
 
 // meteringServer builds a session server whose billing ledger holds
@@ -93,10 +98,10 @@ func TestMeteringEventsReturnsLedger(t *testing.T) {
 		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
 	}
 	page := decodeMeteringPage(t, rr)
-	if len(page.Events) != 3 {
-		t.Fatalf("got %d events, want 3", len(page.Events))
+	if len(page.Items) != 3 {
+		t.Fatalf("got %d events, want 3", len(page.Items))
 	}
-	for i, e := range page.Events {
+	for i, e := range page.Items {
 		if e.SequenceNumber != uint64(i+1) {
 			t.Errorf("event %d: seq %d, want %d", i, e.SequenceNumber, i+1)
 		}
@@ -116,9 +121,9 @@ func TestMeteringEventsSinceSequence(t *testing.T) {
 		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
 	}
 	page := decodeMeteringPage(t, rr)
-	if len(page.Events) != 3 || page.Events[0].SequenceNumber != 3 {
+	if len(page.Items) != 3 || page.Items[0].SequenceNumber != 3 {
 		t.Fatalf("since_sequence=2: got %d events starting at %d, want 3 starting at 3",
-			len(page.Events), seqOf(page))
+			len(page.Items), seqOf(page))
 	}
 }
 
@@ -126,22 +131,34 @@ func TestMeteringEventsPaginates(t *testing.T) {
 	srv := meteringServer(t, 5)
 
 	first := decodeMeteringPage(t, meteringRequest(t, srv.Handler(), "?limit=2", pkgauth.RoleBillingViewer))
-	if len(first.Events) != 2 || !first.HasMore || first.NextCursor != "2" {
-		t.Fatalf("page 1: events=%d hasMore=%v nextCursor=%q, want 2/true/\"2\"",
-			len(first.Events), first.HasMore, first.NextCursor)
+	if len(first.Items) != 2 || !first.HasMore || first.Cursor == "" {
+		t.Fatalf("page 1: events=%d hasMore=%v cursor=%q, want 2/true/non-empty",
+			len(first.Items), first.HasMore, first.Cursor)
 	}
 
 	second := decodeMeteringPage(t, meteringRequest(t, srv.Handler(),
-		"?since_sequence="+first.NextCursor+"&limit=2", pkgauth.RoleBillingViewer))
-	if len(second.Events) != 2 || !second.HasMore || second.NextCursor != "4" {
-		t.Fatalf("page 2: events=%d hasMore=%v nextCursor=%q, want 2/true/\"4\"",
-			len(second.Events), second.HasMore, second.NextCursor)
+		"?cursor="+first.Cursor+"&limit=2", pkgauth.RoleBillingViewer))
+	if len(second.Items) != 2 || !second.HasMore || second.Cursor == "" {
+		t.Fatalf("page 2: events=%d hasMore=%v cursor=%q, want 2/true/non-empty",
+			len(second.Items), second.HasMore, second.Cursor)
+	}
+	if second.Items[0].SequenceNumber <= first.Items[len(first.Items)-1].SequenceNumber {
+		t.Errorf("page 2 starts at seq %d, want > %d", second.Items[0].SequenceNumber,
+			first.Items[len(first.Items)-1].SequenceNumber)
 	}
 
 	third := decodeMeteringPage(t, meteringRequest(t, srv.Handler(),
-		"?since_sequence="+second.NextCursor+"&limit=2", pkgauth.RoleBillingViewer))
-	if len(third.Events) != 1 || third.HasMore {
-		t.Fatalf("page 3: events=%d hasMore=%v, want 1/false", len(third.Events), third.HasMore)
+		"?cursor="+second.Cursor+"&limit=2", pkgauth.RoleBillingViewer))
+	if len(third.Items) != 1 || third.HasMore {
+		t.Fatalf("page 3: events=%d hasMore=%v, want 1/false", len(third.Items), third.HasMore)
+	}
+
+	// The legacy `?since_sequence=` parameter still works for v0 clients.
+	legacy := decodeMeteringPage(t, meteringRequest(t, srv.Handler(),
+		"?since_sequence=2&limit=2", pkgauth.RoleBillingViewer))
+	if len(legacy.Items) != 2 || legacy.Items[0].SequenceNumber != 3 {
+		t.Errorf("legacy since_sequence path broke: events=%d, first seq=%d",
+			len(legacy.Items), seqOf(legacy))
 	}
 }
 
@@ -153,6 +170,38 @@ func TestMeteringEventsRejectsBadSinceSequence(t *testing.T) {
 	}
 }
 
+// TestMeteringEventsClampsLimitToSpecMax_spec_15_1_1236 confirms the
+// §15.1 line 1236 [1, 200] limit clamp applies to the metering
+// endpoint. F-15.1.20.
+func TestMeteringEventsClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
+	srv := meteringServer(t, 250)
+	rr := meteringRequest(t, srv.Handler(), "?limit=500", pkgauth.RoleBillingViewer)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	page := decodeMeteringPage(t, rr)
+	if len(page.Items) != 200 {
+		t.Errorf("limit=500: got %d items, want 200 (spec §15.1 line 1236 clamp)", len(page.Items))
+	}
+	if !page.HasMore {
+		t.Errorf("250-event ledger with clamped limit=200 should report hasMore=true")
+	}
+}
+
+// TestMeteringEventsRejectsBadSort_spec_15_1_1236 confirms the §15.1
+// line 1236 sort-validation rule rejects unknown fields with
+// VALIDATION_ERROR. F-15.1.20.
+func TestMeteringEventsRejectsBadSort_spec_15_1_1236(t *testing.T) {
+	srv := meteringServer(t, 3)
+	rr := meteringRequest(t, srv.Handler(), "?sort=nope:asc", pkgauth.RoleBillingViewer)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("unknown sort: status %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "invalid_sort_field") {
+		t.Errorf("unknown sort envelope: %s", rr.Body.String())
+	}
+}
+
 func TestMeteringEventsWithoutBillingStore(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
 	rr := meteringRequest(t, srv.Handler(), "", pkgauth.RoleBillingViewer)
@@ -160,16 +209,16 @@ func TestMeteringEventsWithoutBillingStore(t *testing.T) {
 		t.Fatalf("no billing store: status %d, want 200", rr.Code)
 	}
 	page := decodeMeteringPage(t, rr)
-	if len(page.Events) != 0 {
-		t.Errorf("no billing store: got %d events, want 0", len(page.Events))
+	if len(page.Items) != 0 {
+		t.Errorf("no billing store: got %d events, want 0", len(page.Items))
 	}
 }
 
 // seqOf returns the first event's sequence number, or 0 when the page
 // is empty.
 func seqOf(page meteringPageJSON) uint64 {
-	if len(page.Events) == 0 {
+	if len(page.Items) == 0 {
 		return 0
 	}
-	return page.Events[0].SequenceNumber
+	return page.Items[0].SequenceNumber
 }

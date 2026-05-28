@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -155,18 +156,32 @@ func TestMessagesRecordsTranscript(t *testing.T) {
 	if tr.Code != http.StatusOK {
 		t.Fatalf("transcript: %d, body=%s", tr.Code, tr.Body.String())
 	}
-	var resp sessionserver.TranscriptResponse
+	var resp transcriptEnvelopeJSON
 	_ = json.Unmarshal(tr.Body.Bytes(), &resp)
 	// One user entry + one assistant entry.
-	if len(resp.Entries) != 2 {
-		t.Fatalf("transcript entries: got %d, want 2 (%+v)", len(resp.Entries), resp.Entries)
+	if len(resp.Items) != 2 {
+		t.Fatalf("transcript items: got %d, want 2 (%+v)", len(resp.Items), resp.Items)
 	}
-	if resp.Entries[0].Role != "user" || !strings.Contains(resp.Entries[0].Content, "hello") {
-		t.Errorf("entry[0]: %+v", resp.Entries[0])
+	if resp.Items[0].Role != "user" || !strings.Contains(resp.Items[0].Content, "hello") {
+		t.Errorf("item[0]: %+v", resp.Items[0])
 	}
-	if resp.Entries[1].Role != "assistant" {
-		t.Errorf("entry[1] role: %q", resp.Entries[1].Role)
+	if resp.Items[1].Role != "assistant" {
+		t.Errorf("item[1] role: %q", resp.Items[1].Role)
 	}
+	if resp.HasMore || resp.Cursor != "" {
+		t.Errorf("two-entry transcript: hasMore=%v cursor=%q, want false/empty",
+			resp.HasMore, resp.Cursor)
+	}
+}
+
+// transcriptEnvelopeJSON is the §15.1 canonical list envelope per spec
+// lines 1228-1253. Used by tests that assert the transcript handler
+// emits `{items, cursor, hasMore}` and not the legacy
+// `{sessionId, entries}` shape. spec: §15.1 line 1228.
+type transcriptEnvelopeJSON struct {
+	Items   []transcriptstore.Entry `json:"items"`
+	Cursor  string                  `json:"cursor"`
+	HasMore bool                    `json:"hasMore"`
 }
 
 func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
@@ -289,10 +304,13 @@ func TestTranscriptEmptyForFreshSession(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("fresh session transcript: %d", rr.Code)
 	}
-	var resp sessionserver.TranscriptResponse
+	var resp transcriptEnvelopeJSON
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if len(resp.Entries) != 0 {
-		t.Errorf("fresh session should have empty transcript: %+v", resp.Entries)
+	if len(resp.Items) != 0 {
+		t.Errorf("fresh session should have empty transcript: %+v", resp.Items)
+	}
+	if resp.HasMore {
+		t.Errorf("empty transcript hasMore=true (want false)")
 	}
 }
 
@@ -468,5 +486,152 @@ func TestMessagesSlotIDFieldRoundTripsThroughBody(t *testing.T) {
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("slotId accepted: got %d, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestTranscriptEmitsCanonicalEnvelope_spec_15_1_1228 pins the
+// §15.1 line 1228 canonical list envelope `{items, cursor, hasMore}`
+// on the transcript endpoint. F-15.1.19.
+func TestTranscriptEmitsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
+	srv, store := newMessagesServer(t)
+	seedRunningSession(t, store, "sess_env")
+	_ = sendMessageRequest(t, srv.Handler(), "sess_env", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hi"}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_env/transcript", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("transcript: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// The pre-rewrite envelope was `{sessionId, entries}`; assert both
+	// of those keys are gone so a future regression to the legacy
+	// shape trips the test.
+	for _, bad := range []string{`"sessionId"`, `"entries"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("legacy envelope key present in body: %q\n%s", bad, body)
+		}
+	}
+	for _, want := range []string{`"items"`, `"hasMore"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("canonical envelope key missing: %q\n%s", want, body)
+		}
+	}
+}
+
+// TestTranscriptPaginatesWithCanonicalCursor_spec_15_1_1228 pages
+// through a multi-entry transcript using the opaque cursor minted
+// by the gateway and confirms the `hasMore` flag flips on the final
+// page. F-15.1.19 + F-15.1.20.
+func TestTranscriptPaginatesWithCanonicalCursor_spec_15_1_1228(t *testing.T) {
+	srv, store := newMessagesServer(t)
+	seedRunningSession(t, store, "sess_p")
+	// Three user→assistant turns ⇒ 6 transcript entries.
+	for i := 0; i < 3; i++ {
+		_ = sendMessageRequest(t, srv.Handler(), "sess_p", sessionserver.MessageRequest{
+			Messages: []sessionserver.MessagePayload{{Role: "user", Content: "ping"}},
+		})
+	}
+
+	get := func(query string) transcriptEnvelopeJSON {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet,
+			"/v1/sessions/sess_p/transcript"+query, nil)
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("page %q: status %d, body=%s", query, rr.Code, rr.Body.String())
+		}
+		var env transcriptEnvelopeJSON
+		if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+			t.Fatalf("decode page %q: %v", query, err)
+		}
+		return env
+	}
+
+	first := get("?limit=4")
+	if len(first.Items) != 4 || !first.HasMore || first.Cursor == "" {
+		t.Fatalf("first page: items=%d hasMore=%v cursor=%q, want 4/true/non-empty",
+			len(first.Items), first.HasMore, first.Cursor)
+	}
+	second := get("?limit=4&cursor=" + first.Cursor)
+	if len(second.Items) != 2 || second.HasMore {
+		t.Fatalf("second page: items=%d hasMore=%v, want 2/false",
+			len(second.Items), second.HasMore)
+	}
+	if second.Items[0].Seq <= first.Items[len(first.Items)-1].Seq {
+		t.Errorf("second page starts at seq %d, want > %d (first page last)",
+			second.Items[0].Seq, first.Items[len(first.Items)-1].Seq)
+	}
+}
+
+// TestTranscriptRejectsOversizedLimit_spec_15_1_1236 confirms the
+// §15.1 line 1236 clamp [1, 200] is enforced — requests for limit=500
+// see 200 items at most.
+func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
+	srv, store := newMessagesServer(t)
+	seedRunningSession(t, store, "sess_clamp")
+	// 250 message turns ⇒ 500 transcript entries, more than the §15.1
+	// hard maximum, so a `?limit=500` request must clamp to 200.
+	for i := 0; i < 250; i++ {
+		_ = sendMessageRequest(t, srv.Handler(), "sess_clamp", sessionserver.MessageRequest{
+			Messages: []sessionserver.MessagePayload{{Role: "user", Content: "x"}},
+		})
+	}
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/sessions/sess_clamp/transcript?limit=500", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	var env transcriptEnvelopeJSON
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Items) != 200 {
+		t.Errorf("limit=500: items=%d, want 200 (§15.1 line 1236 clamp)", len(env.Items))
+	}
+	if !env.HasMore {
+		t.Errorf("limit=500 against 500-entry transcript should report hasMore=true")
+	}
+}
+
+// TestTranscriptRejectsExpiredCursor_spec_15_1_1253 confirms the
+// §15.1 line 1253 "cursor_expired" rule fires after the 24-hour TTL.
+// F-15.1.20.
+func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
+	// Build a server with a clock we can advance past the 24-hour TTL.
+	store := memstore.New()
+	clock := func() func() time.Time {
+		now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+		return func() time.Time { return now }
+	}()
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Clock:       clock,
+	})
+	seedRunningSession(t, store, "sess_expired")
+	_ = sendMessageRequest(t, srv.Handler(), "sess_expired", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "a"}},
+	})
+	// Mint a cursor at t0, then attempt to use it at t0+25h.
+	enc := pagination.MintCursor(
+		pagination.Sort{Field: "seq", Direction: "asc"},
+		"1", "1", clock().Add(-25*time.Hour))
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/sessions/sess_expired/transcript?cursor="+enc, nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expired cursor: status %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "cursor_expired") {
+		t.Errorf("expired cursor envelope missing cursor_expired rule: %s", rr.Body.String())
 	}
 }

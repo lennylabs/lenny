@@ -12,12 +12,21 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
+
+// paginationMint is a one-liner around pagination.MintCursor so test
+// callers can stay typo-free without importing the package directly in
+// every helper.
+func paginationMint(field, direction, key, tiebreak string, issued time.Time) string {
+	return pagination.MintCursor(pagination.Sort{Field: field, Direction: direction},
+		key, tiebreak, issued)
+}
 
 // spec: §15.1 GET /v1/sessions/{id}/events SSE stream.
 
@@ -348,5 +357,112 @@ func TestEventsStreamOmitsGapMarkersOnFreshConnect_spec_7_2(t *testing.T) {
 				t.Errorf("fresh connect emitted gap marker: %q", line)
 			}
 		}
+	}
+}
+
+// TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228 confirms
+// that `Accept: application/json` against /v1/sessions/{id}/events
+// returns the §15.1 line 1228 canonical envelope rather than the SSE
+// stream. F-15.1.23.
+func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(16)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_json", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	for i := 0; i < 5; i++ {
+		bus.PublishForTenant("acme", "sess_json", "response", `{"text":"x"}`, now)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_json/events", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Accept", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type %q, want application/json", ct)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `"items"`) || !strings.Contains(body, `"hasMore"`) {
+		t.Errorf("body missing canonical envelope keys: %s", body)
+	}
+	if strings.Contains(body, "event:") {
+		t.Errorf("body looks like SSE: %s", body)
+	}
+}
+
+// TestEventsJSONListPaginates_spec_15_1_1253 verifies cursor-based
+// pagination on the JSON list view including the canonical `cursor`
+// pivot. F-15.1.23 + F-15.1.20.
+func TestEventsJSONListPaginates_spec_15_1_1253(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(16)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_pag", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	for i := 0; i < 7; i++ {
+		bus.PublishForTenant("acme", "sess_pag", "response", `{}`, now)
+	}
+
+	get := func(query string) (int, string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_pag/events"+query, nil)
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		req.Header.Set("Accept", "application/json")
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		return rr.Code, rr.Body.String()
+	}
+
+	code, body := get("?limit=3")
+	if code != http.StatusOK {
+		t.Fatalf("page 1: %d %s", code, body)
+	}
+	if !strings.Contains(body, `"hasMore":true`) {
+		t.Errorf("page 1 hasMore: %s", body)
+	}
+	if !strings.Contains(body, `"cursor"`) {
+		t.Errorf("page 1 cursor missing: %s", body)
+	}
+}
+
+// TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253 confirms the
+// shared §15.1 line 1253 24h cursor TTL applies on the JSON list path.
+func TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
+	store := memstore.New()
+	bus := sessionevents.NewBus(8)
+	fixed := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	srv := sessionserver.New(store, sessionserver.Options{
+		Events: bus,
+		Clock:  func() time.Time { return fixed },
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_exp", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: fixed, UpdatedAt: fixed,
+	})
+	bus.PublishForTenant("acme", "sess_exp", "response", `{}`, fixed)
+
+	expired := paginationMint("seq", "asc", "1", "1", fixed.Add(-25*time.Hour))
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/sessions/sess_exp/events?cursor="+expired, nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Accept", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expired cursor: %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "cursor_expired") {
+		t.Errorf("expired cursor: missing cursor_expired rule: %s", rr.Body.String())
 	}
 }

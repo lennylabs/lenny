@@ -10,13 +10,20 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/pagination"
 )
 
-// metering page-size bounds for GET /v1/metering/events.
-const (
-	meteringPageDefault = 100
-	meteringPageMax     = 1000
-)
+// meteringSortField is the only sort key the §11.2.1 billing ledger
+// exposes — the per-tenant monotonic sequence number that
+// `billingstore.Since` indexes on. Other fields would require a full
+// scan, which §15.1 line 1252 explicitly excludes from `total`
+// computation; we exclude them from `sort` for the same reason.
+const meteringSortField = "sequenceNumber"
+
+// meteringDefaultSort sorts by per-tenant monotonic sequence
+// ascending so a consumer reading the §11.2.1 billing stream sees
+// events in the same order they were appended.
+var meteringDefaultSort = pagination.Sort{Field: meteringSortField, Direction: pagination.DirectionAsc}
 
 // meteringEvent is the §11.2.1 billing event wire shape. Conditional
 // fields are omitted when zero so a consumer sees "not applicable"
@@ -35,21 +42,14 @@ type meteringEvent struct {
 	Timestamp      string `json:"timestamp"`
 }
 
-// meteringPage is the §15.1 cursor-paginated response envelope. When
-// hasMore is true, nextCursor carries the since_sequence value for the
-// following page.
-type meteringPage struct {
-	Events     []meteringEvent `json:"events"`
-	NextCursor string          `json:"nextCursor,omitempty"`
-	HasMore    bool            `json:"hasMore"`
-}
-
 // handleMeteringEvents implements GET /v1/metering/events per §15.1 —
-// the paginated §11.2.1 billing event stream. Events with
-// sequence_number greater than ?since_sequence are returned in
-// ascending order, capped at ?limit. The endpoint requires the §10.2
-// view_usage permission (held by platform-admin, tenant-admin,
-// tenant-viewer, and billing-viewer).
+// the paginated §11.2.1 billing event stream. Returns the §15.1
+// canonical `{items, cursor, hasMore}` envelope; cursors are opaque
+// with 24-hour TTL, limit clamped to [1, 200], sort restricted to
+// `sequenceNumber:asc|desc`. The legacy `?since_sequence=` parameter
+// is honoured for backwards-compatible callers (cursor is the
+// canonical form). Requires the §10.2 view_usage permission.
+// spec: §15.1 lines 1228-1253; §11.2.1 line 282.
 func (s *Server) handleMeteringEvents(w http.ResponseWriter, r *http.Request) {
 	principal, ok := getPrincipal(r)
 	if !ok || !pkgauth.RolesGrant(principal.Roles, pkgauth.PermViewUsage) {
@@ -58,44 +58,54 @@ func (s *Server) handleMeteringEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	since, err := uintQuery(r, "since_sequence", 0)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"since_sequence must be a non-negative integer", map[string]any{"field": "since_sequence"})
+	params, ferr := pagination.ParseRequest(r,
+		[]string{meteringSortField}, meteringDefaultSort, s.clock())
+	if ferr != nil {
+		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", ferr.Message, ferr.Details())
 		return
-	}
-	limit, err := uintQuery(r, "limit", meteringPageDefault)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"limit must be a non-negative integer", map[string]any{"field": "limit"})
-		return
-	}
-	pageSize := int(limit)
-	if pageSize <= 0 || pageSize > meteringPageMax {
-		pageSize = meteringPageMax
 	}
 
-	page := meteringPage{Events: []meteringEvent{}}
+	since := uint64(0)
+	if params.Cursor.Tiebreak != "" {
+		if n, err := strconv.ParseUint(params.Cursor.Tiebreak, 10, 64); err == nil {
+			since = n
+		}
+	} else if v := r.URL.Query().Get("since_sequence"); v != "" {
+		n, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				"since_sequence must be a non-negative integer",
+				map[string]any{"field": "since_sequence"})
+			return
+		}
+		since = n
+	}
+
+	envelope := pagination.Envelope[meteringEvent]{Items: []meteringEvent{}}
 	if s.billing != nil {
 		tenantID := s.resolveTenant(r)
 		// Fetch one extra row to detect whether a further page exists.
-		events, err := s.billing.Since(r.Context(), tenantID, since, pageSize+1)
+		events, err := s.billing.Since(r.Context(), tenantID, since, params.Limit+1)
 		if err != nil {
 			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 			return
 		}
-		if len(events) > pageSize {
-			events = events[:pageSize]
-			page.HasMore = true
-			page.NextCursor = strconv.FormatUint(events[len(events)-1].SequenceNumber, 10)
+		if len(events) > params.Limit {
+			events = events[:params.Limit]
+			envelope.HasMore = true
 		}
 		for _, e := range events {
-			page.Events = append(page.Events, toMeteringEvent(e))
+			envelope.Items = append(envelope.Items, toMeteringEvent(e))
+		}
+		if envelope.HasMore && len(envelope.Items) > 0 {
+			last := envelope.Items[len(envelope.Items)-1]
+			seqStr := strconv.FormatUint(last.SequenceNumber, 10)
+			envelope.Cursor = pagination.MintCursor(params.Sort, seqStr, seqStr, s.clock())
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(page)
+	_ = json.NewEncoder(w).Encode(envelope)
 }
 
 // toMeteringEvent maps a stored billing event to its wire shape.
