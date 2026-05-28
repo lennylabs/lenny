@@ -83,10 +83,15 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	retry_policy, last_checkpoint_workspace_bytes,
 	last_seq,
 	workspace_root,
-	tracing_context, cascade_on_failure`
+	tracing_context, cascade_on_failure,
+	COALESCE(root_session_id::text, '')`
 
-// Create persists a fresh session row. root_session_id is set to the
-// session's own id: a standalone session is the root of its own tree.
+// Create persists a fresh session row. root_session_id defaults to the
+// session's own id when the caller did not stamp one (a standalone
+// session is the root of its own tree). The §8.2 delegation path stamps
+// the parent's RootSessionID onto every child so all rows in one tree
+// share the same root, which §8.9 and §12.5 read via the
+// idx_sessions_root index. F-8.9.8.
 func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	now := time.Now().UTC()
 	if sess.CreatedAt.IsZero() {
@@ -114,7 +119,10 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	// (F-7.3.1 / F-7.3.21). Binds $43 and $44 are the §8.2 line 52
 	// delegation tracing_context and the §8.3 line 266 / §8.10
 	// cascade_on_failure lease policy added in migration 0090
-	// (F-8.2.14 / F-8.2.15).
+	// (F-8.2.14 / F-8.2.15). Bind $45 is the §8.9 root_session_id —
+	// children inherit the parent's root so the column identifies the
+	// delegation tree by a single value; empty falls back to the
+	// session's own id so a standalone row stays its own root. F-8.9.8.
 	const insertSQL = `INSERT INTO sessions (
 		id, tenant_id, user_id, state, runtime_ref, pool_ref, isolation_profile,
 		parent_session_id, root_session_id, failure_class, failure_reason,
@@ -135,7 +143,18 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		tracing_context, cascade_on_failure
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
-		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
+		NULLIF($8, '')::uuid,
+		-- §8.9 root_session_id: caller-provided ($45) wins; otherwise
+		-- inherit the parent's root via subquery so derived/delegated
+		-- children share the parent's tree; otherwise default to own
+		-- id so a standalone session is its own root. F-8.9.8.
+		COALESCE(
+			NULLIF($45, '')::uuid,
+			(SELECT root_session_id FROM sessions
+				WHERE id = NULLIF($8, '')::uuid AND tenant_id = $2),
+			$1::uuid
+		),
+		$9, $10,
 		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21,
 		$22, $23, $24, $25,
 		$26, $27, $28, $29, $30,
@@ -179,7 +198,10 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			sess.LastSeq,
 			sess.WorkspaceRoot,
 			tracingContextArg(sess.TracingContext),
-			string(sess.CascadeOnFailure))
+			string(sess.CascadeOnFailure),
+			// $45 — §8.9 RootSessionID; empty falls back to the
+			// session's own id via SQL COALESCE in insertSQL. F-8.9.8.
+			sess.RootSessionID)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -381,6 +403,42 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 	return out, nil
 }
 
+// ListByRoot implements Store — every row whose root_session_id equals
+// rootSessionID within tenantID, ordered by created_at ascending so a
+// caller can rebuild the §8.9 tree by walking ParentSessionID. Uses the
+// `idx_sessions_root` index (§12.5 line 101) for an O(tree size)
+// projection instead of the O(tenant size) List path. An empty
+// rootSessionID returns no rows. spec: §8.9 line 1010; §12.5 line 101.
+// F-8.9.7.
+func (s *Store) ListByRoot(ctx context.Context, tenantID, rootSessionID string) ([]sessionstore.Session, error) {
+	if rootSessionID == "" {
+		return nil, nil
+	}
+	q := `SELECT ` + selectList + ` FROM sessions WHERE tenant_id = $1
+		AND root_session_id = $2::uuid
+		ORDER BY created_at ASC, id`
+	var out []sessionstore.Session
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, q, tenantID, rootSessionID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			sess, err := scanSession(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, sess)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Delete removes the session row. session_messages rows cascade.
 func (s *Store) Delete(ctx context.Context, tenantID, id string) error {
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -510,6 +568,10 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §8.2 line 52 / §8.10 — tracing_context + cascade_on_failure
 		// from migration 0090 (F-8.2.14 / F-8.2.15).
 		&tracingContextJSON, &cascadeOnFailure,
+		// §8.9 line 1010 — root_session_id surfaces the delegation-tree
+		// apex on every row in the tree so a single-shard query can
+		// rebuild the §8.9 tree without walking ParentSessionID. F-8.9.8.
+		&s.RootSessionID,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

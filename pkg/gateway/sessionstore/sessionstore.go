@@ -105,6 +105,19 @@ type Session struct {
 	// §7.1 derive copy semantics. Set only on derived sessions.
 	ParentSessionID string
 
+	// RootSessionID is the §8.9 / §12.5 delegation-tree root: every
+	// session in a delegation tree carries the same RootSessionID,
+	// equal to the session at the tree's apex. A standalone session
+	// (one without a parent) is its own root. Children inherit their
+	// parent's RootSessionID, not the parent's id, so the column
+	// identifies the entire tree by a single value. The §12.5
+	// `idx_sessions_root` index supports single-shard tree-scoped
+	// queries (`WHERE root_session_id = $1`) so a tree-walker reads
+	// O(tree size) rather than O(tenant size) rows. Empty on the read
+	// path collapses to the row's own ID. spec: §8.9 line 1010; §12.5
+	// line 101. F-8.9.7 / F-8.9.8.
+	RootSessionID string
+
 	// ParentWorkspaceRef is the §4.5 metadata lineage pointer to the
 	// parent session's workspace object. Audit / observability only;
 	// not a reference-counted dependency.
@@ -417,6 +430,17 @@ type Store interface {
 	// (newest first). The filter is applied in-process; the store
 	// itself does no indexing in v1.
 	List(ctx context.Context, tenantID string, filter ListFilter) ([]Session, error)
+
+	// ListByRoot returns every session whose root_session_id equals
+	// rootSessionID within tenantID — the §8.9 single-shard tree
+	// projection backed by `idx_sessions_root` (§12.5 line 101). The
+	// rootSessionID is included in the result when it identifies a
+	// row in the tenant. Order is by created_at ascending (older
+	// ancestors first) so a caller can rebuild the §8.9 task tree by
+	// walking ParentSessionID without a sort pass. An empty
+	// rootSessionID returns no rows. spec: §8.9 line 1010; §12.5 line
+	// 101. F-8.9.7.
+	ListByRoot(ctx context.Context, tenantID, rootSessionID string) ([]Session, error)
 
 	// Delete removes the session row entirely. Returns ErrNotFound
 	// when the row is missing. The minimal gateway uses this for the

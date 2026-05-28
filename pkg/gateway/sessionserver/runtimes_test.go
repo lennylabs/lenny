@@ -502,3 +502,44 @@ func TestListRuntimesEnvironmentFiltered(t *testing.T) {
 		t.Errorf("environment-filtered discovery: got %+v, want only sec-agent", resp.Runtimes)
 	}
 }
+
+// TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38 pins the
+// §9.1 line 38 / §15.1 line 698 discovery contract: every type:mcp
+// runtime carries `mcpEndpoint: /mcp/runtimes/{name}` in REST
+// `GET /v1/runtimes`, and type:agent runtimes carry it as empty (and
+// so the JSON envelope omits the field). F-9.1.4.
+func TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "fs-mcp", Type: runtimestore.TypeMCP,
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "claude-agent", Type: runtimestore.TypeAgent,
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	gotEndpoints := map[string]string{}
+	for _, r := range resp.Runtimes {
+		gotEndpoints[r.Name] = r.McpEndpoint
+	}
+	if gotEndpoints["fs-mcp"] != "/mcp/runtimes/fs-mcp" {
+		t.Errorf("fs-mcp McpEndpoint = %q, want %q", gotEndpoints["fs-mcp"], "/mcp/runtimes/fs-mcp")
+	}
+	if gotEndpoints["claude-agent"] != "" {
+		t.Errorf("claude-agent McpEndpoint = %q, want empty (type:agent has no per-runtime MCP endpoint)", gotEndpoints["claude-agent"])
+	}
+	// Wire-level check: the empty value must not appear in the JSON.
+	body := rr.Body.String()
+	if !strings.Contains(body, `"mcpEndpoint":"/mcp/runtimes/fs-mcp"`) {
+		t.Errorf("response missing mcpEndpoint for type:mcp: %q", body)
+	}
+}

@@ -552,7 +552,15 @@ func Register(srv *mcp.Server, deps Deps) {
 		if err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 		}
-		all, err := deps.Store.List(ctx, tenant, sessionstore.ListFilter{})
+		// spec: §8.9 line 1010 — read only the rows belonging to the
+		// requested session's delegation tree via the §12.5
+		// `idx_sessions_root` index; the cost is O(tree size) instead
+		// of O(tenant size). F-8.9.7.
+		rootSessionID := root.RootSessionID
+		if rootSessionID == "" {
+			rootSessionID = root.ID
+		}
+		all, err := deps.Store.ListByRoot(ctx, tenant, rootSessionID)
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
@@ -603,7 +611,14 @@ func Register(srv *mcp.Server, deps Deps) {
 		if err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("child session lookup: %w", err)
 		}
-		all, err := deps.Store.List(ctx, tenant, sessionstore.ListFilter{})
+		// spec: §8.9 line 1010 — read only the rows in the child's
+		// delegation tree (the parent must be in the same tree to
+		// authorize the cancel) instead of the whole tenant. F-8.9.7.
+		rootID := child.RootSessionID
+		if rootID == "" {
+			rootID = child.ID
+		}
+		all, err := deps.Store.ListByRoot(ctx, tenant, rootID)
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
@@ -1322,6 +1337,7 @@ func Register(srv *mcp.Server, deps Deps) {
 					Description:       rt.Description,
 					AgentInterface:    rt.AgentInterface,
 					PublishedMetadata: runtimestore.PublicMetadataRefs(rt.PublishedMetadata),
+					McpEndpoint:       mcpEndpointFor(rt),
 				})
 			}
 			body, _ := json.Marshal(struct {
@@ -1904,10 +1920,12 @@ type memoryResult struct {
 }
 
 // treeNode mirrors the §8 tree shape the get_task_tree tool returns.
-// spec: §8.5 line 530 — "each node includes `taskId`, `state`, and
+// spec: §8.5 line 540 — "Each node includes `taskId`, `state`, and
 // `runtimeRef`". The REST surface (sessionserver.TreeNode) carries the
 // same three fields; per §15.2.1 the MCP and REST projections of the
-// same operation must remain semantically equivalent.
+// same operation must remain semantically equivalent. The v1 invariant
+// "task record == session row" (§4.2 line 157) means TaskID is the
+// session row's id. F-8.9.5.
 //
 // `state` carries the §8.8 MCP-protocol spelling (e.g., `canceled`,
 // `working`, `failed` for `expired`). `metadata` carries the §8.8 line
@@ -1915,15 +1933,29 @@ type memoryResult struct {
 // `suspended` session state and `resuming: true` for `resume_pending`
 // / `resuming`. The map is omitted when no annotation applies. F-8.8.9.
 type treeNode struct {
-	SessionID  string         `json:"sessionId"`
+	TaskID     string         `json:"taskId"`
 	State      string         `json:"state"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
 	RuntimeRef string         `json:"runtimeRef,omitempty"`
 	Children   []treeNode     `json:"children"`
 }
 
+// mcpEndpointFor returns the §9.1 discovery pointer for runtime
+// `name` — `/mcp/runtimes/{name}` for `type:mcp`, empty otherwise.
+// F-9.1.4 / coordinated with F-9.1.3.
+func mcpEndpointFor(rt runtimestore.Runtime) string {
+	if rt.Type != runtimestore.TypeMCP {
+		return ""
+	}
+	return "/mcp/runtimes/" + rt.Name
+}
+
 // discoveredRuntime is one entry in the lenny/list_runtimes result. It
 // covers every runtime type, so it carries the type discriminator.
+//
+// McpEndpoint is the §9.1 line 38 / §15.1 line 698 discovery pointer
+// to the per-runtime intra-pod MCP server (`/mcp/runtimes/{name}` for
+// type:mcp; empty for type:agent). F-9.1.4 / coordinated with F-9.1.3.
 type discoveredRuntime struct {
 	Name              string                              `json:"name"`
 	Type              string                              `json:"type,omitempty"`
@@ -1931,6 +1963,7 @@ type discoveredRuntime struct {
 	Description       string                              `json:"description,omitempty"`
 	AgentInterface    *runtimestore.AgentInterface        `json:"agentInterface,omitempty"`
 	PublishedMetadata []runtimestore.PublishedMetadataRef `json:"publishedMetadata,omitempty"`
+	McpEndpoint       string                              `json:"mcpEndpoint,omitempty"`
 }
 
 // mcpAdapterCapabilities reports the §15 AdapterCapabilities of the MCP
@@ -2312,7 +2345,7 @@ func walk(wctx treeWalkContext, s sessionstore.Session, byParent map[string][]se
 	// field for non-terminal session states. F-8.8.7 / F-8.8.9.
 	protoState, meta := nodeProtocolState(s.State)
 	node := treeNode{
-		SessionID:  s.ID,
+		TaskID:     s.ID,
 		State:      protoState,
 		Metadata:   meta,
 		RuntimeRef: s.RuntimeRef,

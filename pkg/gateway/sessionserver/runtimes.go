@@ -34,9 +34,9 @@ func restAdapterCapabilities() adapter.Capabilities {
 
 // RuntimeDiscoveryEntry is one runtime in the §9.1 GET /v1/runtimes
 // discovery response. v1 reports the §5.1 registry fields, the §9.1
-// per-runtime agentInterface descriptor, and the §5.1 publishedMetadata
-// refs; the §9.1 mcpEndpoint block is not yet surfaced. The §9.1
-// adapterCapabilities block is a top-level response field, not a
+// per-runtime agentInterface descriptor, the §5.1 publishedMetadata
+// refs, and the §9.1 mcpEndpoint pointer for type:mcp runtimes. The
+// §9.1 adapterCapabilities block is a top-level response field, not a
 // per-runtime one.
 type RuntimeDiscoveryEntry struct {
 	Name              string                              `json:"name"`
@@ -46,6 +46,21 @@ type RuntimeDiscoveryEntry struct {
 	Labels            map[string]string                   `json:"labels,omitempty"`
 	AgentInterface    *runtimestore.AgentInterface        `json:"agentInterface,omitempty"`
 	PublishedMetadata []runtimestore.PublishedMetadataRef `json:"publishedMetadata,omitempty"`
+	// McpEndpoint is the §9.1 line 38 / §15.1 line 698 discovery
+	// pointer to the per-runtime intra-pod MCP server. Populated as
+	// `/mcp/runtimes/{name}` for type:mcp runtimes; empty (and so
+	// omitted from the JSON envelope) for type:agent runtimes. F-9.1.4.
+	McpEndpoint string `json:"mcpEndpoint,omitempty"`
+}
+
+// mcpEndpointFor returns the §9.1 discovery pointer for runtime
+// `name` — `/mcp/runtimes/{name}` for `type:mcp`, empty otherwise.
+// F-9.1.4 / coordinated with F-9.1.3.
+func mcpEndpointFor(rt runtimestore.Runtime) string {
+	if rt.Type != runtimestore.TypeMCP {
+		return ""
+	}
+	return "/mcp/runtimes/" + rt.Name
 }
 
 // handleListRuntimes implements GET /v1/runtimes — the §9.1 REST
@@ -80,6 +95,7 @@ func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 			Labels:            rt.Labels,
 			AgentInterface:    rt.AgentInterface,
 			PublishedMetadata: runtimestore.PublicMetadataRefs(rt.PublishedMetadata),
+			McpEndpoint:       mcpEndpointFor(rt),
 		})
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{

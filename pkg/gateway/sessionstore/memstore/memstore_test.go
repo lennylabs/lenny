@@ -434,3 +434,136 @@ func TestGetActiveSlotsByPodCrossTenant_spec_5_2_521(t *testing.T) {
 		t.Errorf("cross-tenant active slots = %d, want 2", got)
 	}
 }
+
+// TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010 pins the §8.9
+// line 1010 default: a session created without a parent has
+// RootSessionID equal to its own id (a standalone session is the root
+// of its own tree). F-8.9.8.
+func TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	if err := s.Create(ctx, sessionstore.Session{
+		ID: "sess_alone", TenantID: "acme", State: session.StateRunning,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, _ := s.Get(ctx, "acme", "sess_alone")
+	if got.RootSessionID != "sess_alone" {
+		t.Errorf("standalone session RootSessionID = %q, want %q (own id)", got.RootSessionID, "sess_alone")
+	}
+}
+
+// TestCreateChildInheritsParentRoot_spec_8_9_1010 pins the §8.9 line
+// 1010 inheritance: a session created with ParentSessionID inherits
+// its parent's RootSessionID so all rows in one delegation tree share
+// the same root_session_id. F-8.9.8.
+func TestCreateChildInheritsParentRoot_spec_8_9_1010(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{
+		ID: "sess_root_v", TenantID: "acme", State: session.StateRunning,
+	})
+	_ = s.Create(ctx, sessionstore.Session{
+		ID: "sess_kid_v", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_root_v",
+	})
+	_ = s.Create(ctx, sessionstore.Session{
+		ID: "sess_gc_v", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_kid_v",
+	})
+	for _, id := range []string{"sess_root_v", "sess_kid_v", "sess_gc_v"} {
+		row, _ := s.Get(ctx, "acme", id)
+		if row.RootSessionID != "sess_root_v" {
+			t.Errorf("%s.RootSessionID = %q, want sess_root_v (inherited from tree root)", id, row.RootSessionID)
+		}
+	}
+}
+
+// TestCreateCallerProvidedRootWins_spec_8_9_1010 verifies the caller
+// can stamp RootSessionID explicitly (the §8.2 delegation site path
+// supplies it directly even when the row has no ParentSessionID at
+// Create time). F-8.9.8.
+func TestCreateCallerProvidedRootWins_spec_8_9_1010(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	if err := s.Create(ctx, sessionstore.Session{
+		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
+		RootSessionID: "sess_external_root",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, _ := s.Get(ctx, "acme", "sess_x")
+	if got.RootSessionID != "sess_external_root" {
+		t.Errorf("RootSessionID = %q, want %q (caller-provided wins)", got.RootSessionID, "sess_external_root")
+	}
+}
+
+// TestListByRootScopesToOneTree_spec_8_9_1010 pins the §8.9 single-
+// shard tree-scoped projection: ListByRoot returns only the rows
+// belonging to the requested tree, regardless of how many trees share
+// the tenant. F-8.9.7.
+func TestListByRootScopesToOneTree_spec_8_9_1010(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	// Tree A: sess_a + child sess_ac.
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_a", TenantID: "acme", State: session.StateRunning})
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_ac", TenantID: "acme", State: session.StateRunning, ParentSessionID: "sess_a"})
+	// Tree B: sess_b + child sess_bc.
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_b", TenantID: "acme", State: session.StateRunning})
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_bc", TenantID: "acme", State: session.StateRunning, ParentSessionID: "sess_b"})
+	// Foreign tenant tree must not leak through.
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_foreign", TenantID: "globex", State: session.StateRunning})
+
+	got, err := s.ListByRoot(ctx, "acme", "sess_a")
+	if err != nil {
+		t.Fatalf("ListByRoot: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, r := range got {
+		ids[r.ID] = true
+	}
+	if len(ids) != 2 || !ids["sess_a"] || !ids["sess_ac"] {
+		t.Errorf("tree A = %v, want {sess_a, sess_ac}", ids)
+	}
+	// Tree B is independent.
+	got, _ = s.ListByRoot(ctx, "acme", "sess_b")
+	ids = map[string]bool{}
+	for _, r := range got {
+		ids[r.ID] = true
+	}
+	if len(ids) != 2 || !ids["sess_b"] || !ids["sess_bc"] {
+		t.Errorf("tree B = %v, want {sess_b, sess_bc}", ids)
+	}
+}
+
+// TestListByRootEmptyRootReturnsNoRows_spec_8_9_1010 pins the empty-
+// rootSessionID convention: an empty rootSessionID returns no rows
+// rather than the whole tenant, so a typo cannot collapse to a tenant
+// dump. F-8.9.7.
+func TestListByRootEmptyRootReturnsNoRows_spec_8_9_1010(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_x", TenantID: "acme", State: session.StateRunning})
+	got, err := s.ListByRoot(ctx, "acme", "")
+	if err != nil {
+		t.Fatalf("ListByRoot: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("empty rootSessionID returned %d rows, want 0", len(got))
+	}
+}
+
+// TestListByRootCrossTenantIsolation_spec_8_9_1010 verifies a tree in
+// one tenant is invisible to another tenant's ListByRoot. F-8.9.7.
+func TestListByRootCrossTenantIsolation_spec_8_9_1010(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_acme_root", TenantID: "acme", State: session.StateRunning})
+	got, err := s.ListByRoot(ctx, "globex", "sess_acme_root")
+	if err != nil {
+		t.Fatalf("ListByRoot: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("cross-tenant ListByRoot returned %d rows, want 0", len(got))
+	}
+}

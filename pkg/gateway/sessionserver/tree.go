@@ -55,9 +55,14 @@ type TreeCycleEvent struct {
 	Source        string
 }
 
-// TreeNode is one node in the §8 delegation task tree.
+// TreeNode is one node in the §8 delegation task tree. The wire field
+// is `taskId` per §8.5 line 540 — "Each node includes `taskId`, `state`,
+// and `runtimeRef`". The v1 invariant "task record == session row"
+// (§4.2 line 157) means TaskID is the session row's id; the REST and
+// MCP projections of `lenny/get_task_tree` use the same field name per
+// the §15.2.1 REST↔MCP semantic-equivalence rule. F-8.9.5.
 type TreeNode struct {
-	SessionID  string     `json:"sessionId"`
+	TaskID     string     `json:"taskId"`
 	State      string     `json:"state"`
 	RuntimeRef string     `json:"runtimeRef,omitempty"`
 	Children   []TreeNode `json:"children"`
@@ -97,8 +102,16 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pull every session in the tenant and index by parent.
-	all, err := s.store.List(r.Context(), tenantID, sessionstore.ListFilter{})
+	// spec: §8.9 line 1010 — the §12.5 `idx_sessions_root` index
+	// supports a single-shard tree-scoped projection. Read only the
+	// rows belonging to the requested session's delegation tree
+	// instead of the whole tenant; the cost is O(tree size), not
+	// O(tenant size). F-8.9.7.
+	rootSessionID := root.RootSessionID
+	if rootSessionID == "" {
+		rootSessionID = root.ID
+	}
+	all, err := s.store.ListByRoot(r.Context(), tenantID, rootSessionID)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
@@ -143,7 +156,7 @@ type treeWalkContext struct {
 func buildTreeNode(wctx treeWalkContext, sess sessionstore.Session, childrenByParent map[string][]sessionstore.Session, count *int, seen map[string]bool) TreeNode {
 	*count++
 	node := TreeNode{
-		SessionID:  sess.ID,
+		TaskID:     sess.ID,
 		State:      string(sess.State),
 		RuntimeRef: sess.RuntimeRef,
 		Children:   []TreeNode{},

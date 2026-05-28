@@ -47,6 +47,9 @@ func (s *slowAncestorStore) Update(context.Context, string, string, func(*sessio
 func (s *slowAncestorStore) List(context.Context, string, sessionstore.ListFilter) ([]sessionstore.Session, error) {
 	panic("unused")
 }
+func (s *slowAncestorStore) ListByRoot(context.Context, string, string) ([]sessionstore.Session, error) {
+	panic("unused")
+}
 func (s *slowAncestorStore) Delete(context.Context, string, string) error { panic("unused") }
 func (s *slowAncestorStore) DeleteByUser(context.Context, string, string) (int, error) {
 	panic("unused")

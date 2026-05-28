@@ -529,6 +529,18 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		userID = parent.UserID
 	}
 	now := s.clock()
+	// spec: §8.9 line 1010 — every node in a delegation tree shares
+	// the same root_session_id (the session at the tree's apex). A
+	// child inherits its parent's RootSessionID rather than minting a
+	// new one; the parent's RootSessionID is its tree root when the
+	// parent itself was delegated, or the parent's own id when the
+	// parent is a standalone session that has not yet been re-keyed by
+	// the store. The §12.5 `idx_sessions_root` index supports the
+	// single-shard tree-scoped query a §8.9 walker uses. F-8.9.8.
+	rootSessionID := parent.RootSessionID
+	if rootSessionID == "" {
+		rootSessionID = parent.ID
+	}
 	child := sessionstore.Session{
 		ID:               s.idFn(),
 		TenantID:         tenantID,
@@ -538,6 +550,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		State:            session.StateCreated,
 		IsolationProfile: childProfile,
 		ParentSessionID:  parent.ID,
+		RootSessionID:    rootSessionID,
 		// §8.3: the gateway attaches the parent's registered
 		// tracingContext to every child it delegates.
 		TracingContext: copyTracingContext(parent.TracingContext),

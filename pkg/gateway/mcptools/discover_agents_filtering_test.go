@@ -391,3 +391,50 @@ func TestDiscoverAgentsPlatformDefaultFallback(t *testing.T) {
 		t.Errorf("per-tenant allow-all should override the deny-all platform default: %q", text)
 	}
 }
+
+// TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38 pins the
+// §9.1 line 38 / §15.1 line 698 contract on the MCP discovery surface:
+// `lenny/list_runtimes` reports `mcpEndpoint: /mcp/runtimes/{name}` on
+// every type:mcp runtime; type:agent runtimes carry an empty value
+// (omitted from the JSON envelope). F-9.1.4 / coordinated with F-9.1.3.
+func TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38(t *testing.T) {
+	srv, runtimes, envs, tenants := newMCPFiltered(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-mcp", Type: runtimestore.TypeMCP,
+		Labels: map[string]string{"team": "security"},
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "security"},
+	})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
+
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
+	var resp struct {
+		Runtimes []struct {
+			Name        string `json:"name"`
+			Type        string `json:"type"`
+			McpEndpoint string `json:"mcpEndpoint"`
+		} `json:"runtimes"`
+	}
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("decode: %v (%q)", err, text)
+	}
+	got := map[string]string{}
+	for _, r := range resp.Runtimes {
+		got[r.Name] = r.McpEndpoint
+	}
+	if got["sec-mcp"] != "/mcp/runtimes/sec-mcp" {
+		t.Errorf("sec-mcp McpEndpoint = %q, want %q", got["sec-mcp"], "/mcp/runtimes/sec-mcp")
+	}
+	if got["sec-agent"] != "" {
+		t.Errorf("sec-agent McpEndpoint = %q, want empty (type:agent has no per-runtime MCP endpoint)", got["sec-agent"])
+	}
+	if !strings.Contains(text, `"mcpEndpoint":"/mcp/runtimes/sec-mcp"`) {
+		t.Errorf("list_runtimes response missing mcpEndpoint for type:mcp: %q", text)
+	}
+}

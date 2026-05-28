@@ -893,6 +893,35 @@ func TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1(t *testing.T) {
 	}
 }
 
+// TestGetTaskTreeUsesTaskIDField_spec_8_5_540 verifies that the §8.5
+// MCP `lenny/get_task_tree` node uses the `taskId` wire field rather
+// than `sessionId`. spec: §8.5 line 540 — "Each node includes
+// `taskId`, `state`, and `runtimeRef`". F-8.9.5.
+func TestGetTaskTreeUsesTaskIDField_spec_8_5_540(t *testing.T) {
+	srv, store := newMCP(t)
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_root_tid", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "claude",
+		CreatedAt:  now, UpdatedAt: now,
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_kid_tid", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "gemini", ParentSessionID: "sess_root_tid",
+		CreatedAt: now, UpdatedAt: now,
+	})
+	resp := call(t, srv.Handler(), "lenny/get_task_tree", `{"sessionId":"sess_root_tid"}`)
+	text := resultText(t, resp)
+	for _, want := range []string{`"taskId":"sess_root_tid"`, `"taskId":"sess_kid_tid"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("tree node missing %s: %q", want, text)
+		}
+	}
+	if strings.Contains(text, `"sessionId":"sess_root_tid"`) || strings.Contains(text, `"sessionId":"sess_kid_tid"`) {
+		t.Errorf("tree node leaked legacy `sessionId` field instead of §8.5 line 540 `taskId`: %q", text)
+	}
+}
+
 func TestDelegateTaskTool(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()

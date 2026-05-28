@@ -308,11 +308,14 @@ func TestRESTMCPTasks(t *testing.T) {
 	if restResp.StatusCode != http.StatusOK {
 		t.Fatalf("REST tree status: %d", restResp.StatusCode)
 	}
+	// spec: §8.5 line 540 — "Each node includes `taskId`, `state`, and
+	// `runtimeRef`". §15.2.1 REST↔MCP semantic equivalence requires the
+	// REST `/tree` projection to use the same wire field. F-8.9.5.
 	var restTree struct {
 		Root struct {
-			SessionID string `json:"sessionId"`
-			Children  []struct {
-				SessionID string `json:"sessionId"`
+			TaskID   string `json:"taskId"`
+			Children []struct {
+				TaskID string `json:"taskId"`
 			} `json:"children"`
 		} `json:"root"`
 		NodeCount int `json:"nodeCount"`
@@ -320,8 +323,8 @@ func TestRESTMCPTasks(t *testing.T) {
 	if err := json.NewDecoder(restResp.Body).Decode(&restTree); err != nil {
 		t.Fatalf("REST tree decode: %v", err)
 	}
-	if restTree.Root.SessionID != "sess_parent" {
-		t.Errorf("REST root: got %q, want sess_parent", restTree.Root.SessionID)
+	if restTree.Root.TaskID != "sess_parent" {
+		t.Errorf("REST root: got %q, want sess_parent", restTree.Root.TaskID)
 	}
 	if restTree.NodeCount != 3 {
 		t.Errorf("REST node count: got %d, want 3 (parent + 2 children)", restTree.NodeCount)
@@ -337,10 +340,11 @@ func TestRESTMCPTasks(t *testing.T) {
 		t.Errorf("MCP tree children: got %d, want 2", len(mcpChildren))
 	}
 
-	// Both surfaces must report the same set of child ids.
+	// Both surfaces must report the same set of child ids on the
+	// spec-canonical `taskId` field. F-8.9.5.
 	restIDs := map[string]bool{}
 	for _, c := range restTree.Root.Children {
-		restIDs[c.SessionID] = true
+		restIDs[c.TaskID] = true
 	}
 	mcpIDs := map[string]bool{}
 	for _, c := range mcpChildren {
@@ -348,7 +352,7 @@ func TestRESTMCPTasks(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if id, _ := m["sessionId"].(string); id != "" {
+		if id, _ := m["taskId"].(string); id != "" {
 			mcpIDs[id] = true
 		}
 	}

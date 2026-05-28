@@ -192,6 +192,50 @@ func TestDelegateHappyPath(t *testing.T) {
 	}
 }
 
+// TestDelegateChildInheritsParentRootSessionID_spec_8_9_1010 pins
+// §8.9 line 1010: every node in a delegation tree shares the same
+// RootSessionID. The child created by Delegate carries the parent's
+// RootSessionID rather than minting a fresh one. A grandchild
+// delegated from the child continues to inherit the same tree root.
+// F-8.9.8.
+func TestDelegateChildInheritsParentRootSessionID_spec_8_9_1010(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_root_p", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	svc := newService(t, store, func() string { return "sess_kid" })
+	res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_root_p",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	if res.Child.RootSessionID != "sess_root_p" {
+		t.Errorf("child.RootSessionID = %q, want sess_root_p (inherited from parent root)", res.Child.RootSessionID)
+	}
+	// Grandchild delegated from the child must carry the same root.
+	if _, err := store.Update(context.Background(), "acme", "sess_kid", func(s *sessionstore.Session) error {
+		s.State = session.StateRunning
+		return nil
+	}); err != nil {
+		t.Fatalf("Update kid to running: %v", err)
+	}
+	svc2 := newService(t, store, func() string { return "sess_gc" })
+	res2, err := svc2.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_kid",
+		RuntimeRef:       "claude",
+		PoolRef:          "pool-c",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err != nil {
+		t.Fatalf("Delegate grandchild: %v", err)
+	}
+	if res2.Child.RootSessionID != "sess_root_p" {
+		t.Errorf("grandchild.RootSessionID = %q, want sess_root_p (deep tree root)", res2.Child.RootSessionID)
+	}
+}
+
 func TestDelegateRejectsNonRunningParent(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
@@ -334,6 +378,9 @@ func (c *countingStore) Update(ctx context.Context, tenantID, id string, mutate 
 }
 func (c *countingStore) List(ctx context.Context, tenantID string, filter sessionstore.ListFilter) ([]sessionstore.Session, error) {
 	return c.inner.List(ctx, tenantID, filter)
+}
+func (c *countingStore) ListByRoot(ctx context.Context, tenantID, rootSessionID string) ([]sessionstore.Session, error) {
+	return c.inner.ListByRoot(ctx, tenantID, rootSessionID)
 }
 func (c *countingStore) Delete(ctx context.Context, tenantID, id string) error {
 	return c.inner.Delete(ctx, tenantID, id)

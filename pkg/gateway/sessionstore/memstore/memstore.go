@@ -48,6 +48,24 @@ func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
 	if sess.SchemaVersion == 0 {
 		sess.SchemaVersion = 1
 	}
+	// spec: §8.9 line 1010 — root_session_id identifies the
+	// delegation-tree apex on every row in the tree. When the caller
+	// did not stamp one, the store inherits the parent's
+	// RootSessionID so children share the parent's root automatically;
+	// a standalone session (no parent) becomes its own root. F-8.9.8.
+	if sess.RootSessionID == "" {
+		if sess.ParentSessionID != "" {
+			if parent, ok := s.sessions[sess.ParentSessionID]; ok && parent.TenantID == sess.TenantID {
+				sess.RootSessionID = parent.RootSessionID
+				if sess.RootSessionID == "" {
+					sess.RootSessionID = parent.ID
+				}
+			}
+		}
+		if sess.RootSessionID == "" {
+			sess.RootSessionID = sess.ID
+		}
+	}
 	s.sessions[sess.ID] = sess
 	return nil
 }
@@ -152,6 +170,34 @@ func (s *Store) List(_ context.Context, tenantID string, f sessionstore.ListFilt
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+// ListByRoot implements Store — every row whose RootSessionID equals
+// rootSessionID within tenantID, ordered by CreatedAt ascending so a
+// caller can rebuild the §8.9 tree by walking ParentSessionID. An empty
+// rootSessionID returns no rows. spec: §8.9 line 1010. F-8.9.7.
+func (s *Store) ListByRoot(_ context.Context, tenantID, rootSessionID string) ([]sessionstore.Session, error) {
+	if rootSessionID == "" {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]sessionstore.Session, 0)
+	for _, row := range s.sessions {
+		if row.TenantID != tenantID {
+			continue
+		}
+		rsid := row.RootSessionID
+		if rsid == "" {
+			rsid = row.ID
+		}
+		if rsid != rootSessionID {
+			continue
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
 }
 

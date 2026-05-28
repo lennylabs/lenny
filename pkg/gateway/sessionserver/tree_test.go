@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func TestTreeSingleNode(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
-	if resp.NodeCount != 1 || resp.Root.SessionID != "sess_root" {
+	if resp.NodeCount != 1 || resp.Root.TaskID != "sess_root" {
 		t.Errorf("single-node tree: %+v", resp)
 	}
 	if len(resp.Root.Children) != 0 {
@@ -82,14 +83,14 @@ func TestTreeWithChildren(t *testing.T) {
 	// Find child_a and confirm it has the grandchild.
 	var childA *sessionserver.TreeNode
 	for i := range resp.Root.Children {
-		if resp.Root.Children[i].SessionID == "sess_child_a" {
+		if resp.Root.Children[i].TaskID == "sess_child_a" {
 			childA = &resp.Root.Children[i]
 		}
 	}
 	if childA == nil || len(childA.Children) != 1 {
 		t.Fatalf("child_a subtree: %+v", childA)
 	}
-	if childA.Children[0].SessionID != "sess_grandchild" {
+	if childA.Children[0].TaskID != "sess_grandchild" {
 		t.Errorf("grandchild: %+v", childA.Children[0])
 	}
 }
@@ -103,7 +104,7 @@ func TestTreeSubtreeFromMidNode(t *testing.T) {
 
 	// Requesting the tree from sess_mid returns only mid + leaf.
 	_, resp := getTree(t, srv.Handler(), "sess_mid")
-	if resp.NodeCount != 2 || resp.Root.SessionID != "sess_mid" {
+	if resp.NodeCount != 2 || resp.Root.TaskID != "sess_mid" {
 		t.Errorf("subtree from mid: %+v", resp)
 	}
 }
@@ -145,10 +146,10 @@ func TestTreeRecordsAreSessionRowsLinkedByParentSessionID(t *testing.T) {
 	want := map[string]bool{"sess_root": true, "sess_child": true, "sess_grandchild": true}
 	var walk func(n sessionserver.TreeNode)
 	walk = func(n sessionserver.TreeNode) {
-		if !want[n.SessionID] {
-			t.Errorf("tree node %q is not a seeded session id (§4.2 line 157: task record == session row)", n.SessionID)
+		if !want[n.TaskID] {
+			t.Errorf("tree node %q is not a seeded session id (§4.2 line 157: task record == session row)", n.TaskID)
 		}
-		delete(want, n.SessionID)
+		delete(want, n.TaskID)
 		for _, c := range n.Children {
 			walk(c)
 		}
@@ -191,6 +192,64 @@ func TestTreeCrossTenantIsolation(t *testing.T) {
 	}
 }
 
+// TestTreeReadsOnlySessionsInTheRequestedTree_spec_8_9_1010 pins the
+// §8.9 line 1010 / §12.5 line 101 single-shard projection: the REST
+// `/tree` handler reads only rows belonging to the requested
+// session's delegation tree (via the `idx_sessions_root` index), so a
+// sibling tree in the same tenant never appears in the response.
+// F-8.9.7 / F-8.9.8.
+func TestTreeReadsOnlySessionsInTheRequestedTree_spec_8_9_1010(t *testing.T) {
+	store := memstore.New()
+	// Tree A: sess_root_a + child.
+	seedTreeSession(t, store, "sess_root_a", "")
+	seedTreeSession(t, store, "sess_kid_a", "sess_root_a")
+	// Tree B (sibling — different root): sess_root_b + child.
+	seedTreeSession(t, store, "sess_root_b", "")
+	seedTreeSession(t, store, "sess_kid_b", "sess_root_b")
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	rr, resp := getTree(t, srv.Handler(), "sess_root_a")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	// The response must include only tree A's nodes.
+	if resp.NodeCount != 2 {
+		t.Errorf("tree A node count = %d, want 2 (tree B must not leak)", resp.NodeCount)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "sess_root_b") || strings.Contains(body, "sess_kid_b") {
+		t.Errorf("tree A response leaked tree B nodes: %q", body)
+	}
+}
+
+// TestTreeUsesTaskIDField_spec_8_5_540 pins the §8.5 line 540 wire
+// contract: the REST `/tree` projection emits `taskId` (matching the
+// MCP `lenny/get_task_tree` shape per §15.2.1 REST↔MCP semantic
+// equivalence). F-8.9.5.
+func TestTreeUsesTaskIDField_spec_8_5_540(t *testing.T) {
+	store := memstore.New()
+	seedTreeSession(t, store, "sess_root_rt", "")
+	seedTreeSession(t, store, "sess_kid_rt", "sess_root_rt")
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_root_rt/tree", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`"taskId":"sess_root_rt"`, `"taskId":"sess_kid_rt"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("tree response missing %s: %q", want, body)
+		}
+	}
+	if strings.Contains(body, `"sessionId":"sess_root_rt"`) || strings.Contains(body, `"sessionId":"sess_kid_rt"`) {
+		t.Errorf("tree response leaked legacy `sessionId` field instead of §8.5 line 540 `taskId`: %q", body)
+	}
+}
+
 // captureTreeCycle is a §8.9 cycle observer fake that records every
 // observation so a test can assert emission shape. F-8.9.10.
 type captureTreeCycle struct {
@@ -229,8 +288,8 @@ func TestTreeEmitsCycleObservation_spec_8_9_F_8_9_10(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
-	if resp.Root.SessionID != "sess_a_899" {
-		t.Errorf("root = %q, want sess_a_899", resp.Root.SessionID)
+	if resp.Root.TaskID != "sess_a_899" {
+		t.Errorf("root = %q, want sess_a_899", resp.Root.TaskID)
 	}
 	if len(observer.events) == 0 {
 		t.Fatalf("expected at least one TreeCycleEvent; got none")
