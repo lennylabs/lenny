@@ -77,6 +77,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	gwadapter "github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
@@ -88,7 +89,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover/redisstream"
 	billingpg "github.com/lennylabs/lenny/pkg/gateway/billingstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
-	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
@@ -100,6 +100,7 @@ import (
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/createdsweeper"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
@@ -113,11 +114,11 @@ import (
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
-	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
@@ -161,8 +162,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/partialmanifeststore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/pdbwatcher"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -174,7 +175,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
-	"github.com/lennylabs/lenny/pkg/gateway/createdsweeper"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
@@ -209,6 +209,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
+	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
@@ -239,6 +240,8 @@ func main() {
 		"§10.2 line 212 OIDC claim name the gateway reads the tenant identifier from. Defaults to `tenant_id` (matches the canonical Lenny claim shape); set to e.g. `https://acme.example/tenant` when the upstream IdP stamps tenant identity under a different claim. Mirrors the `auth.tenantIdClaim` Helm value. F-10.2.9.")
 	devMode := flag.Bool("dev-mode", envFlag("LENNY_DEV_MODE"),
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
+	sloValidated := flag.Bool("slo-validated", envFlag("LENNY_SLO_VALIDATED"),
+		"§16.5 line 623 — set true once the Phase 14.5 benchmark gate has validated the §16.5 SLO targets. When false (the default), the gateway logs the provisional-SLO startup warning so an operator running unvalidated defaults cannot silently treat them as SLA commitments. Mirrors the slo.validated Helm value. Override via LENNY_SLO_VALIDATED.")
 	bearerTrustHMACKeyFile := flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
 		"path to an additional HMAC-SHA256 signing key the §10.2 Bearer path trusts, on top of the Token Service signer. Unset in a production install; §17.4 Embedded Mode sets it so the gateway accepts the embedded OIDC provider's tokens. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	bearerExpectedIssuer := flag.String("bearer-expected-issuer", os.Getenv("LENNY_BEARER_EXPECTED_ISSUER"),
@@ -579,6 +582,14 @@ func main() {
 	// accidental production dev-mode install is visible in the logs.
 	if *devMode {
 		log.Printf("lenny-gateway: %s", isolation.DevModeIsolationWarning)
+	}
+
+	// spec: §16.5 lines 609, 623 — surface the provisional-SLO startup
+	// warning unless the Phase 14.5 benchmark gate has set slo.validated,
+	// so a deployment running the unvalidated defaults cannot silently
+	// treat them as customer SLA commitments.
+	if msg, emit := slo.StartupWarning(*sloValidated); emit {
+		log.Printf("lenny-gateway: %s", msg)
 	}
 
 	// §12.8 clock-injection harness. Read LENNY_CLOCK_OFFSET_SECONDS
@@ -1756,9 +1767,9 @@ func main() {
 		// detach-cascade fallback and on the §16.5
 		// OrphanTasksPerTenantHigh alert (the scalar() denominator below
 		// is re-emitted from the same flag). F-8.10.10.
-		MaxOrphanTasksPerTenant:    *delegationMaxOrphanTasksPerTenant,
-		UploadTokenIssuer:          uploadIssuer,
-		UploadTokenVerifier:        uploadVerifier,
+		MaxOrphanTasksPerTenant: *delegationMaxOrphanTasksPerTenant,
+		UploadTokenIssuer:       uploadIssuer,
+		UploadTokenVerifier:     uploadVerifier,
 		// F-7.4.7: §7.1 line 58 TTL = maxCreatedStateTimeoutSeconds.
 		UploadTokenTTL:             time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
 		Blobs:                      blobs,
@@ -1795,7 +1806,7 @@ func main() {
 		// spec: §10.2 lines 256–264. F-10.2.4. Multi-tenant deployments
 		// fail closed on a no-role principal at the session RBAC gate.
 		MultiTenant: *multiTenant,
-		Sealer:                  sessionSealer,
+		Sealer:      sessionSealer,
 		// §4.4 line 236 — the resume path delegates partial-manifest
 		// cleanup to this adapter. Deleter is nil for v1 (no chunk
 		// uploader yet); when the §10.1 writer ships the chunk
@@ -2663,15 +2674,15 @@ func main() {
 		// so a misplaced Idempotency-Key on a GET or unrelated POST
 		// passes through without being trapped for 24 hours. F-11.5.7.
 		AllowedPaths: []string{
-			"/v1/sessions",                       // CreateSession
-			"/v1/sessions/start",                 // create-and-start
-			"/v1/environments/{name}/sessions",   // environment-scoped CreateSession
-			"/v1/sessions/{id}/finalize",         // FinalizeWorkspace
-			"/v1/sessions/{id}/start",            // StartSession
-			"/v1/sessions/{id}/resume",           // Resume
-			"/v1/sessions/{id}/derive",           // fork (Resume-adjacent)
-			"/v1/sessions/{id}/tool-use/...",     // Approve/DenyDelegation tree
-			"/mcp",                               // SpawnChild via JSON-RPC POST
+			"/v1/sessions",                     // CreateSession
+			"/v1/sessions/start",               // create-and-start
+			"/v1/environments/{name}/sessions", // environment-scoped CreateSession
+			"/v1/sessions/{id}/finalize",       // FinalizeWorkspace
+			"/v1/sessions/{id}/start",          // StartSession
+			"/v1/sessions/{id}/resume",         // Resume
+			"/v1/sessions/{id}/derive",         // fork (Resume-adjacent)
+			"/v1/sessions/{id}/tool-use/...",   // Approve/DenyDelegation tree
+			"/mcp",                             // SpawnChild via JSON-RPC POST
 		},
 	})
 
@@ -2741,7 +2752,7 @@ func main() {
 	// set under §17.4 Embedded Mode. Production swaps in the OIDC JWKS
 	// verifier.
 	authOpts := authmw.Options{
-		MultiTenant:     *multiTenant,
+		MultiTenant: *multiTenant,
 		// spec: §10.2 line 212 — operator-configurable OIDC tenant claim
 		// name (`auth.tenantIdClaim` Helm value). F-10.2.9.
 		TenantClaimName: *tenantIDClaim,

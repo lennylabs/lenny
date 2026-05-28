@@ -434,6 +434,19 @@ monitoring:
     # insecureSkipVerify, serverName. F-16.9.12.
     tlsConfig: {}
 
+# slo carries the §16.5 service-level-objective posture. The §16.5 SLO
+# targets are provisional first-principles estimates that must not back
+# customer SLA commitments until the Phase 14.5 benchmark gate validates
+# them (§16.5 lines 607-623).
+slo:
+  # validated gates the §16.5 line 623 provisional-SLO startup warning.
+  # Leave false until the Phase 14.5 benchmark automation has recorded
+  # benchmark results and annotated the release; while false the gateway
+  # logs the provisional-SLO warning at startup so a deployment running
+  # unvalidated defaults cannot silently treat them as SLA commitments.
+  # The benchmark automation sets this true on the validated release.
+  validated: false
+
 # observability configures the §16 OpenTelemetry trace export. Agent
 # runtimes that emit OTLP spans need egress to the OTLP collector; the
 # agent-namespace allow-pod-egress-otlp NetworkPolicy (§13.2 NET-046)
@@ -1474,6 +1487,32 @@ capacityPlanning:
   # rendered ResourceQuota accommodates the tier's warm-pool and
   # active-session pod demand.
   tier: tier1
+  # §16.5 lines 590-601 workload-profile assumptions. The tier sizing
+  # formulas (warm-pool sizing, Redis ops budgets, gateway replica
+  # counts) depend on these. Operators with atypical workloads override
+  # them with observed measurements. The PoolScalingController reads them
+  # at startup and logs a warning when a Tier 2 / Tier 3 deployment still
+  # runs the defaults (§16.5 line 601), so review and substitute observed
+  # values before production promotion.
+  #
+  # avgSessionDurationSeconds feeds the Little's Law warm-pool claim rate
+  # and the delegation-budget Redis ops/s estimate.
+  avgSessionDurationSeconds: 333
+  # delegationParticipationRate is the fraction of sessions that perform
+  # at least one delegation.
+  delegationParticipationRate: 0.05
+  # avgDelegationsPerDelegatingSession scales the budget_reserve.lua
+  # invocation rate.
+  avgDelegationsPerDelegatingSession: 10
+  # avgChildSessionSeconds is the average child-delegation duration, used
+  # in the delegation fan-out minWarm formula.
+  avgChildSessionSeconds: 60
+  # avgWorkspaceSizeMB feeds checkpoint bandwidth and MinIO throughput
+  # budgets.
+  avgWorkspaceSizeMB: 100
+  # sessionIdleFraction is the fraction of active sessions with no active
+  # LLM call; it scales the LLM Proxy concurrency estimate.
+  sessionIdleFraction: 0.30
 
 # resourceGovernance configures the per-agent-namespace ResourceQuota
 # and LimitRange the chart deploys (§17.2). The ResourceQuota caps total

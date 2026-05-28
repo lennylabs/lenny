@@ -214,6 +214,12 @@ type Reconciler struct {
 	// lenny_pool_config_reconciliation_lag_seconds gauge. It is
 	// lazily constructed on the first Sync.
 	lagMeter *reconciliationLagMeter
+
+	// warmupMeter publishes the §16.5 line 488
+	// lenny_pool_warmup_seconds_baseline gauge that the
+	// WarmPoolReplenishmentSlow alert reads as its per-pool 2×
+	// threshold source. It is lazily constructed on the first Sync.
+	warmupMeter *warmupBaselineMeter
 }
 
 // StuckPools returns the list of <namespace>/<name> pool keys with at
@@ -294,6 +300,9 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 	if r.lagMeter == nil {
 		r.lagMeter = newReconciliationLagMeter(r.Now)
 	}
+	if r.warmupMeter == nil {
+		r.warmupMeter = newWarmupBaselineMeter()
+	}
 	configs, err := r.Source.ListPoolConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("list pool configs: %w", err)
@@ -326,11 +335,15 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 		// spec: §4.6.2 line 557 — both tuples synced cleanly, reset the
 		// lag gauge to zero.
 		r.lagMeter.MarkSynced(cfg.Name)
+		// spec: §16.5 line 488 — mirror the pool's warm-up baseline so
+		// WarmPoolReplenishmentSlow fires at 2× the per-pool value.
+		r.warmupMeter.Set(cfg.Name, warmupBaselineForAlert(cfg))
 	}
 	// Pools removed from the Postgres source no longer participate in
-	// the drift check; clear their series so the §16.5 alert
-	// auto-resolves.
+	// the drift check; clear their series so the §16.5 alerts
+	// auto-resolve.
 	r.lagMeter.forgetNotIn(desired)
+	r.warmupMeter.forgetNotIn(desired)
 	return nil
 }
 

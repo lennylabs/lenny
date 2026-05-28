@@ -744,7 +744,7 @@ groups:
             description: 'The lenny-deployment-phase-stamp ConfigMap records a feature flag enabled: true but a ValidatingWebhookConfiguration the flag gates is absent from the cluster. Typically an operator helm-upgrade mistake or an out-of-band kubectl delete.'
             summary: Admission-plane feature-flag downgrade drift
         - alert: WarmPoolReplenishmentSlow
-          expr: histogram_quantile(0.95, sum by (le, pool) (rate(lenny_warmpool_pod_startup_duration_seconds_bucket[5m]))) > 60
+          expr: histogram_quantile(0.95, sum by (le, pool) (rate(lenny_warmpool_pod_startup_duration_seconds_bucket[5m]))) > 2 * lenny_pool_warmup_seconds_baseline
           for: 5m
           labels:
             severity: warning

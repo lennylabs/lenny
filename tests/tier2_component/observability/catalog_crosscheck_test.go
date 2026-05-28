@@ -114,16 +114,22 @@ func TestPrometheusRuleMatchesAlertCatalog(t *testing.T) {
 	if doc.Kind != "PrometheusRule" {
 		t.Fatalf("rendered kind = %q, want PrometheusRule", doc.Kind)
 	}
-	if len(doc.Spec.Groups) != 1 {
-		t.Fatalf("rendered %d rule groups, want exactly 1", len(doc.Spec.Groups))
+	if len(doc.Spec.Groups) == 0 {
+		t.Fatal("rendered PrometheusRule has no rule groups")
 	}
 
+	// spec: §25.13 line 4822 — the catalog renders as one rule group per
+	// §16.5 severity bucket (lenny.critical / lenny.warning /
+	// lenny.info), so flatten the rules across every group before the
+	// catalog cross-check.
 	rendered := map[string]renderedRule{}
-	for _, r := range doc.Spec.Groups[0].Rules {
-		if _, dup := rendered[r.Alert]; dup {
-			t.Errorf("rendered PrometheusRule has duplicate alert %q", r.Alert)
+	for _, g := range doc.Spec.Groups {
+		for _, r := range g.Rules {
+			if _, dup := rendered[r.Alert]; dup {
+				t.Errorf("rendered PrometheusRule has duplicate alert %q", r.Alert)
+			}
+			rendered[r.Alert] = r
 		}
-		rendered[r.Alert] = r
 	}
 
 	catalog := rules.Catalog()
@@ -161,12 +167,16 @@ func TestPrometheusRuleMatchesAlertCatalog(t *testing.T) {
 func TestPrometheusRuleFieldsMatchCatalog(t *testing.T) {
 	root := repoRoot(t)
 	doc := helmTemplatePrometheusRule(t, root)
-	if len(doc.Spec.Groups) != 1 {
-		t.Fatalf("rendered %d rule groups, want exactly 1", len(doc.Spec.Groups))
+	if len(doc.Spec.Groups) == 0 {
+		t.Fatal("rendered PrometheusRule has no rule groups")
 	}
+	// §25.13 line 4822 per-severity group split — flatten before the
+	// per-field comparison.
 	rendered := map[string]renderedRule{}
-	for _, r := range doc.Spec.Groups[0].Rules {
-		rendered[r.Alert] = r
+	for _, g := range doc.Spec.Groups {
+		for _, r := range g.Rules {
+			rendered[r.Alert] = r
+		}
 	}
 
 	for _, want := range rules.Catalog() {
@@ -219,22 +229,25 @@ func TestBundledAlertingRulesFragmentIsCurrent(t *testing.T) {
 func TestRenderedRuleGroupIsWellFormed(t *testing.T) {
 	root := repoRoot(t)
 	doc := helmTemplatePrometheusRule(t, root)
-	if len(doc.Spec.Groups) != 1 {
-		t.Fatalf("rendered %d rule groups, want exactly 1", len(doc.Spec.Groups))
+	if len(doc.Spec.Groups) == 0 {
+		t.Fatal("rendered PrometheusRule has no rule groups")
 	}
-	g := doc.Spec.Groups[0]
-	if g.Name == "" {
-		t.Error("the rendered rule group has no name")
-	}
-	if len(g.Rules) == 0 {
-		t.Error("the rendered rule group has no rules")
-	}
-	for _, r := range g.Rules {
-		if r.Expr == "" {
-			t.Errorf("rendered rule %q has an empty expr", r.Alert)
+	// §25.13 line 4822 — every per-severity group must be named and
+	// carry well-formed rules.
+	for _, g := range doc.Spec.Groups {
+		if g.Name == "" {
+			t.Error("a rendered rule group has no name")
 		}
-		if r.Labels["severity"] == "" {
-			t.Errorf("rendered rule %q has no severity label", r.Alert)
+		if len(g.Rules) == 0 {
+			t.Errorf("rendered rule group %q has no rules", g.Name)
+		}
+		for _, r := range g.Rules {
+			if r.Expr == "" {
+				t.Errorf("rendered rule %q has an empty expr", r.Alert)
+			}
+			if r.Labels["severity"] == "" {
+				t.Errorf("rendered rule %q has no severity label", r.Alert)
+			}
 		}
 	}
 }

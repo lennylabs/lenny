@@ -26343,7 +26343,7 @@ None of these series are in `pkg/observability/metrics/catalog.go`. None are def
 
 The spec also requires the burn-rate metric source be tunable: §16.5 ends with "Burn-rate thresholds are configurable via Helm values (`slo.burnRate.fastMultiplier`, default 14; `slo.burnRate.slowMultiplier`, default 3)." Neither Helm value exists in `charts/lenny/values.yaml`. The impl hard-codes `> 14` and `> 3` at `rules.go:1570,1581`.
 
-### - [ ] F-16.5.4 — `WarmPoolReplenishmentSlow` does not derive its threshold from `scalingPolicy.podWarmupSecondsBaseline`. [Medium] — OPEN
+### - [x] F-16.5.4 — `WarmPoolReplenishmentSlow` does not derive its threshold from `scalingPolicy.podWarmupSecondsBaseline`. [Medium] — CLOSED
 
 Spec (line 488): "P95 of `lenny_warmpool_pod_startup_duration_seconds` exceeds **2× the pool's `scalingPolicy.podWarmupSecondsBaseline`** (default: 30s) for > 5 min". The pool-level baseline is per-pool — it is a `SandboxWarmPool.spec.scalingPolicy.podWarmupSecondsBaseline` value. Impl (`rules.go:906`): hard-codes `> 60` (the default value × 2) for every pool. Two regressions follow:
 
@@ -26352,17 +26352,58 @@ Spec (line 488): "P95 of `lenny_warmpool_pod_startup_duration_seconds` exceeds *
 
 The fix shape is a per-pool scalar series (e.g., `lenny_pool_warmup_seconds_baseline`) referenced in the `Expr` similar to the other `scalar(...)` patterns, plus an emit-side path that mirrors `scalingPolicy.podWarmupSecondsBaseline` into Prometheus. Spec §16.5 calls out the same shape for `GatewayLatencyHigh` (tier-scaled threshold) and the impl implements the shape there (`scalar(lenny_gateway_latency_threshold_seconds)`); `WarmPoolReplenishmentSlow` is the regression.
 
-### - [ ] F-16.5.5 — SLO startup-provisional warning is not emitted. [Medium] — OPEN
+- **Resolution:** The `WarmPoolReplenishmentSlow` `Expr` now reads
+  `... > 2 * lenny_pool_warmup_seconds_baseline` (vector-matched on the
+  shared `pool` label) instead of the fixed `> 60`. The
+  PoolScalingController mirrors each pool's
+  `scalingPolicy.podWarmupSecondsBaseline` into the new per-pool
+  `lenny_pool_warmup_seconds_baseline` gauge on every clean reconcile
+  (`pkg/controller/poolscaling/warmup_baseline.go`,
+  `warmupBaselineForAlert` resolving an explicit baseline or the §16.5
+  30s default so 2×30 = 60 reproduces the prior threshold for an
+  unconfigured pool), with `forgetNotIn` dropping a removed pool's
+  series. The gauge is a config-mirror series (not a §16.1 catalog
+  metric, matching the `lenny_gateway_latency_threshold_seconds`
+  precedent). `charts/lenny/files/alerting-rules.yaml` regenerated. A
+  pool with `podWarmupSecondsBaseline: 60` now alerts at 120s P95 and a
+  pool with `5` at 10s, per the §16.5 line 488 "2× baseline" intent.
+
+### - [x] F-16.5.5 — SLO startup-provisional warning is not emitted. [Medium] — CLOSED
 
 Spec (lines 607-623): "**PROVISIONAL VALUES.** All targets in the table below ... are first-principles design estimates derived from architecture analysis, not load-test measurements. They MUST NOT be used in customer-facing SLA commitments or capacity agreements until the Phase 14.5 validation gate is complete ... Any deployment where these values remain at their defaults (i.e., Phase 14.5 has not yet run) MUST surface a startup warning: `[WARN] SLO targets in Section 16.5 are provisional first-principles estimates and have not been validated by load testing. Do not use for customer SLA commitments until Phase 14.5 benchmark gate is complete.`"
 
 `grep -rE "slo\\.validated|SLO targets.*provisional" --include="*.go"` returns no matches. No `slo.validated` Helm value exists in `values.yaml`. The startup warning is unimplemented; the warning's intent — that an operator running against unvalidated defaults is informed at startup — is therefore unmet. The spec's MUST language indicates this is a normative gap, not a deferred capability.
 
-### - [ ] F-16.5.6 — `capacityPlanning.*` workload-profile Helm values and the PSC default-detection warning are unbuilt. [Medium] — OPEN
+- **Resolution:** New `pkg/observability/slo` package carries the
+  verbatim §16.5 line 609 `ProvisionalWarning` and `StartupWarning(validated)`.
+  The gateway reads a `--slo-validated` flag (`LENNY_SLO_VALIDATED`) and
+  logs the warning at startup whenever it is false, beside the existing
+  dev-mode isolation warning. The `slo.validated` Helm value (default
+  `false`) is added to `values.yaml` and rendered as `LENNY_SLO_VALIDATED`
+  on the gateway Deployment; the Phase 14.5 benchmark automation sets it
+  `true` on the validated release. In v1 the SLO targets are not yet
+  operator-configurable, so the spec's "values remain at their defaults"
+  condition reduces to "not validated".
+
+### - [x] F-16.5.6 — `capacityPlanning.*` workload-profile Helm values and the PSC default-detection warning are unbuilt. [Medium] — CLOSED
 
 Spec (lines 590-601): The workload-profile table lists six `capacityPlanning.*` Helm values (`avgSessionDurationSeconds`, `delegationParticipationRate`, `avgDelegationsPerDelegatingSession`, `avgChildSessionSeconds`, `avgWorkspaceSizeMB`, `sessionIdleFraction`) with defaults and notes "The PoolScalingController reads `capacityPlanning.*` values at startup and logs a warning if defaults are in use for a Tier 2 or Tier 3 deployment: `[WARN] capacityPlanning Helm values are at defaults — review Section 16.5 workload profile table and substitute observed values before production promotion`."
 
 `charts/lenny/values.yaml:794` defines only `capacityPlanning.tier`; none of the six workload-profile keys exist. `grep -rE "avgSessionDurationSeconds|capacityPlanning Helm values are at defaults" --include="*.go"` returns no matches. The PoolScalingController does not read or warn on these values. The sizing formulas in §17.8 and the warm-pool calculations in §16.5 footnote 600 are therefore not parameterised against operator-substituted assumptions.
+
+- **Resolution:** All six `capacityPlanning.*` workload-profile values
+  are added to `charts/lenny/values.yaml` with their §16.5 defaults
+  (333 / 0.05 / 10 / 60 / 100 / 0.30) and rendered as `LENNY_CAPACITY_*`
+  env vars on the PSC Deployment alongside the tier. New
+  `pkg/controller/poolscaling/capacityplanning.go` declares the
+  `CapacityPlanning` struct, `DefaultCapacityPlanning`, `AtDefaults`, the
+  verbatim §16.5 line 601 `CapacityPlanningDefaultsWarning`, and
+  `ShouldWarnCapacityPlanningDefaults` (warns only for Tier 2 / Tier 3 at
+  defaults). `cmd/lenny-pool-scaling-controller` reads the values via
+  `--capacity-*` flags / env defaults and logs the warning at startup.
+  Tier 1 (dev/CI) never warns; an operator substituting any value clears
+  the warning. The values feed the warning gate in v1; consumption by
+  the §17.8 sizing formulas remains future work under those sections.
 
 ### - [x] F-16.5.7 — `lenny_checkpoint_storage_failure_total` is the non-eviction counter; `CheckpointStorageUnavailable` fires on the eviction path. [Low] — CLOSED
 

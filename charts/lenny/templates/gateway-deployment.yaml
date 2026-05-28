@@ -415,6 +415,14 @@ spec:
             # lenny_gateway_max_sessions_per_replica gauge at startup.
             - name: LENNY_MAX_SESSIONS_PER_REPLICA
               value: {{ .Values.gateway.maxSessionsPerReplica | quote }}
+            # §16.5 line 623 — slo.validated gates the gateway's
+            # provisional-SLO startup warning. False (the default) emits
+            # the §16.5 warning at startup so an operator running
+            # unvalidated SLO defaults is informed before relying on them
+            # for customer SLA commitments. The Phase 14.5 benchmark
+            # automation sets it true on the validated release. F-16.5.5.
+            - name: LENNY_SLO_VALIDATED
+              value: {{ .Values.slo.validated | default false | quote }}
             # §4.1 / §16.5 GatewayNoHealthyReplicas alert denominator.
             # Rendered from autoscaling.minReplicas so a tier-preset
             # override flows into the lenny_gateway_min_replicas gauge.

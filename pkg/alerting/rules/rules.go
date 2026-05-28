@@ -175,8 +175,8 @@ func criticalAlerts() []Rule {
 			Description: "Available warm pods = 0 for any pool for more than 60s. New session creation blocks on pod claim until the controller replenishes the pool.",
 			// spec: §25.17 line 5172 — runbook slug is "warm-pool-exhaustion",
 			// matching docs/runbooks/warm-pool-exhaustion.md.
-			RunbookURL:  runbook("warm-pool-exhaustion"),
-			SpecRef:     "§16.5",
+			RunbookURL: runbook("warm-pool-exhaustion"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "PostgresReplicationLagHigh",
@@ -917,8 +917,15 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
-			Name:        "WarmPoolReplenishmentSlow",
-			Expr:        `histogram_quantile(0.95, sum by (le, pool) (rate(lenny_warmpool_pod_startup_duration_seconds_bucket[5m]))) > 60`,
+			Name: "WarmPoolReplenishmentSlow",
+			// spec: §16.5 line 488 — fire at 2× the pool's
+			// scalingPolicy.podWarmupSecondsBaseline. The
+			// PoolScalingController mirrors each pool's baseline into the
+			// per-pool lenny_pool_warmup_seconds_baseline gauge so the
+			// threshold tracks the operator-configured value instead of a
+			// fixed 60s (= 2× the 30s default). The comparison matches on
+			// the shared `pool` label.
+			Expr:        `histogram_quantile(0.95, sum by (le, pool) (rate(lenny_warmpool_pod_startup_duration_seconds_bucket[5m]))) > 2 * lenny_pool_warmup_seconds_baseline`,
 			For:         5 * time.Minute,
 			Severity:    SeverityWarning,
 			Summary:     "Warm pool replenishment slower than expected",

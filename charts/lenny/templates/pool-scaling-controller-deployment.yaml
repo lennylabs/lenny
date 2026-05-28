@@ -67,6 +67,26 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: postgres-dsn
+            # §16.5 lines 590-601 — the workload-profile assumptions the
+            # tier sizing formulas depend on. The PSC reads them at
+            # startup and warns when a Tier 2 / Tier 3 deployment runs the
+            # defaults (§16.5 line 601). F-16.5.6.
+            {{- with .Values.capacityPlanning }}
+            - name: LENNY_CAPACITY_TIER
+              value: {{ .tier | default "tier1" | quote }}
+            - name: LENNY_CAPACITY_AVG_SESSION_DURATION_SECONDS
+              value: {{ .avgSessionDurationSeconds | quote }}
+            - name: LENNY_CAPACITY_DELEGATION_PARTICIPATION_RATE
+              value: {{ .delegationParticipationRate | quote }}
+            - name: LENNY_CAPACITY_AVG_DELEGATIONS_PER_DELEGATING_SESSION
+              value: {{ .avgDelegationsPerDelegatingSession | quote }}
+            - name: LENNY_CAPACITY_AVG_CHILD_SESSION_SECONDS
+              value: {{ .avgChildSessionSeconds | quote }}
+            - name: LENNY_CAPACITY_AVG_WORKSPACE_SIZE_MB
+              value: {{ .avgWorkspaceSizeMB | quote }}
+            - name: LENNY_CAPACITY_SESSION_IDLE_FRACTION
+              value: {{ .sessionIdleFraction | quote }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: 8080

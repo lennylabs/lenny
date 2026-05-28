@@ -369,3 +369,36 @@ func TestBurnRateRulesAreDualWindow(t *testing.T) {
 		}
 	}
 }
+
+// TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline asserts the
+// alert compares P95 startup against 2× the per-pool
+// lenny_pool_warmup_seconds_baseline gauge the PoolScalingController
+// mirrors, rather than the prior fixed 60s threshold. spec: §16.5 line
+// 488.
+func TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline_spec_16_5_488(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "WarmPoolReplenishmentSlow" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("WarmPoolReplenishmentSlow not found in Catalog")
+	}
+	wantFragments := []string{
+		"lenny_warmpool_pod_startup_duration_seconds_bucket",
+		"sum by (le, pool)",
+		"> 2 * lenny_pool_warmup_seconds_baseline",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(got.Expr, frag) {
+			t.Errorf("WarmPoolReplenishmentSlow expression %q is missing required fragment %q", got.Expr, frag)
+		}
+	}
+	// The fixed 2×30s default threshold must be gone — an explicitly
+	// baselined pool no longer alerts at the wrong multiple.
+	if strings.Contains(got.Expr, "> 60") {
+		t.Errorf("WarmPoolReplenishmentSlow still uses the fixed > 60 threshold: %q", got.Expr)
+	}
+}
