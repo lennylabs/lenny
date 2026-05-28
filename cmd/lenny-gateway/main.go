@@ -1332,6 +1332,18 @@ func main() {
 	var memories memorystore.Store
 	var memoryBackendLabel string
 	if *memoryEnabled {
+		// spec: §9.4 line 198 — the Embedder seam advertised for custom
+		// providers is preflighted at startup so a misconfigured
+		// dimension width (e.g., a provider that returns 1536-wide
+		// vectors against the migration-0044 vector(256) column) fails
+		// at boot rather than corrupting every Write with an unfriendly
+		// pgvector dimension-mismatch error. The built-in
+		// HashingEmbedder is correct by construction; the preflight is
+		// still cheap and pins the contract for future seam swaps.
+		// F-9.4.8.
+		if err := memorystore.ValidateEmbedder(memorystore.NewHashingEmbedder()); err != nil {
+			log.Fatalf("lenny-gateway: memorystore embedder preflight failed (§9.4 line 198): %v", err)
+		}
 		if pgPool != nil {
 			pgmem := memorypg.NewWithMaxPerUser(pgPool, *memoryMaxPerUser)
 			memories = pgmem
@@ -2870,7 +2882,15 @@ func main() {
 	// the gateway computes the lease-extension grant. gwMetrics satisfies
 	// leasecontrol.MetricEmitter so every grant drives the §16
 	// lenny_delegation_lease_extension_total counter. F-8.6.13.
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, gwMetrics)
+	// spec: §8.6 line 743 / §11.7 — the leasecontrol auditor adapts the
+	// gateway audit appender so every ExtendLease decision (granted,
+	// capped, denied) lands as a `delegation.lease_extended` row on the
+	// hash-chained §11.7 audit log. The recorder pulls the requesting
+	// session's tenant and the live actor sub from the §10.6
+	// principal-bound context to satisfy §11.7 line 428 actor-tenant
+	// validation. F-8.6.10.
+	leaseExtensionAuditor := leaseExtensionAuditAdapter{appender: auditAppender}
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, gwMetrics, leaseExtensionAuditor, replica)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -3735,16 +3755,18 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // gatewaymetrics.Metrics implements leasecontrol.MetricEmitter so
 // every ExtendLease decision drives the §16 line 66
 // `lenny_delegation_lease_extension_total` counter. F-8.6.13.
-func newGatewayControlServer(addr string, metrics leasecontrol.MetricEmitter) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, replicaID string) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets,
-		Tenants: budgets,
-		Metrics: metrics,
-		Clock:   clockinject.Now,
+		Budgets:           budgets,
+		Tenants:           budgets,
+		Metrics:           metrics,
+		Auditing:          auditor,
+		ServiceInstanceID: replicaID,
+		Clock:             clockinject.Now,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build GatewayControl service: %w", err)
@@ -3756,6 +3778,48 @@ func newGatewayControlServer(addr string, metrics leasecontrol.MetricEmitter) (*
 	gs := grpc.NewServer()
 	adapterv1.RegisterGatewayControlServer(gs, svc)
 	return gs, lis, nil
+}
+
+// leaseExtensionAuditAdapter implements leasecontrol.Auditor, turning
+// each ExtensionAudit record into a §11.7 hash-chained audit row
+// keyed on the request tenant. The event type is the spec-listed
+// `delegation.lease_extended`; the payload carries every §8.6 line
+// 743 field so a forensic reconstruction can identify the requesting
+// session, the approval mode and approver, the per-batch grouping,
+// the issuing replica, and the client originator. F-8.6.10.
+// spec: §8.6 line 743
+type leaseExtensionAuditAdapter struct {
+	appender policy.AuditAppender
+}
+
+func (a leaseExtensionAuditAdapter) RecordExtension(ctx context.Context, e leasecontrol.ExtensionAudit) {
+	if a.appender == nil {
+		return
+	}
+	payload := map[string]any{
+		"session_id":          e.RequestSessionID,
+		"root_session_id":     e.RootSessionID,
+		"requested_tokens":    e.RequestedTokens,
+		"granted_tokens":      e.GrantedTokens,
+		"requested_seconds":   e.RequestedSeconds,
+		"granted_seconds":     e.GrantedSeconds,
+		"effective_max":       e.EffectiveMax,
+		"outcome":             string(e.Outcome),
+		"approval_mode":       string(e.ApprovalMode),
+		"approver":            e.Approver,
+		"batch_id":            e.BatchID,
+		"service_instance_id": e.ServiceInstanceID,
+		"client_ip":           e.ClientIP,
+		"new_limits": map[string]any{
+			"token_budget":    e.NewLimits.TokenBudget,
+			"max_age_seconds": e.NewLimits.MaxAgeSeconds,
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, _ = a.appender.Append(ctx, e.TenantID, "delegation.lease_extended", json.RawMessage(data), clockinject.Now().UTC())
 }
 
 // verifyPostgresSchema fails fast when the gateway is pointed at a

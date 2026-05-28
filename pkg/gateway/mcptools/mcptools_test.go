@@ -1749,6 +1749,94 @@ func TestAwaitChildrenAny(t *testing.T) {
 	}
 }
 
+// TestAwaitChildrenAnyReturnsFirstChronologicallySettled_spec_8_8_945
+// asserts that `any` mode returns the child that reached terminal first
+// by wall clock, not the first-listed terminal child. Two siblings are
+// settled in reverse order vs childIDs: sess_late is listed first and
+// settles second; sess_early is listed second and settles first. F-8.8.12.
+func TestAwaitChildrenAnyReturnsFirstChronologicallySettled_spec_8_8_945(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_late", session.StateRunning, "sess_p")
+	mkSession(t, store, "sess_early", session.StateRunning, "sess_p")
+
+	// sess_early settles first — its UpdatedAt records the earlier instant.
+	if _, err := store.Update(context.Background(), "acme", "sess_early",
+		func(row *sessionstore.Session) error { row.State = session.StateCompleted; return nil }); err != nil {
+		t.Fatalf("settle sess_early: %v", err)
+	}
+	// A measurable gap so wall-clock advances regardless of host clock
+	// granularity. The store's monotonicNext clamps to ≥+1ns regardless;
+	// sleeping here keeps the two terminal timestamps visibly distinct.
+	time.Sleep(2 * time.Millisecond)
+	if _, err := store.Update(context.Background(), "acme", "sess_late",
+		func(row *sessionstore.Session) error { row.State = session.StateCompleted; return nil }); err != nil {
+		t.Fatalf("settle sess_late: %v", err)
+	}
+
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_late","sess_early"],"mode":"any"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, "sess_early") {
+		t.Errorf("await_children any %q should return sess_early — settled first by wall clock", text)
+	}
+	if strings.Contains(text, "sess_late") {
+		t.Errorf("await_children any %q should not include sess_late — it settled second", text)
+	}
+}
+
+// TestAwaitChildrenSettledAliasesAll_spec_8_8_945 asserts that the
+// `settled` mode is the alias for `all` named at §8.8 line 945 — both
+// require every child terminal and return the full set. F-8.8.12.
+func TestAwaitChildrenSettledAliasesAll_spec_8_8_945(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_c1", session.StateCompleted, "sess_p")
+	mkSession(t, store, "sess_c2", session.StateCompleted, "sess_p")
+
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_c1","sess_c2"],"mode":"settled"}`)
+	text := resultText(t, resp)
+	for _, want := range []string{"sess_c1", "sess_c2", "completed"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("settled mode %q missing %q — settled must alias all and return the full set", text, want)
+		}
+	}
+}
+
+// TestAwaitChildrenSettledBlocksUntilAll_spec_8_8_945 confirms `settled`
+// behaves identically to `all`: a single non-terminal child blocks both
+// modes. F-8.8.12.
+func TestAwaitChildrenSettledBlocksUntilAll_spec_8_8_945(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_done", session.StateCompleted, "sess_p")
+	mkSession(t, store, "sess_running", session.StateRunning, "sess_p")
+	h := srv.Handler()
+
+	got := make(chan map[string]any, 1)
+	go func() {
+		got <- call(t, h, "lenny/await_children",
+			`{"sessionId":"sess_p","childIds":["sess_done","sess_running"],"mode":"settled"}`)
+	}()
+	time.Sleep(60 * time.Millisecond)
+	select {
+	case <-got:
+		t.Fatal("settled mode returned before every child reached a terminal state")
+	default:
+	}
+
+	if _, err := store.Update(context.Background(), "acme", "sess_running",
+		func(row *sessionstore.Session) error { row.State = session.StateCompleted; return nil }); err != nil {
+		t.Fatalf("settle child: %v", err)
+	}
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("settled mode did not return after the last child settled")
+	}
+}
+
 func TestAwaitChildrenBlocksUntilSettled(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_p", session.StateRunning, "")

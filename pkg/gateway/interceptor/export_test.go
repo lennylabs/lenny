@@ -315,10 +315,12 @@ func TestRunPreExportMaterializationModifyCannotAlterDelegationContext(t *testin
 	}
 }
 
-func TestRunPreExportMaterializationFailClosedRejects(t *testing.T) {
-	// §8.7 rule 3: a fail-closed interceptor error rejects the file. The
-	// Chain surfaces it as a REJECT, which RunPreExportMaterialization
-	// maps to EXPORT_FILE_SCAN_REJECTED.
+// TestRunPreExportMaterializationFailClosedSurfacesUnavailable_spec_15_1_1073:
+// §15.1 line 1073 and §8.3 rule 3 line 164 — a fail-closed scanner
+// timeout or error must surface as EXPORT_FILE_SCAN_UNAVAILABLE
+// (TRANSIENT, HTTP 503) so retries are allowed, not EXPORT_FILE_SCAN_REJECTED
+// (PERMANENT, HTTP 422). F-8.7.7; F-8.7.8.
+func TestRunPreExportMaterializationFailClosedSurfacesUnavailable_spec_15_1_1073(t *testing.T) {
 	c := interceptor.NewChain()
 	mustRegister(t, c, interceptor.PhasePreExportMaterialization, &fakeInterceptor{
 		name: "down", priority: 500, builtin: true, failPolicy: interceptor.FailClosed,
@@ -335,8 +337,39 @@ func TestRunPreExportMaterializationFailClosedRejects(t *testing.T) {
 	if !errors.As(err, &scanErr) {
 		t.Fatalf("err = %v (%T), want *ExportScanError", err, err)
 	}
+	if scanErr.Code != interceptor.CodeExportFileScanUnavailable {
+		t.Errorf("code = %q, want %q — fail-closed scanner outage is TRANSIENT (503)",
+			scanErr.Code, interceptor.CodeExportFileScanUnavailable)
+	}
+}
+
+// TestRunPreExportMaterializationDeliberateRejectStaysRejected_spec_15_1_1073:
+// a deliberate policy REJECT (Action=Reject with no INTERCEPTOR_TIMEOUT
+// code) must keep mapping to EXPORT_FILE_SCAN_REJECTED so the §15.1
+// classifier renders 422 PERMANENT rather than 503 TRANSIENT. F-8.7.7.
+func TestRunPreExportMaterializationDeliberateRejectStaysRejected_spec_15_1_1073(t *testing.T) {
+	c := interceptor.NewChain()
+	mustRegister(t, c, interceptor.PhasePreExportMaterialization, &fakeInterceptor{
+		name: "policy", priority: 500, builtin: true, failPolicy: interceptor.FailClosed,
+		fn: func(context.Context, interceptor.Request) (interceptor.Result, error) {
+			return interceptor.Result{Action: interceptor.ActionReject, Reason: "blocked content"}, nil
+		},
+	})
+
+	_, err := interceptor.RunPreExportMaterialization(
+		context.Background(), c, "acme", "sess-1", 0,
+		interceptor.ExportFile{Path: "f.go", Content: []byte("x")},
+	)
+	var scanErr *interceptor.ExportScanError
+	if !errors.As(err, &scanErr) {
+		t.Fatalf("err = %v (%T), want *ExportScanError", err, err)
+	}
 	if scanErr.Code != interceptor.CodeExportFileScanRejected {
-		t.Errorf("code = %q, want %q for a fail-closed scanner error", scanErr.Code, interceptor.CodeExportFileScanRejected)
+		t.Errorf("code = %q, want %q — deliberate policy reject stays PERMANENT (422)",
+			scanErr.Code, interceptor.CodeExportFileScanRejected)
+	}
+	if scanErr.Reason != "blocked content" {
+		t.Errorf("reason = %q, want %q", scanErr.Reason, "blocked content")
 	}
 }
 

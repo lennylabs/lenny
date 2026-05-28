@@ -322,8 +322,14 @@ func TestExtendLeaseClearDenialEndsCoolOff(t *testing.T) {
 }
 
 // TestExtendLeaseChildSessionResolvesTree: an extension request from a
-// delegated child session resolves its tree's budget, not a per-session
-// budget.
+// delegated child session resolves the right tree. Per §8.6 line
+// 737-741, the grant applies to the requesting session only — the
+// child's view raises while the root's view stays at the base. The
+// previous implementation bumped the tree-wide counter, violating the
+// scope-isolation contract; F-8.6.12 corrected it. The new assertion
+// pins both views so a regression that re-introduces tree-wide
+// propagation fails loudly.
+// spec: §8.6 line 737-741; F-8.6.12.
 func TestExtendLeaseChildSessionResolvesTree(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
@@ -342,9 +348,53 @@ func TestExtendLeaseChildSessionResolvesTree(t *testing.T) {
 	if resp.Status != adapterv1.ExtendLeaseResponse_STATUS_GRANTED {
 		t.Errorf("status = %v, want GRANTED", resp.Status)
 	}
-	tb, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
-	if tb.CurrentTokenBudget != 150_000 {
-		t.Errorf("tree budget = %d, want 150000 — child grant applies to the tree", tb.CurrentTokenBudget)
+	childView, _ := budgets.TreeBudget(context.Background(), "acme", "child-7")
+	if childView.CurrentTokenBudget != 150_000 {
+		t.Errorf("child view = %d, want 150000 — the requester sees its own bump", childView.CurrentTokenBudget)
+	}
+	rootView, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
+	if rootView.CurrentTokenBudget != 100_000 {
+		t.Errorf("root view = %d, want 100000 — extensions apply to the requesting session only (§8.6 line 737)",
+			rootView.CurrentTokenBudget)
+	}
+}
+
+// TestExtendLeaseExtensionScopedToRequestingSession_spec_8_6_line_737:
+// directly anchors §8.6 line 737-741. Two siblings extend
+// independently; each sibling's view of the tree budget rises only by
+// its own grant, and a third "existing" sibling that did not extend
+// continues to see the unchanged base. F-8.6.12.
+func TestExtendLeaseExtensionScopedToRequestingSession_spec_8_6_line_737(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     1_000_000,
+		DeploymentMax:      5_000_000,
+	})
+	budgets.AddSession("sib-a", "root", "acme")
+	budgets.AddSession("sib-b", "root", "acme")
+	budgets.AddSession("sib-existing", "root", "acme")
+	svc := newService(t, budgets, nil)
+
+	if _, err := svc.ExtendLease(context.Background(), extendReq("sib-a", 50_000)); err != nil {
+		t.Fatalf("sib-a ExtendLease: %v", err)
+	}
+	if _, err := svc.ExtendLease(context.Background(), extendReq("sib-b", 200_000)); err != nil {
+		t.Fatalf("sib-b ExtendLease: %v", err)
+	}
+
+	ab, _ := budgets.TreeBudget(context.Background(), "acme", "sib-a")
+	bb, _ := budgets.TreeBudget(context.Background(), "acme", "sib-b")
+	eb, _ := budgets.TreeBudget(context.Background(), "acme", "sib-existing")
+	if ab.CurrentTokenBudget != 150_000 {
+		t.Errorf("sib-a view = %d, want 150000 (base + own delta)", ab.CurrentTokenBudget)
+	}
+	if bb.CurrentTokenBudget != 300_000 {
+		t.Errorf("sib-b view = %d, want 300000 (base + own delta)", bb.CurrentTokenBudget)
+	}
+	if eb.CurrentTokenBudget != 100_000 {
+		t.Errorf("sib-existing view = %d, want 100000 — sibling extensions must not bleed through", eb.CurrentTokenBudget)
 	}
 }
 
@@ -626,6 +676,142 @@ func TestExtendLeaseBudgetSourceError(t *testing.T) {
 	}
 }
 
+// TestExtendLeaseAuditCarriesSpec_8_6_line_743_fields: every §8.6 line
+// 743 field rides on the recorded ExtensionAudit row — ApprovalMode,
+// Approver, BatchID, ServiceInstanceID, ClientIP, and the post-grant
+// NewLimits. The handler is wired with deterministic BatchIDGen +
+// PeerIPFn so the test pins the exact strings. F-8.6.10.
+func TestExtendLeaseAuditCarriesSpec_8_6_line_743_fields(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-X", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+		ApprovalMode:       leasecontrol.ApprovalModeAuto,
+	})
+	rec := &recordingAuditor{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets:           budgets,
+		Tenants:           budgets,
+		Auditing:          rec,
+		ServiceInstanceID: "gw-7",
+		BatchIDGen:        func() string { return "batch-stub-1" },
+		PeerIPFn:          func(context.Context) string { return "203.0.113.5" },
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	if _, err := svc.ExtendLease(context.Background(), extendReq("root-X", 50_000)); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if len(rec.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(rec.entries))
+	}
+	e := rec.entries[0]
+	if e.ApprovalMode != leasecontrol.ApprovalModeAuto {
+		t.Errorf("ApprovalMode = %q, want auto", e.ApprovalMode)
+	}
+	if e.Approver != "gateway-auto" {
+		t.Errorf("Approver = %q, want gateway-auto (auto mode + non-denied outcome)", e.Approver)
+	}
+	if e.BatchID != "batch-stub-1" {
+		t.Errorf("BatchID = %q, want batch-stub-1 (BatchIDGen plumbed)", e.BatchID)
+	}
+	if e.ServiceInstanceID != "gw-7" {
+		t.Errorf("ServiceInstanceID = %q, want gw-7", e.ServiceInstanceID)
+	}
+	if e.ClientIP != "203.0.113.5" {
+		t.Errorf("ClientIP = %q, want 203.0.113.5", e.ClientIP)
+	}
+	if e.NewLimits.TokenBudget != 150_000 {
+		t.Errorf("NewLimits.TokenBudget = %d, want 150000 (100000 base + 50000 grant)", e.NewLimits.TokenBudget)
+	}
+}
+
+// TestExtendLeaseAuditDeniedCoolOffApproverIsClient_spec_8_6_line_743:
+// the cool-off rejection records the approver as `client` because
+// the rejection is the user's prior denial echoed back; the resolved
+// approval mode is also stamped. F-8.6.10.
+func TestExtendLeaseAuditDeniedCoolOffApproverIsClient_spec_8_6_line_743(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
+	budgets.RegisterTree("root-D", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+		ApprovalMode:       leasecontrol.ApprovalModeElicitation,
+	})
+	rec := &recordingAuditor{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets:  budgets,
+		Tenants:  budgets,
+		Auditing: rec,
+		Clock:    clock,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	budgets.MarkDenied("root-D")
+	if _, err := svc.ExtendLease(context.Background(), extendReq("root-D", 100_000)); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	e := rec.entries[0]
+	if e.Outcome != leasecontrol.AuditOutcomeDenied {
+		t.Fatalf("Outcome = %q, want denied", e.Outcome)
+	}
+	if e.Approver != "client" {
+		t.Errorf("Approver = %q, want client (cool-off is the user's prior denial)", e.Approver)
+	}
+	if e.ApprovalMode != leasecontrol.ApprovalModeElicitation {
+		t.Errorf("ApprovalMode = %q, want elicitation", e.ApprovalMode)
+	}
+	if e.NewLimits.TokenBudget != 100_000 {
+		t.Errorf("NewLimits.TokenBudget = %d, want 100000 (no grant applied)", e.NewLimits.TokenBudget)
+	}
+}
+
+// TestExtendLeaseDefaultBatchIDGenIsChronological_spec_8_6_line_743:
+// successive calls without a BatchIDGen override produce
+// chronologically-sortable BatchIDs (the millis prefix advances).
+// F-8.6.10.
+func TestExtendLeaseDefaultBatchIDGenIsChronological_spec_8_6_line_743(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-T", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	rec := &recordingAuditor{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Auditing: rec,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if _, err := svc.ExtendLease(context.Background(), extendReq("root-T", 1)); err != nil {
+		t.Fatalf("ExtendLease #1: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, err := svc.ExtendLease(context.Background(), extendReq("root-T", 1)); err != nil {
+		t.Fatalf("ExtendLease #2: %v", err)
+	}
+	if len(rec.entries) != 2 {
+		t.Fatalf("audits = %d, want 2", len(rec.entries))
+	}
+	a, b := rec.entries[0].BatchID, rec.entries[1].BatchID
+	if a == "" || b == "" {
+		t.Fatalf("BatchIDs empty: a=%q b=%q", a, b)
+	}
+	if a >= b {
+		t.Errorf("BatchIDs not chronologically sortable: a=%q !< b=%q", a, b)
+	}
+}
+
 // TestExtendLeaseOverGRPC exercises the full GatewayControl gRPC path:
 // register the Service on a gRPC server, dial it as a GatewayControl
 // client, and confirm a grant round-trips.
@@ -713,11 +899,11 @@ func (r *raceBudgetSource) TreeBudget(ctx context.Context, tenantID, sessionID s
 	return r.inner.TreeBudget(ctx, tenantID, sessionID)
 }
 
-func (r *raceBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID string, grantedTokens, grantedSeconds int64) (int64, error) {
+func (r *raceBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, grantedTokens, grantedSeconds int64) (leasecontrol.NewLimits, error) {
 	if r.denyOnApply {
 		r.inner.MarkDenied(rootSessionID)
 	}
-	return r.inner.ApplyGrant(ctx, tenantID, rootSessionID, grantedTokens, grantedSeconds)
+	return r.inner.ApplyGrant(ctx, tenantID, rootSessionID, requestingSessionID, grantedTokens, grantedSeconds)
 }
 
 func (r *raceBudgetSource) RejectionCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration {
@@ -752,8 +938,8 @@ func (e errBudgetSource) TreeBudget(context.Context, string, string) (leasecontr
 	return leasecontrol.TreeBudget{}, e.err
 }
 
-func (e errBudgetSource) ApplyGrant(context.Context, string, string, int64, int64) (int64, error) {
-	return 0, e.err
+func (e errBudgetSource) ApplyGrant(context.Context, string, string, string, int64, int64) (leasecontrol.NewLimits, error) {
+	return leasecontrol.NewLimits{}, e.err
 }
 
 func (e errBudgetSource) RejectionCoolOff(context.Context, string, string) time.Duration {

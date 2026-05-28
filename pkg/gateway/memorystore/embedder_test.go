@@ -4,7 +4,9 @@ package memorystore_test
 
 import (
 	"context"
+	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +73,68 @@ func TestCosineDistanceRanksRelatedTextCloser(t *testing.T) {
 		t.Errorf("self-distance = %v, want 0", d)
 	}
 }
+
+// fakeEmbedder returns the supplied vector verbatim. Used by the
+// ValidateEmbedder dimension-check tests.
+type fakeEmbedder struct {
+	out []float32
+	err error
+}
+
+func (f fakeEmbedder) Embed(string) ([]float32, error) { return f.out, f.err }
+
+// TestValidateEmbedderAcceptsCorrectDim_spec_9_4_198: the default
+// HashingEmbedder passes the §9.4 line 198 preflight.
+func TestValidateEmbedderAcceptsCorrectDim_spec_9_4_198(t *testing.T) {
+	if err := memorystore.ValidateEmbedder(memorystore.NewHashingEmbedder()); err != nil {
+		t.Fatalf("ValidateEmbedder: %v", err)
+	}
+}
+
+// TestValidateEmbedderRejectsWrongDim_spec_9_4_198: a provider-backed
+// Embedder that returns a 1536-dim vector (the OpenAI default) fails
+// the preflight rather than corrupting the pgvector(256) column at
+// the next Write. F-9.4.8.
+func TestValidateEmbedderRejectsWrongDim_spec_9_4_198(t *testing.T) {
+	wide := fakeEmbedder{out: make([]float32, 1536)}
+	err := memorystore.ValidateEmbedder(wide)
+	if err == nil {
+		t.Fatal("ValidateEmbedder: want dimension-mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "1536") || !strings.Contains(err.Error(), "256") {
+		t.Errorf("err = %v, want both observed and expected widths cited", err)
+	}
+}
+
+// TestValidateEmbedderNilOk_spec_9_4_198: a nil Embedder is accepted
+// (callers fall back to recency-only ranking). F-9.4.8.
+func TestValidateEmbedderNilOk_spec_9_4_198(t *testing.T) {
+	if err := memorystore.ValidateEmbedder(nil); err != nil {
+		t.Fatalf("ValidateEmbedder(nil): %v", err)
+	}
+}
+
+// TestValidateEmbedderNilSliceOk_spec_9_4_198: an Embedder that
+// returns a nil slice is accepted — the §9.4 contract permits an
+// Embedder to short-circuit a query, and the column write is skipped
+// in that case so no corruption risk. F-9.4.8.
+func TestValidateEmbedderNilSliceOk_spec_9_4_198(t *testing.T) {
+	if err := memorystore.ValidateEmbedder(fakeEmbedder{out: nil}); err != nil {
+		t.Fatalf("ValidateEmbedder(nil-slice Embedder): %v", err)
+	}
+}
+
+// TestValidateEmbedderPropagatesEmbedderError_spec_9_4_198: a provider
+// outage at startup surfaces as a typed wrapped error so operators
+// see the cause at boot. F-9.4.8.
+func TestValidateEmbedderPropagatesEmbedderError_spec_9_4_198(t *testing.T) {
+	err := memorystore.ValidateEmbedder(fakeEmbedder{err: errPreflight})
+	if err == nil || !errors.Is(err, errPreflight) {
+		t.Fatalf("ValidateEmbedder: err = %v, want wrapping errPreflight", err)
+	}
+}
+
+var errPreflight = errors.New("provider outage")
 
 func TestCosineDistanceMismatchedLengthIsOrthogonal(t *testing.T) {
 	if d := memorystore.CosineDistance([]float32{1, 0}, []float32{1, 0, 0}); d != 1 {

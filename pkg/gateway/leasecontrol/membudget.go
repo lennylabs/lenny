@@ -45,19 +45,30 @@ type MemoryBudgetSource struct {
 type memTree struct {
 	rootSessionID  string
 	tenantID       string
-	currentBudget  int64
+	baseBudget     int64
 	deploymentMax  int64
 	tenantMax      int64
 	tenantBase     int64
 	runtimeBase    int64
 	deploymentBase int64
 
-	// currentMaxAgeSeconds / effectiveMaxAgeSeconds carry the §8.6 line
+	// baseMaxAgeSeconds / effectiveMaxAgeSeconds carry the §8.6 line
 	// 643 additionalMaxAge dimension. The seconds dimension is
 	// independent of the tokens dimension: a request that exhausts only
 	// one of them still applies the other. F-8.6.11.
-	currentMaxAgeSeconds   int64
+	baseMaxAgeSeconds      int64
 	effectiveMaxAgeSeconds int64
+
+	// extensions records per-requesting-session §8.6 line 737-741
+	// extension bumps. Keyed by sessionID, each value carries the
+	// session-specific deltas atop the tree's baseBudget /
+	// baseMaxAgeSeconds. TreeBudget(sessionID) returns the requesting
+	// session's view (base + delta); other sessions in the same tree
+	// see the unchanged base, satisfying "Extensions apply to the
+	// requesting session only" and "Existing children are unaffected".
+	// F-8.6.12.
+	// spec: §8.6 line 737-741
+	extensions map[string]sessionExtension
 
 	// parentLeaseTokenCeiling / parentLeaseMaxAgeCeiling capture the
 	// §8.6 line 648 "parent's own lease limits" hard ceiling. Set by
@@ -91,6 +102,17 @@ type memTree struct {
 	// DefaultSuccessCoolOff once the dispatcher consumes it.
 	// spec: §8.6 line 675
 	successCoolOff time.Duration
+}
+
+// sessionExtension is one requesting session's accumulated §8.6 line
+// 737-741 extension deltas atop the tree's base budget. The in-memory
+// source records these per-session so a sibling reading the tree
+// budget does not observe the requester's bump.
+// F-8.6.12.
+// spec: §8.6 line 737-741
+type sessionExtension struct {
+	tokens  int64
+	seconds int64
 }
 
 // effectiveMax resolves the tree's §8.6 layered ceiling with the pure
@@ -210,14 +232,15 @@ func (m *MemoryBudgetSource) RegisterTree(rootSessionID string, cfg TreeConfig) 
 	m.trees[rootSessionID] = &memTree{
 		rootSessionID:          rootSessionID,
 		tenantID:               cfg.TenantID,
-		currentBudget:          cfg.CurrentTokenBudget,
+		baseBudget:             cfg.CurrentTokenBudget,
 		deploymentBase:         cfg.DeploymentBase,
 		deploymentMax:          cfg.DeploymentMax,
 		tenantBase:             cfg.TenantBase,
 		tenantMax:              cfg.TenantMax,
 		runtimeBase:            cfg.RuntimeBase,
-		currentMaxAgeSeconds:   cfg.CurrentMaxAgeSeconds,
+		baseMaxAgeSeconds:      cfg.CurrentMaxAgeSeconds,
 		effectiveMaxAgeSeconds: cfg.EffectiveMaxAgeSeconds,
+		extensions:             map[string]sessionExtension{},
 		rejectionCoolOff:       cfg.RejectionCoolOff,
 		approvalMode:           mode,
 		successCoolOff:         cfg.SuccessCoolOff,
@@ -301,7 +324,12 @@ func (m *MemoryBudgetSource) TenantOf(_ context.Context, sessionID string) (stri
 
 // TreeBudget returns the §8.6 extension state for the tree that
 // contains sessionID. The cool-off comparison uses the source's own
-// clock, which the in-memory source treats as authoritative.
+// clock, which the in-memory source treats as authoritative. The
+// returned CurrentTokenBudget / CurrentMaxAgeSeconds reflect the
+// requesting session's per-session view: the tree base plus any
+// extension previously granted to sessionID itself. Siblings see the
+// unchanged base — extensions apply to the requesting session only
+// per §8.6 line 737-741. F-8.6.12.
 func (m *MemoryBudgetSource) TreeBudget(_ context.Context, tenantID, sessionID string) (TreeBudget, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -311,12 +339,13 @@ func (m *MemoryBudgetSource) TreeBudget(_ context.Context, tenantID, sessionID s
 	}
 	denied := t.extensionDenied && m.clock().Before(t.coolOffExpiry)
 	parent := m.parentLease[sessionID]
+	ext := t.extensions[sessionID]
 	return TreeBudget{
 		RootSessionID:             t.rootSessionID,
-		CurrentTokenBudget:        t.currentBudget,
+		CurrentTokenBudget:        t.baseBudget + ext.tokens,
 		EffectiveMax:              t.effectiveMax(),
 		ParentLeaseTokenCeiling:   parent.TokenCeiling,
-		CurrentMaxAgeSeconds:      t.currentMaxAgeSeconds,
+		CurrentMaxAgeSeconds:      t.baseMaxAgeSeconds + ext.seconds,
 		EffectiveMaxMaxAgeSeconds: t.effectiveMaxAgeSeconds,
 		ParentLeaseMaxAgeCeiling:  parent.MaxAgeCeiling,
 		ExtensionDenied:           denied,
@@ -324,28 +353,48 @@ func (m *MemoryBudgetSource) TreeBudget(_ context.Context, tenantID, sessionID s
 	}, nil
 }
 
-// ApplyGrant raises the tree's current token budget by grantedTokens
-// and current max-age budget by grantedSeconds. It re-checks the §8.6
-// extension-denied flag under the lock — the in-memory analogue of
-// the Postgres in-transaction re-check — and returns ErrExtensionDenied
-// when a denial landed since the TreeBudget read. F-8.6.11.
-func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSessionID string, grantedTokens, grantedSeconds int64) (int64, error) {
+// ApplyGrant raises the requesting session's extension deltas by
+// grantedTokens / grantedSeconds. §8.6 lines 737-741 scope an
+// extension to the requesting session only — existing children are
+// unaffected, only new children spawned after the extension benefit
+// from the expanded parent budget — so the bump is recorded against
+// requestingSessionID rather than the tree root. ApplyGrant re-checks
+// the §8.6 extension-denied flag under the lock — the in-memory
+// analogue of the Postgres in-transaction re-check — and returns
+// ErrExtensionDenied when a denial landed since the TreeBudget read.
+// F-8.6.11; F-8.6.12.
+func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSessionID, requestingSessionID string, grantedTokens, grantedSeconds int64) (NewLimits, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, err := m.lookupLocked(tenantID, rootSessionID)
 	if err != nil {
-		return 0, err
+		return NewLimits{}, err
 	}
 	if t.extensionDenied && m.clock().Before(t.coolOffExpiry) {
-		return 0, ErrExtensionDenied
+		return NewLimits{}, ErrExtensionDenied
 	}
+	if t.extensions == nil {
+		t.extensions = map[string]sessionExtension{}
+	}
+	scope := requestingSessionID
+	if scope == "" {
+		// The root session (or a caller that omits the requesting id)
+		// applies the bump under the tree root id so the legacy single-
+		// session test cases continue to read the bumped view.
+		scope = rootSessionID
+	}
+	ext := t.extensions[scope]
 	if grantedTokens > 0 {
-		t.currentBudget += grantedTokens
+		ext.tokens += grantedTokens
 	}
 	if grantedSeconds > 0 {
-		t.currentMaxAgeSeconds += grantedSeconds
+		ext.seconds += grantedSeconds
 	}
-	return t.currentBudget, nil
+	t.extensions[scope] = ext
+	return NewLimits{
+		TokenBudget:   t.baseBudget + ext.tokens,
+		MaxAgeSeconds: t.baseMaxAgeSeconds + ext.seconds,
+	}, nil
 }
 
 // RejectionCoolOff returns the §8.6 rejectionCoolOffSeconds configured

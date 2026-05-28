@@ -2149,6 +2149,14 @@ type childOutcome struct {
 	parentID string
 	state    session.State
 	result   taskResult
+	// settledAt is the wall-clock instant the child reached its terminal
+	// state. Sourced from the live row's UpdatedAt (the row mutates on
+	// terminal transition) or, when the row is gone, the §8.10 archive's
+	// SettledAt. Zero when the child has not settled yet. The `any` mode
+	// of lenny/await_children uses it to pick the chronologically-first
+	// settled child rather than the first-listed terminal child.
+	// spec: §8.8 lines 945-949; F-8.8.12.
+	settledAt time.Time
 }
 
 // resolveChild resolves a child to its current outcome. It reads the
@@ -2160,10 +2168,20 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 ) (childOutcome, error) {
 	row, err := store.Get(ctx, tenant, childID)
 	if err == nil {
+		// spec: §8.8 line 945 — the live row mutates on terminal
+		// transition; UpdatedAt is the closest in-tree witness of when
+		// the row reached that state. The archive's SettledAt is more
+		// precise once the row migrates, but until then UpdatedAt is the
+		// authoritative settle witness. F-8.8.12.
+		var settled time.Time
+		if session.IsTerminal(row.State) {
+			settled = row.UpdatedAt
+		}
 		return childOutcome{
-			parentID: row.ParentSessionID,
-			state:    row.State,
-			result:   toTaskResult(row),
+			parentID:  row.ParentSessionID,
+			state:     row.State,
+			result:    toTaskResult(row),
+			settledAt: settled,
 		}, nil
 	}
 	if !errors.Is(err, sessionstore.ErrNotFound) || archive == nil {
@@ -2179,42 +2197,69 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 		tr.TaskID = childID
 	}
 	return childOutcome{
-		parentID: node.ParentSessionID,
-		state:    session.State(node.State),
-		result:   tr,
+		parentID:  node.ParentSessionID,
+		state:     session.State(node.State),
+		result:    tr,
+		settledAt: node.SettledAt,
 	}, nil
 }
 
 // collectChildResults reads the awaited children and reports whether
 // the mode's settle condition holds. For `all` and `settled` the
-// condition is every child terminal; for `any` it is at least one
-// child terminal, and only the first such child (in childIDs order) is
-// returned. A child whose live row is gone is resolved from the §8.10
-// archive.
+// condition is every child terminal; both modes return the full set on
+// completion (the spec at §8.8 lines 945-949 defines `settled` as an
+// alias for `all`, retained for external MCP / A2A callers that already
+// emit either spelling). For `any` it is at least one child terminal,
+// and only the chronologically-first settled child is returned — sourced
+// from the row's UpdatedAt or the §8.10 archive's SettledAt — so a fast
+// finisher buried later in childIDs is preferred over a slow finisher
+// at the head of the list. A child whose live row is gone is resolved
+// from the §8.10 archive. F-8.8.12.
+// spec: §8.8 lines 945-949
 func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store,
 	tenant string, childIDs []string, mode string,
 ) ([]taskResult, bool, error) {
-	var terminal []taskResult
+	type settled struct {
+		at     time.Time
+		idx    int
+		result taskResult
+	}
+	var terminal []settled
 	allTerminal := true
-	for _, cid := range childIDs {
+	for i, cid := range childIDs {
 		oc, err := resolveChild(ctx, store, archive, tenant, cid)
 		if err != nil {
 			return nil, false, err
 		}
 		if session.IsTerminal(oc.state) {
-			terminal = append(terminal, oc.result)
+			terminal = append(terminal, settled{at: oc.settledAt, idx: i, result: oc.result})
 		} else {
 			allTerminal = false
 		}
 	}
 	if mode == "any" {
-		if len(terminal) > 0 {
-			return terminal[:1], true, nil
+		if len(terminal) == 0 {
+			return nil, false, nil
 		}
-		return nil, false, nil
+		first := terminal[0]
+		for _, c := range terminal[1:] {
+			// spec: §8.8 lines 945-949 — "Returns the first TaskResult"
+			// means the child that reached terminal earliest by wall
+			// clock. Stable tie-break on childIDs order when two
+			// children share the same settle instant (e.g., both
+			// missing a settledAt witness).
+			if c.at.Before(first.at) || (c.at.Equal(first.at) && c.idx < first.idx) {
+				first = c
+			}
+		}
+		return []taskResult{first.result}, true, nil
 	}
 	if allTerminal {
-		return terminal, true, nil
+		out := make([]taskResult, len(terminal))
+		for i, t := range terminal {
+			out[i] = t.result
+		}
+		return out, true, nil
 	}
 	return nil, false, nil
 }

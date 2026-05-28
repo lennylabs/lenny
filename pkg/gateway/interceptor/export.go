@@ -27,6 +27,19 @@ const (
 	// interceptor call is made and the whole export fails.
 	CodeExportFileScanSizeExceeded = "EXPORT_FILE_SCAN_SIZE_EXCEEDED"
 
+	// CodeExportFileScanUnavailable is the §15.1 line 1073 error code
+	// returned when a PreExportMaterialization interceptor call timed out
+	// or returned a gRPC error under a fail-closed FailPolicy. The §15.1
+	// classifier marks it TRANSIENT (HTTP 503): the underlying scanner is
+	// not reachable, retry is allowed under the standard Retry-After
+	// conventions. Under fail-open the same timeout/error conditions
+	// admit the file and emit delegation.export_scan_failed_open
+	// instead — that branch returns no error. Callers stamp
+	// details.{filePath, interceptorRef, reason} on the §15.1 envelope
+	// from the *ExportScanError this package returns. F-8.7.8.
+	// spec: §15.1 line 1073; §8.3 rule 3 line 164; §4.8 line 1038
+	CodeExportFileScanUnavailable = "EXPORT_FILE_SCAN_UNAVAILABLE"
+
 	// CodeInterceptorImmutableFieldViolation is the §4.8 error code
 	// returned when a MODIFY decision alters a field the phase marks
 	// immutable. At PreExportMaterialization the immutable fields are
@@ -260,8 +273,22 @@ func scanExportFile(ctx context.Context, c *Chain, tenantID, sessionID string, f
 
 	switch res.Action {
 	case ActionReject:
+		// spec: §15.1 line 1073; §8.3 rule 3 line 164 — a fail-closed
+		// scanner that timed out or errored surfaces from Chain.Run as
+		// ActionReject with Code == CodeInterceptorTimeout. The §15.1
+		// classifier treats that as TRANSIENT (scanner unavailable)
+		// rather than as a deliberate policy REJECT (PERMANENT). Tag
+		// the wrapper with CodeExportFileScanUnavailable in that case
+		// so callers can distinguish a 503 from a 422. A REJECT with
+		// an empty Code (or any non-timeout code) is a real policy
+		// decision and stays mapped to CodeExportFileScanRejected.
+		// F-8.7.7; F-8.7.8.
+		code := CodeExportFileScanRejected
+		if res.Code == CodeInterceptorTimeout {
+			code = CodeExportFileScanUnavailable
+		}
 		return ExportFile{}, &ExportScanError{
-			Code:   CodeExportFileScanRejected,
+			Code:   code,
 			Path:   f.Path,
 			Reason: res.Reason,
 		}
