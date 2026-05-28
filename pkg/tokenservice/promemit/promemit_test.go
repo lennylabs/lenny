@@ -47,3 +47,27 @@ func TestEmitterRegistersAndServesCatalog(t *testing.T) {
 		}
 	}
 }
+
+// spec: §13.3 line 595 / §16.1 — the Token Service's
+// lenny_time_drift_seconds gauge is registered, materialized at
+// startup as 0, and updates via SetTimeDrift. F-13.3.5.
+func TestEmitterSetTimeDriftRoundTrips(t *testing.T) {
+	emitter, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	w := httptest.NewRecorder()
+	emitter.Handler().ServeHTTP(w, req)
+	body, _ := io.ReadAll(w.Body)
+	if !strings.Contains(string(body), "lenny_time_drift_seconds 0") {
+		t.Fatalf("/metrics missing zero-init drift gauge:\n%s", body)
+	}
+	emitter.SetTimeDrift(1.75)
+	w = httptest.NewRecorder()
+	emitter.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	body, _ = io.ReadAll(w.Body)
+	if !strings.Contains(string(body), "lenny_time_drift_seconds 1.75") {
+		t.Fatalf("/metrics missing updated drift gauge:\n%s", body)
+	}
+}

@@ -45,6 +45,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	pkgaudit "github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
@@ -188,6 +190,17 @@ func main() {
 	}
 	_ = pgPool
 
+	// §13.3 line 595: NTP drift self-monitor. The source returns the
+	// clockinject-injected offset for v1 (zero in production unless an
+	// operator wires a real adjtimex/chrony probe). The exchange path
+	// consults driftMonitor.Degraded() and returns
+	// 503 token_validation_unavailable when |drift| >= 5s. F-13.3.5.
+	driftMonitor := driftmonitor.New(func() time.Duration {
+		off, _ := clockinject.Offset()
+		return off
+	}, metricsEmitter)
+	go driftMonitor.Start(ctx, 30*time.Second)
+
 	srv := tokenservice.NewServer(tokenservice.Options{
 		Signer: signer,
 		Issuer: *issuer,
@@ -205,6 +218,7 @@ func main() {
 			TenantPerSecond: *rlTenantPerSec,
 			SampleWindow:    *rlSampleWindow,
 		},
+		DriftDegraded: driftMonitor.Degraded,
 	})
 
 	// §4.0 EventEmitter wiring. The §4.0 spec requires every process

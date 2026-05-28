@@ -220,6 +220,41 @@ func TestScalarGaugesRegisteredAtStartup(t *testing.T) {
 // deployer-configured value once SetMaxOrphanTasksPerTenant fires. The
 // §16.5 OrphanTasksPerTenantHigh alert reads it via
 // `scalar(lenny_max_orphan_tasks_per_tenant)`. F-8.10.13.
+// TestSetTimeDriftRoundTrips covers §13.3 line 595 / F-13.3.5: the
+// lenny_time_drift_seconds gauge is materialized at startup as 0 and
+// updates to the driftmonitor's sampled value via SetTimeDrift.
+func TestSetTimeDriftRoundTrips(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_time_drift_seconds 0") {
+		t.Fatalf("startup /metrics missing zero-init drift gauge\n---\n%s", rr.Body.String())
+	}
+	m.SetTimeDrift(2.5)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_time_drift_seconds 2.5") {
+		t.Fatalf("/metrics missing updated drift gauge\n---\n%s", rr.Body.String())
+	}
+	// Negative offsets must round-trip too — the gauge is signed.
+	m.SetTimeDrift(-3.2)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_time_drift_seconds -3.2") {
+		t.Fatalf("/metrics missing negative drift gauge\n---\n%s", rr.Body.String())
+	}
+}
+
+// TestSetTimeDriftNilSafe ensures the nil receiver short-circuits the
+// gauge update, so a caller with a nil *Metrics handle does not crash.
+func TestSetTimeDriftNilSafe(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.SetTimeDrift(1.0) // must not panic
+}
+
 func TestSetMaxOrphanTasksPerTenant_spec_8_10(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {

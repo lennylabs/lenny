@@ -395,6 +395,13 @@ type Metrics struct {
 	// Drives the §16.5 MemoryStoreGrowthHigh alert. F-9.4.6.
 	memoryStoreUserOverThreshold *prometheus.CounterVec
 
+	// timeDrift is the §13.3 line 595 / §16.1 lenny_time_drift_seconds
+	// gauge: signed offset (seconds) from the NTP reference. The
+	// driftmonitor sampler refreshes this gauge on its tick. The §16.5
+	// GatewayClockDrift alert keys on `abs(lenny_time_drift_seconds) >
+	// 0.5`; the replica self-degrades once |drift| >= 5s. F-13.3.5.
+	timeDrift prometheus.Gauge
+
 	// inflight tracks the number of HTTP requests currently being
 	// handled by the §16.1 Middleware-wrapped mux. It is the source of
 	// the lenny_gateway_request_queue_depth gauge (the §4.1 SCL-026
@@ -1297,6 +1304,17 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §13.3 line 595 / §16.1 — NTP drift self-monitor gauge populated by
+	// pkg/driftmonitor on its periodic sample. The §16.5
+	// GatewayClockDrift alert keys on `abs(lenny_time_drift_seconds) >
+	// 0.5`. F-13.3.5.
+	timeDriftGauge, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_time_drift_seconds",
+		Help: "Gateway wall-clock signed offset (seconds) from the NTP reference (§13.3 line 595 / §16.1).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, maxSessionsPerReplica,
 		extractionThreshold,
@@ -1332,7 +1350,8 @@ func New() (*Metrics, error) {
 		statelessRequests, statelessConcurrentActive, taskReuseCount,
 		delegationLeaseExtension,
 		memoryStoreOperationDuration, memoryStoreErrors,
-		memoryStoreRecordCount, memoryStoreUserOverThreshold)
+		memoryStoreRecordCount, memoryStoreUserOverThreshold,
+		timeDriftGauge)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
 	queueDepth := requestQueueDepth.WithLabelValues()
@@ -1352,6 +1371,10 @@ func New() (*Metrics, error) {
 	// utilization gauge so /metrics emits the series even before the
 	// gateway has published any session events. F-10.4.11.
 	replayBufferUtilizationChild := replayBufferUtilization.WithLabelValues()
+	// §13.3 line 595: pre-materialize the unlabelled drift gauge so
+	// /metrics emits a 0 reading before the first driftmonitor sample.
+	// F-13.3.5.
+	timeDriftChild := timeDriftGauge.WithLabelValues()
 	llmProxyConns := llmProxyActiveConnections.WithLabelValues()
 	reg.MustRegister(activeSessions, activeStreams, requestQueueDepth,
 		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms,
@@ -1446,6 +1469,7 @@ func New() (*Metrics, error) {
 		memoryStoreErrors:                    memoryStoreErrors,
 		memoryStoreRecordCount:               memoryStoreRecordCount,
 		memoryStoreUserOverThreshold:         memoryStoreUserOverThreshold,
+		timeDrift:                            timeDriftChild,
 	}, nil
 }
 
@@ -2554,6 +2578,18 @@ func (m *Metrics) IncMemoryStoreUserOverThreshold(tenantID, backend string) {
 		return
 	}
 	m.memoryStoreUserOverThreshold.WithLabelValues(tenantID, backend).Inc()
+}
+
+// SetTimeDrift publishes the §13.3 line 595 lenny_time_drift_seconds
+// gauge. Driven by the pkg/driftmonitor sampler. Value is the signed
+// offset in seconds (positive = ahead of NTP reference, negative =
+// behind). The §16.5 GatewayClockDrift alert keys on
+// `abs(lenny_time_drift_seconds) > 0.5`. F-13.3.5.
+func (m *Metrics) SetTimeDrift(seconds float64) {
+	if m == nil {
+		return
+	}
+	m.timeDrift.Set(seconds)
 }
 
 // Middleware returns an http.Handler that records the §16.1 request

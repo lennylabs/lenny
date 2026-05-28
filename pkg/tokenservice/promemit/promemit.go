@@ -32,6 +32,7 @@ type Emitter struct {
 	secretReloads      *prometheus.CounterVec
 	rateLimited        *prometheus.CounterVec
 	rateLimitedSampled *prometheus.CounterVec
+	timeDrift          prometheus.Gauge
 }
 
 // New constructs and registers the Token Service metric set against a
@@ -75,8 +76,19 @@ func New() (*Emitter, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §13.3 line 595 / §16.1 — NTP drift self-monitor gauge populated
+	// by pkg/driftmonitor on its periodic sample. The §16.5
+	// GatewayClockDrift alert keys on `abs(lenny_time_drift_seconds) >
+	// 0.5`. F-13.3.5.
+	timeDriftGauge, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_time_drift_seconds",
+		Help: "Token Service wall-clock signed offset (seconds) from the NTP reference (§13.3 line 595 / §16.1).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 
-	reg.MustRegister(requestDuration, errs, secretReloads, rateLimited, rateLimitedSampled)
+	reg.MustRegister(requestDuration, errs, secretReloads, rateLimited, rateLimitedSampled, timeDriftGauge)
 	return &Emitter{
 		reg:                reg,
 		requestDuration:    requestDuration,
@@ -84,6 +96,7 @@ func New() (*Emitter, error) {
 		secretReloads:      secretReloads,
 		rateLimited:        rateLimited,
 		rateLimitedSampled: rateLimitedSampled,
+		timeDrift:          timeDriftGauge.WithLabelValues(),
 	}, nil
 }
 
@@ -114,6 +127,13 @@ func (e *Emitter) IncRateLimitedSampled(limitTier string) {
 // "failure".
 func (e *Emitter) IncSecretReload(outcome string) {
 	e.secretReloads.WithLabelValues(outcome).Inc()
+}
+
+// SetTimeDrift publishes the §13.3 line 595 lenny_time_drift_seconds
+// gauge for the Token Service replica. Driven by pkg/driftmonitor.
+// F-13.3.5.
+func (e *Emitter) SetTimeDrift(seconds float64) {
+	e.timeDrift.Set(seconds)
 }
 
 // Handler returns the Prometheus /metrics scrape handler over the

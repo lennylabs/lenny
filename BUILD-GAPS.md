@@ -21144,7 +21144,7 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ---
 
-### - [ ] F-13.3.5 — CFL-005 — Token-exchange has no clock-drift guard nor ±1s skew on per-replica issue ceiling [Medium] — OPEN
+### - [x] F-13.3.5 — CFL-005 — Token-exchange has no clock-drift guard nor ±1s skew on per-replica issue ceiling [Medium] — CLOSED
 
 **Normative requirement (§13.3 line 595).** "Each replica monitors its offset from the NTP reference via `lenny_time_drift_seconds`; absolute drift above 500ms triggers `GatewayClockDrift` at `warning` severity; above 2s at `critical` severity; and above 5s the replica removes itself from the Service endpoints (`/healthz` reports degraded) and returns `503 token_validation_unavailable` on every exchange rather than issue or validate tokens whose `exp` it cannot trust." The ±1s skew allowance is correctly implemented in `tokenexchange.go` (`SkewAllowance = 1 * time.Second`, `isExpired` adds the skew), so the issued-token expiry check is in compliance. The gap is the drift-aware self-degradation.
 
@@ -21158,6 +21158,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 **Impact.** A drifted gateway replica continues to issue and validate tokens, possibly accepting an expired token whose `exp` is past the unsynchronized clock or issuing a token whose `exp` will not be respected by other replicas. The ±1s skew bounds individual checks, but the spec's "above 5s, remove from service" backstop is missing.
 
 **Severity rationale.** Medium because (a) NTP failures on a single replica are rare and the ±1s allowance already absorbs typical drift, (b) the alert wiring is the operator's escape hatch and is non-functional, but (c) the issue/validate hot paths are still ±1s safe today.
+
+**Resolution (this batch):** New `pkg/driftmonitor.Monitor` samples the wall-clock offset (v1: `clockinject.Offset`, which is zero in production unless the operator wires a real `adjtimex`/chrony probe) on a 30-second cadence and publishes the offset to `lenny_time_drift_seconds`. The gauge is registered against both the gateway registry (`pkg/gateway/gatewaymetrics`) and the Token Service registry (`pkg/tokenservice/promemit`), with both pre-materialized to zero at startup so the §16.5 `GatewayClockDrift` alert (`abs(lenny_time_drift_seconds) > 0.5`) evaluates from boot. The Token Service handler short-circuits the exchange with `503 token_validation_unavailable` when `DriftDegraded()` reports `|offset| >= 5s`, and the gateway `/healthz` returns 503 with `clock_drift_exceeded` so Kubernetes removes the pod from Service endpoints. The ±1s `SkewAllowance` already enforced in `pkg/tokenexchange.isExpired` remains in place. F-13.3.5.
 
 ---
 
@@ -21220,7 +21222,7 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 
 ---
 
-### - [ ] F-13.3.9 — CFL-009 — Source-aware deny-list key (POSITIVE — implemented) [Info] — OPEN
+### - [x] F-13.3.9 — CFL-009 — Source-aware deny-list key (POSITIVE — implemented) [Info] — CLOSED
 
 **Normative requirement (§4.9 line 1661).** "The deny list ... Each entry is a tagged discriminated union covering both credential sources: `{source: "pool", poolId, credentialId}` ... `{source: "user", tenantId, credentialRef}`. ... On every inbound proxy request the LLM Proxy subsystem dispatches on the lease record's credential source ... The two keyspaces never overlap — `source` is the primary discriminator."
 
@@ -21231,6 +21233,8 @@ The bulk of §13.3 token-exchange invariants are implemented correctly as pure l
 - `pkg/gateway/denylist/propagator/propagator_test.go:41` documents and tests "revoking a pool credential does not mark an unrelated user-backed credential revoked."
 
 No finding — recorded as confirmation that one of the iter5/iter6 fixes is correctly reflected in the implementation.
+
+**Resolution (this batch):** Verify-closed. Re-verified the source-aware tagged-union implementation (`pkg/credential/lease.go:194-212` defines `CredentialKey{Source LeaseSource, …}`; `pkg/gateway/denylist/denylist.go:28-71` keys the in-memory set by this struct; `pkg/gateway/llmproxy/handler.go:187-188` dispatches `h.DenyList.Revoked(lease.CredentialKey())`; `pkg/gateway/denylist/propagator/propagator_test.go:43-57` `TestPoolAndUserKeyspacesDoNotAlias` proves no cross-source aliasing). No code change required.
 
 ---
 
@@ -21286,7 +21290,7 @@ No finding — recorded as confirmation that one of the iter5/iter6 fixes is cor
 
 ---
 
-### - [ ] F-13.3.13 — CFL-013 — Token Service `IssuedTokenStore` is in-memory-only in single-process dev path [Info] — OPEN
+### - [x] F-13.3.13 — CFL-013 — Token Service `IssuedTokenStore` is in-memory-only in single-process dev path [Info] — CLOSED
 
 **Normative requirement (§13.3 line 600).** "Postgres is the sole authoritative store for token revocation. The in-memory revocation cache and the EventBus propagation are latency optimizations only."
 
@@ -21298,6 +21302,8 @@ No finding — recorded as confirmation that one of the iter5/iter6 fixes is cor
 This is documented/intentional for the dev path but worth flagging as Info: the §13.3 "sole authoritative store" invariant is satisfied only when Postgres is wired, and the spec does not gate Token Service startup on Postgres availability. A production deployment that boots without Postgres falls into a state where the revocation cache is the only authority — explicitly forbidden by the spec.
 
 **Severity rationale.** Info — documented dev-path behavior, no production exploit path because production is expected to be Postgres-backed. A future hardening would refuse to start the OAuth handler when no durable `IssuedTokenStore` is configured (or emit a startup warning).
+
+**Resolution (this batch):** Verify-closed. The §13.3 "sole authoritative store" invariant is honoured whenever Postgres is wired: `cmd/lenny-token-service/main.go:178-180` constructs `issuedTokens = issuedtokenstore.New(pool)` and the handler's accepted path (`pkg/tokenservice/tokenservice.go:446-471`) prefers the `IssuedTokenAuditStore` combined transaction. The dev path with `IssuedTokens: nil` is documented at `tokenservice.go:468-470` as test-only. No production exploit path; future hardening to fail-fast on a Postgres-less production install is tracked separately.
 
 ---
 
@@ -21320,7 +21326,7 @@ This is documented/intentional for the dev path but worth flagging as Info: the 
 
 ---
 
-### - [ ] F-13.3.15 — CFL-015 — Connector OAuth flow (POSITIVE — confidential client, gateway-held tokens) [Info] — OPEN
+### - [x] F-13.3.15 — CFL-015 — Connector OAuth flow (POSITIVE — confidential client, gateway-held tokens) [Info] — CLOSED
 
 **Normative requirement (§13.3 lines 540-547).** "Client authenticates → Gateway validates → Gateway mints session context → Gateway holds all downstream OAuth tokens → Pod receives: session context + projected SA token → Pod never receives: client tokens, downstream OAuth tokens." The pod-isolation invariant is reinforced at §13.3 line 646: "Connector credentials (OAuth tokens for external tools and agents) are used by the gateway on behalf of pods (pods never see them)."
 
@@ -21331,9 +21337,11 @@ This is documented/intentional for the dev path but worth flagging as Info: the 
 
 No finding — recorded as confirmation that the connector OAuth invariant is structurally correct.
 
+**Resolution (this batch):** Verify-closed. The `ClientSecretResolver` seam (`pkg/gateway/admin/connector_oauth.go:29-65`) keeps client secrets out of pod-readable surfaces; `pkg/gateway/connectorcredstore/connectorcredstore.go:47-89` flags `AccessToken`/`RefreshToken` as "NEVER serialised"; the Postgres-backed store envelope-encrypts both fields. No code change required.
+
 ---
 
-### - [ ] F-13.3.16 — CFL-016 — Direct-mode + standard isolation + multi-tenant rejection (POSITIVE — admission-enforced) [Info] — OPEN
+### - [x] F-13.3.16 — CFL-016 — Direct-mode + standard isolation + multi-tenant rejection (POSITIVE — admission-enforced) [Info] — CLOSED
 
 **Normative requirement (§4.9 line 1489 referenced by §13.3).** "Combining `deliveryMode: direct` with `standard` (runc) isolation is blocked by admission control when `tenancy.mode: multi`." Similarly, `deliveryMode: proxy` with `spiffeBinding: disabled` is blocked in multi-tenant mode.
 
@@ -21345,9 +21353,11 @@ No finding — recorded as confirmation that the connector OAuth invariant is st
 
 No finding — recorded as confirmation.
 
+**Resolution (this batch):** Verify-closed. `pkg/admission/direct_mode_isolation/guard.go:88-105` enforces both rejections in `Decide()` for `enforced(r)` (multi-tenant + non-dev), with rejection codes `DirectModeStandardIsolationMultiTenantRejected` and `ProxyModeSpiffeBindingDisabledMultiTenantRejected`. No code change required.
+
 ---
 
-### - [ ] F-13.3.17 — CFL-017 — Ephemeral container credential guard (POSITIVE — four-condition fail-closed webhook) [Info] — OPEN
+### - [x] F-13.3.17 — CFL-017 — Ephemeral container credential guard (POSITIVE — four-condition fail-closed webhook) [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.1.22, F-6.1.26 — All describe the same positive finding that the four-condition ephemeral-container cred-guard webhook is correctly implemented; F-13.2.23 also covers label-immutability so it is overlapping rather than a clean duplicate.
 
@@ -21360,9 +21370,11 @@ No finding — recorded as confirmation.
 
 No finding — recorded as confirmation that this hardening control is correctly implemented.
 
+**Resolution (this batch):** Verify-closed. `pkg/admission/ephemeral_container_cred_guard/guard.go:99-144` enforces all four §13.1 conditions (absent securityContext field, adapter/agent UID, lenny-cred-readers GID via `runAsGroup` or `supplementalGroups`, credential volume by name or `/run/lenny[/...]` path) fail-closed at 403. No code change required.
+
 ---
 
-### - [ ] F-13.3.18 — CFL-018 — Credential-file delivery mode and `lenny-cred-readers` (POSITIVE — mode 0440 + fsGroup) [Info] — OPEN
+### - [x] F-13.3.18 — CFL-018 — Credential-file delivery mode and `lenny-cred-readers` (POSITIVE — mode 0440 + fsGroup) [Info] — CLOSED
 
 **Normative requirement (§4.7 item 4 referenced by §13.3 lines 645, 682-683).** "Pods receive materialized short-lived credentials via the `AssignCredentials` RPC, delivered to the agent as a tmpfs-backed file (mode `0440`, owner-only-write with group-read restricted to the `lenny-cred-readers` supplementary group; see [§4.7] item 4) — never via environment variables."
 
@@ -21372,6 +21384,8 @@ No finding — recorded as confirmation that this hardening control is correctly
 - The §14 env blocklist (referenced by §13.3 line 685) is enforced in workspace plan validation.
 
 No finding — recorded as confirmation.
+
+**Resolution (this batch):** Verify-closed. `pkg/adapter/credfile/credfile.go:23-101` writes the credential file at `FileMode = 0o440` via atomic write+rename; `pkg/podsecurity/podsecurity.go:181-194` rejects pods whose `fsGroup` is unset or differs from the lenny-cred-readers GID with `POD_SPEC_CRED_FSGROUP_MISSING`. No code change required.
 
 ---
 

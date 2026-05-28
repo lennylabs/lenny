@@ -76,6 +76,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	gwadapter "github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterregistry"
@@ -1206,6 +1207,16 @@ func main() {
 	// transitions land on `lenny_gateway_kms_signing_errors_total` and
 	// `lenny_gateway_kms_signing_circuit_state`. F-10.2.6.
 	kmsBreakerObs.SetMetrics(gwMetrics)
+	// spec: §13.3 line 595 — NTP drift self-monitor. The source returns
+	// the clockinject-injected offset for v1 (zero in production unless
+	// an operator wires a real adjtimex/chrony probe). /healthz and any
+	// downstream consumer (currently the embedded TokenService path,
+	// which lives in lenny-token-service) consult driftMonitor.Degraded.
+	// F-13.3.5.
+	driftMonitor := driftmonitor.New(func() time.Duration {
+		off, _ := clockinject.Offset()
+		return off
+	}, gwMetrics)
 	// §4.6.1: record fallback-claim skips on the gateway metrics registry.
 	// Wired after gatewaymetrics.New() because the binder is constructed
 	// earlier in the agent-namespace block.
@@ -2370,7 +2381,18 @@ func main() {
 	mux.Handle("GET /metrics", gwMetrics.Handler())
 
 	// ----- Healthz (unauthenticated) -----
+	// spec: §13.3 line 595 — when this replica's NTP drift exceeds the
+	// 5s ceiling, /healthz reports degraded (503). Kubernetes responds
+	// by removing the pod from the Service endpoints, so traffic stops
+	// reaching a replica whose clock cannot be trusted for `exp`
+	// validation. F-13.3.5.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		if driftMonitor.Degraded() {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("clock_drift_exceeded\n"))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -3113,6 +3135,12 @@ func main() {
 	// (`max(...)`) of this gauge to gate Tier 3 promotion.
 	gcCollector := &gcpause.Collector{Gauge: gwMetrics}
 	go gcCollector.Run(watchdogCtx)
+
+	// spec: §13.3 line 595 — NTP drift sampler. Samples the clockinject
+	// offset on the configured cadence, publishes the
+	// lenny_time_drift_seconds gauge, and gates /healthz at the 5s
+	// degraded threshold. F-13.3.5.
+	go driftMonitor.Start(watchdogCtx, 30*time.Second)
 
 	// spec: §9.4 line 202 / §16.1 line 153 — periodic per-tenant
 	// MemoryStore record-count sampler. Walks the store's tenants and

@@ -92,6 +92,11 @@ type Server struct {
 	metrics      Metrics
 
 	rateLimiter *RateLimiter
+
+	// driftDegraded is the §13.3 line 595 self-check consulted on
+	// every exchange. A non-nil function returning true causes the
+	// exchange to fail with 503 token_validation_unavailable. F-13.3.5.
+	driftDegraded func() bool
 }
 
 // Options configures the Server.
@@ -140,6 +145,13 @@ type Options struct {
 	// unlimited; production callers populate via flags.
 	RateLimit RateLimitOptions
 
+	// DriftDegraded, when non-nil, is consulted on every exchange.
+	// When it reports true (the §13.3 line 595 5s NTP-drift ceiling
+	// is exceeded), the handler short-circuits the exchange with
+	// 503 token_validation_unavailable rather than issuing or
+	// validating a token whose `exp` it cannot trust. F-13.3.5.
+	DriftDegraded func() bool
+
 	// Now overrides time.Now for the handler and the rate limiter.
 	// Tests inject a fixed clock; production leaves this nil.
 	Now func() time.Time
@@ -162,13 +174,14 @@ func NewServer(opts Options) *Server {
 		opts.Metrics = NoMetrics{}
 	}
 	s := &Server{
-		signer:       opts.Signer,
-		verifier:     opts.Verifier,
-		issuer:       opts.Issuer,
-		perDialect:   opts.PerDialectCap,
-		issuedTokens: opts.IssuedTokens,
-		auditor:      opts.Auditor,
-		metrics:      opts.Metrics,
+		signer:        opts.Signer,
+		verifier:      opts.Verifier,
+		issuer:        opts.Issuer,
+		perDialect:    opts.PerDialectCap,
+		issuedTokens:  opts.IssuedTokens,
+		auditor:       opts.Auditor,
+		metrics:       opts.Metrics,
+		driftDegraded: opts.DriftDegraded,
 	}
 	if !opts.RateLimit.IsZero() {
 		s.rateLimiter = NewRateLimiter(opts.RateLimit, opts.Now)
@@ -218,6 +231,18 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		if errClass != "" {
 			s.metrics.IncErrors(op, errClass)
 		}
+	}
+
+	// §13.3 line 595: when this replica's NTP drift exceeds the 5s
+	// ceiling, refuse to issue or validate a token whose `exp` it
+	// cannot trust. The replica's /healthz simultaneously reports
+	// degraded so the Service controller removes it from endpoints.
+	// F-13.3.5.
+	if s.driftDegraded != nil && s.driftDegraded() {
+		writeOAuthError(w, http.StatusServiceUnavailable, "token_validation_unavailable",
+			"replica wall-clock drift exceeds the §13.3 5s ceiling")
+		finish("token_validation_unavailable")
+		return
 	}
 
 	// Caller token is the Authorization: Bearer header per §13.3.
