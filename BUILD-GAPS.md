@@ -39626,33 +39626,45 @@ Reviewed: 2026-05-23.
 
 ### Findings
 
-### - [ ] F-27.2.1 — 1 — `playground.sessionLabels` Helm value missing [Medium] — OPEN
+### - [x] F-27.2.1 — 1 — `playground.sessionLabels` Helm value missing [Medium] — CLOSED
 Spec requirement 12 mandates `playground.sessionLabels` defaulting to `{origin: "playground"}`. The key is absent from `charts/lenny/values.yaml`, the gateway flag set, and `playground.Config`. The mode-agnostic JWT claim is implemented, but the operator-tunable labels primitive that the spec table promises is not exposed. Audit/accounting consumers that depend on a configurable label map (rather than a hardcoded claim) have no surface to set it.
 
 Evidence: `charts/lenny/values.yaml:656-686` has no `sessionLabels` key; `grep -rn "sessionLabels"` across the tree returns nothing.
 
-### - [ ] F-27.2.2 — 2 — `playground.acknowledgeApiKeyMode` value and preflight warning missing [Medium] — OPEN
+**Resolution:** `playground.sessionLabels` chart value added (default `{origin: "playground"}`); rendered to `--playground-session-labels=k=v,k=v` on the gateway Deployment; parsed by `parseKeyValueCSV` into `playground.Config.SessionLabels`. `Config.EffectiveLabels()` merges operator entries with the load-bearing `origin=playground` (re-stamped so an operator cannot silence the §27.3 mode-agnostic guarantee). The map is stamped on every `AuditEvent` (mint + revoke) and on every `SessionRecord`. Tier-1 tests cover the EffectiveLabels default/merge/re-stamp paths, the SessionRecord JSON round-trip, and the audit-event Labels assertion in `TestLogoutRevokesSessionBearer`; tier-2 helm-unittest covers chart-default + operator-supplied label rendering.
+
+### - [x] F-27.2.2 — 2 — `playground.acknowledgeApiKeyMode` value and preflight warning missing [Medium] — CLOSED
 Spec requirement 13 mandates a `playground.acknowledgeApiKeyMode` value (default `false`) and a non-blocking `lenny-preflight` WARNING when `enabled=true && authMode=apiKey && global.devMode=false && acknowledgeApiKeyMode != true`. The value does not exist in `values.yaml`, no preflight row enforces it (`pkg/preflight/run.go` `Run()` has no playground check), and the spec's explicit comparison ("same pattern as `monitoring.acknowledgeNoPrometheus`") highlights an established pattern that is not followed here. Operators enabling apiKey mode in production receive no install-time warning about the documented phishing surface.
 
 Evidence: `grep -rn "acknowledgeApiKeyMode"` returns no matches across `.go`, `.yaml`, `.json`, `.tpl`.
 
-### - [ ] F-27.2.3 — 3 — Helm `values.schema.json` (layer-1 primary defense) absent for `playground.devTenantId` [Medium] — OPEN
+**Resolution:** `playground.acknowledgeApiKeyMode` chart value added (default `false`). New `pkg/preflight/playground.go` `CheckPlaygroundConfig` emits a non-blocking `WARNING` decision when `enabled && authMode=apiKey && !globalDevMode && !acknowledgeApiKeyMode` (matching the `monitoring.acknowledgeNoPrometheus` pattern). Wired through `preflight.Run()` and the `lenny-preflight` Job args (`--playground-acknowledge-api-key-mode`). Tier-1 tests cover the warning, the ack-suppression path, and the dev-mode escape; tier-2 helm-unittest covers chart-args rendering.
+
+### - [x] F-27.2.3 — 3 — Helm `values.schema.json` (layer-1 primary defense) absent for `playground.devTenantId` [Medium] — CLOSED
 Spec requirement 15 names the schema entry as the **primary** install-time defense (`type: string`, `pattern: ^[a-zA-Z0-9_-]{1,128}$`, `maxLength: 128`). `ls charts/lenny/` confirms there is no `values.schema.json` in the chart at all, so neither `helm install`, `helm upgrade`, `helm install --dry-run`, nor `lenny-ctl values validate` rejects a malformed `playground.devTenantId` at install time. The startup backstop (layer 3) catches the same fault, but the operator experiences it as `CrashLoopBackOff` on `LENNY_PLAYGROUND_DEV_TENANT_INVALID` rather than as an install-time rejection. The spec calls this layer "primary"; its absence shifts the entire validation burden onto the backstop layer and onto layer 4 (which is not a format check).
 
 Evidence: `charts/lenny/` directory listing (no `values.schema.json`); no JSON Schema file referenced from `Chart.yaml`.
 
-### - [ ] F-27.2.4 — 4 — `lenny-preflight` row for `playground.devTenantId` (layer-2 primary defense) absent [Medium] — OPEN
+**Resolution:** `charts/lenny/values.schema.json` added with the `playground.devTenantId` pattern (`^[a-zA-Z0-9_-]{1,128}$`, `maxLength: 128`) and an `enum` constraint on `playground.authMode`. Helm honours the file automatically; `helm install`, `helm upgrade`, and `helm install --dry-run` reject a malformed value before any resource is applied. The schema is intentionally permissive (`additionalProperties: true`) elsewhere so it remains a layer-1 defense rather than a chart-wide validation surface; layer-2 covers cross-field conditionals.
+
+### - [x] F-27.2.4 — 4 — `lenny-preflight` row for `playground.devTenantId` (layer-2 primary defense) absent [Medium] — CLOSED
 Spec requirement 16 mandates a preflight check row that enforces the cross-field conditionals JSON Schema cannot express: `authMode=dev` requires non-empty `devTenantId`; with `auth.multiTenant=true`, `default` is forbidden when multiple tenants are seeded. The check must run under the `pre-install`/`pre-upgrade` hook and under `helm install --dry-run`. `pkg/preflight/run.go` enumerates its checks (admission-webhook-inventory, phase-stamp-consistency, host-sharing-flags, networkpolicy-*) and `grep -rn "playground"` across `pkg/preflight/` and `cmd/lenny-preflight/` returns no matches. The cross-field conditional is therefore never caught by GitOps pipelines (ArgoCD, Flux) or by CI `helm template`→`helm install --dry-run` flows; the gateway pod CrashLoops at startup instead.
 
 Evidence: `pkg/preflight/run.go:73-152` has no playground row; `cmd/lenny-preflight/main.go` and the `pkg/preflight/*.go` files do not mention `playground`.
 
-### - [ ] F-27.2.5 — 5 — `playground.authMode=dev` + `global.devMode=false` Helm-validate rejection missing [Medium] — OPEN
+**Resolution:** New `pkg/preflight/playground.go` `CheckPlaygroundConfig` enforces the layer-2 cross-field conditionals — empty `devTenantId` (`LENNY_PLAYGROUND_DEV_TENANT_REQUIRED`), malformed `devTenantId` (`LENNY_PLAYGROUND_DEV_TENANT_INVALID`), `multiTenant=true` + `devTenantId=default` rejection. Registered as the `playground-config` check in `preflight.Run()`; chart wires `tenancy.mode`, `global.devMode`, and the `playground.*` values into the Job args. Tier-1 tests cover each rejection plus the OIDC happy path; tier-2 helm-unittest covers the args rendering at chart defaults and with overrides.
+
+### - [x] F-27.2.5 — 5 — `playground.authMode=dev` + `global.devMode=false` Helm-validate rejection missing [Medium] — CLOSED
 §27.3 specifies "rejected at Helm-validate otherwise". The chart does not enforce this — no `fail` block in templates, no schema constraint. The runtime backstop at `main.go:1381-1383` (`LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN`) catches it at pod-start, but install-time GitOps pipelines do not. Same root cause as MEDIUM-3 and MEDIUM-4 (absent `values.schema.json` and preflight row), but called out separately because §27.3 names this as a distinct Helm-validate behavior. A fix can land via the same preflight check that handles the layer-2 cross-field conditionals.
 
 Evidence: `grep -n "authMode.*dev\|devMode" charts/lenny/templates/*.yaml` shows no rejection logic for this pair; the only `if` referencing `playground.enabled` is at `gateway-deployment.yaml:166`, which adds args rather than rejecting values.
 
-### - [ ] F-27.2.6 — 6 — `auth.multiTenant=true` + dev mode cross-field check missing at Helm-validate [Medium] — OPEN
+**Resolution:** `CheckPlaygroundConfig` rejects `authMode=dev` without `global.devMode=true` with `LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN`, matching the runtime backstop's envelope. The check fires on the `helm install` / `helm upgrade` / `helm install --dry-run` pre-install hook so GitOps pipelines see the rejection at submit time instead of the gateway pod CrashLoop. Tier-1 test (`TestCheckPlaygroundConfigDevModeForbidden_F_27_2_5`).
+
+### - [x] F-27.2.6 — 6 — `auth.multiTenant=true` + dev mode cross-field check missing at Helm-validate [Medium] — CLOSED
 Subset of MEDIUM-4: the spec calls out this specific conditional twice (in the table row for `playground.devTenantId` and again in the validation-layering layer 2 row). The runtime backstop at `playground.go:189-191` enforces it as `LENNY_PLAYGROUND_DEV_TENANT_REQUIRED`, but the Helm-time check is missing. The fix is to add the row to the preflight Job; tracking separately would inflate the count, so this is noted under MEDIUM-4.
+
+**Resolution:** Closed together with F-27.2.4. `CheckPlaygroundConfig` rejects `enabled && authMode=dev && multiTenant && devTenantID=default` with `LENNY_PLAYGROUND_DEV_TENANT_REQUIRED`; chart wires `tenancy.mode == "multi"` into `--playground-multi-tenant`. Tier-1 test (`TestCheckPlaygroundConfigMultiTenantDefaultRejected_F_27_2_6`).
 
 ### Summary
 
@@ -40430,11 +40442,13 @@ Concretely: an operator who ships `helm install` with `playground.enabled=true`,
 
 Severity: High (MUST in §27.9; missing install-time gate the spec cross-references to `monitoring.acknowledgeNoPrometheus`).
 
-### - [ ] F-27.9.3 — 1 — `playground.acknowledgeApiKeyMode` Helm value not declared in `values.yaml` [Medium] — OPEN
+### - [x] F-27.9.3 — 1 — `playground.acknowledgeApiKeyMode` Helm value not declared in `values.yaml` [Medium] — CLOSED
 
 `/Users/joan/projects/lenny/charts/lenny/values.yaml:656-684` defines the `playground.*` value set. A grep for `acknowledgeApiKeyMode` and `apiKey` across `charts/lenny/` finds no `playground.acknowledgeApiKeyMode` key, no documentation comment, and no default. The spec's acknowledgement value the preflight check is meant to consult is therefore not part of the published chart contract. Even if the preflight rule from High-2 were added, an operator who set `playground.acknowledgeApiKeyMode: true` in their values would receive no schema validation and no chart-level documentation of the field. This is a partner gap to High-2 — the spec lists the value as the operator-facing surface, and it is missing.
 
 Severity: Medium (SHOULD; documented capability not surfaced; not directly exploitable but blocks operators from completing the acknowledgement workflow when High-2 is fixed).
+
+**Resolution:** Closed by F-27.2.2. `playground.acknowledgeApiKeyMode` chart value added with a documentation comment describing the §27.2 line 42 / §27.9 paste-form acknowledgement, default `false`. The new layer-1 `values.schema.json` declares the field as `boolean`; the layer-2 preflight check (`CheckPlaygroundConfig` in `pkg/preflight/playground.go`) consults it via `--playground-acknowledge-api-key-mode`. F-27.9.2 (the High parent) remains OPEN — the preflight WARNING fires at install time per the spec wording, but the §27.9 conditional-emission requirement (chain through to the dashboard) is still scoped under F-27.9.2.
 
 ### - [x] F-27.9.4 — 1 — UI clipboard snippet hard-codes Python; spec lists Go/Python/TS [Low] — CLOSED
 

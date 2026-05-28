@@ -467,6 +467,8 @@ func main() {
 		"§27.2 playground.bearerTtlSeconds: the TTL of MCP bearer tokens minted by POST /v1/playground/token (bounded 60..3600). Override via LENNY_PLAYGROUND_BEARER_TTL_SECONDS.")
 	playgroundGatewayHost := flag.String("playground-gateway-host", os.Getenv("LENNY_PLAYGROUND_GATEWAY_HOST"),
 		"§27.7 the public gateway host the playground UI connects to over the MCP WebSocket; interpolated into the playground connect-src CSP directive. Override via LENNY_PLAYGROUND_GATEWAY_HOST.")
+	playgroundSessionLabels := flag.String("playground-session-labels", os.Getenv("LENNY_PLAYGROUND_SESSION_LABELS"),
+		"§27.2 line 41 playground.sessionLabels: comma-separated key=value pairs stamped on every playground session record and audit event. Empty applies the default {origin: \"playground\"}; the load-bearing origin entry is re-stamped at startup regardless of the supplied value. Override via LENNY_PLAYGROUND_SESSION_LABELS.")
 	maxSessionsPerReplica := flag.Int("max-sessions-per-replica", envInt("LENNY_MAX_SESSIONS_PER_REPLICA", 50),
 		"§4.1 gateway.maxSessionsPerReplica: per-replica capacity ceiling used as the denominator of the GatewaySessionBudgetNearExhaustion alert (§16.5) and the §17.8.2 SCL-036 burst-absorption minReplicas formula. Provisional Tier defaults: 50 (Tier 1), 200 (Tier 2), 400 (Tier 3). Emitted at startup on the lenny_gateway_max_sessions_per_replica gauge. Override via LENNY_MAX_SESSIONS_PER_REPLICA.")
 	// §4.1 / §16.5: scalar gauges read by the GatewayNoHealthyReplicas
@@ -2406,6 +2408,7 @@ func main() {
 			BearerTTL:          time.Duration(*playgroundBearerTTL) * time.Second,
 			MultiTenant:        *multiTenant,
 			GatewayHost:        *playgroundGatewayHost,
+			SessionLabels:      parseKeyValueCSV(*playgroundSessionLabels),
 		}
 		// §27.3 dev mode is permitted only under global devMode; the
 		// chart rejects authMode=dev otherwise, and this is the
@@ -4195,6 +4198,35 @@ func splitCSV(raw string) []string {
 		if p := strings.TrimSpace(part); p != "" {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+// parseKeyValueCSV splits a comma-separated key=value flag value into
+// a map. Trimmed empty entries and entries without `=` are skipped.
+// An empty input yields a nil map. The §27.2 line 41
+// playground.sessionLabels flag uses this encoding so a Helm value
+// like `{origin: playground, env: stage}` renders to
+// `--playground-session-labels=origin=playground,env=stage`.
+func parseKeyValueCSV(raw string) map[string]string {
+	var out map[string]string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if k == "" {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string)
+		}
+		out[k] = v
 	}
 	return out
 }

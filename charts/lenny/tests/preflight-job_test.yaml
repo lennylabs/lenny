@@ -139,3 +139,53 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: '§17.9.3: postgres.connectionPooler must be "pgbouncer" or "external", got "rdsproxy"'
+
+  # spec: §27.2 lines 41–42 + §27.3 — the preflight Job renders the
+  # playground.* chart values into --playground-* flags so the
+  # CheckPlaygroundConfig install-time gate sees them.
+  # F-27.2.2 / F-27.2.4 / F-27.2.5 / F-27.2.6 / F-27.9.3.
+  - it: renders the playground-config preflight inputs from chart values
+    set:
+      playground.enabled: true
+      playground.authMode: oidc
+      playground.devTenantId: alice
+      playground.acknowledgeApiKeyMode: true
+      tenancy.mode: multi
+      global.devMode: false
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-enabled=true"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-auth-mode=oidc"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-dev-tenant-id=alice"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-multi-tenant=true"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-global-dev-mode=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-acknowledge-api-key-mode=true"
+
+  - it: renders the playground-config preflight inputs at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-enabled=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-multi-tenant=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--playground-acknowledge-api-key-mode=false"

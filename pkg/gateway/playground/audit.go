@@ -37,6 +37,12 @@ type AuditEvent struct {
 	// Origin is always "playground".
 	Origin string
 
+	// Labels is the §27.2 line 41 playground.sessionLabels map applied
+	// to the session for audit/accounting. EffectiveLabels guarantees
+	// the load-bearing origin=playground entry is present; operators
+	// can add labels via the chart value.
+	Labels map[string]string
+
 	// At is the gateway clock instant the event occurred.
 	At time.Time
 }
@@ -118,6 +124,7 @@ func (h *Handler) emitBearerMintedAudit(r *http.Request, tenant, user, jti strin
 		BearerJTI:        jti,
 		BearerTTLSeconds: int64(h.cfg.BearerTTL / time.Second),
 		Origin:           PlaygroundOrigin,
+		Labels:           h.cfg.EffectiveLabels(),
 		At:               h.now(),
 	})
 }
@@ -157,6 +164,7 @@ func (h *Handler) emitBearerRevokedAudit(ctx context.Context, tenant, user, cook
 			SessionCookieID: cookieID,
 			BearerJTI:       jti,
 			Origin:          PlaygroundOrigin,
+			Labels:          h.cfg.EffectiveLabels(),
 			At:              h.now(),
 		})
 	}

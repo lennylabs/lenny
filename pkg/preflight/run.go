@@ -64,6 +64,10 @@ type Config struct {
 	// runtimeClasses.profiles entry). Empty skips the §5.3 line 676
 	// RuntimeClass presence check.
 	RequiredRuntimeClasses []RuntimeClassRequirement
+	// Playground holds the §27.2 playground.* chart values the
+	// playground-config check evaluates. The check runs
+	// unconditionally; it is a no-op when Playground.Enabled is false.
+	Playground PlaygroundConfig
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -234,6 +238,17 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Decision: CheckTerminationGracePeriods(pools),
 		})
 	}
+
+	// spec: §27.2 lines 41–42 + §27.3 — install-time cross-field
+	// rejection of malformed playground configuration plus the
+	// non-blocking apiKey-mode acknowledgement warning. The check is a
+	// pure function over the chart values, so it runs without any
+	// cluster gather. F-27.2.2 / F-27.2.4 / F-27.2.5 / F-27.2.6 /
+	// F-27.9.3.
+	report = append(report, CheckResult{
+		Name:     "playground-config",
+		Decision: CheckPlaygroundConfig(cfg.Playground),
+	})
 	return report
 }
 

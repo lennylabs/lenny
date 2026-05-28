@@ -148,6 +148,20 @@ func main() {
 	requiredRuntimeClasses := flag.String("required-runtime-classes", "",
 		"comma-separated profile=runtimeClassName pairs the §5.3 line 676 RuntimeClass "+
 			"presence check requires; empty skips the check")
+	// §27.2 playground-config preflight inputs. Disabled by default;
+	// the chart renders these only when playground.enabled=true.
+	playgroundEnabled := flag.Bool("playground-enabled", false,
+		"value of the playground.enabled chart flag (§27.2)")
+	playgroundAuthMode := flag.String("playground-auth-mode", "oidc",
+		"value of the playground.authMode chart flag (oidc | apiKey | dev) (§27.2)")
+	playgroundDevTenantID := flag.String("playground-dev-tenant-id", "default",
+		"value of the playground.devTenantId chart flag (§27.2)")
+	playgroundMultiTenant := flag.Bool("playground-multi-tenant", false,
+		"value of the auth.multiTenant chart flag, propagated for the playground cross-field check (§27.2)")
+	playgroundGlobalDevMode := flag.Bool("playground-global-dev-mode", false,
+		"value of the global.devMode chart flag, propagated for the §27.3 authMode=dev gate (§27.2)")
+	playgroundAcknowledgeAPIKeyMode := flag.Bool("playground-acknowledge-api-key-mode", false,
+		"value of the playground.acknowledgeApiKeyMode chart flag (§27.2 line 42; §27.9)")
 	flag.Parse()
 
 	// MinIO credentials for the §12.5 line 297 SSE preflight are read
@@ -194,6 +208,14 @@ func main() {
 		MinIOBucket:            *minioBucket,
 		MinIOEncryptionProber:  minioGetBucketEncryption(*minioEndpoint, minioAccessKey, minioSecretKey, *minioUseSSL),
 		RequiredRuntimeClasses: parseRuntimeClassRequirements(*requiredRuntimeClasses),
+		Playground: preflight.PlaygroundConfig{
+			Enabled:               *playgroundEnabled,
+			AuthMode:              *playgroundAuthMode,
+			DevTenantID:           *playgroundDevTenantID,
+			MultiTenant:           *playgroundMultiTenant,
+			GlobalDevMode:         *playgroundGlobalDevMode,
+			AcknowledgeAPIKeyMode: *playgroundAcknowledgeAPIKeyMode,
+		},
 	})
 
 	for _, r := range report {

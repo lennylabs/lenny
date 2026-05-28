@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Lenny chart values",
+  "description": "JSON Schema for the Helm values of the Lenny chart. Enforced at install-time by helm install / helm upgrade / helm install --dry-run; the layer-3 startup gate in pkg/gateway/playground.Config.Validate is the runtime backstop.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "playground": {
+      "type": "object",
+      "description": "§27.2 playground configuration.",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "§27.2 playground.enabled — mount /playground/* and /v1/playground/token on the gateway."
+        },
+        "authMode": {
+          "type": "string",
+          "description": "§27.2 playground.authMode — one of oidc, apiKey, dev.",
+          "enum": ["oidc", "apiKey", "dev"]
+        },
+        "devTenantId": {
+          "type": "string",
+          "description": "§27.2 playground.devTenantId — the tenant bound to dev-mode playground tokens. Required when authMode=dev; must match the canonical §10.2 tenant_id format.",
+          "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+          "maxLength": 128
+        },
+        "allowedRuntimes": {
+          "type": "string",
+          "description": "§27.2 playground.allowedRuntimes — comma-separated glob list of runtime IDs visible in the picker."
+        },
+        "maxSessionMinutes": {
+          "type": "integer",
+          "description": "§27.6 playground.maxSessionMinutes — hard cap on session duration.",
+          "minimum": 1
+        },
+        "maxIdleTimeSeconds": {
+          "type": "integer",
+          "description": "§27.6 playground.maxIdleTimeSeconds — hard idle-timeout override.",
+          "minimum": 60
+        },
+        "oidcSessionTtlSeconds": {
+          "type": "integer",
+          "description": "§27.3.1 playground.oidcSessionTtlSeconds — server-side session and cookie lifetime.",
+          "minimum": 60
+        },
+        "bearerTtlSeconds": {
+          "type": "integer",
+          "description": "§27.3.1 playground.bearerTtlSeconds — MCP bearer token TTL. Gateway bounds to 60..3600.",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "gatewayHost": {
+          "type": "string",
+          "description": "§27.7 playground.gatewayHost — public host interpolated into the connect-src CSP directive."
+        },
+        "sessionLabels": {
+          "type": "object",
+          "description": "§27.2 line 41 playground.sessionLabels — operator-tunable label map stamped on every playground session record and audit event. The origin entry is re-stamped to \"playground\" at startup.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "acknowledgeApiKeyMode": {
+          "type": "boolean",
+          "description": "§27.2 line 42 playground.acknowledgeApiKeyMode — acknowledge the §27.9 paste-form phishing surface for authMode=apiKey outside dev mode."
+        }
+      }
+    }
+  }
+}

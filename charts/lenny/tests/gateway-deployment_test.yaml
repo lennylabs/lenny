@@ -706,6 +706,33 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --playground-bearer-ttl-seconds=900
 
+  # spec: §27.2 line 41 — the chart's playground.sessionLabels map
+  # renders as a comma-separated key=value flag value. F-27.2.1.
+  - it: renders the playground.sessionLabels default {origin=playground}
+    set:
+      playground.enabled: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --playground-session-labels=origin=playground,
+
+  - it: renders operator-supplied playground.sessionLabels entries
+    set:
+      playground.enabled: true
+      playground.sessionLabels:
+        origin: playground
+        environment: stage
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --playground-session-labels=environment=stage,origin=playground,
+
   # spec: §9.4 line 202 — the chart's memory block renders the
   # --memory-max-per-user and --memory-record-count-interval flags on
   # the Deployment so deployers can tune both knobs without editing

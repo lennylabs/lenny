@@ -372,6 +372,14 @@ spec:
             {{- with .Values.playground.gatewayHost }}
             - --playground-gateway-host={{ . }}
             {{- end }}
+            {{/* §27.2 line 41 — sessionLabels is rendered as a
+                  comma-separated key=value list so the gateway flag
+                  reader can split it without a sub-language. The
+                  load-bearing origin entry is re-stamped at startup
+                  regardless of the chart-rendered value. */}}
+            {{- with .Values.playground.sessionLabels }}
+            - --playground-session-labels={{ range $k, $v := . }}{{ $k }}={{ $v }},{{ end }}
+            {{- end }}
             {{- end }}
             {{- if hasKey .Values "memory" }}
             {{- if not .Values.memory.enabled }}

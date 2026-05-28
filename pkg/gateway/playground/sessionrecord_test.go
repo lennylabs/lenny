@@ -12,6 +12,33 @@ import (
 	"time"
 )
 
+// TestSessionRecordCarriesLabelsThroughJSON exercises the §27.2
+// line 41 SessionRecord.Labels round-trip: an operator-supplied
+// label survives Marshal+Unmarshal so a Redis-stored record carries
+// the audit/accounting labels back on every reread. F-27.2.1.
+func TestSessionRecordCarriesLabelsThroughJSON_spec_27_2_41(t *testing.T) {
+	original := SessionRecord{
+		UserID:   "alice",
+		TenantID: "acme",
+		Origin:   PlaygroundOrigin,
+		Labels:   map[string]string{"origin": "playground", "team": "platform"},
+	}
+	raw, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal SessionRecord: %v", err)
+	}
+	var decoded SessionRecord
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal SessionRecord: %v", err)
+	}
+	if decoded.Labels["origin"] != PlaygroundOrigin {
+		t.Fatalf("decoded labels[origin] = %q, want %q", decoded.Labels["origin"], PlaygroundOrigin)
+	}
+	if decoded.Labels["team"] != "platform" {
+		t.Fatalf("decoded labels[team] = %q, want platform", decoded.Labels["team"])
+	}
+}
+
 func TestMemorySessionStorePerTenantIsolation(t *testing.T) {
 	store := NewMemorySessionStore()
 	ctx := context.Background()
@@ -142,6 +169,13 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 		}
 		if ev.Type == "playground.bearer_revoked" {
 			sawRevoke = true
+		}
+		// spec: §27.2 line 41 — every playground audit event carries
+		// the EffectiveLabels map (origin: "playground" plus any
+		// operator-configured entries). F-27.2.1.
+		if ev.Labels["origin"] != PlaygroundOrigin {
+			t.Fatalf("audit event %q labels[origin] = %q, want %q",
+				ev.Type, ev.Labels["origin"], PlaygroundOrigin)
 		}
 	}
 	if !sawMint || !sawRevoke {

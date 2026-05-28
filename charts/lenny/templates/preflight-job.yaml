@@ -218,6 +218,16 @@ spec:
             - --minio-bucket={{ $minio.bucket }}
             - --minio-use-ssl={{ $useSSL }}
             {{- end }}
+            # §27.2 playground-config preflight inputs (F-27.2.2 /
+            # F-27.2.4 / F-27.2.5 / F-27.2.6 / F-27.9.3). The
+            # values flow through even when playground.enabled is
+            # false; the check short-circuits to a pass in that case.
+            - --playground-enabled={{ .Values.playground.enabled }}
+            - --playground-auth-mode={{ .Values.playground.authMode }}
+            - --playground-dev-tenant-id={{ .Values.playground.devTenantId }}
+            - --playground-multi-tenant={{ eq .Values.tenancy.mode "multi" }}
+            - --playground-global-dev-mode={{ .Values.global.devMode }}
+            - --playground-acknowledge-api-key-mode={{ .Values.playground.acknowledgeApiKeyMode }}
           {{- if $hasMinio }}
           env:
             - name: MINIO_ACCESS_KEY_ENV

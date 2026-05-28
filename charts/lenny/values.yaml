@@ -1214,6 +1214,22 @@ playground:
   # to over the MCP WebSocket. It is interpolated into the §27.7
   # connect-src CSP directive. Leave empty to omit the directive host.
   gatewayHost: ""
+  # sessionLabels is the §27.2 line 41 operator-tunable label map
+  # stamped on every playground session record and every playground
+  # audit event for audit/accounting consumers. The default
+  # {origin: "playground"} is the §27.3 mode-agnostic guarantee and
+  # cannot be silenced — operator-supplied entries are merged on top
+  # but the origin entry is re-stamped to "playground" at startup.
+  sessionLabels:
+    origin: playground
+  # acknowledgeApiKeyMode acknowledges the §27.9 paste-form phishing
+  # surface for playground.authMode=apiKey outside dev mode. When
+  # playground.enabled=true, playground.authMode=apiKey, and
+  # global.devMode=false, the lenny-preflight Job emits a non-blocking
+  # WARNING unless this value is set to true (same pattern as
+  # monitoring.acknowledgeNoPrometheus, §25.4). The gateway does not
+  # gate startup on the acknowledgement.
+  acknowledgeApiKeyMode: false
 
 # memory configures the §9.4 MemoryStore. The gateway reads these
 # values as its --memory-* flags. enabled=false is the §12.8 line 746

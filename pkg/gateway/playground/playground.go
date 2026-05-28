@@ -130,6 +130,15 @@ type Config struct {
 	// over the MCP WebSocket. It is interpolated into the §27.7
 	// connect-src CSP directive.
 	GatewayHost string
+
+	// SessionLabels mirrors playground.sessionLabels (§27.2 line 41):
+	// the operator-tunable label map stamped on every playground
+	// session record and every playground audit event for audit /
+	// accounting consumers. The map defaults to {"origin":
+	// "playground"} when empty; an operator may add labels but the
+	// §27.3 mode-agnostic origin=playground guarantee remains
+	// load-bearing, so EffectiveLabels always re-stamps origin.
+	SessionLabels map[string]string
 }
 
 // withDefaults returns a copy of c with the §27.2 default values
@@ -156,7 +165,24 @@ func (c Config) withDefaults() Config {
 	if c.BearerTTL == 0 {
 		c.BearerTTL = 900 * time.Second
 	}
+	c.SessionLabels = c.EffectiveLabels()
 	return c
+}
+
+// EffectiveLabels returns the §27.2 line 41 sessionLabels map with the
+// §27.3 mode-agnostic origin=playground guarantee enforced. The
+// returned map is a copy: callers may mutate it without affecting the
+// stored Config. A nil or empty SessionLabels yields {"origin":
+// "playground"}; an operator-supplied map is preserved with the
+// origin entry re-stamped to the canonical value (operators cannot
+// silence the load-bearing label).
+func (c Config) EffectiveLabels() map[string]string {
+	out := make(map[string]string, len(c.SessionLabels)+1)
+	for k, v := range c.SessionLabels {
+		out[k] = v
+	}
+	out["origin"] = PlaygroundOrigin
+	return out
 }
 
 // Validate enforces the §27.2 layer-3 startup gate: the gateway

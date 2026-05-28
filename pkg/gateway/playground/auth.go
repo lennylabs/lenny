@@ -188,6 +188,7 @@ func (h *Handler) establishSession(ctx context.Context, w http.ResponseWriter, s
 		CallerType: subject.CallerType,
 		Scope:      subject.Scope,
 		Origin:     PlaygroundOrigin,
+		Labels:     h.cfg.EffectiveLabels(),
 		IssuedAt:   h.now(),
 		CSRFToken:  csrf,
 	}

@@ -116,6 +116,59 @@ func TestConfigValidateDevTenantRules(t *testing.T) {
 	}
 }
 
+// TestEffectiveLabelsDefaultsToOrigin exercises the §27.2 line 41
+// default: an unset playground.sessionLabels yields the
+// load-bearing {origin: "playground"} label. F-27.2.1.
+func TestEffectiveLabelsDefaultsToOrigin_spec_27_2_41(t *testing.T) {
+	cfg := Config{}
+	labels := cfg.EffectiveLabels()
+	if got := labels["origin"]; got != PlaygroundOrigin {
+		t.Fatalf("EffectiveLabels()[origin] = %q, want %q", got, PlaygroundOrigin)
+	}
+	if len(labels) != 1 {
+		t.Fatalf("EffectiveLabels() = %v, want a single origin entry", labels)
+	}
+}
+
+// TestEffectiveLabelsMergesOperatorLabels exercises operator-supplied
+// labels: the chart-rendered map is preserved and merged with the
+// load-bearing origin entry. F-27.2.1.
+func TestEffectiveLabelsMergesOperatorLabels_spec_27_2_41(t *testing.T) {
+	cfg := Config{SessionLabels: map[string]string{"environment": "stage", "team": "platform"}}
+	labels := cfg.EffectiveLabels()
+	if labels["environment"] != "stage" {
+		t.Fatalf("EffectiveLabels()[environment] = %q, want stage", labels["environment"])
+	}
+	if labels["team"] != "platform" {
+		t.Fatalf("EffectiveLabels()[team] = %q, want platform", labels["team"])
+	}
+	if labels["origin"] != PlaygroundOrigin {
+		t.Fatalf("EffectiveLabels()[origin] = %q, want %q", labels["origin"], PlaygroundOrigin)
+	}
+}
+
+// TestEffectiveLabelsReStampsOrigin exercises the §27.3 mode-agnostic
+// guarantee: an operator cannot silence the load-bearing origin
+// label by overriding it. F-27.2.1.
+func TestEffectiveLabelsReStampsOrigin_spec_27_3(t *testing.T) {
+	cfg := Config{SessionLabels: map[string]string{"origin": "spoof"}}
+	labels := cfg.EffectiveLabels()
+	if labels["origin"] != PlaygroundOrigin {
+		t.Fatalf("EffectiveLabels()[origin] = %q, want %q", labels["origin"], PlaygroundOrigin)
+	}
+}
+
+// TestEffectiveLabelsReturnsACopy exercises the documented contract:
+// mutating the returned map does not affect the stored Config.
+func TestEffectiveLabelsReturnsACopy_spec_27_2_41(t *testing.T) {
+	cfg := Config{SessionLabels: map[string]string{"team": "platform"}}
+	labels := cfg.EffectiveLabels()
+	labels["team"] = "other"
+	if cfg.SessionLabels["team"] != "platform" {
+		t.Fatalf("Config.SessionLabels mutated to %q, want platform", cfg.SessionLabels["team"])
+	}
+}
+
 func TestEffectiveIdleAndDurationCaps(t *testing.T) {
 	cfg := Config{MaxIdleTimeSeconds: 300, MaxSessionMinutes: 30}
 	// The override tightens a looser runtime limit.

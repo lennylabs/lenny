@@ -29,6 +29,12 @@ type SessionRecord struct {
 	// envelope so a downstream reader does not have to infer it.
 	Origin string `json:"origin"`
 
+	// Labels is the §27.2 line 41 playground.sessionLabels map
+	// applied to the session record for audit/accounting consumers.
+	// Config.EffectiveLabels guarantees the load-bearing origin label
+	// is present; operators can add labels via the chart value.
+	Labels map[string]string `json:"labels,omitempty"`
+
 	// IssuedAt is the gateway clock instant the record was created.
 	IssuedAt time.Time `json:"issued_at"`
 
