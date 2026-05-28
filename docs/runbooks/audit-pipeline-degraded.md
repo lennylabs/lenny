@@ -9,6 +9,8 @@ triggers:
     severity: warning
   - alert: EventBusPublishDropped
     severity: warning
+  - alert: AuditSIEMNotConfigured
+    severity: warning
 components:
   - audit
 symptoms:

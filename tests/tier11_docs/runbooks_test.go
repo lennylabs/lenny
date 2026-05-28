@@ -289,3 +289,142 @@ func TestAlertCatalogRunbookSlugsResolveToDocs(t *testing.T) {
 	}
 	t.Logf("verified %d alert→runbook mappings; %d entries in F-17.7.4 baseline still missing", verified, len(knownBrokenRunbookSlugs))
 }
+
+// knownBrokenRunbookTriggers is the baseline of runbook trigger →
+// alert mismatches (the reverse direction from
+// knownBrokenRunbookSlugs). Each entry is the runbook's frontmatter
+// trigger alert name; the test only fails when a new entry — outside
+// this allowlist — appears. The allowlist shrinks as the underlying
+// F-IDs close.
+//
+// spec: §11.8 deployer guidance pointing at runbooks; §17.7 line 850
+// (each runbook references the relevant alerts). F-11.8.2 /
+// F-11.8.3 cover the reverse-mapping convention; F-11.8.4 is the
+// EmergencyCredentialRevoked orphan; the remaining entries are
+// catalog-drift inherited from the broader F-17.7.4 cluster (alert
+// names diverged from runbook frontmatter names).
+var knownBrokenRunbookTriggers = map[string]bool{
+	// F-11.8.4 (Low, OPEN): emergency-credential-revocation.md trigger
+	// names an alert that has no §16.5 catalog entry yet; the runbook
+	// itself is operator-initiated, not alert-driven, but the
+	// frontmatter convention requires a triggers row. Drops when
+	// either the alert lands in pkg/alerting/rules/rules.go or the
+	// runbook is restructured to remove the trigger.
+	"EmergencyCredentialRevoked": true,
+
+	// F-17.7.4 / §17.7-cluster (High, OPEN): runbook trigger names
+	// pre-date the §16.5 alert-catalog naming pass. Each row drops
+	// when either the alert is added to pkg/alerting/rules/rules.go
+	// or the runbook's trigger is renamed to a catalog name. The
+	// runbook still serves its operator purpose; the cross-link to
+	// the canonical alert is what is stale.
+	"AgentLLMProviderPartition":         true,
+	"CertificateExpiringSoon":           true,
+	"ChildSessionCrashed":               true,
+	"CRDImmutableFieldChanged":          true,
+	"CRDVersionSkew":                    true,
+	"StaleCRDDetected":                  true,
+	"EphemeralCredGuardUnreachable":     true,
+	"CredentialCompromiseSuspected":     true,
+	"CredentialRotationFailed":          true,
+	"CrossZoneNetworkPartition":         true,
+	"DelegationBudgetExhausted":         true,
+	"DelegationDepthDeadlock":           true,
+	"DenyListPropagationDegraded":       true,
+	"DoubleClaimDetected":               true,
+	"ElicitationDeadlockDetected":       true,
+	"GatewayPodPartition":               true,
+	"KMSKeyProbeStale":                  true,
+	"KMSUnavailable":                    true,
+	"LeaseExtensionCoolOffPersist":      true,
+	"MinIOReplicationLag":               true,
+	"NetworkPolicyConfigDrift":          true,
+	"NodeDrainDuringMinIOOutage":        true,
+	"ParentSessionCrashedAwaiting":      true,
+	"AgentPodKilledDuringActiveSession": true,
+	"PoolUpgradeRolledBack":             true,
+	"PostgresReplicationLag":            true,
+	"PostgresUnavailable":               true,
+	"RedisClusterDegraded":              true,
+	"RedisMasterFailover":               true,
+	"SandboxClaimRaceDetected":          true,
+	"SandboxFinalizerHang":              true,
+	"SchemaMigrationDirtyFlag":          true,
+	"SchemaMigrationFailed":             true,
+	"SchemaMigrationDirty":              true,
+	"T3T4SLABreach":                     true,
+	"TokenServiceCircuitOpen":           true,
+	"OpsPlaneUnavailable":               true,
+}
+
+// TestRunbookTriggersResolveToAlertCatalog walks docs/runbooks/ and
+// asserts every `triggers[].alert` value in a runbook's front matter
+// names a real alert in pkg/alerting/rules/rules.go Catalog. The
+// reverse direction of TestAlertCatalogRunbookSlugsResolveToDocs:
+// without it, a runbook can keep a stale trigger name after the
+// catalog renames the alert (F-11.8.2 was exactly this defect for
+// AuditChainGap → AuditChainGapDetected).
+//
+// The current orphan baseline is in knownBrokenRunbookTriggers
+// (F-11.8.4). The test fails when a new runbook trigger outside the
+// baseline names a missing alert, or when a baseline row silently
+// regains (rename or alert-add should drop the row).
+//
+// spec: §11.8 + §17.7 line 850. F-11.8.2 / F-11.8.3.
+func TestRunbookTriggersResolveToAlertCatalog(t *testing.T) {
+	root := repoRoot(t)
+	dir := filepath.Join(root, "docs", "runbooks")
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		t.Skip("docs/runbooks/ does not exist; nothing to cross-check (runbooks ship per §17.7)")
+	}
+	catalog := map[string]bool{}
+	for _, r := range rules.Catalog() {
+		catalog[r.Name] = true
+	}
+	newBroken := []string{}
+	staleAllowlist := []string{}
+	verified := 0
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if filepath.Ext(path) != ".md" {
+			return nil
+		}
+		base := filepath.Base(path)
+		if base == "index.md" || base == "README.md" {
+			return nil
+		}
+		meta, _, perr := parseRunbook(path)
+		if perr != nil {
+			return nil // TestRunbookStructure already reports parse failures
+		}
+		for _, tr := range meta.Triggers {
+			if tr.Alert == "" {
+				continue
+			}
+			exists := catalog[tr.Alert]
+			switch {
+			case exists && knownBrokenRunbookTriggers[tr.Alert]:
+				staleAllowlist = append(staleAllowlist, tr.Alert+" in "+base+" (now resolves to catalog)")
+			case !exists && knownBrokenRunbookTriggers[tr.Alert]:
+				continue
+			case !exists:
+				newBroken = append(newBroken, tr.Alert+" in "+base)
+			default:
+				verified++
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk runbooks: %v", err)
+	}
+	for _, n := range newBroken {
+		t.Errorf("runbook trigger names alert that is not in pkg/alerting/rules/rules.go Catalog (rename trigger or add alert; spec §11.8 / §17.7): %s", n)
+	}
+	for _, s := range staleAllowlist {
+		t.Errorf("knownBrokenRunbookTriggers allowlist is stale; the alert now resolves and the row should be removed: %s", s)
+	}
+	t.Logf("verified %d runbook trigger → catalog mappings; %d entries in F-11.8.4 baseline still missing", verified, len(knownBrokenRunbookTriggers))
+}

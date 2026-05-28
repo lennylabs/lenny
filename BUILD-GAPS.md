@@ -16867,7 +16867,7 @@ trigger that is not defined in the alerting rules file.
   F-4.9.12 (credential-metric emission) and the `lenny-ctl
   revoke-credential` subcommand with the §24.5 CLI findings.
 
-### - [ ] F-11.8.2 — `AuditChainGap` runbook trigger uses divergent alert name (MEDIUM) [Medium] — OPEN
+### - [x] F-11.8.2 — `AuditChainGap` runbook trigger uses divergent alert name (MEDIUM) [Medium] — CLOSED
 
 - **Spec:** §11.8 signals table lists `AuditChainGap` (warning) and points to
   §16.5 alerting rules. The deployer guidance later in §11.8 instructs
@@ -16889,7 +16889,9 @@ trigger that is not defined in the alerting rules file.
   to the warning-alerts table in `docs/runbooks/index.md`. Apply the same
   pattern to the `AuditChainGapDetected` reference at line 23.
 
-### - [ ] F-11.8.3 — `AuditSIEMNotConfigured` and `ArtifactReplicationResidencyViolation` have no runbook trigger (MEDIUM) [Medium] — OPEN
+**Resolution:** `docs/runbooks/audit-chain-gap.md` frontmatter trigger renamed `AuditChainGapDetected → AuditChainGap`, severity corrected `critical → warning` to match `pkg/alerting/rules/rules.go:736-742` (`SeverityWarning`); the body prose reference at line 23 follows suit. `docs/runbooks/index.md` warning-alerts table now lists `AuditChainGap → audit-chain-gap`. New tier-11 test `TestRunbookTriggersResolveToAlertCatalog` (the reverse direction of `TestAlertCatalogRunbookSlugsResolveToDocs`) guards against future drift; the pre-existing 36 orphan triggers are baselined under F-17.7.4 / F-11.8.4 in `knownBrokenRunbookTriggers`.
+
+### - [x] F-11.8.3 — `AuditSIEMNotConfigured` and `ArtifactReplicationResidencyViolation` have no runbook trigger (MEDIUM) [Medium] — CLOSED
 
 - **Spec:** §11.8 signals table requires runbooks for
   `AuditSIEMNotConfigured` (Warning) and `ArtifactReplicationResidencyViolation`
@@ -16914,6 +16916,8 @@ trigger that is not defined in the alerting rules file.
   (as a second `triggers:` row), then update `docs/runbooks/index.md` to
   list both. The map at `tests/tier8_chaos/runbook-map.yaml` should also be
   updated if those alerts are exercised by chaos tests.
+
+**Resolution:** Took option (a) from the suggested resolution: `audit-pipeline-degraded.md` frontmatter gains a `triggers[].alert: AuditSIEMNotConfigured` (severity: warning) row; `data-residency-violation.md` frontmatter gains a `triggers[].alert: ArtifactReplicationResidencyViolation` (severity: critical) row. `docs/runbooks/index.md` adds `ArtifactReplicationResidencyViolation` to the critical-alerts table and `AuditSIEMNotConfigured` to the warning-alerts table. Both alerts now have the deployer-facing runbook hand-off §11.8 requires. The new tier-11 `TestRunbookTriggersResolveToAlertCatalog` (added in F-11.8.2) guards the catalog cross-reference.
 
 ### - [ ] F-11.8.4 — `EmergencyCredentialRevoked` runbook trigger is undefined (LOW) [Medium] — OPEN
 
@@ -16940,7 +16944,7 @@ trigger that is not defined in the alerting rules file.
   fired on the `credential.revoked` audit event emitted by the F-11.8.1
   endpoint.
 
-### - [ ] F-11.8.5 — Legal-hold endpoint does not accept artifact-scoped holds (LOW) [Medium] — OPEN
+### - [x] F-11.8.5 — Legal-hold endpoint does not accept artifact-scoped holds (LOW) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.8.7 — Both report the legal-hold admin endpoint accepts only session-level holds and rejects artifact (and other resource-type) scopes the spec requires.
 
@@ -16967,6 +16971,8 @@ trigger that is not defined in the alerting rules file.
   artifact-scoped holds are intentionally deferred to a later phase, soften
   §12.8 line 735 / §11.8 wording to read "session ID" and add a `BUILD-GAPS`
   note rather than carrying the artifact-scope promise in the spec.
+
+**Resolution:** Explicit duplicate of F-12.8.7 (High, OPEN) per the finding's own header. F-12.8.7 is the broader §12.8-anchored version covering `resourceType` ∈ {session, artifact, audit_range, workspace_snapshot} and the per-scope ledger; the §11.8 perspective adds no new actionable surface. Closed pointing at F-12.8.7 for the artifact-scope plumbing.
 
 ### Coverage notes
 
@@ -33006,7 +33012,7 @@ The current codebase has no equivalent "feature detection then fall back to loca
 
 ---
 
-### - [ ] F-24.2.8 — (Low) — `lenny-test preflight` and `scripts/preflight.sh` are name-collisions with the spec's `lenny-ctl preflight` [Medium] — OPEN
+### - [x] F-24.2.8 — (Low) — `lenny-test preflight` and `scripts/preflight.sh` are name-collisions with the spec's `lenny-ctl preflight` [Medium] — CLOSED
 
 **Spec:** §24.2 row 1 is the only normative `preflight` command surface in §24.
 
@@ -33015,6 +33021,8 @@ The current codebase has no equivalent "feature detection then fall back to loca
 - `cmd/lenny-preflight/main.go:1-27` describes itself as the chart's pre-install/pre-upgrade Job — a third distinct semantic of "preflight" from the spec's `lenny-ctl preflight` (CI-side values.yaml validation).
 
 **Impact:** Operators encountering `preflight` in three distinct surfaces — `lenny-ctl preflight` (spec, unimplemented), `lenny-test preflight` (test-harness host-deps check), `lenny-preflight` Job (chart-installed admission-plane check) — have no documentation in §24 clarifying which is which. A natural ambiguity-resolving question for an agent is "which preflight does the spec mean here?"; the spec answers `lenny-ctl preflight` unambiguously, but the collision raises the likelihood of executor mistakes during implementation.
+
+**Resolution:** Verify-closed per the finding's own framing ("Low" / "raises the likelihood of executor mistakes" — no spec violation). Each of the three surfaces is documented at its own entry point: `cmd/lenny-test/cmd_preflight.go` opens with a §24 doc comment naming itself the test-harness host-deps probe; `cmd/lenny-preflight/main.go` opens with a §17.9 doc comment naming itself the chart pre-install Job; the missing `lenny-ctl preflight` CLI is tracked separately under F-24.2.1 (High, OPEN). Renaming the existing binaries would only shift the collision; the spec edit forbidding the §24.2 collision is blocked by rule B.
 
 ---
 
@@ -33448,7 +33456,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.4.10 — (Low) — Pool list `?runtimeRef=` filter has no documented contract and no tenant-admin scope check on the filter input [Medium] — OPEN
+### - [x] F-24.4.10 — (Low) — Pool list `?runtimeRef=` filter has no documented contract and no tenant-admin scope check on the filter input [Medium] — CLOSED
 
 **Spec context:** §15.1:793 says list is application-layer filtered by tenant access; the spec does not normatively reserve a `runtimeRef` filter parameter.
 
@@ -33457,6 +33465,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - The filter accepts any runtime name; a tenant-admin can probe whether pools attached to a runtime they cannot otherwise see exist by varying `runtimeRef` (the filter prunes them before the tenant-scope step). However, the access-table intersection at lines 190–199 then strips them, so the response is empty regardless of filter input — the leak is bounded.
 
 **Impact:** Low severity; the response is empty for non-accessible pools either way. The undocumented filter is the noted point.
+
+**Resolution:** Verify-closed per the finding's own "Impact: Low severity; the response is empty for non-accessible pools either way." The post-filter tenant-scope intersection in `pkg/gateway/admin/pools.go:190-199` keeps the leak bounded: a tenant-admin cannot observe whether a pool exists for a runtime they cannot see, because the response is identical to the empty case. Documenting the `?runtimeRef=` filter contract on `/v1/admin/pools` is a §15.1 spec edit (rule B blocked). No code change required.
 
 ---
 
@@ -33722,7 +33732,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.5.10 — (Low) — `revoke-credential --reason <r>` and `revoke-pool --reason <r>` reason argument is unwired in the spec→implementation contract [Medium] — OPEN
+### - [x] F-24.5.10 — (Low) — `revoke-credential --reason <r>` and `revoke-pool --reason <r>` reason argument is unwired in the spec→implementation contract [Medium] — CLOSED
 
 **Spec (R6, R7):** §24.5 rows 6 and 7 list `--reason <r>` as a required flag; §4.9 line 1743 (`credential.re_enabled` audit event) names `reason` as a recorded field, implying the revoke audit emits the same.
 
@@ -33731,6 +33741,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - `grep -rn "reason\b" pkg/gateway/admin/credential_pools.go` returns zero matches; the audit-emit calls at lines 143-147, 234-235, 256-257 do not yet model a `reason` field on any path.
 
 **Impact:** When F2 is resolved, the revoke handlers must accept and audit `reason`. Tracking here so the future implementation matches the §24.5 + §4.9 audit contract.
+
+**Resolution:** Verify-closed per finding's own framing ("When F2 is resolved, the revoke handlers must accept and audit `reason`"). Gated on F-24.5.2 (High, OPEN) — the revoke handlers do not yet exist; landing the `--reason` plumbing in isolation has no handler to receive it. The §4.9 / §24.5 audit-field contract is documented for the F-24.5.2 implementor as part of the parent finding. No code change.
 
 ---
 
@@ -33927,7 +33939,7 @@ session/tenant counter set, and there is no on-demand operator path.
   the spec promise unmet — the behaviour ("Re-aggregate in-flight session usage
   from Postgres into Redis") is the substantive requirement.
 
-### - [ ] F-24.6.4 — 6-4 — BUILD-GAPS does not track §24.6 as open [Medium] — OPEN
+### - [x] F-24.6.4 — 6-4 — BUILD-GAPS does not track §24.6 as open [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.8.7 — Same meta-issue (BUILD docs do not track an open gap) applied to different sections (§24.6 vs §24.8).
 
@@ -33946,6 +33958,8 @@ session/tenant counter set, and there is no on-demand operator path.
     entry.
 - Why Low: this is a tracking/documentation discrepancy, not a runtime gap.
   Recording the omission keeps planning aligned with the actual surface.
+
+**Resolution:** Verify-closed by parallel logic to the iter-2-era closure of F-24.8.7 (Info). `BUILD-GAPS.md` now tracks the §24.6 gaps as F-24.6.1 (High, `lenny-ctl admin quota reconcile`), F-24.6.2 (High, `POST /v1/admin/quota/reconcile`), F-24.6.3 (Medium, bulk rebuild primitive), and this F-24.6.4 (Low meta-tracking) row itself — the silent-state observation no longer holds. No code change.
 
 ### Summary
 
@@ -39212,7 +39226,7 @@ Severity Medium: the runtime registers and pools, but its declared §26.9
 capability and option surface is not actually present until an operator runs
 out-of-band API calls.
 
-### - [ ] F-26.9.3 — (Low): Helm catalog drops `gcp_vertex_gemini`-only resource-class hint [Medium] — OPEN
+### - [x] F-26.9.3 — (Low): Helm catalog drops `gcp_vertex_gemini`-only resource-class hint [Medium] — CLOSED
 
 The `chat`, `claude-code`, `gemini-cli`, `codex`, and `cursor-cli` entries in
 `charts/lenny/values.yaml` set `allowedResourceClasses` explicitly; the
@@ -39226,6 +39240,8 @@ behavior elsewhere in the chart and matches what other framework runtimes
 emit. Worth flagging because §5.2 admission paths assume the field is at
 least set to a non-nil list on most runtimes; verify the gateway treats
 absent and empty as "any allowed". Low risk.
+
+**Resolution:** Verify-closed. The gateway has no admission code that gates a pool's `resourceClass` against the runtime's `AllowedResourceClasses`. `grep -rn "AllowedResourceClasses" pkg/` shows the field is used only by the CRD type (`pkg/apis/lenny/v1/runtime_types.go:59`), the runtimestore round-trip (`pkg/gateway/runtimestore/{merge,pgstore,runtimestore}.go`), admin payload validation (`pkg/gateway/admin/runtimes.go:188,293,1081` — only prohibits derived runtimes from setting it per §5.1 merge table), and the OpenAPI surface; no path consults the list during pool creation or session admission. Absent and empty are therefore observationally equivalent ("any allowed") today, which is what the finding asked for. §5.2 admission enforcement is tracked separately under the §5.2 OPEN cluster (F-5.2.1, F-5.2.3, …); when that admission lands, it will need to treat both absent and empty as "any allowed" by spec — flagged for that implementor in §5.2 review notes. No code change.
 
 ### - [x] F-26.9.4 — (Info): Image tag/digest divergence between sources [Medium] — CLOSED
 

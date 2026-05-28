@@ -3,8 +3,8 @@ layout: default
 title: "audit-chain-gap"
 parent: "Runbooks"
 triggers:
-  - alert: AuditChainGapDetected
-    severity: critical
+  - alert: AuditChainGap
+    severity: warning
 components:
   - platform
 symptoms:
@@ -20,7 +20,7 @@ an audit hash chain has a missing sequence number, breaking §11.7 chain integri
 
 ## Trigger
 
-The `AuditChainGapDetected` alert fires when the §16.5 condition documented in the alert rule holds for its `for:` window. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL.
+The `AuditChainGap` alert fires when the §16.5 condition documented in the alert rule holds for its `for:` window. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL.
 
 ## Diagnosis
 

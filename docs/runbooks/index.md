@@ -49,6 +49,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `DualStoreUnavailable` | [dual-store-unavailable](dual-store-unavailable.html) | `postgres`, `redis` |
 | `DataResidencyWebhookUnavailable` | [admission-webhook-outage](admission-webhook-outage.html) | `admission` |
 | `DataResidencyViolationAttempt` | [data-residency-violation](data-residency-violation.html) | `gateway` |
+| `ArtifactReplicationResidencyViolation` | [data-residency-violation](data-residency-violation.html) | `gateway`, `objectStore` |
 | `ElicitationContentTamperDetected` | [elicitation-content-tamper-detected](elicitation-content-tamper-detected.html) | `gateway` |
 | `PgBouncerAllReplicasDown` | [pgbouncer-saturation](pgbouncer-saturation.html) | `postgres` |
 | `SessionEvictionTotalLoss` | [session-eviction-loss](session-eviction-loss.html) | `postgres`, `objectStore` |
@@ -96,6 +97,8 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `BillingStreamBackpressure` | [billing-stream-backlog](billing-stream-backlog.html) | `billing` |
 | `PoolBootstrapMode` | [pool-bootstrap-mode](pool-bootstrap-mode.html) | `warmPools` |
 | `EventBusPublishDropped` | [audit-pipeline-degraded](audit-pipeline-degraded.html) | `audit` |
+| `AuditChainGap` | [audit-chain-gap](audit-chain-gap.html) | `audit` |
+| `AuditSIEMNotConfigured` | [audit-pipeline-degraded](audit-pipeline-degraded.html) | `audit` |
 | `GatewayRateLimitStorm` | [gateway-rate-limit-storm](gateway-rate-limit-storm.html) | `gateway` |
 | `GatewayClockDrift` | [gateway-clock-drift](gateway-clock-drift.html) | `gateway` |
 | `FinalizerStuck` | [stuck-finalizer](stuck-finalizer.html) | `controllers` |

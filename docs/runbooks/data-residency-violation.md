@@ -7,6 +7,8 @@ triggers:
     severity: critical
   - alert: DataResidencyWebhookUnavailable
     severity: critical
+  - alert: ArtifactReplicationResidencyViolation
+    severity: critical
 components:
   - gateway
   - compliance
