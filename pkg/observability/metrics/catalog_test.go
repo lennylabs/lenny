@@ -136,6 +136,10 @@ var spec161Metrics = []string{
 	"lenny_legal_hold_checkpoint_gaps_total",
 	// §25.6 line 2926 — diagnostic endpoint latency histogram.
 	"lenny_diagnostics_request_duration_seconds",
+	// §16.1 line 713 / §25.13 lines 4833–4835 — bundled-alerting
+	// observability surface.
+	"lenny_alerting_rules_bundled", "lenny_alerting_rule_overrides",
+	"lenny_alerting_rule_eval_duration_seconds",
 }
 
 func TestMetricCatalogIsNonEmpty(t *testing.T) {

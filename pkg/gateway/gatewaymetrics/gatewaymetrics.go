@@ -39,6 +39,16 @@ type Metrics struct {
 	// 5%) the BillingCorrectionRateHigh alert reads via
 	// scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
 	billingCorrectionRateThreshold prometheus.Gauge
+	// gatewayQueueDepthThreshold / gatewayLatencyThresholdSeconds /
+	// credentialPoolLowThreshold expose the §25.13 line 4737
+	// tier-dependent alert thresholds as startup-set gauges. The
+	// §16.5 GatewayQueueDepthHigh, GatewayLatencyHigh, and
+	// CredentialPoolLow alerts read each value via `scalar(...)` so
+	// the bundled expressions resolve against operator-tunable inputs
+	// rather than literal constants. F-25.13.2.
+	gatewayQueueDepthThreshold     prometheus.Gauge
+	gatewayLatencyThresholdSeconds prometheus.Gauge
+	credentialPoolLowThreshold     prometheus.Gauge
 	extractionThreshold       *prometheus.GaugeVec
 	storageQuotaUsed          *prometheus.GaugeVec
 	storageQuotaLimit         *prometheus.GaugeVec
@@ -536,6 +546,33 @@ func New() (*Metrics, error) {
 	billingCorrectionRateThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_billing_correction_rate_threshold",
 		Help: "Deployer-configurable BillingCorrectionRateHigh alert threshold as a fraction (§11.2.1 / §16.5; default 0.05).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §25.13 line 4737 — tier-dependent §16.5 thresholds. The
+	// chart emits the configured Helm values into these gauges at
+	// gateway startup; the bundled alert expressions read them via
+	// `scalar(...)` so a tier preset tightening the threshold flows
+	// through to the rendered manifest without re-rendering the rule
+	// expressions. F-25.13.2.
+	gatewayQueueDepthThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_queue_depth_threshold",
+		Help: "Configured §16.5 GatewayQueueDepthHigh ceiling (§25.13 line 4737).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	gatewayLatencyThresholdSeconds, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_latency_threshold_seconds",
+		Help: "Configured §16.5 GatewayLatencyHigh p95 ceiling in seconds (§25.13 line 4737).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	credentialPoolLowThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_credential_pool_low_threshold",
+		Help: "Configured §16.5 CredentialPoolLow utilisation fraction (§25.13 line 4737).",
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -1450,6 +1487,17 @@ func New() (*Metrics, error) {
 	// evaluates to NaN until the gateway main has wired the configuration.
 	billingCorrectionRateThresholdChild := billingCorrectionRateThreshold.WithLabelValues()
 	billingCorrectionRateThresholdChild.Set(0.05)
+	// spec: §25.13 line 4737 / §16.5 — pre-materialize the §25.13
+	// tier-dependent threshold gauges with their base-Helm defaults so
+	// scalar(...) in the bundled alert expressions evaluates to a
+	// finite value even before the gateway main has called the Set*
+	// helpers. F-25.13.2.
+	gatewayQueueDepthThresholdChild := gatewayQueueDepthThreshold.WithLabelValues()
+	gatewayQueueDepthThresholdChild.Set(20)
+	gatewayLatencyThresholdSecondsChild := gatewayLatencyThresholdSeconds.WithLabelValues()
+	gatewayLatencyThresholdSecondsChild.Set(3.0)
+	credentialPoolLowThresholdChild := credentialPoolLowThreshold.WithLabelValues()
+	credentialPoolLowThresholdChild.Set(0.80)
 	// spec: §10.4 / §16 — pre-materialize the unlabelled replay buffer
 	// utilization gauge so /metrics emits the series even before the
 	// gateway has published any session events. F-10.4.11.
@@ -1463,7 +1511,10 @@ func New() (*Metrics, error) {
 		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms,
 		minReplicas, streamCeiling, replicaCount, llmProxyActiveConnections,
 		replayBufferUtilization, pdbBlockedEvictions,
-		billingCorrectionRateThreshold)
+		billingCorrectionRateThreshold,
+		gatewayQueueDepthThreshold,
+		gatewayLatencyThresholdSeconds,
+		credentialPoolLowThreshold)
 
 	tokenServiceCircuitChild := tokenServiceCircuitState.WithLabelValues()
 	kmsSigningCircuitChild := kmsSigningCircuitState.WithLabelValues()
@@ -1480,6 +1531,9 @@ func New() (*Metrics, error) {
 		streamCeiling:                        streamCeilingChild,
 		replicaCount:                         replicaCountChild,
 		billingCorrectionRateThreshold:       billingCorrectionRateThresholdChild,
+		gatewayQueueDepthThreshold:           gatewayQueueDepthThresholdChild,
+		gatewayLatencyThresholdSeconds:       gatewayLatencyThresholdSecondsChild,
+		credentialPoolLowThreshold:           credentialPoolLowThresholdChild,
 		extractionThreshold:                  extractionThreshold,
 		storageQuotaUsed:                     storageQuotaUsed,
 		storageQuotaLimit:                    storageQuotaLimit,
@@ -2662,6 +2716,29 @@ func (m *Metrics) SetReplicaCount(value int) {
 // scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
 func (m *Metrics) SetBillingCorrectionRateThreshold(value float64) {
 	m.billingCorrectionRateThreshold.Set(value)
+}
+
+// SetGatewayQueueDepthThreshold emits the §25.13 line 4737 / §16.5
+// GatewayQueueDepthHigh ceiling. The alert reads it via
+// scalar(lenny_gateway_queue_depth_threshold); tier-2/3 presets tighten
+// the value via monitoring.alertThresholds.gatewayQueueDepthHigh.value.
+// F-25.13.2.
+func (m *Metrics) SetGatewayQueueDepthThreshold(value float64) {
+	m.gatewayQueueDepthThreshold.Set(value)
+}
+
+// SetGatewayLatencyThresholdSeconds emits the §25.13 line 4737 / §16.5
+// GatewayLatencyHigh p95 ceiling, in seconds. The alert reads it via
+// scalar(lenny_gateway_latency_threshold_seconds). F-25.13.2.
+func (m *Metrics) SetGatewayLatencyThresholdSeconds(value float64) {
+	m.gatewayLatencyThresholdSeconds.Set(value)
+}
+
+// SetCredentialPoolLowThreshold emits the §25.13 line 4737 / §16.5
+// CredentialPoolLow utilisation fraction. The alert reads it via
+// scalar(lenny_credential_pool_low_threshold). F-25.13.2.
+func (m *Metrics) SetCredentialPoolLowThreshold(value float64) {
+	m.credentialPoolLowThreshold.Set(value)
 }
 
 // SetExtractionThreshold emits the §4.1 configured per-subsystem

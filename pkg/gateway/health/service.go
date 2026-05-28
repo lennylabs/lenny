@@ -14,6 +14,8 @@ import (
 	"context"
 	"sort"
 	"sync"
+
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
 // Status is the §25.3 health verdict enum.
@@ -99,6 +101,15 @@ type Report struct {
 
 	// Components is the per-subsystem breakdown, name-sorted.
 	Components []Component `json:"components"`
+
+	// Degradation carries the §25.4 canonical envelope. The gateway's
+	// in-process alert tracker always evaluates the compiled-in
+	// thresholds, so a single-replica Report stamps
+	// `thresholdSource: "compiled-in-defaults"` per §25.13 line 4848.
+	// `lenny-ops` overrides the envelope when its aggregated view
+	// derives from the operator's Prometheus rules.
+	// spec: §25.4 line 215.
+	Degradation *conventions.Degradation `json:"degradation,omitempty"`
 }
 
 // Aggregator holds the registered Checkers and rolls them up.
@@ -181,7 +192,33 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 	if fn != nil && prev != "" && prev != worst {
 		fn(prev, worst)
 	}
-	return Report{Status: worst, Components: components}
+	// spec: §25.13 line 4848 — the gateway's in-process tracker
+	// evaluates the compiled-in thresholds. Surface the source on the
+	// envelope so callers (and `lenny-ops` re-aggregation) can decide
+	// whether the per-replica view aligns with the operator's
+	// Prometheus-side customisation.
+	return Report{
+		Status:     worst,
+		Components: components,
+		Degradation: &conventions.Degradation{
+			Level:           degradationLevelFor(worst),
+			ThresholdSource: conventions.ThresholdSourceCompiledInDefaults,
+		},
+	}
+}
+
+// degradationLevelFor maps the §25.3 worst-status to the §25.4
+// envelope level. healthy → healthy, degraded → degraded, unhealthy →
+// failed.
+func degradationLevelFor(s Status) conventions.DegradationLevel {
+	switch s {
+	case StatusDegraded:
+		return conventions.DegradationDegraded
+	case StatusUnhealthy:
+		return conventions.DegradationFailed
+	default:
+		return conventions.DegradationHealthy
+	}
 }
 
 // Component returns the single named component's health, or

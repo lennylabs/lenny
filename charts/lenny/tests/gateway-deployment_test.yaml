@@ -433,10 +433,18 @@ tests:
       # + LENNY_BILLING_CORRECTION_RATE_THRESHOLD (§11.2.1 line 187,
       #   F-11.2.23) + LENNY_SLO_VALIDATED (§16.5 line 623, F-16.5.5)
       # + LENNY_GC_CYCLE_INTERVAL_SECONDS / _TOMBSTONE_RETENTION_SECONDS
-      #   (§12.5 lines 317, 341, F-12.5.19) = 25.
+      #   (§12.5 lines 317, 341, F-12.5.19)
+      # + LENNY_HEALTH_TRACKER_USE_COMPILED_RULES (§25.13 line 4798,
+      #   F-25.13.4)
+      # + LENNY_ALERTING_BUNDLE_FORMATS / LENNY_ALERTING_OVERRIDE_COUNT
+      #   (§25.13 lines 4833-4834, F-25.13.3)
+      # + LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD /
+      #   LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS /
+      #   LENNY_CREDENTIAL_POOL_LOW_THRESHOLD (§25.13 line 4737,
+      #   F-25.13.2) = 31.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 25
+          count: 31
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -533,6 +541,128 @@ tests:
           content:
             name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
             value: "86400"
+      # §25.13 line 4798 / F-25.13.4 — healthTracker.useCompiledRules
+      # defaults to true so the gateway evaluates the §16.5 compiled-in
+      # alert catalogue per replica.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_HEALTH_TRACKER_USE_COMPILED_RULES
+            value: "true"
+      # §25.13 line 4833 / F-25.13.3 — bundle-formats env mirrors
+      # monitoring.format so lenny_alerting_rules_bundled{format}
+      # stamps the rendered formats.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ALERTING_BUNDLE_FORMATS
+            value: "prometheusrule"
+      # §25.13 line 4834 / F-25.13.3 — override-count env mirrors
+      # len(monitoring.alertOverrides). Default 0 (chart bundles the
+      # §16.5 catalogue verbatim).
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ALERTING_OVERRIDE_COUNT
+            value: "0"
+      # §25.13 line 4737 / F-25.13.2 — tier-dependent §16.5 thresholds.
+      # Tier 1 base defaults: gateway queue depth 20, p95 latency 3s,
+      # credential pool utilisation 0.80. Tier presets tighten these
+      # (see presets/values-tier{2,3}.yaml).
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD
+            value: "20"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS
+            value: "3"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CREDENTIAL_POOL_LOW_THRESHOLD
+            value: "0.8"
+
+  # spec: §25.13 line 4798 / F-25.13.4 — operators who customize the
+  # bundled Prometheus rules can disable the in-process tracker to keep
+  # the per-replica view consistent with their custom thresholds.
+  - it: renders LENNY_HEALTH_TRACKER_USE_COMPILED_RULES=false when gateway.healthTracker.useCompiledRules is set
+    set:
+      gateway.healthTracker.useCompiledRules: false
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_HEALTH_TRACKER_USE_COMPILED_RULES
+            value: "false"
+
+  # spec: §25.13 line 4833 / F-25.13.3 — monitoring.format "both"
+  # expands LENNY_ALERTING_BUNDLE_FORMATS to a comma-separated list so
+  # both label series on lenny_alerting_rules_bundled stamp to 1.
+  - it: renders LENNY_ALERTING_BUNDLE_FORMATS as a comma list when monitoring.format=both
+    set:
+      monitoring.format: both
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ALERTING_BUNDLE_FORMATS
+            value: "prometheusrule,configmap"
+
+  # spec: §25.13 line 4834 / F-25.13.3 — len(monitoring.alertOverrides)
+  # flows through to LENNY_ALERTING_OVERRIDE_COUNT so the override-gauge
+  # reflects the rendered overrides map.
+  - it: counts monitoring.alertOverrides entries for LENNY_ALERTING_OVERRIDE_COUNT
+    set:
+      monitoring.alertOverrides.WarmPoolExhausted.expr: "x"
+      monitoring.alertOverrides.WarmPoolExhausted.for: "30s"
+      monitoring.alertOverrides.WarmPoolExhausted.severity: critical
+      monitoring.alertOverrides.NoisyAlert.enabled: false
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ALERTING_OVERRIDE_COUNT
+            value: "2"
+
+  # spec: §25.13 line 4737 / F-25.13.2 — operator override of the
+  # tier-dependent thresholds. Tier 2 / Tier 3 presets ship tighter
+  # defaults; an operator can also override the thresholds directly.
+  - it: renders monitoring.alertThresholds overrides into the threshold env vars
+    set:
+      monitoring.alertThresholds.gatewayQueueDepthHigh.value: 7
+      monitoring.alertThresholds.gatewayLatencyHigh.p99Seconds: 1.5
+      monitoring.alertThresholds.credentialPoolLow.utilizationThreshold: 0.65
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD
+            value: "7"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS
+            value: "1.5"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_CREDENTIAL_POOL_LOW_THRESHOLD
+            value: "0.65"
 
   # spec: §12.5 lines 317, 341 / F-12.5.19 — operator-supplied GC cadence
   # and tombstone retention flow through to the gateway env.

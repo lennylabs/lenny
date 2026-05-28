@@ -412,6 +412,56 @@ monitoring:
     # the alerting-rules ConfigMap where the spec mandates.
     namespace: ""
     name: "lenny-alerting-rules"
+  # alertOverrides is the §25.13 line 4776 per-rule replacement map.
+  # Each entry is keyed by §16.5 alert name and supplies a full rule
+  # definition that replaces the bundled rule in the rendered manifest.
+  # Set `enabled: false` to prune a bundled rule entirely. Empty by
+  # default — the chart bundles the §16.5 catalogue verbatim.
+  # Example:
+  #
+  #   monitoring:
+  #     alertOverrides:
+  #       WarmPoolExhausted:
+  #         expr: 'lenny_warmpool_pod_idle == 0 and on(pool) lenny_warmpool_claim_rate > 1'
+  #         for: 30s
+  #         severity: critical
+  #       NoisyButHarmless:
+  #         enabled: false   # prune this rule from the bundled manifest
+  alertOverrides: {}
+  # alertThresholds gates the §25.13 line 4737 tier-dependent
+  # thresholds. The Tier 1 base values are the loosest in the published
+  # tier matrix; presets/values-tier{2,3}.yaml tighten them per
+  # §17.8.x. The gateway publishes the values as Prometheus gauges so
+  # the bundled §16.5 alert expressions resolve `scalar(...)` against
+  # operator-tunable inputs rather than literal constants.
+  alertThresholds:
+    # GatewayQueueDepthHigh: §16.5 line 657 — per-subsystem queue
+    # depth ceiling. value is the gauge the alert reads via
+    # scalar(lenny_gateway_queue_depth_threshold).
+    gatewayQueueDepthHigh:
+      value: 20
+      duration: 5m
+      severity: warning
+    # GatewayLatencyHigh: §16.5 line 666 — p95 request duration
+    # ceiling in seconds, read via scalar(lenny_gateway_latency_threshold_seconds).
+    gatewayLatencyHigh:
+      p99Seconds: 3.0
+      duration: 10m
+      severity: warning
+    # WarmPoolReplenishmentSlow: §16.5 line 488 — the multiplier
+    # applied to per-pool lenny_pool_warmup_seconds_baseline before
+    # the catalogue's `> N * baseline` comparison. The implementation
+    # uses pod-startup p95 vs N × baseline; tier presets tighten N.
+    warmPoolReplenishmentSlow:
+      multiplierOverPodWarmupBaseline: 2
+      duration: 5m
+      severity: warning
+    # CredentialPoolLow: §16.5 line 484 — utilization fraction read
+    # via scalar(lenny_credential_pool_low_threshold).
+    credentialPoolLow:
+      utilizationThreshold: 0.80
+      duration: 0s
+      severity: warning
   # serviceMonitor gates the §16.9 Prometheus Operator scrape-target
   # CRDs. servicemonitor.yaml renders a ServiceMonitor for the gateway,
   # controller, and Token Service; podmonitor.yaml renders a PodMonitor
@@ -919,6 +969,18 @@ gateway:
   # session names no environment. It MUST be "deny-all" or "allow-all";
   # the gateway refuses to start when it is unset (LENNY_CONFIG_MISSING).
   noEnvironmentPolicy: deny-all
+  # healthTracker gates the §25.13 in-process alert tracker. When
+  # useCompiledRules is true (default), the gateway runs the §16.5
+  # compiled-in alert evaluator so /v1/admin/health derives its
+  # per-replica view from the same expressions the bundled Prometheus
+  # rules evaluate. When false, the tracker is suppressed entirely and
+  # /v1/admin/health falls back to dependency probes and circuit
+  # breaker state only. Operators set this to false for strict
+  # consistency with operator-customized Prometheus rules — the
+  # in-process tracker always evaluates the compiled-in defaults, not
+  # the operator's customizations (§25.13 line 4798).
+  healthTracker:
+    useCompiledRules: true
   # spiffe configures the §4.3 line 205 per-replica mTLS identity.
   # When `enabled: false` (the default) every gateway replica mounts
   # the shared `lenny-gateway-tls` Secret rendered by mtls-pki.yaml;

@@ -558,11 +558,18 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
-			Name:        "CredentialPoolLow",
-			Expr:        `lenny_credential_pool_utilization > 0.80`,
+			Name: "CredentialPoolLow",
+			// spec: §25.13 line 4737 — tier-dependent utilisation
+			// ceiling. The gateway emits the configured fraction on
+			// lenny_credential_pool_low_threshold (default 0.80,
+			// monitoring.alertThresholds.credentialPoolLow.utilizationThreshold).
+			// The scalar lookup keeps the rendered expression valid
+			// when the operator tightens the threshold via the tier
+			// preset without re-rendering the rule body. F-25.13.2.
+			Expr:        `lenny_credential_pool_utilization > scalar(lenny_credential_pool_low_threshold)`,
 			Severity:    SeverityWarning,
-			Summary:     "Credential pool utilisation above 80 percent",
-			Description: "Pool utilisation exceeds 80 percent for any pool. Available credentials are below 20 percent of pool size.",
+			Summary:     "Credential pool utilisation above the configured ceiling",
+			Description: "Pool utilisation exceeds the configured fraction for any pool. Defaults to 80 percent (Tier 1); tighter tier presets (Tier 2 / Tier 3) lower the ceiling via monitoring.alertThresholds.credentialPoolLow.utilizationThreshold.",
 			SpecRef:     "§16.5",
 		},
 		{

@@ -61,6 +61,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
+	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -314,6 +315,24 @@ func main() {
 	interceptorWeakeningCooldownSeconds := flag.Int("interceptor-weakening-cooldown-seconds",
 		envInt("LENNY_INTERCEPTOR_WEAKENING_COOLDOWN_SECONDS", int(delegation.DefaultInterceptorWeakeningCooldown/time.Second)),
 		"§8.3 line 181 Helm value gateway.interceptorWeakeningCooldownSeconds: the cluster-scoped window during which delegate_task rejects every call whose effective DelegationPolicy is inside a `scanExportedFiles: true → false` weakening transition with INTERCEPTOR_WEAKENING_COOLDOWN (TRANSIENT, HTTP 503). Default 60s. Override via LENNY_INTERCEPTOR_WEAKENING_COOLDOWN_SECONDS. F-8.7.12 / F-13.5.7.")
+	healthTrackerUseCompiledRules := flag.Bool("health-tracker-use-compiled-rules",
+		envBool("LENNY_HEALTH_TRACKER_USE_COMPILED_RULES", true),
+		"§25.13 line 4798 Helm value gateway.healthTracker.useCompiledRules: when true (default), the gateway's in-process §16.5 alert evaluator drives the per-replica health view. When false, the gateway suppresses the in-process alert tracker entirely and /v1/admin/health falls back to dependency probes and circuit breaker state only. Operators set this to false for strict consistency with operator-customized Prometheus rules. Override via LENNY_HEALTH_TRACKER_USE_COMPILED_RULES. F-25.13.4.")
+	alertingBundleFormats := flag.String("alerting-bundle-formats",
+		envOr("LENNY_ALERTING_BUNDLE_FORMATS", "prometheusrule"),
+		"§25.13 line 4833 Helm value monitoring.format (closed-enum subset rendered by the chart): comma-separated list of the formats the chart bundled the §16.5 alert catalogue into. Stamps `lenny_alerting_rules_bundled{format}` so an operator can verify the bundling configuration. Override via LENNY_ALERTING_BUNDLE_FORMATS. F-25.13.3.")
+	alertingOverrideCount := flag.Int("alerting-override-count",
+		envInt("LENNY_ALERTING_OVERRIDE_COUNT", 0),
+		"§25.13 line 4834 Helm value len(monitoring.alertOverrides): count of operator-customized §16.5 rules the chart rendered. Stamps `lenny_alerting_rule_overrides` so the §25.13 metrics surface shows how many rules diverged from the bundled defaults. Override via LENNY_ALERTING_OVERRIDE_COUNT. F-25.13.3.")
+	gatewayQueueDepthThreshold := flag.Float64("gateway-queue-depth-threshold",
+		envFloat("LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD", 20),
+		"§25.13 line 4737 / §16.5 monitoring.alertThresholds.gatewayQueueDepthHigh.value: the per-subsystem queue-depth ceiling the GatewayQueueDepthHigh alert reads via scalar(lenny_gateway_queue_depth_threshold). Tier presets tighten this (Tier 2: 10, Tier 3: 5). Override via LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD. F-25.13.2.")
+	gatewayLatencyThresholdSeconds := flag.Float64("gateway-latency-threshold-seconds",
+		envFloat("LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS", 3.0),
+		"§25.13 line 4737 / §16.5 monitoring.alertThresholds.gatewayLatencyHigh.p99Seconds: the per-subsystem p95 latency ceiling (seconds) the GatewayLatencyHigh alert reads via scalar(lenny_gateway_latency_threshold_seconds). Tier presets tighten this (Tier 2: 2.0, Tier 3: 1.0). Override via LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS. F-25.13.2.")
+	credentialPoolLowThreshold := flag.Float64("credential-pool-low-threshold",
+		envFloat("LENNY_CREDENTIAL_POOL_LOW_THRESHOLD", 0.80),
+		"§25.13 line 4737 / §16.5 monitoring.alertThresholds.credentialPoolLow.utilizationThreshold: the per-pool utilisation fraction the CredentialPoolLow alert reads via scalar(lenny_credential_pool_low_threshold). Tier presets tighten this (Tier 2: 0.70, Tier 3: 0.60). Override via LENNY_CREDENTIAL_POOL_LOW_THRESHOLD. F-25.13.2.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
@@ -1537,6 +1556,25 @@ func main() {
 		log.Fatalf("lenny-gateway: --billing-correction-rate-threshold must be in [0, 1] (got %v) (§11.2.1 / §16.5)", *billingCorrectionRateThreshold)
 	}
 	gwMetrics.SetBillingCorrectionRateThreshold(*billingCorrectionRateThreshold)
+
+	// spec: §25.13 line 4737 / §16.5 — emit the configured Tier preset
+	// for the §25.13 tier-dependent thresholds (gateway queue depth,
+	// gateway p95 latency, credential pool utilisation). The
+	// corresponding alert expressions read each value via scalar(...),
+	// so a tier preset tightening the threshold flows through to the
+	// bundled manifest without re-rendering the rule body. F-25.13.2.
+	if *gatewayQueueDepthThreshold < 0 {
+		log.Fatalf("lenny-gateway: --gateway-queue-depth-threshold must be >= 0 (got %v) (§25.13 line 4737)", *gatewayQueueDepthThreshold)
+	}
+	gwMetrics.SetGatewayQueueDepthThreshold(*gatewayQueueDepthThreshold)
+	if *gatewayLatencyThresholdSeconds < 0 {
+		log.Fatalf("lenny-gateway: --gateway-latency-threshold-seconds must be >= 0 (got %v) (§25.13 line 4737)", *gatewayLatencyThresholdSeconds)
+	}
+	gwMetrics.SetGatewayLatencyThresholdSeconds(*gatewayLatencyThresholdSeconds)
+	if *credentialPoolLowThreshold < 0 || *credentialPoolLowThreshold > 1 {
+		log.Fatalf("lenny-gateway: --credential-pool-low-threshold must be in [0, 1] (got %v) (§25.13 line 4737)", *credentialPoolLowThreshold)
+	}
+	gwMetrics.SetCredentialPoolLowThreshold(*credentialPoolLowThreshold)
 
 	// §4.1 extractionThresholds: read the configured per-subsystem
 	// thresholds from LENNY_EXTRACTION_THRESHOLD_* env vars (rendered
@@ -3529,6 +3567,28 @@ func main() {
 		}
 	}()
 
+	// §16.1 line 713 / §25.13 lines 4833–4835 — register the bundled-
+	// alerting observability surface so an operator's chart inputs and
+	// per-rule in-process eval latency become visible on /metrics.
+	// F-25.13.3.
+	alertingMx, err := alertingmetrics.New(nil)
+	if err != nil {
+		log.Fatalf("lenny-gateway: §25.13 alerting metrics: %v", err)
+	}
+	{
+		var formats []string
+		for _, f := range strings.Split(*alertingBundleFormats, ",") {
+			if t := strings.TrimSpace(f); t != "" {
+				formats = append(formats, t)
+			}
+		}
+		alertingMx.SetBundledFormats(formats...)
+	}
+	if *alertingOverrideCount < 0 {
+		log.Fatalf("lenny-gateway: --alerting-override-count must be >= 0 (got %d) (§25.13 line 4834)", *alertingOverrideCount)
+	}
+	alertingMx.SetOverrideCount(*alertingOverrideCount)
+
 	// §4.0 / §25.13: the per-replica in-process alert tracker drives the
 	// §16.5 catalog through inactive → pending → firing and emits
 	// alert_fired / alert_resolved through the shared EventEmitter. With
@@ -3537,15 +3597,25 @@ func main() {
 	// Prometheus-less deployment. The wiring is unconditional so a
 	// future commit that supplies a real ExprEvaluator only swaps the
 	// backend, not the surface.
-	alertEvaluator := evaluator.NewWithEmitter(
-		rules.Catalog(),
-		evaluator.NoopExprEvaluator{},
-		evaluator.EventEmitOptions{
-			Emitter: opsEmitter,
-			Source:  "//lenny.dev/gateway/" + replica,
-		},
-	)
-	go alertEvaluator.Run(watchdogCtx)
+	//
+	// spec: §25.13 line 4798 — operators can suppress the in-process
+	// tracker entirely via `gateway.healthTracker.useCompiledRules:
+	// false`. In that posture the per-replica health view falls back to
+	// dependency probes and circuit breaker state only. F-25.13.4.
+	if *healthTrackerUseCompiledRules {
+		alertEvaluator := evaluator.NewWithEmitter(
+			rules.Catalog(),
+			evaluator.NoopExprEvaluator{},
+			evaluator.EventEmitOptions{
+				Emitter:            opsEmitter,
+				Source:             "//lenny.dev/gateway/" + replica,
+				OnRuleEvalDuration: alertingMx.ObserveRuleEvalDuration,
+			},
+		)
+		go alertEvaluator.Run(watchdogCtx)
+	} else {
+		log.Printf("lenny-gateway: §25.13 in-process alert tracker disabled (gateway.healthTracker.useCompiledRules=false); /v1/admin/health falls back to dependency probes + circuit breaker state only")
+	}
 
 	stopCh := make(chan os.Signal, 1)
 	signal.Notify(stopCh, syscall.SIGTERM, syscall.SIGINT)
@@ -4710,6 +4780,21 @@ func envDuration(name string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// envBool returns the env var parsed as a bool, or def when the var is
+// unset or does not parse. Accepts the strconv.ParseBool truth values
+// ("1", "true", "TRUE", "0", "false", ...).
+func envBool(name string, def bool) bool {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
 }
 
 // envInt64 mirrors envInt for int64-valued flags (idempotency body

@@ -320,6 +320,14 @@ var metricCatalog = []MetricSpec{
 	{"lenny_ops_admin_api_tls_handshake_total", TypeCounter, "lenny-ops to gateway admin-API TLS handshake outcomes"},
 	// §25.6 line 2926 — diagnostic endpoint latency.
 	{"lenny_diagnostics_request_duration_seconds", TypeHistogram, "Per-diagnostic-endpoint latency for §25.6 diagnostic endpoints"},
+	// §25.13 lines 4833–4835 / F-25.13.3 — bundled-rules visibility,
+	// override-count visibility, and per-rule in-process evaluator
+	// latency for the §16.5 alert catalog. The first two are stamped
+	// at gateway boot from the rendered chart inputs; the histogram is
+	// updated by the in-process tracker on every cached evaluation.
+	{"lenny_alerting_rules_bundled", TypeGauge, "1 if rules are rendered in the given chart format (prometheusrule, configmap)"},
+	{"lenny_alerting_rule_overrides", TypeGauge, "Count of operator-overridden rules from monitoring.alertOverrides"},
+	{"lenny_alerting_rule_eval_duration_seconds", TypeHistogram, "In-process tracker evaluation latency per §16.5 rule (Prometheus fallback)"},
 }
 
 // MetricCatalog returns the §16.1 metrics catalog. The slice is fresh

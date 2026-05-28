@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
 func TestGetRecommendationsEmptyWhenNoData(t *testing.T) {
@@ -143,5 +144,30 @@ func TestGetRecommendationsWarmPoolIncrease(t *testing.T) {
 	}
 	if !triggered {
 		t.Errorf("WarmPoolUndersized must trigger on a 24h increase of 4: %+v", resp.Recommendations)
+	}
+}
+
+// TestGetRecommendationsStampsCompiledInDefaults_spec_25_13_4848
+// asserts the gateway always stamps thresholdSource=compiled-in-defaults
+// on its in-process /v1/admin/recommendations response per §25.13 line
+// 4848. lenny-ops layers operator-customized on top when it serves
+// from the Prometheus rule set. F-25.13.5.
+func TestGetRecommendationsStampsCompiledInDefaults_spec_25_13_4848(t *testing.T) {
+	svc := recommendations.NewCapacityService(recommendations.NewWindowStore(time.Hour))
+	resp, err := svc.GetRecommendations(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("GetRecommendations: %v", err)
+	}
+	if resp.Degradation == nil {
+		t.Fatal("expected degradation envelope; got nil")
+	}
+	if resp.Degradation.ThresholdSource != conventions.ThresholdSourceCompiledInDefaults {
+		t.Errorf("thresholdSource = %q, want %q",
+			resp.Degradation.ThresholdSource,
+			conventions.ThresholdSourceCompiledInDefaults)
+	}
+	if resp.Degradation.Level != conventions.DegradationHealthy {
+		t.Errorf("degradation level = %q, want %q",
+			resp.Degradation.Level, conventions.DegradationHealthy)
 	}
 }

@@ -67,6 +67,13 @@ type Options struct {
 	// OnResolved, when set, is called once when a firing rule's
 	// expression clears — the §16.6 alert_resolved signal.
 	OnResolved func(Alert)
+	// OnRuleEvalDuration, when set, is called with the wall-clock
+	// elapsed by a single rule evaluation. Wire it to a Prometheus
+	// histogram labelled by rule to emit the §16.1 / §25.13
+	// `lenny_alerting_rule_eval_duration_seconds` series the
+	// agent-operability surface advertises.
+	// spec: §25.13 line 4835; F-25.13.3.
+	OnRuleEvalDuration func(rule string, d time.Duration)
 }
 
 // DefaultInterval is the evaluation sweep interval for the Run driver.
@@ -75,11 +82,12 @@ const DefaultInterval = 30 * time.Second
 // Evaluator drives the §16.5 alert catalogue through its lifecycle. It
 // is goroutine-safe.
 type Evaluator struct {
-	exprEval   ExprEvaluator
-	interval   time.Duration
-	clock      func() time.Time
-	onFired    func(Alert)
-	onResolved func(Alert)
+	exprEval           ExprEvaluator
+	interval           time.Duration
+	clock              func() time.Time
+	onFired            func(Alert)
+	onResolved         func(Alert)
+	onRuleEvalDuration func(rule string, d time.Duration)
 
 	mu     sync.Mutex
 	states map[string]*ruleState
@@ -97,12 +105,13 @@ type ruleState struct {
 // does not disable the evaluator.
 func New(catalog []rules.Rule, exprEval ExprEvaluator, opts Options) *Evaluator {
 	e := &Evaluator{
-		exprEval:   exprEval,
-		interval:   opts.Interval,
-		clock:      opts.Clock,
-		onFired:    opts.OnFired,
-		onResolved: opts.OnResolved,
-		states:     map[string]*ruleState{},
+		exprEval:           exprEval,
+		interval:           opts.Interval,
+		clock:              opts.Clock,
+		onFired:            opts.OnFired,
+		onResolved:         opts.OnResolved,
+		onRuleEvalDuration: opts.OnRuleEvalDuration,
+		states:             map[string]*ruleState{},
 	}
 	if e.interval <= 0 {
 		e.interval = DefaultInterval
@@ -130,7 +139,14 @@ func (e *Evaluator) Tick(ctx context.Context, now time.Time) int {
 	defer e.mu.Unlock()
 	firing := 0
 	for _, rs := range e.states {
+		evalStart := time.Now()
 		active, err := e.exprEval.Active(ctx, rs.rule.Expr)
+		if e.onRuleEvalDuration != nil {
+			// spec: §25.13 line 4835 — emit the wall-clock per
+			// in-process rule evaluation so operators can detect
+			// expensive expressions under the fallback path.
+			e.onRuleEvalDuration(rs.rule.Name, time.Since(evalStart))
+		}
 		if err == nil {
 			e.advance(rs, active, now)
 		}

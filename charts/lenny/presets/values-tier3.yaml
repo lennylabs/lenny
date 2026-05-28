@@ -121,3 +121,23 @@ backups:
     enabled: true
     schedule: "0 4 1 * *"
     backupSelector: "latest-full"
+
+# §25.13 line 4737 / §16.5 — tier-tightened alert thresholds. Tier 3
+# applies the §25.13 example tier-3 row: queue depth 5/1m, p95 latency
+# 1s/2m, credential pool utilisation 60 percent (tighter still than
+# Tier 2). Critical severity for replenishment-slow per §25.13.
+# F-25.13.2.
+monitoring:
+  alertThresholds:
+    gatewayQueueDepthHigh:
+      value: 5
+      duration: 1m
+      severity: warning
+    gatewayLatencyHigh:
+      p99Seconds: 1.0
+      duration: 2m
+      severity: warning
+    credentialPoolLow:
+      utilizationThreshold: 0.60
+      duration: 0s
+      severity: warning

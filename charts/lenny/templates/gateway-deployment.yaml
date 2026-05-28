@@ -544,6 +544,47 @@ spec:
             # lenny_billing_correction_rate_threshold at startup.
             - name: LENNY_BILLING_CORRECTION_RATE_THRESHOLD
               value: {{ .Values.billing.correctionRateThreshold | default 0.05 | quote }}
+            # §25.13 line 4798 healthTracker.useCompiledRules: gates the
+            # gateway's in-process §16.5 alert evaluator. Set false to
+            # suppress the per-replica tracker and let /v1/admin/health
+            # report only dependency probes and circuit breaker state —
+            # the escape valve for operators whose Prometheus rule
+            # customisations diverge from the compiled-in defaults.
+            - name: LENNY_HEALTH_TRACKER_USE_COMPILED_RULES
+              value: {{ dig "healthTracker" "useCompiledRules" true .Values.gateway | quote }}
+            # §25.13 line 4833 / F-25.13.3 — the gateway stamps
+            # lenny_alerting_rules_bundled{format} so an operator can
+            # verify the bundling configuration from /metrics. The
+            # value mirrors monitoring.format (closed enum
+            # "prometheusrule" | "configmap" | "both"; "both" expands
+            # into both labels). LENNY_ALERTING_OVERRIDE_COUNT mirrors
+            # len(monitoring.alertOverrides) so
+            # lenny_alerting_rule_overrides reflects the rendered
+            # override map.
+            - name: LENNY_ALERTING_BUNDLE_FORMATS
+              value: {{ if .Values.monitoring.bundleRules -}}
+                {{- if eq .Values.monitoring.format "both" -}}
+                "prometheusrule,configmap"
+                {{- else -}}
+                {{ .Values.monitoring.format | quote }}
+                {{- end -}}
+              {{- else -}}
+                ""
+              {{- end }}
+            - name: LENNY_ALERTING_OVERRIDE_COUNT
+              value: {{ len (.Values.monitoring.alertOverrides | default dict) | quote }}
+            # §25.13 line 4737 / F-25.13.2 — tier-dependent §16.5
+            # thresholds. The gateway emits each value on a startup-set
+            # Prometheus gauge so the bundled alert expressions read
+            # the configured number via scalar(...). Tier presets
+            # override these to tighten the thresholds at higher tiers
+            # (see presets/values-tier{2,3}.yaml).
+            - name: LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD
+              value: {{ dig "alertThresholds" "gatewayQueueDepthHigh" "value" 20 .Values.monitoring | quote }}
+            - name: LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS
+              value: {{ dig "alertThresholds" "gatewayLatencyHigh" "p99Seconds" 3.0 .Values.monitoring | quote }}
+            - name: LENNY_CREDENTIAL_POOL_LOW_THRESHOLD
+              value: {{ dig "alertThresholds" "credentialPoolLow" "utilizationThreshold" 0.80 .Values.monitoring | quote }}
             # §4.2 line 165 LENNY_POOLER_MODE: deployment-posture knob
             # for the Postgres pooler. The gateway logs it at startup
             # so operators can confirm the value the running binary

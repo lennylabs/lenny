@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
 func TestOnTransitionFiresOnAggregateChange(t *testing.T) {
@@ -80,6 +81,45 @@ func TestAggregatorAllHealthy(t *testing.T) {
 	// Components sorted by name.
 	if report.Components[0].Name != "blobstore" {
 		t.Errorf("not sorted: %+v", report.Components)
+	}
+}
+
+// TestReportStampsThresholdSource_spec_25_13_4848 asserts every
+// Report carries the §25.4 envelope with
+// thresholdSource=compiled-in-defaults — the gateway's in-process
+// tracker always evaluates the compiled-in thresholds, never the
+// operator-customized Prometheus rules. F-25.13.5.
+func TestReportStampsThresholdSource_spec_25_13_4848(t *testing.T) {
+	agg := health.NewAggregator()
+	agg.Register(healthy("sessionstore"))
+	report := agg.Report(context.Background())
+	if report.Degradation == nil {
+		t.Fatal("expected degradation envelope on the Report")
+	}
+	if report.Degradation.ThresholdSource != conventions.ThresholdSourceCompiledInDefaults {
+		t.Errorf("thresholdSource = %q, want %q",
+			report.Degradation.ThresholdSource,
+			conventions.ThresholdSourceCompiledInDefaults)
+	}
+	if report.Degradation.Level != conventions.DegradationHealthy {
+		t.Errorf("envelope level = %q, want healthy", report.Degradation.Level)
+	}
+	// A degraded component must surface as level=degraded on the
+	// envelope; the threshold source still reflects the compiled-in
+	// defaults since the gateway's evaluator did the work.
+	agg.Register(failing("blobstore", health.StatusDegraded))
+	report = agg.Report(context.Background())
+	if report.Degradation.Level != conventions.DegradationDegraded {
+		t.Errorf("envelope level after degraded component = %q, want degraded", report.Degradation.Level)
+	}
+	if report.Degradation.ThresholdSource != conventions.ThresholdSourceCompiledInDefaults {
+		t.Errorf("thresholdSource (degraded) = %q, want compiled-in-defaults", report.Degradation.ThresholdSource)
+	}
+	// Unhealthy maps to the envelope's "failed" level per §25.4.
+	agg.Register(failing("redis", health.StatusUnhealthy))
+	report = agg.Report(context.Background())
+	if report.Degradation.Level != conventions.DegradationFailed {
+		t.Errorf("envelope level after unhealthy component = %q, want failed", report.Degradation.Level)
 	}
 }
 

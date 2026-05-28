@@ -105,6 +105,25 @@ const (
 	DegradationFailed   DegradationLevel = "failed"
 )
 
+// ThresholdSource is the §25.4 envelope field for endpoints whose
+// recommendations or health-derivation logic depends on alert
+// thresholds. It distinguishes the operator-configured rule set
+// (Prometheus-backed) from the gateway's compiled-in default thresholds
+// the in-process tracker uses during the §25.13 Prometheus fallback.
+//
+// spec: §25.4 line 215, §25.13 line 4848.
+type ThresholdSource string
+
+const (
+	// ThresholdSourceOperatorCustomized signals the response was derived
+	// from the operator-configured rules loaded into Prometheus.
+	ThresholdSourceOperatorCustomized ThresholdSource = "operator-customized"
+	// ThresholdSourceCompiledInDefaults signals the response was derived
+	// from the gateway's compiled-in default thresholds — the in-process
+	// alert tracker fallback used when Prometheus is unreachable.
+	ThresholdSourceCompiledInDefaults ThresholdSource = "compiled-in-defaults"
+)
+
 // Degradation is the §25.4 canonical degradation envelope: the
 // response-level signal for an endpoint whose data quality depends on
 // an external dependency. Endpoints serving from their primary source
@@ -116,8 +135,14 @@ type Degradation struct {
 	FallbackPath      []string         `json:"fallbackPath,omitempty"`
 	Confidence        float64          `json:"confidence,omitempty"`
 	UnavailableFields []string         `json:"unavailableFields,omitempty"`
-	Warnings          []string         `json:"warnings,omitempty"`
-	Since             string           `json:"since,omitempty"`
+	// ThresholdSource is set on health and capacity-recommendations
+	// responses to signal whether the active rule set is the
+	// operator-customized one or the gateway's compiled-in defaults.
+	// Empty on responses unaffected by alert-threshold provenance.
+	// spec: §25.4 line 215, §25.13 line 4848.
+	ThresholdSource ThresholdSource `json:"thresholdSource,omitempty"`
+	Warnings        []string        `json:"warnings,omitempty"`
+	Since           string          `json:"since,omitempty"`
 }
 
 // Pagination is the §25.4 response envelope for a paginated list.

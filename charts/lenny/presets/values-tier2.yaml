@@ -81,3 +81,21 @@ backups:
   # operator can enable it explicitly.
   restoreTest:
     enabled: false
+
+# §25.13 line 4737 / §16.5 — tier-tightened alert thresholds. Tier 2
+# applies the §25.13 example tier-2 row: queue depth 10/5m, p95 latency
+# 2s/5m, credential pool utilisation 70 percent. F-25.13.2.
+monitoring:
+  alertThresholds:
+    gatewayQueueDepthHigh:
+      value: 10
+      duration: 5m
+      severity: warning
+    gatewayLatencyHigh:
+      p99Seconds: 2.0
+      duration: 5m
+      severity: warning
+    credentialPoolLow:
+      utilizationThreshold: 0.70
+      duration: 0s
+      severity: warning

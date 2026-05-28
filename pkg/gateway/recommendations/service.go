@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/recommendations/rules"
 )
 
@@ -38,6 +39,16 @@ type Recommendation struct {
 // RecommendationsResponse is the GET /v1/admin/recommendations body.
 type RecommendationsResponse struct {
 	Recommendations []Recommendation `json:"recommendations"`
+
+	// Degradation carries the §25.4 canonical envelope when the
+	// response is derived from anything other than the operator's
+	// Prometheus rules. The gateway's in-process evaluator runs the
+	// compiled-in defaults, so single-replica reads stamp the envelope
+	// with `thresholdSource: "compiled-in-defaults"` (§25.13 line 4848).
+	// `lenny-ops` overrides the envelope when it serves from the
+	// operator-customized Prometheus rule set.
+	// spec: §25.4 line 215.
+	Degradation *conventions.Degradation `json:"degradation,omitempty"`
 }
 
 // Evaluation is the outcome of running one rule's evaluator. A
@@ -103,6 +114,13 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 			Confidence:    e.Confidence,
 			DataAvailable: e.DataAvailable,
 		})
+	}
+	// spec: §25.13 line 4848 — the gateway's in-process recommendation
+	// evaluator always runs the compiled-in defaults. lenny-ops layers
+	// the operator-customized source on top when it serves the response.
+	resp.Degradation = &conventions.Degradation{
+		Level:           conventions.DegradationHealthy,
+		ThresholdSource: conventions.ThresholdSourceCompiledInDefaults,
 	}
 	return resp, nil
 }

@@ -242,6 +242,49 @@ func TestSetBillingCorrectionRateThreshold_spec_11_2_1_187(t *testing.T) {
 	}
 }
 
+// spec: §25.13 line 4737 / §16.5 — SetGatewayQueueDepthThreshold /
+// SetGatewayLatencyThresholdSeconds / SetCredentialPoolLowThreshold
+// drive the §25.13 tier-dependent threshold gauges the §16.5
+// GatewayQueueDepthHigh / GatewayLatencyHigh / CredentialPoolLow
+// alerts read via scalar(...). The base-Helm defaults pre-materialize
+// the series so a scrape before the gateway main has called the
+// setters still yields a non-NaN reading. F-25.13.2.
+func TestSetAlertThresholds_spec_25_13_4737(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// Pre-Set baseline reading: the chart Tier 1 defaults are
+	// materialized at registration time so scalar(...) is finite.
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, want := range []string{
+		"lenny_gateway_queue_depth_threshold 20",
+		"lenny_gateway_latency_threshold_seconds 3",
+		"lenny_credential_pool_low_threshold 0.8",
+	} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("/metrics missing default threshold %q\n---\n%s", want, rr.Body.String())
+		}
+	}
+	// Tier-2 / Tier-3 tightening flows through to the gauges via the
+	// Set helpers.
+	m.SetGatewayQueueDepthThreshold(5)
+	m.SetGatewayLatencyThresholdSeconds(1.0)
+	m.SetCredentialPoolLowThreshold(0.60)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, want := range []string{
+		"lenny_gateway_queue_depth_threshold 5",
+		"lenny_gateway_latency_threshold_seconds 1",
+		"lenny_credential_pool_low_threshold 0.6",
+	} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("/metrics missing tightened threshold %q\n---\n%s", want, rr.Body.String())
+		}
+	}
+}
+
 // spec: §4.1 / §16.5 — SetMinReplicas / SetStreamCeiling /
 // SetReplicaCount drive the three scalar gauges referenced from the
 // §16.5 alert rules. Each value must round-trip through /metrics so

@@ -152,3 +152,44 @@ tests:
       - equal:
           path: metadata.namespace
           value: lenny-alerts
+
+  # spec: §25.13 line 4776 / F-25.13.1 — monitoring.alertOverrides
+  # merges per-rule replacements into the bundled manifest. Field-level
+  # overrides leave the bundled annotations and other fields in place;
+  # only the supplied fields are replaced.
+  - it: merges expr/for from monitoring.alertOverrides into the bundled manifest
+    set:
+      monitoring:
+        alertOverrides:
+          WarmPoolExhausted:
+            expr: "operator-customised-expr"
+            for: "42s"
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.groups[0].rules[0].alert
+          value: WarmPoolExhausted
+      - equal:
+          path: spec.groups[0].rules[0].expr
+          value: operator-customised-expr
+      - equal:
+          path: spec.groups[0].rules[0].for
+          value: 42s
+      # Bundled annotations remain because mergeOverwrite only replaces
+      # explicit fields. F-25.13.1.
+      - exists:
+          path: spec.groups[0].rules[0].annotations.runbook_url
+
+  # spec: §25.13 line 4827 / F-25.13.1 — `enabled: false` prunes the
+  # bundled rule from the rendered manifest entirely.
+  - it: prunes a bundled rule when monitoring.alertOverrides sets enabled false
+    set:
+      monitoring:
+        alertOverrides:
+          WarmPoolExhausted:
+            enabled: false
+    documentIndex: 0
+    asserts:
+      - notEqual:
+          path: spec.groups[0].rules[0].alert
+          value: WarmPoolExhausted

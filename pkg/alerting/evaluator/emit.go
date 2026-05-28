@@ -27,6 +27,11 @@ type EventEmitOptions struct {
 	// Now overrides time.Now for the ctx-derived emission timestamp.
 	// Tests use it for deterministic timestamps.
 	Now func() time.Time
+	// OnRuleEvalDuration mirrors Options.OnRuleEvalDuration so the
+	// §25.13 line 4835 `lenny_alerting_rule_eval_duration_seconds`
+	// histogram can be wired through NewWithEmitter alongside the
+	// firing-edge event surface. F-25.13.3.
+	OnRuleEvalDuration func(rule string, d time.Duration)
 }
 
 // EmitCallbacks returns OnFired and OnResolved hooks suitable for
@@ -130,7 +135,8 @@ func NewWithEmitter(catalog []rules.Rule, expr ExprEvaluator, opts EventEmitOpti
 	}
 	onFired, onResolved := EmitCallbacks(opts)
 	return New(catalog, expr, Options{
-		OnFired:    onFired,
-		OnResolved: onResolved,
+		OnFired:            onFired,
+		OnResolved:         onResolved,
+		OnRuleEvalDuration: opts.OnRuleEvalDuration,
 	})
 }

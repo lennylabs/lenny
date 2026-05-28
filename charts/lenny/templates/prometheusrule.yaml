@@ -16,14 +16,56 @@ Rendering is gated by monitoring.bundleRules and monitoring.format:
     vanilla Prometheus that mount rule_files.
   - monitoring.format: both            — render both.
 
-The PrometheusRule and the ConfigMap both splice the identical
-files/alerting-rules.yaml fragment, so the §16 catalog cross-check test
-can assert chart-vs-catalog parity against either rendering.
+monitoring.alertOverrides applies per-rule replacements (§25.13 line
+4776): each entry merges over the bundled rule by §16.5 alert name; an
+override carrying `enabled: false` prunes the bundled rule from the
+rendered manifest. The override map is applied to both the
+PrometheusRule and the ConfigMap output so a deployer running both
+formats sees the same customised rule set. F-25.13.1.
 */ -}}
 {{- if .Values.monitoring.bundleRules }}
 {{- $format := .Values.monitoring.format }}
 {{- $ruleNS := .Values.monitoring.prometheusRule.namespace | default .Values.monitoring.namespace }}
 {{- $rules := .Files.Get "files/alerting-rules.yaml" }}
+{{- $overrides := .Values.monitoring.alertOverrides | default dict }}
+{{- $hasOverrides := gt (len $overrides) 0 }}
+{{- /* When no overrides are configured, splice the bundled YAML
+       fragment verbatim so the bundled-vs-catalog cross-check sees an
+       unchanged manifest. Operators only pay the YAML walk when they
+       supply overrides. */ -}}
+{{- if $hasOverrides }}
+  {{- $parsed := $rules | fromYaml }}
+  {{- $newGroups := list }}
+  {{- range $parsed.groups }}
+    {{- $newRules := list }}
+    {{- range .rules }}
+      {{- $name := .alert }}
+      {{- $override := index $overrides $name }}
+      {{- if $override }}
+        {{- /* §25.13 line 4827 — `enabled: false` prunes the rule from
+               the bundled manifest. Any other override field replaces
+               the corresponding bundled field via mergeOverwrite so
+               operators tweak one field without re-stating the whole
+               rule. */ -}}
+        {{- if and (hasKey $override "enabled") (eq (index $override "enabled") false) }}
+          {{- /* pruned */ -}}
+        {{- else }}
+          {{- /* Drop the "enabled" key (renderer signal, not a
+                 PrometheusRule field) before merging. */ -}}
+          {{- $clean := omit $override "enabled" }}
+          {{- $merged := mergeOverwrite (deepCopy .) $clean }}
+          {{- $newRules = append $newRules $merged }}
+        {{- end }}
+      {{- else }}
+        {{- $newRules = append $newRules . }}
+      {{- end }}
+    {{- end }}
+    {{- if gt (len $newRules) 0 }}
+      {{- $newGroups = append $newGroups (dict "name" .name "rules" $newRules) }}
+    {{- end }}
+  {{- end }}
+  {{- $rules = (dict "groups" $newGroups) | toYaml }}
+{{- end }}
 {{- /* Strip the generated-file comment header so the spec.groups
        fragment splices in cleanly under the CRD spec. */ -}}
 {{- $groups := regexReplaceAll "(?m)^#.*\n" $rules "" }}
