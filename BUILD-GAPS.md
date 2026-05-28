@@ -14715,25 +14715,35 @@ Spec §11.2.1 controls applicable to both categories: "anomaly alerting: a `Bill
 
 Spec §11.2 storage-quota mechanism: "for workspace uploads the client supplies a `Content-Length` header (enforced by the gateway)". `sessionserver/upload.go:119` calls `s.reserveStorageQuota` without an explicit "missing Content-Length → reject" branch; if `Content-Length` is absent or zero the reservation uses zero and the `LimitedReader` does the runtime cap. Functionally safe (the stream cap catches it), but the spec implies the gateway should reject a missing header up front.
 
-### - [ ] F-11.2.25 — Append-only billing immutability trigger is correctly installed [Info] — OPEN
+### - [x] F-11.2.25 — Append-only billing immutability trigger is correctly installed [Info] — CLOSED
 
 `migrations/0002_rls_immutability_roles.up.sql:84-94` creates `lenny_billing_immutability` and applies it on `billing_events` (line 134-136) — `BEFORE UPDATE OR DELETE`. The trigger raises an exception identifying itself by name; the spec's "append-only semantics (INSERT only, no UPDATE or DELETE grants)" is enforced at the SQL layer, matching the §11.7 audit-log integrity pattern.
 
-### - [ ] F-11.2.26 — Per-tenant billing event stream key format matches the spec [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own conclusion. The trigger function and attachment on `billing_events` are present and identify themselves by name; tier-2 coverage in `tests/tier2_component/migrations/prod_schema_test.go::TestLedgerImmutability` exercises both UPDATE-rejected and DELETE-rejected paths under the production-schema container.
+
+### - [x] F-11.2.26 — Per-tenant billing event stream key format matches the spec [Info] — CLOSED
 
 `redisstream.streamKey` (`pkg/gateway/billingstore/failover/redisstream/redisstream.go:64`): `"t:" + tenantID + ":billing:stream"` — exactly the §11.2.1 key shape. Same for `storagequota/redisstore/redisstore.go:22` (`"sq:" + tenantID`).
 
-### - [ ] F-11.2.27 — Pseudonymization path correctly destroys the salt after rewriting [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own conclusion. Both per-tenant key formats are verified at the cited lines; no code change required.
+
+### - [x] F-11.2.27 — Pseudonymization path correctly destroys the salt after rewriting [Info] — CLOSED
 
 `erasurejob/billing.go:113-121` updates the tenant row to remove `ErasureSalt` after `PseudonymizeUser` runs. The §12.8 invariant the spec cites ("once it is destroyed the pseudonym cannot be reversed") is preserved. `billingstore.Memory.PseudonymizeUser` (`billingstore.go:267-283`) is idempotent and tenant-scoped per the §11.2.1 sequence-continuity requirement.
 
-### - [ ] F-11.2.28 — Direct-mode delivery is gated to single-tenant / development by admission webhook (cross-reference) [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own conclusion. `BillingEraser.Pseudonymize` persists the salt, calls `PseudonymizeUser`, then nils `ErasureSalt` on the tenant row so the pseudonym is irreversible; `BillingEraser.Verify` is the §12.8 post-pseudonymization check.
+
+### - [x] F-11.2.28 — Direct-mode delivery is gated to single-tenant / development by admission webhook (cross-reference) [Info] — CLOSED
 
 `pkg/admission/direct_mode_isolation/guard.go` (referenced from `pkg/admission/direct_mode_isolation/guard.go:7`) gates direct-mode credentials, consistent with §11.2 "direct mode, which is already restricted to single-tenant or development deployments". The accepted-residual-risk wording in §11.2 is therefore matched at the admission layer; only H10 (no anomaly counter) leaves direct-mode monitoring under-instrumented.
 
-### - [ ] F-11.2.29 — Correction ledger reconciliation helper is exercised in tests [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own conclusion. The `lenny-direct-mode-isolation` ValidatingAdmissionWebhook enforces only in multi-tenant mode and rejects `deliveryMode: direct` paired with `isolationProfile: standard`, matching the §11.2 line 42 accepted-residual-risk wording. H10 (anomaly counter) stays tracked separately.
+
+### - [x] F-11.2.29 — Correction ledger reconciliation helper is exercised in tests [Info] — CLOSED
 
 `billingstore.ReconcileLedger` (`billingstore.go:354-390`) implements the §11.2.1 "consumers reconstruct the accurate billing ledger by processing events in `sequence_number` order and applying each correction to the referenced original" routine, with last-correction-wins ordering. It is not invoked from the metering API (M2), but the function itself is correct and tested.
+
+**Resolution:** Verify-closed per the finding's own conclusion. `ReconcileLedger` honors per-original last-correction-wins ordering, drops correction records that match an in-window original, and surfaces unresolved corrections so consumers do not silently lose them; covered by `TestReconcileLedgerAppliesCorrection`, `TestReconcileLedgerLatestCorrectionWins`, and the admin handler test. M2 metering wiring stays tracked separately.
 
 ---
 
@@ -15161,13 +15171,15 @@ Consequence: SIEM consumers see a generic "AccountChange / Unknown activity" rat
 
 Recommended: add a dedicated mapping `{"admin.user.invalidated", accountChange(ActivityDisable)}` or equivalent OCSF activity (OCSF AccountChange supports `Disable Account` and similar activities).
 
-### - [ ] F-11.4.9 — Spec wording "invalidated in Redis" is loose [Info] — OPEN
+### - [x] F-11.4.9 — Spec wording "invalidated in Redis" is loose [Info] — CLOSED
 
 Spec step 5: "Cached auth tokens for the user are invalidated in Redis."
 
 Implementation: the durable record is Postgres (`pkg/gateway/issuedtokenstore/issuedtokenstore.go:148-185` `RevokeBySubject`), the per-replica cache is in-memory (`pkg/gateway/revocation/revocation.go:31`), and Redis pub/sub is used only as the cross-replica propagation channel (`pkg/gateway/revocation/propagator/propagator.go`). No Redis store of "cached tokens" exists.
 
 This is a wording inconsistency, not a functional gap — the propagation semantics are stronger than the spec's terminology suggests. Recommend updating the spec to describe the durable-Postgres + in-memory-cache + Redis-pub/sub layering used by the implementation, since "invalidated in Redis" misrepresents the architecture.
+
+**Resolution:** Verify-closed per the finding's own conclusion. The implementation already exceeds the §11.4 step-5 wording: Postgres `RevokeBySubject` is the durable record, the per-replica `revocation.Tracker` is the hot cache, and `revocation/propagator` fans revocations to every replica through Redis pub/sub. A spec-side note that reconciles the wording with this layering is a docs change tracked outside the code surface this task can edit.
 
 ### Concerns NOT found (positive findings)
 
@@ -18089,11 +18101,13 @@ The §12.4 spec calls out four exception prefixes: `lenny:pod:`, `cb:`, `{root_s
 
 `tests/tier8_chaos/scaffolds_test.go:66-69` records the test as a stub log message. The compose Sentinel topology exists (`compose/default.yml:104-130`) and `pkg/redisconn` carries the Sentinel-aware client construction, but no end-to-end exercise drives a master kill and asserts the gateway transparently follows the new master. The §12.8 / §12.4 Sentinel topology promise (3 sentinels, 1 primary + 1 replica) is therefore not enforced by tier-8.
 
-### - [ ] F-12.4.25 — `cb:events` cross-replica pub/sub channel is platform-scoped but not in the §12.4 table [Info] — OPEN
+### - [x] F-12.4.25 — `cb:events` cross-replica pub/sub channel is platform-scoped but not in the §12.4 table [Info] — CLOSED
 
 `pkg/gateway/breakerstore/cachingstore/cachingstore.go:31` declares `const channel = "cb:events"` as the pub/sub channel for circuit-breaker change announcements. The §12.4 key-prefix table lists `cb:{name}` (the value keys) but does not list a pub/sub channel; the §11.6 design implies an out-of-band propagation mechanism but does not fix the channel name. Pinning the channel name in §12.4 alongside `cb:{name}` would close the documentation gap; the existing implementation is correct, just under-documented.
 
-### - [ ] F-12.4.26 — `pkg/gateway/credcache` is in-memory; the §12.4 "Cached access tokens encrypted with AES-256-GCM" requirement currently has nothing to encrypt [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own conclusion. The implementation is correct; the only outstanding work is a §12.4 spec-table addition that pins the channel name, which sits outside the code surface this task can edit.
+
+### - [x] F-12.4.26 — `pkg/gateway/credcache` is in-memory; the §12.4 "Cached access tokens encrypted with AES-256-GCM" requirement currently has nothing to encrypt [Info] — CLOSED
 
 Spec §12.4 ("Security"): "Cached access tokens are encrypted before storage in Redis (not stored as plaintext). Tokens are encrypted using AES-256-GCM with a key derived from the Token Service's envelope encryption key; each cached token is stored as `{nonce || ciphertext || tag}`, and the encryption key is rotated alongside the envelope key."
 
@@ -18101,9 +18115,13 @@ Spec §12.4 ("Security"): "Cached access tokens are encrypted before storage in 
 
 Because the cache is in-process and never Redis-backed, the encryption mandate in §12.4 has no current attack surface. This is acceptable as an Info — but if a future change layers a Redis-backed token cache to share credentials across replicas, the AES-256-GCM `{nonce || ciphertext || tag}` framing must be implemented before that wiring lands.
 
-### - [ ] F-12.4.27 — `RedisConcernSessionData` is enumerated for DLQ and durable inbox; both are missing [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own conclusion. The in-memory `credcache.Cache` has nothing to encrypt at rest; the AES-256-GCM mandate activates only if a future change layers a Redis-backed token cache, which is tracked separately.
+
+### - [x] F-12.4.27 — `RedisConcernSessionData` is enumerated for DLQ and durable inbox; both are missing [Info] — CLOSED
 
 The `RedisConcern` constant `RedisConcernSessionData = "session_data"` (`pkg/storerouter/storerouter.go:53`) is annotated `DLQ, durable inbox`. Since both consumers are missing (H6), the constant is currently a forward declaration. Recording this so a reader of `storerouter.go` is not surprised by the dead enum value.
+
+**Resolution:** Verify-closed per the finding's own conclusion. The constant is a forward declaration whose consumers (DLQ, durable inbox) are tracked under the §7.2 inbox/DLQ findings; no code change required here.
 
 ---
 
@@ -18758,13 +18776,15 @@ Even if callers added an `object_type` segment to the key path, the parser
 host. A fix for the eviction-context prefix scoping (high finding above)
 requires extending the parser, not just the writers.
 
-### - [ ] F-12.5.30 — MinIO bucket name and endpoint default to empty in chart values [Info] — OPEN
+### - [x] F-12.5.30 — MinIO bucket name and endpoint default to empty in chart values [Info] — CLOSED
 
 `charts/lenny/values.yaml:158-173` leaves `minio.endpoint`, `accessKey`,
 `secretKey`, and `bucket` empty by default. This is documented as
 "bring-your-own external service"; deployers must wire all four. The spec
 default (line 279, "https://minio.lenny-system:9000") and the chart default
 diverge; the spec naming is informational so this is flagged as Info.
+
+**Resolution:** Verify-closed per the finding's own conclusion. `charts/lenny/values.yaml:270-285` documents the bring-your-own posture explicitly ("MinIO is a bring-your-own external service: the chart leaves endpoint empty by default, and a stock render wires no LENNY_MINIO_* env so the gateway uses its in-memory blob store"); the divergence from the spec's informational default is intentional.
 
 ### - [x] F-12.5.31 — drain-readiness webhook is correctly registered, gateway endpoint correctly handles GET, and the metric `lenny_drain_readiness_checks_total{outcome=…}` is absent [Info] — CLOSED
 - **Resolution:** Closed by the F-4.5.12 fix (same root cause, same fix). The webhook now emits `lenny_drain_readiness_checks_total{outcome=...}` on every decision and exposes the counter on its own `/metrics` scrape target. (commit `bfd1fcd`)
