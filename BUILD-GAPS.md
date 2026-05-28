@@ -32860,7 +32860,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 ### Findings
 
-### - [ ] F-24.1.1 — (High) — `--dry-run` flag is unimplemented end-to-end [Medium] — OPEN
+### - [x] F-24.1.1 — (High) — `--dry-run` flag is unimplemented end-to-end [Medium] — CLOSED
 
 **Spec (R2, R7, R8):** §24.1 lists `lenny-ctl bootstrap --dry-run --from-values <file>` as a first-class row; §15.1:863 mandates a `dryRun:true/false` audit field; §15.1:1140 mandates `X-Dry-Run: true` response header and "no persistence, full validation" semantics.
 
@@ -32871,9 +32871,11 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 **Impact:** Operators cannot validate a seed file before applying it. The §15.1:1140 exception that names bootstrap as the one endpoint where a dry-run *does* emit an audit event has no surface to honor. The §24.1 row 2 is documented but non-functional.
 
+**Resolution (commit 20a2c638):** `lenny-ctl bootstrap --dry-run` now sends `POST /v1/admin/bootstrap?dryRun=true`; `handleBootstrap` reads the query param, runs full validation across all upsert paths, persists nothing (each upsert skips its store Create/Update under `opts.dryRun`), sets the `X-Dry-Run: true` response header, and — per the §15.1:1140 bootstrap exception — still emits the `platform.bootstrap_applied` audit event with `dryRun: true`. Covered by `TestBootstrapDryRunValidatesWithoutPersisting_spec_15_1_1140` and `TestBootstrapDryRunAndForceUpdateQuery_spec_24_1_35`.
+
 ---
 
-### - [ ] F-24.1.2 — (High) — `--force-update` flag is unimplemented; upsert always overwrites [Medium] — OPEN
+### - [x] F-24.1.2 — (High) — `--force-update` flag is unimplemented; upsert always overwrites [Medium] — CLOSED
 
 **Spec (R9, R10):** §17.6:417-453 is the load-bearing normative table for the upsert that §24.1 indexes. It requires:
 - Existing resource + differing fields without `--force-update` ⇒ skip (no write), exit 0, `WARN` log with `details.conflictingFields`.
@@ -32889,9 +32891,11 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 **Impact:** The skip-by-default safety behavior described at §17.6:418 ("Existing resources with matching names are left unchanged unless `--force-update` is passed") does not hold. Helm upgrades that change `bootstrap.runtimes[*].image` silently overwrite the registered runtime row instead of requiring explicit operator opt-in. There is no API path for an operator to inspect the conflict via `SEED_CONFLICT`/`details.conflictingFields`. The security-critical-field guard on `runtime.isolationProfile` is absent — a runtime's isolation tier can be silently changed by a re-run.
 
+**Resolution (commit 20a2c638):** Each upsert path now computes the seed-specified fields that differ from the stored row (`tenantConflicts` / `runtimeConflicts` / `userConflicts` / `credentialPoolConflicts`) and `resolveExisting` applies the §17.6:450 table: identical → no-op, differing without `--force-update` → **skip** (recorded as a `SEED_CONFLICT` skip with `conflictingFields`, exit 0), differing with `?forceUpdate=true` (mapped from `lenny-ctl bootstrap --force-update`) → update. A runtime `isolationProfile` change is security-critical: `runtimeConflicts` reports it separately and `resolveExisting` returns a `SEED_SECURITY_CRITICAL_FIELD` error that is blocked regardless of force-update (§17.6:451). The prior `TestBootstrapUpsertsExisting` (which asserted the inverse overwrite-on-rerun) is replaced by `TestBootstrapSkipsDifferingFieldsWithoutForceUpdate_spec_17_6_450`, `TestBootstrapForceUpdateOverwritesDifferingFields_spec_17_6_450`, and `TestBootstrapBlocksSecurityCriticalFieldOverwrite_spec_17_6_451`.
+
 ---
 
-### - [ ] F-24.1.3 — (High) — Audit event name and payload diverge from §15.1:863 [Medium] — OPEN
+### - [x] F-24.1.3 — (High) — Audit event name and payload diverge from §15.1:863 [Medium] — CLOSED
 
 **Spec (R6, R7):** Event type is `platform.bootstrap_applied`. Detail fields are: (a) caller service-account identity, (b) seed file SHA-256 hash, (c) per-resource summary `{type, name, action ∈ {created, updated, skipped, error}}`, (d) `dryRun: true/false`.
 
@@ -32913,6 +32917,8 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 - Principal subject and tenant are correctly captured via `r.audit.EmitAdminEvent` (`tenants.go:240-252`), so requirement (a) is partially satisfied via `ActorSubject`/`ActorTenantID` columns; however the spec asks for "calling service account identity" which is the same field.
 
 **Impact:** Audit-driven compliance queries (T3 chain) that search for `platform.bootstrap_applied` will return no rows. Per-resource forensic queries ("which runtime was updated by which bootstrap run") cannot be answered. Re-translation/republish paths (§24.15 `lenny-ctl audit`) tied to the event name will not match.
+
+**Resolution (commit 20a2c638):** The audit event type is renamed `admin.bootstrap.applied → platform.bootstrap_applied` (§15.1:863). The detail payload now carries the seed-file SHA-256 (`seedSha256`, computed from the raw request body), `dryRun`, and the per-resource `{type, name, action}` summary via `bootstrapResourceSummary`, where `action ∈ {created, updated, skipped, error}` (the `skipped` class now exists, see F-24.1.2). The calling identity is captured in the `ActorSubject`/`ActorTenantID` audit columns as before. Covered by `TestBootstrapAuditCarriesSeedHashAndResourceSummary_spec_15_1_863` and the updated `TestBootstrapAuditCarriesPerEntryErrors_spec_24_1_R6`. The `me.go` tool/scope names (`admin.bootstrap` / `admin.bootstrap.write`) are the §25.14 admin-tool-catalog convention (matching `admin.create_tenant`, etc.) and are intentionally distinct from the audit-event name; §15.1 defines only the event type, which is now correct.
 
 ---
 
@@ -32939,7 +32945,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 ---
 
-### - [ ] F-24.1.5 — (Medium) — `--wait-timeout` flag spelling does not match spec; default behavior differs [Medium] — OPEN
+### - [x] F-24.1.5 — (Medium) — `--wait-timeout` flag spelling does not match spec; default behavior differs [Medium] — CLOSED
 
 **Spec (R11):** §17.6:421 — "`--wait-timeout`, default 120s".
 
@@ -32949,9 +32955,11 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 **Impact:** Operators consulting the spec and running `lenny-ctl bootstrap --wait-timeout 60 --from-values ...` get an unknown-flag silent ignore (`parseGlobalFlags` falls through to `break`), the wait is skipped, and the seed POST races the gateway readiness. The chart-internal `--wait` flag papers over this for the Helm path, but the CLI surface diverges from the documented one.
 
+**Resolution (commit 20a2c638):** Largely already fixed by a prior batch (the original evidence is stale): `cmdBootstrap` parses `--wait-timeout` with a 120s default and the chart's `bootstrap-job.yaml` renders `--wait-timeout`. This batch removes the now-dead `--wait` back-compat alias (no renderer references it; per the no-backward-compat rule) so the CLI accepts only the spec-named `--wait-timeout`. Covered by `TestBootstrapWaitTimeoutFlag_spec_17_6_421`.
+
 ---
 
-### - [ ] F-24.1.6 — (Medium) — Server response status code uses 207 Multi-Status for partial failure; spec calls for exit code 2 driven from server signal but the response/exit-code mapping is undocumented in §24.1 and not enforced by CLI [Medium] — OPEN
+### - [x] F-24.1.6 — (Medium) — Server response status code uses 207 Multi-Status for partial failure; spec calls for exit code 2 driven from server signal but the response/exit-code mapping is undocumented in §24.1 and not enforced by CLI [Medium] — CLOSED
 
 **Spec (R12):** §17.6:420 — "Exit codes: 0 = success (all resources seeded), 1 = validation error, 2 = partial failure".
 
@@ -32961,6 +32969,8 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 - The CLI never inspects `out.Tenants.Errors`, `out.Runtimes.Errors`, or `out.Users.Errors` after the POST, so it cannot distinguish "all created" from "one created, two errored."
 
 **Impact:** CI pipelines depending on the documented `2 = partial failure` exit code (e.g., `helm install --wait` followed by a `lenny-ctl bootstrap` check) cannot detect partial failures and will silently treat them as success.
+
+**Resolution (commit 20a2c638):** `cmdBootstrap` now decodes the response into a typed `bootstrapResult` and maps it to the §17.6:420 exit codes via `exitCode()`: 0 when every resource was created/updated/skipped, 2 when some resources succeeded and others failed operationally (the 207 partial-failure case), and 1 for a pure-validation failure (nothing seeded) or a `SEED_SECURITY_CRITICAL_FIELD` block (which dominates per §17.6:451). A 4xx/5xx from the client (`Do` returns an error) maps to exit 1. The CLI also prints the §17.6:450 per-resource WARN skip lines via `logSkips`. Covered by `TestBootstrapExitCodeMapping_spec_17_6_420` and `TestBootstrapPartialFailureExitsTwo_spec_17_6_420`.
 
 ---
 
