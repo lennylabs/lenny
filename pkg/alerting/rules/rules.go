@@ -173,7 +173,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Warm pool has no available pods",
 			Description: "Available warm pods = 0 for any pool for more than 60s. New session creation blocks on pod claim until the controller replenishes the pool.",
-			RunbookURL:  runbook("warm-pool-exhausted"),
+			// spec: §25.17 line 5172 — runbook slug is "warm-pool-exhaustion",
+			// matching docs/runbooks/warm-pool-exhaustion.md.
+			RunbookURL:  runbook("warm-pool-exhaustion"),
 			SpecRef:     "§16.5",
 		},
 		{

@@ -71,6 +71,48 @@ func TestNamespaceFlag(t *testing.T) {
 	}
 }
 
+// spec: §24.19.1 line 278 — `lenny image rm` classifies the containerd
+// "image is in use" failure (referenced by container or snapshot) so
+// operators see an actionable diagnostic instead of the raw ctr error.
+func TestImageInUseErrorClassifier(t *testing.T) {
+	hits := []string{
+		"ctr: image \"foo\" is referenced by snapshot \"abc\": failed precondition",
+		"image is in use by container",
+		"in use by container abcd",
+		"failed precondition: in use:",
+	}
+	for _, raw := range hits {
+		if !imageInUseError(raw) {
+			t.Errorf("imageInUseError(%q) = false, want true", raw)
+		}
+	}
+	misses := []string{
+		"",
+		"image not found",
+		"unknown image",
+		"unauthorized",
+	}
+	for _, raw := range misses {
+		if imageInUseError(raw) {
+			t.Errorf("imageInUseError(%q) = true, want false", raw)
+		}
+	}
+}
+
+// spec: §24.19.1 line 278 — when ctr names the consuming reference,
+// the wrapped message points at it for faster operator triage.
+func TestImageInUseReferenceExtraction(t *testing.T) {
+	if got := imageInUseReference("ctr: image \"foo\" is referenced by snapshot \"abc\":"); got != "snapshot \"abc\"" {
+		t.Errorf("reference extraction = %q, want %q", got, "snapshot \"abc\"")
+	}
+	if got := imageInUseReference("image is in use by pod kube-system/x"); got != "" {
+		t.Errorf("non-referenced-by message extracted %q, want empty", got)
+	}
+	if got := imageInUseReference("trailer\nis referenced by container foo\nmore"); got != "container foo" {
+		t.Errorf("multi-line extraction = %q, want %q", got, "container foo")
+	}
+}
+
 func TestCtrInvocationBaseArgs(t *testing.T) {
 	c := ctrInvocation{binary: "/k3s", socket: "/sock"}
 	got := c.baseArgs("k8s.io")

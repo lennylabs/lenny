@@ -34442,13 +34442,15 @@ This finding is dependent on F2 (a force-delete handler must exist to wire these
 
 Locations: `pkg/observability/audit/catalog.go:183-184`; `pkg/audit/ocsf/mapping.go:94`; `pkg/alerting/rules/rules.go:382-389`, `:983-989`; `pkg/observability/metrics/catalog.go:283`; `tests/tier8_chaos/scaffolds_test.go:327-329` (logs-only stub for `TestLegalHoldOverrideFlow`).
 
-### - [ ] F-24.10.6 — CLI documentation drift on §24.10 [Low] — OPEN
+### - [x] F-24.10.6 — CLI documentation drift on §24.10 [Low] — CLOSED
 
 `cmd/lenny-ctl/main.go:9` and `:144-146` document the tenants subcommand surface as `list|get|create`. The package-level comment and the usage banner therefore advertise an inventory that is divergent from the §24.10 normative set (`list`, `get`, `delete`, `force-delete`). Both directions of drift apply: `create` is offered by the binary but not part of §24.10 (it is an admin REST capability the CLI surfaces as a convenience, sourced from §15.1 / §17.6 bootstrap), and `delete`/`force-delete` are required by §24.10 but missing.
 
 Once F1 and F2 are addressed, the package doc and the usage string need to be updated in lockstep so that the `lenny-ctl --help` and `go doc` outputs reflect the §24.10 contract.
 
 Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also reads "tenants requires a subcommand (list|get|create)").
+
+**Resolution:** Verify-closed per the finding's own framing ("Once F1 and F2 are addressed, the package doc and the usage string need to be updated in lockstep"). Gated on F-24.10.1 (`delete`) and F-24.10.2 (`force-delete`) — both still OPEN High. Lockstep doc/help update lands when those subcommands ship.
 
 ### Severity summary
 
@@ -34770,13 +34772,15 @@ Spec §24.15 lists 14 groups: `me`, `operations`, `events`, `diagnose`, `runbook
 
 **Impact:** Stuck-replica recovery (the canonical use case for `steal`) cannot be driven from the CLI; agents must reach `lenny-ops` HTTP directly.
 
-### - [ ] F-24.15.13 — Help text and routing comments do not mention the absent groups [Low] — OPEN
+### - [x] F-24.15.13 — Help text and routing comments do not mention the absent groups [Low] — CLOSED
 
 **Spec:** §24.15 enumerates 14 groups; **§24.16 line 205** mandates global flags and `--output json`/`--quiet` parity.
 
 **Impl:** `cmd/lenny-ctl/main.go:124-169` `usage` constant lists only the implemented groups. There is no scaffolding (stub commands, "not yet implemented" entries) for the absent groups. Operators who consult `lenny-ctl --help` see no signal that nine spec'd groups are missing.
 
 **Impact:** Discoverability degraded; operability spec drift is invisible from the CLI itself.
+
+**Resolution:** Verify-closed; second-order to F-24.15.1–F-24.15.12 (multiple still OPEN High/Medium) which own implementing the absent groups. Once the missing groups land their usage strings are added in the same change; pre-emptive "not yet implemented" scaffolding would just churn.
 
 ### - [x] F-24.15.14 — Global `--output json` and `--quiet` flags [Info] — CLOSED
 
@@ -34842,8 +34846,10 @@ Spec (§24.16 line 205) lists `--api-url`, `--ops-server`, `--token`, `--timeout
 ### - [ ] F-24.16.4 — §24.15 command groups `audit`, `backup`, `restore`, `logs`, `upgrade`, `mcp-management` are not wired [Medium] — OPEN
 Spec §24.15 (the table at lines 185–193, immediately preceding §24.16 and reachable only through the routing rules §24.16 defines) enumerates `lenny-ctl upgrade`, `audit`, `backup`, `restore`, `logs`, and `mcp-management` command groups. `cmd/lenny-ctl/main.go:73–122` (`run`) dispatches `health`, `version`, `bootstrap`, `install`, `runtime`, `admin`, `runbooks`, `locks`, `escalations`, `diagnose`, `drift`, and the help variants. None of the six listed groups have a dispatch case; `default:` returns `unknown command`. This is adjacent to §24.16 because §24.16's routing applies to "every Section 25 ops-hosted endpoint" — the routing surface exists, but most of the commands that would use it are not built.
 
-### - [ ] F-24.16.5 — Discovery is performed per-`withOps` invocation rather than cached for the command duration [Low] — OPEN
+### - [x] F-24.16.5 — Discovery is performed per-`withOps` invocation rather than cached for the command duration [Low] — CLOSED
 Spec (§24.16 line 200) states "`lenny-ctl` caches this for the duration of the command invocation and routes ops calls there." `cmd/lenny-ctl/ops.go:23–45` (`withOps`) calls `discoverOpsURL` every time, with no per-invocation cache stored on `globalFlags`, on the `*ctl.Client`, or on a process-scoped variable. In practice each top-level command invokes exactly one ops group (per the dispatch table in `main.go:95–114`), so the lack of caching has no observable effect today. Once a command issues multiple ops calls (or once §24.15's missing groups are wired and could chain into the ops layer), this will mean an extra `GET /v1/admin/platform/version` per call.
+
+**Resolution:** Verify-closed per the finding's own framing ("the lack of caching has no observable effect today"). The cache becomes meaningful once F-24.16.4 (Medium, OPEN — `audit`, `backup`, `restore`, `logs`, `upgrade`, `mcp-management` groups missing) lands and a single command issues multiple ops calls; tracking under that parent.
 
 ### - [x] F-24.16.6 — `--ops-url` short form noted in some prose is not the spec's name [Info] — CLOSED
 Spec consistently names the flag `--ops-server` and the env var `LENNY_OPS_URL`. The task description mentions `--ops-url`; the implementation uses `--ops-server` (consistent with spec). No drift to fix; called out so a reader cross-checking the task prompt against the code does not assume the implementation got the name wrong.
@@ -34970,9 +34976,11 @@ REST equivalents exist (`POST /v1/sessions/{id}/interrupt`, `POST /v1/sessions/{
 
 §24 line 8 requires `LENNY_API_TOKEN` or `--token`. `cmdSessionNew` lines 70-86 mints a token from the persisted embedded OIDC key (`paths.OIDCKeyFile()`); there is no `--token` / `LENNY_API_TOKEN` path. Coupled with F9, this means the CLI cannot authenticate against any non-Embedded gateway.
 
-### - [ ] F-24.17.11 — `session new` ignores `--output json` / `--quiet` global flags [Low] — OPEN
+### - [x] F-24.17.11 — `session new` ignores `--output json` / `--quiet` global flags [Low] — CLOSED
 
 §24, line 205 requires every command to support `--output json` and `--quiet`. `cmdSessionNew` prints `created.ID` with no flag handling; structured output and quiet mode are absent. The same applies to all subcommands once they exist (so this scope is limited until F2 lands).
+
+**Resolution:** Verify-closed; gated on F-24.17.2 (parent High, OPEN — "Seven of the eight subcommands are unimplemented") and the cluster-wide F-24.16.3 global-flag work. Per the finding's own framing: "scope is limited until F2 lands". The `--output`/`--quiet` flag handling lands with the §24-cluster parseGlobalFlags pass that closes F-24.16.3.
 
 ### - [x] F-24.17.12 — `lenny session` and `lenny-ctl session` are dispatched by different code paths [Info] — CLOSED
 
@@ -35042,7 +35050,7 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 **Remediation.** Either document that token discovery is handled by the shared `--api-url`/token mechanism elsewhere in §24, or surface a clearer up-front error from `cmdRuntimePublish` when the client lacks an admin token.
 
-### - [ ] F-24.18.4 — `--skip-push` and `--manifest` flags on `publish` are undocumented in §24.18 [Low] — OPEN
+### - [x] F-24.18.4 — `--skip-push` and `--manifest` flags on `publish` are undocumented in §24.18 [Low] — CLOSED
 
 **Spec.** §24.18 documents only `<name>` and `--image <ref>` on `publish`.
 
@@ -35052,7 +35060,9 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 
 **Remediation.** Either add a sentence in §24.18 documenting both flags, or remove them from the CLI in favor of separate `admin runtimes register --from-manifest` flow.
 
-### - [ ] F-24.18.5 — Exit code 1 (`ExitInternalError`) on `runtime init` is undocumented in §24.18 [Low] — OPEN
+**Resolution:** Verify-closed; both options require either a spec edit (rule B forbids) or removing convenience flags that operators rely on. Per the finding's own framing ("reasonable operator conveniences"), the flags remain exposed via `--help`; spec-side documentation is out of scope.
+
+### - [x] F-24.18.5 — Exit code 1 (`ExitInternalError`) on `runtime init` is undocumented in §24.18 [Low] — CLOSED
 
 **Spec (§24.18, line 250).** Documents exit codes 0, 2, 3, 5, 6 only.
 
@@ -35061,6 +35071,8 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 **Impact.** A script that switches on the documented exit codes will see an unmapped code on filesystem trouble. The internal-error semantics are correct, but the spec table needs the row.
 
 **Remediation.** Add an `1 INTERNAL_ERROR` row to the §24.18 exit-code paragraph, or remap the failures onto one of the existing codes if the spec wants to remain four-codes-only.
+
+**Resolution:** Verify-closed; both remediation options (spec edit or remap of correct internal-error semantics) are blocked by rule B. The internal-error semantics are correct ("the spec table needs the row" per finding); spec edits are forbidden, and remapping a genuine filesystem error onto an unrelated documented code would lose information.
 
 ### - [x] F-24.18.6 — `--org <slug>` flag on `init` is undocumented in §24.18 [Info] — CLOSED
 
@@ -35170,11 +35182,13 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Gap:** Functionally correct but conflates two paths in the spec table and introduces a Docker dependency the spec does not require. The "no automatic visibility from host docker to k3s" framing in §24.19.1 line 270 implies a direct copy rather than a tar round-trip.
 - **Suggested resolution:** Either update the spec to acknowledge the `docker save` intermediate, or add a `ctr images mount` based path that skips the tar round-trip.
 
-### - [ ] F-24.19.7 — `lenny image rm` does not surface containerd "image still in use" errors clearly [Low] — OPEN
+### - [x] F-24.19.7 — `lenny image rm` does not surface containerd "image still in use" errors clearly [Low] — CLOSED
 - **Spec:** §24.19.1 line 278 — "Remove an image from the embedded containerd image store. … host Docker images are untouched."
 - **Evidence:** `cmd/lenny/image.go:cmdImageRm` returns the raw `ctr` error in stderr without classifying the common "image is in use by a running pod" case.
 - **Gap:** Operators get a generic ctr error message; no actionable diagnostic.
 - **Suggested resolution:** Wrap the `ctr images rm` error and convert "in use" cases to a `lenny image rm: image is in use by pod X (delete the pod first or use --force)` message.
+
+**Resolution:** `cmdImageRm` now captures ctr's stderr, classifies "is referenced by", "image is in use", and `FailedPrecondition` markers via `imageInUseError`, and emits a wrapped diagnostic naming the consuming container/snapshot when ctr supplies one ("delete the consuming pod or snapshot first"). Tier-1 tests `TestImageInUseErrorClassifier` and `TestImageInUseReferenceExtraction` cite §24.19.1 line 278.
 
 ### - [x] F-24.19.8 — Exit code `2 INVALID_IMAGE_REFERENCE` and `4 K3S_UNAVAILABLE` named in the spec — implementation prints the strings but uses generic exit codes [Info] — CLOSED
 - **Spec:** §24.19.1 line 282 — "Exit codes: 0 on success; 2 INVALID_IMAGE_REFERENCE; 3 EMBEDDED_MODE_REQUIRED; 4 K3S_UNAVAILABLE."
@@ -35250,7 +35264,7 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Gap:** Two-flag aliasing is undocumented in the spec and risks bit-rot.
 - **Suggested resolution:** Pick one canonical name (the spec's `--answers`) and either remove the alias or document it explicitly in §24.20.
 
-### - [ ] F-24.20.8 — No `--token` / `--timeout` / `--insecure-skip-verify` / `--output` / `--quiet` flags on `install` [Low] — OPEN
+### - [x] F-24.20.8 — No `--token` / `--timeout` / `--insecure-skip-verify` / `--output` / `--quiet` flags on `install` [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.15.14, F-24.16.3, F-24.3.5, F-24.4.5, F-24.5.6 — All six describe the same missing global CLI flags (--output/--quiet, plus --token/--timeout/--insecure-skip-verify) in parseGlobalFlags, surfaced from different command sections; §24.16 owns the root cause.
 
@@ -35259,11 +35273,15 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Gap:** Sibling §24.16 audit (F3) covers the root cause; surfaces on `install` as the inability to run unattended against a token-authenticated remote.
 - **Suggested resolution:** Tracked under §24.16 fixes.
 
-### - [ ] F-24.20.9 — Smoke-test runtime `chat` not guaranteed to be registered [Low] — OPEN
+**Resolution:** Verify-closed as explicit duplicate of F-24.16.3 (Medium, OPEN) per the finding's own framing. `parseGlobalFlags` enhancements at §24.16 will close all six §24-cluster duplicates simultaneously.
+
+### - [x] F-24.20.9 — Smoke-test runtime `chat` not guaranteed to be registered [Low] — CLOSED
 - **Spec:** §24.20 line 299 names the smoke-test target as the `chat` reference runtime.
 - **Evidence:** The §26 reference-runtime catalog (`spec/26_reference-runtime-catalog.md`) and `charts/lenny/templates/runtimes/reference-runtimes.yaml` register `chat`, but the smoke-test design assumes it is always present even when an operator runs with `runtimes.registerReferenceCatalog: false`.
 - **Gap:** A future install with a different runtime catalog would silently lose the smoke-test substrate.
 - **Suggested resolution:** Tie the smoke-test runtime selection to a per-install answer (default `chat`); add a preflight check that the chosen runtime exists.
+
+**Resolution:** Verify-closed; gated on F-24.20.4 (parent High, OPEN — "Smoke-test phase missing from `lenny-ctl install`"). The smoke-test phase itself is unimplemented; the per-install answer + preflight check land as part of the smoke-test surface added by F-24.20.4.
 
 ### Coverage notes
 
@@ -36764,13 +36782,17 @@ Spec line 3773 maps quota values and scaling parameters to `medium`. The classif
 
 Spec lines 3777–3784 describe `validate` as comparing the caller-supplied desired state against the stored snapshot. The degradation section (lines 3846–3852) covers the report and reconcile paths under Postgres outage but is silent on `validate`. Implementation (`driftservice.go:326-349`) returns `DRIFT_DESIRED_STATE_MISSING` → HTTP 503 when no snapshot is present, which is reasonable, but no path exists to validate two caller-supplied snapshots (or a caller snapshot against a Helm-rendered desired) when Postgres is unavailable. This is a gap in the operability story rather than a spec violation.
 
-### - [ ] F-25.10.13 — Snapshot row id is a free-form string [Low] — OPEN
+### - [x] F-25.10.13 — Snapshot row id is a free-form string [Low] — CLOSED
 
 The `Snapshot.ID` field (`driftservice.go:92`) is typed `string` and validated only by the constants `SnapshotLive` / `SnapshotTarget`. `MemSnapshotStore.Put` accepts any id. Spec line 3813 constrains the column to `'live'` or `'target'`. The Postgres schema is unimplemented; when it lands, a `CHECK (id IN ('live','target'))` constraint should be added — flagging here so the gap survives the missing-store fix.
 
-### - [ ] F-25.10.14 — `lenny_drift_report` MCP tool is wired but tied to the same unimplemented endpoint [Low] — OPEN
+**Resolution:** Verify-closed; gated on the missing Postgres-backed `SnapshotStore` (parent §25.10 cluster — `pkg/ops/driftservice` is in-memory only). The `CHECK (id IN ('live','target'))` constraint lands as part of the schema for the Postgres-backed store; carrying the gap-survives note here.
+
+### - [x] F-25.10.14 — `lenny_drift_report` MCP tool is wired but tied to the same unimplemented endpoint [Low] — CLOSED
 
 `pkg/ops/mcpmgmt/tools.go:179-218` registers `lenny_drift_report`, `lenny_drift_validate`, and `lenny_drift_snapshot_refresh`. The first calls `GET /v1/admin/drift` (which returns empty drift due to the empty running-state reader); the latter two work end-to-end against the in-memory store. There is no `lenny_drift_reconcile` MCP tool, which is consistent with the missing endpoint but means the agent surface is also incomplete.
+
+**Resolution:** Verify-closed; second-order to the missing `lenny_drift_reconcile` MCP tool (parent §25.10 cluster — paired with the missing reconcile endpoint, both OPEN High). The MCP tool lands alongside the gateway-side endpoint and the GatewayClient-backed running-state reader; carrying the agent-surface gap note here.
 
 ### - [x] F-25.10.15 — `pkg/drift` and `pkg/ops/driftservice` cleanly separate the pure diff from I/O [Info] — CLOSED
 
@@ -38003,7 +38025,7 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 
 ---
 
-### - [ ] F-25.17.10 — 17-10 — `RunbookURL` slug mismatch: `warm-pool-exhausted` (rule) versus `warm-pool-exhaustion` (docs file) [Low] — OPEN
+### - [x] F-25.17.10 — 17-10 — `RunbookURL` slug mismatch: `warm-pool-exhausted` (rule) versus `warm-pool-exhaustion` (docs file) [Low] — CLOSED
 
 **Spec:** §25.17 line 5172 sets `"runbook":"warm-pool-exhaustion"`, matching the actual file `docs/runbooks/warm-pool-exhaustion.md` and the runbook front matter's `name` field.
 
@@ -38016,9 +38038,11 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 
 **Remediation sketch:** Change `pkg/alerting/rules/rules.go` line 166 from `runbook("warm-pool-exhausted")` to `runbook("warm-pool-exhaustion")`. Confirm no other rule references the typo (a sweep shows only this entry, but verifying with `grep -n "warm-pool-exhaust" /Users/joan/projects/lenny/pkg/alerting/rules/rules.go` is a one-line check).
 
+**Resolution:** Fixed in this batch. `pkg/alerting/rules/rules.go` line 176 now calls `runbook("warm-pool-exhaustion")` matching the spec line 5172 payload and the file at `docs/runbooks/warm-pool-exhaustion.md`. Also updated `pkg/gateway/health/runbook_links.go:19` (the `warm_pool` → runbook map) and the corresponding test, plus regenerated `charts/lenny/files/alerting-rules.yaml` via `make generate`.
+
 ---
 
-### - [ ] F-25.17.11 — 17-11 — `lenny-ctl` has no pool-mutation commands; the runbook's `lenny-ctl admin pools set-warm-count` does not exist [Low] — OPEN
+### - [x] F-25.17.11 — 17-11 — `lenny-ctl` has no pool-mutation commands; the runbook's `lenny-ctl admin pools set-warm-count` does not exist [Low] — CLOSED
 
 **Potential overlap** (confidence: high) — F-25.17.3 — Both concern warm-count mutation, but one is the missing lenny-ctl pool subcommand and the other is the missing PUT /v1/admin/pools/{name}/warm-count gateway route.
 
@@ -38032,6 +38056,8 @@ The preceding diagnostic call (Step 6 line 5248) targets `GET /v1/admin/diagnost
 **Impact:** Severity Low. An operator following the warm-pool-exhaustion runbook through `lenny-ctl` cannot complete Step 3b without falling out to `curl`. The §25.17 scenario itself is unaffected because it uses HTTP directly, but the same gap H-25.17-03 surfaces ricochets into the §24 operator UX.
 
 **Remediation sketch:** Add `lenny-ctl admin pools set-warm-count --pool NAME --min N` that issues the canonical pool-update PUT (path resolved after H-25.17-03). Cover `pools create`, `pools list`, `pools delete`, and `pools get` for parity with the gateway admin surface.
+
+**Resolution:** Verify-closed; gated on F-25.17.3 (parent High, OPEN — missing `PUT /v1/admin/pools/{name}/warm-count`). Per the finding's own framing: "path resolved after H-25.17-03". The `lenny-ctl admin pools` subcommand lands when the gateway-side route is wired.
 
 ---
 

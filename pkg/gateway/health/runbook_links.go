@@ -16,7 +16,7 @@ var runbookLinks = map[string]string{
 	"breaker_cache":        "redis-failure",
 	"kubernetes":           "kubernetes-api",
 	"gateway":              "gateway-degraded",
-	"warm_pool":            "warm-pool-exhausted",
+	"warm_pool":            "warm-pool-exhaustion",
 	"upgrade":              "platform-upgrade",
 	"sessionstore":         "sessionstore-failure",
 	"blobstore":            "blobstore-failure",

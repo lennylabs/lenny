@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -161,13 +162,71 @@ func cmdImageRm(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	if err := runStreamed(stdout, stderr, nil, ctr.binary,
+	// spec: §24.19.1 line 278 — capture ctr stderr so we can recognise
+	// the containerd "image in use" case and surface an actionable
+	// diagnostic instead of the raw ctr error.
+	var ctrErr bytes.Buffer
+	if err := runStreamed(stdout, &ctrErr, nil, ctr.binary,
 		append(ctr.baseArgs(namespace), "images", "rm", reference)...); err != nil {
-		fmt.Fprintf(stderr, "lenny image rm: %v\n", err)
+		raw := ctrErr.String()
+		stderr.Write([]byte(raw))
+		if ref := imageInUseReference(raw); ref != "" {
+			fmt.Fprintf(stderr, "lenny image rm: image %s is in use by %s; delete the consuming pod or snapshot first\n", reference, ref)
+		} else if imageInUseError(raw) {
+			fmt.Fprintf(stderr, "lenny image rm: image %s is in use by a running pod or snapshot; delete the consuming pod first\n", reference)
+		} else {
+			fmt.Fprintf(stderr, "lenny image rm: %v\n", err)
+		}
 		return 1
 	}
 	fmt.Fprintf(stdout, "removed %s from containerd namespace %s\n", reference, namespace)
 	return 0
+}
+
+// imageInUseError reports whether the given ctr stderr indicates the
+// "image is referenced/in use" failure (containerd refuses to remove
+// an image while it backs a running container or snapshot).
+//
+// spec: §24.19.1 line 278.
+func imageInUseError(raw string) bool {
+	lower := strings.ToLower(raw)
+	for _, marker := range []string{
+		"is referenced by",
+		"image is in use",
+		"in use by",
+		"in use:",
+		"failed precondition",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// imageInUseReference extracts the referring container/snapshot name
+// from a ctr "is referenced by" message when one is present; the empty
+// string means containerd did not name a specific consumer.
+//
+// spec: §24.19.1 line 278.
+func imageInUseReference(raw string) string {
+	lower := strings.ToLower(raw)
+	idx := strings.Index(lower, "referenced by")
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(raw[idx+len("referenced by"):])
+	rest = strings.TrimPrefix(rest, ":")
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return ""
+	}
+	if nl := strings.IndexAny(rest, "\r\n"); nl >= 0 {
+		rest = rest[:nl]
+	}
+	rest = strings.TrimSpace(rest)
+	rest = strings.TrimRight(rest, ":,.;")
+	return strings.TrimSpace(rest)
 }
 
 // ctrInvocation locates the embedded k3s ctr client and its containerd

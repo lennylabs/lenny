@@ -15,7 +15,7 @@ groups:
             severity: critical
           annotations:
             description: Available warm pods = 0 for any pool for more than 60s. New session creation blocks on pod claim until the controller replenishes the pool.
-            runbook_url: https://docs.lenny.dev/runbooks/warm-pool-exhausted
+            runbook_url: https://docs.lenny.dev/runbooks/warm-pool-exhaustion
             summary: Warm pool has no available pods
         - alert: PostgresReplicationLagHigh
           expr: lenny_postgres_replication_lag_seconds > 1

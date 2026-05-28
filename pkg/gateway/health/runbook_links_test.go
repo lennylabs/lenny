@@ -16,7 +16,7 @@ func TestRunbookFor_KnownComponents(t *testing.T) {
 		"postgres":              "postgres-failover",
 		"redis":                 "redis-failure",
 		"circuit_breaker_cache": "redis-failure",
-		"warm_pool":             "warm-pool-exhausted",
+		"warm_pool":             "warm-pool-exhaustion",
 		"unknown_component":     "",
 	}
 	for comp, want := range cases {
