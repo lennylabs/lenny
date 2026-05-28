@@ -299,19 +299,13 @@ func TestAlertCatalogRunbookSlugsResolveToDocs(t *testing.T) {
 //
 // spec: §11.8 deployer guidance pointing at runbooks; §17.7 line 850
 // (each runbook references the relevant alerts). F-11.8.2 /
-// F-11.8.3 cover the reverse-mapping convention; F-11.8.4 is the
-// EmergencyCredentialRevoked orphan; the remaining entries are
-// catalog-drift inherited from the broader F-17.7.4 cluster (alert
-// names diverged from runbook frontmatter names).
+// F-11.8.3 cover the reverse-mapping convention; F-11.8.4 closed
+// the EmergencyCredentialRevoked orphan by repointing the runbook
+// trigger at the canonical CredentialCompromised alert. The
+// remaining entries are catalog-drift inherited from the broader
+// F-17.7.4 cluster (alert names diverged from runbook frontmatter
+// names).
 var knownBrokenRunbookTriggers = map[string]bool{
-	// F-11.8.4 (Low, OPEN): emergency-credential-revocation.md trigger
-	// names an alert that has no §16.5 catalog entry yet; the runbook
-	// itself is operator-initiated, not alert-driven, but the
-	// frontmatter convention requires a triggers row. Drops when
-	// either the alert lands in pkg/alerting/rules/rules.go or the
-	// runbook is restructured to remove the trigger.
-	"EmergencyCredentialRevoked": true,
-
 	// F-17.7.4 / §17.7-cluster (High, OPEN): runbook trigger names
 	// pre-date the §16.5 alert-catalog naming pass. Each row drops
 	// when either the alert is added to pkg/alerting/rules/rules.go

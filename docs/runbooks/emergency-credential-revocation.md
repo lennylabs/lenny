@@ -3,24 +3,27 @@ layout: default
 title: "emergency-credential-revocation"
 parent: "Runbooks"
 triggers:
-  - alert: EmergencyCredentialRevoked
+  - alert: CredentialCompromised
     severity: critical
 components:
   - platform
 symptoms:
   - "the §10.4 emergency credential revocation path was triggered"
+  - "a revoked pool credential still has active leases after propagation"
 tags:
   - chaos
-related: []
+  - credentials
+related:
+  - credential-revocation
 ---
 
 # emergency-credential-revocation
 
-the §10.4 emergency credential revocation path was triggered.
+Direct-mode residual-risk operator steps for emergency credential revocation per §4.9. This runbook covers post-revocation provider-side disablement, lease re-binding, and the audit-trail review checklist after the §10.4 emergency credential revocation path has been triggered.
 
 ## Trigger
 
-The `EmergencyCredentialRevoked` alert fires when the §16.5 condition documented in the alert rule holds for its `for:` window. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL.
+The `CredentialCompromised` alert (defined in `pkg/alerting/rules/rules.go`) fires when a revoked pool credential still has active leases against it for more than 30s, indicating that propagation has not fully cleared. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL. The [credential-revocation](credential-revocation.html) runbook covers the full rotation procedure; this runbook covers direct-mode residual-risk steps that apply after the revocation has been issued.
 
 ## Diagnosis
 

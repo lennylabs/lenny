@@ -59,6 +59,7 @@ type LeaderReporter interface {
 // endpoints and the Kubernetes liveness and readiness probes.
 type Server struct {
 	mux                *http.ServeMux
+	handler            http.Handler // mux wrapped in the §25.4 correlation/access-log middleware
 	probes             map[string]probe.Func
 	runbooks           RunbookSource
 	selfHealth         SelfHealthReporter
@@ -175,12 +176,18 @@ func New(opts Options) *Server {
 	s.mcp = mcp.NewServer(s.mcpInvoker())
 	s.mux.Handle("/mcp/management", s.mcp)
 	s.mux.Handle("/mcp/management/", s.mcp)
+	// §25.4 lines 2499-2526: every request runs through the correlation
+	// middleware (stamps operation_id / agent_name / trace_id from inbound
+	// headers onto the request context) and the access-log middleware
+	// (one structured log line per request, projected through the §25.4
+	// JSON handler configured in main).
+	s.handler = withCorrelation(withAccessLog(s.mux))
 	return s
 }
 
 // ServeHTTP routes a request to the registered operability handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	s.handler.ServeHTTP(w, r)
 }
 
 // handleHealthz is the liveness probe: it reports that the process is

@@ -3,8 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
@@ -132,5 +137,73 @@ func TestEnvHelpers(t *testing.T) {
 	t.Setenv("LENNY_OPS_TEST_BADINT", "not-a-number")
 	if got := envInt64("LENNY_OPS_TEST_BADINT", 99); got != 99 {
 		t.Errorf("envInt64 with a malformed var = %d, want the fallback 99", got)
+	}
+}
+
+// TestSlogWriterBridgesStdlibLog_spec_25_4_2512 covers the §25.4
+// stdlib-log → slog bridge. Every legacy log.Printf call must surface
+// as a structured JSON record so no log line escapes the §25.4 format.
+func TestSlogWriterBridgesStdlibLog_spec_25_4_2512(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	defer slog.SetDefault(prev)
+	logger := slog.New(opsLogging.NewJSONHandler(&buf, opsLogging.Options{
+		Level:            slog.LevelInfo,
+		DefaultComponent: "lenny-ops",
+	}))
+	slog.SetDefault(logger)
+
+	prevFlags := log.Flags()
+	defer log.SetFlags(prevFlags)
+	prevOut := log.Default().Writer()
+	defer log.SetOutput(prevOut)
+	log.SetFlags(0)
+	log.SetOutput(slogWriter{logger: logger})
+
+	log.Printf("lenny-ops: %s", "bridged")
+
+	line := strings.TrimSpace(buf.String())
+	if line == "" {
+		t.Fatalf("expected structured JSON line, got empty buffer")
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(line), &got); err != nil {
+		t.Fatalf("log line is not JSON: %v\nline: %s", err, line)
+	}
+	if got["msg"] != "lenny-ops: bridged" {
+		t.Errorf("msg = %v, want %q", got["msg"], "lenny-ops: bridged")
+	}
+	if got["component"] != "lenny-ops" {
+		t.Errorf("component = %v, want %q", got["component"], "lenny-ops")
+	}
+	if got["level"] != "INFO" {
+		t.Errorf("level = %v, want INFO", got["level"])
+	}
+}
+
+// TestSlogWriterDropsTrailingNewline_spec_25_4_2512 confirms the stdlib
+// log target's trailing newline is stripped before forwarding, so the
+// emitted msg matches the original Printf string.
+func TestSlogWriterDropsTrailingNewline_spec_25_4_2512(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(opsLogging.NewJSONHandler(&buf, opsLogging.Options{
+		Level:            slog.LevelInfo,
+		DefaultComponent: "lenny-ops",
+	}))
+	w := slogWriter{logger: logger}
+	n, err := w.Write([]byte("trailing-newline\n"))
+	if err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+	if n != len("trailing-newline\n") {
+		t.Errorf("Write returned %d bytes, want %d", n, len("trailing-newline\n"))
+	}
+	line := strings.TrimSpace(buf.String())
+	var got map[string]any
+	if err := json.Unmarshal([]byte(line), &got); err != nil {
+		t.Fatalf("log line is not JSON: %v", err)
+	}
+	if got["msg"] != "trailing-newline" {
+		t.Errorf("msg = %v, want stripped of trailing newline", got["msg"])
 	}
 }

@@ -16929,7 +16929,7 @@ trigger that is not defined in the alerting rules file.
 
 **Resolution:** Took option (a) from the suggested resolution: `audit-pipeline-degraded.md` frontmatter gains a `triggers[].alert: AuditSIEMNotConfigured` (severity: warning) row; `data-residency-violation.md` frontmatter gains a `triggers[].alert: ArtifactReplicationResidencyViolation` (severity: critical) row. `docs/runbooks/index.md` adds `ArtifactReplicationResidencyViolation` to the critical-alerts table and `AuditSIEMNotConfigured` to the warning-alerts table. Both alerts now have the deployer-facing runbook hand-off §11.8 requires. The new tier-11 `TestRunbookTriggersResolveToAlertCatalog` (added in F-11.8.2) guards the catalog cross-reference.
 
-### - [ ] F-11.8.4 — `EmergencyCredentialRevoked` runbook trigger is undefined (LOW) [Medium] — OPEN
+### - [x] F-11.8.4 — `EmergencyCredentialRevoked` runbook trigger is undefined (LOW) [Medium] — CLOSED
 
 - **Spec:** §11.8 leaves the alert-to-runbook mapping to the deployer, but
   the runbook contract documented elsewhere (frontmatter `triggers:` →
@@ -16953,6 +16953,8 @@ trigger that is not defined in the alerting rules file.
   alert in `pkg/alerting/rules/rules.go` and the alerting-rules chart,
   fired on the `credential.revoked` audit event emitted by the F-11.8.1
   endpoint.
+
+**Resolution:** Took a hybrid of options (a) and (b): `docs/runbooks/emergency-credential-revocation.md` is preserved per §18.4 build-sequence (which mandates the file's existence as the direct-mode residual-risk operator runbook per §4.9) and its `triggers:` row is repointed at the canonical `CredentialCompromised` alert (`pkg/alerting/rules/rules.go:270`); the body prose line 23 follows. The runbook now reads as a second response path to `CredentialCompromised`, covering the post-revocation residual-risk steps that complement the full rotation procedure in `credential-revocation.md`. `EmergencyCredentialRevoked` is removed from the `knownBrokenRunbookTriggers` baseline in `tests/tier11_docs/runbooks_test.go`; the tier-11 `TestRunbookTriggersResolveToAlertCatalog` from F-11.8.2 now verifies the cross-reference.
 
 ### - [x] F-11.8.5 — Legal-hold endpoint does not accept artifact-scoped holds (LOW) [Medium] — CLOSED
 
@@ -33458,7 +33460,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.4.9 — (Low) — Soft-delete uses `pkg/gateway/poolstore.SoftDelete` but `handleDeletePool` ignores `If-Match` [Medium] — OPEN
+### - [x] F-24.4.9 — (Low) — Soft-delete uses `pkg/gateway/poolstore.SoftDelete` but `handleDeletePool` ignores `If-Match` [Medium] — CLOSED
 
 **Spec (R18, §15.1:796):** §15.1:796 does not list `If-Match` for `DELETE`, but the §15.1 preamble convention is that destructive operations on versioned resources honor `If-Match`. §10.2 grants `tenant-admin` no delete access to pools; that's checked, but a concurrent edit-then-delete race is unguarded.
 
@@ -33467,6 +33469,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - `tenants.go:398`: `mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))` — `requireAdmin` is platform-admin, so cross-tenant deletes are gated, but two platform admins editing in parallel can lose state.
 
 **Impact:** Low severity. The spec does not explicitly require `If-Match` on `DELETE`, so this is documentation-discretion territory. Listed for completeness; the precondition discipline established by `PUT` should plausibly extend.
+
+**Resolution:** Verify-closed per the finding's own framing ("Low severity. The spec does not explicitly require `If-Match` on `DELETE`, so this is documentation-discretion territory."). Grep across `spec/15_external-api-surface.md` confirms `(requires \`If-Match\`)` annotations apply only to `PUT` rows; no `DELETE` row in §15.1 lists the precondition. Adding `If-Match` discipline to `DELETE /v1/admin/pools/{name}` would amount to a §15.1 spec edit (rule B blocked). The two-platform-admin parallel-edit-then-delete race the finding flags has a workable workaround today (the soft-delete record carries the version, so a follow-up read distinguishes a successful delete from a stale ETag), and the broader convention extension belongs in the §15.1 precondition pass.
 
 ---
 
@@ -33720,7 +33724,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.5.8 — (Low) — `credentialpoolstore.Store` data model has no credential-status / health field [Medium] — OPEN
+### - [x] F-24.5.8 — (Low) — `credentialpoolstore.Store` data model has no credential-status / health field [Medium] — CLOSED
 
 **Spec context:** §15.1:810-811 ("Emergency revocation … adds it to the credential deny list"; "Re-enable … restores credential to `healthy` status with a fresh health score") implies a per-credential `status` field; §24.5 row 2 implies per-credential health scores.
 
@@ -33731,9 +33735,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** Implementing F2 (the revoke / re-enable handlers) will require schema migration on the credential-pool storage path to add a per-credential status / revocation history, plus a query model so the §24.5 row-2 Get response can surface it. This is groundwork that has not started, and finishing F2 cleanly is blocked on it. Severity is Low because it is a forward dependency on F2 rather than a standalone defect.
 
+**Resolution:** The credential-status / revocation-history portion of this finding is stale: F-4.9.2 (commit 13fc529e) added `CredentialStatus` (`active`/`revoked`) and the per-credential `RevokedAt` / `RevokedBy` / `RevocationReason` fields to `pkg/gateway/credentialpoolstore/credentialpoolstore.go:30-71`, with `IsRevoked()` semantics and JSONB-backed persistence (no migration). The per-credential `HealthScore` and lease-count surface (the §15.1 "fresh health score" wording at line 811 and the §24.5 row-2 "per-credential health scores" wording) remain tracked separately under F-24.5.4 (Medium, OPEN), which owns the GET-payload exposure of those signals. No standalone work item remains here.
+
 ---
 
-### - [ ] F-24.5.9 — (Low) — `update` handler full-replace semantics conflict with `update-credential` row-update semantics [Medium] — OPEN
+### - [x] F-24.5.9 — (Low) — `update` handler full-replace semantics conflict with `update-credential` row-update semantics [Medium] — CLOSED
 
 **Spec (R4):** §15.1:877 declares `PUT /v1/admin/credential-pools/{name}/credentials/{credId}` updates a single credential entry. §24.5 row 4 names the corresponding `lenny-ctl admin credential-pools update-credential --pool <name> --credential <id>`.
 
@@ -33743,6 +33749,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - Even if a CLI surface mapped `update-credential` to the existing pool-level PUT, an operator updating one credential would have to round-trip the full `credentials` array — a concurrent admin write would race and clobber state.
 
 **Impact:** Any future implementation of `update-credential` cannot reuse the existing pool-level PUT handler; a separate `PUT /credentials/{credId}` handler is required. The current handler also lacks the `If-Match` requirement noted by §15.1:808 (etag-gated update) and §15.1:877 (etag-gated row update) — `grep -n "If-Match\|etag" pkg/gateway/admin/credential_pools.go` returns zero matches. Severity is Low because the surface does not yet ship; categorizing here so the future implementation is not built on the wrong handler.
+
+**Resolution:** Verify-closed per the finding's own framing ("Severity is Low because the surface does not yet ship; categorizing here so the future implementation is not built on the wrong handler"). Gated on F-24.5.2 (High, OPEN) — the per-credential `PUT /credentials/{credId}` row-update handler does not yet exist. F-4.9.2 (commit 13fc529e) intentionally preserved pool-level PUT semantics as a full-pool replace and noted that adding the row-update handler is part of the F-24.5.2 surface; the `If-Match` precondition + the §15.1:1212 RBAC probe on row-level updates land alongside that handler. No standalone work item remains here.
 
 ---
 
@@ -36110,11 +36118,13 @@ Implementation: `charts/lenny/values.yaml` line 374 carries `releaseChannel.publ
 
 **Resolution:** Verify-closed; the three knobs land in lockstep with their gating findings, all still OPEN: `platform.upgradeChannel: ""` requires F-25.4.17 (cron evaluator's `platform_upgrade_check` is unwired), `platform_upgrade_check_cache` requires F-25.4.13 (the `ops_*` Postgres schemas are unmigrated), and `requireDigest: true` admission enforcement requires the §17.6 image-pull policy work tracked under §17.6 / §5.3 SHA pinning. Adding the standalone Helm value with no downstream wiring would create an inert promise.
 
-### - [ ] F-25.4.24 — `lenny-ops` HTTP server lacks the structured-logging primitive §25.4 documents. (Low) [Medium] — OPEN
+### - [x] F-25.4.24 — `lenny-ops` HTTP server lacks the structured-logging primitive §25.4 documents. (Low) [Medium] — CLOSED
 
 Spec: lines 2499–2509. JSON log lines include `ts/level/msg/component/operation_id/agent_name/trace_id`. The trace_id is propagated from `X-Lenny-Operation-ID`/`X-Lenny-Agent-Name` request headers (§25.2 Operation Correlation Headers).
 
 Implementation: `grep -rn "trace_id\|operation_id.*log\|component.*log\|structured.*log\|slog\|zap\|zerolog" /Users/joan/projects/lenny/pkg/ops /Users/joan/projects/lenny/cmd/lenny-ops` returns no matches; the implementation uses Go's stdlib `log` (line-text format) throughout. The HTTP middleware does not read `X-Lenny-Operation-ID`/`X-Lenny-Agent-Name` correlation headers; `grep -rn "X-Lenny-Operation-ID\|X-Lenny-Agent-Name" /Users/joan/projects/lenny/pkg/ops` returns no matches. Consequence: operators cannot grep `lenny-ops` container logs by operation ID to correlate a restore failure across the request, the worker, and the audit trail. Log aggregation (Loki, ELK, CloudWatch) cannot index by structured fields because the lines are free-text.
+
+**Resolution:** `pkg/ops/opsserver/middleware.go` adds two HTTP middlewares wired around the `Server` mux in `New`: `withCorrelation` reads `X-Lenny-Operation-ID`, `X-Lenny-Agent-Name`, `traceparent`, `X-Lenny-Tenant-ID`, and `X-Lenny-Session-ID` from the inbound request (via `correlation.FromHTTPHeader`), stamps `component=lenny-ops` per §16.4, merges onto any pre-existing context scope, and stores the resulting `correlation.Fields` on the request context. `withAccessLog` emits one `slog.LevelInfo` line per request carrying `method`, `path`, `status`, `duration_ms`; the §25.4 JSON handler (`pkg/observability/logging.NewJSONHandler`) auto-projects the correlation fields as top-level structured attributes (`component`, `operation_id`, `agent_name`, `trace_id`, …). `cmd/lenny-ops/main.go` installs `configureStructuredLogging()` immediately after flag parsing: it builds the JSON handler with `DefaultComponent: "lenny-ops"`, sets it as `slog.Default`, and bridges the stdlib `log` package onto the slog logger via `slogWriter` so every legacy `log.Printf` call surfaces in the §25.4 envelope. `ContextWithComponent` exposes the same component-stamping helper to background loops (leader-elected reconcilers) so non-HTTP log lines also carry the binary label.
 
 ### - [ ] F-25.4.25 — `monitoring.acknowledgeNoPrometheus` opt-out, `ops.recommendations.disableOnPrometheusOutage`, and the `lenny-preflight` Prometheus-reachability check are absent. (Medium) [Medium] — OPEN
 
@@ -36155,11 +36165,13 @@ The §25.4 chart annotation pattern is correctly rendered (`charts/lenny/templat
 actionable `/metrics` handler registration on `lenny-ops` belongs to
 §25.2 F2; no separate §25.4 work item.
 
-### - [ ] F-25.4.30 — Spec'd `ops.gateway.url` defaults to HTTPS port 8443 (NET-070); chart hardcodes plaintext `http://lenny-gateway:{gateway.internalPort}`. (High — duplicate of F19 with chart-template scope) [Medium] — OPEN
+### - [x] F-25.4.30 — Spec'd `ops.gateway.url` defaults to HTTPS port 8443 (NET-070); chart hardcodes plaintext `http://lenny-gateway:{gateway.internalPort}`. (High — duplicate of F19 with chart-template scope) [Medium] — CLOSED
 
 Spec: lines 836–841 — `ops.gateway.url: "https://lenny-gateway:8443"` is the documented default; "chart renders `http://lenny-gateway:8080` only when `ops.tls.internalEnabled=false` AND `ops.acknowledgePlaintextAdminAPI=true` (or dev mode)."
 
 Implementation: `charts/lenny/templates/ops-deployment.yaml` line 100 — `- --gateway-url=http://lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.internalPort }}` is hardcoded plaintext with no conditional on `ops.tls.internalEnabled`. The Helm value `gateway.internalTLSPort` is referenced (line 703 of `system-network-policies.yaml`) for the NetworkPolicy but never wired into the `lenny-ops` `--gateway-url` argument. Consequence: every deployment unconditionally uses the plaintext admin API path, regardless of the deployer's TLS posture preferences. Cross-listed for the chart-side scope of F19 because the violation is concretely in `ops-deployment.yaml`.
+
+**Resolution:** Verify-closed as an explicit duplicate of F-25.4.19 (the High §25.4 finding covering the full NET-070 TLS-default posture — `ops.tls.internalEnabled`, plaintext acknowledgment guard, `lenny_ops_admin_api_tls_handshake_total{plaintext}` alerting, and the `lenny-preflight` `ops-admin-tls` probe). The chart-template scope this finding flags (`ops-deployment.yaml --gateway-url` hardcoded to plaintext) is the same code path; the NET-070 chart `required` guard, the conditional URL rendering, and the wiring of `gateway.internalTLSPort` into the `--gateway-url` argument all land under F-25.4.19. Closing the chart-template scope in isolation would create an inert partial fix because the chart `required` guard, the TLS-handshake metric, and the preflight probe are co-dependent. F-25.4.19 stays OPEN.
 
 ### Summary
 

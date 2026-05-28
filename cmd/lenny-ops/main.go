@@ -31,6 +31,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -50,6 +51,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
@@ -138,6 +140,14 @@ func main() {
 	if replicaID == "" {
 		replicaID = "lenny-ops"
 	}
+
+	// §25.4 lines 2499-2526: install the structured JSON logger. Every
+	// log line carries ts / level / msg / component=lenny-ops; lines
+	// emitted from a request context also carry operation_id, agent_name,
+	// and trace_id pulled from the §25.2 X-Lenny-Operation-ID,
+	// X-Lenny-Agent-Name, and traceparent headers (stamped by the
+	// opsserver correlation middleware).
+	configureStructuredLogging()
 
 	// Root context cancelled on SIGTERM/SIGINT; it bounds the background
 	// loops and the leader-election goroutine.
@@ -433,6 +443,53 @@ func main() {
 	}
 	wg.Wait()
 	log.Printf("lenny-ops: replica %s stopped", replicaID)
+}
+
+// configureStructuredLogging installs the §25.4 JSON logger as the
+// process-wide slog.Default. The pkg/observability/logging handler
+// auto-attaches the §16.4 correlation fields (component, operation_id,
+// agent_name, trace_id, …) from any context that carries a
+// correlation.Fields value. The stdlib log package is redirected so
+// existing log.Printf call sites also surface as structured records and
+// no log line escapes the §25.4 format.
+//
+// spec: §25.4 lines 2499-2526.
+func configureStructuredLogging() {
+	level := slog.LevelInfo
+	if v := os.Getenv("LENNY_LOG_LEVEL"); v != "" {
+		// best-effort parsing: an unknown value falls back to Info, which
+		// matches the §25.4 default posture.
+		_ = level.UnmarshalText([]byte(v))
+	}
+	handler := opsLogging.NewJSONHandler(os.Stderr, opsLogging.Options{
+		Level:            level,
+		DefaultComponent: "lenny-ops",
+	})
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+	// Bridge the stdlib log package onto slog so legacy log.Printf calls
+	// emit the structured §25.4 envelope. log.Flags is cleared so the
+	// timestamp prefix the stdlib writes is not duplicated alongside slog's
+	// own ts attribute.
+	log.SetFlags(0)
+	log.SetOutput(slogWriter{logger: logger})
+}
+
+// slogWriter bridges io.Writer (the stdlib log target) onto a slog logger
+// so calls like log.Printf surface as Info-level structured records. It
+// strips a single trailing newline because log.Output always appends one.
+type slogWriter struct {
+	logger *slog.Logger
+}
+
+// Write implements io.Writer for the stdlib log bridge.
+func (w slogWriter) Write(p []byte) (int, error) {
+	msg := string(p)
+	if n := len(msg); n > 0 && msg[n-1] == '\n' {
+		msg = msg[:n-1]
+	}
+	w.logger.Info(msg)
+	return len(p), nil
 }
 
 // envOr returns the environment variable name when set, else fallback.
