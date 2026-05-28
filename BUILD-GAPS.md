@@ -20192,7 +20192,7 @@ who treat the docstring as ground truth.
 
 ---
 
-### - [ ] F-12.9.19 — 9-16 — §12.9 cryptographic-erasure semantics are correctly wired through the tenant-deletion controller [Info] — OPEN
+### - [x] F-12.9.19 — 9-16 — §12.9 cryptographic-erasure semantics are correctly wired through the tenant-deletion controller [Info] — CLOSED
 
 The §12.9 T4 control "Immediate + cryptographic erasure where
 supported" is correctly implemented by:
@@ -20203,7 +20203,9 @@ supported" is correctly implemented by:
   semantics.
 This is the cleanest area of the §12.9 implementation surface.
 
-### - [ ] F-12.9.20 — 9-17 — T4 KMS continuous probe surface (admin-time + leader-elected periodic) matches the §12.5/§12.9 control contract [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own conclusion; the cited surfaces (`Lifecycle.DestroyForTenant` at `pkg/tenantkms/tenantkms.go:328-350` with `DisableKey`+`DestroyKey` ordering and `ErrKeyNotFound` absorption, plus the Phase 4a controller hook) match the §12.9 control text without further code change.
+
+### - [x] F-12.9.20 — 9-17 — T4 KMS continuous probe surface (admin-time + leader-elected periodic) matches the §12.5/§12.9 control contract [Info] — CLOSED
 
 The §12.5-cross-referenced T4 KMS lifecycle is implemented:
 - `pkg/tenantkms/tenantkms.go:209-286` (provision-on-create, idempotent
@@ -20215,7 +20217,9 @@ The §12.5-cross-referenced T4 KMS lifecycle is implemented:
 - `pkg/gateway/admin/tenants_kmsprobe_test.go:69-131` (admin path
   exercise).
 
-### - [ ] F-12.9.21 — 9-18 — Workspace-tier ratchet (T3 → T4 one-way) is enforced on the generic PUT path [Info] — OPEN
+**Resolution:** Verify-closed; `Lifecycle.EnsureForTenant` / `RotateForTenant` / `ProbeAvailability` (`pkg/tenantkms/tenantkms.go:209-286`), the prober, and the admin-time T4 probe path on PUT `/v1/admin/tenants/{id}` (cited at `pkg/gateway/admin/tenants.go:1114-1133` after recent refactor) remain in place and exercised by tests.
+
+### - [x] F-12.9.21 — 9-18 — Workspace-tier ratchet (T3 → T4 one-way) is enforced on the generic PUT path [Info] — CLOSED
 
 `pkg/gateway/admin/tenants.go:665-687, 974-991` implements the
 stricter-only ratchet exactly as §12.9 directs, with the symmetric
@@ -20225,7 +20229,9 @@ stricter-only ratchet exactly as §12.9 directs, with the symmetric
 `tier_downgrade_prohibited` reason and the §12.5 idempotent re-assert
 behavior.
 
-### - [ ] F-12.9.22 — 9-19 — Credential secrets (§12.9 row "Credential pool secrets — T4") are envelope-encrypted; refresh tokens (§12.9 row "OAuth/refresh tokens — T4") are encrypted under the per-tenant KEK [Info] — OPEN
+**Resolution:** Verify-closed; the `isWorkspaceTierDowngrade` rejection on the PUT path (now at `pkg/gateway/admin/tenants.go:1102-1113`) and the `tier_downgrade_prohibited` regression test still hold.
+
+### - [x] F-12.9.22 — 9-19 — Credential secrets (§12.9 row "Credential pool secrets — T4") are envelope-encrypted; refresh tokens (§12.9 row "OAuth/refresh tokens — T4") are encrypted under the per-tenant KEK [Info] — CLOSED
 
 - `pkg/gateway/credentialstore/pgstore/pgstore.go:18-81` requires a
   non-nil KMS provider and envelope-encrypts every secret on write.
@@ -20235,6 +20241,8 @@ behavior.
   encrypts access and refresh tokens.
 
 These cover the spec's two-row T4 expectations directly.
+
+**Resolution:** Verify-closed; `pgstore.New` (`pkg/gateway/credentialstore/pgstore/pgstore.go:63-71`) still rejects a nil `kms.Provider`, and the §4.9.1 envelope cipher continues to wrap every secret on write under a per-tenant KEK alias.
 
 ---
 
@@ -20763,7 +20771,7 @@ Evidence:
 
 ---
 
-### - [ ] F-13.1.18 — 1-01 — §13.1 Egress row defers to §13.2 NetworkPolicies; not audited here [Info] — OPEN
+### - [x] F-13.1.18 — 1-01 — §13.1 Egress row defers to §13.2 NetworkPolicies; not audited here [Info] — CLOSED
 
 §13.1 line 11 "Egress: Default-deny NetworkPolicy; allow only gateway
 + required internal services" is a reference summary of the §13.2
@@ -20773,7 +20781,9 @@ implementation hooks are
 `pkg/preflight/networkpolicy*.go`,
 `charts/lenny/templates/system-network-policies.yaml`.
 
-### - [ ] F-13.1.19 — 1-02 — Registry-digest, cosign-verify, etcd encryption, kernel-module restrictions are not part of §13.1 [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own scoping note; the §13.1 Egress row is a pointer into §13.2 and the live audit there is tracked under F-13.2.* (open H-class gaps stand on their own findings).
+
+### - [x] F-13.1.19 — 1-02 — Registry-digest, cosign-verify, etcd encryption, kernel-module restrictions are not part of §13.1 [Info] — CLOSED
 
 The audit method enumerated by the request lists these items adjacent
 to §13.1, but the §13.1 spec text does not reference them. They are
@@ -20801,7 +20811,9 @@ Implementation status, included here for completeness, is:
   beyond `RuntimeDefault` (line 27 "no AppArmor/Seccomp profile is
   required"). Implementation matches.
 
-### - [ ] F-13.1.20 — 1-03 — Per-container `SecurityContext` posture is correctly enforced on platform `lenny-system` Deployments by template authoring [Info] — OPEN
+**Resolution:** Verify-closed; each adjacent control (cosign-verify webhook in `pkg/admission/cosign_verify/`, registry-digest guard in `pkg/admission/registry_digest/guard.go`, and `charts/lenny/templates/etcd-encryption.yaml`) remains in place under its actual home section.
+
+### - [x] F-13.1.20 — 1-03 — Per-container `SecurityContext` posture is correctly enforced on platform `lenny-system` Deployments by template authoring [Info] — CLOSED
 
 `gateway-deployment.yaml`, `controller-deployment.yaml`,
 `token-service-deployment.yaml`, `ops-deployment.yaml`,
@@ -20815,7 +20827,9 @@ the §13.1 "specific UID/GID" wording (line 7) is left to the image's
 with a known non-root USER; surfaces no operator-visible drift today.
 The lack of preflight enforcement is captured in M-13.1-06.
 
-### - [ ] F-13.1.21 — 1-04 — Host-sharing prohibition is correctly enforced at admission for new agent pods [Info] — OPEN
+**Resolution:** Verify-closed; `gateway-deployment.yaml`, `controller-deployment.yaml`, `token-service-deployment.yaml`, `ops-deployment.yaml`, `bootstrap-job.yaml`, and `preflight-job.yaml` all render `runAsNonRoot`, `seccompProfile`, `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, and `capabilities.drop` as cited.
+
+### - [x] F-13.1.21 — 1-04 — Host-sharing prohibition is correctly enforced at admission for new agent pods [Info] — CLOSED
 
 `pkg/podsecurity/podsecurity.go:112-124` rejects all four flags with
 `POD_SPEC_HOST_SHARING_FORBIDDEN`; the webhook
@@ -20825,7 +20839,9 @@ The lack of preflight enforcement is captured in M-13.1-06.
 are M-13.1-01 (preflight scope = release namespace only) and the
 absence of a sidecar-aware sweep for future pod templates.
 
-### - [ ] F-13.1.22 — 1-05 — `lenny-cred-readers` ephemeral-container guard correctly enforces all four §13.1 conditions [Info] — OPEN
+**Resolution:** Verify-closed; `pkg/podsecurity/podsecurity.go:171-180` still rejects all four host-sharing flags with `POD_SPEC_HOST_SHARING_FORBIDDEN`, the webhook (`pkg/admission/webhook/pod_security.go`) remains fail-closed, and the install-time preflight in `pkg/preflight/hostsharing.go` covers `lenny-system` Deployments / DaemonSets / Jobs.
+
+### - [x] F-13.1.22 — 1-05 — `lenny-cred-readers` ephemeral-container guard correctly enforces all four §13.1 conditions [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.3.17, F-6.1.26 — All describe the same positive finding that the four-condition ephemeral-container cred-guard webhook is correctly implemented; F-13.2.23 also covers label-immutability so it is overlapping rather than a clean duplicate.
 
@@ -20838,6 +20854,8 @@ runAsGroup or supplementalGroups, (iii) absent securityContext fields
 `operations: ["UPDATE"]`
 (`charts/lenny/templates/admission-policies/ephemeral-container-cred-guard-webhook.yaml:37`)
 and fail-closed.
+
+**Resolution:** Verify-closed; `Decide` / `violation` (`pkg/admission/ephemeral_container_cred_guard/guard.go:102-144`) still enforce all four §13.1 conditions, and the webhook stays fail-closed on the cited subresource.
 
 ---
 
@@ -21008,23 +21026,33 @@ Implementation:
 
 The `allow-gateway-egress` template (`charts/lenny/templates/system-network-policies.yaml` lines 442–528) explicitly defers external-HTTPS egress with the comment "The external-HTTPS egress with its §13.2 NET-062 dual-family IMDS/private-range exclusions is rendered with the LLM proxy." This rendering is unimplemented (see H5). Logged as Low because the comment surfaces the deferral; the operational impact is captured under H5.
 
-### - [ ] F-13.2.19 — Preflight NetworkPolicy parity audits (NET-047/050, 057, 062, 065, 067, 068) are implemented and exercised [Info] — OPEN
+### - [x] F-13.2.19 — Preflight NetworkPolicy parity audits (NET-047/050, 057, 062, 065, 067, 068) are implemented and exercised [Info] — CLOSED
 `pkg/preflight/networkpolicy_{selectors,ipblock,ssrf,clustercidr,opsegress}.go` plus `pkg/preflight/run.go` wire six NetworkPolicy audits into the preflight report. `pkg/preflight/run_networkpolicy_test.go` covers the failure paths (DNS pod-selector missing, legacy `app:` selector drift, cross-family `ipBlock` `except`, missing NET-064 trust-domain configs, fail-closed posture on `List` error). The audits enforce part (a) and (c) of NET-050 in full; part (b) is documented as deferred (L1).
 
-### - [ ] F-13.2.20 — Agent-namespace NetworkPolicies (`default-deny-all`, `allow-gateway-ingress`, `allow-pod-egress-base`) render correctly [Info] — OPEN
+**Resolution:** Verify-closed; `pkg/preflight/networkpolicy_{selectors,ipblock,ssrf,clustercidr,opsegress}.go` plus matching `*_test.go` regression files remain on disk and wired into `pkg/preflight/run.go`.
+
+### - [x] F-13.2.20 — Agent-namespace NetworkPolicies (`default-deny-all`, `allow-gateway-ingress`, `allow-pod-egress-base`) render correctly [Info] — CLOSED
 `charts/lenny/templates/agent-network-policies.yaml` renders the three baseline policies per namespace declared in `agentNamespaces`. `charts/lenny/tests/agent-network-policies_test.yaml` validates the baseline-with-and-without-OTLP cases and the in-cluster vs. external-CIDR OTLP target cases.
 
-### - [ ] F-13.2.21 — Adapter mTLS (gateway → pod) is fully wired [Info] — OPEN
+**Resolution:** Verify-closed; the chart template and Helm-unittest fixture still render and assert the three baseline agent-namespace policies.
+
+### - [x] F-13.2.21 — Adapter mTLS (gateway → pod) is fully wired [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.4.23 — Both are positive findings that adapter mTLS (RequireAndVerifyClientCert in pkg/adapter/transport.go) is correctly wired.
 
 `pkg/adapter/transport.go` `TLSServerOption` and `TLSClientOption` (lines 43–100) implement the §4.7 gateway↔adapter mTLS link with `ClientAuth: RequireAndVerifyClientCert` on the server, a configurable client CA bundle, and an explicit plaintext path for local development. `pkg/gateway/adapterclient/client.go` documents the mTLS dial expectation. The mTLS deny-list propagator (`pkg/mtls/denylist/propagator/`) is wired into the gateway's security event bus.
 
-### - [ ] F-13.2.22 — Data-residency validator webhook is built and fail-closed [Info] — OPEN
+**Resolution:** Verify-closed; `pkg/adapter/transport.go:43-100` still sets `cfg.ClientAuth = tls.RequireAndVerifyClientCert` on the server option and the matching client dial option remains in place.
+
+### - [x] F-13.2.22 — Data-residency validator webhook is built and fail-closed [Info] — CLOSED
 `pkg/admission/data_residency_validator/validator.go` implements §12.8 region inheritance (`IsEnvironmentScoped` → `REGION_CONSTRAINT_VIOLATED`) and `storage.regions` membership (`REGION_CONSTRAINT_UNRESOLVABLE`). `charts/lenny/templates/admission-policies/data-residency-validator-webhook.yaml` renders it with `failurePolicy: Fail`, `timeoutSeconds: 5`, scoped to agent namespaces, gated on `features.compliance`.
 
-### - [ ] F-13.2.23 — Label-immutability and ephemeral-container cred-guard webhooks are built and tested [Info] — OPEN
+**Resolution:** Verify-closed; validator constants and the rendered webhook (with `failurePolicy: Fail`, `timeoutSeconds: 5`) remain in place.
+
+### - [x] F-13.2.23 — Label-immutability and ephemeral-container cred-guard webhooks are built and tested [Info] — CLOSED
 `pkg/admission/label_immutability/label_immutability.go` enforces the §13.2 NET-003 immutability rules for `lenny.dev/managed`, `lenny.dev/delivery-mode`, and `lenny.dev/egress-profile`, and the constrained tenant-id transitions. `pkg/admission/ephemeral_container_cred_guard/guard.go` implements all four §13.1 ephemeral-container rejection conditions. (Both webhooks remain operative on labels and volumes that other code paths do not actually write — see H1 for `delivery-mode`.)
+
+**Resolution:** Verify-closed; `LabelManaged` / `LabelDeliveryMode` / `LabelEgressProfile` constants and the ephemeral-container cred-guard four-condition decision remain authoritative. The orthogonal H1 — that no controller writes the `delivery-mode` label — is tracked separately under F-13.2.1.
 
 ---
 
