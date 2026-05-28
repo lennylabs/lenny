@@ -194,18 +194,96 @@ func TestPatchExperimentRejectsInvalidTransition(t *testing.T) {
 	}
 }
 
+// spec: §10.7 line 1094 — concluded experiments are immutable; delete
+// is permitted only after the operator transitions the experiment to
+// `concluded` via PATCH. F-10.7.17.
 func TestDeleteExperiment(t *testing.T) {
 	router, exps, _ := newExperimentAdmin(t)
 	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_d"), withAdminPrincipal)
+	doAdminReq(t, router.Handler(), http.MethodPatch, "/v1/admin/experiments/exp_d?tenantId=acme",
+		map[string]any{"status": "concluded"}, withAdminPrincipal)
 
 	rr := doAdminReq(t, router.Handler(), http.MethodDelete, "/v1/admin/experiments/exp_d?tenantId=acme",
 		nil, withAdminPrincipal)
 	if rr.Code != http.StatusNoContent {
-		t.Fatalf("delete: status %d", rr.Code)
+		t.Fatalf("delete: status %d, body %s", rr.Code, rr.Body.String())
 	}
 	if _, err := exps.Get(context.Background(), "acme", "exp_d"); err == nil {
 		t.Error("experiment still present after delete")
+	}
+}
+
+// spec: §10.7 line 1094 — deleting an active or paused experiment
+// would orphan its variant pool and enrolled-session eval attribution;
+// the handler must reject with 409 INVALID_STATE_TRANSITION until the
+// operator PATCHes to `concluded`. F-10.7.17.
+func TestDeleteExperimentRejectsActive(t *testing.T) {
+	router, exps, _ := newExperimentAdmin(t)
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+		validExperimentPayload("exp_active"), withAdminPrincipal)
+
+	rr := doAdminReq(t, router.Handler(), http.MethodDelete, "/v1/admin/experiments/exp_active?tenantId=acme",
+		nil, withAdminPrincipal)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("delete active: status %d, want 409", rr.Code)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if errBlk, _ := resp["error"].(map[string]any); errBlk["code"] != "INVALID_STATE_TRANSITION" {
+		t.Errorf("delete active: code %v, want INVALID_STATE_TRANSITION", errBlk["code"])
+	}
+	if _, err := exps.Get(context.Background(), "acme", "exp_active"); err != nil {
+		t.Error("experiment removed despite reject")
+	}
+}
+
+// spec: §10.7 line 703 / §15.1 line 1005 — reserved-identifier
+// violation surfaces as 422 RESERVED_IDENTIFIER with details.field +
+// details.value, distinct from VALIDATION_ERROR. F-10.7.11.
+func TestCreateExperimentReservedIdentifierCode(t *testing.T) {
+	router, _, _ := newExperimentAdmin(t)
+	body := validExperimentPayload("exp_resv")
+	body.Variants = []admin.ExperimentVariant{{ID: "control", Weight: 0.1}}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments", body, withAdminPrincipal)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("reserved: status %d, want 422", rr.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	errBlk, _ := resp["error"].(map[string]any)
+	if errBlk["code"] != "RESERVED_IDENTIFIER" {
+		t.Fatalf("code = %v, want RESERVED_IDENTIFIER", errBlk["code"])
+	}
+	details, _ := errBlk["details"].(map[string]any)
+	if details["field"] != "variants[0].id" {
+		t.Errorf("details.field = %v, want variants[0].id", details["field"])
+	}
+	if details["value"] != "control" {
+		t.Errorf("details.value = %v, want \"control\"", details["value"])
+	}
+}
+
+// spec: §4.6.2 line 545 — Σ variant_weights ≥ 1 surfaces as 422
+// INVALID_VARIANT_WEIGHTS, distinct from VALIDATION_ERROR. F-10.7.11.
+func TestCreateExperimentInvalidVariantWeightsCode(t *testing.T) {
+	router, _, _ := newExperimentAdmin(t)
+	body := validExperimentPayload("exp_weights")
+	body.Variants = []admin.ExperimentVariant{
+		{ID: "a", Weight: 0.5},
+		{ID: "b", Weight: 0.5},
+	}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments", body, withAdminPrincipal)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("sum>=1: status %d, want 422", rr.Code)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	errBlk, _ := resp["error"].(map[string]any)
+	if errBlk["code"] != "INVALID_VARIANT_WEIGHTS" {
+		t.Errorf("code = %v, want INVALID_VARIANT_WEIGHTS", errBlk["code"])
 	}
 }
 

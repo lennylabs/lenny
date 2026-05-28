@@ -258,11 +258,12 @@ func TestDefinitionRejectsReservedControlID(t *testing.T) {
 }
 
 func TestDefinitionRejectsBadWeights(t *testing.T) {
+	// spec: §10.7 line 694 / line 743 — each weight in [0.0, 1.0); a
+	// 1.0 weight always violates the cross-Σ < 1.0 rule.
 	cases := []struct {
 		name    string
 		weights []float64
 	}{
-		{"zero weight", []float64{0}},
 		{"weight one", []float64{1.0}},
 		{"weight over one", []float64{1.5}},
 		{"negative weight", []float64{-0.1}},
@@ -282,6 +283,23 @@ func TestDefinitionRejectsBadWeights(t *testing.T) {
 				t.Errorf("bad weights %v should be rejected", c.weights)
 			}
 		})
+	}
+}
+
+// spec: §10.7 line 694 — weight: 0.0 is operationally a no-op (no
+// traffic to the variant) and must be admitted so deployers can stage a
+// variant before turning on traffic. F-10.7.16.
+func TestDefinitionAcceptsZeroWeightVariant(t *testing.T) {
+	d := Definition{
+		ID: "x", Status: StatusActive, BaseRuntime: "r",
+		TargetingMode: TargetingPercentage, Sticky: StickyUser, Propagation: PropagationInherit,
+		Variants: []Variant{
+			{ID: "staged", Weight: 0},
+			{ID: "live", Weight: 0.1},
+		},
+	}
+	if err := d.Validate(); err != nil {
+		t.Fatalf("staged variant with weight 0 should be admitted: %v", err)
 	}
 }
 

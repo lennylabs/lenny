@@ -13662,7 +13662,7 @@ the documented `400`.
 
 ---
 
-### - [ ] F-10.7.11 — 11  `RESERVED_IDENTIFIER` error code is collapsed into generic `VALIDATION_ERROR` [Medium] — OPEN
+### - [x] F-10.7.11 — 11  `RESERVED_IDENTIFIER` error code is collapsed into generic `VALIDATION_ERROR` [Medium] — CLOSED
 
 **Spec:** §10.7 line 703 and §15.1 line 1005 — attempting to define a
 variant with `id: "control"` must return `422` with error code
@@ -13684,6 +13684,8 @@ asserts only the HTTP status, accepting the wrong error code.
 **Classification:** Medium — callers cannot programmatically distinguish a
 reserved-identifier rejection from any other validation failure. The
 documented error catalog is divergent from the actual wire response.
+
+**Resolution:** `experiment.ValidationError` now carries typed `Violation` entries with a §15.1 `Code` (`RESERVED_IDENTIFIER`, `INVALID_VARIANT_WEIGHTS`, or `VALIDATION_ERROR`). New `writeExperimentValidationError` helper in `pkg/gateway/admin/experiments.go` maps the precedence chain to the correct 422 response with `details.field` + `details.value`. Closed in this batch's commit.
 
 ---
 
@@ -13812,7 +13814,7 @@ of the documented surface and several other admin resources implement it
 
 ---
 
-### - [ ] F-10.7.16 — 16  Variant `Weight` must be in `(0, 1)`; spec allows `weight: 0.0` semantics around the boundary [Low] — OPEN
+### - [x] F-10.7.16 — 16  Variant `Weight` must be in `(0, 1)`; spec allows `weight: 0.0` semantics around the boundary [Low] — CLOSED
 
 **Spec:** §10.7 lines 693–694 — "`weight: 0.10 # fraction (0.0–1.0); 0.10 =
 10% of traffic`". The pseudocode at lines 747–767 uses the variant directly
@@ -13834,9 +13836,11 @@ spec, which only causes harm for operators staging a variant with
 `weight: 0` (a documented experiment-staging pattern would be rejected at
 admission). No correctness regression results.
 
+**Resolution:** Relaxed the per-variant weight bound from `(0, 1)` to `[0, 1)` in `pkg/experiment/experiment.go` and `pkg/controller/poolscaling/variants.go`. A 0-weight variant is admitted (staged with no traffic); cross-Σ < 1.0 still blocks the trivial single-variant-of-1.0 case. Closed in this batch's commit.
+
 ---
 
-### - [ ] F-10.7.17 — 17  No experiment-state guard on `DELETE /v1/admin/experiments/{name}` [Low] — OPEN
+### - [x] F-10.7.17 — 17  No experiment-state guard on `DELETE /v1/admin/experiments/{name}` [Low] — CLOSED
 
 **Spec:** §10.7 line 1094 — "Concluded experiments are immutable". The
 broader implication is that an active experiment's deletion would orphan
@@ -13852,6 +13856,8 @@ deletes regardless of `Status`. No `CanDelete()` check exists. The
 implementation diverges from a defensive reading where deletion is permitted
 only after `concluded`. An operator can delete an `active` experiment, after
 which its variant pool's transition behavior is undefined.
+
+**Resolution:** `handleDeleteExperiment` in `pkg/gateway/admin/experiments.go` now reads the experiment's status first and rejects active/paused with `409 INVALID_STATE_TRANSITION` (carrying `details.currentStatus`). Operators must PATCH to `concluded` before DELETE. Closed in this batch's commit.
 
 ---
 
@@ -13896,7 +13902,7 @@ serialize the column directly.
 
 ---
 
-### - [ ] F-10.7.20 — 20  Experiment-router enrollment scope is constrained to matching `baseRuntime`; spec leaves this implicit [Info] — OPEN
+### - [x] F-10.7.20 — 20  Experiment-router enrollment scope is constrained to matching `baseRuntime`; spec leaves this implicit [Info] — CLOSED
 
 **Spec:** §10.7 lines 685–701 — each experiment names a `baseRuntime`; the
 variant routes traffic from that base runtime onto a sibling variant
@@ -13915,6 +13921,8 @@ multi_eligible_skipped event scope confirms only matching candidates count.
 **Classification:** Info — implementation choice is sensible, but the spec
 should make the base-runtime filter explicit so deployers understand which
 experiments compete on the first-match rule for a given session.
+
+**Resolution:** Verify-closed. `pkg/gateway/sessionserver/experimentrouter.go` filters tenant experiments to those whose `BaseRuntime == row.RuntimeRef` before evaluating; this is the desired operational behavior per the finding's own analysis (a session's variant must be a compatible upgrade path from its base runtime). No code change required.
 
 ### Coverage notes
 

@@ -245,7 +245,7 @@ func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request
 				"experiment with this id already exists in tenant", nil)
 			return
 		}
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
+		writeExperimentValidationError(w, err)
 		return
 	}
 	stored, _ := r.experiments.Get(req.Context(), tenant, exp.ID)
@@ -333,7 +333,7 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "experiment not found", nil)
 			return
 		}
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
+		writeExperimentValidationError(w, err)
 		return
 	}
 	principal, _ := authmw.FromContext(req.Context())
@@ -415,6 +415,26 @@ func (r *Router) handleDeleteExperiment(w http.ResponseWriter, req *http.Request
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
+	// spec: §10.7 line 1094 — concluded experiments are immutable; an
+	// active or paused experiment owns a variant pool and may have
+	// in-flight enrolled sessions whose eval attribution would orphan
+	// on delete. Require the operator to PATCH to `concluded` first.
+	// F-10.7.17.
+	existing, gerr := r.experiments.Get(req.Context(), tenant, name)
+	if gerr != nil {
+		if errors.Is(gerr, experimentstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "experiment not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+		return
+	}
+	if existing.Status != experiment.StatusConcluded {
+		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
+			"experiment must be in 'concluded' status before delete",
+			map[string]any{"currentStatus": string(existing.Status)})
+		return
+	}
 	if err := r.experiments.Delete(req.Context(), tenant, name); err != nil {
 		if errors.Is(err, experimentstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "experiment not found", nil)
@@ -426,4 +446,31 @@ func (r *Router) handleDeleteExperiment(w http.ResponseWriter, req *http.Request
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.experiment.deleted", name, map[string]any{"tenantId": tenant})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeExperimentValidationError surfaces an experiment.ValidationError
+// using the §15.1-distinct error code attached to each violation.
+// RESERVED_IDENTIFIER (line 1005) and INVALID_VARIANT_WEIGHTS (§4.6.2
+// line 545) take precedence over the generic VALIDATION_ERROR so
+// callers can programmatically distinguish them. spec: F-10.7.11.
+func writeExperimentValidationError(w http.ResponseWriter, err error) {
+	var ve *experiment.ValidationError
+	if !errors.As(err, &ve) {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	preference := []string{experiment.CodeReservedIdentifier, experiment.CodeInvalidVariantWeights}
+	for _, code := range preference {
+		if !ve.HasCode(code) {
+			continue
+		}
+		v := ve.FirstWithCode(code)
+		details := map[string]any{"field": v.Field}
+		if v.Value != nil {
+			details["value"] = v.Value
+		}
+		writeError(w, http.StatusUnprocessableEntity, code, v.Message, details)
+		return
+	}
+	writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
 }

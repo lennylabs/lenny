@@ -83,8 +83,10 @@ func ResolveVariantRoles(configs []PoolConfig, variants []ActiveVariant) ([]Pool
 	isBase := make(map[string]bool)
 
 	for _, v := range variants {
-		if v.Weight <= 0 || v.Weight >= 1 {
-			return nil, fmt.Errorf("variant pool %q of experiment %q: weight must be in (0,1), got %g",
+		if v.Weight < 0 || v.Weight >= 1 {
+			// spec: §10.7 line 694 / line 743 — weight in [0.0, 1.0);
+			// 0.0 admits staged variants with no traffic.
+			return nil, fmt.Errorf("variant pool %q of experiment %q: weight must be in [0,1), got %g",
 				v.VariantPool, v.ExperimentID, v.Weight)
 		}
 		vi, ok := index[v.VariantPool]

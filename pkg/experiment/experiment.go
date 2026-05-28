@@ -180,7 +180,12 @@ const ControlVariantID = "control"
 type Variant struct {
 	// ID is the variant identifier. Cannot equal ControlVariantID.
 	ID string
-	// Weight is the traffic fraction routed to this variant; in (0, 1).
+	// Weight is the traffic fraction routed to this variant; in [0, 1).
+	// spec: §10.7 line 694 / line 743 — fraction in [0.0, 1.0]; the
+	// cross-Σ < 1.0 rule (line 743) bars 1.0 in a single-variant
+	// experiment. A weight of 0.0 is operationally a no-op (no traffic
+	// to the variant) and is admitted so deployers can stage a variant
+	// before turning on traffic.
 	Weight float64
 }
 
@@ -197,48 +202,68 @@ type Definition struct {
 }
 
 // Validate reports the §10.7 admission errors for an
-// ExperimentDefinition at admin POST/PUT time.
+// ExperimentDefinition at admin POST/PUT time. Violations are tagged
+// with a §15.1 error code so the admin handler can surface
+// `RESERVED_IDENTIFIER` (line 1005) or `INVALID_VARIANT_WEIGHTS`
+// (§4.6.2 line 545) distinctly from the generic `VALIDATION_ERROR`.
 func (d Definition) Validate() error {
-	v := []string{}
+	var v []Violation
 	if d.ID == "" {
-		v = append(v, "id is required")
+		v = append(v, Violation{Code: CodeValidationError, Field: "id", Message: "id is required"})
 	}
 	if !d.Status.IsValid() {
-		v = append(v, fmt.Sprintf("status %q is not in {active, paused, concluded}", d.Status))
+		v = append(v, Violation{Code: CodeValidationError, Field: "status", Value: string(d.Status),
+			Message: fmt.Sprintf("status %q is not in {active, paused, concluded}", d.Status)})
 	}
 	if d.BaseRuntime == "" {
-		v = append(v, "baseRuntime is required")
+		v = append(v, Violation{Code: CodeValidationError, Field: "baseRuntime", Message: "baseRuntime is required"})
 	}
 	if !d.TargetingMode.IsValid() {
-		v = append(v, fmt.Sprintf("targeting.mode %q is not in {percentage, external}", d.TargetingMode))
+		v = append(v, Violation{Code: CodeValidationError, Field: "targeting.mode", Value: string(d.TargetingMode),
+			Message: fmt.Sprintf("targeting.mode %q is not in {percentage, external}", d.TargetingMode)})
 	}
 	if !d.Sticky.IsValid() {
-		v = append(v, fmt.Sprintf("targeting.sticky %q is not in {user, session, none}", d.Sticky))
+		v = append(v, Violation{Code: CodeValidationError, Field: "targeting.sticky", Value: string(d.Sticky),
+			Message: fmt.Sprintf("targeting.sticky %q is not in {user, session, none}", d.Sticky)})
 	}
 	if !d.Propagation.IsValid() {
-		v = append(v, fmt.Sprintf("propagation.childSessions %q is not in {inherit, control, independent}", d.Propagation))
+		v = append(v, Violation{Code: CodeValidationError, Field: "propagation.childSessions", Value: string(d.Propagation),
+			Message: fmt.Sprintf("propagation.childSessions %q is not in {inherit, control, independent}", d.Propagation)})
 	}
 	var totalWeight float64
 	seen := map[string]bool{}
 	for i, vt := range d.Variants {
+		field := fmt.Sprintf("variants[%d].id", i)
 		if vt.ID == "" {
-			v = append(v, fmt.Sprintf("variants[%d].id is required", i))
+			v = append(v, Violation{Code: CodeValidationError, Field: field, Message: field + " is required"})
 			continue
 		}
 		if vt.ID == ControlVariantID {
-			v = append(v, fmt.Sprintf("variants[%d].id %q is a reserved identifier", i, vt.ID))
+			// spec: §10.7 line 703 / §15.1 line 1005 — variant id
+			// "control" is reserved; admin must surface
+			// RESERVED_IDENTIFIER with details.field + details.value.
+			v = append(v, Violation{Code: CodeReservedIdentifier, Field: field, Value: vt.ID,
+				Message: fmt.Sprintf("variants[%d].id %q is a reserved identifier", i, vt.ID)})
 		}
 		if seen[vt.ID] {
-			v = append(v, fmt.Sprintf("variants[%d].id %q duplicates an earlier variant", i, vt.ID))
+			v = append(v, Violation{Code: CodeValidationError, Field: field, Value: vt.ID,
+				Message: fmt.Sprintf("variants[%d].id %q duplicates an earlier variant", i, vt.ID)})
 		}
 		seen[vt.ID] = true
-		if vt.Weight <= 0 || vt.Weight >= 1 {
-			v = append(v, fmt.Sprintf("variants[%d].weight %g must be in (0, 1)", i, vt.Weight))
+		if vt.Weight < 0 || vt.Weight >= 1 {
+			// spec: §10.7 line 694 / line 743 — weight in [0.0, 1.0);
+			// 1.0 always violates the cross-Σ < 1.0 rule (line 743);
+			// 0.0 is admitted (staged variant with no traffic).
+			v = append(v, Violation{Code: CodeInvalidVariantWeights, Field: fmt.Sprintf("variants[%d].weight", i), Value: vt.Weight,
+				Message: fmt.Sprintf("variants[%d].weight %g must be in [0, 1)", i, vt.Weight)})
 		}
 		totalWeight += vt.Weight
 	}
 	if totalWeight >= 1 {
-		v = append(v, fmt.Sprintf("Σ variant_weights %g must be < 1 (remainder is the control group)", totalWeight))
+		// spec: §4.6.2 line 545 — Σ variant_weights ≥ 1 returns
+		// INVALID_VARIANT_WEIGHTS at admission.
+		v = append(v, Violation{Code: CodeInvalidVariantWeights, Field: "variants", Value: totalWeight,
+			Message: fmt.Sprintf("Σ variant_weights %g must be < 1 (remainder is the control group)", totalWeight)})
 	}
 	if len(v) == 0 {
 		return nil
@@ -246,16 +271,62 @@ func (d Definition) Validate() error {
 	return &ValidationError{ID: d.ID, Violations: v}
 }
 
+// Violation codes surfaced by Definition.Validate; the admin handler
+// maps each to its §15.1 error code.
+const (
+	CodeValidationError       = "VALIDATION_ERROR"
+	CodeReservedIdentifier    = "RESERVED_IDENTIFIER"
+	CodeInvalidVariantWeights = "INVALID_VARIANT_WEIGHTS"
+)
+
+// Violation is one §10.7 admission-time defect. Code is the §15.1
+// error code, Field is the JSON-path of the offending field, Value is
+// the rejected value (when applicable), and Message is the human
+// description.
+type Violation struct {
+	Code    string
+	Field   string
+	Value   any
+	Message string
+}
+
 // ValidationError captures Definition.Validate failures. The admin
 // API surfaces this as 422 with a `RESERVED_IDENTIFIER` /
-// `INVALID_VARIANT_WEIGHTS` error code per §10.7.
+// `INVALID_VARIANT_WEIGHTS` / `VALIDATION_ERROR` error code per §10.7
+// — see Violation.Code on each entry.
 type ValidationError struct {
 	ID         string
-	Violations []string
+	Violations []Violation
 }
 
 func (e *ValidationError) Error() string {
-	return fmt.Sprintf("experiment: %s: %v", e.ID, e.Violations)
+	msgs := make([]string, len(e.Violations))
+	for i, v := range e.Violations {
+		msgs[i] = v.Message
+	}
+	return fmt.Sprintf("experiment: %s: %v", e.ID, msgs)
+}
+
+// HasCode reports whether any violation carries the given §15.1 code.
+func (e *ValidationError) HasCode(code string) bool {
+	for _, v := range e.Violations {
+		if v.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// FirstWithCode returns the first violation tagged with code, or a
+// zero Violation when none exists. Used by the admin handler to
+// populate `details.field` / `details.value` for the §15.1 error.
+func (e *ValidationError) FirstWithCode(code string) Violation {
+	for _, v := range e.Violations {
+		if v.Code == code {
+			return v
+		}
+	}
+	return Violation{}
 }
 
 // AssignVariant implements the §10.7 percentage-mode bucketing

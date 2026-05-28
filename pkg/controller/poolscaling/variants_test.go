@@ -185,14 +185,34 @@ func TestResolveVariantRolesRejectsDuplicateVariantPool(t *testing.T) {
 // a non-positive or ≥ 1 weight is invalid and must be rejected with the
 // failure attributable to the named experiment.
 func TestResolveVariantRolesRejectsOutOfRangeWeight(t *testing.T) {
-	for _, w := range []float64{0, -0.1, 1, 1.5} {
+	// spec: §10.7 line 694 / line 743 — weight in [0.0, 1.0); 1.0 and
+	// negative values are rejected. 0.0 is accepted (a staged variant
+	// with no traffic) — see TestResolveVariantRolesAcceptsZeroWeight.
+	// F-10.7.16.
+	for _, w := range []float64{-0.1, 1, 1.5} {
 		configs := []poolscaling.PoolConfig{poolNamed("base"), poolNamed("variant-a")}
 		variants := []poolscaling.ActiveVariant{
 			{ExperimentID: "exp-1", BasePool: "base", VariantPool: "variant-a", Weight: w},
 		}
 		if _, err := poolscaling.ResolveVariantRoles(configs, variants); err == nil {
-			t.Errorf("weight %g: ResolveVariantRoles should reject a weight outside (0,1)", w)
+			t.Errorf("weight %g: ResolveVariantRoles should reject a weight outside [0,1)", w)
 		}
+	}
+}
+
+// spec: §10.7 line 694 / line 743 — weight=0.0 admits a staged variant
+// before traffic is turned on. F-10.7.16.
+func TestResolveVariantRolesAcceptsZeroWeight(t *testing.T) {
+	configs := []poolscaling.PoolConfig{poolNamed("base"), poolNamed("variant-a")}
+	variants := []poolscaling.ActiveVariant{
+		{ExperimentID: "exp-1", BasePool: "base", VariantPool: "variant-a", Weight: 0},
+	}
+	out, err := poolscaling.ResolveVariantRoles(configs, variants)
+	if err != nil {
+		t.Fatalf("zero-weight variant should be admitted: %v", err)
+	}
+	if got := findPool(t, out, "variant-a").VariantWeight; got != 0 {
+		t.Errorf("variant-a VariantWeight = %g, want 0", got)
 	}
 }
 
