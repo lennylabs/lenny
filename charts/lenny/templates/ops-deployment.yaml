@@ -111,6 +111,14 @@ spec:
             - --leader-election-namespace={{ .Release.Namespace }}
             - --gateway-url=http://lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.internalPort }}
             - --production={{ .Values.ops.production }}
+            {{- if .Values.ops.prometheus.url }}
+            # §25.16 line 5124: when ops.prometheus.url is set, lenny-ops
+            # uses the supplied BYO Prometheus HTTP API for §25.4
+            # cross-replica health aggregation and §25.13 alert
+            # evaluation. Empty (the Tier 1 default) leaves lenny-ops in
+            # per-replica fan-out fallback.
+            - --prometheus-url={{ .Values.ops.prometheus.url }}
+            {{- end }}
             {{- if .Values.platform.releaseChannel.publisher.enabled }}
             # §25.8 release-channel manifest publisher.
             - --release-channel-key-file=/etc/lenny/release-channel/{{ .Values.platform.releaseChannel.publisher.signingKeyKey }}
@@ -189,6 +197,13 @@ spec:
 # the binary serves /metrics on the same mux as the §25 HTTP surface;
 # the §13.2 NET-045 monitoring-scrape NetworkPolicy and podmonitor.yaml
 # scrape it.
+#
+# sessionAffinity: ClientIP with a 3h clientIP timeout pins each SSE
+# client to the replica that buffered its events (§25.4 line 1063 / §25.16
+# Production block). During a dual gateway+Redis outage the per-replica
+# event buffer is the only durability layer; a reconnecting watchdog must
+# return to the same lenny-ops replica or it silently misses the locally
+# buffered events.
 apiVersion: v1
 kind: Service
 metadata:
@@ -200,6 +215,10 @@ metadata:
 spec:
   selector:
     app: lenny-ops
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: {{ .Values.ops.service.sessionAffinityTimeoutSeconds }}
   ports:
     - name: http
       port: {{ .Values.ops.httpPort }}

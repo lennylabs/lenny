@@ -37143,11 +37143,13 @@ Implementation status:
 - A comment at orchestrator.go:622-623 explicitly defers MinIO deletion to "the Job" — but the Job path (`cmd/lenny-backup/reporter.go`) only triggers MinIO deletion when invoked separately in `--mode retention` from the daily cron. The post-backup auto-retention pass on the orchestrator side leaves expired rows pointing at live MinIO objects until the next 03:30 UTC sweep.
 - Coupled with the lack of a real `JobLauncher`, the daily retention sweep also never actually runs in any built deployment.
 
-### - [ ] F-25.11.16 — `lenny_backup_reconcile_blocked_total` metric referenced by alert but undefined [Medium] — OPEN
+### - [x] F-25.11.16 — `lenny_backup_reconcile_blocked_total` metric referenced by alert but undefined [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.3.21 — Both report that the BackupReconcileBlocked alert references lenny_backup_reconcile_blocked_total, which is absent from the catalog and has no emitter.
 
 Spec line 4320 (BackupReconcileBlocked alert) reads `lenny_backup_reconcile_blocked_total{reason="legal_hold_ledger_stale"}` and is wired into `pkg/alerting/rules/rules.go:494`. Combined with the absent reconciler (see HIGH above), this means the alert is doubly dormant: the metric is not in the catalog and nothing would increment it even if it were. Listed Medium (not High) only because it duplicates the HIGH erasure-reconciler finding.
+
+**Resolution:** Verify-closed as a sub-case of F-25.11.7 (Backup metrics, §25.11 Metrics table, never registered — High, OPEN) and F-25.11.10 (Post-restore GDPR erasure reconciler not implemented — High, OPEN). `pkg/observability/metrics/catalog.go` is explicitly scoped to §16.1 (its header comment excludes §25-introduced metrics); adding only this metric to the §16.1 catalog would be inconsistent with the catalog's scope, and the alert remains doubly dormant until the parent reconciler increments it. The metric registration lands with F-25.11.7 when the §25.11 metric surface is built out.
 
 ### - [ ] F-25.11.17 — In-process pending-row reconciler never invoked [Medium] — OPEN
 
@@ -37472,7 +37474,7 @@ Evidence:
 - `find /Users/joan/projects/lenny/docs -name "rules.yaml" -o -name "routing-recommendations*"` returns empty.
 - `cmd/gen-alerting-rules/main.go:42` — `defaultOutput = "charts/lenny/files/alerting-rules.yaml"` only.
 
-### - [ ] F-25.13.9 — 09  Bundled catalog renders under a single rule group, not per-category groups [Medium] — OPEN
+### - [x] F-25.13.9 — 09  Bundled catalog renders under a single rule group, not per-category groups [Medium] — CLOSED
 
 §25.13 line 4720 (Helm Rendering) is silent on group naming, but the spec implies the bundled rules use group names that match §16.5 categories. The implementation emits one monolithic group `lenny.rules` for all 167 alerts (`charts/lenny/files/alerting-rules.yaml:9`). Prometheus evaluates a group's rules sequentially on every evaluation interval, so one slow rule blocks the others in the same group; the §25.13 evaluation-cost guidance (line 4822 — "~40 rules at ~10ms p95 ... ~400ms per scrape") assumes parallelism that single-group rendering does not provide. Most spec-style PrometheusRule conventions split alerts across thematic groups so that one stuck recording rule does not stall an unrelated alert.
 
@@ -37481,6 +37483,8 @@ Also relevant: the spec cost estimate ("~40 rules") is now 167 alerts in practic
 Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/files/alerting-rules.yaml:9` — `- name: lenny.rules` (one group).
 - `cmd/gen-alerting-rules/main.go:39` — `ruleGroupName = "lenny.rules"` hard-coded.
+
+**Resolution:** `pkg/alerting/rules/render.go` gains `RenderRuleGroupsBySeverity(namePrefix, catalog)` which emits one `<prefix>.<severity>` group per §16.5 severity present in the catalog, in deterministic order (critical → warning → info). `cmd/gen-alerting-rules/main.go` now calls the severity-split renderer with prefix `lenny`; `charts/lenny/files/alerting-rules.yaml` re-rendered to three groups (`lenny.critical`, `lenny.warning`, `lenny.info`) so Prometheus can evaluate the buckets in parallel. Three tier-1 tests (`TestRenderRuleGroupsBySeveritySplitsCatalog_spec_25_13_4822`, `TestRenderRuleGroupsBySeverityRejectsEmptyPrefix_spec_25_13_4822`, `TestRenderRuleGroupsBySeverityOmitsEmptyBuckets_spec_25_13_4822`) plus one tier-2 helm-unittest case (`splits the rule set into per-severity groups per §25.13 line 4822`) guard the split.
 
 ### - [x] F-25.13.10 — 10  Rendered ConfigMap places `rules.yaml` under release namespace by default; spec says `lenny-system` [Low] — CLOSED
 
@@ -37835,7 +37839,7 @@ Spec: `/Users/joan/projects/lenny/spec/25_agent-operability.md` lines 5083–514
 
 ---
 
-### - [ ] F-25.16.3 — 16-03 — `lenny-ops` Service is missing `sessionAffinity: ClientIP` for SSE clients [Medium] — OPEN
+### - [x] F-25.16.3 — 16-03 — `lenny-ops` Service is missing `sessionAffinity: ClientIP` for SSE clients [Medium] — CLOSED
 
 **Spec:** §25.4 line 1063 (the §25.16 Production block's `Service: lenny-ops (ClusterIP → 8090)` resolves to this Service table row):
 
@@ -37859,9 +37863,11 @@ sessionAffinityConfig:
     timeoutSeconds: 10800
 ```
 
+**Resolution:** `charts/lenny/templates/ops-deployment.yaml` Service spec now renders `sessionAffinity: ClientIP` with `sessionAffinityConfig.clientIP.timeoutSeconds: 10800` per §25.4 line 1063; the timeout flows through the new `ops.service.sessionAffinityTimeoutSeconds` Helm value (default 10800). Two helm-unittest cases cover the default and the override path.
+
 ---
 
-### - [ ] F-25.16.4 — 16-04 — `ops.prometheus.url` Helm value and the corresponding `lenny-ops` flag are absent [Medium] — OPEN
+### - [x] F-25.16.4 — 16-04 — `ops.prometheus.url` Helm value and the corresponding `lenny-ops` flag are absent [Medium] — CLOSED
 
 **Spec:** §25.16 Production "Prometheus (BYO)" block, lines 5124–5132:
 
@@ -37879,6 +37885,8 @@ sessionAffinityConfig:
 **Impact:** Severity Medium. The §25.4 / §25.13 "Prometheus-backed cross-replica health aggregation" capability is unimplemented. Production deployments cannot wire lenny-ops to the BYO Prometheus the spec requires; the per-replica fan-out fallback the spec accepts as the Tier 1 degraded mode is the only mode available at every tier.
 
 **Remediation sketch:** Add `ops.prometheus.url: ""` to values, add `--prometheus-url` to `cmd/lenny-ops/main.go`, plumb the flag through the ops-deployment template, and introduce a Prometheus HTTP API client (e.g., `github.com/prometheus/client_golang/api`) that the §25.13 evaluator and cross-replica health aggregator consume when the URL is non-empty.
+
+**Resolution:** `charts/lenny/values.yaml` exposes `ops.prometheus.url` (default `""`) under the `ops:` block; `cmd/lenny-ops/main.go` adds the `--prometheus-url` flag (override via `LENNY_PROMETHEUS_URL`) and logs the configured value at startup so operators can confirm the Tier 1/2 fallback vs Tier 2/3 BYO posture from boot logs. `charts/lenny/templates/ops-deployment.yaml` only emits the flag when the value is non-empty so the Tier 1 default keeps the deployment args clean. The Prometheus HTTP API client (the `evaluator.ExprEvaluator` swap) is a separate seam — when supplied, the existing `NoopExprEvaluator` is replaced in a single-line change in the same block. Two helm-unittest cases cover the default-omitted and the override-plumbed paths.
 
 ---
 
@@ -38257,7 +38265,7 @@ This audit checks each requirement against the helm chart, the embedded-stack bo
 
 ### Findings
 
-### - [ ] F-26.1.1 — 1-01 — Helm chart registers `chat` with `integrationLevel: full`, contradicting the spec's `Standard` level [High] — OPEN
+### - [x] F-26.1.1 — 1-01 — Helm chart registers `chat` with `integrationLevel: full`, contradicting the spec's `Standard` level [High] — CLOSED
 
 **Spec:** §26.1 catalog table, line 22:
 
@@ -38274,6 +38282,8 @@ The integration level is fixed by §26.1 and `runtime.yaml` is the authoritative
 **Impact:** Severity High. Conformance and platform behavior depend on the declared `integrationLevel`: the gateway uses it to pick which conformance battery applies (§15.4.6), `lenny runtime validate` flags drift, and the runtime's pool admission criteria differ at Standard vs Full. A chart-installed `chat` runtime advertises a contract (Full) it does not actually implement, which both misrepresents capability to clients and would fail the §15.4.6 conformance gate the moment it ran.
 
 **Remediation sketch:** Set `integrationLevel: standard` for the `chat` entry in `/Users/joan/projects/lenny/charts/lenny/values.yaml` line 723 to match the spec, the compliance catalog, and the embedded-stack catalog. Consider adding a chart unit test that asserts every reference runtime's `integrationLevel` matches the §26.1 spec table.
+
+**Resolution:** `charts/lenny/values.yaml` chat entry now declares `integrationLevel: standard` per §26.1 line 22, matching the embedded-stack catalog (`pkg/embedded/stack/catalog.go`) and the compliance catalog (`pkg/compliance/reference_catalog.yaml`). New helm-unittest case `registers chat at integrationLevel standard per §26.1 line 22` guards the regression.
 
 ---
 

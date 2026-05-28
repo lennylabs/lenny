@@ -25,12 +25,21 @@ tests:
           path: metadata.namespace
           value: monitoring
 
-  - it: names the single rule group lenny.rules
+  # spec: §25.13 line 4822 — F-25.13.9. The catalog renders one rule
+  # group per §16.5 severity (critical, warning, info) so Prometheus
+  # evaluates each bucket in parallel rather than serialising the full
+  # catalog through a single group. The "~40 rules at ~10ms p95" budget
+  # in §25.13 applies per group; with the catalog now well past forty
+  # alerts, the split protects the per-group evaluation budget.
+  - it: splits the rule set into per-severity groups per §25.13 line 4822
     documentIndex: 0
     asserts:
       - equal:
           path: spec.groups[0].name
-          value: lenny.rules
+          value: lenny.critical
+      - equal:
+          path: spec.groups[1].name
+          value: lenny.warning
 
   - it: bundles the WarmPoolExhausted critical alert from the §16.5 catalog
     documentIndex: 0

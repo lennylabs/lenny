@@ -6,7 +6,7 @@
 # catalog in pkg/alerting/rules and regenerating is the only supported
 # way to change these rules.
 groups:
-    - name: lenny.rules
+    - name: lenny.critical
       rules:
         - alert: WarmPoolExhausted
           expr: (min by (pool) (lenny_warmpool_idle_pods) == 0) unless on (pool) (lenny_warmpool_fill_grace_active == 1)
@@ -330,6 +330,88 @@ groups:
             description: Two lenny-ops replicas briefly believed they held the same remediation lock; outage-epoch reconciliation resolved the conflict but the event requires auditing.
             runbook_url: https://docs.lenny.dev/runbooks/ops-lock-split-brain
             summary: lenny-ops remediation lock split-brain detected
+        - alert: SessionCreationSuccessRateBurnRate
+          expr: lenny_session_creation_error_ratio / (1 - 0.995) > 14
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            runbook_url: https://docs.lenny.dev/runbooks/session-creation-success-rate-burn-rate
+            slo: Session creation success rate >= 99.5%
+            summary: Fast-window error-budget burn for Session creation success rate >= 99.5%
+        - alert: SessionCreationLatencyBurnRate
+          expr: lenny_session_creation_latency_slow_ratio / 0.01 > 14
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            runbook_url: https://docs.lenny.dev/runbooks/session-creation-latency-burn-rate
+            slo: Session creation latency P99 < 500ms
+            summary: Fast-window error-budget burn for Session creation latency P99 < 500ms
+        - alert: SessionAvailabilityBurnRate
+          expr: lenny_session_unavailability_ratio / (1 - 0.999) > 14
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            runbook_url: https://docs.lenny.dev/runbooks/session-availability-burn-rate
+            slo: Session availability >= 99.9%
+            summary: Fast-window error-budget burn for Session availability >= 99.9%
+        - alert: GatewayAvailabilityBurnRate
+          expr: lenny_gateway_unavailability_ratio / (1 - 0.9995) > 14
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            runbook_url: https://docs.lenny.dev/runbooks/gateway-availability-burn-rate
+            slo: Gateway availability >= 99.95%
+            summary: Fast-window error-budget burn for Gateway availability >= 99.95%
+        - alert: StartupLatencyBurnRate
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05 > 14
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            runbook_url: https://docs.lenny.dev/runbooks/startup-latency-burn-rate
+            slo: Startup latency P95 < 2s (runc)
+            summary: Fast-window error-budget burn for Startup latency P95 < 2s (runc)
+        - alert: StartupLatencyGVisorBurnRate
+          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05 > 14
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            runbook_url: https://docs.lenny.dev/runbooks/startup-latency-gvisor-burn-rate
+            slo: Startup latency P95 < 5s (gVisor)
+            summary: Fast-window error-budget burn for Startup latency P95 < 5s (gVisor)
+        - alert: TTFTBurnRate
+          expr: (1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05 > 14
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            runbook_url: https://docs.lenny.dev/runbooks/ttft-burn-rate
+            slo: Time to first token P95 < 10s
+            summary: Fast-window error-budget burn for Time to first token P95 < 10s
+        - alert: CheckpointDurationBurnRate
+          expr: lenny_checkpoint_duration_slow_ratio / 0.05 > 14
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
+            runbook_url: https://docs.lenny.dev/runbooks/checkpoint-duration-burn-rate
+            slo: Checkpoint duration P95 < 2s (<= 100MB)
+            summary: Fast-window error-budget burn for Checkpoint duration P95 < 2s (<= 100MB)
+    - name: lenny.warning
+      rules:
         - alert: WarmPoolLow
           expr: (lenny_warmpool_idle_pods / on(pool) group_left lenny_warmpool_min_warm < 0.25) unless on (pool) (lenny_warmpool_fill_grace_active == 1)
           labels:
@@ -1099,13 +1181,6 @@ groups:
           annotations:
             description: A variant pool's isolationProfile is weaker than an enrolled session's minIsolationProfile, and affected sessions are rejected with VARIANT_ISOLATION_UNAVAILABLE. Steady-state value is zero; a sustained rate means the §10.7 admission-time monotonicity check was bypassed.
             summary: ExperimentRouter is failing closed on isolation-monotonicity checks
-        - alert: PlatformUpgradeAvailable
-          expr: lenny_platform_upgrade_available > 0
-          labels:
-            severity: info
-          annotations:
-            description: /v1/admin/platform/upgrade-check reports a new Lenny release. Informational; used to drive agent-initiated upgrade workflows.
-            summary: A new Lenny platform release is available
         - alert: PlatformUpgradeStuck
           expr: lenny_platform_upgrade_phase > 0
           for: 1h
@@ -1178,16 +1253,6 @@ groups:
           annotations:
             description: An in-flight operation exceeded its expected inter-step cadence per the §25.2 Progress Envelope. Investigate via GET /v1/admin/operations/{id}.
             summary: An in-flight operation has stalled
-        - alert: SessionCreationSuccessRateBurnRate
-          expr: lenny_session_creation_error_ratio / (1 - 0.995) > 14
-          for: 1h
-          labels:
-            severity: critical
-          annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
-            runbook_url: https://docs.lenny.dev/runbooks/session-creation-success-rate-burn-rate
-            slo: Session creation success rate >= 99.5%
-            summary: Fast-window error-budget burn for Session creation success rate >= 99.5%
         - alert: SessionCreationSuccessRateBurnRateSlow
           expr: lenny_session_creation_error_ratio / (1 - 0.995) > 3
           for: 6h
@@ -1197,16 +1262,6 @@ groups:
             description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Session creation success rate >= 99.5%
             summary: Slow-window error-budget burn for Session creation success rate >= 99.5%
-        - alert: SessionCreationLatencyBurnRate
-          expr: lenny_session_creation_latency_slow_ratio / 0.01 > 14
-          for: 1h
-          labels:
-            severity: critical
-          annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
-            runbook_url: https://docs.lenny.dev/runbooks/session-creation-latency-burn-rate
-            slo: Session creation latency P99 < 500ms
-            summary: Fast-window error-budget burn for Session creation latency P99 < 500ms
         - alert: SessionCreationLatencyBurnRateSlow
           expr: lenny_session_creation_latency_slow_ratio / 0.01 > 3
           for: 6h
@@ -1216,16 +1271,6 @@ groups:
             description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Session creation latency P99 < 500ms
             summary: Slow-window error-budget burn for Session creation latency P99 < 500ms
-        - alert: SessionAvailabilityBurnRate
-          expr: lenny_session_unavailability_ratio / (1 - 0.999) > 14
-          for: 1h
-          labels:
-            severity: critical
-          annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
-            runbook_url: https://docs.lenny.dev/runbooks/session-availability-burn-rate
-            slo: Session availability >= 99.9%
-            summary: Fast-window error-budget burn for Session availability >= 99.9%
         - alert: SessionAvailabilityBurnRateSlow
           expr: lenny_session_unavailability_ratio / (1 - 0.999) > 3
           for: 6h
@@ -1235,16 +1280,6 @@ groups:
             description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Session availability >= 99.9%
             summary: Slow-window error-budget burn for Session availability >= 99.9%
-        - alert: GatewayAvailabilityBurnRate
-          expr: lenny_gateway_unavailability_ratio / (1 - 0.9995) > 14
-          for: 1h
-          labels:
-            severity: critical
-          annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
-            runbook_url: https://docs.lenny.dev/runbooks/gateway-availability-burn-rate
-            slo: Gateway availability >= 99.95%
-            summary: Fast-window error-budget burn for Gateway availability >= 99.95%
         - alert: GatewayAvailabilityBurnRateSlow
           expr: lenny_gateway_unavailability_ratio / (1 - 0.9995) > 3
           for: 6h
@@ -1254,16 +1289,6 @@ groups:
             description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Gateway availability >= 99.95%
             summary: Slow-window error-budget burn for Gateway availability >= 99.95%
-        - alert: StartupLatencyBurnRate
-          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05 > 14
-          for: 1h
-          labels:
-            severity: critical
-          annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
-            runbook_url: https://docs.lenny.dev/runbooks/startup-latency-burn-rate
-            slo: Startup latency P95 < 2s (runc)
-            summary: Fast-window error-budget burn for Startup latency P95 < 2s (runc)
         - alert: StartupLatencyBurnRateSlow
           expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="runc",le="2"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="runc"}[1h])))) / 0.05 > 3
           for: 6h
@@ -1273,16 +1298,6 @@ groups:
             description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Startup latency P95 < 2s (runc)
             summary: Slow-window error-budget burn for Startup latency P95 < 2s (runc)
-        - alert: StartupLatencyGVisorBurnRate
-          expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05 > 14
-          for: 1h
-          labels:
-            severity: critical
-          annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
-            runbook_url: https://docs.lenny.dev/runbooks/startup-latency-gvisor-burn-rate
-            slo: Startup latency P95 < 5s (gVisor)
-            summary: Fast-window error-budget burn for Startup latency P95 < 5s (gVisor)
         - alert: StartupLatencyGVisorBurnRateSlow
           expr: (1 - (sum(rate(lenny_session_startup_duration_seconds_bucket{isolation_profile="gvisor",le="5"}[1h])) / sum(rate(lenny_session_startup_duration_seconds_count{isolation_profile="gvisor"}[1h])))) / 0.05 > 3
           for: 6h
@@ -1292,16 +1307,6 @@ groups:
             description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Startup latency P95 < 5s (gVisor)
             summary: Slow-window error-budget burn for Startup latency P95 < 5s (gVisor)
-        - alert: TTFTBurnRate
-          expr: (1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05 > 14
-          for: 1h
-          labels:
-            severity: critical
-          annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
-            runbook_url: https://docs.lenny.dev/runbooks/ttft-burn-rate
-            slo: Time to first token P95 < 10s
-            summary: Fast-window error-budget burn for Time to first token P95 < 10s
         - alert: TTFTBurnRateSlow
           expr: (1 - (sum(rate(lenny_session_time_to_first_token_seconds_bucket{le="10"}[1h])) / sum(rate(lenny_session_time_to_first_token_seconds_count[1h])))) / 0.05 > 3
           for: 6h
@@ -1311,16 +1316,6 @@ groups:
             description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Time to first token P95 < 10s
             summary: Slow-window error-budget burn for Time to first token P95 < 10s
-        - alert: CheckpointDurationBurnRate
-          expr: lenny_checkpoint_duration_slow_ratio / 0.05 > 14
-          for: 1h
-          labels:
-            severity: critical
-          annotations:
-            description: Fast-window (1h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 14x the sustainable rate over a 1-hour window. The fast-window alert pages on-call.
-            runbook_url: https://docs.lenny.dev/runbooks/checkpoint-duration-burn-rate
-            slo: Checkpoint duration P95 < 2s (<= 100MB)
-            summary: Fast-window error-budget burn for Checkpoint duration P95 < 2s (<= 100MB)
         - alert: CheckpointDurationBurnRateSlow
           expr: lenny_checkpoint_duration_slow_ratio / 0.05 > 3
           for: 6h
@@ -1330,3 +1325,12 @@ groups:
             description: Slow-window (6h) multi-window burn-rate alert. Fires when the SLO error budget is consumed at more than 3x the sustainable rate over a 6-hour window, catching slow-burn degradation that threshold-only alerts would miss.
             slo: Checkpoint duration P95 < 2s (<= 100MB)
             summary: Slow-window error-budget burn for Checkpoint duration P95 < 2s (<= 100MB)
+    - name: lenny.info
+      rules:
+        - alert: PlatformUpgradeAvailable
+          expr: lenny_platform_upgrade_available > 0
+          labels:
+            severity: info
+          annotations:
+            description: /v1/admin/platform/upgrade-check reports a new Lenny release. Informational; used to drive agent-initiated upgrade workflows.
+            summary: A new Lenny platform release is available

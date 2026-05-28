@@ -33,10 +33,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 )
 
-// ruleGroupName is the single PrometheusRule group name. It matches
-// the group the gateway's in-process evaluator uses so the two
-// surfaces share one identifier.
-const ruleGroupName = "lenny.rules"
+// ruleGroupPrefix is the PrometheusRule group-name prefix. The
+// generator splits the catalog into one rule group per §16.5 severity
+// ("lenny.critical", "lenny.warning", "lenny.info") so Prometheus can
+// evaluate the buckets in parallel rather than serialising the full
+// catalog through a single group; see §25.13 line 4822 per-group
+// evaluation cost. F-25.13.9.
+const ruleGroupPrefix = "lenny"
 
 // defaultOutput is the chart-relative path of the bundled fragment.
 const defaultOutput = "charts/lenny/files/alerting-rules.yaml"
@@ -92,7 +95,7 @@ func main() {
 
 // render builds the header-prefixed spec.groups fragment.
 func render() ([]byte, error) {
-	groups, err := rules.RenderRuleGroups(ruleGroupName, rules.Catalog())
+	groups, err := rules.RenderRuleGroupsBySeverity(ruleGroupPrefix, rules.Catalog())
 	if err != nil {
 		return nil, err
 	}

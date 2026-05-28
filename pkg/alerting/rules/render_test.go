@@ -155,3 +155,82 @@ func TestRenderPrometheusRuleRendersFullCatalog(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderRuleGroupsBySeveritySplitsCatalog verifies the bundled
+// catalog renders into one rule group per §16.5 severity. The split
+// lets Prometheus evaluate the buckets in parallel rather than
+// serialising the full catalog through a single group.
+//
+// spec: §25.13 line 4822; F-25.13.9.
+func TestRenderRuleGroupsBySeveritySplitsCatalog_spec_25_13_4822(t *testing.T) {
+	out, err := RenderRuleGroupsBySeverity("lenny", Catalog())
+	if err != nil {
+		t.Fatalf("RenderRuleGroupsBySeverity: %v", err)
+	}
+	var doc ruleGroupsDoc
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(doc.Groups) < 2 {
+		t.Fatalf("groups = %d, want at least 2 (critical and warning present in catalog)", len(doc.Groups))
+	}
+	gotNames := []string{}
+	totalRules := 0
+	for _, g := range doc.Groups {
+		gotNames = append(gotNames, g.Name)
+		totalRules += len(g.Rules)
+		for _, r := range g.Rules {
+			wantSeverity := string(g.Name[len("lenny."):])
+			if r.Labels["severity"] != wantSeverity {
+				t.Errorf("group %q rule %q severity=%q, want %q",
+					g.Name, r.Alert, r.Labels["severity"], wantSeverity)
+			}
+		}
+	}
+	if totalRules != len(Catalog()) {
+		t.Fatalf("rendered %d rules across groups, catalog has %d", totalRules, len(Catalog()))
+	}
+	if gotNames[0] != "lenny.critical" {
+		t.Errorf("first group = %q, want lenny.critical (deterministic ordering)", gotNames[0])
+	}
+}
+
+// TestRenderRuleGroupsBySeverityRejectsEmptyPrefix verifies the
+// renderer fails closed on a missing namePrefix rather than emitting a
+// group named ".critical".
+//
+// spec: §25.13 line 4822; F-25.13.9.
+func TestRenderRuleGroupsBySeverityRejectsEmptyPrefix_spec_25_13_4822(t *testing.T) {
+	if _, err := RenderRuleGroupsBySeverity("", Catalog()); err == nil {
+		t.Error("an empty group-name prefix must be rejected")
+	}
+}
+
+// TestRenderRuleGroupsBySeverityOmitsEmptyBuckets verifies a catalog
+// containing only critical alerts renders one group, not three (no
+// empty warning or info groups).
+//
+// spec: §25.13 line 4822; F-25.13.9.
+func TestRenderRuleGroupsBySeverityOmitsEmptyBuckets_spec_25_13_4822(t *testing.T) {
+	bucket := []Rule{{
+		Name:       "OnlyCritical",
+		Expr:       "up == 0",
+		Severity:   SeverityCritical,
+		Summary:    "single critical rule",
+		RunbookURL: "https://docs.lenny.dev/runbooks/example",
+	}}
+	out, err := RenderRuleGroupsBySeverity("lenny", bucket)
+	if err != nil {
+		t.Fatalf("RenderRuleGroupsBySeverity: %v", err)
+	}
+	var doc ruleGroupsDoc
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(doc.Groups) != 1 {
+		t.Fatalf("groups = %d, want 1 (catalog had only critical rules)", len(doc.Groups))
+	}
+	if doc.Groups[0].Name != "lenny.critical" {
+		t.Errorf("group name = %q, want lenny.critical", doc.Groups[0].Name)
+	}
+}

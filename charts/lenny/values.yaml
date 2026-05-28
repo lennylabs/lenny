@@ -1320,9 +1320,14 @@ referenceRuntimes:
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [cursor_direct]
+    # spec: §26.1 line 22 anchors `chat` at Standard ("the minimum useful
+    # runtime"). Every other reference runtime is Full; the chart value
+    # MUST match the spec catalog row so the registered Runtime CRD
+    # advertises the §15.4.6 conformance battery the chat runtime
+    # actually implements. F-26.1.1.
     - name: chat
       image: ghcr.io/lennylabs/runtime-chat@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      integrationLevel: full
+      integrationLevel: standard
       allowedResourceClasses: [small]
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
     - name: langgraph
@@ -1372,6 +1377,21 @@ ops:
   # production gates the §25.11 confirm:true requirement on full
   # backups. Set true on staging and production installs.
   production: false
+  # service carries the lenny-ops Service overrides. §25.4 line 1063
+  # pins sessionAffinity: ClientIP with a 3h client-IP timeout so SSE
+  # consumers reconnecting after a network blip return to the replica
+  # whose in-memory event buffer holds their unread events.
+  service:
+    sessionAffinityTimeoutSeconds: 10800
+  # prometheus configures the §25.16 Production-tier "Prometheus (BYO)"
+  # block (line 5124). When url is non-empty lenny-ops connects to the
+  # supplied HTTP-API endpoint to evaluate cross-replica health
+  # aggregation (§25.4) and §25.13 alerting rules; an empty value (the
+  # Minimal/dev default) keeps lenny-ops in the per-replica fan-out
+  # fallback the spec permits at Tier 1. The value flows to lenny-ops
+  # as --prometheus-url.
+  prometheus:
+    url: ""
   image:
     repository: ghcr.io/lennylabs/lenny-ops
     # tag defaults to the chart appVersion when left empty.

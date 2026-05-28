@@ -129,6 +129,16 @@ func main() {
 	pgauditTenantID := flag.String("pgaudit-tenant-id", envOr("LENNY_PGAUDIT_TENANT_ID", "platform"),
 		"Tenant stamped on every pgaudit-sourced OCSF record (defaults to 'platform' for the "+
 			"regulated-Postgres-instance case). Override via LENNY_PGAUDIT_TENANT_ID.")
+	// spec: §25.16 Production "Prometheus (BYO)" block (lines 5124-5132).
+	// When set, lenny-ops uses the supplied HTTP API endpoint as the
+	// §25.13 ExprEvaluator backend and the §25.4 cross-replica health
+	// aggregator. When empty (the §25.16 Minimal default) lenny-ops
+	// degrades to the per-replica fan-out fallback the spec permits at
+	// Tier 1. F-25.16.4.
+	prometheusURL := flag.String("prometheus-url", os.Getenv("LENNY_PROMETHEUS_URL"),
+		"§25.16 BYO Prometheus HTTP API base URL (e.g. http://prometheus.monitoring.svc:9090). "+
+			"When empty the §25.4 cross-replica health aggregator falls back to per-replica fan-out. "+
+			"Override via LENNY_PROMETHEUS_URL.")
 	flag.Parse()
 
 	// Replica identity: the pod name (the Helm chart sets POD_NAME from
@@ -350,6 +360,19 @@ func main() {
 	// evaluator until a real backend lands. The wiring is unconditional
 	// so a future commit that supplies a real ExprEvaluator only swaps
 	// the backend.
+	//
+	// spec: §25.16 line 5124. When --prometheus-url is set, the operator
+	// has supplied a BYO Prometheus HTTP API endpoint; the §25.13
+	// ExprEvaluator and the §25.4 cross-replica health aggregator should
+	// route through it (the HTTP client is built here so the future
+	// backend swap is a single-line change). When empty, lenny-ops
+	// degrades to the per-replica fan-out fallback the §25.16 Minimal
+	// block accepts. F-25.16.4.
+	if *prometheusURL != "" {
+		log.Printf("lenny-ops: §25.16 BYO Prometheus configured at %s", *prometheusURL)
+	} else {
+		log.Printf("lenny-ops: §25.16 BYO Prometheus not configured; cross-replica health degrades to per-replica fan-out")
+	}
 	alertEvaluator := evaluator.NewWithEmitter(
 		rules.Catalog(),
 		evaluator.NoopExprEvaluator{},

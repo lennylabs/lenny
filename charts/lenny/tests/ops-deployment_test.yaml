@@ -162,6 +162,63 @@ tests:
             name: http
             containerPort: 8090
 
+  # spec: §25.4 line 1063 — F-25.16.3. The lenny-ops Service MUST
+  # pin SSE clients to the replica that buffered their events; the
+  # session-affinity timeout matches the §25.16 Production block.
+  - it: pins SSE clients with sessionAffinity ClientIP per §25.4 line 1063
+    documentSelector:
+      path: kind
+      value: Service
+    asserts:
+      - equal:
+          path: spec.sessionAffinity
+          value: ClientIP
+      - equal:
+          path: spec.sessionAffinityConfig.clientIP.timeoutSeconds
+          value: 10800
+
+  # spec: §25.4 line 1063 — F-25.16.3. Operators can tune the affinity
+  # timeout via ops.service.sessionAffinityTimeoutSeconds.
+  - it: honors ops.service.sessionAffinityTimeoutSeconds override per §25.4 line 1063
+    set:
+      ops:
+        service:
+          sessionAffinityTimeoutSeconds: 7200
+    documentSelector:
+      path: kind
+      value: Service
+    asserts:
+      - equal:
+          path: spec.sessionAffinityConfig.clientIP.timeoutSeconds
+          value: 7200
+
+  # spec: §25.16 line 5124 — F-25.16.4. When ops.prometheus.url is
+  # empty (the §25.16 Minimal default) lenny-ops runs without a BYO
+  # Prometheus URL and falls back to per-replica fan-out.
+  - it: omits --prometheus-url when ops.prometheus.url is empty per §25.16 line 5124
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --prometheus-url=
+
+  # spec: §25.16 line 5124 — F-25.16.4. Production Tier 2/3 sets
+  # ops.prometheus.url to the deployment's BYO Prometheus HTTP API.
+  - it: plumbs --prometheus-url when ops.prometheus.url is set per §25.16 line 5124
+    set:
+      ops:
+        prometheus:
+          url: http://prometheus.monitoring.svc:9090
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --prometheus-url=http://prometheus.monitoring.svc:9090
+
   # spec: §17.8.5 line 1323 — F-17.8.12. The chart MUST reject any
   # attempt to disable lenny-ops via Helm values: the operability
   # surface is mandatory in every Lenny installation regardless of tier.

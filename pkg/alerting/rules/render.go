@@ -119,6 +119,50 @@ func RenderRuleGroups(groupName string, catalog []Rule) ([]byte, error) {
 	return yaml.Marshal(ruleGroupsDoc{Groups: []promRuleGroup{group}})
 }
 
+// RenderRuleGroupsBySeverity renders the catalog into a spec.groups
+// fragment carrying one rule group per §16.5 severity (critical,
+// warning, info). The split lets Prometheus evaluate the three buckets
+// in parallel rather than serialising the full catalog through a
+// single group — the §25.13 line 4822 "~40 rules at ~10ms p95" budget
+// applies per group, and the catalog has now grown well past forty
+// rules.
+//
+// Groups are emitted in a deterministic order (critical → warning →
+// info), keyed off the severities present in the supplied catalog so a
+// trimmed catalog does not render an empty bucket. Rules inside each
+// group preserve their catalog order. namePrefix names the group set
+// (e.g. "lenny" → "lenny.critical", "lenny.warning", "lenny.info");
+// every rule is validated first.
+//
+// spec: §25.13 line 4822 (per-group evaluation cost); F-25.13.9.
+func RenderRuleGroupsBySeverity(namePrefix string, catalog []Rule) ([]byte, error) {
+	if namePrefix == "" {
+		return nil, fmt.Errorf("rules: rule group name prefix is required")
+	}
+	order := []Severity{SeverityCritical, SeverityWarning, SeverityInfo}
+	bySeverity := map[Severity][]Rule{}
+	for _, r := range catalog {
+		bySeverity[r.Severity] = append(bySeverity[r.Severity], r)
+	}
+	var groups []promRuleGroup
+	for _, sev := range order {
+		bucket := bySeverity[sev]
+		if len(bucket) == 0 {
+			continue
+		}
+		name := namePrefix + "." + string(sev)
+		group, err := buildRuleGroup(name, bucket)
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, group)
+	}
+	if len(groups) == 0 {
+		return nil, fmt.Errorf("rules: catalog has no rules to render")
+	}
+	return yaml.Marshal(ruleGroupsDoc{Groups: groups})
+}
+
 // prometheusDuration formats a Go duration as a Prometheus duration
 // string. A whole number of hours is rendered in hours, a whole number
 // of minutes in minutes, otherwise in seconds — alert sustain windows
