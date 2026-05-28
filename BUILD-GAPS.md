@@ -25185,7 +25185,7 @@ is the one half of §16.3 that ships.
 
 - **Resolution:** Verify-closed. `pkg/delegation/tracing/`, `mcptools.go:663` (`lenny/set_tracing_context`), `delegation/service.go:430` (`copyTracingContext`), `sessionserver/start.go:978/996/1563`, `adapterclient/client.go:76/95/334/385`, and `adapter/manifest.go:116/251` all carry the tracingContext field end-to-end. Positive confirmation, no code change.
 
-### - [ ] F-16.3.12 — Spec-map records the gap as intentional but on the wrong wave [Info] — OPEN
+### - [x] F-16.3.12 — Spec-map records the gap as intentional but on the wrong wave [Info] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-16.4.16 — Same spec-map-deferral-aged-past-its-wave observation applied to different sections (§16.3 tracing vs §16.4 logging).
 
@@ -25199,6 +25199,12 @@ observability wave (`BUILD-PLAN.md:277-305`), which has shipped. The
 so the gap from H1–H4 has aged past every gate the plan set for it.
 Surfacing this here so it lands on the right wave instead of staying
 deferred indefinitely.
+
+**Resolution:** Verify-closed. This is a meta-observation about
+`tests/spec-map.json` `notes` field aging past the wave gate it
+referenced; the actual per-component tracing wiring gap is tracked
+as `High` under F-16.3.4 / F-16.3.5 / F-16.3.6 / F-16.3.7 (still
+OPEN). No code change required for the meta-tracking itself.
 
 ---
 
@@ -25711,7 +25717,7 @@ local development. No binary main wires it on a `--log-format` or
 The dev-mode log experience the spec implies (line 397) — same fields,
 human-friendly text format — exists in code but is unreachable.
 
-### - [ ] F-16.4.15 — The §16.4 logger primitives test cleanly in isolation [Info] — OPEN
+### - [x] F-16.4.15 — The §16.4 logger primitives test cleanly in isolation [Info] — CLOSED
 
 The two tests at
 `pkg/observability/logging/logging_test.go::{TestHandlerEmitsRequired
@@ -25725,7 +25731,17 @@ record, the correlation projection works, empty fields are skipped, and
 the level gate behaves correctly. The primitive itself ships
 correctly; the gap is its non-use in production binaries.
 
-### - [ ] F-16.4.16 — `tests/spec-map.json` explicitly carries the gap as a deferred per-component wiring [Info] — OPEN
+**Resolution:** Verify-closed. All eight cited unit tests exist in
+`pkg/observability/logging/logging_test.go` (`TestHandlerEmitsRequiredSlogKeys`,
+`TestHandlerEmitsDefaultComponent`, `TestHandlerProjectsCorrelationFieldsFromContext`,
+`TestHandlerSkipsEmptyCorrelationFields`, `TestHandlerWithAttrsPreservesCorrelation`,
+`TestHandlerHonoursLevelGate`, `TestTextHandlerProjectsCorrelation`,
+`TestWrapPreservesDecoration`) and `TestObservabilityPrimitivesWireTogether`
+ships at `tests/tier2_component/observability/integration_test.go:35`.
+Per the finding's own framing the primitive ships correctly; the
+non-use-in-production gap is tracked under H1–H4 in §16.4.
+
+### - [x] F-16.4.16 — `tests/spec-map.json` explicitly carries the gap as a deferred per-component wiring [Info] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-16.3.12 — Same spec-map-deferral-aged-past-its-wave observation applied to different sections (§16.3 tracing vs §16.4 logging).
 
@@ -25738,6 +25754,12 @@ per-component emission was not picked up by any subsequent wave, so
 H1–H4 carry past the gate the spec-map set for them. Worth flagging
 explicitly so this surfaces on a current wave instead of staying
 deferred indefinitely.
+
+**Resolution:** Verify-closed (duplicate observation of F-16.3.12).
+`tests/spec-map.json:2138` notes field matches the finding text
+verbatim. The underlying H1–H4 §16.4 per-component logging gaps are
+tracked separately and remain OPEN; this meta-tracking note requires
+no code change.
 
 ### - [ ] F-16.4.17 — The PrometheusRule references metrics that nothing publishes [Info] — OPEN
 
@@ -26766,9 +26788,16 @@ Section §10.3 mandates mTLS between control-plane components. The gateway metri
 
 Adding these cross-template assertions is the unit-test path to catching F1, F2, F3 at chart-test time.
 
-### - [ ] F-16.9.15 — §16.9 comment in `servicemonitor.yaml` and `podmonitor.yaml` cites a NET-045 NetworkPolicy that is split across multiple per-component policies [Info] — OPEN
+### - [x] F-16.9.15 — §16.9 comment in `servicemonitor.yaml` and `podmonitor.yaml` cites a NET-045 NetworkPolicy that is split across multiple per-component policies [Info] — CLOSED
 
 Both templates' comments reference "the §13.2 NET-045 metrics-scrape NetworkPolicies (rendered by `system-network-policies.yaml`)". The actual rendering is four separate policies (`allow-controller-metrics-scrape`, `allow-gateway-metrics-scrape`, `allow-token-service-metrics-scrape`, `allow-dedicated-coredns`) plus the `allow-ops` ingress clause carrying the lenny-ops metrics port. The comment is accurate as a reference but does not enumerate the per-component split, so a reader auditing the scrape path has to chase five rules instead of one. Pure documentation note.
+
+**Resolution:** Verify-closed per the finding's own framing ("Pure
+documentation note"). Confirmed the four NET-045 NetworkPolicies plus
+`allow-ops` render at `charts/lenny/templates/system-network-policies.yaml:231`,
+`:259`, `:309`, `:330`, `:674`, and the §13.2 NET-045 comment is
+accurate as written in `charts/lenny/templates/servicemonitor.yaml:12`
+and `charts/lenny/templates/podmonitor.yaml:8,13`. No code change.
 
 ### Summary
 
@@ -28306,7 +28335,14 @@ create them via the public endpoint.
 
 ---
 
-### - [ ] F-17.3.25 — noteworthy [Info] — OPEN
+### - [x] F-17.3.25 — noteworthy [Info] — CLOSED
+
+**Resolution:** Verify-closed as an orphan heading. The heading
+sits between F-17.3.24 and F-17.3.26 with no body; the word
+"noteworthy" appears to be a stray section divider rather than a
+distinct finding. No actionable content; the Info-class observations
+that follow (F-17.3.26 through F-17.3.29) carry the substantive
+content. No code change.
 
 ### - [ ] F-17.3.26 — 3.1 — Replication controller is one of the most-complete §25.11 surfaces [Info] — OPEN
 
@@ -28341,7 +28377,7 @@ landing the reconciler so this surface becomes reachable.
 
 ---
 
-### - [ ] F-17.3.28 — 3.3 — Tier presets correctly override retention values [Info] — OPEN
+### - [x] F-17.3.28 — 3.3 — Tier presets correctly override retention values [Info] — CLOSED
 
 `charts/lenny/presets/values-tier3.yaml:89–101` overrides
 `retainDays: 90`, `retainCount: 30`, `retainMinFull: 7`, and
@@ -28351,6 +28387,14 @@ monthly cadence (`schedule: "0 4 1 * *"`). The retention math in
 time (`retainMinFull: 1` minimum) match §25.11 line 4124. The
 spec-intended tier ladder is correctly modelled at the chart
 level even where the runtime backing is missing.
+
+**Resolution:** Verify-closed positive observation. Confirmed
+`charts/lenny/presets/values-tier3.yaml:113-115` carries
+`retainDays: 90`, `retainCount: 30`, `retainMinFull: 7` and
+`:120-123` enables `restoreTest` with `schedule: "0 4 1 * *"`.
+The `RetainMinFull` / `RetainDays` / `RetainCount` fields exist
+in `pkg/backup/retention/retention.go` (17 references). No code
+change.
 
 ---
 
