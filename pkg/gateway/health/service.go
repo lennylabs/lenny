@@ -59,6 +59,13 @@ type Component struct {
 	// Detail is a human-readable description of the current state.
 	Detail string `json:"detail,omitempty"`
 
+	// Issue is the §25.7 Path B health-API issue code (e.g.,
+	// `POSTGRES_UNREACHABLE`, `WARM_POOL_EXHAUSTED`,
+	// `CIRCUIT_BREAKER_OPEN`). The §17.7 line 741 issueRunbooks
+	// table resolves this to the runbook the agent should fetch.
+	// spec: §25.7 lines 3217-3234.
+	Issue string `json:"issue,omitempty"`
+
 	// SuggestedAction is the §25.3 remediation hint an AI-DevOps
 	// agent can act on when Status is not healthy. Empty when the
 	// component is healthy or no action is known.
@@ -66,6 +73,10 @@ type Component struct {
 
 	// RunbookRef points at the operational runbook for this
 	// component's failure modes. Empty when none is registered.
+	// When the checker stamps Issue, the §25.3 aggregator resolves
+	// RunbookRef from the §17.7 issueRunbooks table when the
+	// checker left it empty.
+	// spec: §25.7 line 3234.
 	RunbookRef string `json:"runbookRef,omitempty"`
 }
 
@@ -169,6 +180,13 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 			if comp.Name == "" {
 				comp.Name = c.Name()
 			}
+			// spec: §25.7 line 3234 — when the checker stamps Issue
+			// and leaves RunbookRef empty, the §17.7 issueRunbooks
+			// table is the source of truth so the agent receives the
+			// runbook pointer without per-checker duplication.
+			if comp.RunbookRef == "" && comp.Issue != "" {
+				comp.RunbookRef = RunbookForIssue(comp.Issue)
+			}
 			components[i] = comp
 		}(i, c)
 	}
@@ -234,6 +252,12 @@ func (a *Aggregator) Component(ctx context.Context, name string) (Component, boo
 	comp := c.Check(ctx)
 	if comp.Name == "" {
 		comp.Name = name
+	}
+	// spec: §25.7 line 3234 — same back-fill rule as Report so the
+	// /v1/admin/health/{component} response carries the runbook
+	// pointer when the checker stamped only Issue.
+	if comp.RunbookRef == "" && comp.Issue != "" {
+		comp.RunbookRef = RunbookForIssue(comp.Issue)
 	}
 	return comp, true
 }

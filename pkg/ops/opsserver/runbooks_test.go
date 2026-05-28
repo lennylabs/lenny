@@ -126,3 +126,71 @@ func TestRunbookStepsNotFound(t *testing.T) {
 		t.Errorf("status = %d, want 404 for an unknown runbook", rec.Code)
 	}
 }
+
+// TestRunbookMarkdownEndpoint covers the §25.7 GET
+// /v1/admin/runbooks/{name} endpoint: an agent that already holds the
+// runbook name reads the full markdown plus front matter in one hop.
+// spec: §25.7 lines 3055-3057.
+func TestRunbookMarkdownEndpoint_spec_25_7_3055(t *testing.T) {
+	body := "# Warm pool exhausted\n\nRemediation goes here.\n"
+	src := fakeRunbookSource{
+		books: []opsserver.Runbook{{
+			Name: "warm-pool-exhaustion",
+			FrontMatter: runbooks.FrontMatter{
+				Components: []string{"warmPools"},
+			},
+		}},
+		md: map[string][]byte{"warm-pool-exhaustion": []byte(body)},
+	}
+	srv := opsserver.New(opsserver.Options{Runbooks: src})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/v1/admin/runbooks/warm-pool-exhaustion", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got struct {
+		Name        string             `json:"name"`
+		FrontMatter runbooks.FrontMatter `json:"frontMatter"`
+		Markdown    string             `json:"markdown"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Name != "warm-pool-exhaustion" {
+		t.Errorf("name = %q, want warm-pool-exhaustion", got.Name)
+	}
+	if got.Markdown != body {
+		t.Errorf("markdown = %q, want %q", got.Markdown, body)
+	}
+	if len(got.FrontMatter.Components) != 1 || got.FrontMatter.Components[0] != "warmPools" {
+		t.Errorf("front matter components = %v, want [warmPools]", got.FrontMatter.Components)
+	}
+}
+
+// TestRunbookMarkdownNotFound covers the canonical 404 path so a stale
+// alert pointing at a removed runbook does not crash the agent.
+// spec: §25.7 line 3055.
+func TestRunbookMarkdownNotFound_spec_25_7_3055(t *testing.T) {
+	srv := opsserver.New(opsserver.Options{Runbooks: fakeRunbookSource{md: map[string][]byte{}}})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/v1/admin/runbooks/nonexistent", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestRunbookMarkdownUnavailable covers the 503 path so an agent
+// receives the canonical error envelope when the runbook index has
+// not been loaded.
+// spec: §25.7 line 3055.
+func TestRunbookMarkdownUnavailable_spec_25_7_3055(t *testing.T) {
+	srv := opsserver.New(opsserver.Options{})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/v1/admin/runbooks/warm-pool-exhaustion", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+}

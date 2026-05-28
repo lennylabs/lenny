@@ -185,8 +185,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Postgres sync replica lag exceeds 1 second",
 			Description: "Sync-replica replication lag exceeds 1 second sustained for 30 seconds. Session state writes risk read-after-write inconsistency.",
-			RunbookURL:  runbook("postgres-replication-lag"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/postgres-failover.md.
+			RunbookURL: runbook("postgres-failover"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "GatewayNoHealthyReplicas",
@@ -195,8 +196,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Healthy gateway replicas below tier minimum",
 			Description: "Healthy gateway replicas have fallen below the tier minimum (§17.8) for more than 30s. Request capacity is degraded and session creation may be rejected.",
-			RunbookURL:  runbook("gateway-no-healthy-replicas"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/gateway-replica-failure.md.
+			RunbookURL: runbook("gateway-replica-failure"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "SessionStoreUnavailable",
@@ -205,8 +207,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Postgres primary unreachable",
 			Description: "The Postgres primary has been unreachable for more than 15s. Session state writes fail and new session creation is rejected.",
-			RunbookURL:  runbook("session-store-unavailable"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/postgres-failover.md.
+			RunbookURL: runbook("postgres-failover"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "RedisUnavailable",
@@ -243,8 +246,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "T4 tenant KMS key unusable",
 			Description: "The leader-elected continuous KMS probe has not successfully encrypted and decrypted against a T4 tenant's KMS key for at least two probe cycles. Any checkpoint or artifact write for this tenant will be rejected with CLASSIFICATION_CONTROL_VIOLATION / kms_unavailable.",
-			RunbookURL:  runbook("t4-kms-key-unusable"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/kms-unavailable.md.
+			RunbookURL: runbook("kms-unavailable"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "EtcdUnavailable",
@@ -253,8 +257,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "API server etcd connectivity errors",
 			Description: "API server etcd connectivity errors have been sustained for more than 15s. CRD reads and writes fail and warm-pool reconciliation stalls.",
-			RunbookURL:  runbook("etcd-unavailable"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/etcd-operations.md.
+			RunbookURL: runbook("etcd-operations"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "CredentialPoolExhausted",
@@ -263,8 +268,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Credential pool has no assignable credentials",
 			Description: "A credential pool has 0 assignable credentials (all exhausted, in cooldown, or revoked) for more than 30s. New session creation returns CREDENTIAL_POOL_EXHAUSTED for this pool.",
-			RunbookURL:  runbook("credential-pool-exhausted"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/credential-pool-exhaustion.md.
+			RunbookURL: runbook("credential-pool-exhaustion"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "CredentialCompromised",
@@ -273,8 +279,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Revoked credential still has active leases",
 			Description: "At least one credential in revoked state (pool-scoped or user-scoped) still has active leases alive against it for more than 30s, indicating revocation propagation failure and that the compromised key may still be in use.",
-			RunbookURL:  runbook("credential-compromised"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/credential-revocation.md.
+			RunbookURL: runbook("credential-revocation"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "TokenServiceUnavailable",
@@ -292,8 +299,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Controller Lease has not been renewed",
 			Description: "A controller's Lease has not been renewed within leaseDuration (15s); failover is imminent or in progress. Auto-resolves when a new leader acquires the lease.",
-			RunbookURL:  runbook("controller-leader-election-failed"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/controller-leader-election.md.
+			RunbookURL: runbook("controller-leader-election"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "DedicatedDNSUnavailable",
@@ -302,8 +310,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "All dedicated agent CoreDNS replicas are down",
 			Description: "All dedicated CoreDNS replicas for the agent namespace have zero ready pods. Agent pods lose DNS resolution entirely and cannot reach external tools or LLM endpoints.",
-			RunbookURL:  runbook("dedicated-dns-unavailable"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/dns-outage.md.
+			RunbookURL: runbook("dns-outage"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "CosignWebhookUnavailable",
@@ -330,8 +339,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Internet egress NetworkPolicy except blocks are stale",
 			Description: "The continuous CIDR drift check detected that the installed internet egress NetworkPolicy except blocks no longer match the cluster's actual pod or service CIDRs. Agent pods with internet egress may be able to reach internal cluster IPs, enabling lateral movement.",
-			RunbookURL:  runbook("network-policy-cidr-drift"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/network-policy-drift.md.
+			RunbookURL: runbook("network-policy-drift"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "AdmissionWebhookUnavailable",
@@ -369,8 +379,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Data-residency validator webhook unreachable",
 			Description: "The lenny-data-residency-validator ValidatingAdmissionWebhook (failurePolicy: Fail) has been unreachable for more than 30s. All operations on tenant-scoped CRD resources with a dataResidencyRegion field are denied.",
-			RunbookURL:  runbook("data-residency-webhook-unavailable"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/admission-webhook-outage.md.
+			RunbookURL: runbook("admission-webhook-outage"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "DataResidencyViolationAttempt",
@@ -405,8 +416,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Platform-tenant audit region unresolvable",
 			Description: "A platform-tenant audit event referencing a non-platform target_tenant_id failed to commit because the target tenant's dataResidencyRegion resolves to no storage.regions.<region>.postgresEndpoint entry or that region's platform-Postgres is unreachable.",
-			RunbookURL:  runbook("platform-audit-residency-violation"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/data-residency-violation.md.
+			RunbookURL: runbook("data-residency-violation"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "PgBouncerAllReplicasDown",
@@ -414,8 +426,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "All PgBouncer replicas are down",
 			Description: "All PgBouncer pods in lenny-system have zero ready replicas (self-managed backends only). Postgres is unreachable for all gateway components — session creation and state writes will fail immediately.",
-			RunbookURL:  runbook("pgbouncer-all-replicas-down"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/pgbouncer-saturation.md.
+			RunbookURL: runbook("pgbouncer-saturation"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "SessionEvictionTotalLoss",
@@ -423,8 +436,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Session lost with no durable state",
 			Description: "Both MinIO and Postgres were unavailable during an eviction checkpoint, leaving the session unrecoverable with no durable state saved. Any non-zero value is immediately actionable.",
-			RunbookURL:  runbook("session-eviction-total-loss"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/session-eviction-loss.md.
+			RunbookURL: runbook("session-eviction-loss"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "DelegationBudgetKeysExpired",
@@ -432,8 +446,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Delegation budget keys expired while tree active",
 			Description: "A Lua script returned BUDGET_KEYS_EXPIRED, indicating the delegation budget keys for a root session have expired while the tree was still active. The gateway initiates tree cleanup (cascade cancel + root to failed).",
-			RunbookURL:  runbook("delegation-budget-keys-expired"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/delegation-budget-recovery.md.
+			RunbookURL: runbook("delegation-budget-recovery"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "BillingStreamEntryAgeHigh",
@@ -441,8 +456,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Billing Redis stream entry near TTL expiry",
 			Description: "The oldest unacknowledged entry in a per-tenant billing Redis stream exceeds 80% of billingStreamTTLSeconds. A small number of billing events have been sitting unflushed long enough to be at imminent risk of TTL expiry and permanent loss.",
-			RunbookURL:  runbook("billing-stream-entry-age-high"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/billing-stream-backlog.md.
+			RunbookURL: runbook("billing-stream-backlog"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "OTLPPlaintextEgressDetected",
@@ -488,8 +504,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Gateway LLM upstream egress anomaly",
 			Description: "The gateway observed an outbound connection attempt from the gateway pod to a destination outside the allow-gateway-egress-llm-upstream NetworkPolicy allowlist. Steady-state value is zero; any non-zero rate is a potential compromise signal.",
-			RunbookURL:  runbook("llm-upstream-egress-anomaly"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/llm-egress-anomaly.md.
+			RunbookURL: runbook("llm-egress-anomaly"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "TokenStoreUnavailable",
@@ -516,8 +533,9 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "ArtifactStore replication lag exceeds 4x RPO",
 			Description: "ArtifactStore replication lag exceeds 4x the configured RPO. The replication is severely degraded and a full-site disaster at this point would lose a materially larger artifact window than the deployment contract allows.",
-			RunbookURL:  runbook("minio-artifact-replication-lag"),
-			SpecRef:     "§16.5",
+			// spec: §17.7 line 745 — slug matches docs/runbooks/minio-replication-lag.md.
+			RunbookURL: runbook("minio-replication-lag"),
+			SpecRef:    "§16.5",
 		},
 		{
 			Name:        "LenniOpsLockSplitBrainDetected",

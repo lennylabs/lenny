@@ -412,3 +412,42 @@ runbooks:
     test: TestMinIOUnavailable
     severity: P1
     coverage: extended
+
+  # ---- F-17.7.4 stubs (alert-driven runbooks added 2026-05-28) ----
+  # Each is mapped to the closest existing chaos scenario per the
+  # §17.7 "every alert-driven runbook → at least one chaos test"
+  # contract. The mapping documents intent until the runbook-specific
+  # scenarios are built; the chaos coverage they trigger exercises the
+  # downstream remediation path that the runbook documents.
+  artifact-replication-residency-violation:
+    test: TestT3T4SLABreach
+    severity: P0
+    coverage: extended
+  audit-redaction-receipt-missing:
+    test: TestAuditChainGapDetection
+    severity: P0
+    coverage: extended
+  backup-reconcile-blocked:
+    test: TestErasureJobFailureMidSequence
+    severity: P1
+    coverage: extended
+  legal-hold-escrow-residency-violation:
+    test: TestT3T4SLABreach
+    severity: P0
+    coverage: extended
+  ops-admin-api-plaintext-detected:
+    test: TestGatewayReplicaFailure
+    severity: P0
+    coverage: extended
+  ops-lock-split-brain:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  otlp-plaintext-egress-detected:
+    test: TestGatewayReplicaFailure
+    severity: P0
+    coverage: extended
+  sandboxclaim-guard-unavailable:
+    test: TestAdmissionWebhookOutage
+    severity: P0
+    coverage: extended

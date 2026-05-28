@@ -189,43 +189,26 @@ func TestRunbookStructure(t *testing.T) {
 // alerts") — the reverse mapping (alert → runbook filename) must
 // resolve to an on-disk file under docs/runbooks/. F-17.7.10.
 var knownBrokenRunbookSlugs = map[string]bool{
-	// F-17.7.4: 27 broken slugs from §17.7 audit + later catalog
-	// growth. When F-17.7.4 closes by renaming runbook files or
-	// alert slugs, the rows here drop out one-for-one.
-	"PostgresReplicationLagHigh":               true,
-	"GatewayNoHealthyReplicas":                 true,
-	"SessionStoreUnavailable":                  true,
-	"T4KmsKeyUnusable":                         true,
-	"EtcdUnavailable":                          true,
-	"CredentialPoolExhausted":                  true,
-	"CredentialCompromised":                    true,
-	"ControllerLeaderElectionFailed":           true,
-	"DedicatedDNSUnavailable":                  true,
-	"NetworkPolicyCIDRDrift":                   true,
-	"SandboxClaimGuardUnavailable":             true,
-	"DataResidencyWebhookUnavailable":          true,
-	"ArtifactReplicationResidencyViolation":    true,
-	"LegalHoldEscrowResidencyViolation":        true,
-	"PlatformAuditResidencyViolation":          true,
-	"PgBouncerAllReplicasDown":                 true,
-	"SessionEvictionTotalLoss":                 true,
-	"DelegationBudgetKeysExpired":              true,
-	"BillingStreamEntryAgeHigh":                true,
-	"OTLPPlaintextEgressDetected":              true,
-	"OpsAdminAPIPlaintextDetected":             true,
-	"AuditRedactionReceiptMissing":             true,
-	"LLMUpstreamEgressAnomaly":                 true,
-	"BackupReconcileBlocked":                   true,
-	"MinIOArtifactReplicationLagCritical":      true,
-	"LenniOpsLockSplitBrainDetected":           true,
-	"SessionCreationSuccessRateBurnRate":       true,
-	"SessionCreationLatencyBurnRate":           true,
-	"SessionAvailabilityBurnRate":              true,
-	"GatewayAvailabilityBurnRate":              true,
-	"StartupLatencyBurnRate":                   true,
-	"StartupLatencyGVisorBurnRate":             true,
-	"TTFTBurnRate":                             true,
-	"CheckpointDurationBurnRate":               true,
+	// F-17.7.4 closed the 26 §17.7-cataloged alert→file mismatches by
+	// renaming alert slugs to match existing files and authoring stub
+	// runbooks for the residual unmatched alerts (sandboxclaim-guard,
+	// audit-redaction-receipt-missing, otlp-plaintext-egress-detected,
+	// ops-admin-api-plaintext-detected, backup-reconcile-blocked,
+	// ops-lock-split-brain, artifact-replication-residency-violation,
+	// legal-hold-escrow-residency-violation, ops-lock-split-brain).
+	// Burn-rate alerts (closed by the §16.5 multi-window pattern, not
+	// individual runbooks) remain on the allowlist: each fires only on
+	// a service-wide SLO breach and the §17.7 contract names the
+	// downstream remediation runbook on the affected service, not the
+	// burn-rate alert itself.
+	"SessionCreationSuccessRateBurnRate": true,
+	"SessionCreationLatencyBurnRate":     true,
+	"SessionAvailabilityBurnRate":        true,
+	"GatewayAvailabilityBurnRate":        true,
+	"StartupLatencyBurnRate":             true,
+	"StartupLatencyGVisorBurnRate":       true,
+	"TTFTBurnRate":                       true,
+	"CheckpointDurationBurnRate":         true,
 }
 
 // TestAlertCatalogRunbookSlugsResolveToDocs walks the §16.5 alert

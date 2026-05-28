@@ -131,3 +131,40 @@ func (s *Server) handleRunbookSteps(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"steps": runbooks.ParseSteps(md)})
 }
+
+// handleRunbookMarkdown serves the §25.7 GET /v1/admin/runbooks/{name}
+// endpoint: the full rendered markdown body of the named runbook. This
+// is the §25.7 Path A "follow the link" hop — an agent that already
+// knows the runbook name (from alert_fired.runbook or
+// suggestedAction.runbook) fetches the document in one round-trip
+// without having to scrape the §25.7 index.
+//
+// spec: §25.7 lines 3055-3057 — "GET /v1/admin/runbooks/{name}
+// returning full markdown content"; §17.7 line 741 — "/v1/admin/-
+// runbooks/* … served as structured JSON".
+func (s *Server) handleRunbookMarkdown(w http.ResponseWriter, r *http.Request) {
+	if s.runbooks == nil {
+		conventions.WriteError(w, http.StatusServiceUnavailable, "RUNBOOK_INDEX_UNAVAILABLE",
+			conventions.CategoryTransient, "the runbook index is not configured")
+		return
+	}
+	name := r.PathValue("name")
+	md, ok := s.runbooks.Markdown(name)
+	if !ok {
+		conventions.WriteError(w, http.StatusNotFound, "RUNBOOK_NOT_FOUND",
+			conventions.CategoryPermanent, "no runbook named "+name)
+		return
+	}
+	var fm runbooks.FrontMatter
+	for _, rb := range s.runbooks.Runbooks() {
+		if rb.Name == name {
+			fm = rb.FrontMatter
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name":        name,
+		"frontMatter": fm,
+		"markdown":    string(md),
+	})
+}

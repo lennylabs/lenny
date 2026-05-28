@@ -161,6 +161,9 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /v1/admin/diagnostics/connectivity", s.handleConnectivity)
 	s.mux.HandleFunc("GET /v1/admin/runbooks", s.handleListRunbooks)
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}/steps", s.handleRunbookSteps)
+	// spec: §25.7 lines 3055-3057, §17.7 line 741 — the full markdown
+	// hop for an agent that already holds the runbook name.
+	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}", s.handleRunbookMarkdown)
 	s.mux.HandleFunc("GET /v1/admin/ops/health", s.handleOpsHealth)
 	s.registerBackupRoutes()
 	s.registerDiagnosticsRoutes()

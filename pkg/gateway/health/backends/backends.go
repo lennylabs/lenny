@@ -39,9 +39,13 @@ func Postgres(pool *pgxpool.Pool, name string) health.Checker {
 			defer cancel()
 			if err := pool.Ping(pingCtx); err != nil {
 				return health.Component{
-					Name:            name,
-					Status:          health.StatusUnhealthy,
-					Detail:          "postgres ping failed: " + err.Error(),
+					Name:   name,
+					Status: health.StatusUnhealthy,
+					Detail: "postgres ping failed: " + err.Error(),
+					// spec: §25.7 line 3226 — Issue selects the
+					// Path B runbook through the §17.7 issueRunbooks
+					// table.
+					Issue:           "POSTGRES_UNREACHABLE",
 					SuggestedAction: "verify Postgres reachability, credentials, and the connection pool; the gateway rejects session writes until it recovers",
 					RunbookRef:      health.RunbookFor("postgres"),
 				}
@@ -64,9 +68,11 @@ func Redis(client redis.UniversalClient, name string) health.Checker {
 			defer cancel()
 			if err := client.Ping(pingCtx).Err(); err != nil {
 				return health.Component{
-					Name:            name,
-					Status:          health.StatusUnhealthy,
-					Detail:          "redis ping failed: " + err.Error(),
+					Name:   name,
+					Status: health.StatusUnhealthy,
+					Detail: "redis ping failed: " + err.Error(),
+					// spec: §25.7 line 3227.
+					Issue:           "REDIS_UNREACHABLE",
 					SuggestedAction: "verify Redis reachability; circuit-breaker and coordination state degrade to per-replica behaviour until it recovers",
 					RunbookRef:      health.RunbookFor("redis"),
 				}
