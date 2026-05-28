@@ -166,6 +166,23 @@ func TestInfraPathsExempt(t *testing.T) {
 	}
 }
 
+// spec: §15.1 line 589 — the OpenAPI discovery endpoints are
+// unauthenticated and must be reachable without a bearer; the rate-
+// limit middleware exempts them so an SDK generator can fetch the
+// document under load. F-15.1.17.
+func TestOpenAPIPathsExempt_spec_15_1_589(t *testing.T) {
+	for _, path := range []string{"/openapi.yaml", "/openapi.json", "/v1/openapi.json"} {
+		h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+			Counter: rlcounter.NewMemory(), GlobalPerMinute: 1, Clock: fixedClock,
+		})
+		for i := 1; i <= 4; i++ {
+			if code := fire(h, path, ""); code != http.StatusNoContent {
+				t.Errorf("%s request %d: status %d, want 204 (openapi paths are exempt)", path, i, code)
+			}
+		}
+	}
+}
+
 // erroringCounter always fails, exercising the §11.1 fail-open path.
 type erroringCounter struct{}
 

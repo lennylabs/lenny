@@ -2420,6 +2420,11 @@ func main() {
 	// gateway's release version, not the embedded default.
 	openapiHandler := openapi.HandlerWithVersion(buildVersion)
 	mux.Handle("/openapi.yaml", openapiHandler)
+	// spec: §15.1 line 589 — `/openapi.json` is the canonical
+	// gateway-side JSON mount; `/v1/openapi.json` is retained for
+	// the §18 build-sequence reference and §25.4 lenny-ops parity.
+	// F-15.1.17.
+	mux.Handle("/openapi.json", openapiHandler)
 	mux.Handle("/v1/openapi.json", openapiHandler)
 	// §4.3 line 193 canonical token endpoint. The gateway reverse-
 	// proxies /v1/oauth/* to lenny-token-service so the Token Service
@@ -4595,7 +4600,7 @@ func routeTemplate(r *http.Request) string {
 	case p == "/healthz", p == "/metrics", p == "/v1/sessions",
 		p == "/v1/sessions/start", p == "/v1/chat/completions",
 		p == "/v1/responses", p == "/mcp", p == "/openapi.yaml",
-		p == "/v1/openapi.json":
+		p == "/openapi.json", p == "/v1/openapi.json":
 		return p
 	case strings.HasPrefix(p, "/v1/sessions/"):
 		return "/v1/sessions/{id}/*"

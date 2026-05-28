@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: MIT
 
 // Package openapi serves the §15.1 OpenAPI 3.x specification at
-// GET /openapi.yaml and GET /v1/openapi.json.
+// GET /openapi.yaml, GET /openapi.json, and GET /v1/openapi.json.
 //
 // The canonical document is embedded as JSON from openapi.json at
 // build time. YAML 1.2 is a strict superset of JSON, so the same
 // bytes serialise correctly with the YAML Content-Type for SDK
 // generators that prefer YAML input.
+//
+// §15.1 line 589 names `/openapi.yaml` and `/openapi.json` as the
+// canonical gateway-side endpoints; the `/v1/openapi.json` mount is
+// kept so the §18 build-sequence reference and the §25.4 lenny-ops
+// listing remain aligned. F-15.1.17.
 //
 // The spec is the canonical source for community SDK generators and
 // for the §13 MCP Management Server's `openapi-to-mcp` tool generator
@@ -33,9 +38,11 @@ var openapiDoc []byte
 // Mounts:
 //
 //	GET /openapi.yaml — YAML form (JSON is valid YAML 1.2)
-//	GET /v1/openapi.json — JSON form
+//	GET /openapi.json — JSON form (§15.1 line 589 canonical mount)
+//	GET /v1/openapi.json — JSON form (legacy alias retained for §18
+//	    build-sequence references and §25.4 lenny-ops parity)
 //
-// Both endpoints are unauthenticated per §15.1: the spec must be
+// Every endpoint is unauthenticated per §15.1: the spec must be
 // discoverable so SDK generators and the MCP Management Server can
 // fetch it without a bearer token.
 func Handler() http.Handler { return HandlerWithVersion("") }
@@ -52,6 +59,13 @@ func HandlerWithVersion(buildVersion string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		_, _ = w.Write(body)
+	})
+	// spec: §15.1 line 589 — gateway serves the JSON form at
+	// `/openapi.json`. F-15.1.17.
+	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "public, max-age=60")
 		_, _ = w.Write(body)
 	})

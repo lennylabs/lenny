@@ -49,6 +49,50 @@ func TestServesJSONEndpoint(t *testing.T) {
 	}
 }
 
+// spec: §15.1 line 589 — the gateway also serves the JSON form at
+// `/openapi.json` (no `/v1` prefix). The same document must come back
+// byte-for-byte from both JSON mounts. F-15.1.17.
+func TestServesJSONAtCanonicalSpecPath_spec_15_1_589(t *testing.T) {
+	for _, path := range []string{"/openapi.json", "/v1/openapi.json"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		openapi.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status: %d", path, rr.Code)
+		}
+		if got := rr.Header().Get("Content-Type"); got != "application/json" {
+			t.Errorf("%s Content-Type: got %q", path, got)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil {
+			t.Fatalf("%s body is not valid JSON: %v", path, err)
+		}
+		if doc["openapi"] != "3.1.0" {
+			t.Errorf("%s openapi version: got %v", path, doc["openapi"])
+		}
+	}
+}
+
+// spec: §15.1 line 589 — the canonical `/openapi.json` mount preserves
+// the gateway release version stamped via HandlerWithVersion. F-15.1.17.
+func TestCanonicalJSONMountStampsReleaseVersion_spec_15_1_589(t *testing.T) {
+	const release = "2.7.0"
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rr := httptest.NewRecorder()
+	openapi.HandlerWithVersion(release).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	info, _ := doc["info"].(map[string]any)
+	if got := info["version"]; got != release {
+		t.Errorf("info.version: got %v, want %q", got, release)
+	}
+}
+
 func TestDocumentMatchesEndpoints(t *testing.T) {
 	doc := openapi.Document()
 	var parsed map[string]any

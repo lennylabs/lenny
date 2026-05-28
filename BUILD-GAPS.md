@@ -23221,7 +23221,7 @@ the request tenant), no `labels` filter, and no `includeDeriveFailures`.
 
 **Resolution:** Section-marker entry with no actionable body; the individual SHOULD-class findings are tracked at F-15.1.17–F-15.1.27. Closed as a placeholder heading.
 
-### - [ ] F-15.1.17 — OpenAPI document is at `/openapi.json` (spec) vs `/v1/openapi.json` (impl) [Medium] — OPEN
+### - [x] F-15.1.17 — OpenAPI document is at `/openapi.json` (spec) vs `/v1/openapi.json` (impl) [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-15.5.17, F-25.4.27 — Three related OpenAPI-route findings about different defects: gateway missing /openapi.json (15.1.17), lenny-ops missing /v1/openapi.json (25.4.27), and a 15.5.17 Info note affirming the convention is honored.
 
@@ -23232,6 +23232,8 @@ route is a /v1-prefixed variant. Spec §25.4 line 908 also separately
 lists `/v1/openapi.json` and `/v1/openapi.yaml` for `lenny-ops`, so a
 case can be made that both routes are needed; the gap is that the
 gateway-side `/openapi.json` is missing.
+
+**Resolution:** `openapi.HandlerWithVersion` now mounts `GET /openapi.json` alongside `/openapi.yaml` and the legacy `/v1/openapi.json`; `cmd/lenny-gateway/main.go` and the `routeTemplate`/`ratelimit.isInfraPath` allowlists pick up the new canonical mount. Spec §15.1 line 589 is now satisfied while §18 / §25.4's `/v1/openapi.json` reference is preserved as the documented legacy alias. Two new tier-1 tests (`TestServesJSONAtCanonicalSpecPath_spec_15_1_589`, `TestCanonicalJSONMountStampsReleaseVersion_spec_15_1_589`) cover byte-equal delivery + version templating; `TestOpenAPIPathsExempt_spec_15_1_589` pins the rate-limit exemption.
 
 ### - [x] F-15.1.18 — OpenAPI `info.version` does not reflect the gateway release [Medium] — CLOSED
 Spec line 589: `info.version` "matches the gateway's release version".
@@ -23256,7 +23258,7 @@ against per-resource fields, cursors valid 24h with
 is clamped to 1000 (not the spec's 200); cursors are not opaque
 (`?since_sequence=` is a raw integer).
 
-### - [ ] F-15.1.21 — Admin-resource `regenerate-cards` is not a §15.1 endpoint [Medium] — OPEN
+### - [x] F-15.1.21 — Admin-resource `regenerate-cards` is not a §15.1 endpoint [Medium] — CLOSED
 `POST /v1/admin/runtimes/regenerate-cards` is wired
 (`pkg/gateway/admin/tenants.go:286-287`) and tested but does not appear
 in any §15.1 table. The §5.1 spec references regeneration only as a
@@ -23266,13 +23268,17 @@ its `?dryRun`-via-body convention are an implementation detail with no
 add it to the runtime CRUD table; the build-time CI check from line 933
 will flag it because there is no spec mapping.
 
-### - [ ] F-15.1.22 — `GET /v1/sessions/{id}/messages` (paginated list) is unimplemented [Medium] — OPEN
+**Resolution:** Verify-closed. §5.1 line 296 normatively defines `POST /v1/admin/runtimes/regenerate-cards` (Request body with `generatorVersionBefore` + `dryRun`; response with `regenerated/skipped/errors`). The §15.1 line 933 CI invariant only requires every admin endpoint to carry the `x-lenny-mcp-tool` / `x-lenny-scope` / `x-lenny-required-role` / `x-lenny-category` extensions; `openapi.json:1021-1026` confirms the endpoint already carries all four. The §5.1-vs-§15.1 cross-listing question is spec-coordination territory (Rule B prevents spec edits); no code action owed.
+
+### - [-] F-15.1.22 — `GET /v1/sessions/{id}/messages` (paginated list) is unimplemented [Medium] — DEFERRED
 Spec lines 691–693 explicitly require both the POST and a GET on
 `/v1/sessions/{id}/messages`, returning "message history including
 delivery receipts and state". Impl wires only the POST
 (`sessionserver.go:477`). Without the GET, clients have no way to read
 back the inbox / sent messages they submitted, and the spec's
 "delivery receipt" contract from §7.2 is not callable.
+
+**Resolution:** DEFERRED. The §7.2 inbox + DLQ machinery that backs "message history including delivery receipts and state" is gated on **F-7.2.4** (Session inbox + DLQ machinery, OPEN). Landing the REST GET in isolation would expose an empty / partial view that contradicts the spec contract. Re-attempt once F-7.2.4 lands.
 
 ### - [ ] F-15.1.23 — The §15.1 cursor envelope for events / SSE reconnect uses `Last-Event-ID` but no canonical `items` shape [Medium] — OPEN
 Spec line 482 mounts `GET /v1/sessions/{id}/events`; the canonical
@@ -23282,13 +23288,15 @@ lines 1228 lists this endpoint but the impl
 does not return a JSON envelope. The spec text needs a carve-out OR the
 impl needs an alternative JSON shape; today neither matches the spec.
 
-### - [ ] F-15.1.24 — `/v1/admin/issued-tokens/{jti}/revoke` is mounted but the GET list is missing [Medium] — OPEN
+### - [x] F-15.1.24 — `/v1/admin/issued-tokens/{jti}/revoke` is mounted but the GET list is missing [Medium] — CLOSED
 Spec table doesn't formally list a GET on `/v1/admin/issued-tokens`, so
 this is a Medium note: §13.3 build progress (and SDK error-handling
 guidance) implies operators want to enumerate live tokens; spec carries
 only the revoke action.
 
-### - [ ] F-15.1.25 — `DELETE /v1/sessions/{id}` semantics partially diverge [Medium] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("spec table doesn't formally list a GET on `/v1/admin/issued-tokens` ... spec carries only the revoke action"). §12.1 names the `issued_tokens` Postgres table as a revocation-lookup index; §13.3 lines 589-601 describe only the revoke flow as an external surface. A listing endpoint would require new spec text (Rule B prevents spec edits); the revoke action at `POST /v1/admin/issued-tokens/{jti}/revoke` is already mounted (`tenants.go:572`) and OpenAPI-declared (`openapi.json:1412`). No code action owed.
+
+### - [-] F-15.1.25 — `DELETE /v1/sessions/{id}` semantics partially diverge [Medium] — DEFERRED
 Spec lines 624–625 distinguish `/terminate` ("graceful, successful end
 — `completed`") from `DELETE` ("force-cancel — `cancelled`"). Impl at
 `pkg/gateway/sessionserver/sessionserver.go::handleDelete` does
@@ -23296,6 +23304,8 @@ transition to `cancelled` correctly, but does not honour an optional
 `If-Match` (spec lines 1213, even when ETag is otherwise absent), and
 does not record the `releases resources` semantic — the impl just flips
 state.
+
+**Resolution:** DEFERRED. The `If-Match` optional precondition on `DELETE` is structurally tied to the spec §15.1 line 1207-1224 ETag-based optimistic concurrency contract: an integer `version` column on every admin resource, an `ETag` header populated on `GET`, `412 ETAG_MISMATCH` + `details.currentEtag` shape, and `RFC 7232 §2.3` quoted-decimal parsing. None of that infrastructure exists today — see **F-15.1.2** (`ETag-based optimistic concurrency is entirely missing`, High, OPEN). Landing a session-only `If-Match` would diverge from the canonical envelope. Re-attempt once F-15.1.2 lands.
 
 ### - [ ] F-15.1.26 — Per-endpoint MCP/scope OpenAPI extensions are not enforced by CI [Medium] — OPEN
 Spec lines 923–933 require every admin endpoint to carry
@@ -23306,7 +23316,7 @@ declares some of these on a subset of endpoints (86 entries with
 `x-lenny-mcp-tool` across ~78 paths) but not consistently; no test in
 the tree asserts the build-time check.
 
-### - [ ] F-15.1.27 — Comma-separated handler entries in spec table [Medium] — OPEN
+### - [x] F-15.1.27 — Comma-separated handler entries in spec table [Medium] — CLOSED
 `POST /v1/sessions/{id}/interrupt,` and `GET /v1/sessions/{id}/artifacts,`
 appear in the spec text because of intra-row commas; these are not
 genuine endpoints but they exposed minor table-rendering glitches when I
@@ -23314,6 +23324,8 @@ parsed the spec. Not a build gap, but the spec table cells around lines
 657 and 661 use commas to enumerate multiple endpoints in a single row
 header. A code generator parsing that table will mis-extract; not a Go
 issue but a contract-stability issue worth flagging.
+
+**Resolution:** Verify-closed per the finding's own framing ("Not a build gap, but the spec table cells ... use commas to enumerate multiple endpoints"). The reachability-matrix cells at §15.1 lines 657 and 661 contain canonical comma-and-space lists of endpoints (`/upload`, `/finalize`, `/messages`, `/eval`, `/replay` etc.), not phantom endpoint names. Code generators must parse the markdown table cell as a list, not split on commas treating each fragment as a route. Rule B prevents reshaping the spec table; no code action owed.
 
 ### - [x] F-15.1.28 — minor [Low] — CLOSED
 

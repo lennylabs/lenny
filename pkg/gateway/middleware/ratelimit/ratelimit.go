@@ -322,7 +322,8 @@ func userKey(r *http.Request) (string, bool) {
 // monitoring scrapes and that the §11.1 admission limits exempt.
 func isInfraPath(p string) bool {
 	switch p {
-	case "/healthz", "/metrics", "/openapi.yaml", "/v1/openapi.json":
+	case "/healthz", "/metrics",
+		"/openapi.yaml", "/openapi.json", "/v1/openapi.json":
 		return true
 	default:
 		return false
