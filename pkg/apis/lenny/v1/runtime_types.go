@@ -98,6 +98,84 @@ type RuntimeSpec struct {
 	// §13.4 lines 663-672 — F-7.4.4.
 	// +optional
 	ArchivePolicy *ArchivePolicy `json:"archivePolicy,omitempty"`
+
+	// Capabilities is the §5.1 capabilities block on a runtime: the
+	// runtime's interaction model and its mid-session injection support.
+	// §26 reference runtimes (mastra, openai-assistants, crewai, …)
+	// declare these so the registered Runtime CRD advertises the
+	// §15.4.6 conformance battery the runtime actually implements; the
+	// runtime controller mirrors them into the gateway registry's
+	// RuntimeCapabilities at reconciliation time so §7.2 path-4 (queued
+	// injection) is gated on the runtime's declared injection.modes.
+	// spec: §5.1 lines 60-64; §26.9 line 407; §26.10 line 432; §26.11
+	// line 466 — F-26.9.2 / F-26.10.2 / F-26.11.2.
+	// +optional
+	Capabilities *RuntimeCapabilitiesCRD `json:"capabilities,omitempty"`
+
+	// RuntimeOptionsSchemaRef is the §5.1 / §26 runtimeOptionsSchema URL
+	// the runtime advertises. The §14 path resolves it (or the inline
+	// schema set via the admin API) when validating session-creation
+	// runtimeOptions. The CRD carries the URL form so the chart can
+	// declaratively register schemas hosted at
+	// `https://schemas.lenny.dev/runtime-options/<name>/v1.json` per §26.
+	// The runtime controller stamps it into the gateway registry as a
+	// JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1 line 92; §26.9
+	// line 408; §26.10 line 434; §26.11 line 465 — F-26.9.2 / F-26.10.2 /
+	// F-26.11.2.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^https?://`
+	RuntimeOptionsSchemaRef string `json:"runtimeOptionsSchemaRef,omitempty"`
+
+	// DelegationPolicyRef is the §5.1 delegationPolicyRef: the
+	// DelegationPolicy this runtime is bound to. §26.11 (crewai) declares
+	// the field as required on a runtime that delegates. The runtime
+	// controller propagates it through the gateway registry.
+	// spec: §5.1 line 68; §26.11 line 467 — F-26.11.2.
+	// +optional
+	DelegationPolicyRef string `json:"delegationPolicyRef,omitempty"`
+}
+
+// RuntimeCapabilitiesCRD mirrors the §5.1 capabilities block onto the
+// Runtime CRD so the registered Runtime advertises the runtime's
+// interaction model and mid-session injection support declaratively.
+// The runtime controller plumbs every field into the gateway registry's
+// runtimestore.RuntimeCapabilities. spec: §5.1 lines 60-64 — F-26.9.2.
+type RuntimeCapabilitiesCRD struct {
+	// Interaction is the runtime's §5.1 capabilities.interaction model:
+	// one_shot (one message, one response) or multi_turn (repeated message
+	// delivery over a task). §26's reference runtimes declare multi_turn.
+	// +kubebuilder:validation:Enum=one_shot;multi_turn
+	// +optional
+	Interaction string `json:"interaction,omitempty"`
+
+	// Injection is the runtime's §5.1 capabilities.injection block:
+	// whether mid-session message injection is supported and the modes
+	// (immediate, queued) the runtime accepts. §26's reference runtimes
+	// declare supported=true with both modes.
+	// +optional
+	Injection *InjectionCapabilityCRD `json:"injection,omitempty"`
+
+	// PreConnect is the §5.1 capabilities.preConnect flag: when true the
+	// §6.1 warm-pool controller pre-connects the agent SDK process during
+	// the warm phase. Default false.
+	// +optional
+	PreConnect bool `json:"preConnect,omitempty"`
+}
+
+// InjectionCapabilityCRD is the §5.1 capabilities.injection block: whether
+// the runtime accepts mid-session message injection and the §7.2 delivery
+// modes it supports.
+type InjectionCapabilityCRD struct {
+	// Supported is the §5.1 capabilities.injection.supported flag. False
+	// (the default) rejects injection per §7.2 line 222.
+	// +optional
+	Supported bool `json:"supported,omitempty"`
+
+	// Modes lists the §7.2 injection modes the runtime accepts:
+	// `immediate` interrupts a suspended session to deliver, `queued`
+	// buffers the message for the next runtime turn.
+	// +optional
+	Modes []string `json:"modes,omitempty"`
 }
 
 // ArchivePolicy mirrors the §13.4 archivePolicy block onto the Runtime CRD

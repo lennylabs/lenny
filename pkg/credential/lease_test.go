@@ -118,6 +118,33 @@ func TestLeaseValidateRejectsZeroExpiry(t *testing.T) {
 	}
 }
 
+// TestAllProxyDialectsIsExhaustive pins the §4.9 + §26 closed enum of
+// proxy dialects. The §4.9 launch dialects are anthropic and openai; §26
+// extends with google (codex / langgraph / mastra) and cursor (cursor-cli).
+// spec: §4.9 lines 1473-1476; §26.6 line 297; §26.5 / §26.8 / §26.9.
+func TestAllProxyDialectsIsExhaustive_spec_4_9_1473(t *testing.T) {
+	got := AllProxyDialects()
+	if len(got) != 4 {
+		t.Errorf("AllProxyDialects() returned %d, want 4 (anthropic, openai, google, cursor)", len(got))
+	}
+	for _, d := range got {
+		if !d.IsValid() {
+			t.Errorf("AllProxyDialects() returned invalid value %q", d)
+		}
+	}
+	// Negative: an unknown dialect is rejected (§4.9 line 1475 admission
+	// returns INVALID_POOL_PROXY_DIALECT against the runtime declaration).
+	if ProxyDialect("grpc").IsValid() {
+		t.Errorf("unknown dialect must not be IsValid for the §4.9 admission gate")
+	}
+	// Positive: each spec value is admitted.
+	for _, want := range []ProxyDialect{ProxyDialectAnthropic, ProxyDialectOpenAI, ProxyDialectGoogle, ProxyDialectCursor} {
+		if !want.IsValid() {
+			t.Errorf("ProxyDialect %q must be IsValid()", want)
+		}
+	}
+}
+
 // spec: §4.9 line 1145 — a lease records issuedAt so expiresAt and the
 // wall-clock duration are auditable.
 func TestLeaseValidateRejectsZeroIssuedAt(t *testing.T) {

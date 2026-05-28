@@ -1376,26 +1376,73 @@ referenceRuntimes:
   # deployment uses; an operator may also register more runtimes
   # through the admin API after install.
   catalog:
+    # spec: §26.3 lines 150-165 — claude-code declares the §26.2 shared
+    # coding-agent capabilities (multi_turn + injection.{immediate,
+    # queued}) and the §26.3 proxyDialect: [anthropic]. F-26.3.1 /
+    # F-26.3.3.
     - name: claude-code
       image: ghcr.io/lennylabs/runtime-claude-code@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [anthropic_direct, aws_bedrock, gcp_vertex_anthropic]
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/claude-code/v1.json
+      credentialCapabilities:
+        hotRotation: true
+        proxyDialect: [anthropic]
+    # spec: §26.4 lines 244-256 — gemini-cli inherits the §26.2 shared
+    # coding-agent capabilities and declares proxyDialect: [google].
     - name: gemini-cli
       image: ghcr.io/lennylabs/runtime-gemini-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [gcp_vertex_gemini, google_ai_studio]
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/gemini-cli/v1.json
+      credentialCapabilities:
+        hotRotation: true
+        proxyDialect: [google]
+    # spec: §26.5 lines 264-278 — codex inherits the §26.2 shared
+    # coding-agent capabilities and declares proxyDialect: [openai].
     - name: codex
       image: ghcr.io/lennylabs/runtime-codex@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [openai_direct, azure_openai]
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/codex/v1.json
+      credentialCapabilities:
+        hotRotation: true
+        proxyDialect: [openai]
+    # spec: §26.6 lines 295-300 — cursor-cli declares cursor_direct,
+    # the new `cursor` LLM-proxy dialect (§4.9 / §26.6 line 297), and
+    # the v1 runtimeOptionsSchema URL. F-26.6.1 / F-26.6.2.
     - name: cursor-cli
       image: ghcr.io/lennylabs/runtime-cursor-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [cursor_direct]
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/cursor-cli/v1.json
+      credentialCapabilities:
+        hotRotation: true
+        proxyDialect: [cursor]
     # spec: §26.1 line 22 anchors `chat` at Standard ("the minimum useful
     # runtime"). Every other reference runtime is Full; the chart value
     # MUST match the spec catalog row so the registered Runtime CRD
@@ -1406,27 +1453,89 @@ referenceRuntimes:
       integrationLevel: standard
       allowedResourceClasses: [small]
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
+      # spec: §26.7 lines 318-352 — chat is multi_turn but supports only
+      # immediate injection (no buffered queue); the runtimeOptionsSchema
+      # is registered at the v1 URL.
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate]
+      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/chat/v1.json
+      credentialCapabilities:
+        hotRotation: true
+        proxyDialect: [anthropic, openai, google]
+    # spec: §26.8 lines 376-381 — langgraph declares anthropic/openai/google
+    # proxy dialects, v1 runtimeOptionsSchema URL, multi_turn + queued
+    # injection. F-26.9.2 pattern.
     - name: langgraph
       image: ghcr.io/lennylabs/runtime-langgraph@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini, azure_openai]
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/langgraph/v1.json
+      credentialCapabilities:
+        hotRotation: true
+        proxyDialect: [anthropic, openai, google]
+    # spec: §26.9 lines 405-410 — mastra declares anthropic/openai/google
+    # proxy dialects, v1 runtimeOptionsSchema URL, multi_turn + queued
+    # injection. F-26.9.2.
     - name: mastra
       image: ghcr.io/lennylabs/runtime-mastra@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/mastra/v1.json
+      credentialCapabilities:
+        hotRotation: true
+        proxyDialect: [anthropic, openai, google]
     # spec: §26.10 operator warning — OpenAI's hosted code interpreter
     # runs outside Lenny's sandbox. Operators concerned about code
     # execution isolation should disable code_interpreter in their
     # assistant configuration on OpenAI's side; Lenny does not proxy or
     # intercept code-interpreter invocations.
+    # spec: §26.10 lines 432-440 — openai-assistants declares the openai
+    # proxy dialect, multi_turn + immediate-only injection, and the v1
+    # runtimeOptionsSchema URL. F-26.10.2.
     - name: openai-assistants
       image: ghcr.io/lennylabs/runtime-openai-assistants@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       supportedProviders: [openai_direct, azure_openai]
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate]
+      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/openai-assistants/v1.json
+      credentialCapabilities:
+        hotRotation: true
+        proxyDialect: [openai]
+    # spec: §26.11 lines 462-469 — crewai declares the anthropic/openai
+    # proxy dialects, multi_turn + queued injection, the v1
+    # runtimeOptionsSchema URL, and a required delegationPolicyRef bound
+    # to the crewai-default DelegationPolicy. F-26.11.2.
     - name: crewai
       image: ghcr.io/lennylabs/runtime-crewai@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct]
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/crewai/v1.json
+      credentialCapabilities:
+        hotRotation: true
+        proxyDialect: [anthropic, openai]
+      delegationPolicyRef: crewai-default
 
 # ops configures the §25.4 lenny-ops operability service. lenny-ops is
 # mandatory in every Lenny installation (§17.8.5); the chart provides no

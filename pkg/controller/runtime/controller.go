@@ -26,6 +26,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -235,6 +236,23 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	// AllowSymlinks toggle the deployer declared on the Runtime resource.
 	// F-7.4.4.
 	dst.ArchivePolicy = archivePolicyFromCRD(rt.Spec.ArchivePolicy)
+	// spec: §5.1 lines 60-64; §26.9 line 407; §26.10 line 432; §26.11 line
+	// 466 — capabilities (interaction + injection.{supported, modes}) are
+	// mirrored from the CRD so the gateway registry advertises the §15.4.6
+	// conformance battery the runtime actually implements. F-26.9.2 /
+	// F-26.10.2 / F-26.11.2.
+	dst.Capabilities = capabilitiesFromCRD(rt.Spec.Capabilities)
+	// spec: §5.1 line 92; §26.9 line 408; §26.10 line 434; §26.11 line 465
+	// — runtimeOptionsSchemaRef is rendered as a JSON {"$ref": "<url>"}
+	// schema fragment so the §14 validator resolves the v1 schema URL the
+	// runtime advertises. An empty CRD field leaves the registry schema
+	// nil. F-26.9.2 / F-26.10.2 / F-26.11.2.
+	dst.RuntimeOptionsSchema = runtimeOptionsSchemaFromRef(rt.Spec.RuntimeOptionsSchemaRef)
+	// spec: §5.1 line 68; §26.11 line 467 — delegationPolicyRef binds the
+	// runtime to its §8.3 DelegationPolicy so the gateway resolves the
+	// policy at session-creation time. §26.11 declares the field required
+	// on the crewai runtime. F-26.11.2.
+	dst.DelegationPolicyRef = rt.Spec.DelegationPolicyRef
 	dst.Labels = domainLabels(rt.Labels)
 }
 
@@ -278,6 +296,42 @@ func archivePolicyFromCRD(p *lennyv1.ArchivePolicy) *runtimestore.ArchivePolicy 
 	return &runtimestore.ArchivePolicy{
 		AllowSymlinks: p.AllowSymlinks,
 	}
+}
+
+// capabilitiesFromCRD maps the §5.1 capabilities block. A nil CRD block
+// mirrors to a nil registry block (no capabilities declared). The
+// runtimestore enum types accept any string; ApplyDefaults at registry
+// admission rejects invalid values with the spec-required error.
+// spec: §5.1 lines 60-64 — F-26.9.2.
+func capabilitiesFromCRD(c *lennyv1.RuntimeCapabilitiesCRD) *runtimestore.RuntimeCapabilities {
+	if c == nil {
+		return nil
+	}
+	out := &runtimestore.RuntimeCapabilities{
+		Interaction: runtimestore.RuntimeInteraction(c.Interaction),
+		PreConnect:  c.PreConnect,
+	}
+	if c.Injection != nil {
+		out.Injection.Supported = c.Injection.Supported
+		modes := make([]runtimestore.InjectionMode, 0, len(c.Injection.Modes))
+		for _, m := range c.Injection.Modes {
+			modes = append(modes, runtimestore.InjectionMode(m))
+		}
+		out.Injection.Modes = modes
+	}
+	return out
+}
+
+// runtimeOptionsSchemaFromRef converts the CRD's URL form of
+// runtimeOptionsSchema into the gateway registry's JSON Schema fragment:
+// a `{"$ref": "<url>"}` document the §14 validator dereferences. An empty
+// ref returns nil. spec: §5.1 line 92; §26.9 line 408 — F-26.9.2.
+func runtimeOptionsSchemaFromRef(ref string) json.RawMessage {
+	if ref == "" {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]string{"$ref": ref})
+	return body
 }
 
 // domainLabels returns the CRD object labels that are domain

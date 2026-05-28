@@ -34,8 +34,9 @@ func (m DeliveryMode) IsValid() bool {
 type ProxyConfig struct {
 	// ProxyURL is the HTTPS endpoint of the §4.9 LLM reverse proxy.
 	ProxyURL string
-	// ProxyDialect is the wire format the runtime speaks to the proxy:
-	// "openai" or "anthropic".
+	// ProxyDialect is the wire format the runtime speaks to the proxy.
+	// The value is one of the canonical §4.9 / §26 dialects enumerated in
+	// AllProxyDialects.
 	ProxyDialect string
 	// LeaseToken is the opaque bearer token authenticating the runtime
 	// to ProxyURL. The runtime supplies it as its SDK API key.
@@ -43,6 +44,50 @@ type ProxyConfig struct {
 	// UpstreamModel is an optional hint for the upstream model ID; the
 	// runtime may override it per request.
 	UpstreamModel string
+}
+
+// ProxyDialect is the §4.9 LLM-proxy dialect a runtime's SDK speaks to
+// the Lenny LLM proxy. The §4.9 admission path rejects a pool whose
+// declared proxyDialect is not one of the canonical values, returning
+// INVALID_POOL_PROXY_DIALECT per spec lines 1473-1476.
+//
+// spec: §4.9 lines 1473-1476; §26.6 line 297 (cursor); §26.5/§26.8/§26.9
+// (google).
+type ProxyDialect string
+
+const (
+	// ProxyDialectAnthropic exposes POST {proxyUrl}/v1/messages with the
+	// Anthropic Messages API request body (§4.9 line 1474).
+	ProxyDialectAnthropic ProxyDialect = "anthropic"
+	// ProxyDialectOpenAI exposes POST {proxyUrl}/v1/chat/completions and
+	// /v1/embeddings with the OpenAI request body (§4.9 line 1473).
+	ProxyDialectOpenAI ProxyDialect = "openai"
+	// ProxyDialectGoogle is the §26.5/§26.8/§26.9 Google dialect covering
+	// Gemini's inference surface for codex, langgraph, and mastra.
+	ProxyDialectGoogle ProxyDialect = "google"
+	// ProxyDialectCursor is the §26.6 line 297 cursor dialect covering
+	// Cursor's inference surface for the cursor-cli reference runtime.
+	ProxyDialectCursor ProxyDialect = "cursor"
+)
+
+// AllProxyDialects returns every built-in proxy dialect in §4.9 +
+// §26-extension order.
+func AllProxyDialects() []ProxyDialect {
+	return []ProxyDialect{
+		ProxyDialectAnthropic, ProxyDialectOpenAI,
+		ProxyDialectGoogle, ProxyDialectCursor,
+	}
+}
+
+// IsValid reports whether d is one of the canonical proxy dialects.
+// spec: §4.9 line 1475.
+func (d ProxyDialect) IsValid() bool {
+	for _, v := range AllProxyDialects() {
+		if d == v {
+			return true
+		}
+	}
+	return false
 }
 
 // Lease is a §4.9 CredentialLease: the credential grant the gateway

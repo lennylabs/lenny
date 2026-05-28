@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/credential"
 )
 
 // CredentialStatus is the §4.9 per-credential lifecycle state within a
@@ -354,16 +356,16 @@ func validateProxyEndpoint(endpoint string) error {
 	return nil
 }
 
-// validProxyDialect reports whether d is an accepted §4.9 proxy
+// validProxyDialect reports whether d is an accepted §4.9 / §26 proxy
 // dialect. Empty is accepted (a direct-mode pool declares no dialect).
-// The two launch dialects are `openai` and `anthropic` (spec line 1481).
+// The §4.9 launch dialects are `openai` and `anthropic`; §26 extends the
+// set with `google` (codex / langgraph / mastra) and `cursor` (cursor-cli).
+// spec: §4.9 lines 1473-1476; §26.6 line 297; §26.5/§26.8/§26.9.
 func validProxyDialect(d string) bool {
-	switch d {
-	case "", "openai", "anthropic":
+	if d == "" {
 		return true
-	default:
-		return false
 	}
+	return credential.ProxyDialect(d).IsValid()
 }
 
 // Validate reports the §4.9 structural invariants of a pool: a tenant

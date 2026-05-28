@@ -60,7 +60,9 @@ func TestValidateProxyFields(t *testing.T) {
 			t.Errorf("Validate deliveryMode %q: %v, want nil", m, err)
 		}
 	}
-	for _, d := range []string{"", "openai", "anthropic"} {
+	// spec: §4.9 lines 1473-1476 launch dialects (anthropic, openai);
+	// §26.5 / §26.8 / §26.9 add `google`; §26.6 line 297 adds `cursor`.
+	for _, d := range []string{"", "openai", "anthropic", "google", "cursor"} {
 		p := samplePool("acme", "pool-pd")
 		p.ProxyDialect = d
 		if err := credentialpoolstore.Validate(p); err != nil {

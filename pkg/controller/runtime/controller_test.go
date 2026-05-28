@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"testing"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
@@ -74,14 +75,16 @@ func TestApplyCRDFields_spec_5_1(t *testing.T) {
 }
 
 // TestApplyCRDFields_PreservesNonCRDFields_spec_5_1 verifies the update
-// path leaves §5.1 fields the CRD does not model (capabilities, the
-// agent interface, setup policy, limits) intact, so an admin-API
+// path leaves §5.1 fields the CRD does not model (the agent interface,
+// the description text, minPlatformVersion) intact, so an admin-API
 // configuration layered on top of the CRD base survives a re-reconcile.
+// spec: §5.1 — F-26.9.2 added capabilities/runtimeOptionsSchemaRef/
+// delegationPolicyRef to the CRD; those are now CRD-canonical and
+// therefore not preserved here.
 func TestApplyCRDFields_PreservesNonCRDFields_spec_5_1(t *testing.T) {
 	dst := runtimestore.Runtime{
 		Name:               "scanner",
 		Description:        "configured via admin API",
-		Capabilities:       &runtimestore.RuntimeCapabilities{Interaction: runtimestore.InteractionMultiTurn},
 		AgentInterface:     &runtimestore.AgentInterface{},
 		MinPlatformVersion: "1.4.0",
 	}
@@ -92,9 +95,6 @@ func TestApplyCRDFields_PreservesNonCRDFields_spec_5_1(t *testing.T) {
 
 	if dst.Description != "configured via admin API" {
 		t.Errorf("description wiped: %q", dst.Description)
-	}
-	if dst.Capabilities == nil || dst.Capabilities.Interaction != runtimestore.InteractionMultiTurn {
-		t.Errorf("capabilities wiped: %+v", dst.Capabilities)
 	}
 	if dst.AgentInterface == nil {
 		t.Error("agentInterface wiped")
@@ -284,6 +284,105 @@ func TestDomainLabels_AllSystem(t *testing.T) {
 	}
 	if out := domainLabels(nil); out != nil {
 		t.Errorf("nil labels mapped to %v, want nil", out)
+	}
+}
+
+// TestCapabilitiesFromCRD_spec_5_1 verifies the §5.1 capabilities block
+// mirrors from the CRD onto the runtimestore: interaction + injection
+// (supported + modes) + preConnect round-trip; a nil CRD block mirrors to
+// nil; the modes slice is copied, not aliased to the CRD slice.
+// spec: §5.1 lines 60-64; §26.3 lines 150-155 — F-26.3.1 / F-26.9.2 /
+// F-26.10.2 / F-26.11.2.
+func TestCapabilitiesFromCRD_spec_5_1(t *testing.T) {
+	if got := capabilitiesFromCRD(nil); got != nil {
+		t.Errorf("nil block mapped to %+v, want nil", got)
+	}
+	src := &lennyv1.RuntimeCapabilitiesCRD{
+		Interaction: "multi_turn",
+		Injection: &lennyv1.InjectionCapabilityCRD{
+			Supported: true,
+			Modes:     []string{"immediate", "queued"},
+		},
+		PreConnect: false,
+	}
+	got := capabilitiesFromCRD(src)
+	if got == nil {
+		t.Fatal("capabilitiesFromCRD(non-nil) = nil")
+	}
+	if got.Interaction != runtimestore.InteractionMultiTurn {
+		t.Errorf("Interaction = %q, want multi_turn", got.Interaction)
+	}
+	if !got.Injection.Supported {
+		t.Error("Injection.Supported = false, want true")
+	}
+	if len(got.Injection.Modes) != 2 ||
+		got.Injection.Modes[0] != runtimestore.InjectionImmediate ||
+		got.Injection.Modes[1] != runtimestore.InjectionQueued {
+		t.Errorf("Injection.Modes = %v, want [immediate, queued]", got.Injection.Modes)
+	}
+	if got.PreConnect {
+		t.Error("PreConnect = true, want false")
+	}
+	// Mutating the registry copy must not leak back to the CRD slice.
+	got.Injection.Modes[0] = "mutated"
+	if src.Injection.Modes[0] != "immediate" {
+		t.Error("Injection.Modes aliased to CRD: mutation leaked back")
+	}
+}
+
+// TestRuntimeOptionsSchemaFromRef_spec_5_1 verifies the §5.1 / §26 schema
+// URL is rendered as a JSON {"$ref": "<url>"} fragment the §14 validator
+// can dereference. An empty ref returns nil.
+// spec: §5.1 line 92; §26.9 line 408 — F-26.9.2.
+func TestRuntimeOptionsSchemaFromRef_spec_5_1(t *testing.T) {
+	if got := runtimeOptionsSchemaFromRef(""); got != nil {
+		t.Errorf("empty ref returned %s, want nil", got)
+	}
+	const url = "https://schemas.lenny.dev/runtime-options/mastra/v1.json"
+	got := runtimeOptionsSchemaFromRef(url)
+	var doc map[string]string
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("ref schema not valid JSON: %v", err)
+	}
+	if doc["$ref"] != url {
+		t.Errorf("schema $ref = %q, want %q", doc["$ref"], url)
+	}
+}
+
+// TestApplyCRDFields_MirrorsCapabilitiesAndSchemaAndDelegation_spec_5_1
+// verifies the end-to-end plumbing: the §5.1 capabilities block, the
+// §5.1 / §26 runtimeOptionsSchemaRef URL, and the §5.1 / §26.11
+// delegationPolicyRef all land on the runtimestore runtime when the CRD
+// declares them. spec: §5.1 lines 60-92; §26.11 line 467 — F-26.9.2 /
+// F-26.10.2 / F-26.11.2.
+func TestApplyCRDFields_MirrorsCapabilitiesAndSchemaAndDelegation_spec_5_1(t *testing.T) {
+	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
+		Type:             "agent",
+		Image:            "img@sha256:" + hex64,
+		IntegrationLevel: "full",
+		Capabilities: &lennyv1.RuntimeCapabilitiesCRD{
+			Interaction: "multi_turn",
+			Injection: &lennyv1.InjectionCapabilityCRD{
+				Supported: true,
+				Modes:     []string{"immediate", "queued"},
+			},
+		},
+		RuntimeOptionsSchemaRef: "https://schemas.lenny.dev/runtime-options/crewai/v1.json",
+		DelegationPolicyRef:     "crewai-default",
+	}}
+	var dst runtimestore.Runtime
+	applyCRDFields(&dst, rt)
+	if dst.Capabilities == nil || dst.Capabilities.Interaction != runtimestore.InteractionMultiTurn {
+		t.Errorf("Capabilities not plumbed: %+v", dst.Capabilities)
+	}
+	if !dst.Capabilities.Injection.Supported {
+		t.Errorf("Injection.Supported = false, want true")
+	}
+	if len(dst.RuntimeOptionsSchema) == 0 {
+		t.Errorf("RuntimeOptionsSchema not plumbed")
+	}
+	if dst.DelegationPolicyRef != "crewai-default" {
+		t.Errorf("DelegationPolicyRef = %q, want %q", dst.DelegationPolicyRef, "crewai-default")
 	}
 }
 

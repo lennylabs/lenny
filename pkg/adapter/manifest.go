@@ -348,12 +348,18 @@ func manifestLLMFromPayload(payload []byte) *ManifestLLM {
 // apiKeyEnvForDialect returns the §4.7 canonical API-key env var the
 // runtime's SDK reads for a proxy dialect. An unrecognized dialect yields
 // an empty string (the field is then omitted).
+// spec: §4.9 lines 1473-1474; §26.5/§26.8/§26.9 (google); §26.6 line 297
+// (cursor).
 func apiKeyEnvForDialect(dialect string) string {
 	switch dialect {
 	case "anthropic":
 		return "ANTHROPIC_API_KEY"
 	case "openai":
 		return "OPENAI_API_KEY"
+	case "google":
+		return "GOOGLE_API_KEY"
+	case "cursor":
+		return "CURSOR_API_KEY"
 	default:
 		return ""
 	}

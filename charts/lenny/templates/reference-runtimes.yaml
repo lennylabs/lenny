@@ -11,10 +11,11 @@ images live in their own repositories (github.com/lennylabs/runtime-<name>)
 and are pulled lazily on first session start.
 
 The Runtime CRD carries the type, image, integration level, execution
-mode, isolation profile, allowed resource classes, and supported
-providers. The richer §26 fields (capabilities, limits, the runtime
-options schema, the agent interface) are documented in §26 and are
-configured on the runtime through the admin API.
+mode, isolation profile, allowed resource classes, supported providers,
+the §5.1 capabilities block (interaction + injection), the §5.1
+runtimeOptionsSchema URL the §26 sections enumerate, the §4.9
+credentialCapabilities.proxyDialect set, and the §8.3
+delegationPolicyRef. F-26.9.2 / F-26.10.2 / F-26.11.2.
 */ -}}
 {{- if .Values.referenceRuntimes.enabled }}
 {{- range .Values.referenceRuntimes.catalog }}
@@ -38,5 +39,19 @@ spec:
   {{- end }}
   supportedProviders:
     {{- toYaml .supportedProviders | nindent 4 }}
+  {{- with .capabilities }}
+  capabilities:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .runtimeOptionsSchemaRef }}
+  runtimeOptionsSchemaRef: {{ . | quote }}
+  {{- end }}
+  {{- with .credentialCapabilities }}
+  credentialCapabilities:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .delegationPolicyRef }}
+  delegationPolicyRef: {{ . | quote }}
+  {{- end }}
 {{- end }}
 {{- end }}

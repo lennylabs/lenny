@@ -128,3 +128,118 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  # spec: §26.3 lines 150-155 + §26.9 line 407 + §26.10 line 437 + §26.11
+  # line 466 — every catalog entry MUST surface capabilities.interaction
+  # and capabilities.injection so the registered Runtime advertises the
+  # spec-anchored §15.4.6 conformance battery. F-26.3.1 / F-26.9.2 /
+  # F-26.10.2 / F-26.11.2.
+  - it: stamps capabilities.interaction = multi_turn on claude-code per §26.3 line 151
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.capabilities.interaction
+          value: multi_turn
+      - equal:
+          path: spec.capabilities.injection.supported
+          value: true
+      - contains:
+          path: spec.capabilities.injection.modes
+          content: immediate
+      - contains:
+          path: spec.capabilities.injection.modes
+          content: queued
+
+  - it: stamps capabilities + injection.modes = [immediate] on openai-assistants per §26.10 line 437
+    documentSelector:
+      path: metadata.name
+      value: openai-assistants
+    asserts:
+      - equal:
+          path: spec.capabilities.interaction
+          value: multi_turn
+      - contains:
+          path: spec.capabilities.injection.modes
+          content: immediate
+
+  - it: stamps capabilities + injection.modes = [immediate, queued] on crewai per §26.11 line 466
+    documentSelector:
+      path: metadata.name
+      value: crewai
+    asserts:
+      - equal:
+          path: spec.capabilities.interaction
+          value: multi_turn
+      - contains:
+          path: spec.capabilities.injection.modes
+          content: immediate
+      - contains:
+          path: spec.capabilities.injection.modes
+          content: queued
+
+  # spec: §26.3 line 165 — claude-code proxyDialect: [anthropic].
+  # F-26.3.3 / F-26.9.2 / F-26.10.2 / F-26.11.2.
+  - it: stamps credentialCapabilities.proxyDialect on claude-code per §26.3 line 165
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.credentialCapabilities.hotRotation
+          value: true
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: anthropic
+
+  # spec: §26.6 line 297 — cursor-cli proxyDialect: [cursor]. F-26.6.2.
+  - it: stamps cursor proxyDialect on cursor-cli per §26.6 line 297
+    documentSelector:
+      path: metadata.name
+      value: cursor-cli
+    asserts:
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: cursor
+
+  # spec: §26.9 line 410 — mastra proxyDialect: [anthropic, openai, google].
+  - it: stamps anthropic/openai/google proxyDialect on mastra per §26.9 line 410
+    documentSelector:
+      path: metadata.name
+      value: mastra
+    asserts:
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: anthropic
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: openai
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: google
+
+  # spec: §26.9 line 408 / §26.10 line 438 / §26.11 line 467 — the v1
+  # runtimeOptionsSchema URL is stamped on every reference runtime so the
+  # gateway/controller can resolve the schema at session-creation time.
+  # F-26.9.2 / F-26.10.2 / F-26.11.2.
+  - it: stamps runtimeOptionsSchemaRef on mastra per §26.9 line 408
+    documentSelector:
+      path: metadata.name
+      value: mastra
+    asserts:
+      - equal:
+          path: spec.runtimeOptionsSchemaRef
+          value: https://schemas.lenny.dev/runtime-options/mastra/v1.json
+
+  - it: stamps runtimeOptionsSchemaRef on crewai per §26.11 line 467
+    documentSelector:
+      path: metadata.name
+      value: crewai
+    asserts:
+      - equal:
+          path: spec.runtimeOptionsSchemaRef
+          value: https://schemas.lenny.dev/runtime-options/crewai/v1.json
+      - equal:
+          path: spec.delegationPolicyRef
+          value: crewai-default

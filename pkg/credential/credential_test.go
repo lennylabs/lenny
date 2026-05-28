@@ -8,8 +8,10 @@ import (
 )
 
 func TestAllProvidersIsExhaustive(t *testing.T) {
-	if got := len(AllProviders()); got != 6 {
-		t.Errorf("AllProviders() returned %d, want 6 per §4.9 table", got)
+	// spec: §4.9 + §26.6 line 296 — cursor_direct is a §26 reference-runtime
+	// provider added to the built-in surface.
+	if got := len(AllProviders()); got != 7 {
+		t.Errorf("AllProviders() returned %d, want 7 (six §4.9 + cursor_direct §26.6)", got)
 	}
 	for _, p := range AllProviders() {
 		if !p.IsValid() {
@@ -18,6 +20,18 @@ func TestAllProvidersIsExhaustive(t *testing.T) {
 	}
 	if Provider("custom-x").IsValid() {
 		t.Errorf("unknown provider must not be IsValid for the built-in surface")
+	}
+}
+
+// TestCursorDirectProviderIsBuiltIn pins §26.6 line 296: the cursor-cli
+// runtime declares supportedProviders: [cursor_direct], so the credential
+// package must accept it as a built-in.
+func TestCursorDirectProviderIsBuiltIn_spec_26_6_296(t *testing.T) {
+	if !ProviderCursorDirect.IsValid() {
+		t.Errorf("ProviderCursorDirect (%q) must be IsValid()", ProviderCursorDirect)
+	}
+	if ProviderCursorDirect != "cursor_direct" {
+		t.Errorf("provider wire value = %q, want %q", ProviderCursorDirect, "cursor_direct")
 	}
 }
 
