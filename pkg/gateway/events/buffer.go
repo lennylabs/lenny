@@ -37,6 +37,16 @@ type OperationalEvent struct {
 	// Type is the CloudEvents type, of the form dev.lenny.<short_name>.
 	Type string `json:"type"`
 
+	// Subject is the CloudEvents v1.0.2 subject context attribute. It
+	// names the resource the event is about — for the §16.6 catalogue
+	// this is the canonical resource identifier (e.g. "pool/default-
+	// gvisor", "session/abc123", "credential_pool/openai-prod"). Agents
+	// filter related events without parsing the payload by matching
+	// CloudEvents subject; the buffer's matchFilter honours the §25.5
+	// ?resourceType / ?resourceId filters against this field. spec:
+	// §16.6 catalogue / CloudEvents v1.0.2 subject context attribute.
+	Subject string `json:"subject,omitempty"`
+
 	// Time is the event timestamp.
 	Time time.Time `json:"time"`
 

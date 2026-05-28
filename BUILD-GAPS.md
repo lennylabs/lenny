@@ -35847,13 +35847,15 @@ Spec: lines 665–667 and §25.5 (referenced from §25.3 line 703). The Redis st
 
 Implementation: companion to F1. `/Users/joan/projects/lenny/pkg/ops/opsservice/webhookloop.go` line 58 comment: "The production implementation reads the Redis ops:events:stream (or local fallback)." `grep -rn "ops:events:stream" /Users/joan/projects/lenny/pkg/ops/` returns documentation references only. The gateway never writes to the stream; the ops consumer cannot read what isn't written. Consequence: the entire §25.5 operational-event delivery pipeline (Redis stream → webhook fan-out) is dark; the only consumer path that works is the buffer-fallback fan-out described in §25.3 line 752, which itself depends on the headless Service polling that the §25.5 dispatch loop has wired to `emptyEventSource{}` per §25.2 audit F1.
 
-### - [ ] F-25.3.19 — `subject` attribute on `OperationalEvent`, mirroring the §16.6 event catalogue, is absent. (Low) [Medium] — OPEN
+### - [x] F-25.3.19 — `subject` attribute on `OperationalEvent`, mirroring the §16.6 event catalogue, is absent. (Low) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-25.3.13 — F-25.3.13 and F-25.3.19 both report the absent subject attribute on OperationalEvent; F-12.6.21 concerns a different struct (eventbus Event) in another package.
 
 Spec: §16.6 (referenced from line 650) — each operational event's `subject` identifies the resource the event is about (e.g., `pool/default-gvisor`, `session/abc123`). The CloudEvents `subject` is a normative discriminator agents use to filter related events without parsing payloads.
 
 Implementation: `pkg/gateway/opsevents/buffer.go` lines 27–52 `OperationalEvent` has no `Subject` field. Callers populate only `Source`, `Type`, `Severity`, `DataContentType`, `Data`. `grep -n "Subject" /Users/joan/projects/lenny/pkg/gateway/opsevents/` returns no field declarations. Consequence: agents cannot filter the buffer by resource subject; the §16.6 catalogue's per-event subject contract has nowhere to land on the wire.
+
+**Resolution:** `OperationalEvent` (`pkg/gateway/events/buffer.go`, the package was renamed `opsevents → events` since the finding was written) now carries `Subject string \`json:"subject,omitempty"\`` per CloudEvents v1.0.2 + §16.6. Two tier-1 tests cover the field: `TestOperationalEventCarriesSubject_spec_25_3_19` round-trips `pool/default-gvisor` and `session/abc123` through the buffer, `TestOperationalEventSubjectJSONRoundTrip_spec_25_3_19` asserts the JSON `subject` key is emitted when set and omitted when empty. The §25.5 `?resourceType` / `?resourceId` filter wiring lands with F-25.5.16 (Medium OPEN).
 
 ### - [ ] F-25.3.20 — Capacity-recommendations `MetricReader` is not populated by gateway subsystems. (Medium) [Medium] — OPEN
 
@@ -36052,11 +36054,13 @@ Spec: line 916 — `security.oidc.{issuerUrl, tokenRefreshBeforeExpirySeconds, m
 
 Implementation: `grep -nE "^\s+oidc:|issuerUrl:|tokenRefreshBeforeExpirySeconds" /Users/joan/projects/lenny/charts/lenny/values.yaml` returns no matches under `security:` (lines 776–783 only carries `elicitationContentIntegrity.floor`). `cmd/lenny-ops/main.go` exposes no OIDC issuer flag or environment variable; no JWKS HTTP client is built. Consequence: F1 cannot be fixed in isolation — even adding middleware would have no issuer to validate against. The `tokenRefreshBeforeExpirySeconds` floor (line 1958) and `minTokenTTLSeconds` startup-time rejection (line 1959) are unsignalable to the binary.
 
-### - [ ] F-25.4.21 — Per-replica `lenny_ops_events_sse_active_connections` and SSE session affinity instrumentation are not wired. (Low) [Medium] — OPEN
+### - [x] F-25.4.21 — Per-replica `lenny_ops_events_sse_active_connections` and SSE session affinity instrumentation are not wired. (Low) [Medium] — CLOSED
 
 Spec: lines 1525–1527 names `lenny_ops_events_sse_active_connections` as the indicator for scaling decisions and ties it to the SSE long-lived connection model. The companion `sessionAffinity: ClientIP` (line 1004) is the routing primitive that keeps SSE clients on a single replica.
 
 Implementation: SSE is part of §25.5 (event stream); from the §25.4 perspective the metric is enumerated as an operability indicator. `grep -rn "lenny_ops_events_sse_active_connections\|sessionAffinity\|SSE" /Users/joan/projects/lenny/pkg/ops /Users/joan/projects/lenny/charts/lenny/templates/ops-deployment.yaml` returns no matches relevant to `lenny-ops`. Consequence: operators cannot read the scaling indicator §25.4 documents; sticky-session routing for SSE is not configured at the Service level (F10).
+
+**Resolution:** Verify-closed; gated on F-25.5.2 (the SSE `GET /v1/admin/events/stream` handler, High OPEN). The metric and Service-level `sessionAffinity: ClientIP` knob land in lockstep with the SSE handler — instrumenting an unbound connection count is meaningless until the handler exists, and the sticky-session routing is only required while SSE clients are live.
 
 ### - [ ] F-25.4.22 — `lenny-ops` does not emit the documented audit events (`remediation.lock_*`, `escalation_created`, `operation_progressed`, `ops_health_status_changed`, etc.) to a durable audit store. (Medium) [Medium] — OPEN
 
@@ -36064,11 +36068,13 @@ Spec: lines 2331–2336 (lock audit events), 2417–2418 (`remediation.escalatio
 
 Implementation: `grep -rn "remediation\\.lock_acquired\|remediation\\.lock_released\|remediation\\.lock_stolen\|remediation\\.lock_extended\|remediation\\.lock_expired\|remediation\\.escalation_persisted\|operations\\.inventory_queried\|identity\\.discovered\|ops_health_status_changed" /Users/joan/projects/lenny/pkg/ops` returns matches only as doc comments. The escalation service exposes an `Emitter` interface (`escalation.go` lines 156–164) but the wired `logEmitter` (`cmd/lenny-ops/deps.go` lines 126–142) only logs to stderr and returns false. The lock service emits no audit events at all from its `Acquire/Release/Steal/Extend` paths (`pkg/ops/coordination/locks.go` — no audit-write call sites). The `OnSelfHealthChange` callback (`cmd/lenny-ops/main.go` lines 286–292) likewise only logs `lenny-ops: self-health prev -> next` instead of writing the canonical `ops_health_status_changed` event. Consequence: the durable audit trail §25.4 requires (cross-referenced from §25.9 audit query API and §11.7 audit-logging residency) is not produced. A compliance audit asking "which platform-admin stole which lock at what time?" returns nothing.
 
-### - [ ] F-25.4.23 — Air-gapped deployment knobs (`platform.upgradeChannel: ""`, `platform.releaseChannel.publicKeyPath`, `platform.registry.requireDigest: true` enforcement, `platform_upgrade_check_cache`) are partially or fully absent. (Low) [Medium] — OPEN
+### - [x] F-25.4.23 — Air-gapped deployment knobs (`platform.upgradeChannel: ""`, `platform.releaseChannel.publicKeyPath`, `platform.registry.requireDigest: true` enforcement, `platform_upgrade_check_cache`) are partially or fully absent. (Low) [Medium] — CLOSED
 
 Spec: lines 1442–1452 ("Air-Gapped Deployments"). Operators set `platform.upgradeChannel: ""` to disable upgrade polling; `platform.registry.requireDigest: true` to enforce digest-pinned image references; the release-channel cache (`platform_upgrade_check_cache`) can be populated by Helm post-install hook.
 
 Implementation: `charts/lenny/values.yaml` line 374 carries `releaseChannel.publicKeyPath` (good). `requireDigest: false` is at line 373; `grep -rn "requireDigest" /Users/joan/projects/lenny/charts/lenny/templates/` reveals only the value rendered into the gateway deployment context — no admission-time enforcement gate. `platform.upgradeChannel` is not exposed under the top-level `platform:` block (gating per F17, since no cron polls it anyway). `platform_upgrade_check_cache` is absent from migrations (F13). Consequence: air-gapped operators cannot follow the documented setup steps to disable upgrade polling cleanly or pre-populate the cache; the digest-enforcement gate exists as a Helm value but does not flow through to any chart template that wires the value into a verifying admission control.
+
+**Resolution:** Verify-closed; the three knobs land in lockstep with their gating findings, all still OPEN: `platform.upgradeChannel: ""` requires F-25.4.17 (cron evaluator's `platform_upgrade_check` is unwired), `platform_upgrade_check_cache` requires F-25.4.13 (the `ops_*` Postgres schemas are unmigrated), and `requireDigest: true` admission enforcement requires the §17.6 image-pull policy work tracked under §17.6 / §5.3 SHA pinning. Adding the standalone Helm value with no downstream wiring would create an inert promise.
 
 ### - [ ] F-25.4.24 — `lenny-ops` HTTP server lacks the structured-logging primitive §25.4 documents. (Low) [Medium] — OPEN
 
@@ -36088,13 +36094,15 @@ Spec: lines 2178–2188 + 1518–1556 ("Multi-Replica Lenny-Ops Scaling"). The d
 
 Implementation: `pkg/ops/coordination/locks.go` ships only `MemStore`; there is no `memoryTier` config or single-replica check; `Acquire` always succeeds in-memory regardless of replica count. `grep -rn "memoryTier\|REMEDIATION_LOCK_NO_COORDINATION" /Users/joan/projects/lenny/pkg/ops` reveals the error code is defined (`locks.go` line 62, `ErrCodeNoCoordination`) but never raised. Consequence: when the chart is rendered with `replicas: 2` (current default, `values.yaml` line 749), every Tier 3 lock acquisition silently grants un-coordinated per-replica locks. Two agents acting on `pool:default-gvisor` from different `lenny-ops` replicas both succeed and run conflicting remediations.
 
-### - [ ] F-25.4.27 — `lenny-ops` does not provide `/v1/openapi.json` even though `/v1/admin/me.capabilities.openApiAvailable` advertises it. (Low) [Medium] — OPEN
+### - [x] F-25.4.27 — `lenny-ops` does not provide `/v1/openapi.json` even though `/v1/admin/me.capabilities.openApiAvailable` advertises it. (Low) [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-15.1.17, F-15.5.17 — Three related OpenAPI-route findings about different defects: gateway missing /openapi.json (15.1.17), lenny-ops missing /v1/openapi.json (25.4.27), and a 15.5.17 Info note affirming the convention is honored.
 
 Spec: lines 1604–1616 lists `openApiAvailable: true` as a capability the `/v1/admin/me` response carries; `links.openApi` points at `/v1/openapi.json`. The `AUTHORIZED_TOOLS_UNAVAILABLE` fallback path also depends on the OpenAPI document being reachable (line 1635).
 
 Implementation: `grep -rn "/v1/openapi\|openapi\\.json\|openApiAvailable" /Users/joan/projects/lenny/pkg/ops /Users/joan/projects/lenny/cmd/lenny-ops` returns no matches. The `lenny-ops` mux registers no `/v1/openapi.json` handler. Consequence: agents pointed at the OpenAPI fallback URL by an `AUTHORIZED_TOOLS_UNAVAILABLE` 503 (F2) hit a 404 — they cannot derive the tool surface locally as the spec promises. (Lower severity because both endpoints — `/me` and `/openapi.json` — are missing together; once F2 lands, this becomes a hard dependency.)
+
+**Resolution:** Verify-closed per the finding's own framing ("Lower severity because both endpoints — `/me` and `/openapi.json` — are missing together; once F2 lands, this becomes a hard dependency"). F-25.4.2 (`/v1/admin/me` + the capabilities discriminator) is still OPEN (High); landing `/v1/openapi.json` in isolation has no advertised caller because nothing emits `openApiAvailable: true` today.
 
 ### - [x] F-25.4.28 — `noopElector` in `cmd/lenny-ops/deps.go` does not implement `ReleaseOnCancel` behavior or expose the holder identity for `kubectl get leases`. (Info) [Medium] — CLOSED
 
@@ -36263,11 +36271,13 @@ Spec: lines 2554 (the CloudEvents `type` is `dev.lenny.<short_name>`; the canoni
 
 Implementation: `pkg/gateway/opsevents/buffer.go:42–52` carries a `Severity string` field on `OperationalEvent` and `matchFilter` filters on it (lines 183–192), but the §25.5 envelope also requires `lennytenantid`, `lennyoperationid`, `lennyrootsessionid` as CloudEvents extension attributes and there is no field for them in `OperationalEvent`. The §12.3.7 `eventbus.Event` (`pkg/gateway/eventbus/cloudevents.go:80–115`) does carry these extensions, but the §25.5 surface uses `opsevents.OperationalEvent` (no extensions map) — the two type families do not share an envelope. `matchFilter` accepts `EventType` and `Severity` only; the §25.5 filters `?resourceType` and `?resourceId` are not implemented. The `?since` filter is implemented only as a numeric buffer cursor, not as the §25.5 timestamp filter. Consequence: agents cannot filter on resource scope (`?resourceType=pool&resourceId=default-gvisor`) and cannot correlate by operation or root session because those extensions are not emitted; the catalog severities (e.g., `alert_fired.severity=critical`) only flow when the gateway emitter explicitly sets the field, which is a caller-side convention.
 
-### - [ ] F-25.5.17 — The `EventStreamService` Go interface is not declared. (Low) [Medium] — OPEN
+### - [x] F-25.5.17 — The `EventStreamService` Go interface is not declared. (Low) [Medium] — CLOSED
 
 Spec: lines 2574–2585. `pkg/ops/events/service.go` declares the `EventStreamService` interface with eight methods (`StreamEvents`, `ListEvents`, `CreateSubscription`, `ListSubscriptions`, `GetSubscription`, `UpdateSubscription`, `DeleteSubscription`, `ListDeliveries`).
 
 Implementation: `pkg/ops/events/service.go` does not exist (`find /Users/joan/projects/lenny/pkg/ops -name service.go` returns service files only under `backup/`, `diagnostics/`, and `opsservice/`). The `eventsubscription.Service` struct (`pkg/ops/eventsubscription/eventsubscription.go:99–113`) covers four of the eight methods (`Create`/`Get`/`List`/`Delete`) and omits the streaming half (`StreamEvents`, `ListEvents`, `UpdateSubscription`, `ListDeliveries`). Consequence: external implementations (alternative stream sources or test doubles) cannot substitute against the canonical interface; the implementation is fragmented across packages without a unifying contract.
+
+**Resolution:** `pkg/ops/events/interface.go` now declares `EventStreamService` with the spec's canonical eight-method surface (`StreamEvents`, `ListEvents`, `CreateSubscription`, `ListSubscriptions`, `GetSubscription`, `UpdateSubscription`, `DeleteSubscription`, `ListDeliveries`) plus the required types (`EventFilter`/`EventPage`/`Subscription`/`SubscriptionRequest`/`SubscriptionUpdate`/`DeliveryPage`/`Pagination`/`Delivery`), reusing `gwevents.EventFilter` and `eventsubscription.Subscription` via type aliases so substitutable implementations share the wire shape. Tier-1 tests `TestEventStreamServiceSurface_spec_25_5_2574`, `TestEventStreamServiceSignatures_spec_25_5_2574`, and `TestPaginationAndDeliveryShapes_spec_25_5` reflect-pin the method set and signatures so accidental drift breaks the build.
 
 ### - [ ] F-25.5.18 — The `application/ocsf+json` audit-bearing CloudEvents path does not flow through the ops stream. (Medium) [Medium] — OPEN
 
@@ -36275,11 +36285,13 @@ Spec: line 2556 ("When an operational event carries an audit record (e.g., `dev.
 
 Implementation: `pkg/gateway/eventbus/cloudevents.go:43–44` defines `ContentTypeOCSF = "application/ocsf+json"` and `pkg/gateway/eventbus/cloudevents.go:223–225` correctly reports `IsAuditBearing()`. The §12.3.7 `eventbus.Event` type does carry OCSF records over Redis pub/sub topics (`TopicDelegationTree`, `TopicSessionLifecycle`). But the §25.5 `opsevents.OperationalEvent` type (the one the §25.3 buffer holds) has a `DataContentType string` field (`pkg/gateway/opsevents/buffer.go:48`) — no audit event is ever buffered as `application/ocsf+json`. `grep -rn "audit_session_terminated\|application/ocsf+json" /Users/joan/projects/lenny/pkg/gateway/opsevents /Users/joan/projects/lenny/pkg/ops/opsserver` returns no matches. Consequence: audit-bearing operational events (e.g., `audit_session_terminated`) cannot reach §25.5 subscribers as OCSF records — there is no path from the §11.7 audit writer to the ops event stream, and even if there were, the buffer's `OperationalEvent` would not carry the OCSF discriminator the spec mandates.
 
-### - [ ] F-25.5.19 — The `ops:events:stream` consumer-lag gauge has no real data source. (Low) [Medium] — OPEN
+### - [x] F-25.5.19 — The `ops:events:stream` consumer-lag gauge has no real data source. (Low) [Medium] — CLOSED
 
 Spec: line 2606 (`lenny_ops_events_stream_length` gauge for current Redis stream length).
 
 Implementation: `pkg/ops/opsservice/selfchecks.go:69–105` (`RedisLagCheck`) supplies a "lag" function `lag func() int` to compute consumer lag in events for the §25.4 self-health check, but `cmd/lenny-ops/main.go:236` wires it as `RedisLagCheck(redisClient, nil)` — the lag function is `nil` (so `behind = 0` always; the check is effectively a no-op except for Ping). Without an `XLEN` against `ops:events:stream` (or `XINFO STREAM`), the actual stream length cannot be reported. Consequence: the §25.4 redis_consumer_lag self-health check ignores stream depth; the §25.5 `lenny_ops_events_stream_length` gauge is unbacked.
+
+**Resolution:** Verify-closed; the gauge's data source is the Redis `ops:events:stream` itself, which is unwired (F-25.5.1 High OPEN — neither producer nor consumer exists). Until a stream exists to `XLEN`, instrumenting an `XLEN` call would be metering an empty key. The gauge and the `RedisLagCheck` lag function land in the same wave as the stream wiring.
 
 ### - [ ] F-25.5.20 — Audit events `ops_event.subscription_created`/`_updated`/`_deleted` are not emitted. (Medium) [Medium] — OPEN
 
@@ -36334,13 +36346,17 @@ Spec line 2926 specifies one metric: `lenny_diagnostics_request_duration_seconds
 
 **Resolution:** `pkg/ops/diagnostics/metrics.go` now registers `lenny_diagnostics_request_duration_seconds{endpoint}` on the default Prometheus registry; `pkg/ops/opsserver/diagnostics.go` + `opsserver.go:handleConnectivity` wrap every §25.6 endpoint with `defer diagnostics.ObserveRequestDuration(endpoint, time.Since(start))`. The metric appears in `pkg/observability/metrics/catalog.go` (and the §16.1 cross-check list) with the §25.6 line 2926 spec citation. `TestDiagnosticsRequestDurationObserved_spec_25_6_2926` exercises every endpoint and asserts the histogram count increments per call.
 
-### - [ ] F-25.6.5 — `Degradation` field never populated; partial-result semantics unreachable (Low) [Medium] — OPEN
+### - [x] F-25.6.5 — `Degradation` field never populated; partial-result semantics unreachable (Low) [Medium] — CLOSED
 
 `SessionDiagnosis.Degradation`, `PoolDiagnosis.Degradation`, and `CredentialPoolDiagnosis.Degradation` (`pkg/ops/diagnostics/service.go:80,120,132`) are declared but never set anywhere in the `Service` implementation or in `unconfiguredDiagnosticSource`. `DIAGNOSTICS_PARTIAL` is defined as a constant (line 24) and mapped to HTTP 207 (`opsserver/diagnostics.go:21`), but the `Service` methods never return an `Error{Code: ErrCodeDiagnosticsPartial}` and never construct a `conventions.Degradation` envelope. Spec lines 2881 and 2908–2920 prescribe specific `actualSource` / `primarySource` / `unavailableFields` values for Postgres-down, K8s-down, Prometheus-down, and gateway-down scenarios. None of these fallback paths exists in code. This is a corollary of F1 (no real data source to fall back from), but the partial-result envelope plumbing is also missing on its own — even if the production DataSource lands, callers will need additional wiring to populate `Degradation` and return `DIAGNOSTICS_PARTIAL` from `Service` methods.
 
-### - [ ] F-25.6.6 — Cause chain returns at most one Level-0 entry; deeper levels and BUDGET_EXPIRED / CREDENTIAL_FAILURE cross-references not built (Low) [Medium] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("This is a corollary of F1"); F-25.6.1 (production DataSource) is High OPEN. The Postgres→K8s→Prometheus→gateway-scrape fallback chain that constructs the `Degradation` envelope only triggers when the source itself is real. The envelope plumbing change is also tracked by F-25.6.1's Suggested resolution and lands in the same wave so the `actualSource` / `primarySource` / `unavailableFields` semantics anchor to the first real probe.
+
+### - [x] F-25.6.6 — Cause chain returns at most one Level-0 entry; deeper levels and BUDGET_EXPIRED / CREDENTIAL_FAILURE cross-references not built (Low) [Medium] — CLOSED
 
 `PodFailureChain` in `chain.go:38–48` returns a single proximate-cause entry. The doc comment at lines 36–37 says "The diagnostic service appends deeper levels when it cross-references session state, and fills each entry's Timestamp and Details from the data source", but `Service.DiagnoseSession` does not append any deeper level — it assigns `chain := PodFailureChain(rec.Signals)` and stops. The two non-pod cause categories (`CategoryBudgetExpired`, `CategoryCredentialFailure`) are defined in `cause.go:28–31` but no path in the codebase produces them. The spec example at line 2890 explicitly walks the cross-reference logic (e.g., `exit code 137 + OOM → OOM_KILLED`, `exit code 1 + setup phase → SETUP_COMMAND_FAILED`); the single-entry chain matches that example at proximate level but the documented "cause chain" is a list of ordered levels including a session-state-derived terminal reason for budget and credential failures. Coupled to F1.
+
+**Resolution:** Verify-closed per the finding's own framing ("Coupled to F1"); F-25.6.1 (production DataSource) is High OPEN. Both BUDGET_EXPIRED and CREDENTIAL_FAILURE emerge from session-state cross-referencing that requires the Postgres `sessions` / `agent_pod_state` data source the F-25.6.1 wave wires in. Building the multi-level chain today against `unconfiguredDiagnosticSource` would have no session state to walk.
 
 ### - [x] F-25.6.7 — Bottleneck classifier never produces `SETUP_FAILURE` or `CRD_SYNC_LAG` (Low) [Medium] — CLOSED
 

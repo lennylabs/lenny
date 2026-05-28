@@ -3,6 +3,8 @@
 package events
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -109,5 +111,64 @@ func TestQueryReportsBufferAge(t *testing.T) {
 	page := b.Query(0, EventFilter{}, 100)
 	if page.BufferAge != "2h0m0s" {
 		t.Errorf("bufferAge = %q, want 2h0m0s", page.BufferAge)
+	}
+}
+
+func TestOperationalEventCarriesSubject_spec_25_3_19(t *testing.T) {
+	// spec: §16.6 / CloudEvents v1.0.2 subject context attribute —
+	// each event's Subject names the canonical resource identifier so
+	// agents filter related events without parsing the payload.
+	b := NewEventBuffer(4)
+	pool := OperationalEvent{
+		ID:          "alert-pool",
+		SpecVersion: "1.0.2",
+		Type:        "dev.lenny.pool_state_changed",
+		Subject:     "pool/default-gvisor",
+		Time:        time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC),
+	}
+	session := OperationalEvent{
+		ID:          "alert-session",
+		SpecVersion: "1.0.2",
+		Type:        "dev.lenny.session_failed",
+		Subject:     "session/abc123",
+		Time:        time.Date(2026, 5, 17, 12, 1, 0, 0, time.UTC),
+	}
+	b.Append(pool)
+	b.Append(session)
+	page := b.Query(0, EventFilter{}, 100)
+	if len(page.Events) != 2 {
+		t.Fatalf("want both events buffered, got %d", len(page.Events))
+	}
+	if got := page.Events[0].Event.Subject; got != "pool/default-gvisor" {
+		t.Errorf("pool subject = %q, want %q", got, "pool/default-gvisor")
+	}
+	if got := page.Events[1].Event.Subject; got != "session/abc123" {
+		t.Errorf("session subject = %q, want %q", got, "session/abc123")
+	}
+}
+
+func TestOperationalEventSubjectJSONRoundTrip_spec_25_3_19(t *testing.T) {
+	// spec: §16.6 — the CloudEvents subject attribute round-trips
+	// through the §25.3 wire format and is omitted when empty.
+	e := OperationalEvent{
+		ID:          "evt-1",
+		SpecVersion: "1.0.2",
+		Type:        "dev.lenny.alert_fired",
+		Subject:     "credential_pool/openai-prod",
+	}
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"subject":"credential_pool/openai-prod"`) {
+		t.Errorf("marshalled JSON missing subject: %s", data)
+	}
+	empty := OperationalEvent{ID: "evt-2", SpecVersion: "1.0.2", Type: "dev.lenny.alert_resolved"}
+	emptyData, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatalf("marshal empty: %v", err)
+	}
+	if strings.Contains(string(emptyData), `"subject"`) {
+		t.Errorf("empty Subject must be omitted from JSON: %s", emptyData)
 	}
 }
