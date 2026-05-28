@@ -21854,7 +21854,7 @@ handler; today nothing calls it (see H1, H2).
 adapter extractor now imports `pkg/upload` and calls `ValidateEntry`,
 `ValidateArchive`, and `ValidateSymlinkTarget` on every uploadArchive entry.
 
-### - [ ] F-13.4.20 — `pkg/uploadtoken` correctly implements the §7.1 single-use HMAC scheme [Info] — OPEN
+### - [x] F-13.4.20 — `pkg/uploadtoken` correctly implements the §7.1 single-use HMAC scheme [Info] — CLOSED
 `pkg/uploadtoken/uploadtoken.go` implements the wire format
 `<session_id>.<expiry_unix_seconds>.<hmac_hex>`, the rotation/overlap window
 (`Rotate`, `Expire`), the consumed-tracker single-use enforcement
@@ -21867,7 +21867,9 @@ go` `ConsumeDigest` on finalize) wires these correctly. This dimension of
 upload authorization (`§13.4` "Gateway validates and authorizes all uploads")
 is complete.
 
-### - [ ] F-13.4.21 — `pkg/gateway/sessionserver/upload.go` enforces the §11.2 storage quota with a stream-byte cap [Info] — OPEN
+**Resolution:** Verify-closed. `pkg/uploadtoken/uploadtoken.go` package header (lines 11-29) documents and implements all §7.1 invariants; `ErrInvalid`, `ErrExpired`, `ErrSessionMismatch`, `ErrConsumed` map to the §15.1 codes at `pkg/gateway/sessionserver/upload.go:592-598`.
+
+### - [x] F-13.4.21 — `pkg/gateway/sessionserver/upload.go` enforces the §11.2 storage quota with a stream-byte cap [Info] — CLOSED
 The handler reserves the declared `Content-Length` against the tenant quota,
 caps the inbound body at `reservation.headroom + 1` with `io.LimitedReader`
 to defeat under-declared `Content-Length`, and reconciles or releases the
@@ -21875,14 +21877,18 @@ reservation based on the actual byte count. The §13.4 line 655 "Size limits
 enforced at gateway and pod" requirement is satisfied for the opaque-blob
 case (lines 124–185).
 
-### - [ ] F-13.4.22 — Tenant scoping on blob retrieval is correctly enforced [Info] — OPEN
+**Resolution:** Verify-closed. `reserveStorageQuota` at `pkg/gateway/sessionserver/upload.go:204-209`, `http.MaxBytesReader` cap at lines 211-215, `io.LimitedReader{N: headroom + 1}` at lines 225-232, and post-stream reconciliation at lines 290-306. Matches §13.4 line 655 size-limit invariant.
+
+### - [x] F-13.4.22 — Tenant scoping on blob retrieval is correctly enforced [Info] — CLOSED
 `pkg/gateway/sessionserver/upload.go` `handleBlob` (lines 259–308) rejects
 cross-tenant blob reads with `403 FORBIDDEN` (line 286–289) and does not leak
 existence by returning `404` for tenant mismatches. The
 `TestBlobGetRejectsCrossTenant` test in `upload_test.go` line 225 covers the
 path.
 
-### - [ ] F-13.4.23 — The §13.4 line 653 "pod trusts only the gateway" stance is enforced via mTLS on the adapter link [Info] — OPEN
+**Resolution:** Verify-closed. `handleBlob` at `pkg/gateway/sessionserver/upload.go:520-550` returns `403 FORBIDDEN` on `uri.TenantID != callerTenant` (line 546); `TestBlobGetRejectsCrossTenant` at `pkg/gateway/sessionserver/upload_test.go:262` covers the path.
+
+### - [x] F-13.4.23 — The §13.4 line 653 "pod trusts only the gateway" stance is enforced via mTLS on the adapter link [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.2.21 — Both are positive findings that adapter mTLS (RequireAndVerifyClientCert in pkg/adapter/transport.go) is correctly wired.
 
@@ -21890,6 +21896,8 @@ path.
 RequireAndVerifyClientCert` from gateway peers, and `pkg/gateway/adapterclient/
 client.go` documents the mTLS dial expectation. The pod's gRPC server admits
 no caller without a verified gateway client cert.
+
+**Resolution:** Verify-closed (confirmed duplicate of F-13.2.21, which is already CLOSED). `TLSServerOption` at `pkg/adapter/transport.go:43` sets `cfg.ClientAuth = tls.RequireAndVerifyClientCert` (line 65). Pod admits no caller without a verified gateway client cert.
 
 ---
 
@@ -22411,37 +22419,57 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 ---
 
-### - [ ] F-14.1.26 — Open-string `source.type` extensibility is correctly implemented in the Go parser [Info] — OPEN
+### - [x] F-14.1.26 — Open-string `source.type` extensibility is correctly implemented in the Go parser [Info] — CLOSED
 `pkg/workspaceplan/plan.go:427-439` returns an unknown-type Source with a warning rather than failing. Strict per-variant `additionalProperties: false` is enforced via `decodeVariant`'s `DisallowUnknownFields` at `pkg/workspaceplan/plan.go:467-468`. The gap is only in the published JSON Schema (H4) and the materializer (H2).
 
-### - [ ] F-14.1.27 — The `resolvedCommitSha` client-input rejection is correctly enforced by the Go runtime check [Info] — OPEN
+**Resolution:** Verify-closed. `parse` returns the unknown source with `WarnUnknownSourceType` at `pkg/workspaceplan/plan.go:444-455`, and `decodeVariant` enforces strict per-variant decoding at `pkg/workspaceplan/plan.go:484-485` via `DisallowUnknownFields`. Aligned with §14.1 open-string discriminator semantics.
+
+### - [x] F-14.1.27 — The `resolvedCommitSha` client-input rejection is correctly enforced by the Go runtime check [Info] — CLOSED
 `pkg/workspaceplan/plan.go:576-583` and the Parse/ParseStored split (lines 238-246) correctly implement the §14 dual-schema pattern. The published schema relies on a separate Go check (intentional per §14 line 104); this is implemented correctly.
 
-### - [ ] F-14.1.28 — Per-session immutability of `gitClone.resolvedCommitSha` across resumes is preserved [Info] — OPEN
+**Resolution:** Verify-closed. `validateGitClone` rejects client-supplied `resolvedCommitSha` at `pkg/workspaceplan/plan.go:592-600` with `ReasonGatewayWrittenField`; `ParseStored` (line 246) accepts the gateway-written value for storage round-trips. Matches §14 line 102 dual-schema pattern.
+
+### - [x] F-14.1.28 — Per-session immutability of `gitClone.resolvedCommitSha` across resumes is preserved [Info] — CLOSED
 - `pkg/workspaceplan/refresolve.go:159-179` (`PinCommitSHAs`) is idempotent: it skips entries whose `ResolvedCommitSha` is already set.
 - `pkg/gateway/sessionserver/start.go:221-227` (`storedWorkspacePlan`) uses `ParseStored` to read the pinned plan from Postgres without re-pinning.
 - `pkg/gateway/sessionserver/start.go:583-589` (resume path) re-uses the persisted plan via `startOnPod`, so retries land on the pinned commit. Correct per §14.
 
-### - [ ] F-14.1.29 — Path safety guards (no `..`, no absolute, no NUL/backslash, depth ≤ 32, length ≤ 4096) are correctly enforced [Info] — OPEN
+**Resolution:** Verify-closed. `PinCommitSHAs` at `pkg/workspaceplan/refresolve.go:159-179` short-circuits on `gc.ResolvedCommitSha != ""` (line 168). `storedWorkspacePlan` at `pkg/gateway/sessionserver/start.go:499-505` uses `workspaceplan.ParseStored` so re-materialization re-uses the pinned plan. Matches §14 line 102 per-session immutability rule.
+
+### - [x] F-14.1.29 — Path safety guards (no `..`, no absolute, no NUL/backslash, depth ≤ 32, length ≤ 4096) are correctly enforced [Info] — CLOSED
 `pkg/workspaceplan/plan.go:704-769` (`validatePath`) implements the §13.4-aligned constraints comprehensively. The materializer's `resolvePath` (`pkg/adapter/workspace/materialize.go:164-184`) re-checks containment, mirroring §13.4's defense-in-depth.
 
-### - [ ] F-14.1.30 — Mode validation matches §14 mode-field notes precisely [Info] — OPEN
+**Resolution:** Verify-closed. `validatePath` at `pkg/workspaceplan/plan.go:721-786` enforces length cap, absolute-path rejection, control/NUL/backslash byte rejection, `..` traversal rejection, and depth cap. `pkg/adapter/workspace/materialize.go:217-230` (`resolvePath`) re-checks containment as defense-in-depth.
+
+### - [x] F-14.1.30 — Mode validation matches §14 mode-field notes precisely [Info] — CLOSED
 `pkg/workspaceplan/plan.go:659-698` (`validateMode`) correctly handles the 3-vs-4-digit forms, setuid (`04xxx`) / setgid (`02xxx`) prohibition on all variants, and sticky (`01xxx`) permitted on mkdir but rejected on file variants. The defense-in-depth at `pkg/adapter/workspace/materialize.go:188-205` (`parseMode`) drops the same bits at materialization.
 
-### - [ ] F-14.1.31 — URL host extraction lowercase normalization is in place [Info] — OPEN
+**Resolution:** Verify-closed. `validateMode` at `pkg/workspaceplan/plan.go:676-714` matches the §14 `^0[0-7]{3,4}$` regex, rejects setuid/setgid on any variant, and gates sticky on `allowSticky`. `validateMkdir` passes `allowSticky=true` (line 585); `validateInlineFile`/`validateUploadFile` pass `allowSticky=false` (lines 511, 553).
+
+### - [x] F-14.1.31 — URL host extraction lowercase normalization is in place [Info] — CLOSED
 `pkg/workspaceplan/refresolve.go:43-49` (`GitCloneHost`) returns `strings.ToLower(u.Host)` for the §14 host-to-pool binding.
 
-### - [ ] F-14.1.32 — The `additionalProperties: false` on per-variant objects in the published schema matches §14 line 336 [Info] — OPEN
+**Resolution:** Verify-closed. `GitCloneHost` at `pkg/workspaceplan/refresolve.go:43-49` returns `strings.ToLower(u.Host)`; the surrounding scheme check at `pkg/workspaceplan/plan.go:615` already lower-compares. Matches §14 line 93 normalization rule.
+
+### - [x] F-14.1.32 — The `additionalProperties: false` on per-variant objects in the published schema matches §14 line 336 [Info] — CLOSED
 `schemas/workspaceplan-v1.json:54, 66, 78, 95, 107, 122, 144` all set `additionalProperties: false` per spec. (Only the source-discriminator `oneOf` is wrong — see H4.)
 
-### - [ ] F-14.1.33 — Migration 0008 stores the inner WorkspacePlan as JSONB (not a structured table) [Info] — OPEN
+**Resolution:** Verify-closed. Per-variant strictness present at `schemas/workspaceplan-v1.json` lines 54 (inlineFile), 66 (uploadFile), 78 (uploadArchive), 96 (mkdir), 107 (gitClone), 122 (gitClone.auth), 144 (setupCommand). Matches §14 line 336 "per-variant field strictness".
+
+### - [x] F-14.1.33 — Migration 0008 stores the inner WorkspacePlan as JSONB (not a structured table) [Info] — CLOSED
 `migrations/0008_session_workspace_plan.up.sql:10-11`. Per §14.1 the "audit / analytics consumers" forward-read rule requires preserving unknown fields verbatim; JSONB does so. Aligned with the spec.
 
-### - [ ] F-14.1.34 — JSON Schema published `additionalProperties: false` at the top level is intentional for `schemaVersion`/`sources`/`setupCommands` [Info] — OPEN
+**Resolution:** Verify-closed. Migration `migrations/0008_session_workspace_plan.up.sql` line 11 declares `workspace_plan JSONB`, preserving unknown fields verbatim per §14.1 forward-read rule.
+
+### - [x] F-14.1.34 — JSON Schema published `additionalProperties: false` at the top level is intentional for `schemaVersion`/`sources`/`setupCommands` [Info] — CLOSED
 But it bites the spec's own `$schema` example (H5). The fix is to add `$schema` as an explicit allowed key.
 
-### - [ ] F-14.1.35 — The `gitClone.url` userinfo rejection (defense in depth) goes beyond spec but is well-motivated [Info] — OPEN
+**Resolution:** Verify-closed (Info observation). Top-level `additionalProperties: false` at `schemas/workspaceplan-v1.json:8` is intentional per §14.1 outer-strictness. The `$schema` carve-out is tracked as a separate H5 finding in this section.
+
+### - [x] F-14.1.35 — The `gitClone.url` userinfo rejection (defense in depth) goes beyond spec but is well-motivated [Info] — CLOSED
 `pkg/workspaceplan/plan.go:605-613` rejects URLs that embed userinfo so the credential-lease path is the only authenticated channel. Defensible.
+
+**Resolution:** Verify-closed. `validateGitClone` rejects `u.User != nil` at `pkg/workspaceplan/plan.go:622-631`, forcing authenticated clones through `gitClone.auth.leaseScope`. Defensible defense-in-depth against in-URL credential leakage, aligned with §13.5 credential-lease boundary.
 
 ---
 
