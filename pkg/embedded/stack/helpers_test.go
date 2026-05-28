@@ -52,14 +52,21 @@ func TestResolveRoot(t *testing.T) {
 	}
 }
 
+// TestKnownLogComponent covers the §24.19 line 263 component allow-list:
+// gateway, controller, ops, postgres, redis, kms, oidc, k3s, supervisor.
+//
+// spec: §24.19 line 263.
 func TestKnownLogComponent(t *testing.T) {
-	for _, c := range []string{"gateway", "controller", "k3s", "supervisor"} {
+	for _, c := range []string{
+		"gateway", "controller", "ops", "postgres", "redis",
+		"kms", "oidc", "k3s", "supervisor",
+	} {
 		if !knownLogComponent(c) {
 			t.Errorf("knownLogComponent(%q) = false, want true", c)
 		}
 	}
-	if knownLogComponent("postgres") {
-		t.Error("knownLogComponent(postgres) = true; postgres is surfaced via the supervisor log")
+	if knownLogComponent("not-a-component") {
+		t.Error("knownLogComponent rejected expected to reject bogus name")
 	}
 }
 

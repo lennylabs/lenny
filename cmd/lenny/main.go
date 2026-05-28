@@ -59,7 +59,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "status":
 		return cmdStatus(ctx, args[1:], stdout, stderr)
 	case "logs":
-		return cmdLogs(args[1:], stdout, stderr)
+		return cmdLogs(ctx, args[1:], stdout, stderr)
 	case "token":
 		return cmdToken(args[1:], stdout, stderr)
 	case "image":
@@ -89,8 +89,10 @@ Embedded Mode commands (§17.4):
   up                       Start the embedded stack (idempotent)
   down [--purge]           Stop the stack; --purge removes ~/.lenny
   status [--json]          Print component health and active session count
-  logs [<component>]       Tail merged logs, or one of: gateway, controller,
-                           k3s, supervisor
+  logs [<component>] [--follow]
+                           Tail merged logs, or one of: gateway, controller,
+                           ops, postgres, redis, kms, oidc, k3s, supervisor,
+                           or runtime-<name>; --follow streams new lines
   token print [--ttl <d>]  Print a bearer token for the built-in user
   image <import|list|rm>   Manage images in the embedded containerd store
   session new --runtime <name>
@@ -187,16 +189,22 @@ func cmdStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	return 0
 }
 
-// cmdLogs implements `lenny logs`.
-func cmdLogs(args []string, stdout, stderr io.Writer) int {
+// cmdLogs implements `lenny logs [<component>] [--follow]`.
+// spec: §17.4 line 179, §24.19 line 263.
+func cmdLogs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	component := ""
+	follow := false
 	for _, a := range args {
-		if a != "" && a[0] != '-' {
-			component = a
-			break
+		switch a {
+		case "--follow", "-f":
+			follow = true
+		default:
+			if a != "" && a[0] != '-' && component == "" {
+				component = a
+			}
 		}
 	}
-	err := stack.RunLogs(stack.LogsOptions{Component: component, Out: stdout})
+	err := stack.RunLogs(ctx, stack.LogsOptions{Component: component, Follow: follow, Out: stdout})
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny logs: %v\n", err)
 		return 1

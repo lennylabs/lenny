@@ -22,6 +22,25 @@ type ComponentStatus struct {
 	Healthy bool `json:"healthy"`
 	// Detail is a human-readable status note.
 	Detail string `json:"detail"`
+	// Resource carries the component's CPU% and resident memory.
+	//
+	// spec: §24.19 line 262 "resource usage".
+	Resource ResourceUsage `json:"resource"`
+}
+
+// ResourceUsage is a per-component CPU% / RSS sample. CPUPercent is
+// the share of one CPU (so >100% on multi-threaded processes). RSSBytes
+// is the OS-reported resident set size of the process.
+//
+// Sampled is false when the OS probe could not produce a sample (the
+// process is gone, ps is unavailable, or the platform is not
+// supported); JSON callers can distinguish that from a real zero.
+//
+// spec: §24.19 line 262 "resource usage".
+type ResourceUsage struct {
+	Sampled    bool    `json:"sampled"`
+	CPUPercent float64 `json:"cpuPercent"`
+	RSSBytes   int64   `json:"rssBytes"`
 }
 
 // Status is the §17.4 lenny status report: per-component health and
@@ -46,7 +65,10 @@ type StatusOptions struct {
 }
 
 // CollectStatus probes a running Embedded Mode stack and returns its
-// §17.4 status report.
+// §17.4 / §24.19 status report (per-component health, active session
+// count, and resource usage).
+//
+// spec: §17.4 line 178, §24.19 line 262.
 func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 	root, err := resolveRoot(opts.Root)
 	if err != nil {
@@ -63,27 +85,35 @@ func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 
 	out := Status{Running: true, StartedAt: st.StartedAt, ActiveSessions: -1}
 
+	// Sample resource usage for every PID we know about; one ps
+	// invocation per stack rather than per component.
+	pids := []int{st.SupervisorPID, st.GatewayPID, st.ControllerPID, st.K3sPID}
+	usage := sampleResourceUsage(pids)
+
 	// Supervisor.
 	out.Components = append(out.Components, ComponentStatus{
-		Name:    "supervisor",
-		Healthy: processAlive(st.SupervisorPID),
-		Detail:  pidDetail(st.SupervisorPID),
+		Name:     "supervisor",
+		Healthy:  processAlive(st.SupervisorPID),
+		Detail:   pidDetail(st.SupervisorPID),
+		Resource: usage[st.SupervisorPID],
 	})
 
 	// Gateway: probe its liveness endpoint.
 	gwHealthy := processAlive(st.GatewayPID) && gatewayHealthy(ctx, "http://"+st.HTTPAddr)
 	out.Components = append(out.Components, ComponentStatus{
-		Name:    "gateway",
-		Healthy: gwHealthy,
-		Detail:  fmt.Sprintf("https://localhost%s (%s)", portSuffix(st.HTTPSAddr), pidDetail(st.GatewayPID)),
+		Name:     "gateway",
+		Healthy:  gwHealthy,
+		Detail:   fmt.Sprintf("https://localhost%s (%s)", portSuffix(st.HTTPSAddr), pidDetail(st.GatewayPID)),
+		Resource: usage[st.GatewayPID],
 	})
 
 	// Controller.
 	if st.ControllerPID != 0 {
 		out.Components = append(out.Components, ComponentStatus{
-			Name:    "controller",
-			Healthy: processAlive(st.ControllerPID),
-			Detail:  pidDetail(st.ControllerPID),
+			Name:     "controller",
+			Healthy:  processAlive(st.ControllerPID),
+			Detail:   pidDetail(st.ControllerPID),
+			Resource: usage[st.ControllerPID],
 		})
 	} else if st.K3sEnabled {
 		out.Components = append(out.Components, ComponentStatus{
@@ -94,9 +124,10 @@ func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 	// Embedded Kubernetes.
 	if st.K3sEnabled {
 		out.Components = append(out.Components, ComponentStatus{
-			Name:    "k3s",
-			Healthy: processAlive(st.K3sPID),
-			Detail:  pidDetail(st.K3sPID),
+			Name:     "k3s",
+			Healthy:  processAlive(st.K3sPID),
+			Detail:   pidDetail(st.K3sPID),
+			Resource: usage[st.K3sPID],
 		})
 	} else {
 		out.Components = append(out.Components, ComponentStatus{
@@ -123,6 +154,8 @@ func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 }
 
 // WriteStatus renders a Status report as a human-readable table.
+//
+// spec: §17.4 line 178, §24.19 line 262.
 func WriteStatus(w io.Writer, s Status) {
 	if !s.Running {
 		fmt.Fprintln(w, "lenny status: no embedded stack is running")
@@ -131,13 +164,14 @@ func WriteStatus(w io.Writer, s Status) {
 	}
 	fmt.Fprintf(w, "lenny status: embedded stack running since %s\n\n", s.StartedAt.Format(time.RFC3339))
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "COMPONENT\tHEALTH\tDETAIL")
+	fmt.Fprintln(tw, "COMPONENT\tHEALTH\tCPU%\tRSS\tDETAIL")
 	for _, c := range s.Components {
 		health := "down"
 		if c.Healthy {
 			health = "ok"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", c.Name, health, c.Detail)
+		cpu, rss := formatResource(c.Resource)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", c.Name, health, cpu, rss, c.Detail)
 	}
 	_ = tw.Flush()
 	if s.ActiveSessions >= 0 {
@@ -145,6 +179,34 @@ func WriteStatus(w io.Writer, s Status) {
 	} else {
 		fmt.Fprintf(w, "\nactive sessions: unknown (gateway unreachable)\n")
 	}
+}
+
+// formatResource renders a ResourceUsage sample as two display cells
+// ("CPU%", "RSS"). An unsampled component renders as "—".
+func formatResource(r ResourceUsage) (string, string) {
+	if !r.Sampled {
+		return "—", "—"
+	}
+	return fmt.Sprintf("%.1f", r.CPUPercent), humanizeBytes(r.RSSBytes)
+}
+
+// humanizeBytes formats a byte count as a short human-readable string
+// (e.g., "12.4 MiB"). It rounds to one decimal place.
+func humanizeBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	suffixes := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
+	if exp >= len(suffixes) {
+		exp = len(suffixes) - 1
+	}
+	return fmt.Sprintf("%.1f %s", float64(b)/float64(div), suffixes[exp])
 }
 
 // WriteStatusJSON renders a Status report as indented JSON.

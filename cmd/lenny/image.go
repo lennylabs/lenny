@@ -100,6 +100,19 @@ func cmdImageImport(args []string, stdout, stderr io.Writer) int {
 
 	// Stream the image out of the host Docker daemon and into
 	// containerd: `docker save <ref>` piped to `ctr images import -`.
+	// Resolve `docker` on PATH up front so a missing binary surfaces a
+	// caller-facing diagnostic that points at the `--file <tar>`
+	// fallback rather than the raw `exec: docker: executable file not
+	// found in PATH` from os/exec.
+	//
+	// spec: §17.4 line 290, §24.19.1 line 274.
+	if _, err := lookPathDocker(); err != nil {
+		fmt.Fprintln(stderr, "lenny image import: the `docker` binary is required for the host-daemon path but is not on PATH;")
+		fmt.Fprintln(stderr, "  either install Docker and rerun, or produce an OCI/Docker-format tarball with another tool")
+		fmt.Fprintf(stderr, "  (`podman save -o image.tar %s`, `skopeo copy docker-daemon:%s oci-archive:image.tar`) and rerun with `--file image.tar`\n",
+			reference, reference)
+		return 1
+	}
 	save := exec.Command("docker", "save", reference)
 	pipe, err := save.StdoutPipe()
 	if err != nil {
@@ -285,4 +298,11 @@ func runStreamed(stdout, stderr io.Writer, stdin io.Reader, name string, args ..
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
+}
+
+// lookPathDocker resolves the `docker` binary on PATH. It is overridden
+// in tests so the host-daemon-missing path can be exercised without
+// touching the real PATH.
+var lookPathDocker = func() (string, error) {
+	return exec.LookPath("docker")
 }

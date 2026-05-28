@@ -4,6 +4,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,6 +114,50 @@ func TestImageInUseReferenceExtraction(t *testing.T) {
 	}
 	if got := imageInUseReference("trailer\nis referenced by container foo\nmore"); got != "container foo" {
 		t.Errorf("multi-line extraction = %q, want %q", got, "container foo")
+	}
+}
+
+// TestImageImportSuggestsTarFallbackWhenDockerMissing covers the
+// host-daemon path: when `docker` is not on PATH, the command surfaces
+// a diagnostic pointing at the `--file <tar>` fallback rather than
+// propagating the raw os/exec "executable file not found" message.
+//
+// spec: §17.4 line 290, §24.19.1 line 274.
+func TestImageImportSuggestsTarFallbackWhenDockerMissing_spec_24_19_1(t *testing.T) {
+	origLookPath := lookPathDocker
+	t.Cleanup(func() { lookPathDocker = origLookPath })
+
+	root := t.TempDir()
+	t.Setenv("LENNY_HOME", root)
+	// Seed a fake k3s binary + containerd socket so ctrCommand returns
+	// successfully and the docker-missing branch is reached.
+	k3sDir := filepath.Join(root, "k3s")
+	if err := os.MkdirAll(filepath.Join(k3sDir, "data", "agent", "containerd"), 0o755); err != nil {
+		t.Fatalf("seed k3s dirs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(k3sDir, "k3s"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("seed k3s binary: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(k3sDir, "data", "agent", "containerd", "containerd.sock"), nil, 0o600); err != nil {
+		t.Fatalf("seed containerd sock: %v", err)
+	}
+	lookPathDocker = func() (string, error) {
+		return "", errors.New("exec: \"docker\": executable file not found in $PATH")
+	}
+	var out, errb bytes.Buffer
+	code := cmdImageImport([]string{"my-agent:dev"}, &out, &errb)
+	if code != 1 {
+		t.Errorf("docker-missing exit = %d, want 1", code)
+	}
+	got := errb.String()
+	if !strings.Contains(got, "the `docker` binary is required") {
+		t.Errorf("stderr = %q, want guidance about docker binary", got)
+	}
+	if !strings.Contains(got, "--file image.tar") {
+		t.Errorf("stderr = %q, want --file fallback suggestion", got)
+	}
+	if !strings.Contains(got, "podman save") || !strings.Contains(got, "skopeo copy") {
+		t.Errorf("stderr = %q, want podman/skopeo suggestions", got)
 	}
 }
 

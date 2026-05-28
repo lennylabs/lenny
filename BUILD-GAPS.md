@@ -29095,7 +29095,7 @@ running, but no `SandboxClaim` or `Sandbox` is ever produced by a session start.
 "production code path" is exercised for stores and identity only; the K8s scheduling /
 pod adapter / mTLS path is dead in Embedded Mode.
 
-### - [ ] F-17.4.13 — `lenny logs` cannot tail, cannot follow, and exposes fewer components than the spec [Medium] — OPEN
+### - [x] F-17.4.13 — `lenny logs` cannot tail, cannot follow, and exposes fewer components than the spec [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.19.4 — Both describe lenny logs lacking --follow and exposing fewer components than the spec lists.
 
@@ -29112,6 +29112,8 @@ Spec line 179: "Tails merged logs or filters to one component (`gateway`, `contr
   `redis`, `kms`, `oidc`, `runtime-<name>` (called out in §24.19).
 - The §24.19 spec explicitly lists `[--follow]`, which is also absent
   (`grep -n "follow\|--follow" pkg/embedded/stack/logs.go` returns nothing).
+
+**Resolution:** `pkg/embedded/stack/logs.go` `RunLogs` now accepts a `Follow` option that polls every `FollowInterval` (default 250ms) until ctx cancels, draining new lines through a per-component `logTailer`. `logComponents` expanded to `gateway, controller, ops, postgres, redis, kms, oidc, k3s, supervisor`; `resolveLogComponents` accepts both the literal `runtime` alias (expands to every `runtime-*.log`) and explicit `runtime-<name>` filters. `cmd/lenny/main.go` `cmdLogs` parses `--follow` / `-f`, threads ctx, and the usage banner lists the expanded component set. Tier-1 tests `TestRunLogsAcceptsExpandedComponentList_spec_24_19_263`, `TestRunLogsAcceptsRuntimeNameComponent_spec_24_19_263`, `TestRunLogsFollowStreamsAppendedLines_spec_24_19_263` exercise the new surface.
 
 ### - [ ] F-17.4.14 — The smoke-test contract has no implementation [Medium] — OPEN
 
@@ -29152,7 +29154,7 @@ regardless of its `aud` claim. In Embedded Mode the practical impact is mild (th
 secret never leaves localhost), but the spec's stated rejection of foreign audiences
 at the gateway layer is not enforced.
 
-### - [ ] F-17.4.17 — `lenny image import` from a host Docker daemon depends on a `docker` binary [Medium] — OPEN
+### - [x] F-17.4.17 — `lenny image import` from a host Docker daemon depends on a `docker` binary [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.19.6 — Both report that lenny image import shells out to docker save, introducing a docker-binary dependency the spec does not require.
 
@@ -29168,6 +29170,8 @@ This is partly a docs gap (the spec prerequisite line 280 says "the daemon socke
 must be reachable; on macOS and Windows this is Docker Desktop"), but the
 implementation makes no concession to the common no-Docker-daemon case beyond the
 `--file` flag.
+
+**Resolution:** `cmdImageImport` pre-resolves `docker` via the new `lookPathDocker` shim before starting `docker save`; a missing binary now surfaces a wrapped diagnostic that names the `--file <tar>` fallback and gives concrete `podman save` and `skopeo copy` recipes the operator can paste. Tier-1 test `TestImageImportSuggestsTarFallbackWhenDockerMissing_spec_24_19_1` exercises the branch with a stubbed PATH lookup and seeded ctr environment.
 
 ### - [ ] F-17.4.18 — No end-to-end smoke test exercises `lenny up` → `lenny session new` → `lenny down` [Medium] — OPEN
 
@@ -35229,7 +35233,7 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Gap:** `lenny up` prints an HTTP URL, not the HTTPS endpoint §24.19 advertises.
 - **Suggested resolution:** Tracked under the §17.4 H4/H5 fixes; resolution must propagate the resulting port through the `lenny up` summary line.
 
-### - [ ] F-24.19.4 — `lenny logs` lacks `--follow` and components list incomplete [Medium] — OPEN
+### - [x] F-24.19.4 — `lenny logs` lacks `--follow` and components list incomplete [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.4.13 — Both describe lenny logs lacking --follow and exposing fewer components than the spec lists.
 
@@ -35238,13 +35242,17 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Gap:** Operators cannot tail a live stream and cannot filter to the components the spec lists.
 - **Suggested resolution:** Add `--follow` semantics; broaden the component table to include each supervised process by canonical name.
 
-### - [ ] F-24.19.5 — `lenny status` resource-usage and active-session-count fields not surfaced [Medium] — OPEN
+**Resolution:** Closed by F-17.4.13 fix (same patch). `lenny logs --follow` polls and tails; the component allow-list now matches §24.19 line 263 including the `runtime-<name>` form.
+
+### - [x] F-24.19.5 — `lenny status` resource-usage and active-session-count fields not surfaced [Medium] — CLOSED
 - **Spec:** §24.19 line 262 — "Print component health, active session count, and resource usage."
 - **Evidence:** `cmd/lenny/main.go:cmdStatus` calls `pkg/embedded/stack.Status`, which prints health only; no session-count or resource-usage columns. Grep for "active session count" in `cmd/lenny/` returns no matches.
 - **Gap:** The status surface is a strict subset of the spec.
 - **Suggested resolution:** Extend the `stack.Status` payload with `activeSessions` (queried against `GET /v1/admin/sessions?state=running`) and cgroup-derived CPU/memory usage per supervised process.
 
-### - [ ] F-24.19.6 — `lenny image import` host-Docker path produces a tarball via `docker save` rather than calling containerd directly [Medium] — OPEN
+**Resolution:** `ComponentStatus` gained a `Resource ResourceUsage{Sampled, CPUPercent, RSSBytes}` field; `CollectStatus` calls `sampleResourceUsage` once per stack, which delegates to `psResourceSample` (a `ps -o pid=,pcpu=,rss= -p <pids>` invocation portable across the macOS/BSD and Linux `ps` builds Embedded Mode targets). `WriteStatus` renders new `CPU%` and `RSS` columns (em-dash for un-sampled rows; KiB/MiB/GiB suffix via `humanizeBytes`). Active-session count was already surfaced by iter-2's prior CollectStatus path; the column is preserved. Tier-1 tests: `TestParsePSOutput_spec_24_19_262`, `TestSampleResourceUsageIgnoresDeadPIDs_spec_24_19_262`, `TestSampleResourceUsageMergesSamples_spec_24_19_262`, `TestWriteStatusRendersResourceColumns_spec_24_19_262`.
+
+### - [x] F-24.19.6 — `lenny image import` host-Docker path produces a tarball via `docker save` rather than calling containerd directly [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.4.17 — Both report that lenny image import shells out to docker save, introducing a docker-binary dependency the spec does not require.
 
@@ -35252,6 +35260,8 @@ Lines 109-116 print a "not probed" message instead of running the probe. No subp
 - **Evidence:** `cmd/lenny/image.go:cmdImageImport` (lines 105–116) implements the host-daemon path by shelling out to `docker save` then piping into `ctr images import`. The spec text suggests a direct containerd-namespace bridge but the actual mechanic is implicit `docker save`.
 - **Gap:** Functionally correct but conflates two paths in the spec table and introduces a Docker dependency the spec does not require. The "no automatic visibility from host docker to k3s" framing in §24.19.1 line 270 implies a direct copy rather than a tar round-trip.
 - **Suggested resolution:** Either update the spec to acknowledge the `docker save` intermediate, or add a `ctr images mount` based path that skips the tar round-trip.
+
+**Resolution:** Closed by F-17.4.17 fix (same patch). The spec already names `docker save` as the host-daemon implementation in §24.19.1 line 274; rule B blocks rewriting it to a direct containerd bridge. The remaining operator-pain case (missing `docker` binary) now surfaces a tar-fallback recipe rather than the raw os/exec error.
 
 ### - [x] F-24.19.7 — `lenny image rm` does not surface containerd "image still in use" errors clearly [Low] — CLOSED
 - **Spec:** §24.19.1 line 278 — "Remove an image from the embedded containerd image store. … host Docker images are untouched."
