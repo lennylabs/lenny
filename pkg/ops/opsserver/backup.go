@@ -67,11 +67,15 @@ func (s *Server) registerBackupRoutes() {
 	s.mux.HandleFunc("POST /v1/admin/restore/{id}/confirm-legal-hold-ledger", s.handleConfirmLegalHoldLedger)
 }
 
-// backupUnavailable reports the §25.11 surface as unconfigured. It is
-// the response when lenny-ops has no BackupService — a deployment
-// without Postgres or a Kubernetes connection.
+// backupUnavailable reports the §25.11 surface as unconfigured. It
+// returns the spec-canonical TRANSIENT 503 BACKUP_STORAGE_UNREACHABLE
+// (§25.11 Error Codes table line 4335) — the closest enumerated code
+// for "backup dependency missing" when lenny-ops has no BackupService
+// (deployment without Postgres or a Kubernetes connection). Using a
+// catalogued code keeps the response within the spec-enumerated set
+// agents can match.
 func (s *Server) backupUnavailable(w http.ResponseWriter) {
-	conventions.WriteError(w, http.StatusServiceUnavailable, "BACKUP_SERVICE_UNAVAILABLE",
+	conventions.WriteError(w, http.StatusServiceUnavailable, backup.ErrCodeStorageUnreachable,
 		conventions.CategoryTransient, "the backup subsystem is not configured")
 }
 

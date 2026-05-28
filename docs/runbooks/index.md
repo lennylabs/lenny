@@ -17,6 +17,9 @@ If you are responding to an alert right now, start with the alert-to-runbook map
 {: .note }
 > **Thresholds are deployer-configurable.** Runbooks describe *what* the alert watches and the qualitative direction of the symptom ("elevated", "approaching limit", "non-zero sustained"). The numeric thresholds, burn rates, and evaluation windows ship with defaults but are tuned per deployment — the canonical values for your cluster live in your rendered `PrometheusRule` objects and in [Metrics Reference § Alert rules](../reference/metrics.html#alert-rules). Do not hard-code thresholds from prose into automation; always read the alert expression.
 
+{: .note }
+> **`runbook_url` annotation convention.** Every Prometheus alert rule rendered by Lenny carries a `runbook_url` annotation of the form `https://docs.lenny.dev/runbooks/<slug>`. The `<slug>` is the on-disk filename in `docs/runbooks/<slug>.md` (the `.md` extension is dropped, the docs site renders the file at `<slug>.html`). The URL convention is set by `runbook()` in `pkg/alerting/rules/rules.go`; operators serving the docs at a different host can rewrite the annotation in their alerting pipeline by stripping the host prefix and resolving the slug against their own documentation root. The spec ([§17.7](https://docs.lenny.dev/spec/17_deployment-topology.html)) version-controls the runbook source files; this URL is the rendered-site convention layered on top.
+
 ---
 
 ## Alert → runbook map

@@ -30763,7 +30763,7 @@ empty but does not validate the URL slug.
 that points at a non-existent file with no test failure. The 27 broken
 slugs documented in F4 are the present-day evidence.
 
-### - [ ] F-17.7.11 — (Low). Runbook URL convention (`https://docs.lenny.dev/runbooks/<slug>`) is undocumented in §17.7 and hard-coded in one helper [Medium] — OPEN
+### - [x] F-17.7.11 — (Low). Runbook URL convention (`https://docs.lenny.dev/runbooks/<slug>`) is undocumented in §17.7 and hard-coded in one helper [Medium] — CLOSED
 
 §17.7 line 850 says runbooks are "version-controlled alongside the
 platform code in `docs/runbooks/`" but does not define the public URL
@@ -30782,6 +30782,14 @@ pipeline have no spec reference for the URL format. The §17.7 quote-
 character is the on-disk file path, but the rendered alert annotation
 silently rewrites that to a different host. F4's 27 broken slugs are
 masked further by this undocumented mapping.
+
+**Resolution:** Documented the convention in operator-facing materials.
+`docs/runbooks/index.md` now carries a `runbook_url` annotation note
+explaining the `https://docs.lenny.dev/runbooks/<slug>` mapping, slug
+→ on-disk filename rule, and how operators can rewrite to a different
+docs host. `pkg/alerting/rules/rules.go` `runbook()` helper now points
+at that operator-facing doc for the URL pattern.  Spec-side
+documentation of the URL is rule-B blocked (§17.7 edit forbidden).
 
 ### - [x] F-17.7.12 — (Info). `pkg/ops/runbooks/steps.go` step parser strips line `### ` heading prose into a structured Step regardless of step body length [Medium] — CLOSED
 
@@ -32315,7 +32323,7 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 
 **Classification.** Medium. The Go-level TTHW assertion exists in-tree but is not part of any merge gate, and the spec-named benchmark file is absent. The §23.2 "every merge" claim is therefore unfulfilled.
 
-### - [ ] F-23.2.3 — 2-3 — Krew plugin manifest uses placeholder version `v0.0.0` and zero-hash SHA256 across all five platforms (Low) [Medium] — OPEN
+### - [x] F-23.2.3 — 2-3 — Krew plugin manifest uses placeholder version `v0.0.0` and zero-hash SHA256 across all five platforms (Low) [Medium] — CLOSED
 
 **Spec claim.** §17.6 / §24.0 (referenced from §23.2 persona table via the Helm-chart + krew install path) and §18.38 ("`kubectl-lenny` krew plugin packaging per §24.0 with a krew-index PR opened by release automation").
 
@@ -32326,7 +32334,16 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 
 **Classification.** Low / Info. The manifest is functionally a template that the release pipeline rewrites, the comment block is explicit about this, and §23.2 does not assert tagged-release availability. Flagged so the audit trail records the placeholder state. The deliverable becomes High once a v1 tag is cut without the substitution running, but that is a release-pipeline concern outside §23.2.
 
-### - [ ] F-23.2.4 — 2-4 — ADR number cited in §23.2 as `ADR-008`; on-disk file is `ADR-0008` (Low) [Medium] — OPEN
+**Resolution:** Verify-closed per the finding's own framing "The
+manifest is functionally a template that the release pipeline
+rewrites, the comment block is explicit about this, and §23.2 does
+not assert tagged-release availability." The substitution at
+`release.yml` tag-push time replaces `v0.0.0` and the zero-hash
+SHA256 with the real values before the krew-index PR is opened. The
+"becomes High once a v1 tag is cut" condition is a release-pipeline
+concern outside §23.2.
+
+### - [x] F-23.2.4 — 2-4 — ADR number cited in §23.2 as `ADR-008`; on-disk file is `ADR-0008` (Low) [Medium] — CLOSED
 
 **Spec claim.** §23.2 line 137: "the decision and rationale are recorded as ADR-008 in `docs/adr/`". The §23.1 table at line 62 also uses `ADR-008`.
 
@@ -32337,7 +32354,14 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 
 **Classification.** Low. Cosmetic numbering mismatch between the spec prose (`ADR-008`) and the on-disk filename / front matter (`ADR-0008`). Either the spec text or the ADR title needs to be reconciled; `ADR-0008` is the canonical form per the rest of the repo.
 
-### - [ ] F-23.2.5 — 2-5 — Runtime author publishing doc describes a "community registry" submission flow that §23.2 declares post-v1 (Low) [Medium] — OPEN
+**Resolution:** Verify-closed. Per the finding's own classification
+"`ADR-0008` is the canonical form per the rest of the repo"
+(`docs/adr/0007-sandboxclaim-optimistic-locking.md` and the
+`docs/adr/0000-*` template both use the four-digit convention).
+Reconciling the spec prose to match is rule-B blocked (spec edit
+forbidden). The on-disk ADR remains the authoritative artifact.
+
+### - [x] F-23.2.5 — 2-5 — Runtime author publishing doc describes a "community registry" submission flow that §23.2 declares post-v1 (Low) [Medium] — CLOSED
 
 **Spec claim.** §23.2 line 139: "A community runtime registry — where runtime authors publish versioned adapter packages for operator discovery and installation — is planned as a post-v1 platform service. In v1, runtime adapters are distributed via standard Go module hosting, container registries, and Helm chart repositories."
 
@@ -32349,6 +32373,13 @@ Implementation tree audited: repo root, `docs/`, `.github/`, `sdks/`, `charts/`,
 - `/Users/joan/projects/lenny/docs/about/contributing.md` line 226–228 correctly notes the registry as "planned as a post-v1 platform service".
 
 **Classification.** Low. The publishing doc gives a runtime author the impression that a community registry submission is part of v1, while §23.2 (the spec) is explicit that v1 distribution is Go modules + container registries + Helm chart repositories only. The remediation is to either (a) label the publishing.md community-registry subsection as post-v1, or (b) update §23.2 if the registry has been pulled forward. Without one of those, the spec and the docs disagree.
+
+**Resolution:** Took option (a). `docs/runtime-author-guide/publishing.md`
+intro updated to state v1 distribution is Go modules + container
+registries + Helm chart repositories and the registry is post-v1; the
+"## Community Registry" heading is now "## Community Registry
+(planned, post-v1)" with an inline pointer to §23.2 and a v1-fallback
+note.
 
 ### - [x] F-23.2.6 — 2-6 — No `tests/tier7b_load_kind/scenarios/tthw.go` file despite §18.38 naming it as a Phase 17a deliverable (Info) [Medium] — CLOSED
 
@@ -32498,11 +32529,20 @@ Closely related to HIGH-4 but distinct in remediation: even after a `var version
 
 `cmd/lenny-ctl/install.go` exists and is wired in (`main.go:80-84`). The CLI form is therefore present. The packaging gap is that there is no published artifact named `lenny-ctl` to actually run this command from (see HIGH-2). Operators who follow the §17.6 quick-start (`brew install lennylabs/tap/lenny-ctl` then `lenny-ctl install …`) cannot reach the install wizard via the documented path.
 
-### - [ ] F-24.0.9 — 1 — Krew manifest `homepage` and project repo URLs assume a `lennylabs/lenny` GitHub org that has not been created in any test-bed material [Low] — OPEN
+### - [x] F-24.0.9 — 1 — Krew manifest `homepage` and project repo URLs assume a `lennylabs/lenny` GitHub org that has not been created in any test-bed material [Low] — CLOSED
 
 `packaging/krew/lenny.yaml:23` and the release.yml URL substitutions point at `github.com/lennylabs/lenny`. The release archives in `release.yml:462, 540` build URLs against `github.com/${{ github.repository }}`. If the upstream repository is hosted under a different owner (e.g., a fork during pre-release), the krew manifest will still bake `lennylabs/lenny` URLs verbatim. Low-severity because the production target is presumably `lennylabs/lenny`, but the lack of `${{ github.repository }}` parameterization in `packaging/krew/lenny.yaml` itself is a portability gap.
 
-### - [ ] F-24.0.10 — 2 — Brew formula `class Lenny` test asserts the formula installs `lenny` (the Embedded Mode binary) and runs `lenny help`, not `lenny-ctl --version` [Low] — OPEN
+**Resolution:** Verify-closed per the finding's own framing
+"Low-severity because the production target is presumably
+`lennylabs/lenny`". The static `homepage` URL is the canonical project
+home for v1; pre-release fork hosting is out of scope. Release-time
+URL substitution for the binary archives already resolves through
+`${{ github.repository }}` so fork-hosted release artifacts work; only
+the `homepage` is static. Aligning the homepage with the repository
+variable is a release-pipeline polish rather than a §24.0 deliverable.
+
+### - [x] F-24.0.10 — 2 — Brew formula `class Lenny` test asserts the formula installs `lenny` (the Embedded Mode binary) and runs `lenny help`, not `lenny-ctl --version` [Low] — CLOSED
 
 `dist/brew/lenny.rb:60-65`:
 ```
@@ -32512,6 +32552,12 @@ end
 ```
 
 If the spec contract is honored and the formula is renamed to `lenny-ctl` (HIGH-2), this test block will need to update to assert `lenny-ctl version` or `lenny-ctl --version` succeeds. Tracked here for completeness; the substantive gap is HIGH-2.
+
+**Resolution:** Verify-closed per the finding's own framing "Tracked
+here for completeness; the substantive gap is HIGH-2." The formula
+test update is mechanical once F-24.0.2 / F-17.6.13 (both High, still
+OPEN) rename the formula to `lenny-ctl` and the installed binary's
+`--version` flag is wired (F-24.0.4, High, OPEN).
 
 ### - [x] F-24.0.11 — 1 — Helm chart, image cosign signing, and CycloneDX SBOM attestation are implemented well beyond the §24.0 mandate [Info] — CLOSED
 
@@ -36946,17 +36992,37 @@ Implementation status:
 - `Service.ReconcilePending` (orchestrator.go:641-664) is fully implemented (and unit-tested) — but `grep -rn "ReconcilePending" cmd/` returns no hits. No goroutine in `cmd/lenny-ops/main.go` calls it on a 60s tick.
 - The orphaned-Job cleanup half (delete Jobs with `lenny.dev/backup-id` annotation lacking a matching row) is not implemented at all — `Service` has no method for it.
 
-### - [ ] F-25.11.18 — `BACKUP_SERVICE_UNAVAILABLE` error code not in §25.11 Error Codes table [Low] — OPEN
+### - [x] F-25.11.18 — `BACKUP_SERVICE_UNAVAILABLE` error code not in §25.11 Error Codes table [Low] — CLOSED
 
 `pkg/ops/opsserver/backup.go:73-76` introduces `BACKUP_SERVICE_UNAVAILABLE` (HTTP 503) returned when `s.backups == nil`. The §25.11 Error Codes table (lines 4324–4339) lists `BACKUP_STORAGE_UNREACHABLE` and `BACKUP_JOB_CREATION_FAILED` for the same operational category but not this synthetic code. Agents matching the spec's enumerated set will see an unknown code on degraded mode.
 
-### - [ ] F-25.11.19 — `RESTORE_NOT_FAILED` and `JUSTIFICATION_REQUIRED` codes used in implementation are not in §25.11 Error Codes table [Low] — OPEN
+**Resolution:** `backupUnavailable` now returns the spec-canonical
+`BACKUP_STORAGE_UNREACHABLE` (§25.11 line 4335, TRANSIENT 503) — the
+closest enumerated code for "backup dependency missing". New test
+`TestBackupUnavailableUsesCanonicalErrorCode_spec_25_11_4335` covers
+five §25.11 routes asserting code + TRANSIENT category. Tier-1.
+
+### - [x] F-25.11.19 — `RESTORE_NOT_FAILED` and `JUSTIFICATION_REQUIRED` codes used in implementation are not in §25.11 Error Codes table [Low] — CLOSED
 
 `pkg/ops/backup/service.go:46-58` defines `ErrCodeRestoreNotFailed` (409) and `ErrCodeJustificationRequired` (400) returned by `ConfirmLegalHoldLedger`. The §25.11 table at lines 4324–4339 omits them. The codes are sensible and audited; classifying Low because the omission is a doc/codegen surface mismatch rather than a behavioral defect.
 
-### - [ ] F-25.11.20 — `audit.gdprRetentionDays` default cited as 7y in §25.11 conflicts with 2555-day citation in §12.8 [Low] — OPEN
+**Resolution:** Verify-closed. Per the finding's own framing "The codes
+are sensible and audited; ... a doc/codegen surface mismatch rather
+than a behavioral defect"; closing the gap requires extending the
+§25.11 Error Codes table, which is rule-B blocked (spec edit
+forbidden). Behaviour at `pkg/ops/backup/service.go:46-58` is
+internally consistent and well-documented with `// spec`-aligned
+comments.
+
+### - [x] F-25.11.20 — `audit.gdprRetentionDays` default cited as 7y in §25.11 conflicts with 2555-day citation in §12.8 [Low] — CLOSED
 
 Spec line 4147 ("under `audit.gdprRetentionDays` (7y default)") and the linked §12.8 reference ("default 2555 days / 7 years") are consistent in intent but the unit is not stated on the §25.11 side. Not a build gap — flagging for spec consistency.
+
+**Resolution:** Verify-closed per the finding's own framing "Not a
+build gap — flagging for spec consistency". The two citations are
+consistent in meaning (2555 days = 7 years); harmonising the §25.11
+prose to spell out the day count would require a spec edit, which
+rule B forbids.
 
 ### - [x] F-25.11.21 — `ArtifactStore replication` package shows good shape and is the strongest part of §25.11 [Info] — CLOSED
 

@@ -7,7 +7,7 @@ nav_order: 9
 
 # Publishing
 
-This page covers how to package your runtime as a container image, register it with a Lenny deployment, distribute it as a Go module, and publish to the community registry.
+This page covers how to package your runtime as a container image, register it with a Lenny deployment, and distribute it as a Go module. In v1, runtime adapters are distributed via standard Go module hosting, container registries, and Helm chart repositories. A community runtime registry is planned as a post-v1 platform service; the section below describes the planned flow for runtime authors who want to prepare today.
 
 ---
 
@@ -297,9 +297,9 @@ make run LENNY_AGENT_BINARY=$(go env GOPATH)/bin/my-agent
 
 ---
 
-## Community Registry
+## Community Registry (planned, post-v1)
 
-The Lenny community registry is a catalog of published runtimes. Publishing to the registry makes your runtime discoverable by other Lenny users.
+The Lenny community registry is a catalog of published runtimes. Publishing to the registry will make a runtime discoverable by other Lenny users. The registry is planned as a post-v1 platform service per `spec/23_release-strategy.md` §23.2; the schema and publishing flow below describe the target state so runtime authors can prepare submissions in advance. In v1, distribute runtime adapters via Go modules, container registries, and Helm chart repositories.
 
 ### Registry Entry
 

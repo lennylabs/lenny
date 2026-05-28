@@ -134,7 +134,13 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("rule %q: %s", e.Rule, strings.Join(e.Violations, "; "))
 }
 
-// runbook builds a §17.7 runbook URL for an alert page slug.
+// runbook builds a §17.7 runbook URL for an alert page slug. The URL
+// convention is `https://docs.lenny.dev/runbooks/<slug>` where <slug>
+// is the on-disk filename under `docs/runbooks/<slug>.md` minus the
+// `.md` extension. The convention is documented for operators in
+// `docs/runbooks/index.md` (the runbook_url annotation note); spec
+// §17.7 version-controls the source files but does not define the
+// rendered-site host pattern.
 func runbook(slug string) string {
 	return "https://docs.lenny.dev/runbooks/" + slug
 }

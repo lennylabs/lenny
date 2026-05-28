@@ -371,3 +371,48 @@ func TestRestoreStatusEndpoint(t *testing.T) {
 		t.Errorf("restore state backup id = %q, want %q", state.BackupID, b.ID)
 	}
 }
+
+// TestBackupUnavailableUsesCanonicalErrorCode_spec_25_11_4335 asserts
+// that when lenny-ops has no BackupService wired (s.backups == nil),
+// the §25.11 routes return BACKUP_STORAGE_UNREACHABLE — the closest
+// catalogued code (Error Codes table line 4335, TRANSIENT 503).
+// Returning a non-catalogued code would break the agent-operability
+// contract that the response is one of the spec's enumerated set.
+func TestBackupUnavailableUsesCanonicalErrorCode_spec_25_11_4335(t *testing.T) {
+	srv := opsserver.New(opsserver.Options{Production: false})
+	// Every §25.11 backup route should map an unconfigured subsystem
+	// to the same spec-canonical code.
+	paths := []struct {
+		method, path string
+	}{
+		{http.MethodPost, "/v1/admin/backups"},
+		{http.MethodGet, "/v1/admin/backups"},
+		{http.MethodGet, "/v1/admin/backups/schedule"},
+		{http.MethodPost, "/v1/admin/restore/preview"},
+		{http.MethodGet, "/v1/admin/restore/safety-check"},
+	}
+	for _, tc := range paths {
+		rec := do(srv, tc.method, tc.path, "")
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s %s status = %d, want 503\nbody: %s", tc.method, tc.path, rec.Code, rec.Body.String())
+			continue
+		}
+		var resp struct {
+			Error struct {
+				Code     string `json:"code"`
+				Category string `json:"category"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Errorf("%s %s decode: %v", tc.method, tc.path, err)
+			continue
+		}
+		if resp.Error.Code != backup.ErrCodeStorageUnreachable {
+			t.Errorf("%s %s code = %q, want %q (spec §25.11 line 4335)",
+				tc.method, tc.path, resp.Error.Code, backup.ErrCodeStorageUnreachable)
+		}
+		if resp.Error.Category != "TRANSIENT" {
+			t.Errorf("%s %s category = %q, want TRANSIENT", tc.method, tc.path, resp.Error.Category)
+		}
+	}
+}
