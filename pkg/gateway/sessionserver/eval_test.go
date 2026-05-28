@@ -145,3 +145,47 @@ func TestEvalUnavailableWithoutStore(t *testing.T) {
 		t.Errorf("eval with no store: status %d, want 503", rr.Code)
 	}
 }
+
+// spec: §10.7 lines 892-928 — the POST /v1/sessions/{id}/eval response
+// carries experimentId, variantId, delegationDepth, inherited, and
+// submittedAfterConclusion when the session has an experiment context,
+// so callers can round-trip the stored record without a follow-up GET.
+func TestEvalResponseCarriesExperimentAttribution_spec_10_7(t *testing.T) {
+	enrolled := sessionstore.Session{
+		ID: "sess_attr", TenantID: "default", UserID: "alice", State: session.StateRunning,
+		ExperimentContext: &sessionstore.ExperimentContext{
+			ExperimentID: "exp-42",
+			VariantID:    "variant-b",
+			Inherited:    true,
+		},
+	}
+	h, _ := evalServer(t, 0, enrolled)
+	rr := postEval(t, h, "sess_attr", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("eval: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.EvalResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.ExperimentID != "exp-42" {
+		t.Errorf("experimentId = %q, want exp-42", resp.ExperimentID)
+	}
+	if resp.VariantID != "variant-b" {
+		t.Errorf("variantId = %q, want variant-b", resp.VariantID)
+	}
+	if !resp.Inherited {
+		t.Errorf("inherited = false, want true")
+	}
+	// Unenrolled session: attribution fields are omitted (zero values).
+	h2, _ := evalServer(t, 0, evalSession("sess_unenrolled", session.StateRunning))
+	rr2 := postEval(t, h2, "sess_unenrolled", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	var resp2 sessionserver.EvalResponse
+	_ = json.Unmarshal(rr2.Body.Bytes(), &resp2)
+	if resp2.ExperimentID != "" || resp2.VariantID != "" {
+		t.Errorf("unenrolled response carries attribution: %+v", resp2)
+	}
+	if strings.Contains(rr2.Body.String(), `"experimentId"`) || strings.Contains(rr2.Body.String(), `"variantId"`) {
+		t.Errorf("unenrolled response should omit empty attribution fields: %s", rr2.Body.String())
+	}
+}

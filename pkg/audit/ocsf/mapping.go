@@ -127,6 +127,11 @@ var prefixCatalog = []struct {
 	{"admin.user.created", accountChange(ActivityCreate)},
 	{"admin.user.updated", accountChange(ActivityUpdate)},
 	{"admin.user.deleted", accountChange(ActivityDelete)},
+	// spec: §11.4 — admin.user.invalidated (soft_disable / hard_disable
+	// / full_revoke) maps to OCSF AccountChange Disable so SIEM consumers
+	// see a distinguished disable event rather than the generic prefix
+	// fallback.
+	{"admin.user.invalidated", accountChange(ActivityDisable)},
 	{"admin.user", accountChange(ActivityUnknown)},
 	{"admin.runtime.created", entityMgmt(ActivityCreate)},
 	{"admin.runtime.updated", entityMgmt(ActivityUpdate)},

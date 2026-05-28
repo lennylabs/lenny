@@ -278,3 +278,21 @@ func TestLookupClassCoversCatalog(t *testing.T) {
 		t.Errorf("admin.tenant.created resolved to %+v, want EntityManagement/create", m)
 	}
 }
+
+// spec: §11.4 — admin.user.invalidated (soft_disable / hard_disable /
+// full_revoke fan-out emitter) must resolve to OCSF AccountChange with
+// ActivityDisable so SIEM consumers see a distinguished "Disable
+// Account" event rather than the generic admin.user prefix
+// (AccountChange/Unknown).
+func TestAdminUserInvalidatedMapsToDisable_spec_11_4(t *testing.T) {
+	m, ok := LookupClass("admin.user.invalidated")
+	if !ok {
+		t.Fatal("admin.user.invalidated did not resolve to any class")
+	}
+	if m.ClassUID != ClassAccountChange {
+		t.Errorf("admin.user.invalidated class_uid = %d, want %d (AccountChange)", m.ClassUID, ClassAccountChange)
+	}
+	if m.ActivityID != ActivityDisable {
+		t.Errorf("admin.user.invalidated activity_id = %d, want %d (Disable)", m.ActivityID, ActivityDisable)
+	}
+}

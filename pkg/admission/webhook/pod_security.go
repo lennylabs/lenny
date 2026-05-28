@@ -23,8 +23,13 @@ import (
 // undropped capability, or a seccomp profile other than RuntimeDefault.
 //
 // credReadersGID is the lenny-cred-readers GID the §13.1 cross-UID
-// credential-delivery path requires on the pod-level fsGroup; the
-// binary passes the chart's agent.credReadersGID value.
+// credential-delivery path requires on the pod-level fsGroup. The
+// lenny-webhook binary passes podspec.CredReadersGID (the Go constant
+// in pkg/controller/sandbox/podspec), so the validator and the
+// controller stay aligned on a single source of truth. Spec §13.1
+// leaves the specific GID to the implementation (the spec mandates
+// only "distinct non-root identities"); the constant value is
+// documented in pkg/controller/sandbox/podspec/podspec.go.
 //
 // rcPolicy carries the §17.2 RuntimeClass-aware relaxations (the
 // gVisor and Kata RuntimeClass names); the binary passes the names from

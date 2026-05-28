@@ -181,7 +181,7 @@ tests:
           path: webhooks[0].clientConfig.service.path
           value: /sandboxclaim-guard
 
-  - it: configures the pod-security webhook fail-closed on pod CREATE
+  - it: configures the pod-security webhook fail-closed on pod CREATE and UPDATE
     template: admission-policies/pod-security-webhook.yaml
     documentIndex: 4
     asserts:
@@ -196,9 +196,15 @@ tests:
       - equal:
           path: webhooks[0].rules[0].resources[0]
           value: pods
+      # spec: §13.1 — CREATE+UPDATE matches the other webhook
+      # configurations (label-immutability, pool-config-validator,
+      # data-residency-validator) so spec-mutable fields are revalidated.
       - equal:
           path: webhooks[0].rules[0].operations[0]
           value: CREATE
+      - equal:
+          path: webhooks[0].rules[0].operations[1]
+          value: UPDATE
 
   - it: renders the workload and webhook config for pool-config-validator
     template: admission-policies/pool-config-validator-webhook.yaml

@@ -36,7 +36,14 @@ webhooks:
       - apiGroups: [""]
         apiVersions: ["v1"]
         resources: ["pods"]
-        operations: ["CREATE"]
+        # spec: §13.1 — register CREATE and UPDATE so the
+        # securityContext invariants are re-validated on every spec
+        # write. Most SecurityContext fields are kubelet-immutable
+        # post-creation, but automountServiceAccountToken and other
+        # spec-mutable fields can be toggled. Matches the §13.2 / §4.6.3
+        # webhooks (label-immutability, pool-config-validator,
+        # data-residency-validator) which all register CREATE+UPDATE.
+        operations: ["CREATE", "UPDATE"]
         scope: Namespaced
     clientConfig:
       service:

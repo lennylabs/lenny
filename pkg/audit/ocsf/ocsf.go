@@ -87,6 +87,13 @@ const (
 	ActivityUpdate  = 3
 	ActivityDelete  = 4
 	ActivityLogon   = 1 // Authentication: Logon
+	// ActivityDisable is the OCSF AccountChange (3006) activity for
+	// "Disable Account". spec: §11.4 invalidate-user fan-out emits
+	// `admin.user.invalidated` for soft_disable / hard_disable / full_revoke;
+	// the OCSF mapping uses activity_id 5 (Disable Account) so SIEM
+	// consumers see a distinguished disable event rather than an unknown
+	// AccountChange.
+	ActivityDisable = 5
 )
 
 // OCSF disposition_id values: §11.7 maps payload.policy_result

@@ -22,15 +22,25 @@ type EvalRequest struct {
 	Metadata map[string]any     `json:"metadata,omitempty"`
 }
 
-// EvalResponse echoes the stored §10.7 EvalResult.
+// EvalResponse echoes the stored §10.7 EvalResult. spec: §10.7 lines
+// 892-928 — the response carries the experiment attribution and the
+// delegation/inherited/submittedAfterConclusion flags the gateway
+// populates from the session's experiment context so callers see the
+// effective record without an additional GET. Empty attribution fields
+// are omitted for unenrolled sessions.
 type EvalResponse struct {
-	ID        string             `json:"id"`
-	SessionID string             `json:"sessionId"`
-	Scorer    string             `json:"scorer"`
-	Score     *float64           `json:"score,omitempty"`
-	Scores    map[string]float64 `json:"scores,omitempty"`
-	Metadata  map[string]any     `json:"metadata,omitempty"`
-	CreatedAt string             `json:"createdAt"`
+	ID                       string             `json:"id"`
+	SessionID                string             `json:"sessionId"`
+	ExperimentID             string             `json:"experimentId,omitempty"`
+	VariantID                string             `json:"variantId,omitempty"`
+	Scorer                   string             `json:"scorer"`
+	Score                    *float64           `json:"score,omitempty"`
+	Scores                   map[string]float64 `json:"scores,omitempty"`
+	Metadata                 map[string]any     `json:"metadata,omitempty"`
+	DelegationDepth          uint32             `json:"delegationDepth,omitempty"`
+	Inherited                bool               `json:"inherited,omitempty"`
+	SubmittedAfterConclusion bool               `json:"submittedAfterConclusion,omitempty"`
+	CreatedAt                string             `json:"createdAt"`
 }
 
 // evalEligible reports whether a session in state st accepts eval
@@ -123,12 +133,17 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(EvalResponse{
-		ID:        stored.ID,
-		SessionID: stored.SessionID,
-		Scorer:    stored.Scorer,
-		Score:     stored.Score,
-		Scores:    stored.Scores,
-		Metadata:  stored.Metadata,
-		CreatedAt: stored.CreatedAt.UTC().Format(time.RFC3339Nano),
+		ID:                       stored.ID,
+		SessionID:                stored.SessionID,
+		ExperimentID:             stored.ExperimentID,
+		VariantID:                stored.VariantID,
+		Scorer:                   stored.Scorer,
+		Score:                    stored.Score,
+		Scores:                   stored.Scores,
+		Metadata:                 stored.Metadata,
+		DelegationDepth:          stored.DelegationDepth,
+		Inherited:                stored.Inherited,
+		SubmittedAfterConclusion: stored.SubmittedAfterConclusion,
+		CreatedAt:                stored.CreatedAt.UTC().Format(time.RFC3339Nano),
 	})
 }

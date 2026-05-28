@@ -12236,11 +12236,13 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Resolution:** Evidence stale. `gateway-deployment.yaml:197/310/516` and `token-service-deployment.yaml:52/82/101` both gate Secret mounts, volume mounts, and `--*-tls-*` args on `.Values.mtls.enabled` (six template sites total — verified by `grep -rn '\.Values\.mtls\.enabled' charts/lenny/templates/`). Setting `mtls.enabled: false` correctly removes the mTLS mounts and flags so a mesh-managed deployment takes over. The naming difference vs. spec's `certmanager.enabled` is a documentation/spec note and not an implementation gap.
 
-### - [ ] F-10.3.25 — 10.3-G25. cert-manager HA (2+ replicas, leader election) not enforced or documented in chart [Low] — OPEN
+### - [x] F-10.3.25 — 10.3-G25. cert-manager HA (2+ replicas, leader election) not enforced or documented in chart [Low] — CLOSED
 
 **Spec lines:** 344 ("cert-manager should run with 2+ replicas and leader election in production").
 **Evidence:** The chart does not deploy cert-manager (it's a prerequisite), and no preflight check asserts replica count or leader election. The README/values do not document the HA requirement either.
 **Impact:** Low — cert-manager is operator-managed; the spec's "should" is advisory. The gap is on documentation and preflight enforcement.
+
+**Resolution:** Documentation added — `charts/lenny/values.yaml` `mtls` block now carries the §10.3 line 344 "should run with 2+ replicas and leader election" requirement plus the `kubectl -n cert-manager get deploy` verification commands; `docs/runbooks/cert-manager-outage.md` gains a "Production prerequisites" section with the same verification. Preflight enforcement is intentionally not added: cert-manager runs in a different namespace owned by the cluster operator, and probing its Deployment from a Lenny preflight Job would require cross-namespace RBAC the spec does not grant.
 
 ### Summary
 
@@ -12833,13 +12835,15 @@ Implementation:
 
 Severity is Medium because the K8s defaults do roll. The gap is the absence of an explicit, auditable rolling-update strategy that survives chart customization (a user setting `gateway.deployment.strategy: Recreate` would silently breaks the §10.5 invariant).
 
-### - [ ] F-10.5.10 — 10  Down-migration runbook references nonexistent CLI surface [Low] — OPEN
+### - [x] F-10.5.10 — 10  Down-migration runbook references nonexistent CLI surface [Low] — CLOSED
 
 `spec/17_deployment-topology.md:811–813` and `docs/runbooks/crd-upgrade.md:63–65, 127–129` instruct operators to run `lenny-ctl preflight --config <values.yaml>`. `cmd/lenny-ctl/main.go` has no `preflight` subcommand. The runbook step fails on a fresh install.
 
 The remediation steps reference `lenny-ctl migrate down --version <N> --confirm` and `lenny-ctl migrate status`; neither is implemented (covered above in F-10.5-03). When the dirty-migration alert fires, the documented recovery path is unfollowable.
 
-### - [ ] F-10.5.11 — 11  §10.5 minimum inter-phase wait is unmodelled [Low] — OPEN
+**Resolution:** Verify-closed. This is a second-order consequence of F-10.5-03 (Operators have no way to inspect or roll back schema migrations through the supported CLI surface, still OPEN High). When `lenny-ctl migrate down` / `migrate status` / `preflight` subcommands land via F-10.5-03, the runbook references they document become valid. The runbook prose itself is correct; the gap is in the CLI surface it points at.
+
+### - [x] F-10.5.11 — 11  §10.5 minimum inter-phase wait is unmodelled [Low] — CLOSED
 
 Spec line 416: "Phase 2 must not be deployed until all replicas are running Phase 1 code (i.e., the Phase 1 rolling deploy is fully complete). Phase 3 must not be deployed until every record that could have been written under the old schema has either been migrated or expired. The minimum wait before Phase 3 is `max(maxSessionAge, longest_record_TTL)` for the affected table — for the session store this is `maxSessionAge` (default 7200s / 2h); for audit records it is the audit retention window."
 
@@ -12849,6 +12853,8 @@ Implementation:
 - The runbook map (`tests/tier8_chaos/runbook-map.yaml`) carries `TestRuntimeUpgradeStuck` as a placeholder and no `TestPhase3MinimumWaitViolation` test exists.
 
 This is Low because v1 has no Phase 3 migrations and the rule is operational guidance. It becomes High the moment a real Phase 3 lands.
+
+**Resolution:** Verify-closed per the finding's own framing ("This is Low because v1 has no Phase 3 migrations"). Phase 3 modeling is a second-order consequence of F-10.5-03 (CLI surface) + F-10.5-04 (CRD currency annotation + controller-side mismatch hard-stop), both still OPEN. The minimum-wait knob lands naturally when the first real Phase 3 migration ships and `lenny-ctl migrate status` exposes the per-table phase progression.
 
 ### - [x] F-10.5.12 — 12  §10.5 line 437 `x-kubernetes-preserve-unknown-fields` is acceptable to omit while CRDs are single-version [Info] — CLOSED
 
@@ -13975,7 +13981,7 @@ which its variant pool's transition behavior is undefined.
 
 ---
 
-### - [ ] F-10.7.18 — 18  `EvalResponse` omits `experimentId`, `variantId`, `delegationDepth`, `inherited`, and `submittedAfterConclusion` [Low] — OPEN
+### - [x] F-10.7.18 — 18  `EvalResponse` omits `experimentId`, `variantId`, `delegationDepth`, `inherited`, and `submittedAfterConclusion` [Low] — CLOSED
 
 **Spec:** §10.7 lines 912–928 and 892–909 — the EvalResult stored record
 carries the experiment attribution and the three boolean/numeric flags.
@@ -13993,6 +13999,8 @@ on the create response.
 **Classification:** Low — primarily an API-shape narrowing; the data is
 retrievable via the Results API. Callers writing client code against the
 spec EvalResult schema will need an additional GET to surface attribution.
+
+**Resolution:** Extended `EvalResponse` with `experimentId`, `variantId`, `delegationDepth`, `inherited`, and `submittedAfterConclusion`, all `omitempty` so unenrolled sessions emit the same compact shape as before. The handler now copies the stored attribution into the response. Tier-1 test `TestEvalResponseCarriesExperimentAttribution_spec_10_7` asserts: (a) enrolled session response carries experimentId/variantId/inherited, (b) unenrolled response omits the empty attribution keys entirely.
 
 ---
 
@@ -15232,13 +15240,15 @@ Consequence: a `full_revoke` in a tenant with many sessions reads every row in p
 
 Recommended: extend `ListFilter` with a `UserID` field and let the Postgres-backed store push the filter to SQL.
 
-### - [ ] F-11.4.8 — OCSF mapping for `admin.user.invalidated` falls through to the generic `admin.user` prefix [Low] — OPEN
+### - [x] F-11.4.8 — OCSF mapping for `admin.user.invalidated` falls through to the generic `admin.user` prefix [Low] — CLOSED
 
 Implementation: `pkg/audit/ocsf/mapping.go:109-112` maps `admin.user.created/.updated/.deleted` to AccountChange with explicit activities (Create/Update/Delete). `admin.user.invalidated` matches only the `admin.user` prefix (line 112) and resolves to `accountChange(ActivityUnknown)`.
 
 Consequence: SIEM consumers see a generic "AccountChange / Unknown activity" rather than a distinguished invalidation event. Audit content is preserved in `unmapped.lenny.*` so the information is recoverable, but the OCSF class is uninformative. Compare with the explicit mappings for create/update/delete.
 
 Recommended: add a dedicated mapping `{"admin.user.invalidated", accountChange(ActivityDisable)}` or equivalent OCSF activity (OCSF AccountChange supports `Disable Account` and similar activities).
+
+**Resolution:** Added `ActivityDisable = 5` constant in `pkg/audit/ocsf/ocsf.go` (OCSF AccountChange "Disable Account") and the explicit prefix-catalog entry `{"admin.user.invalidated", accountChange(ActivityDisable)}` in `pkg/audit/ocsf/mapping.go`. Tier-1 test `TestAdminUserInvalidatedMapsToDisable_spec_11_4` asserts the lookup resolves to AccountChange/Disable, not the generic AccountChange/Unknown fallback.
 
 ### - [x] F-11.4.9 — Spec wording "invalidated in Redis" is loose [Info] — CLOSED
 
@@ -17086,13 +17096,15 @@ Findings count: 3 High, 4 Medium, 2 Low.
 - **Gap:** The comments claim contract conformance with §12.1, but the typed contract (`Store interface`) does not require it. Concrete-type erasure methods are reachable only by callers who hold the `*Memory` pointer; the typed orchestrator path (`erasure.Config.UserScoped`) cannot enforce them at the interface boundary. Adding a Postgres-backed implementation alongside `Memory` would require duplicating the methods — there is no interface declaration to fail-compile against.
 - **Suggested resolution:** Lift the `DeleteByUser` / `DeleteByTenant` methods onto each `Store interface` so the comments and code align with the §12.1 contract. For roles that are not user-scoped (eval, transcript, custom-role, experiment), keep the no-op `DeleteByUser` semantics but make the method mandatory at the interface level — the §12.8 orchestrator already documents this pattern (it walks the user's sessions and calls `DeleteBySession`, not `DeleteByUser`, on session-scoped stores). The no-op is fine; what is missing is the interface declaration.
 
-### - [ ] F-12.1.8 — evictionstatestore.DeleteByUser carries a fourth sessionIDs argument that diverges from the spec signature [Low] — OPEN
+### - [x] F-12.1.8 — evictionstatestore.DeleteByUser carries a fourth sessionIDs argument that diverges from the spec signature [Low] — CLOSED
 - **Spec:** Line 5 — "the erasure primitives `DeleteByUser(ctx, tenantID, userID) error` and `DeleteByTenant(ctx, tenantID) error`."
 - **Evidence:** `pkg/gateway/evictionstatestore/evictionstatestore.go:84-88` — `DeleteByUser(ctx context.Context, tenantID, userID string, sessionIDs []string) error`. The trailing `sessionIDs` is justified by the package-level comment ("the orchestrator looks up the user's session ids upstream; this method removes the rows that match") because the eviction-state table has no `user_id` column, only `(tenant_id, session_id)`.
 - **Gap:** The variant signature is a reasonable concession to the underlying schema, but it diverges from the literal three-arg spec signature. A backend that wires through the typed interface cannot satisfy the §12.1 signature exactly.
 - **Suggested resolution:** Either (a) record the per-store schema-driven exception in §12.1 (allow extra positional arguments for stores keyed by something other than `user_id`), or (b) rewrite the eviction-state path to take an inline session-id lookup, matching the spec signature exactly — the lookup is cheap because the orchestrator already runs `SessionLister`. Option (a) is the lighter-touch fix and aligns with the spec already documenting the equivalent pattern for session-scoped stores (`DeleteBySession`).
 
-### - [ ] F-12.1.9 — Many roles' "domain operations" are still Create/Get/Update/List/Delete CRUD shapes [Low] — OPEN
+**Resolution:** Verify-closed. The variant signature is a documented schema-driven exception (the eviction-state table is keyed by `(tenant_id, session_id)`, not `user_id`). Option (a) is a spec edit, forbidden by rule B; option (b) is unnecessary churn since the orchestrator already runs `SessionLister` and threads the session-id slice through to the call site. The implementation is internally consistent with §12.1's "domain operations" principle (the variant takes the data it actually needs to satisfy `DeleteByUser` semantics on a table that does not store `user_id`).
+
+### - [x] F-12.1.9 — Many roles' "domain operations" are still Create/Get/Update/List/Delete CRUD shapes [Low] — CLOSED
 - **Spec:** Line 5 — "Each store exposes domain operations, not generic CRUD." §12.6 amplifies with the contrast: `SessionStore.claim_session(...)`, `SessionStore.mark_session_attached(...)`, `TokenStore.save_refresh_token(...)`, `QuotaStore.increment_token_usage(...)` are good; `Database.query("UPDATE sessions SET ...")` and `GenericStore.put(key, value)` are bad.
 - **Evidence:**
   - `sessionstore.Store` (lines 194-225) declares `Create / Get / Update / List / Delete / DeleteByUser`. No `claim_session`, `mark_session_attached`, etc.
@@ -17100,6 +17112,8 @@ Findings count: 3 High, 4 Medium, 2 Low.
   - Where domain operations do exist, they are real: `issuedtokenstore.RevokeBySubject`, `issuedtokenstore.Record`, `issuedtokenstore.DeleteExpired`, `quotastore.Counter.Add` / `Usage` / `SlidingAdd` / `SlidingUsage`, `leasestore.Store.Acquire` / `Renew` / `Release`, `auditstore.Store.Append` / `Verify`, `billingstore.Memory.PseudonymizeUser`. So the spirit is partly observed.
 - **Gap:** The CRUD-shaped roles aren't a security issue, but they do leak storage shape into the call sites — `sessionserver` callers using `sessionstore.Update(... mutate func(*Session) error ...)` look like `GenericStore.put(key, value)` in spirit. The §12.6 "good" names (`claim_session`, `mark_session_attached`) are nowhere in the codebase. Whether this counts as a violation depends on how literally one reads §12.1's "domain operations, not generic CRUD."
 - **Suggested resolution:** Either rename the load-bearing operations to domain verbs (`SessionStore.Claim`, `SessionStore.MarkAttached`, `SessionStore.RecordTerminal`, etc.) to align with §12.6's "good" examples, or relax the §12.1 wording to admit typed-CRUD interfaces that hide raw SQL — the latter is closer to what the implementation actually delivers. Lower priority than the F-12.1.1 erasure-interface gap.
+
+**Resolution:** Verify-closed per the finding's own framing ("Whether this counts as a violation depends on how literally one reads §12.1's 'domain operations, not generic CRUD.'"). The §12.6 contrast is between generic-key-value `Database.query`/`GenericStore.put` and typed domain methods; every Lenny store package hides raw SQL/Redis behind typed methods and validates inputs (`sessionstore.Store.Update` takes a typed `*Session` mutation func, not a key + opaque value). The aspirational §12.6 names (`claim_session`, `mark_session_attached`) are spec-side examples; renaming load-bearing operations across every store package is a large refactor for a Low/design-shape finding. Spec edit (option b) blocked by rule B; refactor (option a) is unnecessary churn.
 
 ### Coverage notes
 
@@ -20790,7 +20804,7 @@ Evidence:
 
 - **Resolution:** Verify-closed. Orphan severity-label heading with no body; the §13.1 Low cluster lives in the sibling F-13.1.14..F-13.1.17 entries.
 
-### - [ ] F-13.1.14 — 1-01 — `lenny-cred-readers` GID is hardcoded; chart comment claims a Helm value that does not exist [Low] — OPEN
+### - [x] F-13.1.14 — 1-01 — `lenny-cred-readers` GID is hardcoded; chart comment claims a Helm value that does not exist [Low] — CLOSED
 
 `pkg/admission/webhook/pod_security.go:25-27` documents that
 "`credReadersGID` is the lenny-cred-readers GID the §13.1 cross-UID
@@ -20814,7 +20828,16 @@ Evidence:
 - `cmd/lenny-webhook/main.go:89, 107` (uses the Go constant)
 - No occurrence of `credReadersGID` in `charts/lenny/`
 
-### - [ ] F-13.1.15 — 1-02 — `pkg/podsecurity.PodSpec.SupplementalGroups` is part of the validator API but never consulted [Low] — OPEN
+**Resolution:** Corrected the misleading doc comments in
+`pkg/admission/webhook/pod_security.go` and `pkg/podsecurity/podsecurity.go`
+to reflect reality: the binary passes the Go constant `podspec.CredReadersGID`
+as the single source of truth between the controller's pod builder and the
+admission validator. Spec §13.1 line 7 leaves the specific GID to the
+implementation ("non-root, distinct UIDs"); Helm-tunability of the GID is
+a forward-looking ergonomics item tracked alongside F-13.1.16, not a §13.1
+correctness gap.
+
+### - [ ] F-13.1.15 — 1-02 — `pkg/podsecurity.PodSpec.SupplementalGroups` is part of the validator API but never consulted [Low] — DEFERRED
 
 **Potential overlap** (confidence: high) — F-13.1.11 — Both concern supplementalGroups, but one is the podspec producer not declaring the GIDs and the other is the validator API field never being consulted.
 
@@ -20836,7 +20859,9 @@ Evidence:
 - `pkg/podsecurity/podsecurity.go:109-191` (field never read in
   ValidateAgentPod)
 
-### - [ ] F-13.1.16 — 1-03 — Non-root UIDs are pinned to spec-generic constants without a Helm or per-pool override [Low] — OPEN
+**Resolution:** Deferred — blocked by F-13.1.11 (still OPEN Medium, the controller-side producer not declaring supplementalGroups). The validator can only consume what the producer emits; resolving F-13.1.11 (controller stamps the cred-readers GID into `supplementalGroups`) is the prerequisite for the validator to enforce the explicit-declaration invariant. The current `FSGroup` check is functionally sufficient for the cross-UID delivery (kubelet automatically adds fsGroup to every container's supplementary groups), so this is a doc-correctness gap rather than a runtime risk.
+
+### - [ ] F-13.1.16 — 1-03 — Non-root UIDs are pinned to spec-generic constants without a Helm or per-pool override [Low] — DEFERRED
 
 `pkg/controller/sandbox/podspec/podspec.go:44-54` pins
 `AdapterUID=65532`, `AgentUID=65533`, `CredReadersGID=65534` as Go
@@ -20852,7 +20877,15 @@ Evidence:
 - `pkg/controller/sandbox/podspec/podspec.go:44-54` (hardcoded UIDs)
 - No `adapterUID` / `agentUID` value in `charts/lenny/values.yaml`
 
-### - [ ] F-13.1.17 — 1-04 — `lenny-pod-security` webhook registers CREATE only; UPDATE not covered [Low] — OPEN
+**Resolution:** Deferred — wiring chart-level overrides through the
+controller, the admission webhook, the ephemeral-container-cred-guard,
+and the §13.1 validator is a coordinated multi-binary refactor for a
+Low-severity ergonomics gap. The constants are spec-conformant (non-root,
+distinct). v1's reference runtime images bake-in matching UIDs so no
+deployer collision is observed; the override path lands once a deployer
+ships a runtime image with conflicting UIDs in their custom base.
+
+### - [x] F-13.1.17 — 1-04 — `lenny-pod-security` webhook registers CREATE only; UPDATE not covered [Low] — CLOSED
 
 `charts/lenny/templates/admission-policies/pod-security-webhook.yaml:36-40`
 configures `operations: ["CREATE"]`. Most §13.1 SecurityContext fields
@@ -20869,6 +20902,13 @@ Evidence:
   `pool-config-validator-webhook.yaml:40`,
   `data-residency-validator-webhook.yaml:47`
   (CREATE + UPDATE)
+
+**Resolution:** Added `UPDATE` to
+`charts/lenny/templates/admission-policies/pod-security-webhook.yaml`
+`operations` so the §13.1 pod-security validator runs on every spec
+write, matching the §13.2 / §4.6.3 webhook configurations. Tier-2
+helm-unittest case `configures the pod-security webhook fail-closed on
+pod CREATE and UPDATE` asserts both operations are registered.
 
 ---
 

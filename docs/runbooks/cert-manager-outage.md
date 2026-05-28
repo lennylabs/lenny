@@ -166,3 +166,15 @@ Escalate if:
 - ACME provider is returning persistent challenge failures (DNS propagation, rate limits on issuance).
 - More than 4 hours have elapsed since cert-manager failed -- existing pod certs reach the default 4 h TTL and new session pods start failing.
 - You needed to set `failurePolicy: Ignore` on a webhook to restore service. Log the bypass window in the incident record, restore `failurePolicy: Fail` immediately after recovery, and page security on-call to audit what was admitted during the bypass.
+
+## Production prerequisites
+
+spec §10.3 line 344 requires cert-manager to run with 2+ replicas and leader election in production. A single-replica cert-manager pauses leaf renewal during pod restarts and node maintenance, which surfaces as `CertExpiryImminent` alerts under sustained load. Verify the posture before declaring a production deployment ready:
+
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl -n cert-manager get deploy cert-manager -o jsonpath='{.spec.replicas}'
+kubectl -n cert-manager get deploy cert-manager -o jsonpath='{.spec.template.spec.containers[0].args}' | tr ',' '\n' | grep -i leader
+```
+
+Both must show `2` (or higher) replicas and `--leader-elect=true` for production. Set on the upstream cert-manager Helm chart with `--set replicaCount=2 --set leaderElection.enabled=true`.

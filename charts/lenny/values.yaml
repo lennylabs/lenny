@@ -715,6 +715,17 @@ global:
 # certificates issued here all chain to the CA below, so the gateway,
 # controller, and token service validate each other against one trust
 # anchor (§10.3 mutual SAN validation).
+#
+# cert-manager is an operator-managed prerequisite (the chart does not
+# install or manage cert-manager itself; see §17.6 preflight). spec
+# §10.3 line 344: cert-manager SHOULD run with 2+ replicas and leader
+# election enabled in production so a single cert-manager pod outage
+# does not pause leaf renewal across the lenny-system namespace. The
+# upstream chart enables this with
+# `--set replicaCount=2 --set leaderElection.enabled=true`. Lenny
+# operators should verify this on the deployed cert-manager Deployment
+# (`kubectl -n cert-manager get deploy cert-manager -o jsonpath=
+# '{.spec.replicas}'`) before running production tier-2+ presets.
 mtls:
   # enabled gates the §10.3 internal mTLS PKI templates. Leave true for
   # any cluster that runs gateway-to-pod mTLS through cert-manager. Set
