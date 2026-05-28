@@ -16,6 +16,7 @@ tmp/
 /lenny-webhook
 /lenny-loadrunner
 /lenny-loadctl
+/lenny-ops
 /cloud-metrics-collector
 /echo
 /streaming-echo
