@@ -311,6 +311,9 @@ func main() {
 		"§8.2.bis line 89 Helm fallback for delegationLease.maxDepth (gateway.delegation.defaultMaxDepth). Every effective delegation lease MUST carry a positive integer maxDepth; this value is consulted last in the precedence chain (client → preset → runtime default → policy ceiling → Helm fallback), so a delegation request that omits maxDepth still receives a bounded chain. Default 10. Override via LENNY_DELEGATION_DEFAULT_MAX_DEPTH.")
 	gatewayAllowSelfRecursion := flag.Bool("gateway-allow-self-recursion", envFlag("LENNY_GATEWAY_ALLOW_SELF_RECURSION"),
 		"§8.2 LayerPlatform input to the cycle-detection three-layer AND gate (Helm value gateway.allowSelfRecursion). A self-recursive delegation hop (same runtime+pool tuple appears earlier in the lineage) is admitted under mode=enforce iff this flag, the resolved Runtime.allowSelfRecursion, and the resolved DelegationPolicy.allowSelfRecursion are all true. Default false. Override via LENNY_GATEWAY_ALLOW_SELF_RECURSION.")
+	interceptorWeakeningCooldownSeconds := flag.Int("interceptor-weakening-cooldown-seconds",
+		envInt("LENNY_INTERCEPTOR_WEAKENING_COOLDOWN_SECONDS", int(delegation.DefaultInterceptorWeakeningCooldown/time.Second)),
+		"§8.3 line 181 Helm value gateway.interceptorWeakeningCooldownSeconds: the cluster-scoped window during which delegate_task rejects every call whose effective DelegationPolicy is inside a `scanExportedFiles: true → false` weakening transition with INTERCEPTOR_WEAKENING_COOLDOWN (TRANSIENT, HTTP 503). Default 60s. Override via LENNY_INTERCEPTOR_WEAKENING_COOLDOWN_SECONDS. F-8.7.12 / F-13.5.7.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
@@ -2039,6 +2042,9 @@ func main() {
 		PlatformAllowSelfRecursion: *gatewayAllowSelfRecursion,
 		// §8.2.bis line 89 — Helm value gateway.delegation.defaultMaxDepth.
 		DefaultMaxDepth: *delegationDefaultMaxDepth,
+		// §8.3 line 181 — Helm value gateway.interceptorWeakeningCooldownSeconds.
+		// F-8.7.12 / F-13.5.7.
+		InterceptorWeakeningCooldown: time.Duration(*interceptorWeakeningCooldownSeconds) * time.Second,
 		// §8.2 / §16.1: the delegation service emits
 		// `lenny_delegation_depth` and
 		// `lenny_delegation_would_have_blocked_total` through the

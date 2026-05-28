@@ -363,11 +363,31 @@ func TestUpdateDelegationPolicyEmitsScanWeakenedEvent(t *testing.T) {
 	if _, present := findAuditEvent(audit.snapshot(), "interceptor.fail_policy_weakened"); present {
 		t.Error("a scanExportedFiles transition must not re-use interceptor.fail_policy_weakened (§8.3 line 181)")
 	}
+	// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) — a `true → false`
+	// weakening MUST stamp the server-minted transition timestamp on
+	// the policy row so the delegation service can enforce
+	// INTERCEPTOR_WEAKENING_COOLDOWN.
+	stored, err := store.Get(context.Background(), "platform", "p1")
+	if err != nil {
+		t.Fatalf("Get after weakening: %v", err)
+	}
+	if stored.ScanExportedFilesWeakenedAt.IsZero() {
+		t.Error("ScanExportedFilesWeakenedAt was not persisted on a true → false weakening")
+	}
+	if !stored.ScanExportedFilesWeakenedAt.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("ScanExportedFilesWeakenedAt = %v, want clock injected time", stored.ScanExportedFilesWeakenedAt)
+	}
 }
 
 func TestUpdateDelegationPolicyEmitsScanStrengthenedEvent(t *testing.T) {
 	router, store, audit := newAuditedDelegationPolicyAdmin(t)
-	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {
+	// Pre-stamp the cooldown so the strengthen path is exercised against
+	// an armed timestamp; the strengthen must clear it.
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{
+		TenantID:                    "platform",
+		Name:                        "p1",
+		ScanExportedFilesWeakenedAt: time.Date(2025, 12, 31, 23, 59, 59, 0, time.UTC),
+	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	// Update turns scanExportedFiles on — a §8.3 strengthening.
@@ -385,6 +405,17 @@ func TestUpdateDelegationPolicyEmitsScanStrengthenedEvent(t *testing.T) {
 	}
 	if _, hasCooldown := ev.Detail["cooldown_seconds"]; hasCooldown {
 		t.Error("a strengthening transition takes effect immediately — it must not carry cooldown_seconds")
+	}
+	// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) — a strengthen MUST
+	// clear the prior weakening timestamp so subsequent delegations
+	// admit immediately rather than wait for the §8.3 cluster-scoped
+	// window opened by the prior weaken.
+	stored, err := store.Get(context.Background(), "platform", "p1")
+	if err != nil {
+		t.Fatalf("Get after strengthen: %v", err)
+	}
+	if !stored.ScanExportedFilesWeakenedAt.IsZero() {
+		t.Errorf("strengthen must clear ScanExportedFilesWeakenedAt; got %v", stored.ScanExportedFilesWeakenedAt)
 	}
 }
 

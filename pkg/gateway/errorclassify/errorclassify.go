@@ -89,6 +89,15 @@ var table = map[string]entry{
 	// INTERCEPTOR_REJECTED a deliberate REJECT produces.
 	"INTERCEPTOR_TIMEOUT":            {CategoryTransient, true},
 	"INTERCEPTOR_COOLDOWN_IMMUTABLE": {CategoryPolicy, false},
+	// spec: §8.3 line 181 — the gateway rejects every `delegate_task`
+	// (and §7.2 `lenny/send_message`) whose effective DelegationPolicy
+	// is inside the cluster-scoped scanExportedFiles weakening
+	// cooldown window. TRANSIENT and retryable: the same request
+	// succeeds once the §8.3 cluster-scoped
+	// `gateway.interceptorWeakeningCooldownSeconds` window closes; the
+	// gateway populates `details.retryAfterSeconds` so the client can
+	// schedule a precise retry. F-8.7.12 / F-13.5.7.
+	"INTERCEPTOR_WEAKENING_COOLDOWN": {CategoryTransient, true},
 	// spec: §15.1 lines 1012-1013 — a deliberate REJECT by a PreLLMRequest
 	// or PostLLMResponse interceptor in the §4.9 LLM proxy. PERMANENT (the
 	// same request fails again), distinct from the TRANSIENT

@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
@@ -734,6 +735,92 @@ func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing
 	}
 	if env["retryable"] != false {
 		t.Errorf("envelope.retryable = %v, want false", env["retryable"])
+	}
+}
+
+// TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181
+// verifies that the §8.3 line 181 cluster-scoped weakening cooldown
+// rejects every `delegate_task` whose effective DelegationPolicy is
+// the freshly-weakened row, surfacing INTERCEPTOR_WEAKENING_COOLDOWN
+// (TRANSIENT, HTTP 503) through the §15.2.1 lenny envelope with
+// details.policyName + details.retryAfterSeconds. F-8.7.12 /
+// F-13.5.7 / F-8.5.10.
+func TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	policies := delegationpolicystore.NewMemory()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_parent_cd", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
+		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt:  now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed parent: %v", err)
+	}
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "gemini", Image: "lenny/gemini@sha256:abc",
+		DelegationPolicyRef: "scan-policy",
+	}); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	if err := policies.Create(context.Background(), delegationpolicystore.DelegationPolicy{
+		TenantID: "acme", Name: "scan-policy",
+		ContentPolicy: delegationpolicystore.ContentPolicy{
+			InterceptorRef: "guardrails", ScanExportedFiles: false,
+		},
+		// 30 s into a 60 s cooldown window — retryAfter must surface 30.
+		ScanExportedFilesWeakenedAt: now.Add(-30 * time.Second),
+	}); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+
+	svc := delegation.NewService(store, delegation.Options{
+		Runtimes:                     runtimes,
+		Policies:                     policies,
+		Clock:                        func() time.Time { return now },
+		IDFunc:                       func() string { return "sess_child" },
+		InterceptorWeakeningCooldown: 60 * time.Second,
+	})
+
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:      store,
+		Executor:   executor.NewEchoExecutor(),
+		Runtimes:   runtimes,
+		Delegation: svc,
+		Clock:      func() time.Time { return now },
+		IDFunc:     func() string { return "sess_mcp" },
+		TenantID:   "acme",
+	})
+
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent_cd","runtimeRef":"gemini","poolRef":"pool-b"}`)
+	result, _ := resp["result"].(map[string]any)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "INTERCEPTOR_WEAKENING_COOLDOWN" {
+		t.Errorf("envelope.code = %v, want INTERCEPTOR_WEAKENING_COOLDOWN", env["code"])
+	}
+	if env["category"] != "TRANSIENT" {
+		t.Errorf("envelope.category = %v, want TRANSIENT", env["category"])
+	}
+	if env["retryable"] != true {
+		t.Errorf("envelope.retryable = %v, want true", env["retryable"])
+	}
+	details, _ := env["details"].(map[string]any)
+	if details == nil {
+		t.Fatalf("envelope.details missing: %+v", env)
+	}
+	if details["policyName"] != "scan-policy" {
+		t.Errorf("details.policyName = %v, want scan-policy", details["policyName"])
+	}
+	// JSON numbers decode as float64.
+	if details["retryAfterSeconds"] != float64(30) {
+		t.Errorf("details.retryAfterSeconds = %v, want 30", details["retryAfterSeconds"])
+	}
+	if details["cooldownSeconds"] != float64(60) {
+		t.Errorf("details.cooldownSeconds = %v, want 60", details["cooldownSeconds"])
 	}
 }
 

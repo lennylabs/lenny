@@ -56,6 +56,14 @@ type policyBody struct {
 	Rules              []delegationpolicystore.Rule        `json:"rules,omitempty"`
 	ContentPolicy      delegationpolicystore.ContentPolicy `json:"contentPolicy"`
 	AllowSelfRecursion bool                                `json:"allowSelfRecursion,omitempty"`
+	// ScanExportedFilesWeakenedAt is the §8.3 line 181 server-minted
+	// transition timestamp persisted on the policy row. The admin
+	// Update handler stamps it on `scanExportedFiles: true → false`;
+	// the delegation Service reads it at `delegate_task` time to
+	// enforce INTERCEPTOR_WEAKENING_COOLDOWN. omitempty keeps the
+	// jsonb payload from growing for policies that never weakened.
+	// F-8.7.12 / F-13.5.7.
+	ScanExportedFilesWeakenedAt *time.Time `json:"scanExportedFilesWeakenedAt,omitempty"`
 }
 
 // Create inserts a new delegation-policy row after running the §8.3
@@ -263,6 +271,9 @@ func scanPolicy(row pgx.Row) (delegationpolicystore.DelegationPolicy, error) {
 		p.Rules = b.Rules
 		p.ContentPolicy = b.ContentPolicy
 		p.AllowSelfRecursion = b.AllowSelfRecursion
+		if b.ScanExportedFilesWeakenedAt != nil {
+			p.ScanExportedFilesWeakenedAt = b.ScanExportedFilesWeakenedAt.UTC()
+		}
 	}
 	if deletedAt != nil {
 		p.DeletedAt = *deletedAt
@@ -271,13 +282,19 @@ func scanPolicy(row pgx.Row) (delegationpolicystore.DelegationPolicy, error) {
 }
 
 // bodyJSON marshals the §8.3 policy body (Rules, ContentPolicy,
-// AllowSelfRecursion) to a JSON string for the policy jsonb column.
+// AllowSelfRecursion, and the F-8.7.12 scanExportedFiles weakening
+// timestamp) to a JSON string for the policy jsonb column.
 func bodyJSON(p delegationpolicystore.DelegationPolicy) (string, error) {
-	b, err := json.Marshal(policyBody{
+	body := policyBody{
 		Rules:              p.Rules,
 		ContentPolicy:      p.ContentPolicy,
 		AllowSelfRecursion: p.AllowSelfRecursion,
-	})
+	}
+	if !p.ScanExportedFilesWeakenedAt.IsZero() {
+		t := p.ScanExportedFilesWeakenedAt.UTC()
+		body.ScanExportedFilesWeakenedAt = &t
+	}
+	b, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("delegationpolicystore: encode policy: %w", err)
 	}

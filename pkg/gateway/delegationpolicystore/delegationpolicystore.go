@@ -100,6 +100,19 @@ type DelegationPolicy struct {
 	// narrow it (true to false) but never widen it.
 	AllowSelfRecursion bool
 
+	// ScanExportedFilesWeakenedAt is the §8.3 line 181 server-minted
+	// transition timestamp of the most recent
+	// `contentPolicy.scanExportedFiles: true → false` flip. It backs the
+	// `INTERCEPTOR_WEAKENING_COOLDOWN` rejection the gateway raises at
+	// `delegate_task` time for every call whose effective
+	// `DelegationPolicy` resolves to this row while the cluster-scoped
+	// `gateway.interceptorWeakeningCooldownSeconds` window is open.
+	// Zero means no active cooldown (either the policy never weakened
+	// or the strengthen path cleared it). The field is admin-API-
+	// immutable per §8.3 SEC-013; a `false → true` strengthen clears
+	// it. F-8.7.12 / F-13.5.7.
+	ScanExportedFilesWeakenedAt time.Time
+
 	// CreatedAt / UpdatedAt / DeletedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time

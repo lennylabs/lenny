@@ -10,9 +10,45 @@ import (
 	"errors"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 )
+
+// installSpanRecorder swaps the global OTel TracerProvider for an
+// SDK-backed recorder so a test can read every span the function
+// under test emitted, then restores the prior provider when the test
+// ends. F-8.7.11 / spec: §16 trace inventory line 346.
+func installSpanRecorder(t *testing.T) (*tracetest.SpanRecorder, func()) {
+	t.Helper()
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	return recorder, func() {
+		otel.SetTracerProvider(prev)
+	}
+}
+
+// findSpanIntAttr returns the int64 value of attribute key on span
+// attributes. Returns false when the key is missing or the value is
+// not an int.
+func findSpanIntAttr(attrs []attribute.KeyValue, key string) (int64, bool) {
+	for _, a := range attrs {
+		if string(a.Key) != key {
+			continue
+		}
+		if a.Value.Type() == attribute.INT64 {
+			return a.Value.AsInt64(), true
+		}
+	}
+	return 0, false
+}
 
 // decodeExportRecord unpacks the §4.8 PreExportMaterialization content
 // payload an interceptor receives.
@@ -449,5 +485,105 @@ func TestRunPreExportMaterializationThroughExternalInterceptor(t *testing.T) {
 	var scanErr *interceptor.ExportScanError
 	if !errors.As(err, &scanErr) || scanErr.Code != interceptor.CodeExportFileScanRejected {
 		t.Errorf("err = %v, want EXPORT_FILE_SCAN_REJECTED through the external interceptor", err)
+	}
+}
+
+// spec: §16.3 / §16 trace inventory line 346 (F-8.7.11). Every
+// PreExportMaterialization scan loop runs under a
+// `delegation.export_files` span. The span carries the §8.7 telemetry
+// attributes (file_count, total_bytes, max_per_file_bytes,
+// scanned_count) and records an error attribute when a per-file
+// rejection short-circuits the loop. The previous gap left
+// SpanDelegationExportFiles a catalog-only constant with no
+// tracer.Start call site.
+func TestRunPreExportMaterializationStartsDelegationExportFilesSpan_spec_16_F_8_7_11(t *testing.T) {
+	rec, restore := installSpanRecorder(t)
+	defer restore()
+
+	c := interceptor.NewChain()
+	mustRegister(t, c, interceptor.PhasePreExportMaterialization, &fakeInterceptor{
+		name: "allow", priority: 500, builtin: true,
+		fn: func(_ context.Context, _ interceptor.Request) (interceptor.Result, error) {
+			return interceptor.Result{Action: interceptor.ActionAllow}, nil
+		},
+	})
+
+	files := []interceptor.ExportFile{
+		{Path: "a.go", Content: []byte("aaaa")},
+		{Path: "b.md", Content: []byte("bb")},
+	}
+	if _, err := interceptor.RunPreExportMaterialization(
+		context.Background(), c, "acme", "sess-1", 1<<20, files...,
+	); err != nil {
+		t.Fatalf("RunPreExportMaterialization: %v", err)
+	}
+
+	spans := rec.Ended()
+	var exportSpan sdktrace.ReadOnlySpan
+	for _, s := range spans {
+		if s.Name() == "delegation.export_files" {
+			exportSpan = s
+			break
+		}
+	}
+	if exportSpan == nil {
+		t.Fatalf("delegation.export_files span not recorded; got %d spans", len(spans))
+	}
+	wantAttrs := map[string]int64{
+		"delegation.export.file_count":         2,
+		"delegation.export.total_bytes":        6,
+		"delegation.export.max_per_file_bytes": 1 << 20,
+		"delegation.export.scanned_count":      2,
+	}
+	for k, want := range wantAttrs {
+		got, ok := findSpanIntAttr(exportSpan.Attributes(), k)
+		if !ok {
+			t.Errorf("span attribute %q missing", k)
+			continue
+		}
+		if got != want {
+			t.Errorf("span attribute %q = %d, want %d", k, got, want)
+		}
+	}
+	if status := exportSpan.Status(); status.Code != codes.Unset {
+		t.Errorf("clean-pass span status = %v, want Unset", status.Code)
+	}
+}
+
+func TestRunPreExportMaterializationSpanRecordsRejectError_spec_16_F_8_7_11(t *testing.T) {
+	rec, restore := installSpanRecorder(t)
+	defer restore()
+
+	c := interceptor.NewChain()
+	mustRegister(t, c, interceptor.PhasePreExportMaterialization, &fakeInterceptor{
+		name: "reject", priority: 500, builtin: true,
+		fn: func(_ context.Context, _ interceptor.Request) (interceptor.Result, error) {
+			return interceptor.Result{Action: interceptor.ActionReject, Reason: "policy"}, nil
+		},
+	})
+
+	_, err := interceptor.RunPreExportMaterialization(
+		context.Background(), c, "acme", "sess-1", 0,
+		interceptor.ExportFile{Path: "secret.env", Content: []byte("KEY=value")},
+	)
+	if err == nil {
+		t.Fatalf("expected REJECT error")
+	}
+
+	var exportSpan sdktrace.ReadOnlySpan
+	for _, s := range rec.Ended() {
+		if s.Name() == "delegation.export_files" {
+			exportSpan = s
+			break
+		}
+	}
+	if exportSpan == nil {
+		t.Fatal("delegation.export_files span not recorded for REJECT path")
+	}
+	if exportSpan.Status().Code != codes.Error {
+		t.Errorf("span status = %v, want codes.Error on REJECT", exportSpan.Status().Code)
+	}
+	if _, ok := findSpanIntAttr(exportSpan.Attributes(), "delegation.export.scanned_count"); ok {
+		t.Error("scanned_count must not be set when the loop short-circuits on REJECT")
 	}
 }

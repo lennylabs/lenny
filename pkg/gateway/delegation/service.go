@@ -39,6 +39,14 @@ import (
 // spec: §8.2.bis line 89.
 const DefaultMaxDepth = 10
 
+// DefaultInterceptorWeakeningCooldown is the §8.3 line 181 cluster-
+// scoped default for `gateway.interceptorWeakeningCooldownSeconds`
+// (60s). During the window following a DelegationPolicy
+// `scanExportedFiles: true → false` transition every `delegate_task`
+// resolving to that policy is rejected with
+// `INTERCEPTOR_WEAKENING_COOLDOWN`. F-8.7.12 / F-13.5.7.
+const DefaultInterceptorWeakeningCooldown = 60 * time.Second
+
 // Request is a §8.5 `lenny/delegate_task` invocation.
 type Request struct {
 	// ParentSessionID is the session issuing the delegation. Must be
@@ -144,6 +152,13 @@ type Service struct {
 	// ceiling supplied one. Always positive (DefaultMaxDepth when the
 	// caller passed 0).
 	defaultMaxDepth int
+	// interceptorWeakeningCooldown is the §8.3 line 181 cluster-scoped
+	// window after a DelegationPolicy `scanExportedFiles: true → false`
+	// transition during which `delegate_task` rejects with
+	// INTERCEPTOR_WEAKENING_COOLDOWN. Zero disables enforcement (used
+	// by tests that exercise the rest of the admission path without
+	// the cooldown gate).
+	interceptorWeakeningCooldown time.Duration
 }
 
 // Options configures a Service.
@@ -218,6 +233,16 @@ type Options struct {
 	// at the propagated context only, which silently unenrolls the
 	// child under `independent`.
 	ExperimentRouter ExperimentRouter
+
+	// InterceptorWeakeningCooldown is the §8.3 line 181 cluster-scoped
+	// `gateway.interceptorWeakeningCooldownSeconds`. During the window
+	// following a DelegationPolicy `scanExportedFiles: true → false`
+	// transition every `delegate_task` resolving to the affected
+	// policy is rejected with INTERCEPTOR_WEAKENING_COOLDOWN
+	// (TRANSIENT, HTTP 503). Zero selects DefaultInterceptorWeakeningCooldown
+	// (60s). A negative value disables the gate — tests that exercise
+	// the rest of the admission path can opt out. F-8.7.12 / F-13.5.7.
+	InterceptorWeakeningCooldown time.Duration
 }
 
 // NewService returns a delegation Service.
@@ -238,19 +263,27 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 	if maxDepth <= 0 {
 		maxDepth = DefaultMaxDepth
 	}
+	cooldown := opts.InterceptorWeakeningCooldown
+	if cooldown == 0 {
+		cooldown = DefaultInterceptorWeakeningCooldown
+	}
+	if cooldown < 0 {
+		cooldown = 0
+	}
 	return &Service{
-		store:                store,
-		experiments:          opts.Experiments,
-		runtimes:             opts.Runtimes,
-		policies:             opts.Policies,
-		metrics:              opts.Metrics,
-		auditor:              opts.Auditor,
-		experimentRouter:     opts.ExperimentRouter,
-		clock:                clock,
-		idFn:                 idFn,
-		mode:                 mode,
-		platformAllowSelfRec: opts.PlatformAllowSelfRecursion,
-		defaultMaxDepth:      maxDepth,
+		store:                        store,
+		experiments:                  opts.Experiments,
+		runtimes:                     opts.Runtimes,
+		policies:                     opts.Policies,
+		metrics:                      opts.Metrics,
+		auditor:                      opts.Auditor,
+		experimentRouter:             opts.ExperimentRouter,
+		clock:                        clock,
+		idFn:                         idFn,
+		mode:                         mode,
+		platformAllowSelfRec:         opts.PlatformAllowSelfRecursion,
+		defaultMaxDepth:              maxDepth,
+		interceptorWeakeningCooldown: cooldown,
 	}
 }
 
@@ -286,6 +319,39 @@ var (
 	// spec: §8.4 line 521. F-8.4.1.
 	ErrDelegationDenied = errors.New("delegation: lease approvalMode=deny rejects this hop (§8.4)")
 )
+
+// InterceptorWeakeningCooldownError reports a §8.3 line 181 rejection:
+// the effective DelegationPolicy is inside the cluster-scoped
+// `gateway.interceptorWeakeningCooldownSeconds` window that opened
+// when an admin flipped `contentPolicy.scanExportedFiles` from true
+// to false. The gateway returns INTERCEPTOR_WEAKENING_COOLDOWN
+// (TRANSIENT, HTTP 503) so callers retry after the window closes.
+// F-8.7.12 / F-13.5.7.
+type InterceptorWeakeningCooldownError struct {
+	// PolicyName is the §8.3 affected DelegationPolicy.
+	PolicyName string
+
+	// TransitionTs is the server-minted scanExportedFiles weakening
+	// timestamp recorded on the policy row.
+	TransitionTs time.Time
+
+	// CooldownSeconds is the cluster-scoped cooldown duration that
+	// was in force at TransitionTs.
+	CooldownSeconds int
+
+	// RetryAfterSeconds is the integer ceiling of the remaining
+	// cooldown window from "now". Callers map it onto the §15.1
+	// `details.retryAfterSeconds` field and the HTTP Retry-After
+	// header.
+	RetryAfterSeconds int
+}
+
+func (e *InterceptorWeakeningCooldownError) Error() string {
+	return fmt.Sprintf(
+		"delegation: policy %q is inside the §8.3 scanExportedFiles weakening cooldown; retry after %ds",
+		e.PolicyName, e.RetryAfterSeconds,
+	)
+}
 
 // IsolationViolationError reports a §8.3 SEC-001 monotonicity
 // failure. The gateway maps it to ISOLATION_MONOTONICITY_VIOLATED
@@ -407,6 +473,18 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 			settings.RuntimeAllowSelfRec = rt.AllowSelfRecursion
 			if s.policies != nil && rt.DelegationPolicyRef != "" {
 				if pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef); err == nil && pol.IsActive() {
+					// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) —
+					// reject every `delegate_task` whose effective
+					// DelegationPolicy is inside the cluster-scoped
+					// scanExportedFiles weakening cooldown window so
+					// a stolen admin credential cannot use a brief
+					// fail-open gap to push delegations past a
+					// now-disabled scanner. The check is structural:
+					// it fires regardless of whether this particular
+					// call carries any exported files.
+					if cdErr := s.checkInterceptorWeakeningCooldown(pol); cdErr != nil {
+						return Result{}, cdErr
+					}
 					settings.PolicyAllowSelfRec = pol.AllowSelfRecursion
 					// §8.2.bis layer 4 ceiling. DelegationPolicy has no
 					// dedicated MaxDepth field in v1; the policy-ceiling
@@ -640,6 +718,44 @@ func (s *Service) propagateExperimentContext(ctx context.Context, tenantID strin
 		ExperimentID: prop.ExperimentID,
 		VariantID:    prop.VariantID,
 		Inherited:    true,
+	}
+}
+
+// checkInterceptorWeakeningCooldown returns a typed
+// InterceptorWeakeningCooldownError when the resolved DelegationPolicy
+// is still inside the §8.3 line 181 cluster-scoped
+// `gateway.interceptorWeakeningCooldownSeconds` window opened by a
+// `scanExportedFiles: true → false` admin update. Returns nil when the
+// cooldown is disabled (interceptorWeakeningCooldown == 0), the policy
+// row never weakened (ScanExportedFilesWeakenedAt zero), or the window
+// has expired. The §8.5 `lenny/delegate_task` MCP handler maps the
+// typed error to `INTERCEPTOR_WEAKENING_COOLDOWN` (TRANSIENT, HTTP 503)
+// with `details.policyName` and `details.retryAfterSeconds`.
+// F-8.7.12 / F-13.5.7.
+func (s *Service) checkInterceptorWeakeningCooldown(pol delegationpolicystore.DelegationPolicy) error {
+	if s.interceptorWeakeningCooldown <= 0 || pol.ScanExportedFilesWeakenedAt.IsZero() {
+		return nil
+	}
+	elapsed := s.clock().Sub(pol.ScanExportedFilesWeakenedAt)
+	if elapsed < 0 {
+		// Clock skew: treat as freshly-armed so the window still
+		// applies. elapsed=0 maps to the full cooldown remaining.
+		elapsed = 0
+	}
+	remaining := s.interceptorWeakeningCooldown - elapsed
+	if remaining <= 0 {
+		return nil
+	}
+	// Round-up so a sub-second tail still produces retryAfter=1.
+	retryAfter := int((remaining + time.Second - 1) / time.Second)
+	if retryAfter < 1 {
+		retryAfter = 1
+	}
+	return &InterceptorWeakeningCooldownError{
+		PolicyName:        pol.Name,
+		TransitionTs:      pol.ScanExportedFilesWeakenedAt,
+		CooldownSeconds:   int(s.interceptorWeakeningCooldown / time.Second),
+		RetryAfterSeconds: retryAfter,
 	}
 }
 

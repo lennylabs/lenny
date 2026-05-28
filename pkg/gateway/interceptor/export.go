@@ -8,6 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
 // §8.7 file-export scan error codes. The gateway returns these on the
@@ -216,6 +220,28 @@ func (e *ExportScanError) Error() string {
 // *ExportScanError and the files scanned so far are discarded by the
 // caller (the delegation is rolled back).
 func RunPreExportMaterialization(ctx context.Context, c *Chain, tenantID, sessionID string, maxExportedFileSize int64, files ...ExportFile) ([]ExportFile, error) {
+	// spec: §16.3 / §16 trace inventory (`delegation.export_files` span,
+	// attributed to gateway + parent pod) — every per-file scan loop
+	// runs under a span so distributed traces show the export
+	// materialization phase. The span totals the input file count and
+	// aggregate byte size; per-file decisions ride on child spans
+	// emitted by Chain.Run inside scanExportFile. F-8.7.11.
+	tracer := tracing.NewTracer(nil)
+	var totalBytes int64
+	for _, f := range files {
+		totalBytes += int64(len(f.Content))
+	}
+	ctx, span := tracer.Start(ctx, tracing.SpanDelegationExportFiles)
+	span.SetAttributes(
+		attribute.Int("delegation.export.file_count", len(files)),
+		attribute.Int64("delegation.export.total_bytes", totalBytes),
+		attribute.Int64("delegation.export.max_per_file_bytes", maxExportedFileSize),
+	)
+	var spanErr error
+	defer func() {
+		tracing.RecordError(span, spanErr)
+		span.End()
+	}()
 	out := make([]ExportFile, 0, len(files))
 	for _, f := range files {
 		// §7.4 line 446: when the caller stamped an inbound Hash on a
@@ -223,19 +249,22 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, tenantID, sessio
 		// ComputeExportFileHash output), verify the bytes have not
 		// been tampered with before any interceptor call. F-7.4.10.
 		if err := VerifyExportFileHash(f.Path, f.Content, f.Hash); err != nil {
+			spanErr = err
 			return nil, err
 		}
 		// §8.7 rule 2: the per-file ceiling is enforced before any
 		// interceptor call so a single over-size file cannot stall the
 		// interceptor or inflate the gRPC payload.
 		if maxExportedFileSize > 0 && int64(len(f.Content)) > maxExportedFileSize {
-			return nil, &ExportScanError{
+			spanErr = &ExportScanError{
 				Code: CodeExportFileScanSizeExceeded,
 				Path: f.Path,
 			}
+			return nil, spanErr
 		}
 		scanned, err := scanExportFile(ctx, c, tenantID, sessionID, f)
 		if err != nil {
+			spanErr = err
 			return nil, err
 		}
 		// §7.4 line 446: stamp the post-pipeline Hash so the
@@ -245,6 +274,7 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, tenantID, sessio
 		scanned.Hash = ComputeExportFileHash(scanned.Content)
 		out = append(out, scanned)
 	}
+	span.SetAttributes(attribute.Int("delegation.export.scanned_count", len(out)))
 	return out, nil
 }
 

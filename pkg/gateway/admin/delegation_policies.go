@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
@@ -125,14 +126,16 @@ const interceptorWeakeningCooldownSeconds = 60
 // emitScanExportedFilesTransition emits the §8.3 operational event for
 // a `scanExportedFiles` change on a DelegationPolicy update: a
 // weakening (true to false) emits `delegation_policy.export_scan_weakened`
-// and starts the §8.3 interceptor-weakening cooldown; a strengthening
+// and arms the §8.3 interceptor-weakening cooldown; a strengthening
 // (false to true) emits `delegation_policy.export_scan_strengthened`
 // and takes effect immediately. No event fires when the value is
 // unchanged.
 //
 // The cooldown enforcement at `delegate_task` time (rejecting with
-// INTERCEPTOR_WEAKENING_COOLDOWN during the window) is deferred — it
-// belongs to the delegation request path.
+// INTERCEPTOR_WEAKENING_COOLDOWN during the window) lives in the
+// delegation service (F-8.7.12 / F-13.5.7) — it reads
+// `ScanExportedFilesWeakenedAt` off the policy row written by the
+// Update path above.
 func (r *Router) emitScanExportedFilesTransition(ctx context.Context, p authmw.Principal, name string, oldScan, newScan bool, transitionTs string) {
 	if oldScan == newScan {
 		return
@@ -299,6 +302,20 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 		p.ContentPolicy = toContentPolicy(body.ContentPolicy)
 		p.AllowSelfRecursion = body.AllowSelfRecursion
 		delegationpolicystore.ApplyDefaults(p)
+		// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) — server-mint the
+		// scanExportedFiles weakening transition timestamp so the
+		// gateway can enforce INTERCEPTOR_WEAKENING_COOLDOWN at
+		// `delegate_task` time. A `true → false` flip stamps the
+		// row with the gateway clock; a `false → true` strengthen
+		// clears any prior stamp so subsequent delegations admit
+		// immediately. The field is admin-API-immutable per
+		// §8.3 SEC-013 — the wire payload does not expose it.
+		switch {
+		case oldScan && !p.ContentPolicy.ScanExportedFiles:
+			p.ScanExportedFilesWeakenedAt = r.clock()
+		case !oldScan && p.ContentPolicy.ScanExportedFiles:
+			p.ScanExportedFilesWeakenedAt = time.Time{}
+		}
 		return nil
 	})
 	if err != nil {

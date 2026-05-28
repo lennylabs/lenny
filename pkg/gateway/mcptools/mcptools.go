@@ -1569,6 +1569,24 @@ func Register(srv *mcp.Server, deps Deps) {
 					return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_AN_AGENT",
 						err.Error(), map[string]any{"runtimeRef": in.RuntimeRef})
 				}
+				// spec: §8.3 line 181 — the resolved DelegationPolicy
+				// is inside the cluster-scoped scanExportedFiles
+				// weakening cooldown. Map the typed error to the
+				// canonical INTERCEPTOR_WEAKENING_COOLDOWN envelope
+				// (TRANSIENT, HTTP 503) so callers and §15.2.1 parity
+				// scanners observe the same `(category, retryable)`
+				// pair across REST and MCP. F-8.7.12 / F-13.5.7.
+				var cdErr *delegation.InterceptorWeakeningCooldownError
+				if errors.As(err, &cdErr) {
+					return mcp.ToolResult{}, mcp.NewToolError(
+						"INTERCEPTOR_WEAKENING_COOLDOWN",
+						err.Error(),
+						map[string]any{
+							"policyName":        cdErr.PolicyName,
+							"cooldownSeconds":   cdErr.CooldownSeconds,
+							"retryAfterSeconds": cdErr.RetryAfterSeconds,
+						})
+				}
 				return mcp.ToolResult{}, err
 			}
 			// Deliver the (possibly interceptor-modified) task input to

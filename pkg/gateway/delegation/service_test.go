@@ -1550,3 +1550,151 @@ func TestDelegateSpawnedAuditRecordsDefaultApprovalMode_spec_8_4(t *testing.T) {
 		t.Errorf("audit effective_approval_mode = %v, want %q", got, lease.ApprovalModePolicy)
 	}
 }
+
+// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7). The §8.3 cluster-scoped
+// `gateway.interceptorWeakeningCooldownSeconds` window opens when an
+// admin flips a DelegationPolicy's `scanExportedFiles` from true to
+// false. Every `delegate_task` whose effective DelegationPolicy
+// resolves to the affected policy MUST reject with the typed
+// InterceptorWeakeningCooldownError carrying the policy name,
+// transition timestamp, configured cooldown, and the remaining
+// retry-after window so the §8.5 MCP shim can emit the canonical
+// INTERCEPTOR_WEAKENING_COOLDOWN envelope (TRANSIENT, HTTP 503).
+func newCooldownTestRig(t *testing.T, weakenedAt time.Time, cooldown time.Duration, fixedNow time.Time) (*delegation.Service, delegation.Request) {
+	t.Helper()
+	store := memstore.New()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name:                "gemini",
+		Image:               "lenny/gemini@sha256:abc",
+		DelegationPolicyRef: "scan-policy",
+	}); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	policies := delegationpolicystore.NewMemory()
+	if err := policies.Create(context.Background(), delegationpolicystore.DelegationPolicy{
+		TenantID: "acme",
+		Name:     "scan-policy",
+		ContentPolicy: delegationpolicystore.ContentPolicy{
+			ScanExportedFiles: false,
+			InterceptorRef:    "guardrails",
+		},
+	}); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	if !weakenedAt.IsZero() {
+		if _, err := policies.Update(context.Background(), "acme", "scan-policy",
+			func(p *delegationpolicystore.DelegationPolicy) error {
+				p.ScanExportedFilesWeakenedAt = weakenedAt
+				return nil
+			}); err != nil {
+			t.Fatalf("stamp weakenedAt: %v", err)
+		}
+	}
+	svc := delegation.NewService(store, delegation.Options{
+		Runtimes:                     runtimes,
+		Policies:                     policies,
+		Clock:                        func() time.Time { return fixedNow },
+		IDFunc:                       func() string { return "sess_child" },
+		InterceptorWeakeningCooldown: cooldown,
+	})
+	return svc, delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}
+}
+
+func TestDelegateRejectsInsideInterceptorWeakeningCooldownWindow_spec_8_3_181(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Weakened 30 s ago — half the cooldown window remains.
+	weakenedAt := now.Add(-30 * time.Second)
+	svc, req := newCooldownTestRig(t, weakenedAt, 60*time.Second, now)
+
+	_, err := svc.Delegate(context.Background(), "acme", req)
+	var cdErr *delegation.InterceptorWeakeningCooldownError
+	if !errors.As(err, &cdErr) {
+		t.Fatalf("Delegate during cooldown = %v, want *InterceptorWeakeningCooldownError", err)
+	}
+	if cdErr.PolicyName != "scan-policy" {
+		t.Errorf("PolicyName = %q, want scan-policy", cdErr.PolicyName)
+	}
+	if !cdErr.TransitionTs.Equal(weakenedAt) {
+		t.Errorf("TransitionTs = %v, want %v", cdErr.TransitionTs, weakenedAt)
+	}
+	if cdErr.CooldownSeconds != 60 {
+		t.Errorf("CooldownSeconds = %d, want 60", cdErr.CooldownSeconds)
+	}
+	if cdErr.RetryAfterSeconds != 30 {
+		t.Errorf("RetryAfterSeconds = %d, want 30", cdErr.RetryAfterSeconds)
+	}
+}
+
+func TestDelegateAdmitsAfterCooldownWindowExpires_spec_8_3_181(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Weakened 61 s ago — the 60 s window has expired.
+	weakenedAt := now.Add(-61 * time.Second)
+	svc, req := newCooldownTestRig(t, weakenedAt, 60*time.Second, now)
+
+	if _, err := svc.Delegate(context.Background(), "acme", req); err != nil {
+		t.Fatalf("Delegate after cooldown expiry: %v", err)
+	}
+}
+
+func TestDelegateAdmitsWhenWeakenedAtZero_spec_8_3_181(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// A policy that never weakened carries WeakenedAt = zero; the
+	// admission path must skip the cooldown check entirely so the
+	// spec-default open posture is undisturbed.
+	svc, req := newCooldownTestRig(t, time.Time{}, 60*time.Second, now)
+	if _, err := svc.Delegate(context.Background(), "acme", req); err != nil {
+		t.Fatalf("Delegate with no prior weakening: %v", err)
+	}
+}
+
+func TestDelegateRespectsCooldownDisabled_spec_8_3_181(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	weakenedAt := now.Add(-5 * time.Second)
+	// A negative Options.InterceptorWeakeningCooldown disables the
+	// gate so tests that exercise unrelated admission paths can opt
+	// out without re-rigging the policy registry. F-8.7.12.
+	svc, req := newCooldownTestRig(t, weakenedAt, -1, now)
+	if _, err := svc.Delegate(context.Background(), "acme", req); err != nil {
+		t.Fatalf("Delegate with cooldown disabled: %v", err)
+	}
+}
+
+func TestDelegateCooldownRoundsUpSubSecondTail_spec_8_3_181(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 500*int(time.Millisecond), time.UTC)
+	// 59.5 s have elapsed — the spec-canonical retryAfter ceiling
+	// surfaces 1 (round-up of the remaining 0.5 s).
+	weakenedAt := now.Add(-59500 * time.Millisecond)
+	svc, req := newCooldownTestRig(t, weakenedAt, 60*time.Second, now)
+	_, err := svc.Delegate(context.Background(), "acme", req)
+	var cdErr *delegation.InterceptorWeakeningCooldownError
+	if !errors.As(err, &cdErr) {
+		t.Fatalf("Delegate during sub-second tail = %v, want cooldown error", err)
+	}
+	if cdErr.RetryAfterSeconds != 1 {
+		t.Errorf("RetryAfterSeconds = %d, want 1 (round-up)", cdErr.RetryAfterSeconds)
+	}
+}
+
+func TestDelegateCooldownDefaultsTo60sWhenOptionZero_spec_8_3_181(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	weakenedAt := now.Add(-10 * time.Second)
+	// Options.InterceptorWeakeningCooldown == 0 selects the
+	// DefaultInterceptorWeakeningCooldown (60 s) so a delegation 10 s
+	// into the window still rejects.
+	svc, req := newCooldownTestRig(t, weakenedAt, 0, now)
+	_, err := svc.Delegate(context.Background(), "acme", req)
+	var cdErr *delegation.InterceptorWeakeningCooldownError
+	if !errors.As(err, &cdErr) {
+		t.Fatalf("Delegate during cooldown = %v, want cooldown error", err)
+	}
+	if cdErr.CooldownSeconds != int(delegation.DefaultInterceptorWeakeningCooldown/time.Second) {
+		t.Errorf("CooldownSeconds = %d, want %d", cdErr.CooldownSeconds, int(delegation.DefaultInterceptorWeakeningCooldown/time.Second))
+	}
+}
