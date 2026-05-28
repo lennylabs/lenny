@@ -203,10 +203,42 @@ func TestScalarGaugesRegisteredAtStartup(t *testing.T) {
 		"lenny_gateway_min_replicas 0",
 		"lenny_gateway_stream_ceiling 0",
 		"lenny_gateway_replica_count 0",
+		// spec: §11.2.1 line 187 / §16.5 BillingCorrectionRateHigh —
+		// pre-materialize the threshold gauge with the spec default
+		// (0.05 = 5%) so scalar(lenny_billing_correction_rate_threshold)
+		// in the alert expression never evaluates to NaN even before
+		// SetBillingCorrectionRateThreshold runs. F-11.2.23.
+		"lenny_billing_correction_rate_threshold 0.05",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
 		}
+	}
+}
+
+// spec: §11.2.1 line 187 / §16.5 — SetBillingCorrectionRateThreshold
+// drives the lenny_billing_correction_rate_threshold gauge that the
+// §16.5 BillingCorrectionRateHigh alert reads via scalar(...). The
+// deployer-configured value must round-trip through /metrics so the
+// alert evaluates against the chart-provided threshold rather than a
+// baked-in constant. F-11.2.23.
+func TestSetBillingCorrectionRateThreshold_spec_11_2_1_187(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetBillingCorrectionRateThreshold(0.10)
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_billing_correction_rate_threshold 0.1") {
+		t.Fatalf("/metrics missing updated threshold gauge\n---\n%s", rr.Body.String())
+	}
+	// Zero is admissible (disable the alert), so the gauge must accept it.
+	m.SetBillingCorrectionRateThreshold(0)
+	rr = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rr.Body.String(), "lenny_billing_correction_rate_threshold 0") {
+		t.Fatalf("/metrics missing zero threshold gauge\n---\n%s", rr.Body.String())
 	}
 }
 

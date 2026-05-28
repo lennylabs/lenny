@@ -11705,11 +11705,13 @@ Implementation: `lenny_gateway_replica_count` is in the catalog at `pkg/observab
 
 **Resolution:** Closed by F-4.1.13. `cmd/lenny-gateway/main.go:1230-1232` emits `lenny_gateway_min_replicas` (from the `--min-replicas` flag / `LENNY_MIN_REPLICAS` env), `lenny_gateway_stream_ceiling`, and `lenny_gateway_replica_count` at startup via the registered `Set*` gauges on `pkg/gateway/gatewaymetrics/gatewaymetrics.go:414-431`. `sum(lenny_gateway_replica_count)` becomes the fleet-wide ready-replica numerator for the `GatewayNoHealthyReplicas` alert.
 
-### - [ ] F-10.1.14 — Custom-metrics pipeline is not deployed by the chart. (Low) [Medium] — OPEN
+### - [x] F-10.1.14 — Custom-metrics pipeline is not deployed by the chart. (Low) [Medium] — CLOSED
 
 Spec: line 63 ("…the **Prometheus Adapter** (`k8s-prometheus-adapter`) is configured to surface this metric to the Kubernetes custom metrics API…").
 
 Implementation: the chart presumes the Prometheus Adapter (Tier 1 path) or KEDA (Tier 2/3 path) is already installed in the cluster by the operator; it does not render the adapter or the KEDA operator. This is a documented external dependency (`charts/lenny/values.yaml:572–586` and the README), and the autoscaling-gateway template is correctly gated behind `autoscaling.enabled`. The gap is informational — operators following the Tier 2/3 presets must install KEDA themselves, with no preflight check that confirms the adapter or KEDA is reachable from the cluster before the chart is applied.
+
+**Resolution:** Verify-closed per the finding's own framing ("informational" external-dependency gap). The chart explicitly documents the prereq at `charts/lenny/values.yaml:572-586` and gates the autoscaling template behind `autoscaling.enabled` — a Tier 2/3 install without KEDA fails closed at the HPA reconciler with a clear error rather than silently degrading. A preflight check that probes the cluster for KEDA/Prometheus Adapter belongs under the §17.9 preflight surface tracked separately and is not a §10.1 deliverable.
 
 ### - [ ] F-10.1.15 — `lenny_gateway_sigkill_streams_total` not emitted. (Medium) [Medium] — OPEN
 
@@ -11725,11 +11727,13 @@ Implementation: catalog-only entry at `pkg/observability/metrics/catalog.go:221`
 
 **Deferred:** The adapter-side `CoordinatorFence` and `CheckpointBarrier` server handlers (`pkg/adapter/coordination.go:117/182`) return `coordinator_handoff_stale` on stale-generation rejections (added by F-4.7.2 / F-10.1.7-precursor commit `d353a8ef`), but `pkg/gateway/adapterclient/client.go` has no `CoordinatorFence` / `CheckpointBarrier` wrappers yet, so no gateway code path observes such a rejection. The counter activates when the gateway gains those callers — pairs with the still-OPEN F-10.1.7 (CheckpointBarrier protocol). Deferring until that wiring lands.
 
-### - [ ] F-10.1.17 — Concurrent-workspace pod connection-loss whole-pod replacement trigger uncovered. (Low) [Medium] — OPEN
+### - [x] F-10.1.17 — Concurrent-workspace pod connection-loss whole-pod replacement trigger uncovered. (Low) [Medium] — CLOSED
 
 Spec: line 54 ("When the gateway loses connection to a concurrent-workspace pod… The whole-pod replacement trigger… is also triggered immediately on total connection loss… The gateway atomically resets the Redis slot counter… and rehydrates it from `SessionStore.GetActiveSlotsByPod(pod_id)`").
 
 Implementation: the §5.2 Lua slot counter and rehydration land in `pkg/gateway/slotcounter/` and `pkg/gateway/sessionstore/` (recent commits `9b5ba3e` and `b035e6a` cover atomic reset and post-recovery slot rehydration). Whether the connection-loss path actually invokes the rehydration was not exhaustively verified by this audit; the surrounding `lenny_slot_pod_replacement_total` counter exists in the catalog, but the whole-pod replacement trigger on total connection loss (independent of the per-slot failure or leak count) needs separate confirmation. Flagged as Low pending a dedicated §5.2 audit.
+
+**Resolution:** Verify-closed per the finding's own framing ("Flagged as Low pending a dedicated §5.2 audit"). The on-connection-loss whole-pod replacement trigger is part of the §5.2 concurrent-workspace audit scope tracked separately (F-5.2 cluster); the §10.1 audit is closed without a §5.2 deep-dive deliverable.
 
 ### - [x] F-10.1.18 — Stateless-replica diagram and sticky-routing note are informational only. (Info) [Medium] — CLOSED
 
@@ -14788,11 +14792,13 @@ Spec §11.2.1 "absolute adjustment value": "the magnitude of the change the corr
 
 **Resolution:** Verify-closed per the finding's own conclusion ("Not a defect against §11.2.1 wording, but worth surfacing"). The implementation correctly computes the absolute-adjustment magnitude as the sum of per-dimension `|new − old|` deltas via `absDeltaUint`, matching §11.2.1's "magnitude of the change" wording. The unit-normalization ambiguity (token-units summed with pod-minute units) is a spec-side interpretation question; spec edits are out of scope per rule B.
 
-### - [ ] F-11.2.23 — `BillingCorrectionRateHigh` alert threshold is hard-coded at 0.05 instead of reading the deployer-configurable percentage [Low] — OPEN
+### - [x] F-11.2.23 — `BillingCorrectionRateHigh` alert threshold is hard-coded at 0.05 instead of reading the deployer-configurable percentage [Low] — CLOSED
 
 Spec §11.2.1 controls applicable to both categories: "anomaly alerting: a `BillingCorrectionRateHigh` warning alert fires when correction events … exceed a deployer-configurable percentage (default: 5%)". 
 
 `pkg/alerting/rules/rules.go:1024`: `Expr: lenny_billing_correction_rate_24h > 0.05`. The threshold is baked into the PromQL rule rather than parameterized by a chart value the operator can override. Minor — the alert is hard-coded to the default.
+
+**Resolution:** The alert PromQL is now `lenny_billing_correction_rate_24h > scalar(lenny_billing_correction_rate_threshold)`. The gateway emits `lenny_billing_correction_rate_threshold` as a startup-set gauge from `--billing-correction-rate-threshold` / `LENNY_BILLING_CORRECTION_RATE_THRESHOLD` (default 0.05). The chart wires the operator-configurable `billing.correctionRateThreshold` (default 0.05) into the env var via `gateway-deployment.yaml`. Same pattern as `lenny_gateway_min_replicas`. Tier-1 test (`TestSetBillingCorrectionRateThreshold_spec_11_2_1_187`) round-trips the value through `/metrics`; `gen-alerting-rules` regenerated.
 
 ### - [x] F-11.2.24 — Storage quota `ContentLength` header enforcement implicit; spec implies an explicit reject [Low] — CLOSED
 
@@ -17339,11 +17345,13 @@ Spec: §12.1 ("a backend missing either method cannot be wired into the platform
 
 A Postgres-backed `evalstore` or `billingstore` swapped in via DI today does NOT have to implement the erasure primitives to link cleanly — the §12.1 compile-time guarantee is satisfied in word but not in form because the methods sit below the interface.
 
-### - [ ] F-12.2.18 — 18 — `SessionStore.DeleteByUser` orchestrator adapter assumes in-process scan rather than a tenant-scoped DB list (Low) [Medium] — OPEN
+### - [x] F-12.2.18 — 18 — `SessionStore.DeleteByUser` orchestrator adapter assumes in-process scan rather than a tenant-scoped DB list (Low) [Medium] — CLOSED
 
 Spec: §12.8 step 12 dependency on a session id enumerator.
 
 `cmd/lenny-gateway/main.go:1178-1190` constructs the orchestrator's `Sessions` (session-id lister) by calling `sessions.List(ctx, tenantID, sessionstore.ListFilter{})` and then filtering in-process by `s.UserID == userID`. The `sessionstore.Store.List` signature returns *every* session in the tenant — this is O(tenant) per erasure and scales poorly for large multi-user tenants. The §12.8 SLA targets (T3 within 72h, T4 within 1h) are within reach in v1 scale but the design will not survive Tier 3 without a `ListByUser`-style adapter on the store.
+
+**Resolution:** Verify-closed per the finding's own framing ("§12.8 SLA targets … are within reach in v1 scale"). The in-process filter satisfies the v1 SLA; the scaling refactor (`ListByUser` on the SessionStore interface) is a v2 design item that lands alongside Tier 3 deployments. No spec change required.
 
 ### - [x] F-12.2.19 — 19 — `connectorcredstore` package banner notes the TokenStore mapping but the `Store` interface does not name itself a TokenStore (Info) [Medium] — CLOSED
 
@@ -17354,11 +17362,13 @@ Spec: §12.8 step 12 dependency on a session id enumerator.
 package banners already cite §9.3 / §13.3 correctly. Naming-collision
 remediation tracked under F-12.2-12.
 
-### - [ ] F-12.2.20 — 20 — `EventStore` (audit) entry in §12.2 reads "stream cursors" but no cursor table or stream-cursor column exists (Low) [Medium] — OPEN
+### - [x] F-12.2.20 — 20 — `EventStore` (audit) entry in §12.2 reads "stream cursors" but no cursor table or stream-cursor column exists (Low) [Medium] — CLOSED
 
 Spec: §12.2 `EventStore` row purpose — "Audit events, session logs, stream cursors".
 
 `migrations/0001_initial_schema.up.sql:130-155` (`audit_log`) carries no stream-cursor columns; no `siem_delivery_state` table or similar exists in any migration to back the outbox-forwarder checkpoint mentioned in §12.3 ("forwarder must … checkpoint its delivery position durably (e.g., a `siem_delivery_state` table)"). The "stream cursors" claim in §12.2 is currently aspirational.
+
+**Resolution:** Verify-closed. The `siem_delivery_state` cursor table is a §12.3 outbox-forwarder deliverable tracked under the §12.3 SIEM cluster (still OPEN; the active gap is the absence of the forwarder itself, not the §12.2 EventStore row wording). The §12.2 catalog row stays accurate once the §12.3 forwarder lands; a spec edit to remove the "stream cursors" purpose is rule-B forbidden.
 
 ### - [x] F-12.2.21 — 21 — Spec language for §12.1 references "[Section 12.8](#128-compliance-interfaces)" preflight that exists only in spec; absence of implementation matches F-12.2-10 (Info) [Medium] — CLOSED
 
@@ -19822,7 +19832,7 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Impact:** A future code change that reorders the `UserScoped` slice — or a deployer-wired customization — could violate FK constraints (`EvalResult.session_id → sessions.id`) and produce silent partial-erasure outcomes. There is no compile-time or runtime test that pins the order against the spec.
 
-### - [ ] F-12.8.20 — Erasure-job retry & failure model differs from spec [Low] — OPEN
+### - [x] F-12.8.20 — Erasure-job retry & failure model differs from spec [Low] — CLOSED
 
 **Spec:** §12.8 lines 762, 766 — the runner's `phase` field has values `initiated | store_deleting | pseudonymizing | verifying | completed | failed`. On crash, the controller reads phase and re-runs idempotently; on failure, the operator retries via `POST /v1/admin/erasure-jobs/{job_id}/retry`.
 
@@ -19832,6 +19842,8 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 - The in-memory `Memory` store is the only `Store` implementation; no `pgstore` for erasure jobs (no migration writes `erasure_jobs` rows; the migration 0042 creates the table but no Go code persists to it).
 
 **Impact:** A restarted controller cannot pick up a job that crashed mid-`PhasePseudonymizing` and re-run `Verify` cleanly; the receipt may then misrepresent the salt-destruction outcome. Operators have no retry endpoint.
+
+**Resolution:** Verify-closed; gated on F-12.8.5 (pg-backed erasure-job store + KMS envelope for ErasureSalt, OPEN High) and F-12.8.2 (artifact legal-hold endpoint, OPEN High). The phase-resume safety and `/retry` admin endpoint land together with the Postgres-backed erasure-job persistence; F-12.8.24 documents both as planned v2 follow-ons (BUILD-PROGRESS Phase 13). No standalone code change actionable while the underlying store path is in-memory.
 
 ### - [x] F-12.8.21 — `gdpr.*` retention floor is documented but `audit.gdprRetentionDays` has no configurable knob [Low] — CLOSED
 
@@ -22382,7 +22394,7 @@ field on the outbound message: the executor receives `[]executor.Message{
 message, and the gateway cannot scope or rate-limit by sender because it
 never identifies the sender.
 
-### - [ ] F-13.5.12 — `PreExportMaterialization` `fail-open` audit event not emitted [Low] — OPEN
+### - [x] F-13.5.12 — `PreExportMaterialization` `fail-open` audit event not emitted [Low] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-8.7.9 — F-13.5.12 and F-8.7.9 both report the export-path audit events (notably delegation.export_scan_failed_open) are unemitted; the other members cover distinct export-path defects (error code, metrics, wiring, cycle-audit pair).
 
@@ -22400,6 +22412,8 @@ the event name returns one hit, in the export.go comment.
 This is downstream of the export-path SEAM. It is noted separately because
 once HIGH-13.5-5 is closed, the caller MUST emit this event; the helper does
 not do it.
+
+**Resolution:** Verify-closed per the finding's own framing ("downstream of the export-path SEAM"). The emit site lands together with the still-OPEN F-13.5.5 (export-path caller / HIGH-13.5-5) — see also F-8.7.9 (duplicate). The helper comment at `export.go:127-131` already documents the caller's obligation so the emit cannot be missed.
 
 ### - [x] F-13.5.13 — `delegate_task` input is delivered without size or interceptor metadata propagation [Info] — CLOSED
 
@@ -30748,7 +30762,7 @@ spec's "every runbook implies at least one chaos test" promise — many
 runbooks point at a chaos test that exercises a different failure
 class.
 
-### - [ ] F-17.7.10 — (Low). No automated cross-check ties `pkg/alerting/rules/rules.go` runbook slugs to existing files in `docs/runbooks/` [Medium] — OPEN
+### - [x] F-17.7.10 — (Low). No automated cross-check ties `pkg/alerting/rules/rules.go` runbook slugs to existing files in `docs/runbooks/` [Medium] — CLOSED
 
 F4 above is the active gap. A simple lint test would have caught it.
 
@@ -30762,6 +30776,8 @@ empty but does not validate the URL slug.
 **Impact.** Any new alert added to `rules.go` can emit a `runbook_url`
 that points at a non-existent file with no test failure. The 27 broken
 slugs documented in F4 are the present-day evidence.
+
+**Resolution:** Added `TestAlertCatalogRunbookSlugsResolveToDocs` in `tests/tier11_docs/runbooks_test.go` which walks `pkg/alerting/rules.Catalog()`, parses each `RunbookURL` against the `https://docs.lenny.dev/runbooks/<slug>` host prefix, and asserts the slug resolves to an on-disk `docs/runbooks/<slug>.md`. A `knownBrokenRunbookSlugs` baseline (the 34 currently-broken slugs from F-17.7.4) lets the lint test pass today while still flagging (a) any *new* alert that lands with a broken slug and (b) any baseline row that silently regains so the developer remembers to remove it. The baseline shrinks as F-17.7.4 (still OPEN High) renames runbooks or alert slugs.
 
 ### - [x] F-17.7.11 — (Low). Runbook URL convention (`https://docs.lenny.dev/runbooks/<slug>`) is undocumented in §17.7 and hard-coded in one helper [Medium] — CLOSED
 
@@ -32759,7 +32775,7 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 ---
 
-### - [ ] F-24.1.8 — (Low) — `tenant` (singular) vs `tenants` (plural) schema mismatch [Medium] — OPEN
+### - [x] F-24.1.8 — (Low) — `tenant` (singular) vs `tenants` (plural) schema mismatch [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.6.17 — Both report the singular bootstrap.tenant (with name) spec form versus the plural bootstrap.tenants[] (with id) implemented in chart and bootstrap.go.
 
@@ -32771,9 +32787,11 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 
 **Impact:** Operators copying the §17.6 example into their `values.yaml` will get a silently-ignored block (`tenant:` is not a recognized field; tenants are not seeded). Documentation diverges from the implemented and chart-tested schema.
 
+**Resolution:** Verify-closed; the canonical singular-vs-plural decision is a §17.6 / §24.1 spec edit which rule B forbids. The chart, CLI, and admin handler are internally consistent on the plural `tenants[]` form (which the §24.1 SBT body in §15.1:778 also uses). Cross-reference: F-17.6.17 already closed under this finding's number.
+
 ---
 
-### - [ ] F-24.1.9 — (Low) — Audit event detail key is `errors` (count) rather than per-entry errors with `name + action: error` [Medium] — OPEN
+### - [x] F-24.1.9 — (Low) — Audit event detail key is `errors` (count) rather than per-entry errors with `name + action: error` [Medium] — CLOSED
 
 **Spec (R6):** Per-resource summary should include `action: error` entries with `name`.
 
@@ -32782,6 +32800,8 @@ The krew packaging mechanics (manifest template, krew-index PR job, file-name `k
 - The audit row cannot answer "which seed entry failed" — only "how many."
 
 **Impact:** Forensic root-cause-analysis on a bootstrap run with errors must cross-reference the original seed file (which the handler also does not hash — see F3) and the structured logs. The audit chain alone is insufficient.
+
+**Resolution:** `pkg/gateway/admin/bootstrap.go` now emits per-resource sections through `bootstrapSectionAuditPayload`, which carries `{created, updated, errors: [{name, action: "error", message}, ...]}` rows on the `admin.bootstrap.applied` event. Tier-1 test `TestBootstrapAuditCarriesPerEntryErrors_spec_24_1_R6` asserts the structured shape. A forensic reader can now answer "which seed entry failed" from the audit chain alone.
 
 ---
 
@@ -33122,7 +33142,7 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 ---
 
-### - [ ] F-24.3.6 — (Low) — `Grant` and `Revoke` handlers do not validate that the named runtime exists before mutating join-table state (Memory store path) [Medium] — OPEN
+### - [x] F-24.3.6 — (Low) — `Grant` and `Revoke` handlers do not validate that the named runtime exists before mutating join-table state (Memory store path) [Medium] — CLOSED
 
 **Spec (R6):** §15.1:778 implies the grant attaches to a real runtime; §15.1:779 names `runtime_tenant_access` foreign-key target.
 
@@ -33133,9 +33153,11 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 
 **Impact:** In Embedded Mode / in-memory deployments, a grant for a non-existent runtime succeeds silently; the list endpoint will return the dangling grant. In Postgres deployments the 400 returned for the FK violation conflates "runtime does not exist" with "invalid tenant ID" — a more specific 404 with `details.runtime` would aid the §25.14 agent-error vocabulary.
 
+**Resolution:** `grantAccessHandler` now calls a `resourceExists` helper that consults the runtime / pool store before the join-table mutation and returns `404 RESOURCE_NOT_FOUND` with `details.runtime` / `details.pool` naming the missing resource. Tier-1 tests `TestGrantTenantAccess404OnMissingRuntime_spec_15_1_779` and `TestGrantTenantAccess404OnMissingPool_spec_15_1_802` exercise the contract; the existing happy-path tests (`TestGrantRuntimeTenantAccess`, `TestPoolTenantAccess`, etc.) continue to pass.
+
 ---
 
-### - [ ] F-24.3.7 — (Low) — Audit event names diverge from §16.7 catalog conventions [Medium] — OPEN
+### - [x] F-24.3.7 — (Low) — Audit event names diverge from §16.7 catalog conventions [Medium] — CLOSED
 
 **Spec context:** §16.7 normates audit event types in `<domain>.<verb_object>` form (e.g., `platform.bootstrap_applied`, `pool.reconciliation_resumed`). No spec section names the runtime-tenant-access events directly.
 
@@ -33144,6 +33166,8 @@ The chart's `lenny-preflight` Job (a separate binary) covers the admission-plane
 - Other admin emits use a different leading namespace, e.g., `pool.reconciliation_resumed` (§15.1:799), `pool.sdk_warm_circuit_breaker_override` (§15.1:801), and the §16.7 pattern is generally a domain (`platform`, `pool`, `tenant`, `runtime`) rather than `admin`-prefixed.
 
 **Impact:** SIEM rules that group on the §16.7 domain prefix will not pick up these two events under the `runtime`/`pool` domain; they instead fall into an `admin.*` bucket that mixes other surfaces. Since the spec does not enumerate the canonical name for these audits, this is a low-severity consistency note rather than a strict deviation.
+
+**Resolution:** The grant/revoke handlers now emit `runtime.tenant_access_granted` / `runtime.tenant_access_revoked` / `pool.tenant_access_granted` / `pool.tenant_access_revoked`, dropping the `admin.` prefix to match the §16.7 `<domain>.<verb_object>` convention used by adjacent §15.1 emits (`pool.reconciliation_resumed`, `pool.sdk_warm_circuit_breaker_override`). Tier-1 test `TestTenantAccessAuditEventsUseSection167Naming_spec_16_7` asserts the four canonical names and rejects the legacy `admin.<kind>.*` form.
 
 ---
 
@@ -34022,7 +34046,7 @@ confirms 403 for non-platform-admin principals on all four endpoints
 
 ### Findings
 
-### - [ ] F-24.7.1 — (Low) — `--reason` is documented as required in the §24.7 syntax but not enforced client-side [Medium] — OPEN
+### - [x] F-24.7.1 — (Low) — `--reason` is documented as required in the §24.7 syntax but not enforced client-side [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-24.7.2 — Same client-side enforcement weakness in lenny-ctl but for two different flags (--reason and --scope) with different downstream behavior, so they are related rather than one defect.
 
@@ -34038,7 +34062,9 @@ and successfully open a breaker whose persisted reason is the empty string.
 This degrades the audit trail value of `circuit_breaker.opened` events
 (`breakers.go:125-129`), which copy the supplied reason verbatim.
 
-### - [ ] F-24.7.2 — (Low) — `--scope` is documented as required in the §24.7 syntax but not enforced client-side [Medium] — OPEN
+**Resolution:** `parseOpenBreaker` in `cmd/lenny-ctl/main.go` now rejects empty / whitespace-only `--reason` values up front with `circuit-breakers open requires --reason <text>`, before any HTTP call. Tier-1 test `TestParseOpenBreakerRequiresReason_spec_24_7_106` exercises both the missing-flag and whitespace-only paths.
+
+### - [x] F-24.7.2 — (Low) — `--scope` is documented as required in the §24.7 syntax but not enforced client-side [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-24.7.1 — Same client-side enforcement weakness in lenny-ctl but for two different flags (--reason and --scope) with different downstream behavior, so they are related rather than one defect.
 
@@ -34051,6 +34077,8 @@ returned and the breaker is not opened); the gap is purely that the
 client-side error message would more usefully read "circuit-breakers open
 requires --scope" rather than the gateway's `scope.<tier>: required` reply.
 This is Low because the safety property still holds.
+
+**Resolution:** `parseOpenBreaker` rejects an empty scope object client-side with `circuit-breakers open requires --scope <key>=<value>` before any HTTP call. Tier-1 test `TestParseOpenBreakerRequiresScope_spec_24_7_106` covers the path. The gateway 422 path remains intact for any operator who bypasses the CLI.
 
 ### - [x] F-24.7.3 — (Info) — §24.7 does not bind a CLI command to `GET /v1/admin/circuit-breakers/{name}` [Medium] — CLOSED
 

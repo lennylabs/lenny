@@ -180,6 +180,67 @@ func TestBootstrapReportsPerEntryErrors(t *testing.T) {
 	}
 }
 
+// TestBootstrapAuditCarriesPerEntryErrors asserts the §24.1 R6 audit
+// contract: the admin.bootstrap.applied event's per-resource summary
+// carries `{name, action: "error", message}` rows for each failed
+// entry, not just an error count. A forensic reader must be able to
+// answer "which seed entry failed" from the audit chain alone.
+// F-24.1.9.
+func TestBootstrapAuditCarriesPerEntryErrors_spec_24_1_R6(t *testing.T) {
+	router, _, _, _, audit := newBootstrapRouter(t)
+	body := admin.BootstrapRequest{
+		Tenants: []admin.TenantPayload{
+			{ID: "acme", DisplayName: "Acme"},
+			{ID: "with space"}, // invalid id format
+			{ID: ""},           // missing id
+		},
+	}
+	buf, _ := json.Marshal(body)
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/bootstrap", bytes.NewReader(buf)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusMultiStatus {
+		t.Fatalf("status: got %d, want 207", rr.Code)
+	}
+	got := audit.snapshot()
+	if len(got) != 1 || got[0].Type != "admin.bootstrap.applied" {
+		t.Fatalf("audit: %+v", got)
+	}
+	tenantsSection, ok := got[0].Detail["tenants"].(map[string]any)
+	if !ok {
+		t.Fatalf("tenants section missing from audit detail: %+v", got[0].Detail)
+	}
+	if c, _ := tenantsSection["created"].(int); c != 1 {
+		t.Errorf("tenants.created = %v, want 1", tenantsSection["created"])
+	}
+	errs, ok := tenantsSection["errors"].([]map[string]any)
+	if !ok {
+		t.Fatalf("tenants.errors is %T, want []map[string]any; section=%+v", tenantsSection["errors"], tenantsSection)
+	}
+	if len(errs) != 2 {
+		t.Fatalf("tenants.errors length = %d, want 2; got %+v", len(errs), errs)
+	}
+	for _, e := range errs {
+		if e["action"] != "error" {
+			t.Errorf("audit entry action = %v, want %q", e["action"], "error")
+		}
+		if _, present := e["message"]; !present {
+			t.Errorf("audit entry missing message: %+v", e)
+		}
+	}
+	// One entry carries the rejected id "with space"; the other has
+	// an empty id because the input row had no id.
+	gotNames := map[string]bool{}
+	for _, e := range errs {
+		if n, ok := e["name"].(string); ok {
+			gotNames[n] = true
+		}
+	}
+	if !gotNames["with space"] {
+		t.Errorf("audit errors missing 'with space' entry: %+v", errs)
+	}
+}
+
 func TestBootstrapRequiresPlatformAdmin(t *testing.T) {
 	router, _, _, _, _ := newBootstrapRouter(t)
 	body, _ := json.Marshal(admin.BootstrapRequest{})

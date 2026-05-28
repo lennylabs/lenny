@@ -1035,8 +1035,12 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
+			// spec: §11.2.1 line 187 — "deployer-configurable percentage (default 5%)".
+			// The threshold is read from scalar(lenny_billing_correction_rate_threshold),
+			// a startup-set gauge the gateway emits from the
+			// billing.correctionRateThreshold Helm value. F-11.2.23.
 			Name:        "BillingCorrectionRateHigh",
-			Expr:        `lenny_billing_correction_rate_24h > 0.05`,
+			Expr:        `lenny_billing_correction_rate_24h > scalar(lenny_billing_correction_rate_threshold)`,
 			Severity:    SeverityWarning,
 			Summary:     "Billing correction rate above the configured threshold",
 			Description: "Billing correction events exceed the deployer-configurable percentage (default 5 percent) of total billing events in a rolling 24h window. May indicate compromised credentials, operational error, or a systematic metering bug.",

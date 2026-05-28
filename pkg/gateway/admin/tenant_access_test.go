@@ -270,6 +270,144 @@ func TestGetPoolTenantScoped(t *testing.T) {
 	}
 }
 
+// TestGrantTenantAccess404OnMissingRuntime asserts the Grant handler
+// pre-validates the runtime exists before mutating the join-table
+// state; the Memory tenantaccessstore previously accepted any
+// non-empty resource name, which let an operator stash a dangling
+// grant for a non-existent runtime. The corrected handler rejects the
+// request with 404 RESOURCE_NOT_FOUND naming the missing runtime in
+// details.runtime. spec: §15.1 line 779 (`runtime_tenant_access`
+// FK reference). F-24.3.6.
+func TestGrantTenantAccess404OnMissingRuntime_spec_15_1_779(t *testing.T) {
+	router, runtimes, _, access := newScopedResourceAdmin(t)
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{Name: "exists"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost,
+		"/v1/admin/runtimes/ghost/tenant-access", grantBody("acme"), withAdminPrincipal)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("grant for missing runtime: status %d, want 404; body %s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Code != "RESOURCE_NOT_FOUND" {
+		t.Errorf("error code = %q, want RESOURCE_NOT_FOUND", env.Error.Code)
+	}
+	if got := env.Error.Details["runtime"]; got != "ghost" {
+		t.Errorf("details.runtime = %v, want ghost", got)
+	}
+	// And no grant was written under the missing name.
+	grants, _ := access.List(context.Background(), tenantaccessstore.KindRuntime, "ghost")
+	if len(grants) != 0 {
+		t.Errorf("dangling grant persisted: %+v", grants)
+	}
+	// Existing runtime still admits the grant.
+	if rr := doAdminReq(t, router.Handler(), http.MethodPost,
+		"/v1/admin/runtimes/exists/tenant-access", grantBody("acme"), withAdminPrincipal); rr.Code != http.StatusCreated {
+		t.Errorf("grant on existing runtime: status %d, want 201", rr.Code)
+	}
+}
+
+// TestGrantTenantAccess404OnMissingPool mirrors the runtime guard for
+// the pool kind. spec: §15.1 line 802 (`pool_tenant_access` FK
+// reference). F-24.3.6.
+func TestGrantTenantAccess404OnMissingPool_spec_15_1_802(t *testing.T) {
+	router, _, _, _ := newScopedResourceAdmin(t)
+	rr := doAdminReq(t, router.Handler(), http.MethodPost,
+		"/v1/admin/pools/ghost-pool/tenant-access", grantBody("acme"), withAdminPrincipal)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("grant for missing pool: status %d, want 404; body %s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	if env.Error.Code != "RESOURCE_NOT_FOUND" {
+		t.Errorf("error code = %q, want RESOURCE_NOT_FOUND", env.Error.Code)
+	}
+	if got := env.Error.Details["pool"]; got != "ghost-pool" {
+		t.Errorf("details.pool = %v, want ghost-pool", got)
+	}
+}
+
+// TestTenantAccessAuditEventsUseSection167Naming asserts the emitted
+// audit event names follow the §16.7 `<domain>.<verb_object>`
+// convention used by adjacent §15.1 emits such as
+// `pool.reconciliation_resumed`. The previous implementation emitted
+// `admin.runtime.tenant_access_granted` / `admin.pool.tenant_access_revoked`,
+// which a §16.7 domain-based SIEM rule would route into the `admin.*`
+// bucket rather than the per-resource domain. spec: §16.7 audit
+// catalog conventions. F-24.3.7.
+func TestTenantAccessAuditEventsUseSection167Naming_spec_16_7(t *testing.T) {
+	tenants := tenantstore.NewMemory()
+	access := tenantaccessstore.NewMemory()
+	runtimes := runtimestore.NewMemory()
+	pools := poolstore.NewMemory()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{Name: "rt-a"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := pools.Create(context.Background(), poolstore.Pool{Name: "pool-a"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	audit := &recordingAudit{}
+	router := admin.NewRouter(tenants, admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		Audit: audit,
+	}).WithRuntimes(runtimes).WithPools(pools).WithTenantAccess(access)
+	h := router.Handler()
+
+	if rr := doAdminReq(t, h, http.MethodPost,
+		"/v1/admin/runtimes/rt-a/tenant-access", grantBody("acme"), withAdminPrincipal); rr.Code != http.StatusCreated {
+		t.Fatalf("runtime grant: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if rr := doAdminReq(t, h, http.MethodPost,
+		"/v1/admin/pools/pool-a/tenant-access", grantBody("acme"), withAdminPrincipal); rr.Code != http.StatusCreated {
+		t.Fatalf("pool grant: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if rr := doAdminReq(t, h, http.MethodDelete,
+		"/v1/admin/runtimes/rt-a/tenant-access/acme", nil, withAdminPrincipal); rr.Code != http.StatusNoContent {
+		t.Fatalf("runtime revoke: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if rr := doAdminReq(t, h, http.MethodDelete,
+		"/v1/admin/pools/pool-a/tenant-access/acme", nil, withAdminPrincipal); rr.Code != http.StatusNoContent {
+		t.Fatalf("pool revoke: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	expected := map[string]bool{
+		"runtime.tenant_access_granted": false,
+		"pool.tenant_access_granted":    false,
+		"runtime.tenant_access_revoked": false,
+		"pool.tenant_access_revoked":    false,
+	}
+	for _, ev := range audit.snapshot() {
+		if _, ok := expected[ev.Type]; ok {
+			expected[ev.Type] = true
+		}
+		// The legacy `admin.<kind>.tenant_access_*` form must not be
+		// emitted alongside the §16.7 form.
+		if ev.Type == "admin.runtime.tenant_access_granted" ||
+			ev.Type == "admin.pool.tenant_access_granted" ||
+			ev.Type == "admin.runtime.tenant_access_revoked" ||
+			ev.Type == "admin.pool.tenant_access_revoked" {
+			t.Errorf("legacy admin-prefixed event still emitted: %s", ev.Type)
+		}
+	}
+	for name, seen := range expected {
+		if !seen {
+			t.Errorf("expected audit event %q not emitted; got %+v", name, audit.snapshot())
+		}
+	}
+}
+
 func TestTenantAccessRequiresPlatformAdmin(t *testing.T) {
 	router, _, _ := newTenantAccessAdmin(t)
 	h := router.Handler()

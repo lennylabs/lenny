@@ -464,6 +464,11 @@ spec:
             - name: LENNY_BILLING_SINK
               value: {{ . | quote }}
             {{- end }}
+            # §11.2.1 line 187 / §16.5: BillingCorrectionRateHigh
+            # alert threshold as a fraction. Gateway emits it on
+            # lenny_billing_correction_rate_threshold at startup.
+            - name: LENNY_BILLING_CORRECTION_RATE_THRESHOLD
+              value: {{ .Values.billing.correctionRateThreshold | default 0.05 | quote }}
             # §4.2 line 165 LENNY_POOLER_MODE: deployment-posture knob
             # for the Postgres pooler. The gateway logs it at startup
             # so operators can confirm the value the running binary

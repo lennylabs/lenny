@@ -403,6 +403,8 @@ func main() {
 		"§25.14 public URL of the lenny-ops service (the ops.ingress.host Helm value). Advertised in GET /v1/admin/platform/version so lenny-ctl auto-discovers the ops endpoint. Override via LENNY_OPS_SERVICE_URL.")
 	billingDualControlThreshold := flag.Float64("billing-dual-control-threshold", envFloat("LENNY_BILLING_DUAL_CONTROL_THRESHOLD", 0),
 		"§11.2.1 billing.dualControlThreshold: an operator-initiated billing correction whose absolute adjustment value exceeds this requires a second platform-admin's approval. The default of 0 makes every correction dual-control. Override via LENNY_BILLING_DUAL_CONTROL_THRESHOLD.")
+	billingCorrectionRateThreshold := flag.Float64("billing-correction-rate-threshold", envFloat("LENNY_BILLING_CORRECTION_RATE_THRESHOLD", 0.05),
+		"§11.2.1 line 187 billing.correctionRateThreshold: BillingCorrectionRateHigh alert threshold as a fraction (0.05 = 5%). Emitted at startup on the lenny_billing_correction_rate_threshold gauge so the §16.5 alert can evaluate via scalar(lenny_billing_correction_rate_threshold). Override via LENNY_BILLING_CORRECTION_RATE_THRESHOLD.")
 	// §27.2 web-playground flags. These mirror the playground.* Helm
 	// values; the gateway reads them from its own configuration so the
 	// playground is gated without a separate deployment target.
@@ -1367,6 +1369,13 @@ func main() {
 	gwMetrics.SetMinReplicas(*minReplicas)
 	gwMetrics.SetStreamCeiling(*streamCeiling)
 	gwMetrics.SetReplicaCount(1)
+	// spec: §11.2.1 line 187 — emit the configured BillingCorrectionRateHigh
+	// threshold as a startup-set scalar gauge so the alert expression in
+	// pkg/alerting/rules can read it via scalar(lenny_billing_correction_rate_threshold).
+	if *billingCorrectionRateThreshold < 0 || *billingCorrectionRateThreshold > 1 {
+		log.Fatalf("lenny-gateway: --billing-correction-rate-threshold must be in [0, 1] (got %v) (§11.2.1 / §16.5)", *billingCorrectionRateThreshold)
+	}
+	gwMetrics.SetBillingCorrectionRateThreshold(*billingCorrectionRateThreshold)
 
 	// §4.1 extractionThresholds: read the configured per-subsystem
 	// thresholds from LENNY_EXTRACTION_THRESHOLD_* env vars (rendered

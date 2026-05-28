@@ -422,10 +422,12 @@ tests:
       # POD_NAME + LENNY_MAX_SESSIONS_PER_REPLICA + LENNY_MIN_REPLICAS
       # + LENNY_STREAM_CEILING + LENNY_TERMINATION_GRACE_SECONDS
       # + 8 extraction-threshold gauges + LENNY_POOLER_MODE
-      # (§4.2 line 165) + POD_NAMESPACE (§10.4 PDB poller) = 15.
+      # (§4.2 line 165) + POD_NAMESPACE (§10.4 PDB poller)
+      # + LENNY_BILLING_CORRECTION_RATE_THRESHOLD (§11.2.1 line 187,
+      #   F-11.2.23) = 16.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 15
+          count: 16
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -494,6 +496,14 @@ tests:
           content:
             name: LENNY_POOLER_MODE
             value: "transactional"
+      # §11.2.1 line 187 / §16.5 BillingCorrectionRateHigh — the
+      # deployer-configurable threshold defaults to 0.05 (5%).
+      # F-11.2.23.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_CORRECTION_RATE_THRESHOLD
+            value: "0.05"
 
   # spec: §4.2 line 165 — pgbouncer.poolerMode = external propagates
   # to the gateway as LENNY_POOLER_MODE=external. The gateway logs

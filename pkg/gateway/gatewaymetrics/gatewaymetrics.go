@@ -34,6 +34,11 @@ type Metrics struct {
 	minReplicas               prometheus.Gauge
 	streamCeiling             prometheus.Gauge
 	replicaCount              prometheus.Gauge
+	// billingCorrectionRateThreshold is the §11.2.1 / §16.5 startup-set
+	// gauge that exposes the deployer-configurable percentage (default
+	// 5%) the BillingCorrectionRateHigh alert reads via
+	// scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
+	billingCorrectionRateThreshold prometheus.Gauge
 	extractionThreshold       *prometheus.GaugeVec
 	storageQuotaUsed          *prometheus.GaugeVec
 	storageQuotaLimit         *prometheus.GaugeVec
@@ -502,6 +507,18 @@ func New() (*Metrics, error) {
 	replicaCount, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_gateway_replica_count",
 		Help: "Per-replica ready indicator; the recording rule sum() yields the fleet-wide ready replica count (§4.1 / §16.1).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §11.2.1 line 187 — "deployer-configurable percentage (default
+	// 5%)". The §16.5 BillingCorrectionRateHigh alert evaluates
+	// lenny_billing_correction_rate_24h > scalar(lenny_billing_correction_rate_threshold);
+	// the gateway emits this gauge at startup from the
+	// billing.correctionRateThreshold Helm value. F-11.2.23.
+	billingCorrectionRateThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_billing_correction_rate_threshold",
+		Help: "Deployer-configurable BillingCorrectionRateHigh alert threshold as a fraction (§11.2.1 / §16.5; default 0.05).",
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -1367,6 +1384,13 @@ func New() (*Metrics, error) {
 	minReplicasChild := minReplicas.WithLabelValues()
 	streamCeilingChild := streamCeiling.WithLabelValues()
 	replicaCountChild := replicaCount.WithLabelValues()
+	// §11.2.1 / §16.5: pre-materialize the unlabelled threshold gauge so
+	// /metrics emits the default (0.05) reading before
+	// SetBillingCorrectionRateThreshold is called; otherwise the
+	// scalar(lenny_billing_correction_rate_threshold) in the alert rule
+	// evaluates to NaN until the gateway main has wired the configuration.
+	billingCorrectionRateThresholdChild := billingCorrectionRateThreshold.WithLabelValues()
+	billingCorrectionRateThresholdChild.Set(0.05)
 	// spec: §10.4 / §16 — pre-materialize the unlabelled replay buffer
 	// utilization gauge so /metrics emits the series even before the
 	// gateway has published any session events. F-10.4.11.
@@ -1379,7 +1403,8 @@ func New() (*Metrics, error) {
 	reg.MustRegister(activeSessions, activeStreams, requestQueueDepth,
 		rejectionRate, cbCacheStale, cbCacheInitialized, gcPauseP99Ms,
 		minReplicas, streamCeiling, replicaCount, llmProxyActiveConnections,
-		replayBufferUtilization, pdbBlockedEvictions)
+		replayBufferUtilization, pdbBlockedEvictions,
+		billingCorrectionRateThreshold)
 
 	tokenServiceCircuitChild := tokenServiceCircuitState.WithLabelValues()
 	kmsSigningCircuitChild := kmsSigningCircuitState.WithLabelValues()
@@ -1395,6 +1420,7 @@ func New() (*Metrics, error) {
 		minReplicas:                          minReplicasChild,
 		streamCeiling:                        streamCeilingChild,
 		replicaCount:                         replicaCountChild,
+		billingCorrectionRateThreshold:       billingCorrectionRateThresholdChild,
 		extractionThreshold:                  extractionThreshold,
 		storageQuotaUsed:                     storageQuotaUsed,
 		storageQuotaLimit:                    storageQuotaLimit,
@@ -2491,6 +2517,16 @@ func (m *Metrics) SetStreamCeiling(value int) {
 // installs without kube-state-metrics.
 func (m *Metrics) SetReplicaCount(value int) {
 	m.replicaCount.Set(float64(value))
+}
+
+// SetBillingCorrectionRateThreshold emits the §11.2.1 / §16.5
+// lenny_billing_correction_rate_threshold gauge. The value is the
+// deployer-configurable percentage (default 0.05 = 5%) of total billing
+// events allowed in a rolling 24h window before
+// `BillingCorrectionRateHigh` fires. The alert reads it via
+// scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
+func (m *Metrics) SetBillingCorrectionRateThreshold(value float64) {
+	m.billingCorrectionRateThreshold.Set(value)
 }
 
 // SetExtractionThreshold emits the §4.1 configured per-subsystem

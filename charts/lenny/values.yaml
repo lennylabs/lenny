@@ -572,6 +572,12 @@ postgres:
 # §11.2.1 TestCloudBillingExport sees the env var on the gateway pod.
 billing:
   sink: ""
+  # §11.2.1 line 187 / §16.5: BillingCorrectionRateHigh alert
+  # threshold as a fraction (0.05 = 5%). The gateway emits this on the
+  # lenny_billing_correction_rate_threshold gauge at startup; the alert
+  # rule evaluates lenny_billing_correction_rate_24h >
+  # scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
+  correctionRateThreshold: 0.05
 
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render

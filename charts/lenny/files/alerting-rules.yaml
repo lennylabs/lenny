@@ -766,7 +766,7 @@ groups:
             description: Phase 4a of the tenant deletion lifecycle failed to disable or schedule deletion of the per-tenant KMS key. The tenant's T4 KMS key may remain active, violating least-privilege.
             summary: Per-tenant KMS key deletion failed
         - alert: BillingCorrectionRateHigh
-          expr: lenny_billing_correction_rate_24h > 0.05
+          expr: lenny_billing_correction_rate_24h > scalar(lenny_billing_correction_rate_threshold)
           labels:
             severity: warning
           annotations:

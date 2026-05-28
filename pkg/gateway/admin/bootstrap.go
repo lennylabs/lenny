@@ -85,11 +85,17 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 		out.CredentialPools = r.upsertCredentialPools(req, body.CredentialPools)
 	}
 
+	// spec: §24.1 R6 — "Per-resource summary should include
+	// `action: error` entries with `name`." The audit emit therefore
+	// carries the structured per-entry rows (name + action + message)
+	// alongside the createdCount / updatedCount totals, so a forensic
+	// reader can answer "which seed entry failed" from the audit chain
+	// alone instead of cross-referencing the seed file. F-24.1.9.
 	r.emit(req.Context(), principal, "admin.bootstrap.applied", "platform", map[string]any{
-		"tenants":         map[string]any{"created": out.Tenants.CreatedCount, "updated": out.Tenants.UpdatedCount, "errors": len(out.Tenants.Errors)},
-		"runtimes":        map[string]any{"created": out.Runtimes.CreatedCount, "updated": out.Runtimes.UpdatedCount, "errors": len(out.Runtimes.Errors)},
-		"users":           map[string]any{"created": out.Users.CreatedCount, "updated": out.Users.UpdatedCount, "errors": len(out.Users.Errors)},
-		"credentialPools": map[string]any{"created": out.CredentialPools.CreatedCount, "updated": out.CredentialPools.UpdatedCount, "errors": len(out.CredentialPools.Errors)},
+		"tenants":         bootstrapSectionAuditPayload(out.Tenants),
+		"runtimes":        bootstrapSectionAuditPayload(out.Runtimes),
+		"users":           bootstrapSectionAuditPayload(out.Users),
+		"credentialPools": bootstrapSectionAuditPayload(out.CredentialPools),
 	})
 
 	status := http.StatusOK
@@ -102,6 +108,29 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// bootstrapSectionAuditPayload builds the §24.1 R6 audit payload for
+// one BootstrapSection: per-entry `{name, action: "error", message}`
+// rows alongside the createdCount and updatedCount totals. F-24.1.9.
+func bootstrapSectionAuditPayload(s BootstrapSection) map[string]any {
+	out := map[string]any{
+		"created": s.CreatedCount,
+		"updated": s.UpdatedCount,
+	}
+	if len(s.Errors) == 0 {
+		return out
+	}
+	rows := make([]map[string]any, 0, len(s.Errors))
+	for _, e := range s.Errors {
+		rows = append(rows, map[string]any{
+			"name":    e.ID,
+			"action":  "error",
+			"message": e.Message,
+		})
+	}
+	out["errors"] = rows
+	return out
 }
 
 func anyFailures(out BootstrapResponse) bool {

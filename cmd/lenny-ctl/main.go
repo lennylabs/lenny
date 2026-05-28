@@ -616,8 +616,21 @@ func parseOpenBreaker(args []string) (map[string]any, error) {
 			return nil, fmt.Errorf("unknown flag %q", args[i])
 		}
 	}
+	// spec: §24.7 line 106 — `--reason`, `--scope`, and `--limit-tier`
+	// are all listed unbracketed (required) in the command syntax. The
+	// client enforces the contract up front so an operator sees a
+	// single deterministic error rather than reaching the gateway with
+	// a partial payload (empty reason silently degrades the audit
+	// trail; empty scope produces a 422 from the gateway). F-24.7.1 /
+	// F-24.7.2.
 	if limitTier == "" {
 		return nil, fmt.Errorf("circuit-breakers open requires --limit-tier")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return nil, fmt.Errorf("circuit-breakers open requires --reason <text>")
+	}
+	if len(scope) == 0 {
+		return nil, fmt.Errorf("circuit-breakers open requires --scope <key>=<value>")
 	}
 	return map[string]any{"reason": reason, "limit_tier": limitTier, "scope": scope}, nil
 }

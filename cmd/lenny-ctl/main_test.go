@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -423,5 +424,37 @@ func TestParseOpenBreaker(t *testing.T) {
 	}
 	if _, err := parseOpenBreaker([]string{"--limit-tier", "pool", "--bogus"}); err == nil {
 		t.Error("parseOpenBreaker with an unknown flag should error")
+	}
+}
+
+// TestParseOpenBreakerRequiresReason asserts the §24.7 line 106
+// required `--reason <text>` flag is enforced client-side so the audit
+// event does not silently degrade. F-24.7.1.
+func TestParseOpenBreakerRequiresReason_spec_24_7_106(t *testing.T) {
+	_, err := parseOpenBreaker([]string{"--limit-tier", "runtime", "--scope", "runtime=echo"})
+	if err == nil {
+		t.Fatal("parseOpenBreaker without --reason should error")
+	}
+	if !strings.Contains(err.Error(), "--reason") {
+		t.Errorf("error %q should mention --reason", err.Error())
+	}
+	// An empty-string reason is rejected the same way as a missing one.
+	_, err = parseOpenBreaker([]string{"--limit-tier", "runtime", "--scope", "runtime=echo", "--reason", "   "})
+	if err == nil {
+		t.Fatal("parseOpenBreaker with whitespace-only --reason should error")
+	}
+}
+
+// TestParseOpenBreakerRequiresScope asserts the §24.7 line 106
+// required `--scope <key>=<value>` flag is enforced client-side so
+// the operator sees a deterministic CLI error rather than a server
+// 422 INVALID_BREAKER_SCOPE. F-24.7.2.
+func TestParseOpenBreakerRequiresScope_spec_24_7_106(t *testing.T) {
+	_, err := parseOpenBreaker([]string{"--limit-tier", "runtime", "--reason", "incident"})
+	if err == nil {
+		t.Fatal("parseOpenBreaker without --scope should error")
+	}
+	if !strings.Contains(err.Error(), "--scope") {
+		t.Errorf("error %q should mention --scope", err.Error())
 	}
 }
