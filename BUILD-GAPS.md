@@ -9486,7 +9486,7 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** Operators cannot detect a stalled or chronically-failing-open scanner. The `ExportFileScanFailOpen` alert in §16.1 cannot fire.
 
-### - [ ] F-8.7.11 — `delegation.export_files` span is declared but never started [Medium] — OPEN
+### - [x] F-8.7.11 — `delegation.export_files` span is declared but never started [Medium] — CLOSED
 
 **Spec:** §16 trace inventory (`spec/16_observability.md:346`) — `delegation.export_files` span attributed to gateway and parent pod.
 
@@ -9496,7 +9496,9 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** Per-delegation export traces are absent from distributed-tracing dashboards; depends on F1 to have a code path that could emit them.
 
-### - [ ] F-8.7.12 — `INTERCEPTOR_WEAKENING_COOLDOWN` is not enforced at `delegate_task` time [Medium] — OPEN
+**Resolution:** `RunPreExportMaterialization` now opens a `delegation.export_files` span via `tracing.NewTracer(nil).Start(ctx, tracing.SpanDelegationExportFiles)` around the per-file scan loop and stamps `delegation.export.{file_count,total_bytes,max_per_file_bytes,scanned_count}` attributes. Per-file decisions ride on child spans Chain.Run emits inside `scanExportFile`; a per-file rejection sets `spanErr` so the deferred `tracing.RecordError` flips the span status to error before End. Whenever a future caller wires the materialization phase to delegate_task (F-8.7.1), the span is already in place; today the interceptor test harness exercises both pass and reject branches via `TestRunPreExportMaterializationStartsDelegationExportFilesSpan_spec_16_F_8_7_11` and `TestRunPreExportMaterializationSpanRecordsRejectError_spec_16_F_8_7_11`.
+
+### - [x] F-8.7.12 — `INTERCEPTOR_WEAKENING_COOLDOWN` is not enforced at `delegate_task` time [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.5.7 — Both describe INTERCEPTOR_WEAKENING_COOLDOWN not enforced at delegate_task after a scanExportedFiles flip; F-4.8.17 is the unrelated interceptor fail_policy audit event, which it explicitly disclaims.
 
@@ -9508,6 +9510,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 - `grep -rn "INTERCEPTOR_WEAKENING_COOLDOWN" /Users/joan/projects/lenny/pkg` returns the admin doc-comment only; no enforcement at `delegate_task` exists.
 
 **Impact:** A stolen admin credential that flips `scanExportedFiles` off can use a wide window to push delegations past a now-disabled scanner. The audit emits, but the bulk-bypass window the cooldown was designed to close is open.
+
+**Resolution:** `delegationpolicystore.DelegationPolicy` gains a server-minted `ScanExportedFilesWeakenedAt time.Time` field (admin-API-immutable; not exposed on the §15.1 wire payload). The admin `handleUpdateDelegationPolicy` path stamps it on `true → false` and clears it on `false → true`, and the pgstore round-trips it inside the existing jsonb body. `delegation.Service` gains `Options.InterceptorWeakeningCooldown` (default `DefaultInterceptorWeakeningCooldown = 60s`); `Service.Delegate` calls `checkInterceptorWeakeningCooldown(pol)` after resolving the runtime's `DelegationPolicyRef` and returns a typed `*InterceptorWeakeningCooldownError` carrying `PolicyName`, `TransitionTs`, `CooldownSeconds`, and `RetryAfterSeconds`. The `§8.5 lenny/delegate_task` MCP shim maps the typed error to `INTERCEPTOR_WEAKENING_COOLDOWN` (TRANSIENT/HTTP 503) via `mcp.NewToolError` with `details.{policyName, cooldownSeconds, retryAfterSeconds}`; `errorclassify` registers the canonical `(category=TRANSIENT, retryable=true)` pair. `cmd/lenny-gateway/main.go` adds `--interceptor-weakening-cooldown-seconds` / `LENNY_INTERCEPTOR_WEAKENING_COOLDOWN_SECONDS`. Six tier-1 delegation tests pin the matrix (in-window reject, post-window admit, zero-WeakenedAt admit, disabled gate, sub-second round-up, default-cooldown when option zero); the admin tests pin the persisted timestamp + strengthen-clears-it; and `TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181` pins the §15.2.1 MCP envelope.
 
 ### - [ ] F-8.7.13 — Child→parent file delivery (`TaskResult.artifactRefs`) is unimplemented [Medium] — OPEN
 
@@ -22439,7 +22443,7 @@ does the same. Neither path:
 Operators have no audit trail for delegation/message content rejections, only
 for quota rejections at session create.
 
-### - [ ] F-13.5.7 — `INTERCEPTOR_WEAKENING_COOLDOWN` runtime gate not enforced [Medium] — OPEN
+### - [x] F-13.5.7 — `INTERCEPTOR_WEAKENING_COOLDOWN` runtime gate not enforced [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.7.12 — Both describe INTERCEPTOR_WEAKENING_COOLDOWN not enforced at delegate_task after a scanExportedFiles flip; F-4.8.17 is the unrelated interceptor fail_policy audit event, which it explicitly disclaims.
 
@@ -22467,6 +22471,19 @@ catalog mention; `INTERCEPTOR_COOLDOWN_IMMUTABLE` is registered in
 `errorclassify` but no caller produces it. The interceptor `fail-closed →
 fail-open` transition emission (`interceptor.fail_policy_weakened`) is also
 absent.
+
+**Resolution:** Closed by F-8.7.12 (§8.3 line 181 DelegationPolicy
+`scanExportedFiles: true → false` weakening cooldown is now enforced at
+`delegate_task` time via the typed `delegation.InterceptorWeakeningCooldownError`,
+surfaced through the §15.2.1 MCP envelope as `INTERCEPTOR_WEAKENING_COOLDOWN`
+TRANSIENT/HTTP 503). The §8.3 line 218 interceptor-level
+`fail-closed → fail-open` cooldown remains gated on the still-deferred
+F-4.8.17 (`interceptor.fail_policy_weakened` audit event + interceptor
+registry transition_ts), which is a separate workstream covering the
+interceptor registry rather than the DelegationPolicy registry; the
+canonical `INTERCEPTOR_WEAKENING_COOLDOWN` code now ships through the
+shared error path and is ready to ride the second cooldown axis as soon
+as F-4.8.17 lands.
 
 ### - [ ] F-13.5.8 — `treeVisibility` and `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE` not enforced [Medium] — OPEN
 
