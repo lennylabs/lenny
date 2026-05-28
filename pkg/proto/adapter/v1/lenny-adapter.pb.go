@@ -1250,8 +1250,8 @@ func (x *FinalizeWorkspaceResponse) GetWorkspacePlanWarnings() []*WorkspacePlanW
 
 // WorkspacePlanWarning is one §14 advisory the adapter raised against
 // a workspace source during FinalizeWorkspace materialization. The
-// (code, source_index, entry) tuple is the same shape the
-// workspaceplan parser emits; an empty entry signals the warning
+// (code, source_index, entry_path) tuple is the same shape the
+// workspaceplan parser emits; an empty entry_path signals the warning
 // applies to the source as a whole rather than to a specific archive
 // entry. F-7.4.15.
 type WorkspacePlanWarning struct {
@@ -1260,15 +1260,30 @@ type WorkspacePlanWarning struct {
 	// `workspace_plan_strip_components_skip`.
 	Code string `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
 	// source_index is the workspace plan's 0-based source index the
-	// warning refers to.
+	// warning refers to. spec: §14 line 100 — `sourceIndex` is the
+	// first field listed in the strip-components-skip warning fields.
 	SourceIndex int32 `protobuf:"varint,2,opt,name=source_index,json=sourceIndex,proto3" json:"source_index,omitempty"`
-	// entry is the archive entry path that triggered the warning. Empty
-	// when the warning is not entry-scoped.
-	Entry string `protobuf:"bytes,3,opt,name=entry,proto3" json:"entry,omitempty"`
+	// entry_path is the archive entry path that triggered the warning.
+	// Empty when the warning is not entry-scoped. spec: §14 line 100 —
+	// `entryPath` is the per-entry path the strip-components rule
+	// discarded. F-14.1.18.
+	EntryPath string `protobuf:"bytes,3,opt,name=entry_path,json=entryPath,proto3" json:"entry_path,omitempty"`
 	// message carries a human-readable explanation for the warning.
-	Message       string `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Message string `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	// segment_count is the number of `/`-separated segments the rejected
+	// entry path had after stripping any leading/trailing empty
+	// segments. spec: §14 line 100 — `segmentCount`. Populated on
+	// `workspace_plan_strip_components_skip` warnings; zero on other
+	// codes. F-14.1.18.
+	SegmentCount int32 `protobuf:"varint,5,opt,name=segment_count,json=segmentCount,proto3" json:"segment_count,omitempty"`
+	// strip_components is the configured `stripComponents` value the
+	// entry was tested against. spec: §14 line 100 —
+	// `stripComponents`. Populated on
+	// `workspace_plan_strip_components_skip` warnings; zero on other
+	// codes. F-14.1.18.
+	StripComponents int32 `protobuf:"varint,6,opt,name=strip_components,json=stripComponents,proto3" json:"strip_components,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *WorkspacePlanWarning) Reset() {
@@ -1315,9 +1330,9 @@ func (x *WorkspacePlanWarning) GetSourceIndex() int32 {
 	return 0
 }
 
-func (x *WorkspacePlanWarning) GetEntry() string {
+func (x *WorkspacePlanWarning) GetEntryPath() string {
 	if x != nil {
-		return x.Entry
+		return x.EntryPath
 	}
 	return ""
 }
@@ -1327,6 +1342,20 @@ func (x *WorkspacePlanWarning) GetMessage() string {
 		return x.Message
 	}
 	return ""
+}
+
+func (x *WorkspacePlanWarning) GetSegmentCount() int32 {
+	if x != nil {
+		return x.SegmentCount
+	}
+	return 0
+}
+
+func (x *WorkspacePlanWarning) GetStripComponents() int32 {
+	if x != nil {
+		return x.StripComponents
+	}
+	return 0
 }
 
 // RunSetupRequest carries the §14 WorkspacePlan setup commands the
@@ -4306,12 +4335,15 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x0eallow_symlinks\x18\x01 \x01(\bR\rallowSymlinks\x12%\n" +
 	"\x0eworkspace_root\x18\x02 \x01(\tR\rworkspaceRoot\"{\n" +
 	"\x19FinalizeWorkspaceResponse\x12^\n" +
-	"\x17workspace_plan_warnings\x18\x01 \x03(\v2&.lenny.adapter.v1.WorkspacePlanWarningR\x15workspacePlanWarnings\"}\n" +
+	"\x17workspace_plan_warnings\x18\x01 \x03(\v2&.lenny.adapter.v1.WorkspacePlanWarningR\x15workspacePlanWarnings\"\xd6\x01\n" +
 	"\x14WorkspacePlanWarning\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12!\n" +
-	"\fsource_index\x18\x02 \x01(\x05R\vsourceIndex\x12\x14\n" +
-	"\x05entry\x18\x03 \x01(\tR\x05entry\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage\"\xd6\x01\n" +
+	"\fsource_index\x18\x02 \x01(\x05R\vsourceIndex\x12\x1d\n" +
+	"\n" +
+	"entry_path\x18\x03 \x01(\tR\tentryPath\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x12#\n" +
+	"\rsegment_count\x18\x05 \x01(\x05R\fsegmentCount\x12)\n" +
+	"\x10strip_components\x18\x06 \x01(\x05R\x0fstripComponents\"\xd6\x01\n" +
 	"\x0fRunSetupRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12E\n" +

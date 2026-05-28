@@ -155,21 +155,31 @@ const (
 // Warning is a non-fatal advisory the parser raised against a plan.
 //
 // The per-warning structured-field set follows §14:
-//   - `workspace_plan_unknown_source_type`: `sourceIndex`, `field`,
-//     `message` (the legacy index points at the unknown entry).
-//   - `workspace_plan_path_collision`: `path`, `winningSourceIndex`,
-//     `losingSourceIndex` per §14 line 338; `sourceIndex` is preserved
-//     equal to `winningSourceIndex` for backwards-compatibility with
+//   - `workspace_plan_unknown_source_type` (spec: §14 line 334): the
+//     warning carries `schemaVersion` (the plan's declared schema
+//     version, copied so a downstream consumer that filters on warnings
+//     can correlate them to plans without reparsing) and `unknownType`
+//     (the open-string discriminator the consumer skipped).
+//   - `workspace_plan_path_collision` (spec: §14 line 338): `path`,
+//     `winningSourceIndex`, `losingSourceIndex`. `sourceIndex` is
+//     preserved equal to `winningSourceIndex` for backwards-compatible
 //     pre-§14-line-338 single-index consumers.
 //
 // The strip-components-skip warning is emitted by the adapter
 // materializer (see pkg/adapter/workspace) and carries its own per-
-// entry fields there.
+// entry fields (`entryPath`, `segmentCount`, `stripComponents`) there.
+// F-14.1.18.
 type Warning struct {
 	Code        WarningCode `json:"code"`
 	SourceIndex int         `json:"sourceIndex"`
 	Field       string      `json:"field,omitempty"`
 	Message     string      `json:"message"`
+
+	// Structured fields per §14 line 334
+	// (`workspace_plan_unknown_source_type`). Optional; populated only
+	// on unknown-source-type warnings.
+	SchemaVersion *int   `json:"schemaVersion,omitempty"`
+	UnknownType   string `json:"unknownType,omitempty"`
 
 	// Structured fields per §14 line 338 (`workspace_plan_path_collision`).
 	// Optional; populated only on collision warnings so the JSON output
@@ -346,6 +356,14 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 			continue
 		}
 		if warn != nil {
+			// spec: §14 line 334 — the unknown-source-type warning
+			// carries the plan's `schemaVersion` so a downstream
+			// consumer can correlate the warning to the plan version
+			// without re-reading the request body. F-14.1.18.
+			if warn.Code == WarnUnknownSourceType && warn.SchemaVersion == nil {
+				sv := *root.SchemaVersion
+				warn.SchemaVersion = &sv
+			}
 			warnings = append(warnings, *warn)
 		}
 		plan.Sources = append(plan.Sources, src)
@@ -489,12 +507,14 @@ func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *Su
 	default:
 		// §14 open-string discriminator: unknown types pass through
 		// with a warning so the consumer can decide whether to skip
-		// them.
+		// them. spec: §14 line 334 — fields are `schemaVersion` (stamped
+		// by the caller in parse) and `unknownType`. F-14.1.18.
 		return Source{Type: head.Type, Raw: rawMap},
 			&Warning{
 				Code:        WarnUnknownSourceType,
 				SourceIndex: i,
 				Field:       "type",
+				UnknownType: head.Type,
 				Message:     fmt.Sprintf("unknown source type %q; consumer will skip", head.Type),
 			},
 			nil

@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -387,6 +388,12 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordSessionCreated(r.Context(), row)
 	s.registerBinding(r.Context(), bound)
+	// spec: §14 lines 100, 334, 338 — publish parse-time
+	// `workspace_plan_unknown_source_type` / `workspace_plan_path_collision`
+	// warnings on the per-session SSE bus so Ops/audit subscribers see
+	// them asynchronously, parity with the two-step create path.
+	// F-14.1.17.
+	s.publishParsePlanWarnings(row.TenantID, row.ID, planWarnings)
 
 	// spec: §7.2 line 137 — the create-and-start path lands the session
 	// directly in running, so emit status_change(running) for SSE
@@ -1035,11 +1042,18 @@ func (s *Server) registerBinding(ctx context.Context, result *podsession.BindRes
 	s.publishWorkspaceWarnings(result)
 }
 
-// publishWorkspaceWarnings emits one SSE `workspace_plan_warning`
-// frame per §14 advisory the adapter returned from FinalizeWorkspace.
-// The handler is a no-op when the bind produced no warnings.
+// publishWorkspaceWarnings emits one §14 `workspace_plan_warning`
+// frame per advisory the adapter returned from FinalizeWorkspace. The
+// frame goes on the per-session SSE bus (so clients subscribing to
+// /v1/sessions/{id}/events see it) and on the §16.6 / §25.3
+// operational-event stream (so Ops console and AI DevOps agents see
+// it asynchronously). The emitted payload carries the §14 line 100
+// per-warning structured fields (`entryPath`, `segmentCount`,
+// `stripComponents`) so a consumer that matches on these can extract
+// them without parsing the free-form message.
 //
-// spec: §7.4 line 459; §14 WarningCode. F-7.4.15.
+// spec: §7.4 line 459; §14 line 100; §16.6 catalogue. F-7.4.15,
+// F-14.1.17, F-14.1.18.
 func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
 	if result == nil || len(result.WorkspacePlanWarnings) == 0 {
 		return
@@ -1048,12 +1062,91 @@ func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
 		if w == nil {
 			continue
 		}
-		s.publishEvent(result.TenantID, result.SessionID, "workspace_plan_warning", map[string]any{
-			"code":        w.GetCode(),
-			"sourceIndex": w.GetSourceIndex(),
-			"entry":       w.GetEntry(),
-			"message":     w.GetMessage(),
-		})
+		payload := map[string]any{
+			"code":            w.GetCode(),
+			"sourceIndex":     w.GetSourceIndex(),
+			"entryPath":       w.GetEntryPath(),
+			"segmentCount":    w.GetSegmentCount(),
+			"stripComponents": w.GetStripComponents(),
+			"message":         w.GetMessage(),
+		}
+		s.publishEvent(result.TenantID, result.SessionID, "workspace_plan_warning", payload)
+		s.emitWorkspacePlanWarningOps(result.TenantID, result.SessionID, payload)
+	}
+}
+
+// emitWorkspacePlanWarningOps publishes a §14 warning on the §16.6 /
+// §25.3 operational-event stream so Ops/audit subscribers see the
+// warning without having to subscribe to the per-session SSE feed.
+// No-op when the OpsEmitter is not wired (tests).
+//
+// spec: §14 lines 100/334/338; §16.6 catalogue. F-14.1.17.
+func (s *Server) emitWorkspacePlanWarningOps(tenantID, sessionID string, payload map[string]any) {
+	if s.opsEmitter == nil {
+		return
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		data = []byte("{}")
+	}
+	subject := "session/" + sessionID
+	_, _ = s.opsEmitter.Emit(context.Background(), events.OperationalEvent{
+		Source:          "/v1/sessions",
+		Subject:         subject,
+		Type:            events.EventWorkspacePlanWarning.CloudEventsType(),
+		Severity:        "info",
+		DataContentType: "application/json",
+		Data:            data,
+	})
+	_ = tenantID
+}
+
+// publishParsePlanWarnings emits one SSE `workspace_plan_warning`
+// frame per §14 advisory the workspaceplan parser raised on
+// CreateSession ingest (`workspace_plan_unknown_source_type`,
+// `workspace_plan_path_collision`). The §14 spec calls each warning
+// an "event" the gateway emits — the create response already echoes
+// the same slice, but operators (Ops console, audit pipelines, AI
+// DevOps agents per §25) cannot observe them asynchronously unless
+// the gateway publishes them on the same per-session SSE bus the
+// strip-components-skip warnings ride.
+//
+// spec: §14 lines 100, 334, 338; §14 WarningCode. F-14.1.17,
+// F-14.1.18.
+func (s *Server) publishParsePlanWarnings(tenantID, sessionID string, warnings []workspaceplan.Warning) {
+	if sessionID == "" || len(warnings) == 0 {
+		return
+	}
+	for _, w := range warnings {
+		payload := map[string]any{
+			"code":        string(w.Code),
+			"sourceIndex": w.SourceIndex,
+			"message":     w.Message,
+		}
+		if w.Field != "" {
+			payload["field"] = w.Field
+		}
+		// spec: §14 line 334 — unknown_source_type fields:
+		// `schemaVersion`, `unknownType`.
+		if w.SchemaVersion != nil {
+			payload["schemaVersion"] = *w.SchemaVersion
+		}
+		if w.UnknownType != "" {
+			payload["unknownType"] = w.UnknownType
+		}
+		// spec: §14 line 338 — path_collision fields: `path`,
+		// `winningSourceIndex`, `losingSourceIndex`.
+		if w.Path != "" {
+			payload["path"] = w.Path
+		}
+		if w.WinningSourceIndex != nil {
+			payload["winningSourceIndex"] = *w.WinningSourceIndex
+		}
+		if w.LosingSourceIndex != nil {
+			payload["losingSourceIndex"] = *w.LosingSourceIndex
+		}
+		s.publishEvent(tenantID, sessionID, "workspace_plan_warning", payload)
+		s.emitWorkspacePlanWarningOps(tenantID, sessionID, payload)
 	}
 }
 

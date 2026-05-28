@@ -22544,10 +22544,12 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
   ```
 - **Impact:** Any client that runs the published canonical schema (`https://schemas.lenny.dev/workspaceplan/v1.json`) against a plan containing an unknown `source.type` will reject it at JSON Schema validation. This breaks the "open string discriminator" extensibility contract for every downstream JSON-Schema validator (CI gates, client SDKs, IDE tooling). The Go parser handles it correctly with its custom path, but the wire contract is the canonical schema — a §14.1 forward-compat regression.
 
-### - [ ] F-14.1.5 — Published JSON Schema rejects `$schema` keyword on the workspacePlan object [High] — OPEN
+### - [x] F-14.1.5 — Published JSON Schema rejects `$schema` keyword on the workspacePlan object [High] — CLOSED
 - **Spec §14.1 line 313:** "Clients MAY reference the inner schema via the optional `$schema` keyword on their `workspacePlan` object (matching the canonical example above) for local validation of the plan sub-object." The canonical example in §14 lines 11-13 includes `"$schema": "https://schemas.lenny.dev/workspaceplan/v1.json"`.
 - **Evidence:** `schemas/workspaceplan-v1.json:6-9` declares `additionalProperties: false` at the root and the `properties` map contains only `schemaVersion`, `sources`, `setupCommands`. A `$schema` key on the workspacePlan object would be rejected by any 2020-12 validator. The Go parser at `pkg/workspaceplan/plan.go:253-263` is lenient (no DisallowUnknownFields at the root), so the gateway accepts it — but third-party tooling running the published schema does not.
 - **Impact:** Clients that follow the spec example verbatim get a validation failure from the canonical schema. The two consumer paths (Go gateway vs. JSON Schema validator) diverge on the spec's own example.
+
+**Resolution:** `schemas/workspaceplan-v1.json` now lists `$schema` (URI-format string) under `properties` so the 2020-12 validator accepts the canonical spec example verbatim. `schemas/examples/workspaceplan.full.json` was updated to include the spec's `"$schema": "https://schemas.lenny.dev/workspaceplan/v1.json"`, and `TestWorkspacePlanExamplesValidate` (tier-0) re-validates it after the change. The Go parser was already lenient at the root, so the two consumer paths now agree. F-14.1.5.
 
 ### - [ ] F-14.1.6 — `gitClone.auth` (authenticated clones) is unsupported at clone time despite the auth-binding check being wired [High] — OPEN
 - **Spec §14 line 95 (gitClone.auth):** Defines `credential-lease` mode with `vcs.<provider>.read|write` scope; v1 ships `github` as the built-in provider; the gateway "performs the clone with a short-lived HTTPS bearer/basic token scoped to the repository."
@@ -22618,10 +22620,12 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
   - `pool`: spec example field; implementation uses `runtimeRef` instead. The spec's §14.1 line 311 explicitly names `pool` as an outer envelope field.
 - **Impact:** Most of the §14 envelope surface is unwired. A v1 deployer cannot constrain session age, override credential policy, set delegation lease bounds, or pass runtime-specific options through the documented schema-validation path.
 
-### - [ ] F-14.1.15 — `RuntimeOptionsUnschematized` warning event is unimplemented [Medium] — OPEN
+### - [ ] F-14.1.15 — `RuntimeOptionsUnschematized` warning event is unimplemented [Medium] — DEFERRED
 - **Spec §14 line 155:** "If no schema is registered, options are passed through as-is (backward compatible) but a `RuntimeOptionsUnschematized` warning event is emitted."
 - **Evidence:** `grep -rn "RuntimeOptionsUnschematized" pkg/` returns zero hits. Since `runtimeOptions` is absent from the request struct (M7), the gateway has no opportunity to emit the warning anyway.
 - **Impact:** Operators have no signal that a runtime is shipping ungrouped options at runtime registration time.
+
+**Resolution:** Deferred. Gated on F-14.1.14 (Medium, OPEN) — the `runtimeOptions` field is absent from CreateSessionRequest, so the gateway has no admission point to detect "no schema is registered" against. The warning event surface (the `workspace_plan_warning`-style §16.6 emitter wired by F-14.1.17) is now in place, so once F-14.1.14 lands the `RuntimeOptionsUnschematized` event can ride the same plane without new infrastructure.
 
 ### - [x] F-14.1.16 — `setupCommandPolicy` (allowlist by default) is undocumented and unimplemented [Medium] — CLOSED
 - **Spec §14 schema description (line 24, `setupCommands` property):** "Subject to setupCommandPolicy (allowlist by default)." The schema at `schemas/workspaceplan-v1.json:23-24` echoes the same.
@@ -22630,15 +22634,19 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 **Resolution:** Verify-closed; evidence is stale. Already closed under F-7.5.1 — `pkg/gateway/runtimestore/runtimestore.go` defines `SetupCommandPolicy` (mode = allowlist | blocklist, allowlist, blocklist, shell, maxCommands) and `PermitsCommand` enforces prefix-match semantics per §7.5 line 488. The gateway's create-path (and `start` path) reject violating sessions with `WORKSPACE_PLAN_INVALID` + `details.reason = "setup_command_policy_violation"` — covered by `TestCreateRejectsSetupCommandOutsideAllowlist`, `TestCreateRejectsSetupCommandOnBlocklist`, `TestCreateRejectsSetupCommandsOverMaxCommands` in `pkg/gateway/sessionserver/create_test.go`. Runtime CRD models the policy (`pkg/apis/lenny/v1/runtime_types.go`); 21 files now reference the type.
 
-### - [ ] F-14.1.17 — Plan-level WorkspacePlanWarnings are response-only, not published as events [Medium] — OPEN
+### - [x] F-14.1.17 — Plan-level WorkspacePlanWarnings are response-only, not published as events [Medium] — CLOSED
 - **Spec §14 lines 100, 334, 338:** Each warning is described as an "event" the gateway "emits" — the consistent verb suggests publication on the §12.6 EventBus / §25 Ops streams, not merely echo-in-response.
 - **Evidence:** `pkg/gateway/sessionserver/sessionserver.go:550-553, 711-715` adds warnings to `CreateSessionResponse.WorkspacePlanWarnings` only. `grep -rn "workspace_plan_unknown_source_type\|workspace_plan_path_collision\|workspace_plan_strip_components_skip" pkg/observability pkg/ops` returns zero hits — no event bus publication.
 - **Impact:** Operators (Ops console, audit pipelines, AI DevOps agents per §25) cannot observe these warnings asynchronously — they are visible only to the request originator at create-time and lost thereafter.
 
-### - [ ] F-14.1.18 — `Warning` struct lacks spec-mandated per-warning fields [Medium] — OPEN
+**Resolution:** All three §14 warning kinds now publish to both planes the spec describes. New `publishParsePlanWarnings` (`pkg/gateway/sessionserver/start.go`) fires per-session SSE `workspace_plan_warning` frames at CreateSession ingest for `workspace_plan_unknown_source_type` and `workspace_plan_path_collision` (carrying the §14 line 100/334/338 structured fields). The existing `publishWorkspaceWarnings` (FinalizeWorkspace strip-components-skip) was already on the SSE plane and is now extended. Both helpers also call new `emitWorkspacePlanWarningOps`, which records an `events.OperationalEvent{Type: dev.lenny.workspace_plan_warning, Subject: session/<id>}` on the §16.6 / §25.3 buffer so Ops/audit/DevOps subscribers see the warnings without subscribing to the per-session feed. F-14.1.17.
+
+### - [x] F-14.1.18 — `Warning` struct lacks spec-mandated per-warning fields [Medium] — CLOSED
 - **Spec §14 lines 100, 334, 338:** Each warning's field list is enumerated (`workspace_plan_unknown_source_type`: `schemaVersion`, `unknownType`; `workspace_plan_strip_components_skip`: `sourceIndex`, `entryPath`, `segmentCount`, `stripComponents`; `workspace_plan_path_collision`: `path`, `winningSourceIndex`, `losingSourceIndex`).
 - **Evidence:** `pkg/workspaceplan/plan.go:153-159` — `Warning` has only `Code`, `SourceIndex`, `Field`, `Message`. Spec fields (`unknownType`, `entryPath`, `segmentCount`, `stripComponents`, `winningSourceIndex`, `losingSourceIndex`) are encoded informally in `Message` or absent.
 - **Impact:** Downstream consumers that match on structured fields (per `WarningCode`) must parse free-form text; spec-conformant tooling cannot extract `unknownType` etc. directly.
+
+**Resolution:** `pkg/workspaceplan.Warning` gained `SchemaVersion *int` + `UnknownType string` (populated by `parseSource` and the post-parse loop for unknown-source-type); the path-collision fields (`Path`, `WinningSourceIndex`, `LosingSourceIndex`) already landed under F-14.1.23. Proto `WorkspacePlanWarning` (`schemas/lenny-adapter.proto`) renamed `entry → entry_path` and added `segment_count` + `strip_components` per spec §14 line 100 — adapter materializer `extractUploadTar`/`extractUploadZip` populate them via the updated `stripPath`. The §16.6 / SSE publication payloads carry the structured field names verbatim (`entryPath`, `segmentCount`, `stripComponents`, `schemaVersion`, `unknownType`, `path`, `winningSourceIndex`, `losingSourceIndex`). F-14.1.18.
 
 ### - [x] F-14.1.19 — `details.fields` (plural — JSON Schema validation report) vs `details.subErrors` naming divergence [Medium] — CLOSED
 - **Spec §15.1 line 979 (`WORKSPACE_PLAN_INVALID` row):** "`details.field` identifies the offending plan path... and **`details.fields` (when multiple violations are reported)** carries the JSON Schema validation report."

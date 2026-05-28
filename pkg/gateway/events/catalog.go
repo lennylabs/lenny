@@ -46,8 +46,20 @@ const (
 	EventExperimentVariantWeakerThanFloor     EventType = "experiment.variant_weaker_than_tenant_floor"
 )
 
+// The §16.6 §14 WorkspacePlan warning event short name. The
+// CloudEvents type is `dev.lenny.workspace_plan_warning`; the payload
+// carries the per-warning structured fields per §14 lines 100, 334,
+// 338. spec: §14 line 100; §14 line 334; §14 line 338. F-14.1.17.
+const EventWorkspacePlanWarning EventType = "workspace_plan_warning"
+
 // gatewayEventCatalog is the §16.6 closed enumeration of the
-// operational-event types the gateway emits.
+// operational-event types the gateway emits. EventWorkspacePlanWarning
+// is deliberately omitted: §14 lines 100/334/338 describe per-session
+// warnings, not §16.6 catalogue events, and `TestGatewayCatalogIsCompleteAgainstSpec166`
+// asserts the catalogue transcribes §16.6 exactly. The constant is
+// exported for the §25.3 OpsEmitter Type field; subscribers that
+// filter by suffix on `workspace_plan_warning` still receive it.
+// F-14.1.17.
 var gatewayEventCatalog = []EventType{
 	EventAlertFired, EventAlertResolved, EventUpgradeProgressed, EventPoolStateChanged,
 	EventCircuitBreakerOpened, EventCircuitBreakerClosed, EventCredentialRotated,

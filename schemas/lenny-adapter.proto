@@ -428,8 +428,8 @@ message FinalizeWorkspaceResponse {
 
 // WorkspacePlanWarning is one §14 advisory the adapter raised against
 // a workspace source during FinalizeWorkspace materialization. The
-// (code, source_index, entry) tuple is the same shape the
-// workspaceplan parser emits; an empty entry signals the warning
+// (code, source_index, entry_path) tuple is the same shape the
+// workspaceplan parser emits; an empty entry_path signals the warning
 // applies to the source as a whole rather than to a specific archive
 // entry. F-7.4.15.
 message WorkspacePlanWarning {
@@ -437,13 +437,28 @@ message WorkspacePlanWarning {
   // `workspace_plan_strip_components_skip`.
   string code = 1;
   // source_index is the workspace plan's 0-based source index the
-  // warning refers to.
+  // warning refers to. spec: §14 line 100 — `sourceIndex` is the
+  // first field listed in the strip-components-skip warning fields.
   int32 source_index = 2;
-  // entry is the archive entry path that triggered the warning. Empty
-  // when the warning is not entry-scoped.
-  string entry = 3;
+  // entry_path is the archive entry path that triggered the warning.
+  // Empty when the warning is not entry-scoped. spec: §14 line 100 —
+  // `entryPath` is the per-entry path the strip-components rule
+  // discarded. F-14.1.18.
+  string entry_path = 3;
   // message carries a human-readable explanation for the warning.
   string message = 4;
+  // segment_count is the number of `/`-separated segments the rejected
+  // entry path had after stripping any leading/trailing empty
+  // segments. spec: §14 line 100 — `segmentCount`. Populated on
+  // `workspace_plan_strip_components_skip` warnings; zero on other
+  // codes. F-14.1.18.
+  int32 segment_count = 5;
+  // strip_components is the configured `stripComponents` value the
+  // entry was tested against. spec: §14 line 100 —
+  // `stripComponents`. Populated on
+  // `workspace_plan_strip_components_skip` warnings; zero on other
+  // codes. F-14.1.18.
+  int32 strip_components = 6;
 }
 
 // RunSetupRequest carries the §14 WorkspacePlan setup commands the

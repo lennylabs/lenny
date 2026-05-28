@@ -1,4 +1,5 @@
 {
+  "$schema": "https://schemas.lenny.dev/workspaceplan/v1.json",
   "schemaVersion": 1,
   "sources": [
     {

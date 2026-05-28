@@ -7,6 +7,11 @@
   "required": ["schemaVersion", "sources"],
   "additionalProperties": false,
   "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri",
+      "description": "Optional self-reference per §14.1 line 313: clients MAY embed `$schema` on their workspacePlan object so local 2020-12 validators recognize the canonical example. The gateway ignores the field for routing decisions; it is preserved by round-trip."
+    },
     "schemaVersion": {
       "type": "integer",
       "const": 1,

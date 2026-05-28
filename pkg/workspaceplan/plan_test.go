@@ -3,6 +3,7 @@
 package workspaceplan_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -130,6 +131,58 @@ func TestParseSkipsUnknownSourceTypeWithWarning(t *testing.T) {
 	}
 	if len(warns) != 1 || warns[0].Code != workspaceplan.WarnUnknownSourceType {
 		t.Errorf("expected unknown-type warning, got %+v", warns)
+	}
+}
+
+// spec: §14 line 334 — `workspace_plan_unknown_source_type` carries
+// `schemaVersion` and `unknownType` as structured fields, not only in
+// the free-form message. F-14.1.18.
+func TestUnknownSourceTypeWarningCarriesStructuredFields_spec_14_334(t *testing.T) {
+	body := `{"schemaVersion": 1, "sources": [
+		{"type": "ferrousMode", "magicNumber": 42}
+	]}`
+	_, warns, err := parse(t, body)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(warns) != 1 {
+		t.Fatalf("warns: got %d, want 1", len(warns))
+	}
+	w := warns[0]
+	if w.SchemaVersion == nil || *w.SchemaVersion != 1 {
+		t.Errorf("warn.SchemaVersion = %v, want *1", w.SchemaVersion)
+	}
+	if w.UnknownType != "ferrousMode" {
+		t.Errorf("warn.UnknownType = %q, want ferrousMode", w.UnknownType)
+	}
+}
+
+// spec: §14 line 334 — JSON marshalling preserves the structured
+// fields so downstream consumers reading the wire format can extract
+// `schemaVersion` and `unknownType` without parsing the message. The
+// other warning codes must not leak the unknown-source-type fields.
+// F-14.1.18.
+func TestUnknownSourceTypeWarningJSONRoundTrip_spec_14_334(t *testing.T) {
+	body := `{"schemaVersion": 1, "sources": [
+		{"type": "ferrousMode"}
+	]}`
+	_, warns, err := parse(t, body)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	encoded, err := json.Marshal(warns[0])
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"schemaVersion":1`) {
+		t.Errorf("encoded warn missing schemaVersion: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"unknownType":"ferrousMode"`) {
+		t.Errorf("encoded warn missing unknownType: %s", encoded)
+	}
+	// Path-collision-only fields must not be present on this code.
+	if strings.Contains(string(encoded), `"winningSourceIndex"`) {
+		t.Errorf("encoded unknown-source-type warn leaked path-collision fields: %s", encoded)
 	}
 }
 

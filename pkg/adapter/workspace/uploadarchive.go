@@ -250,17 +250,21 @@ func extractUploadTar(root, prefix string, strip, sourceIndex int, r io.Reader, 
 			sess.rollback()
 			return warnings, fmt.Errorf("read tar entry: %w", err)
 		}
-		rel, ok := stripPath(hdr.Name, strip)
+		rel, segCount, ok := stripPath(hdr.Name, strip)
 		if !ok {
 			// spec: §7.4 line 459 — an entry with too few segments after
 			// stripComponents is skipped without aborting extraction and
 			// emits a workspace_plan_strip_components_skip warning event
-			// per skipped entry. F-7.4.15.
+			// per skipped entry. spec: §14 line 100 — the warning carries
+			// `sourceIndex`, `entryPath`, `segmentCount`, `stripComponents`.
+			// F-7.4.15, F-14.1.18.
 			warnings = append(warnings, Warning{
-				Code:        stripComponentsSkipCode,
-				SourceIndex: sourceIndex,
-				Entry:       hdr.Name,
-				Message:     fmt.Sprintf("entry has fewer than stripComponents=%d segments", strip),
+				Code:            stripComponentsSkipCode,
+				SourceIndex:     sourceIndex,
+				EntryPath:       hdr.Name,
+				SegmentCount:    segCount,
+				StripComponents: strip,
+				Message:         fmt.Sprintf("entry has %d segment(s); fewer than stripComponents=%d", segCount, strip),
 			})
 			continue
 		}
@@ -352,15 +356,18 @@ func extractUploadZip(root, prefix string, strip, sourceIndex int, archivePath s
 	var entryCount int
 	var warnings []Warning
 	for _, entry := range zr.File {
-		rel, ok := stripPath(entry.Name, strip)
+		rel, segCount, ok := stripPath(entry.Name, strip)
 		if !ok {
 			// spec: §7.4 line 459 — strip-components skip per entry.
-			// F-7.4.15.
+			// spec: §14 line 100 — `sourceIndex`, `entryPath`,
+			// `segmentCount`, `stripComponents`. F-7.4.15, F-14.1.18.
 			warnings = append(warnings, Warning{
-				Code:        stripComponentsSkipCode,
-				SourceIndex: sourceIndex,
-				Entry:       entry.Name,
-				Message:     fmt.Sprintf("entry has fewer than stripComponents=%d segments", strip),
+				Code:            stripComponentsSkipCode,
+				SourceIndex:     sourceIndex,
+				EntryPath:       entry.Name,
+				SegmentCount:    segCount,
+				StripComponents: strip,
+				Message:         fmt.Sprintf("entry has %d segment(s); fewer than stripComponents=%d", segCount, strip),
 			})
 			continue
 		}
@@ -547,22 +554,26 @@ func archiveMode(mode os.FileMode) os.FileMode {
 }
 
 // stripPath drops the first n path segments from an archive entry path
-// and returns the remainder joined with "/". ok is false when, after
-// removing leading and trailing empty segments, the entry has n or
-// fewer segments: per §14 such an entry is skipped rather than failing
-// extraction.
-func stripPath(entryPath string, n int) (string, bool) {
+// and returns the remainder joined with "/" along with the
+// pre-stripping segment count (after trimming leading/trailing empty
+// segments). ok is false when the entry has n or fewer segments: per
+// §14 such an entry is skipped rather than failing extraction. The
+// returned segment count rides on the
+// `workspace_plan_strip_components_skip` warning per §14 line 100.
+// F-14.1.18.
+func stripPath(entryPath string, n int) (string, int, bool) {
 	trimmed := strings.Trim(entryPath, "/")
 	if trimmed == "" {
-		return "", false
+		return "", 0, false
 	}
 	parts := strings.Split(trimmed, "/")
-	if len(parts) <= n {
-		return "", false
+	segCount := len(parts)
+	if segCount <= n {
+		return "", segCount, false
 	}
 	rest := strings.Join(parts[n:], "/")
 	if rest == "" {
-		return "", false
+		return "", segCount, false
 	}
-	return rest, true
+	return rest, segCount, true
 }

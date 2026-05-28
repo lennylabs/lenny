@@ -34,16 +34,26 @@ var ErrUnknownSourceType = errors.New("unknown workspace source type")
 // slice straight onto FinalizeWorkspaceResponse.
 //
 // spec: §7.4 line 459 (workspace_plan_strip_components_skip); §14
-// WarningCode. F-7.4.15.
+// WarningCode. F-7.4.15, F-14.1.18.
 type Warning struct {
 	// Code is the §14 WarningCode enum value (e.g.
 	// `workspace_plan_strip_components_skip`).
 	Code string
 	// SourceIndex is the 0-based plan source index the warning refers to.
+	// spec: §14 line 100 — `sourceIndex`.
 	SourceIndex int
-	// Entry is the archive entry path that triggered the warning.
+	// EntryPath is the archive entry path that triggered the warning.
 	// Empty when the warning is not entry-scoped.
-	Entry string
+	// spec: §14 line 100 — `entryPath`. F-14.1.18.
+	EntryPath string
+	// SegmentCount is the number of `/`-separated segments the rejected
+	// entry had after trimming leading/trailing empty segments.
+	// spec: §14 line 100 — `segmentCount`. F-14.1.18.
+	SegmentCount int
+	// StripComponents is the configured `stripComponents` value the
+	// entry was tested against.
+	// spec: §14 line 100 — `stripComponents`. F-14.1.18.
+	StripComponents int
 	// Message is a human-readable explanation.
 	Message string
 }

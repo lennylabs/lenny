@@ -26,8 +26,16 @@ func TestMaterializeUploadArchive_TarEmitsStripSkipWarning_spec_7_4_15(t *testin
 	if got := warnings[0].Code; got != "workspace_plan_strip_components_skip" {
 		t.Errorf("warning.Code = %q, want workspace_plan_strip_components_skip", got)
 	}
-	if warnings[0].Entry != "readme.md" {
-		t.Errorf("warning.Entry = %q, want readme.md", warnings[0].Entry)
+	if warnings[0].EntryPath != "readme.md" {
+		t.Errorf("warning.EntryPath = %q, want readme.md", warnings[0].EntryPath)
+	}
+	// spec: §14 line 100 — `segmentCount`, `stripComponents` ride on
+	// the strip-components-skip warning.
+	if warnings[0].SegmentCount != 1 {
+		t.Errorf("warning.SegmentCount = %d, want 1", warnings[0].SegmentCount)
+	}
+	if warnings[0].StripComponents != 2 {
+		t.Errorf("warning.StripComponents = %d, want 2", warnings[0].StripComponents)
 	}
 }
 
@@ -49,8 +57,14 @@ func TestMaterializeUploadArchive_ZipEmitsStripSkipWarning_spec_7_4_15(t *testin
 		if w.Code != "workspace_plan_strip_components_skip" {
 			t.Errorf("warning[%d].Code = %q, want workspace_plan_strip_components_skip", i, w.Code)
 		}
-		if w.Entry == "" {
-			t.Errorf("warning[%d].Entry empty", i)
+		if w.EntryPath == "" {
+			t.Errorf("warning[%d].EntryPath empty", i)
+		}
+		if w.StripComponents != 2 {
+			t.Errorf("warning[%d].StripComponents = %d, want 2", i, w.StripComponents)
+		}
+		if w.SegmentCount == 0 || w.SegmentCount > 2 {
+			t.Errorf("warning[%d].SegmentCount = %d, want 1 or 2", i, w.SegmentCount)
 		}
 	}
 }

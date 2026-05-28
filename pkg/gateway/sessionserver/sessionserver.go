@@ -1402,6 +1402,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 		return
 	}
 	s.recordSessionCreated(r.Context(), row)
+	// spec: §14 lines 100, 334, 338 — each plan warning is an "event"
+	// the gateway emits, not just an echo-in-response. Publish the
+	// parse-time `workspace_plan_unknown_source_type` and
+	// `workspace_plan_path_collision` warnings on the same per-session
+	// SSE bus that the materializer's `workspace_plan_strip_components_skip`
+	// warnings ride, so Ops/audit consumers see all three async.
+	// F-14.1.17.
+	s.publishParsePlanWarnings(row.TenantID, row.ID, planWarnings)
 
 	base := toResponse(row)
 	// spec: §7.1 line 75 — the pool-resolved level is now persisted on
