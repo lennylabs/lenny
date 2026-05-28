@@ -11505,7 +11505,7 @@ Verdict: **NOTEWORTHY** — the §9.4 signature returns no count, so the erasure
 
 ---
 
-### - [ ] F-9.4.10 — (Low) — `pgstore.Query`'s `embedding <=> $N::vector NULLS LAST` may not match the ivfflat operator class for sentinel-NULL rows [Low] — OPEN
+### - [x] F-9.4.10 — (Low) — `pgstore.Query`'s `embedding <=> $N::vector NULLS LAST` may not match the ivfflat operator class for sentinel-NULL rows [Low] — CLOSED
 
 Spec wording (§9.4 line 198): the default backend is "Postgres + pgvector".
 
@@ -11516,6 +11516,8 @@ Evidence:
 - No README, runbook, or ANALYZE/EXPLAIN baseline records the expected query plan for the hybrid (vector + NULLS LAST) path.
 
 Verdict: **NOTEWORTHY** — correctness is fine, performance characteristics under embedding mix are undocumented.
+
+**Resolution:** Verify-closed per the finding's own NOTEWORTHY verdict — "correctness is fine, performance characteristics under embedding mix are undocumented." The query is functionally correct under the partial ivfflat index; the unfiled work is a performance baseline document, not a code change. A v2 EXPLAIN/ANALYZE runbook can capture the hybrid-path plan if and when embedding-mix performance becomes a deployment concern.
 
 ---
 
@@ -14778,9 +14780,11 @@ Spec §11.2: "The gateway enforces budget limits against Redis counters (fast pa
 
 The `QuotaEvaluator` runs only on the **admission** chain (PhasePostAuth on session create). No mid-session checkpoint compares accumulated usage against the per-session token budget and forces a terminal state. Combined with H2 (no recording) and H4 (no checkpoint), there is no mechanism by which a long-running session is mid-flight terminated for budget breach.
 
-### - [ ] F-11.2.22 — `billing.dualControlThreshold` default in code matches spec but the absolute-adjustment formula treats negative deltas as positive [Low] — OPEN
+### - [x] F-11.2.22 — `billing.dualControlThreshold` default in code matches spec but the absolute-adjustment formula treats negative deltas as positive [Low] — CLOSED
 
 Spec §11.2.1 "absolute adjustment value": "the magnitude of the change the correction makes to the original event's billable dimensions". Implementation `correctionAdjustment` (`pkg/gateway/admin/billing_corrections.go:429-432`) computes `|TokensInput_new − TokensInput_old| + |TokensOutput_new − TokensOutput_old| + |PodMinutes_new − PodMinutes_old|` via `absDeltaUint`. This matches the spec wording. Noting only that `pod_minutes` adjustments and token adjustments add into the same scalar without unit normalization, so a 10-minute pod-time adjustment compares as "10" against a 10-token quota threshold; the spec leaves the unit unspecified but the threshold's interpretation is operationally ambiguous. Not a defect against §11.2.1 wording, but worth surfacing.
+
+**Resolution:** Verify-closed per the finding's own conclusion ("Not a defect against §11.2.1 wording, but worth surfacing"). The implementation correctly computes the absolute-adjustment magnitude as the sum of per-dimension `|new − old|` deltas via `absDeltaUint`, matching §11.2.1's "magnitude of the change" wording. The unit-normalization ambiguity (token-units summed with pod-minute units) is a spec-side interpretation question; spec edits are out of scope per rule B.
 
 ### - [ ] F-11.2.23 — `BillingCorrectionRateHigh` alert threshold is hard-coded at 0.05 instead of reading the deployer-configurable percentage [Low] — OPEN
 
@@ -16657,7 +16661,7 @@ list and is included here for completeness.
 **Severity:** Medium — catalog completeness affects audit-tooling
 correctness; arguably Low at the §11.7 boundary.
 
-### - [ ] F-11.7.19 — 19  `lenny_erasure` billing UPDATE grant is scoped to `user_id` only; the spec also names "free-text PII columns" [Low] — OPEN
+### - [x] F-11.7.19 — 19  `lenny_erasure` billing UPDATE grant is scoped to `user_id` only; the spec also names "free-text PII columns" [Low] — CLOSED
 
 **Spec:** §11.7 item 7 line 384 — `UPDATE` on billing tables "scoped
 to the `user_id` and free-text PII columns only".
@@ -16675,7 +16679,9 @@ review covers the audit-grants surface.
 
 **Severity:** Low — no live exposure today; documentation cue only.
 
-### - [ ] F-11.7.20 — 20  OCSF translator's `unmapped.lenny.genesis_nonce` extension is wired but no audit row carries `genesis_nonce` in its payload [Low] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("no live exposure today; documentation cue only"). The current `billing_events` schema has no free-text PII column, so the `UPDATE (user_id)` grant is correctly scoped against the live schema. A future migration that adds a PII column must widen the grant in the same migration — that obligation rides with the migration author, and is also captured by the spec wording itself.
+
+### - [x] F-11.7.20 — 20  OCSF translator's `unmapped.lenny.genesis_nonce` extension is wired but no audit row carries `genesis_nonce` in its payload [Low] — CLOSED
 
 **Spec:** §11.7 line 411 — the OCSF translator emits
 `unmapped.lenny_chain.genesis_nonce` on the first entry per tenant.
@@ -16705,6 +16711,8 @@ echo is meaningless without that nonce being written.
 **Severity:** Low here because the broader bug is a §12 issue; the
 §11.7 implication is that the OCSF genesis-nonce echo is structurally
 unbacked.
+
+**Resolution:** Verify-closed; the finding's evidence is stale on the pgstore tenant-create path. `pkg/gateway/tenantstore/pgstore/pgstore.go:89-112` generates a 32-byte nonce via `rand.Read(nonce)` and inserts it into the `genesis_nonce` column on every tenant create. The audit translation at `pkg/gateway/auditstore/translation.go:47,84-85` reads the column for `seq == 1` rows and the OCSF translator at `pkg/audit/ocsf/ocsf.go:432,539` emits `unmapped.lenny_chain.genesis_nonce` from that input. End-to-end the OCSF echo is correctly backed.
 
 ### - [x] F-11.7.21 — 21  The in-memory `ChainSet` audit path is the default for non-Postgres deployments and loses every row on restart [Info] — CLOSED
 
@@ -21152,20 +21160,28 @@ Implementation:
 - No `lenny-coredns` image is referenced in `values.yaml` (no `coredns.image.repository`).
 - (This finding is downstream of H3; logged separately because even a stock CoreDNS Deployment would not provide query rate limiting or response filtering.)
 
-### - [ ] F-13.2.15 — Selector-consistency audit has a documented incomplete coverage gap (NET-050 part b) [Low] — OPEN
+### - [x] F-13.2.15 — Selector-consistency audit has a documented incomplete coverage gap (NET-050 part b) [Low] — CLOSED
 `pkg/preflight/networkpolicy_selectors.go` lines 39–55 (TODO comment): the audit does not check that "any selector matches zero pods for a component that is expected to be running given the rendered Helm values." The TODO acknowledges the constraint (preflight runs before the chart applies platform Deployments). Logged as Low because parts (a) and (c) are enforced and the TODO is intentional.
 
-### - [ ] F-13.2.16 — Token-Service / Gateway mTLS configuration is opt-in via three independent flags; partial configuration is rejected only at dial time [Low] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("parts (a) and (c) are enforced and the TODO is intentional"). The TODO at `pkg/preflight/networkpolicy_selectors.go:39-55` explains in detail why part (b) cannot be implemented from preflight's vantage point (no rendered Helm values + no live pod inventory at pre-install hook time) and parts (a) and (c) remain enforced. The part-(b) audit is a v2 design item gated on passing the full rendered values set into preflight, not a v1 code gap.
+
+### - [x] F-13.2.16 — Token-Service / Gateway mTLS configuration is opt-in via three independent flags; partial configuration is rejected only at dial time [Low] — CLOSED
 `cmd/lenny-gateway/main.go` `dialTokenService` accepts any of (a) all three of `--token-service-tls-cert`, `--token-service-tls-key`, `--token-service-ca`, or (b) all three empty (plaintext). Partial configuration returns `"token service mTLS requires --token-service-tls-cert, --token-service-tls-key, and --token-service-ca to all be set"` at runtime. There is no chart-level validation that the three values are coherent; a Helm install can render the gateway Deployment with only one of the three flags and the gateway will fail to start. Logged as Low because the failure mode is fail-closed (process exit) rather than silently insecure.
 
-### - [ ] F-13.2.17 — `saTokenAudience` Helm value is undeclared; the NET-064 SA-token-audience uniqueness check has no value to read [Low] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("fail-closed (process exit) rather than silently insecure"). The gateway exits on any partial configuration with an explicit diagnostic naming all three flags, so the failure mode is operator-debuggable on first launch. A future chart-side schema validator (Helm 3.5+ values-schema.json) could move the check earlier, but the runtime gate already meets §13.2's safety posture.
+
+### - [x] F-13.2.17 — `saTokenAudience` Helm value is undeclared; the NET-064 SA-token-audience uniqueness check has no value to read [Low] — CLOSED
 `pkg/preflight/run.go` reads `cfg.SATokenAudience` and feeds it to `CheckSATokenAudienceUniqueness`; `cmd/lenny-preflight/main.go` would source it from chart values, but `values.yaml` declares only `global.spiffeTrustDomain` (line 440), not `global.saTokenAudience`. The check therefore short-circuits on empty (line 84 of `networkpolicy_identity.go`). Logged as Low because the SPIFFE-trust-domain half of NET-064 is implemented and the SA-token-audience half is a future-proofing collision guard.
 
-### - [ ] F-13.2.18 — `lenny-system` `allow-gateway-egress` lacks the §13.2 external-HTTPS rule (rendered separately under the missing `allow-gateway-egress-llm-upstream`); the comment block at line 435 documents the deferral [Low] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("future-proofing collision guard"). The NET-064 SPIFFE-trust-domain half lands in `CheckTrustDomain` and is wired through preflight. The SA-token-audience half short-circuits cleanly on empty, so the audit does not false-positive on a fresh install. When a future deployment declares projected SA-token mounts with audiences, the chart can add the `global.saTokenAudience` declaration in the same change-set; the preflight check is ready to consume it.
+
+### - [x] F-13.2.18 — `lenny-system` `allow-gateway-egress` lacks the §13.2 external-HTTPS rule (rendered separately under the missing `allow-gateway-egress-llm-upstream`); the comment block at line 435 documents the deferral [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.2.5 — Both report the allow-gateway-egress-llm-upstream external-HTTPS egress policy is not rendered; F-13.2.18 just logs the deferral comment for the same gap.
 
 The `allow-gateway-egress` template (`charts/lenny/templates/system-network-policies.yaml` lines 442–528) explicitly defers external-HTTPS egress with the comment "The external-HTTPS egress with its §13.2 NET-062 dual-family IMDS/private-range exclusions is rendered with the LLM proxy." This rendering is unimplemented (see H5). Logged as Low because the comment surfaces the deferral; the operational impact is captured under H5.
+
+**Resolution:** Explicit duplicate of F-13.2.5 (High, still OPEN) per the finding's own "Potential duplicate" cross-reference. The external-HTTPS egress NetworkPolicy rendering and the in-template deferral comment are the same gap; F-13.2.5 owns the remediation (chart-side `allow-gateway-egress-llm-upstream` template with NET-062 dual-family exclusions).
 
 ### - [x] F-13.2.19 — Preflight NetworkPolicy parity audits (NET-047/050, 057, 062, 065, 067, 068) are implemented and exercised [Info] — CLOSED
 `pkg/preflight/networkpolicy_{selectors,ipblock,ssrf,clustercidr,opsegress}.go` plus `pkg/preflight/run.go` wire six NetworkPolicy audits into the preflight report. `pkg/preflight/run_networkpolicy_test.go` covers the failure paths (DNS pod-selector missing, legacy `app:` selector drift, cross-family `ipBlock` `except`, missing NET-064 trust-domain configs, fail-closed posture on `List` error). The audits enforce part (a) and (c) of NET-050 in full; part (b) is documented as deferred (L1).
