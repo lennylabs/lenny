@@ -327,6 +327,25 @@ minio:
     # reproducible installs.
     image: "minio/mc:latest"
 
+# gc configures the §12.5 artifact garbage-collection sweep that the
+# gateway runs as a §10.1 leader-elected goroutine. The same cadence
+# drives the §7.1 retention soft-delete pass and the §12.5 line 341
+# tombstone hard-prune pass.
+gc:
+  # cycleIntervalSeconds is the §12.5 line 317 GC sweep cadence in
+  # seconds. Default 900 (15 minutes); the gateway clamps a value below
+  # the 60-second floor up to 60. Higher tiers may lower it toward the
+  # floor for tighter erasure SLAs (§17.8).
+  # spec: §12.5 line 317 (default 900, minimum 60).
+  cycleIntervalSeconds: 900
+  # tombstoneRetentionSeconds is the §12.5 line 341 window a
+  # soft-deleted artifact_store row is retained before the hard-prune
+  # sweep physically removes it. Default 86400 (24 hours). Operators
+  # with long failover windows (multi-region DR drills) may raise it
+  # without affecting GC correctness.
+  # spec: §12.5 line 341 (default 86400 / 24 hours).
+  tombstoneRetentionSeconds: 86400
+
 # kms configures the §4 envelope-encryption KEK provider for both the
 # gateway and the Token Service. The gateway wraps §4.9 connector
 # credentials; the Token Service wraps its signing key. spec: §4 /

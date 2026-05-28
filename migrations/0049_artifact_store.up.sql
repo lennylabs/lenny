@@ -16,7 +16,10 @@ CREATE TABLE artifact_store (
     session_id           TEXT        NOT NULL,
     part_id              TEXT        NOT NULL,
     mime_type            TEXT        NOT NULL DEFAULT '',
-    size_bytes           BIGINT      NOT NULL DEFAULT 0,
+    -- §12.5 line 309 names this column artifact_size_bytes; the §12.4
+    -- line 210 / §11.2 storage-quota rehydration query sums it across
+    -- live rows on Redis restart.
+    artifact_size_bytes  BIGINT      NOT NULL DEFAULT 0,
     -- §12.5 lifecycle state: 'live', 'soft_deleted', or 'tombstoned'.
     state                TEXT        NOT NULL DEFAULT 'live',
     -- §12.5 SSE-KMS key alias the object was sealed with; NULL when

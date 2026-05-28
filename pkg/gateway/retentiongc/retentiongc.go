@@ -21,8 +21,45 @@ import (
 )
 
 // DefaultSweepInterval is how often the retention GC runs when no
-// interval is configured.
+// interval is configured. It matches the §12.5 line 317
+// `gc.cycleIntervalSeconds` default of 900 seconds.
+//
+// spec: §12.5 line 317.
 const DefaultSweepInterval = 15 * time.Minute
+
+// MinSweepInterval is the §12.5 line 317 floor on `gc.cycleIntervalSeconds`.
+// Operators may raise the interval freely; a configured value below this
+// floor is clamped up so the leader-elected sweep cannot busy-loop.
+//
+// spec: §12.5 line 317 ("minimum: 60").
+const MinSweepInterval = 60 * time.Second
+
+// DefaultTombstoneRetention is the §12.5 line 341
+// `gc.tombstoneRetentionSeconds` default: a soft-deleted artifact_store
+// row is retained for this window before the hard-prune sweep physically
+// removes it. The window must outlast the maximum stale-leader write
+// delay; 24 hours is the spec default. Operators may raise it without
+// affecting GC correctness.
+//
+// spec: §12.5 line 341 ("default: 86400 / 24 hours").
+const DefaultTombstoneRetention = 24 * time.Hour
+
+// ClampSweepInterval applies the §12.5 line 317 bounds to a configured
+// `gc.cycleIntervalSeconds` value: a non-positive duration selects
+// DefaultSweepInterval, and a positive duration below MinSweepInterval is
+// raised to the floor so the leader-elected sweep cannot busy-loop. Any
+// value at or above the floor is returned unchanged.
+//
+// spec: §12.5 line 317 (default 900, minimum 60).
+func ClampSweepInterval(d time.Duration) time.Duration {
+	if d <= 0 {
+		return DefaultSweepInterval
+	}
+	if d < MinSweepInterval {
+		return MinSweepInterval
+	}
+	return d
+}
 
 // ArtifactDeleter removes a session's artifacts from one store and
 // returns the count removed. The transcript store's and the blob

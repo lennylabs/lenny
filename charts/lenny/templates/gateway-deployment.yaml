@@ -483,6 +483,23 @@ spec:
               value: {{ .maxOrphanTasksPerTenant | quote }}
             {{- end }}
             {{- end }}
+            {{- with .Values.gc }}
+            # §12.5 line 317 — gc.cycleIntervalSeconds: the leader-elected
+            # GC sweep cadence (default 900, minimum 60). Drives both the
+            # §7.1 retention soft-delete sweep and the §12.5 line 341
+            # tombstone hard-prune sweep. F-12.5.19.
+            {{- if hasKey . "cycleIntervalSeconds" }}
+            - name: LENNY_GC_CYCLE_INTERVAL_SECONDS
+              value: {{ .cycleIntervalSeconds | quote }}
+            {{- end }}
+            # §12.5 line 341 — gc.tombstoneRetentionSeconds: how long a
+            # soft-deleted artifact_store row is retained before the
+            # hard-prune sweep removes it (default 86400 / 24h). F-12.5.19.
+            {{- if hasKey . "tombstoneRetentionSeconds" }}
+            - name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
+              value: {{ .tombstoneRetentionSeconds | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.gateway.extractionThresholds }}
             # §4.1 extractionThresholds — per-subsystem extraction
             # thresholds surfaced from Helm so operators can calibrate

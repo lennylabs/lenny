@@ -159,7 +159,7 @@ type ArtifactCatalog interface {
 	// session, and URI with the confirmed object size. The
 	// implementation maps the call onto the canonical
 	// artifact_store schema (URI, tenant_id, session_id, part_id,
-	// size_bytes, state, artifact_type=eviction_context). Returns
+	// artifact_size_bytes, state, artifact_type=eviction_context). Returns
 	// the underlying database error on failure.
 	RecordEvictionContext(ctx context.Context, tenantID, sessionID, uri string, sizeBytes int64) error
 }

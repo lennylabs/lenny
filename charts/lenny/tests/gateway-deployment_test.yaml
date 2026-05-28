@@ -431,10 +431,12 @@ tests:
       # + 8 extraction-threshold gauges + LENNY_POOLER_MODE
       # (§4.2 line 165) + POD_NAMESPACE (§10.4 PDB poller)
       # + LENNY_BILLING_CORRECTION_RATE_THRESHOLD (§11.2.1 line 187,
-      #   F-11.2.23) + LENNY_SLO_VALIDATED (§16.5 line 623, F-16.5.5) = 23.
+      #   F-11.2.23) + LENNY_SLO_VALIDATED (§16.5 line 623, F-16.5.5)
+      # + LENNY_GC_CYCLE_INTERVAL_SECONDS / _TOMBSTONE_RETENTION_SECONDS
+      #   (§12.5 lines 317, 341, F-12.5.19) = 25.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 23
+          count: 25
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -518,6 +520,40 @@ tests:
           content:
             name: LENNY_BILLING_CORRECTION_RATE_THRESHOLD
             value: "0.05"
+      # §12.5 line 317 / F-12.5.19 — gc.cycleIntervalSeconds defaults to 900.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GC_CYCLE_INTERVAL_SECONDS
+            value: "900"
+      # §12.5 line 341 / F-12.5.19 — gc.tombstoneRetentionSeconds defaults
+      # to 86400 (24h), distinct from the §7.1 7-day artifact TTL.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
+            value: "86400"
+
+  # spec: §12.5 lines 317, 341 / F-12.5.19 — operator-supplied GC cadence
+  # and tombstone retention flow through to the gateway env.
+  - it: renders gc.cycleIntervalSeconds and gc.tombstoneRetentionSeconds overrides
+    set:
+      gc.cycleIntervalSeconds: 300
+      gc.tombstoneRetentionSeconds: 172800
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GC_CYCLE_INTERVAL_SECONDS
+            value: "300"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
+            value: "172800"
 
   # spec: §16.5 line 623 / F-16.5.5 — slo.validated = true suppresses
   # the gateway's provisional-SLO startup warning once the Phase 14.5

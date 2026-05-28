@@ -384,13 +384,29 @@ func main() {
 		"MinIO secret key. Required when --minio-endpoint is set.")
 	minioBucket := flag.String("minio-bucket", os.Getenv("LENNY_MINIO_BUCKET"),
 		"MinIO bucket for §4.5 artifacts. Required when --minio-endpoint is set.")
-	minioUseSSL := flag.Bool("minio-use-ssl", envFlag("LENNY_MINIO_USE_SSL"),
-		"connect to MinIO over HTTPS. Override via LENNY_MINIO_USE_SSL.")
+	// spec: §12.5 line 279 — "MinIO connections MUST use TLS". TLS is on
+	// by default; only §17.4 Embedded Mode (the chart's backends:embedded
+	// posture) renders LENNY_MINIO_USE_SSL=false. The Helm chart fails the
+	// render when tls.enabled is false on any non-embedded backend.
+	minioUseSSL := flag.Bool("minio-use-ssl", envFlagDefault("LENNY_MINIO_USE_SSL", true),
+		"connect to MinIO over HTTPS. Defaults to true per §12.5 line 279; only §17.4 Embedded Mode disables it. Override via LENNY_MINIO_USE_SSL.")
 	checkpointInterval := flag.Duration("checkpoint-interval", 10*time.Minute,
 		"§4.4 line 256 periodic-checkpoint cadence (`periodicCheckpointIntervalSeconds`). The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace. Default 10m (600s) matches the §4.4 spec value; the freshness SLO bounds workspace loss on eviction to ≤ one interval.")
 	sessionArtifactRetentionSeconds := flag.Int("session-artifact-retention-seconds",
 		envInt("LENNY_SESSION_ARTIFACT_RETENTION_SECONDS", int(sessionserver.DefaultArtifactRetention/time.Second)),
 		"§7.1 line 77 default artifact-retention window in seconds. Session workspace snapshots, logs, and transcripts stay GC-eligible until this long after the session reaches a terminal state. Default 7 days (604800s); clients extend per-session via POST /v1/sessions/{id}/extend-retention. Override via LENNY_SESSION_ARTIFACT_RETENTION_SECONDS.")
+	// spec: §12.5 line 317 — gc.cycleIntervalSeconds (default 900, min 60).
+	// Drives both the §7.1 retention sweep and the §12.5 line 341 hard-prune
+	// sweep cadence. A value below the floor is clamped up to 60s.
+	gcCycleIntervalSeconds := flag.Int("gc-cycle-interval-seconds",
+		envInt("LENNY_GC_CYCLE_INTERVAL_SECONDS", int(retentiongc.DefaultSweepInterval/time.Second)),
+		"§12.5 line 317 gc.cycleIntervalSeconds: the leader-elected GC sweep cadence in seconds (default 900, minimum 60). Drives the §7.1 retention soft-delete sweep and the §12.5 line 341 tombstone hard-prune sweep. Override via LENNY_GC_CYCLE_INTERVAL_SECONDS.")
+	// spec: §12.5 line 341 — gc.tombstoneRetentionSeconds (default 86400).
+	// The soft-deleted artifact_store row's tombstone-retention window before
+	// the hard-prune sweep physically removes it.
+	gcTombstoneRetentionSeconds := flag.Int("gc-tombstone-retention-seconds",
+		envInt("LENNY_GC_TOMBSTONE_RETENTION_SECONDS", int(retentiongc.DefaultTombstoneRetention/time.Second)),
+		"§12.5 line 341 gc.tombstoneRetentionSeconds: how long a soft-deleted artifact_store row is retained before the hard-prune sweep removes it, in seconds (default 86400 / 24h). Operators may raise it without affecting GC correctness. Override via LENNY_GC_TOMBSTONE_RETENTION_SECONDS.")
 	maxCreatedStateTimeoutSeconds := flag.Int("max-created-state-timeout-seconds",
 		envInt("LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxCreatedStateSeconds),
 		"§7.1 line 58 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL, the watchdog's `created`-state budget, and the createdsweeper's abandoned-row timeout so the three deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
@@ -3054,6 +3070,20 @@ func main() {
 	// mode, where no catalog is wired, retains the legacy direct-delete
 	// path.
 	{
+		// §12.5 line 317 gc.cycleIntervalSeconds: the GC sweep cadence,
+		// clamped up to the spec's 60s floor so a misconfigured chart
+		// value cannot make the leader-elected sweep busy-loop.
+		rawGCInterval := time.Duration(*gcCycleIntervalSeconds) * time.Second
+		gcInterval := retentiongc.ClampSweepInterval(rawGCInterval)
+		if gcInterval != rawGCInterval && rawGCInterval > 0 {
+			log.Printf("lenny-gateway: §12.5 line 317 gc.cycleIntervalSeconds=%d below the %ds floor; clamping to the minimum",
+				*gcCycleIntervalSeconds, int(retentiongc.MinSweepInterval/time.Second))
+		}
+		// §12.5 line 341 gc.tombstoneRetentionSeconds: the window a
+		// soft-deleted artifact_store row is retained before hard-prune.
+		// This is distinct from the §7.1 artifact-retention TTL (when a
+		// terminal session's artifacts become soft-delete-eligible).
+		gcTombstoneRetention := time.Duration(*gcTombstoneRetentionSeconds) * time.Second
 		var arts []retentiongc.Artifact
 		if te, ok := transcripts.(sessionArtifactDeleter); ok {
 			arts = append(arts, retentiongc.Artifact{Name: "transcripts", Delete: te.DeleteBySession})
@@ -3063,20 +3093,23 @@ func main() {
 			// objects through the cataloging decorator instead of
 			// removing them outright. The hard-prune pass below runs on
 			// the same Run loop and bumps lenny_gc_tombstones_pruned_total.
-			tombstoneRetention := blobstore.DerivedSnapshotTTL // 7 days, matches §12.5 default
+			// The tombstone deadline is now + gc.tombstoneRetentionSeconds.
 			arts = append(arts, retentiongc.Artifact{
 				Name: "artifacts",
 				Delete: func(ctx context.Context, tenantID, sessionID string) (int, error) {
-					return blobsCataloged.SoftDeleteSession(ctx, tenantID, sessionID, tombstoneRetention)
+					return blobsCataloged.SoftDeleteSession(ctx, tenantID, sessionID, gcTombstoneRetention)
 				},
 			})
 		} else if be, ok := blobs.(sessionArtifactDeleter); ok {
 			arts = append(arts, retentiongc.Artifact{Name: "artifacts", Delete: be.DeleteBySession})
 		}
 		retGC := retentiongc.New(sessions, tenantsLister{tenants}, arts, retentiongc.Options{
-			Clock:   clockinject.Now,
-			Metrics: gwMetrics,
+			Interval: gcInterval,
+			Clock:    clockinject.Now,
+			Metrics:  gwMetrics,
 		})
+		log.Printf("lenny-gateway: §12.5 GC sweep cadence %s (gc.cycleIntervalSeconds=%d); tombstone retention %s (gc.tombstoneRetentionSeconds=%d)",
+			gcInterval, int(gcInterval/time.Second), gcTombstoneRetention, int(gcTombstoneRetention/time.Second))
 		go retGC.Run(watchdogCtx, func(collected int, err error) {
 			if err != nil {
 				log.Printf("lenny-gateway: retention-GC sweep error: %v", err)
@@ -3088,7 +3121,7 @@ func main() {
 			}
 		})
 
-		// §12.5 ll. 341 hard-prune sweep: every retentiongc.DefaultSweepInterval
+		// §12.5 ll. 341 hard-prune sweep: every gc.cycleIntervalSeconds
 		// the catalog removes rows whose tombstone deadline has elapsed
 		// and emits the count to lenny_gc_tombstones_pruned_total.
 		// Production runs this under the §10.1 leader lease; the dev-
@@ -3096,7 +3129,7 @@ func main() {
 		// the sweep entirely.
 		if blobsCataloged != nil {
 			go func() {
-				ticker := time.NewTicker(retentiongc.DefaultSweepInterval)
+				ticker := time.NewTicker(gcInterval)
 				defer ticker.Stop()
 				for {
 					select {

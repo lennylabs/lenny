@@ -74,6 +74,7 @@ type Record struct {
 	SessionID         string
 	PartID            string
 	MimeType          string
+	// SizeBytes maps to the §12.5 line 309 artifact_size_bytes column.
 	SizeBytes         int64
 	State             State
 	// ArtifactType is the §4.4 / §12.5 artifact-kind tag. Empty maps
@@ -163,7 +164,7 @@ func (s *PgStore) Insert(ctx context.Context, r Record) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO artifact_store (
 			uri, tenant_id, session_id, part_id,
-			mime_type, size_bytes, state, kms_key_alias,
+			mime_type, artifact_size_bytes, state, kms_key_alias,
 			legal_hold, artifact_type, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		r.URI, r.TenantID, r.SessionID, r.PartID,
@@ -185,7 +186,7 @@ func (s *PgStore) Get(ctx context.Context, uri string) (Record, error) {
 	)
 	row := s.pool.QueryRow(ctx, `
 		SELECT uri, tenant_id, session_id, part_id,
-		       mime_type, size_bytes, state, kms_key_alias,
+		       mime_type, artifact_size_bytes, state, kms_key_alias,
 		       legal_hold, artifact_type, soft_deleted_at, tombstone_deadline,
 		       created_at, updated_at
 		FROM artifact_store WHERE uri = $1`, uri)
@@ -273,7 +274,7 @@ func (s *PgStore) HardPruneExpired(ctx context.Context, now time.Time) (int, err
 func (s *PgStore) ListBySession(ctx context.Context, tenantID, sessionID string) ([]Record, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT uri, tenant_id, session_id, part_id,
-		       mime_type, size_bytes, state, kms_key_alias,
+		       mime_type, artifact_size_bytes, state, kms_key_alias,
 		       legal_hold, artifact_type, soft_deleted_at, tombstone_deadline,
 		       created_at, updated_at
 		FROM artifact_store WHERE tenant_id = $1 AND session_id = $2
