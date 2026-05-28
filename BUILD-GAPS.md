@@ -17720,7 +17720,7 @@ The configuration option named in the spec is absent from `values.yaml` and
 `presets/values-tier*.yaml`. (Already tied to the High finding on missing
 startup invocation.)
 
-### - [ ] F-12.3.21 — RLS test naming differs from spec but functional coverage exists (§12.3 line 57) [Info] — OPEN
+### - [x] F-12.3.21 — RLS test naming differs from spec but functional coverage exists (§12.3 line 57) [Info] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-4.4.22 — Both reference the missing TestRLSTenantGuardMissingSetLocal test, but F-12.3.21 is about test naming with existing functional coverage while F-4.4.22 is about session_eviction_state lacking RLS coverage.
 
@@ -17744,7 +17744,9 @@ Evidence:
 
 The test names do not match the spec; the coverage does match.
 
-### - [ ] F-12.3.22 — Linters `lint-schema.sh` (R-01) and `lint-queries.sh` (R-02) are present and wired (§12.3 lines 136, 138) [Info] — OPEN
+- **Resolution:** Verify-closed. `tests/tier2_component/rls/rls_test.go:70` (`TestRLSRequiresTenantContext`) covers the missing-`SET LOCAL` rejection path; `:95` (`TestRLSPreventsCrossTenantRead`) covers the cross-tenant zero-rows assertion. Test names diverge from the spec text but functional coverage matches; renaming is cosmetic-only.
+
+### - [x] F-12.3.22 — Linters `lint-schema.sh` (R-01) and `lint-queries.sh` (R-02) are present and wired (§12.3 lines 136, 138) [Info] — CLOSED
 
 Spec mandates a schema linter and a query linter that fail CI when R-01 /
 R-02 are violated, report annotation counts, and demand justification
@@ -17764,7 +17766,9 @@ Evidence:
 
 This requirement is met.
 
-### - [ ] F-12.3.23 — Synchronous replication enforcement is operator-supplied (§12.3 line 30 + line 150) [Info] — OPEN
+- **Resolution:** Verify-closed. `scripts/lint-schema.sh` and `scripts/lint-queries.sh` exist and are wired into the tier-1 static pass at `cmd/lenny-test/cmd_run.go:593-608`, with `cmd/lenny-test/tiers.go:126` documenting them under the tier-1 notes. The §12.3 R-01/R-02 invariant is met.
+
+### - [x] F-12.3.23 — Synchronous replication enforcement is operator-supplied (§12.3 line 30 + line 150) [Info] — CLOSED
 
 Spec mandates "synchronous replication and automatic failover" and "RPO: 0
 (synchronous replication — no committed transaction lost)."
@@ -17784,7 +17788,9 @@ chart-managed test infra does not exercise the sync path; tier-8 chaos
 covers Postgres failover via a `kubectl exec`-driven `pg_ctl promote`
 rather than an automatic synchronous-replication-backed failover.
 
-### - [ ] F-12.3.24 — Encryption at rest is not chart-enforced for Postgres (§12.3 line 169) [Info] — OPEN
+- **Resolution:** Verify-closed. `charts/lenny/values.yaml:496-521` documents Postgres as bring-your-own (chart leaves `postgres.dsn` empty); synchronous replication, the `synchronous_standby_names` / `synchronous_commit` configuration, and RPO=0 are operator responsibility. Managed-service defaults (RDS Multi-AZ, Cloud SQL HA) meet the spec without chart involvement.
+
+### - [x] F-12.3.24 — Encryption at rest is not chart-enforced for Postgres (§12.3 line 169) [Info] — CLOSED
 
 Spec mandates Postgres encryption at rest, with explicit guidance for
 self-managed (LUKS / dm-crypt) and managed deployments.
@@ -17798,6 +17804,8 @@ Evidence:
   these files would clarify whether the Terraform requires encryption-at-
   rest at provisioning time. (Out of audit scope for §12.3, but flagged so
   the next pass covers it.)
+
+- **Resolution:** Verify-closed. Postgres is bring-your-own (chart does not provision it; `charts/lenny/values.yaml:496-521`). Volume encryption at rest is the operator's responsibility via the chosen managed service (RDS/CloudSQL/Flexible Server SSE-KMS) or self-managed LUKS/dm-crypt; out of §12.3 audit scope.
 
 ---
 
@@ -25881,23 +25889,31 @@ The impl picked reading 1. Either way the spec is internally inconsistent and th
 
 Spec (line 489) `WarmPoolReplenishmentFailing`: "rate exceeds 1 failure/min for any pool for > 5 min". Impl (`rules.go:915`): `rate(lenny_warmpool_warmup_failure_total[5m]) * 60 > 1` — i.e., `rate(...)[5m]` is /sec, scaled to /min. Same intent, but mathematically `rate × 60 > 1` is equivalent to `rate > 1/60` which is equivalent to "1 per minute averaged over 5 min". Correct. Minor cosmetic concern only.
 
-### - [ ] F-16.5.9 — SLO label `slo` annotation and runbook annotations on the rendered manifest. [Info] — OPEN
+### - [x] F-16.5.9 — SLO label `slo` annotation and runbook annotations on the rendered manifest. [Info] — CLOSED
 
 The impl `RenderPrometheusRule` annotates each rule with `summary`, `description`, `runbook_url`, and `slo` (for burn-rate rules) — matching the spec's reference to "`runbook` key (Section 25.7 Path B)" in §25.13. Spot-checked the rendered `charts/lenny/files/alerting-rules.yaml`: every critical alert carries `runbook_url`; warnings carry it when authored. Note: spec §25.13 uses key name `runbook`, impl emits `runbook_url`. Aligns with Prometheus operator convention and current `kube-prometheus-stack` conventions; not a regression but worth noting if any downstream tool parses for `runbook` key specifically.
 
-### - [ ] F-16.5.10 — 13 counter alerts use raw `> 0` instead of `increase()`/`rate()`, latching after first increment. [Info] — OPEN
+- **Resolution:** Verify-closed. `pkg/alerting/rules/render.go:62-67` emits `runbook_url` and `slo` as annotations on every rule, matching the kube-prometheus-stack convention. Per the finding's own framing this is not a regression.
+
+### - [x] F-16.5.10 — 13 counter alerts use raw `> 0` instead of `increase()`/`rate()`, latching after first increment. [Info] — CLOSED
 
 Alerts (`AuditGrantDrift`, `NetworkPolicyCIDRDrift`, `DataResidencyViolationAttempt`, `SessionEvictionTotalLoss`, `DelegationBudgetKeysExpired`, `LLMUpstreamEgressAnomaly`, `BackupReconcileBlocked`, `LenniOpsLockSplitBrainDetected`, `CredentialProactiveRenewalExhausted`, `OutstandingInflightAtRotationCeiling`, `ErasureJobFailed`, `KmsKeyDeletionFailed`, `OperationStalled`) use raw `<counter> > 0`. Since counters are monotonic, the alert latches firing until the gateway restarts (which zeros the counter). Spec phrasing for these alerts is "incremented" — usually idiomatic for `increase(X[window]) > 0` patterns that auto-resolve. For the high-severity "any non-zero is immediately actionable, manual ack required" cases (`SessionEvictionTotalLoss`, `DelegationBudgetKeysExpired`, `BackupReconcileBlocked`, `LenniOpsLockSplitBrainDetected`) latching is the intent; for the lower-severity warning cases (`CredentialProactiveRenewalExhausted`, `ErasureJobFailed`, `OperationStalled`) it may be the wrong choice — these will fire forever for a single transient occurrence. Spec is silent on which semantics to apply. Flag for design clarification rather than as a defect.
 
-### - [ ] F-16.5.11 — `lenny_inbox_drain_failure_total` alert is `> 0`-by-impl but described as "incremented" in spec. [Info] — OPEN
+- **Resolution:** Verify-closed. Per the finding's own conclusion the latch-vs-auto-resolve choice is a design-clarification flag, not a regression; the spec is silent on which semantics apply per-alert. No code change.
+
+### - [x] F-16.5.11 — `lenny_inbox_drain_failure_total` alert is `> 0`-by-impl but described as "incremented" in spec. [Info] — CLOSED
 
 `InboxDrainFailure` (`rules.go:1188`) uses `increase(lenny_inbox_drain_failure_total[5m]) > 0` — the right `increase()` pattern, matching spec. Confirms F10 is per-alert author choice, not a systematic miss.
 
-### - [ ] F-16.5.12 — `monitoring.openslo.enabled` is documented in §16.10 but the Helm value and templates are absent (officially deferred). [Info] — OPEN
+- **Resolution:** Verify-closed. `pkg/alerting/rules/rules.go:1194-1195` confirms `InboxDrainFailure` uses `increase(lenny_inbox_drain_failure_total[5m]) > 0`, which is the spec-aligned auto-resolving pattern. Positive confirmation, no code change.
+
+### - [x] F-16.5.12 — `monitoring.openslo.enabled` is documented in §16.10 but the Helm value and templates are absent (officially deferred). [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-16.10.1 — Both report the absent OpenSLO export surface (monitoring.openslo.enabled value and templates); F-16.5.12 records it as a deferred dependency of the same gap.
 
 §16.10 promises OpenSLO export when `monitoring.openslo.enabled: true`. `grep openslo charts/lenny/values.yaml` returns no match. `tests/spec-map-exceptions.yaml` records the deferral with `reason: deferred, justification: OpenSLO export is built in Wave 7 (Phase 14.5).` Out of scope for this §16.5 regression audit; record as informational so the dependency is visible alongside §16.5's burn-rate alerts (which are themselves blocked by F3).
+
+- **Resolution:** Verify-closed. `tests/spec-map-exceptions.yaml:96-98` carries the §16.10 deferral with `reason: deferred, justification: OpenSLO export is built in Wave 7 (Phase 14.5)`; the primary gap is tracked under F-16.10.1. Informational dependency note only.
 
 ### Catalog parity summary
 
@@ -26342,9 +26358,11 @@ Evidence:
 - `pkg/observability/audit/catalog_test.go:132-156` — the two completeness tests check spec ↔ catalog parity but not catalog ↔ OCSF parity.
 - `pkg/audit/ocsf/ocsf_test.go` covers the translator's behavior on a handful of event types but does not iterate the §16.7 catalog.
 
-### - [ ] F-16.7.11 — `cross_tenant_read` is emitted but is a §12.3 event, not §16.7 — flagging for completeness. [Info] — OPEN
+### - [x] F-16.7.11 — `cross_tenant_read` is emitted but is a §12.3 event, not §16.7 — flagging for completeness. [Info] — CLOSED
 
 `pkg/gateway/auditstore/translation.go:117` emits `_, err := s.Append(ctx, "platform", "cross_tenant_read", payload, time.Time{})` during OCSF translator's cross-tenant read. This event is correctly attributed to §12.3 (line 141 of `pkg/gateway/auditstore/translation.go`'s comments) and is appropriately not in the §16.7 catalog. Its OCSF mapping is also absent — `ocsf.LookupClass("cross_tenant_read")` returns `false` (no exact, no prefix match). The translator wraps cross-tenant reads with an audit row in the platform tenant, but the row itself cannot be translated to OCSF and would dead-letter. This is a §12.3 gap, not a §16.7 gap; recording it here for the catalog-coverage discussion.
+
+- **Resolution:** Verify-closed. `pkg/gateway/auditstore/translation.go:100-104,117` confirms the `cross_tenant_read` emission cites §12.3 line 141, not §16.7. Per the finding's own conclusion this is a §12.3 catalog-coverage note rather than a §16.7 regression.
 
 Evidence:
 - `pkg/gateway/auditstore/translation.go:117`
@@ -26523,9 +26541,11 @@ grep -nE "lenny_platform_upgrade_available|lenny_backup_storage_used_bytes|lenny
 
 §16.8 line 709 annotates `lenny_audit_chain_integrity_total{state}` as "see §16.1 Audit Integrity", but the corresponding catalog entry at `pkg/observability/metrics/catalog.go:265` and the §16.5 rule `AuditChainIntegrityBroken` do not contradict this; the link is fine. Noting for completeness so it does not get flagged in a sweep — no action.
 
-### - [ ] F-16.8.7 — `lenny-ops` MCP tool names are not metrics [Info] — OPEN
+### - [x] F-16.8.7 — `lenny-ops` MCP tool names are not metrics [Info] — CLOSED
 
 `pkg/ops/mcpmgmt/tools.go` defines several MCP tool identifiers with the `lenny_` prefix (`lenny_health_get`, `lenny_drift_validate`, `lenny_drift_snapshot_refresh`, `lenny_lock_acquire`, `lenny_lock_extend`, `lenny_lock_release`, `lenny_lock_steal`, `lenny_escalation_create`, etc.). A naive `grep "lenny_"` will surface these alongside metric names; they are tool names per §25.12, not Prometheus metrics. They are not implementations of §16.8 entries and should not be conflated.
+
+- **Resolution:** Verify-closed. `pkg/ops/mcp/tools.go:140,219,243,292` (the renamed home of mcpmgmt/tools.go) confirms these are MCP tool identifiers (`Name:` fields in tool definitions), not Prometheus metric series. Per the finding's own framing this is a disambiguation note rather than a regression.
 
 ---
 
