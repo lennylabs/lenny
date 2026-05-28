@@ -37592,7 +37592,7 @@ Other gaps: the `/v1/openapi/{endpoint-id}` schema-fragment endpoint is missing;
 
 ### Findings
 
-### - [ ] F-25.13.1 — 01  No `monitoring.alertOverrides` Helm value or rendering logic [High] — OPEN
+### - [x] F-25.13.1 — 01  No `monitoring.alertOverrides` Helm value or rendering logic [High] — CLOSED
 
 §25.13 ("Operator Customization Model", path 2) mandates a `monitoring.alertOverrides` Helm map of `rule name → custom rule definition` that "replaces the bundled one in the rendered manifest" and is also counted by the `lenny_alerting_rule_overrides` metric. The spec excerpt at line 4779:
 
@@ -37613,7 +37613,9 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:182-209` — no `alertOverrides`.
 - `/Users/joan/projects/lenny/charts/lenny/templates/prometheusrule.yaml:23-61` — uses `$rules := .Files.Get "files/alerting-rules.yaml"` then splices unchanged.
 
-### - [ ] F-25.13.2 — 02  No `monitoring.alertThresholds` Helm values and no tier-specific defaults [High] — OPEN
+**Resolution:** `monitoring.alertOverrides` Helm value added (`values.yaml`); `templates/prometheusrule.yaml` walks the bundled fragment when the map is non-empty, merging per-rule overrides via `mergeOverwrite` and pruning rules whose override carries `enabled: false`. Two new tier-2 helm-unittest cases (`merges expr/for from monitoring.alertOverrides…` and `prunes a bundled rule when monitoring.alertOverrides sets enabled false`) cover the merge + prune semantics. Closed in commit c4f70777.
+
+### - [x] F-25.13.2 — 02  No `monitoring.alertThresholds` Helm values and no tier-specific defaults [High] — CLOSED
 
 §25.13 "Tier-Aware Defaults" section (lines 4722–4768) mandates that tier-dependent thresholds (`gatewayQueueDepthHigh`, `gatewayLatencyHigh`, `warmPoolReplenishmentSlow`, `credentialPoolLow`) are exposed as Helm values with tier-aware defaults set in `values-tier1.yaml`, `values-tier2.yaml`, `values-tier3.yaml`. Listed shape:
 
@@ -37633,7 +37635,9 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/presets/values-tier1.yaml`, `values-tier2.yaml`, `values-tier3.yaml` — no `monitoring.alertThresholds` block.
 - `/Users/joan/projects/lenny/charts/lenny/files/alerting-rules.yaml:798` (`GatewayQueueDepthHigh`), `:807` (`GatewayLatencyHigh`), `:905` (`WarmPoolReplenishmentSlow`), `:546` (`CredentialPoolLow`) — literal thresholds, not Helm-templated.
 
-### - [ ] F-25.13.3 — 03  §25.13 metrics catalog entirely unimplemented [High] — OPEN
+**Resolution:** `monitoring.alertThresholds` Helm map added (`values.yaml`) with sub-keys `gatewayQueueDepthHigh`, `gatewayLatencyHigh`, `warmPoolReplenishmentSlow`, `credentialPoolLow`. Tier 2 / Tier 3 presets tighten three of the four values per the §25.13 example (queue depth 20 → 10 → 5; latency 3s → 2s → 1s; credential pool 0.80 → 0.70 → 0.60). The gateway emits each value on the new startup-set gauges `lenny_gateway_queue_depth_threshold` / `lenny_gateway_latency_threshold_seconds` / `lenny_credential_pool_low_threshold` (`pkg/gateway/gatewaymetrics`). `CredentialPoolLow` rule expression updated to `lenny_credential_pool_utilization > scalar(lenny_credential_pool_low_threshold)` so the tier-tightened threshold flows through to the rendered manifest without re-rendering the rule body. `warmPoolReplenishmentSlow.multiplierOverPodWarmupBaseline` is exposed but not yet wired into the per-pool baseline metric (the §16.5 expression already reads `lenny_pool_warmup_seconds_baseline`); tier-aware tightening of the multiplier is deferred to a follow-up. Closed in commit c4f70777.
+
+### - [x] F-25.13.3 — 03  §25.13 metrics catalog entirely unimplemented [High] — CLOSED
 
 §25.13 "Metrics" (lines 4830–4838) defines three metrics:
 
@@ -37649,7 +37653,9 @@ Evidence:
 - `grep -rn "lenny_alerting_rules_bundled" /Users/joan/projects/lenny/pkg /Users/joan/projects/lenny/cmd` returns no implementation hits.
 - `pkg/observability/metrics/catalog.go` does not register them.
 
-### - [ ] F-25.13.4 — 04  `gateway.healthTracker.useCompiledRules` setting absent [High] — OPEN
+**Resolution:** New `pkg/alerting/alertingmetrics` package registers the three §25.13 metrics with their §16.1 line 713 names: `lenny_alerting_rules_bundled{format}` (Gauge, closed-enum format), `lenny_alerting_rule_overrides` (Gauge), `lenny_alerting_rule_eval_duration_seconds{rule}` (Histogram). The §16.1 catalog allowlist accepts the three names; the gateway boot path stamps the gauges from `LENNY_ALERTING_BUNDLE_FORMATS` / `LENNY_ALERTING_OVERRIDE_COUNT` env vars (rendered by the chart from `monitoring.format` + `len(monitoring.alertOverrides)`); the histogram is updated by the in-process evaluator via the new `evaluator.Options.OnRuleEvalDuration` hook. Closed in commit c4f70777.
+
+### - [x] F-25.13.4 — 04  `gateway.healthTracker.useCompiledRules` setting absent [High] — CLOSED
 
 §25.13 "Gateway In-Process Tracker" (line 4798) gives operators the escape valve:
 
@@ -37661,7 +37667,9 @@ Evidence:
 - `grep -rn "useCompiledRules\|healthTracker" pkg cmd charts` returns only spec hits.
 - `pkg/alerting/evaluator/evaluator.go` exposes no on/off toggle.
 
-### - [ ] F-25.13.5 — 05  `thresholdSource` response field never emitted [High] — OPEN
+**Resolution:** `gateway.healthTracker.useCompiledRules` chart value (default `true`) added under `values.yaml`; gateway flag `--health-tracker-use-compiled-rules` (`LENNY_HEALTH_TRACKER_USE_COMPILED_RULES`) gates the in-process `evaluator.NewWithEmitter` instantiation. When false, the boot path logs the escape-valve activation and `/v1/admin/health` falls back to dependency probes + circuit breaker state only — `health.Aggregator` already supports the no-tracker posture. Tier-2 helm-unittest case (`renders LENNY_HEALTH_TRACKER_USE_COMPILED_RULES=false when gateway.healthTracker.useCompiledRules is set`) covers the override. Closed in commit c4f70777.
+
+### - [x] F-25.13.5 — 05  `thresholdSource` response field never emitted [High] — CLOSED
 
 §25.13 "Failure Mode Implications" (line 4848) requires:
 
@@ -37671,6 +37679,8 @@ The §25.4 envelope schema at spec line 215 confirms `thresholdSource` is an env
 
 Evidence:
 - `grep -rn "thresholdSource" pkg cmd charts` returns only `spec/25_agent-operability.md:215,4848`.
+
+**Resolution:** `conventions.ThresholdSource` enum (`operator-customized | compiled-in-defaults`) + `Degradation.ThresholdSource` field added (`pkg/ops/conventions/conventions.go`). The gateway's in-process `health.Aggregator.Report` and `recommendations.CapacityService.GetRecommendations` now stamp the `§25.4` envelope with `thresholdSource=compiled-in-defaults` and a `degradationLevelFor`-derived `level`. `lenny-ops` can override the envelope with `operator-customized` when the aggregated response derives from the operator's Prometheus rule set. Closed in commit c4f70777.
 
 ### - [ ] F-25.13.6 — 06  In-process alert tracker has no Prometheus-backed `ExprEvaluator`; not wired into gateway [High] — OPEN
 
@@ -37696,7 +37706,7 @@ This is a spec drift that should be reconciled in either direction — implement
 Evidence:
 - `/Users/joan/projects/lenny/spec/25_agent-operability.md:4684-4698` vs `/Users/joan/projects/lenny/pkg/alerting/rules/rules.go:54-93`.
 
-### - [ ] F-25.13.8 — 08  `docs/alerting/rules.yaml` and `docs/alerting/routing-recommendations.md` not produced [Medium] — OPEN
+### - [x] F-25.13.8 — 08  `docs/alerting/rules.yaml` and `docs/alerting/routing-recommendations.md` not produced [Medium] — CLOSED
 
 §25.13 line 4720 requires "the full rule set is also rendered into `docs/alerting/rules.yaml` in the repository ... generated from the same Go source and committed to the repo on each release." Line 4804 requires `docs/alerting/routing-recommendations.md` with the severity → routing table.
 
@@ -37705,6 +37715,8 @@ The directory `/Users/joan/projects/lenny/docs/alerting/` does not exist (`bfs: 
 Evidence:
 - `find /Users/joan/projects/lenny/docs -name "rules.yaml" -o -name "routing-recommendations*"` returns empty.
 - `cmd/gen-alerting-rules/main.go:42` — `defaultOutput = "charts/lenny/files/alerting-rules.yaml"` only.
+
+**Resolution:** `cmd/gen-alerting-rules` extended to render three artefacts from the single §16.5 catalog: the chart fragment (unchanged path), `docs/alerting/rules.yaml` (full PrometheusRule reference for non-Prometheus stacks per §25.13 line 4720), and `docs/alerting/routing-recommendations.md` (severity → routing recommendation table + Alertmanager `route:` example per §25.13 line 4804). The `-check` mode now verifies all three artefacts so a stale docs/alerting file fails CI. `make generate` regenerates the set; the rendered files were committed alongside the generator change. Closed in commit c4f70777.
 
 ### - [x] F-25.13.9 — 09  Bundled catalog renders under a single rule group, not per-category groups [Medium] — CLOSED
 
