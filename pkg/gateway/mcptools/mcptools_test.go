@@ -80,6 +80,31 @@ func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionst
 	return srv, store, reg
 }
 
+// newMCPForInputWithRuntimes builds the MCP server like newMCPForInput
+// and also returns the §5.1 runtime registry + a session event bus so
+// the §8.8 line 869 `one_shot` tests can seed a runtime and read the
+// elicitation_request SSE payload. F-8.8.10.
+func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Server, sessionstore.Store, runtimestore.Store, *inputwait.Registry, *sessionevents.Bus) {
+	t.Helper()
+	store := memstore.New()
+	reg := inputwait.NewRegistry()
+	runtimes := runtimestore.NewMemory()
+	bus := sessionevents.NewBus(0)
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:               store,
+		Executor:            executor.NewEchoExecutor(),
+		Runtimes:            runtimes,
+		Events:              bus,
+		InputWaits:          reg,
+		RequestInputTimeout: timeout,
+		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:              func() string { return "sess_mcp" },
+		TenantID:            "acme",
+	})
+	return srv, store, runtimes, reg, bus
+}
+
 // newMCPForArchive builds the MCP server with a §8.10 tree archive and
 // returns the archive so the cancel_child archiving test can read it.
 func newMCPForArchive(t *testing.T) (*mcp.Server, sessionstore.Store, treearchive.Store) {
@@ -1437,6 +1462,130 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	}
 }
 
+// TestRequestInputOneShotRejectsSecondCall_spec_8_8_869 verifies the
+// §8.8 line 869 enforcement: a `one_shot` runtime's first
+// lenny/request_input call lands; the second is rejected with
+// ONE_SHOT_INPUT_EXHAUSTED. F-8.8.10.
+func TestRequestInputOneShotRejectsSecondCall_spec_8_8_869(t *testing.T) {
+	srv, store, runtimes, reg, _ := newMCPForInputWithRuntimes(t, 50*time.Millisecond)
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt_one", Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionOneShot,
+		},
+	}); err != nil {
+		t.Fatalf("Create runtime: %v", err)
+	}
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_os", TenantID: "acme", State: session.StateRunning, RuntimeRef: "rt_one",
+	}); err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+	// First call: lands, then times out (50ms request_input timeout). The
+	// timeout is what we want — it lets the call return so we can issue
+	// the second call. The Consumed counter has bumped to 1.
+	resp1 := call(t, srv.Handler(), "lenny/request_input",
+		`{"sessionId":"sess_os","requestId":"req-1","parts":[{"type":"text","text":"go?"}]}`)
+	result1, _ := resp1["result"].(map[string]any)
+	env1 := readLennyErrorEnvelope(t, result1)
+	if env1["code"] != "REQUEST_INPUT_TIMEOUT" {
+		t.Fatalf("first call should land then timeout; got code %v", env1["code"])
+	}
+	if got := reg.Consumed("sess_os"); got != 1 {
+		t.Fatalf("Consumed after first call = %d, want 1", got)
+	}
+	// Second call: rejected with ONE_SHOT_INPUT_EXHAUSTED — the channel
+	// is never allocated so the Consumed counter does NOT bump again.
+	resp2 := call(t, srv.Handler(), "lenny/request_input",
+		`{"sessionId":"sess_os","requestId":"req-2","parts":[{"type":"text","text":"again?"}]}`)
+	result2, _ := resp2["result"].(map[string]any)
+	env2 := readLennyErrorEnvelope(t, result2)
+	if env2["code"] != "ONE_SHOT_INPUT_EXHAUSTED" {
+		t.Errorf("second call code = %v, want ONE_SHOT_INPUT_EXHAUSTED (§8.8 line 869)", env2["code"])
+	}
+	details, _ := env2["details"].(map[string]any)
+	if details == nil || details["maxInputRounds"] == nil {
+		t.Errorf("details = %v, want maxInputRounds: 1", details)
+	}
+	if got := reg.Consumed("sess_os"); got != 1 {
+		t.Errorf("Consumed after rejected second call = %d, want 1 (rejection must not bump)", got)
+	}
+}
+
+// TestRequestInputMultiTurnAllowsRepeat_spec_8_8_869 verifies a
+// `multi_turn` runtime is NOT subject to the §8.8 one_shot constraint:
+// a second request_input lands normally. F-8.8.10.
+func TestRequestInputMultiTurnAllowsRepeat_spec_8_8_869(t *testing.T) {
+	srv, store, runtimes, _, _ := newMCPForInputWithRuntimes(t, 30*time.Millisecond)
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt_mt", Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionMultiTurn,
+		},
+	}); err != nil {
+		t.Fatalf("Create runtime: %v", err)
+	}
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_mt", TenantID: "acme", State: session.StateRunning, RuntimeRef: "rt_mt",
+	}); err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		args := fmt.Sprintf(`{"sessionId":"sess_mt","requestId":"req-%d","parts":[{"type":"text","text":"q"}]}`, i)
+		resp := call(t, srv.Handler(), "lenny/request_input", args)
+		result, _ := resp["result"].(map[string]any)
+		env := readLennyErrorEnvelope(t, result)
+		// Both should time out (no responder), neither should be ONE_SHOT_INPUT_EXHAUSTED.
+		if env["code"] == "ONE_SHOT_INPUT_EXHAUSTED" {
+			t.Errorf("multi_turn runtime got ONE_SHOT_INPUT_EXHAUSTED on call %d (§8.8 line 869 only applies to one_shot)", i)
+		}
+	}
+}
+
+// TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869
+// verifies the §8.8 line 869 elicitation_request annotation: a
+// `one_shot` runtime's first request publishes the event with
+// `metadata.maxInputRounds: 1` so client renderers see the constraint
+// alongside the question. A `multi_turn` runtime emits no such
+// metadata field. F-8.8.10.
+func TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869(t *testing.T) {
+	srv, store, runtimes, reg, bus := newMCPForInputWithRuntimes(t, 30*time.Millisecond)
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt_one2", Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionOneShot,
+		},
+	}); err != nil {
+		t.Fatalf("Create runtime: %v", err)
+	}
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_os2", TenantID: "acme", State: session.StateRunning, RuntimeRef: "rt_one2",
+	}); err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+	h := srv.Handler()
+	done := make(chan map[string]any, 1)
+	go func() {
+		done <- call(t, h, "lenny/request_input",
+			`{"sessionId":"sess_os2","requestId":"req-os2","parts":[{"type":"text","text":"pick"}]}`)
+	}()
+	waitPending(t, reg, "sess_os2", "req-os2")
+
+	hist := bus.History("sess_os2", 0)
+	if len(hist) != 1 {
+		t.Fatalf("event history len = %d, want 1: %+v", len(hist), hist)
+	}
+	if !strings.Contains(hist[0].Data, `"maxInputRounds":1`) {
+		t.Errorf("event data = %q, want metadata.maxInputRounds:1 for one_shot runtime", hist[0].Data)
+	}
+	reg.Cancel("sess_os2", "req-os2")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request_input did not return after cancel")
+	}
+}
+
 // TestSendMessageTopologyAcceptsDirectChild — spec §7.2 line 240
 // `direct` scope admits a parent→child message.
 // spec: §7.2 line 240, 373; F-7.2.22.
@@ -1706,6 +1855,88 @@ func TestAwaitChildrenFailedChildCarriesError(t *testing.T) {
 	text := resultText(t, resp)
 	if !strings.Contains(text, `"error"`) {
 		t.Errorf("await_children result %q for a failed child should carry an error", text)
+	}
+}
+
+// TestGetTaskTreeProjectsSessionStateMetadata_spec_8_8_871 verifies
+// that the MCP tree walker stamps the §8.8 lines 871-883 supplementary
+// metadata on tree nodes: a suspended session surfaces as
+// `working + metadata.suspended:true`; a resume_pending session as
+// `working + metadata.resuming:true`. F-8.8.9.
+func TestGetTaskTreeProjectsSessionStateMetadata_spec_8_8_871(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_root_meta", session.StateRunning, "")
+	mkSession(t, store, "sess_susp", session.StateSuspended, "sess_root_meta")
+	mkSession(t, store, "sess_rp", session.StateResumePending, "sess_root_meta")
+	resp := call(t, srv.Handler(), "lenny/get_task_tree", `{"sessionId":"sess_root_meta"}`)
+	text := resultText(t, resp)
+	// Suspended → working + metadata.suspended:true
+	if !strings.Contains(text, `"suspended":true`) {
+		t.Errorf("tree response missing metadata.suspended:true for suspended child: %q", text)
+	}
+	// ResumePending → working + metadata.resuming:true
+	if !strings.Contains(text, `"resuming":true`) {
+		t.Errorf("tree response missing metadata.resuming:true for resume_pending child: %q", text)
+	}
+	// State strings are the §8.8 MCP-protocol projection. The Lenny-native
+	// "running" string never appears for the root or either child.
+	if strings.Contains(text, `"state":"running"`) || strings.Contains(text, `"state":"suspended"`) ||
+		strings.Contains(text, `"state":"resume_pending"`) {
+		t.Errorf("tree response leaked Lenny-native state names instead of MCP projection: %q", text)
+	}
+	if !strings.Contains(text, `"state":"working"`) {
+		t.Errorf("tree response missing MCP-projection state \"working\" for any node: %q", text)
+	}
+}
+
+// TestAwaitChildrenMapsStateToMCPSpelling_spec_8_8_867 verifies that
+// `lenny/await_children` projects the §8.8 line 857 task-level state
+// table at the MCP boundary: `cancelled` → `canceled` (MCP spelling)
+// and `expired` → `failed` (with the §8.8 line 867 `expired:*` error
+// code prefix when the row carries one). F-8.8.7.
+func TestAwaitChildrenMapsStateToMCPSpelling_spec_8_8_867(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_canc", session.StateCancelled, "sess_p")
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_canc"],"mode":"all"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, `"state":"canceled"`) {
+		t.Errorf("await_children for cancelled child = %q, want MCP spelling \"canceled\" (§8.8 line 857)", text)
+	}
+	if strings.Contains(text, `"state":"cancelled"`) {
+		t.Errorf("await_children carried Lenny-native spelling \"cancelled\" instead of MCP \"canceled\": %q", text)
+	}
+}
+
+// TestAwaitChildrenExpiredChildSurfacesFailedWithReasonCode_spec_8_8_867
+// verifies the §8.8 line 867 `expired` → `failed` collapse: the state
+// field uses MCP `failed`, the error.code carries the spec-prescribed
+// `expired:*` prefix (here `expired:deadline` from the watchdog), and
+// the Lenny-native `expired` spelling does not leak through. F-8.8.7
+// / F-8.8.8.
+func TestAwaitChildrenExpiredChildSurfacesFailedWithReasonCode_spec_8_8_867(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_exp", session.StateExpired, "sess_p")
+	if _, err := store.Update(context.Background(), "acme", "sess_exp",
+		func(r *sessionstore.Session) error {
+			r.FailureReason = string(session.FailureExpiredDeadline)
+			return nil
+		}); err != nil {
+		t.Fatalf("stamp FailureReason: %v", err)
+	}
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_exp"],"mode":"all"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, `"state":"failed"`) {
+		t.Errorf("expired child state should collapse to \"failed\" per §8.8 line 867: %q", text)
+	}
+	if strings.Contains(text, `"state":"expired"`) {
+		t.Errorf("Lenny-native \"expired\" leaked to MCP boundary: %q", text)
+	}
+	if !strings.Contains(text, `"code":"expired:deadline"`) {
+		t.Errorf("expired child error.code should carry the §8.8 line 867 prefix \"expired:deadline\": %q", text)
 	}
 }
 

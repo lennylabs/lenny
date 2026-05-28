@@ -47,6 +47,31 @@ func TestTickTerminatesOrphanPastCascadeTimeout(t *testing.T) {
 	}
 }
 
+// TestTickStampsExpiredDeadlineReason_spec_8_8_867 verifies the
+// §8.8 line 867 expiry-reason prefix lands on the row when orphan
+// cleanup drives a child to `expired`. The MCP boundary's taskError
+// fallback then surfaces `expired:deadline` to clients. F-8.8.8.
+func TestTickStampsExpiredDeadlineReason_spec_8_8_867(t *testing.T) {
+	store := memstore.New()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seed(t, store, "sess_root_or", "", session.StateCompleted, base)
+	seed(t, store, "sess_child_or", "sess_root_or", session.StateRunning, base)
+	sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"}, orphancleanup.Options{})
+	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_child_or")
+	if err != nil {
+		t.Fatalf("Get sess_child_or: %v", err)
+	}
+	if row.State != session.StateExpired {
+		t.Fatalf("State = %q, want expired", row.State)
+	}
+	if row.FailureReason != string(session.FailureExpiredDeadline) {
+		t.Errorf("FailureReason = %q, want %q (§8.8 line 867)", row.FailureReason, session.FailureExpiredDeadline)
+	}
+}
+
 func TestTickLeavesOrphanWithinCascadeWindow(t *testing.T) {
 	store := memstore.New()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

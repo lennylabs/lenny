@@ -114,6 +114,53 @@ func ValidTransitions() []Transition {
 	}
 }
 
+// MCPProtocolState projects a §7.2 Lenny session state into the §8.8
+// MCP Tasks surface per the supplementary table (spec §8.8 lines
+// 871–883). It returns the protocol state string and any metadata
+// annotations the §8.8 contract requires.
+//
+//   - Pre-running states (created, finalizing, ready, starting) collapse
+//     to `submitted` per §8.8 line 883.
+//   - `running` → `working`; `input_required` → `input_required`.
+//   - `suspended` → `working` + metadata.suspended=true (§8.8 line 879).
+//   - `resume_pending` → `working` + metadata.resuming=true (§8.8 line 880).
+//   - `awaiting_client_action` → `input_required` (§8.8 line 881).
+//   - `resuming` is internal to the recovery cycle; it is surfaced as
+//     `working` + metadata.resuming=true alongside `resume_pending` so
+//     external observers do not flicker through a transient state.
+//   - Terminal states use the §8.8 line 857 task-level mapping
+//     (`cancelled` → `canceled`, `expired` → `failed`).
+//   - An unknown state returns ("", nil).
+//
+// The metadata map is nil when the surface needs no annotations.
+//
+// spec: §8.8 lines 855-883. F-8.8.9.
+func MCPProtocolState(s State) (string, map[string]any) {
+	switch s {
+	case Created, Finalizing, Ready, Starting:
+		return "submitted", nil
+	case Running:
+		return "working", nil
+	case InputRequired:
+		return "input_required", nil
+	case Suspended:
+		return "working", map[string]any{"suspended": true}
+	case ResumePending, Resuming:
+		return "working", map[string]any{"resuming": true}
+	case AwaitingClientAction:
+		return "input_required", nil
+	case Completed:
+		return "completed", nil
+	case Failed:
+		return "failed", nil
+	case Cancelled:
+		return "canceled", nil
+	case Expired:
+		return "failed", nil
+	}
+	return "", nil
+}
+
 // InvalidTransitionError is returned by IsValid for any edge not present
 // in ValidTransitions(). Callers can errors.As to retrieve the typed
 // value and read From/To for structured logging.

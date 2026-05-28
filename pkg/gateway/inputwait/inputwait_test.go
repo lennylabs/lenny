@@ -69,6 +69,40 @@ func TestCancelRemovesPending(t *testing.T) {
 	r.Cancel("sess-1", "req-absent")
 }
 
+// TestCancelClosesChannelToUnblockWaiter verifies the Registry's
+// cancellation contract: an external Cancel closes the channel the
+// waiter is selecting on so the receive returns with ok=false. The
+// handler treats that as a structured "cancelled" outcome rather than
+// waiting for the §11.3 maxRequestInputWaitSeconds timeout.
+func TestCancelClosesChannelToUnblockWaiter(t *testing.T) {
+	r := inputwait.NewRegistry()
+	ch, err := r.Register("sess-1", "req-1")
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	r.Cancel("sess-1", "req-1")
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Error("Cancel delivered an answer; want a closed channel (ok=false)")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Cancel did not close the channel; waiter is still blocked")
+	}
+}
+
+// TestCancelIsIdempotent verifies a double Cancel does not panic on
+// the close of an already-closed channel.
+func TestCancelIsIdempotent(t *testing.T) {
+	r := inputwait.NewRegistry()
+	if _, err := r.Register("sess-1", "req-1"); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	r.Cancel("sess-1", "req-1")
+	// Must not panic.
+	r.Cancel("sess-1", "req-1")
+}
+
 func TestRequestsAreKeyedBySessionAndID(t *testing.T) {
 	r := inputwait.NewRegistry()
 	// The same request id in two sessions is two distinct requests.
@@ -120,6 +154,86 @@ func TestPendingForSessionListsRegistrations(t *testing.T) {
 	// session-id prefix collisions).
 	if other := r.PendingForSession("sess"); len(other) != 0 {
 		t.Errorf("sess (prefix) returned %v, want nil — session ids are exact-match", other)
+	}
+}
+
+// TestConsumedTracksRegisterAcrossResolveAndCancel exercises the §8.8
+// line 869 per-session lifetime counter. Register bumps it; Resolve
+// and Cancel do not decrement it. spec: §8.8 line 869. F-8.8.10.
+func TestConsumedTracksRegisterAcrossResolveAndCancel_spec_8_8_869(t *testing.T) {
+	r := inputwait.NewRegistry()
+	if got := r.Consumed("sess-1"); got != 0 {
+		t.Errorf("Consumed on empty registry = %d, want 0", got)
+	}
+	if _, err := r.Register("sess-1", "req-1"); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if got := r.Consumed("sess-1"); got != 1 {
+		t.Errorf("Consumed after first Register = %d, want 1", got)
+	}
+	if err := r.Resolve("sess-1", "req-1", "x"); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := r.Consumed("sess-1"); got != 1 {
+		t.Errorf("Consumed after Resolve = %d, want 1 (lifetime counter does not decrement)", got)
+	}
+	if _, err := r.Register("sess-1", "req-2"); err != nil {
+		t.Fatalf("second Register: %v", err)
+	}
+	if got := r.Consumed("sess-1"); got != 2 {
+		t.Errorf("Consumed after second Register = %d, want 2", got)
+	}
+	r.Cancel("sess-1", "req-2")
+	if got := r.Consumed("sess-1"); got != 2 {
+		t.Errorf("Consumed after Cancel = %d, want 2 (lifetime counter does not decrement)", got)
+	}
+}
+
+// TestConsumedIsPerSession verifies the §8.8 counter is partitioned by
+// session id — one session's request_input rounds do not bleed into
+// another's count. spec: §8.8 line 869. F-8.8.10.
+func TestConsumedIsPerSession_spec_8_8_869(t *testing.T) {
+	r := inputwait.NewRegistry()
+	_, _ = r.Register("sess-a", "req-1")
+	_, _ = r.Register("sess-a", "req-2")
+	_, _ = r.Register("sess-b", "req-1")
+	if got := r.Consumed("sess-a"); got != 2 {
+		t.Errorf("sess-a Consumed = %d, want 2", got)
+	}
+	if got := r.Consumed("sess-b"); got != 1 {
+		t.Errorf("sess-b Consumed = %d, want 1", got)
+	}
+	if got := r.Consumed("sess-c"); got != 0 {
+		t.Errorf("sess-c Consumed = %d, want 0", got)
+	}
+}
+
+// TestForgetSessionClearsCounter is the §8.8 line 869 reclaim path the
+// gateway calls on terminal transition. spec: §8.8 line 869. F-8.8.10.
+func TestForgetSessionClearsCounter_spec_8_8_869(t *testing.T) {
+	r := inputwait.NewRegistry()
+	_, _ = r.Register("sess-1", "req-1")
+	r.ForgetSession("sess-1")
+	if got := r.Consumed("sess-1"); got != 0 {
+		t.Errorf("Consumed after ForgetSession = %d, want 0", got)
+	}
+	// A no-op for a session never tracked.
+	r.ForgetSession("sess-unknown")
+}
+
+// TestRegisterDuplicateDoesNotBumpConsumed verifies that a duplicate
+// Register (rejected with ErrDuplicate) does not double-count against
+// the §8.8 lifetime counter. spec: §8.8 line 869. F-8.8.10.
+func TestRegisterDuplicateDoesNotBumpConsumed_spec_8_8_869(t *testing.T) {
+	r := inputwait.NewRegistry()
+	if _, err := r.Register("sess-1", "req-1"); err != nil {
+		t.Fatalf("first Register: %v", err)
+	}
+	if _, err := r.Register("sess-1", "req-1"); !errors.Is(err, inputwait.ErrDuplicate) {
+		t.Fatalf("duplicate Register err = %v, want ErrDuplicate", err)
+	}
+	if got := r.Consumed("sess-1"); got != 1 {
+		t.Errorf("Consumed after duplicate Register = %d, want 1", got)
 	}
 }
 

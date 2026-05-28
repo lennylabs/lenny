@@ -157,6 +157,13 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 				return nil // concurrent transition — leave it alone
 			}
 			r.State = session.StateExpired
+			// spec: §8.8 line 867 — orphan cleanup is a wall-clock
+			// deadline (the cascade window after a root settles), so
+			// the MCP boundary surfaces `failed` with code
+			// `expired:deadline`. F-8.8.8.
+			if r.FailureReason == "" {
+				r.FailureReason = string(session.FailureExpiredDeadline)
+			}
 			return nil
 		})
 		if err != nil {

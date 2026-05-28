@@ -98,6 +98,89 @@ func (t *terminalOnly) OnSessionTerminal(_ context.Context, sess sessionstore.Se
 	t.calls = append(t.calls, sess)
 }
 
+// TestSweepAwaitingClientActionStampsExpiredDeadline_spec_8_8_867
+// verifies the §8.8 line 867 expiry-reason prefix lands on the
+// failureReason column when the watchdog drives an
+// awaiting_client_action row to `expired`. The MCP boundary's
+// taskError.Code fallback then surfaces `expired:deadline` to clients.
+// F-8.8.8.
+func TestSweepAwaitingClientActionStampsExpiredDeadline_spec_8_8_867(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_aw_d", "acme", session.StateAwaitingClientAction, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithTerminalHook(&captureExpiryHook{})
+	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err := store.Get(context.Background(), "acme", "sess_aw_d")
+	if err != nil {
+		t.Fatalf("Get sess_aw_d: %v", err)
+	}
+	if got.State != session.StateExpired {
+		t.Fatalf("State = %q, want expired", got.State)
+	}
+	if got.FailureReason != string(session.FailureExpiredDeadline) {
+		t.Errorf("FailureReason = %q, want %q (§8.8 line 867)", got.FailureReason, session.FailureExpiredDeadline)
+	}
+}
+
+// TestSweepMaxAgeStampsExpiredDeadline_spec_8_8_867 verifies the
+// §8.8 line 867 expiry prefix is stamped when the §11.3 maxSessionAge
+// cap fires. F-8.8.8.
+func TestSweepMaxAgeStampsExpiredDeadline_spec_8_8_867(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_old_d", "acme", session.StateRunning, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithTerminalHook(&captureExpiryHook{})
+	if _, err := w.Tick(context.Background(), born.Add(3*time.Hour)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err := store.Get(context.Background(), "acme", "sess_old_d")
+	if err != nil {
+		t.Fatalf("Get sess_old_d: %v", err)
+	}
+	if got.State != session.StateExpired {
+		t.Fatalf("State = %q, want expired", got.State)
+	}
+	if got.FailureReason != string(session.FailureExpiredDeadline) {
+		t.Errorf("FailureReason = %q, want %q (§8.8 line 867)", got.FailureReason, session.FailureExpiredDeadline)
+	}
+}
+
+// TestSweepDoesNotOverwriteExistingFailureReason_spec_8_8_867 verifies
+// that when an earlier writer has already stamped a non-empty
+// FailureReason on a soon-to-be-expired row, the watchdog leaves the
+// existing value alone. The MCP boundary will surface that earlier
+// reason rather than the watchdog's default deadline prefix. F-8.8.8.
+func TestSweepDoesNotOverwriteExistingFailureReason_spec_8_8_867(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID:            "sess_aw_pre",
+		TenantID:      "acme",
+		State:         session.StateAwaitingClientAction,
+		CreatedAt:     born,
+		UpdatedAt:     born,
+		FailureReason: string(session.FailureExpiredBudget),
+	}); err != nil {
+		t.Fatalf("seed sess_aw_pre: %v", err)
+	}
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithTerminalHook(&captureExpiryHook{})
+	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err := store.Get(context.Background(), "acme", "sess_aw_pre")
+	if err != nil {
+		t.Fatalf("Get sess_aw_pre: %v", err)
+	}
+	if got.FailureReason != string(session.FailureExpiredBudget) {
+		t.Errorf("FailureReason = %q, want %q (pre-stamped reason preserved)", got.FailureReason, session.FailureExpiredBudget)
+	}
+}
+
 func TestTerminalHookWithoutAwaitingNotifierStillFiresTerminal_spec_7_3_25(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

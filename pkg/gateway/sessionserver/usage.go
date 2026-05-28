@@ -17,6 +17,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
+	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
+	taskstate "github.com/lennylabs/lenny/pkg/task/state"
 )
 
 // releaseExecutor tears down a terminal session's executor state. When the
@@ -275,6 +277,15 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 			log.Printf("lenny-gateway: session-log close-hook session=%s: %v", sess.ID, err)
 		}
 	}
+	// spec: §8.8 line 869 — drop the per-session input-rounds counter
+	// the inputwait Registry tracks for the §8.8 line 869 one_shot
+	// constraint. The counter is process-local and only needed while
+	// the session is non-terminal; reclaiming it here keeps a
+	// long-running gateway from accumulating entries for sessions
+	// whose rows are gone. F-8.8.10.
+	if s.inputWaits != nil {
+		s.inputWaits.ForgetSession(sess.ID)
+	}
 	if s.billing == nil {
 		return
 	}
@@ -416,11 +427,16 @@ type archivedTaskResult sessionstore.Session
 
 // MarshalJSON renders the §8.8 TaskResult fields v1 records: identity,
 // terminal state, and an error code for a non-completed terminal state.
+// The `state` field uses the §8.8 line 857 MCP protocol spelling so a
+// resumed parent rebuilding the TaskResult from the archive sees the
+// same value it would see if the session row were still live (e.g.,
+// `canceled` for cancelled, `failed` for expired). F-8.8.7.
+// spec: §8.8 lines 855-867.
 func (a archivedTaskResult) MarshalJSON() ([]byte, error) {
 	body := map[string]any{
 		"schemaVersion": 1,
 		"taskId":        a.ID,
-		"state":         string(a.State),
+		"state":         mcpStateForSession(a.State),
 	}
 	if a.State != session.StateCompleted {
 		code := a.FailureReason
@@ -433,4 +449,26 @@ func (a archivedTaskResult) MarshalJSON() ([]byte, error) {
 		}
 	}
 	return json.Marshal(body)
+}
+
+// mcpStateForSession mirrors the §8.8 MCP projection used by the MCP
+// taskResult builder so an archived row produces the same protocol
+// state string a live row produces. The session-level supplementary
+// table is delegated to sessionstate.MCPProtocolState; the task-level
+// table is delegated to taskstate.MCPProtocolState. F-8.8.7.
+func mcpStateForSession(s session.State) string {
+	switch s {
+	case session.StateInputRequired:
+		return taskstate.MCPProtocolState(taskstate.InputRequired)
+	case session.StateCompleted:
+		return taskstate.MCPProtocolState(taskstate.Completed)
+	case session.StateFailed:
+		return taskstate.MCPProtocolState(taskstate.Failed)
+	case session.StateCancelled:
+		return taskstate.MCPProtocolState(taskstate.Cancelled)
+	case session.StateExpired:
+		return taskstate.MCPProtocolState(taskstate.Expired)
+	}
+	proto, _ := sessionstate.MCPProtocolState(sessionstate.State(s))
+	return proto
 }

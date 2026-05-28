@@ -24,14 +24,29 @@ var (
 
 // Registry tracks pending lenny/request_input calls keyed by
 // (sessionID, requestID). It is goroutine-safe.
+//
+// The Registry also maintains a per-session lifetime counter of
+// lenny/request_input rounds the session has consumed (`Consumed`).
+// The counter is monotonically non-decreasing for a session — Register
+// increments it on every accepted request, regardless of subsequent
+// Resolve / Cancel — so the gateway can enforce the §8.8 line 869
+// `one_shot` constraint: a runtime whose `capabilities.interaction:
+// one_shot` declaration limits it to a single `request_input` call
+// over the task lifetime. The counter is process-local; a one_shot
+// runtime is short-lived by definition so v1 in-memory tracking is
+// sufficient for the §8.8 contract. spec: §8.8 line 869. F-8.8.10.
 type Registry struct {
-	mu      sync.Mutex
-	pending map[string]chan string
+	mu       sync.Mutex
+	pending  map[string]chan string
+	consumed map[string]int
 }
 
 // NewRegistry returns an empty Registry.
 func NewRegistry() *Registry {
-	return &Registry{pending: map[string]chan string{}}
+	return &Registry{
+		pending:  map[string]chan string{},
+		consumed: map[string]int{},
+	}
 }
 
 // key joins a session and request id into a registry key. The NUL
@@ -44,7 +59,9 @@ func key(sessionID, requestID string) string {
 // Register records a pending request and returns the channel its
 // answer arrives on. The channel is buffered so a Resolve call never
 // blocks even when the waiter has already left. ErrDuplicate is
-// returned when (sessionID, requestID) is already pending.
+// returned when (sessionID, requestID) is already pending. Register
+// also bumps the §8.8 per-session lifetime counter so a Consumed()
+// caller can detect a second request before allocating a channel.
 func (r *Registry) Register(sessionID, requestID string) (<-chan string, error) {
 	k := key(sessionID, requestID)
 	r.mu.Lock()
@@ -54,7 +71,29 @@ func (r *Registry) Register(sessionID, requestID string) (<-chan string, error) 
 	}
 	ch := make(chan string, 1)
 	r.pending[k] = ch
+	r.consumed[sessionID]++
 	return ch, nil
+}
+
+// Consumed returns the cumulative count of lenny/request_input rounds
+// the session has registered over its lifetime. The counter is
+// monotonically non-decreasing — Resolve and Cancel do not decrement.
+// Returns zero when the session has never registered a request.
+// spec: §8.8 line 869. F-8.8.10.
+func (r *Registry) Consumed(sessionID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.consumed[sessionID]
+}
+
+// ForgetSession drops the per-session counter for sessionID. Callers
+// invoke it on session terminal transition so a long-running gateway
+// process does not accumulate counters for sessions whose rows have
+// been reclaimed. A no-op when the session is not tracked.
+func (r *Registry) ForgetSession(sessionID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.consumed, sessionID)
 }
 
 // Resolve delivers answer to the request's waiter and removes the
@@ -72,14 +111,21 @@ func (r *Registry) Resolve(sessionID, requestID, answer string) error {
 	return nil
 }
 
-// Cancel removes a pending request without delivering an answer. It is
-// the cleanup path for a waiter that stopped waiting on a timeout or a
-// cancelled context. Cancel is a no-op when no request matches.
+// Cancel removes a pending request without delivering an answer and
+// closes the channel so the waiter unblocks with the zero value. The
+// blocked tool handler distinguishes a real Resolve (ok=true on
+// receive) from a Cancel (ok=false on a closed channel) so it can
+// translate the latter into a structured cancellation error rather
+// than treating it as an empty answer. Cancel is idempotent: a second
+// call (or a race with Resolve) finds no entry and returns silently.
 func (r *Registry) Cancel(sessionID, requestID string) {
 	k := key(sessionID, requestID)
 	r.mu.Lock()
-	delete(r.pending, k)
-	r.mu.Unlock()
+	defer r.mu.Unlock()
+	if ch, ok := r.pending[k]; ok {
+		close(ch)
+		delete(r.pending, k)
+	}
 }
 
 // Pending reports whether a request is registered for (sessionID,

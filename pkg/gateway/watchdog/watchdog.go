@@ -658,6 +658,13 @@ func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string,
 				return nil
 			}
 			r.State = session.StateExpired
+			// spec: §8.8 line 867 — stamp the `expired:deadline` prefix
+			// on the row so the MCP adapter surfaces `failed` with the
+			// `expired:*` error code. The awaiting-client-action sweep
+			// is the §7.3 line 423 wall-clock deadline. F-8.8.8.
+			if r.FailureReason == "" {
+				r.FailureReason = string(session.FailureExpiredDeadline)
+			}
 			return nil
 		})
 		if err != nil {
@@ -708,6 +715,12 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 				return nil
 			}
 			r.State = session.StateExpired
+			// spec: §8.8 line 867 — stamp the `expired:deadline` prefix
+			// for the §11.3 maxSessionAge cap so the MCP adapter
+			// surfaces `failed` with the `expired:*` error code. F-8.8.8.
+			if r.FailureReason == "" {
+				r.FailureReason = string(session.FailureExpiredDeadline)
+			}
 			return nil
 		})
 		if err != nil {

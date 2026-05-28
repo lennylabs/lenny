@@ -75,6 +75,74 @@ func TestIsTerminal(t *testing.T) {
 	}
 }
 
+// TestMCPProtocolStateSessionMapping_spec_8_8_871 covers the §8.8
+// lines 871-883 supplementary table: pre-running session states
+// collapse to `submitted`, `suspended`/`resume_pending`/`resuming` map
+// to `working` with the canonical metadata annotation,
+// `awaiting_client_action` collapses to `input_required`, and the
+// terminal + `input_required` states use the §8.8 line 857 task-level
+// table. spec: §8.8 lines 855-883. F-8.8.9.
+func TestMCPProtocolStateSessionMapping_spec_8_8_871(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in       state.State
+		want     string
+		metaKey  string
+		metaWant any
+	}{
+		{state.Created, "submitted", "", nil},
+		{state.Finalizing, "submitted", "", nil},
+		{state.Ready, "submitted", "", nil},
+		{state.Starting, "submitted", "", nil},
+		{state.Running, "working", "", nil},
+		{state.InputRequired, "input_required", "", nil},
+		{state.Suspended, "working", "suspended", true},
+		{state.ResumePending, "working", "resuming", true},
+		{state.Resuming, "working", "resuming", true},
+		{state.AwaitingClientAction, "input_required", "", nil},
+		{state.Completed, "completed", "", nil},
+		{state.Failed, "failed", "", nil},
+		{state.Cancelled, "canceled", "", nil}, // MCP spelling
+		{state.Expired, "failed", "", nil},     // expired collapses to failed
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(string(c.in), func(t *testing.T) {
+			t.Parallel()
+			got, meta := state.MCPProtocolState(c.in)
+			if got != c.want {
+				t.Errorf("MCPProtocolState(%q) state = %q, want %q", c.in, got, c.want)
+			}
+			if c.metaKey == "" {
+				if meta != nil {
+					t.Errorf("MCPProtocolState(%q) meta = %v, want nil", c.in, meta)
+				}
+				return
+			}
+			if meta == nil {
+				t.Fatalf("MCPProtocolState(%q) meta = nil, want %q=%v", c.in, c.metaKey, c.metaWant)
+			}
+			if got := meta[c.metaKey]; got != c.metaWant {
+				t.Errorf("MCPProtocolState(%q) meta[%q] = %v, want %v", c.in, c.metaKey, got, c.metaWant)
+			}
+		})
+	}
+}
+
+// TestMCPProtocolStateUnknownStateReturnsEmpty_spec_8_8_871 verifies an
+// out-of-band state value yields ("", nil) so a malformed input does
+// not propagate a misleading default. F-8.8.9.
+func TestMCPProtocolStateUnknownStateReturnsEmpty_spec_8_8_871(t *testing.T) {
+	t.Parallel()
+	got, meta := state.MCPProtocolState(state.State("not-a-real-state"))
+	if got != "" {
+		t.Errorf("MCPProtocolState(unknown) state = %q, want empty", got)
+	}
+	if meta != nil {
+		t.Errorf("MCPProtocolState(unknown) meta = %v, want nil", meta)
+	}
+}
+
 // spec: 7.2
 // diagnosis: IsValid rejected a transition listed in ValidTransitions(),
 //

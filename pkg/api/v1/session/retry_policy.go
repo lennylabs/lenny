@@ -236,6 +236,28 @@ const (
 	// FailureSetupCommandFailed is the §7.3 line 385 default-non-
 	// retryable label for a non-zero exit from a §7.5 setup command.
 	FailureSetupCommandFailed FailureReason = "setup_command_failed"
+
+	// FailureExpiredDeadline marks a session driven to `expired` by a
+	// §11.3 / §7.3 deadline sweep — the platform-wide `maxSessionAge`
+	// cap, the `awaiting_client_action` inactivity deadline, the orphan
+	// cleanup window, and any other watchdog edge whose proximate cause
+	// is wall-clock elapsed time. The §8.8 MCP adapter surfaces this as
+	// `failed` with error code `expired:deadline` so external clients
+	// can distinguish time-driven expiry from budget/lease expiry.
+	// spec: §8.8 line 867.
+	FailureExpiredDeadline FailureReason = "expired:deadline"
+
+	// FailureExpiredBudget marks a session driven to `expired` because
+	// a §8.1 token / cost / call budget was exhausted. The §8.8 MCP
+	// adapter surfaces this as `failed` with error code
+	// `expired:budget`. spec: §8.8 line 867.
+	FailureExpiredBudget FailureReason = "expired:budget"
+
+	// FailureExpiredLease marks a session driven to `expired` because a
+	// §4.9 credential lease or §8.7 delegation lease expired. The §8.8
+	// MCP adapter surfaces this as `failed` with error code
+	// `expired:lease`. spec: §8.8 line 867.
+	FailureExpiredLease FailureReason = "expired:lease"
 )
 
 // DefaultRetryableFailures is the §7.3 line 384 platform default the

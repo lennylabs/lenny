@@ -59,7 +59,42 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
+	taskstate "github.com/lennylabs/lenny/pkg/task/state"
 )
+
+// mcpStateForSession returns the §8.8 MCP-protocol state spelling for
+// a §7.2 session-level Lenny state. Terminal and `input_required`
+// states route through the §8.8 line 857 task-level table; all other
+// session-level states fall through to the §8.8 line 871-883
+// supplementary table. F-8.8.7.
+// spec: §8.8 lines 857-883.
+func mcpStateForSession(s session.State) string {
+	proto, _ := nodeProtocolState(s)
+	return proto
+}
+
+// nodeProtocolState returns the §8.8 MCP-protocol state spelling and
+// any supplementary-table metadata annotations for a §7.2 session-level
+// Lenny state. The metadata map is nil when no annotation applies (the
+// caller omits the `metadata` field from the wire payload via the
+// `omitempty` JSON tag). F-8.8.7 / F-8.8.9.
+// spec: §8.8 lines 855-883.
+func nodeProtocolState(s session.State) (string, map[string]any) {
+	switch s {
+	case session.StateInputRequired:
+		return taskstate.MCPProtocolState(taskstate.InputRequired), nil
+	case session.StateCompleted:
+		return taskstate.MCPProtocolState(taskstate.Completed), nil
+	case session.StateFailed:
+		return taskstate.MCPProtocolState(taskstate.Failed), nil
+	case session.StateCancelled:
+		return taskstate.MCPProtocolState(taskstate.Cancelled), nil
+	case session.StateExpired:
+		return taskstate.MCPProtocolState(taskstate.Expired), nil
+	}
+	return sessionstate.MCPProtocolState(sessionstate.State(s))
+}
 
 // DelegationAuditor records §11.7 audit events for delegation
 // operations such as the §10.6 isolation-monotonicity violation.
@@ -816,14 +851,31 @@ func Register(srv *mcp.Server, deps Deps) {
 			// §11.3 / §5.1 limits.maxRequestInputWaitSeconds: the session's
 			// runtime may declare a per-runtime wait cap that overrides the
 			// platform default. Resolve the effective runtime so a derived
-			// runtime's merged Override value applies.
+			// runtime's merged Override value applies. The same lookup
+			// resolves the runtime's §5.1 capabilities.interaction so the
+			// §8.8 line 869 `one_shot` input-round constraint can fire
+			// before a channel is allocated. F-8.8.10.
 			callTimeout := requestInputTimeout
+			oneShot := false
 			if deps.Runtimes != nil && row.RuntimeRef != "" {
 				if rt, rerr := runtimestore.Resolve(ctx, deps.Runtimes, row.RuntimeRef); rerr == nil {
 					if rt.Limits != nil && rt.Limits.MaxRequestInputWaitSeconds > 0 {
 						callTimeout = time.Duration(rt.Limits.MaxRequestInputWaitSeconds) * time.Second
 					}
+					if rt.Capabilities != nil && rt.Capabilities.Interaction == runtimestore.InteractionOneShot {
+						oneShot = true
+					}
 				}
+			}
+			// spec: §8.8 line 869 — a `one_shot` runtime may use
+			// lenny/request_input at most once per task. The second
+			// attempt is rejected with ONE_SHOT_INPUT_EXHAUSTED. The
+			// gateway enforces the constraint regardless of whether
+			// the client read the maxInputRounds annotation. F-8.8.10.
+			if oneShot && deps.InputWaits.Consumed(sessionID) >= 1 {
+				return mcp.ToolResult{}, mcp.NewToolError("ONE_SHOT_INPUT_EXHAUSTED",
+					fmt.Sprintf("one_shot runtime %q has already consumed its single request_input round (§8.8 line 869)", row.RuntimeRef),
+					map[string]any{"sessionId": sessionID, "runtimeRef": row.RuntimeRef, "maxInputRounds": 1})
 			}
 			ch, err := deps.InputWaits.Register(sessionID, requestID)
 			if err != nil {
@@ -837,17 +889,38 @@ func Register(srv *mcp.Server, deps Deps) {
 			// `parts` array (rather than the legacy flat `prompt`) so
 			// rendering surfaces can re-use the same OutputPart visitor
 			// the runtime adapter applies. F-8.5.12.
+			//
+			// spec: §8.8 line 869 — a `one_shot` runtime's
+			// elicitation_request carries `metadata.maxInputRounds: 1`
+			// so a client surface that renders the SSE payload sees the
+			// constraint alongside the question itself. The annotation
+			// is informational; enforcement runs above. F-8.8.10.
 			if deps.Events != nil {
-				data, _ := json.Marshal(struct {
+				payload := struct {
 					RequestID string            `json:"requestId"`
 					Parts     []json.RawMessage `json:"parts"`
-				}{RequestID: requestID, Parts: in.Parts})
+					Metadata  map[string]any    `json:"metadata,omitempty"`
+				}{RequestID: requestID, Parts: in.Parts}
+				if oneShot {
+					payload.Metadata = map[string]any{"maxInputRounds": 1}
+				}
+				data, _ := json.Marshal(payload)
 				deps.Events.Publish(sessionID, "elicitation_request", string(data), clock())
 			}
 			// Block in the §7.2 input_required sub-state until a peer
-			// resolves the request or the §11.3 timeout fires.
+			// resolves the request, an external Cancel closes the
+			// channel, or the §11.3 timeout fires. A closed channel
+			// (ok=false) is the inputwait Registry's cancellation
+			// signal; surface it as the canonical
+			// REQUEST_INPUT_CANCELLED tool error so the runtime
+			// distinguishes a peer-cancelled prompt from a real timeout.
 			select {
-			case answer := <-ch:
+			case answer, ok := <-ch:
+				if !ok {
+					return mcp.ToolResult{}, mcp.NewToolError("REQUEST_INPUT_CANCELLED",
+						fmt.Sprintf("request_input %s was cancelled", requestID),
+						map[string]any{"requestId": requestID, "sessionId": sessionID})
+				}
 				body, _ := json.Marshal(struct {
 					RequestID string `json:"requestId"`
 					Answer    string `json:"answer"`
@@ -1817,11 +1890,18 @@ type memoryResult struct {
 // `runtimeRef`". The REST surface (sessionserver.TreeNode) carries the
 // same three fields; per §15.2.1 the MCP and REST projections of the
 // same operation must remain semantically equivalent.
+//
+// `state` carries the §8.8 MCP-protocol spelling (e.g., `canceled`,
+// `working`, `failed` for `expired`). `metadata` carries the §8.8 line
+// 871-883 supplementary table annotations — `suspended: true` for the
+// `suspended` session state and `resuming: true` for `resume_pending`
+// / `resuming`. The map is omitted when no annotation applies. F-8.8.9.
 type treeNode struct {
-	SessionID  string     `json:"sessionId"`
-	State      string     `json:"state"`
-	RuntimeRef string     `json:"runtimeRef,omitempty"`
-	Children   []treeNode `json:"children"`
+	SessionID  string         `json:"sessionId"`
+	State      string         `json:"state"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	RuntimeRef string         `json:"runtimeRef,omitempty"`
+	Children   []treeNode     `json:"children"`
 }
 
 // discoveredRuntime is one entry in the lenny/list_runtimes result. It
@@ -2047,8 +2127,11 @@ type taskError struct {
 }
 
 // toTaskResult builds the §8.8 TaskResult for a settled child session.
+// spec: §8.8 line 855-867 — the MCP state field uses the protocol
+// spelling (`canceled`, `failed` for `expired`); the Lenny-native row
+// state is translated through state.MCPProtocolState at this boundary.
 func toTaskResult(s sessionstore.Session) taskResult {
-	tr := taskResult{SchemaVersion: 1, TaskID: s.ID, State: string(s.State)}
+	tr := taskResult{SchemaVersion: 1, TaskID: s.ID, State: mcpStateForSession(s.State)}
 	if s.State != session.StateCompleted {
 		code := s.FailureReason
 		if code == "" {
@@ -2160,9 +2243,15 @@ func buildTree(wctx treeWalkContext, root sessionstore.Session, all []sessionsto
 func walk(wctx treeWalkContext, s sessionstore.Session, byParent map[string][]sessionstore.Session, seen map[string]bool) treeNode {
 	// spec: §8.5 line 530 — every tree node carries `runtimeRef` so the
 	// MCP projection matches the REST `/tree` surface.
+	// spec: §8.8 lines 855-883 — `state` uses the §8.8 MCP protocol
+	// spelling, and the supplementary table's `metadata.suspended` /
+	// `metadata.resuming` annotations ride on the optional metadata
+	// field for non-terminal session states. F-8.8.7 / F-8.8.9.
+	protoState, meta := nodeProtocolState(s.State)
 	node := treeNode{
 		SessionID:  s.ID,
-		State:      string(s.State),
+		State:      protoState,
+		Metadata:   meta,
 		RuntimeRef: s.RuntimeRef,
 		Children:   []treeNode{},
 	}
