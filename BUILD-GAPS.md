@@ -29901,7 +29901,7 @@ misconfigurations may cause runtime failures."` printed when
 
 ---
 
-### - [ ] F-17.6.21 — Helm chart signing pipeline and image-signing pipeline are present and well-aligned with the spec [Info] — OPEN
+### - [x] F-17.6.21 — Helm chart signing pipeline and image-signing pipeline are present and well-aligned with the spec [Info] — CLOSED
 
 `.github/workflows/release.yml` correctly implements:
 
@@ -29921,9 +29921,15 @@ signatures. This is the strongest part of the §17.6 implementation.
 **Files:**
 - `/Users/joan/projects/lenny/.github/workflows/release.yml`
 
+**Resolution:** Verify-closed positive observation. Re-confirmed
+keyless cosign signing (lines 122-157), CycloneDX SBOM (160-184), PGP
+helm signing key export (315), SHA256SUMS manifest (382), and the
+release-notes verify block (398-401). Duplicate of F-24.0.11. No code
+change.
+
 ---
 
-### - [ ] F-17.6.22 — Tier presets and answer files match the spec's §17.8.4 / §17.9 expectations [Info] — OPEN
+### - [x] F-17.6.22 — Tier presets and answer files match the spec's §17.8.4 / §17.9 expectations [Info] — CLOSED
 
 `charts/lenny/presets/{values-tier1,values-tier2,values-tier3}.yaml` and
 `charts/lenny/answers/{tier1-local,tier2-prod,tier3-prod}.yaml` are present
@@ -29934,6 +29940,12 @@ phase (M2) the suggestion is hard-coded to the operator-supplied tier.
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/presets/`
 - `/Users/joan/projects/lenny/charts/lenny/answers/`
+
+**Resolution:** Verify-closed positive observation. Re-confirmed
+three preset files (`values-tier1.yaml`, `values-tier2.yaml`,
+`values-tier3.yaml`) plus three answer files (`tier1-local.yaml`,
+`tier2-prod.yaml`, `tier3-prod.yaml`); the detection-phase gap is
+tracked under §17.6/§17.9 M2. No code change.
 
 ---
 
@@ -31451,7 +31463,7 @@ at a mirror.
 
 ---
 
-### - [ ] F-17.9.20 — Gateway and controllers correctly do not branch on backend selection; the design principle in §17.9 (line 1342) is honoured in runtime code [Info] — OPEN
+### - [x] F-17.9.20 — Gateway and controllers correctly do not branch on backend selection; the design principle in §17.9 (line 1342) is honoured in runtime code [Info] — CLOSED
 
 **Spec:** §17.9 line 1342: "Helm values select the active backends; the
 gateway and controllers are unaware of which backend is active."
@@ -31471,9 +31483,14 @@ design intent is preserved in the runtime layer.
 - `/Users/joan/projects/lenny/pkg/gateway/*/pgstore/` (single Postgres
   store layer across all backend modes)
 
+**Resolution:** Verify-closed positive observation. Re-confirmed that
+`grep -rn 'backend.*branch\|if backends\|backends ==' pkg/gateway/
+pkg/controller/` returns no matches, and the URL-scheme dispatch
+remains in `pkg/objectstore/objectstore.go:9-69`. No code change.
+
 ---
 
-### - [ ] F-17.9.21 — Embedded Mode (§17.9.6) is well-implemented; `lenny up` brings up Postgres, miniredis, OIDC, k3s, and the local-disk artifact store [Info] — OPEN
+### - [x] F-17.9.21 — Embedded Mode (§17.9.6) is well-implemented; `lenny up` brings up Postgres, miniredis, OIDC, k3s, and the local-disk artifact store [Info] — CLOSED
 
 **Spec:** §17.9.6 (line 1534) names Embedded Mode as the laptop
 deployment: embedded Postgres, in-process Redis, local-disk artifact
@@ -31503,9 +31520,14 @@ implementation.
 - `/Users/joan/projects/lenny/pkg/embedded/k3s/`
 - `/Users/joan/projects/lenny/pkg/objectstore/file.go`
 
+**Resolution:** Verify-closed positive observation. Re-confirmed all
+five embedded packages (`postgres`, `redis`, `k3s`, `oidc`, `tlsgen`)
+exist with their `_test.go` companions and `pkg/objectstore/file.go`
+implements `file://` scheme dispatch. No code change.
+
 ---
 
-### - [ ] F-17.9.22 — The `tier1-local.yaml` answer file is a workable analogue of the spec's `laptop.yaml` [Info] — OPEN
+### - [x] F-17.9.22 — The `tier1-local.yaml` answer file is a workable analogue of the spec's `laptop.yaml` [Info] — CLOSED
 
 **Spec:** §17.9.2 row for `laptop.yaml`: "cluster=`laptop`,
 backends=`embedded`, environment=`local`, tier=`tier1`. Used as-is;
@@ -31523,9 +31545,14 @@ reason).
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/answers/tier1-local.yaml`
 
+**Resolution:** Verify-closed positive observation. Re-confirmed
+`charts/lenny/answers/tier1-local.yaml` exists alongside README,
+`tier2-prod.yaml`, `tier3-prod.yaml`; the naming-divergence note is
+captured under §17.9 medium gaps (M2 detection). No code change.
+
 ---
 
-### - [ ] F-17.9.23 — `migrations/0002_rls_immutability_roles.up.sql` creates `lenny_tenant_guard` unconditionally on the tenant-scoped tables documented in §12.3 [Info] — OPEN
+### - [x] F-17.9.23 — `migrations/0002_rls_immutability_roles.up.sql` creates `lenny_tenant_guard` unconditionally on the tenant-scoped tables documented in §12.3 [Info] — CLOSED
 
 The trigger is present from the first install and applied to the
 documented tables. The gap noted in H2 is the spec's expectation that
@@ -31535,6 +31562,12 @@ that the gateway verify the trigger at startup based on
 
 **Files:**
 - `/Users/joan/projects/lenny/migrations/0002_rls_immutability_roles.up.sql:36-126`
+
+**Resolution:** Verify-closed positive observation. Re-confirmed
+`CREATE FUNCTION lenny_tenant_guard()` at line 36 plus 5 `CREATE
+TRIGGER lenny_tenant_guard` statements (lines 112-126). The
+conditional-creation gap is tracked under §17.9 H2 (cloud-pooler
+hardening). No code change.
 
 ---
 
@@ -32006,17 +32039,32 @@ end
 
 If the spec contract is honored and the formula is renamed to `lenny-ctl` (HIGH-2), this test block will need to update to assert `lenny-ctl version` or `lenny-ctl --version` succeeds. Tracked here for completeness; the substantive gap is HIGH-2.
 
-### - [ ] F-24.0.11 — 1 — Helm chart, image cosign signing, and CycloneDX SBOM attestation are implemented well beyond the §24.0 mandate [Info] — OPEN
+### - [x] F-24.0.11 — 1 — Helm chart, image cosign signing, and CycloneDX SBOM attestation are implemented well beyond the §24.0 mandate [Info] — CLOSED
 
 `release.yml:83-186` and the helm-chart job (`release.yml:260-330`) implement keyless cosign signing of every platform image, attach CycloneDX SBOM attestations, and produce a PGP-signed Helm chart (`.tgz` + `.prov`). These exceed §24.0's mandates (§24.0 only requires CLI-binary signing) and are tightly aligned with §17.6 / §18.33. Noteworthy because the supply-chain coverage for platform components is strong while the CLI-binary half is the weakest link (see HIGH-3).
 
-### - [ ] F-24.0.12 — 2 — Per-platform krew matrix coverage matches the spec set [Info] — OPEN
+**Resolution:** Verify-closed positive observation. Re-confirmed
+`cosign sign` (release.yml:149-157), CycloneDX SBOM attestation
+(`anchore/sbom-action` + `cosign attest --type cyclonedx`, lines
+160-184), PGP-signed Helm chart artifacts (line 315), and the
+release-notes `cosign verify` block (lines 398-401). No code change.
+
+### - [x] F-24.0.12 — 2 — Per-platform krew matrix coverage matches the spec set [Info] — CLOSED
 
 The krew manifest (`packaging/krew/lenny.yaml:39-73`) and the CLI build matrix (`release.yml:200-206`) both cover `darwin/amd64`, `darwin/arm64`, `linux/amd64`, `linux/arm64`, `windows/amd64`. The spec ("signed binaries for Linux, macOS, and Windows") is satisfied at the platform-matrix level.
 
-### - [ ] F-24.0.13 — 3 — Krew binary file is correctly named `kubectl-lenny` (§17.6 ¶2 invariant respected at build time) [Info] — OPEN
+**Resolution:** Verify-closed positive observation. Re-confirmed five
+`os: {darwin,linux,windows}` rows with `amd64`/`arm64` archives at
+`packaging/krew/lenny.yaml:41-71`. No code change.
+
+### - [x] F-24.0.13 — 3 — Krew binary file is correctly named `kubectl-lenny` (§17.6 ¶2 invariant respected at build time) [Info] — CLOSED
 
 `release.yml:230-232, 236-239` produce a binary literally named `kubectl-lenny` (with `.exe` on Windows) and ship it inside the krew archives. The build-time half of the §17.6 binary-naming contract holds. The verification half (HIGH-5) is the gap.
+
+**Resolution:** Verify-closed positive observation. Re-confirmed
+`-o "${out}/kubectl-lenny${{ matrix.goos == 'windows' && '.exe' || ''}}"`
+at release.yml:231 and the matching tar/zip naming at lines 236-239.
+The verification-half gap is tracked under §24.0 HIGH-5. No code change.
 
 ### Summary
 
