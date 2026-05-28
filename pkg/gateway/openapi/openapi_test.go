@@ -104,6 +104,8 @@ func TestDocumentMatchesEndpoints(t *testing.T) {
 		"/v1/admin/pools/{name}",
 		"/v1/admin/connectors",
 		"/v1/admin/connectors/{id}",
+		"/v1/admin/connectors/{id}/oauth/authorize",
+		"/v1/admin/connectors/oauth/callback",
 		"/v1/admin/circuit-breakers",
 		"/v1/admin/circuit-breakers/{name}",
 		"/v1/admin/circuit-breakers/{name}/open",
@@ -194,6 +196,33 @@ func TestHandlerKeepsEmbeddedVersionWhenBuildVersionIsEmptyOrDev_spec_15_1_589(t
 		if ver == "" {
 			t.Errorf("info.version unexpectedly empty for buildVersion %q", v)
 		}
+	}
+}
+
+// spec: §9.3 lines 144-158 — the §13 openapi-to-mcp tool generator
+// consumes the OpenAPI document; the connector OAuth authorize +
+// callback routes must be declared so the OAuth flow surfaces as a
+// generated tool and external SDK consumers can see it. F-9.3.14.
+func TestConnectorOAuthEndpointsDeclaredInDocument_spec_9_3_157(t *testing.T) {
+	doc := openapi.Document()
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	paths, _ := parsed["paths"].(map[string]any)
+	authorize, ok := paths["/v1/admin/connectors/{id}/oauth/authorize"].(map[string]any)
+	if !ok {
+		t.Fatal("missing /v1/admin/connectors/{id}/oauth/authorize")
+	}
+	if _, ok := authorize["post"]; !ok {
+		t.Error("authorize endpoint missing POST verb")
+	}
+	callback, ok := paths["/v1/admin/connectors/oauth/callback"].(map[string]any)
+	if !ok {
+		t.Fatal("missing /v1/admin/connectors/oauth/callback")
+	}
+	if _, ok := callback["get"]; !ok {
+		t.Error("callback endpoint missing GET verb")
 	}
 }
 

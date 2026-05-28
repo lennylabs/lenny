@@ -1619,6 +1619,44 @@
         "responses": { "204": { "description": "Deleted" } }
       }
     },
+    "/v1/admin/connectors/{id}/oauth/authorize": {
+      "post": {
+        "summary": "Initiate the §9.3 connector OAuth 2.1 authorization-code flow",
+        "x-lenny-mcp-tool": "admin.authorize_connector_oauth",
+        "x-lenny-scope": "admin.connectors.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "connector-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "environment", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Authorization URL returned" },
+          "400": { "description": "Connector not OAuth or auth block incomplete" },
+          "404": { "description": "Connector not found" }
+        }
+      }
+    },
+    "/v1/admin/connectors/oauth/callback": {
+      "get": {
+        "summary": "Receive the §9.3 OAuth provider redirect and complete token exchange",
+        "x-lenny-mcp-tool": "admin.connector_oauth_callback",
+        "x-lenny-scope": "admin.connectors.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "connector-management",
+        "security": [],
+        "parameters": [
+          { "name": "code", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "state", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Token exchange completed; credential stored" },
+          "400": { "description": "Invalid or expired state" },
+          "502": { "description": "Provider token endpoint failure" }
+        }
+      }
+    },
     "/v1/admin/credential-pools": {
       "post": {
         "summary": "Create a credential pool",

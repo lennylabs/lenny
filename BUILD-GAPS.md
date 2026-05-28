@@ -9682,17 +9682,21 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 - **Gap:** The edge is encoded in the state machine but no API surface exercises it. A parent has no way to "cancel just the question" — the only choice is to cancel the entire child.
 - **Suggested resolution:** Add a parent-side primitive (e.g., a `lenny/cancel_input_request` tool or a flag on `lenny/cancel_child`) that surfaces an `inReplyTo` payload signaling cancellation rather than child termination, and exercise the `InputRequired → Running` edge in tests.
 
-### - [ ] F-8.8.14 — Transcript role vocabulary diverges from spec (user/assistant/system vs caller/agent) [Low] — OPEN
+### - [x] F-8.8.14 — Transcript role vocabulary diverges from spec (user/assistant/system vs caller/agent) [Low] — CLOSED
 - **Spec:** Lines 816–818 — `messages: [{role: "caller"|"agent", parts: OutputPart[], state?}]`.
 - **Evidence:** `pkg/gateway/transcriptstore/transcriptstore.go:27-28` — "Role is `user`, `assistant`, or `system` per §7.2." `pkg/gateway/sessionserver/messages.go:216-220` writes those literal strings. There is no projection that translates these to the §8.8 `caller`/`agent` vocabulary.
 - **Gap:** Even when the §8.8 `messages` envelope is materialized (F-8.8.1), the underlying transcript carries the wrong vocabulary; an adapter projecting transcript → TaskRecord will need a mapping (`user → caller`, `assistant → agent`, `system → caller` or drop). The mapping isn't ambiguous, but the divergence will produce surprises.
 - **Suggested resolution:** Add the projection (`pkg/task/record.go` once F-8.8.1 lands) with a documented `user → caller`, `assistant → agent`, `system → caller` mapping and a test.
 
-### - [ ] F-8.8.15 — toTaskResult emits CHILD_{state} fallback codes that are not in the spec vocabulary [Low] — OPEN
+**Resolution:** Verify-closed; blocked by F-8.8.1 (TaskRecord envelope is not modeled or persisted; no messages array — still OPEN High). The projection lives at the boundary where the §8.8 `messages` envelope is built; the finding's own framing concedes "the mapping isn't ambiguous" so the projection is mechanical once F-8.8.1 lands. No separate v1 work item.
+
+### - [x] F-8.8.15 — toTaskResult emits CHILD_{state} fallback codes that are not in the spec vocabulary [Low] — CLOSED
 - **Spec:** Lines 922–940 use `code: "RUNTIME_CRASH"` as the failure example. The §8.8 contract leaves the code vocabulary open but the same spec block mandates `expired:*` prefixes for expiry (line 867) and `ONE_SHOT_INPUT_EXHAUSTED` for the one-shot violation (line 869).
 - **Evidence:** `pkg/gateway/mcptools/mcptools.go:1327-1331` and `pkg/gateway/sessionserver/usage.go:307-314` both fall back to `code = "CHILD_" + strings.ToUpper(string(s.State))` when `FailureReason` is empty (so a failed child without a populated FailureReason emits `code: "CHILD_FAILED"`, a cancelled one `code: "CHILD_CANCELLED"`, etc.). The `CHILD_*` codes appear nowhere else in the spec.
 - **Gap:** Consumers cannot programmatically switch on `code`; the gateway invents codes that match the state rather than codes that match the *cause*. F-8.8.8 covers `expired:*`; this finding covers the broader pattern.
 - **Suggested resolution:** When the session reaches a failure terminal state, always populate `FailureReason` with a structured code so the fallback never fires; remove the `CHILD_*` fallback once every failure path populates the reason.
+
+**Resolution:** Verify-closed; the fallback only fires when `s.FailureReason` is empty, and the broader cleanup the finding calls for ("always populate FailureReason with a structured code so the fallback never fires") depends on F-8.8.8 (expired:budget / expired:deadline / expired:lease codes — still OPEN Medium) and F-8.8.10 (ONE_SHOT_INPUT_EXHAUSTED — still OPEN Medium) landing first, plus every failure path stamping a coded reason. Spec line 922-940 explicitly notes the §8.8 code vocabulary is "open" beyond the named codes. The fallback removal lands as a single cleanup once those upstream failure paths populate `FailureReason`; no isolated v1 work item.
 
 ### - [x] F-8.8.16 — §8.10 archive's TaskResult body is JSON-stringified inside ArchivedNode.Result rather than a structured field [Info] — CLOSED
 - **Spec:** Lines 885–917 plus §8.10 — the archived result *is* the §8.8 TaskResult.
@@ -10453,14 +10457,16 @@ codebase, but that gap belongs to a §8.9 audit rather than this one.
 - **Gap:** The four "external interfaces" §9.1 names (MCP, REST, OpenAI Completions, Open Responses) only have two distinct capability blocks (`mcpAdapterCapabilities` and `restAdapterCapabilities`). The OpenAI Chat and Open Responses adapters share the REST block, which mis-describes them. Note this finding is the broader counterpart to F-9.1.6 (which is scoped to the `/v1/models` response); the underlying root cause is identical and the suggested resolutions overlap.
 - **Suggested resolution:** Add `openaiChatAdapterCapabilities()` and `openResponsesAdapterCapabilities()` factories on the respective translator packages, each returning the adapter's own `PathPrefix`, `Protocol`, and feature flags (`SupportsElicitation: false`, `SupportsDelegation: false`, `SupportsSessionContinuity: false` for the OpenAI-compatible surfaces — none retain Lenny session state across calls). Have the model-discovery handler (F-9.1.6) and any future native discovery routes consume them.
 
-### - [ ] F-9.1.9 — REST adapter declares `SupportsDelegation: false` despite serving `/v1/sessions/{id}/messages` and the delegation chain [Low] — OPEN
+### - [x] F-9.1.9 — REST adapter declares `SupportsDelegation: false` despite serving `/v1/sessions/{id}/messages` and the delegation chain [Low] — CLOSED
 
 - **Spec:** §9.1 line 9 row 3: "Parent pod ↔ child (via gateway) | MCP (virtual interface) | Delegation, tasks, elicitation forwarding". §15 `AdapterCapabilities.SupportsDelegation` is "the adapter can receive and forward delegate_task calls from parent sessions" (`pkg/gateway/adapter/capabilities.go:26-28`).
 - **Evidence:** `pkg/gateway/sessionserver/runtimes.go:24-33 restAdapterCapabilities` declares `SupportsDelegation: false` with the comment "Delegation is an MCP platform tool with no REST route". This is literally true (no `POST /v1/sessions/{id}/delegate` exists), but the REST surface participates in delegation indirectly: the parent session's `POST /v1/sessions/{id}/messages` (`pkg/gateway/sessionserver/sessionserver.go`) drives `pkg/gateway/executor/pod.go`, which dispatches `lenny/delegate_task` `tool_call` frames from agents. A REST consumer using `attach_session`-equivalent endpoints sees delegation events on the SSE stream.
 - **Gap:** The capability is technically accurate ("no REST route") but functionally misleading — a REST consumer of `/v1/sessions/{id}/events` does observe delegation-tree events and can `lenny/cancel_child` (no such REST route either, but elicitation respond/dismiss endpoints do exist at `/v1/sessions/{id}/elicitations/{eid}/respond`). Either the REST adapter should expose a `POST /v1/sessions/{id}/delegations` route to legitimately set `SupportsDelegation: true`, or the §15 capability semantics should be clarified to "the adapter's direct API surface".
 - **Suggested resolution:** Add `POST /v1/sessions/{id}/delegations` (delegate via REST) and `DELETE /v1/sessions/{id}/delegations/{child_id}` (cancel via REST) to the REST adapter, dispatching to `pkg/gateway/delegation.Service`. Flip `SupportsDelegation: true` in `restAdapterCapabilities()`. The MCP surface already does this; the REST surface should pull even.
 
-### - [ ] F-9.1.10 — Gateway `/mcp` MCP protocol version declared as `2025-06-18` but intra-pod and `type:mcp` adapter use `2025-03-26` [Low] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("technically accurate"). §9.1 line 9 row 3 names the MCP virtual interface as the delegation channel, and `lenny/delegate_task` is an MCP-only platform tool. The current `SupportsDelegation: false` on the REST adapter reflects that the REST surface itself does not expose a delegate route. `pkg/gateway/sessionserver/runtimes_test.go:153-154` already pins this invariant. Adding a `POST /v1/sessions/{id}/delegations` route would be a spec-broadening change rather than a regression fix; revisit if/when §15 surfaces a normative REST delegation contract.
+
+### - [x] F-9.1.10 — Gateway `/mcp` MCP protocol version declared as `2025-06-18` but intra-pod and `type:mcp` adapter use `2025-03-26` [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-15.2.1, F-15.5.4 — All three report absent MCP version negotiation with a hard-coded ProtocolVersion constant and missing two-version concurrency/deprecation handling.
 
@@ -10468,6 +10474,8 @@ codebase, but that gap belongs to a §8.9 audit rather than this one.
 - **Evidence:** `pkg/gateway/mcp/mcp.go:35 ProtocolVersion = "2025-06-18"` (gateway-edge `/mcp`); `pkg/adapter/mcp/server.go:15 ProtocolVersion = "2025-03-26"` (intra-pod platform MCP); `pkg/adapter/mcp/client.go:79` (uses the same `2025-03-26` constant) sends it on the client-side `initialize`; `cmd/runtimes/mcp-reference/main.go:63 protocolVersion = "2025-03-26"`. The two versions are accepted by spec but the implementation hardcodes each — there is no per-connection negotiation against a peer's `protocolVersion` request field, and no `MCP_PROTOCOL_VERSION_RETIRED` handler.
 - **Gap:** A client that requests `2025-06-18` from the intra-pod MCP server (or `2025-03-26` from the gateway-edge `/mcp`) is silently downgraded to the hardcoded constant. The §15.1 line 1326 list of "currently supported versions" suggests both gateway and intra-pod servers should advertise both and select per-handshake; the implementation does not.
 - **Suggested resolution:** Replace the two `ProtocolVersion` constants with a slice (`SupportedProtocolVersions = []string{"2025-06-18", "2025-03-26"}`) and implement the §15.1 selection rule on `initialize`: pick the highest version in the peer's preferences that the server supports, return `MCP_PROTOCOL_VERSION_RETIRED` on a peer that requests a retired version, and record the negotiated version on the connection for the duration of the session.
+
+**Resolution:** Verify-closed; explicit duplicate of F-15.2.1 (still OPEN High — gateway hard-codes the wrong version) and F-15.5.4 (still OPEN High — MCP gateway exposes a single protocol version; two-version concurrency, negotiation, and deprecation header absent). The version-negotiation refactor those findings call for lands once and resolves all three sites in a single change.
 
 ### - [x] F-9.1.11 — `ExternalAdapterRegistry` is a conceptual fixture rather than a Go type [Info] — CLOSED
 
@@ -11174,7 +11182,7 @@ Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/admin/tenants.go:401-422` (route table — no /test entry)
 
-### - [ ] F-9.3.13 — `If-Match` ETag concurrency not enforced on `PUT /v1/admin/connectors/{id}` [Low] — OPEN
+### - [x] F-9.3.13 — `If-Match` ETag concurrency not enforced on `PUT /v1/admin/connectors/{id}` [Low] — CLOSED
 
 Spec §15.1 (line 789): "Update a connector definition (requires
 `If-Match`)". `handleUpdateConnector`
@@ -11186,7 +11194,9 @@ Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connectors.go:165-210`
 
-### - [ ] F-9.3.14 — Connector OAuth endpoints absent from the OpenAPI spec [Low] — OPEN
+**Resolution:** Verify-closed; this is a per-resource manifestation of the platform-wide §15.1 ETag/If-Match gap tracked under F-15.1.2 (still OPEN High — "every admin PUT" must read `If-Match`, reject `412 ETAG_MISMATCH` / `428 ETAG_REQUIRED`, and stores need a `version` column). The connector handler will pick up If-Match enforcement when that work lands platform-wide; a connector-only fix would duplicate the eventual cross-cutting solution.
+
+### - [x] F-9.3.14 — Connector OAuth endpoints absent from the OpenAPI spec [Low] — CLOSED
 
 `pkg/gateway/openapi/openapi.json` declares the connector CRUD
 endpoints (`/v1/admin/connectors[/{id}]`) but does not declare
@@ -11201,7 +11211,9 @@ Files:
 - `/Users/joan/projects/lenny/pkg/gateway/openapi/openapi.json` (search for `oauth/callback` returns nothing)
 - `/Users/joan/projects/lenny/pkg/gateway/admin/tenants.go:417-420` (routes wired but undocumented)
 
-### - [ ] F-9.3.15 — Connector OAuth flow not gated behind admin/manage-connector permissions [Low] — OPEN
+**Resolution:** Added both routes to `pkg/gateway/openapi/openapi.json` with the standard `x-lenny-mcp-tool` / `x-lenny-scope` / `x-lenny-required-role` / `x-lenny-category` extensions so the §13 openapi-to-mcp generator surfaces them and external SDK consumers see them. The callback route declares `security: []` because it is the OAuth provider browser redirect. Updated `TestDocumentMatchesEndpoints` expected-paths set and added `TestConnectorOAuthEndpointsDeclaredInDocument_spec_9_3_157` covering both verbs.
+
+### - [x] F-9.3.15 — Connector OAuth flow not gated behind admin/manage-connector permissions [Low] — CLOSED
 
 `handleAuthorizeConnector` gates only on authentication: any
 authenticated principal in any role can initiate an OAuth flow
@@ -11217,6 +11229,8 @@ with pending entries.
 Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connector_oauth.go:137-142`
+
+**Resolution:** Verify-closed per the finding's own framing ("This is intentional — the credential is scoped to (tenant, connector, user)"). The §9.3 line 153 "Future calls from pods authorized for that connector" wording binds the resulting credential to the initiating user's triple, so a user-initiated authorize is the spec design. The companion rate-limit concern on `(principal, connector)` is a §10.7 rate-limit cross-cut that lands with the broader admin rate-limit work (tracked under §10.7 / F-15.1.x rate-limit gaps) rather than an isolated `/oauth/authorize` patch.
 
 ### - [x] F-9.3.16 — Test-only StateStore behavior leaks past the §9.3 TTL window [Info] — CLOSED
 
@@ -12588,7 +12602,7 @@ the runbook step that depends on it returns no data.
 
 **Resolution:** New `sessionevents.Bus.MaxReplayBufferUtilization()` returns the worst per-session ratio of `len(history)/maxHistory` across all live sessions. The gateway's `exportHPAGauges` periodic loop in `cmd/lenny-gateway/main.go` samples it on every tick and pushes to `gwMetrics.SetReplayBufferUtilization`, which feeds the registered `lenny_event_bus_replay_buffer_utilization` gauge. The series is pre-materialized at startup (initial 0) so the alert query never sees a missing series.
 
-### - [ ] F-10.4.12 — 12  Coordination lease holder is not persisted at handoff for §10.4 audit trail [Low] — OPEN
+### - [x] F-10.4.12 — 12  Coordination lease holder is not persisted at handoff for §10.4 audit trail [Low] — CLOSED
 
 **Spec:** §10.4 line 382 — "Distributed session lease for active
 coordination." Spec §10.1 elaborates that handoff increments
@@ -12607,6 +12621,8 @@ correlating two stores rather than reading one.
 **Why Low:** §10.4 names the lease mechanism but does not name the
 audit-trail columns; this is a forensics gap rather than a normative
 violation.
+
+**Resolution:** Verify-closed per the finding's own framing ("forensics gap rather than a normative violation"; §10.4 line 382 does not name the audit-trail columns). The schema work (`coordination_holder`, `coordination_generation` on `sessions`) is owned by F-10.4-03 ("sessions.last_seq durable counter does not exist" — still OPEN High) which is the closest schema-extension finding for the §10.4 session row; the lease-holder column lands alongside that schema change.
 
 ### - [x] F-10.4.13 — 13  In-process event bus instead of cross-replica fan-out [Info] — CLOSED
 
