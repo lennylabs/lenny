@@ -38793,7 +38793,7 @@ Extracted six testable claims from §27.1 (three purpose statements, three non-g
 
 ### Findings
 
-### - [ ] F-27.1.1 — All §27.1 purpose statements are implemented [Info] — OPEN
+### - [x] F-27.1.1 — All §27.1 purpose statements are implemented [Info] — CLOSED
 
 | Claim | Evidence |
 |---|---|
@@ -38801,7 +38801,9 @@ Extracted six testable claims from §27.1 (three purpose statements, three non-g
 | P2: "smoke-test UI after `lenny-ctl runtime publish` without wiring a client app" | The runtime picker (`app.js:133-170`) enumerates the same `GET /v1/runtimes` surface a fresh `lenny-ctl runtime publish` populates, with a `use this runtime` button that flows directly into `renderSessionConfig` / `createSession`. No additional client wiring required. |
 | P3: "exercise the policy/audit pipeline end-to-end" | Playground bearers ride the standard gateway auth chain (`pkg/gateway/playground/token.go`, `pkg/gateway/playground/audit.go`); the chat screen includes a `raw MCP frame inspector` (`app.js:319-339`) for surfacing policy/audit-shaped events. `audit.go` emits the `bearer.revoked` events §27.3.1 step 6 requires. |
 
-### - [ ] F-27.1.2 — All §27.1 non-goals are honored by the implementation [Info] — OPEN
+Resolution (iter 38): Verify-closed Info finding per its own framing ("§27.1 purpose statements have a code path"). `assets.go:19-30` `go:embed ui` confirmed; `app.js:133-170` runtime picker calls `/v1/runtimes`; `app.js:283-309` calls `POST /v1/sessions`; `app.js:372-400` opens MCP WebSocket; raw frame inspector at `app.js:317-323`. Inline `// spec: §27.1` citation already present in `playground/playground.go`.
+
+### - [x] F-27.1.2 — All §27.1 non-goals are honored by the implementation [Info] — CLOSED
 
 | Non-goal | Evidence |
 |---|---|
@@ -38812,9 +38814,13 @@ Extracted six testable claims from §27.1 (three purpose statements, three non-g
 | NG2: "Not a replacement for the admin CLI… does not expose installation administration" | `Handler.PlaygroundRoutes()` (`playground.go:322-334`) and `TokenRoutes()` (`playground.go:341-345`) mount only auth gatekeepers, the SPA bundle, `GET /playground/config.json`, and `POST /v1/playground/token`. No admin/installation endpoints. The `app.js` SPA invokes only `/v1/runtimes`, `/v1/sessions`, the MCP WebSocket, and the playground auth surface. |
 | NG3: "No offline mode. The playground requires a live gateway." | `start()` (`app.js:57-72`) fetches `/playground/config.json` immediately on load and renders an error if it fails; no service worker is registered; the CSP `connect-src 'self'` plus optional `wss://<gatewayHost>` (`assets.go:190-208`) forbids cross-origin fallbacks; the bearer (`app.js:99-101`) is in-memory only and forces a re-mint after refresh. |
 
-### - [ ] F-27.1.3 — Helm default for `playground.enabled` matches §27.2 prose alignment with §27.1 [Info] — OPEN
+Resolution (iter 38): Verify-closed Info finding. All five non-goals honored by the absence of the named surface. `app.js:21-30` scalar `state.sessionId`, no workspace/listing UI, no user-management endpoints in `playground.go:322-345`, no prompt-save UI, `start()` fetches `/playground/config.json` on load with no service worker fallback.
 
-The Helm default at `charts/lenny/values.yaml:659` (`enabled: false`) is consistent with the §27.2 statement that ties back to §27.1's framing ("intentionally scoped for exploration and quick demos"). No gap.
+### - [x] F-27.1.3 — Helm default for `playground.enabled` matches §27.2 prose alignment with §27.1 [Info] — CLOSED
+
+The Helm default at `charts/lenny/values.yaml:1121` (`enabled: false`) is consistent with the §27.2 statement that ties back to §27.1's framing ("intentionally scoped for exploration and quick demos"). No gap.
+
+Resolution (iter 38): Verify-closed Info finding. Default still `playground.enabled: false` at `charts/lenny/values.yaml:1121` (line drifted from 659).
 
 ### Classification summary
 
@@ -39148,7 +39154,7 @@ The package's `TestMemorySessionStorePerTenantIsolation`, `TestMemorySessionStor
 
 **Severity rationale (Low):** absence of the spec-mandated integration tests. The underlying capability gap is captured in the High finding above; this is the corresponding test-coverage gap.
 
-### - [ ] F-27.3.11 — Mode-polymorphic mint endpoint, per-mode admission, and PKCE state-cookie are implemented correctly [Info] — OPEN
+### - [x] F-27.3.11 — Mode-polymorphic mint endpoint, per-mode admission, and PKCE state-cookie are implemented correctly [Info] — CLOSED
 
 `POST /v1/playground/token` at `pkg/gateway/playground/token.go:47-66` dispatches by `cfg.AuthMode` and rejects an empty body that is not a `{}` JSON object (`emptyJSONBody` line 345). Per-mode admission:
 
@@ -39163,6 +39169,8 @@ The scope-narrowing intersection (`intersectScope`, line 324-341) is correct and
 Tenant-claim rejection in the OIDC callback (`auth.go:140-165`): the three §27.3.1 codes (`tenant_claim_missing`, `tenant_not_found`, `tenant_claim_invalid_format`) are emitted via `redirectAuthError`, the state cookie is cleared (`clearCookie` at line 108), and the reserved query-param namespace is honored.
 
 The minted-bearer revocation primitive (`revokeSessionRecord`, `auth.go:247-257`) writes the records, emits the metric and audit, and returns `503 REDIS_UNAVAILABLE` on Redis error (`handleLogout` line 234-238). The `RedisSessionStore.RevokeSession` uses a transactional pipeline that commits before publish (`sessionrecord.go:300-322`), satisfying the §27.6 "MUST NOT return 200 to the browser until the revocation writes have committed" requirement *for the logout path*.
+
+Resolution (iter 38): Verify-closed Info finding per its own framing ("the mint path is solid"). `token.go:47-66` dispatch + emptyJSONBody, `mintOIDC:72-109`, `mintAPIKey:115-190`, `mintDev:200-209`, `intersectScope:327-348`, `rejectWrongMaterial:315-325`, `completeMint:224-292` with `Origin: PlaygroundOrigin` and `Typ: TokenSessionCapability`, all lines drift slightly but exact references confirmed. The four High and four Medium revocation/enforcement gaps remain tracked separately under §27.3 / §27.6.
 
 ### Classification summary
 
@@ -39250,16 +39258,20 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
 - Evidence: `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:156-162` emits the "use this runtime" button; lines 319-323 wrap the raw frames in a `<details>` panel; line 345 adds a "new session" button not specified.
 - Impact: the "new session" button is an additive convenience consistent with the no-persistence rule. The frame inspector cap of 40 lines (line 337) is undocumented but reasonable. Severity Low; flagged for completeness.
 
-### - [ ] F-27.4.9 — No-persistence rule is honored [Info] — OPEN
+### - [x] F-27.4.9 — No-persistence rule is honored [Info] — CLOSED
 - Evidence: `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:21-30` keeps all state in-memory; the bearer is documented as never persisted; the chat log is rebuilt on every `renderChat` call; the `beforeunload` handler (lines 458-473) sends best-effort `session.cancel`. There is no `localStorage`/`sessionStorage` write of chat content (the only `sessionStorage` use is the apiKey-mode operator token).
 - Conformance: the §27.4 closing constraint is satisfied.
 
-### - [ ] F-27.4.10 — Implementation deviation from "React SPA" [Info] — OPEN
+Resolution (iter 38): Verify-closed Info finding. `app.js:18-30` state object held in-memory only; bearer never written to localStorage/cookie (`app.js:19-20` comment); `beforeunload` at `app.js:456-473` sends best-effort `lenny/session_cancel`; only `sessionStorage` write is the operator-pasted apiKey token at `app.js:193-209`.
+
+### - [x] F-27.4.10 — Implementation deviation from "React SPA" [Info] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-27.5.5 — Both reference the same React-SPA-vs-vanilla-JS deviation comment, but F-27.4.10 is the architectural-deviation note while F-27.5.5 flags that the comment misrepresents §27.5 protocol usage, a different concern.
 
 - Evidence: `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:10-13` notes "The §27.4 spec describes a React SPA; the playground screens and the §27.5 protocol usage are implemented here directly so the bundle is embeddable in the gateway binary without an npm toolchain." Plain ES2017 with no build step.
 - Conformance: the spec specifies React; the implementation chooses vanilla JS for embedding. This is a documented architectural deviation rather than a behavioral one; surfaced for visibility, not action.
+
+Resolution (iter 38): Verify-closed Info finding per its own framing ("surfaced for visibility, not action"). Inline `app.js:10-13` deviation comment present. F-27.5.5 (the cited overlap) is a separate concern about the protocol-usage comment.
 
 ### Summary
 
@@ -39488,23 +39500,29 @@ Tests: `/Users/joan/projects/lenny/pkg/gateway/playground/playground_test.go` (`
 
 ### Findings
 
-### - [ ] F-27.7.1 — 1 — `connect-src` omits `wss://<gateway-host>` when `GatewayHost` is empty [Info] — OPEN
+### - [x] F-27.7.1 — 1 — `connect-src` omits `wss://<gateway-host>` when `GatewayHost` is empty [Info] — CLOSED
 
 `assets.go:191-194` builds `connect-src 'self'` and appends `wss://<host>` only when `Config.GatewayHost != ""`. The flag is operator-supplied (`cmd/lenny-gateway/main.go:307` / `LENNY_PLAYGROUND_GATEWAY_HOST`) with no default. When the operator does not set it (or sets it to empty), the emitted CSP omits the WebSocket origin and the playground SPA cannot open its MCP WebSocket — `connect-src 'self'` alone covers `wss://<same-origin>` in modern browsers in practice, so the playground may still work on a single-host deployment, but the spec text "connect-src 'self' wss://<gateway-host>" reads as both clauses being present. This is informational: behavior matches the spec when the operator wires the flag, and the resulting header is more restrictive (not less) when the flag is empty. Consider documenting the empty-`GatewayHost` behavior or defaulting to the request's `Host` header.
 
 Severity: Info.
 
-### - [ ] F-27.7.2 — 2 — Bundles are not content-hashed; spec mentions "hashed `*.js` and `*.css`" [Info] — OPEN
+Resolution (iter 38): Verify-closed Info finding per its own framing ("informational: behavior matches the spec when the operator wires the flag"). `assets.go:191-194` confirmed: empty `GatewayHost` yields a strictly-more-restrictive header consistent with §27.7.
+
+### - [x] F-27.7.2 — 2 — Bundles are not content-hashed; spec mentions "hashed `*.js` and `*.css`" [Info] — CLOSED
 
 `pkg/gateway/playground/ui/` ships `app.js` and `app.css` with fixed filenames (no content hash in the path). The `Cache-Control: public, max-age=31536000, immutable` header is applied to any non-`index.html` asset by `assets.go:55-59`, which is correct in itself, but pairing `immutable` with non-hashed filenames means a release that ships a new `app.js` cannot reliably invalidate downstream caches; the spec's "hashed `*.js` and `*.css` bundles are served with long cache headers" implies a build pipeline that emits hash-suffixed filenames. The single-file ui/ bundle is intentional for v1 (no JS build tooling), and `index.html` is `no-store`, so a fresh fetch always picks up the new asset reference. This is a forward concern, not a violation of any MUST in §27.7.
 
 Severity: Info.
 
-### - [ ] F-27.7.3 — 3 — No subresource integrity (SRI) hashes on `<script>` / `<link>` in `ui/index.html` [Info] — OPEN
+Resolution (iter 38): Verify-closed Info finding per its own framing ("forward concern, not a violation of any MUST in §27.7"). `index.html` is `no-store` per `assets.go:73`; non-`index.html` assets are `public, max-age=31536000, immutable` per `assets.go:57`. v1 single-file bundle intentional.
+
+### - [x] F-27.7.3 — 3 — No subresource integrity (SRI) hashes on `<script>` / `<link>` in `ui/index.html` [Info] — CLOSED
 
 The spec does not require SRI; §27.7 is silent on it. The embedded `ui/index.html` (`/Users/joan/projects/lenny/pkg/gateway/playground/ui/index.html`) references `/playground/app.css` and `/playground/app.js` without `integrity=` attributes. Because assets are served from the same origin as the page, SRI provides no extra protection against an attacker who can modify the gateway binary (the embedded FS is part of the same artifact). Reporting only because the audit brief explicitly enumerated it as a requirement category.
 
 Severity: Info.
+
+Resolution (iter 38): Verify-closed Info finding. §27.7 does not require SRI; same-origin embedded FS makes it redundant. No spec gap.
 
 ### Verified requirements (no finding)
 
