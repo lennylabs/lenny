@@ -8,8 +8,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 )
 
+// spec: §25.11 Pre-Restore Backup Lifecycle uses type:"pre-restore" —
+// ValidType MUST accept it so a forced pre-restore snapshot via
+// POST /v1/admin/backups is not rejected at the public endpoint.
 func TestValidType(t *testing.T) {
-	for _, ok := range []string{"full", "postgres", "config"} {
+	for _, ok := range []string{"full", "postgres", "config", "pre-restore"} {
 		if !backup.ValidType(ok) {
 			t.Errorf("ValidType(%q) = false, want true", ok)
 		}

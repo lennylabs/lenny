@@ -143,6 +143,14 @@ type Reconciler struct {
 	// lenny-controller binary wires the production reader-backed checker.
 	RuntimeClasses RuntimeClassChecker
 
+	// RuntimeClassNameOverrides remaps the §5.3 isolation profile to a
+	// cluster-specific RuntimeClass name (spec: §17.5 line 3). The
+	// pool's RuntimeClass-presence check resolves the override here so
+	// a cluster running gVisor as `runsc` or Kata as `kata-qemu` sees
+	// the Degraded condition reference the operator's actual cluster
+	// names, not Lenny's literal defaults.
+	RuntimeClassNameOverrides map[isolation.Profile]string
+
 	// IdleMeterInterval is the period the reconciler re-queues a pool to
 	// advance the §4.6.1 lenny_warmpool_idle_pod_minutes integral when no
 	// pod event has fired. Zero selects defaultIdleMeterInterval (60s).
@@ -574,7 +582,7 @@ func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.San
 		return nil, nil
 	}
 	profile := isolation.Profile(tmpl.Spec.IsolationProfile)
-	rcName, ok := isolation.RuntimeClassName(profile)
+	rcName, ok := isolation.ResolveRuntimeClassName(profile, r.RuntimeClassNameOverrides)
 	if !ok {
 		return nil, nil
 	}

@@ -18,16 +18,18 @@ import (
 type Type string
 
 const (
-	TypeFull     Type = "full"
-	TypePostgres Type = "postgres"
-	TypeConfig   Type = "config"
+	TypeFull       Type = "full"
+	TypePostgres   Type = "postgres"
+	TypeConfig     Type = "config"
+	TypePreRestore Type = "pre-restore"
 )
 
-// ValidType reports whether s names one of the three §25.11 backup
-// types.
+// ValidType reports whether s names one of the §25.11 backup types,
+// including the "pre-restore" variant produced by the restore-execute
+// lifecycle (§25.11 Pre-Restore Backup Lifecycle).
 func ValidType(s string) bool {
 	switch Type(s) {
-	case TypeFull, TypePostgres, TypeConfig:
+	case TypeFull, TypePostgres, TypeConfig, TypePreRestore:
 		return true
 	default:
 		return false

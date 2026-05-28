@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/backup/retention"
@@ -670,7 +672,7 @@ func (s *Service) createPreRestoreBackup(ctx context.Context, owner string) (Bac
 	now := s.now()
 	b := Backup{
 		ID:              s.newID("bkp"),
-		Type:            "pre-restore",
+		Type:            string(TypePreRestore),
 		Status:          StatusPending,
 		StartedAt:       now,
 		Components:      componentsFor(TypeFull),
@@ -684,7 +686,7 @@ func (s *Service) createPreRestoreBackup(ctx context.Context, owner string) (Bac
 	launched, err := s.launcher.Launch(ctx, JobSpec{
 		Kind:       JobBackup,
 		BackupID:   b.ID,
-		BackupType: "pre-restore",
+		BackupType: string(TypePreRestore),
 	})
 	if err != nil {
 		return Backup{}, codedError(ErrCodeJobCreationFailed, "create pre-restore Job: %v", err)
@@ -771,13 +773,31 @@ func atoiSafe(s string) int {
 	return n
 }
 
+// randomIDFallbackCounter ensures the crypto/rand-unavailable fallback
+// path stays collision-free across same-nanosecond callers. spec: §25.11
+// IDs are opaque but unique.
+var randomIDFallbackCounter uint64
+
 // randomID generates a backup or restore ID: a prefix and 16 random
-// hex characters.
+// hex characters. When crypto/rand fails (rare; reachable in a degraded
+// entropy pool), the fallback composes the current nanosecond with a
+// process-local atomic counter so two near-simultaneous IDs do not
+// collide on the same encoded timestamp.
 func randomID(prefix string) string {
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		// rand.Read does not fail in practice; fall back to a timestamp.
-		return prefix + "-" + hex.EncodeToString([]byte(time.Now().UTC().Format(time.RFC3339Nano)))
+		return randomIDFallback(prefix, time.Now().UTC().UnixNano())
 	}
 	return prefix + "-" + hex.EncodeToString(buf[:])
+}
+
+// randomIDFallback composes the entropy-unavailable backup-ID format:
+// "<prefix>-<nanosHex>-<seqHex>". Exposed for the package's internal
+// test so the fallback path is exercised without forcing a crypto/rand
+// failure at runtime.
+func randomIDFallback(prefix string, nanos int64) string {
+	seq := atomic.AddUint64(&randomIDFallbackCounter, 1)
+	return prefix + "-" +
+		strconv.FormatInt(nanos, 16) + "-" +
+		strconv.FormatUint(seq, 16)
 }

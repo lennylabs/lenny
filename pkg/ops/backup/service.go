@@ -133,10 +133,10 @@ type BackupComponent struct {
 // backup is a full backup tagged "pre-restore"; it is retained on the
 // shorter preRestoreRetainDays schedule.
 func (b Backup) retentionKind() retention.Kind {
-	switch b.Type {
-	case "pre-restore":
+	switch Type(b.Type) {
+	case TypePreRestore:
 		return retention.KindPreRestore
-	case string(TypePostgres):
+	case TypePostgres:
 		return retention.KindPostgres
 	default:
 		return retention.KindFull

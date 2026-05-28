@@ -191,6 +191,14 @@ type Inputs struct {
 	// IsolationProfile is the §5.3 profile (standard, sandboxed, or
 	// microvm) that selects the RuntimeClass.
 	IsolationProfile string
+	// RuntimeClassNameOverrides remaps the §5.3 isolation profile to a
+	// cluster-specific RuntimeClass name. spec: §17.5 line 3 — clusters
+	// that ship gVisor as `runsc` or Kata as `kata-qemu` / `kata-fc`
+	// set this through the chart's `isolation.runtimeClassNames` Helm
+	// values so the controller does not require operators to rename
+	// in-cluster RuntimeClass objects to match Lenny's literal defaults.
+	// A nil or empty map preserves the §5.3 defaults.
+	RuntimeClassNameOverrides map[isolation.Profile]string
 	// DeploymentModel is the §4.7 deployment model, from
 	// Runtime.spec.deploymentModel. An empty value defaults to the
 	// sidecar model.
@@ -295,7 +303,7 @@ func Build(in Inputs) (*corev1.Pod, error) {
 	if in.RuntimeImage == "" {
 		return nil, errors.New("podspec: runtime image is required")
 	}
-	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(in.IsolationProfile))
+	runtimeClass, ok := isolation.ResolveRuntimeClassName(isolation.Profile(in.IsolationProfile), in.RuntimeClassNameOverrides)
 	if !ok {
 		return nil, fmt.Errorf("podspec: unknown isolation profile %q", in.IsolationProfile)
 	}

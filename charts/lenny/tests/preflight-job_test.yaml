@@ -87,3 +87,55 @@ tests:
             apiGroups: ["lenny.dev"]
             resources: ["sandboxtemplates"]
             verbs: ["list"]
+
+  # spec: §17.6 line 534 — the preflight Job ships with a hard runtime
+  # cap so a slow control plane does not hang the install.
+  - it: caps preflight runtime via activeDeadlineSeconds (default 120s)
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - equal:
+          path: spec.activeDeadlineSeconds
+          value: 120
+
+  - it: honors preflight.timeoutSeconds override
+    set:
+      preflight.timeoutSeconds: 240
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - equal:
+          path: spec.activeDeadlineSeconds
+          value: 240
+
+  # spec: §17.9.3 / §17.6 line 488 — preflight passes the connection-pooler
+  # selection so the CloudPoolerSentinelDefense check fires only when
+  # the deployer fronts Postgres with an external proxy.
+  - it: defaults --connection-pooler to pgbouncer
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--connection-pooler=pgbouncer"
+
+  - it: surfaces --connection-pooler=external for cloud-managed Postgres
+    set:
+      postgres.connectionPooler: external
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--connection-pooler=external"
+
+  - it: rejects an unrecognized postgres.connectionPooler value
+    set:
+      postgres.connectionPooler: rdsproxy
+    asserts:
+      - failedTemplate:
+          errorMessage: '§17.9.3: postgres.connectionPooler must be "pgbouncer" or "external", got "rdsproxy"'

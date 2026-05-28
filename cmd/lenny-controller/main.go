@@ -117,6 +117,9 @@ func main() {
 		certExpiryThreshold     time.Duration
 		saTokenAudience         string
 		agentServiceAccount     string
+		runtimeClassStandard    string
+		runtimeClassSandboxed   string
+		runtimeClassMicrovm     string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -132,6 +135,17 @@ func main() {
 		"§10.3 deployment-specific projected-token audience (global.saTokenAudience, e.g. lenny-gateway-<cluster-name>). When set, every agent pod mounts a §6.1 audience-bound, 900s-TTL projected service-account token; empty leaves the pod without it rather than mounting a cluster-default-audience token.")
 	flag.StringVar(&agentServiceAccount, "agent-service-account", os.Getenv("LENNY_AGENT_SERVICE_ACCOUNT"),
 		"§10.3 zero-RBAC ServiceAccount bound to agent pods. Empty uses the namespace default SA (which carries no RBAC bindings in agent namespaces).")
+	// spec: §17.5 line 3 — operators whose cluster ships the gVisor or
+	// Kata RuntimeClass under a non-default name (`runsc`, `kata-qemu`,
+	// `kata-fc`) override Lenny's literal defaults here so the chart's
+	// `isolation.runtimeClassNames` Helm values reach the controller
+	// without forcing a rename of in-cluster RuntimeClass objects.
+	flag.StringVar(&runtimeClassStandard, "standard-runtime-class", os.Getenv("LENNY_STANDARD_RUNTIME_CLASS"),
+		"§17.5 RuntimeClass name override for the §5.3 standard profile. Empty uses the default 'runc'.")
+	flag.StringVar(&runtimeClassSandboxed, "sandboxed-runtime-class", os.Getenv("LENNY_SANDBOXED_RUNTIME_CLASS"),
+		"§17.5 RuntimeClass name override for the §5.3 sandboxed profile. Empty uses the default 'gvisor'.")
+	flag.StringVar(&runtimeClassMicrovm, "microvm-runtime-class", os.Getenv("LENNY_MICROVM_RUNTIME_CLASS"),
+		"§17.5 RuntimeClass name override for the §5.3 microvm profile. Empty uses the default 'kata'.")
 	flag.StringVar(&egressCaptureImage, "egress-capture-image", os.Getenv("LENNY_EGRESS_CAPTURE_IMAGE"),
 		"the §12.9.8 tier-9 lenny-egress-capture sidecar image. Empty disables capture globally. Non-empty enables injection on every Sandbox whose annotation set carries `lenny.dev/test-egress-capture-upstream`. Production rejects the sidecar via lenny-pod-security; the flag exists for tier-9 §12.9.8 credential-leakage probes.")
 	flag.StringVar(&postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
@@ -176,6 +190,20 @@ func main() {
 	// startup so an accidental production dev-mode install is visible.
 	if devMode {
 		log.Printf("lenny-controller: %s", isolation.DevModeIsolationWarning)
+	}
+
+	// spec: §17.5 line 3 — assemble the §5.3 isolation-profile to
+	// RuntimeClass-name override map. An unset flag leaves the chart-
+	// default literal (runc / gvisor / kata) in place.
+	runtimeClassOverrides := map[isolation.Profile]string{}
+	if runtimeClassStandard != "" {
+		runtimeClassOverrides[isolation.ProfileStandard] = runtimeClassStandard
+	}
+	if runtimeClassSandboxed != "" {
+		runtimeClassOverrides[isolation.ProfileSandboxed] = runtimeClassSandboxed
+	}
+	if runtimeClassMicrovm != "" {
+		runtimeClassOverrides[isolation.ProfileMicrovm] = runtimeClassMicrovm
 	}
 
 	// §4.6.1 API server rate limiting: route Create calls for Sandbox
@@ -274,10 +302,11 @@ func main() {
 		// sizing it. The reader-backed checker uses the manager's uncached
 		// API reader so the RuntimeClass get needs only the `get` verb the
 		// §4.6.3 controller RBAC grants, not a cluster-wide watch.
-		RuntimeClasses:          warmpool.NewReaderRuntimeClassChecker(mgr.GetAPIReader()),
-		InitialFillGracePeriod:  initialFillGrace,
-		MaxConcurrentReconciles: maxConcurrentReconciles,
-		QueueFactory:            queueFactory,
+		RuntimeClasses:            warmpool.NewReaderRuntimeClassChecker(mgr.GetAPIReader()),
+		RuntimeClassNameOverrides: runtimeClassOverrides,
+		InitialFillGracePeriod:    initialFillGrace,
+		MaxConcurrentReconciles:   maxConcurrentReconciles,
+		QueueFactory:              queueFactory,
 	}
 	// A nil *agentpodstatepg.Store assigned to the agentpodstate.Store
 	// interface field would be a non-nil interface; only assign when a
@@ -290,16 +319,17 @@ func main() {
 	}
 
 	if err := (&sandbox.Reconciler{
-		Client:                  mgr.GetClient(),
-		Scheme:                  mgr.GetScheme(),
-		AdapterImage:            adapterImage,
-		EgressCaptureImage:      egressCaptureImage,
-		DevMode:                 devMode,
-		SATokenAudience:         saTokenAudience,
-		AgentServiceAccountName: agentServiceAccount,
-		StatusDedup:             statusdedup.New(statusDedupWindow),
-		MaxConcurrentReconciles: maxConcurrentReconciles,
-		QueueFactory:            queueFactory,
+		Client:                    mgr.GetClient(),
+		Scheme:                    mgr.GetScheme(),
+		AdapterImage:              adapterImage,
+		EgressCaptureImage:        egressCaptureImage,
+		DevMode:                   devMode,
+		SATokenAudience:           saTokenAudience,
+		AgentServiceAccountName:   agentServiceAccount,
+		RuntimeClassNameOverrides: runtimeClassOverrides,
+		StatusDedup:               statusdedup.New(statusDedupWindow),
+		MaxConcurrentReconciles:   maxConcurrentReconciles,
+		QueueFactory:              queueFactory,
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
 	}

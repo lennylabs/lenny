@@ -132,7 +132,7 @@ tests:
           content: http://lenny-gateway.lenny-system.svc:8080
       - contains:
           path: spec.template.spec.containers[0].args
-          content: --wait
+          content: --wait-timeout
 
   - it: mounts the bootstrap-values ConfigMap at /etc/lenny
     template: bootstrap-job.yaml

@@ -28617,7 +28617,7 @@ wired the alert needs the corresponding counter and the
 
 ---
 
-### - [ ] F-17.3.22 — 3.2 — `randomID` SHA-256 fallback path uses a non-cryptographic time-string fallback [Low] — OPEN
+### - [x] F-17.3.22 — 3.2 — `randomID` SHA-256 fallback path uses a non-cryptographic time-string fallback [Low] — CLOSED
 
 Spec — §25.11 IDs are opaque but unique.
 
@@ -28636,9 +28636,17 @@ acknowledges "rand.Read does not fail in practice" — accurate
 but worth tightening to use a monotonic counter or a hash of
 hostname+ns+timestamp.
 
+**Resolution:** `randomID`'s entropy-unavailable fallback now composes
+the UTC nanosecond clock with a process-local `atomic.AddUint64` counter
+so two same-nanosecond fallback IDs cannot collide
+(`pkg/ops/backup/orchestrator.go:randomID` / `randomIDFallback`).
+Internal-package test `TestRandomIDFallbackIsCollisionFree_spec_25_11`
+fires 1000 concurrent fallback calls under a fixed nanosecond clock and
+asserts 1000 unique IDs.
+
 ---
 
-### - [ ] F-17.3.23 — 3.3 — `BackupSchedule` validation accepts the disabled toggle but not a paused-schedule semantic [Low] — OPEN
+### - [x] F-17.3.23 — 3.3 — `BackupSchedule` validation accepts the disabled toggle but not a paused-schedule semantic [Low] — CLOSED
 
 Spec — §25.11 schedule body: `{"full": "...", "postgres": "...",
 "enabled": true}`.
@@ -28655,9 +28663,17 @@ Effect: an operator who turns off the schedule via
 scheduled backups until lenny-ops restarts (and even then the
 cron action runs because `deps.go` does not re-read the schedule).
 
+**Resolution:** The `backup-full` and `backup-postgres` cron jobs now
+re-read `svc.GetSchedule(ctx)` before each fire and skip when
+`enabled:false`, so a `PUT /v1/admin/backups/schedule` flip takes
+effect without a lenny-ops restart (`cmd/lenny-ops/deps.go`
+`scheduledBackupsDisabled`). The retention sweep runs unconditionally
+as before. Tier-1 test `TestScheduledBackupsRespectScheduleEnabled_spec_25_11`
+exercises the gate.
+
 ---
 
-### - [ ] F-17.3.24 — 3.4 — `ValidType` in backup package does not include `"pre-restore"` [Low] — OPEN
+### - [x] F-17.3.24 — 3.4 — `ValidType` in backup package does not include `"pre-restore"` [Low] — CLOSED
 
 Spec — §25.11 Pre-Restore Backup Lifecycle uses `type:
 "pre-restore"`.
@@ -28670,6 +28686,11 @@ backup with `Type: "pre-restore"` bypassing `CreateBackup`
 `type: pre-restore` (e.g. for a forced pre-restore snapshot) would
 be rejected. Minor — spec doesn't explicitly require admin to
 create them via the public endpoint.
+
+**Resolution:** Added `TypePreRestore = "pre-restore"` constant and
+extended `ValidType` to accept it (`pkg/ops/backup/backup.go`). The
+in-tree `createPreRestoreBackup` and `retentionKind` paths now use
+the new constant. `TestValidType` asserts the four canonical types.
 
 ---
 
@@ -29459,7 +29480,7 @@ No `gke_platform_test.go`, `gcs_resources_test.go`, `aks_platform_test.go`, `azu
 
 ---
 
-### - [ ] F-17.5.7 — 1 — RuntimeClass mapping is hard-coded to three Lenny isolation profile names (no operator override surface) [Low] — OPEN
+### - [x] F-17.5.7 — 1 — RuntimeClass mapping is hard-coded to three Lenny isolation profile names (no operator override surface) [Low] — CLOSED
 
 **Potential overlap** (confidence: high) — F-6.1.20 — Same RuntimeClass mapping code, but F-17.5.7 flags the hard-coded names as a missing operator override while F-6.1.20 records the mapping as correct with no gap.
 
@@ -29486,9 +29507,21 @@ The RuntimeClass *name* the controller writes to the pod spec is hard-coded to `
 
 **Suggested fix.** Expose a `pools[].runtimeClassNameOverride` (per-pool) or `isolation.runtimeClassNames` (chart-wide map: `standard|sandboxed|microvm → string`) Helm value; pass it through to the controller's pod-spec render.
 
+**Resolution:** Added `isolation.ResolveRuntimeClassName(profile, overrides)`
+(`pkg/sandbox/isolation/runtimeclass.go`); the chart now exposes
+`isolation.runtimeClassNames.{standard,sandboxed,microvm}` Helm values
+(`charts/lenny/values.yaml`) and the controller deployment surfaces
+them through `--{standard,sandboxed,microvm}-runtime-class` flags
+(`cmd/lenny-controller/main.go`, `charts/lenny/templates/controller-deployment.yaml`).
+The sandbox.Reconciler / warmpool.Reconciler now carry
+`RuntimeClassNameOverrides map[isolation.Profile]string`; the
+warmpool Degraded message substitutes the override name. Tier-1 tests
+`TestResolveRuntimeClassNameAppliesOverrides_spec_17_5` and
+`TestRuntimeClassOverrideRoutesPresenceCheck_spec_17_5` cover the path.
+
 ---
 
-### - [ ] F-17.5.8 — 2 — Cloud-managed connection-pooler advice is doc-only; no `connectionPooler: external` enforcement in chart [Low] — OPEN
+### - [x] F-17.5.8 — 2 — Cloud-managed connection-pooler advice is doc-only; no `connectionPooler: external` enforcement in chart [Low] — CLOSED
 
 **Spec basis.** §17.9.3 "Cloud-Managed Backends" Postgres row (`spec/17_deployment-topology.md:1383-1389`) requires `connectionPooler = external` when the deployment uses RDS Proxy / Cloud SQL Auth Proxy / Azure PgBouncer. The §17.6 preflight "Cloud-managed pooler sentinel defense" check (`spec/17_deployment-topology.md:488`) is *gated on* `postgres.connectionPooler = external`.
 
@@ -29499,6 +29532,15 @@ The RuntimeClass *name* the controller writes to the pod spec is hard-coded to `
 **Severity.** Low. Mostly a documentation/configuration-surface gap; the per-transaction `lenny_tenant_guard` trigger is present in the migrations. Surfaces only when a deployer uses RDS Proxy or Cloud SQL Auth Proxy without independently verifying the trigger.
 
 **Suggested fix.** Add `postgres.connectionPooler: pgbouncer | external` Helm value (default `pgbouncer`) and gate the preflight `lenny_tenant_guard` check on the `external` branch.
+
+**Resolution:** Added `postgres.connectionPooler` Helm value (default
+`pgbouncer`, accepts `external`) with chart-template enum validation
+that fails the render with §17.9.3 message on any other value
+(`charts/lenny/templates/preflight-job.yaml`). The preflight Job now
+surfaces the selection via `--connection-pooler=<value>` so the
+CloudPoolerSentinelDefense check fires only on the `external` branch.
+Tier-2 helm-unittests cover the default, the override, and the
+enum-rejection paths (`charts/lenny/tests/preflight-job_test.yaml`).
 
 ---
 
@@ -30130,7 +30172,7 @@ error, but the spec's source-of-truth ambiguity should be resolved.
 
 ---
 
-### - [ ] F-17.6.16 — `--wait-timeout` flag spelled `--wait` [Low] — OPEN
+### - [x] F-17.6.16 — `--wait-timeout` flag spelled `--wait` [Low] — CLOSED
 
 **Spec:** §17.6 line 421: `--wait-timeout` (default 120s) for bootstrap
 readiness poll.
@@ -30145,6 +30187,14 @@ following the spec verbatim would fail with `unknown flag`.
 **Files:**
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/main.go:493`
 - `/Users/joan/projects/lenny/charts/lenny/templates/bootstrap-job.yaml:75`
+
+**Resolution:** `cmdBootstrap` now accepts `--wait-timeout` (canonical
+spec name; default 120s) and keeps `--wait` as a back-compat alias so
+in-tree chart renders do not regress
+(`cmd/lenny-ctl/main.go cmdBootstrap`). The chart's bootstrap-job
+template now renders `--wait-timeout`. Help text + comment updated.
+Tier-1 test `TestBootstrapWaitTimeoutFlagAlias_spec_17_6_421` exercises
+both spellings; helm-unittest updated to assert the new flag form.
 
 ---
 
@@ -30183,7 +30233,7 @@ which form is authoritative would help.
 
 ---
 
-### - [ ] F-17.6.18 — Chart's `kubeApiServerCIDR` default is `0.0.0.0/0` [Low] — OPEN
+### - [x] F-17.6.18 — Chart's `kubeApiServerCIDR` default is `0.0.0.0/0` [Low] — CLOSED
 
 **Spec:** §17.6 lines 573–575: example values use a tight `10.96.0.0/12` and
 the prose recommends the cluster service CIDR.
@@ -30199,9 +30249,18 @@ preflight calls out the check.
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:77`
 
+**Resolution:** Flipped the chart default to `kubeApiServerCIDR:
+"10.96.0.0/12"` (kubeadm/k3s/kind service CIDR; matches §17.6 line 575
+example) and documented the cloud-managed override commands inline
+(`charts/lenny/values.yaml`). The four system-network-policies rules
+that splice this CIDR now ship the tightened default; the existing
+helm-unittest assertion was updated to match. The preflight CIDR
+containment check tracked separately under F-13.2.13 still bites
+operators who set an invalid value.
+
 ---
 
-### - [ ] F-17.6.19 — `lenny-preflight` Job has no `activeDeadlineSeconds` [Low] — OPEN
+### - [x] F-17.6.19 — `lenny-preflight` Job has no `activeDeadlineSeconds` [Low] — CLOSED
 
 **Spec:** §17.6 line 534: "The Job has a `activeDeadlineSeconds: 120`."
 
@@ -30213,6 +30272,12 @@ would still hang the install indefinitely.
 
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/templates/preflight-job.yaml:111-157`
+
+**Resolution:** Added `preflight.timeoutSeconds` Helm value (default
+120s, matching §17.6 line 534) and the preflight Job now renders
+`spec.activeDeadlineSeconds` from it. Two helm-unittest assertions
+cover the default and an operator-supplied override
+(`charts/lenny/tests/preflight-job_test.yaml`).
 
 ---
 

@@ -70,18 +70,20 @@ func (c readerRuntimeClassChecker) RuntimeClassExists(ctx context.Context, name 
 
 // runtimeClassMissingMessage formats the §5.3 line 675 Degraded message
 // for a pool whose isolation profile maps to an uninstalled
-// RuntimeClass. The gvisor wording matches the spec verbatim; runc and
-// kata follow the same form.
+// RuntimeClass. The phrasing matches the spec verbatim for the chart
+// defaults (runc, gvisor, kata) and substitutes the operator-supplied
+// override (§17.5 line 3) when the chart's `isolation.runtimeClassNames`
+// values remap the profile to a non-default name.
 //
-// spec: §5.3 line 675.
+// spec: §5.3 line 675; §17.5 line 3.
 func runtimeClassMissingMessage(profile isolation.Profile, rcName string) string {
 	switch profile {
 	case isolation.ProfileSandboxed:
-		return "RuntimeClass 'gvisor' not found — install gVisor or change the pool's isolation profile."
+		return fmt.Sprintf("RuntimeClass '%s' not found — install gVisor or change the pool's isolation profile.", rcName)
 	case isolation.ProfileMicrovm:
-		return "RuntimeClass 'kata' not found — install Kata Containers or change the pool's isolation profile."
+		return fmt.Sprintf("RuntimeClass '%s' not found — install Kata Containers or change the pool's isolation profile.", rcName)
 	case isolation.ProfileStandard:
-		return "RuntimeClass 'runc' not found — install the runc RuntimeClass or change the pool's isolation profile."
+		return fmt.Sprintf("RuntimeClass '%s' not found — install the runc RuntimeClass or change the pool's isolation profile.", rcName)
 	default:
 		return fmt.Sprintf("RuntimeClass %q not found — install it or change the pool's isolation profile.", rcName)
 	}

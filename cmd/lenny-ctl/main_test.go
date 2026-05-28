@@ -369,12 +369,34 @@ users:
 func TestBootstrapRejectsMalformedSeedFile(t *testing.T) {
 	path := writeSeedFile(t, "bootstrap-values.yaml", "tenants: [unterminated")
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"bootstrap", "--from-values", path}, &stdout, &stderr)
+	// --wait-timeout=0 skips the readiness poll so a unit test that
+	// never starts a gateway does not block on /healthz.
+	code := run([]string{"bootstrap", "--wait-timeout", "0", "--from-values", path}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("malformed seed file: exit code %d, want 1", code)
 	}
 	if !bytes.Contains(stderr.Bytes(), []byte("not valid YAML or JSON")) {
 		t.Errorf("stderr: %q, want a YAML-or-JSON parse error", stderr.String())
+	}
+}
+
+// spec: §17.6 line 421 — the bootstrap CLI MUST accept --wait-timeout
+// (canonical) and SHOULD accept --wait (back-compat alias).
+func TestBootstrapWaitTimeoutFlagAlias_spec_17_6_421(t *testing.T) {
+	for _, flag := range []string{"--wait-timeout", "--wait"} {
+		flag := flag
+		t.Run(flag, func(t *testing.T) {
+			path := writeSeedFile(t, "bootstrap-values.json",
+				`{"tenants":[{"id":"acme","displayName":"Acme Corp"}]}`)
+			code, got := runAgainstGateway(t, http.StatusOK, `{"tenants":{"createdCount":1}}`,
+				"bootstrap", flag, "0", "--from-values", path)
+			if code != 0 {
+				t.Fatalf("%s: exit code %d, want 0", flag, code)
+			}
+			if got.method != http.MethodPost || got.path != "/v1/admin/bootstrap" {
+				t.Fatalf("%s: %s %s, want POST /v1/admin/bootstrap", flag, got.method, got.path)
+			}
+		})
 	}
 }
 

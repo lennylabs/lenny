@@ -220,9 +220,11 @@ tests:
       value: allow-ops
     asserts:
       # §25.4: lenny-ops is leader-elected and needs kube-apiserver egress.
+      # The kubeApiServerCIDR default matches kubeadm/k3s/kind cluster
+      # service CIDR (§17.6 lines 573-575). F-17.6.18.
       - equal:
           path: spec.egress[0].to[0].ipBlock.cidr
-          value: "0.0.0.0/0"
+          value: "10.96.0.0/12"
       - contains:
           path: spec.egress[0].ports
           content:

@@ -137,7 +137,8 @@ Global flags:
 Gateway commands:
   health                                Print the platform health report
   version                               Print the gateway version
-  bootstrap --from-values <f>           Apply a seed file (tenants/runtimes/users)
+  bootstrap --from-values <f> [--wait-timeout <secs>]
+                                        Apply a seed file (tenants/runtimes/users); --wait-timeout defaults to 120s (§17.6)
   install [--answer-file <f>]           Run the installation wizard (§17.6)
   runtime init <name> --language <l> --template <t>   Scaffold a runtime repo
   runtime validate [<path>]             Statically validate a runtime repo
@@ -623,13 +624,17 @@ func parseOpenBreaker(args []string) (map[string]any, error) {
 
 func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	var fromValues string
-	var waitSeconds int
+	// spec: §17.6 line 421 — --wait-timeout (default 120s) for the
+	// bootstrap readiness poll. --wait is kept as a back-compat alias so
+	// an existing Helm chart that still renders --wait keeps working.
+	const defaultWaitTimeoutSeconds = 120
+	waitSeconds := defaultWaitTimeoutSeconds
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--from-values" && i+1 < len(args):
 			fromValues = args[i+1]
 			i++
-		case args[i] == "--wait" && i+1 < len(args):
+		case (args[i] == "--wait-timeout" || args[i] == "--wait") && i+1 < len(args):
 			if n, err := strconv.Atoi(args[i+1]); err == nil {
 				waitSeconds = n
 			}
@@ -640,10 +645,11 @@ func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, std
 		fmt.Fprintln(stderr, "lenny-ctl: bootstrap requires --from-values <file>")
 		return 2
 	}
-	// --wait polls the gateway's health endpoint until it is ready or
-	// the deadline elapses. The lenny-bootstrap Job needs this because
-	// it runs from a distroless image with no shell to poll from, and
-	// it is a post-install hook that races the gateway Deployment.
+	// --wait-timeout polls the gateway's health endpoint until it is
+	// ready or the deadline elapses. The lenny-bootstrap Job needs this
+	// because it runs from a distroless image with no shell to poll
+	// from, and it is a post-install hook that races the gateway
+	// Deployment.
 	if waitSeconds > 0 {
 		deadline := time.Now().Add(time.Duration(waitSeconds) * time.Second)
 		fmt.Fprintf(stderr, "lenny-ctl: waiting up to %ds for the gateway\n", waitSeconds)

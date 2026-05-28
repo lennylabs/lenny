@@ -123,10 +123,14 @@ admissionPolicies:
 webhookIngressCIDR: "0.0.0.0/0"
 
 # kubeApiServerCIDR is the destination CIDR the control-plane
-# components are allowed to reach the kube-apiserver on (§13.2).
-# Operators should tighten this to the cluster's apiserver endpoint;
-# the broad default is bounded by the kubeApiServerPorts egress rule.
-kubeApiServerCIDR: "0.0.0.0/0"
+# components are allowed to reach the kube-apiserver on (§13.2 NET-040,
+# §17.6 lines 573-575). The default matches kubeadm/k3s/kind clusters
+# (service CIDR 10.96.0.0/12). Override for cloud-managed clusters with
+# the value of `kubectl get svc kubernetes -n default -o
+# jsonpath='{.spec.clusterIP}'` or the cloud provider's serviceIpv4Cidr.
+# The lenny-preflight Job validates that the apiserver Service ClusterIP
+# falls within this CIDR and fails the install if it does not.
+kubeApiServerCIDR: "10.96.0.0/12"
 
 # kubeApiServerPorts lists the destination ports the control-plane
 # components may reach the kube-apiserver on (§13.2). The in-cluster
@@ -495,6 +499,18 @@ pgbouncer:
 
 # postgres configures the Postgres connection.
 postgres:
+  # connectionPooler selects how the gateway and lenny-ops reach
+  # Postgres. §17.9.3 row "Postgres" pairs the cloud-managed sentinel
+  # defense (CloudPoolerSentinelDefense preflight check, §17.6 line
+  # 488) with the "external" value: when the deployer fronts Postgres
+  # with RDS Proxy / Cloud SQL Auth Proxy / Azure PgBouncer, those
+  # proxies cannot enforce the `__unset__` `app.current_tenant`
+  # sentinel via `connect_query`, so preflight must verify the
+  # per-transaction `lenny_tenant_guard` trigger exists. Accepted
+  # values: "pgbouncer" (default; in-cluster PgBouncer enforces the
+  # sentinel via `connect_query`) or "external" (cloud-managed pooler;
+  # preflight CloudPoolerSentinelDefense gates on the trigger).
+  connectionPooler: "pgbouncer"
   # cidr is the destination CIDR PgBouncer is allowed to reach
   # Postgres on (§13.2). Operators should tighten this to the
   # database endpoint; the broad default is bounded by the per-port
@@ -804,6 +820,20 @@ runtimeClasses:
       # standard (runc) is the native container runtime and adds no
       # isolation overhead per §5.3.
       overhead: {}
+
+# isolation configures cluster-specific seams the §5.3 isolation
+# profiles depend on. runtimeClassNames overrides Lenny's chart-default
+# RuntimeClass literal per profile (standard→runc, sandboxed→gvisor,
+# microvm→kata). spec: §17.5 line 3 — clusters whose gVisor RuntimeClass
+# is published as `runsc` (the upstream-default name) or whose Kata
+# install names objects `kata-qemu` / `kata-fc` set the per-profile
+# override so the sandbox controller maps each profile to the cluster's
+# actual RuntimeClass name. An empty value preserves the chart default.
+isolation:
+  runtimeClassNames:
+    standard: ""
+    sandboxed: ""
+    microvm: ""
 
 # gateway configures the §4.1 edge gateway. The lenny-gateway
 # Deployment runs the gateway binary; it is stateless and horizontally
@@ -1384,6 +1414,11 @@ preflight:
     # tag defaults to the chart appVersion when left empty.
     tag: ""
     pullPolicy: IfNotPresent
+  # timeoutSeconds caps the preflight Job runtime via
+  # activeDeadlineSeconds. §17.6 line 534 sets the default at 120s; a
+  # slow API server is bounded so the install never hangs indefinitely.
+  # Deployers can raise this for sluggish managed control planes.
+  timeoutSeconds: 120
   resources:
     requests:
       cpu: 50m

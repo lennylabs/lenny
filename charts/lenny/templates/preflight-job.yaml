@@ -127,6 +127,19 @@ subjects:
 {{- if hasKey ($tls | default dict) "enabled" -}}
 {{- $useSSL = $tls.enabled -}}
 {{- end -}}
+{{- /* §17.9.3 Postgres "Cloud-Managed Backends" — postgres.connectionPooler
+   selects how Lenny reaches Postgres. "pgbouncer" is the in-cluster
+   default (sentinel via connect_query). "external" signals an RDS
+   Proxy / Cloud SQL Auth Proxy / Azure PgBouncer in front of Postgres,
+   which cannot enforce the connect_query sentinel — preflight then
+   verifies the per-transaction lenny_tenant_guard trigger
+   (CloudPoolerSentinelDefense check, §17.6 line 488). Surfaced here so
+   the preflight binary gets the value via --connection-pooler. */ -}}
+{{- $postgresValues := .Values.postgres | default dict -}}
+{{- $connectionPooler := $postgresValues.connectionPooler | default "pgbouncer" -}}
+{{- if not (or (eq $connectionPooler "pgbouncer") (eq $connectionPooler "external")) -}}
+{{- fail (printf "§17.9.3: postgres.connectionPooler must be \"pgbouncer\" or \"external\", got %q" $connectionPooler) -}}
+{{- end -}}
 {{- /*
 §5.3 line 676 RuntimeClass requirements. The install requires the
 RuntimeClasses backing the isolation profiles its pods will use. Source
@@ -160,6 +173,11 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 0
+  # spec: §17.6 line 534 — the preflight Job runs to completion within
+  # activeDeadlineSeconds; a slow API server is bounded so a hung check
+  # does not block the install indefinitely. Deployers raise the bound
+  # via preflight.timeoutSeconds.
+  activeDeadlineSeconds: {{ int (.Values.preflight.timeoutSeconds | default 120) }}
   template:
     metadata:
       labels:
@@ -188,6 +206,10 @@ spec:
             # production deployments override both. F-10.3.5 / F-10.3.6.
             - --spiffe-trust-domain={{ .Values.global.spiffeTrustDomain | default "" }}
             - --sa-token-audience={{ .Values.global.saTokenAudience | default "" }}
+            # spec: §17.9.3 / §17.6 line 488 — when "external" the
+            # CloudPoolerSentinelDefense check verifies the
+            # lenny_tenant_guard per-transaction trigger.
+            - --connection-pooler={{ $connectionPooler }}
             {{- if $rcReqs }}
             - --required-runtime-classes={{ join "," $rcReqs }}
             {{- end }}

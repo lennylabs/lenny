@@ -109,6 +109,14 @@ type Reconciler struct {
 	// trailing status lands once the window expires. A nil gate disables
 	// deduplication.
 	StatusDedup *statusdedup.Gate
+	// RuntimeClassNameOverrides remaps the §5.3 isolation profile to a
+	// cluster-specific RuntimeClass name (spec: §17.5 line 3). Set from
+	// the chart's `isolation.runtimeClassNames` Helm values so a cluster
+	// running gVisor as `runsc` or Kata as `kata-qemu` does not require
+	// renaming in-cluster RuntimeClass objects to Lenny's literal
+	// defaults. A nil or empty map preserves the §5.3 defaults
+	// (standard→runc, sandboxed→gvisor, microvm→kata).
+	RuntimeClassNameOverrides map[isolation.Profile]string
 	// MaxConcurrentReconciles is the §4.6.1 worker count
 	// (--max-concurrent-reconciles, default 1). Zero or negative selects
 	// the controller-runtime default of 1.
@@ -275,8 +283,13 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		RuntimeImage:     rt.Spec.Image,
 		AdapterImage:     r.AdapterImage,
 		IsolationProfile: profile,
-		DeploymentModel:  rt.Spec.DeploymentModel,
-		EgressCapture:    r.resolveEgressCapture(sb),
+		// spec: §17.5 line 3 — apply operator RuntimeClass-name
+		// overrides (e.g. gvisor→runsc, kata→kata-qemu) so the chart's
+		// `isolation.runtimeClassNames` Helm values reach the pod spec
+		// without requiring rename of in-cluster RuntimeClass objects.
+		RuntimeClassNameOverrides: r.RuntimeClassNameOverrides,
+		DeploymentModel:           rt.Spec.DeploymentModel,
+		EgressCapture:             r.resolveEgressCapture(sb),
 		// spec: §5.2 line 516 — the SandboxTemplate's deployer-set
 		// terminationGracePeriodSeconds replaces the 120s default base, and
 		// the maxTerminationGracePeriodSeconds ceiling clamps the pod's

@@ -15,6 +15,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // stubRuntimeClassChecker is an injectable warmpool.RuntimeClassChecker
@@ -225,5 +226,34 @@ func TestRuntimeClassMissingMessageActionable_spec_5_3(t *testing.T) {
 	cond, _ := degradedCondition(t, getPool(t, c))
 	if !strings.Contains(cond.Message, "install gVisor") {
 		t.Errorf("Degraded.Message %q omits the install remediation", cond.Message)
+	}
+}
+
+// spec: §17.5 line 3 — a deployer-supplied RuntimeClass-name override
+// remaps the §5.3 sandboxed profile to the cluster's actual name
+// (e.g. `runsc`) so the presence check queries the right object and a
+// Degraded message references it.
+func TestRuntimeClassOverrideRoutesPresenceCheck_spec_17_5(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(t, s, template(), pool(1, 10))
+	stub := &stubRuntimeClassChecker{exists: false}
+
+	r := &warmpool.Reconciler{
+		Client:                    c,
+		Scheme:                    s,
+		RuntimeClasses:            stub,
+		RuntimeClassNameOverrides: map[isolation.Profile]string{isolation.ProfileSandboxed: "runsc"},
+	}
+	reconcileWith(t, r)
+
+	if len(stub.calls) == 0 || stub.calls[0] != "runsc" {
+		t.Fatalf("RuntimeClassExists calls = %v, want first call for %q (override)", stub.calls, "runsc")
+	}
+	cond, ok := degradedCondition(t, getPool(t, c))
+	if !ok {
+		t.Fatalf("pool carries no Degraded condition")
+	}
+	if !strings.Contains(cond.Message, "runsc") {
+		t.Errorf("Degraded.Message %q omits override name 'runsc'", cond.Message)
 	}
 }

@@ -57,8 +57,9 @@ spec:
           imagePullPolicy: {{ $b.image.pullPolicy }}
           # The lenny-ctl image is distroless and has no shell, so the
           # container runs the binary directly. lenny-ctl bootstrap
-          # --wait polls the gateway health endpoint before applying the
-          # seed, which replaces the former shell wait loop.
+          # --wait-timeout polls the gateway health endpoint before
+          # applying the seed, which replaces the former shell wait
+          # loop. spec: §17.6 line 421.
           args:
             - --api-url
             - "{{ $gateway }}"
@@ -72,7 +73,7 @@ spec:
             - "{{ $b.auth.devRoles }}"
             {{- end }}
             - bootstrap
-            - --wait
+            - --wait-timeout
             - "{{ int $b.waitTimeoutSeconds }}"
             - --from-values
             - /etc/lenny/bootstrap-values.yaml

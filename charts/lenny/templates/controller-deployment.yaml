@@ -64,6 +64,22 @@ spec:
             # than a cluster-default-audience token. F-10.3.5.
             - --sa-token-audience={{ . }}
             {{- end }}
+            {{- /* spec: §17.5 line 3 — per-profile RuntimeClass name
+                   overrides. Clusters that ship gVisor as `runsc` or
+                   Kata as `kata-qemu`/`kata-fc` set these so the
+                   controller maps §5.3 profiles to the cluster's
+                   actual RuntimeClass names without renaming the
+                   in-cluster objects. F-17.5.7. */}}
+            {{- $rcNames := (.Values.isolation | default dict).runtimeClassNames | default dict -}}
+            {{- with $rcNames.standard }}
+            - --standard-runtime-class={{ . }}
+            {{- end }}
+            {{- with $rcNames.sandboxed }}
+            - --sandboxed-runtime-class={{ . }}
+            {{- end }}
+            {{- with $rcNames.microvm }}
+            - --microvm-runtime-class={{ . }}
+            {{- end }}
           {{- if $hasPg }}
           env:
             - name: LENNY_POSTGRES_DSN

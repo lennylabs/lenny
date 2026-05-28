@@ -145,11 +145,24 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 	// enforcement sweep daily at 03:30 UTC. The cron evaluator fires
 	// these on the leader replica; each creates a Kubernetes Job through
 	// the BackupService.
+	//
+	// spec: §25.11 schedule.enabled — the backup-creating jobs re-read
+	// the schedule before each fire and skip when enabled:false so an
+	// operator who turns scheduling off via PUT /v1/admin/backups/schedule
+	// no longer waits for a lenny-ops restart for the change to take
+	// effect. The retention sweep runs unconditionally (it is a
+	// retention-policy job, not a backup-creation job).
 	jobs := []opsservice.ScheduledJob{
 		{
 			Name:       "backup-full",
 			Expression: "0 2 * * *",
 			Run: func(ctx context.Context) error {
+				if skip, err := scheduledBackupsDisabled(ctx, svc); err != nil {
+					return err
+				} else if skip {
+					log.Printf("lenny-ops: backup-full skipped: schedule.enabled=false")
+					return nil
+				}
 				_, err := svc.CreateBackup(ctx, backup.BackupRequest{
 					Type: string(backup.TypeFull), Confirm: true, Production: production,
 				})
@@ -160,6 +173,12 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 			Name:       "backup-postgres",
 			Expression: "0 */6 * * *",
 			Run: func(ctx context.Context) error {
+				if skip, err := scheduledBackupsDisabled(ctx, svc); err != nil {
+					return err
+				} else if skip {
+					log.Printf("lenny-ops: backup-postgres skipped: schedule.enabled=false")
+					return nil
+				}
 				_, err := svc.CreateBackup(ctx, backup.BackupRequest{
 					Type: string(backup.TypePostgres),
 				})
@@ -179,6 +198,21 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 		},
 	}
 	return svc, jobs
+}
+
+// scheduledBackupsDisabled reports whether the persisted §25.11
+// backup schedule has enabled:false. A non-nil err is a transient
+// store failure; the caller treats the fire as a no-op to avoid
+// creating a backup the operator may have disabled.
+func scheduledBackupsDisabled(ctx context.Context, svc *backup.Service) (bool, error) {
+	sched, err := svc.GetSchedule(ctx)
+	if err != nil {
+		return false, err
+	}
+	if sched == nil {
+		return false, nil
+	}
+	return !sched.Enabled, nil
 }
 
 // logEmitter is the §25.4 escalation Emitter used until the §25.5 event
