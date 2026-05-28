@@ -881,6 +881,18 @@ message ExtendLeaseResponse {
   // only when status is REJECTED.
   // spec: §15.1 line 1080
   string cool_off_expires_at = 6;
+  // error is the §15.1 typed error envelope. Populated when the
+  // gateway auto-rejects a REJECTED outcome with one of the §15.1
+  // delegation error codes (currently EXTENSION_COOL_OFF_ACTIVE on
+  // both the pre-grant rejection-cool-off path and the §8.6 line 731
+  // in-flight atomic re-check). Unset on every non-REJECTED outcome
+  // and on a STATUS_REJECTED outcome that does not map to a §15.1
+  // typed code. Mirrors the REST/MCP error envelope so clients and
+  // admin tooling can distinguish "user just denied" from "the
+  // subtree is inside an existing cool-off window" without parsing
+  // the status field.
+  // spec: §15.1 line 1080; F-8.6.9
+  Error error = 7;
 
   enum Status {
     STATUS_UNSPECIFIED = 0;

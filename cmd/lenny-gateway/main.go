@@ -2640,8 +2640,10 @@ func main() {
 	// surface — the inverse direction of the pod-facing Adapter service.
 	// It currently hosts the §8.6 ExtendLease RPC: a pod's adapter calls
 	// it when its LLM proxy rejects a request for budget exhaustion, and
-	// the gateway computes the lease-extension grant.
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr)
+	// the gateway computes the lease-extension grant. gwMetrics satisfies
+	// leasecontrol.MetricEmitter so every grant drives the §16
+	// lenny_delegation_lease_extension_total counter. F-8.6.13.
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, gwMetrics)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -3427,7 +3429,12 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // swapping in a Postgres-backed leasecontrol.BudgetSource with the
 // Wave 1 store-persistence work; leasecontrol.Service depends only on
 // the interface.
-func newGatewayControlServer(addr string) (*grpc.Server, net.Listener, error) {
+//
+// metrics may be nil for the no-metrics test path; in production the
+// gatewaymetrics.Metrics implements leasecontrol.MetricEmitter so
+// every ExtendLease decision drives the §16 line 66
+// `lenny_delegation_lease_extension_total` counter. F-8.6.13.
+func newGatewayControlServer(addr string, metrics leasecontrol.MetricEmitter) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
@@ -3435,6 +3442,7 @@ func newGatewayControlServer(addr string) (*grpc.Server, net.Listener, error) {
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets: budgets,
 		Tenants: budgets,
+		Metrics: metrics,
 		Clock:   clockinject.Now,
 	})
 	if err != nil {

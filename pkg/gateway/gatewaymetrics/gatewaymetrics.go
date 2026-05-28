@@ -353,6 +353,17 @@ type Metrics struct {
 	// task-mode lifecycle (F-5.2.1 / F-5.2.18).
 	taskReuseCount *prometheus.HistogramVec
 
+	// delegationLeaseExtension is the §16 line 66 counter for §8.6
+	// lease extensions. Labelled by `tenant_id` and `outcome` (one of
+	// `approved` / `capped` / `denied` — the §8.6 line 743 audit
+	// classification). The §16.1 catalog declares the metric with no
+	// labels; tenant_id and outcome are tier-2 dimensions that keep
+	// cardinality bounded (tenants × 3 outcomes) and let the
+	// per-tenant dashboards under §16 surface the rejection-rate split
+	// the §8.6 elicitation flow drives. Emitted from leasecontrol.Service
+	// on every ExtendLease decision. F-8.6.13.
+	delegationLeaseExtension *prometheus.CounterVec
+
 	// memoryStoreOperationDuration is the §9.4 / §16.1 line 151
 	// MemoryStore per-operation duration histogram. Labels: `operation`
 	// (one of write, query, delete, list, delete_by_user,
@@ -1208,6 +1219,19 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16 line 66 — `lenny_delegation_lease_extension_total` counter
+	// of §8.6 lease-extension decisions, labelled by `tenant_id` and
+	// the §8.6 line 743 `outcome` classification (approved/capped/
+	// denied). Driven by leasecontrol.Service.auditFull on every
+	// ExtendLease return — wired in cmd/lenny-gateway/main.go via the
+	// Options.Metrics field. F-8.6.13.
+	delegationLeaseExtension, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_delegation_lease_extension_total",
+		Help: "§8.6 delegation lease-extension decisions by tenant and §8.6 line 743 outcome.",
+	}, []string{"tenant_id", "outcome"})
+	if err != nil {
+		return nil, err
+	}
 	// §9.4 line 200 / §16.1 line 151 — MemoryStore per-operation
 	// duration histogram. Six operation labels (write, query, delete,
 	// list, delete_by_user, delete_by_tenant); backend distinguishes
@@ -1286,6 +1310,7 @@ func New() (*Metrics, error) {
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		maxOrphanTasksPerTenant,
 		statelessRequests, statelessConcurrentActive, taskReuseCount,
+		delegationLeaseExtension,
 		memoryStoreOperationDuration, memoryStoreErrors,
 		memoryStoreRecordCount, memoryStoreUserOverThreshold)
 	gauge := activeSessions.WithLabelValues()
@@ -1395,11 +1420,27 @@ func New() (*Metrics, error) {
 		statelessRequests:                    statelessRequests,
 		statelessConcurrentActive:            statelessConcurrentActive,
 		taskReuseCount:                       taskReuseCount,
+		delegationLeaseExtension:             delegationLeaseExtension,
 		memoryStoreOperationDuration:         memoryStoreOperationDuration,
 		memoryStoreErrors:                    memoryStoreErrors,
 		memoryStoreRecordCount:               memoryStoreRecordCount,
 		memoryStoreUserOverThreshold:         memoryStoreUserOverThreshold,
 	}, nil
+}
+
+// IncDelegationLeaseExtension records a §8.6 lease-extension
+// decision against the §16 line 66
+// `lenny_delegation_lease_extension_total` counter. The `outcome`
+// label is the §8.6 line 743 audit classification
+// (`approved`/`capped`/`denied`) — emitted by
+// leasecontrol.Service alongside its audit record so the dashboard and
+// the audit chain share one source of truth. spec: §16 line 66; §8.6
+// line 743; F-8.6.13.
+func (m *Metrics) IncDelegationLeaseExtension(tenantID, outcome string) {
+	if m == nil {
+		return
+	}
+	m.delegationLeaseExtension.WithLabelValues(tenantID, outcome).Inc()
 }
 
 // IncStatelessRequest records a §5.2 line 573 stateless-pool request.

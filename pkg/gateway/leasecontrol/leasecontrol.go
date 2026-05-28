@@ -142,6 +142,40 @@ type TreeBudget struct {
 	// extension can never push CurrentTokenBudget above it.
 	EffectiveMax int64
 
+	// ParentLeaseTokenCeiling is the §8.6 line 648 second hard ceiling:
+	// "a child requesting an extension cannot exceed what the parent
+	// was granted". Zero means no parent ceiling applies (the
+	// requesting session is the tree root, or the BudgetSource has not
+	// resolved a parent lease). When positive, EffectiveMax is further
+	// capped at this value before Grant runs so the child cannot
+	// overshoot the parent's lease envelope. F-8.6.15.
+	// spec: §8.6 line 648
+	ParentLeaseTokenCeiling int64
+
+	// CurrentMaxAgeSeconds is the §8.6 line 643 additionalMaxAge
+	// dimension's present value (the tree's current perChildMaxAge in
+	// seconds). leaseextension.Grant uses it the same way as
+	// CurrentTokenBudget for the seconds dimension. F-8.6.11.
+	// spec: §8.6 line 643
+	CurrentMaxAgeSeconds int64
+
+	// EffectiveMaxMaxAgeSeconds is the §8.6 layered ceiling for the
+	// additionalMaxAge dimension, resolved through the
+	// deployment/tenant/runtime layering. Zero disables the dimension
+	// (a request that asks for additional seconds against a
+	// zero-ceiling tree gets a CEILING_REACHED outcome on the seconds
+	// dimension while the tokens dimension proceeds independently).
+	// F-8.6.11.
+	// spec: §8.6 line 643
+	EffectiveMaxMaxAgeSeconds int64
+
+	// ParentLeaseMaxAgeCeiling mirrors ParentLeaseTokenCeiling for the
+	// seconds dimension: the parent's perChildMaxAge grant value caps
+	// the child's effective max-age. Zero disables the per-parent cap.
+	// F-8.6.15.
+	// spec: §8.6 line 648
+	ParentLeaseMaxAgeCeiling int64
+
 	// ExtensionDenied is the §8.6 extension-denied flag for the
 	// requesting subtree. When set and the cool-off has not expired,
 	// the gateway auto-rejects without entering the elicitation path.
@@ -171,13 +205,15 @@ type BudgetSource interface {
 	TreeBudget(ctx context.Context, tenantID, sessionID string) (TreeBudget, error)
 
 	// ApplyGrant atomically raises the tree's CurrentTokenBudget by
-	// granted and returns the new budget. A Postgres implementation
+	// grantedTokens and CurrentMaxAgeSeconds by grantedSeconds, and
+	// returns the new token budget. A Postgres implementation
 	// re-checks the extension-denied flag inside the same transaction
 	// and returns ErrExtensionDenied when a rejection was persisted
 	// between the TreeBudget read and the commit (§8.6 in-flight
-	// atomic check). granted of zero is a no-op that still returns the
-	// current budget.
-	ApplyGrant(ctx context.Context, tenantID, rootSessionID string, granted int64) (int64, error)
+	// atomic check). A zero on either dimension is a no-op for that
+	// dimension; ApplyGrant still returns the current token budget
+	// after applying whatever did land. F-8.6.11.
+	ApplyGrant(ctx context.Context, tenantID, rootSessionID string, grantedTokens, grantedSeconds int64) (int64, error)
 
 	// RejectionCoolOff returns the §8.6 rejectionCoolOffSeconds for the
 	// tree, resolved through the deployment, tenant, and runtime
@@ -216,7 +252,21 @@ type Service struct {
 	budgets  BudgetSource
 	tenants  TenantResolver
 	auditing Auditor
+	metrics  MetricEmitter
 	clock    func() time.Time
+}
+
+// MetricEmitter is the §16 counter callback the Service drives on
+// every ExtendLease decision. *gatewaymetrics.Metrics satisfies it.
+// The interface keeps the leasecontrol package free of a direct
+// gatewaymetrics dependency (which would create an import cycle once
+// gatewaymetrics consumes leasecontrol types). spec: §16 line 66;
+// F-8.6.13.
+type MetricEmitter interface {
+	// IncDelegationLeaseExtension bumps lenny_delegation_lease_extension_total
+	// with the §8.6 line 743 (`approved`/`capped`/`denied`) outcome the
+	// audit recorded for the same request.
+	IncDelegationLeaseExtension(tenantID, outcome string)
 }
 
 // Auditor records the §8.6 audit entry for an extension request. The
@@ -279,6 +329,12 @@ type ExtensionAudit struct {
 	RequestSessionID string
 	RequestedTokens  int64
 	GrantedTokens    int64
+	// RequestedSeconds and GrantedSeconds carry the §8.6 line 643
+	// additionalMaxAge dimension so the audit reflects both budget
+	// dimensions, not just tokens. Zero on either pair indicates the
+	// caller did not request that dimension. F-8.6.11.
+	RequestedSeconds int64
+	GrantedSeconds   int64
 	EffectiveMax     int64
 	// Outcome is the §8.6 line 743 approved/denied/capped classification.
 	Outcome AuditOutcome
@@ -295,6 +351,10 @@ type Options struct {
 	// Auditing records the §8.6 audit entry per request. Optional;
 	// nil skips auditing.
 	Auditing Auditor
+
+	// Metrics drives the §16 lenny_delegation_lease_extension_total
+	// counter. Optional; nil skips metric emission. F-8.6.13.
+	Metrics MetricEmitter
 
 	// Clock overrides time.Now for cool-off comparisons. Pass nil for
 	// production.
@@ -317,6 +377,7 @@ func NewService(opts Options) (*Service, error) {
 		budgets:  opts.Budgets,
 		tenants:  opts.Tenants,
 		auditing: opts.Auditing,
+		metrics:  opts.Metrics,
 		clock:    clock,
 	}, nil
 }
@@ -368,24 +429,55 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 		// spec: §15.1 line 1080 — REJECTED carries details.subtreeId and
 		// details.coolOffExpiresAt (UTC RFC 3339) so clients can identify
 		// the denied subtree and the cool-off window end without parsing
-		// the legacy unix-ms field.
+		// the legacy unix-ms field. The Error envelope mirrors the §15.1
+		// EXTENSION_COOL_OFF_ACTIVE typed code so admin tooling can
+		// distinguish "in an existing cool-off window" from other
+		// REJECTED outcomes without re-parsing details. F-8.6.9.
 		return &adapterv1.ExtendLeaseResponse{
 			Status:              adapterv1.ExtendLeaseResponse_STATUS_REJECTED,
 			GrantedTokens:       0,
 			CoolOffExpiryUnixMs: budget.CoolOffExpiry.UnixMilli(),
 			SubtreeId:           sessionID,
 			CoolOffExpiresAt:    formatCoolOffExpiry(budget.CoolOffExpiry),
+			Error:               coolOffActiveError(),
 		}, nil
 	}
 
+	// spec: §8.6 line 648 — the parent's own lease limits cap the child's
+	// extension. ParentLeaseTokenCeiling is set by the BudgetSource when
+	// the requesting session is a delegated child whose parent's lease
+	// envelope is narrower than the layered deployment/tenant/runtime
+	// ceiling. The handler treats it as a second hard ceiling: the grant
+	// math runs against the smaller of the two. A zero ceiling means
+	// "no parent cap" (root session or unknown parent). F-8.6.15.
+	tokenCeiling := budget.EffectiveMax
+	if budget.ParentLeaseTokenCeiling > 0 && budget.ParentLeaseTokenCeiling < tokenCeiling {
+		tokenCeiling = budget.ParentLeaseTokenCeiling
+	}
 	granted, outcome := leaseextension.Grant(
 		budget.CurrentTokenBudget,
 		req.GetRequestedTokens(),
-		budget.EffectiveMax,
+		tokenCeiling,
 	)
 
-	if granted > 0 {
-		if _, err := s.budgets.ApplyGrant(ctx, tenantID, budget.RootSessionID, granted); err != nil {
+	// spec: §8.6 line 643 — the additionalMaxAge dimension shares the
+	// same Grant math against its own §8.6 ceiling and parent-lease
+	// cap. The seconds dimension is independent of the tokens
+	// dimension: a request that exhausts only one of them still
+	// applies the other. F-8.6.11.
+	maxAgeCeiling := budget.EffectiveMaxMaxAgeSeconds
+	if budget.ParentLeaseMaxAgeCeiling > 0 && budget.ParentLeaseMaxAgeCeiling < maxAgeCeiling {
+		maxAgeCeiling = budget.ParentLeaseMaxAgeCeiling
+	}
+	requestedSeconds := int64(req.GetRequestedSeconds())
+	grantedSeconds, secondsOutcome := leaseextension.Grant(
+		budget.CurrentMaxAgeSeconds,
+		requestedSeconds,
+		maxAgeCeiling,
+	)
+
+	if granted > 0 || grantedSeconds > 0 {
+		if _, err := s.budgets.ApplyGrant(ctx, tenantID, budget.RootSessionID, granted, grantedSeconds); err != nil {
 			// §8.6 in-flight atomic check: a REJECTED outcome was
 			// persisted between the TreeBudget read and the commit.
 			// Surface it as a REJECTED extension response rather than
@@ -395,25 +487,64 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 				expiry := s.clock().Add(coolOff)
 				s.audit(ctx, tenantID, budget, sessionID, req.GetRequestedTokens(), 0, AuditOutcomeDenied)
 				// spec: §15.1 line 1080 — REJECTED carries the subtreeId
-				// and the UTC RFC 3339 cool-off expiry.
+				// and the UTC RFC 3339 cool-off expiry. The §8.6 line 731
+				// in-flight atomic re-check surfaces the same typed
+				// EXTENSION_COOL_OFF_ACTIVE code as the pre-grant rejection
+				// so clients see one canonical reason for both paths.
+				// F-8.6.9.
 				return &adapterv1.ExtendLeaseResponse{
 					Status:              adapterv1.ExtendLeaseResponse_STATUS_REJECTED,
 					GrantedTokens:       0,
 					CoolOffExpiryUnixMs: expiry.UnixMilli(),
 					SubtreeId:           sessionID,
 					CoolOffExpiresAt:    formatCoolOffExpiry(expiry),
+					Error:               coolOffActiveError(),
 				}, nil
 			}
 			return nil, fmt.Errorf("leasecontrol: apply grant for tree %s: %w", budget.RootSessionID, err)
 		}
 	}
 
-	status := statusFor(outcome)
-	s.audit(ctx, tenantID, budget, sessionID, req.GetRequestedTokens(), granted, auditOutcomeFor(outcome))
+	combined := combineOutcomes(
+		req.GetRequestedTokens(), requestedSeconds,
+		granted, grantedSeconds,
+		outcome, secondsOutcome,
+	)
+	status := statusFor(combined)
+	s.auditFull(ctx, tenantID, budget, sessionID,
+		req.GetRequestedTokens(), granted,
+		requestedSeconds, grantedSeconds,
+		auditOutcomeFor(combined))
 	return &adapterv1.ExtendLeaseResponse{
-		Status:        status,
-		GrantedTokens: granted,
+		Status:         status,
+		GrantedTokens:  granted,
+		GrantedSeconds: int32(grantedSeconds),
 	}, nil
+}
+
+// combineOutcomes folds the per-dimension §8.6 grant outcomes for
+// tokens and seconds into one response-level outcome. A dimension the
+// caller did not request (zero requested) is treated as already
+// satisfied and does not pull the response status down. When both
+// dimensions land Granted, the response is Granted. When the combined
+// grant is zero across all requested dimensions the response is
+// CeilingReached. Otherwise the response is PartiallyGranted.
+// spec: §8.6 line 643; F-8.6.11
+func combineOutcomes(reqTokens, reqSeconds, grantedTokens, grantedSeconds int64, tokensOut, secondsOut leaseextension.Outcome) leaseextension.Outcome {
+	switch {
+	case reqTokens == 0 && reqSeconds == 0:
+		return leaseextension.Granted
+	case reqTokens == 0:
+		return secondsOut
+	case reqSeconds == 0:
+		return tokensOut
+	case tokensOut == leaseextension.Granted && secondsOut == leaseextension.Granted:
+		return leaseextension.Granted
+	case grantedTokens == 0 && grantedSeconds == 0:
+		return leaseextension.CeilingReached
+	default:
+		return leaseextension.PartiallyGranted
+	}
 }
 
 // statusFor maps a §8.6 leaseextension.Outcome to the proto status
@@ -443,6 +574,25 @@ func formatCoolOffExpiry(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+// coolOffActiveError returns the §15.1 line 1080 typed error envelope
+// embedded on every REJECTED ExtendLease response whose rejection
+// reason is "the requesting subtree is in an extension cool-off
+// window" — both the pre-grant rejection check and the §8.6 line 731
+// in-flight atomic re-check. The category is POLICY because the
+// rejection is a deployment policy decision the caller cannot retry
+// around; retryable is false because the adapter MUST NOT loop on the
+// extension request inside the window (re-issuing trips the same
+// cool-off, see §8.6 line 629 retry contract).
+// spec: §15.1 line 1080; F-8.6.9
+func coolOffActiveError() *adapterv1.Error {
+	return &adapterv1.Error{
+		Code:      adapterv1.Error_ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE,
+		Category:  adapterv1.Error_CATEGORY_POLICY,
+		Message:   "subtree is in an extension cool-off window after a user-denied extension elicitation",
+		Retryable: false,
+	}
+}
+
 // resolveCoolOff returns the §8.6 rejection cool-off for the tree,
 // falling back to DefaultRejectionCoolOff when the source supplies no
 // override.
@@ -456,7 +606,24 @@ func (s *Service) resolveCoolOff(ctx context.Context, tenantID, rootSessionID st
 
 // audit records one §8.6 extension decision when an Auditor is wired.
 // outcome carries the §8.6 line 743 approved/denied/capped classification.
+// Use auditFull on the token+seconds paths; this single-dimension helper
+// preserves the original audit signature for the cool-off rejection
+// callers, which never carry a seconds dimension because no grant is
+// applied.
 func (s *Service) audit(ctx context.Context, tenantID string, b TreeBudget, sessionID string, requested, granted int64, outcome AuditOutcome) {
+	s.auditFull(ctx, tenantID, b, sessionID, requested, granted, 0, 0, outcome)
+}
+
+// auditFull records one §8.6 extension decision with both budget
+// dimensions, when an Auditor is wired. The metric counter side-effect
+// rides on the same audit-emit so a deployment with no Auditor still
+// drives the §16 dashboard counter — operators rely on the metric
+// regardless of whether they have wired the §11.7 audit chain.
+// spec: §8.6 line 743; F-8.6.11; F-8.6.13
+func (s *Service) auditFull(ctx context.Context, tenantID string, b TreeBudget, sessionID string, requestedTokens, grantedTokens, requestedSeconds, grantedSeconds int64, outcome AuditOutcome) {
+	if s.metrics != nil {
+		s.metrics.IncDelegationLeaseExtension(tenantID, string(outcome))
+	}
 	if s.auditing == nil {
 		return
 	}
@@ -464,8 +631,10 @@ func (s *Service) audit(ctx context.Context, tenantID string, b TreeBudget, sess
 		TenantID:         tenantID,
 		RootSessionID:    b.RootSessionID,
 		RequestSessionID: sessionID,
-		RequestedTokens:  requested,
-		GrantedTokens:    granted,
+		RequestedTokens:  requestedTokens,
+		GrantedTokens:    grantedTokens,
+		RequestedSeconds: requestedSeconds,
+		GrantedSeconds:   grantedSeconds,
 		EffectiveMax:     b.EffectiveMax,
 		Outcome:          outcome,
 	})

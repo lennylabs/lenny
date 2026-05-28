@@ -34,6 +34,11 @@ type MemoryBudgetSource struct {
 
 	// sessionTenant maps a session id to its tenant.
 	sessionTenant map[string]string
+
+	// parentLease records the §8.6 line 648 parent-lease ceilings keyed
+	// by child session id. A child session's effective extension max
+	// is capped at the parent's lease grant per dimension. F-8.6.15.
+	parentLease map[string]SessionLease
 }
 
 // memTree is one delegation tree's mutable §8.6 extension state.
@@ -46,6 +51,21 @@ type memTree struct {
 	tenantBase     int64
 	runtimeBase    int64
 	deploymentBase int64
+
+	// currentMaxAgeSeconds / effectiveMaxAgeSeconds carry the §8.6 line
+	// 643 additionalMaxAge dimension. The seconds dimension is
+	// independent of the tokens dimension: a request that exhausts only
+	// one of them still applies the other. F-8.6.11.
+	currentMaxAgeSeconds   int64
+	effectiveMaxAgeSeconds int64
+
+	// parentLeaseTokenCeiling / parentLeaseMaxAgeCeiling capture the
+	// §8.6 line 648 "parent's own lease limits" hard ceiling. Set by
+	// AddSession to the delegated child's parent grant; zero on the
+	// root session (no parent). The handler caps EffectiveMax at the
+	// parent ceiling when both are positive. F-8.6.15.
+	parentLeaseTokenCeiling  int64
+	parentLeaseMaxAgeCeiling int64
 
 	// extensionDenied and coolOffExpiry are the §8.6 per-tree denial
 	// state. The in-memory source applies them tree-wide; the spec
@@ -92,6 +112,7 @@ func NewMemoryBudgetSource() *MemoryBudgetSource {
 		trees:         map[string]*memTree{},
 		sessionTree:   map[string]string{},
 		sessionTenant: map[string]string{},
+		parentLease:   map[string]SessionLease{},
 	}
 }
 
@@ -130,6 +151,17 @@ type TreeConfig struct {
 	// RuntimeBase is the runtime-override maxExtendableBudget base.
 	RuntimeBase int64
 
+	// CurrentMaxAgeSeconds is the §8.6 line 643 additionalMaxAge
+	// dimension's present value (the tree's current perChildMaxAge in
+	// seconds). F-8.6.11.
+	CurrentMaxAgeSeconds int64
+
+	// EffectiveMaxAgeSeconds is the layered ceiling for the
+	// additionalMaxAge dimension. Zero disables the dimension; a
+	// non-zero ceiling permits Grant on the seconds dimension up to
+	// this value. F-8.6.11.
+	EffectiveMaxAgeSeconds int64
+
 	// RejectionCoolOff overrides DefaultRejectionCoolOff for the tree.
 	RejectionCoolOff time.Duration
 
@@ -145,6 +177,26 @@ type TreeConfig struct {
 	SuccessCoolOff time.Duration
 }
 
+// SessionLease is the §8.6 line 648 "parent's own lease limits" snapshot
+// recorded for a delegated child session. The MemoryBudgetSource keys
+// it on the child session id; the handler reads it as the second hard
+// ceiling so a child cannot extend beyond what the parent's lease
+// granted. Zero on either field disables that dimension's cap.
+// F-8.6.15.
+// spec: §8.6 line 648
+type SessionLease struct {
+	// TokenCeiling caps the child's per-extension token grant at the
+	// parent lease's token grant value. Zero means "no cap on this
+	// dimension" (the parent had no lease ceiling, or the row was not
+	// resolved).
+	TokenCeiling int64
+
+	// MaxAgeCeiling caps the child's per-extension additionalMaxAge
+	// grant at the parent lease's perChildMaxAge value. Zero means "no
+	// cap on this dimension".
+	MaxAgeCeiling int64
+}
+
 // RegisterTree records a delegation tree's §8.6 budget configuration,
 // keyed by its root session. The root session is registered as a
 // member of its own tree.
@@ -156,17 +208,19 @@ func (m *MemoryBudgetSource) RegisterTree(rootSessionID string, cfg TreeConfig) 
 		mode = DefaultApprovalMode
 	}
 	m.trees[rootSessionID] = &memTree{
-		rootSessionID:    rootSessionID,
-		tenantID:         cfg.TenantID,
-		currentBudget:    cfg.CurrentTokenBudget,
-		deploymentBase:   cfg.DeploymentBase,
-		deploymentMax:    cfg.DeploymentMax,
-		tenantBase:       cfg.TenantBase,
-		tenantMax:        cfg.TenantMax,
-		runtimeBase:      cfg.RuntimeBase,
-		rejectionCoolOff: cfg.RejectionCoolOff,
-		approvalMode:     mode,
-		successCoolOff:   cfg.SuccessCoolOff,
+		rootSessionID:          rootSessionID,
+		tenantID:               cfg.TenantID,
+		currentBudget:          cfg.CurrentTokenBudget,
+		deploymentBase:         cfg.DeploymentBase,
+		deploymentMax:          cfg.DeploymentMax,
+		tenantBase:             cfg.TenantBase,
+		tenantMax:              cfg.TenantMax,
+		runtimeBase:            cfg.RuntimeBase,
+		currentMaxAgeSeconds:   cfg.CurrentMaxAgeSeconds,
+		effectiveMaxAgeSeconds: cfg.EffectiveMaxAgeSeconds,
+		rejectionCoolOff:       cfg.RejectionCoolOff,
+		approvalMode:           mode,
+		successCoolOff:         cfg.SuccessCoolOff,
 	}
 	m.sessionTree[rootSessionID] = rootSessionID
 	m.sessionTenant[rootSessionID] = cfg.TenantID
@@ -180,6 +234,25 @@ func (m *MemoryBudgetSource) AddSession(sessionID, rootSessionID, tenantID strin
 	defer m.mu.Unlock()
 	m.sessionTree[sessionID] = rootSessionID
 	m.sessionTenant[sessionID] = tenantID
+}
+
+// SetParentLease records the §8.6 line 648 parent-lease ceiling for a
+// delegated child session. The handler caps the child's extension
+// effective max at this value (per dimension) so the child cannot
+// extend beyond what the parent's own lease granted. Calling with a
+// zero-valued SessionLease clears the cap (e.g., to reset a session
+// that no longer has a parent ceiling). The session must already be
+// registered via AddSession or RegisterTree; an unknown session is a
+// no-op so callers can call this defensively before AddSession.
+// F-8.6.15.
+// spec: §8.6 line 648
+func (m *MemoryBudgetSource) SetParentLease(sessionID string, parent SessionLease) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.parentLease == nil {
+		m.parentLease = map[string]SessionLease{}
+	}
+	m.parentLease[sessionID] = parent
 }
 
 // MarkDenied sets the §8.6 extension-denied flag for the tree and
@@ -237,21 +310,26 @@ func (m *MemoryBudgetSource) TreeBudget(_ context.Context, tenantID, sessionID s
 		return TreeBudget{}, err
 	}
 	denied := t.extensionDenied && m.clock().Before(t.coolOffExpiry)
+	parent := m.parentLease[sessionID]
 	return TreeBudget{
-		RootSessionID:      t.rootSessionID,
-		CurrentTokenBudget: t.currentBudget,
-		EffectiveMax:       t.effectiveMax(),
-		ExtensionDenied:    denied,
-		CoolOffExpiry:      t.coolOffExpiry,
+		RootSessionID:             t.rootSessionID,
+		CurrentTokenBudget:        t.currentBudget,
+		EffectiveMax:              t.effectiveMax(),
+		ParentLeaseTokenCeiling:   parent.TokenCeiling,
+		CurrentMaxAgeSeconds:      t.currentMaxAgeSeconds,
+		EffectiveMaxMaxAgeSeconds: t.effectiveMaxAgeSeconds,
+		ParentLeaseMaxAgeCeiling:  parent.MaxAgeCeiling,
+		ExtensionDenied:           denied,
+		CoolOffExpiry:             t.coolOffExpiry,
 	}, nil
 }
 
-// ApplyGrant raises the tree's current token budget by granted. It
-// re-checks the §8.6 extension-denied flag under the lock — the
-// in-memory analogue of the Postgres in-transaction re-check — and
-// returns ErrExtensionDenied when a denial landed since the
-// TreeBudget read.
-func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSessionID string, granted int64) (int64, error) {
+// ApplyGrant raises the tree's current token budget by grantedTokens
+// and current max-age budget by grantedSeconds. It re-checks the §8.6
+// extension-denied flag under the lock — the in-memory analogue of
+// the Postgres in-transaction re-check — and returns ErrExtensionDenied
+// when a denial landed since the TreeBudget read. F-8.6.11.
+func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSessionID string, grantedTokens, grantedSeconds int64) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, err := m.lookupLocked(tenantID, rootSessionID)
@@ -261,8 +339,11 @@ func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSession
 	if t.extensionDenied && m.clock().Before(t.coolOffExpiry) {
 		return 0, ErrExtensionDenied
 	}
-	if granted > 0 {
-		t.currentBudget += granted
+	if grantedTokens > 0 {
+		t.currentBudget += grantedTokens
+	}
+	if grantedSeconds > 0 {
+		t.currentMaxAgeSeconds += grantedSeconds
 	}
 	return t.currentBudget, nil
 }

@@ -9157,7 +9157,7 @@ Each is mapped to the implementation below.
 
 ---
 
-### - [ ] F-8.6.9 — EXTENSION_COOL_OFF_ACTIVE error code never returned by the handler [Medium] — OPEN
+### - [x] F-8.6.9 — EXTENSION_COOL_OFF_ACTIVE error code never returned by the handler [Medium] — CLOSED
 
 **Spec:** §15.1 (line 1080) registers `EXTENSION_COOL_OFF_ACTIVE` as the error code the gateway emits when an extension request is auto-rejected because the requesting subtree is in a rejection cool-off window. §8.6 (line 731) requires the in-flight Postgres re-check to return this code.
 
@@ -9168,6 +9168,8 @@ Each is mapped to the implementation below.
 **Severity:** Medium — observability/error-classification gap; functional path roughly correct.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:235–242, 257–264`.
+
+**Resolution:** Added an `Error error = 7;` field to `ExtendLeaseResponse` (proto + regenerated bindings). `pkg/gateway/leasecontrol/leasecontrol.go` now populates the field on both REJECTED paths — pre-grant rejection-cool-off and the §8.6 line 731 in-flight atomic re-check — with `ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE`, `CATEGORY_POLICY`, `Retryable=false`. The existing `details.subtreeId` and `details.coolOffExpiresAt` fields already shipped (F-15.1 fix) so the §15.1 line 1080 envelope is now complete on both rejection paths. GRANTED / PARTIALLY_GRANTED / CEILING_REACHED responses leave `Error` nil so tooling can distinguish success vs typed-rejection.
 
 ### - [ ] F-8.6.10 — Audit record omits approval mode, approver, batch id, service_instance_id, client_ip, and resulting new limits [Medium] — OPEN
 
@@ -9181,7 +9183,7 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:145–154, 304–318`; `cmd/lenny-gateway/main.go:1838–1858`.
 
-### - [ ] F-8.6.11 — `requested_seconds` declared on the wire but silently dropped [Medium] — OPEN
+### - [x] F-8.6.11 — `requested_seconds` declared on the wire but silently dropped [Medium] — CLOSED
 
 **Spec:** §8.6 lists `additionalMaxAge` and `perChildMaxAge` as an extendable dimension.
 
@@ -9192,6 +9194,8 @@ Each is mapped to the implementation below.
 **Severity:** Medium — silent partial fulfillment; either narrow the wire to tokens-only and fail explicitly or implement the seconds dimension.
 
 **Files:** `schemas/lenny-adapter.proto:506–526`; `pkg/gateway/leasecontrol/leasecontrol.go:208–275`.
+
+**Resolution:** Plumbed the §8.6 line 643 `additionalMaxAge` dimension end-to-end. `TreeBudget` gained `CurrentMaxAgeSeconds` + `EffectiveMaxMaxAgeSeconds`; `MemoryBudgetSource.memTree` mirrors them and `TreeConfig` accepts the layered ceiling. The handler runs `leaseextension.Grant` against the seconds dimension independently of tokens, applies both via the updated `ApplyGrant(grantedTokens, grantedSeconds)` signature, and returns `granted_seconds` on the proto response. A new `combineOutcomes` helper folds the two per-dimension outcomes into a single response status (GRANTED only if both fit, PARTIALLY_GRANTED if at least one dimension granted under cap, CEILING_REACHED if both are zero against a non-zero request). `ExtensionAudit` gains `RequestedSeconds` / `GrantedSeconds` so the §11.7 chain records both dimensions. The seconds-dimension producers (LLM-proxy trigger that asks for additional time) ride on the F-8.6.6 follow-on but the wire+grant kernel is now complete and no longer silently zeroes the field.
 
 ### - [ ] F-8.6.12 — Tree-wide grant violates the §8.6 "requesting session only" scope [Medium] — OPEN
 
@@ -9205,7 +9209,7 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/membudget.go:39–60, 223–237`.
 
-### - [ ] F-8.6.13 — `lenny_delegation_lease_extension_total` declared in the metric catalog but never incremented [Medium] — OPEN
+### - [x] F-8.6.13 — `lenny_delegation_lease_extension_total` declared in the metric catalog but never incremented [Medium] — CLOSED
 
 **Spec:** §16 (line 66) requires `lenny_delegation_lease_extension_total` as a counter for "Delegation lease extensions".
 
@@ -9217,7 +9221,9 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/observability/metrics/catalog.go:122`; `pkg/gateway/leasecontrol/leasecontrol.go:304–318`.
 
-### - [ ] F-8.6.14 — Non-extendable fields are not explicitly rejected [Medium] — OPEN
+**Resolution:** Registered `lenny_delegation_lease_extension_total{tenant_id,outcome}` on `gatewaymetrics.Metrics` with an `IncDelegationLeaseExtension(tenantID, outcome)` emitter. Added a `MetricEmitter` interface to `leasecontrol.Options.Metrics`; `Service.auditFull` drives the counter on every ExtendLease decision alongside the audit record, with the §8.6 line 743 outcome class (`approved`/`capped`/`denied`) as the `outcome` label. Wired via `cmd/lenny-gateway/main.go` `newGatewayControlServer(addr, gwMetrics)`.
+
+### - [x] F-8.6.14 — Non-extendable fields are not explicitly rejected [Medium] — CLOSED
 
 **Spec:** §8.6 (line 643) "Not extendable: `maxDepth`, `minIsolationProfile`, `delegationPolicyRef`, `perChildRetryBudget`, `treeVisibility`, `allowSelfRecursion` (these are security or reliability boundaries, not resource budgets)."
 
@@ -9229,7 +9235,9 @@ Each is mapped to the implementation below.
 
 **Files:** `schemas/lenny-adapter.proto:506–526`; `pkg/gateway/leasecontrol/leasecontrol.go:208–275`.
 
-### - [ ] F-8.6.15 — Hard ceiling "child cannot exceed parent's lease limits" never checked [Medium] — OPEN
+**Resolution:** Added a regression test (`TestExtendLeaseRequestRejectsNonExtendableFields_spec_8_6_line_643`) that walks the `ExtendLeaseRequest` proto descriptor and fails when any of the §8.6 line 643 non-extendable field names (`max_depth`, `min_isolation_profile`, `delegation_policy_ref`, `per_child_retry_budget`, `tree_visibility`, `allow_self_recursion`) appear on the schema. A future proto bump that accidentally exposes one of those security/reliability boundaries fails the test loudly.
+
+### - [x] F-8.6.15 — Hard ceiling "child cannot exceed parent's lease limits" never checked [Medium] — CLOSED
 
 **Spec:** §8.6 (line 648) lists two hard ceilings. The second: "The parent's own lease limits — a child requesting an extension cannot exceed what the parent was granted."
 
@@ -9240,6 +9248,8 @@ Each is mapped to the implementation below.
 **Severity:** Medium — security/policy boundary unenforced; once children actually request extensions (post-H1), this rises in severity.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:208–275`; `pkg/leaseextension/leaseextension.go:50–62`.
+
+**Resolution:** Added `ParentLeaseTokenCeiling` and `ParentLeaseMaxAgeCeiling` to `TreeBudget` and a new `SessionLease`-keyed map on `MemoryBudgetSource` (`SetParentLease(sessionID, lease)`). The ExtendLease handler now caps `EffectiveMax` at `min(EffectiveMax, ParentLeaseTokenCeiling)` (and the same for max-age) before `leaseextension.Grant`, satisfying the §8.6 line 648 second hard ceiling. Root sessions have no parent lease (zero ceiling) and continue to bind only against the layered deployment/tenant/runtime ceiling. The Postgres-backed BudgetSource picks up the same TreeBudget fields when it lands; the kernel decision is in place.
 
 ---
 

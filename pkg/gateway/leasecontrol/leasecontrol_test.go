@@ -713,11 +713,11 @@ func (r *raceBudgetSource) TreeBudget(ctx context.Context, tenantID, sessionID s
 	return r.inner.TreeBudget(ctx, tenantID, sessionID)
 }
 
-func (r *raceBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID string, granted int64) (int64, error) {
+func (r *raceBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID string, grantedTokens, grantedSeconds int64) (int64, error) {
 	if r.denyOnApply {
 		r.inner.MarkDenied(rootSessionID)
 	}
-	return r.inner.ApplyGrant(ctx, tenantID, rootSessionID, granted)
+	return r.inner.ApplyGrant(ctx, tenantID, rootSessionID, grantedTokens, grantedSeconds)
 }
 
 func (r *raceBudgetSource) RejectionCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration {
@@ -752,7 +752,7 @@ func (e errBudgetSource) TreeBudget(context.Context, string, string) (leasecontr
 	return leasecontrol.TreeBudget{}, e.err
 }
 
-func (e errBudgetSource) ApplyGrant(context.Context, string, string, int64) (int64, error) {
+func (e errBudgetSource) ApplyGrant(context.Context, string, string, int64, int64) (int64, error) {
 	return 0, e.err
 }
 
@@ -852,4 +852,452 @@ func TestDefaultSuccessCoolOff_spec_8_6_line_675(t *testing.T) {
 	if leasecontrol.DefaultSuccessCoolOff != 5*time.Second {
 		t.Errorf("DefaultSuccessCoolOff = %v, want 5s per §8.6 line 675", leasecontrol.DefaultSuccessCoolOff)
 	}
+}
+
+// TestExtendLeaseRejectedCoolOffActiveError_spec_15_1_line_1080: the
+// pre-grant rejection-cool-off path surfaces the §15.1 typed
+// EXTENSION_COOL_OFF_ACTIVE error envelope, with category POLICY and
+// retryable=false per §15.1 line 1080. F-8.6.9.
+func TestExtendLeaseRejectedCoolOffActiveError_spec_15_1_line_1080(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	svc := newService(t, budgets, clock)
+	budgets.MarkDenied("root-1")
+
+	resp, err := svc.ExtendLease(context.Background(), extendReq("root-1", 200_000))
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if resp.GetError() == nil {
+		t.Fatal("REJECTED response must carry a §15.1 Error envelope per F-8.6.9")
+	}
+	if got, want := resp.GetError().GetCode(), adapterv1.Error_ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE; got != want {
+		t.Errorf("Error.Code = %v, want %v", got, want)
+	}
+	if got, want := resp.GetError().GetCategory(), adapterv1.Error_CATEGORY_POLICY; got != want {
+		t.Errorf("Error.Category = %v, want POLICY", got)
+	}
+	if resp.GetError().GetRetryable() {
+		t.Error("Error.Retryable must be false during cool-off (loop tripper)")
+	}
+}
+
+// TestExtendLeaseInFlightDenialCoolOffActiveError_spec_15_1_line_1080: the
+// §8.6 line 731 in-flight atomic re-check converts the outcome to
+// REJECTED with the same EXTENSION_COOL_OFF_ACTIVE envelope as the
+// pre-grant path, so admin tooling can route both rejections through
+// one error code. F-8.6.9.
+func TestExtendLeaseInFlightDenialCoolOffActiveError_spec_15_1_line_1080(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	base := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
+	base.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	racing := &raceBudgetSource{inner: base, denyOnApply: true}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: racing, Tenants: base, Clock: clock,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	resp, err := svc.ExtendLease(context.Background(), extendReq("root-1", 200_000))
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if resp.GetError() == nil {
+		t.Fatal("in-flight REJECTED response must carry a §15.1 Error envelope per F-8.6.9")
+	}
+	if got, want := resp.GetError().GetCode(), adapterv1.Error_ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE; got != want {
+		t.Errorf("Error.Code = %v, want %v", got, want)
+	}
+}
+
+// TestExtendLeaseGrantedHasNoErrorEnvelope: non-REJECTED outcomes
+// MUST NOT carry the §15.1 Error envelope; a GRANTED response is a
+// success and operator tooling treats Error.Code as authoritative.
+// F-8.6.9.
+func TestExtendLeaseGrantedHasNoErrorEnvelope(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	svc := newService(t, budgets, nil)
+	resp, err := svc.ExtendLease(context.Background(), extendReq("root-1", 50_000))
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if resp.GetError() != nil {
+		t.Errorf("GRANTED response must not carry Error envelope, got %+v", resp.GetError())
+	}
+}
+
+// TestExtendLeaseSecondsDimensionGranted_spec_8_6_line_643: a request
+// that asks only for additionalMaxAge (requested_seconds) is granted
+// against the seconds-dimension ceiling, raises the tree's
+// CurrentMaxAgeSeconds, and surfaces granted_seconds on the response.
+// F-8.6.11.
+func TestExtendLeaseSecondsDimensionGranted_spec_8_6_line_643(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:               "acme",
+		CurrentTokenBudget:     100_000,
+		DeploymentBase:         500_000,
+		DeploymentMax:          2_000_000,
+		CurrentMaxAgeSeconds:   600,
+		EffectiveMaxAgeSeconds: 3600,
+	})
+	svc := newService(t, budgets, nil)
+
+	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
+		SessionId:        &adapterv1.SessionId{Value: "root-1"},
+		RequestedSeconds: 900,
+	})
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_GRANTED; got != want {
+		t.Errorf("status = %v, want GRANTED for seconds-only grant", got)
+	}
+	if got, want := resp.GetGrantedSeconds(), int32(900); got != want {
+		t.Errorf("granted_seconds = %d, want %d", got, want)
+	}
+	tb, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
+	if tb.CurrentMaxAgeSeconds != 1500 {
+		t.Errorf("current max age = %d, want 1500 (600 + 900)", tb.CurrentMaxAgeSeconds)
+	}
+}
+
+// TestExtendLeaseSecondsDimensionPartiallyGranted_spec_8_6_line_643: a
+// request that exceeds the additionalMaxAge ceiling is capped to the
+// remaining headroom and reported via the seconds dimension; combined
+// outcome rolls up to PARTIALLY_GRANTED. F-8.6.11.
+func TestExtendLeaseSecondsDimensionPartiallyGranted_spec_8_6_line_643(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:               "acme",
+		CurrentTokenBudget:     100_000,
+		DeploymentBase:         500_000,
+		DeploymentMax:          2_000_000,
+		CurrentMaxAgeSeconds:   3500,
+		EffectiveMaxAgeSeconds: 3600,
+	})
+	svc := newService(t, budgets, nil)
+
+	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
+		SessionId:        &adapterv1.SessionId{Value: "root-1"},
+		RequestedSeconds: 600, // headroom is 100s.
+	})
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED; got != want {
+		t.Errorf("status = %v, want PARTIALLY_GRANTED", got)
+	}
+	if got, want := resp.GetGrantedSeconds(), int32(100); got != want {
+		t.Errorf("granted_seconds = %d, want 100", got)
+	}
+}
+
+// TestExtendLeaseTokensAndSecondsCombinedOutcome_spec_8_6_line_643: a
+// request that hits one dimension's ceiling but fits under the other
+// rolls up to PARTIALLY_GRANTED across both dimensions. F-8.6.11.
+func TestExtendLeaseTokensAndSecondsCombinedOutcome_spec_8_6_line_643(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:               "acme",
+		CurrentTokenBudget:     100_000,
+		DeploymentBase:         500_000,
+		DeploymentMax:          2_000_000,
+		CurrentMaxAgeSeconds:   3500,
+		EffectiveMaxAgeSeconds: 3600, // headroom 100s
+	})
+	svc := newService(t, budgets, nil)
+
+	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
+		SessionId:        &adapterv1.SessionId{Value: "root-1"},
+		RequestedTokens:  50_000, // fully under tokens ceiling
+		RequestedSeconds: 600,    // partially capped
+	})
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED; got != want {
+		t.Errorf("combined status = %v, want PARTIALLY_GRANTED", got)
+	}
+	if resp.GetGrantedTokens() != 50_000 || resp.GetGrantedSeconds() != 100 {
+		t.Errorf("granted = (%d tokens, %ds), want (50000, 100)", resp.GetGrantedTokens(), resp.GetGrantedSeconds())
+	}
+}
+
+// TestExtendLeaseSecondsDimensionAudited_spec_8_6_line_743: the audit
+// record carries the additionalMaxAge requested/granted figures so
+// forensic reconstruction sees both dimensions. F-8.6.11.
+func TestExtendLeaseSecondsDimensionAudited_spec_8_6_line_743(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:               "acme",
+		CurrentTokenBudget:     100_000,
+		DeploymentBase:         500_000,
+		DeploymentMax:          2_000_000,
+		CurrentMaxAgeSeconds:   600,
+		EffectiveMaxAgeSeconds: 3600,
+	})
+	rec := &recordingAuditor{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Auditing: rec,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if _, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
+		SessionId:        &adapterv1.SessionId{Value: "root-1"},
+		RequestedTokens:  50_000,
+		RequestedSeconds: 900,
+	}); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if len(rec.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(rec.entries))
+	}
+	e := rec.entries[0]
+	if e.RequestedSeconds != 900 || e.GrantedSeconds != 900 {
+		t.Errorf("audit seconds = (req %d, grant %d), want (900, 900)", e.RequestedSeconds, e.GrantedSeconds)
+	}
+}
+
+// TestExtendLeaseDrivesMetricEmitter_spec_16_line_66: every ExtendLease
+// decision drives the §16 line 66 lenny_delegation_lease_extension_total
+// counter via the Options.Metrics callback, labelled with the audit
+// outcome class. F-8.6.13.
+func TestExtendLeaseDrivesMetricEmitter_spec_16_line_66(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	rec := &recordingMetrics{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Metrics: rec,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if _, err := svc.ExtendLease(context.Background(), extendReq("root-1", 50_000)); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if len(rec.entries) != 1 {
+		t.Fatalf("metric emissions = %d, want 1", len(rec.entries))
+	}
+	if rec.entries[0] != (metricEntry{tenantID: "acme", outcome: string(leasecontrol.AuditOutcomeApproved)}) {
+		t.Errorf("emitted entry = %+v, want {acme, approved}", rec.entries[0])
+	}
+}
+
+// TestExtendLeaseDrivesMetricOnCoolOffRejection_spec_16_line_66: the
+// cool-off REJECTED path also bumps the counter, with outcome=denied.
+// F-8.6.13.
+func TestExtendLeaseDrivesMetricOnCoolOffRejection_spec_16_line_66(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	budgets := leasecontrol.NewMemoryBudgetSource().WithClock(clock)
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	rec := &recordingMetrics{}
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets, Tenants: budgets, Metrics: rec, Clock: clock,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	budgets.MarkDenied("root-1")
+	if _, err := svc.ExtendLease(context.Background(), extendReq("root-1", 50_000)); err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if len(rec.entries) != 1 {
+		t.Fatalf("metric emissions = %d, want 1", len(rec.entries))
+	}
+	if rec.entries[0].outcome != string(leasecontrol.AuditOutcomeDenied) {
+		t.Errorf("cool-off metric outcome = %q, want denied", rec.entries[0].outcome)
+	}
+}
+
+// TestExtendLeaseParentLeaseCeilingCaps_spec_8_6_line_648: a child
+// session whose parent lease grants fewer tokens than the layered
+// deployment/tenant/runtime ceiling has its grant capped at the
+// parent value, not the layered ceiling. F-8.6.15.
+func TestExtendLeaseParentLeaseCeilingCaps_spec_8_6_line_648(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     1_000_000, // layered ceiling 1M
+		DeploymentMax:      2_000_000,
+	})
+	budgets.AddSession("child-2", "root-1", "acme")
+	// Parent's lease only granted 300K tokens — the child cannot
+	// extend beyond that, even though the layered ceiling is 1M and
+	// the tree's current budget would have permitted a much larger
+	// grant. F-8.6.15.
+	budgets.SetParentLease("child-2", leasecontrol.SessionLease{TokenCeiling: 300_000})
+	svc := newService(t, budgets, nil)
+
+	resp, err := svc.ExtendLease(context.Background(), extendReq("child-2", 500_000))
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED; got != want {
+		t.Errorf("status = %v, want PARTIALLY_GRANTED capped by parent ceiling", got)
+	}
+	if resp.GetGrantedTokens() != 200_000 {
+		t.Errorf("granted = %d, want 200000 (parent ceiling 300K minus current 100K)", resp.GetGrantedTokens())
+	}
+}
+
+// TestExtendLeaseParentLeaseCeilingHonoursLayeredCap_spec_8_6_line_648:
+// when the parent's lease ceiling exceeds the layered ceiling, the
+// layered ceiling still binds — both hard ceilings apply. F-8.6.15.
+func TestExtendLeaseParentLeaseCeilingHonoursLayeredCap_spec_8_6_line_648(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000, // layered ceiling 500K
+		DeploymentMax:      2_000_000,
+	})
+	budgets.AddSession("child-2", "root-1", "acme")
+	budgets.SetParentLease("child-2", leasecontrol.SessionLease{TokenCeiling: 5_000_000})
+	svc := newService(t, budgets, nil)
+
+	resp, err := svc.ExtendLease(context.Background(), extendReq("child-2", 1_000_000))
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_PARTIALLY_GRANTED; got != want {
+		t.Errorf("status = %v, want PARTIALLY_GRANTED", got)
+	}
+	if resp.GetGrantedTokens() != 400_000 {
+		t.Errorf("granted = %d, want 400000 (layered ceiling 500K minus current 100K)", resp.GetGrantedTokens())
+	}
+}
+
+// TestExtendLeaseParentLeaseCeilingMaxAge_spec_8_6_line_648: the parent
+// ceiling applies to the additionalMaxAge dimension too. F-8.6.15.
+func TestExtendLeaseParentLeaseCeilingMaxAge_spec_8_6_line_648(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:               "acme",
+		CurrentTokenBudget:     100_000,
+		DeploymentBase:         500_000,
+		DeploymentMax:          2_000_000,
+		CurrentMaxAgeSeconds:   600,
+		EffectiveMaxAgeSeconds: 7200, // layered seconds ceiling
+	})
+	budgets.AddSession("child-2", "root-1", "acme")
+	// Parent's perChildMaxAge grant was 1800s; child can't extend
+	// beyond that even though the layered ceiling is 7200.
+	budgets.SetParentLease("child-2", leasecontrol.SessionLease{MaxAgeCeiling: 1800})
+	svc := newService(t, budgets, nil)
+
+	resp, err := svc.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{
+		SessionId:        &adapterv1.SessionId{Value: "child-2"},
+		RequestedSeconds: 5000,
+	})
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got, want := resp.GetGrantedSeconds(), int32(1200); got != want {
+		t.Errorf("granted_seconds = %d, want 1200 (parent ceiling 1800 minus current 600)", got)
+	}
+}
+
+// TestExtendLeaseRootSessionHasNoParentCeiling_spec_8_6_line_648: the
+// root session has no parent lease and therefore no extra cap. The
+// layered ceiling alone binds. F-8.6.15.
+func TestExtendLeaseRootSessionHasNoParentCeiling_spec_8_6_line_648(t *testing.T) {
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
+		TenantID:           "acme",
+		CurrentTokenBudget: 100_000,
+		DeploymentBase:     500_000,
+		DeploymentMax:      2_000_000,
+	})
+	// No SetParentLease for "root-1" — root sessions have no parent.
+	svc := newService(t, budgets, nil)
+
+	resp, err := svc.ExtendLease(context.Background(), extendReq("root-1", 200_000))
+	if err != nil {
+		t.Fatalf("ExtendLease: %v", err)
+	}
+	if got, want := resp.GetStatus(), adapterv1.ExtendLeaseResponse_STATUS_GRANTED; got != want {
+		t.Errorf("status = %v, want GRANTED for root session with no parent cap", got)
+	}
+	if resp.GetGrantedTokens() != 200_000 {
+		t.Errorf("granted = %d, want 200000", resp.GetGrantedTokens())
+	}
+}
+
+// TestExtendLeaseRequestRejectsNonExtendableFields_spec_8_6_line_643:
+// the §8.6 line 643 non-extendable fields (maxDepth,
+// minIsolationProfile, delegationPolicyRef, perChildRetryBudget,
+// treeVisibility, allowSelfRecursion) MUST NOT appear on the
+// ExtendLeaseRequest proto. A regression test on the descriptor
+// prevents a future proto bump from accidentally exposing them.
+// F-8.6.14.
+func TestExtendLeaseRequestRejectsNonExtendableFields_spec_8_6_line_643(t *testing.T) {
+	descriptor := (&adapterv1.ExtendLeaseRequest{}).ProtoReflect().Descriptor()
+	forbidden := []string{
+		"max_depth",
+		"min_isolation_profile",
+		"delegation_policy_ref",
+		"per_child_retry_budget",
+		"tree_visibility",
+		"allow_self_recursion",
+	}
+	fields := descriptor.Fields()
+	present := map[string]bool{}
+	for i := 0; i < fields.Len(); i++ {
+		present[string(fields.Get(i).Name())] = true
+	}
+	for _, f := range forbidden {
+		if present[f] {
+			t.Errorf("ExtendLeaseRequest schema exposes non-extendable field %q — §8.6 line 643 lists it as not extendable", f)
+		}
+	}
+}
+
+// metricEntry records one IncDelegationLeaseExtension call for the
+// recording MetricEmitter.
+type metricEntry struct {
+	tenantID string
+	outcome  string
+}
+
+// recordingMetrics is a MetricEmitter that captures every counter bump
+// in order so tests can assert on emitted (tenant, outcome) labels.
+type recordingMetrics struct {
+	entries []metricEntry
+}
+
+func (r *recordingMetrics) IncDelegationLeaseExtension(tenantID, outcome string) {
+	r.entries = append(r.entries, metricEntry{tenantID: tenantID, outcome: outcome})
 }

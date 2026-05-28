@@ -700,6 +700,41 @@ func TestSlotRehydrationCounterNilSafe(t *testing.T) {
 	m.IncSlotRehydration("sbx-1", "pool") // must not panic
 }
 
+// spec: §16 line 66 — lenny_delegation_lease_extension_total is the §8.6
+// per-decision counter labelled by tenant_id and outcome
+// (approved/capped/denied). F-8.6.13.
+func TestDelegationLeaseExtensionCounter_spec_16_line_66(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncDelegationLeaseExtension("acme", "approved")
+	m.IncDelegationLeaseExtension("acme", "approved")
+	m.IncDelegationLeaseExtension("acme", "denied")
+	m.IncDelegationLeaseExtension("globex", "capped")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		`lenny_delegation_lease_extension_total{outcome="approved",tenant_id="acme"} 2`,
+		`lenny_delegation_lease_extension_total{outcome="denied",tenant_id="acme"} 1`,
+		`lenny_delegation_lease_extension_total{outcome="capped",tenant_id="globex"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// A nil *Metrics is a no-op for the delegation lease-extension counter so
+// the leasecontrol path works even when metrics are unwired. F-8.6.13.
+func TestDelegationLeaseExtensionCounterNilSafe(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncDelegationLeaseExtension("acme", "approved") // must not panic
+}
+
 // spec: §4.9 line 1220 — lenny_credential_preclaim_mismatch_total is a
 // per-(pool,provider) counter of races where the pre-claim availability
 // check passed but the lease assignment failed.
