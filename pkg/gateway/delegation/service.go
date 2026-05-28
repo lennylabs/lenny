@@ -594,11 +594,28 @@ func (s *Service) propagateExperimentContext(ctx context.Context, tenantID strin
 	}
 }
 
+// lineageWalkSafetyMargin is the additive cap above the Helm
+// fallback maxDepth applied to the buildLineage walk. The walk stops
+// once chain length reaches defaultMaxDepth + safetyMargin even when
+// further ancestors are reachable; the §8.2.bis depth check below
+// will then reject the delegation with a saturated depth value.
+// F-8.2.16 — bounds the per-delegate-task store-lookup fan-out under
+// a misbehaving or pathologically deep store.
+const lineageWalkSafetyMargin = 4
+
 // buildLineage walks the ParentSessionID chain from the parent up to
 // the root, returning the §8.2 Lineage (root-first) and the
 // parent's depth (root = 0). A cycle in the stored chain is
-// defended against with a visited set.
+// defended against with a visited set. The walk is additionally
+// bounded by defaultMaxDepth + lineageWalkSafetyMargin so a
+// pathological chain (or a stored chain longer than the active
+// maxDepth ceiling) does not produce an unbounded store fan-out per
+// delegate_task call. spec: §8.2.
 func (s *Service) buildLineage(ctx context.Context, tenantID string, parent sessionstore.Session) (cycle.Lineage, int, error) {
+	walkCap := s.defaultMaxDepth + lineageWalkSafetyMargin
+	if walkCap <= 0 {
+		walkCap = DefaultMaxDepth + lineageWalkSafetyMargin
+	}
 	var chain []sessionstore.Session
 	visited := map[string]bool{}
 	cur := parent
@@ -609,6 +626,14 @@ func (s *Service) buildLineage(ctx context.Context, tenantID string, parent sess
 		visited[cur.ID] = true
 		chain = append(chain, cur)
 		if cur.ParentSessionID == "" {
+			break
+		}
+		if len(chain) >= walkCap {
+			// F-8.2.16: chain already exceeds the active maxDepth
+			// ceiling plus a safety margin; the depth check below
+			// will reject the delegation regardless of whether
+			// further ancestors exist. Stop walking to bound the
+			// store fan-out.
 			break
 		}
 		next, err := s.store.Get(ctx, tenantID, cur.ParentSessionID)

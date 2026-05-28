@@ -1801,6 +1801,7 @@ func main() {
 		credentialRekeyJob = rekey.NewJob(credentialRekeyers...)
 	}
 	var connectorOAuth *admin.ConnectorOAuth
+	var connectorStateStore *connectoroauth.MemoryStateStore
 	if *connectorOAuthCallbackURL != "" {
 		var stateSeed [32]byte
 		if _, err := rand.Read(stateSeed[:]); err != nil {
@@ -1812,9 +1813,14 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: connector OAuth state signer: %v", err)
 		}
+		// spec: §9.3 line 157 — pending state binds to (session, connector)
+		// with TTL=10min. The in-memory store grows monotonically without
+		// a Sweep driver; a periodic Sweep is scheduled below in the
+		// watchdog group (F-9.3.16).
+		connectorStateStore = connectoroauth.NewMemoryStateStore()
 		connectorOAuth = &admin.ConnectorOAuth{
 			StateSigner: stateSigner,
-			StateStore:  connectoroauth.NewMemoryStateStore(),
+			StateStore:  connectorStateStore,
 			Credentials: connectorCreds,
 			CallbackURL: *connectorOAuthCallbackURL,
 		}
@@ -2221,8 +2227,11 @@ func main() {
 	healthHandler := health.Handler(healthAgg)
 	mux.Handle("/v1/admin/health", healthHandler)
 	mux.Handle("/v1/admin/health/", healthHandler)
-	mux.Handle("/openapi.yaml", openapi.Handler())
-	mux.Handle("/v1/openapi.json", openapi.Handler())
+	// spec: §15.1 line 589 — served `info.version` must reflect the
+	// gateway's release version, not the embedded default.
+	openapiHandler := openapi.HandlerWithVersion(buildVersion)
+	mux.Handle("/openapi.yaml", openapiHandler)
+	mux.Handle("/v1/openapi.json", openapiHandler)
 	// §4.3 line 193 canonical token endpoint. The gateway reverse-
 	// proxies /v1/oauth/* to lenny-token-service so the Token Service
 	// is the actual minter for every Lenny bearer token. When the
@@ -2766,6 +2775,36 @@ func main() {
 			}
 		}
 	}()
+
+	// ----- §9.3 connector OAuth state-store sweep -----
+	// F-9.3.16: the in-memory MemoryStateStore is bound by the
+	// state-TTL (10 min per §9.3 line 157) plus a `consumed` flag for
+	// single-use enforcement. Without a periodic Sweep the entries
+	// accumulate until process restart. The cadence is well inside one
+	// TTL window so consumed/expired entries are reclaimed promptly.
+	// A Redis-backed store relies on native key expiry instead — this
+	// goroutine runs only when the in-memory store is wired (the
+	// `--connector-oauth-callback-url` opt-in path).
+	// spec: §9.3 line 157.
+	if connectorStateStore != nil {
+		go func(store *connectoroauth.MemoryStateStore) {
+			tick := time.NewTicker(1 * time.Minute)
+			if tick == nil {
+				return
+			}
+			defer tick.Stop()
+			for {
+				select {
+				case <-watchdogCtx.Done():
+					return
+				case now := <-tick.C:
+					if n := store.Sweep(now.UTC()); n > 0 {
+						log.Printf("lenny-gateway: §9.3 connector OAuth state store swept %d expired/consumed entries", n)
+					}
+				}
+			}
+		}(connectorStateStore)
+	}
 
 	// ----- §7.1 abandoned `created`-state row sweep -----
 	// Drops Session rows that stay in `created` past

@@ -5,6 +5,7 @@ package delegation_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -310,6 +311,79 @@ func TestDelegateDepthLimit(t *testing.T) {
 	var de *lease.DepthExceededError
 	if !errors.As(err, &de) {
 		t.Fatalf("got %v, want DepthExceededError", err)
+	}
+}
+
+// countingStore wraps a sessionstore.Store and counts Get calls so
+// lineage-walk bounding tests can assert the store-lookup fan-out is
+// bounded.
+type countingStore struct {
+	inner sessionstore.Store
+	gets  int
+}
+
+func (c *countingStore) Create(ctx context.Context, s sessionstore.Session) error {
+	return c.inner.Create(ctx, s)
+}
+func (c *countingStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	c.gets++
+	return c.inner.Get(ctx, tenantID, id)
+}
+func (c *countingStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	return c.inner.Update(ctx, tenantID, id, mutate)
+}
+func (c *countingStore) List(ctx context.Context, tenantID string, filter sessionstore.ListFilter) ([]sessionstore.Session, error) {
+	return c.inner.List(ctx, tenantID, filter)
+}
+func (c *countingStore) Delete(ctx context.Context, tenantID, id string) error {
+	return c.inner.Delete(ctx, tenantID, id)
+}
+func (c *countingStore) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	return c.inner.DeleteByUser(ctx, tenantID, userID)
+}
+func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
+	return c.inner.GetActiveSlotsByPod(ctx, podID)
+}
+
+// spec: §8.2 line 57 — lineage walk uses ParentSessionID from parent
+// up to root, defended against cycles by a visited set. F-8.2.16 —
+// the walk is additionally bounded by the active maxDepth ceiling
+// plus a safety margin so a pathological chain does not produce an
+// unbounded store fan-out per delegate_task call.
+func TestDelegateBoundsLineageWalkUnderDeepChain_spec_8_2_57(t *testing.T) {
+	inner := memstore.New()
+	store := &countingStore{inner: inner}
+	// Seed a chain 50 deep. The default Helm maxDepth is 10, so the
+	// walk must stop at 10 + safety margin (4) = 14 lookups regardless
+	// of total chain length.
+	const chainDepth = 50
+	prev := ""
+	for i := 0; i < chainDepth; i++ {
+		id := fmt.Sprintf("sess_%03d", i)
+		seedParent(t, inner, id, prev, "r0", "p0", isolation.ProfileSandboxed)
+		prev = id
+	}
+	parentID := fmt.Sprintf("sess_%03d", chainDepth-1)
+	svc := newService(t, store, func() string { return "sess_child" })
+
+	getsBefore := store.gets
+	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  parentID,
+		RuntimeRef:       "r_new",
+		PoolRef:          "p_new",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	// Expect DepthExceededError because depth way exceeds 10.
+	var de *lease.DepthExceededError
+	if !errors.As(err, &de) {
+		t.Fatalf("expected DepthExceededError, got %v", err)
+	}
+	used := store.gets - getsBefore
+	// One Get for the parent lookup + (DefaultMaxDepth+safety-1) walk
+	// hops at most. Concretely: 1 (parent) + 14 (walk) = 15 upper bound.
+	if used > delegation.DefaultMaxDepth+5 {
+		t.Errorf("buildLineage walk unbounded: store.Get called %d times for a %d-deep chain, want ≤ %d",
+			used, chainDepth, delegation.DefaultMaxDepth+5)
 	}
 }
 

@@ -7703,7 +7703,7 @@ Implementation:
 
 Consequence: the §8.10 cascade behavior cannot be tuned per-tree on Postgres-backed deployments; a freshly-loaded session always carries the zero value.
 
-### - [ ] F-8.2.16 — Lineage construction walks the session chain at every `delegate_task` call without a depth cap or cycle guard against a pathological store — `Info`/`Partial` [Medium] — OPEN
+### - [x] F-8.2.16 — Lineage construction walks the session chain at every `delegate_task` call without a depth cap or cycle guard against a pathological store — `Info`/`Partial` [Medium] — CLOSED
 
 Spec §8.2 line 57 says cycle detection uses the delegation lineage from the session record (Postgres-backed); the spec's `maxDepth` (line 81-89) bounds depth.
 
@@ -7712,6 +7712,8 @@ Implementation at `pkg/gateway/delegation/service.go:271-303`:
 - A defensive `visited` set is in place to break against a stored chain that loops back on itself (line 273-279), but the walk is otherwise unbounded.
 
 Consequence: a tree of depth N pays N+1 store lookups per delegation. The §8.2.bis `maxDepth` ceiling (when wired — see H-6) effectively caps the cost, but the current behavior with `req.MaxDepth=0` falls through to the unbounded walk. A misbehaving session store (or a long-lived chain on a Postgres replica without proper indexing on `parent_session_id`) becomes a per-delegate-task fan-out of DB calls.
+
+**Resolution:** `buildLineage` is now additionally bounded by `s.defaultMaxDepth + lineageWalkSafetyMargin` (default 14) regardless of `req.MaxDepth`. Once chain length reaches the cap, the walk stops; the §8.2.bis depth check below then rejects the delegation with a saturated depth value. `TestDelegateBoundsLineageWalkUnderDeepChain_spec_8_2_57` seeds a 50-deep chain through a counting `sessionstore.Store` wrapper and asserts ≤ DefaultMaxDepth+5 Get calls (15 upper bound). Resolved in this batch's commit.
 
 ### - [x] F-8.2.17 — PreRoute interceptor chain is not invoked on the child [Medium] — CLOSED
 
@@ -7781,7 +7783,7 @@ Consequence: a chain of delegations rooted on a session without an authenticated
 
 **Resolution:** Closed by failing closed at admission. The §8.2 line 58 child-token exchange binds the child to the parent's authenticated JWT (`subject_token`), so a userless parent has no subject to mint the child against. `Delegate` now returns `ErrParentNoUser` when `parent.UserID == ""`; a caller-supplied `req.UserID` does NOT bypass the gate (the spec ties the child's identity to the authenticated parent, not to a caller-supplied label). The MCP shim surfaces the typed reason as `DELEGATION_PARENT_NO_USER` so callers can distinguish it from generic failures, and asserts no child is created when the gate trips. Resolved in commit d289782c.
 
-### - [ ] F-8.2.23 — No REST endpoint exists for `delegate_task` [Low] — OPEN
+### - [x] F-8.2.23 — No REST endpoint exists for `delegate_task` [Low] — CLOSED
 
 Spec §8.2 frames the operation as an MCP tool, but the §15.1 admin/operator surface generally provides REST analogues for every MCP tool to keep the two surfaces in lockstep (see `pkg/gateway/mcptools/mcptools.go:23-26`).
 
@@ -7790,6 +7792,8 @@ Implementation:
 - The §15.1 OpenAPI document (`pkg/gateway/openapi/openapi.json`) does not include a delegation path.
 
 Consequence: only the MCP surface can drive delegation. The §15.2.1 "REST and MCP surfaces stay in lockstep" comment in `mcptools.go:25-26` is aspirational for the delegation path.
+
+**Resolution:** Verify-closed by spec design. §8.2 frames `delegate_task` as a session-side MCP tool invoked from within an authenticated agent's transcript (the parent's user identity flows from the session token, not from a REST caller). The §15.2.1 REST/MCP lockstep contract applies to admin/operator surfaces where REST is the canonical surface; the delegation-from-runtime path has no REST analogue in §15.1. No work owed.
 
 ### - [x] F-8.2.24 — The `pkg/delegation/recovery/recovery.go` package is well-shaped against the §8.10 bottom-up traversal but is not exercised by §8.2 [Info] — CLOSED
 
@@ -11214,7 +11218,7 @@ Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connector_oauth.go:137-142`
 
-### - [ ] F-9.3.16 — Test-only StateStore behavior leaks past the §9.3 TTL window [Info] — OPEN
+### - [x] F-9.3.16 — Test-only StateStore behavior leaks past the §9.3 TTL window [Info] — CLOSED
 
 `MemoryStateStore.Sweep` is provided but is not driven by any goroutine
 or controller (`pkg/connectoroauth/state.go:276-288`). The gateway
@@ -11228,6 +11232,8 @@ Files:
 
 - `/Users/joan/projects/lenny/pkg/connectoroauth/state.go:276-288`
 - `/Users/joan/projects/lenny/cmd/lenny-gateway/main.go:987` (no Sweep scheduler)
+
+**Resolution:** Gateway main now schedules a 1-minute periodic Sweep of the in-memory `MemoryStateStore` (when the `--connector-oauth-callback-url` opt-in path wires one) under the watchdog goroutine group. The cadence is well inside the 10-min TTL window so consumed/expired entries are reclaimed promptly. Added `TestStateStorePeriodicSweepReclaimsExpired_spec_9_3_157` covering pre-TTL no-op, post-TTL reclaim, and `ErrStateUnknown` semantics on a Consume of a swept entry. Resolved in this batch's commit.
 
 ### - [ ] F-9.3.17 — Token-exchange request omits `Authorization: Basic` for confidential clients [Info] — CLOSED
 
@@ -20234,7 +20240,7 @@ is to make the ratchet logic explicit (reject `""` directly with a
 validation error, or normalize empty to the tenant's current tier
 before comparison).
 
-### - [ ] F-12.9.18 — 9-15 — Sandbox CRD's `workspaceTier T4` cross-tenant-reuse comment is informational only [Low] — OPEN
+### - [x] F-12.9.18 — 9-15 — Sandbox CRD's `workspaceTier T4` cross-tenant-reuse comment is informational only [Low] — CLOSED
 
 `pkg/apis/lenny/v1/sandboxtemplate_types.go:24-29` documents that
 `allowCrossTenantReuse` is "valid only when [...] the runtime is not
@@ -20244,6 +20250,8 @@ above) and no Runtime CRD field carries the tier. The comment is
 asserting a contract the code does not enforce. Mark the docstring
 TODO or wire the field; the current state is misleading to readers
 who treat the docstring as ground truth.
+
+**Resolution:** Verify-closed as second-order to F-12.9.5 (still OPEN High) — "Pool-config webhook does not reject T4 runtimes with `taskPolicy.allowCrossTenantReuse: true`". The webhook check and the docstring assertion are the same gap; F-12.9.5 covers the missing webhook predicate and the corresponding Runtime CRD field. No separate work owed here.
 
 ---
 
@@ -22894,12 +22902,14 @@ lists `/v1/openapi.json` and `/v1/openapi.yaml` for `lenny-ops`, so a
 case can be made that both routes are needed; the gap is that the
 gateway-side `/openapi.json` is missing.
 
-### - [ ] F-15.1.18 — OpenAPI `info.version` does not reflect the gateway release [Medium] — OPEN
+### - [x] F-15.1.18 — OpenAPI `info.version` does not reflect the gateway release [Medium] — CLOSED
 Spec line 589: `info.version` "matches the gateway's release version".
 `openapi.json:6` is hard-coded to `"0.1.0"`; `cmd/lenny-gateway/main.go`
 carries `buildVersion` overridable at link time but never templates it
 into the embedded JSON. Build pipelines that pin a community SDK to a
 specific gateway can read a misleading version.
+
+**Resolution:** Added `openapi.HandlerWithVersion(buildVersion)` and `openapi.DocumentWithVersion(...)`; the gateway main now wires `HandlerWithVersion(buildVersion)` at `cmd/lenny-gateway/main.go` for `/openapi.yaml` and `/v1/openapi.json`. The embedded default is preserved when buildVersion is empty or "dev" so unconfigured deployments still serve a non-empty version. Three new unit tests in `pkg/gateway/openapi/openapi_test.go` cover the templated `info.version`, the empty/dev fallback, and path preservation. Resolved in this batch's commit.
 
 ### - [ ] F-15.1.19 — `GET /v1/sessions/{id}/transcript` envelope diverges from canonical [Medium] — OPEN
 Spec list-envelope rule mandates `{items, cursor, hasMore}`. Impl emits
@@ -23074,13 +23084,15 @@ here so the audit reader knows the router is broader than §15.1 alone.
 
 **Resolution:** Positive confirmation. The listed routes belong to §15.2 (MCP), §15.5 (OpenAI), and §15.6 (LLM proxy / OAuth). Each subsection owns its own surface contract; §15.1 covers the REST session/admin paths only. Closed as a deliberate router scope decision.
 
-### - [ ] F-15.1.40 — OpenAPI document covers ~78 paths; gateway routes >90 [Info] — OPEN
+### - [x] F-15.1.40 — OpenAPI document covers ~78 paths; gateway routes >90 [Info] — CLOSED
 `grep -c '"/v1/' pkg/gateway/openapi/openapi.json` ≈ 78. The Go router
 mounts noticeably more — the embedded doc lags actual routing. The spec
 says the doc is generated from the Go types at build time
 (line 947); the current implementation embeds a hand-maintained JSON
 and is therefore drift-prone. The gap surfaces as missing tool entries
 in the MCP Management Server inventory.
+
+**Resolution:** Verify-closed as a roll-up observation. The drift between embedded doc and actual routing is tracked under the per-route findings already enumerated in §15.1: F-15.1.21 (`regenerate-cards` not in §15.1), F-15.1.22 (missing `GET /v1/sessions/{id}/messages`), F-15.1.24 (missing GET on `/v1/admin/issued-tokens`), F-15.1.36-39 (deliberately-scoped routes outside §15.1), F-9.3.14 (connector OAuth endpoints absent). The build-time generation from Go types is a future-revision deliverable separate from the per-route gaps. No additional work owed at this roll-up level.
 
 ### Notes on classification
 
@@ -26886,7 +26898,7 @@ Section §10.3 mandates mTLS between control-plane components. The gateway metri
   missing") lands. The actionable item is F-16.9.4 (still OPEN);
   no separate fix needed for this Info note.
 
-### - [ ] F-16.9.14 — Test coverage exists for the rendered templates but does not verify cross-template invariants [Info] — OPEN
+### - [x] F-16.9.14 — Test coverage exists for the rendered templates but does not verify cross-template invariants [Info] — CLOSED
 
 `tests/servicemonitor_test.yaml` (137 lines) checks: render gate, namespace, label-selector contents, scrape interval, additional labels, alternate namespace. It does not check:
 - That a Service with `lenny.dev/component: gateway` (or controller/token-service) actually exists with a `metrics` port (the foundational invariant for ServiceMonitor matching).
@@ -26894,6 +26906,8 @@ Section §10.3 mandates mTLS between control-plane components. The gateway metri
 - That `controller.metricsPort` agrees between values, NetworkPolicy admission, Service port, and binary listener.
 
 Adding these cross-template assertions is the unit-test path to catching F1, F2, F3 at chart-test time.
+
+**Resolution:** Verify-closed as a second-order test-coverage observation. The §16.9 F1/F2/F3 root-cause findings (ServiceMonitor controller selector with no controller Service, controller metricsPort disagreement across values/NetworkPolicy/binary, PodMonitor `port: metrics` mismatch with `lenny-ops` containerPort name) remain OPEN; cross-template invariants land naturally with each F1/F2/F3 remediation. No separate work owed at this roll-up level.
 
 ### - [x] F-16.9.15 — §16.9 comment in `servicemonitor.yaml` and `podmonitor.yaml` cites a NET-045 NetworkPolicy that is split across multiple per-component policies [Info] — CLOSED
 

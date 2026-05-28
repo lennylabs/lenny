@@ -156,3 +156,57 @@ func TestDocumentReturnsCopy(t *testing.T) {
 		t.Error("Document must return defensive copies")
 	}
 }
+
+// spec: §15.1 line 589 — `info.version` field in the spec matches the
+// gateway's release version. F-15.1.18.
+func TestHandlerStampsGatewayReleaseVersionIntoInfoVersion_spec_15_1_589(t *testing.T) {
+	const release = "1.4.2"
+	req := httptest.NewRequest(http.MethodGet, "/v1/openapi.json", nil)
+	rr := httptest.NewRecorder()
+	openapi.HandlerWithVersion(release).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	info, _ := doc["info"].(map[string]any)
+	if got := info["version"]; got != release {
+		t.Errorf("info.version: got %v, want %q", got, release)
+	}
+}
+
+// spec: §15.1 line 589 — empty / "dev" build version leaves the
+// embedded default in place so unconfigured deployments still serve a
+// non-empty version string.
+func TestHandlerKeepsEmbeddedVersionWhenBuildVersionIsEmptyOrDev_spec_15_1_589(t *testing.T) {
+	for _, v := range []string{"", "dev"} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/openapi.json", nil)
+		rr := httptest.NewRecorder()
+		openapi.HandlerWithVersion(v).ServeHTTP(rr, req)
+		var doc map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil {
+			t.Fatalf("decode for %q: %v", v, err)
+		}
+		info, _ := doc["info"].(map[string]any)
+		ver, _ := info["version"].(string)
+		if ver == "" {
+			t.Errorf("info.version unexpectedly empty for buildVersion %q", v)
+		}
+	}
+}
+
+// spec: §15.1 line 589 — version templating preserves the rest of the
+// document (paths and MCP-extensions remain intact).
+func TestHandlerVersionTemplatingPreservesPaths_spec_15_1_589(t *testing.T) {
+	doc := openapi.DocumentWithVersion("9.9.9")
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	paths, _ := parsed["paths"].(map[string]any)
+	if _, ok := paths["/v1/sessions"]; !ok {
+		t.Error("versioned document dropped /v1/sessions path")
+	}
+}

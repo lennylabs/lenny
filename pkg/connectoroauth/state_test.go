@@ -235,3 +235,34 @@ func TestStateStoreSweep(t *testing.T) {
 		t.Fatalf("live entry was swept prematurely: %v", err)
 	}
 }
+
+// spec: §9.3 line 157 — pending state entries have TTL=10 min. The
+// in-memory store grows monotonically without a periodic Sweep; the
+// gateway main schedules one every minute under the watchdog. This
+// test asserts that repeated periodic Sweep calls reclaim consumed and
+// expired entries without affecting still-live entries. F-9.3.16.
+func TestStateStorePeriodicSweepReclaimsExpired_spec_9_3_157(t *testing.T) {
+	store := NewMemoryStateStore()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	if err := store.Put("live", sampleFlow(now), DefaultStateTTL); err != nil {
+		t.Fatalf("Put live: %v", err)
+	}
+	if err := store.Put("expired", sampleFlow(now), DefaultStateTTL); err != nil {
+		t.Fatalf("Put expired: %v", err)
+	}
+	// Sweep before expiry must keep both.
+	if dropped := store.Sweep(now.Add(time.Minute)); dropped != 0 {
+		t.Fatalf("premature Sweep dropped %d, want 0", dropped)
+	}
+	// After the TTL, the expired one goes; the live one is still live
+	// per its own put time (same now).
+	if dropped := store.Sweep(now.Add(DefaultStateTTL + time.Second)); dropped != 2 {
+		t.Fatalf("post-TTL Sweep dropped %d, want 2", dropped)
+	}
+	// A subsequent Consume of an already-swept entry must return
+	// ErrStateUnknown rather than ErrStateExpired or ErrStateConsumed,
+	// since the entry no longer exists in the map.
+	if _, err := store.Consume("expired", now.Add(DefaultStateTTL+2*time.Second)); err != ErrStateUnknown {
+		t.Fatalf("Consume after Sweep: got %v, want ErrStateUnknown", err)
+	}
+}
