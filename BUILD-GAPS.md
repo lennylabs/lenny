@@ -9189,7 +9189,7 @@ Each is mapped to the implementation below.
 
 **Resolution:** Added an `Error error = 7;` field to `ExtendLeaseResponse` (proto + regenerated bindings). `pkg/gateway/leasecontrol/leasecontrol.go` now populates the field on both REJECTED paths — pre-grant rejection-cool-off and the §8.6 line 731 in-flight atomic re-check — with `ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE`, `CATEGORY_POLICY`, `Retryable=false`. The existing `details.subtreeId` and `details.coolOffExpiresAt` fields already shipped (F-15.1 fix) so the §15.1 line 1080 envelope is now complete on both rejection paths. GRANTED / PARTIALLY_GRANTED / CEILING_REACHED responses leave `Error` nil so tooling can distinguish success vs typed-rejection.
 
-### - [ ] F-8.6.10 — Audit record omits approval mode, approver, batch id, service_instance_id, client_ip, and resulting new limits [Medium] — OPEN
+### - [x] F-8.6.10 — Audit record omits approval mode, approver, batch id, service_instance_id, client_ip, and resulting new limits [Medium] — CLOSED
 
 **Spec:** §8.6 (line 743) enumerates the audit fields: requesting session, requested amounts, approval mode, outcome, approver (gateway-auto or client), granted amount, effective max at time of request, resulting new limits, batch id, service_instance_id, client_ip.
 
@@ -9200,6 +9200,8 @@ Each is mapped to the implementation below.
 **Severity:** Medium — degrades audit completeness for a sensitive control surface; not a correctness defect on the grant path itself.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:145–154, 304–318`; `cmd/lenny-gateway/main.go:1838–1858`.
+
+**Resolution:** `ExtensionAudit` gains `ApprovalMode`, `Approver`, `BatchID`, `ServiceInstanceID`, `ClientIP`, and `NewLimits` per §8.6 line 743; `leasecontrol.Options` accepts `ServiceInstanceID`, `BatchIDGen`, and `PeerIPFn` so the §16.1.1 service.instance.id, a chronologically-sortable batch id, and the gRPC peer client_ip plumb end-to-end (defaults: replica id from `--replica-id`, time-prefixed random batch id, `peer.FromContext` extraction). The handler stamps `NewLimits` from the per-session post-grant view (paired with F-8.6.12) and computes `Approver` via `approverFor(outcome, mode)` (cool-off rejection → `client`, all other paths → `gateway-auto` until the §8.6 line 714 dispatcher lands). `cmd/lenny-gateway/main.go` wires a new `leaseExtensionAuditAdapter` that writes one `delegation.lease_extended` row to the §11.7 hash chain per ExtendLease decision, keyed on the requesting tenant. Closed by commit f9de1458.
 
 ### - [x] F-8.6.11 — `requested_seconds` declared on the wire but silently dropped [Medium] — CLOSED
 
@@ -9215,7 +9217,7 @@ Each is mapped to the implementation below.
 
 **Resolution:** Plumbed the §8.6 line 643 `additionalMaxAge` dimension end-to-end. `TreeBudget` gained `CurrentMaxAgeSeconds` + `EffectiveMaxMaxAgeSeconds`; `MemoryBudgetSource.memTree` mirrors them and `TreeConfig` accepts the layered ceiling. The handler runs `leaseextension.Grant` against the seconds dimension independently of tokens, applies both via the updated `ApplyGrant(grantedTokens, grantedSeconds)` signature, and returns `granted_seconds` on the proto response. A new `combineOutcomes` helper folds the two per-dimension outcomes into a single response status (GRANTED only if both fit, PARTIALLY_GRANTED if at least one dimension granted under cap, CEILING_REACHED if both are zero against a non-zero request). `ExtensionAudit` gains `RequestedSeconds` / `GrantedSeconds` so the §11.7 chain records both dimensions. The seconds-dimension producers (LLM-proxy trigger that asks for additional time) ride on the F-8.6.6 follow-on but the wire+grant kernel is now complete and no longer silently zeroes the field.
 
-### - [ ] F-8.6.12 — Tree-wide grant violates the §8.6 "requesting session only" scope [Medium] — OPEN
+### - [x] F-8.6.12 — Tree-wide grant violates the §8.6 "requesting session only" scope [Medium] — CLOSED
 
 **Spec:** §8.6 (lines 737–741) "Extensions apply to the requesting session only. Existing children are unaffected — their leases remain as originally granted. Only new children spawned after the extension benefit from the expanded parent budget."
 
@@ -9226,6 +9228,8 @@ Each is mapped to the implementation below.
 **Severity:** Medium — incorrect semantics in the canonical decision kernel; rises to High once H3 is fixed and downstream consumers exist.
 
 **Files:** `pkg/gateway/leasecontrol/membudget.go:39–60, 223–237`.
+
+**Resolution:** `BudgetSource.ApplyGrant` now takes a `requestingSessionID` and returns a typed `NewLimits` rather than just a bumped tree token total. `memTree.currentBudget` was split into a `baseBudget` plus a per-`sessionID` `extensions` map of `{tokens, seconds}` deltas; `TreeBudget(sessionID)` returns the requesting session's view (`base + delta`) so a sibling reading the tree sees the unchanged base. The handler captures the `NewLimits` and threads them through `auditFull` so the §8.6 line 743 "resulting new limits" audit field is sourced from the per-session post-grant view. A new `TestExtendLeaseExtensionScopedToRequestingSession_spec_8_6_line_737` test pins three sibling sessions: each sibling's grant raises its own view, while a third "existing" sibling continues to see the base — a regression that re-introduces tree-wide propagation fails loudly. Closed by commit f9de1458.
 
 ### - [x] F-8.6.13 — `lenny_delegation_lease_extension_total` declared in the metric catalog but never incremented [Medium] — CLOSED
 
@@ -9435,7 +9439,7 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** The "later entries overwrite earlier ones" precedence in §8.7 line 774 has no observability counterpart, so silent shadowing of exported files is undiagnosable.
 
-### - [ ] F-8.7.7 — Fail-closed `PreExportMaterialization` returns the wrong §15.1 error code [High] — OPEN
+### - [x] F-8.7.7 — Fail-closed `PreExportMaterialization` returns the wrong §15.1 error code [High] — CLOSED
 
 **Spec:** §8.3 rule 3 (line 164) and §4.8 (line 1038) — on a `fail-closed` interceptor timeout/error, the export MUST fail with `EXPORT_FILE_SCAN_UNAVAILABLE` (TRANSIENT, HTTP 503). §15.1 line 1073 enumerates this code with `details.reason ∈ {timeout, grpc_error, unreachable}`.
 
@@ -9446,7 +9450,9 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** Callers cannot distinguish a deliberate policy REJECT (`PERMANENT`, HTTP 422 per §15.1) from a transient scanner outage (`TRANSIENT`, HTTP 503). Retry classification is wrong: clients will treat a recoverable interceptor outage as a permanent rejection, and operators lose the 503 signal that drives availability dashboards.
 
-### - [ ] F-8.7.8 — `EXPORT_FILE_SCAN_UNAVAILABLE` error constant is missing [Medium] — OPEN
+**Resolution:** `scanExportFile` now inspects the chain-returned `Code` on every `ActionReject`: when it equals `CodeInterceptorTimeout` (the fail-closed transient marker Chain.Run sets), the wrapper is tagged `CodeExportFileScanUnavailable` so the §15.1 classifier renders 503 TRANSIENT; a deliberate policy REJECT (empty or non-timeout code) stays `CodeExportFileScanRejected` so 422 PERMANENT remains the response for content-policy refusals. The misleading test that asserted "fail-closed = REJECTED" was renamed to `TestRunPreExportMaterializationFailClosedSurfacesUnavailable_spec_15_1_1073` and a new `TestRunPreExportMaterializationDeliberateRejectStaysRejected_spec_15_1_1073` pins the other side of the matrix so retries on transient outages and non-retries on policy denials both fail loudly under regression. Closed by commit f9de1458 alongside F-8.7.8.
+
+### - [x] F-8.7.8 — `EXPORT_FILE_SCAN_UNAVAILABLE` error constant is missing [Medium] — CLOSED
 
 **Spec:** §15.1 line 1073 — `EXPORT_FILE_SCAN_UNAVAILABLE` is a normative §15.1 error code (TRANSIENT, HTTP 503).
 
@@ -9454,6 +9460,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 - `grep -rn "EXPORT_FILE_SCAN_UNAVAILABLE" /Users/joan/projects/lenny/pkg` returns no hits.
 
 **Impact:** Even when F7 is fixed, the constant must exist before the mapping can compile. Note: this is the direct enabler of F7's correctness fix.
+
+**Resolution:** Added `CodeExportFileScanUnavailable = "EXPORT_FILE_SCAN_UNAVAILABLE"` to `pkg/gateway/interceptor/export.go` with a comment pinning §15.1 line 1073 + §8.3 rule 3 + §4.8 line 1038; the matching mapping in `scanExportFile` lands with F-8.7.7. Closed by commit f9de1458.
 
 ### - [ ] F-8.7.9 — `delegation.export_file_scan_rejected` and `delegation.export_scan_failed_open` audit events are not emitted [High] — OPEN
 
@@ -9687,7 +9695,7 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 - **Gap:** Without a persistent envelope and a write path that respects the existing version, the §8.8 rolling-upgrade story (different replicas may write at different versions) cannot hold. A future schema-2 bump would silently mutate prior schema-1 records.
 - **Suggested resolution:** When the `task_records` table is added (per F-8.8.1), add `schema_version INT NOT NULL DEFAULT 1` and make the create path the sole writer of the column. Update / read paths must SELECT and re-emit the value rather than re-deriving it.
 
-### - [ ] F-8.8.12 — lenny/await_children mode "settled" is treated as a synonym for "all" with no separate semantics surfaced [Medium] — OPEN
+### - [x] F-8.8.12 — lenny/await_children mode "settled" is treated as a synonym for "all" with no separate semantics surfaced [Medium] — CLOSED
 
 **Potential overlap** (confidence: medium) — F-8.5.22 — Both about lenny/await_children mode handling but target different defects: F-8.5.22 concerns mode=any not cancelling vs cascade interaction, F-8.8.12 concerns any returning first-listed rather than first-chronological child and settled-vs-all naming.
 
@@ -9695,6 +9703,8 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 - **Evidence:** `pkg/gateway/mcptools/mcptools.go:425, 442-443` accept all three values. `collectChildResults` at `mcptools.go:1385-1411` collapses `settled` and `all` into the same path. The `any` branch returns `terminal[:1]` and the remaining unsettled children are left running. So far this matches the spec.
 - **Gap:** The narrower issue is that the `any` mode returns *the first child in childIDs order* (`mcptools.go:1402-1404`) rather than the first child to reach a terminal state (chronological). The spec says "return as soon as any child reaches a terminal state. Returns the first `TaskResult`". The current poll loop returns the *first-listed* terminal child, which can be the one that settled last, depending on poll interleaving.
 - **Suggested resolution:** Either (a) track per-child settle time and select the earliest-settled, or (b) document the existing behavior as a v1 acceptance and revisit when streaming partial yields are added (F-8.8.5). Streaming yields naturally give the parent the *first* settled child without reordering on the poll.
+
+**Resolution:** `childOutcome` gains a `settledAt` field sourced from the live row's `UpdatedAt` (terminal transition timestamp) or the §8.10 archive's `SettledAt`; `collectChildResults` now scans every terminal child and picks the one with the earliest `settledAt`, with a stable tie-break on `childIDs` order so two children sharing the same settle instant resolve deterministically. `settled` continues to alias `all` per §8.8 line 945-949, with the package-level comment now explaining the alias is retained for external MCP / A2A clients. Three new tests pin the behavior: `TestAwaitChildrenAnyReturnsFirstChronologicallySettled_spec_8_8_945` (a child listed second but settled first wins), `TestAwaitChildrenSettledAliasesAll_spec_8_8_945`, and `TestAwaitChildrenSettledBlocksUntilAll_spec_8_8_945`. Closed by commit f9de1458.
 
 ### - [x] F-8.8.13 — input_required exit path "request cancelled by parent → running" is undocumented in the task-state transition list [Medium] — CLOSED
 - **Spec:** Line 842 — `input_required → running (request cancelled by parent via lenny/cancel_child or equivalent)` is listed as a legal task-level edge.
@@ -11559,7 +11569,7 @@ renderings.
 
 ---
 
-### - [ ] F-9.4.8 — (Medium) — `EmbeddingDim = 256` is hard-coded; vector dimension drift between Embedder, pgvector column, and ivfflat index is not preflighted [Medium] — OPEN
+### - [x] F-9.4.8 — (Medium) — `EmbeddingDim = 256` is hard-coded; vector dimension drift between Embedder, pgvector column, and ivfflat index is not preflighted [Medium] — CLOSED
 
 Spec wording (§9.4 line 198): "**Default implementation:** Postgres + pgvector."
 
@@ -11570,6 +11580,8 @@ Evidence:
 - No `Validate(embedder Embedder) error` startup hook checks that `embedder.Embed("preflight")` returns a slice of `EmbeddingDim` length; no SQL check ensures the column dimension matches the constant.
 
 Verdict: **PARTIAL** — the default `HashingEmbedder` is correct by construction, but the seam advertised for custom Embedders is missing a startup validation step the spec calls "MUST project its model output to this width before returning". Demoted from High to Medium because the default path is safe and only a misconfigured custom Embedder triggers the failure.
+
+**Resolution:** `memorystore.ValidateEmbedder(e Embedder) error` runs the preflight: it calls `e.Embed(EmbedderPreflightToken)` (a deterministic non-empty input that bypasses an Embedder's empty-text short-circuit) and returns a typed error citing both observed and expected widths when the slice length differs from `EmbeddingDim`. A nil Embedder is accepted (callers fall back to recency-only ranking); a nil-slice return is accepted (§9.4 permits an Embedder to short-circuit a query — the column write is then skipped, no corruption risk); a provider error propagates with `errors.Is`-friendly wrapping. `cmd/lenny-gateway/main.go` now calls the preflight when the MemoryStore is enabled, so a misconfigured 1536-dim provider fails at boot with the `§9.4 line 198` citation rather than corrupting the pgvector(256) column on every Write. Four tier-1 tests cover accept / wrong-dim / nil / nil-slice / propagate-error. Closed by commit f9de1458.
 
 ---
 
