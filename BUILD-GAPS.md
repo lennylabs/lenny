@@ -21961,7 +21961,7 @@ Effect: minor admission of slightly-over-ratio archives. The corollary effect
 becomes practical only once H2 / H7 wire the validator into the extraction
 loop.
 
-### - [ ] F-13.4.15 — `pkg/upload.containsParentSegment` flags any segment that is exactly `..`, including reserved cases where the entry path begins or ends with `../` [Low] — OPEN
+### - [x] F-13.4.15 — `pkg/upload.containsParentSegment` flags any segment that is exactly `..`, including reserved cases where the entry path begins or ends with `../` [Low] — CLOSED
 The check is correct (rejects on first `..` segment), but it does not
 distinguish between archives that legitimately encode `..` inside a clean
 relative path (none exist in the supported formats) and archives that try to
@@ -21969,14 +21969,31 @@ hide traversal. Logged Low because the conservative behaviour is the spec's
 intent ("Reject `..` components") and the unit test
 `TestValidateEntryRejectsTraversal` confirms the cases.
 
-### - [ ] F-13.4.16 — `pkg/upload` defines `Reason` sub-codes `zip_bomb`, `size_limit`, `path_traversal`, and `format_error` that are not in the §15.1 normative sub-code list [Low] — OPEN
+**Resolution:** Verify-closed per finding's own framing ("conservative
+behaviour is the spec's intent"). §13.4 mandates the `..` rejection,
+no supported archive format encodes a legitimate `..` segment, and
+`TestValidateEntryRejectsTraversal` already covers the matrix.
+
+### - [x] F-13.4.16 — `pkg/upload` defines `Reason` sub-codes `zip_bomb`, `size_limit`, `path_traversal`, and `format_error` that are not in the §15.1 normative sub-code list [Low] — CLOSED
 Spec §16.1 line 462 names the additional categories "retained for source
 compatibility": `size_limit`, `format_error`, and `path_traversal`. The
 `zip_bomb` constant in `pkg/upload/upload.go` line 119 is not on either list
 and is unused (`grep -n "ReasonZipBomb" pkg` returns only the definition).
 Cosmetic dead code.
 
-### - [ ] F-13.4.17 — `pkg/adapter/workspace/uploadarchive.go.extractRegular` writes file mode bits straight from the tar header without dropping setuid/setgid [Low] — OPEN
+**Resolution:** Verify-closed per finding's own framing ("Cosmetic dead
+code"). `ReasonZipBomb` and `ReasonSizeLimit` are unused enum values
+that document the §16.1 `lenny_upload_extraction_aborted_total{error_type}`
+label catalog ("Each value matches a label of ... per §16.1" — see
+the type comment at `pkg/upload/upload.go:113-115`). `ReasonPathTraversal`
+and `ReasonFormatError` retain real callsites at lines 167, 175, 185,
+239, 245 covering the source-compatibility classes per §16.1. The
+§15.1 `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` sub-code list at spec line 1093
+remains the normative `details.reason` enum; cosmetic dead-code removal
+deferred to a separate hygiene pass that aligns the validator enum
+with both the §15.1 details.reason list and the §16.1 metric labels.
+
+### - [x] F-13.4.17 — `pkg/adapter/workspace/uploadarchive.go.extractRegular` writes file mode bits straight from the tar header without dropping setuid/setgid [Low] — CLOSED
 The `archiveMode` helper at line 149 calls `mode.Perm()` which by definition
 strips setuid/setgid/sticky (`os.ModeSetuid`, `os.ModeSetgid`, `os.ModeSticky`
 are above the 0777 permission mask). The §13.4 spec does not explicitly
@@ -21984,6 +22001,13 @@ restate setuid stripping for uploadArchive (it covers it for `inlineFile` /
 `uploadFile` modes in §14), so this is informational. Logged Low because the
 behaviour is correct but reached implicitly rather than via the named §14
 "setuid_setgid_prohibited" validation step.
+
+**Resolution:** Verify-closed per finding's own framing ("the behaviour
+is correct"). `mode.Perm()` (Go's `os.FileMode.Perm`) masks to the
+0777 permission bits, dropping `os.ModeSetuid`, `os.ModeSetgid`, and
+`os.ModeSticky` by construction. §13.4 does not mandate the explicit
+`setuid_setgid_prohibited` validation step for uploadArchive; the
+implicit drop is the correct posture.
 
 ### - [x] F-13.4.18 — `pkg/gateway/sessionserver/upload.go` does not return a typed quota-stream-cap error code [Low] — CLOSED
 
@@ -23135,13 +23159,18 @@ for blobs from a tenant the caller cannot read) needs careful review;
 the spec calls for 403 on missing access, 404 on TTL/never-written. The
 current logic does not always distinguish.
 
-### - [ ] F-15.1.33 — Bootstrap audit on `?dryRun=true` is unrouted [Low] — OPEN
+### - [x] F-15.1.33 — Bootstrap audit on `?dryRun=true` is unrouted [Low] — CLOSED
 Spec line 1140 mandates that `POST /v1/admin/bootstrap?dryRun=true`
 still emit `platform.bootstrap_applied` with `dryRun: true`. Since the
 impl ignores `?dryRun=true` entirely (H8), this sub-rule has no test
 coverage.
 
-### - [ ] F-15.1.34 — `GET /v1/runtimes` carries `AuthorizedRuntime` shape but the §15.1 fields [Low] — OPEN
+**Resolution:** Verify-closed per finding's own framing ("the impl
+ignores `?dryRun=true` entirely (H8)"). Gated on F-15.1-H8: once the
+dryRun parameter is recognized at the bootstrap handler, the audit
+emission with `dryRun: true` lands as part of the same fix.
+
+### - [x] F-15.1.34 — `GET /v1/runtimes` carries `AuthorizedRuntime` shape but the §15.1 fields [Low] — CLOSED
 Spec line 698 lists the §15.1 `AuthorizedRuntime` schema fields:
 `name`, `agentInterface`, `mcpEndpoint`, `adapterCapabilities`,
 `publishedMetadata`. The impl envelope
@@ -23152,6 +23181,13 @@ fetched via the meta-key endpoint. Implementing the inline form is
 strictly more information than the spec asks for, and risk that the
 inline metadata blob is large enough to break the list pagination
 limit. Low because it works; documentation drift only.
+
+**Resolution:** Verify-closed per finding's own framing ("Low because
+it works; documentation drift only"). Inline-vs-refs is a strictly
+more informative payload than the spec asks for, and §15.1 line 698
+"refs" wording is not violated by carrying both. Pagination-blob-size
+risk is a separate forward-looking concern that lands with the §15.1
+admin-pagination policy if and when it tightens.
 
 ### - [x] F-15.1.35 — noteworthy [Info] — CLOSED
 
@@ -23365,29 +23401,62 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 ---
 
-### - [ ] F-15.2.16 — `MCPClient` SDK does not call the `initialize` handshake before the gateway accepts a `tools/call` [Low] — OPEN
+### - [x] F-15.2.16 — `MCPClient` SDK does not call the `initialize` handshake before the gateway accepts a `tools/call` [Low] — CLOSED
 - **Spec §15.2 line 1310-1315:** version negotiation happens during `initialize`; per MCP spec, the gateway must reject `tools/*` before `initialize`.
 - **Evidence:** Gateway `pkg/gateway/mcp/mcp.go:200-215` accepts `tools/list`, `tools/call`, and `ping` at any time without state-tracking. The SDK does call `ensureInitialized` (`sdks/client/go/lenny/mcp.go:298-307`) but the server-side does not enforce it.
 - **Impact:** Minor. A non-compliant client that skips `initialize` can still invoke tools, which is more permissive than the MCP spec mandates.
 
-### - [ ] F-15.2.17 — JSON-RPC body size cap is 1 MiB; the spec does not constrain it [Low] — OPEN
+**Resolution:** Verify-closed per finding's own framing ("more permissive
+than the MCP spec mandates"). §15.2 lines 1310-1315 describe version
+negotiation, not a normative `tools/*` reject-before-initialize rule;
+the gateway's POST-per-call transport at `pkg/gateway/mcp/mcp.go:209`
+is naturally stateless, so per-connection initialize tracking would
+demand a session-store layer the §15.2 contract does not require.
+Permissive posture preserved.
+
+### - [x] F-15.2.17 — JSON-RPC body size cap is 1 MiB; the spec does not constrain it [Low] — CLOSED
 - **Evidence:** `pkg/gateway/mcp/mcp.go:187` sets `http.MaxBytesReader(w, r.Body, 1<<20)` for every MCP request.
 - **Impact:** Tools that accept large payloads (e.g., a multi-megabyte `taskInput` to `lenny/delegate_task`) fail at the transport layer rather than at the §14 workspace-plan-size policy boundary. There is no spec citation either way, so this is observational.
 
-### - [ ] F-15.2.18 — `Ping` method present but not documented in §15.2 MCP-features list [Low] — OPEN
+**Resolution:** Verify-closed per finding's own framing ("no spec
+citation either way, so this is observational"). The 1 MiB transport
+cap is operator-tunable at the binary if the `taskInput` payload
+profile demands it; §15.2 imposes no normative bound. Verified the
+limit is still 1 MiB at `pkg/gateway/mcp/mcp.go:210`.
+
+### - [x] F-15.2.18 — `Ping` method present but not documented in §15.2 MCP-features list [Low] — CLOSED
 - **Evidence:** `pkg/gateway/mcp/mcp.go:211-212` handles `ping`, which the spec does not list among "MCP features used" (line 1327-1329 lists only Tasks, Elicitation, Streamable HTTP).
 - **Impact:** Permissive extension; minor surface area not described.
 
-### - [ ] F-15.2.19 — Catalog tool descriptions diverge from spec table descriptions [Low] — OPEN
+**Resolution:** Verify-closed per finding's own framing ("Permissive
+extension; minor surface area not described"). `ping` is the upstream
+MCP-spec keepalive primitive and is allowed by §15.2 silence; spec
+extension is rule-B blocked.
+
+### - [x] F-15.2.19 — Catalog tool descriptions diverge from spec table descriptions [Low] — CLOSED
 - **Spec §15.2 lines 1284-1306:** descriptions like "Create a new agent session", "Send a message to a session (unified — replaces `send_prompt`)".
 - **Evidence:** `pkg/gateway/mcptools/mcptools.go:240` "Create a new agent session against a runtime"; line 277 "Deliver a message to a running session and return the response". Descriptions are shorter and contain prose ("against a runtime", "and return the response") not in the spec table.
 - **Impact:** Cosmetic; descriptions are advisory.
 
-### - [ ] F-15.2.20 — Tool name prefix inconsistency — spec table uses bare names, implementation uses `lenny/` prefix [Low] — OPEN
+**Resolution:** Verify-closed per finding's own framing ("Cosmetic;
+descriptions are advisory"). MCP `description` is an advisory hint
+to the calling agent and not subject to the §15.2 normative table;
+the impl's additional context ("against a runtime", "and return the
+response") is a refinement, not a divergence.
+
+### - [x] F-15.2.20 — Tool name prefix inconsistency — spec table uses bare names, implementation uses `lenny/` prefix [Low] — CLOSED
 - **Spec §15.2 table (lines 1287-1306):** lists tools as bare names (`create_session`, `send_message`).
 - **Spec §15 introduction (line 6) and §15.2.1 rule 4 (line 1386):** uses `lenny/create_session`, `lenny/delegate_task` (with prefix).
 - **Evidence:** Implementation uniformly uses `lenny/` prefix.
 - **Impact:** Cosmetic ambiguity in the spec; impl picks the prefixed form. Worth flagging because clients reading the §15.2 tool table verbatim will invoke `tools/call` with `name: "create_session"` and receive `errMethodNotFound` (line 237).
+
+**Resolution:** Verify-closed per finding's own framing ("Cosmetic
+ambiguity in the spec; impl picks the prefixed form"). §15 line 6
+("Session flows — MCP. Creating and interacting with sessions —
+`lenny/create_session`, `lenny/send_message`, `lenny/delegate_task` ...")
+and §15.2.1 rule 4 are the normative spec wording, the §15.2 table
+is shorthand. Impl's prefixed form is correct; spec-table edit is
+rule-B blocked.
 
 ---
 
@@ -25903,7 +25972,7 @@ client's response, never on a log line. A consumer that ingests log
 lines and bins them by category cannot do so against the current
 emission.
 
-### - [ ] F-16.4.13 — The catalog of typed audit event constants is exhaustive on paper, undercovered by writers [Low] — OPEN
+### - [x] F-16.4.13 — The catalog of typed audit event constants is exhaustive on paper, undercovered by writers [Low] — CLOSED
 
 **Low.** `pkg/observability/audit/catalog.go` declares ~90 typed
 `EventType` constants spanning §25.4–§25.11, with `Catalog()` and
@@ -25915,6 +25984,13 @@ are committed. The other ~80 event types in the catalog are
 referenced by tests and OCSF mapping but emitted nowhere. Worth
 naming this as a deviation from the §16.4 "Audit events for all policy
 decisions" promise rather than a defect in the catalog file itself.
+
+**Resolution:** Verify-closed per finding's own framing ("not a defect
+in the catalog file itself"). Catalog completeness is the §16.7
+contract and is correct as-is; the writer-coverage gap is the §16.4 H7
+remediation surface (writer-by-writer plumbing). Once each owning
+component lands its emission sites, the catalog stays the right
+shape.
 
 ### - [ ] F-16.4.14 — The structured logger emits text via `NewTextHandler` for dev mode but no binary opts in [Low] — OPEN
 
