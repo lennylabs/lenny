@@ -30743,7 +30743,7 @@ Implementation surveyed:
 
 ### Findings
 
-### - [ ] F-17.7.1 — (High). `pkg/gateway/health/runbook_links.go` not implemented — `issueRunbooks` lookup absent [Medium] — OPEN
+### - [x] F-17.7.1 — (High). `pkg/gateway/health/runbook_links.go` not implemented — `issueRunbooks` lookup absent [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.7.4, F-4.0.14, F-4.0.19 — All four report the absent runbook_links.go / issueRunbooks central lookup table with runbook refs inlined per checker.
 
@@ -30783,7 +30783,9 @@ external agent calling `GET /v1/admin/health` cannot retrieve the
 `suggestedAction.runbook` pointer for any of the eight codes the spec
 enumerates. Path B is unwired.
 
-### - [ ] F-17.7.2 — (High). `GET /v1/admin/runbooks/{name}` not registered [Medium] — OPEN
+**Resolution.** `pkg/gateway/health/runbook_links.go` now exports the §25.7 line 3222 `issueRunbooks` map keyed by all eight codes plus `RunbookForIssue` / `RegisterIssueRunbook` helpers. `Component.Issue` is added as a wire field; the `Aggregator.Report` / `Aggregator.Component` paths back-fill `RunbookRef` from the table when the checker stamps only Issue. The Postgres/Redis backends in `pkg/gateway/health/backends/backends.go` stamp `POSTGRES_UNREACHABLE` / `REDIS_UNREACHABLE`. Verified via 5 new tier-1 tests in `runbook_links_test.go`.
+
+### - [x] F-17.7.2 — (High). `GET /v1/admin/runbooks/{name}` not registered [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-25.17.4, F-25.7.1 — All three report GET /v1/admin/runbooks/{name} (full markdown body) is not registered, with the same evidence at opsserver.go:153-154.
 
@@ -30811,7 +30813,9 @@ help text but the underlying HTTP path it calls is absent.
 through the documented API. Discovery from `alert_fired` payload
 (§25.7 "Discovery Flow Summary") fails on the first step.
 
-### - [ ] F-17.7.3 — (High). `drift-snapshot-refresh.md` runbook missing [Medium] — OPEN
+**Resolution.** `pkg/ops/opsserver/runbooks.go` adds `handleRunbookMarkdown` returning `{name, frontMatter, markdown}` and `opsserver.go` registers the `GET /v1/admin/runbooks/{name}` route per §25.7 lines 3055-3057. Verified via 3 new tier-1 tests (success / not-found / unavailable) in `runbooks_test.go`.
+
+### - [x] F-17.7.3 — (High). `drift-snapshot-refresh.md` runbook missing [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.15.11 — Related to drift-snapshot-refresh but distinct defects: F-17.7.3 is a missing operator runbook doc, F-24.15.11 is a missing lenny-ctl drift snapshot-refresh subcommand.
 
@@ -30838,7 +30842,9 @@ reference for the snapshot-refresh step they are required to embed. The
 `AdmissionPlaneFeatureFlagDowngrade` runbook explicitly links to the
 missing file as a remediation cross-reference.
 
-### - [ ] F-17.7.4 — (High). Alert `RunbookURL` slugs mismatch the documented runbook filenames; 27 of 36 emit URLs that resolve to nothing [Medium] — OPEN
+**Resolution.** `docs/runbooks/drift-snapshot-refresh.md` authored per §17.7 lines 830-833 with Trigger / Diagnosis / Remediation sections, the post-hotfix cleanup checklist tail, and `<!-- access: -->` markers on every operator command.
+
+### - [x] F-17.7.4 — (High). Alert `RunbookURL` slugs mismatch the documented runbook filenames; 27 of 36 emit URLs that resolve to nothing [Medium] — CLOSED
 
 `pkg/alerting/rules/render.go:63` writes `RunbookURL` into the
 `runbook_url` annotation on every PrometheusRule. The slug helper
@@ -30894,6 +30900,8 @@ silently broken in the reverse direction. No test enforces the
 correspondence — `tests/tier11_docs/runbooks_test.go` validates structure
 inside each file but does not cross-check alert slugs against filenames.
 
+**Resolution.** 18 alert slugs in `pkg/alerting/rules/rules.go` renamed to the existing filenames (e.g., `postgres-replication-lag` → `postgres-failover`, `gateway-no-healthy-replicas` → `gateway-replica-failure`, `etcd-unavailable` → `etcd-operations`, `credential-compromised` → `credential-revocation`). 8 stub runbooks authored for slugs without a near match (`sandboxclaim-guard-unavailable`, `audit-redaction-receipt-missing`, `otlp-plaintext-egress-detected`, `ops-admin-api-plaintext-detected`, `backup-reconcile-blocked`, `ops-lock-split-brain`, `artifact-replication-residency-violation`, `legal-hold-escrow-residency-violation`). `tests/tier8_chaos/runbook-map.yaml` extended to map each new alert-driven runbook to its closest chaos scenario. The slug-resolution lint test in `tests/tier11_docs/runbooks_test.go` now passes with the §17.7 baseline allowlist reduced from 26 to 0 alert-driven entries; only the burn-rate-alert slugs (procedural, per §16.5) remain on the allowlist.
+
 ### - [ ] F-17.7.5 — (High). `lenny-ctl` lacks the `admin pools`, `admin sessions`, `admin quota`, `migrate`, and `preflight` subcommands the §17.7 runbooks invoke [Medium] — OPEN
 
 §17.7 runbooks repeatedly invoke `lenny-ctl` commands the binary does
@@ -30941,7 +30949,7 @@ gives an agent a runbook whose `<!-- access: lenny-ctl -->` block fails
 to execute. The runbook catalog promises automation that the CLI does
 not deliver.
 
-### - [ ] F-17.7.6 — (Medium). `db-rollback.md` runbook referenced by §17.7 line 813 is absent [Medium] — OPEN
+### - [x] F-17.7.6 — (Medium). `db-rollback.md` runbook referenced by §17.7 line 813 is absent [Medium] — CLOSED
 
 §17.7 schema-migration-failure remediation step 4 (line 813) reads:
 "Cross-reference: Phase 1.5 deliverable `docs/runbooks/db-rollback.md`
@@ -30954,6 +30962,8 @@ runbook as a current deliverable.
 
 **Impact.** The schema-migration-failure runbook's escalation surface
 (broader rollback) has no document to escalate to.
+
+**Resolution.** `docs/runbooks/db-rollback.md` authored with the decision tree (down DDL / partial / full restore), step-by-step quiesce → safety-check → restore → re-apply → verify procedure, and the post-rollback drift-snapshot-refresh tail. Cross-linked from `schema-migration-failure.md:174`.
 
 ### - [ ] F-17.7.7 — (Medium). 34 of 94 runbook files are stubs without `<!-- access: ... -->` markers; `/v1/admin/runbooks/{name}/steps` returns an empty step list for them [Medium] — OPEN
 
@@ -36701,11 +36711,13 @@ Spec: `/Users/joan/projects/lenny/spec/25_agent-operability.md` lines 2986–327
 
 ### Findings
 
-### - [ ] F-25.7.1 — `GET /v1/admin/runbooks/{name}` route (full rendered markdown) is not registered (High) [Medium] — OPEN
+### - [x] F-25.7.1 — `GET /v1/admin/runbooks/{name}` route (full rendered markdown) is not registered (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.7.2, F-25.17.4 — All three report GET /v1/admin/runbooks/{name} (full markdown body) is not registered, with the same evidence at opsserver.go:153-154.
 
 Spec lines 3056 and 3133 require `GET /v1/admin/runbooks/{name}` to return the full markdown content; line 3266–3271 makes it the terminating step of every Path-A and Path-B discovery flow (`event.payload.runbook is set? → yes: GET /v1/admin/runbooks/{name} — done`). `pkg/ops/opsserver/opsserver.go:153–154` registers only `GET /v1/admin/runbooks` and `GET /v1/admin/runbooks/{name}/steps`. `DirRunbookSource.Markdown(name)` is implemented but only callable via the `/steps` handler, which parses the markdown into the structured form rather than returning the raw bytes. `lenny-ctl runbooks get <name>` calls the missing route (`cmd/lenny-ctl/ops.go:91`), so the operator-facing CLI command is broken — the request hits the lenny-ops mux, finds no match, and returns 404 with no `RUNBOOK_NOT_FOUND` body. The §25.14 CLI mapping table (line 4871) and the §25.7 discovery flow both depend on this endpoint.
+
+**Resolution.** Closed by F-17.7.2 — `pkg/ops/opsserver/runbooks.go:handleRunbookMarkdown` + the `GET /v1/admin/runbooks/{name}` route in `opsserver.go` deliver `{name, frontMatter, markdown}` per §25.7 lines 3055-3057.
 
 ### - [ ] F-25.7.2 — `requires` and `q` filter parameters are not implemented on `GET /v1/admin/runbooks` (Medium) [Medium] — OPEN
 
@@ -36717,11 +36729,13 @@ Spec lines 3140–3143 enumerate five filter parameters: `alert`, `component`, `
 
 Spec lines 3193–3213 define `suggestedAction` as a JSON object with five fields: `action` (machine code such as `SCALE_WARM_POOL`), `endpoint` (HTTP verb + path), `body` (JSON the agent should `PUT`/`POST`), `reasoning` (human-readable justification), and `runbook` (the runbook slug). `pkg/gateway/health/health.go:60–67` models the surface as two sibling top-level strings on `Component`: `SuggestedAction string` and `RunbookRef string`. The four backend checkers (`pkg/gateway/health/backends/backends.go:33–125`) populate `SuggestedAction` with prose like `"verify Postgres reachability, credentials, and the connection pool; the gateway rejects session writes until it recovers"` and set `RunbookRef` to a slug. No `action`, `endpoint`, `body`, or `reasoning` field exists, so an AI-DevOps agent cannot programmatically invoke the suggested remediation — it has to parse English prose. The spec's "closes the loop for the most common automated path" (line 3215) is unreachable from the gateway's current JSON.
 
-### - [ ] F-25.7.4 — `pkg/gateway/health/runbook_links.go` and the `issueRunbooks` lookup table are absent (Medium) [Medium] — OPEN
+### - [x] F-25.7.4 — `pkg/gateway/health/runbook_links.go` and the `issueRunbooks` lookup table are absent (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.7.1, F-4.0.14, F-4.0.19 — All four report the absent runbook_links.go / issueRunbooks central lookup table with runbook refs inlined per checker.
 
 Spec lines 3217–3234 prescribe a gateway-side map from issue codes to runbook slugs (`WARM_POOL_EXHAUSTED → warm-pool-exhaustion`, `POSTGRES_UNREACHABLE → postgres-failover`, ...) at `pkg/gateway/health/runbook_links.go`, used by the health service to populate `suggestedAction.runbook`. The file does not exist. No `issueRunbooks` symbol exists anywhere in the repo. The current `RunbookRef` strings are inlined in each backend checker's body (`backends.go:46, 71, 106, 115`) without a central catalogue, so the eight issue codes listed at lines 3222–3231 cannot be uniformly resolved, and other §25.3 components that report `issue` strings have no mechanism to project to a runbook slug. The `docs/runbooks/index.md:139` text claims "The health API's `issueRunbooks` lookup returns the same mapping; `lenny-ops` populates it from this catalog" — that lookup does not exist.
+
+**Resolution.** Closed by F-17.7.1 — `pkg/gateway/health/runbook_links.go` now exports the §25.7 line 3222 `issueRunbooks` map (all 8 codes) plus `RunbookForIssue`. `Component.Issue` is added; `Aggregator.Report` and `Aggregator.Component` back-fill `RunbookRef` from the lookup.
 
 ### - [ ] F-25.7.5 — `alert_fired` event production is not wired; the `runbook` field on event payloads is never emitted (Medium) [Medium] — OPEN
 
@@ -38300,9 +38314,11 @@ The same path is documented in `docs/runbooks/warm-pool-exhaustion.md` line 128 
 
 ---
 
-### - [ ] F-25.17.4 — 17-04 — `GET /v1/admin/runbooks/{name}` is not implemented; lenny-ctl and the MCP management server both route to a missing endpoint [High] — OPEN
+### - [x] F-25.17.4 — 17-04 — `GET /v1/admin/runbooks/{name}` is not implemented; lenny-ctl and the MCP management server both route to a missing endpoint [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.7.2, F-25.7.1 — All three report GET /v1/admin/runbooks/{name} (full markdown body) is not registered, with the same evidence at opsserver.go:153-154.
+
+**Resolution.** Closed by F-17.7.2 — `pkg/ops/opsserver/runbooks.go:handleRunbookMarkdown` + the `GET /v1/admin/runbooks/{name}` route in `opsserver.go` deliver `{name, frontMatter, markdown}` per §25.17 Step 3 / §25.7 lines 3055-3057. `lenny-ctl runbooks get <name>` and the MCP `lenny_runbooks_get` tool now resolve.
 
 **Spec:** §25.17 Step 3 (lines 5208–5212):
 
