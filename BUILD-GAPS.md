@@ -38789,7 +38789,7 @@ supported providers were checked against the spec text.
 
 ### Findings
 
-### - [ ] F-26.3.1 — 1  `capabilities` (interaction, injection, preConnect) not registered [Medium] — OPEN
+### - [x] F-26.3.1 — 1  `capabilities` (interaction, injection, preConnect) not registered [Medium] — CLOSED
 
 The §26.3 entry (lines 150–155) requires the registered runtime to carry:
 
@@ -38816,6 +38816,8 @@ Helm-/CRD-driven registration path leaves those fields unset for the
 reference runtime. A consumer enumerating runtimes via the admin API will
 not see the capabilities the spec lists as inherent to `claude-code`.
 
+**Resolution:** Closed by the §26 CRD-extension landed under F-26.9.2 (single fix). `RuntimeSpec.Capabilities` (interaction + injection.{supported, modes} + preConnect) is now CRD-modeled; the runtime controller's `applyCRDFields` mirrors it into `runtimestore.Runtime.Capabilities`. The chart template renders the block and `values.yaml` populates claude-code per §26.3 line 151 (multi_turn + immediate+queued). Tier-2 helm-unittest `stamps capabilities.interaction = multi_turn on claude-code per §26.3 line 151` pins the rendered Runtime CR.
+
 ### - [ ] F-26.3.2 — 2  `limits` (maxSessionAge, maxUploadSize, maxRequestInputWaitSeconds) not registered [Medium] — OPEN
 
 Spec §26.3 lines 166–169 require:
@@ -38834,7 +38836,7 @@ session-age cap, upload cap, and request-input-wait cap therefore default
 to whatever the gateway uses for the unset case rather than the values
 the spec ascribes to `claude-code`.
 
-### - [ ] F-26.3.3 — 3  `credentialCapabilities` not registered [Medium] — OPEN
+### - [x] F-26.3.3 — 3  `credentialCapabilities` not registered [Medium] — CLOSED
 
 Spec §26.3 lines 163–165 require:
 
@@ -38848,6 +38850,8 @@ credentialCapabilities:
 ignores it. Operators of the reference catalog cannot rely on the
 registered runtime advertising hot rotation or the Anthropic proxy
 dialect, even though §26.3 says the runtime supports both.
+
+**Resolution:** First-half evidence is stale — `RuntimeSpec.CredentialCapabilities` exists on the CRD (pkg/apis/lenny/v1/runtime_types.go:71); the controller's `credentialCapabilitiesFromCRD` already mirrors it. Second-half (chart) closed by the §26 chart-template extension landed under F-26.9.2: the template now renders `credentialCapabilities` from each catalog value, and `values.yaml` populates claude-code per §26.3 line 165 with `hotRotation: true` + `proxyDialect: [anthropic]`. Tier-2 helm-unittest `stamps credentialCapabilities.proxyDialect on claude-code per §26.3 line 165` pins the rendered Runtime CR.
 
 ### - [ ] F-26.3.4 — 4  `setupCommandPolicy` and `setupPolicy` not registered [Medium] — OPEN
 
@@ -39169,7 +39173,7 @@ The first-party runtime image, adapter binary, schema URL, and conformance suite
 
 ### Findings
 
-### - [ ] F-26.6.1 — `cursor_direct` provider absent from `pkg/credential` built-in enum (Medium) [Medium] — OPEN
+### - [x] F-26.6.1 — `cursor_direct` provider absent from `pkg/credential` built-in enum (Medium) [Medium] — CLOSED
 
 §26.6 line 296 requires `supportedProviders: [cursor_direct]` for the cursor-cli runtime, and §26.6 line 298 adds the provider scope `llm.provider.cursor.inference`. `charts/lenny/values.yaml:720` configures the helm-installed `Runtime` record with `supportedProviders: [cursor_direct]`. The built-in `credential.Provider` enum (`pkg/credential/credential.go:22-29`) declares only `anthropic_direct`, `aws_bedrock`, `vertex_ai`, `azure_openai`, `github`, and `vault_transit`; neither `cursor_direct` nor a `ProviderCursorDirect` constant exists. `credential.AllProviders()` (lines 31-37) and `Provider.IsValid()` (lines 39-51) therefore report `cursor_direct` as unknown. Any platform-side admission, lease-mint, or pool-config code that gates on `Provider.IsValid()` for the built-in surface rejects a Cursor credential pool until the enum gains `cursor_direct` or the runtime is treated as a custom-provider extension.
 
@@ -39180,7 +39184,9 @@ Locations:
 - `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:296`
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:716-720`
 
-### - [ ] F-26.6.2 — `cursor` proxy dialect not registered alongside `anthropic`/`openai`/`google` (Medium) [Medium] — OPEN
+**Resolution:** Added `ProviderCursorDirect = "cursor_direct"` to the §4.9 built-in enum; `AllProviders()` returns the 7-element set and `Provider("cursor_direct").IsValid()` is true so any admission/lease-mint/pool-config caller that gates on `Provider.IsValid()` accepts the cursor-cli pool. Tier-1 `TestAllProvidersIsExhaustive` updated to 7 and `TestCursorDirectProviderIsBuiltIn_spec_26_6_296` pins the wire value.
+
+### - [x] F-26.6.2 — `cursor` proxy dialect not registered alongside `anthropic`/`openai`/`google` (Medium) [Medium] — CLOSED
 
 §26.6 line 297 requires Lenny's LLM proxy to gain a `cursor` dialect covering Cursor's inference surface. §4.9 (`spec/04_system-components.md:1471-1476`) requires admission control to reject any pool registration whose `proxyDialect` is not declared in the runtime's `credentialCapabilities.proxyDialect` set, returning `422 INVALID_POOL_PROXY_DIALECT`. The `credential.ProxyConfig.ProxyDialect` field (`pkg/credential/lease.go:37-39`) is typed as a free-form `string` and the package contains no closed enum or validator for the allowed dialect values; the surrounding code base ships fixture values `"anthropic"` only (`pkg/credential/lease_mint_test.go:66,113,140`, `pkg/credential/lease_test.go:27,105`). There is no `cursor` dialect handler in `pkg/llmproxy/`, `pkg/llm-proxy/`, or `pkg/proxy/` (none of those packages exist in this tree).
 
@@ -39191,6 +39197,8 @@ Locations:
 - `/Users/joan/projects/lenny/pkg/credential/lease_mint.go:90-93`
 - `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:297,303`
 - `/Users/joan/projects/lenny/spec/04_system-components.md:1471-1476`
+
+**Resolution:** New `credential.ProxyDialect` closed enum (`anthropic`, `openai`, `google`, `cursor`) with `AllProxyDialects()` and `IsValid()`; the §4.9 admission gate `credentialpoolstore.validProxyDialect` now delegates to it so an unknown dialect at pool create-time is rejected with the §4.9 INVALID_POOL_PROXY_DIALECT path. `apiKeyEnvForDialect` learns `cursor` (CURSOR_API_KEY) and `google` (GOOGLE_API_KEY) so the §4.7 adapter manifest exposes the canonical env-var name to the runtime's SDK. The cursor-cli chart-catalog entry now stamps `credentialCapabilities.proxyDialect: [cursor]` and an `https://schemas.lenny.dev/runtime-options/cursor-cli/v1.json` runtimeOptionsSchemaRef on the registered Runtime CR. Tier-1 `TestAllProxyDialectsIsExhaustive_spec_4_9_1473` and `TestAPIKeyEnvForDialect_spec_4_7` pin the enum + env-var matrix; tier-2 helm-unittest pins the cursor dialect on the rendered Runtime CR. The proxy translator itself (§26.6 "Lenny's LLM proxy gains a cursor dialect") is a Wave 6/Phase 11 follow-up tracked under the LLM proxy build; admission is now correctly gated on the spec dialect set.
 
 ### - [x] F-26.6.3 — `pkg/compliance/reference_catalog.yaml` cursor-cli entry uses the wrong image reference (Medium) [Medium] — CLOSED
 
@@ -39422,7 +39430,7 @@ and the platform never owns the Node adapter source. The absence of a
 `cmd/runtimes/mastra/` binary is by design and is consistent with how every
 framework runtime in §26.7-§26.11 is wired. Not a gap.
 
-### - [ ] F-26.9.2 — (Medium): Mastra Runtime CR omits §26.9 fields the spec calls out [Medium] — OPEN
+### - [x] F-26.9.2 — (Medium): Mastra Runtime CR omits §26.9 fields the spec calls out [Medium] — CLOSED
 
 `charts/lenny/templates/reference-runtimes.yaml` L29-40 only emits `type`,
 `image`, `integrationLevel`, `executionMode`, `isolationProfile`,
@@ -39454,6 +39462,8 @@ the chart and never invoke the admin API get a Mastra Runtime that:
 Severity Medium: the runtime registers and pools, but its declared §26.9
 capability and option surface is not actually present until an operator runs
 out-of-band API calls.
+
+**Resolution:** Extended the §5.1 `RuntimeSpec` CRD with `capabilities` (interaction + injection.{supported, modes} + preConnect), `runtimeOptionsSchemaRef` (URL form rendered to the gateway as a `{"$ref": "<url>"}` JSON Schema fragment), and `delegationPolicyRef`. The runtime controller's `applyCRDFields` mirrors each into `runtimestore.Runtime` (`Capabilities`, `RuntimeOptionsSchema`, `DelegationPolicyRef`). The chart template `reference-runtimes.yaml` now renders the four fields, and `values.yaml` populates them per §26.9 line 407 / line 408 / line 410 for mastra (multi_turn + immediate+queued + proxy dialects [anthropic, openai, google] + v1 schema URL). Tier-1 covers `capabilitiesFromCRD` round-trip + slice-copy, `runtimeOptionsSchemaFromRef` $ref encoding, and an end-to-end `applyCRDFields` mirror test. Tier-2 helm-unittest pins mastra's capabilities/proxyDialect/runtimeOptionsSchemaRef on the rendered Runtime CR.
 
 ### - [x] F-26.9.3 — (Low): Helm catalog drops `gcp_vertex_gemini`-only resource-class hint [Medium] — CLOSED
 
@@ -39551,9 +39561,11 @@ The runtime exists in the catalog *registration* surfaces (Embedded-Mode `refere
 
 `cmd/runtimes/` contains only the in-tree echo/MCP reference runtimes (`echo`, `streaming-echo`, `cred-shell-echo`, `delegation-echo`, `elicitation-echo`, `echo-embedded`, `mcp-reference`). There is no `cmd/runtimes/openai-assistants/` directory and no producer of an `ghcr.io/lennylabs/runtime-openai-assistants:1.0.0` image in this repo, even though `pkg/embedded/stack/catalog.go:82-86` and `charts/lenny/values.yaml:734-737` register that image as a §26 reference runtime. §26.10 ("Bootstrap: on session start, adapter creates a Thread on OpenAI with the assistant ID … appends to the thread and starts a Run … streams the run's deltas as Lenny `response` parts; maps Assistants tool calls (including `code_interpreter`, `file_search`) to Lenny `tool_call` envelopes") describes work that has no implementation. §18 also lists `openai-assistants` among the nine first-party reference runtimes ("packaged, signed, and registered with the gateway via `lenny-ctl admin runtimes register`"); the package/sign step has no source artifact to build. Treated as Medium because the runtime is published as part of the spec's reference catalog and may live in an external `github.com/lennylabs/runtime-openai-assistants` repository per §26.10's **Repository** field. If so, this audit only flags the missing in-monorepo build target; the gap is informational against the in-tree implementation surfaces.
 
-### - [ ] F-26.10.2 — Registered `Runtime` record omits the §26.10 `runtimeOptionsSchema` (Medium) [Medium] — OPEN
+### - [x] F-26.10.2 — Registered `Runtime` record omits the §26.10 `runtimeOptionsSchema` (Medium) [Medium] — CLOSED
 
 `charts/lenny/templates/reference-runtimes.yaml` only sets `type`, `image`, `integrationLevel`, `executionMode`, `isolationProfile`, `allowedResourceClasses`, and `supportedProviders` on the `lenny.dev/v1 Runtime` it creates. §26.10 requires the `openai-assistants` record to expose the §14 schema (`assistantId` required, `model` / `temperature` / `responseFormat` / `parallelToolCalls`) via `runtimeOptionsSchema`. The chart comment explicitly defers this to "the richer §26 fields (capabilities, limits, the runtime options schema, the agent interface) … configured on the runtime through the admin API," but no admin-API call or post-install hook performs that registration, so a §13 `RunRequest` against `runtime: openai-assistants` would not be validated against the §14 schema by the gateway. Equivalent gap applies to the §26.10 `capabilities.interaction: multi_turn`, `injection.modes: [immediate]`, and `credentialCapabilities.proxyDialect: [openai]` fields; the chart template carries none of them.
+
+**Resolution:** Closed by the §26 CRD-extension landed under F-26.9.2 (single fix). The chart template now renders `capabilities`, `runtimeOptionsSchemaRef`, and `credentialCapabilities` from the catalog value; `values.yaml` populates the openai-assistants entry per §26.10 line 437 (multi_turn + injection.modes=[immediate]), line 438 (v1 runtimeOptionsSchema URL), and line 440 (proxyDialect=[openai]). Tier-2 helm-unittest `stamps capabilities + injection.modes = [immediate] on openai-assistants per §26.10 line 437` pins the rendered Runtime CR.
 
 ### - [x] F-26.10.3 — `pkg/compliance/reference_catalog.yaml` image stem diverges from §26.10 (Low) [Medium] — CLOSED
 
@@ -39598,7 +39610,7 @@ Spec §26.11 documents the `crewai` reference runtime as a first-class catalogue
 - Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:453-479`
 - Evidence: missing `/Users/joan/projects/lenny/cmd/runtimes/crewai/`; `/Users/joan/projects/lenny/tests/spec-map.json:3031-3040`; `/Users/joan/projects/lenny/tests/spec-map-exceptions.yaml:177-179`
 
-### - [ ] F-26.11.2 — Required §26.11 Runtime fields are not encoded in any installable manifest [Medium] — OPEN
+### - [x] F-26.11.2 — Required §26.11 Runtime fields are not encoded in any installable manifest [Medium] — CLOSED
 
 The §26.11 entry mandates fields that are absent from every install path:
 
@@ -39612,6 +39624,8 @@ The §26.11 entry mandates fields that are absent from every install path:
 
 - Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:464-477`
 - Evidence: `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:87-92`, `/Users/joan/projects/lenny/pkg/compliance/reference_catalog.yaml:78-82`, `/Users/joan/projects/lenny/charts/lenny/values.yaml:738-741`, `/Users/joan/projects/lenny/charts/lenny/templates/reference-runtimes.yaml`
+
+**Resolution:** Closed by the §26 CRD-extension landed under F-26.9.2 (single fix). The crewai catalog entry in `values.yaml` now declares `capabilities` (multi_turn + immediate+queued), `runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/crewai/v1.json`, `credentialCapabilities.proxyDialect: [anthropic, openai]`, and `delegationPolicyRef: crewai-default`; the controller's `applyCRDFields` stamps `dst.DelegationPolicyRef` onto the runtimestore. The §26.11 `setupCommands` block (Python `pip install -r requirements.txt` against `/workspace/current/`) belongs to the §5.1 `workspaceDefaults`/setup-policy CRD surface that admin-API runtime-controller flows still own; that piece tracks separately. Tier-2 helm-unittest `stamps runtimeOptionsSchemaRef on crewai per §26.11 line 467` pins the rendered Runtime CR including `delegationPolicyRef`.
 
 ### - [x] F-26.11.3 — Embedded catalog and chart values use different image tags for the same reference runtime [Low] — CLOSED
 
