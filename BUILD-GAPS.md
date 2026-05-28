@@ -17746,7 +17746,7 @@ Evidence:
 
 Tied to the High finding on the SIEM outbox above.
 
-### - [ ] F-12.3.18 — `pg_stat_user_functions` operator-observable for trigger overhead is undocumented in tooling (§12.3 line 58) [Low] — OPEN
+### - [x] F-12.3.18 — `pg_stat_user_functions` operator-observable for trigger overhead is undocumented in tooling (§12.3 line 58) [Low] — CLOSED
 
 "Operators should monitor `pg_stat_user_functions` to verify trigger
 execution counts align with query volume."
@@ -17756,7 +17756,9 @@ Evidence: no dashboard, recording rule, or runbook references
 empty. This is operator-tooling advice and the spec does not specify a
 chart deliverable, but a runbook reference would close the loop.
 
-### - [ ] F-12.3.19 — Per-tenant quota-flush jitter and `quotaFlushBatchSize` are not in code (§12.3 line 125 footnote) [Low] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("operator-tooling advice and the spec does not specify a chart deliverable"). §12.3 line 58 is a SHOULD/operator-observability note, not a Lenny-side chart or code deliverable; the trigger itself (`lenny_tenant_guard`) is implemented and exercised. Operator runbooks are tracked outside the spec.
+
+### - [x] F-12.3.19 — Per-tenant quota-flush jitter and `quotaFlushBatchSize` are not in code (§12.3 line 125 footnote) [Low] — CLOSED
 
 Footnote describes per-replica jitter `quotaSyncIntervalSeconds + random(0,
 quotaSyncIntervalSeconds × 0.3)` and `quotaFlushBatchSize` (default 200).
@@ -17775,11 +17777,15 @@ gateway. The Postgres-checkpoint reconciliation is referenced in
 `pkg/quota/quota.go:221` and `pkg/gateway/quotastore/quotastore.go:131` but
 no flush implementation exists.
 
-### - [ ] F-12.3.20 — `audit.startupChainCheckEntries` Helm value not implemented (§12.3 line 101) [Low] — OPEN
+**Resolution:** Verify-closed as second-order to the Redis→Postgres quota flush remediation tracked under F-11.2.4 (Postgres reconciliation/checkpoint of token counters, High, OPEN) and F-11.2.16 (`quotaSyncIntervalSeconds` knob exposure, Medium, OPEN). The §12.3 footnote names two sub-config knobs (`quotaFlushBatchSize`, per-replica jitter) of the same missing flush path; both land naturally once the flush scheduler exists.
+
+### - [x] F-12.3.20 — `audit.startupChainCheckEntries` Helm value not implemented (§12.3 line 101) [Low] — CLOSED
 
 The configuration option named in the spec is absent from `values.yaml` and
 `presets/values-tier*.yaml`. (Already tied to the High finding on missing
 startup invocation.)
+
+**Resolution:** Verify-closed as second-order to F-12.3.9 (Startup audit chain-continuity check is not invoked by the gateway, High, OPEN). The Helm value `audit.startupChainCheckEntries` exposes a knob whose consumer (the startup chain-continuity check, §12.3 line 101) has no live call site; the knob lands together with the gateway-side invocation under F-12.3.9.
 
 ### - [x] F-12.3.21 — RLS test naming differs from spec but functional coverage exists (§12.3 line 57) [Info] — CLOSED
 
@@ -18852,7 +18858,7 @@ Consequence: the spec line 278 cannot be honoured even if the controller were
 wired, because no concrete driver translates the controller's calls into MinIO
 / S3 / GCS / Azure replication API calls.
 
-### - [ ] F-12.5.28 — `Tombstoner.HardPrune` retention-window cutoff ignores `deletedAt.Equal(cutoff)` (§12.5 line 341) [Low] — OPEN
+### - [x] F-12.5.28 — `Tombstoner.HardPrune` retention-window cutoff ignores `deletedAt.Equal(cutoff)` (§12.5 line 341) [Low] — CLOSED
 
 `pkg/blobstore/blobstore.go:298-303` uses `!b.deletedAt.After(cutoff)` so
 boundary-equal timestamps are removed. `pkg/blobstore/s3/s3.go:255` uses
@@ -18862,7 +18868,9 @@ removed there too. Both behaviours are consistent with the spec's
 in-memory and S3 paths diverge at sub-second resolution but the impact is
 limited to test races.
 
-### - [ ] F-12.5.29 — `lenny-blob` URI lacks the `{object_type}` segment in the parser (§12.5 line 295) [Low] — OPEN
+**Resolution:** Verify-closed per the finding's own framing. The in-memory (`pkg/blobstore/blobstore.go:476`), S3 (`pkg/blobstore/s3/s3.go:399`), Azure (`pkg/blobstore/azureblob/azureblob.go:333`), MinIO (`pkg/blobstore/miniostore/miniostore.go:747`), and Postgres-catalog (`pkg/blobstore/artifactcatalog/catalog.go:263`) prune paths are internally consistent (`<=` cutoff). The spec's `< now() - retention` predicate (line 341) is evaluated at second granularity in Postgres practice; the sub-second divergence is cosmetic-only and limited to test races as the finding itself documents.
+
+### - [x] F-12.5.29 — `lenny-blob` URI lacks the `{object_type}` segment in the parser (§12.5 line 295) [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.5.6, F-4.5.2 — All three describe the missing {object_type} segment in the blob object key path breaking eviction prefix scoping; F-12.5.29 is the parser-side facet of the same defect.
 
@@ -18870,6 +18878,8 @@ Even if callers added an `object_type` segment to the key path, the parser
 (`pkg/blobstore/blobstore.go:80-104`) reads exactly three components after the
 host. A fix for the eviction-context prefix scoping (high finding above)
 requires extending the parser, not just the writers.
+
+**Resolution:** Closed as duplicate of F-12.5.6 / F-4.5.2 (both High, OPEN). The parser extension required to honour the `{object_type}` segment is the same fix called out under those two findings — extending the writer key format and the parser together. Tracked as one work-item under the High siblings.
 
 ### - [x] F-12.5.30 — MinIO bucket name and endpoint default to empty in chart values [Info] — CLOSED
 
@@ -19791,7 +19801,7 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Impact:** A restarted controller cannot pick up a job that crashed mid-`PhasePseudonymizing` and re-run `Verify` cleanly; the receipt may then misrepresent the salt-destruction outcome. Operators have no retry endpoint.
 
-### - [ ] F-12.8.21 — `gdpr.*` retention floor is documented but `audit.gdprRetentionDays` has no configurable knob [Low] — OPEN
+### - [x] F-12.8.21 — `gdpr.*` retention floor is documented but `audit.gdprRetentionDays` has no configurable knob [Low] — CLOSED
 
 **Spec:** §12.8 line 839 — "Helm configuration: `audit.gdprRetentionDays: 2555`. This value may not be set below 2190 (6 years) when `complianceProfile` is any regulated value... the gateway rejects the configuration at startup with `CONFIG_INVALID: audit.gdprRetentionDays below compliance floor`."
 
@@ -19799,13 +19809,17 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Impact:** Even without `gdpr.*` partitioned retention, the spec's compliance-floor invariant is silently violated by any deployment. Combined with F4 (no audit-GDPR exemption filter), the `gdpr.*` rows are subject to the same partition TTL as any other audit row.
 
-### - [ ] F-12.8.22 — `compliance.profile_decommissioned` event audit retention does not enforce `audit.gdprRetentionDays` floor [Low] — OPEN
+**Resolution:** Closed as a strict subset of F-12.8.16 (Medium, OPEN) which lists `audit.gdprRetentionDays` alongside `storage.regions.<region>.legalHoldEscrow.*` and `backups.erasureReconciler.enabled` as missing Helm knobs requiring the `CONFIG_INVALID: audit.gdprRetentionDays below compliance floor` startup validator. The knob, the validator, and the metric all land together under F-12.8.16's remediation.
+
+### - [x] F-12.8.22 — `compliance.profile_decommissioned` event audit retention does not enforce `audit.gdprRetentionDays` floor [Low] — CLOSED
 
 **Spec:** §12.8 GDPR retention applies to all `gdpr.*` and `legal_hold.*` and `compliance.*` events (line 839 + line 887). The decommissioning event must be retained under the gdpr retention floor.
 
 **Implementation:** `pkg/gateway/admin/tenants.go:1207` emits `compliance.profile_decommissioned`; the event is in the OCSF mapping (`pkg/audit/ocsf/mapping.go:87`). But there is no separate retention policy: it is subject to the same audit partition TTL as every other row.
 
 **Impact:** Minor — the event survives at most `audit.retentionDays` (typically 30-90), shorter than the spec's 7-year floor for compliance receipts.
+
+**Resolution:** Verify-closed as second-order to F-12.8.21 (closed this batch as a subset of F-12.8.16, Medium OPEN). The retention-policy partitioning that exempts `compliance.*` rows from the generic `audit.retentionDays` cap requires the `audit.gdprRetentionDays` consumer to exist; both knobs land together under F-12.8.16's Helm + startup-validator remediation.
 
 ### - [ ] F-12.8.23 — Per-job legal-hold override emits but does not include `jobId` in the gdpr.legal_hold_overridden event [Info] — CLOSED
 
@@ -20218,7 +20232,7 @@ documents.
 
 - **Resolution:** Verify-closed. Orphan severity-label heading with no body; the §12.9 Low cluster lives in the sibling F-12.9.16/F-12.9.17 entries.
 
-### - [ ] F-12.9.16 — 9-13 — Admin error response for a tier downgrade reuses `CLASSIFICATION_CONTROL_VIOLATION` rather than a tier-specific code [Low] — OPEN
+### - [x] F-12.9.16 — 9-13 — Admin error response for a tier downgrade reuses `CLASSIFICATION_CONTROL_VIOLATION` rather than a tier-specific code [Low] — CLOSED
 
 `pkg/gateway/admin/tenants.go:982-991` rejects a downgrade with code
 `CLASSIFICATION_CONTROL_VIOLATION` and `details.reason:
@@ -20235,7 +20249,9 @@ amended to add `tier_downgrade_prohibited`, or a dedicated
 (symmetric with `COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED` per
 §11.7). The current overload is a minor catalog drift.
 
-### - [ ] F-12.9.17 — 9-14 — `Update` to a tenant with `WorkspaceTier: ""` resets the tier to empty (default) via the generic PUT, evading the ratchet [Low] — OPEN
+**Resolution:** Verify-closed. The §15.1 error-code catalog text at `spec/15_external-api-surface.md:1078` keeps the `details.reason` field open ("e.g., `kms_probe_failed`, `kms_unavailable`, `tier_store_mismatch`" — the "e.g." marks the list as non-exhaustive). The acknowledged comment at `tenants.go:1098-1101` makes the contract explicit. Either of the two proposed fixes (add a fourth catalog value, or introduce a dedicated `WORKSPACE_TIER_DOWNGRADE_PROHIBITED` code) requires a `spec/` edit, which rule B forbids. Catalog drift is minor and behavior is correct as wired.
+
+### - [x] F-12.9.17 — 9-14 — `Update` to a tenant with `WorkspaceTier: ""` resets the tier to empty (default) via the generic PUT, evading the ratchet [Low] — CLOSED
 
 `pkg/gateway/admin/tenants.go:980-1014`: the ratchet branch only
 fires when `body.WorkspaceTier != nil`. When the body field is set to
@@ -20257,6 +20273,8 @@ This is low because the behavior is correct today; the recommendation
 is to make the ratchet logic explicit (reject `""` directly with a
 validation error, or normalize empty to the tenant's current tier
 before comparison).
+
+**Resolution:** Verify-closed per the finding's own framing ("behavior is correct today"). The §12.9 ratchet contract is honored: `workspaceTierRank[""] = 1` (`pkg/gateway/admin/tenants.go:768-772`) is the documented same-rank-as-T3 convention, the rejection at `:1102-1113` blocks every T4 → "" or T4 → T3 transition, and the docstring at `:764-767` ("an unset value defaults to T3, so the empty string ranks with T3") pins the invariant. The trip-wire concern is forward-looking refactor hygiene, not a spec violation.
 
 ### - [x] F-12.9.18 — 9-15 — Sandbox CRD's `workspaceTier T4` cross-tenant-reuse comment is informational only [Low] — CLOSED
 
