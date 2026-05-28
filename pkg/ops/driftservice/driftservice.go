@@ -21,6 +21,7 @@ package driftservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -63,9 +64,17 @@ const (
 // Error is a §25.10 drift failure carrying the canonical error code so
 // the HTTP handler maps it to the documented status without
 // re-classifying.
+//
+// HTTPStatus, when non-zero, overrides the default code→status mapping
+// in the HTTP layer. §25.10 line 3866 maps DRIFT_DESIRED_STATE_MISSING
+// to either 404 (cold-start: no snapshot exists at all) or 503
+// (Postgres down). The default mapping is the conservative 503; the
+// cold-start path sets HTTPStatus = 404 so a fresh install reads as a
+// missing snapshot rather than a transient outage. F-25.10.10.
 type Error struct {
-	Code    string
-	Message string
+	Code       string
+	Message    string
+	HTTPStatus int
 }
 
 // Error implements error.
@@ -145,6 +154,94 @@ type RunningStateReader interface {
 	RunningState(ctx context.Context, scope string) (map[string]any, error)
 }
 
+// RunningStateCache is the §25.10 line 3822 running-state cache: the
+// gateway-aggregation result for a scope is held for
+// ops.drift.runningStateCacheTTLSeconds so repeat drift reports skip
+// the expensive scatter over 50+ pools. The HTTP layer honors
+// ?fresh=true by setting ReportParams.Fresh, which bypasses Lookup and
+// updates the entry via Store.
+//
+// The Redis-backed cache is a documented seam; tests and the v1
+// single-process degraded mode use MemRunningStateCache. F-25.10.7.
+type RunningStateCache interface {
+	// Lookup returns the cached running state for the scope, if any.
+	// ok=false signals a miss; the caller falls back to the reader.
+	Lookup(ctx context.Context, scope string) (state map[string]any, ok bool, err error)
+	// Store writes the running state for the scope with the configured
+	// TTL. A Store failure is non-fatal — drift report assembly does not
+	// depend on the cache persisting.
+	Store(ctx context.Context, scope string, state map[string]any) error
+}
+
+// MemRunningStateCache is the §25.10 in-memory running-state cache used
+// in the single-process degraded mode and in tests. It is safe for
+// concurrent use; entries expire after the TTL configured at
+// construction (zero TTL disables caching entirely — every Lookup
+// reports a miss). F-25.10.7.
+type MemRunningStateCache struct {
+	mu      sync.Mutex
+	ttl     time.Duration
+	entries map[string]memCacheEntry
+	now     func() time.Time
+}
+
+// memCacheEntry is one cached running-state snapshot keyed by scope.
+type memCacheEntry struct {
+	state    map[string]any
+	expireAt time.Time
+}
+
+// NewMemRunningStateCache returns an in-memory cache with the given TTL.
+// A non-positive TTL disables caching: Lookup always misses and Store is
+// a no-op (the §25.10 line 3824 "0 disables" posture).
+func NewMemRunningStateCache(ttl time.Duration) *MemRunningStateCache {
+	return &MemRunningStateCache{
+		ttl:     ttl,
+		entries: make(map[string]memCacheEntry),
+		now:     func() time.Time { return time.Now().UTC() },
+	}
+}
+
+// SetClock overrides the cache clock; tests use it for deterministic
+// TTL expiration.
+func (c *MemRunningStateCache) SetClock(now func() time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = now
+}
+
+// Lookup returns the cached running state for the scope. ok=false on a
+// miss or an expired entry; on expiry the entry is dropped so a later
+// Store does not race with the still-stale value.
+func (c *MemRunningStateCache) Lookup(_ context.Context, scope string) (map[string]any, bool, error) {
+	if c.ttl <= 0 {
+		return nil, false, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[scope]
+	if !ok {
+		return nil, false, nil
+	}
+	if c.now().After(entry.expireAt) {
+		delete(c.entries, scope)
+		return nil, false, nil
+	}
+	return entry.state, true, nil
+}
+
+// Store writes the running state for the scope with the configured TTL.
+// A zero TTL is a no-op: caching is disabled.
+func (c *MemRunningStateCache) Store(_ context.Context, scope string, state map[string]any) error {
+	if c.ttl <= 0 {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[scope] = memCacheEntry{state: state, expireAt: c.now().Add(c.ttl)}
+	return nil
+}
+
 // DriftEntry is one drifted field in a §25.10 drift report: the dotted
 // field path, how it drifted, the desired and actual values, and the
 // §25.10 severity classification.
@@ -195,15 +292,22 @@ const staleWarningText = "The bootstrap_seed_snapshot is %d days old. " +
 type Service struct {
 	snapshots SnapshotStore
 	running   RunningStateReader
+	// runningCache is the optional §25.10 line 3822 running-state cache.
+	// A nil cache disables caching and every report reads fresh.
+	runningCache RunningStateCache
 	// StaleWarningDays is ops.drift.snapshotStaleWarningDays (default 7);
 	// a value of zero disables the staleness warning.
 	StaleWarningDays int
 	now              func() time.Time
 }
 
-// defaultStaleWarningDays is the §25.10 ops.drift.snapshotStaleWarningDays
-// default.
-const defaultStaleWarningDays = 7
+// DefaultStaleWarningDays is the §25.10 ops.drift.snapshotStaleWarningDays
+// spec default (line 3801, 3809).
+const DefaultStaleWarningDays = 7
+
+// DefaultRunningStateCacheTTL is the §25.10 line 3824
+// ops.drift.runningStateCacheTTLSeconds default.
+const DefaultRunningStateCacheTTL = 60 * time.Second
 
 // NewService returns a drift service over the given snapshot store and
 // running-state reader. A nil running-state reader leaves Report unable
@@ -212,10 +316,15 @@ func NewService(snapshots SnapshotStore, running RunningStateReader) *Service {
 	return &Service{
 		snapshots:        snapshots,
 		running:          running,
-		StaleWarningDays: defaultStaleWarningDays,
+		StaleWarningDays: DefaultStaleWarningDays,
 		now:              func() time.Time { return time.Now().UTC() },
 	}
 }
+
+// SetRunningStateCache installs the §25.10 line 3822 running-state
+// cache. A nil cache disables caching (the §25.10 line 3824 "0
+// disables" posture). F-25.10.7.
+func (s *Service) SetRunningStateCache(c RunningStateCache) { s.runningCache = c }
 
 // SetClock overrides the service clock; tests use it for deterministic
 // staleness computation.
@@ -232,6 +341,11 @@ type ReportParams struct {
 	// Desired, when non-nil, is a caller-supplied desired state used in
 	// place of the stored snapshot for ad-hoc comparison.
 	Desired map[string]any
+	// Fresh, when true, bypasses the §25.10 line 3822 running-state
+	// cache. The HTTP layer sets this from ?fresh=true. Reconciliation
+	// always passes Fresh=true so it never acts on stale state.
+	// F-25.10.7.
+	Fresh bool
 }
 
 // Report computes the §25.10 drift report: it collects the running
@@ -256,7 +370,7 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 		return nil, &Error{Code: ErrCodeInvalid, Message: "against must be live or target"}
 	}
 
-	running, err := s.collectRunning(ctx, scope)
+	running, err := s.collectRunning(ctx, scope, p.Fresh)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +390,15 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 	} else {
 		snap, ok, snapErr := s.snapshots.Get(ctx, against)
 		if snapErr != nil {
-			return nil, snapErr
+			// §25.10 line 3866: a snapshot-store failure (Postgres down)
+			// surfaces as DRIFT_DESIRED_STATE_MISSING with the default
+			// 503 mapping. The underlying store error is preserved in the
+			// message so operators can correlate with §25.4 healthz output.
+			// F-25.10.10.
+			return nil, &Error{
+				Code:    ErrCodeDesiredStateMissing,
+				Message: "snapshot store unavailable: " + snapErr.Error(),
+			}
 		}
 		if !ok {
 			if against == SnapshotTarget {
@@ -285,9 +407,14 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 					Message: "no target snapshot — no upgrade is in flight",
 				}
 			}
+			// §25.10 line 3866: the cold-start "no snapshot exists" case is
+			// 404, distinct from the 503 "Postgres down" case above. The
+			// explicit HTTPStatus override pins the status without changing
+			// the canonical error code. F-25.10.10.
 			return nil, &Error{
-				Code:    ErrCodeDesiredStateMissing,
-				Message: "no bootstrap_seed_snapshot and no caller-supplied desired state",
+				Code:       ErrCodeDesiredStateMissing,
+				Message:    "no bootstrap_seed_snapshot and no caller-supplied desired state",
+				HTTPStatus: 404,
 			}
 		}
 		desired = snap.DesiredState
@@ -319,26 +446,57 @@ func (s *Service) applyStaleness(report *DriftReport, snap Snapshot) {
 	}
 }
 
+// ValidateParams is the §25.10 POST /v1/admin/drift/validate request
+// shape. Desired is the externally-supplied source-of-truth (typically a
+// Helm values document); Stored, when non-nil, supplies the stored
+// snapshot side of the diff in place of bootstrap_seed_snapshot — the
+// §25.10 "Postgres down, two caller-supplied snapshots" offline-
+// validation path that lets GitOps agents diff their pre- and post-
+// edit snapshots without a working snapshot store. F-25.10.12.
+type ValidateParams struct {
+	Desired map[string]any
+	Stored  map[string]any
+}
+
 // Validate computes the §25.10 POST /v1/admin/drift/validate diff
 // between a caller-supplied desired state and the stored live snapshot,
 // reporting a match/diverged verdict. It is read-only — no state is
 // changed.
-func (s *Service) Validate(ctx context.Context, desired map[string]any) (*ValidationResult, error) {
-	if desired == nil {
+//
+// When p.Stored is non-nil the snapshot store is not consulted: the diff
+// is computed between p.Stored and p.Desired. This is the §25.10
+// degradation path for `validate` during a Postgres outage —
+// F-25.10.12.
+func (s *Service) Validate(ctx context.Context, p ValidateParams) (*ValidationResult, error) {
+	if p.Desired == nil {
 		return nil, &Error{Code: ErrCodeInvalid, Message: "a desired-state body is required"}
 	}
-	snap, ok, err := s.snapshots.Get(ctx, SnapshotLive)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, &Error{
-			Code:    ErrCodeDesiredStateMissing,
-			Message: "no stored bootstrap_seed_snapshot to validate against",
+	stored := p.Stored
+	if stored == nil {
+		snap, ok, err := s.snapshots.Get(ctx, SnapshotLive)
+		if err != nil {
+			// §25.10 line 3866 Postgres-down case → 503 via the default
+			// DRIFT_DESIRED_STATE_MISSING mapping (HTTPStatus left zero).
+			return nil, &Error{
+				Code:    ErrCodeDesiredStateMissing,
+				Message: "snapshot store unavailable: " + err.Error(),
+			}
 		}
+		if !ok {
+			// §25.10 line 3866 cold-start path: no snapshot exists at all
+			// → 404. The caller may retry by supplying a stored snapshot
+			// in the request body for offline validation. F-25.10.10 /
+			// F-25.10.12.
+			return nil, &Error{
+				Code:       ErrCodeDesiredStateMissing,
+				Message:    "no stored bootstrap_seed_snapshot to validate against",
+				HTTPStatus: 404,
+			}
+		}
+		stored = snap.DesiredState
 	}
 	res := &ValidationResult{SnapshotValidationResult: "match"}
-	for _, c := range drift.Diff(snap.DesiredState, desired) {
+	for _, c := range drift.Diff(stored, p.Desired) {
 		res.Differences = append(res.Differences, toDriftEntry(c))
 	}
 	res.DifferenceCount = len(res.Differences)
@@ -359,24 +517,46 @@ type RefreshRequest struct {
 
 // RefreshResult is the §25.10 snapshot-refresh outcome, carrying the
 // previous-snapshot provenance for the drift.snapshot_refreshed audit
-// event.
+// event. The §25.10 line 3871 event details require
+// {previous_written_at, previous_source, new_source, byteSize}; this
+// struct populates all four so the audit emitter can render the event
+// without re-marshalling. F-25.10.8.
 type RefreshResult struct {
 	Replaced          bool       `json:"replaced"`
 	NewWrittenAt      time.Time  `json:"newWrittenAt"`
 	PreviousWrittenAt *time.Time `json:"previousWrittenAt,omitempty"`
 	PreviousSource    string     `json:"previousSource,omitempty"`
 	NewSource         string     `json:"newSource"`
+	// ByteSize is the JSON-encoded length of the new desired state. §25.10
+	// line 3871 carries this on the drift.snapshot_refreshed audit event
+	// so operators can correlate snapshot growth with downstream Postgres
+	// row size and the §25.10 line 3824 cache pressure. F-25.10.8.
+	ByteSize int `json:"byteSize"`
 }
 
 // RefreshSnapshot replaces the §25.10 live bootstrap_seed_snapshot row
 // with the caller-supplied desired state. §25.10 keeps refresh an
 // explicit operator action — the HTTP layer requires confirm:true (the
 // §25.2 dry-run/confirm pattern) before calling this.
+//
+// The returned RefreshResult carries the §25.10 line 3871
+// drift.snapshot_refreshed audit-event details: previous_written_at,
+// previous_source, new_source, and the JSON-encoded byteSize of the
+// new desired state.
 func (s *Service) RefreshSnapshot(ctx context.Context, req RefreshRequest) (*RefreshResult, error) {
 	if req.Desired == nil {
 		return nil, &Error{Code: ErrCodeInvalid, Message: "a desired-state body is required"}
 	}
-	res := &RefreshResult{NewSource: SourceSnapshotRefresh}
+	// §25.10 line 3871: byteSize is the JSON-encoded length of the new
+	// desired state. The JSON-encoding choice matches how the snapshot is
+	// stored in Postgres (`bootstrap_seed_snapshot.desired_state JSONB`)
+	// so the audit event reports the persisted row size, not the
+	// in-memory Go map. F-25.10.8.
+	encoded, err := json.Marshal(req.Desired)
+	if err != nil {
+		return nil, &Error{Code: ErrCodeInvalid, Message: "desired state is not JSON-encodable: " + err.Error()}
+	}
+	res := &RefreshResult{NewSource: SourceSnapshotRefresh, ByteSize: len(encoded)}
 	if prev, ok, err := s.snapshots.Get(ctx, SnapshotLive); err != nil {
 		return nil, err
 	} else if ok {
@@ -402,11 +582,33 @@ func (s *Service) RefreshSnapshot(ctx context.Context, req RefreshRequest) (*Ref
 // collectRunning reads the running state for the scope. A nil
 // running-state reader yields an empty running state so the report
 // still assembles (every desired field reads as removed drift).
-func (s *Service) collectRunning(ctx context.Context, scope string) (map[string]any, error) {
+//
+// When a §25.10 line 3822 running-state cache is configured and
+// fresh=false, the cache is consulted first and a fresh read updates
+// the cache for the next call. fresh=true bypasses the cache entirely
+// and does not update it — §25.10 line 3824 reserves the cache for the
+// non-bypass path so a ?fresh=true probe cannot crowd out the baseline
+// value other callers rely on. Cache failures are non-fatal: a Lookup
+// error degrades to a fresh read, a Store error is silently ignored
+// (the report has already assembled and the next call will retry).
+// F-25.10.7.
+func (s *Service) collectRunning(ctx context.Context, scope string, fresh bool) (map[string]any, error) {
 	if s.running == nil {
 		return map[string]any{}, nil
 	}
-	return s.running.RunningState(ctx, scope)
+	if s.runningCache != nil && !fresh {
+		if cached, ok, err := s.runningCache.Lookup(ctx, scope); err == nil && ok {
+			return cached, nil
+		}
+	}
+	state, err := s.running.RunningState(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if s.runningCache != nil && !fresh {
+		_ = s.runningCache.Store(ctx, scope, state)
+	}
+	return state, nil
 }
 
 // toDriftEntry projects a pkg/drift Change into the §25.10 wire entry.

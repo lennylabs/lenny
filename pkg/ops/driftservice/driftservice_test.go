@@ -4,6 +4,7 @@ package driftservice_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -141,8 +142,8 @@ func TestValidateReportsMatchAndDiverged(t *testing.T) {
 	svc := driftservice.NewService(store, fixedRunning{state: map[string]any{}})
 
 	// An identical desired state validates as match.
-	match, err := svc.Validate(context.Background(), map[string]any{
-		"pools": map[string]any{"p": map[string]any{"minWarm": float64(5)}},
+	match, err := svc.Validate(context.Background(), driftservice.ValidateParams{
+		Desired: map[string]any{"pools": map[string]any{"p": map[string]any{"minWarm": float64(5)}}},
 	})
 	if err != nil {
 		t.Fatalf("validate match: %v", err)
@@ -151,8 +152,8 @@ func TestValidateReportsMatchAndDiverged(t *testing.T) {
 		t.Errorf("validation result = %q, want match", match.SnapshotValidationResult)
 	}
 	// A differing desired state validates as diverged.
-	diverged, err := svc.Validate(context.Background(), map[string]any{
-		"pools": map[string]any{"p": map[string]any{"minWarm": float64(9)}},
+	diverged, err := svc.Validate(context.Background(), driftservice.ValidateParams{
+		Desired: map[string]any{"pools": map[string]any{"p": map[string]any{"minWarm": float64(9)}}},
 	})
 	if err != nil {
 		t.Fatalf("validate diverged: %v", err)
@@ -201,4 +202,231 @@ func TestRefreshSnapshotRejectsEmptyDesiredState(t *testing.T) {
 	if driftservice.CodeOf(err) != driftservice.ErrCodeInvalid {
 		t.Errorf("err code = %q, want DRIFT_INVALID for an empty desired state", driftservice.CodeOf(err))
 	}
+}
+
+// TestRefreshSnapshotCarriesByteSizeSpec25_10_3871 pins the §25.10 line
+// 3871 drift.snapshot_refreshed audit-event detail: the RefreshResult
+// carries the JSON-encoded byteSize of the new desired state so the
+// audit emitter can render the event without re-marshalling. F-25.10.8.
+func TestRefreshSnapshotCarriesByteSizeSpec25_10_3871(t *testing.T) {
+	svc := driftservice.NewService(driftservice.NewMemSnapshotStore(), fixedRunning{state: map[string]any{}})
+	desired := map[string]any{"pools": map[string]any{"default-gvisor": map[string]any{"minWarm": float64(5)}}}
+	res, err := svc.RefreshSnapshot(context.Background(), driftservice.RefreshRequest{
+		Desired: desired, Confirm: true, WrittenBy: "operator",
+	})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	// The byteSize must match the JSON encoding of the desired state —
+	// not the in-memory Go map size — because that's the Postgres JSONB
+	// row size the audit event reports.
+	if res.ByteSize <= 0 {
+		t.Fatalf("byteSize = %d, want > 0", res.ByteSize)
+	}
+	// A larger desired state must produce a larger byteSize.
+	bigger := map[string]any{
+		"pools": map[string]any{
+			"default-gvisor": map[string]any{"minWarm": float64(5), "maxSize": float64(100)},
+			"second-pool":    map[string]any{"minWarm": float64(2)},
+		},
+	}
+	res2, err := svc.RefreshSnapshot(context.Background(), driftservice.RefreshRequest{
+		Desired: bigger, Confirm: true, WrittenBy: "operator",
+	})
+	if err != nil {
+		t.Fatalf("refresh 2: %v", err)
+	}
+	if res2.ByteSize <= res.ByteSize {
+		t.Errorf("byteSize did not grow with desired state: %d vs %d", res2.ByteSize, res.ByteSize)
+	}
+}
+
+// TestReportColdStartReturns404Spec25_10_3866 pins the §25.10 line 3866
+// table: DRIFT_DESIRED_STATE_MISSING resolves to 404 when no snapshot
+// exists at all (cold start). The Error.HTTPStatus override carries the
+// signal end-to-end so the HTTP layer can distinguish cold-start (404)
+// from store-down (503). F-25.10.10.
+func TestReportColdStartReturns404Spec25_10_3866(t *testing.T) {
+	svc := driftservice.NewService(driftservice.NewMemSnapshotStore(), fixedRunning{state: map[string]any{}})
+	_, err := svc.Report(context.Background(), driftservice.ReportParams{})
+	var de *driftservice.Error
+	if !errors.As(err, &de) {
+		t.Fatalf("err is not *driftservice.Error: %T %v", err, err)
+	}
+	if de.Code != driftservice.ErrCodeDesiredStateMissing {
+		t.Errorf("err code = %q, want DRIFT_DESIRED_STATE_MISSING", de.Code)
+	}
+	if de.HTTPStatus != 404 {
+		t.Errorf("HTTPStatus = %d, want 404 (§25.10 line 3866 cold-start)", de.HTTPStatus)
+	}
+}
+
+// TestValidateColdStartReturns404Spec25_10_3866 pins the same §25.10
+// line 3866 distinction for the validate path. The cold-start case sets
+// HTTPStatus=404; the caller can recover by supplying a stored snapshot
+// in the request body (the F-25.10.12 offline-validation path).
+func TestValidateColdStartReturns404Spec25_10_3866(t *testing.T) {
+	svc := driftservice.NewService(driftservice.NewMemSnapshotStore(), fixedRunning{state: map[string]any{}})
+	_, err := svc.Validate(context.Background(), driftservice.ValidateParams{
+		Desired: map[string]any{"pools": map[string]any{}},
+	})
+	var de *driftservice.Error
+	if !errors.As(err, &de) {
+		t.Fatalf("err is not *driftservice.Error: %T %v", err, err)
+	}
+	if de.Code != driftservice.ErrCodeDesiredStateMissing || de.HTTPStatus != 404 {
+		t.Errorf("validate cold-start = code=%q status=%d, want DRIFT_DESIRED_STATE_MISSING/404",
+			de.Code, de.HTTPStatus)
+	}
+}
+
+// TestReportStoreFailureMapsTo503_spec_25_10_3866 pins the §25.10 line
+// 3866 "Postgres down" case: a snapshot-store error wraps as
+// DRIFT_DESIRED_STATE_MISSING with the default code mapping (HTTPStatus
+// unset) so the HTTP layer renders 503. F-25.10.10.
+func TestReportStoreFailureMapsTo503_spec_25_10_3866(t *testing.T) {
+	svc := driftservice.NewService(failingStore{}, fixedRunning{state: map[string]any{}})
+	_, err := svc.Report(context.Background(), driftservice.ReportParams{})
+	var de *driftservice.Error
+	if !errors.As(err, &de) {
+		t.Fatalf("want a *driftservice.Error, got %T %v", err, err)
+	}
+	if de.Code != driftservice.ErrCodeDesiredStateMissing {
+		t.Errorf("code = %q, want DRIFT_DESIRED_STATE_MISSING", de.Code)
+	}
+	if de.HTTPStatus != 0 {
+		t.Errorf("HTTPStatus = %d, want 0 (default-503 mapping)", de.HTTPStatus)
+	}
+}
+
+// TestValidateAcceptsCallerSuppliedStoredSpec25_10_3782 pins the §25.10
+// degradation path: when Postgres is unavailable, the caller can supply
+// a stored snapshot in the request body and validate against it without
+// consulting the snapshot store. F-25.10.12.
+func TestValidateAcceptsCallerSuppliedStoredSpec25_10_3782(t *testing.T) {
+	// Empty store — no live snapshot. With the stored field set, the
+	// validate succeeds and diffs the two caller-supplied bodies.
+	svc := driftservice.NewService(driftservice.NewMemSnapshotStore(), fixedRunning{state: map[string]any{}})
+	stored := map[string]any{"pools": map[string]any{"p": map[string]any{"minWarm": float64(5)}}}
+	desired := map[string]any{"pools": map[string]any{"p": map[string]any{"minWarm": float64(9)}}}
+	res, err := svc.Validate(context.Background(), driftservice.ValidateParams{
+		Stored: stored, Desired: desired,
+	})
+	if err != nil {
+		t.Fatalf("validate with caller-supplied stored: %v", err)
+	}
+	if res.SnapshotValidationResult != "diverged" || res.DifferenceCount != 1 {
+		t.Errorf("validate result=%q count=%d, want diverged/1",
+			res.SnapshotValidationResult, res.DifferenceCount)
+	}
+}
+
+// TestReportHonorsRunningStateCacheSpec25_10_3822 pins the §25.10 line
+// 3822-3824 running-state caching: when a cache is configured the
+// second Report call returns the cached state without re-reading from
+// the running-state reader. F-25.10.7.
+func TestReportHonorsRunningStateCacheSpec25_10_3822(t *testing.T) {
+	store := driftservice.NewMemSnapshotStore()
+	seedLive(t, store, map[string]any{"pools": map[string]any{}}, time.Now().UTC())
+	reader := &countingRunningState{state: map[string]any{"pools": map[string]any{}}}
+	svc := driftservice.NewService(store, reader)
+	svc.SetRunningStateCache(driftservice.NewMemRunningStateCache(60 * time.Second))
+
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Report(context.Background(), driftservice.ReportParams{Scope: "pools"}); err != nil {
+			t.Fatalf("report %d: %v", i, err)
+		}
+	}
+	if reader.calls != 1 {
+		t.Errorf("running-state reader called %d times, want 1 (later calls cached)", reader.calls)
+	}
+}
+
+// TestReportFreshBypassesCacheSpec25_10_3762 pins the §25.10 line 3762
+// ?fresh=true contract: a Fresh=true report bypasses the cache and
+// reads from the running-state reader every time. F-25.10.7.
+func TestReportFreshBypassesCacheSpec25_10_3762(t *testing.T) {
+	store := driftservice.NewMemSnapshotStore()
+	seedLive(t, store, map[string]any{"pools": map[string]any{}}, time.Now().UTC())
+	reader := &countingRunningState{state: map[string]any{"pools": map[string]any{}}}
+	svc := driftservice.NewService(store, reader)
+	svc.SetRunningStateCache(driftservice.NewMemRunningStateCache(60 * time.Second))
+
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Report(context.Background(), driftservice.ReportParams{
+			Scope: "pools", Fresh: true,
+		}); err != nil {
+			t.Fatalf("report %d: %v", i, err)
+		}
+	}
+	if reader.calls != 3 {
+		t.Errorf("running-state reader called %d times, want 3 (Fresh=true bypasses cache)", reader.calls)
+	}
+}
+
+// TestMemRunningStateCacheTTLExpiresSpec25_10_3824 pins the TTL
+// expiration behavior: an entry stored at t expires at t+TTL and a
+// later Lookup misses. The Mem cache uses an injectable clock so the
+// expiry is exercised without real wall time.
+func TestMemRunningStateCacheTTLExpiresSpec25_10_3824(t *testing.T) {
+	cache := driftservice.NewMemRunningStateCache(60 * time.Second)
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	cache.SetClock(func() time.Time { return now })
+	if err := cache.Store(context.Background(), "all", map[string]any{"k": "v"}); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if _, ok, _ := cache.Lookup(context.Background(), "all"); !ok {
+		t.Fatal("cache miss immediately after store")
+	}
+	// Advance past the TTL.
+	now = now.Add(61 * time.Second)
+	if _, ok, _ := cache.Lookup(context.Background(), "all"); ok {
+		t.Fatal("cache hit after TTL expiry, want miss")
+	}
+}
+
+// TestMemRunningStateCacheZeroTTLDisablesSpec25_10_3824 pins the §25.10
+// line 3824 "0 disables" posture: a zero TTL causes Lookup to always
+// miss and Store to be a no-op. F-25.10.7.
+func TestMemRunningStateCacheZeroTTLDisablesSpec25_10_3824(t *testing.T) {
+	cache := driftservice.NewMemRunningStateCache(0)
+	_ = cache.Store(context.Background(), "all", map[string]any{"k": "v"})
+	if _, ok, _ := cache.Lookup(context.Background(), "all"); ok {
+		t.Error("zero-TTL cache Lookup hit, want miss (caching disabled)")
+	}
+}
+
+// TestBuildDriftServiceWiresCache verifies the spec-default StaleWarningDays
+// and cache TTL constants the binary uses. F-25.10.7, F-25.10.9.
+func TestDefaultsMatchSpec25_10(t *testing.T) {
+	if driftservice.DefaultStaleWarningDays != 7 {
+		t.Errorf("DefaultStaleWarningDays = %d, want 7 (§25.10 line 3801)", driftservice.DefaultStaleWarningDays)
+	}
+	if driftservice.DefaultRunningStateCacheTTL != 60*time.Second {
+		t.Errorf("DefaultRunningStateCacheTTL = %v, want 60s (§25.10 line 3824)", driftservice.DefaultRunningStateCacheTTL)
+	}
+}
+
+// failingStore is a SnapshotStore that always returns an error — used to
+// pin the §25.10 line 3866 "Postgres down" case.
+type failingStore struct{}
+
+func (failingStore) Get(context.Context, string) (driftservice.Snapshot, bool, error) {
+	return driftservice.Snapshot{}, false, errors.New("postgres down")
+}
+
+func (failingStore) Put(context.Context, driftservice.Snapshot) error {
+	return errors.New("postgres down")
+}
+
+// countingRunningState is a RunningStateReader that counts how many
+// times the underlying source was read.
+type countingRunningState struct {
+	state map[string]any
+	calls int
+}
+
+func (c *countingRunningState) RunningState(context.Context, string) (map[string]any, error) {
+	c.calls++
+	return c.state, nil
 }

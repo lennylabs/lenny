@@ -83,6 +83,70 @@ func TestClassifySeverity(t *testing.T) {
 	}
 }
 
+// TestClassifyQuotaScalingSpec25_10_3773 pins the §25.10 line 3773
+// "scaling parameters and quota values are medium" rule for the common
+// §6.x / §17.x field names operators actually drift. The implementation
+// matched these by default-falling to medium; the explicit keyword set
+// guards against future low-keyword substring matches that would
+// downgrade them. F-25.10.11.
+func TestClassifyQuotaScalingSpec25_10_3773(t *testing.T) {
+	for _, path := range []string{
+		"pool.scaling.replicas",
+		"pool.scaling.minWarm",
+		"pool.scaling.maxSize",
+		"resourceQuota.requestsCPU",
+		"resourceQuota.pods",
+		"deployment.strategy.rollingUpdate.maxSurge",
+		"deployment.strategy.rollingUpdate.maxUnavailable",
+		"limits.memory",
+		"warmCount",
+	} {
+		if got := drift.Classify(path); got != drift.SeverityMedium {
+			t.Errorf("Classify(%q) = %q, want medium (§25.10 line 3773 scaling/quota)", path, got)
+		}
+	}
+}
+
+// TestClassifyDoesNotDowngradeLabelSelectorSpec25_10_3773 pins the §25.10
+// line 3773 distinction between metadata bags (low) and structural
+// configuration whose name happens to contain "label" (medium). Before
+// F-25.10.11 a path like "pool.scaling.labelSelector" — structural
+// config — was downgraded to low because the classifier substring-
+// matched "label". The fix matches the low keyword as a whole segment.
+func TestClassifyDoesNotDowngradeLabelSelectorSpec25_10_3773(t *testing.T) {
+	for _, path := range []string{
+		"pool.scaling.labelSelector",
+		"pool.scaling.labelExpression",
+		"deployment.spec.selector.matchLabelExpressions",
+		"runtime.annotationFilter",
+		"runtime.metadataValidator",
+		"runtime.descriptionTemplate",
+	} {
+		if got := drift.Classify(path); got == drift.SeverityLow {
+			t.Errorf("Classify(%q) = low, want medium (structural config, not metadata bag)", path)
+		}
+	}
+}
+
+// TestClassifyKeepsMetadataBagsLowSpec25_10_3773 confirms the §25.10
+// metadata-bag whole-segment paths still classify low: a path with a
+// "labels", "annotations", "description", or "metadata" segment is the
+// low-severity case. F-25.10.11.
+func TestClassifyKeepsMetadataBagsLowSpec25_10_3773(t *testing.T) {
+	for _, path := range []string{
+		"labels.team",
+		"runtime.labels.owner",
+		"runtime.annotations.checksum",
+		"runtime.description",
+		"runtime.metadata.uid",
+		"deployment.spec.template.metadata.labels.app",
+	} {
+		if got := drift.Classify(path); got != drift.SeverityLow {
+			t.Errorf("Classify(%q) = %q, want low (§25.10 metadata bag)", path, got)
+		}
+	}
+}
+
 func TestDiffSeverityIsAttachedToChanges(t *testing.T) {
 	desired := map[string]any{"image": "claude:v1"}
 	actual := map[string]any{"image": "claude:v2"}

@@ -3,7 +3,9 @@
 package opsserver
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
@@ -23,14 +25,27 @@ var driftErrorMap = map[string]struct {
 
 // writeDriftError maps a §25.10 drift service error to the §25.2
 // canonical error envelope and writes it.
+//
+// A non-zero driftservice.Error.HTTPStatus overrides the default
+// code→status mapping. §25.10 line 3866 maps DRIFT_DESIRED_STATE_MISSING
+// to either 404 (cold-start) or 503 (Postgres down); the cold-start
+// path sets HTTPStatus=404 so a fresh install reports as "no snapshot
+// exists" rather than as a transient outage. F-25.10.10.
 func writeDriftError(w http.ResponseWriter, err error) {
 	code := driftservice.CodeOf(err)
-	if mapping, ok := driftErrorMap[code]; ok {
-		conventions.WriteError(w, mapping.status, code, mapping.category, err.Error())
-		return
+	mapping, knownCode := driftErrorMap[code]
+	status := mapping.status
+	category := mapping.category
+	if !knownCode {
+		status = http.StatusInternalServerError
+		code = "INTERNAL"
+		category = conventions.CategoryTransient
 	}
-	conventions.WriteError(w, http.StatusInternalServerError, "INTERNAL",
-		conventions.CategoryTransient, err.Error())
+	var de *driftservice.Error
+	if errors.As(err, &de) && de.HTTPStatus != 0 {
+		status = de.HTTPStatus
+	}
+	conventions.WriteError(w, status, code, category, err.Error())
 }
 
 // registerDriftRoutes wires the §25.10 configuration-drift endpoints
@@ -49,16 +64,28 @@ func (s *Server) driftUnavailable(w http.ResponseWriter) {
 
 // handleDriftReport serves GET /v1/admin/drift: the §25.10 drift report
 // comparing running state against the desired-state snapshot. It
-// accepts ?scope=, ?against=, and ?fresh=.
+// accepts ?scope=, ?against=, and ?fresh= (§25.10 line 3762).
+//
+// ?fresh=true bypasses the §25.10 line 3822 running-state cache; the
+// HTTP layer parses the standard truthy spellings (true/1/yes/on). An
+// unparseable value is treated as not-fresh so a typo does not silently
+// thrash the cache. F-25.10.7.
 func (s *Server) handleDriftReport(w http.ResponseWriter, r *http.Request) {
 	if s.drift == nil {
 		s.driftUnavailable(w)
 		return
 	}
 	q := r.URL.Query()
+	fresh := false
+	if v := q.Get("fresh"); v != "" {
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			fresh = parsed
+		}
+	}
 	report, err := s.drift.Report(r.Context(), driftservice.ReportParams{
 		Scope:   q.Get("scope"),
 		Against: q.Get("against"),
+		Fresh:   fresh,
 	})
 	if err != nil {
 		writeDriftError(w, err)
@@ -70,6 +97,11 @@ func (s *Server) handleDriftReport(w http.ResponseWriter, r *http.Request) {
 // handleDriftValidate serves POST /v1/admin/drift/validate: the §25.10
 // check of a caller-supplied desired state against the stored snapshot.
 // It reports differences as warnings and mutates no state.
+//
+// The optional "stored" body field supplies the snapshot side of the
+// diff in place of the stored bootstrap_seed_snapshot — the §25.10
+// offline-validation degradation path that lets GitOps agents diff two
+// caller-supplied snapshots without consulting Postgres. F-25.10.12.
 func (s *Server) handleDriftValidate(w http.ResponseWriter, r *http.Request) {
 	if s.drift == nil {
 		s.driftUnavailable(w)
@@ -77,13 +109,17 @@ func (s *Server) handleDriftValidate(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Desired map[string]any `json:"desired"`
+		Stored  map[string]any `json:"stored,omitempty"`
 	}
 	if err := readJSONBody(r, &body); err != nil {
 		conventions.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST",
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
-	result, err := s.drift.Validate(r.Context(), body.Desired)
+	result, err := s.drift.Validate(r.Context(), driftservice.ValidateParams{
+		Desired: body.Desired,
+		Stored:  body.Stored,
+	})
 	if err != nil {
 		writeDriftError(w, err)
 		return

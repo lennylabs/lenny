@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -242,6 +243,19 @@ func buildEscalationService() *escalation.Service {
 	return escalation.NewService(logEmitter{})
 }
 
+// driftServiceConfig carries the §25.10 lines 3809 / 3824 operator-
+// tunable knobs the lenny-ops binary exposes via flags / env. The
+// Postgres-backed store and the gateway-client reader are documented
+// seams; the knobs apply unchanged once those land. F-25.10.7, F-25.10.9.
+type driftServiceConfig struct {
+	// StaleWarningDays is ops.drift.snapshotStaleWarningDays (§25.10 line
+	// 3809). Default 7; 0 disables the snapshot-staleness warning.
+	StaleWarningDays int
+	// RunningStateCacheTTLSec is ops.drift.runningStateCacheTTLSeconds
+	// (§25.10 line 3824). Default 60; 0 disables the running-state cache.
+	RunningStateCacheTTLSec int
+}
+
 // buildDriftService constructs the §25.10 configuration-drift service.
 // The Postgres-backed bootstrap_seed_snapshot store and the
 // gateway-client running-state reader are documented seams: until they
@@ -249,8 +263,18 @@ func buildEscalationService() *escalation.Service {
 // running-state reader, so the §25.10 drift endpoints serve and an
 // agent can exercise the validate and snapshot-refresh paths in a
 // single-process degraded mode.
-func buildDriftService() *driftservice.Service {
-	return driftservice.NewService(driftservice.NewMemSnapshotStore(), emptyRunningState{})
+//
+// The §25.10 line 3822 running-state cache is wired here over the
+// in-memory MemRunningStateCache. A non-positive TTL disables caching,
+// matching the §25.10 line 3824 "0 disables" posture. F-25.10.7, F-25.10.9.
+func buildDriftService(cfg driftServiceConfig) *driftservice.Service {
+	svc := driftservice.NewService(driftservice.NewMemSnapshotStore(), emptyRunningState{})
+	svc.StaleWarningDays = cfg.StaleWarningDays
+	if cfg.RunningStateCacheTTLSec > 0 {
+		svc.SetRunningStateCache(driftservice.NewMemRunningStateCache(
+			time.Duration(cfg.RunningStateCacheTTLSec) * time.Second))
+	}
+	return svc
 }
 
 // emptyRunningState is the §25.10 RunningStateReader used until the

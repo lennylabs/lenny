@@ -1468,6 +1468,24 @@ ops:
   # as --prometheus-url.
   prometheus:
     url: ""
+  # drift carries the §25.10 configuration-drift-detection knobs the
+  # spec exposes for per-deployment tuning. The values render as
+  # lenny-ops flags so the binary's defaults match an operator-supplied
+  # override end-to-end. F-25.10.7, F-25.10.9.
+  drift:
+    # snapshotStaleWarningDays sets the §25.10 line 3809 threshold at
+    # which the GET /v1/admin/drift report flags the stored
+    # bootstrap_seed_snapshot as stale. Default 7 days; 0 disables the
+    # warning. The value renders as --drift-snapshot-stale-warning-days
+    # on lenny-ops.
+    snapshotStaleWarningDays: 7
+    # runningStateCacheTTLSeconds is the §25.10 line 3824 TTL of the
+    # running-state cache the GET /v1/admin/drift report consults
+    # before scattering over the gateway admin API. Default 60 seconds;
+    # 0 disables caching (every report reads fresh from the gateway).
+    # The value renders as --drift-running-state-cache-ttl-seconds on
+    # lenny-ops; clients can bypass the cache per-call with ?fresh=true.
+    runningStateCacheTTLSeconds: 60
   image:
     repository: ghcr.io/lennylabs/lenny-ops
     # tag defaults to the chart appVersion when left empty.

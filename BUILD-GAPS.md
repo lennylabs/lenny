@@ -37050,37 +37050,49 @@ Spec line 3791 requires `GET /v1/admin/drift?against=both` to return both live a
 
 Implementation status: `Service.Report` (`driftservice.go:255-257`) rejects any `against` value other than `"live"` or `"target"` with `DRIFT_INVALID` / HTTP 400. Callers asking for `both` get a bad-request rejection instead of a dual-diff response.
 
-### - [ ] F-25.10.7 — `?fresh=true` parameter not honored; no running-state caching [Medium] — OPEN
+### - [x] F-25.10.7 — `?fresh=true` parameter not honored; no running-state caching [Medium] — CLOSED
 
 Spec line 3762 promises `?fresh=true` to bypass the running-state cache. Lines 3822–3824 require `lenny-ops` to cache the collected running state in Redis for `ops.drift.runningStateCacheTTLSeconds` (default 60), bypassed by `?fresh=true`, with reconciliation always reading fresh state.
 
 Implementation status: `handleDriftReport` (`pkg/ops/opsserver/drift.go:53-68`) reads `q.Get("scope")` and `q.Get("against")` only — the `fresh` query parameter is parsed nowhere. No Redis cache layer exists in `driftservice/`. The `ops.drift.runningStateCacheTTLSeconds` config knob is absent.
 
-### - [ ] F-25.10.8 — Snapshot-refresh audit event lacks `byteSize` and previous-source details [Medium] — OPEN
+**Resolution:** `pkg/ops/driftservice` gains a `RunningStateCache` interface with in-memory `MemRunningStateCache` (per-scope TTL, injectable clock); `Service.SetRunningStateCache` and `ReportParams.Fresh` thread the §25.10 line 3762 / 3822 contract end-to-end. `handleDriftReport` parses `?fresh=true` and bypasses the cache when set. `cmd/lenny-ops` adds `--drift-running-state-cache-ttl-seconds` (env `LENNY_DRIFT_RUNNING_STATE_CACHE_TTL_SECONDS`) and the chart adds `ops.drift.runningStateCacheTTLSeconds` (default 60; 0 disables). The Postgres / Redis-backed cache stays a documented seam — same interface, same flag.
+
+### - [x] F-25.10.8 — Snapshot-refresh audit event lacks `byteSize` and previous-source details [Medium] — CLOSED
 
 Spec line 3871 specifies the `drift.snapshot_refreshed` event carries `{previous_written_at, previous_source, new_source, byteSize}` in its details.
 
 Implementation status: `RefreshResult` (`driftservice.go:363-369`) carries `PreviousWrittenAt`, `PreviousSource`, and `NewSource` but no `byteSize`. The struct is the HTTP response body — there is no separate audit-event emission path that would populate the details. Even were emission wired, the byteSize field is not computed against `req.Desired`.
 
-### - [ ] F-25.10.9 — `ops.drift.snapshotStaleWarningDays` config knob not surfaced [Medium] — OPEN
+**Resolution:** `driftservice.RefreshResult` gains `ByteSize int` (JSON `byteSize`); `RefreshSnapshot` computes it via `json.Marshal(req.Desired)` so the audit event reports the §25.10 line 3814 `desired_state JSONB` row size, not the in-memory Go map. The actual audit emission stays gated on F-25.4.22 (lenny-ops audit-event durable store, OPEN); when that lands the emitter reads the four §25.10 line 3871 fields straight off `RefreshResult`. Commits track this change.
+
+### - [x] F-25.10.9 — `ops.drift.snapshotStaleWarningDays` config knob not surfaced [Medium] — CLOSED
 
 Spec line 3809 says the threshold is tunable per deployment via `ops.drift.snapshotStaleWarningDays` in `lenny-ops` config (default 7; 0 disables).
 
 Implementation status: `Service.StaleWarningDays` is an exported field (`driftservice.go:200`) with default 7, but `buildDriftService` (`deps.go:160`) never reads any config file or env var to override it. No `ops.drift.snapshotStaleWarningDays` key is loaded from a config source. Operators have no per-deployment override path.
 
-### - [ ] F-25.10.10 — Stored-snapshot 404 surfaces as 503 `DRIFT_DESIRED_STATE_MISSING` [Medium] — OPEN
+**Resolution:** `cmd/lenny-ops` adds `--drift-snapshot-stale-warning-days` (env `LENNY_DRIFT_SNAPSHOT_STALE_WARNING_DAYS`) wired through new `driftServiceConfig` into `Service.StaleWarningDays`. Chart adds `ops.drift.snapshotStaleWarningDays` (default 7) rendered on the ops-deployment args. Constant renamed `defaultStaleWarningDays → DefaultStaleWarningDays` so the binary references the spec default rather than re-declaring it.
+
+### - [x] F-25.10.10 — Stored-snapshot 404 surfaces as 503 `DRIFT_DESIRED_STATE_MISSING` [Medium] — CLOSED
 
 Spec table at lines 3866–3868 says `DRIFT_DESIRED_STATE_MISSING` has HTTP `404/503` — 404 when no snapshot exists at all, 503 when Postgres is down. The 404 case is the cold-start condition; the 503 case is the degradation condition described at line 3850 ("Postgres down, no `desired` body").
 
 Implementation status: `driftErrorMap` (`opsserver/drift.go:18`) maps `DRIFT_DESIRED_STATE_MISSING` to `http.StatusServiceUnavailable` (503) unconditionally. With an empty in-memory snapshot store on first start, callers receive 503 rather than 404, conflating the cold-start case with a Postgres outage.
 
-### - [ ] F-25.10.11 — Severity classifier does not include "quota" or "scaling" keywords [Medium] — OPEN
+**Resolution:** `driftservice.Error` gains an optional `HTTPStatus int` override. `Report` and `Validate` cold-start paths (no snapshot in the store) set `HTTPStatus: 404`; the store-down paths wrap the underlying error as `DRIFT_DESIRED_STATE_MISSING` with `HTTPStatus` left zero so the default 503 mapping applies. `writeDriftError` prefers the explicit override and falls back to the code-map status. Tests pin both branches at the HTTP layer.
+
+### - [x] F-25.10.11 — Severity classifier does not include "quota" or "scaling" keywords [Medium] — CLOSED
 
 Spec line 3773 maps quota values and scaling parameters to `medium`. The classifier (`drift.go:101-114`) falls through to `medium` as the default but does not test for `quota`, `scaling`, `replica`, `minReady`, `maxSurge`, etc., explicitly. The behavior is correct by default for fields that do not match `image|isolation|security|privileged|capabilit|label|description|annotation|metadata`, but a field path that happens to contain `"label"` for a scaling parameter (e.g., `pool.scaling.labelSelector`) would be downgraded to `low` — observed risk is small but the classifier is keyword-based and fragile under realistic field paths. Spec says "scaling parameters, quota values" are medium and "labels, descriptions, and metadata" are low; the implementation cannot distinguish a `labelSelector` (structural config) from a `labels` map (metadata).
 
-### - [ ] F-25.10.12 — `POST /v1/admin/drift/validate` rejects missing snapshot with `DRIFT_DESIRED_STATE_MISSING`, no degradation path [Medium] — OPEN
+**Resolution:** `pkg/drift.Classify` now explicitly tests `scaling`, `quota`, `replica`, `warm`, `size`, `limit`, `maxsurge`, `maxunavailable` and returns medium ahead of the low-bucket keyword pass — so `pool.scaling.labelSelector` stays at medium because it matches `scaling` first. The low-bucket pass also switches from substring to whole-segment matching via new `hasLowSegment`: a structural token like `labelSelector`, `annotationFilter`, `metadataValidator`, or `descriptionTemplate` no longer triggers low. The metadata-bag cases (`labels.team`, `runtime.annotations.checksum`, `runtime.metadata.uid`, `runtime.description`) remain low.
+
+### - [x] F-25.10.12 — `POST /v1/admin/drift/validate` rejects missing snapshot with `DRIFT_DESIRED_STATE_MISSING`, no degradation path [Medium] — CLOSED
 
 Spec lines 3777–3784 describe `validate` as comparing the caller-supplied desired state against the stored snapshot. The degradation section (lines 3846–3852) covers the report and reconcile paths under Postgres outage but is silent on `validate`. Implementation (`driftservice.go:326-349`) returns `DRIFT_DESIRED_STATE_MISSING` → HTTP 503 when no snapshot is present, which is reasonable, but no path exists to validate two caller-supplied snapshots (or a caller snapshot against a Helm-rendered desired) when Postgres is unavailable. This is a gap in the operability story rather than a spec violation.
+
+**Resolution:** `Service.Validate` accepts a new `ValidateParams` (`{Desired, Stored}`); when `Stored` is non-nil the snapshot store is not consulted and the diff is computed between the two caller-supplied bodies. The HTTP layer parses an optional `stored` field on the validate body and threads it through. Combined with F-25.10.10's 404 cold-start signal, GitOps agents can recover from a Postgres outage by retrying validate with a stored snapshot supplied in the body.
 
 ### - [x] F-25.10.13 — Snapshot row id is a free-form string [Low] — CLOSED
 

@@ -219,6 +219,58 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --prometheus-url=http://prometheus.monitoring.svc:9090
 
+  # spec: §25.10 line 3809 — F-25.10.9. ops.drift.snapshotStaleWarningDays
+  # renders as --drift-snapshot-stale-warning-days. Default 7 days.
+  - it: renders --drift-snapshot-stale-warning-days with the spec default per §25.10 line 3809
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --drift-snapshot-stale-warning-days=7
+
+  # spec: §25.10 line 3809 — F-25.10.9. Operators can override per
+  # deployment; the rendered flag reflects the override.
+  - it: honors ops.drift.snapshotStaleWarningDays override per §25.10 line 3809
+    set:
+      ops:
+        drift:
+          snapshotStaleWarningDays: 14
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --drift-snapshot-stale-warning-days=14
+
+  # spec: §25.10 line 3824 — F-25.10.7. ops.drift.runningStateCacheTTLSeconds
+  # renders as --drift-running-state-cache-ttl-seconds. Default 60s.
+  - it: renders --drift-running-state-cache-ttl-seconds with the spec default per §25.10 line 3824
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --drift-running-state-cache-ttl-seconds=60
+
+  # spec: §25.10 line 3824 — F-25.10.7. A 0 override disables the cache
+  # entirely (every report reads fresh from the gateway).
+  - it: honors ops.drift.runningStateCacheTTLSeconds=0 disable per §25.10 line 3824
+    set:
+      ops:
+        drift:
+          runningStateCacheTTLSeconds: 0
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --drift-running-state-cache-ttl-seconds=0
+
   # spec: §17.8.5 line 1323 — F-17.8.12. The chart MUST reject any
   # attempt to disable lenny-ops via Helm values: the operability
   # surface is mandatory in every Lenny installation regardless of tier.

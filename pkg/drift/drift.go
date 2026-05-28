@@ -94,23 +94,69 @@ func newChange(path string, kind Kind, desired, actual any) Change {
 	return Change{Path: path, Kind: kind, Desired: desired, Actual: actual, Severity: Classify(path)}
 }
 
-// Classify ranks a field path's drift severity per §25.10: image,
-// isolation profile, and security fields are high; scaling parameters
-// and quota values are medium; labels, descriptions, and metadata are
-// low. A field matching none of these defaults to medium.
+// Classify ranks a field path's drift severity per §25.10 line 3773:
+// image, isolation profile, and security fields are high; scaling
+// parameters and quota values are medium; labels, descriptions, and
+// metadata are low. A field matching none of these defaults to medium.
+//
+// The classification is segment-aware rather than substring-only. A
+// nested path like "pool.scaling.labelSelector" carries a structural
+// "scaling" segment that matches medium first, so the inner "label"
+// token does not pull the severity down to low. The low-severity
+// keywords match only when the inner path token equals (or, for the
+// "labels"/"annotations" maps, starts a sub-key under) one of the
+// reserved metadata field names; a token like "labelSelector" or
+// "labelExpression" stays at medium because it is structural config,
+// not a metadata bag. F-25.10.11.
 func Classify(path string) Severity {
 	p := strings.ToLower(path)
+	// §25.10 line 3773: image, isolation, and security fields drift at
+	// high severity. The substring match is faithful: any path segment
+	// that contains one of these keywords (e.g. "securityContext",
+	// "isolationProfile") is structural-security and high.
 	for _, kw := range []string{"image", "isolation", "security", "privileged", "capabilit"} {
 		if strings.Contains(p, kw) {
 			return SeverityHigh
 		}
 	}
-	for _, kw := range []string{"label", "description", "annotation", "metadata"} {
+	// §25.10 line 3773: scaling parameters and quota values drift at
+	// medium severity. The keyword set covers the common §6.x / §17.x
+	// names operators use; matching scaling/quota before the low-bucket
+	// keywords keeps a path like "pool.scaling.labelSelector" at medium
+	// (its "label" token is structural, not a metadata bag).
+	for _, kw := range []string{
+		"scaling", "quota", "replica", "warm", "size",
+		"limit", "maxsurge", "maxunavailable",
+	} {
 		if strings.Contains(p, kw) {
+			return SeverityMedium
+		}
+	}
+	// §25.10 line 3773: labels, descriptions, annotations, and metadata
+	// drift at low severity. The match is segment-anchored so the
+	// keyword applies only to a metadata bag — a path segment that is
+	// the literal keyword, or that starts a sub-key under one of the
+	// reserved map names. A structural token like "labelSelector",
+	// "annotationFilter", or "metadataValidator" stays at medium.
+	for _, kw := range []string{"label", "description", "annotation", "metadata"} {
+		if hasLowSegment(p, kw) {
 			return SeverityLow
 		}
 	}
 	return SeverityMedium
+}
+
+// hasLowSegment reports whether path carries kw as a whole segment, or
+// as the root of a sub-key under one of the §25.10 metadata bags
+// ("labels.team" — yes; "labelSelector.app" — no). F-25.10.11.
+func hasLowSegment(path, kw string) bool {
+	for _, seg := range strings.Split(path, ".") {
+		// Bare segment: e.g. "description", "metadata", "labels".
+		if seg == kw || seg == kw+"s" {
+			return true
+		}
+	}
+	return false
 }
 
 // SnapshotStale reports whether a desired-state snapshot of the given

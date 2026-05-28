@@ -53,6 +53,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
+	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
@@ -139,6 +140,26 @@ func main() {
 		"§25.16 BYO Prometheus HTTP API base URL (e.g. http://prometheus.monitoring.svc:9090). "+
 			"When empty the §25.4 cross-replica health aggregator falls back to per-replica fan-out. "+
 			"Override via LENNY_PROMETHEUS_URL.")
+	// spec: §25.10 line 3809. ops.drift.snapshotStaleWarningDays sets the
+	// threshold at which a stored desired-state snapshot is flagged stale
+	// in the GET /v1/admin/drift report. Default 7 days; 0 disables the
+	// warning entirely. F-25.10.9.
+	driftSnapshotStaleWarningDays := flag.Int("drift-snapshot-stale-warning-days",
+		envInt("LENNY_DRIFT_SNAPSHOT_STALE_WARNING_DAYS", driftservice.DefaultStaleWarningDays),
+		"§25.10 ops.drift.snapshotStaleWarningDays — threshold (in days) for the "+
+			"bootstrap_seed_snapshot staleness warning on GET /v1/admin/drift. Default 7; "+
+			"0 disables the warning. Override via LENNY_DRIFT_SNAPSHOT_STALE_WARNING_DAYS.")
+	// spec: §25.10 line 3824. ops.drift.runningStateCacheTTLSeconds caps
+	// how long the §25.10 running-state cache holds the gateway-aggregated
+	// running state. ?fresh=true on the drift report bypasses the cache.
+	// Default 60s; 0 disables caching entirely. F-25.10.7.
+	driftRunningStateCacheTTLSeconds := flag.Int("drift-running-state-cache-ttl-seconds",
+		envInt("LENNY_DRIFT_RUNNING_STATE_CACHE_TTL_SECONDS",
+			int(driftservice.DefaultRunningStateCacheTTL/time.Second)),
+		"§25.10 ops.drift.runningStateCacheTTLSeconds — TTL (in seconds) for the §25.10 "+
+			"line 3822 running-state cache that backs GET /v1/admin/drift. Default 60; "+
+			"0 disables caching (every report reads fresh). "+
+			"Override via LENNY_DRIFT_RUNNING_STATE_CACHE_TTL_SECONDS.")
 	flag.Parse()
 
 	// Replica identity: the pod name (the Helm chart sets POD_NAME from
@@ -298,7 +319,10 @@ func main() {
 	// degraded mode so the §25 endpoints serve and an agent can exercise
 	// them; the durable backing stores are documented seams.
 	escalationSvc := buildEscalationService()
-	driftSvc := buildDriftService()
+	driftSvc := buildDriftService(driftServiceConfig{
+		StaleWarningDays:        *driftSnapshotStaleWarningDays,
+		RunningStateCacheTTLSec: *driftRunningStateCacheTTLSeconds,
+	})
 	diagnosticSvc := buildDiagnosticService()
 
 	// The §25.8 release-channel manifest publisher. Loaded from the
@@ -528,6 +552,17 @@ func envOr(name, fallback string) string {
 func envInt64(name string, fallback int64) int64 {
 	if v := os.Getenv(name); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+// envInt parses the named environment variable as an int, falling back
+// when it is unset or malformed.
+func envInt(name string, fallback int) int {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
 	}

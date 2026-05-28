@@ -119,6 +119,10 @@ spec:
             # per-replica fan-out fallback.
             - --prometheus-url={{ .Values.ops.prometheus.url }}
             {{- end }}
+            # §25.10 line 3809 / line 3824 — drift detection knobs.
+            # F-25.10.7, F-25.10.9.
+            - --drift-snapshot-stale-warning-days={{ .Values.ops.drift.snapshotStaleWarningDays }}
+            - --drift-running-state-cache-ttl-seconds={{ .Values.ops.drift.runningStateCacheTTLSeconds }}
             {{- if .Values.platform.releaseChannel.publisher.enabled }}
             # §25.8 release-channel manifest publisher.
             - --release-channel-key-file=/etc/lenny/release-channel/{{ .Values.platform.releaseChannel.publisher.signingKeyKey }}
