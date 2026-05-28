@@ -4,6 +4,11 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
+    # spec: §10 line 437 / §10 line 443 — CRD schema-version annotation
+    # read at controller startup + lenny-preflight; mismatch causes a
+    # FATAL exit so stale CRDs never silently strip new fields.
+    # F-15.5.12.
+    lenny.dev/schema-version: "1"
   name: runtimes.lenny.dev
 spec:
   group: lenny.dev
@@ -56,6 +61,7 @@ spec:
               RuntimeSpec is the desired state of a registered agent Runtime
               (§5.1). The gateway mirrors the registered runtimes into its
               runtime_definitions registry; the CRD is the declarative source.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               allowedResourceClasses:
                 description: |-
@@ -302,6 +308,7 @@ spec:
             type: object
           status:
             description: RuntimeStatus is the observed state of a Runtime.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               conditions:
                 description: |-

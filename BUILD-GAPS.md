@@ -24432,7 +24432,7 @@ default:
 
 For v1 this is benign (only one version exists). The spec's "selects a compatible version" claim is unimplemented and will need a real negotiation layer the moment a `1.1` or `2.0` runtime appears.
 
-### - [ ] F-15.5.10 — Stability tiers (`stable`, `beta`, `alpha`) are not modeled in OpenAPI, MCP tool descriptors, or any registry [Medium] — OPEN
+### - [x] F-15.5.10 — Stability tiers (`stable`, `beta`, `alpha`) are not modeled in OpenAPI, MCP tool descriptors, or any registry [Medium] — CLOSED
 
 `spec/15_external-api-surface.md:2447-2450` (item 6) defines three tiers and ties stability guarantees to them. The docs/api/index.md surface (lines 138-145) tells users "every endpoint, tool, and response field carries one of three labels."
 
@@ -24440,21 +24440,29 @@ Implementation check: `grep -n "x-lenny-stability\|stability" pkg/gateway/openap
 
 A consumer cannot programmatically discover which endpoints are `alpha` and therefore subject to change-without-notice. The spec's tier system is documentation-only.
 
-### - [ ] F-15.5.11 — Documentation promises `X-Lenny-Deprecated-Version` REST header; the gateway emits no such header [Medium] — OPEN
+- **Resolution:** `pkg/gateway/openapi/openapi.go`'s `versionedDocument` (and `Document()`) now post-processes the embedded document to stamp `x-lenny-stability: "stable"` onto every operation that lacks an explicit override; hand-authored overrides in `openapi.json` (e.g. an `"x-lenny-stability": "beta"` on a future `/v2`-track surface) are preserved verbatim. `mcp.Tool` gained a `Stability` field that serialises as `x-lenny-stability` with the same three-value enum, defaulting to `"stable"` via a custom MarshalJSON so every entry in `tools/list` carries the tier. Two new CI tests (`TestEveryOperationCarriesStabilityTier_spec_15_5_2447`, `TestStabilityDefaultsToStable_spec_15_5_2447`) and an MCP-side test (`TestToolsListStampsStabilityTier_spec_15_5_2447`) guard the surface. Stability values are shared as `StabilityStable | StabilityBeta | StabilityAlpha` constants in both packages.
+
+### - [x] F-15.5.11 — Documentation promises `X-Lenny-Deprecated-Version` REST header; the gateway emits no such header [Medium] — CLOSED
 
 `docs/api/index.md:124`: "When a version enters deprecation: 1. The gateway adds an `X-Lenny-Deprecated-Version` header to every response."
 
 `grep -rn "X-Lenny-Deprecated-Version\|X-Lenny-Deprecat" pkg/ cmd/` returns zero matches. The header is in the docs and nowhere else. §15.5 itself does not name this REST-level header (it cites the MCP-specific `X-Lenny-Mcp-Version-Deprecated`), but the docs page now describes a contract the implementation does not honour. Either the spec must lift the header to a normative §15.5 requirement and the gateway must emit it, or the docs page should be reconciled with the actual behaviour.
 
-### - [ ] F-15.5.12 — CRDs do not carry `x-kubernetes-preserve-unknown-fields`; `lenny.dev/schema-version` annotation is absent [Medium] — OPEN
+- **Resolution:** New `pkg/gateway/middleware/deprecation` package: `Wrap(handler, "v1", "v2", …)` stamps `X-Lenny-Deprecated-Version` on every response whose request URL begins with one of the configured `/vN/` prefixes. The wrapper is a no-op when the set is empty, which is the v1 default; the chart-level `gateway.deprecatedAPIVersions` value (rendered as the gateway's `--deprecated-api-versions` flag, env `LENNY_DEPRECATED_API_VERSIONS`) turns the header on when `/v2/` ships and `/v1/` enters its 6-month sunset. The middleware is inserted just inside `recover` so the header rides 500 responses too. 6 tier-1 tests in the new package + 2 tier-2 helm-unittest cases.
+
+### - [x] F-15.5.12 — CRDs do not carry `x-kubernetes-preserve-unknown-fields`; `lenny.dev/schema-version` annotation is absent [Medium] — CLOSED
 
 `spec/10_gateway-internals.md:437` (referenced from §15.5 via the rolling-deploy / conversion-webhook procedure): "CRD specs use `x-kubernetes-preserve-unknown-fields` on extensible sub-objects so that a controller running an older version does not crash on fields introduced by a newer gateway." Line 439 also requires a `lenny.dev/schema-version` annotation that controllers check at startup.
 
 `grep -n "x-kubernetes-preserve-unknown-fields" charts/lenny/crds/*.yaml pkg/embedded/crds/*.yaml` returns zero matches. `grep -rn "lenny.dev/schema-version" charts/ pkg/ cmd/` returns zero matches. Neither the preserve-unknown-fields ratchet nor the schema-version drift check exists.
 
-### - [ ] F-15.5.13 — Adapter `OutputPart` translation drops `schemaVersion` through MCP / OpenAI / Open Responses adapters [Medium] — OPEN
+- **Resolution:** All five chart CRDs (`runtimes`, `sandboxclaims`, `sandboxes`, `sandboxtemplates`, `sandboxwarmpools` under `charts/lenny/crds/`) now carry `metadata.annotations[lenny.dev/schema-version] = "1"` and `x-kubernetes-preserve-unknown-fields: true` on the `spec` and `status` sub-objects; embedded copies under `pkg/embedded/crds/` were resynced to match. New `pkg/preflight/crdschema.go` exports `CRDSchemaVersionAnnotation`, `CurrentCRDSchemaVersion`, `LennyCRDNames`, and `CRDSchemaVersionCheck.Decide`; the shared check is wired into `preflight.Run` (new `crd-schema-version` named check) and the controller's `assertCRDSchemaVersion` startup self-check that exits FATAL with the spec line 443 runbook-anchored message on mismatch. Tests: 5 tier-1 preflight + 2 embedded-CRD parity.
+
+### - [x] F-15.5.13 — Adapter `OutputPart` translation drops `schemaVersion` through MCP / OpenAI / Open Responses adapters [Medium] — CLOSED
 
 `pkg/gateway/outputpartfidelity/matrix.go:66` registers `FieldSchemaVersion Field = "schemaVersion"` as a tracked field, and `pkg/gateway/outputpartfidelity/openai_completions.go:22` documents it as dropped on outbound. The spec's §15.4.1 Translation Fidelity Matrix accepts this, but combined with the §15.5 forward-read rule it produces a silent integrity gap: when a delegation chain routes output through MCP and the result is persisted as a `TaskRecord`, the durable consumer sees `schemaVersion: 1` regardless of the original part's actual version. No `schema_version_ahead` signal is raised because the consumer cannot tell the version was downgraded mid-flight (H-5 makes the signal itself unimplemented). The spec acknowledges this concern in `spec-reviews/.../iter4/summary.md:750` as a previously raised finding; the runtime gap remains.
+
+- **Resolution:** `pkg/adapter/mcpruntime.go::mcpResultParts` now reads each upstream MCP content block as a flexible `map[string]any` and hoists the producer-stamped `schemaVersion` onto the OutputPart envelope (with `delete(fields, "schemaVersion")` on the inline payload so the value is never duplicated); a block without `schemaVersion` falls through to `1`, and a malformed value (string / negative / fractional / zero) is normalised by the new `readProducerSchemaVersion` helper. OpenAI / Open Responses translations remain spec-compliant under the §15.4.1 fidelity matrix (`schemaVersion` is a documented drop on those wires); the MCP boundary is the only adapter under §15.5 forward-read scope. 6 tier-1 internal tests in `pkg/adapter/mcpruntime_schemaversion_internal_test.go`.
 
 ---
 

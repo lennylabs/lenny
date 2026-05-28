@@ -64,6 +64,51 @@ func TestToolsList(t *testing.T) {
 	}
 }
 
+// spec: §15.5 item 6 — every MCP tool descriptor MUST carry an
+// `x-lenny-stability` label so a consumer can programmatically discover
+// whether the tool is `stable`, `beta`, or `alpha`. An unannotated
+// registration falls through to `stable` (covered by the §15.5
+// versioning guarantees). F-15.5.10.
+func TestToolsListStampsStabilityTier_spec_15_5_2447(t *testing.T) {
+	s := mcp.NewServer()
+	s.RegisterTool(mcp.Tool{
+		Name:        "lenny/create_session",
+		Description: "Create a session",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		// Stability left empty so the default kicks in.
+	}, func(context.Context, json.RawMessage) (mcp.ToolResult, error) {
+		return mcp.ToolResult{}, nil
+	})
+	s.RegisterTool(mcp.Tool{
+		Name:        "lenny/experimental_op",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Stability:   mcp.StabilityAlpha,
+	}, func(context.Context, json.RawMessage) (mcp.ToolResult, error) {
+		return mcp.ToolResult{}, nil
+	})
+	resp := rpc(t, s.Handler(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	result, _ := resp["result"].(map[string]any)
+	tools, _ := result["tools"].([]any)
+	if len(tools) != 2 {
+		t.Fatalf("tools: got %d, want 2", len(tools))
+	}
+	got := map[string]string{}
+	for _, raw := range tools {
+		entry, _ := raw.(map[string]any)
+		name, _ := entry["name"].(string)
+		stab, _ := entry["x-lenny-stability"].(string)
+		got[name] = stab
+	}
+	if got["lenny/create_session"] != string(mcp.StabilityStable) {
+		t.Errorf("lenny/create_session stability: got %q, want %q",
+			got["lenny/create_session"], mcp.StabilityStable)
+	}
+	if got["lenny/experimental_op"] != string(mcp.StabilityAlpha) {
+		t.Errorf("lenny/experimental_op stability: got %q, want %q",
+			got["lenny/experimental_op"], mcp.StabilityAlpha)
+	}
+}
+
 func TestToolsCallDispatches(t *testing.T) {
 	s := mcp.NewServer()
 	s.RegisterTool(mcp.Tool{Name: "echo", InputSchema: json.RawMessage(`{}`)},

@@ -4,6 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
+    # spec: §10 line 437 / §10 line 443 — F-15.5.12.
+    lenny.dev/schema-version: "1"
   name: sandboxtemplates.lenny.dev
 spec:
   group: lenny.dev
@@ -57,7 +59,19 @@ spec:
               §5.2 declaration of one warmable pool. Per §4.6.3 the
               PoolScalingController owns spec.*, reconciling it from the Postgres
               pool definitions that the admin API treats as the source of truth.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
+              checkpointBarrierAckTimeoutSeconds:
+                description: |-
+                  CheckpointBarrierAckTimeoutSeconds is the §10.1 wall-clock deadline
+                  the gateway waits for `CheckpointBarrierAck` from every coordinated
+                  pod during a rolling drain. The pool-config webhook adds it to the
+                  per-pod `terminationGracePeriodSeconds` floor for concurrent-workspace
+                  pools and additionally enforces the §10.1 line 124 BarrierAck-floor
+                  rule (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
+                  Unset defaults to the §10.1 line 122 90s.
+                format: int64
+                type: integer
               checkpointCadenceSeconds:
                 description: |-
                   CheckpointCadenceSeconds is the interval between periodic
@@ -106,6 +120,18 @@ spec:
                 - proxy
                 - direct
                 type: string
+              egressProfile:
+                description: |-
+                  EgressProfile is the §13.2 egress profile the WarmPoolController
+                  stamps onto the pool's pods so the matching pre-created
+                  NetworkPolicy takes effect. Empty inherits the §13.2 default
+                  (`restricted`). The `internet` profile is rejected on a `standard`
+                  (runc) pool at admission per the §13.2 cross-control.
+                enum:
+                - restricted
+                - provider-direct
+                - internet
+                type: string
               executionMode:
                 description: |-
                   ExecutionMode is the §5.2 pod-reuse mode. Empty is treated as
@@ -124,17 +150,6 @@ spec:
                 - sandboxed
                 - microvm
                 type: string
-              checkpointBarrierAckTimeoutSeconds:
-                description: |-
-                  CheckpointBarrierAckTimeoutSeconds is the §10.1 wall-clock deadline
-                  the gateway waits for `CheckpointBarrierAck` from every coordinated
-                  pod during a rolling drain. The pool-config webhook adds it to the
-                  per-pod `terminationGracePeriodSeconds` floor for concurrent-workspace
-                  pools and additionally enforces the §10.1 line 124 BarrierAck-floor
-                  rule (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
-                  Unset defaults to the §10.1 line 122 90s.
-                format: int64
-                type: integer
               maxConcurrent:
                 description: MaxConcurrent is the per-pod slot count for concurrent
                   mode.
@@ -275,21 +290,9 @@ spec:
                   terminationGracePeriodSeconds for this pool. spec: §5.2 line 516 —
                   for concurrent-workspace pools the deployer sets it to cover the
                   per-slot checkpoint budget (`maxConcurrent × max_tiered_checkpoint_cap
-                  + checkpointBarrierAckTimeoutSeconds + 30`); §6.4 line 67 requires
                   at least `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces
                   the §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
                   clamps it down.
-                format: int64
-                type: integer
-              workspaceSizeLimitBytes:
-                description: |-
-                  WorkspaceSizeLimitBytes is the §4.4 line 254 / §10.1 line 122 per-pod
-                  workspace-size hard limit. The pool-config webhook resolves it to the
-                  matching §10.1 tiered-checkpoint-cap (30s for ≤100 MB, 60s for
-                  ≤300 MB, 90s for ≤512 MB) when computing the
-                  `terminationGracePeriodSeconds` floor for concurrent-workspace pools
-                  (spec/05_runtime-registry-and-pool-model.md §5.2 line 516). Unset
-                  defaults to the 90s conservative tier per §10.1 line 108.
                 format: int64
                 type: integer
               topologySpreadConstraints:
@@ -472,6 +475,17 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+              workspaceSizeLimitBytes:
+                description: |-
+                  WorkspaceSizeLimitBytes is the §4.4 line 254 / §10.1 line 122 per-pod
+                  workspace-size hard limit. The pool-config webhook resolves it to the
+                  matching §10.1 tiered-checkpoint-cap (30s for ≤100 MB, 60s for
+                  ≤300 MB, 90s for ≤512 MB) when computing the
+                  `terminationGracePeriodSeconds` floor for concurrent-workspace pools
+                  (spec/05_runtime-registry-and-pool-model.md §5.2 line 516). Unset
+                  defaults to the 90s conservative tier per §10.1 line 108.
+                format: int64
+                type: integer
             required:
             - runtimeRef
             type: object
@@ -481,6 +495,7 @@ spec:
               Per §4.6.3 the WarmPoolController owns status.*: it records pool
               health conditions, including the §5.2 PoolWarmingUp bootstrap
               condition, and the observed generation.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               conditions:
                 description: |-

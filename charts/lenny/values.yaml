@@ -969,6 +969,13 @@ gateway:
   # session names no environment. It MUST be "deny-all" or "allow-all";
   # the gateway refuses to start when it is unset (LENNY_CONFIG_MISSING).
   noEnvironmentPolicy: deny-all
+  # deprecatedAPIVersions is the §15.5 item 1 sunset list: every URL
+  # version prefix in this list receives the `X-Lenny-Deprecated-Version`
+  # response header during its 6-month deprecation window. The list
+  # defaults empty because /v1/ is current and no /v2/ has shipped; when
+  # /v2/ lands, set this to `[v1]` for the duration of the sunset.
+  # spec: §15.5 item 1; docs/api/index.md line 124 — F-15.5.11.
+  deprecatedAPIVersions: []
   # healthTracker gates the §25.13 in-process alert tracker. When
   # useCompiledRules is true (default), the gateway runs the §16.5
   # compiled-in alert evaluator so /v1/admin/health derives its

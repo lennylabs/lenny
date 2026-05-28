@@ -68,6 +68,18 @@ type Config struct {
 	// playground-config check evaluates. The check runs
 	// unconditionally; it is a no-op when Playground.Enabled is false.
 	Playground PlaygroundConfig
+	// CRDSchemaVersion is the schema version the chart release expects
+	// every installed Lenny CRD to declare via the
+	// `lenny.dev/schema-version` annotation. Empty falls back to
+	// CurrentCRDSchemaVersion so the chart can rely on the binary's
+	// embedded default until a future release bumps the value.
+	// spec: §10 line 443. F-15.5.12.
+	CRDSchemaVersion string
+	// CRDNames overrides the default LennyCRDNames set the
+	// schema-version check fans across. Empty falls back to the
+	// chart-shipped CRDs.
+	// spec: §10 line 443. F-15.5.12.
+	CRDNames []string
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -248,6 +260,18 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	report = append(report, CheckResult{
 		Name:     "playground-config",
 		Decision: CheckPlaygroundConfig(cfg.Playground),
+	})
+
+	// spec: §10 line 443 — every installed Lenny CRD MUST carry the
+	// schema-version annotation matching the version the chart release
+	// expects. A stale or absent CRD aborts the install before the
+	// gateway and controllers roll. F-15.5.12.
+	report = append(report, CheckResult{
+		Name: "crd-schema-version",
+		Decision: CRDSchemaVersionCheck{
+			Expected: cfg.CRDSchemaVersion,
+			Names:    cfg.CRDNames,
+		}.Decide(ctx, reader),
 	})
 	return report
 }

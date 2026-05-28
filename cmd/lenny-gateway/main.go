@@ -158,6 +158,7 @@ import (
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
+	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/deprecation"
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
@@ -272,6 +273,18 @@ func main() {
 	coordInterval := flag.Duration("coordination-interval", 15*time.Second,
 		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
+	// spec: §15.5 item 1 + docs/api/index.md line 124 — when a REST URL
+	// version prefix enters its 6-month sunset window, the gateway adds
+	// the `X-Lenny-Deprecated-Version` response header to every response
+	// served under that prefix. The list defaults empty: v1 is current
+	// and no /v2/ has shipped yet, so the middleware is inert. When the
+	// first /v2/ surface lands, operators set
+	// `gateway.deprecatedAPIVersions: [v1]` in the Helm values (rendered
+	// as the flag below) and the middleware begins stamping the header
+	// without further code changes. F-15.5.11.
+	deprecatedAPIVersionsCSV := flag.String("deprecated-api-versions",
+		os.Getenv("LENNY_DEPRECATED_API_VERSIONS"),
+		"§15.5 item 1 / docs/api/index.md line 124 — comma-separated REST URL version prefixes currently in their 6-month sunset window. Each match stamps the `X-Lenny-Deprecated-Version` response header. Empty disables the header (v1 default). Override via LENNY_DEPRECATED_API_VERSIONS. F-15.5.11.")
 	rlGlobalPerMin := flag.Int("rate-limit-global-per-min", 0,
 		"§11.1 global requests-per-minute admission limit. Zero disables the global rate limit.")
 	rlPerUserPerMin := flag.Int("rate-limit-per-user-per-min", 0,
@@ -2870,6 +2883,15 @@ func main() {
 	// the resulting 500 status. The route label collapses
 	// high-cardinality path segments to a stable template.
 	handler = gwMetrics.Middleware(handler, routeTemplate)
+
+	// spec: §15.5 item 1 + docs/api/index.md line 124 — stamp the
+	// `X-Lenny-Deprecated-Version` response header onto every response
+	// served under a deprecated URL version prefix. The wrapper is a
+	// no-op when --deprecated-api-versions is empty, which is the v1
+	// default. Inserted ahead of the recovery wrapper so the header
+	// also rides the 500 surface emitted when an inner handler
+	// panics. F-15.5.11.
+	handler = deprecationmw.Wrap(handler, splitCSV(*deprecatedAPIVersionsCSV)...)
 
 	// spec: §10.4 line 377 — handler-goroutine panic must surface as
 	// an explicit 500 response and a structured log line rather than

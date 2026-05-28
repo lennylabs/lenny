@@ -280,6 +280,12 @@ spec:
             - --addr=:{{ .Values.gateway.internalPort }}
             - --grpc-addr=:{{ .Values.gateway.grpcPort }}
             - --no-environment-policy={{ .Values.gateway.noEnvironmentPolicy }}
+            # spec: §15.5 item 1; docs/api/index.md line 124 —
+            # F-15.5.11. Empty omits the flag so the middleware stays
+            # inert until the operator declares a sunset window.
+            {{- with .Values.gateway.deprecatedAPIVersions }}
+            - --deprecated-api-versions={{ join "," . }}
+            {{- end }}
             # §10.2 line 212 — OIDC claim the gateway extracts the
             # tenant identifier from. Operator-configurable so an
             # upstream IdP that stamps tenant identity under a non-

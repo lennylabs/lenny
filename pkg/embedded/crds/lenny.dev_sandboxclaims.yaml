@@ -4,6 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
+    # spec: §10 line 437 / §10 line 443 — F-15.5.12.
+    lenny.dev/schema-version: "1"
   name: sandboxclaims.lenny.dev
 spec:
   group: lenny.dev
@@ -58,6 +60,7 @@ spec:
               deliberately carries no ownerReference so the session survives pod
               deletion and can be reassigned; the WarmPoolController garbage-
               collects orphaned claims instead.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               sandboxRef:
                 description: |-
@@ -89,6 +92,7 @@ spec:
               SandboxClaimStatus is the observed state of a SandboxClaim. Per
               §4.6.3 status.phase is gateway-owned and tracks the session-to-pod
               binding — distinct from the Sandbox pod lifecycle state machine.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               conditions:
                 description: Conditions is the standard Kubernetes condition list.
@@ -157,10 +161,13 @@ spec:
               phase:
                 description: |-
                   Phase is the §4.6.3 session-binding state: `bound` once the
-                  claim is bound to a claimed Sandbox, `released` once the pod is
-                  returned to the pool, `failed` on a binding failure.
+                  claim is bound to a claimed Sandbox, `active` once the session has
+                  reached `attached` and is actively running work on the claimed pod,
+                  `released` once the pod is returned to the pool, `failed` on a
+                  binding failure. Per §4.6.3 only `released` and `failed` are terminal.
                 enum:
                 - bound
+                - active
                 - released
                 - failed
                 type: string

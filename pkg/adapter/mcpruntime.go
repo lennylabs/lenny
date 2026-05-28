@@ -345,31 +345,56 @@ func mcpResponseFrame(msgID, tool string, result json.RawMessage, callErr error)
 // each text content block becomes a `text` OutputPart. A result that
 // does not follow that shape is wrapped verbatim in a single structured
 // `application/json` part so no information is lost.
+//
+// Each content block's `schemaVersion` is preserved verbatim when the
+// producer set one (Lenny runtimes speaking MCP may stamp the field on
+// the block as a Lenny-internal extension); when the block carries no
+// `schemaVersion` the adapter falls through to `1` so a durable
+// consumer reading the persisted §8.8 TaskRecord still sees a value.
+// This honours the §15.5 item 7 forward-read contract: the producer's
+// declared revision crosses the MCP boundary without being silently
+// downgraded mid-flight. spec: §15.5 item 7; §15.4.1 line 1524. F-15.5.13.
 func mcpResultParts(result json.RawMessage) []map[string]any {
 	if len(result) == 0 {
 		return []map[string]any{}
 	}
 	var toolResult struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
+		Content []json.RawMessage `json:"content"`
 	}
 	if err := json.Unmarshal(result, &toolResult); err == nil && len(toolResult.Content) > 0 {
 		parts := make([]map[string]any, 0, len(toolResult.Content))
-		for _, block := range toolResult.Content {
-			if block.Type == "text" {
+		for _, rawBlock := range toolResult.Content {
+			var fields map[string]any
+			if err := json.Unmarshal(rawBlock, &fields); err != nil || fields == nil {
+				// Block did not decode as an object; preserve the raw
+				// bytes as a structured part so no information is lost.
 				parts = append(parts, map[string]any{
 					"schemaVersion": 1,
+					"type":          "data",
+					"mimeType":      "application/json",
+					"inline":        string(rawBlock),
+				})
+				continue
+			}
+			schemaVersion := readProducerSchemaVersion(fields["schemaVersion"])
+			btype, _ := fields["type"].(string)
+			if btype == "text" {
+				text, _ := fields["text"].(string)
+				parts = append(parts, map[string]any{
+					"schemaVersion": schemaVersion,
 					"type":          "text",
-					"inline":        block.Text,
+					"inline":        text,
 				})
 				continue
 			}
 			// A non-text content block: preserve it as structured JSON.
-			raw, _ := json.Marshal(block)
+			// Drop the producer-stamped schemaVersion from the inline
+			// payload (it is now hoisted to the OutputPart envelope) so
+			// the consumer never sees it duplicated.
+			delete(fields, "schemaVersion")
+			raw, _ := json.Marshal(fields)
 			parts = append(parts, map[string]any{
-				"schemaVersion": 1,
+				"schemaVersion": schemaVersion,
 				"type":          "data",
 				"mimeType":      "application/json",
 				"inline":        string(raw),
@@ -384,6 +409,30 @@ func mcpResultParts(result json.RawMessage) []map[string]any {
 		"mimeType":      "application/json",
 		"inline":        string(result),
 	}}
+}
+
+// readProducerSchemaVersion projects a producer-stamped schemaVersion
+// onto a positive integer. JSON numbers decode as float64 through the
+// generic map[string]any path; an integer that round-trips cleanly is
+// preserved verbatim, otherwise the adapter falls through to 1 so a
+// durable consumer reading the persisted §8.8 TaskRecord still sees a
+// value. spec: §15.5 item 7. F-15.5.13.
+func readProducerSchemaVersion(v any) int {
+	switch t := v.(type) {
+	case float64:
+		if t > 0 && t == float64(int(t)) {
+			return int(t)
+		}
+	case int:
+		if t > 0 {
+			return t
+		}
+	case json.Number:
+		if i, err := t.Int64(); err == nil && i > 0 {
+			return int(i)
+		}
+	}
+	return 1
 }
 
 // exitErr maps a cmd.Wait error to nil for a clean exit and a normal

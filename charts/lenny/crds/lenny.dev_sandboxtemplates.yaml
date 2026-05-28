@@ -4,6 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
+    # spec: §10 line 437 / §10 line 443 — F-15.5.12.
+    lenny.dev/schema-version: "1"
   name: sandboxtemplates.lenny.dev
 spec:
   group: lenny.dev
@@ -57,6 +59,7 @@ spec:
               §5.2 declaration of one warmable pool. Per §4.6.3 the
               PoolScalingController owns spec.*, reconciling it from the Postgres
               pool definitions that the admin API treats as the source of truth.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               checkpointBarrierAckTimeoutSeconds:
                 description: |-
@@ -492,6 +495,7 @@ spec:
               Per §4.6.3 the WarmPoolController owns status.*: it records pool
               health conditions, including the §5.2 PoolWarmingUp bootstrap
               condition, and the observed generation.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               conditions:
                 description: |-

@@ -4,6 +4,11 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
+    # spec: §10 line 437 / §10 line 443 — CRD schema-version annotation
+    # read at controller startup + lenny-preflight; mismatch causes a
+    # FATAL exit so stale CRDs never silently strip new fields.
+    # F-15.5.12.
+    lenny.dev/schema-version: "1"
   name: runtimes.lenny.dev
 spec:
   group: lenny.dev
@@ -56,6 +61,7 @@ spec:
               RuntimeSpec is the desired state of a registered agent Runtime
               (§5.1). The gateway mirrors the registered runtimes into its
               runtime_definitions registry; the CRD is the declarative source.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               allowedResourceClasses:
                 description: |-
@@ -64,6 +70,71 @@ spec:
                 items:
                   type: string
                 type: array
+              archivePolicy:
+                description: |-
+                  ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
+                  block: AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+                  entries inside uploadArchive sources. An empty block leaves the
+                  platform default (symlinks rejected). spec: §7.4 lines 458, 462;
+                  §13.4 lines 663-672 — F-7.4.4.
+                properties:
+                  allowSymlinks:
+                    description: |-
+                      AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+                      entries inside uploadArchive sources. When false (the default),
+                      extraction aborts on any symlink with details.reason = "symlink".
+                    type: boolean
+                type: object
+              capabilities:
+                description: |-
+                  Capabilities is the §5.1 capabilities block on a runtime: the
+                  runtime's interaction model and its mid-session injection support.
+                  §26 reference runtimes (mastra, openai-assistants, crewai, …)
+                  declare these so the registered Runtime CRD advertises the
+                  §15.4.6 conformance battery the runtime actually implements; the
+                  runtime controller mirrors them into the gateway registry's
+                  RuntimeCapabilities at reconciliation time so §7.2 path-4 (queued
+                  injection) is gated on the runtime's declared injection.modes.
+                  spec: §5.1 lines 60-64; §26.9 line 407; §26.10 line 432; §26.11
+                  line 466 — F-26.9.2 / F-26.10.2 / F-26.11.2.
+                properties:
+                  injection:
+                    description: |-
+                      Injection is the runtime's §5.1 capabilities.injection block:
+                      whether mid-session message injection is supported and the modes
+                      (immediate, queued) the runtime accepts. §26's reference runtimes
+                      declare supported=true with both modes.
+                    properties:
+                      modes:
+                        description: |-
+                          Modes lists the §7.2 injection modes the runtime accepts:
+                          `immediate` interrupts a suspended session to deliver, `queued`
+                          buffers the message for the next runtime turn.
+                        items:
+                          type: string
+                        type: array
+                      supported:
+                        description: |-
+                          Supported is the §5.1 capabilities.injection.supported flag. False
+                          (the default) rejects injection per §7.2 line 222.
+                        type: boolean
+                    type: object
+                  interaction:
+                    description: |-
+                      Interaction is the runtime's §5.1 capabilities.interaction model:
+                      one_shot (one message, one response) or multi_turn (repeated message
+                      delivery over a task). §26's reference runtimes declare multi_turn.
+                    enum:
+                    - one_shot
+                    - multi_turn
+                    type: string
+                  preConnect:
+                    description: |-
+                      PreConnect is the §5.1 capabilities.preConnect flag: when true the
+                      §6.1 warm-pool controller pre-connects the agent SDK process during
+                      the warm phase. Default false.
+                    type: boolean
+                type: object
               credentialCapabilities:
                 description: |-
                   CredentialCapabilities declares the runtime's §4.9 credential
@@ -84,6 +155,14 @@ spec:
                       type: string
                     type: array
                 type: object
+              delegationPolicyRef:
+                description: |-
+                  DelegationPolicyRef is the §5.1 delegationPolicyRef: the
+                  DelegationPolicy this runtime is bound to. §26.11 (crewai) declares
+                  the field as required on a runtime that delegates. The runtime
+                  controller propagates it through the gateway registry.
+                  spec: §5.1 line 68; §26.11 line 467 — F-26.11.2.
+                type: string
               deploymentModel:
                 description: |-
                   DeploymentModel is the §4.7 agent-pod deployment model. `sidecar`
@@ -132,6 +211,66 @@ spec:
                 - sandboxed
                 - microvm
                 type: string
+              runtimeOptionsSchemaRef:
+                description: |-
+                  RuntimeOptionsSchemaRef is the §5.1 / §26 runtimeOptionsSchema URL
+                  the runtime advertises. The §14 path resolves it (or the inline
+                  schema set via the admin API) when validating session-creation
+                  runtimeOptions. The CRD carries the URL form so the chart can
+                  declaratively register schemas hosted at
+                  `https://schemas.lenny.dev/runtime-options/<name>/v1.json` per §26.
+                  The runtime controller stamps it into the gateway registry as a
+                  JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1 line 92; §26.9
+                  line 408; §26.10 line 434; §26.11 line 465 — F-26.9.2 / F-26.10.2 /
+                  F-26.11.2.
+                pattern: ^https?://
+                type: string
+              setupCommandPolicy:
+                description: |-
+                  SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block: the
+                  per-runtime command allow/block list, shell-execution flag, and
+                  per-session command cap the gateway enforces at session create-time
+                  (§7.5 line 488). An empty block declares no policy (the legacy
+                  admit-everything path). F-7.5.10.
+                properties:
+                  allowlist:
+                    description: |-
+                      Allowlist is the set of permitted §7.5 command prefixes when Mode is
+                      allowlist.
+                    items:
+                      type: string
+                    type: array
+                  blocklist:
+                    description: |-
+                      Blocklist is the set of rejected §7.5 command prefixes when Mode is
+                      blocklist.
+                    items:
+                      type: string
+                    type: array
+                  maxCommands:
+                    description: |-
+                      MaxCommands caps the number of setup commands per session. Zero
+                      declares no cap.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  mode:
+                    description: |-
+                      Mode selects allowlist (deny-by-default) or blocklist
+                      (allow-by-default) §7.5 prefix matching. An empty value disables the
+                      prefix gate but the rest of the policy (shell, maxCommands) still
+                      applies.
+                    enum:
+                    - allowlist
+                    - blocklist
+                    type: string
+                  shell:
+                    description: |-
+                      Shell selects shell-vs-argv setup-command execution. False splits on
+                      whitespace and execs the argv directly, neutering shell
+                      metacharacters per §7.5 line 490.
+                    type: boolean
+                type: object
               supportedProviders:
                 description: |-
                   SupportedProviders lists the LLM providers the runtime accepts
@@ -162,52 +301,6 @@ spec:
                 - T3
                 - T4
                 type: string
-              setupCommandPolicy:
-                description: |-
-                  SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block: the
-                  per-runtime command allow/block list, shell-execution flag, and
-                  per-session command cap the gateway enforces at session create-time
-                  (§7.5 line 488). An empty block declares no policy (the legacy
-                  admit-everything path). F-7.5.10.
-                properties:
-                  mode:
-                    description: |-
-                      Mode selects allowlist (deny-by-default) or blocklist
-                      (allow-by-default) §7.5 prefix matching. An empty value disables
-                      the prefix gate but the rest of the policy (shell, maxCommands)
-                      still applies.
-                    enum:
-                    - allowlist
-                    - blocklist
-                    type: string
-                  shell:
-                    description: |-
-                      Shell selects shell-vs-argv setup-command execution. False splits
-                      on whitespace and execs the argv directly, neutering shell
-                      metacharacters per §7.5 line 490.
-                    type: boolean
-                  allowlist:
-                    description: |-
-                      Allowlist is the set of permitted §7.5 command prefixes when Mode
-                      is allowlist.
-                    items:
-                      type: string
-                    type: array
-                  blocklist:
-                    description: |-
-                      Blocklist is the set of rejected §7.5 command prefixes when Mode
-                      is blocklist.
-                    items:
-                      type: string
-                    type: array
-                  maxCommands:
-                    description: |-
-                      MaxCommands caps the number of setup commands per session. Zero
-                      declares no cap.
-                    format: int32
-                    minimum: 0
-                    type: integer
-                type: object
             required:
             - image
             - integrationLevel
@@ -215,6 +308,7 @@ spec:
             type: object
           status:
             description: RuntimeStatus is the observed state of a Runtime.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               conditions:
                 description: |-

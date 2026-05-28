@@ -1266,3 +1266,31 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --checkpoint-jitter-fraction=0.5
+
+  # spec: §15.5 item 1; docs/api/index.md line 124 — the default chart
+  # ships with no deprecated REST versions, so the gateway container
+  # does NOT carry --deprecated-api-versions and the middleware is
+  # inert. F-15.5.11.
+  - it: omits --deprecated-api-versions when gateway.deprecatedAPIVersions is empty
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --deprecated-api-versions=
+
+  # spec: §15.5 item 1; docs/api/index.md line 124 — operators declare
+  # the sunset list via gateway.deprecatedAPIVersions; the chart joins
+  # the values with `,` and renders a single flag the gateway parses
+  # into the in-memory deprecation set. F-15.5.11.
+  - it: renders --deprecated-api-versions joined from the chart list
+    set:
+      gateway.deprecatedAPIVersions: [v1, v2]
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --deprecated-api-versions=v1,v2

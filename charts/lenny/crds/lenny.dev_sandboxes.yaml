@@ -4,6 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
+    # spec: §10 line 437 / §10 line 443 — F-15.5.12.
+    lenny.dev/schema-version: "1"
   name: sandboxes.lenny.dev
 spec:
   group: lenny.dev
@@ -58,6 +60,7 @@ spec:
               pod (§4.6, §6). The WarmPoolController owns spec.*; the pod is
               created from the pool's SandboxTemplate, and these fields pin the
               per-pod identity the controller and gateway resolve against.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               deliveryMode:
                 description: DeliveryMode is the §4.9 credential delivery mode.
@@ -274,6 +277,7 @@ spec:
               the §6.2 authoritative pod lifecycle state machine; it is the
               single source of truth that the §4.6 claim path and the
               lenny-sandboxclaim-guard webhook read.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               activeSlots:
                 description: |-

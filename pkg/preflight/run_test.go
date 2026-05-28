@@ -10,6 +10,7 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -28,7 +29,32 @@ func runScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
 	}
+	// spec: §10 line 437 — the crd-schema-version check fetches the
+	// installed CRDs by name; tests register apiextensions.k8s.io/v1
+	// so the fake reader can deserialize the baseline CRD objects.
+	// F-15.5.12.
+	if err := apiextensionsv1.AddToScheme(s); err != nil {
+		t.Fatalf("apiextensions AddToScheme: %v", err)
+	}
 	return s
+}
+
+// baselineCRDs returns one healthy CRD per LennyCRDNames so the
+// crd-schema-version check passes by default when an existing Run test
+// only cares about a different §17.9 dimension. F-15.5.12.
+func baselineCRDs() []client.Object {
+	out := make([]client.Object, 0, len(preflight.LennyCRDNames))
+	for _, name := range preflight.LennyCRDNames {
+		out = append(out, &apiextensionsv1.CustomResourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+				Annotations: map[string]string{
+					preflight.CRDSchemaVersionAnnotation: preflight.CurrentCRDSchemaVersion,
+				},
+			},
+		})
+	}
+	return out
 }
 
 func validatingWebhook(name string) *admissionregistrationv1.ValidatingWebhookConfiguration {
@@ -52,7 +78,8 @@ func phaseStampCM(data map[string]string) *corev1.ConfigMap {
 
 func runClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
-	return fake.NewClientBuilder().WithScheme(runScheme(t)).WithObjects(objs...).Build()
+	all := append(baselineCRDs(), objs...)
+	return fake.NewClientBuilder().WithScheme(runScheme(t)).WithObjects(all...).Build()
 }
 
 // allBaselineWebhooks returns the baseline ValidatingWebhookConfigurations.

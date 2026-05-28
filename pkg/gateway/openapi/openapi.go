@@ -77,9 +77,12 @@ func HandlerWithVersion(buildVersion string) http.Handler {
 	return mux
 }
 
-// Document returns the raw OpenAPI JSON bytes with the embedded
-// `info.version`. Useful for tests that validate the document shape.
-func Document() []byte { return append([]byte(nil), openapiDoc...) }
+// Document returns the OpenAPI JSON bytes with the embedded
+// `info.version` plus the §15.5 item 6 default-stability stamp. Useful
+// for tests that validate the document shape. F-15.5.10.
+func Document() []byte {
+	return append([]byte(nil), versionedDocument("")...)
+}
 
 // DocumentWithVersion returns the OpenAPI JSON bytes with
 // `info.version` set to the supplied gateway release version. Useful
@@ -92,29 +95,81 @@ func DocumentWithVersion(buildVersion string) []byte {
 }
 
 // versionedDocument returns the embedded document bytes with the
-// `info.version` field rewritten to buildVersion. The embedded value
-// is kept whenever buildVersion is empty, equal to "dev", or the
-// embedded document fails to round-trip through json — the latter
-// preserves the served bytes' validity even under a future
-// hand-edited document.
+// `info.version` field rewritten to buildVersion and the §15.5 item 6
+// default-stability stamp applied to every operation that lacks an
+// explicit override. The embedded value is kept whenever the embedded
+// document fails to round-trip through json — that path preserves the
+// served bytes' validity even under a future hand-edited document.
+//
+// Hand-edited overrides in openapi.json (e.g. an explicit
+// `"x-lenny-stability": "beta"` on `/v1/responses`) are preserved
+// verbatim; only operations missing the field get the default stamp.
+// F-15.5.10.
 func versionedDocument(buildVersion string) []byte {
-	v := strings.TrimSpace(buildVersion)
-	if v == "" || v == "dev" {
-		return openapiDoc
-	}
 	var doc map[string]any
 	if err := json.Unmarshal(openapiDoc, &doc); err != nil {
 		return openapiDoc
 	}
-	info, _ := doc["info"].(map[string]any)
-	if info == nil {
-		return openapiDoc
+	stampDefaultStability(doc)
+	v := strings.TrimSpace(buildVersion)
+	if v != "" && v != "dev" {
+		if info, _ := doc["info"].(map[string]any); info != nil {
+			info["version"] = v
+			doc["info"] = info
+		}
 	}
-	info["version"] = v
-	doc["info"] = info
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return openapiDoc
 	}
 	return out
 }
+
+// stampDefaultStability walks doc.paths and stamps
+// `x-lenny-stability: "stable"` onto every operation body that does
+// not already carry one. The walk mutates doc in place.
+//
+// spec: §15.5 item 6 — F-15.5.10.
+func stampDefaultStability(doc map[string]any) {
+	paths, _ := doc["paths"].(map[string]any)
+	if paths == nil {
+		return
+	}
+	verbs := map[string]struct{}{
+		"get": {}, "put": {}, "post": {}, "delete": {},
+		"options": {}, "head": {}, "patch": {}, "trace": {},
+	}
+	for _, raw := range paths {
+		methods, _ := raw.(map[string]any)
+		if methods == nil {
+			continue
+		}
+		for name, m := range methods {
+			if _, ok := verbs[name]; !ok {
+				continue
+			}
+			body, _ := m.(map[string]any)
+			if body == nil {
+				continue
+			}
+			if _, ok := body["x-lenny-stability"]; ok {
+				continue
+			}
+			body["x-lenny-stability"] = string(StabilityStable)
+		}
+	}
+}
+
+// Stability is the §15.5 item 6 tier the OpenAPI document defaults
+// every operation to when `x-lenny-stability` is omitted from
+// openapi.json. The MCP Tool descriptor and any future stability-aware
+// surface share the same string values (`stable`, `beta`, `alpha`).
+//
+// spec: §15.5 item 6 — F-15.5.10.
+type Stability string
+
+const (
+	StabilityStable Stability = "stable"
+	StabilityBeta   Stability = "beta"
+	StabilityAlpha  Stability = "alpha"
+)

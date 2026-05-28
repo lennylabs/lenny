@@ -93,11 +93,54 @@ const (
 	errInternal       = -32603
 )
 
+// Stability classifies an MCP tool's §15.5 item 6 stability tier so
+// consumers can programmatically discover which catalog entries are
+// covered by the platform's versioning guarantees and which may change
+// without notice. The value is surfaced as the `x-lenny-stability`
+// extension on every entry in the `tools/list` response.
+//
+//   - StabilityStable: covered by §15.5 items 1–5.
+//   - StabilityBeta: may change between minor releases with deprecation notice.
+//   - StabilityAlpha: may change without notice — do not build production code against it.
+//
+// spec: §15.5 item 6. F-15.5.10.
+type Stability string
+
+const (
+	StabilityStable Stability = "stable"
+	StabilityBeta   Stability = "beta"
+	StabilityAlpha  Stability = "alpha"
+)
+
 // Tool is one entry in the MCP tool catalog.
+//
+// spec: §15.5 item 6 — `Stability` is the catalog-discoverable
+// stability label for the tool; empty defaults to `stable` at
+// serialization time so an unannotated tool is treated as covered by
+// the platform versioning guarantees. F-15.5.10.
 type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"inputSchema"`
+	// Stability is the §15.5 item 6 tier the tool ships under.
+	// Marshalled as `x-lenny-stability`; empty serialises as
+	// `"stable"` so consumers can rely on the field always being
+	// present.
+	Stability Stability `json:"x-lenny-stability,omitempty"`
+}
+
+// MarshalJSON serialises the Tool descriptor with `x-lenny-stability`
+// always set: an empty Stability collapses to StabilityStable so the
+// §15.5 item 6 tier is discoverable on every catalog entry. F-15.5.10.
+func (t Tool) MarshalJSON() ([]byte, error) {
+	type alias Tool
+	stab := t.Stability
+	if stab == "" {
+		stab = StabilityStable
+	}
+	a := alias(t)
+	a.Stability = stab
+	return json.Marshal(a)
 }
 
 // ToolResult is the §15.2 tool-call result content.

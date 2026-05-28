@@ -4,6 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
+    # spec: §10 line 437 / §10 line 443 — F-15.5.12.
+    lenny.dev/schema-version: "1"
   name: sandboxwarmpools.lenny.dev
 spec:
   group: lenny.dev
@@ -63,6 +65,7 @@ spec:
               §5.2 warm-count management for one pool. Per §4.6.3 the
               PoolScalingController owns spec.*, deriving the scaling parameters
               from the Postgres pool definitions.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               maxWarm:
                 description: |-
@@ -195,6 +198,7 @@ spec:
               Per §4.6.3 the WarmPoolController owns status.* except the
               SDKWarmCircuitBreaker carve-out, which the PoolScalingController
               owns.
+            x-kubernetes-preserve-unknown-fields: true
             properties:
               conditions:
                 description: Conditions is the standard Kubernetes condition list.

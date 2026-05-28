@@ -36,6 +36,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -189,6 +190,10 @@ func main() {
 	// Register lenny.dev/v1 so the §5.2 line 516 node-drain-timeout
 	// warning can list SandboxTemplate pools.
 	utilruntime.Must(lennyv1.AddToScheme(scheme))
+	// spec: §10 line 443 — the crd-schema-version check fetches the
+	// installed CRDs by name; register apiextensions.k8s.io/v1 so the
+	// reader can deserialize them. F-15.5.12.
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	cl, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		log.Fatalf("lenny-preflight: build cluster client: %v", err)

@@ -394,3 +394,71 @@ func TestHandlerVersionTemplatingPreservesPaths_spec_15_1_589(t *testing.T) {
 		t.Error("versioned document dropped /v1/sessions path")
 	}
 }
+
+// spec: §15.5 item 6 — every operation MUST carry x-lenny-stability so
+// consumers can programmatically discover which endpoints are covered
+// by the platform's versioning guarantees and which may change without
+// notice. The handler stamps `stable` on every operation that lacks an
+// explicit override in openapi.json. F-15.5.10.
+func TestEveryOperationCarriesStabilityTier_spec_15_5_2447(t *testing.T) {
+	doc := openapi.DocumentWithVersion("1.0.0")
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	paths, _ := parsed["paths"].(map[string]any)
+	if len(paths) == 0 {
+		t.Fatal("paths block is empty")
+	}
+	verbs := map[string]struct{}{
+		"get": {}, "put": {}, "post": {}, "delete": {},
+		"options": {}, "head": {}, "patch": {}, "trace": {},
+	}
+	allowed := map[string]struct{}{
+		string(openapi.StabilityStable): {},
+		string(openapi.StabilityBeta):   {},
+		string(openapi.StabilityAlpha):  {},
+	}
+	for path, raw := range paths {
+		methods, _ := raw.(map[string]any)
+		for verb, m := range methods {
+			if _, ok := verbs[verb]; !ok {
+				continue
+			}
+			body, _ := m.(map[string]any)
+			val, ok := body["x-lenny-stability"]
+			if !ok {
+				t.Errorf("%s %s missing x-lenny-stability", verb, path)
+				continue
+			}
+			s, _ := val.(string)
+			if _, ok := allowed[s]; !ok {
+				t.Errorf("%s %s x-lenny-stability %q not in {stable, beta, alpha}", verb, path, s)
+			}
+		}
+	}
+}
+
+// spec: §15.5 item 6 — the default tier is `stable` so an unannotated
+// operation reads as covered by the §15.5 items 1–5 guarantees.
+// F-15.5.10.
+func TestStabilityDefaultsToStable_spec_15_5_2447(t *testing.T) {
+	doc := openapi.Document()
+	var parsed map[string]any
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	paths, _ := parsed["paths"].(map[string]any)
+	sessions, _ := paths["/v1/sessions"].(map[string]any)
+	if sessions == nil {
+		t.Fatal("/v1/sessions missing")
+	}
+	post, _ := sessions["post"].(map[string]any)
+	if post == nil {
+		t.Fatal("/v1/sessions POST missing")
+	}
+	if got, _ := post["x-lenny-stability"].(string); got != string(openapi.StabilityStable) {
+		t.Errorf("/v1/sessions POST stability: got %q, want %q",
+			got, openapi.StabilityStable)
+	}
+}

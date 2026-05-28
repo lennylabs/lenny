@@ -27,16 +27,20 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -52,6 +56,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/preflight"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
 	sessionstore "github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -62,10 +67,15 @@ import (
 // buildScheme assembles the runtime scheme the manager uses: the
 // Kubernetes built-in types plus the lenny.dev/v1 CRDs the controllers
 // reconcile.
+//
+// apiextensions.k8s.io/v1 is also registered so the §10 line 437
+// startup self-check can fetch each installed CRD and read its
+// `lenny.dev/schema-version` annotation. F-15.5.12.
 func buildScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(s))
 	utilruntime.Must(lennyv1.AddToScheme(s))
+	utilruntime.Must(apiextensionsv1.AddToScheme(s))
 	return s
 }
 
@@ -233,6 +243,16 @@ func main() {
 	})
 	if err != nil {
 		log.Fatalf("lenny-controller: create manager: %v", err)
+	}
+
+	// spec: §10 line 437 / line 443 — assert every installed Lenny CRD
+	// declares the expected `lenny.dev/schema-version` annotation before
+	// the controller starts reconciling. A mismatch logs the
+	// runbook-grep-anchored FATAL message and exits non-zero so a stale
+	// CRD never silently strips fields added by a newer controller.
+	// F-15.5.12.
+	if err := assertCRDSchemaVersion(restCfg); err != nil {
+		log.Fatalf("lenny-controller: %v. See docs/runbooks/crd-upgrade.md", err)
 	}
 
 	// The §4.6.1 agent_pod_state mirror is durable under --postgres-dsn:
@@ -436,6 +456,26 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		log.Fatalf("lenny-controller: manager exited: %v", err)
 	}
+}
+
+// assertCRDSchemaVersion is the §10 line 437 startup self-check: it
+// builds a read-only controller-runtime client and runs the shared
+// preflight CRD schema-version comparison. On mismatch (or a missing
+// CRD, or a missing annotation) it returns an error whose text matches
+// the spec line 437 runbook anchor so operators can grep the controller
+// logs for the exact message. F-15.5.12.
+func assertCRDSchemaVersion(restCfg *rest.Config) error {
+	c, err := ctrlclient.New(restCfg, ctrlclient.Options{Scheme: buildScheme()})
+	if err != nil {
+		return fmt.Errorf("CRD schema-version check: build read-only client: %w", err)
+	}
+	decision := preflight.CRDSchemaVersionCheck{
+		Expected: preflight.CurrentCRDSchemaVersion,
+	}.Decide(context.Background(), c)
+	if !decision.Passed {
+		return fmt.Errorf("CRD schema version mismatch: %s", decision.Reason)
+	}
+	return nil
 }
 
 // sessionActiveLookup adapts the session store to the §4.6.1 orphan-claim
