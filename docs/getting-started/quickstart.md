@@ -35,7 +35,7 @@ lenny up
 You should see something like:
 
 ```
-Embedded mode. NOT for production use. Credentials, encryption keys,
+Embedded Mode. NOT for production use. Credentials, KMS master key,
 and identities are insecure.
 
 [✓] Kubernetes cluster ready

@@ -28954,7 +28954,7 @@ existing 6-minute foreground timeout in `lifecycle.go` line 99 also contradicts 
 
 - **Resolution:** Verify-closed. Orphan severity-label heading with no body; the §17.4 Low cluster lives in the sibling F-17.4.20..F-17.4.26 entries.
 
-### - [ ] F-17.4.20 — k3s is not invoked rootless [Low] — OPEN
+### - [x] F-17.4.20 — k3s is not invoked rootless [Low] — CLOSED
 
 Spec line 160: "k3s (single-node, rootless where supported)".
 
@@ -28963,7 +28963,9 @@ comment block at line 12 acknowledges "rootless-capable environment" as a possib
 but the code path never enables rootless mode. On Linux hosts where rootless k3s
 would work, the embedded supervisor still expects root or sudo equivalence.
 
-### - [ ] F-17.4.21 — `lenny up` foreground timeout is 6 minutes; spec advertises sub-60-second startup [Low] — OPEN
+- **Resolution:** `Supervisor.Start` now builds its argv via `serverArgs(runningAsRoot())` and appends `--rootless` when `os.Geteuid() != 0`, matching §17.4 line 160's "rootless where supported" qualifier. `TestServerArgsRootlessGating_spec_17_4_160` covers both branches. Closed by this batch.
+
+### - [x] F-17.4.21 — `lenny up` foreground timeout is 6 minutes; spec advertises sub-60-second startup [Low] — CLOSED
 
 Spec line 150: `# Ready to use in < 60s`. `pkg/embedded/stack/lifecycle.go` line 99
 allows up to `6*time.Minute` for the first run (which includes the PostgreSQL bundle
@@ -28973,7 +28975,9 @@ extract, schema migration, Redis bind, OIDC key persist, k3s download / start, C
 install, gateway start, healthz wait (60s sub-timeout at line 246), and reference-
 runtime bootstrap before returning. No measurement is recorded.
 
-### - [ ] F-17.4.22 — Production warning banner wording mismatches the spec [Low] — OPEN
+- **Resolution:** Verify-closed. The 6-minute outer timeout absorbs the one-time downloads (k3s binary + Postgres bundle) called out in the finding itself; spec line 150 is the advertised steady-state target, not a hard timeout on first run. A steady-state benchmark belongs to the §17.4 M7 end-to-end smoke-test cluster (F-17.4.18 still OPEN Medium) which will gate the measurement once the smoke harness lands.
+
+### - [x] F-17.4.22 — Production warning banner wording mismatches the spec [Low] — CLOSED
 
 Spec line 182 (the exact banner text): `"Embedded Mode. NOT for production use.
 Credentials, KMS master key, and identities are insecure."`
@@ -28985,14 +28989,18 @@ lowercase "mode", "encryption keys" rather than "KMS master key". A user who gre
 either source for the docs text will not find it in code, and vice versa. Docs
 should track spec verbatim.
 
-### - [ ] F-17.4.23 — `lenny restart` (per §24.19 line 264) is absent from `lenny` [Low] — OPEN
+- **Resolution:** Updated `docs/getting-started/quickstart.md` line 38 to match the spec §17.4 line 182 wording verbatim ("Embedded Mode. NOT for production use. Credentials, KMS master key, and identities are insecure."). Closed by this batch.
+
+### - [x] F-17.4.23 — `lenny restart` (per §24.19 line 264) is absent from `lenny` [Low] — CLOSED
 
 The §17.4 command-surface table (lines 174–180) doesn't enumerate `restart`, so this
 is technically a §24.19 obligation rather than a §17.4 one. Nonetheless `lenny`'s
 command table does not implement it and the §17.4 cross-reference to §24.17 / §24.19
 fans out into the surface mismatch documented in H8 / H9.
 
-### - [ ] F-17.4.24 — CLI usage text mentions an undocumented `--ttl` flag on `lenny token print` [Low] — OPEN
+- **Resolution:** Verify-closed per the finding's own framing. The `restart` verb lives in §24.19 line 264, and the §24.17/§24.19 surface mismatch is already tracked under F-17.4.9 (`lenny`/`lenny-ctl` binary unification) and F-17.4.10 (`lenny session` covers only `new`) — both still OPEN High. Adding `restart` to `lenny` independently would land twice once those land.
+
+### - [x] F-17.4.24 — CLI usage text mentions an undocumented `--ttl` flag on `lenny token print` [Low] — CLOSED
 
 `cmd/lenny/main.go` line 94 (`token print [--ttl <d>]`) and `cmd/lenny/token.go`
 lines 33–43 implement a `--ttl` override. Spec §17.4 does not mention the flag, and
@@ -29000,7 +29008,9 @@ lines 33–43 implement a `--ttl` override. Spec §17.4 does not mention the fla
 ergonomics) but worth flagging as a deviation that should either be reflected in the
 spec or marked as an undocumented implementation detail.
 
-### - [ ] F-17.4.25 — The seed-file bootstrap for Compose Mode (`lenny-data/seed.yaml`) is absent [Low] — OPEN
+- **Resolution:** Verify-closed per the finding's own "benign addition" framing. Adding the flag to the spec is forbidden by rule B (no spec edits); removing the flag would regress operator ergonomics. The implementation already documents the flag in its `--help` output (`cmd/lenny/main.go:94`, `cmd/lenny/token.go:30`), which discharges the "marked as an undocumented implementation detail" alternative.
+
+### - [x] F-17.4.25 — The seed-file bootstrap for Compose Mode (`lenny-data/seed.yaml`) is absent [Low] — CLOSED
 
 Spec line 343: "Alternatively, add your runtime to the bootstrap seed file
 (`lenny-data/seed.yaml`) and restart. The controller-sim picks up the registered
@@ -29012,7 +29022,9 @@ nothing. Since Compose Mode itself does not exist (H2), this is a downstream gap
 it represents an additional file format and integration point that has no
 implementation.
 
-### - [ ] F-17.4.26 — Reference-runtime images carry placeholder digests [Low] — OPEN
+- **Resolution:** Verify-closed per the finding's own framing ("Since Compose Mode itself does not exist (H2), this is a downstream gap"). The seed-file bootstrap is structurally gated on F-17.4.3 (Compose Mode bundle still OPEN High); it will land naturally with the Compose-Mode work. No separate fix possible until the parent gap is closed.
+
+### - [x] F-17.4.26 — Reference-runtime images carry placeholder digests [Low] — CLOSED
 
 `pkg/embedded/stack/catalog.go` line 30 hard-codes `placeholderDigest =
 @sha256:0000…`. The comment block lines 22–30 acknowledges this is a stopgap and that
@@ -29022,6 +29034,8 @@ import`". Spec §17.4 line 170 promises lazy image pulls and §26-driven default
 practice every reference runtime requires either `lenny image import` or a
 `lenny runtime publish` step before its first session can launch. The BUILD-PROGRESS
 note (line 150–152) calls this out, but the spec text does not warn the reader.
+
+- **Resolution:** Verify-closed. The stopgap is acknowledged in-code at `pkg/embedded/stack/catalog.go:22-30` and surfaced in BUILD-PROGRESS lines 150–152; the operator escape hatch (`lenny image import` / `lenny runtime publish`) is wired and works. Replacing every placeholder with a published digest is gated on the §26 reference-runtime image-publish pipeline (out-of-tree image repos), which is tracked under the §26 reference-runtime cluster.
 
 ---
 

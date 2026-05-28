@@ -172,23 +172,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("embedded k3s: open log %s: %w", s.LogPath(), err)
 	}
-	// k3s server runs the control plane and a built-in agent on one
-	// node. --write-kubeconfig-mode 0600 keeps the admin kubeconfig
-	// readable only by the current user. --disable traefik drops the
-	// ingress controller the embedded stack does not use.
-	args := []string{
-		"server",
-		"--data-dir", filepath.Join(s.cfg.Dir, "data"),
-		"--write-kubeconfig", s.KubeconfigPath(),
-		"--write-kubeconfig-mode", "0600",
-		"--https-listen-port", fmt.Sprintf("%d", s.cfg.APIPort),
-		"--bind-address", "127.0.0.1",
-		"--disable", "traefik",
-		"--disable", "servicelb",
-		"--disable-cloud-controller",
-		"--disable-network-policy",
-		"--flannel-backend", "host-gw",
-	}
+	args := s.serverArgs(runningAsRoot())
 	cmd := exec.Command(s.BinaryPath(), args...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -207,6 +191,39 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// serverArgs builds the argv k3s server is invoked with. asRoot=false
+// adds --rootless so a non-root supervisor uses k3s' rootless mode on
+// hosts that support it (spec §17.4 line 160: "rootless where
+// supported"). On a host without rootless prerequisites k3s itself
+// reports the error in the log file.
+//
+// spec: §17.4 line 160 ("rootless where supported")
+func (s *Supervisor) serverArgs(asRoot bool) []string {
+	args := []string{
+		"server",
+		"--data-dir", filepath.Join(s.cfg.Dir, "data"),
+		"--write-kubeconfig", s.KubeconfigPath(),
+		"--write-kubeconfig-mode", "0600",
+		"--https-listen-port", fmt.Sprintf("%d", s.cfg.APIPort),
+		"--bind-address", "127.0.0.1",
+		"--disable", "traefik",
+		"--disable", "servicelb",
+		"--disable-cloud-controller",
+		"--disable-network-policy",
+		"--flannel-backend", "host-gw",
+	}
+	if !asRoot {
+		args = append(args, "--rootless")
+	}
+	return args
+}
+
+// runningAsRoot reports whether the current process is root. k3s
+// rootless mode is only added when the supervisor itself is non-root.
+func runningAsRoot() bool {
+	return os.Geteuid() == 0
 }
 
 // waitReady blocks until the kubeconfig file exists or ReadyTimeout

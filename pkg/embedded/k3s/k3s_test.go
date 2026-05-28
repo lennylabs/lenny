@@ -98,3 +98,30 @@ func TestEnsureBinaryRejectsUnsupportedPlatform(t *testing.T) {
 		t.Error("expected EnsureBinary to fail on an unsupported platform")
 	}
 }
+
+// spec: §17.4 line 160 — "k3s (single-node, rootless where supported)".
+// When running as non-root the supervisor passes --rootless so k3s
+// picks its rootless mode on supported hosts; when running as root it
+// omits the flag so root-mode k3s starts normally.
+func TestServerArgsRootlessGating_spec_17_4_160(t *testing.T) {
+	s := New(Config{Dir: t.TempDir()})
+
+	rootArgs := s.serverArgs(true)
+	for _, a := range rootArgs {
+		if a == "--rootless" {
+			t.Fatalf("root invocation must omit --rootless, got %v", rootArgs)
+		}
+	}
+
+	nonRootArgs := s.serverArgs(false)
+	found := false
+	for _, a := range nonRootArgs {
+		if a == "--rootless" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("non-root invocation must include --rootless, got %v", nonRootArgs)
+	}
+}
