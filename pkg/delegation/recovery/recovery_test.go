@@ -176,3 +176,29 @@ func TestRecoverEmptyTree(t *testing.T) {
 		t.Errorf("an empty tree produced %d results, want 0", len(results))
 	}
 }
+
+// TestQuiescenceDeadlineUsesDefault_spec_11_3_224 verifies the default
+// usage-quiescence window matches the §11.3 line 224 spec value (5s).
+// F-11.3.19.
+func TestQuiescenceDeadlineUsesDefault_spec_11_3_224(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	cfg := recovery.Config{}
+	got := cfg.QuiescenceDeadline(now).Sub(now)
+	if got != recovery.DefaultUsageQuiescenceTimeout {
+		t.Errorf("QuiescenceDeadline default delta = %s, want %s", got, recovery.DefaultUsageQuiescenceTimeout)
+	}
+	if recovery.DefaultUsageQuiescenceTimeout != 5*time.Second {
+		t.Errorf("DefaultUsageQuiescenceTimeout = %s, want 5s (§11.3 line 224)", recovery.DefaultUsageQuiescenceTimeout)
+	}
+}
+
+// TestQuiescenceDeadlineHonorsOverride_spec_11_3_224 verifies the
+// operator-tunable override flows through to QuiescenceDeadline. F-11.3.19.
+func TestQuiescenceDeadlineHonorsOverride_spec_11_3_224(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	cfg := recovery.Config{UsageQuiescenceTimeout: 12 * time.Second}
+	got := cfg.QuiescenceDeadline(now).Sub(now)
+	if got != 12*time.Second {
+		t.Errorf("QuiescenceDeadline = %s, want 12s", got)
+	}
+}

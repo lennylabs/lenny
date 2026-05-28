@@ -854,15 +854,25 @@ func Register(srv *mcp.Server, deps Deps) {
 				return textResult(string(body)), nil
 			case <-time.After(callTimeout):
 				deps.InputWaits.Cancel(sessionID, requestID)
-				// spec: §15.2.1 — return the canonical lenny code via
-				// *mcp.ToolError so the REST and MCP error envelopes
-				// share the same (category, retryable) pair. The human-
-				// readable Msg preserves the spec reason inline so log
-				// scrapers that only read content[0].text still pivot on
-				// the code string. F-8.5.10.
+				// spec: §15.2.1 / §11.3 line 238 — return the canonical
+				// REQUEST_INPUT_TIMEOUT code via *mcp.ToolError so the
+				// REST and MCP error envelopes share the same (category,
+				// retryable) pair. Details include the absolute
+				// `expiredAt` (ISO 8601 UTC) so a runtime can pivot on
+				// the same timestamp shape the §11.3 line 238
+				// `request_input_expired` await_children event uses. The
+				// human-readable Msg preserves the spec reason inline so
+				// log scrapers that only read content[0].text still
+				// pivot on the code string. F-8.5.10 / F-11.3.23.
+				expiredAt := clock().UTC().Format(time.RFC3339Nano)
 				return mcp.ToolResult{}, mcp.NewToolError("REQUEST_INPUT_TIMEOUT",
-					fmt.Sprintf("REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", requestID, callTimeout),
-					map[string]any{"requestId": requestID, "timeout": callTimeout.String()})
+					fmt.Sprintf("REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s (expiredAt=%s)", requestID, callTimeout, expiredAt),
+					map[string]any{
+						"requestId":      requestID,
+						"timeout":        callTimeout.String(),
+						"timeoutSeconds": callTimeout.Seconds(),
+						"expiredAt":      expiredAt,
+					})
 			case <-ctx.Done():
 				deps.InputWaits.Cancel(sessionID, requestID)
 				return mcp.ToolResult{}, ctx.Err()
@@ -1080,11 +1090,14 @@ func Register(srv *mcp.Server, deps Deps) {
 							}
 							return nil
 						})
+					expiredAt := clock().UTC().Format(time.RFC3339Nano)
 					return mcp.ToolResult{}, mcp.NewToolError("ELICITATION_TIMEOUT",
-						fmt.Sprintf("no response for %s within %s", elicitationID, elicitationTimeout),
+						fmt.Sprintf("no response for %s within %s (expiredAt=%s)", elicitationID, elicitationTimeout, expiredAt),
 						map[string]any{
 							"elicitationId":  elicitationID,
 							"timeoutSeconds": elicitationTimeout.Seconds(),
+							"timeout":        elicitationTimeout.String(),
+							"expiredAt":      expiredAt,
 						})
 				case <-ticker.C:
 				}

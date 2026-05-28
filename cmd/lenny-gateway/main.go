@@ -52,6 +52,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -112,6 +113,7 @@ import (
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
@@ -382,6 +384,45 @@ func main() {
 	maxCreatedStateTimeoutSeconds := flag.Int("max-created-state-timeout-seconds",
 		envInt("LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxCreatedStateSeconds),
 		"§7.1 line 58 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL, the watchdog's `created`-state budget, and the createdsweeper's abandoned-row timeout so the three deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
+	// spec: §11.3 line 219-221 — gateway.max{Finalizing,Ready,Starting}TimeoutSeconds
+	// and the platform-wide cap on §6.2 awaiting_client_action /
+	// maxSessionAge. Each is operator-tunable; the watchdog applied the
+	// constructed defaults silently before. F-11.3.11.
+	maxFinalizingTimeoutSeconds := flag.Int("max-finalizing-state-timeout-seconds",
+		envInt("LENNY_MAX_FINALIZING_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxFinalizingStateSeconds),
+		"§11.3 line 219 maxFinalizingTimeoutSeconds: the deadline on the `finalizing` pre-running state. A session stuck longer than this wall-clock window is transitioned to `failed`. The §6.2 line 260 invariant `maxFinalizingTimeoutSeconds ≥ runtime.setupTimeoutSeconds` is enforced at admin registration; raising this flag also raises the gateway-side cap admin uses when validating new runtimes. Default 600s. Override via LENNY_MAX_FINALIZING_STATE_TIMEOUT_SECONDS.")
+	maxReadyStateTimeoutSeconds := flag.Int("max-ready-state-timeout-seconds",
+		envInt("LENNY_MAX_READY_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxReadyStateSeconds),
+		"§11.3 line 220 maxReadyTimeoutSeconds: the deadline on the `ready` pre-running state. A session stuck longer than this is transitioned to `failed`. Default 300s. Override via LENNY_MAX_READY_STATE_TIMEOUT_SECONDS.")
+	maxStartingStateTimeoutSeconds := flag.Int("max-starting-state-timeout-seconds",
+		envInt("LENNY_MAX_STARTING_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxStartingStateSeconds),
+		"§11.3 line 221 maxStartingTimeoutSeconds: the deadline on the `starting` pre-running state. A session stuck longer than this is transitioned to `failed`. Default 120s. Override via LENNY_MAX_STARTING_STATE_TIMEOUT_SECONDS.")
+	maxSessionAgeSeconds := flag.Int("max-session-age-seconds",
+		envInt("LENNY_MAX_SESSION_AGE_SECONDS", watchdog.DefaultMaxSessionAgeSeconds),
+		"§11.3 line 198 / §6.2 line 240 platform-wide maxSessionAgeSeconds: the total non-terminal lifetime cap of a session, measured from its creation. The per-runtime `runtime.maxSessionAgeSeconds` (and per-session retryPolicy.maxSessionAgeSeconds) tighten this cap; this flag is the floor a runtime without an override inherits. Default 7200s (2h). Override via LENNY_MAX_SESSION_AGE_SECONDS.")
+	maxAwaitingClientActionSeconds := flag.Int("max-awaiting-client-action-seconds",
+		envInt("LENNY_MAX_AWAITING_CLIENT_ACTION_SECONDS", watchdog.DefaultMaxAwaitingClientActionSeconds),
+		"§11.3 line 199 maxAwaitingClientActionSeconds: the deadline on the `awaiting_client_action` state. A session that has waited this long for client action is transitioned to `expired`. Default 900s. Override via LENNY_MAX_AWAITING_CLIENT_ACTION_SECONDS.")
+	maxSuspendedPodHoldSeconds := flag.Int("max-suspended-pod-hold-seconds",
+		envInt("LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS", watchdog.DefaultMaxSuspendedPodHoldSeconds),
+		"§11.3 line 233 maxSuspendedPodHoldSeconds: the wall-clock window a `suspended` session may hold its pod before the watchdog transitions it to `expired`. Both the deploy-wide cap (this flag) and a per-tenant cap apply; the more restrictive value wins. Default 900s. Override via LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS.")
+	// spec: §11.3 line 205-206 — grpc.keepaliveTime{,out}Ms on the
+	// adapter client (gateway → pod), operator-tunable. The library
+	// default is no keepalive on the client side, so the §11.3 5s timeout
+	// is unenforced without this. F-11.3.12.
+	adapterKeepaliveTimeMs := flag.Int("adapter-keepalive-time-ms",
+		envInt("LENNY_ADAPTER_KEEPALIVE_TIME_MS", 10_000),
+		"§11.3 line 205 grpc.keepaliveTimeMs: the interval at which the gateway sends a keepalive ping on an idle adapter connection. Default 10000ms (10s). Override via LENNY_ADAPTER_KEEPALIVE_TIME_MS.")
+	adapterKeepaliveTimeoutMs := flag.Int("adapter-keepalive-timeout-ms",
+		envInt("LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS", 5_000),
+		"§11.3 line 206 grpc.keepaliveTimeoutMs: how long the gateway waits for an adapter keepalive-ping reply before closing the connection. Default 5000ms (5s). Override via LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS.")
+	// spec: §11.3 line 224 — delegation.usageQuiescenceTimeoutSeconds,
+	// operator-tunable. The §8.10 tree-recovery path waits this long after
+	// the last usage report before declaring the tree quiescent and
+	// progressing to drain. F-11.3.19.
+	delegationUsageQuiescenceTimeoutSeconds := flag.Int("delegation-usage-quiescence-timeout-seconds",
+		envInt("LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS", 5),
+		"§11.3 line 224 delegation.usageQuiescenceTimeoutSeconds: the wall-clock window the §8.10 tree-recovery path waits after the last child usage report before declaring the delegation tree quiescent. Default 5s. Override via LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS.")
 	workspaceSealMaxDurationSeconds := flag.Int("workspace-seal-max-duration-seconds",
 		envInt("LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS", int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second)),
 		"§7.1 line 112 maxWorkspaceSealDurationSeconds: the total wall-clock window the gateway retries seal-and-export (exponential backoff 5s→60s) before failing the session with workspace_seal_timeout and terminating the pod anyway. Default 300s. Override via LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS.")
@@ -527,6 +568,19 @@ func main() {
 	default:
 		log.Fatalf("lenny-gateway: --pooler-mode must be `transactional` or `external`, got %q (§4.2 line 165)", *poolerMode)
 	}
+
+	// spec: §11.3 line 224 — surface the effective
+	// `delegation.usageQuiescenceTimeoutSeconds` at startup so operators
+	// see the value the §8.10 tree-recovery orchestrator will consume.
+	// The recovery package exposes the Config field; the gateway-side
+	// orchestrator threads `delegationQuiescenceCfg` to keep one source
+	// of truth. F-11.3.19.
+	delegationQuiescenceCfg := recovery.Config{
+		UsageQuiescenceTimeout: time.Duration(*delegationUsageQuiescenceTimeoutSeconds) * time.Second,
+	}
+	log.Printf("lenny-gateway: delegation.usageQuiescenceTimeoutSeconds=%ds (§11.3 line 224)",
+		int(delegationQuiescenceCfg.QuiescenceDeadline(time.Time{}).Sub(time.Time{}).Seconds()))
+	_ = delegationQuiescenceCfg
 
 	// ----- Stores -----
 	// session, transcript, tenant, and runtime state is persisted to
@@ -1064,6 +1118,15 @@ func main() {
 		if err != nil {
 			log.Fatalf("lenny-gateway: adapter TLS: %v", err)
 		}
+		// spec: §11.3 lines 205-206 — gateway→pod keepalive: 10s interval
+		// and 5s timeout. Without these the gRPC client library default
+		// (no keepalive) leaves a half-open TCP connection holding
+		// adapter state past the §11.3 timeout. F-11.3.12.
+		keepaliveOpt := grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                time.Duration(*adapterKeepaliveTimeMs) * time.Millisecond,
+			Timeout:             time.Duration(*adapterKeepaliveTimeoutMs) * time.Millisecond,
+			PermitWithoutStream: true,
+		})
 		podRegistry = podsession.NewRegistry()
 		// §5.2 atomic slot counter. When Redis is wired, every
 		// concurrent-mode slot reservation goes through the Redis Lua
@@ -1087,7 +1150,7 @@ func main() {
 			AdapterPort:      adapterGRPCPort,
 			AcceptedVersions: []string{adapter.ProtocolVersionV1},
 			DialAdapter: func(addr string) (*adapterclient.Client, error) {
-				return adapterclient.Dial(addr, dialOpt)
+				return adapterclient.Dial(addr, dialOpt, keepaliveOpt)
 			},
 			Blobs: blobs,
 			// §4.9: the binder mints a session's credential leases and
@@ -2044,7 +2107,7 @@ func main() {
 	// the §15.1 POST/PUT /v1/admin/runtimes and POST /v1/admin/bootstrap
 	// handlers reject a runtime whose setupPolicy.timeoutSeconds exceeds
 	// gateway.maxFinalizingTimeoutSeconds.
-	adminRouter = adminRouter.WithMaxFinalizingTimeoutSeconds(watchdog.DefaultMaxFinalizingStateSeconds)
+	adminRouter = adminRouter.WithMaxFinalizingTimeoutSeconds(*maxFinalizingTimeoutSeconds)
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.
@@ -2730,11 +2793,22 @@ func main() {
 	// is the §6.2 fixed 300s budget. MaxRetries falls through to the
 	// same deployer flag the §4.8 RetryPolicyEvaluator uses so the
 	// resuming → resume_pending retry counts against the same budget.
+	// spec: §11.3 line 219-221 — every operator-tunable watchdog budget
+	// flows through `Config`. The flag surface above defaults each to the
+	// §11.3 spec value, so `Config{}` is now constructed with the
+	// effective value (after env/flag resolution) rather than the
+	// zero-value the watchdog used to backfill silently. F-11.3.11.
 	wd := watchdog.New(sessions, tenantsLister{tenants}, watchdog.Config{
-		MaxCreatedSeconds:       *maxCreatedStateTimeoutSeconds,
-		MaxResumePendingSeconds: *maxResumePendingSeconds,
-		MaxResumingSeconds:      *maxResumingSeconds,
-		MaxRetries:              *retryMaxRetries,
+		MaxCreatedSeconds:              *maxCreatedStateTimeoutSeconds,
+		MaxFinalizingSeconds:           *maxFinalizingTimeoutSeconds,
+		MaxReadySeconds:                *maxReadyStateTimeoutSeconds,
+		MaxStartingSeconds:             *maxStartingStateTimeoutSeconds,
+		MaxSessionAgeSeconds:           *maxSessionAgeSeconds,
+		MaxAwaitingClientActionSeconds: *maxAwaitingClientActionSeconds,
+		MaxSuspendedPodHoldSeconds:     *maxSuspendedPodHoldSeconds,
+		MaxResumePendingSeconds:        *maxResumePendingSeconds,
+		MaxResumingSeconds:             *maxResumingSeconds,
+		MaxRetries:                     *retryMaxRetries,
 	}, nil).
 		WithBilling(billing).
 		WithTreeArchive(treeArchive).

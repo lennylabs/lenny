@@ -26,6 +26,14 @@ const (
 	// DefaultTreeTimeout bounds the whole traversal
 	// (`maxTreeRecoverySeconds`). It overrides the per-level budgets.
 	DefaultTreeTimeout = 600 * time.Second
+	// DefaultUsageQuiescenceTimeout is the §11.3 line 224
+	// `delegation.usageQuiescenceTimeoutSeconds` window the tree-recovery
+	// path waits after the most recent child usage report before
+	// declaring the delegation tree quiescent and starting the bottom-up
+	// reattach traversal. A node that reports usage during the
+	// quiescence window resets the timer. spec: §11.3 line 224; §8.10
+	// tree recovery.
+	DefaultUsageQuiescenceTimeout = 5 * time.Second
 )
 
 // Node is one delegation-tree node to recover. Depth is the node's
@@ -66,7 +74,14 @@ type NodeResult struct {
 type Config struct {
 	LevelTimeout time.Duration
 	TreeTimeout  time.Duration
-	Now          func() time.Time
+	// UsageQuiescenceTimeout is the §11.3 line 224 wall-clock window the
+	// caller observes between the last child usage report and the start
+	// of the bottom-up reattach traversal. Exposed on Config so the
+	// gateway can thread an operator-tuned value through to whatever
+	// orchestrator polls for quiescence; the traversal itself does not
+	// consume the value. Zero selects DefaultUsageQuiescenceTimeout.
+	UsageQuiescenceTimeout time.Duration
+	Now                    func() time.Time
 }
 
 func (c Config) withDefaults() Config {
@@ -76,10 +91,24 @@ func (c Config) withDefaults() Config {
 	if c.TreeTimeout <= 0 {
 		c.TreeTimeout = DefaultTreeTimeout
 	}
+	if c.UsageQuiescenceTimeout <= 0 {
+		c.UsageQuiescenceTimeout = DefaultUsageQuiescenceTimeout
+	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now() }
 	}
 	return c
+}
+
+// QuiescenceDeadline returns the wall-clock time the tree-recovery
+// orchestrator must wait until before declaring the tree quiescent and
+// starting the reattach traversal. lastUsageReport is the timestamp of
+// the most recent child usage report; an orchestrator that resets on
+// every new report calls this helper after each report. spec: §11.3
+// line 224.
+func (c Config) QuiescenceDeadline(lastUsageReport time.Time) time.Time {
+	cfg := c.withDefaults()
+	return lastUsageReport.Add(cfg.UsageQuiescenceTimeout)
 }
 
 // Levels groups nodes by depth and returns them deepest-first — the

@@ -712,6 +712,49 @@ func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing
 	}
 }
 
+// TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238 verifies the
+// §11.3 line 238 timeout error envelope details include the ISO 8601
+// `expiredAt` timestamp plus `requestId` and `timeoutSeconds`. F-11.3.23.
+func TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238(t *testing.T) {
+	srv, store, _ := newMCPForInput(t, 10*time.Millisecond)
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_t1", TenantID: "acme", State: session.StateRunning,
+	})
+	resp := call(t, srv.Handler(), "lenny/request_input",
+		`{"sessionId":"sess_t1","requestId":"req-t1","parts":[{"type":"text","text":"hi"}]}`)
+	result, _ := resp["result"].(map[string]any)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "REQUEST_INPUT_TIMEOUT" {
+		t.Fatalf("envelope.code = %v, want REQUEST_INPUT_TIMEOUT", env["code"])
+	}
+	details, _ := env["details"].(map[string]any)
+	if details == nil {
+		t.Fatalf("envelope.details missing: %+v", env)
+	}
+	if got := details["requestId"]; got != "req-t1" {
+		t.Errorf("details.requestId = %v, want req-t1", got)
+	}
+	if _, ok := details["timeoutSeconds"]; !ok {
+		t.Errorf("details.timeoutSeconds missing: %+v", details)
+	}
+	rawExpired, ok := details["expiredAt"].(string)
+	if !ok || rawExpired == "" {
+		t.Fatalf("details.expiredAt missing or not a string: %+v", details)
+	}
+	// The MCP test rig pins Clock to 2026-01-01 UTC; the test asserts
+	// the timestamp parses as RFC3339Nano and matches the injected
+	// clock, exercising the round-trip from clock() through
+	// time.RFC3339Nano formatting.
+	expiredAt, err := time.Parse(time.RFC3339Nano, rawExpired)
+	if err != nil {
+		t.Fatalf("details.expiredAt not RFC3339Nano: %v (got %q)", err, rawExpired)
+	}
+	want := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if !expiredAt.Equal(want) {
+		t.Errorf("details.expiredAt = %v, want %v", expiredAt, want)
+	}
+}
+
 // TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1 verifies that
 // `lenny/get_task_tree` surfaces `runtimeRef` on every node, matching
 // the REST `/tree` projection (§15.2.1 REST↔MCP semantic equivalence).

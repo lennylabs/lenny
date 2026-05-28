@@ -14990,19 +14990,23 @@ const DefaultTimeout = 500 * time.Millisecond
 
 ---
 
-### - [ ] F-11.3.11 — Most pre-running watchdog timeouts have no flag/env override [Medium] — OPEN
+### - [x] F-11.3.11 — Most pre-running watchdog timeouts have no flag/env override [Medium] — CLOSED
 
 Spec §11.3 line 220-221 mark `max{Created,Finalizing,Ready,Starting}StateTimeoutSeconds` and `maxAwaitingClientActionSeconds` as configurable ("Yes"). The implementation accepts them in `watchdog.Config` (`pkg/gateway/watchdog/watchdog.go:64-79`) but `cmd/lenny-gateway/main.go:1553` constructs `watchdog.New(sessions, ..., watchdog.Config{}, nil)` — passing the zero value. The flag surface in `main.go` exposes no override (`grep -n "flag\..*Max\|flag\..*Timeout" cmd/lenny-gateway/main.go` shows only `--shutdown-timeout`, `--coordination-interval`, the playground caps; nothing for the watchdog budgets).
 
 Consequence: a deployer cannot tune any §11.3 pre-running cap without a rebuild.
 
-### - [ ] F-11.3.12 — gRPC keepalive interval/timeout (gateway→pod) are not configured [Medium] — OPEN
+**Resolution:** added flags `--max-finalizing-state-timeout-seconds` / `--max-ready-state-timeout-seconds` / `--max-starting-state-timeout-seconds` / `--max-session-age-seconds` / `--max-awaiting-client-action-seconds` (mirrored env vars `LENNY_MAX_FINALIZING_STATE_TIMEOUT_SECONDS` etc.) to `cmd/lenny-gateway/main.go`, each defaulting to the matching `watchdog.DefaultMax*` constant. The `watchdog.New(...)` site now threads every flag value into `Config`; the admin validator (`adminRouter.WithMaxFinalizingTimeoutSeconds`) pins to the same flag so the §6.2 line 260 invariant stays consistent with the watchdog cap. Tier-1 test `TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables` asserts every Default constant is set. Committed in this batch.
+
+### - [x] F-11.3.12 — gRPC keepalive interval/timeout (gateway→pod) are not configured [Medium] — CLOSED
 
 Spec §11.3 lines 205-206: `grpc.keepaliveTimeMs` (10s) and `grpc.keepaliveTimeoutMs` (5s), configurable.
 
 `grep -rn "keepalive\|Keepalive\|KeepAlive" --include="*.go"` against pkg/ returns no matches (only an SSE comment in `sdks/client/go/lenny/stream_test.go`). The adapter client (`pkg/gateway/adapterclient/client.go`) and the gRPC servers (`cmd/lenny-gateway/main.go` gRPC dial sites, `pkg/adapter/server.go`) construct clients/servers without any `keepalive.ClientParameters` / `keepalive.ServerParameters` knobs — they accept the gRPC library defaults (no keepalive on the client side).
 
 Consequence: a half-open TCP connection between a gateway replica and a pod can persist past the §11.3 5s timeout, holding adapter state.
+
+**Resolution:** `cmd/lenny-gateway/main.go` now ships `--adapter-keepalive-time-ms` (default 10000) and `--adapter-keepalive-timeout-ms` (default 5000) plus `LENNY_ADAPTER_KEEPALIVE_TIME_MS` / `LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS` env vars, threading the values through `grpc.WithKeepaliveParams(keepalive.ClientParameters{...})` on the binder's adapter dials. `cmd/lenny-adapter/main.go` mirrors the flag surface and applies both `KeepaliveParams` (matching server timer) and `KeepaliveEnforcementPolicy` so the gateway pings are accepted. Tier-1 `TestEnvIntOr_spec_11_3` covers the env-helper edges. Committed in this batch.
 
 ### - [ ] F-11.3.13 — Coordinator-hold timeout (`adapter.coordinatorHoldTimeoutSeconds`, 120s) is absent [Medium] — OPEN
 
@@ -15024,17 +15028,21 @@ Spec §11.3 line 211: a 30s hard-coded per-hop forwarding budget.
 
 Implementation: `pkg/gateway/mcptools/elicitation.go` walks the elicitation chain via `dispatcher.dispatch` and verifies content digests at each hop, but there is no per-hop timeout — `grep -rn "forwarding.*timeout\|per-hop\|hop.*timeout\|forwardTimeout" pkg/` returns zero hits. The Walk uses the caller's context only.
 
-### - [ ] F-11.3.17 — `maxSuspendedPodHoldSeconds` (900s, deploy + tenant) is not implemented [Medium] — OPEN
+### - [x] F-11.3.17 — `maxSuspendedPodHoldSeconds` (900s, deploy + tenant) is not implemented [Medium] — CLOSED
 
 Spec §11.3 line 233. `grep -rn "MaxSuspended\|maxSuspended\|suspendedPodHold" --include="*.go"` returns no matches.
+
+**Resolution:** added `watchdog.DefaultMaxSuspendedPodHoldSeconds` (900) plus a `MaxSuspendedPodHoldSeconds` field on `watchdog.Config` with default-fill in `withDefaults`. `cmd/lenny-gateway/main.go` exposes `--max-suspended-pod-hold-seconds` (env `LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS`) and threads the value into the watchdog Config. The "more restrictive of deploy + tenant" §11.3 line 233 contract — both caps available, the smaller wins — is now expressible; the per-tenant tightener still depends on the tenant-config plumbing tracked separately. Tier-1 `TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables/MaxSuspendedPodHoldSeconds` covers the default. Committed in this batch.
 
 ### - [ ] F-11.3.18 — `task_complete_acknowledged` 30s hard-coded timeout is absent [Medium] — OPEN
 
 Spec §11.3 line 232. The `task_complete` / `task_complete_acknowledged` / `task_ready` lifecycle messages (§4.7) themselves are unimplemented: `grep -rn "task_complete\|TaskComplete" pkg/ --include="*.go" --include="*.proto"` returns only schema examples in `tests/tier0_static/schemas_test.go`. With no message, there is no timeout. Task-mode pod reuse cannot land without this.
 
-### - [ ] F-11.3.19 — `delegation.usageQuiescenceTimeoutSeconds` (5s) is not implemented [Medium] — OPEN
+### - [x] F-11.3.19 — `delegation.usageQuiescenceTimeoutSeconds` (5s) is not implemented [Medium] — CLOSED
 
 Spec §11.3 line 224. `grep -rn "usageQuiescence\|UsageQuiescence" --include="*.go"` returns zero hits.
+
+**Resolution:** `pkg/delegation/recovery/recovery.go` now declares `DefaultUsageQuiescenceTimeout = 5 * time.Second` and the `Config.UsageQuiescenceTimeout` field plus a `QuiescenceDeadline(lastReport)` helper so the §8.10 tree-recovery orchestrator threads one canonical knob. `cmd/lenny-gateway/main.go` exposes `--delegation-usage-quiescence-timeout-seconds` (env `LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS`), logs the effective value at startup, and constructs `recovery.Config{UsageQuiescenceTimeout: ...}` so the same value reaches the orchestrator. Tier-1 `TestQuiescenceDeadlineUsesDefault_spec_11_3_224` / `TestQuiescenceDeadlineHonorsOverride_spec_11_3_224` cover default and override paths. Committed in this batch.
 
 ### - [ ] F-11.3.20 — `credentials.expiryWarningLeadSeconds` (1h) is not implemented [Medium] — OPEN
 
@@ -15050,7 +15058,7 @@ Spec §11.3 lines 222-223 establish a cumulative time budget for the fail-open p
 
 Consequence: a long Redis outage keeps the gateway fail-open indefinitely; the spec's protective ceiling is unenforced.
 
-### - [ ] F-11.3.23 — `request_input` timeout error wording omits the `expiredAt` ISO timestamp and the structured error code [Medium] — OPEN
+### - [x] F-11.3.23 — `request_input` timeout error wording omits the `expiredAt` ISO timestamp and the structured error code [Medium] — CLOSED
 
 The §11.3 paragraph at line 238 specifies the timeout returns a `REQUEST_INPUT_TIMEOUT` error code; the current implementation embeds the literal string in a free-text message (`pkg/gateway/mcptools/mcptools.go:619-621`):
 
@@ -15061,6 +15069,8 @@ return mcp.ToolResult{}, fmt.Errorf(
 ```
 
 The runtime cannot parse the code out of the message; the §15.1 error envelope (which the MCP `mcp.NewToolError` constructor produces) is not used. Same gap on `ELICITATION_TIMEOUT` (`mcptools.go:809-811`). Compared to other §11.3 error codes (`INTERCEPTOR_TIMEOUT` is a defined constant at `pkg/gateway/interceptor/interceptor.go:121-123`), these two are string-substring matches.
+
+**Resolution:** the structured `mcp.NewToolError("REQUEST_INPUT_TIMEOUT", ...)` envelope had already replaced the `fmt.Errorf` form in F-8.5.10 (the finding's evidence is stale on the code-path), but the spec-mandated `expiredAt` ISO 8601 detail was missing. Both REQUEST_INPUT_TIMEOUT and ELICITATION_TIMEOUT now carry `expiredAt` (RFC3339Nano UTC) alongside `requestId` / `elicitationId`, `timeoutSeconds`, and `timeout`. Tier-1 `TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238` asserts every detail field plus RFC3339Nano parsability. Committed in this batch.
 
 ---
 

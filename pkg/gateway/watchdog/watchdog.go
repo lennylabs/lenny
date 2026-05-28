@@ -101,6 +101,15 @@ const (
 	// `sweepAwaitingClientAction` below.
 	DefaultMaxAwaitingClientActionSeconds = 900
 
+	// DefaultMaxSuspendedPodHoldSeconds is the §11.3 line 233 wall-clock
+	// cap on the suspended pod-hold window. A session that has been
+	// `suspended` longer than this releases its pod (and transitions to
+	// `expired` if no resume has begun). Both deploy-wide and per-tenant
+	// caps apply; the more restrictive wins, per §11.3 line 233. The
+	// per-tenant cap is read from tenant configuration when present and
+	// otherwise falls back to this platform default. spec: §11.3 line 233.
+	DefaultMaxSuspendedPodHoldSeconds = 900
+
 	// DefaultMaxResumePendingSeconds is the §6.2 line 292 / §7.3 line
 	// 404 default for the `resume_pending` wall-clock cap: 900s. A
 	// session that has waited this long for a pod to become available
@@ -144,6 +153,12 @@ type Config struct {
 	// awaiting_client_action state: a session that has waited this
 	// long for client action is expired.
 	MaxAwaitingClientActionSeconds int
+	// MaxSuspendedPodHoldSeconds is the §11.3 line 233 deploy-wide cap
+	// on the suspended pod-hold window. The per-tenant cap (when set)
+	// further tightens this; the watchdog applies the more-restrictive
+	// of the two for each row. A zero value falls through to
+	// DefaultMaxSuspendedPodHoldSeconds.
+	MaxSuspendedPodHoldSeconds int
 	// MaxResumePendingSeconds is the §6.2 line 292 wall-clock cap on
 	// resume_pending. On expiry the session transitions to
 	// awaiting_client_action so the client can intervene. The
@@ -181,6 +196,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxAwaitingClientActionSeconds <= 0 {
 		c.MaxAwaitingClientActionSeconds = DefaultMaxAwaitingClientActionSeconds
+	}
+	if c.MaxSuspendedPodHoldSeconds <= 0 {
+		c.MaxSuspendedPodHoldSeconds = DefaultMaxSuspendedPodHoldSeconds
 	}
 	if c.MaxResumePendingSeconds <= 0 {
 		c.MaxResumePendingSeconds = DefaultMaxResumePendingSeconds

@@ -41,7 +41,10 @@ import (
 	"strconv"
 	"syscall"
 
+	"time"
+
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
@@ -120,6 +123,16 @@ func main() {
 		"§13.2 (NET-059) dev/make-run escape hatch: write observability.otlpTlsEnabled=false "+
 			"so the runtime accepts an http:// OTLP endpoint; production keeps this false and "+
 			"uses an https:// endpoint")
+	// spec: §11.3 lines 205-206 — gateway→pod keepalive: 10s interval,
+	// 5s timeout. The server-side EnforcementPolicy keeps the gateway's
+	// client params (the 10s interval) from triggering an
+	// ENHANCE_YOUR_CALM. F-11.3.12.
+	keepaliveTimeMs := flag.Int("keepalive-time-ms",
+		envIntOr("LENNY_ADAPTER_KEEPALIVE_TIME_MS", 10_000),
+		"§11.3 line 205 keepalive interval (ms) for gRPC pings from the gateway. Default 10000ms.")
+	keepaliveTimeoutMs := flag.Int("keepalive-timeout-ms",
+		envIntOr("LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS", 5_000),
+		"§11.3 line 206 keepalive timeout (ms) the gateway waits for a ping reply. Default 5000ms.")
 	flag.Parse()
 
 	if *runtimeBin != "" && *runtimeSocket != "" {
@@ -153,6 +166,22 @@ func main() {
 	if tlsOpt != nil {
 		opts = append(opts, tlsOpt)
 	}
+	// spec: §11.3 lines 205-206 — server-side keepalive that mirrors the
+	// gateway's client params. MinTime guards against an over-aggressive
+	// client; PermitWithoutStream allows the gateway's idle pings to
+	// keep the connection observably alive. F-11.3.12.
+	keepaliveTime := time.Duration(*keepaliveTimeMs) * time.Millisecond
+	keepaliveTimeout := time.Duration(*keepaliveTimeoutMs) * time.Millisecond
+	opts = append(opts,
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             keepaliveTime / 2,
+			PermitWithoutStream: true,
+		}),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    keepaliveTime,
+			Timeout: keepaliveTimeout,
+		}),
+	)
 
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
@@ -236,4 +265,19 @@ func main() {
 	if err := srv.Serve(lis); err != nil {
 		log.Fatalf("lenny-adapter: serve: %v", err)
 	}
+}
+
+// envIntOr returns the integer value of the named environment variable,
+// or def when the variable is unset or not parseable. spec: §11.3.
+func envIntOr(name string, def int) int {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		log.Printf("lenny-adapter: ignoring unparseable %s=%q", name, v)
+		return def
+	}
+	return n
 }

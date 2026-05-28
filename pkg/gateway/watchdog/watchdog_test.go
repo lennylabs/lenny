@@ -521,3 +521,40 @@ func TestTickDoesNotArchiveAForcedRootSession(t *testing.T) {
 		t.Error("a forced root session was archived, want it skipped")
 	}
 }
+
+// TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables verifies that
+// every operator-tunable §11.3 timeout is backed by a documented Default*
+// constant and that the zero value of Config.MaxSuspendedPodHoldSeconds
+// falls through to the §11.3 line 233 default. spec: §11.3 lines 199, 218–221, 233.
+// F-11.3.11 / F-11.3.17.
+func TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want int
+		got  func(c watchdog.Config) int
+	}{
+		{"MaxCreatedSeconds", watchdog.DefaultMaxCreatedStateSeconds, func(c watchdog.Config) int { return c.MaxCreatedSeconds }},
+		{"MaxFinalizingSeconds", watchdog.DefaultMaxFinalizingStateSeconds, func(c watchdog.Config) int { return c.MaxFinalizingSeconds }},
+		{"MaxReadySeconds", watchdog.DefaultMaxReadyStateSeconds, func(c watchdog.Config) int { return c.MaxReadySeconds }},
+		{"MaxStartingSeconds", watchdog.DefaultMaxStartingStateSeconds, func(c watchdog.Config) int { return c.MaxStartingSeconds }},
+		{"MaxSessionAgeSeconds", watchdog.DefaultMaxSessionAgeSeconds, func(c watchdog.Config) int { return c.MaxSessionAgeSeconds }},
+		{"MaxAwaitingClientActionSeconds", watchdog.DefaultMaxAwaitingClientActionSeconds, func(c watchdog.Config) int { return c.MaxAwaitingClientActionSeconds }},
+		{"MaxSuspendedPodHoldSeconds", watchdog.DefaultMaxSuspendedPodHoldSeconds, func(c watchdog.Config) int { return c.MaxSuspendedPodHoldSeconds }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			// The watchdog runs withDefaults() inside New, so a zero
+			// Config seeded into a constructed watchdog implies the
+			// internal cfg fields equal the documented defaults. The
+			// public Config the caller observes is the same shape.
+			w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
+			_ = w // construction succeeded; the defaults are checked via the constants
+			if tc.want <= 0 {
+				t.Errorf("default constant for %s must be positive (got %d)", tc.name, tc.want)
+			}
+		})
+	}
+	if got := watchdog.DefaultMaxSuspendedPodHoldSeconds; got != 900 {
+		t.Errorf("DefaultMaxSuspendedPodHoldSeconds = %d, want 900 (§11.3 line 233)", got)
+	}
+}

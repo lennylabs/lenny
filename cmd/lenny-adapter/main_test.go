@@ -36,3 +36,32 @@ func TestResolveRuntimeUID_spec_4_7(t *testing.T) {
 		})
 	}
 }
+
+// TestEnvIntOr_spec_11_3 covers the helper that backs the §11.3 keepalive
+// flag defaults: a present-and-valid env wins, anything else falls back
+// to the default. F-11.3.12.
+func TestEnvIntOr_spec_11_3(t *testing.T) {
+	tests := []struct {
+		name   string
+		setEnv bool
+		val    string
+		def    int
+		want   int
+	}{
+		{name: "valid env wins", setEnv: true, val: "12345", def: 10_000, want: 12_345},
+		{name: "empty env returns default", setEnv: true, val: "", def: 10_000, want: 10_000},
+		{name: "unparseable env returns default", setEnv: true, val: "not-a-number", def: 5_000, want: 5_000},
+		{name: "unset env returns default", setEnv: false, def: 5_000, want: 5_000},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.setEnv {
+				t.Setenv("LENNY_KEEPALIVE_TEST", tc.val)
+			}
+			got := envIntOr("LENNY_KEEPALIVE_TEST", tc.def)
+			if got != tc.want {
+				t.Errorf("envIntOr() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
