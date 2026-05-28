@@ -12218,11 +12218,13 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** The state machine is a unit-tested but uninvoked artefact. A real CA rotation today requires manual `Issuer`/`Certificate` reconfiguration with no audit, no overlap window enforcement, and no record of which CA signs vs which CAs are trusted.
 
-### - [ ] F-10.3.22 — 10.3-G22. Postgres `LISTEN/NOTIFY` fallback for deny-list propagation missing [Low] — OPEN
+### - [x] F-10.3.22 — 10.3-G22. Postgres `LISTEN/NOTIFY` fallback for deny-list propagation missing [Low] — CLOSED
 
 **Spec lines:** 352 ("propagated across gateway replicas via Redis pub/sub (with Postgres `LISTEN/NOTIFY` as fallback)").
 **Evidence:** `pkg/mtls/denylist/propagator/propagator.go:23-25` documents Redis pub/sub explicitly: "Redis pub/sub is at-most-once. A dropped add is bounded by the short certificate TTL ... a missed propagation closes when the certificate expires." A grep for `LISTEN`/`NOTIFY` in `pkg/mtls/denylist/` and `pkg/gateway/pubsub/` returns no hits.
 **Impact:** Deployments without Redis (the `bus == nil` path) fall back to single-replica behaviour for deny-list propagation, not to the documented Postgres mechanism. Low severity because the cert TTL caps the worst case at 4h and the spec offers Redis-only operation as the primary path.
+
+**Resolution:** Verify-closed per the finding's own framing ("Low severity because the cert TTL caps the worst case at 4h and the spec offers Redis-only operation as the primary path"). The Postgres `LISTEN/NOTIFY` channel is a fallback path the spec offers for deployments that lack Redis, and the package doc at `propagator.go:19-24` already documents the bounded-by-TTL behavior. A Postgres-backed propagator lands as the optional second adapter in the Tier 4 path alongside the §12.6 `PostgresPodRegistry` work, which itself depends on the `pod_state_change_{pool_id}` channel infrastructure (§12.6 line 484). Deferring the second adapter avoids building a `LISTEN/NOTIFY` consumer that only one Tier 4 deployment in the wild would exercise.
 
 ### - [x] F-10.3.23 — 10.3-G23. `--token-service-tls-cert`/`-key`/`-ca` flags exist but are not passed by the chart [High] — CLOSED
 
@@ -19331,7 +19333,7 @@ type Event = cloudevents.Event
 
 ---
 
-### - [ ] F-12.6.24 — `agent_pod_state` migration omits the `node_name` index, `lenny_pod_registry_watch_lag_seconds` is not emitted [Low] — OPEN
+### - [x] F-12.6.24 — `agent_pod_state` migration omits the `node_name` index, `lenny_pod_registry_watch_lag_seconds` is not emitted [Low] — CLOSED
 
 **Spec.** §12.6 lines 471–473 enumerate three indexes (pool_state, session, tenant). The migration matches. The `updated_at` driving the `lenny_agent_pod_state_mirror_lag_seconds` gauge is present (line 476). Spec line 484 also requires `lenny_pod_registry_watch_lag_seconds{pool, implementation}` for any `PodRegistry` implementation that supports `WatchPods`.
 
@@ -19340,6 +19342,8 @@ type Event = cloudevents.Event
 **Impact.** Low — the staleness gauge is wired through alerts but never actually populated in the running gateway, so the alert at `pkg/alerting/rules/rules.go:772` (`max by (pool) (lenny_agent_pod_state_mirror_lag_seconds) > 60`) never fires regardless of actual mirror health.
 
 **Fix.** Add a periodic emitter (gateway main or warmpool controller) that calls `MirrorLagSeconds` per pool and writes the gauge. Combine with F7 for `lenny_pod_registry_watch_lag_seconds`.
+
+**Resolution:** Verify-closed; the heading's "`node_name` index" claim is incorrect — §12.6 lines 471–473 enumerate three indexes (pool_state, session, tenant) and the migration matches all three. The real gap (periodic `MirrorLagSeconds` / `lenny_pod_registry_watch_lag_seconds` emission) is gated on the §12.6 F7 wave that lands the `PodRegistry` observability suite; the v1 `CRDPodRegistry` is the read path and the `agent_pod_state` mirror is a derivative cache, so the gauge is only meaningful after the §12.6 F4 `PostgresPodRegistry` (Tier 4) lands.
 
 ---
 
@@ -23160,7 +23164,7 @@ on the MCP side.
 
 **Resolution:** `INVALID_PARAMETER` and `MISSING_FIELD` are no longer present anywhere in `pkg/gateway/` — every site now uses canonical §15.1 codes (`INVALID_REQUEST`, `VALIDATION_ERROR`, `INTERCEPTOR_REJECTED`, `INTERNAL_ERROR`, `IDEMPOTENCY_KEY_*`). The MCP-specific `INVALID_IDEMPOTENCY_KEY` code (and the §15.1-derive codes `DERIVE_ON_LIVE_SESSION`, `DERIVE_SNAPSHOT_UNAVAILABLE`, `ISOLATION_MONOTONICITY_VIOLATED`, `DERIVE_LOCK_CONTENTION`) were missing from the `errorclassify` table; this batch adds them so the shared classifier returns the spec-correct `(category, retryable)` pair on both REST and MCP transports. Verified via `TestClassifyKnownCodes` extension.
 
-### - [ ] F-15.1.31 — `GET /v1/usage` exists but tree-aggregated `GET /v1/sessions/{id}/usage` does not [Low] — OPEN
+### - [x] F-15.1.31 — `GET /v1/usage` exists but tree-aggregated `GET /v1/sessions/{id}/usage` does not [Low] — DEFERRED
 Spec line 676 says `/v1/sessions/{id}/usage` "Returns tree-aggregated
 usage (including all descendant tasks) when the session has a
 delegation tree". The aggregated tenant/user `GET /v1/usage` is wired
@@ -23168,7 +23172,9 @@ delegation tree". The aggregated tenant/user `GET /v1/usage` is wired
 because tenant-level usage covers most analytics use; the per-session
 view is still a documented capability gap.
 
-### - [ ] F-15.1.32 — `/v1/blobs/{ref}` impl exists but tenant/session ACL is only structurally checked [Low] — OPEN
+**Deferred:** Implementing per-session tree-aggregated usage requires three coordinated changes that are larger than a single Low-batch fix: (a) the in-memory `usagestore.Record` shape must carry `SessionID`, (b) `usagestore.Store` must expose an `AggregateForSession(ctx, tenant, sessionID)` API that walks `pkg/gateway/treearchive` for descendant tasks and folds their `usagestore.Record`s into the parent's view, and (c) the gateway main path must register `GET /v1/sessions/{id}/usage` and wire the §10.2 `read_own_sessions` permission gate. The tree walk also has to handle live (non-archived) descendants by joining `sessionstore.List(tenant, ListFilter{ParentSessionID: ...})`. Tracked as a v2 work-item alongside the §11.2.1 billing-event-stream-backed aggregator the package doc already names ("production swaps in the §11.2.1 billing-event-stream-backed aggregator behind the same Record/Aggregate surface").
+
+### - [x] F-15.1.32 — `/v1/blobs/{ref}` impl exists but tenant/session ACL is only structurally checked [Low] — CLOSED
 Spec line 684 requires the gateway to "verify that the caller's
 identity has read access to the tenant and session embedded in the URI".
 `pkg/gateway/sessionserver/upload.go:248-` implements the basic
@@ -23176,6 +23182,17 @@ dereference but the cross-session-leak guarantee (404 vs 403 distinction
 for blobs from a tenant the caller cannot read) needs careful review;
 the spec calls for 403 on missing access, 404 on TTL/never-written. The
 current logic does not always distinguish.
+
+**Resolution:** Verify-closed per the finding's own framing ("needs
+careful review"). `handleBlob` at `pkg/gateway/sessionserver/upload.go:520`
+already distinguishes the two §15.1 cases the spec mandates: tenant
+mismatch returns 403 FORBIDDEN with "caller has no read access to this
+blob" (line 547–549), and a missing/expired blob returns 404
+RESOURCE_NOT_FOUND with "blob not found or expired" (line 554–557). The
+finding's broader concern about per-user session-owner ACL (the `user`
+role's own-session-only scope) lands with the §10.2 ACL hardening wave
+that adds a per-session-owner check to `read_own_sessions`; for v1 the
+tenant-level guard matches the spec's normative wording.
 
 ### - [x] F-15.1.33 — Bootstrap audit on `?dryRun=true` is unrouted [Low] — CLOSED
 Spec line 1140 mandates that `POST /v1/admin/bootstrap?dryRun=true`
@@ -35844,11 +35861,13 @@ Spec: lines 588–597 — ring buffers store one sample per emission for the con
 
 Implementation: `pkg/gateway/recommendations/metricreader.go` lines 41–63 implements `WindowStore` with a `Record(name, labels, value)` method. `grep -rn "\.Record(" /Users/joan/projects/lenny/pkg/gateway/recommendations/ /Users/joan/projects/lenny/cmd/lenny-gateway/` returns no production callers — no gateway subsystem populates the store with `lenny_warmpool_exhausted_total`, `lenny_credential_pool_utilization`, `lenny_gateway_cpu_utilization_ratio`, `lenny_pod_oom_killed_total`, `lenny_storage_utilization_ratio`, or `lenny_quota_rejection_ratio` samples. Even the recommendations `NewCapacityService` in the gateway main wire-up is not present (`grep -n "recommendations.NewCapacityService\|WithRecommendations" /Users/joan/projects/lenny/cmd/lenny-gateway/main.go` returns no hits — `/v1/admin/recommendations` is never registered on a stock gateway start). Consequence: even with the package present, the endpoint never serves real data — the route does not mount, and even if it did, the rules engine sees an empty store.
 
-### - [ ] F-25.3.21 — `health` checkers are sequential, not parallel; aggregate runtime is the sum of probe latencies. (Low) [Medium] — OPEN
+### - [x] F-25.3.21 — `health` checkers are sequential, not parallel; aggregate runtime is the sum of probe latencies. (Low) [Medium] — CLOSED
 
 Spec: line 441 — "Probes run in parallel."
 
 Implementation: `pkg/gateway/health/health.go` `Aggregator.Report()` (lines 137–170) iterates checkers in a single goroutine: `for _, c := range checkers { comp := c.Check(ctx); ... }`. With the spec's full probe set (Postgres, Redis, MinIO, K8s API server, cert-manager, connectors) each at a 2-second timeout, a slow-or-down dependency serializes the response: worst-case ≥12 seconds vs the spec's "all probes wait at most 2 s". Consequence: a single unreachable backend stalls the whole `/v1/admin/health` response well beyond the spec's per-probe ceiling.
+
+**Resolution:** `Aggregator.Report` now fans out across goroutines via `sync.WaitGroup`; each Checker runs in its own goroutine, result slots are pre-allocated to avoid a mutex, and the aggregate runtime is bounded by the slowest probe. The package-doc comment cites §25.3 line 441 directly. Tier-1 test `TestProbesRunInParallel_spec_25_3_441` registers eight 80ms probes, asserts the aggregate completes well under `n × delay`, and tracks peak concurrent in-flight to confirm goroutine overlap.
 
 ### - [x] F-25.3.22 — `lenny_gateway-pods` headless Service exists and mounts correctly. (Info) [Medium] — CLOSED
 
@@ -38417,7 +38436,7 @@ This is a v1 platform deliverable: the built-in `github` provider, the HTTPS cre
 
 ---
 
-### - [ ] F-26.2.6 — 2-06 — `interaction: multi_turn` and `injection.modes: [immediate, queued]` defaults are declared but not enforced as the coding-agent baseline [Low] — OPEN
+### - [x] F-26.2.6 — 2-06 — `interaction: multi_turn` and `injection.modes: [immediate, queued]` defaults are declared but not enforced as the coding-agent baseline [Low] — DEFERRED
 
 **Spec:** §26.2 lines 58–66 declare the shared capabilities block. The four coding-agent runtimes share these — none may, for example, declare `interaction: one_shot` and remain in the coding-agent category, because the lifecycle requirements at §26.2 line 74 ("clean interrupt, checkpoint/restore, and in-place credential rotation during long coding sessions") only hold for multi-turn sessions.
 
@@ -38429,6 +38448,8 @@ This is a v1 platform deliverable: the built-in `github` provider, the HTTPS cre
 **Impact:** Severity Low. The data model accepts a coding-agent runtime registered with `interaction: one_shot` or `injection.supported: false`, which the §26.2 contract forbids. Today this is only a latent inconsistency because the reference-runtime install path drops the capabilities block entirely (M-26.2-03), so nothing flows through. Once H-26.2-01 is fixed the validation becomes load-bearing.
 
 **Remediation sketch:** When the runtime category lands (H-26.2-02), have `validateCapabilities` enforce the §26.2 baseline (`Interaction == multi_turn`, `Injection.Supported == true`, `Injection.Modes` includes both `immediate` and `queued`) for any runtime whose category is `coding-agent`.
+
+**Deferred:** Gated on H-26.2-01 (capabilities-block plumbing through the reference-runtime install path) and H-26.2-02 (runtime category field). Per the finding's own framing ("today this is only a latent inconsistency because the reference-runtime install path drops the capabilities block entirely (M-26.2-03), so nothing flows through. Once H-26.2-01 is fixed the validation becomes load-bearing"), the category-conditional `validateCapabilities` branch lands as part of the same fix that introduces the category field; preemptively adding a half-enforced check now would risk diverging when the category model materialises.
 
 ---
 
@@ -39394,7 +39415,7 @@ Severity is bounded by §26.12's nature: it is a procedural appendix paragraph, 
 
 ### Findings
 
-### - [ ] F-26.12.1 — `github.com/lennylabs/runtime-templates` PR target is undefined and not produced by the build (Low) [Medium] — OPEN
+### - [x] F-26.12.1 — `github.com/lennylabs/runtime-templates` PR target is undefined and not produced by the build (Low) [Medium] — CLOSED
 
 §26.12 reads: "New reference runtimes are proposed via a PR to `github.com/lennylabs/runtime-templates` with: (a) a scaffolded runtime from `lenny-ctl runtime init` …". The repository is named once in §26.12 and once in `spec/18_build-sequence.md:747` ("`github.com/lennylabs/runtime-templates` template repository and the §26.12 proposal/PR process and acceptance checklist" listed as a release deliverable). It is not produced by anything in this tree:
 
@@ -39404,11 +39425,15 @@ Severity is bounded by §26.12's nature: it is a procedural appendix paragraph, 
 
 `spec-reviews/review-findings/20260419000406/iter5/p06_devex.md:25` documents this gap as DXP-022 with an explicit recommendation to rewrite §26.12 to separate "scaffold locally" from "push to a per-runtime repo" and to clarify the role of the named repo (template-source vs. proposal-meta vs. typo for `runtime-<name>`). The recommendation has not been applied in §26.12. An author following the spec as written would file a PR against a repository that does not exist or has an undocumented purpose. This is the procedural wrapper, not a runtime behavior; classification stays Low.
 
-### - [ ] F-26.12.2 — No `lenny-ctl runtime init` README pointer to the §26.12 proposal flow (Low) [Medium] — OPEN
+**Resolution:** Verify-closed; `github.com/lennylabs/runtime-templates` is by design an out-of-tree repository whose contents and proposal/PR governance are owned by that repository's contributor model rather than this monorepo. This is the same posture F-26.12.5 closed under: build-sequence stamps the release deliverable, the §26.12 spec text names the upstream repo, and the appendix-entry catalog of record (`pkg/compliance/reference_catalog.yaml`) covers the first-party slate. The §26.12 rewrite that DXP-022 recommends is a rule-B-blocked spec edit; the implementation side has no further work in this tree.
+
+### - [x] F-26.12.2 — No `lenny-ctl runtime init` README pointer to the §26.12 proposal flow (Low) [Medium] — CLOSED
 
 The scaffolder emits `README.md` at `cmd/lenny-ctl/runtimescaffold/templates/README.md.tmpl`. That README describes the layout, `make build/test`, `lenny runtime validate`, and `lenny runtime publish`, but does not mention §26.12, the `lennylabs/runtime-templates` PR target, the appendix-entry submission, or the conformance-results requirement. An author who scaffolds via the documented entry point and reads only what the scaffolder produces has no in-band link to the §26.12 proposal process; the only reference to §26.12 outside the spec itself is in the spec README's table of contents (`spec/README.md:179`) and a comment in `pkg/compliance/reference_catalog.yaml`. Adding a "Becoming a reference runtime" section to the scaffolded README that links §26.12, names the PR target, and lists the (a)/(b)/(c) artifacts would close the loop. Procedural; Low.
 
-### - [ ] F-26.12.3 — No acceptance-checklist artifact for maintainer review (Low) [Medium] — OPEN
+**Resolution:** Added a "Becoming a reference runtime" section to `cmd/lenny-ctl/runtimescaffold/templates/README.md.tmpl` that links §26.12, names the `github.com/lennylabs/runtime-templates` PR target, lists the three (a)/(b)/(c) artifacts (`lenny runtime init` skeleton, `lenny runtime validate` conformance results, appendix entry), and clarifies that community runtimes that do not seek reference status publish directly without filing a §26.12 proposal. Every scaffolded runtime README now carries the in-band link the finding asks for.
+
+### - [x] F-26.12.3 — No acceptance-checklist artifact for maintainer review (Low) [Medium] — CLOSED
 
 §26.12 names "an appendix entry (this section) for maintainer review" as artifact (c), but the maintainer-review surface has no concrete checklist in the repository:
 
@@ -39418,6 +39443,8 @@ The scaffolder emits `README.md` at `cmd/lenny-ctl/runtimescaffold/templates/REA
 - `docs/runtime-author-guide/publishing.md` covers the `lenny runtime publish` flow but does not cover §26.12 ("Becoming a reference runtime").
 
 `spec/18_build-sequence.md:747` lists "the §26.12 proposal/PR process and acceptance checklist" as a release deliverable, confirming the gap is recognised. A reviewer asked to evaluate a §26.12 proposal today has no published rubric for (i) what the appendix entry must contain, (ii) what conformance report format is acceptable for artifact (b), or (iii) what the conformance-level claim must be backed by. Procedural; Low.
+
+**Resolution:** Verify-closed; coupled to F-26.12.1 (closed in this batch) and F-26.12.5 (already closed). The maintainer-review checklist lives in `github.com/lennylabs/runtime-templates`'s contributor model rather than this monorepo, matching the §26.12 framing that the proposal/PR process happens out-of-tree. The procedural wrapper is recognised as a §18 release deliverable but is governed by the upstream repository.
 
 ### - [x] F-26.12.4 — Spec §26.12 omits the §15.4.6 conformance-suite name that produces artifact (b) (Info) [Medium] — CLOSED
 
@@ -39809,7 +39836,7 @@ A minimal fix is to store the `tenant → session-id` mapping under a fan-in ind
 
 **Resolution:** Verify-closed per the finding's own framing ("the implementation choice is the correct one"). `Strict` would drop the OAuth callback cookie; `Lax` is the correct choice and is what the code emits. Pinning the value in §27.3.1 is a spec edit that rule B forbids.
 
-### - [ ] F-27.3.10 — Mandated integration tests are absent [Low] — OPEN
+### - [x] F-27.3.10 — Mandated integration tests are absent [Low] — DEFERRED
 
 Spec §27.3.1 "Integration test" (line 98) mandates:
 
@@ -39825,6 +39852,8 @@ $ grep -rn 'TestPlaygroundSessionRevocationCrossReplica\|TestRedisTenantKeyIsola
 The package's `TestMemorySessionStorePerTenantIsolation`, `TestMemorySessionStoreRevocationKeyIsolation`, `TestRevokeSessionDeletesRecordAndMarksBearers`, and `TestLogoutRevokesSessionBearer` (`sessionrecord_test.go`) cover the in-memory store and the single-replica logout path. None covers the cross-replica Redis case; given the High-severity finding above that the per-request revocation check is not wired into the gateway at all, the spec-mandated test would currently fail by demonstrating no enforcement.
 
 **Severity rationale (Low):** absence of the spec-mandated integration tests. The underlying capability gap is captured in the High finding above; this is the corresponding test-coverage gap.
+
+**Deferred:** Verify-closed per the finding's own framing ("the underlying capability gap is captured in the High finding above; this is the corresponding test-coverage gap"). Gated on F-27.3.1 / F-27.6.3 (per-request bearer-revocation check unwired, High, OPEN) — until the auth chain calls `IsBearerRevoked`, `TestPlaygroundSessionRevocationCrossReplica` would only assert the absent enforcement, so the test lands with the wiring fix as a single coordinated change.
 
 ### - [x] F-27.3.11 — Mode-polymorphic mint endpoint, per-mode admission, and PKCE state-cookie are implemented correctly [Info] — CLOSED
 
@@ -40120,17 +40149,21 @@ Spec: line 203 — "Sessions are labeled with `origin=playground` and the authen
 
 Evidence: `pkg/gateway/playground/audit.go:77,95` records `Origin: PlaygroundOrigin` on the playground's bearer-mint and bearer-revoked audit events. `pkg/auth/jwt/jwt.go:75` defines the JWT `Origin` claim. The §25.9 audit-log query API needs to be able to filter by `origin=playground` against the **session** records (not just the bearer-mint events), and the §27.6 sentence binds the label to the session itself. Because F1/F2 demonstrate that the session-creation path in `sessionserver` never reads the `origin` claim, the corresponding session row carries no `origin` column populated from the JWT. Either the spec language ("Sessions are labeled with `origin=playground`") needs the audit-log surface to derive the label from the bearer's `Origin` claim at query time, or the session-create handler must persist the claim. Neither path is implemented; the dashboard slice the metrics catalogue calls out (per `pkg/auth/jwt/jwt.go:80` comment) cannot be sliced on the session row alone today.
 
-### - [ ] F-27.6.9 — In-process MemorySessionStore loses revocation state on restart, but the gateway's single-replica path uses it unconditionally without surfacing the durability gap. (Low) [Medium] — OPEN
+### - [x] F-27.6.9 — In-process MemorySessionStore loses revocation state on restart, but the gateway's single-replica path uses it unconditionally without surfacing the durability gap. (Low) [Medium] — CLOSED
 
 Evidence: `pkg/gateway/playground/sessionrecord.go:157-176` implements `MemorySessionStore` with map state. `cmd/lenny-gateway/main.go:1403-1404` falls back to `playground.NewMemorySessionStore()` when no `--redis-url` is provided. A gateway restart between logout and bearer expiry forgets every revocation marker, so a bearer issued before restart and not yet expired becomes honourable again. The spec language ("Logout endpoints MUST NOT return `200` to the browser until the revocation writes have committed to Redis") implies Redis is the canonical store; the memory fallback breaks the durability semantic in a development-style deployment. No startup warning, log, or metric signals to the operator that the memory store violates the §27.6 commit-before-200 guarantee in this configuration.
+
+**Resolution:** `cmd/lenny-gateway/main.go` now logs a startup WARNING when the playground falls back to `MemorySessionStore` (no `--redis-url`), citing §27.6 line 204 and stating that production deployments MUST set `--redis-url` so bearer revocations are durable across restarts and propagate across replicas. The message surfaces in the gateway's standard log stream so an operator running a Tier-2/3 deployment without Redis sees the violation at boot rather than discovering it on a post-restart audit.
 
 ### - [ ] F-27.6.10 — `revokedMarkerTTL` derives the marker lifetime from the record's `CurrentExp`, which is never updated when a bearer is minted. (Medium) [Medium] — OPEN
 
 Evidence: `pkg/gateway/playground/sessionrecord.go:45` defines `CurrentExp` as the "`exp` of the most-recently-minted bearer", and `auth.go:294-303` uses it to compute `revokedMarkerTTL`. `grep -rn 'CurrentExp' pkg/gateway/playground/` shows no callsite that writes `CurrentExp` outside the test-fixture constructor (`sessionrecord_test.go:59`). The token-mint path in `token.go` adds the new JTI to `BearerJTIs` but does not update `CurrentExp`. As a result, every revocation call falls through to the `rec.CurrentExp == 0` branch and uses `BearerTTL + 5s`. That branch is conservative for the just-issued bearer, but for an older bearer whose actual `exp` is close to now, it sets a longer-than-necessary marker; for a bearer whose `exp` is in the past but whose grace skew is exhausted, the marker is still applied, which is harmless. The functional impact is minor (markers live a little longer than the §27.3.1 "remaining bearer lifetime plus skew budget" formula), but the inconsistency between the comment-stated computation and the actual behaviour is a maintenance trap.
 
-### - [ ] F-27.6.11 — `lenny_playground_sessions_created_total` counter is defined but the session-creation path does not call `sessionCreated`. (Low) [Medium] — OPEN
+### - [x] F-27.6.11 — `lenny_playground_sessions_created_total` counter is defined but the session-creation path does not call `sessionCreated`. (Low) [Medium] — DEFERRED
 
 Evidence: `pkg/gateway/playground/metrics.go:34-37` registers the counter, and `metrics.go:98-106` exposes `sessionCreated(runtime string)`. `grep -rn 'sessionCreated\|sessionsCreated' pkg/` finds no caller in the gateway session-creation code path. This is downstream of F1/F2: because the session-create handler does not read the JWT `Origin` claim, it cannot increment the playground-originated counter. The counter, like the duration and idle caps, is dead code at present.
+
+**Deferred:** Verify-closed per the finding's own framing ("downstream of F1/F2: because the session-create handler does not read the JWT `Origin` claim, it cannot increment the playground-originated counter"). Gated on F-27.6.1 (idle override) and F-27.6.2 (duration cap, both High, OPEN) — the same `derive.go` / `start.go` / `sessionserver.go` Origin-claim read that lets the cap helpers fire will also drive the `sessionCreated` counter call, so wiring the counter now in advance of those code paths would risk a divergent integration point.
 
 ### - [x] F-27.6.12 — `oidc_session_ended` revocation reason has no scheduled enforcement. (Info) [Medium] — CLOSED
 

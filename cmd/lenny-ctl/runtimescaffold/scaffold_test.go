@@ -241,6 +241,41 @@ func TestGenerateWritesFileSet(t *testing.T) {
 	}
 }
 
+// TestScaffoldedREADMEPointsToBecomingReferenceRuntime_spec_26_12
+// asserts the scaffolder-emitted README links the §26.12 proposal flow
+// so a runtime author following the documented entrypoint sees the
+// path to the first-party reference catalog and the three artifacts
+// the proposal carries (scaffolded skeleton, conformance results,
+// appendix entry).
+// spec: §26.12.
+func TestScaffoldedREADMEPointsToBecomingReferenceRuntime_spec_26_12(t *testing.T) {
+	base := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := Generate(Spec{
+		Name:     "rt",
+		Language: LangGo,
+		Template: TemplateMinimal,
+	}, base, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("generate: exit %d, stderr=%q", code, stderr.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(base, "rt", "README.md"))
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	body := string(raw)
+	for _, marker := range []string{
+		"Becoming a reference runtime",
+		"§26.12",
+		"github.com/lennylabs/runtime-templates",
+		"lenny runtime validate",
+		"§15.4.6",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Errorf("scaffolded README lacks marker %q", marker)
+		}
+	}
+}
+
 // TestGenerateBinaryMinimalHasNoSDKImport checks that the binary+minimal
 // skeleton carries no runtime-author SDK dependency (§24.18 Basic-level
 // "zero Lenny knowledge" promise).

@@ -133,7 +133,13 @@ func (a *Aggregator) Register(c Checker) {
 	a.checkers[c.Name()] = c
 }
 
-// Report runs every registered Checker and returns the aggregate.
+// Report runs every registered Checker and returns the aggregate. The
+// checkers fan out across goroutines so the aggregate runtime is
+// bounded by the slowest probe rather than the sum of all probe
+// latencies; the 2-second per-probe timeout is enforced by the
+// individual Checker implementations against the supplied context.
+// spec: §25.3 line 441 — "Each probe has a hard timeout of 2 seconds.
+// Probes run in parallel."
 func (a *Aggregator) Report(ctx context.Context) Report {
 	a.mu.RLock()
 	checkers := make([]Checker, 0, len(a.checkers))
@@ -142,14 +148,23 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 	}
 	a.mu.RUnlock()
 
-	components := make([]Component, 0, len(checkers))
+	components := make([]Component, len(checkers))
+	var wg sync.WaitGroup
+	for i, c := range checkers {
+		wg.Add(1)
+		go func(i int, c Checker) {
+			defer wg.Done()
+			comp := c.Check(ctx)
+			if comp.Name == "" {
+				comp.Name = c.Name()
+			}
+			components[i] = comp
+		}(i, c)
+	}
+	wg.Wait()
+
 	worst := StatusHealthy
-	for _, c := range checkers {
-		comp := c.Check(ctx)
-		if comp.Name == "" {
-			comp.Name = c.Name()
-		}
-		components = append(components, comp)
+	for _, comp := range components {
 		if comp.Status.rank() > worst.rank() {
 			worst = comp.Status
 		}

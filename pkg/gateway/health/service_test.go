@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 )
@@ -180,5 +182,60 @@ func TestHandlerUnknownComponent404(t *testing.T) {
 	health.Handler(agg).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("unknown component: got %d, want 404", rr.Code)
+	}
+}
+
+// TestProbesRunInParallel_spec_25_3_441 asserts that registered
+// Checkers fan out concurrently rather than serially. The aggregator
+// runtime is bounded by the slowest probe rather than the sum of all
+// probe latencies, so a slow dependency does not stall the §25.3
+// /v1/admin/health response beyond a single probe's ceiling.
+// spec: §25.3 line 441.
+func TestProbesRunInParallel_spec_25_3_441(t *testing.T) {
+	const (
+		n     = 8
+		delay = 80 * time.Millisecond
+	)
+	agg := health.NewAggregator()
+	var inflight atomic.Int32
+	var peak atomic.Int32
+	probe := func(name string) health.Checker {
+		return health.CheckerFunc{
+			ComponentName: name,
+			Fn: func(context.Context) health.Component {
+				cur := inflight.Add(1)
+				for {
+					p := peak.Load()
+					if cur <= p || peak.CompareAndSwap(p, cur) {
+						break
+					}
+				}
+				time.Sleep(delay)
+				inflight.Add(-1)
+				return health.Component{Name: name, Status: health.StatusHealthy}
+			},
+		}
+	}
+	for i := 0; i < n; i++ {
+		agg.Register(probe(string(rune('a' + i))))
+	}
+	start := time.Now()
+	report := agg.Report(context.Background())
+	elapsed := time.Since(start)
+	if report.Status != health.StatusHealthy {
+		t.Errorf("status: %q, want healthy", report.Status)
+	}
+	if len(report.Components) != n {
+		t.Errorf("components: %d, want %d", len(report.Components), n)
+	}
+	// Sequential execution would take at least n*delay; parallel
+	// execution completes in close to delay. Allow a generous 4×
+	// margin so a slow CI host does not flake the test, while still
+	// rejecting the n-times-serial baseline.
+	if elapsed >= time.Duration(n)*delay/2 {
+		t.Errorf("aggregate runtime: %v, want close to %v (parallel)", elapsed, delay)
+	}
+	if peak.Load() < 2 {
+		t.Errorf("peak concurrent probes: %d, want ≥ 2", peak.Load())
 	}
 }

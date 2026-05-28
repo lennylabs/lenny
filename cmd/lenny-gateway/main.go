@@ -2371,6 +2371,16 @@ func main() {
 			}
 		} else {
 			pgSessions = playground.NewMemorySessionStore()
+			// spec: §27.6 line 204 — Logout endpoints MUST NOT return
+			// 200 to the browser until the revocation writes have
+			// committed to Redis. The in-memory store has no cross-
+			// replica fan-out and loses every revocation marker on
+			// restart, so a bearer minted before restart and not yet
+			// expired becomes honourable again. Surface the durability
+			// gap at startup so a single-replica dev/embedded operator
+			// knows the §27.6 commit-before-200 guarantee is unbacked.
+			// F-27.6.9.
+			log.Printf("lenny-gateway: §27.6 playground SessionStore is in-memory (no --redis-url): bearer revocations are not durable across gateway restarts and do not propagate across replicas; production deployments MUST set --redis-url")
 		}
 		// §27.8 playground metrics register against the same private
 		// registry the gateway's /metrics scrape target serves.
