@@ -3,9 +3,11 @@
 package compliance_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/compliance"
@@ -107,5 +109,41 @@ func TestNewAdapterReportsConstructorValues(t *testing.T) {
 	}
 	if a.DeclaredLevel() != compliance.LevelFull {
 		t.Errorf("DeclaredLevel = %q, want full", a.DeclaredLevel())
+	}
+}
+
+// spec: §26.1 lines 14-22 (catalog table) + §26.3-26.11 (per-runtime
+// Image field), §26.7 line 312, §26.9 line 399, §26.11 line 458, etc.
+// diagnosis: every §26 reference runtime is published at
+// `ghcr.io/lennylabs/runtime-<name>:<release>`. The embedded-stack
+// catalog (`pkg/embedded/stack/catalog.go`) and Helm chart
+// (`charts/lenny/values.yaml`) carry the absolute form; the compliance
+// manifest carries the path-relative form `lennylabs/runtime-<name>:1.0.0`
+// so that an operator pulls from any configured registry. A regression
+// that drops the `runtime-` prefix or rolls the tag back to `:v1`
+// would silently skew nightly conformance pulls from the Helm/embedded
+// runtime image. This assertion catches both.
+func TestReferenceCatalogImageRefsCanonical(t *testing.T) {
+	catalog, err := compliance.ReferenceCatalog()
+	if err != nil {
+		t.Fatalf("read reference catalog: %v", err)
+	}
+	if len(catalog) == 0 {
+		t.Fatal("reference catalog is empty")
+	}
+	for _, r := range catalog {
+		want := fmt.Sprintf("lennylabs/runtime-%s:1.0.0", r.Name)
+		if r.Image != want {
+			t.Errorf("§26 runtime %q image = %q, want %q (spec §26.1: ghcr.io/lennylabs/runtime-<name>:<release>; manifest carries the path-relative form)", r.Name, r.Image, want)
+		}
+		if strings.HasPrefix(r.Image, "ghcr.io/") {
+			t.Errorf("§26 runtime %q image %q is absolute; the manifest expresses the path-relative form so LENNY_REFERENCE_IMAGE_REGISTRY can target any registry", r.Name, r.Image)
+		}
+		if !strings.Contains(r.Image, "/runtime-") {
+			t.Errorf("§26 runtime %q image %q drops the canonical `runtime-` repository prefix per spec §26.x Image lines (e.g. §26.7 line 312)", r.Name, r.Image)
+		}
+		if strings.HasSuffix(r.Image, ":v1") {
+			t.Errorf("§26 runtime %q image %q uses the legacy `:v1` tag; canonical form is `:1.0.0` per pkg/embedded/stack/catalog.go and charts/lenny/values.yaml", r.Name, r.Image)
+		}
 	}
 }

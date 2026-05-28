@@ -37525,7 +37525,7 @@ time, (b) document the re-pin step in the `lenny up` output, or (c)
 flag-gate `claude-code` from the day-one Embedded catalog until the
 upstream image publishes.
 
-### - [ ] F-26.3.7 — 7  `pkg/compliance/reference_catalog.yaml` lists an image reference that does not match §26.3 [Low] — OPEN
+### - [x] F-26.3.7 — 7  `pkg/compliance/reference_catalog.yaml` lists an image reference that does not match §26.3 [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.4.1, F-26.5.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
@@ -37540,6 +37540,8 @@ land with the §17.5 image-pin rotation; until then this field carries
 the canonical tag." Reconcile the image string with §26.3's published
 form so that nightly conformance pulls do not skew from the Helm/Embedded
 runtime image.
+
+Resolution (pending): both `pkg/compliance/reference_catalog.yaml` and `cmd/lenny-compliance/reference-catalog.yaml` now carry `lennylabs/runtime-claude-code:1.0.0` so `LENNY_REFERENCE_IMAGE_REGISTRY=ghcr.io` resolves to the §26.3 canonical `ghcr.io/lennylabs/runtime-claude-code:1.0.0`, matching `pkg/embedded/stack/catalog.go` and `charts/lenny/values.yaml`. New `TestReferenceCatalogImageRefsCanonical` enforces the form.
 
 ### - [ ] F-26.3.8 — 8  No `claude-code`-specific verification of the registered Runtime against §26.3 [Low] — OPEN
 
@@ -37618,7 +37620,7 @@ The `gemini-cli` runtime is registered in every catalog touchpoint with the corr
 
 ### Findings
 
-### - [ ] F-26.4.1 — Compliance reference-catalog image diverges from §26.4 [Medium] — OPEN
+### - [x] F-26.4.1 — Compliance reference-catalog image diverges from §26.4 [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.5.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
@@ -37635,6 +37637,8 @@ Evidence:
 - `/Users/joan/projects/lenny/cmd/lenny-compliance/reference-catalog.yaml:36-40`
 - `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:46-50`
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:706-710`
+
+Resolution (pending): closed by the §26 image-cluster fix; both manifests now carry `lennylabs/runtime-gemini-cli:1.0.0`, which joins with `LENNY_REFERENCE_IMAGE_REGISTRY=ghcr.io` to the spec-canonical `ghcr.io/lennylabs/runtime-gemini-cli:1.0.0` per §26.4 line 246. Guarded by `TestReferenceCatalogImageRefsCanonical`.
 
 ### - [ ] F-26.4.2 — §26.4-specific fields (proxyDialect, runtimeOptionsSchema, adapter entrypoint, agentInterface.description) are not pre-applied [Low] — OPEN
 
@@ -37692,7 +37696,7 @@ The first-party runtime image, adapter binary, schema URL, and conformance suite
 
 ### Findings
 
-### - [ ] F-26.5.1 — `pkg/compliance/reference_catalog.yaml` codex entry uses the wrong image reference (Medium) [Medium] — OPEN
+### - [x] F-26.5.1 — `pkg/compliance/reference_catalog.yaml` codex entry uses the wrong image reference (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.4.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
@@ -37715,6 +37719,8 @@ Locations:
 - `/Users/joan/projects/lenny/pkg/compliance/reference_catalog.yaml:42-46`
 - Compare: `/Users/joan/projects/lenny/charts/lenny/values.yaml:711-715`
 - Compare: `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:51-56`
+
+Resolution (pending): closed by the §26 image-cluster fix; entry now reads `lennylabs/runtime-codex:1.0.0`, satisfying §26.5 line 268. `TestReferenceCatalogImageRefsCanonical` guards against regression.
 
 ### - [ ] F-26.5.2 — `runtimeOptionsSchema` URL not registered in the platform catalog (Info) [Medium] — OPEN
 
@@ -37782,7 +37788,7 @@ Locations:
 - `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:297,303`
 - `/Users/joan/projects/lenny/spec/04_system-components.md:1471-1476`
 
-### - [ ] F-26.6.3 — `pkg/compliance/reference_catalog.yaml` cursor-cli entry uses the wrong image reference (Medium) [Medium] — OPEN
+### - [x] F-26.6.3 — `pkg/compliance/reference_catalog.yaml` cursor-cli entry uses the wrong image reference (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
@@ -37804,6 +37810,8 @@ Locations:
 - `/Users/joan/projects/lenny/cmd/lenny-compliance/reference-catalog.yaml:48-52`
 - Compare: `/Users/joan/projects/lenny/charts/lenny/values.yaml:716-720`
 - Compare: `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:57-62`
+
+Resolution (pending): closed by the §26 image-cluster fix; entry now reads `lennylabs/runtime-cursor-cli:1.0.0`, satisfying §26.6 line 290. `TestReferenceCatalogImageRefsCanonical` guards the form.
 
 ### - [ ] F-26.6.4 — `runtimeOptionsSchema`, `proxyDialect`, and `agentInterface.description` not surfaced in the platform catalog (Info) [Medium] — OPEN
 
@@ -37846,24 +37854,32 @@ Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md` lines 30
 
 ### Findings
 
-### - [ ] F-26.7.1 — (High) — Spec internal contradiction on `chat` integration level [Medium] — OPEN
+### - [ ] F-26.7.1 — (High) — Spec internal contradiction on `chat` integration level [Medium] — DEFERRED
 - §26.1 catalog table (line 22) lists `chat` as **Standard**.
 - §26.7 body lists `chat` as **Full** in three places: prose line 309 ("smallest useful Full-level runtime"), Conformance level line 313 ("Full"), and YAML highlights line 322 (`integrationLevel: full`).
 - Implementation (`pkg/embedded/stack/catalog.go` line 66, `pkg/embedded/stack/catalog_test.go` lines 36–39, `pkg/compliance/reference_catalog.yaml` line 56) all hard-code `standard`, citing §26.1.
 - Effect: either the §26.1 table or the §26.7 body is wrong, and the implementation has picked one side without resolving the conflict. The §26.7 capabilities block (multi_turn interaction, immediate injection, hotRotation credentials, lifecycle-channel-implied behavior) reads as Full-level surface; the chosen `standard` level would forbid the lifecycle channel features that §26.7 implies, and `lenny runtime validate` would flag declared-vs-observed drift per the §15.4.6 conformance suite once the runtime is exercised.
 - Resolution must update either §26.1 or §26.7 to agree, then re-align the catalog entry, the compliance YAML, and the test assertion accordingly.
 
-### - [ ] F-26.7.2 — (Info) — Image tag matches §26.7 YAML highlights [Medium] — OPEN
+Resolution (pending): deferred. Closing requires a `spec/` edit (one of §26.1 line 22 or §26.7 lines 309/313/322 has to give) which this task is not authorised to make. The implementation has picked the §26.1 catalog-table value (Standard); the spec arbitration belongs to the spec maintainer.
+
+### - [x] F-26.7.2 — (Info) — Image tag matches §26.7 YAML highlights [Medium] — CLOSED
 `ghcr.io/lennylabs/runtime-chat:1.0.0` in `catalog.go` line 65 matches the spec line 320 image tag exactly. Digest is a placeholder per the §17.4 pattern documented in `catalog.go` lines 19–30; on first session start the gateway will fail the pull until the operator re-registers with the published digest or imports the image locally. Noted as expected behavior, not a defect.
 
-### - [ ] F-26.7.3 — (Info) — Capabilities, limits, policy fields not modeled in `ReferenceRuntime` struct [Medium] — OPEN
+Resolution (pending): verify-closed per the finding's own conclusion — the embedded catalog already matches the §26.7 line 320 image tag; the placeholder-digest behaviour is the spec-intended §17.4 pattern, tracked separately under F-26.1.4 / F-26.3.6.
+
+### - [x] F-26.7.3 — (Info) — Capabilities, limits, policy fields not modeled in `ReferenceRuntime` struct [Medium] — CLOSED
 `ReferenceRuntime` carries only Name, Image, IntegrationLevel, and Description (`catalog.go` lines 7–17). The §26.7 YAML highlights (capabilities, allowedResourceClasses, supportedProviders, credentialCapabilities, limits, setupCommandPolicy, setupPolicy, runtimeOptionsSchema, defaultPoolConfig) are not represented in the embedded-stack seed. This is consistent across all nine §26 reference runtimes and matches the §26 model: full `Runtime` YAML lives in the per-runtime first-party repo; the embedded-stack seed only carries the bootstrap identity (name, image, level). Operators register the full record by deploying the runtime's published manifest. Not a §26.7-specific gap.
 
-### - [ ] F-26.7.4 — (Info) — Compliance YAML uses non-canonical image path [Medium] — OPEN
+Resolution (pending): verify-closed per the finding's own conclusion — the embedded-stack seed intentionally carries only (name, image, level, description); the rest arrives via the per-runtime first-party `runtime.yaml`. The §26.7-specific gap closes; cross-cutting "embedded seed misses richer fields" remains tracked under F-26.3.1–F-26.3.5 / F-26.9.2.
+
+### - [x] F-26.7.4 — (Info) — Compliance YAML uses non-canonical image path [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.6.3, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
 `pkg/compliance/reference_catalog.yaml` line 57 declares `image: lennylabs/chat:v1` while `catalog.go` line 65 uses `ghcr.io/lennylabs/runtime-chat:1.0.0@sha256:…`. The compliance YAML header (lines 16–24) documents that `image` here is "relative to the configured registry" and that "concrete `imageDigest` values land with the §17.5 image-pin rotation". This is consistent across all nine entries in the compliance file. Not a §26.7-specific gap, but noted because the two manifests use different image-naming conventions; an operator scanning both files will see two different image references for `chat`.
+
+Resolution (pending): closed by the §26 image-cluster fix; the compliance entry for `chat` now reads `lennylabs/runtime-chat:1.0.0`, matching the embedded catalog and Helm chart paths and the §26.7 line 312 image. `TestReferenceCatalogImageRefsCanonical` guards the form.
 
 ### Classification summary
 
@@ -37891,7 +37907,9 @@ scope.
 
 ### Findings
 
-### - [ ] F-26.8.1 — Catalog registration is consistent across embedded stack, Helm chart, and compliance catalog [Info] — OPEN
+### - [x] F-26.8.1 — Catalog registration is consistent across embedded stack, Helm chart, and compliance catalog [Info] — CLOSED
+
+Resolution (pending): verify-closed — positive consistency note. The §26.8 langgraph entry agrees across the embedded catalog, Helm chart, and (now) the compliance catalog after the §26 image-cluster fix aligns the image string.
 
 The `langgraph` entry exists in every catalog surface and the
 spec-relevant fields agree:
@@ -37912,7 +37930,9 @@ spec-relevant fields agree:
   is published in spec §14 at lines 182-187, matching the §26.8 reference
   ("`runtimeOptionsSchema` already in §14").
 
-### - [ ] F-26.8.2 — Helm template intentionally omits §26.8 sub-fields [Info] — OPEN
+### - [x] F-26.8.2 — Helm template intentionally omits §26.8 sub-fields [Info] — CLOSED
+
+Resolution (pending): verify-closed per the finding's own conclusion — the chart deliberately scopes its templated fields to `name|image|type|integrationLevel|isolationProfile|supportedProviders`; the §26 richer surface arrives via the runtime image's self-registration. "No regression: §26.8's `isolationProfile`, capability flags, and `credentialCapabilities` are out of the chart's declared scope by design."
 
 `/Users/joan/projects/lenny/charts/lenny/templates/reference-runtimes.yaml:15-34`
 defaults `isolationProfile: sandboxed` (matching §26.8) and explicitly
@@ -37922,7 +37942,7 @@ image's self-registration. No regression: §26.8's `isolationProfile`,
 capability flags, and `credentialCapabilities` are out of the chart's
 declared scope by design.
 
-### - [ ] F-26.8.3 — Image reference in compliance catalog uses a different naming convention than §26.8 and the Helm/embedded catalogs [Low] — OPEN
+### - [x] F-26.8.3 — Image reference in compliance catalog uses a different naming convention than §26.8 and the Helm/embedded catalogs [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.10.3, F-26.11.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.6.3, F-26.7.4 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
@@ -37939,6 +37959,8 @@ cross-checking the catalog against the spec must do extra work to match
 the two strings. Documenting the shorthand at the top of
 `reference_catalog.yaml`, or aligning the image string with §26.8, would
 remove the friction.
+
+Resolution (pending): closed by the §26 image-cluster fix; the entry now reads `lennylabs/runtime-langgraph:1.0.0` and the header comment documents the relative form + registry-join convention so the next reader cross-checking the catalog has no friction.
 
 ### Verdict
 
@@ -37980,7 +38002,9 @@ inbound messages, and registers `lenny/delegate_task` as a Mastra tool when
 
 ### Findings
 
-### - [ ] F-26.9.1 — (Info): Adapter image is an out-of-tree deliverable [Medium] — OPEN
+### - [x] F-26.9.1 — (Info): Adapter image is an out-of-tree deliverable [Medium] — CLOSED
+
+Resolution (pending): verify-closed per the finding's own conclusion — the §26 framing makes `cmd/runtimes/mastra/` an explicit non-goal; the absence of the binary in this repo matches the design.
 
 The `mastra` runtime image is hosted in
 `github.com/lennylabs/runtime-mastra` per §26 framing
@@ -38040,7 +38064,7 @@ emit. Worth flagging because §5.2 admission paths assume the field is at
 least set to a non-nil list on most runtimes; verify the gateway treats
 absent and empty as "any allowed". Low risk.
 
-### - [ ] F-26.9.4 — (Info): Image tag/digest divergence between sources [Medium] — OPEN
+### - [x] F-26.9.4 — (Info): Image tag/digest divergence between sources [Medium] — CLOSED
 
 The three places that name the Mastra image disagree:
 
@@ -38057,7 +38081,11 @@ so the inconsistency is global rather than Mastra-specific. Flagging here
 because it surfaces on a Mastra-focused audit; the cross-cutting fix
 belongs in a §26-wide pass.
 
-### - [ ] F-26.9.5 — (Info): Adapter behaviour (bootstrap, delegation) is not testable from this repo [Medium] — OPEN
+Resolution (pending): closed by the §26 image-cluster fix; both compliance manifests now carry `lennylabs/runtime-mastra:1.0.0` (path-relative form joining with `LENNY_REFERENCE_IMAGE_REGISTRY=ghcr.io` to recover §26.9 line 399's canonical `ghcr.io/lennylabs/runtime-mastra:1.0.0`). `TestReferenceCatalogImageRefsCanonical` guards the form.
+
+### - [x] F-26.9.5 — (Info): Adapter behaviour (bootstrap, delegation) is not testable from this repo [Medium] — CLOSED
+
+Resolution (pending): verify-closed per the finding's own conclusion — adapter-level §26.9 behaviour is by design out-of-tree (`github.com/lennylabs/runtime-mastra`); the in-repo catalog wiring is the only audit surface and it passes.
 
 §26.9 L418-420 specifies adapter-level behaviour: `agent.stream(message)`
 mapping to the `tool_call` envelope, returning the final assistant message as
@@ -38119,11 +38147,13 @@ The runtime exists in the catalog *registration* surfaces (Embedded-Mode `refere
 
 `charts/lenny/templates/reference-runtimes.yaml` only sets `type`, `image`, `integrationLevel`, `executionMode`, `isolationProfile`, `allowedResourceClasses`, and `supportedProviders` on the `lenny.dev/v1 Runtime` it creates. §26.10 requires the `openai-assistants` record to expose the §14 schema (`assistantId` required, `model` / `temperature` / `responseFormat` / `parallelToolCalls`) via `runtimeOptionsSchema`. The chart comment explicitly defers this to "the richer §26 fields (capabilities, limits, the runtime options schema, the agent interface) … configured on the runtime through the admin API," but no admin-API call or post-install hook performs that registration, so a §13 `RunRequest` against `runtime: openai-assistants` would not be validated against the §14 schema by the gateway. Equivalent gap applies to the §26.10 `capabilities.interaction: multi_turn`, `injection.modes: [immediate]`, and `credentialCapabilities.proxyDialect: [openai]` fields; the chart template carries none of them.
 
-### - [ ] F-26.10.3 — `pkg/compliance/reference_catalog.yaml` image stem diverges from §26.10 (Low) [Medium] — OPEN
+### - [x] F-26.10.3 — `pkg/compliance/reference_catalog.yaml` image stem diverges from §26.10 (Low) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.11.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
 `pkg/compliance/reference_catalog.yaml:75` lists the runtime image as `lennylabs/openai-assistants:v1`. §26.10 specifies `ghcr.io/lennylabs/runtime-openai-assistants:<release>`, and `pkg/embedded/stack/catalog.go:83` plus `charts/lenny/values.yaml:735` use the spec-correct `ghcr.io/lennylabs/runtime-openai-assistants:1.0.0`. The compliance baseline drifts from both the spec and the other two registration sites; any audit job that compares published images against the compliance baseline would falsely accept (or falsely reject) the spec-conformant image.
+
+Resolution (pending): closed by the §26 image-cluster fix; the compliance entry now reads `lennylabs/runtime-openai-assistants:1.0.0`, aligned with §26.10's image identifier per the path-relative + registry-join convention. `TestReferenceCatalogImageRefsCanonical` guards the form.
 
 ### - [ ] F-26.10.4 — `code_interpreter` operator warning is undocumented at install time (Low) [Medium] — OPEN
 
@@ -38171,7 +38201,7 @@ The §26.11 entry mandates fields that are absent from every install path:
 - Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:464-477`
 - Evidence: `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:87-92`, `/Users/joan/projects/lenny/pkg/compliance/reference_catalog.yaml:78-82`, `/Users/joan/projects/lenny/charts/lenny/values.yaml:738-741`, `/Users/joan/projects/lenny/charts/lenny/templates/reference-runtimes.yaml`
 
-### - [ ] F-26.11.3 — Embedded catalog and chart values use different image tags for the same reference runtime [Low] — OPEN
+### - [x] F-26.11.3 — Embedded catalog and chart values use different image tags for the same reference runtime [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.10.3, F-26.3.7, F-26.4.1, F-26.5.1, F-26.6.3, F-26.7.4, F-26.8.3 — All findings report the same defect: compliance reference_catalog.yaml uses the bare lennylabs/<name>:v1 image form diverging from the canonical ghcr.io/lennylabs/runtime-<name> used elsewhere, only per-runtime; F-26.8.1 is a positive consistency note and not a duplicate.
 
@@ -38180,7 +38210,11 @@ The §26.11 entry mandates fields that are absent from every install path:
 - Spec: `/Users/joan/projects/lenny/spec/26_reference-runtime-catalog.md:458`
 - Evidence: `/Users/joan/projects/lenny/pkg/embedded/stack/catalog.go:89`; `/Users/joan/projects/lenny/pkg/compliance/reference_catalog.yaml:81`; `/Users/joan/projects/lenny/charts/lenny/values.yaml:739`
 
-### - [ ] F-26.11.4 — Conformance and fixtures already enumerate `crewai` at level `full` [Info] — OPEN
+Resolution (pending): closed by the §26 image-cluster fix; the compliance entry now reads `lennylabs/runtime-crewai:1.0.0` and the comment block documents the three image surfaces and the path-relative form. The placeholder-digest pin on the embedded catalog remains tracked under F-26.1.4 / F-26.3.6. `TestReferenceCatalogImageRefsCanonical` guards the form.
+
+### - [x] F-26.11.4 — Conformance and fixtures already enumerate `crewai` at level `full` [Info] — CLOSED
+
+Resolution (pending): verify-closed — positive consistency note. The conformance scaffolds + fixtures + tier-10 manifest enumerate `crewai` at level `full`; the runtime-binary gap is tracked separately under F-26.11.1.
 
 `tests/tier10_conformance/scaffolds_test.go:387` registers `"crewai": compliance.LevelFull` and `tests/testinfra/fixtures/fixtures.go:47` exports `RuntimeCrewAI = "crewai"`. The `cmd/lenny-test` integration suite (`cmd/lenny-test/cmd_run.go:975`) and the group subsets (`tests/groups.subsets.yaml:242`) include `crewai` in the reference-runtime list. These are scaffolds that will exercise the binary once it ships; they currently pass against the missing implementation only because the §26.11 deferral exception is honoured.
 
