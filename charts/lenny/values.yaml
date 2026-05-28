@@ -372,8 +372,10 @@ monitoring:
     additionalLabels: {}
   # configMap configures the rendered ConfigMap rule file.
   configMap:
-    # namespace defaults to the release namespace (lenny-system) when
-    # empty.
+    # namespace defaults to lenny-system when empty (§25.13 line 4712).
+    # The default is a literal lenny-system rather than the release
+    # namespace, so a non-default release-namespace install still places
+    # the alerting-rules ConfigMap where the spec mandates.
     namespace: ""
     name: "lenny-alerting-rules"
   # serviceMonitor gates the §16.9 Prometheus Operator scrape-target

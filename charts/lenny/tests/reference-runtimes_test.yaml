@@ -39,6 +39,57 @@ tests:
           path: spec.supportedProviders
           content: anthropic_direct
 
+  # spec: §26.3 lines 159-162 — claude-code MUST advertise the three
+  # anthropic-compatible providers (anthropic_direct, aws_bedrock,
+  # gcp_vertex_anthropic). A regression that drops aws_bedrock or
+  # gcp_vertex_anthropic must fail this test.
+  - it: advertises aws_bedrock for claude-code per §26.3
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - contains:
+          path: spec.supportedProviders
+          content: aws_bedrock
+
+  - it: advertises gcp_vertex_anthropic for claude-code per §26.3
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - contains:
+          path: spec.supportedProviders
+          content: gcp_vertex_anthropic
+
+  # spec: §26.3 line 158 — claude-code MUST allow small/medium/large.
+  - it: advertises small/medium/large resource classes for claude-code per §26.3
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - contains:
+          path: spec.allowedResourceClasses
+          content: small
+      - contains:
+          path: spec.allowedResourceClasses
+          content: medium
+      - contains:
+          path: spec.allowedResourceClasses
+          content: large
+
+  # spec: §26.3 lines 147 / 224 — claude-code image is
+  # ghcr.io/lennylabs/runtime-claude-code (with a semver tag at release
+  # time). The chart MUST emit the upstream repository so a regression
+  # that retargets the image to another registry fails this check.
+  - it: targets the canonical ghcr.io/lennylabs/runtime-claude-code image per §26.3
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - matchRegex:
+          path: spec.image
+          pattern: "^ghcr\\.io/lennylabs/runtime-claude-code(@sha256:[A-Fa-f0-9]{64}|:[A-Za-z0-9._-]+)$"
+
   - it: pins every reference runtime image by digest per §5.3
     documentSelector:
       path: metadata.name

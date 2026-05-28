@@ -135,11 +135,19 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 			afterSeq = n
 		}
 	}
+	// spec: §25.9 line 3659 — limit default 100, max 1000. Out-of-range
+	// or unparseable values are rejected as 400 INVALID_ARGUMENT rather
+	// than silently coerced to the default, matching the rejection style
+	// of the surrounding admin handlers.
 	limit := 100
 	if v := req.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
-			limit = n
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 || n > 1000 {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"limit must be an integer in 1..1000", nil)
+			return
 		}
+		limit = n
 	}
 
 	items := make([]json.RawMessage, 0, limit)

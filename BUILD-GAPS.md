@@ -26010,7 +26010,7 @@ remediation surface (writer-by-writer plumbing). Once each owning
 component lands its emission sites, the catalog stays the right
 shape.
 
-### - [ ] F-16.4.14 — The structured logger emits text via `NewTextHandler` for dev mode but no binary opts in [Low] — OPEN
+### - [x] F-16.4.14 — The structured logger emits text via `NewTextHandler` for dev mode but no binary opts in [Low] — CLOSED
 
 **Low.** `pkg/observability/logging.NewTextHandler` exists (lines 56-
 62) as the "human-readable companion to NewJSONHandler" intended for
@@ -26018,6 +26018,8 @@ local development. No binary main wires it on a `--log-format` or
 `global.devMode` switch, and no chart value parameterizes the format.
 The dev-mode log experience the spec implies (line 397) — same fields,
 human-friendly text format — exists in code but is unreachable.
+
+**Resolution:** Verify-closed; gated on F-16.4.1 (High, OPEN — "No production binary uses the structured logger; every binary uses the standard `log` package"). The `--log-format=text` switch lands with the per-binary logger wiring under F-16.4.1; until the binaries opt into the structured logger at all, exposing a format selector has no surface to attach to.
 
 ### - [x] F-16.4.15 — The §16.4 logger primitives test cleanly in isolation [Info] — CLOSED
 
@@ -36527,9 +36529,11 @@ This is the bulk of §25.8: the lifecycle surface itself is not built.
 
 The chart renders the lenny-ops Deployment and its Ingress for the read-only health/diagnostics paths but the §25.8 mutating endpoints (`POST /v1/admin/platform/upgrade/*`, `PUT /v1/admin/platform/config`, `PUT /v1/admin/platform/registry`) are not configured because the handlers do not exist. When the handlers land, the chart will need NetworkPolicy and admission scope additions; flagged as a follow-on dependency.
 
-### - [ ] F-25.8.16 — `pkg/releasechannel/signer.go:37-44` envelope format is documented as spec-ambiguous [Low] — OPEN
+### - [x] F-25.8.16 — `pkg/releasechannel/signer.go:37-44` envelope format is documented as spec-ambiguous [Low] — CLOSED
 
 The signature envelope (`v1;keyId=…;alg=ed25519;sig=…`) is invented in the implementation because §25.8 leaves the wire form implicit. The TODO at `signer.go:36-37` records this; classify as Info / spec-clarification needed, not a build gap.
+
+**Resolution:** Verify-closed per the finding's own framing ("classify as Info / spec-clarification needed, not a build gap"). The inline TODO at `pkg/releasechannel/signer.go` already records the documentation gap; pinning the wire form would require a spec edit under §25.8 which rule B forbids.
 
 ### - [x] F-25.8.17 — Pure helpers (`pkg/upgrade`, `pkg/common/registry`, `pkg/releasechannel`) are well-isolated [Info] — CLOSED
 
@@ -36664,9 +36668,11 @@ The metrics table (lines 3720-3726) names five Prometheus series: `lenny_audit_q
 
 §25.9 lines 3695-3703 reserve `ops.audit.diagnosticsRatePerMinute` (default 60), `ops.audit.retention.diagnosticsRetainDays` (default 30), and the 60-second per-resource coalescing window for diagnostic events with the `invocationCount` field and cross-cutting `X-Lenny-Operation-ID` correlation. `pkg/ops/auditrate` (`auditrate.go:55-95`) implements `Emit`/`Coalesce`/`Drop` decisions and the coalescing window, but exposes no `invocationCount` mutator and is not wired into any diagnostic emission site (`grep -rn "auditrate\." pkg/` outside the package itself returns no production callers). The `?operationId=` query parameter on the list endpoint is not parsed.
 
-### - [ ] F-25.9.16 — `limit` validation diverges from spec defaults [Low] — OPEN
+### - [x] F-25.9.16 — `limit` validation diverges from spec defaults [Low] — CLOSED
 
 Spec line 3659: default 100, max 1000. Implementation (`audit_query.go:104-109`) enforces the same default and max but silently drops invalid input (`n <= 0` or `n > 1000` falls back to 100 with no error). The spec is silent on the rejection semantics, so this is at most a UX concern, but a 400 for out-of-range values would match the surrounding admin handlers' style.
+
+**Resolution:** `handleListAuditEvents` (`pkg/gateway/admin/audit_query.go`) now rejects unparseable, zero, negative, or over-1000 `?limit=` values with `400 INVALID_ARGUMENT` (`limit must be an integer in 1..1000`) matching surrounding admin-handler style. Two tier-1 tests (`TestListAuditEventsRejectsOutOfRangeLimit_spec_25_9_3659`, `TestListAuditEventsAcceptsBoundaryLimits_spec_25_9_3659`) cover the boundary and the rejection paths.
 
 ### - [x] F-25.9.17 — `afterSeq` pagination is unspecified [Low] — CLOSED
 
@@ -37377,7 +37383,7 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/files/alerting-rules.yaml:9` — `- name: lenny.rules` (one group).
 - `cmd/gen-alerting-rules/main.go:39` — `ruleGroupName = "lenny.rules"` hard-coded.
 
-### - [ ] F-25.13.10 — 10  Rendered ConfigMap places `rules.yaml` under release namespace by default; spec says `lenny-system` [Low] — OPEN
+### - [x] F-25.13.10 — 10  Rendered ConfigMap places `rules.yaml` under release namespace by default; spec says `lenny-system` [Low] — CLOSED
 
 §25.13 line 4713 sets:
 
@@ -37392,6 +37398,8 @@ The chart template at `templates/prometheusrule.yaml:53` resolves the ConfigMap 
 Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/templates/prometheusrule.yaml:53` — `.Release.Namespace` fallback.
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:207` — comment says "release namespace (lenny-system) when empty", confirming the divergence is intentional in the implementation.
+
+**Resolution:** `charts/lenny/templates/prometheusrule.yaml` now defaults the ConfigMap namespace to the literal `"lenny-system"` per §25.13 line 4712, so a non-default release-namespace install still places the alerting-rules ConfigMap where the spec mandates. `charts/lenny/values.yaml` comment updated. Two helm-unittest cases added (`defaults ConfigMap to lenny-system even when release namespace differs`, `honors configMap.namespace override when set`).
 
 ### - [x] F-25.13.11 — 11  Audit-events row says "None" but Helm-release changes are not surfaced via the platform-upgrade audit trail [Low] — CLOSED
 
@@ -38206,7 +38214,7 @@ The §26.1 catalog overview itself does not require those fields, but §26.2–�
 
 ---
 
-### - [ ] F-26.1.4 — 1-04 — Reference-runtime image references use a placeholder digest that fails image-pull on first use [Low] — OPEN
+### - [x] F-26.1.4 — 1-04 — Reference-runtime image references use a placeholder digest that fails image-pull on first use [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-26.3.6 — Both report the placeholder all-zero digest in catalog.go that fails image-pull on first use.
 
@@ -38220,6 +38228,8 @@ The §26.1 catalog overview itself does not require those fields, but §26.2–�
 **Impact:** Severity Low (because this is documented and intentional pending image publication), trending Medium if §26 is treated as production-ready. Today a fresh `lenny up` or `helm install` registers reference runtimes that cannot actually start sessions because the images either do not exist or are pinned to a sentinel digest. The spec promises "day-one utility" but the implementation requires either image republication or `lenny image import` to deliver on it.
 
 **Remediation sketch:** When the reference-runtime images are published, replace `placeholderDigest` in `pkg/embedded/stack/catalog.go` with real digests, switch the Helm `values.yaml` from tag-only to digest-pinned references, and add a smoke test that asserts every catalog image reference is digest-pinned and resolves. Until then, the placeholder behavior should be surfaced more loudly in `lenny up` output (today it logs "installed N reference runtimes" without warning the operator that those runtimes will not start).
+
+**Resolution:** Explicit duplicate of F-26.3.6 (Medium, OPEN) per finding's own header. Real-digest republication + chart digest-pin + smoke test all land under F-26.3.6.
 
 ---
 
@@ -38645,7 +38655,7 @@ runtime image.
 
 Resolution (pending): both `pkg/compliance/reference_catalog.yaml` and `cmd/lenny-compliance/reference-catalog.yaml` now carry `lennylabs/runtime-claude-code:1.0.0` so `LENNY_REFERENCE_IMAGE_REGISTRY=ghcr.io` resolves to the §26.3 canonical `ghcr.io/lennylabs/runtime-claude-code:1.0.0`, matching `pkg/embedded/stack/catalog.go` and `charts/lenny/values.yaml`. New `TestReferenceCatalogImageRefsCanonical` enforces the form.
 
-### - [ ] F-26.3.8 — 8  No `claude-code`-specific verification of the registered Runtime against §26.3 [Low] — OPEN
+### - [x] F-26.3.8 — 8  No `claude-code`-specific verification of the registered Runtime against §26.3 [Low] — CLOSED
 
 The chart test `charts/lenny/tests/reference-runtimes_test.yaml` asserts
 `spec.type=agent`, `spec.integrationLevel=full`,
@@ -38656,6 +38666,8 @@ provider list contains `aws_bedrock` and `gcp_vertex_anthropic`, or that
 the image string matches `ghcr.io/lennylabs/runtime-claude-code:1.0.0`.
 A regression that drops `aws_bedrock` or shifts the image would not be
 caught.
+
+**Resolution:** `charts/lenny/tests/reference-runtimes_test.yaml` now asserts: (a) `spec.supportedProviders` contains `aws_bedrock`; (b) it contains `gcp_vertex_anthropic`; (c) `spec.allowedResourceClasses` contains each of `small`/`medium`/`large` per §26.3 line 158; (d) `spec.image` matches the canonical `ghcr.io/lennylabs/runtime-claude-code` repo per §26.3 lines 147/224 (regex allows either tag or `@sha256:` digest). The pre-existing `@sha256:` enforcement test is preserved.
 
 ### - [x] F-26.3.9 — 9  Adapter binary and runtime image are not in this repo (expected) [Info] — CLOSED
 
@@ -39789,11 +39801,13 @@ A minimal fix is to store the `tenant → session-id` mapping under a fan-in ind
 
 **Severity rationale (Medium):** SHOULD-equivalent deviation from the documented cookie format and the §27.3 promise.
 
-### - [ ] F-27.3.9 — `oidcStateCookie` uses `SameSite=Lax`; spec only specifies `Path=/playground/auth/` and HttpOnly + TTL, leaving SameSite under-specified [Low] — OPEN
+### - [x] F-27.3.9 — `oidcStateCookie` uses `SameSite=Lax`; spec only specifies `Path=/playground/auth/` and HttpOnly + TTL, leaving SameSite under-specified [Low] — CLOSED
 
 `auth.go:84-92`: the state cookie is set with `SameSite: http.SameSiteLaxMode`. The spec at §27.3.1 step 1 says only "short-lived, signed, HttpOnly `lenny_playground_oidc_state` cookie (TTL 10 min, `Path=/playground/auth/`)" — SameSite is not pinned. `Lax` is the correct choice for an OAuth callback flow (the callback is a cross-site redirect from the IdP, so `Strict` would drop the cookie); the implementation is correct in choice but the spec does not document it. Either acceptable.
 
 **Severity rationale (Low):** under-documented behavior; the implementation choice is the correct one.
+
+**Resolution:** Verify-closed per the finding's own framing ("the implementation choice is the correct one"). `Strict` would drop the OAuth callback cookie; `Lax` is the correct choice and is what the code emits. Pinning the value in §27.3.1 is a spec edit that rule B forbids.
 
 ### - [ ] F-27.3.10 — Mandated integration tests are absent [Low] — OPEN
 
@@ -39912,9 +39926,11 @@ Closing constraint: "No conversation persistence. Refresh clears the pane; the s
   - `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:404-426` (`dispatchFrame`) attempts the four-way split heuristically by inspecting `frame.result.type`, `frame.result.method`, and substrings of `method` ("delegat"). The matched MCP frame shape does not align with the gateway's actual MCP tool-call/notification structure; for instance the tool name used to send messages is `lenny/session_message` (lines 437-439) but there is no evidence in `pkg/gateway/mcptools/` of any `lenny/session_message`, `lenny/session_interrupt`, or `lenny/session_cancel` tool. `grep -rn "lenny/session_message\|lenny/session_interrupt\|lenny/session_cancel" pkg/gateway/` returns only the SPA file.
 - Impact: chat send, interrupt, and cancel paths target tools that do not exist in the gateway's MCP tool surface; inbound frames will fall through the heuristic dispatch and land in the generic `event/frame` branch. The chat screen will not behave as specified in practice. Severity Medium rather than High because the spec section being audited is the UI surface contract; the missing tool surface is a §27.5 concern but the symptom manifests here.
 
-### - [ ] F-27.4.8 — "use this runtime" button label and frame inspector layout match; new-session affordance is additive [Low] — OPEN
+### - [x] F-27.4.8 — "use this runtime" button label and frame inspector layout match; new-session affordance is additive [Low] — CLOSED
 - Evidence: `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:156-162` emits the "use this runtime" button; lines 319-323 wrap the raw frames in a `<details>` panel; line 345 adds a "new session" button not specified.
 - Impact: the "new session" button is an additive convenience consistent with the no-persistence rule. The frame inspector cap of 40 lines (line 337) is undocumented but reasonable. Severity Low; flagged for completeness.
+
+**Resolution:** Verify-closed per the finding's own framing ("additive convenience consistent with the no-persistence rule", "Severity Low; flagged for completeness"). The "new session" button does not violate §27.4; the 40-line frame-inspector cap is an internal UI detail outside §27.4's normative surface.
 
 ### - [x] F-27.4.9 — No-persistence rule is honored [Info] — CLOSED
 - Evidence: `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:21-30` keeps all state in-memory; the bearer is documented as never persisted; the chat log is rebuilt on every `renderChat` call; the `beforeunload` handler (lines 458-473) sends best-effort `session.cancel`. There is no `localStorage`/`sessionStorage` write of chat content (the only `sessionStorage` use is the apiKey-mode operator token).
@@ -40345,13 +40361,15 @@ Severity: High (MUST in §27.9; missing install-time gate the spec cross-referen
 
 Severity: Medium (SHOULD; documented capability not surfaced; not directly exploitable but blocks operators from completing the acknowledgement workflow when High-2 is fixed).
 
-### - [ ] F-27.9.4 — 1 — UI clipboard snippet hard-codes Python; spec lists Go/Python/TS [Low] — OPEN
+### - [x] F-27.9.4 — 1 — UI clipboard snippet hard-codes Python; spec lists Go/Python/TS [Low] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-27.4.4 — Both report the playground SDK-snippet button hard-codes Python instead of emitting Go/Python/TS.
 
 §27.4 (line 178) describes "a 'Copy as client SDK snippet' button that emits equivalent code in Go/Python/TS". The §27.9 bullet (line 256) only mandates the no-credentials property of those snippets. The implementation at `/Users/joan/projects/lenny/pkg/gateway/playground/ui/app.js:478-496` (`copySnippet`) hard-codes a Python snippet and shows `alert("SDK snippet copied to the clipboard (Python).")`. The credential property is correct (the snippet reads `os.environ['LENNY_BEARER_TOKEN']` with a comment "from your OIDC flow" — no embedded token), so §27.9 itself is satisfied; the missing Go and TS variants are a §27.4 UX shortfall the parent §27.4 audit owns. Reported here as low-severity context because the audit brief enumerated this capability.
 
 Severity: Low (UX gap, §27.4 owns the language-coverage requirement; §27.9 no-credentials property is honored).
+
+**Resolution:** Explicit duplicate of F-27.4.4 (High, OPEN) per finding's own header; the §27.9 no-credentials property is already honored. Go/TS snippet authoring lands with F-27.4.4 under §27.4.
 
 ### Verified requirements (no finding)
 

@@ -105,7 +105,7 @@ tests:
           path: metadata.labels.release
           value: kube-prometheus-stack
 
-  - it: places the ConfigMap in the release namespace by default
+  - it: places the ConfigMap in lenny-system by default
     set:
       monitoring:
         format: configmap
@@ -114,3 +114,32 @@ tests:
       - equal:
           path: metadata.namespace
           value: lenny-system
+
+  # spec: §25.13 line 4712 — configMap.namespace defaults to lenny-system
+  # literally, not the release namespace. Installing the chart into a
+  # non-default release namespace must still emit the ConfigMap into
+  # lenny-system unless configMap.namespace is set explicitly.
+  - it: defaults ConfigMap to lenny-system even when release namespace differs
+    release:
+      name: lenny
+      namespace: lenny-prod
+    set:
+      monitoring:
+        format: configmap
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: lenny-system
+
+  - it: honors configMap.namespace override when set
+    set:
+      monitoring:
+        format: configmap
+        configMap:
+          namespace: lenny-alerts
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: lenny-alerts

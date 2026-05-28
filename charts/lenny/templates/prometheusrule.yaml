@@ -50,7 +50,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Values.monitoring.configMap.name }}
-  namespace: {{ .Values.monitoring.configMap.namespace | default .Release.Namespace }}
+  {{- /* spec: §25.13 line 4712 — configMap.namespace defaults to lenny-system, not the release namespace */}}
+  namespace: {{ .Values.monitoring.configMap.namespace | default "lenny-system" }}
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
     lenny.dev/component: alerting-rules

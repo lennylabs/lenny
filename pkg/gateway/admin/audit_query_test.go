@@ -227,3 +227,34 @@ func TestAuditQueryRejectsRegularUser(t *testing.T) {
 		t.Errorf("anonymous: got %d, want 403", rr.Code)
 	}
 }
+
+// spec: §25.9 line 3659 — limit default 100, max 1000. An out-of-range
+// or unparseable value MUST surface as 400 INVALID_ARGUMENT rather than
+// being silently coerced to the default.
+func TestListAuditEventsRejectsOutOfRangeLimit_spec_25_9_3659(t *testing.T) {
+	router, _ := newAuditQueryRouter(t)
+	for _, q := range []string{"0", "-1", "1001", "abc", "9999999999"} {
+		rr := httptest.NewRecorder()
+		router.Handler().ServeHTTP(rr, withAdminPrincipal(
+			httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&limit="+q, nil),
+		))
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("limit=%q: got %d, want 400", q, rr.Code)
+		}
+	}
+}
+
+// spec: §25.9 line 3659 — limit values inside 1..1000 MUST succeed; the
+// boundary values 1 and 1000 are valid.
+func TestListAuditEventsAcceptsBoundaryLimits_spec_25_9_3659(t *testing.T) {
+	router, _ := newAuditQueryRouter(t)
+	for _, q := range []string{"1", "100", "1000"} {
+		rr := httptest.NewRecorder()
+		router.Handler().ServeHTTP(rr, withAdminPrincipal(
+			httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events?tenantId=platform&limit="+q, nil),
+		))
+		if rr.Code != http.StatusOK {
+			t.Errorf("limit=%q: got %d, want 200", q, rr.Code)
+		}
+	}
+}
