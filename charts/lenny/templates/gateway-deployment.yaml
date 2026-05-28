@@ -507,6 +507,14 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.gateway.internalPort }}
+            # spec: §16.9 line 723 — named metrics containerPort so a
+            # PodMonitor `port: metrics` discovery works uniformly across
+            # control-plane components. /metrics is served on the same
+            # HTTP listener as the REST API (internalPort); the named
+            # entry is a labelling concern that surfaces the metrics
+            # endpoint in the rendered pod spec. F-16.9.10.
+            - name: metrics
+              containerPort: {{ .Values.gateway.internalPort }}
             - name: grpc
               containerPort: {{ .Values.gateway.grpcPort }}
             {{- if .Values.features.llmProxy }}

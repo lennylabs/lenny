@@ -134,3 +134,107 @@ tests:
       - equal:
           path: metadata.labels.release
           value: kube-prometheus-stack
+
+  # spec: F-16.9.11 — operators with non-standard metrics paths
+  # (kube-rbac-proxy mounted at /-/metrics, an ingress-rewritten path)
+  # must be able to override the scrape path through values rather than
+  # forking the chart.
+  - it: defaults the ServiceMonitor scrape path to /metrics
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.endpoints[0].path
+          value: /metrics
+
+  - it: defaults the PodMonitor scrape path to /metrics
+    template: podmonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].path
+          value: /metrics
+
+  - it: honours an override of monitoring.serviceMonitor.path on the ServiceMonitor
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.serviceMonitor.path: /-/metrics
+    asserts:
+      - equal:
+          path: spec.endpoints[0].path
+          value: /-/metrics
+
+  - it: honours an override of monitoring.serviceMonitor.path on the PodMonitor
+    template: podmonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.serviceMonitor.path: /-/metrics
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].path
+          value: /-/metrics
+
+  # spec: F-16.9.12 — operators fronting /metrics with TLS opt into a
+  # non-plaintext scrape via the scheme and tlsConfig knobs. The default
+  # stays http so the chart's existing plaintext metrics listener works
+  # without explicit configuration.
+  - it: omits scheme and tlsConfig on the ServiceMonitor by default
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - notExists:
+          path: spec.endpoints[0].scheme
+      - notExists:
+          path: spec.endpoints[0].tlsConfig
+
+  - it: omits scheme and tlsConfig on the PodMonitor by default
+    template: podmonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - notExists:
+          path: spec.podMetricsEndpoints[0].scheme
+      - notExists:
+          path: spec.podMetricsEndpoints[0].tlsConfig
+
+  - it: renders scheme HTTPS and tlsConfig on the ServiceMonitor when configured
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.serviceMonitor.scheme: https
+      monitoring.serviceMonitor.tlsConfig:
+        caFile: /etc/prometheus/secrets/ca.crt
+        serverName: lenny-gateway.lenny-system.svc
+    asserts:
+      - equal:
+          path: spec.endpoints[0].scheme
+          value: https
+      - equal:
+          path: spec.endpoints[0].tlsConfig.caFile
+          value: /etc/prometheus/secrets/ca.crt
+      - equal:
+          path: spec.endpoints[0].tlsConfig.serverName
+          value: lenny-gateway.lenny-system.svc
+
+  - it: renders scheme HTTPS and tlsConfig on the PodMonitor when configured
+    template: podmonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.serviceMonitor.scheme: https
+      monitoring.serviceMonitor.tlsConfig:
+        caFile: /etc/prometheus/secrets/ca.crt
+        serverName: lenny-ops.lenny-system.svc
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].scheme
+          value: https
+      - equal:
+          path: spec.podMetricsEndpoints[0].tlsConfig.caFile
+          value: /etc/prometheus/secrets/ca.crt
+      - equal:
+          path: spec.podMetricsEndpoints[0].tlsConfig.serverName
+          value: lenny-ops.lenny-system.svc

@@ -53,7 +53,10 @@ type installAnswers struct {
 	Tier string `json:"tier"`
 	// Profile is the answer-file base name the wizard auto-suggests
 	// from cluster detection (§17.9). It is advisory metadata; the
-	// non-interactive path does not load a second file from it.
+	// non-interactive path does not load a second file from it. Curated
+	// answer files in charts/lenny/answers/ accordingly omit the field;
+	// the wizard records it on save (§17.9.2 line 1376) so the captured
+	// answer file documents the detection. F-17.9.15.
 	Profile string `json:"profile,omitempty"`
 	// Domain is the gateway's external DNS name. Empty leaves the
 	// chart default in place.

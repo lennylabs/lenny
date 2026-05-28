@@ -23,6 +23,12 @@ Each answer file pairs with the tier preset of the same tier under
 `charts/lenny/presets/`. The wizard selects the preset from the `tier`
 field, so the answer file and the preset stay consistent.
 
+The §17.9.2 spec catalog enumerates nine curated answer files keyed on
+the cluster type (laptop, k3d, kind, eks, gke, aks, openshift, vanilla,
+airgap-self-managed) and the backend composition. The three answer
+files above are the implemented subset of that catalog; the wider
+catalog rollout is tracked under F-17.9.1.
+
 ## Schema
 
 Every field below is optional. Unset fields fall back to the wizard

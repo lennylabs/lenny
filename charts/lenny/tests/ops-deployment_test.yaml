@@ -141,3 +141,22 @@ tests:
             name: metrics
             port: 9090
             targetPort: http
+
+  # spec: §16.9 line 723 — F-16.9.10. The lenny-ops PodMonitor selects
+  # by container port name `metrics`; the deployment must expose the
+  # named port even though /metrics lives on the same HTTP listener.
+  - it: exposes a named metrics containerPort on the lenny-ops pod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 8090
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http
+            containerPort: 8090

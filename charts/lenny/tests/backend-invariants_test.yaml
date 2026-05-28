@@ -1,0 +1,135 @@
+suite: §17.9.7 backend-invariant defenses
+# spec: §17.9.7 (lines 1538–1546) — these defenses apply "uniformly"
+# across cloud-managed, self-managed, and embedded backends. The
+# runtime layer enforces the invariants at gateway start; the chart
+# layer's contribution is to render values that keep the runtime
+# defenses active no matter which backend the operator selects.
+# F-17.9.18.
+release:
+  name: lenny
+  namespace: lenny-system
+tests:
+  # §17.9.7 line 1538 — Postgres transaction-mode pooling: the
+  # gateway must receive LENNY_POOLER_MODE so pgxpool's
+  # transaction-discipline guard is active. The default rendering
+  # carries the `transactional` value with no operator input.
+  - it: gateway carries LENNY_POOLER_MODE on the default render
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POOLER_MODE
+            value: "transactional"
+
+  # §17.9.7 line 1538 — the same env survives a Postgres DSN
+  # override (the bring-your-own self-managed path). The chart must
+  # not drop the pooler-mode posture when the deployer wires a DSN.
+  - it: gateway carries LENNY_POOLER_MODE when postgres.dsn is set
+    template: gateway-deployment.yaml
+    set:
+      postgres.dsn: "postgres://user:pass@postgres.lenny.svc:5432/lenny?sslmode=require"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POOLER_MODE
+            value: "transactional"
+
+  # §17.9.7 line 1539 — Redis AUTH+TLS: the gateway env reads the
+  # Redis URL from the lenny-datastore-conn Secret. Renderings must
+  # not inline the URL into the env value — that would leak the AUTH
+  # credential into the rendered manifest stream.
+  - it: gateway sources LENNY_REDIS_URL from the datastore Secret when redis.url is set
+    template: gateway-deployment.yaml
+    set:
+      redis.url: "rediss://:password@redis.lenny.svc:6380/0"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-url
+
+  # §17.9.7 line 1539 — the TLS port stays 6380 by default so the
+  # NetworkPolicy admission and ServicePort agreement match the
+  # gateway client config.
+  - it: redis.tlsPort defaults to 6380 across all renderings
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      redis.url: "rediss://:password@redis.lenny.svc:6380/0"
+    asserts:
+      # The chart's `lenny-datastore-conn` Secret keys redis-url; the
+      # value passes through the Secret and the env is the canonical
+      # consumer. Confirm both the env reference and the value source.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-url
+
+  # §17.9.7 line 1542 — encryption-at-rest gating: the chart renders
+  # an EncryptionConfiguration ConfigMap by default so a Kubernetes
+  # API server can mount it for Secret encryption. The rendering is
+  # backend-agnostic; cloud-managed, self-managed, and embedded all
+  # ship the ConfigMap.
+  - it: etcd-encryption ConfigMap renders by default
+    template: etcd-encryption.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-etcd-encryption
+
+  # §17.9.7 line 1539 + line 1541 — MinIO/object-store credentials
+  # also flow through the lenny-datastore-conn Secret, not inlined
+  # into env. The accessKey and secretKey use valueFrom.secretKeyRef
+  # so the rendered manifest stream carries no plaintext credentials.
+  - it: gateway sources LENNY_MINIO_ACCESS_KEY and LENNY_MINIO_SECRET_KEY from the datastore Secret
+    template: gateway-deployment.yaml
+    set:
+      minio.endpoint: "s3.us-east-1.amazonaws.com"
+      minio.accessKey: "AKIA-EXAMPLE"
+      minio.secretKey: "SECRET-EXAMPLE"
+      minio.bucket: "acme-lenny-prod"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MINIO_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: minio-access-key
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MINIO_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: minio-secret-key

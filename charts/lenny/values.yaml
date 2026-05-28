@@ -397,6 +397,25 @@ monitoring:
     interval: "30s"
     # scrapeTimeout bounds a single scrape; it must not exceed interval.
     scrapeTimeout: "10s"
+    # path is the HTTP path Prometheus scrapes from each control-plane
+    # component. The Lenny binaries serve metrics on /metrics; an
+    # operator running a non-standard reverse-proxy in front of metrics
+    # (kube-rbac-proxy, OpenShift router) may need to override the path.
+    # F-16.9.11.
+    path: "/metrics"
+    # scheme selects the URL scheme Prometheus uses for the scrape. The
+    # default plaintext "http" matches the chart's metrics listener,
+    # which shares the gateway HTTP container port. Set to "https" when
+    # an operator fronts /metrics with TLS (kube-rbac-proxy sidecar or
+    # an in-process mTLS metrics listener), and supply tlsConfig below.
+    # F-16.9.12.
+    scheme: "http"
+    # tlsConfig is rendered verbatim onto every scrape endpoint when
+    # scheme is "https". The chart does not inspect the structure; the
+    # operator provides the Prometheus Operator-shaped TLSConfig (per
+    # the monitoring.coreos.com/v1 spec): caFile, certFile, keyFile,
+    # insecureSkipVerify, serverName. F-16.9.12.
+    tlsConfig: {}
 
 # observability configures the §16 OpenTelemetry trace export. Agent
 # runtimes that emit OTLP spans need egress to the OTLP collector; the

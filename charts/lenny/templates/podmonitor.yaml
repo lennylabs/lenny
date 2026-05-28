@@ -43,5 +43,17 @@ spec:
     - port: metrics
       interval: {{ $sm.interval | quote }}
       scrapeTimeout: {{ $sm.scrapeTimeout | quote }}
-      path: /metrics
+      path: {{ $sm.path | default "/metrics" | quote }}
+      {{- $smScheme := $sm.scheme | default "http" }}
+      {{- if ne $smScheme "http" }}
+      # spec: F-16.9.12 — operators fronting /metrics with TLS
+      # (kube-rbac-proxy or an in-process mTLS listener) opt in to a
+      # non-plaintext scrape via monitoring.serviceMonitor.scheme +
+      # tlsConfig. The chart renders both verbatim.
+      scheme: {{ $smScheme | quote }}
+      {{- with $sm.tlsConfig }}
+      tlsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
 {{- end }}

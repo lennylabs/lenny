@@ -224,6 +224,20 @@ tests:
             name: grpc
             containerPort: 50051
 
+  # spec: §16.9 line 723 — F-16.9.10. The gateway pod exposes an
+  # explicit metrics containerPort so PodMonitor `port: metrics`
+  # discovery matches uniformly across control-plane components.
+  - it: exposes a named metrics containerPort on the gateway pod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 8080
+
   - it: binds the REST and GatewayControl listeners via args
     documentSelector:
       path: kind

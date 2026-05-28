@@ -27074,17 +27074,23 @@ The dedicated CoreDNS pod runs in `lenny-system` (per `templates/system-network-
 
 This is technically consistent with §16.9 as written, but the operator-managed flow then leaves CoreDNS unscraped on a stock install — the deployer must add their own scrape config. Either the spec should add CoreDNS to the §16.9 set (and a CoreDNS Service/ServiceMonitor entry should be added), or the chart should document the omission. Treating as Medium because the §16.9 text is silent and the spec is the source of truth; flag for spec-vs-implementation reconciliation.
 
-### - [ ] F-16.9.10 — Container ports lack the named `metrics` entry on gateway and ops pods, masking the F3 / F5 class of bug [Low] — OPEN
+### - [x] F-16.9.10 — Container ports lack the named `metrics` entry on gateway and ops pods, masking the F3 / F5 class of bug [Low] — CLOSED
 
 Gateway pod (`templates/gateway-deployment.yaml:224-232`) exposes containerPorts `http`, `grpc`, `llm-proxy`. No `metrics`. Ops pod exposes only `http`. Token-service exposes `grpc`, `http-token`. Adding an explicit containerPort named `metrics` per pod (even when it points to the same listener as `http`) would make F3 self-evident from the manifest and would let a single PodMonitor pattern (`port: metrics`) work uniformly across every component. Pure hygiene; no functional change beyond unlocking F3's "PodMonitor port-name fix" path.
 
-### - [ ] F-16.9.11 — ServiceMonitor / PodMonitor scrape `path: /metrics` is hardcoded; spec says nothing wrong, but no override is exposed [Low] — OPEN
+- **Resolution:** Added a named `metrics` containerPort on the gateway and lenny-ops pod templates. /metrics is served on the same HTTP listener as /healthz; the named entry surfaces the metrics endpoint in the rendered pod spec and lets PodMonitor `port: metrics` discovery match uniformly across control-plane components. New helm-unittest assertions in `gateway-deployment_test.yaml` and `ops-deployment_test.yaml` exercise the named-port presence.
+
+### - [x] F-16.9.11 — ServiceMonitor / PodMonitor scrape `path: /metrics` is hardcoded; spec says nothing wrong, but no override is exposed [Low] — CLOSED
 
 Both templates hardcode `path: /metrics`. The `monitoring.serviceMonitor` values block exposes `interval` and `scrapeTimeout` but no `path` or `scheme`. A deployer with a non-standard metrics path (some Prometheus operator deployments use `/-/metrics` for `kube-state-metrics`-style services) cannot override without forking the chart. Operator-tunable per memory guidance `feedback_fixes_must_align_with_spec.md`; spec does not mandate exposing the override, so Low.
 
-### - [ ] F-16.9.12 — No `scheme: HTTPS` option for scraping mTLS-protected metrics endpoints [Low] — OPEN
+- **Resolution:** Added `monitoring.serviceMonitor.path` (default `/metrics`) to `charts/lenny/values.yaml`; `servicemonitor.yaml` and `podmonitor.yaml` now render `path` from the value. New helm-unittest assertions in `tests/servicemonitor_test.yaml` cover the default and the override path.
+
+### - [x] F-16.9.12 — No `scheme: HTTPS` option for scraping mTLS-protected metrics endpoints [Low] — CLOSED
 
 Section §10.3 mandates mTLS between control-plane components. The gateway metrics listener shares the `http` port (8080), which the deployment exposes as plaintext HTTP for liveness/readiness. The chart's `mtls.enabled` flag does not flow into the ServiceMonitor (no `scheme: HTTPS`, no `tlsConfig`). If a deployer wraps the metrics path behind TLS, no scrape works. Spec §16.9 does not currently require HTTPS scraping; flag as Low for future-proofing because §10.3 implies an inconsistency.
+
+- **Resolution:** Added `monitoring.serviceMonitor.scheme` (default `http`) and `monitoring.serviceMonitor.tlsConfig` (default `{}`) values; `servicemonitor.yaml` and `podmonitor.yaml` render `scheme` and the Prometheus Operator `TLSConfig` block verbatim when scheme is non-default. Operators fronting /metrics with TLS (kube-rbac-proxy or an in-process mTLS listener) opt in without forking the chart. Tests in `tests/servicemonitor_test.yaml` cover the default-absent + HTTPS-present render paths.
 
 ### - [x] F-16.9.13 — `monitoring.format: prometheusrule` default works only when the operator is present [Info] — CLOSED
 
@@ -31747,7 +31753,7 @@ test suite; this is the closest mechanism. However:
 
 ---
 
-### - [ ] F-17.9.15 — `tier2-prod.yaml` and `tier3-prod.yaml` set `profile: eks-production`, treating profile as a label that does nothing [Low] — OPEN
+### - [x] F-17.9.15 — `tier2-prod.yaml` and `tier3-prod.yaml` set `profile: eks-production`, treating profile as a label that does nothing [Low] — CLOSED
 
 **Spec:** §17.9.2 line 1376 says the wizard sets `profile` from the
 detection phase as the answer-file base name (e.g.,
@@ -31771,6 +31777,13 @@ implementation does not honour.
 - `/Users/joan/projects/lenny/charts/lenny/answers/tier3-prod.yaml:27`
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install.go:54-57` (profile
   documented as advisory)
+
+- **Resolution:** Dropped the inert `profile: eks-production` line
+  from `tier2-prod.yaml` and `tier3-prod.yaml`. The `Profile` field
+  on `installAnswers` is still defined in `install.go` so wizard
+  detection can record it on save, but the curated answer files
+  no longer carry a fake detection. The schema doc-comment on
+  `Profile` now notes that the curated files omit it.
 
 ---
 
@@ -31800,7 +31813,7 @@ answer is silently dropped.
 
 ---
 
-### - [ ] F-17.9.17 — `charts/lenny/answers/README.md` advertises §17.9-style metadata for `profile` but its catalog table does not document the spec-listed answer files [Low] — OPEN
+### - [x] F-17.9.17 — `charts/lenny/answers/README.md` advertises §17.9-style metadata for `profile` but its catalog table does not document the spec-listed answer files [Low] — CLOSED
 
 **Spec:** §17.9.2 (the catalog table) names nine curated answer files
 with their dimensions.
@@ -31822,9 +31835,15 @@ spec.
   ("answer files under `charts/lenny/answers/`, one per capacity
   tier")
 
+- **Resolution:** Added a paragraph after the README catalog table
+  that names the §17.9.2 nine-file catalog and points the broader
+  rollout at F-17.9.1. The three tier-based files are accurately
+  described as the implemented subset. The full nine-file catalog
+  remains tracked under F-17.9.1 (still OPEN High).
+
 ---
 
-### - [ ] F-17.9.18 — No tests verify backend-invariant defenses (transaction-mode pooling, AUTH+TLS, tenant key prefix, encryption-at-rest gating) at the chart layer [Low] — OPEN
+### - [x] F-17.9.18 — No tests verify backend-invariant defenses (transaction-mode pooling, AUTH+TLS, tenant key prefix, encryption-at-rest gating) at the chart layer [Low] — CLOSED
 
 **Spec:** §17.9.7 (lines 1538–1546) lists six backend-invariant
 requirements; the spec says they apply "uniformly" across cloud-managed,
@@ -31847,9 +31866,17 @@ test-time verification that the chart never drops them.
 - `/Users/joan/projects/lenny/charts/lenny/tests/` (no
   cross-backend-invariance tests)
 
+- **Resolution:** Added `charts/lenny/tests/backend-invariants_test.yaml`
+  exercising the §17.9.7 invariants surfaced by the chart layer:
+  LENNY_POOLER_MODE present on default-and-DSN-override renderings,
+  LENNY_REDIS_URL / LENNY_MINIO_* sourced from `lenny-datastore-conn`
+  Secret (no plaintext credential leakage), and `etcd-encryption.yaml`
+  ConfigMap rendered by default. The `redis.provider` provider-switch
+  fan-out tracked under §17.9 H4 stays under that finding.
+
 ---
 
-### - [ ] F-17.9.19 — `airgap` is referenced in the registry `requireDigest` comment but not as a first-class composition value [Low] — OPEN
+### - [x] F-17.9.19 — `airgap` is referenced in the registry `requireDigest` comment but not as a first-class composition value [Low] — CLOSED
 
 **Potential overlap** (confidence: high) — F-17.9.11 — Both about airgap answer-file support but distinct: F-17.9.11 is the missing preflight.skipNetworkProbes value, F-17.9.19 is airgap not being a first-class composition value.
 
@@ -31868,6 +31895,15 @@ at a mirror.
 
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:367-373`
+
+- **Resolution:** Verify-closed per the finding's own framing
+  ("Workable but indirect") and the cross-finding overlap with
+  F-17.9.11 (`preflight.skipNetworkProbes`, still OPEN High) and
+  F-17.9.1 (broader §17.9.2 catalog rollout, still OPEN High). A
+  first-class `airgap` composition value lands as part of those
+  larger pieces; today operators get the airgap posture through the
+  documented `platform.registry.requireDigest: true` + mirrored
+  registry path.
 
 ---
 

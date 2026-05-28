@@ -24,8 +24,6 @@ environment: prod
 # Capacity tier. tier2 is the mid-range envelope (§17.8.2).
 tier: tier2
 
-profile: eks-production
-
 # Gateway DNS name and TLS strategy. cert-manager issues the gateway
 # certificate from a cluster ClusterIssuer.
 domain: lenny.acme.com

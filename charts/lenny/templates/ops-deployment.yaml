@@ -117,6 +117,13 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.ops.httpPort }}
+            # spec: §16.9 line 723 — named metrics containerPort so the
+            # podmonitor.yaml `port: metrics` selector matches the
+            # lenny-ops pod. lenny-ops serves /metrics on the same HTTP
+            # listener as the §25 REST surface; the named entry surfaces
+            # the metrics endpoint on the rendered pod spec. F-16.9.10.
+            - name: metrics
+              containerPort: {{ .Values.ops.httpPort }}
           livenessProbe:
             httpGet:
               path: /healthz

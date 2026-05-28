@@ -24,8 +24,6 @@ environment: prod
 # KEDA-driven gateway autoscaler.
 tier: tier3
 
-profile: eks-production
-
 domain: lenny.acme.com
 tls: cert-manager
 
