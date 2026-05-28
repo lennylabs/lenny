@@ -16,6 +16,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/elicitation"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
@@ -492,6 +493,167 @@ func TestGetTaskTreeTool(t *testing.T) {
 	if !strings.Contains(text, "sess_root") || !strings.Contains(text, "sess_kid") {
 		t.Errorf("task tree: %q", text)
 	}
+}
+
+// TestGetTaskTreeAcceptsEmptyArgsFromBoundPrincipal_spec_8_9_F_8_9_11
+// verifies that lenny/get_task_tree honors the §8.9 lines 615-623 input
+// schema (`{"properties":{},"required":[]}`): a spec-conformant caller
+// who omits every argument and presents an authenticated principal
+// gets the tree rooted at the principal's SessionID. F-8.9.11.
+func TestGetTaskTreeAcceptsEmptyArgsFromBoundPrincipal_spec_8_9_F_8_9_11(t *testing.T) {
+	srv, store := newMCP(t)
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_principal_899", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_kid_899", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_principal_899",
+		CreatedAt:       now, UpdatedAt: now,
+	})
+	principal := authmw.Principal{Subject: "alice", TenantID: "acme", SessionID: "sess_principal_899"}
+	resp := callAs(t, srv.Handler(), principal, "lenny/get_task_tree", `{}`)
+	text := resultText(t, resp)
+	for _, want := range []string{"sess_principal_899", "sess_kid_899"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("tree missing %q: %q", want, text)
+		}
+	}
+}
+
+// TestGetTaskTreeRejectsUnboundEmptyArgs_spec_8_9_F_8_9_11 verifies the
+// negative path: a caller with neither a principal-bound SessionID nor
+// a transport-fallback sessionId argument is rejected with
+// VALIDATION_ERROR rather than silently selecting an arbitrary tree.
+// F-8.9.11.
+func TestGetTaskTreeRejectsUnboundEmptyArgs_spec_8_9_F_8_9_11(t *testing.T) {
+	srv, _ := newMCP(t)
+	resp := call(t, srv.Handler(), "lenny/get_task_tree", `{}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("expected isError result; got %+v", resp)
+	}
+}
+
+// TestGetTaskTreeInputSchemaHasNoRequired_spec_8_9_F_8_9_11 verifies
+// the registered §8.9 input schema declares no required fields — the
+// caller-implicit identification rule the spec at lines 615-623 sets.
+// F-8.9.11.
+func TestGetTaskTreeInputSchemaHasNoRequired_spec_8_9_F_8_9_11(t *testing.T) {
+	srv, _ := newMCP(t)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rr.Body.String())
+	}
+	result, _ := resp["result"].(map[string]any)
+	tools, _ := result["tools"].([]any)
+	for _, raw := range tools {
+		tool, _ := raw.(map[string]any)
+		if tool["name"] != "lenny/get_task_tree" {
+			continue
+		}
+		schema, _ := tool["inputSchema"].(map[string]any)
+		required, _ := schema["required"].([]any)
+		if len(required) != 0 {
+			t.Errorf("get_task_tree inputSchema.required = %v, want [] (§8.9 lines 615-623)", required)
+		}
+		return
+	}
+	t.Fatalf("lenny/get_task_tree not in tools/list")
+}
+
+// TestGetTaskTreeEmitsCycleObservation_spec_8_9_F_8_9_10 verifies that
+// the MCP walker fires the TreeCycleObserver when the persistent
+// store has been corrupted into a ParentSessionID cycle (the §8.2
+// pre-delegation detector is bypassed in this defensive path). The
+// walker still returns a well-formed (truncated) tree so the response
+// stays serializable. F-8.9.10.
+func TestGetTaskTreeEmitsCycleObservation_spec_8_9_F_8_9_10(t *testing.T) {
+	store := memstore.New()
+	now := time.Now()
+	// A two-node cycle: sess_a.parent = sess_b, sess_b.parent = sess_a.
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_a", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_b",
+		CreatedAt:       now, UpdatedAt: now,
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_b", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_a",
+		CreatedAt:       now, UpdatedAt: now,
+	})
+	observer := &captureTreeCycle{}
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:             store,
+		TenantID:          "acme",
+		TreeCycleObserver: observer,
+	})
+	resp := call(t, srv.Handler(), "lenny/get_task_tree", `{"sessionId":"sess_a"}`)
+	if result, _ := resp["result"].(map[string]any); result == nil || result["isError"] == true {
+		t.Fatalf("expected non-error result; got %+v", resp)
+	}
+	if len(observer.events) == 0 {
+		t.Fatalf("expected at least one TreeCycleEvent; got none")
+	}
+	got := observer.events[0]
+	if got.TenantID != "acme" {
+		t.Errorf("TenantID = %q, want acme", got.TenantID)
+	}
+	if got.Source != "mcp" {
+		t.Errorf("Source = %q, want mcp", got.Source)
+	}
+	if got.RootSessionID != "sess_a" {
+		t.Errorf("RootSessionID = %q, want sess_a", got.RootSessionID)
+	}
+	if got.CycleNodeID == "" {
+		t.Errorf("CycleNodeID is empty; want the repeated node id")
+	}
+}
+
+// TestGetTaskTreeAcyclicTreeEmitsNoCycle_spec_8_9_F_8_9_10 verifies
+// the negative: a clean tree never fires the cycle observer. F-8.9.10.
+func TestGetTaskTreeAcyclicTreeEmitsNoCycle_spec_8_9_F_8_9_10(t *testing.T) {
+	store := memstore.New()
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_root_cl", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_kid_cl", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_root_cl",
+		CreatedAt:       now, UpdatedAt: now,
+	})
+	observer := &captureTreeCycle{}
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:             store,
+		TenantID:          "acme",
+		TreeCycleObserver: observer,
+	})
+	resp := call(t, srv.Handler(), "lenny/get_task_tree", `{"sessionId":"sess_root_cl"}`)
+	if result, _ := resp["result"].(map[string]any); result == nil || result["isError"] == true {
+		t.Fatalf("expected non-error result; got %+v", resp)
+	}
+	if len(observer.events) != 0 {
+		t.Errorf("acyclic tree produced %d cycle events; want 0", len(observer.events))
+	}
+}
+
+// captureTreeCycle is a §8.9 TreeCycleObserver fake that records
+// every observation so a test can assert emission shape. F-8.9.10.
+type captureTreeCycle struct {
+	events []mcptools.TreeCycleEvent
+}
+
+func (c *captureTreeCycle) OnTreeCycle(_ context.Context, ev mcptools.TreeCycleEvent) {
+	c.events = append(c.events, ev)
 }
 
 // TestDelegateTaskRejectsMCPTargetSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10

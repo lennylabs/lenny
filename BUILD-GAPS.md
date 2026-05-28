@@ -9495,7 +9495,7 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** The reverse direction (child returns artifacts to parent) is unbuilt. The audit prompt lists "child→parent file delivery" as in-scope; the spec normatively defines `artifactRefs` on the TaskResult only — no operational §8.7 text. The audit prompt's framing of "child→parent file delivery" therefore mostly surfaces an §8.8 gap rather than an §8.7 normative gap, but the channel is part of the same end-to-end file model and is enumerated here for completeness.
 
-### - [ ] F-8.7.14 — `interceptor.fail_policy_weakened` re-use prohibition is informational; no test asserts the negative [Low] — OPEN
+### - [x] F-8.7.14 — `interceptor.fail_policy_weakened` re-use prohibition is informational; no test asserts the negative [Low] — CLOSED
 
 **Spec:** §8.3 line 181 — "The audit event `interceptor.fail_policy_weakened` is not re-used for this transition — a dedicated `delegation_policy.export_scan_weakened` event records the change."
 
@@ -9505,9 +9505,13 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** Low. A future refactor could accidentally emit both events on the same transition without test failure.
 
-### - [ ] F-8.7.15 — `PreExportMaterialization` chain is reachable only through the test harness [Info] — OPEN
+**Resolution:** `TestUpdateDelegationPolicyEmitsScanWeakenedEvent` now asserts the negative directly: after the `true → false` `scanExportedFiles` transition, the audit log must contain `delegation_policy.export_scan_weakened` and must not contain `interceptor.fail_policy_weakened`. A future refactor that accidentally collapses the two transitions onto one event row fails the test.
+
+### - [x] F-8.7.15 — `PreExportMaterialization` chain is reachable only through the test harness [Info] — CLOSED
 
 **Note:** Not a separate gap; this is the operational shape of F1 + F9 + F10 + F11. The interceptor framework itself (`pkg/gateway/interceptor/export.go::RunPreExportMaterialization`, external gRPC adapter in `external.go`) is well-formed, covered by `export_test.go` (clean pass, oversize, REJECT, MODIFY, immutable-field violations, fail-open, fail-closed, external gRPC end-to-end), and ready to consume from the future `pkg/delegation/export` package the spec-map points to. The constants `CodeExportFileScanRejected`, `CodeExportFileScanSizeExceeded`, `CodeInterceptorImmutableFieldViolation`, and the `ExportFile` / `ExportDelegationContext` / `ExportScanError` envelope match §4.8's `PreExportMaterialization` payload row line-for-line.
+
+**Resolution:** Verify-closed per the finding's own conclusion (the chain framework is well-formed; production-call gap is tracked separately under F1/F9/F10/F11). No code change.
 
 ---
 
@@ -9684,11 +9688,13 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 - **Gap:** Consumers cannot programmatically switch on `code`; the gateway invents codes that match the state rather than codes that match the *cause*. F-8.8.8 covers `expired:*`; this finding covers the broader pattern.
 - **Suggested resolution:** When the session reaches a failure terminal state, always populate `FailureReason` with a structured code so the fallback never fires; remove the `CHILD_*` fallback once every failure path populates the reason.
 
-### - [ ] F-8.8.16 — §8.10 archive's TaskResult body is JSON-stringified inside ArchivedNode.Result rather than a structured field [Info] — OPEN
+### - [x] F-8.8.16 — §8.10 archive's TaskResult body is JSON-stringified inside ArchivedNode.Result rather than a structured field [Info] — CLOSED
 - **Spec:** Lines 885–917 plus §8.10 — the archived result *is* the §8.8 TaskResult.
 - **Evidence:** `pkg/gateway/treearchive/treearchive.go:41-42` — `Result string` is "the §8.8 TaskResult JSON the resumed parent replays". `pkg/gateway/sessionserver/usage.go:178` marshals `archivedTaskResult(sess)` into a JSON string and assigns it. `pkg/gateway/mcptools/mcptools.go:1366-1376` then unmarshals it back when resolving an archived child for `lenny/await_children`.
 - **Gap:** None directly — the round-trip through a JSON string column is a valid implementation choice — but every consumer that wants to read or filter the TaskResult fields has to parse the embedded JSON. As the TaskResult body grows (per F-8.8.2, F-8.8.3) the structured query story will be worse than necessary.
 - **Suggested resolution:** Consider a `treearchive.ArchivedNode.TaskResult` typed struct once the schema stabilizes, with the JSON string preserved as a denormalization for replay.
+
+**Resolution:** Verify-closed per the finding's own conclusion ("None directly — a valid implementation choice"). The structured-field refactor is a forward-looking optimization that lands once F-8.8.2 / F-8.8.3 stabilize the TaskResult shape; no v1 code change.
 
 ---
 
@@ -9796,7 +9802,7 @@ Section §8.9 is a short normative declaration: the gateway maintains a complete
 - **Gap:** A long-lived gateway with many delegated trees will grow the archive map without bound. The spec's "default 128 entries" cache assumes a Postgres-backed authoritative store with the in-memory copy serving as a hot cache; the current implementation conflates the two.
 - **Suggested resolution:** Once the Postgres backing exists (F-8.9.3), repurpose the memory implementation as an LRU cache with `default 128 entries` and a configurable cap, fronting the Postgres store rather than acting as the durable record.
 
-### - [ ] F-8.9.10 — Cycle guard in tree walker uses node-id `seen` set rather than relying on the §8.2 cycle detector [Low] — OPEN
+### - [x] F-8.9.10 — Cycle guard in tree walker uses node-id `seen` set rather than relying on the §8.2 cycle detector [Low] — CLOSED
 - **Spec:** §8.2 cycle detection runs at delegation time. §8.9 / §8.10 traversal assumes the tree is acyclic.
 - **Evidence:**
   - `pkg/gateway/sessionserver/tree.go:78-94::buildTreeNode` carries a `seen map[string]bool` and short-circuits when a node id repeats. The comment at line 75–77 calls it "defensive in case of a corrupt store".
@@ -9804,18 +9810,24 @@ Section §8.9 is a short normative declaration: the gateway maintains a complete
 - **Gap:** Defensive code that papers over a hypothetical corruption can mask a real bug (e.g., a mis-set `ParentSessionID` after the §8.10 recovery path). The §8.2 cycle detector prevents cycles at delegation, but a recovery write that re-parents a node could still create one and the tree walker would silently truncate the cycle rather than surface an alert.
 - **Suggested resolution:** When the `seen` guard short-circuits, emit a `tree_cycle_detected` audit event and a metric (`lenny_delegation_tree_cycle_detected_total`) so a corrupted store surfaces rather than silently truncates.
 
-### - [ ] F-8.9.11 — MCP `get_task_tree` input schema requires `sessionId`; spec says no input parameters [Low] — OPEN
+**Resolution:** Added `sessionserver.TreeCycleObserver` and `mcptools.TreeCycleObserver` interfaces, refactored both `buildTreeNode` (sessionserver) and `buildTree`/`walk` (mcptools) to thread a `treeWalkContext` carrying the observer, and wired `gatewaymetrics.Metrics.IncDelegationTreeCycleDetected(tenant_id, source)` on each repeated-node hit. Each walker source labels its rows distinctly (`rest` for `/v1/sessions/{id}/tree`, `mcp` for `lenny/get_task_tree`). The metric `lenny_delegation_tree_cycle_detected_total` is registered with prometheus at gateway startup, sitting outside §16.1 the same way `lenny_rate_limit_rejected_total` does. The audit-row half of the suggested resolution (a `delegation.tree_cycle_detected` row in the §11.7 hash-chained log) is **deferred** because §16.7 is a closed catalog of spec-listed events and the new event type requires a spec change; the metric is the operator-visible signal in v1, the audit row lands with a future §16.7 catalog extension.
+
+### - [x] F-8.9.11 — MCP `get_task_tree` input schema requires `sessionId`; spec says no input parameters [Low] — CLOSED
 - **Spec:** Lines 615–623 — `lenny/get_task_tree` is defined with an empty input schema (`{"type":"object","properties":{},"required":[]}`) and "Returns the task hierarchy visible to the calling session (scoped by `treeVisibility`)." The caller is identified implicitly from the MCP session.
 - **Evidence:** `pkg/gateway/mcptools/mcptools.go:345-367` — `InputSchema: ...required:["sessionId"]...`. The handler requires the caller to pass `sessionId` explicitly and uses that id as the root of the returned subtree.
 - **Gap:** The implementation requires an explicit input parameter the spec does not name and uses it to *select an arbitrary tree* rather than implicitly identifying the caller's tree (which would be enforced by `treeVisibility` once that landed). The MCP surface therefore both diverges from the documented schema and exposes a tree-selection capability the spec did not intend (a tree-traversal by parent of an arbitrary tenant-owned session).
 - **Suggested resolution:** Drop the input parameter, source the caller's session id from the MCP context (via `Deps.CallerSessionID` or equivalent), and apply F-8.9.2's `treeVisibility` scoping. If an admin tool needs to inspect an arbitrary tree, add a separate admin endpoint rather than overloading the agent-facing `lenny/get_task_tree`.
 
-### - [ ] F-8.9.12 — Tree-archive cancellation cascade snapshots the `seen` set at one instant, never observing late-settling siblings [Info] — OPEN
+**Resolution:** Rewrote the `lenny/get_task_tree` registration so the input schema declares no required fields (`{"properties":{"sessionId":{...}},"required":[]}`), and the handler now sources the caller's session id from `callerSessionID(ctx, in.SessionID)` — the same principal-bound resolver every other §8.5 tool uses. A spec-conformant empty-args call from a bound principal walks the tree rooted at the principal's `SessionID`; the optional `sessionId` is the §15.2.1 transport-fallback used by tests and dev-headers callers that have not yet bound a session-scoped principal. An unbound caller passing no fallback is rejected with `VALIDATION_ERROR` rather than silently selecting an arbitrary tree. `treeVisibility` scoping lands with F-8.9.2.
+
+### - [x] F-8.9.12 — Tree-archive cancellation cascade snapshots the `seen` set at one instant, never observing late-settling siblings [Info] — CLOSED
 - **Spec:** §8.10 line 1062 — "the gateway first streams all already-settled child results from `session_tree_archive` in original-settlement order". §8.10 cancellation cascade applies to all descendants reached at the time of the cancel call.
 - **Evidence:** `pkg/gateway/mcptools/mcptools.go:1464-1500::cancelSubtree` walks the cancellation cascade by re-reading the session list it was passed in. Sessions that transition to terminal *during* the cascade are not re-walked.
   - This is a different concern from F-8.9.10 (silent cycle masking).
 - **Gap:** None directly visible at v1 fan-out scales — the loop completes quickly and the spec does not require linearizable cancellation. As tree depth grows, the cancel cascade may miss a fast-finishing concurrent child that completed between the initial list and the per-node update.
 - **Suggested resolution:** Document the v1 acceptance and revisit when the per-tree atomic counter work lands (F-8.9.6): a Redis-keyed `{root_session_id}:dlg:state` channel would let the cancellation cascade observe the active in-flight set rather than a snapshot.
+
+**Resolution:** Verify-closed per the finding's own conclusion ("None directly visible at v1 fan-out scales"). The spec does not require linearizable cancellation; the redesign lands with F-8.9.6 (per-tree atomic counter). No v1 code change.
 
 ---
 
@@ -10273,7 +10285,7 @@ parameterize the alert.
 
 ---
 
-### - [ ] F-8.10.14 — 1 — Tree-archive replay path is implemented but not exercised end-to-end [Info] — OPEN
+### - [x] F-8.10.14 — 1 — Tree-archive replay path is implemented but not exercised end-to-end [Info] — CLOSED
 
 The `treearchive` package implements settlement-ordered Replay
 (`pkg/gateway/treearchive/treearchive.go:111–122`) and has unit
@@ -10282,15 +10294,19 @@ coverage (`TestArchiveAndReplayInSettlementOrder`). The
 (HIGH-4). Worth flagging as "the contract is there; the consumers
 just need to use it."
 
+**Resolution:** Verify-closed per the finding's own conclusion (the Replay contract is implemented and unit-tested; the consumer-integration gap is tracked under HIGH-4). No additional code change in this batch.
+
 ---
 
-### - [ ] F-8.10.15 — 2 — `pkg/delegation/recovery` traversal is solid in isolation [Info] — OPEN
+### - [x] F-8.10.15 — 2 — `pkg/delegation/recovery` traversal is solid in isolation [Info] — CLOSED
 
 The recovery package's Go-level API is clean, deterministic, and
 unit-tested (level grouping, level-deadline expiry, tree-deadline
 expiry, empty-tree case). When HIGH-1 is addressed, the only API
 change likely needed is a per-node deadline (MEDIUM-6) and a per-node
 audit/metric hook.
+
+**Resolution:** Verify-closed per the finding's own conclusion (the in-isolation API is clean and unit-tested). The per-node-deadline + per-node-hook follow-ups land with MEDIUM-6 and HIGH-1. No code change.
 
 ---
 

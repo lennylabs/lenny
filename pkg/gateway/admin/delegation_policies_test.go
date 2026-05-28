@@ -355,6 +355,14 @@ func TestUpdateDelegationPolicyEmitsScanWeakenedEvent(t *testing.T) {
 	if ev.Detail["cooldown_seconds"] != 60 {
 		t.Errorf("weakened event cooldown_seconds = %v, want 60", ev.Detail["cooldown_seconds"])
 	}
+	// spec: §8.3 line 181 — "The audit event `interceptor.fail_policy_weakened`
+	// is not re-used for this transition — a dedicated
+	// `delegation_policy.export_scan_weakened` event records the
+	// change." F-8.7.14: pin the negative so a future refactor cannot
+	// accidentally collapse the two transitions onto one event row.
+	if _, present := findAuditEvent(audit.snapshot(), "interceptor.fail_policy_weakened"); present {
+		t.Error("a scanExportedFiles transition must not re-use interceptor.fail_policy_weakened (§8.3 line 181)")
+	}
 }
 
 func TestUpdateDelegationPolicyEmitsScanStrengthenedEvent(t *testing.T) {

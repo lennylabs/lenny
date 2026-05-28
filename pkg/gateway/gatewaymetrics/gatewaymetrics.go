@@ -280,6 +280,14 @@ type Metrics struct {
 	// per-layer breakdown for diagnostic rollouts (the delegation is
 	// admitted). Not emitted under `mode: permissive`.
 	delegationWouldHaveBlocked *prometheus.CounterVec
+	// delegationTreeCycleDetected counts §8.9 tree-walker cycle
+	// detections. Labels `tenant_id` and `source` (`rest` for the
+	// /v1/sessions/{id}/tree handler, `mcp` for the lenny/get_task_tree
+	// platform tool and lenny/await_children tree walks). Emission
+	// implies a corrupt ParentSessionID lineage that bypassed the §8.2
+	// pre-delegation cycle detector — typically a §8.10 recovery write
+	// that re-parented a node. spec: §8.9 line 1003; F-8.9.10.
+	delegationTreeCycleDetected *prometheus.CounterVec
 	// rateLimitRejected counts §11.1 line 7 admission rejections by
 	// the ratelimit middleware. Labelled by `scope` (`global` | `user`)
 	// so operators can attribute rejection volume to the scope that
@@ -1116,6 +1124,18 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 / §8.9 — `lenny_delegation_tree_cycle_detected_total`
+	// counts the tree-walker defensive cycle hits. The §8.2 cycle
+	// detector prevents cycles at delegation time; a non-zero rate
+	// here implies the persistent store has been corrupted (e.g., a
+	// §8.10 recovery write re-parented a node). F-8.9.10.
+	delegationTreeCycleDetected, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_delegation_tree_cycle_detected_total",
+		Help: "Tree walker hit a cycle in the §8.2 ParentSessionID lineage (corrupt store).",
+	}, []string{"tenant_id", "source"})
+	if err != nil {
+		return nil, err
+	}
 	// §11.1 line 7 — `lenny_rate_limit_rejected_total` counts ratelimit
 	// middleware 429 rejections, labelled by `scope` (`global` | `user`)
 	// so operators can attribute rejection volume per enforcement axis.
@@ -1305,7 +1325,7 @@ func New() (*Metrics, error) {
 		gcRuns, gcArtifactsDeleted, gcErrors, gcDuration,
 		drainReadinessChecks, legalHoldCheckpointGaps,
 		artifactUploadError,
-		delegationDepth, delegationWouldHaveBlocked,
+		delegationDepth, delegationWouldHaveBlocked, delegationTreeCycleDetected,
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
 		maxOrphanTasksPerTenant,
@@ -1411,6 +1431,7 @@ func New() (*Metrics, error) {
 		artifactUploadError:                  artifactUploadError,
 		delegationDepth:                      delegationDepth,
 		delegationWouldHaveBlocked:           delegationWouldHaveBlocked,
+		delegationTreeCycleDetected:          delegationTreeCycleDetected,
 		rateLimitRejected:                    rateLimitRejected,
 		rateLimitFailopenActive:              rateLimitFailopenActive.WithLabelValues(),
 		rateLimitCounterFailure:              rateLimitCounterFailure,
@@ -2015,6 +2036,19 @@ func (m *Metrics) IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode stri
 		return
 	}
 	m.delegationWouldHaveBlocked.WithLabelValues(pool, tenantID, layer, mode).Inc()
+}
+
+// IncDelegationTreeCycleDetected increments the §8.9
+// `lenny_delegation_tree_cycle_detected_total` counter when a tree
+// walker hits a cycle in the §8.2 ParentSessionID lineage. `source`
+// is `rest` for the /v1/sessions/{id}/tree handler and `mcp` for the
+// lenny/get_task_tree platform-tool and lenny/await_children walks.
+// spec: §8.9 line 1003; F-8.9.10.
+func (m *Metrics) IncDelegationTreeCycleDetected(tenantID, source string) {
+	if m == nil {
+		return
+	}
+	m.delegationTreeCycleDetected.WithLabelValues(tenantID, source).Inc()
 }
 
 // IncCheckpointEvictionFallback increments the §4.4 line 263

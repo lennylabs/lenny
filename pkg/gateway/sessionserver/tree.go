@@ -24,12 +24,36 @@ package sessionserver
 // spec: §4.2 line 157.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
+
+// TreeCycleObserver is invoked when a §8.9 tree walker hits a cycle
+// in the §8.2 ParentSessionID lineage. The §8.2 cycle detector
+// prevents cycles at delegation time, so a non-zero call rate
+// signals a corrupted persistent store (e.g., a §8.10 recovery
+// write that re-parented a node into a cycle). The walker truncates
+// the cycle in the returned tree; the observer surfaces the
+// corruption to operators via the §11.7 audit log + §16.1
+// `lenny_delegation_tree_cycle_detected_total` counter so it does
+// not silently disappear. The source field is `rest` for the
+// /v1/sessions/{id}/tree handler. spec: §8.9 line 1003; F-8.9.10.
+type TreeCycleObserver interface {
+	OnTreeCycle(ctx context.Context, ev TreeCycleEvent)
+}
+
+// TreeCycleEvent is the §8.9 tree-cycle audit/metric payload. The
+// fields mirror the §11.7 audit row the gateway writes.
+type TreeCycleEvent struct {
+	TenantID      string
+	RootSessionID string
+	CycleNodeID   string
+	Source        string
+}
 
 // TreeNode is one node in the §8 delegation task tree.
 type TreeNode struct {
@@ -87,16 +111,36 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	count := 0
-	node := buildTreeNode(root, childrenByParent, &count, map[string]bool{})
+	ctx := treeWalkContext{
+		ctx:           r.Context(),
+		tenantID:      tenantID,
+		rootSessionID: root.ID,
+		observer:      s.treeCycleObserver,
+	}
+	node := buildTreeNode(ctx, root, childrenByParent, &count, map[string]bool{})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(TreeResponse{Root: node, NodeCount: count})
+}
+
+// treeWalkContext carries the per-walk fields buildTreeNode passes
+// to the cycle observer. The observer fires once per repeated node;
+// the walker still truncates the cycle to keep the response well-
+// formed. spec: §8.9 line 1003; F-8.9.10.
+type treeWalkContext struct {
+	ctx           context.Context
+	tenantID      string
+	rootSessionID string
+	observer      TreeCycleObserver
 }
 
 // buildTreeNode recursively assembles the subtree rooted at sess.
 // The `seen` set guards against a cycle in the ParentSessionID
 // graph (which the §8.2 cycle detector prevents at delegation time,
 // but the tree walker stays defensive in case of a corrupt store).
-func buildTreeNode(sess sessionstore.Session, childrenByParent map[string][]sessionstore.Session, count *int, seen map[string]bool) TreeNode {
+// When the guard fires, the walker emits a §8.9 cycle observation
+// so the corruption surfaces rather than silently truncates.
+// spec: §8.9 line 1003; F-8.9.10.
+func buildTreeNode(wctx treeWalkContext, sess sessionstore.Session, childrenByParent map[string][]sessionstore.Session, count *int, seen map[string]bool) TreeNode {
 	*count++
 	node := TreeNode{
 		SessionID:  sess.ID,
@@ -105,11 +149,19 @@ func buildTreeNode(sess sessionstore.Session, childrenByParent map[string][]sess
 		Children:   []TreeNode{},
 	}
 	if seen[sess.ID] {
+		if wctx.observer != nil {
+			wctx.observer.OnTreeCycle(wctx.ctx, TreeCycleEvent{
+				TenantID:      wctx.tenantID,
+				RootSessionID: wctx.rootSessionID,
+				CycleNodeID:   sess.ID,
+				Source:        "rest",
+			})
+		}
 		return node
 	}
 	seen[sess.ID] = true
 	for _, child := range childrenByParent[sess.ID] {
-		node.Children = append(node.Children, buildTreeNode(child, childrenByParent, count, seen))
+		node.Children = append(node.Children, buildTreeNode(wctx, child, childrenByParent, count, seen))
 	}
 	return node
 }

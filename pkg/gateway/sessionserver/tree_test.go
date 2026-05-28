@@ -190,3 +190,105 @@ func TestTreeCrossTenantIsolation(t *testing.T) {
 		t.Errorf("cross-tenant child must not appear: %+v", resp)
 	}
 }
+
+// captureTreeCycle is a §8.9 cycle observer fake that records every
+// observation so a test can assert emission shape. F-8.9.10.
+type captureTreeCycle struct {
+	events []sessionserver.TreeCycleEvent
+}
+
+func (c *captureTreeCycle) OnTreeCycle(_ context.Context, ev sessionserver.TreeCycleEvent) {
+	c.events = append(c.events, ev)
+}
+
+// TestTreeEmitsCycleObservation_spec_8_9_F_8_9_10 verifies that the
+// REST /v1/sessions/{id}/tree walker fires the TreeCycleObserver
+// when the persistent store has been corrupted into a
+// ParentSessionID cycle. The walker still returns a well-formed
+// (truncated) tree so the response stays serializable. F-8.9.10.
+func TestTreeEmitsCycleObservation_spec_8_9_F_8_9_10(t *testing.T) {
+	store := memstore.New()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// A two-node cycle: sess_a.parent = sess_b, sess_b.parent = sess_a.
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_a_899", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_b_899",
+		CreatedAt:       now, UpdatedAt: now,
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_b_899", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_a_899",
+		CreatedAt:       now, UpdatedAt: now,
+	})
+	observer := &captureTreeCycle{}
+	srv := sessionserver.New(store, sessionserver.Options{
+		TreeCycleObserver: observer,
+	})
+
+	rr, resp := getTree(t, srv.Handler(), "sess_a_899")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	if resp.Root.SessionID != "sess_a_899" {
+		t.Errorf("root = %q, want sess_a_899", resp.Root.SessionID)
+	}
+	if len(observer.events) == 0 {
+		t.Fatalf("expected at least one TreeCycleEvent; got none")
+	}
+	got := observer.events[0]
+	if got.TenantID != "acme" {
+		t.Errorf("TenantID = %q, want acme", got.TenantID)
+	}
+	if got.Source != "rest" {
+		t.Errorf("Source = %q, want rest", got.Source)
+	}
+	if got.RootSessionID != "sess_a_899" {
+		t.Errorf("RootSessionID = %q, want sess_a_899", got.RootSessionID)
+	}
+	if got.CycleNodeID == "" {
+		t.Errorf("CycleNodeID is empty; want the repeated node id")
+	}
+}
+
+// TestTreeAcyclicEmitsNoCycle_spec_8_9_F_8_9_10 verifies the negative
+// path: a clean tree never fires the cycle observer. F-8.9.10.
+func TestTreeAcyclicEmitsNoCycle_spec_8_9_F_8_9_10(t *testing.T) {
+	store := memstore.New()
+	seedTreeSession(t, store, "sess_root_clean", "")
+	seedTreeSession(t, store, "sess_kid_clean", "sess_root_clean")
+
+	observer := &captureTreeCycle{}
+	srv := sessionserver.New(store, sessionserver.Options{
+		TreeCycleObserver: observer,
+	})
+	rr, _ := getTree(t, srv.Handler(), "sess_root_clean")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	if len(observer.events) != 0 {
+		t.Errorf("acyclic tree produced %d cycle events; want 0", len(observer.events))
+	}
+}
+
+// TestTreeNilObserverIsSafe_spec_8_9_F_8_9_10 verifies that the walker
+// keeps the legacy contract when no observer is wired: a cycle is
+// truncated and the response is well-formed. F-8.9.10.
+func TestTreeNilObserverIsSafe_spec_8_9_F_8_9_10(t *testing.T) {
+	store := memstore.New()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_x_899", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_y_899",
+		CreatedAt:       now, UpdatedAt: now,
+	})
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_y_899", TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: "sess_x_899",
+		CreatedAt:       now, UpdatedAt: now,
+	})
+	srv := sessionserver.New(store, sessionserver.Options{})
+	rr, _ := getTree(t, srv.Handler(), "sess_x_899")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+}

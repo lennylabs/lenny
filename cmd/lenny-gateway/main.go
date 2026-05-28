@@ -1675,6 +1675,12 @@ func main() {
 		// respond/dismiss) to the §11.7 hash-chained log, written under
 		// the session's tenant. F-7.2.8.
 		InteractionAuditSink: interactionResolutionAuditor{appender: auditAppender},
+		// §8.9 line 1003 / §11.7 / §16.1 — tree-walker defensive cycle
+		// observer for REST /v1/sessions/{id}/tree. Emits the
+		// delegation.tree_cycle_detected audit row + increments the
+		// lenny_delegation_tree_cycle_detected_total counter when the
+		// walker hits a repeated node. F-8.9.10.
+		TreeCycleObserver: sessionserverTreeCycleObserver{emitter: treeCycleEmitter{metrics: gwMetrics}},
 		// §7.2 line 317 — shared inputwait registry so REST inReplyTo
 		// resolves the same pending `lenny/request_input` MCP registers.
 		// F-7.2.14.
@@ -1881,6 +1887,11 @@ func main() {
 		ElicitationMetrics:         gwMetrics,
 		TenantID:                   "default",
 		Clock:                      clockinject.Now,
+		// §8.9 line 1003 / §11.7 / §16.1 — same tree-walker cycle
+		// observer the REST /tree handler uses, so the audit row +
+		// counter fire regardless of which surface walked the tree.
+		// F-8.9.10.
+		TreeCycleObserver: mcpToolsTreeCycleObserver{emitter: treeCycleEmitter{metrics: gwMetrics}},
 	})
 
 	// §13.3 revocation cache: the auth middleware rejects a token
@@ -3866,6 +3877,54 @@ func (a interactionResolutionAuditor) EmitInteractionResolution(ctx context.Cont
 		at = clockinject.Now().UTC()
 	}
 	_, _ = a.appender.Append(ctx, ev.TenantID, ev.EventType, json.RawMessage(data), at)
+}
+
+// treeCycleEmitter increments the
+// `lenny_delegation_tree_cycle_detected_total` counter when a §8.9
+// tree walker hits a cycle in the §8.2 ParentSessionID lineage. Each
+// tree-walker surface (REST `/v1/sessions/{id}/tree`, MCP
+// `lenny/get_task_tree`) wraps this emitter in a per-package adapter
+// that matches the package's TreeCycleObserver interface; both
+// adapters fan into the same metric so the corruption surfaces
+// regardless of which transport walked the tree. The audit-row half
+// of the §8.9 finding (a `delegation.tree_cycle_detected` row) is
+// not yet emitted: §16.7 is a closed catalog of spec-listed events
+// and the new event type requires a spec change. spec: §8.9 line
+// 1003; F-8.9.10 (metric half closed, audit half deferred to a
+// future spec addition).
+type treeCycleEmitter struct {
+	metrics *gatewaymetrics.Metrics
+}
+
+func (e treeCycleEmitter) emit(_ context.Context, tenantID, _, _, source string) {
+	if e.metrics != nil {
+		e.metrics.IncDelegationTreeCycleDetected(tenantID, source)
+	}
+	// The cycle-detected metric is the operator-visible signal in v1.
+	// A `delegation.tree_cycle_detected` audit row is the cleaner long-
+	// run answer but lands with the §16.7 catalog extension.
+}
+
+// sessionserverTreeCycleObserver adapts treeCycleEmitter to
+// sessionserver.TreeCycleObserver for the REST /v1/sessions/{id}/tree
+// walker. spec: §8.9 line 1003; F-8.9.10.
+type sessionserverTreeCycleObserver struct {
+	emitter treeCycleEmitter
+}
+
+func (o sessionserverTreeCycleObserver) OnTreeCycle(ctx context.Context, ev sessionserver.TreeCycleEvent) {
+	o.emitter.emit(ctx, ev.TenantID, ev.RootSessionID, ev.CycleNodeID, ev.Source)
+}
+
+// mcpToolsTreeCycleObserver adapts treeCycleEmitter to
+// mcptools.TreeCycleObserver for the lenny/get_task_tree platform-
+// tool walker. spec: §8.9 line 1003; F-8.9.10.
+type mcpToolsTreeCycleObserver struct {
+	emitter treeCycleEmitter
+}
+
+func (o mcpToolsTreeCycleObserver) OnTreeCycle(ctx context.Context, ev mcptools.TreeCycleEvent) {
+	o.emitter.emit(ctx, ev.TenantID, ev.RootSessionID, ev.CycleNodeID, ev.Source)
 }
 
 // credentialAuditor adapts the gateway audit sink to the

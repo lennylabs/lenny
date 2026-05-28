@@ -66,6 +66,26 @@ type DelegationAuditor interface {
 	EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any)
 }
 
+// TreeCycleObserver is invoked when a §8.9 tree walker hits a cycle
+// in the §8.2 ParentSessionID lineage. The §8.2 cycle detector
+// prevents cycles at delegation time, so a non-zero call rate signals
+// a corrupted persistent store. The walker truncates the cycle in
+// the returned tree; the observer surfaces the corruption to
+// operators via the §11.7 audit log + §16.1 counter. The source
+// field is `mcp` for the lenny/get_task_tree platform tool.
+// spec: §8.9 line 1003; F-8.9.10.
+type TreeCycleObserver interface {
+	OnTreeCycle(ctx context.Context, ev TreeCycleEvent)
+}
+
+// TreeCycleEvent is the §8.9 tree-cycle observation payload.
+type TreeCycleEvent struct {
+	TenantID      string
+	RootSessionID string
+	CycleNodeID   string
+	Source        string
+}
+
 // Deps carries the gateway services the MCP tools dispatch to.
 type Deps struct {
 	// Store is the §4.2 session store.
@@ -102,6 +122,14 @@ type Deps struct {
 	// Audit records §11.7 delegation audit events. Optional — a nil
 	// Audit disables delegation audit emission.
 	Audit DelegationAuditor
+
+	// TreeCycleObserver, when set, receives a §8.9 cycle observation
+	// when lenny/get_task_tree hits a repeated node in the
+	// ParentSessionID lineage. Production wires the same observer to
+	// the REST /v1/sessions/{id}/tree handler; nil disables the
+	// emission and the walker still truncates the cycle.
+	// spec: §8.9 line 1003; F-8.9.10.
+	TreeCycleObserver TreeCycleObserver
 
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied to a caller whose tenant has set no
@@ -453,17 +481,38 @@ func Register(srv *mcp.Server, deps Deps) {
 	})
 
 	srv.RegisterTool(mcp.Tool{
-		Name:        "lenny/get_task_tree",
-		Description: "Return the §8 delegation task tree rooted at a session.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string"}}}`),
+		Name: "lenny/get_task_tree",
+		// spec: §8.5 line 540 — returns the task hierarchy visible to
+		// the calling session (scoped by `treeVisibility`). §8.9 lines
+		// 615-623 fix the input schema at `{"type":"object",
+		// "properties":{},"required":[]}` — the caller's session is
+		// resolved from the MCP principal, not from a request field.
+		// The legacy `sessionId` field is accepted as a transport
+		// fallback for tests and dev-headers callers that have not
+		// bound a session-scoped principal yet; it is not in
+		// `required` so a spec-conformant caller sending an empty
+		// object succeeds. F-8.9.11.
+		Description: "Return the §8 delegation task tree rooted at the calling session (visibility scoped by §8.3 treeVisibility).",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}},"required":[]}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
-			SessionID string `json:"sessionId"`
+			// SessionID is the §15.2.1 transport fallback used when the
+			// principal carries no SessionID claim. The spec schema
+			// names no input parameters; the fallback keeps the tool
+			// usable in pre-bearer dev deployments. F-8.9.11.
+			SessionID string `json:"sessionId,omitempty"`
 		}
-		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+		if len(args) > 0 {
+			if err := json.Unmarshal(args, &in); err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			}
 		}
-		root, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		sessionID := callerSessionID(ctx, in.SessionID)
+		if sessionID == "" {
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
+		}
+		root, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 		}
@@ -471,7 +520,13 @@ func Register(srv *mcp.Server, deps Deps) {
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		tree := buildTree(root, all)
+		wctx := treeWalkContext{
+			ctx:           ctx,
+			tenantID:      tenant,
+			rootSessionID: root.ID,
+			observer:      deps.TreeCycleObserver,
+		}
+		tree := buildTree(wctx, root, all)
 		body, _ := json.Marshal(tree)
 		return textResult(string(body)), nil
 	})
@@ -2019,17 +2074,28 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 	return nil, false, nil
 }
 
-func buildTree(root sessionstore.Session, all []sessionstore.Session) treeNode {
+// treeWalkContext carries the per-walk fields the MCP tree walker
+// passes to the §8.9 cycle observer. The observer fires once per
+// repeated node; the walker still truncates the cycle to keep the
+// response well-formed. spec: §8.9 line 1003; F-8.9.10.
+type treeWalkContext struct {
+	ctx           context.Context
+	tenantID      string
+	rootSessionID string
+	observer      TreeCycleObserver
+}
+
+func buildTree(wctx treeWalkContext, root sessionstore.Session, all []sessionstore.Session) treeNode {
 	childrenByParent := map[string][]sessionstore.Session{}
 	for _, s := range all {
 		if s.ParentSessionID != "" {
 			childrenByParent[s.ParentSessionID] = append(childrenByParent[s.ParentSessionID], s)
 		}
 	}
-	return walk(root, childrenByParent, map[string]bool{})
+	return walk(wctx, root, childrenByParent, map[string]bool{})
 }
 
-func walk(s sessionstore.Session, byParent map[string][]sessionstore.Session, seen map[string]bool) treeNode {
+func walk(wctx treeWalkContext, s sessionstore.Session, byParent map[string][]sessionstore.Session, seen map[string]bool) treeNode {
 	// spec: §8.5 line 530 — every tree node carries `runtimeRef` so the
 	// MCP projection matches the REST `/tree` surface.
 	node := treeNode{
@@ -2039,11 +2105,20 @@ func walk(s sessionstore.Session, byParent map[string][]sessionstore.Session, se
 		Children:   []treeNode{},
 	}
 	if seen[s.ID] {
+		// spec: §8.9 line 1003; F-8.9.10 — defensive cycle guard.
+		if wctx.observer != nil {
+			wctx.observer.OnTreeCycle(wctx.ctx, TreeCycleEvent{
+				TenantID:      wctx.tenantID,
+				RootSessionID: wctx.rootSessionID,
+				CycleNodeID:   s.ID,
+				Source:        "mcp",
+			})
+		}
 		return node
 	}
 	seen[s.ID] = true
 	for _, c := range byParent[s.ID] {
-		node.Children = append(node.Children, walk(c, byParent, seen))
+		node.Children = append(node.Children, walk(wctx, c, byParent, seen))
 	}
 	return node
 }

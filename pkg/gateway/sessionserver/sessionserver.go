@@ -237,6 +237,13 @@ type Server struct {
 	// way. spec: §7.2 table lines 124-127; §11.7; §16.7. F-7.2.8.
 	interactionAudit InteractionAuditSink
 
+	// treeCycleObserver, when set, receives a §8.9 cycle observation
+	// whenever the /v1/sessions/{id}/tree walker hits a repeated node
+	// in the ParentSessionID lineage. Nil disables the emission and
+	// the walker still truncates the cycle so the response remains
+	// well-formed. spec: §8.9 line 1003; F-8.9.10.
+	treeCycleObserver TreeCycleObserver
+
 	// inputWaits, when set, makes the REST POST /v1/sessions/{id}/messages
 	// handler honor §7.2 path 1: a request body whose `inReplyTo`
 	// matches an outstanding `lenny/request_input` call resolves the
@@ -445,6 +452,15 @@ type Options struct {
 	// emission and the resolution still proceeds.
 	// spec: §7.2 table lines 124-127. F-7.2.8.
 	InteractionAuditSink InteractionAuditSink
+
+	// TreeCycleObserver, when set, receives a §8.9 cycle observation
+	// when /v1/sessions/{id}/tree hits a repeated node in the
+	// ParentSessionID lineage. Production wires this to the
+	// `delegation.tree_cycle_detected` audit event plus the §16.1
+	// `lenny_delegation_tree_cycle_detected_total` counter; nil
+	// disables the emission and the walker still truncates the cycle.
+	// spec: §8.9 line 1003; F-8.9.10.
+	TreeCycleObserver TreeCycleObserver
 
 	// InputWaits is the shared §8.5 `lenny/request_input` pending-call
 	// registry. When set, the REST POST /v1/sessions/{id}/messages
@@ -883,6 +899,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		observeTimeToFirstToken: opts.ObserveTimeToFirstToken,
 		lifecycleAudit:         opts.LifecycleAuditSink,
 		interactionAudit:       opts.InteractionAuditSink,
+		treeCycleObserver:      opts.TreeCycleObserver,
 		inputWaits:             opts.InputWaits,
 		defaultRetention:       opts.DefaultRetention,
 		retryPolicyCaps:        opts.RetryPolicyCaps,

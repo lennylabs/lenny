@@ -1003,6 +1003,32 @@ func TestDelegationMetricsNilSafe_spec_8_2(t *testing.T) {
 	// Must not panic.
 	m.ObserveDelegationDepth("pool-a", 1)
 	m.IncDelegationWouldHaveBlocked("pool-a", "acme", "policy", "enforce")
+	// F-8.9.10 nil-safe coverage.
+	m.IncDelegationTreeCycleDetected("acme", "rest")
+}
+
+// spec: §8.9 line 1003 / §16.1 — lenny_delegation_tree_cycle_detected_total
+// carries (tenant_id, source) labels and increments once per repeated
+// node hit by the tree walker. F-8.9.10.
+func TestIncDelegationTreeCycleDetected_spec_8_9(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncDelegationTreeCycleDetected("acme", "rest")
+	m.IncDelegationTreeCycleDetected("acme", "rest")
+	m.IncDelegationTreeCycleDetected("acme", "mcp")
+	m.IncDelegationTreeCycleDetected("globex", "rest")
+	body := scrapeMetrics(t, m)
+	for _, want := range []string{
+		`lenny_delegation_tree_cycle_detected_total{source="rest",tenant_id="acme"} 2`,
+		`lenny_delegation_tree_cycle_detected_total{source="mcp",tenant_id="acme"} 1`,
+		`lenny_delegation_tree_cycle_detected_total{source="rest",tenant_id="globex"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q in /metrics, body=%q", want, body)
+		}
+	}
 }
 
 // spec: §11.1 line 7 — lenny_rate_limit_rejected_total{scope} carries
