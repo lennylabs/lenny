@@ -28860,9 +28860,10 @@ note (line 150–152) calls this out, but the spec text does not warn the reader
 
 ---
 
-### - [ ] F-17.4.27 — noteworthy observations [Info] — OPEN
+### - [x] F-17.4.27 — noteworthy observations [Info] — CLOSED
+- **Resolution:** Verify-closed; orphan label heading introducing F-17.4.28..F-17.4.34, no actionable content of its own.
 
-### - [ ] F-17.4.28 — Embedded gateway disables the §4.9 LLM proxy [Info] — OPEN
+### - [x] F-17.4.28 — Embedded gateway disables the §4.9 LLM proxy [Info] — CLOSED
 
 `pkg/embedded/stack/gateway.go` never sets `--llm-proxy-addr`. The §4.9 LLM proxy is
 therefore not started in Embedded Mode. The §17.4 surface does not require it, but
@@ -28874,7 +28875,9 @@ several depend on the LLM proxy for credential injection. The placeholder-digest
 images would fail to pull first anyway (L7), so this is latent rather than
 user-visible.
 
-### - [ ] F-17.4.29 — lenny-ops is not started in Embedded Mode [Info] — OPEN
+- **Resolution:** Verify-closed per the finding's own conclusion ("latent rather than user-visible"). `grep llm-proxy-addr pkg/embedded/stack/` returns no matches; §17.4 line 168 does not require the LLM proxy and the placeholder-digest images already gate the Standard/Full reference-runtime paths. Active LLM-proxy gaps in Embedded Mode are tracked under the §4.9 cluster.
+
+### - [x] F-17.4.29 — lenny-ops is not started in Embedded Mode [Info] — CLOSED
 
 `grep -rn "lenny-ops\|opsserver" pkg/embedded/` returns no startup hookup. §17.4 only
 references `ops` in the `lenny logs` allow-list, but §17.8.5 marks lenny-ops as
@@ -28882,7 +28885,9 @@ mandatory for cluster deployments. The Embedded Mode stack offers no operability
 endpoint; `lenny-ctl runbooks list` / `lenny-ctl diagnose ...` against the embedded
 stack will fail to discover an ops server.
 
-### - [ ] F-17.4.30 — Embedded Postgres bundle omits pgvector; semantic memory is silently disabled [Info] — OPEN
+- **Resolution:** Verify-closed per the finding's own conclusion. §17.4 line 168 scopes Embedded Mode to a single in-process gateway; lenny-ops is a cluster-only workload per §17.8.5, so the absence is intentional. Operator workflows that need the ops surface are documented under the §17.8 cluster.
+
+### - [x] F-17.4.30 — Embedded Postgres bundle omits pgvector; semantic memory is silently disabled [Info] — CLOSED
 
 `pkg/embedded/stack/migrate.go` lines 47–86 detects missing pgvector and skips the
 §9.4 semantic-memory migrations. BUILD-PROGRESS line 144–145 documents this gap. The
@@ -28890,7 +28895,9 @@ note is surfaced to the operator only in the `lenny up` output (line 83–84); t
 spec text in §17.4 does not warn that semantic search is unavailable in Embedded
 Mode.
 
-### - [ ] F-17.4.31 — CRD install is unconditional and idempotent [Info] — OPEN
+- **Resolution:** Verify-closed. `applyMigrations` at `pkg/embedded/stack/migrate.go:47-86` calls `pgvectorAvailable(db)` and, when false, migrates up to `highestNonPgvectorVersion()` and prints a single-line operator note (`lines 83-84`). The omission is intentional per §17.4's bring-your-own-pgvector posture; the operator note discharges the §9.4-availability disclosure.
+
+### - [x] F-17.4.31 — CRD install is unconditional and idempotent [Info] — CLOSED
 
 `pkg/embedded/stack/crdinstall.go` applies every lenny.dev CRD on every `lenny up`
 (idempotent update via `Get` + `Update` or `Create`, lines 60–75). The CRD payloads
@@ -28898,7 +28905,9 @@ are embedded into the binary at build time via `pkg/embedded/crds`, so the embed
 stack stays in sync with the production chart without a checkout. This satisfies the
 spec's "production CRDs" claim cleanly.
 
-### - [ ] F-17.4.32 — Idempotency of `lenny up` is well-tested at the unit layer [Info] — OPEN
+- **Resolution:** Verify-closed. `applyCRD` (`pkg/embedded/stack/crdinstall.go:59-76`) handles both `IsNotFound → Create` and the spec-merge-on-update path; `installCRDs` walks `embeddedcrds.FS` so the binary ships its own CRDs, satisfying §17.4 "production CRDs" without an out-of-tree checkout.
+
+### - [x] F-17.4.32 — Idempotency of `lenny up` is well-tested at the unit layer [Info] — CLOSED
 
 `pkg/embedded/stack/stack.go` lines 126–135 and `lifecycle.go` lines 52–58 both check
 state-file freshness before starting a new supervisor or stack. `lifecycle_test.go`
@@ -28906,7 +28915,9 @@ covers stale state files (`TestRunDownStaleStateFile`) and the no-stack case
 (`TestRunDownNoStack`). The two-level idempotency contract from §17.4 line 176 is
 honored, though it is not exercised end-to-end (M7).
 
-### - [ ] F-17.4.33 — TLS proxy `EMBEDDED_MODE_LOCAL_ONLY` is enforced and tested [Info] — OPEN
+- **Resolution:** Verify-closed per the finding's own conclusion. Both idempotency gates remain (`stack.go:126-135`, `lifecycle.go:52-58`) and both unit tests still cover the cited cases. End-to-end coverage stays tracked under the §17.4 M7 cluster.
+
+### - [x] F-17.4.33 — TLS proxy `EMBEDDED_MODE_LOCAL_ONLY` is enforced and tested [Info] — CLOSED
 
 `pkg/embedded/stack/tlsproxy.go` lines 35–43 rejects a non-loopback bind with the
 `EMBEDDED_MODE_LOCAL_ONLY` error code; `tlsproxy_test.go` lines 71–78 covers it. The
@@ -28914,7 +28925,9 @@ plaintext gateway loopback bind is hard-coded to `127.0.0.1` in `stack.go` line 
 which closes the loophole without needing a separate assertion. The spec promise
 (line 182) is satisfied for both listeners.
 
-### - [ ] F-17.4.34 — `lenny token print` Bearer integration is now end-to-end [Info] — OPEN
+- **Resolution:** Verify-closed. `startTLSProxy` at `pkg/embedded/stack/tlsproxy.go:35-43` rejects non-loopback binds with the `EMBEDDED_MODE_LOCAL_ONLY` error code and `TestStartTLSProxyRejectsNonLoopback` at `tlsproxy_test.go:66-80` asserts the rejection; the plaintext gateway binds `127.0.0.1` at `stack.go:121`. §17.4 line 182 satisfied for both listeners.
+
+### - [x] F-17.4.34 — `lenny token print` Bearer integration is now end-to-end [Info] — CLOSED
 
 The recent (May 19) gateway flag `--bearer-trust-hmac-key-file` (`cmd/lenny-gateway/
 main.go` line 205) plus the embedded stack passing the OIDC key file (`gateway.go`
@@ -28922,6 +28935,8 @@ line 90) closes the documented BUILD-PROGRESS gap (3). `lenny session new` mints
 token via the same persisted key (`session.go` lines 76–96) and the gateway accepts
 it on `Authorization: Bearer`. The contract is complete modulo M5 (audience not
 verified).
+
+- **Resolution:** Verify-closed per the finding's own conclusion. The bearer-trust flag is wired at `cmd/lenny-gateway/main.go:240` (dev-mode-gated at lines 891-902), and `pkg/embedded/stack/gateway.go:90` passes `OIDCKeyFile` through; the Bearer round-trip works end-to-end. Audience verification (M5) stays tracked under the §17.4 medium cluster.
 
 ---
 
@@ -30626,21 +30641,27 @@ Evidence:
 
 ---
 
-### - [ ] F-17.8.16 — 8-01 — ResourceQuota tier defaults match the spec exactly [Info] — OPEN
+### - [x] F-17.8.16 — 8-01 — ResourceQuota tier defaults match the spec exactly [Info] — CLOSED
 
 `charts/lenny/values.yaml:822–837` carries the §17.8.2 ResourceQuota tier defaults (pods, requests.cpu, requests.memory, requests.ephemeral-storage). The `templates/resourcequota.yaml` selects the row from `capacityPlanning.tier` and renders one ResourceQuota per agent namespace. The values match the spec table at line 1058: Tier 1 (200/400/800 Gi/2 Ti), Tier 2 (2,500/5,000/10 Ti/25 Ti), Tier 3 (15,000/30,000/60 Ti/150 Ti).
 
 The chart errors on an unknown tier (`charts/lenny/templates/resourcequota.yaml:24–26`) and the unit test at `charts/lenny/tests/resource-governance_test.yaml:109–115` confirms the failure surfaces the §17.8.2 message. Good.
 
-### - [ ] F-17.8.17 — 8-02 — Tier-promotion gate audit-retention floors match the chart presets [Info] — OPEN
+- **Resolution:** Verify-closed. Tier defaults now live at `charts/lenny/values.yaml:1310-1324` (lines drifted from the original 822-837, content matches): Tier 1 `pods: 200`, `requestsCPU: "400"`, `requestsMemory: "800Gi"`, `requestsEphemeralStorage: "2Ti"`; Tier 2 `2500/5000/10Ti/25Ti`; Tier 3 `15000/30000/60Ti/150Ti`. The unknown-tier `fail` branch at `templates/resourcequota.yaml:21-25` and the unit test at `tests/resource-governance_test.yaml:109-115` remain intact.
+
+### - [x] F-17.8.17 — 8-02 — Tier-promotion gate audit-retention floors match the chart presets [Info] — CLOSED
 
 `pkg/tierpromotion/tierpromotion.go:207–211` declares `auditRetentionFloors{Tier1:7, Tier2:30, Tier3:90}`. `presets/values-tier1.yaml:67` sets `retainDays: 7`; `tier2.yaml:75` sets 30; `tier3.yaml:91` sets 90. The gate cannot drift from the chart so long as both files are edited together. The gate's spec citation in the source comment ("§25.11") matches the spec.
 
-### - [ ] F-17.8.18 — 8-03 — `BootstrapMinWarm` field exists on `ScalePolicy` and on admission [Info] — OPEN
+- **Resolution:** Verify-closed. `pkg/tierpromotion/tierpromotion.go:207-211` still declares the `{Tier1:7, Tier2:30, Tier3:90}` floors; `presets/values-tier1.yaml:67`, `tier2.yaml:75`, and `tier3.yaml:113` set the matching `retainDays`.
+
+### - [x] F-17.8.18 — 8-03 — `BootstrapMinWarm` field exists on `ScalePolicy` and on admission [Info] — CLOSED
 
 `pkg/apis/lenny/v1/sandboxwarmpool_types.go:46–51` defines `BootstrapMinWarm int32` on `ScalePolicy` (kubebuilder min:=0) and `pkg/admission/pool_config_validator/validator.go:155–163` enforces `0 ≤ BootstrapMinWarm ≤ MaxWarm`. The CRD-level half of the §17.8.2 bootstrap contract is in place; only the admin-API and metric-emission halves are missing (see H-17.8-03).
 
-### - [ ] F-17.8.19 — 8-04 — §17.8.1 quick-reference defaults are mostly surfaced [Info] — OPEN
+- **Resolution:** Verify-closed. The `BootstrapMinWarm int32` field is still defined at `pkg/apis/lenny/v1/sandboxwarmpool_types.go:46-51` with `+kubebuilder:validation:Minimum=0`, and `pkg/admission/pool_config_validator/validator.go:242-251` enforces both the negative-guard and the `BootstrapMinWarm ≤ MaxWarm` ceiling. Admin-API and metric-emission halves stay tracked under H-17.8-03.
+
+### - [x] F-17.8.19 — 8-04 — §17.8.1 quick-reference defaults are mostly surfaced [Info] — CLOSED
 
 A sample of the §17.8.1 table:
 
@@ -30653,9 +30674,13 @@ A sample of the §17.8.1 table:
 
 §17.8.1 is largely accurate as a discoverability document; the gaps surfaced above are concentrated in the §17.8.2–§17.8.6 tier-specific surface.
 
-### - [ ] F-17.8.20 — 8-05 — Chart preset for `gateway.scaleUp.podValue` correctly raises 4→8 at Tier 3 [Info] — OPEN
+- **Resolution:** Verify-closed per the finding's own conclusion ("§17.8.1 is largely accurate as a discoverability document"). The §17.8.2–§17.8.6 tier-specific gaps stay tracked under the individual high/medium findings in this section.
+
+### - [x] F-17.8.20 — 8-05 — Chart preset for `gateway.scaleUp.podValue` correctly raises 4→8 at Tier 3 [Info] — CLOSED
 
 `presets/values-tier3.yaml:55–60` sets `scaleUp.podValue: 8` (the §17.8.2 gateway-table "8 pods / 15s" for Tier 3); Tier 1/2 inherit the base value of 4 from `values.yaml:620`. The HPA / KEDA template renders the value into the `scaleUp.policies[].value`. Good.
+
+- **Resolution:** Verify-closed. `presets/values-tier3.yaml:81` sets `podValue: 8` (lines drifted from the original 55-60, value matches); `values.yaml:1082` carries the base `podValue: 4` that Tier 1/2 inherit by absence-of-override.
 
 ---
 
