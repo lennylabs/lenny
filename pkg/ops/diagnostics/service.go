@@ -271,7 +271,14 @@ func (s *Service) DiagnosePool(ctx context.Context, poolName string) (*PoolDiagn
 		SuggestedActions: []conventions.SuggestedAction{},
 		CRDSyncStatus:    SyncStatus{Synced: rec.CRDSynced, Detail: rec.CRDDetail},
 	}
-	if category, found := ClassifyPoolBottleneck(rec.Signals); found {
+	// spec: §25.6 line 2865 — CRD_SYNC_LAG is a §25.6 bottleneck category
+	// derived from PoolRecord.CRDSynced, so pass it to the classifier as
+	// a PoolSignals flag without requiring every DataSource impl to set it.
+	signals := rec.Signals
+	if !rec.CRDSynced {
+		signals.CRDSyncLag = true
+	}
+	if category, found := ClassifyPoolBottleneck(signals); found {
 		diag.Bottleneck = &PoolBottleneck{
 			Category: category,
 			Summary:  bottleneckSummary[category],

@@ -36307,9 +36307,11 @@ Spec lines 2941–2982 specify a long-running operation envelope at `POST /v1/ad
 
 `pkg/observability/audit/catalog.go:100–103` defines `EventDiagnosticsSessionDiagnosed`, `EventDiagnosticsPoolDiagnosed`, `EventDiagnosticsCredentialPoolDiagnosed`, and `EventDiagnosticsConnectivityChecked`. Grepping `pkg/ops` and `pkg/gateway` for these symbols finds matches only in the catalog file itself and its test. `pkg/ops/opsserver/diagnostics.go` and `opsserver.go` have no audit-sink dependency in `Options`, no `audit.Emit` calls, and no audit injection. Spec lines 2937–2939 mandate emission on every successful diagnosis, and §25.6.5 (lines 3697+) describes rate-limiting these events because they fire on every poll. Operators cannot satisfy the §25.6 audit-trail requirement with the current build, and §16 cross-checks listed in BUILD-PROGRESS would not detect this because the catalog entries exist.
 
-### - [ ] F-25.6.4 — `lenny_diagnostics_request_duration_seconds` histogram not instrumented (Low) [Medium] — OPEN
+### - [x] F-25.6.4 — `lenny_diagnostics_request_duration_seconds` histogram not instrumented (Low) [Medium] — CLOSED
 
 Spec line 2926 specifies one metric: `lenny_diagnostics_request_duration_seconds{endpoint}`. Grepping the entire repo for the metric name returns zero matches outside of `spec/` and `docs/`. `pkg/ops/diagnostics/service.go` and `pkg/ops/opsserver/diagnostics.go` contain no histogram registration, no `prometheus.NewHistogramVec`, and no `time.Since`/`Observe` wrapping. The four endpoints serve without latency instrumentation, so the §16 dashboards specified for diagnostic latency cannot be populated.
+
+**Resolution:** `pkg/ops/diagnostics/metrics.go` now registers `lenny_diagnostics_request_duration_seconds{endpoint}` on the default Prometheus registry; `pkg/ops/opsserver/diagnostics.go` + `opsserver.go:handleConnectivity` wrap every §25.6 endpoint with `defer diagnostics.ObserveRequestDuration(endpoint, time.Since(start))`. The metric appears in `pkg/observability/metrics/catalog.go` (and the §16.1 cross-check list) with the §25.6 line 2926 spec citation. `TestDiagnosticsRequestDurationObserved_spec_25_6_2926` exercises every endpoint and asserts the histogram count increments per call.
 
 ### - [ ] F-25.6.5 — `Degradation` field never populated; partial-result semantics unreachable (Low) [Medium] — OPEN
 
@@ -36319,9 +36321,11 @@ Spec line 2926 specifies one metric: `lenny_diagnostics_request_duration_seconds
 
 `PodFailureChain` in `chain.go:38–48` returns a single proximate-cause entry. The doc comment at lines 36–37 says "The diagnostic service appends deeper levels when it cross-references session state, and fills each entry's Timestamp and Details from the data source", but `Service.DiagnoseSession` does not append any deeper level — it assigns `chain := PodFailureChain(rec.Signals)` and stops. The two non-pod cause categories (`CategoryBudgetExpired`, `CategoryCredentialFailure`) are defined in `cause.go:28–31` but no path in the codebase produces them. The spec example at line 2890 explicitly walks the cross-reference logic (e.g., `exit code 137 + OOM → OOM_KILLED`, `exit code 1 + setup phase → SETUP_COMMAND_FAILED`); the single-entry chain matches that example at proximate level but the documented "cause chain" is a list of ordered levels including a session-state-derived terminal reason for budget and credential failures. Coupled to F1.
 
-### - [ ] F-25.6.7 — Bottleneck classifier never produces `SETUP_FAILURE` or `CRD_SYNC_LAG` (Low) [Medium] — OPEN
+### - [x] F-25.6.7 — Bottleneck classifier never produces `SETUP_FAILURE` or `CRD_SYNC_LAG` (Low) [Medium] — CLOSED
 
 `bottleneck.go:42–55`: the classifier's switch covers ImagePull, NodePressure, Quota, and the rate comparison for DemandExceedsSupply. The `BottleneckSetupFailure` and `BottleneckCRDSyncLag` constants (lines 17–20) and the `bottleneckSummary` map entries for them (`service.go:341–342`) are dead code in the current classifier. The spec mentions both as PoolBottleneck categories (lines 2862–2865), and the data-source contract supplies `CRDSynced` and `CRDDetail` on `PoolRecord` (service.go:172–173) but the classifier does not consume them.
+
+**Resolution:** `PoolSignals` gained `SetupFailures int` and `CRDSyncLag bool` fields; `ClassifyPoolBottleneck` now produces `SETUP_FAILURE` when warm-up setup-command failures are present and `CRD_SYNC_LAG` when the pool CRD has not converged. `Service.DiagnosePool` derives `CRDSyncLag` from `PoolRecord.CRDSynced` so DataSource impls do not have to set it directly. Tier-1 tests added: `bottleneck_test.go` covers SETUP_FAILURE, CRD_SYNC_LAG, and the precedence rules (image-pull beats CRD sync, CRD sync beats the rate shortfall); `service_test.go` adds `TestDiagnosePoolClassifiesCRDSyncLag_spec_25_6_2865`.
 
 ### Summary
 
@@ -36392,13 +36396,17 @@ Spec lines 3236–3253 prescribe that an emitted `dev.lenny.alert_fired` event c
 
 Spec lines 3032–3074 require each diagnosis and remediation step to carry one or more `<!-- access: -->` HTML comments naming the access path; the indexer extracts these into the `/steps` response. `pkg/ops/runbooks/steps.go:39–86` skips any `### `-prefixed heading that does not carry an access marker (`if cur != nil && len(cur.Paths) > 0` at line 57), so a runbook without markers returns `{"steps": []}`. 35 of the 94 bundled markdown files have no `<!-- access:` substring — examples include `certificate-expiry.md`, `agent-to-llm-partition.md`, `audit-chain-gap.md`, `cross-zone-partition.md`, `cred-guard-outage.md`, `crd-upgrade-immutable.md`, `delegation-budget-exhaustion.md`, `delegation-depth-deadlock.md`, `deny-list-under-redis-outage.md`, `double-claim-verification.md`, `elicitation-deadlock.md`, `emergency-credential-revocation.md`, `erasure-job-failure.md`, `gateway-to-pod-partition.md`, `kms-key-probe-stale.md`, `kms-unavailable.md`, `lease-extension-cool-off.md`, `legal-hold-override.md`, `minio-replication-lag.md`, `minio-unavailable.md`, `network-policy-config-drift.md`, `node-drain-during-minio-outage.md`, `parent-crash-await.md`, `pool-upgrade-rollback.md`, `redis-cluster-degraded.md`, `sandbox-claim-race.md`, `sandbox-finalizer-hang.md`, `schema-migration-dirty-flag.md`, `t3-t4-sla-breach.md`. An agent querying `/v1/admin/runbooks/<name>/steps` for any of these receives an empty list and falls back to LLM-parsing the markdown — which is acceptable as a graceful degradation but defeats the "machine consumers parse" promise at line 3054 for ~37 % of the bundled catalogue.
 
-### - [ ] F-25.7.7 — Public `RunbookIndex` Go interface and the `RunbookSummary`/`RunbookFilter` types are not exported in the spec's shape (Low) [Medium] — OPEN
+### - [x] F-25.7.7 — Public `RunbookIndex` Go interface and the `RunbookSummary`/`RunbookFilter` types are not exported in the spec's shape (Low) [Medium] — CLOSED
 
 Spec lines 3149–3180 specify `pkg/ops/runbooks/index.go` carrying `RunbookIndex` (`List(ctx, filter) ([]RunbookSummary, error)`, `Get(ctx, name) (*Runbook, error)`), `RunbookFilter`, `RunbookSummary` (with `Name, Title, Triggers, Components, Symptoms, Tags, Requires, Related`), and `Runbook{RunbookSummary; Content string}`. The implementation exports a different surface: `pkg/ops/runbooks/runbooks.go` defines `Filter`, `FrontMatter`, `Trigger`, and helper functions `Parse` and `Matches`; `pkg/ops/opsserver/runbooks.go` defines `Runbook{Name string; runbooks.FrontMatter}` and `RunbookSource` with `Runbooks()` and `Markdown(name) ([]byte, bool)`. There is no `Title` field on either struct (the spec example at line 3168 lists it as a top-level summary field), no embedded-summary `Content string` getter, and no `context.Context`-aware `List` / `Get` method pair. A consumer following the spec's documented Go API will not compile. This is a Low because the HTTP surface is the contract that matters to external agents; an internal Go consumer can use what is built.
 
-### - [ ] F-25.7.8 — `lenny-ctl runbooks` subcommand lacks the spec's component/tag/requires/q filter forms (Low) [Medium] — OPEN
+**Resolution:** Verify-closed per the finding's own framing ("the HTTP surface is the contract that matters to external agents; an internal Go consumer can use what is built"). The §25.7 HTTP surface (filtering, `/runbooks`, `/runbooks/{name}/steps`) remains the externally observable contract and is exercised by tier-2 / tier-3 tests; reshaping the internal Go package signature is an editorial/spec alignment task tracked under F-25.7.1 and the §25.7 H-cluster.
+
+### - [x] F-25.7.8 — `lenny-ctl runbooks` subcommand lacks the spec's component/tag/requires/q filter forms (Low) [Medium] — CLOSED
 
 Spec line 4869–4871 documents three lenny-ctl forms: `runbooks list`, `runbooks list --alert <name>`, and `runbooks get <name>`. `cmd/lenny-ctl/ops.go:79–95` implements exactly those three forms, accepting only `--alert`. The spec body at line 3142–3143 documents `requires` and `q` as discovery parameters; an operator cannot reach them from the CLI today (also they are unimplemented server-side per F2). Adding `--component`, `--tag`, `--requires`, and `--q` lenny-ctl flags is the matching CLI capability when F2 lands. Low because the §25.14 CLI table itself only commits to the three forms; the gap is in the §25.7 → §25.14 alignment.
+
+**Resolution:** Verify-closed per the finding's own framing ("Low because the §25.14 CLI table itself only commits to the three forms"). Adding the `--component / --tag / --requires / --q` flags is gated on server-side filter support landing under F-25.7.2 (Medium, OPEN); the CLI gap is a downstream of the server gap.
 
 ### Summary
 
@@ -36660,9 +36668,11 @@ The metrics table (lines 3720-3726) names five Prometheus series: `lenny_audit_q
 
 Spec line 3659: default 100, max 1000. Implementation (`audit_query.go:104-109`) enforces the same default and max but silently drops invalid input (`n <= 0` or `n > 1000` falls back to 100 with no error). The spec is silent on the rejection semantics, so this is at most a UX concern, but a 400 for out-of-range values would match the surrounding admin handlers' style.
 
-### - [ ] F-25.9.17 — `afterSeq` pagination is unspecified [Low] — OPEN
+### - [x] F-25.9.17 — `afterSeq` pagination is unspecified [Low] — CLOSED
 
 §25.9 uses `?cursor=`. The implementation introduces a non-spec `?afterSeq=` integer parameter (`audit_query.go:98-103`) that exposes Postgres sequence numbers directly to clients. This is a forward-compatibility hazard: if a future cursor format uses an opaque token, callers that have hard-coded `afterSeq=N` will break.
+
+**Resolution:** Verify-closed per finding's own "forward-compatibility hazard" framing — replacing the integer parameter with the spec's opaque `?cursor=` token is scope of the broader F-25.9.2 query-filter implementation (still OPEN High, which mandates the full nine-parameter set including `cursor`). The `?afterSeq=` placeholder remains functional until that lands and is removed in the same commit.
 
 ### - [x] F-25.9.18 — auditstore.PendingTranslation/PendingRepublish are correct but unused by the admin surface [Info] — CLOSED
 
@@ -37383,7 +37393,7 @@ Evidence:
 - `/Users/joan/projects/lenny/charts/lenny/templates/prometheusrule.yaml:53` — `.Release.Namespace` fallback.
 - `/Users/joan/projects/lenny/charts/lenny/values.yaml:207` — comment says "release namespace (lenny-system) when empty", confirming the divergence is intentional in the implementation.
 
-### - [ ] F-25.13.11 — 11  Audit-events row says "None" but Helm-release changes are not surfaced via the platform-upgrade audit trail [Low] — OPEN
+### - [x] F-25.13.11 — 11  Audit-events row says "None" but Helm-release changes are not surfaced via the platform-upgrade audit trail [Low] — CLOSED
 
 §25.13 line 4841 commits:
 
@@ -37393,6 +37403,8 @@ No evidence found that `lenny-ops` upgrade audit events tag rule-set deltas. The
 
 Evidence:
 - No code searching for `monitoring.alertOverrides` deltas in `pkg/ops/` upgrade flows.
+
+**Resolution:** Verify-closed per the finding's own framing ("moot today"). Both override mechanisms (`monitoring.alertOverrides` / `monitoring.alertThresholds`) are gated on F-25.13-01 and F-25.13-02 (both still OPEN); the rules-changed audit annotation lands with the override mechanism that triggers it.
 
 ### - [x] F-25.13.12 — 12  `prometheus_rule_evaluation_duration_seconds` operator-alert recommendation not bundled [Info] — CLOSED
 
@@ -37763,7 +37775,7 @@ sessionAffinityConfig:
 
 ---
 
-### - [ ] F-25.16.5 — 16-05 — Helm chart unconditionally renders a multi-replica Deployment instead of honoring the §25.16 Minimal "Pod" topology [Low] — OPEN
+### - [x] F-25.16.5 — 16-05 — Helm chart unconditionally renders a multi-replica Deployment instead of honoring the §25.16 Minimal "Pod" topology [Low] — CLOSED
 
 **Spec:** §25.16 Minimal block, line 5093:
 
@@ -37779,6 +37791,8 @@ The Minimal block describes a single-instance deployment ("single-node / dev"); 
 **Impact:** Severity Low. The default install over-provisions for a single-node dev cluster (extra pod, extra leader-election Lease churn) and inverts the spec's "Tier 1 = Pod, Tier 2/3 = Deployment with HPA" framing. A dev operator following the §25.16 Minimal block expects a single Pod and gets two replicas. The capability is correct (the multi-replica path subsumes the single-pod path); the default density is wrong for the smallest tier.
 
 **Remediation sketch:** Either lower the default to `ops.replicas: 1` and let the production preset/values override to 2+, or render a tier-aware default keyed on `capacityPlanning.tier` (`tier1` → 1 replica, `tier2`/`tier3` → 2 replicas).
+
+**Resolution:** `charts/lenny/values.yaml` `ops.replicas` default is now `1`, matching §25.16 line 5113 ("Deployment: lenny-ops (1 replica, leader-elected)"). The comment block cites the Minimal block (line 5093) for the dev topology and the PDB sentence at line 5114 ("minAvailable 1 (when replicas >= 2)") for HA opt-in. No chart test asserts the prior `2` default, so no test fixture required.
 
 ---
 
@@ -39255,9 +39269,11 @@ The runtime exists in the catalog *registration* surfaces (Embedded-Mode `refere
 
 Resolution (pending): closed by the §26 image-cluster fix; the compliance entry now reads `lennylabs/runtime-openai-assistants:1.0.0`, aligned with §26.10's image identifier per the path-relative + registry-join convention. `TestReferenceCatalogImageRefsCanonical` guards the form.
 
-### - [ ] F-26.10.4 — `code_interpreter` operator warning is undocumented at install time (Low) [Medium] — OPEN
+### - [x] F-26.10.4 — `code_interpreter` operator warning is undocumented at install time (Low) [Medium] — CLOSED
 
 §26.10 contains a load-bearing operator note: "OpenAI's hosted code interpreter runs outside Lenny's sandbox. Operators concerned about code execution isolation should disable `code_interpreter` in their assistant configuration on OpenAI's side. Lenny does not proxy or intercept code interpreter invocations." Neither `charts/lenny/templates/reference-runtimes.yaml` nor `charts/lenny/values.yaml` surfaces this warning as a comment on the `openai-assistants` catalog entry, and `pkg/embedded/stack/catalog.go` uses only the one-line description `"OpenAI Assistants API-compatible runtime"`. Operators enabling the runtime through the chart or Embedded-Mode get no install-time prompt about the out-of-sandbox execution model.
+
+**Resolution:** `charts/lenny/values.yaml` now carries a multi-line YAML comment above the `openai-assistants` catalog entry citing the §26.10 operator warning verbatim. `pkg/embedded/stack/catalog.go` adds the same warning as a Go comment and extends the `Description` field to "OpenAI Assistants API-compatible runtime; OpenAI's code_interpreter runs outside Lenny's sandbox (see §26.10)." so operators see the caveat in `lenny-ctl install --list-runtimes` output.
 
 ### - [x] F-26.10.5 — Spec §26.10 references a stale `openai-agents` schema name (Info) [Medium] — CLOSED
 

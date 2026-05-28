@@ -237,6 +237,8 @@ func (s *Server) handleOpsHealth(w http.ResponseWriter, _ *http.Request) {
 // Postgres connection — the endpoint falls back to the readiness
 // dependency probes so connectivity diagnosis still works.
 func (s *Server) handleConnectivity(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() { diagnostics.ObserveRequestDuration("connectivity", time.Since(start)) }()
 	if s.diagnostics != nil {
 		report, err := s.diagnostics.CheckConnectivity(r.Context())
 		if err != nil {

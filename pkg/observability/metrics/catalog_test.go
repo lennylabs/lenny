@@ -134,6 +134,8 @@ var spec161Metrics = []string{
 	"lenny_drain_readiness_checks_total",
 	// §12.8 line 739 — legal-hold checkpoint-gap reconciler counter.
 	"lenny_legal_hold_checkpoint_gaps_total",
+	// §25.6 line 2926 — diagnostic endpoint latency histogram.
+	"lenny_diagnostics_request_duration_seconds",
 }
 
 func TestMetricCatalogIsNonEmpty(t *testing.T) {

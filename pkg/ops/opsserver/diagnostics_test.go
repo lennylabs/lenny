@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 )
@@ -106,4 +109,64 @@ func TestDiagnosticsUnavailableWithoutService(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503 with no diagnostic service configured", rec.Code)
 	}
+}
+
+// TestDiagnosticsRequestDurationObserved covers §25.6 line 2926 — every
+// diagnostic-endpoint call records a sample on the
+// lenny_diagnostics_request_duration_seconds{endpoint} histogram.
+func TestDiagnosticsRequestDurationObserved_spec_25_6_2926(t *testing.T) {
+	src := fakeDiagSource{
+		session: diagnostics.SessionRecord{SessionID: "sess-a", State: "running", Found: true},
+		pool:    diagnostics.PoolRecord{Name: "pool-a", Found: true},
+		creds:   diagnostics.CredentialPoolRecord{Name: "creds-a", Found: true},
+	}
+	svc := diagnostics.NewService(src)
+	srv := opsserver.New(opsserver.Options{Diagnostics: svc})
+
+	before := map[string]uint64{
+		"session":         histCount(t, "session"),
+		"pool":            histCount(t, "pool"),
+		"credential-pool": histCount(t, "credential-pool"),
+		"connectivity":    histCount(t, "connectivity"),
+	}
+	doJSON(t, srv, http.MethodGet, "/v1/admin/diagnostics/sessions/sess-a", nil, nil)
+	doJSON(t, srv, http.MethodGet, "/v1/admin/diagnostics/pools/pool-a", nil, nil)
+	doJSON(t, srv, http.MethodGet, "/v1/admin/diagnostics/credential-pools/creds-a", nil, nil)
+	doJSON(t, srv, http.MethodGet, "/v1/admin/diagnostics/connectivity", nil, nil)
+	for _, ep := range []string{"session", "pool", "credential-pool", "connectivity"} {
+		if got := histCount(t, ep); got <= before[ep] {
+			t.Errorf("endpoint %q: histogram count %d did not increment from %d", ep, got, before[ep])
+		}
+	}
+}
+
+// histCount returns the cumulative sample count on the §25.6 histogram
+// for the named endpoint, gathered from the default Prometheus
+// registry.
+func histCount(t *testing.T, endpoint string) uint64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, mf := range families {
+		if mf.GetName() != "lenny_diagnostics_request_duration_seconds" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			if labelValue(m, "endpoint") == endpoint {
+				return m.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+	return 0
+}
+
+func labelValue(m *dto.Metric, name string) string {
+	for _, p := range m.GetLabel() {
+		if p.GetName() == name {
+			return p.GetValue()
+		}
+	}
+	return ""
 }

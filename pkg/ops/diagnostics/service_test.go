@@ -86,9 +86,10 @@ func TestDiagnosePoolClassifiesBottleneck(t *testing.T) {
 
 func TestDiagnosePoolHealthyHasNoBottleneck(t *testing.T) {
 	svc := diagnostics.NewService(fakeSource{pool: diagnostics.PoolRecord{
-		Name:    "default-gvisor",
-		Signals: diagnostics.PoolSignals{ReplenishmentRate: 5, ClaimRate: 2},
-		Found:   true,
+		Name:      "default-gvisor",
+		Signals:   diagnostics.PoolSignals{ReplenishmentRate: 5, ClaimRate: 2},
+		CRDSynced: true,
+		Found:     true,
 	}})
 	diag, _ := svc.DiagnosePool(context.Background(), "default-gvisor")
 	if diag.Bottleneck != nil {
@@ -96,6 +97,33 @@ func TestDiagnosePoolHealthyHasNoBottleneck(t *testing.T) {
 	}
 	if diag.Status != "healthy" {
 		t.Errorf("status = %q, want healthy", diag.Status)
+	}
+}
+
+// TestDiagnosePoolClassifiesCRDSyncLag covers §25.6 line 2865 —
+// DiagnosePool derives the CRD_SYNC_LAG bottleneck from a
+// PoolRecord whose CRDSynced flag is false, without the DataSource
+// having to set the PoolSignals.CRDSyncLag field directly.
+func TestDiagnosePoolClassifiesCRDSyncLag_spec_25_6_2865(t *testing.T) {
+	svc := diagnostics.NewService(fakeSource{pool: diagnostics.PoolRecord{
+		Name:      "default-gvisor",
+		Signals:   diagnostics.PoolSignals{ReplenishmentRate: 5, ClaimRate: 2},
+		CRDSynced: false,
+		CRDDetail: "lenny.dev/Pool generation lag",
+		Found:     true,
+	}})
+	diag, err := svc.DiagnosePool(context.Background(), "default-gvisor")
+	if err != nil {
+		t.Fatalf("diagnose: %v", err)
+	}
+	if diag.Bottleneck == nil {
+		t.Fatal("bottleneck is nil, want CRD_SYNC_LAG")
+	}
+	if diag.Bottleneck.Category != diagnostics.BottleneckCRDSyncLag {
+		t.Errorf("bottleneck = %q, want CRD_SYNC_LAG", diag.Bottleneck.Category)
+	}
+	if diag.Status != "unhealthy" {
+		t.Errorf("status = %q, want unhealthy", diag.Status)
 	}
 }
 

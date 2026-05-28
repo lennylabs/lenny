@@ -79,10 +79,14 @@ var referenceRuntimes = []ReferenceRuntime{
 		Description:      "Mastra agent framework (TypeScript)",
 	},
 	{
+		// spec: §26.10 operator warning — OpenAI's hosted code interpreter
+		// runs outside Lenny's sandbox; operators concerned about code
+		// execution isolation should disable code_interpreter in their
+		// assistant configuration on OpenAI's side.
 		Name:             "openai-assistants",
 		Image:            "ghcr.io/lennylabs/runtime-openai-assistants:1.0.0" + placeholderDigest,
 		IntegrationLevel: "full",
-		Description:      "OpenAI Assistants API-compatible runtime",
+		Description:      "OpenAI Assistants API-compatible runtime; OpenAI's code_interpreter runs outside Lenny's sandbox (see §26.10).",
 	},
 	{
 		Name:             "crewai",

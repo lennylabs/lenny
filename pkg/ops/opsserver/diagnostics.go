@@ -4,6 +4,7 @@ package opsserver
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
@@ -54,6 +55,8 @@ func (s *Server) diagnosticsUnavailable(w http.ResponseWriter) {
 // handleDiagnoseSession serves GET /v1/admin/diagnostics/sessions/{id}:
 // the §25.6 structured cause chain for a failed session.
 func (s *Server) handleDiagnoseSession(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() { diagnostics.ObserveRequestDuration("session", time.Since(start)) }()
 	if s.diagnostics == nil {
 		s.diagnosticsUnavailable(w)
 		return
@@ -69,6 +72,8 @@ func (s *Server) handleDiagnoseSession(w http.ResponseWriter, r *http.Request) {
 // handleDiagnosePool serves GET /v1/admin/diagnostics/pools/{name}: the
 // §25.6 warm-pool bottleneck analysis.
 func (s *Server) handleDiagnosePool(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() { diagnostics.ObserveRequestDuration("pool", time.Since(start)) }()
 	if s.diagnostics == nil {
 		s.diagnosticsUnavailable(w)
 		return
@@ -84,6 +89,8 @@ func (s *Server) handleDiagnosePool(w http.ResponseWriter, r *http.Request) {
 // handleDiagnoseCredentialPool serves GET /v1/admin/diagnostics/-
 // credential-pools/{name}: the §25.6 credential-pool health diagnosis.
 func (s *Server) handleDiagnoseCredentialPool(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() { diagnostics.ObserveRequestDuration("credential-pool", time.Since(start)) }()
 	if s.diagnostics == nil {
 		s.diagnosticsUnavailable(w)
 		return

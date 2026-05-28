@@ -318,6 +318,8 @@ var metricCatalog = []MetricSpec{
 	{"lenny_billing_redis_stream_oldest_entry_age_seconds", TypeGauge, "Age of the oldest unacknowledged billing Redis entry"},
 	{"lenny_otlp_export_tls_handshake_total", TypeCounter, "OTLP exporter TLS handshake outcomes by result"},
 	{"lenny_ops_admin_api_tls_handshake_total", TypeCounter, "lenny-ops to gateway admin-API TLS handshake outcomes"},
+	// §25.6 line 2926 — diagnostic endpoint latency.
+	{"lenny_diagnostics_request_duration_seconds", TypeHistogram, "Per-diagnostic-endpoint latency for §25.6 diagnostic endpoints"},
 }
 
 // MetricCatalog returns the §16.1 metrics catalog. The slice is fresh

@@ -1284,6 +1284,11 @@ referenceRuntimes:
       image: ghcr.io/lennylabs/runtime-mastra@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
+    # spec: §26.10 operator warning — OpenAI's hosted code interpreter
+    # runs outside Lenny's sandbox. Operators concerned about code
+    # execution isolation should disable code_interpreter in their
+    # assistant configuration on OpenAI's side; Lenny does not proxy or
+    # intercept code-interpreter invocations.
     - name: openai-assistants
       image: ghcr.io/lennylabs/runtime-openai-assistants@sha256:0000000000000000000000000000000000000000000000000000000000000000
       integrationLevel: full
@@ -1299,7 +1304,12 @@ referenceRuntimes:
 # election (lenny-ops-leader); the leader runs the §25.4 background
 # loops and every replica serves the §25 HTTP surface.
 ops:
-  replicas: 2
+  # spec: §25.16 line 5113 — "Deployment: lenny-ops (1 replica,
+  # leader-elected)". The Minimal topology (line 5093) is a single Pod;
+  # production runs as a Deployment with 1 replica plus leader election.
+  # Operators wanting HA can set replicas >= 2 and the PodDisruptionBudget
+  # renders accordingly (line 5114: "minAvailable 1 (when replicas >= 2)").
+  replicas: 1
   # httpPort is the port the lenny-ops HTTP surface binds (the binary's
   # --addr flag). The lenny-ops Service exposes it; the Ingress and the
   # §13.2 NET-051 ingress NetworkPolicy reference it.

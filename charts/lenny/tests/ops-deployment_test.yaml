@@ -28,14 +28,15 @@ tests:
           path: spec.template.metadata.labels.app
           value: lenny-ops
 
-  - it: runs two replicas by default
+  # spec: §25.16 line 5113 — "Deployment: lenny-ops (1 replica, leader-elected)".
+  - it: defaults to one replica per §25.16 line 5113
     documentSelector:
       path: kind
       value: Deployment
     asserts:
       - equal:
           path: spec.replicas
-          value: 2
+          value: 1
 
   - it: runs under the lenny-ops-sa service account
     documentSelector:
