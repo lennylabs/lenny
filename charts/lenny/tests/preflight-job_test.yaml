@@ -11,6 +11,32 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--required-runtime-classes=sandboxed=gvisor"
 
+  # spec: §10.3 lines 316, 334 (NET-064) — the preflight Job needs the
+  # values at hand to feed CheckSPIFFETrustDomainUniqueness /
+  # CheckSATokenAudienceUniqueness. F-10.3.5.
+  - it: passes --spiffe-trust-domain and --sa-token-audience to the preflight binary
+    set:
+      global.saTokenAudience: lenny-gateway-acme
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--spiffe-trust-domain=cluster.local"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--sa-token-audience=lenny-gateway-acme"
+
+  - it: still passes an empty --sa-token-audience when global.saTokenAudience is unset (chart default)
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--sa-token-audience="
+
   - it: requires both gVisor and Kata when microvm is also enabled
     set:
       runtimeClasses.profiles.microvm.enabled: true

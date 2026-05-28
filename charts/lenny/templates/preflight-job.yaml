@@ -182,6 +182,12 @@ spec:
             - --feature-compliance={{ .Values.features.compliance }}
             - --accept-downgrade={{ join "," $accepted }}
             - --compliance-profile={{ .Values.complianceProfile | default "" }}
+            # §10.3 lines 316, 334 (NET-064) uniqueness inputs. The
+            # collision check skips an empty value, so the unset
+            # saTokenAudience case (chart default) passes preflight;
+            # production deployments override both. F-10.3.5 / F-10.3.6.
+            - --spiffe-trust-domain={{ .Values.global.spiffeTrustDomain | default "" }}
+            - --sa-token-audience={{ .Values.global.saTokenAudience | default "" }}
             {{- if $rcReqs }}
             - --required-runtime-classes={{ join "," $rcReqs }}
             {{- end }}

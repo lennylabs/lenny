@@ -58,6 +58,12 @@ spec:
                    isolation profile to runc so a gVisor-less cluster works. */}}
             - --dev-mode
             {{- end }}
+            {{- with .Values.global.saTokenAudience }}
+            # §10.3 line 334 (NET-064): when set, each warm pod mounts
+            # a §6.1 audience-bound, 900s-TTL projected SA token rather
+            # than a cluster-default-audience token. F-10.3.5.
+            - --sa-token-audience={{ . }}
+            {{- end }}
           {{- if $hasPg }}
           env:
             - name: LENNY_POSTGRES_DSN

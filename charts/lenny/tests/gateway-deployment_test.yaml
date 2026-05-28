@@ -47,6 +47,60 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --token-service-tls-cert=/etc/lenny/mtls/tls.crt
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-tls-cert=/etc/lenny/mtls/tls.crt
+
+  # spec: §4.7 / §10.3 line 320 (NET-060) — the same lenny-gateway-tls
+  # Secret carries the client cert the gateway presents to each pod
+  # adapter's gRPC listener; without these flags the gateway dials
+  # adapters in plaintext. F-10.3.10.
+  - it: passes --adapter-tls-* flags when mtls.enabled (default)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-tls-cert=/etc/lenny/mtls/tls.crt
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-tls-key=/etc/lenny/mtls/tls.key
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --adapter-ca=/etc/lenny/mtls/ca.crt
+
+  # spec: §10.3 lines 316, 334 (NET-064) — the lenny-preflight Job reads
+  # these annotations to enforce uniqueness across Lenny Deployments in
+  # the same cluster; without them the collision check is a no-op.
+  # F-10.3.6.
+  - it: stamps NET-064 identity annotations on the gateway Deployment metadata
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: metadata.annotations["lenny.dev/spiffe-trust-domain"]
+          value: cluster.local
+
+  - it: stamps the sa-token-audience annotation when global.saTokenAudience is set
+    set:
+      global.saTokenAudience: lenny-gateway-acme
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: metadata.annotations["lenny.dev/sa-token-audience"]
+          value: lenny-gateway-acme
+
+  - it: omits the sa-token-audience annotation when global.saTokenAudience is empty (chart default)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notExists:
+          path: metadata.annotations["lenny.dev/sa-token-audience"]
 
   - it: renders the service account, cluster role, binding, deployment, services, and the §4.1 PodDisruptionBudget by default
     asserts:

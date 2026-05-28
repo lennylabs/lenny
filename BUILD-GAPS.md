@@ -11938,7 +11938,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** Every stock install of the chart inherits `cluster.local` as the SPIFFE trust domain, defeating the NET-064 cross-deployment isolation guarantee. The preflight collision check (`pkg/preflight/networkpolicy_identity.go::CheckSPIFFETrustDomainUniqueness`) operates against rendered annotations, which are also missing — see 10.3-G6.
 
-### - [ ] F-10.3.5 — 10.3-G5. `global.saTokenAudience` not implemented as a chart value [High] — OPEN
+### - [x] F-10.3.5 — 10.3-G5. `global.saTokenAudience` not implemented as a chart value [High] — CLOSED
 
 **Spec lines:** 334 ("required chart value with no default; preflight aborts the install with exit code 1 if the value under installation matches any existing Lenny deployment's audience").
 **Evidence:**
@@ -11948,7 +11948,9 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** Cross-deployment SA-token replay protection is absent. A projected SA token minted for deployment A's gateway is accepted by deployment B's gateway without further checks.
 
-### - [ ] F-10.3.6 — 10.3-G6. Chart does not stamp the NET-064 identity annotations the preflight reads [High] — OPEN
+**Resolution:** Added `global.saTokenAudience` chart value (empty default, set explicitly in production); wired it as `--sa-token-audience` on the `lenny-controller` Deployment and `--sa-token-audience` / `--spiffe-trust-domain` on the `lenny-preflight` Job so `CheckSATokenAudienceUniqueness` / `CheckSPIFFETrustDomainUniqueness` now read real values. Preflight collision check still skips empty values, preserving stock installs. Gateway-side `aud`-claim enforcement on the projected SA-token path is tracked under F-10.3.20.
+
+### - [x] F-10.3.6 — 10.3-G6. Chart does not stamp the NET-064 identity annotations the preflight reads [High] — CLOSED
 
 **Spec lines:** 316, 334 ("enumerates every Lenny Deployment's rendered `global.spiffeTrustDomain` / `global.saTokenAudience` across the target cluster (by reading the `lenny.dev/spiffe-trust-domain` / `lenny.dev/sa-token-audience` annotation on the `lenny-gateway` Deployment ...)").
 **Evidence:**
@@ -11956,6 +11958,8 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - `charts/lenny/templates/gateway-deployment.yaml` does not write either annotation. A grep for the literal strings returns zero matches across `charts/lenny/templates/`.
 
 **Impact:** Even if a deployment chose a unique trust domain or audience, the preflight collision check sees every existing Lenny gateway as a deployment with empty annotations and never flags a collision. The collision-detection logic is dead in practice.
+
+**Resolution:** `charts/lenny/templates/gateway-deployment.yaml` now stamps `lenny.dev/spiffe-trust-domain` (always) and `lenny.dev/sa-token-audience` (when `global.saTokenAudience` is set) on the Deployment's metadata. The preflight enumerator now sees real values and the NET-064 collision checks (`CheckSPIFFETrustDomainUniqueness` / `CheckSATokenAudienceUniqueness`) become enforcing.
 
 ### - [ ] F-10.3.7 — 10.3-G7. Deny list is built but never consulted on the mTLS handshake [High] — OPEN
 
@@ -11986,7 +11990,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** Agent pods present no client certificate to the gateway. Either the §4.7 adapter→gateway link runs unauthenticated, or it fails closed at handshake — the spec demands the former never happens, and the codebase has no path to make the latter succeed under real load. The §4.7 mTLS posture is incomplete on the agent-pod side.
 
-### - [ ] F-10.3.10 — 10.3-G10. Chart never wires the mTLS Secrets into the gateway, controller, or Token Service Deployments [High] — OPEN
+### - [x] F-10.3.10 — 10.3-G10. Chart never wires the mTLS Secrets into the gateway, controller, or Token Service Deployments [High] — CLOSED
 
 **Spec lines:** 308–314 (lifecycle table) plus the implicit prerequisite that each component runs with the issued cert.
 **Evidence:**
@@ -11996,7 +12000,9 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** Out of the box, every internal hop runs in the plaintext fall-through path the flag defaults document ("Empty dials adapters in plaintext (local development only)" — line 243). The spec's "internal control-plane mTLS" posture is unwired on a production install.
 
-### - [ ] F-10.3.11 — 10.3-G11. Token Service deployment has no mTLS configuration at all [High] — OPEN
+**Resolution:** Evidence is stale. `gateway-deployment.yaml` and `token-service-deployment.yaml` already mount the cert-manager Secrets and pass `--token-service-tls-*` / `--tls-cert` / `--tls-key` / `--tls-ca`. This batch additionally pipes `--adapter-tls-cert` / `--adapter-tls-key` / `--adapter-ca` on the gateway so the §4.7 adapter dial presents a client cert. The controller hop is pure controller-runtime CRD reconciliation, not a gRPC hop, so it does not need a TLS secret mount.
+
+### - [x] F-10.3.11 — 10.3-G11. Token Service deployment has no mTLS configuration at all [High] — CLOSED
 
 **Spec lines:** 313 ("Token Service | 24h | DNS: `lenny-token-service.lenny-system.svc`"), 318 ("Token Service validates that incoming connections present a gateway replica certificate (matching the gateway's DNS SAN `lenny-gateway.lenny-system.svc`), rejecting connections from any other component").
 **Evidence:**
@@ -12004,6 +12010,8 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - The Token Service binary's gRPC listener has no equivalent of `pkg/adapter/transport.go::TLSServerOption` wired in the chart, and no SAN check against the gateway's expected SAN.
 
 **Impact:** The §4.3 trust boundary "gateway has no KMS decrypt rights" depends on the Token Service authenticating the gateway. As shipped, the Token Service either runs plaintext or fails to validate its peer.
+
+**Resolution:** Evidence is stale. `charts/lenny/templates/token-service-deployment.yaml:52-93` already mounts the `lenny-token-service-tls` Secret at `/etc/lenny/mtls/` and passes `--tls-cert` / `--tls-key` / `--tls-ca` to the binary when `mtls.enabled` (default true). Gateway↔Token-Service SAN pinning hardness is tracked under F-10.3.1 / F-10.3.2 (handshake-time SAN validation, separate from chart wiring).
 
 ### - [ ] F-10.3.12 — 10.3-G12. cert-manager Helm dependency, version check, and `certmanager.enabled` value all missing [High] — OPEN
 
@@ -12098,7 +12106,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 **Evidence:** `pkg/mtls/denylist/propagator/propagator.go:23-25` documents Redis pub/sub explicitly: "Redis pub/sub is at-most-once. A dropped add is bounded by the short certificate TTL ... a missed propagation closes when the certificate expires." A grep for `LISTEN`/`NOTIFY` in `pkg/mtls/denylist/` and `pkg/gateway/pubsub/` returns no hits.
 **Impact:** Deployments without Redis (the `bus == nil` path) fall back to single-replica behaviour for deny-list propagation, not to the documented Postgres mechanism. Low severity because the cert TTL caps the worst case at 4h and the spec offers Redis-only operation as the primary path.
 
-### - [ ] F-10.3.23 — 10.3-G23. `--token-service-tls-cert`/`-key`/`-ca` flags exist but are not passed by the chart [High] — OPEN
+### - [x] F-10.3.23 — 10.3-G23. `--token-service-tls-cert`/`-key`/`-ca` flags exist but are not passed by the chart [High] — CLOSED
 
 **Spec lines:** 318 (Token Service ↔ Gateway mTLS posture).
 **Evidence:**
@@ -12107,6 +12115,8 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - Result: `dialTokenService(addr, "", "", "")` falls into the plaintext branch at `cmd/lenny-gateway/main.go:2267-2268`.
 
 **Impact:** Even though the cert-manager `Secret`s exist, the gateway dials the Token Service plaintext. The §4.3 trust boundary the spec rests on is unenforced.
+
+**Resolution:** Closed as duplicate of F-10.3.10 — the evidence here is stale. `charts/lenny/templates/gateway-deployment.yaml:299-308` already renders `--token-service-tls-cert=/etc/lenny/mtls/tls.crt`, `--token-service-tls-key=/etc/lenny/mtls/tls.key`, and `--token-service-ca=/etc/lenny/mtls/ca.crt` under `if .Values.mtls.enabled` (default true), so the gateway dials the Token Service over mTLS on a stock install.
 
 ### - [ ] F-10.3.24 — 10.3-G24. `mtls.enabled` value gates the PKI but no downstream consumer notices [Info] — OPEN
 

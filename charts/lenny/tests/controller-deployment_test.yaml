@@ -19,6 +19,22 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --leader-elect
 
+  # spec: §10.3 line 334 (NET-064) — when set the controller stamps the
+  # audience-bound projected SA token on every warm pod. F-10.3.5.
+  - it: passes --sa-token-audience when global.saTokenAudience is set
+    set:
+      global.saTokenAudience: lenny-gateway-acme
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sa-token-audience=lenny-gateway-acme
+
+  - it: omits --sa-token-audience when global.saTokenAudience is unset (chart default)
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --sa-token-audience=
+
   - it: runs under the lenny-controller service account
     asserts:
       - equal:

@@ -683,10 +683,27 @@ global:
   # cluster.
   devMode: false
   # spiffeTrustDomain is the SPIFFE trust domain anchoring agent-pod
-  # and in-cluster-interceptor identities (§10.3). It is the host
-  # component of every spiffe:// URI Lenny issues. Defaults to the
-  # cluster DNS domain so a stock install has a stable anchor.
+  # and in-cluster-interceptor identities (§10.3 line 316). It is the
+  # host component of every spiffe:// URI Lenny issues. Production
+  # deployments SHOULD override this with a deployment-unique value
+  # (e.g. `lenny-<cluster-name>-<namespace>`); the lenny-preflight Job
+  # rejects an install whose value collides with an existing Lenny
+  # Deployment in the same cluster (NET-064).
   spiffeTrustDomain: cluster.local
+  # saTokenAudience is the §10.3 line 334 projected SA-token audience
+  # the gateway validates on every pod→gateway request. The value MUST
+  # be deployment-specific (e.g. `lenny-gateway-<cluster-name>`) so a
+  # token minted for deployment A's gateway is rejected by deployment B
+  # under audience replay (NET-064). The chart leaves it empty by
+  # default — preflight's collision check skips an empty value, and the
+  # gateway treats an empty audience as "no audience check" so a stock
+  # `helm install` still serves traffic. Production deployments set it
+  # explicitly. Stamped on the lenny-gateway Deployment as the
+  # `lenny.dev/sa-token-audience` annotation read by the preflight
+  # collision check; the lenny-controller already reads the
+  # --sa-token-audience flag and the lenny-preflight Job's
+  # --sa-token-audience flag is wired below. F-10.3.5 / F-10.3.6.
+  saTokenAudience: ""
 
 # mtls configures the §10.3 gateway-to-agent-pod mTLS PKI: a
 # cluster-internal certificate authority managed by cert-manager and

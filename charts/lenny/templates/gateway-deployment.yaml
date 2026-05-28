@@ -138,6 +138,17 @@ metadata:
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
     lenny.dev/component: gateway
+  # spec: §10.3 lines 316, 334 (NET-064). The lenny-preflight Job
+  # enumerates these annotations across every lenny-gateway Deployment
+  # in the cluster to enforce SPIFFE-trust-domain / SA-token-audience
+  # uniqueness. Without them, the collision check sees existing
+  # deployments as having empty annotations and never flags a clash.
+  # F-10.3.6.
+  annotations:
+    lenny.dev/spiffe-trust-domain: {{ .Values.global.spiffeTrustDomain | quote }}
+    {{- with .Values.global.saTokenAudience }}
+    lenny.dev/sa-token-audience: {{ . | quote }}
+    {{- end }}
 spec:
   replicas: {{ .Values.gateway.replicas }}
   # §4.1 / §17.1 rolling-update strategy. maxUnavailable: 1 caps the
@@ -305,6 +316,14 @@ spec:
             - --token-service-tls-cert=/etc/lenny/mtls/tls.crt
             - --token-service-tls-key=/etc/lenny/mtls/tls.key
             - --token-service-ca=/etc/lenny/mtls/ca.crt
+            # §4.7 / §10.3 line 320 (NET-060) adapter mTLS client
+            # material. The same lenny-gateway-tls Secret carries the
+            # client cert the gateway presents to each pod adapter's
+            # gRPC listener; ca.crt verifies the adapter's per-pod
+            # serving cert. F-10.3.10.
+            - --adapter-tls-cert=/etc/lenny/mtls/tls.crt
+            - --adapter-tls-key=/etc/lenny/mtls/tls.key
+            - --adapter-ca=/etc/lenny/mtls/ca.crt
             {{- end }}
             # §9.2 platform-wide elicitation content-integrity floor.
             # The admin API's GET endpoint reports the effective mode
