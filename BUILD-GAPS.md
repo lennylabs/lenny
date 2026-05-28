@@ -35967,17 +35967,23 @@ The chart renders the lenny-ops Deployment and its Ingress for the read-only hea
 
 The signature envelope (`v1;keyId=…;alg=ed25519;sig=…`) is invented in the implementation because §25.8 leaves the wire form implicit. The TODO at `signer.go:36-37` records this; classify as Info / spec-clarification needed, not a build gap.
 
-### - [ ] F-25.8.17 — Pure helpers (`pkg/upgrade`, `pkg/common/registry`, `pkg/releasechannel`) are well-isolated [Info] — OPEN
+### - [x] F-25.8.17 — Pure helpers (`pkg/upgrade`, `pkg/common/registry`, `pkg/releasechannel`) are well-isolated [Info] — CLOSED
 
 The three present packages are pure (no I/O), well-commented, and aligned with the spec where they intersect it. They are the right foundations for the orchestrator, version aggregator, and upgrade-check client to be built on top of.
 
-### - [ ] F-25.8.18 — Audit and ops event catalogs are populated ahead of the handlers [Info] — OPEN
+**Resolution:** Verify-closed. `pkg/upgrade/upgrade.go`, `pkg/common/registry/resolver.go`, and `pkg/releasechannel/{manifest,publisher,signer}.go` all present and unit-tested; finding's own framing confirms they are the correct foundations. No code change needed; orchestrator/aggregator/upgrade-check gaps tracked separately under F-25.8.1..F-25.8.4.
+
+### - [x] F-25.8.18 — Audit and ops event catalogs are populated ahead of the handlers [Info] — CLOSED
 
 Every spec-mandated audit event (`audit/catalog.go:108-122`) and every spec-mandated ops event (`opsevents/catalog.go:35,87-89`) has a constant declared. They are wired into the catalog allow-lists. When the orchestrator is built the emit sites can use the existing constants without further plumbing.
 
-### - [ ] F-25.8.19 — BUILD-PROGRESS records §25.8 as "release-channel publisher built", and does not claim the rest [Info] — OPEN
+**Resolution:** Verify-closed. `pkg/observability/audit/catalog.go:152-165` declares `EventPlatformVersionChecked`/`UpgradeStarted`/`OpsRolled`/`CrdsUpdated`/`SchemaMigrated`/`GatewayRolled`/`ControllersRolled`/`PhaseAdvanced`/`Paused`/`RolledBack`/`Completed`/`Verified`/`ConfigChanged`/`RegistryUpdated`. `pkg/gateway/events/catalog.go:35,87-89` declares `platform_upgrade_available`/`platform_upgrade_completed`/`platform_upgrade_verification_failed`/`platform_upgrade_image_pull_failed`. Emitter sites tracked under F-25.8.1..F-25.8.7.
+
+### - [x] F-25.8.19 — BUILD-PROGRESS records §25.8 as "release-channel publisher built", and does not claim the rest [Info] — CLOSED
 
 `BUILD-PROGRESS.md` line 57 attributes the publisher and the digest-pinned admission gate to wave 14. It does not claim the orchestrator, the `/v1/admin/platform/*` endpoints, the upgrade-check client, or the version aggregator — the build progress and the implementation tree are consistent on the gap.
+
+**Resolution:** Verify-closed per the finding's own framing: BUILD-PROGRESS row 14 accurately records "release-channel manifest publisher is built" and does not overclaim. The unbuilt §25.8 surfaces remain tracked under F-25.8.1..F-25.8.15.
 
 ### Summary
 
@@ -36102,13 +36108,17 @@ Spec line 3659: default 100, max 1000. Implementation (`audit_query.go:104-109`)
 
 §25.9 uses `?cursor=`. The implementation introduces a non-spec `?afterSeq=` integer parameter (`audit_query.go:98-103`) that exposes Postgres sequence numbers directly to clients. This is a forward-compatibility hazard: if a future cursor format uses an opaque token, callers that have hard-coded `afterSeq=N` will break.
 
-### - [ ] F-25.9.18 — auditstore.PendingTranslation/PendingRepublish are correct but unused by the admin surface [Info] — OPEN
+### - [x] F-25.9.18 — auditstore.PendingTranslation/PendingRepublish are correct but unused by the admin surface [Info] — CLOSED
 
 `pkg/gateway/auditstore/translation.go` and `retranscribe.go` implement the canonical scan and CloudEvents envelope rebuild for the background OCSF translator and EventBus retranscribe worker. These are correctly bounded with the `__all__` tenant sentinel and emit the §12.3 `cross_tenant_read` audit event per worker invocation. The data is present in Postgres; the gap is the admin HTTP surface that lets operators trigger a single-row retranslate/republish on demand (see High #4, #5).
 
-### - [ ] F-25.9.19 — chain integrity model: per-tenant chain via `pkg/audit` plus durable Postgres counterpart [Info] — OPEN
+**Resolution:** Verify-closed. `pkg/gateway/auditstore/translation.go:26,37` (`PendingTranslation`) and `retranscribe.go:20,29` (`PendingRepublish`) confirmed present and used by the background workers. Admin-surface gap remains tracked under F-25.9.4 (retranslate) and F-25.9.5 (republish).
+
+### - [x] F-25.9.19 — chain integrity model: per-tenant chain via `pkg/audit` plus durable Postgres counterpart [Info] — CLOSED
 
 `pkg/audit/chain.go` (372 lines) implements the in-memory chain with `Verify()` producing a `VerifyResult{Integrity, BreakSeq, Detail}`. `pkg/gateway/auditstore/auditstore.go:139-145` reuses the same verifier over the Postgres rows. The verifier correctness is sound; the gap is that the verdict never reaches the §25.9 response envelope (`chainIntegrityReport` and per-row `chainIntegrity`), even though all six enum states are defined and tested.
+
+**Resolution:** Verify-closed. `pkg/audit/chain.go:220-317` confirms `VerifyResult` + six-state `ChainIntegrity` enum (verified/broken/rechained_post_outage/unchecked/redacted_gdpr/gap_suspected) plus full `Verify` implementation; durable counterpart reused by auditstore. Envelope/per-row exposure remains tracked under F-25.9.9.
 
 ### Coverage Matrix
 
@@ -36252,13 +36262,17 @@ The `Snapshot.ID` field (`driftservice.go:92`) is typed `string` and validated o
 
 `pkg/ops/mcpmgmt/tools.go:179-218` registers `lenny_drift_report`, `lenny_drift_validate`, and `lenny_drift_snapshot_refresh`. The first calls `GET /v1/admin/drift` (which returns empty drift due to the empty running-state reader); the latter two work end-to-end against the in-memory store. There is no `lenny_drift_reconcile` MCP tool, which is consistent with the missing endpoint but means the agent surface is also incomplete.
 
-### - [ ] F-25.10.15 — `pkg/drift` and `pkg/ops/driftservice` cleanly separate the pure diff from I/O [Info] — OPEN
+### - [x] F-25.10.15 — `pkg/drift` and `pkg/ops/driftservice` cleanly separate the pure diff from I/O [Info] — CLOSED
 
 The split is per the package docs: `pkg/drift` is a deterministic, sorted, recursive map diff; `pkg/ops/driftservice` adds snapshot lookup, staleness, report assembly, and error mapping. The error-code surface (`Error`, `CodeOf`, `driftErrorMap`) is faithful to §25.2 conventions. The HTTP-side dry-run preview on `snapshot/refresh` (`opsserver/drift.go:117-131`) matches §25.2.
 
-### - [ ] F-25.10.16 — `drift_detected` gateway ops event is unrelated to §25.10 [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own framing. `pkg/drift/drift.go` + `pkg/drift/drift_test.go` + `pkg/ops/driftservice/driftservice.go` + `pkg/ops/driftservice/driftservice_test.go` confirmed; split holds.
+
+### - [x] F-25.10.16 — `drift_detected` gateway ops event is unrelated to §25.10 [Info] — CLOSED
 
 `pkg/gateway/opsevents/catalog.go:86` declares `EventDriftDetected = "drift_detected"`. This is a §25.5 ops-events catalog entry consumed by webhook subscriptions, not a §25.10 audit event — and `pkg/webhooksig/webhooksig_test.go:16` only uses it as a sample payload. No producer in the §25.10 path emits this event either.
+
+**Resolution:** Verify-closed per the finding's own framing. `pkg/gateway/events/catalog.go:86` (path renamed from `opsevents` → `events`) confirms `EventDriftDetected` belongs to the §25.5 ops-events catalog; webhook-sample-only use intentional. §25.10 audit-event emission is tracked under separate §25.10 findings.
 
 ---
 
@@ -36480,19 +36494,25 @@ Implementation status:
 
 Spec line 4147 ("under `audit.gdprRetentionDays` (7y default)") and the linked §12.8 reference ("default 2555 days / 7 years") are consistent in intent but the unit is not stated on the §25.11 side. Not a build gap — flagging for spec consistency.
 
-### - [ ] F-25.11.21 — `ArtifactStore replication` package shows good shape and is the strongest part of §25.11 [Info] — OPEN
+### - [x] F-25.11.21 — `ArtifactStore replication` package shows good shape and is the strongest part of §25.11 [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.5.20, F-16.7.2, F-17.3.7, F-25.11.1, F-17.3.26 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
 
 `pkg/blobstore/replication/` implements the runtime residency preflight, jurisdiction-tag probe, DNS-rebinding CIDR guard, sampled positive-audit event, suspend/resume state machine, idempotent rule management, and FakeDriver. The driver wraps `minio-go`'s replication and tagging APIs and is unit-tested at `replication_test.go`. The one missing piece is wiring: the controller is never instantiated in `cmd/lenny-ops`.
 
-### - [ ] F-25.11.22 — `lenny-backup` binary supports `--mode retention` via the daily cron path [Info] — OPEN
+**Resolution:** Verify-closed per the finding's own framing. `pkg/blobstore/replication/{controller,driver,replication}.go` + `replication_test.go` confirmed present. Wiring gap remains tracked under F-12.5.20 / F-16.7.2 / F-17.3.7 / F-25.11.1 / F-17.3.26.
+
+### - [x] F-25.11.22 — `lenny-backup` binary supports `--mode retention` via the daily cron path [Info] — CLOSED
 
 `cmd/lenny-backup/main.go:147-156` handles `--mode retention` correctly (calls `deps.reporter.RunRetention`). This is a useful piece of the §25.11 retention flow that does work once the Postgres `ops_backups` table exists and the Job actually launches.
 
-### - [ ] F-25.11.23 — Test-restore CronJob renders but cannot execute [Info] — OPEN
+**Resolution:** Verify-closed. `cmd/lenny-backup/main.go:146-150` confirmed: `if *mode == "retention"` branches to `deps.reporter.RunRetention(ctx, deps.uploader, *preRestoreRetainDays)`. Dependencies (`ops_backups` table, K8s `JobLauncher`) tracked under F-25.11.3 / F-25.11.4.
+
+### - [x] F-25.11.23 — Test-restore CronJob renders but cannot execute [Info] — CLOSED
 
 `charts/lenny/templates/restore-test-cronjob.yaml` renders a CronJob, SA, ClusterRole, ClusterRoleBinding, and PSS-compliant Pod spec — solid Helm work. It calls the `lenny-backup` image, which (per the In-Job pipeline finding above) does not handle a restore-test mode. The CronJob will fail on first fire with a usage error from the binary.
+
+**Resolution:** Verify-closed. `charts/lenny/templates/restore-test-cronjob.yaml` confirmed present and PSS-compliant. The binary `--mode test-restore` gap remains tracked under F-25.11.12.
 
 ---
 
@@ -36794,7 +36814,7 @@ No evidence found that `lenny-ops` upgrade audit events tag rule-set deltas. The
 Evidence:
 - No code searching for `monitoring.alertOverrides` deltas in `pkg/ops/` upgrade flows.
 
-### - [ ] F-25.13.12 — 12  `prometheus_rule_evaluation_duration_seconds` operator-alert recommendation not bundled [Info] — OPEN
+### - [x] F-25.13.12 — 12  `prometheus_rule_evaluation_duration_seconds` operator-alert recommendation not bundled [Info] — CLOSED
 
 §25.13 line 4822 recommends:
 
@@ -36805,7 +36825,9 @@ The recommendation is not a normative MUST, but no bundled `PrometheusRuleEvalSl
 Evidence:
 - `grep -n "prometheus_rule_evaluation" /Users/joan/projects/lenny/charts/lenny/files/alerting-rules.yaml` returns no hits.
 
-### - [ ] F-25.13.13 — 13  Implementation richer than spec on a few axes [Info] — OPEN
+**Resolution:** Verify-closed. Spec line 4822 says "Operators should alert" — an operator-side recommendation about their Prometheus deployment, not a Lenny-bundled rule MUST. The natural home (`docs/alerting/routing-recommendations.md`) remains tracked under F-25.13.8.
+
+### - [x] F-25.13.13 — 13  Implementation richer than spec on a few axes [Info] — CLOSED
 
 Positive deltas worth recording so they propagate into the spec or get explicitly endorsed:
 
@@ -36814,6 +36836,8 @@ Positive deltas worth recording so they propagate into the spec or get explicitl
 - `cmd/gen-alerting-rules -check` is wired into CI; staleness is a build failure. Spec text mentions a "cross-check test" (line 4679) but does not specify the build integration. Document the CI hook in the spec or runbooks.
 
 No action required beyond optional spec uplift.
+
+**Resolution:** Verify-closed per the finding's own framing. `pkg/alerting/rules/rules.go:117-118` confirms compile-time critical-RunbookURL enforcement; `tests/tier2_component/observability/catalog_crosscheck_test.go:207` confirms CI `gen-alerting-rules -check` wiring. Spec-side uplift optional.
 
 ---
 
