@@ -61,6 +61,7 @@ func TestParseGlobalFlagsStopsAtCommand(t *testing.T) {
 type capturedRequest struct {
 	method string
 	path   string
+	query  string
 	body   map[string]any
 }
 
@@ -72,6 +73,9 @@ func runAgainstGateway(t *testing.T, status int, response string, args ...string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got.method = r.Method
 		got.path = r.URL.Path
+		if r.URL.Path != "/healthz" {
+			got.query = r.URL.RawQuery
+		}
 		if raw, _ := io.ReadAll(r.Body); len(raw) > 0 {
 			_ = json.Unmarshal(raw, &got.body)
 		}
@@ -381,23 +385,111 @@ func TestBootstrapRejectsMalformedSeedFile(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 421 — the bootstrap CLI MUST accept --wait-timeout
-// (canonical) and SHOULD accept --wait (back-compat alias).
-func TestBootstrapWaitTimeoutFlagAlias_spec_17_6_421(t *testing.T) {
-	for _, flag := range []string{"--wait-timeout", "--wait"} {
-		flag := flag
-		t.Run(flag, func(t *testing.T) {
+// spec: §17.6 line 421 — the bootstrap CLI accepts --wait-timeout
+// (default 120s) for the gateway readiness poll.
+func TestBootstrapWaitTimeoutFlag_spec_17_6_421(t *testing.T) {
+	path := writeSeedFile(t, "bootstrap-values.json",
+		`{"tenants":[{"id":"acme","displayName":"Acme Corp"}]}`)
+	code, got := runAgainstGateway(t, http.StatusOK, `{"tenants":{"createdCount":1}}`,
+		"bootstrap", "--wait-timeout", "0", "--from-values", path)
+	if code != 0 {
+		t.Fatalf("--wait-timeout: exit code %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/bootstrap" {
+		t.Fatalf("--wait-timeout: %s %s, want POST /v1/admin/bootstrap", got.method, got.path)
+	}
+}
+
+// spec: §24.1 line 35 — --dry-run maps to ?dryRun=true; §17.6 line 450 —
+// --force-update maps to ?forceUpdate=true.
+func TestBootstrapDryRunAndForceUpdateQuery_spec_24_1_35(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		flags     []string
+		wantQuery string
+	}{
+		{"dry-run", []string{"--dry-run"}, "dryRun=true"},
+		{"force-update", []string{"--force-update"}, "forceUpdate=true"},
+		{"both", []string{"--dry-run", "--force-update"}, "dryRun=true&forceUpdate=true"},
+		{"neither", nil, ""},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
 			path := writeSeedFile(t, "bootstrap-values.json",
 				`{"tenants":[{"id":"acme","displayName":"Acme Corp"}]}`)
-			code, got := runAgainstGateway(t, http.StatusOK, `{"tenants":{"createdCount":1}}`,
-				"bootstrap", flag, "0", "--from-values", path)
+			args := append([]string{"bootstrap", "--wait-timeout", "0", "--from-values", path}, tc.flags...)
+			code, got := runAgainstGateway(t, http.StatusOK, `{"tenants":{"createdCount":1}}`, args...)
 			if code != 0 {
-				t.Fatalf("%s: exit code %d, want 0", flag, code)
+				t.Fatalf("exit code %d, want 0", code)
 			}
-			if got.method != http.MethodPost || got.path != "/v1/admin/bootstrap" {
-				t.Fatalf("%s: %s %s, want POST /v1/admin/bootstrap", flag, got.method, got.path)
+			if got.query != tc.wantQuery {
+				t.Errorf("query = %q, want %q", got.query, tc.wantQuery)
 			}
 		})
+	}
+}
+
+// spec: §17.6 line 420 — exit 0 = all seeded, 1 = validation error,
+// 2 = partial failure.
+func TestBootstrapExitCodeMapping_spec_17_6_420(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body bootstrapResult
+		want int
+	}{
+		{
+			name: "all created",
+			body: bootstrapResult{Tenants: bootstrapSection{CreatedCount: 2}},
+			want: 0,
+		},
+		{
+			name: "all skipped is still success",
+			body: bootstrapResult{Tenants: bootstrapSection{SkippedCount: 2}},
+			want: 0,
+		},
+		{
+			name: "partial: one created, one store error",
+			body: bootstrapResult{Tenants: bootstrapSection{
+				CreatedCount: 1,
+				Errors:       []bootstrapErr{{ID: "bad", Code: "SEED_STORE_ERROR"}},
+			}},
+			want: 2,
+		},
+		{
+			name: "pure validation failure, nothing seeded",
+			body: bootstrapResult{Tenants: bootstrapSection{
+				Errors: []bootstrapErr{{ID: "bad", Code: "SEED_VALIDATION"}},
+			}},
+			want: 1,
+		},
+		{
+			name: "security-critical block dominates even with successes",
+			body: bootstrapResult{Runtimes: bootstrapSection{
+				CreatedCount: 3,
+				Errors:       []bootstrapErr{{ID: "echo", Code: "SEED_SECURITY_CRITICAL_FIELD"}},
+			}},
+			want: 1,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.body.exitCode(); got != tc.want {
+				t.Errorf("exitCode() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// spec: §17.6 line 420 — a 207 partial-failure POST response makes the
+// CLI exit 2; the readiness poll is skipped so the test never blocks.
+func TestBootstrapPartialFailureExitsTwo_spec_17_6_420(t *testing.T) {
+	path := writeSeedFile(t, "bootstrap-values.json",
+		`{"tenants":[{"id":"acme"},{"id":"with space"}]}`)
+	code, _ := runAgainstGateway(t, http.StatusMultiStatus,
+		`{"tenants":{"createdCount":1,"errors":[{"id":"with space","code":"SEED_VALIDATION","message":"bad id"}]}}`,
+		"bootstrap", "--wait-timeout", "0", "--from-values", path)
+	if code != 2 {
+		t.Errorf("partial failure: exit code %d, want 2", code)
 	}
 }
 

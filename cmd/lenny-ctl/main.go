@@ -638,20 +638,27 @@ func parseOpenBreaker(args []string) (map[string]any, error) {
 func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	var fromValues string
 	// spec: §17.6 line 421 — --wait-timeout (default 120s) for the
-	// bootstrap readiness poll. --wait is kept as a back-compat alias so
-	// an existing Helm chart that still renders --wait keeps working.
+	// bootstrap readiness poll.
 	const defaultWaitTimeoutSeconds = 120
 	waitSeconds := defaultWaitTimeoutSeconds
+	// spec: §24.1 line 35 — --dry-run maps to ?dryRun=true; §17.6 line 450
+	// — --force-update maps to ?forceUpdate=true (overwrite differing
+	// fields on an existing resource instead of skipping).
+	var dryRun, forceUpdate bool
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--from-values" && i+1 < len(args):
 			fromValues = args[i+1]
 			i++
-		case (args[i] == "--wait-timeout" || args[i] == "--wait") && i+1 < len(args):
+		case args[i] == "--wait-timeout" && i+1 < len(args):
 			if n, err := strconv.Atoi(args[i+1]); err == nil {
 				waitSeconds = n
 			}
 			i++
+		case args[i] == "--dry-run":
+			dryRun = true
+		case args[i] == "--force-update":
+			forceUpdate = true
 		}
 	}
 	if fromValues == "" {
@@ -695,13 +702,118 @@ func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, std
 		fmt.Fprintf(stderr, "lenny-ctl: %s is not valid YAML or JSON: %v\n", fromValues, err)
 		return 1
 	}
-	var out map[string]any
-	if err := c.Do(ctx, "POST", "/v1/admin/bootstrap", body, &out); err != nil {
+	// spec: §24.1 line 35; §15.1 line 1140 — dryRun/forceUpdate are query
+	// parameters on POST /v1/admin/bootstrap.
+	path := "/v1/admin/bootstrap"
+	if q := bootstrapQuery(dryRun, forceUpdate); q != "" {
+		path += "?" + q
+	}
+	var out bootstrapResult
+	if err := c.Do(ctx, "POST", path, body, &out); err != nil {
+		// A 4xx/5xx (whole-body validation, auth, transport) is a
+		// validation error per §17.6 line 420 exit-code 1.
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	printJSON(stdout, out)
-	return 0
+	// spec: §17.6 lines 449-450 — log INFO/WARN per skipped resource so
+	// operators see why a re-run left existing resources unchanged.
+	out.logSkips(stderr)
+	// spec: §17.6 line 420 — exit 0 = all seeded, 1 = validation error,
+	// 2 = partial failure.
+	return out.exitCode()
+}
+
+// bootstrapQuery builds the dryRun/forceUpdate query string.
+func bootstrapQuery(dryRun, forceUpdate bool) string {
+	q := url.Values{}
+	if dryRun {
+		q.Set("dryRun", "true")
+	}
+	if forceUpdate {
+		q.Set("forceUpdate", "true")
+	}
+	return q.Encode()
+}
+
+// bootstrapResult mirrors the §15.1 POST /v1/admin/bootstrap response. The
+// CLI decodes only the fields it needs to log skips and compute the exit
+// code, keeping the client thin (no dependency on the gateway package).
+type bootstrapResult struct {
+	Tenants         bootstrapSection `json:"tenants"`
+	Runtimes        bootstrapSection `json:"runtimes"`
+	Users           bootstrapSection `json:"users"`
+	CredentialPools bootstrapSection `json:"credentialPools"`
+}
+
+type bootstrapSection struct {
+	CreatedCount int             `json:"createdCount"`
+	UpdatedCount int             `json:"updatedCount"`
+	SkippedCount int             `json:"skippedCount"`
+	Errors       []bootstrapErr  `json:"errors"`
+	Skipped      []bootstrapSkip `json:"skipped"`
+}
+
+type bootstrapErr struct {
+	ID      string `json:"id"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type bootstrapSkip struct {
+	ID                string   `json:"id"`
+	Code              string   `json:"code"`
+	ConflictingFields []string `json:"conflictingFields"`
+}
+
+func (b bootstrapResult) sections() map[string]bootstrapSection {
+	return map[string]bootstrapSection{
+		"tenant":         b.Tenants,
+		"runtime":        b.Runtimes,
+		"user":           b.Users,
+		"credentialPool": b.CredentialPools,
+	}
+}
+
+// logSkips prints the §17.6 line 450 WARN line for every resource that
+// was left unchanged because its seed fields differ and --force-update
+// was not supplied.
+func (b bootstrapResult) logSkips(stderr io.Writer) {
+	for kind, s := range b.sections() {
+		for _, sk := range s.Skipped {
+			fmt.Fprintf(stderr,
+				"WARN resource %s/%s: exists with differing fields %v; skipping (use --force-update to overwrite)\n",
+				kind, sk.ID, sk.ConflictingFields)
+		}
+	}
+}
+
+// exitCode maps the bootstrap response to the §17.6 line 420 exit codes:
+// 0 = all resources seeded (created, updated, or already-present skips),
+// 1 = validation error (a security-critical block, or a pure-failure run
+// where nothing succeeded), 2 = partial failure (some succeeded, some
+// failed operationally).
+func (b bootstrapResult) exitCode() int {
+	succeeded, failed, securityCritical := 0, 0, false
+	for _, s := range b.sections() {
+		succeeded += s.CreatedCount + s.UpdatedCount + s.SkippedCount
+		failed += len(s.Errors)
+		for _, e := range s.Errors {
+			if e.Code == "SEED_SECURITY_CRITICAL_FIELD" {
+				securityCritical = true
+			}
+		}
+	}
+	if securityCritical {
+		return 1
+	}
+	if failed == 0 {
+		return 0
+	}
+	if succeeded > 0 {
+		return 2
+	}
+	return 1
 }
 
 func printJSON(w io.Writer, v any) {

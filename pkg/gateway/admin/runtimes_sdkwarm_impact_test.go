@@ -207,7 +207,7 @@ func TestUpdateBaseRuntimeImpactValidation(t *testing.T) {
 func TestBootstrapAutoGeneratesAgentCard(t *testing.T) {
 	router, _, runtimes, _, _ := newBootstrapRouter(t)
 
-	post := func(desc string) {
+	post := func(desc, query string) {
 		body := admin.BootstrapRequest{
 			Runtimes: []admin.RuntimePayload{{
 				Name:  "carded",
@@ -220,7 +220,7 @@ func TestBootstrapAutoGeneratesAgentCard(t *testing.T) {
 			}},
 		}
 		buf, _ := json.Marshal(body)
-		req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/bootstrap", bytes.NewReader(buf)))
+		req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/bootstrap"+query, bytes.NewReader(buf)))
 		rr := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
@@ -229,7 +229,7 @@ func TestBootstrapAutoGeneratesAgentCard(t *testing.T) {
 	}
 
 	// Create branch.
-	post("Analyzes codebases")
+	post("Analyzes codebases", "")
 	stored, err := runtimes.Get(context.Background(), "carded")
 	if err != nil {
 		t.Fatalf("runtime not stored: %v", err)
@@ -240,7 +240,9 @@ func TestBootstrapAutoGeneratesAgentCard(t *testing.T) {
 	}
 
 	// Update branch: re-upsert with a new description regenerates the card.
-	post("Reviews pull requests")
+	// §17.6 line 450 — a differing agentInterface is a conflict, so the
+	// overwrite requires --force-update (?forceUpdate=true).
+	post("Reviews pull requests", "?forceUpdate=true")
 	stored, _ = runtimes.Get(context.Background(), "carded")
 	entry = agentCardEntry(t, stored.PublishedMetadata)
 	if !strings.Contains(entry.Content, "Reviews pull requests") {
