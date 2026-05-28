@@ -2302,11 +2302,18 @@
       "title": "Cloud Portability",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
-        "tests/tier6_e2e_cloud/scaffolds_test.go::TestManagedIngress"
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestManagedIngress"
       ],
-      "packages": [],
+      "packages": [
+        "pkg/blobstore/s3",
+        "pkg/blobstore/gcs",
+        "pkg/blobstore/azureblob",
+        "pkg/kms/aws",
+        "pkg/kms/gcp",
+        "pkg/kms/azure"
+      ],
       "blocked_until_phase": "6",
-      "notes": "Non-normative portability statement. The cloud-provider abstractions live in pkg/cloud and ship in Phase 6. The tier-6 e2e cloud managed_ingress suite is the pre-release environment check that an operator-supplied Ingress and provider-native external load balancer route HTTPS traffic to the gateway on managed Kubernetes."
+      "notes": "Non-normative portability statement. The cloud-provider abstractions live under pkg/blobstore/{s3,gcs,azureblob} (Store implementations) and pkg/kms/{aws,gcp,azure} (Provider implementations) and ship in Phase 6. The tier-6 e2e cloud managed_ingress suite (cluster_assertions_test.go::TestManagedIngress) is the pre-release environment check that an operator-supplied Ingress and provider-native external load balancer route HTTPS traffic to the gateway on managed Kubernetes."
     },
     "17.6": {
       "title": "Packaging and Installation",

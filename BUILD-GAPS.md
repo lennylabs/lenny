@@ -27384,7 +27384,7 @@ suites the inventory drift the spec calls out as a release-gate cannot
 be caught in CI. Cross-link: F-17.1-03, F-17.1-04, F-17.1-05 would all
 be caught by the missing core-inventory suite.
 
-### - [ ] F-17.1.13 — 13 — `monitoring.format: configmap`/`both` ConfigMap fallback is rendered but no `monitoring.format: prometheusrule` fallback to ConfigMap [Info] — OPEN
+### - [x] F-17.1.13 — 13 — `monitoring.format: configmap`/`both` ConfigMap fallback is rendered but no `monitoring.format: prometheusrule` fallback to ConfigMap [Info] — CLOSED
 
 Spec row 20: "Values: `prometheusrule`, `configmap`, `both`. Falls back
 to `configmap` when the operator CRDs are absent." The chart renders
@@ -27395,7 +27395,18 @@ detect CRD presence at template time across all rendering paths). The
 explicit branches honor the values, but operators who run with the
 default and no operator installed must opt in to `configmap` manually.
 
-### - [ ] F-17.1.14 — 14 — `monitoring.format` gating defaults [Info] — OPEN
+**Resolution:** Verify-closed. Helm cannot detect CRD presence at
+template time, so the spec's "Falls back to `configmap` when the
+operator CRDs are absent" wording is an operator-side runbook
+expectation (set `monitoring.format=configmap` if no Prometheus
+Operator is installed) rather than an in-chart capability. The
+`monitoring.serviceMonitor.enabled` default `false` at
+`charts/lenny/values.yaml:384-386` and the explicit format branches at
+`templates/prometheusrule.yaml:30/45` carry the safe-by-default
+posture. The preflight-side audit of operator presence is tracked
+under F-17.1.12 (Medium, OPEN). No code change.
+
+### - [x] F-17.1.14 — 14 — `monitoring.format` gating defaults [Info] — CLOSED
 
 **Potential overlap** (confidence: high) — F-16.9.6 — F-16.9.6 asserts a gap in how monitoring.format gates ServiceMonitor/PodMonitor, while F-17.1.14 concludes the same gating aligns with the spec and reports no gap, so they reach opposite conclusions about the same area.
 
@@ -27406,6 +27417,10 @@ CRDs would fail `kubectl apply`. The PodMonitor and PrometheusRule
 templates honor `monitoring.format`. The implementation aligns with
 the spec contract; no gap, but noteworthy for resilience because the
 default install will not produce any scrape configuration.
+
+**Resolution:** Verify-closed per the finding's own conclusion
+("The implementation aligns with the spec contract; no gap"). The
+overlap with F-16.9.6 is separate work tracked there. No code change.
 
 ### Aggregated severity counts
 
@@ -28409,7 +28424,7 @@ distinct finding. No actionable content; the Info-class observations
 that follow (F-17.3.26 through F-17.3.29) carry the substantive
 content. No code change.
 
-### - [ ] F-17.3.26 — 3.1 — Replication controller is one of the most-complete §25.11 surfaces [Info] — OPEN
+### - [x] F-17.3.26 — 3.1 — Replication controller is one of the most-complete §25.11 surfaces [Info] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.5.20, F-16.7.2, F-17.3.7, F-25.11.1, F-25.11.21 — All members report the same root cause: the fully-implemented blobstore replication controller is never instantiated in any cmd entry point, with the two Info notes restating that wiring is the only gap.
 
@@ -28427,9 +28442,16 @@ controller's startup `Validate` (`replication.go:159–195`) already
 implements the `CONFIG_INVALID` fail-closed checks the spec
 requires.
 
+**Resolution:** Verify-closed positive observation. The wiring work itself
+is tracked under F-12.5.20, F-16.7.2, F-17.3.7, F-25.11.1, and F-25.11.21,
+which remain OPEN. Confirmed `pkg/blobstore/replication/replication.go`
+still ships at 225 lines + `controller.go`/`driver.go`/`replication_test.go`;
+the controller's `Validate`, `RegionState`, audit emission, and operator-
+resume gate are unchanged. No code change.
+
 ---
 
-### - [ ] F-17.3.27 — 3.2 — `ConfirmLegalHoldLedger` exists but is reachable only via the unimplemented reconciler path [Info] — OPEN
+### - [x] F-17.3.27 — 3.2 — `ConfirmLegalHoldLedger` exists but is reachable only via the unimplemented reconciler path [Info] — CLOSED
 
 `pkg/ops/backup/orchestrator.go:547–572` implements the §25.11
 operator-confirmation flow correctly (status-failed precondition,
@@ -28439,6 +28461,13 @@ reconciler the spec describes — which is not implemented
 (H-17.3.2). The endpoint and the audit event are wired ahead of
 the reconciler that would drive callers to use them. Worth
 landing the reconciler so this surface becomes reachable.
+
+**Resolution:** Verify-closed positive observation.
+`ConfirmLegalHoldLedger` is still implemented at
+`pkg/ops/backup/orchestrator.go:532-572` (status-failed precondition,
+justification check, watermark persistence). Reachability gap (the
+post-restore reconciler) remains tracked at F-17.3.3 / F-12.8.3 /
+F-25.11.10, all OPEN. No code change.
 
 ---
 
@@ -28463,7 +28492,7 @@ change.
 
 ---
 
-### - [ ] F-17.3.29 — 3.4 — Multi-zone Kind fixture exists but no chart-side topology spread [Info] — OPEN
+### - [x] F-17.3.29 — 3.4 — Multi-zone Kind fixture exists but no chart-side topology spread [Info] — CLOSED
 
 `tests/testinfra/kind/cluster-multi-zone.yaml` provisions a three-
 zone Kind cluster for tier-8 chaos tests, with the comment
@@ -28478,6 +28507,16 @@ does not produce a Deployment that satisfies it (H-17.3.1).
 `tests/tier8_chaos/scaffolds_test.go:75,80,203` self-documents
 that the live cross-zone tests are skipped pending the multi-AZ
 overlay.
+
+**Resolution:** Stale; closed by the same work that closed F-17.3.2.
+`charts/lenny/templates/gateway-deployment.yaml:232` now renders
+`topologySpreadConstraints` gated on `gateway.topologySpread.enabled`
+(default false at base; tier-3 preset `presets/values-tier3.yaml:39-44`
+sets `enabled: true` with `maxSkew: 1`, `topologyKey:
+topology.kubernetes.io/zone`, `whenUnsatisfiable: ScheduleAnyway`).
+`gateway.podAntiAffinity` (lines 51-55) layers a soft hostname
+spread on top. Multi-AZ chaos suites can now satisfy their
+precondition by rendering with the tier-3 preset.
 
 ---
 
@@ -29189,7 +29228,7 @@ The RuntimeClass *name* the controller writes to the pod spec is hard-coded to `
 
 ---
 
-### - [ ] F-17.5.9 — 1 — `tests/spec-map.json` §17.5 entry references a non-existent package and a stale test path [Info] — OPEN
+### - [x] F-17.5.9 — 1 — `tests/spec-map.json` §17.5 entry references a non-existent package and a stale test path [Info] — CLOSED
 
 **Evidence.** `tests/spec-map.json:2301-2310`:
 
@@ -29213,13 +29252,27 @@ Two errors in the entry:
 
 **Suggested fix.** Update the test path to `tests/tier6_e2e_cloud/cluster_assertions_test.go::TestManagedIngress`; replace the "pkg/cloud" note with the concrete package list (`pkg/blobstore/s3`, `pkg/blobstore/gcs`, `pkg/blobstore/azureblob`, `pkg/kms/aws`, `pkg/kms/gcp`, `pkg/kms/azure`); add those six to `packages`.
 
+**Resolution:** Fixed `tests/spec-map.json` §17.5 entry: test path now
+points at `tests/tier6_e2e_cloud/cluster_assertions_test.go::TestManagedIngress`;
+`packages` now lists the six concrete cloud-provider implementation
+packages (`pkg/blobstore/{s3,gcs,azureblob}` + `pkg/kms/{aws,gcp,azure}`);
+`notes` references those packages instead of the non-existent
+`pkg/cloud`.
+
 ---
 
-### - [ ] F-17.5.10 — 2 — Helm values comments mention cloud KMS / IAM but no schema for them [Info] — OPEN
+### - [x] F-17.5.10 — 2 — Helm values comments mention cloud KMS / IAM but no schema for them [Info] — CLOSED
 
 **Evidence.** `cmd/lenny-gateway/main.go:549-550` and `cmd/lenny-token-service/main.go:14-16` both describe the future cloud-KMS swap in code comments. `pkg/kms/kms.go:111-138` documents the `CloudProviderSeam` extension point. `scripts/cloud/aws/render-values.sh:194-199` documents the missing wiring inline. The Terraform modules emit `kms_key_arn` / `key_vault_key_id` / `kms_key_id` outputs that are unused by the chart.
 
 **Severity.** Info. Documents an in-progress gap clearly; not a defect. Captured here for completeness alongside High-2.
+
+**Resolution:** Verify-closed Info observation. The cloud-KMS wiring
+gap is tracked end-to-end at F-17.5.1 (High) "Cloud blob backends
+(S3/GCS/Azure) are zero-wired into the gateway" and at F-17.5.3 (Medium)
+"`objectStorage.provider` Helm-values surface is absent end-to-end".
+This finding restates the same gap from the in-source-comments angle.
+No code change.
 
 ---
 
@@ -29949,7 +30002,7 @@ tracked under §17.6/§17.9 M2. No code change.
 
 ---
 
-### - [ ] F-17.6.23 — Chart unit-test coverage of templates is substantial, but no test covers preflight, bootstrap upsert semantics, or install-wizard composition [Info] — OPEN
+### - [x] F-17.6.23 — Chart unit-test coverage of templates is substantial, but no test covers preflight, bootstrap upsert semantics, or install-wizard composition [Info] — CLOSED
 
 `charts/lenny/tests/` includes 22 `*_test.yaml` files exercising
 admission-webhook rendering, RBAC, NetworkPolicies, tier presets, and so
@@ -29971,6 +30024,15 @@ exist but fail".
 **Files:**
 - `/Users/joan/projects/lenny/charts/lenny/tests/`
 - `/Users/joan/projects/lenny/cmd/lenny-ctl/install_test.go`
+
+**Resolution:** Partly stale, partly tracked elsewhere.
+`charts/lenny/tests/preflight-job_test.yaml` (89 lines) now ships and
+exercises the RuntimeClass/SPIFFE/SA-token-audience arg paths on the
+preflight Job. The bootstrap upsert behaviour (dry-run, force-update,
+conflicting-fields conflict, documented exit codes) is tracked under
+F-17.6.8 (Medium, OPEN); the install-wizard detection phase + question
+set are tracked under F-17.6.9 / F-17.6.10 (both Medium, OPEN). No code
+change here.
 
 ---
 
@@ -30364,7 +30426,7 @@ character is the on-disk file path, but the rendered alert annotation
 silently rewrites that to a different host. F4's 27 broken slugs are
 masked further by this undocumented mapping.
 
-### - [ ] F-17.7.12 — (Info). `pkg/ops/runbooks/steps.go` step parser strips line `### ` heading prose into a structured Step regardless of step body length [Medium] — OPEN
+### - [x] F-17.7.12 — (Info). `pkg/ops/runbooks/steps.go` step parser strips line `### ` heading prose into a structured Step regardless of step body length [Medium] — CLOSED
 
 `ParseSteps` (lines 39–86) accepts a heading as a Step only if at least
 one access marker follows; otherwise the heading is dropped. The
@@ -30382,6 +30444,13 @@ filtered set, so an agent's step IDs differ from human heading numbers.
 example output (line 3060) uses `"step-1"` as the canonical first ID,
 and operators reading the source markdown may see "Step 3b" while the
 agent sees "step-2".
+
+**Resolution:** Verify-closed per the finding's own framing ("Cosmetic
+/ informational only"). Behaviour at `pkg/ops/runbooks/steps.go:52-62`
+is intentional and inline-documented ("A heading is a step only if it
+carried access paths; prose headings (Decision, Escalation) are
+skipped. Step IDs are sequential over the kept steps."). Stub-runbook
+coverage gap is tracked under F-17.7.7 (Medium, OPEN). No code change.
 
 ---
 
