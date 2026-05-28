@@ -70,6 +70,36 @@ tests:
           path: spec.ingress[0].ports[0].protocol
           value: TCP
 
+  - it: pairs the Ingress controller namespaceSelector with a controllerPodLabel podSelector
+    # spec: §13.2 lines 266-292. F-13.2.8. The from: clause pairs the
+    # namespaceSelector with a podSelector matching the controllerPodLabel
+    # so only Ingress controller pods reach the gateway TLS listener;
+    # sidecars and debug containers in the same namespace are denied.
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: ingress-nginx
+
+  - it: honors a custom ingress.controllerPodLabel override
+    # spec: §13.2 lines 266-292. F-13.2.8. Custom Ingress controller
+    # chart (e.g., traefik) overrides the default app.kubernetes.io/name
+    # ingress-nginx label.
+    set:
+      ingress:
+        controllerPodLabel:
+          key: "app.kubernetes.io/instance"
+          value: "traefik-prod"
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/instance"]
+          value: traefik-prod
+
   - it: admits agent namespaces on the gateway gRPC and LLM-proxy ports
     documentSelector:
       path: metadata.name
@@ -304,3 +334,68 @@ tests:
       - equal:
           path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
           value: traefik-system
+
+  - it: renders one supplemental interceptor-egress policy per declared namespace
+    # spec: §13.2 NET-039 / NET-058. F-13.2.10. The chart iterates
+    # gateway.interceptorNamespaces and renders one
+    # allow-gateway-egress-interceptor-<ns> per entry that pairs the
+    # namespaceSelector with podSelector lenny.dev/component: interceptor
+    # on the configured interceptorGRPCPort.
+    set:
+      gateway:
+        interceptorNamespaces:
+          - "interceptors"
+          - "tenant-x-filters"
+        interceptorGRPCPort: 50053
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress-interceptor-interceptors
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/component"]
+          value: gateway
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: interceptors
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: interceptor
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 50053
+      - equal:
+          path: spec.egress[0].ports[0].protocol
+          value: TCP
+      - equal:
+          path: spec.policyTypes
+          value: [Egress]
+
+  - it: honors a custom interceptorGRPCPort
+    # spec: §13.2 NET-039. F-13.2.10.
+    set:
+      gateway:
+        interceptorNamespaces: ["filters"]
+        interceptorGRPCPort: 50099
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress-interceptor-filters
+    asserts:
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 50099
+
+  - it: renders the second declared interceptor namespace independently
+    # spec: §13.2 NET-039 / NET-058. F-13.2.10. One NetworkPolicy per
+    # namespace, each named allow-gateway-egress-interceptor-<ns>.
+    set:
+      gateway:
+        interceptorNamespaces:
+          - "interceptors"
+          - "tenant-x-filters"
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress-interceptor-tenant-x-filters
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: tenant-x-filters

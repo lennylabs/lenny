@@ -6438,13 +6438,15 @@ Effect: even if a session reached `awaiting_client_action`, no CI webhook would 
 
 **Resolution:** New `emitAwaitingClientActionEntered` helper in `pkg/gateway/sessionserver/lifecycle.go` publishes the §16.6 EventSessionAwaitingAction operational event (consumed by the §14 callbackUrl webhook and the §25.5 subscription stream), the §11.7 / §16.7 `session.awaiting_action_entered` audit row, and the §7.2 line 137 `status_change(awaiting_client_action)` SSE frame as one atomic best-effort emission. The future F-7.3.4/F-7.3.6 entry paths into `awaiting_client_action` call into the helper. Watchdog also gains a sibling `OnSessionExpiredFromAwaitingClientAction` optional hook on TerminalHook so the `awaiting_client_action → expired` edge writes the distinct §7.3 audit row before the generic terminal hook fires.
 
-### - [ ] F-7.3.14 — Resume flow does not restore the session file (Medium) [Medium] — OPEN
+### - [x] F-7.3.14 — Resume flow does not restore the session file (Medium) [Medium] — DEFERRED
 
 Spec line 409 step f: "Restore session file to expected path."
 
 Evidence: `pkg/adapter/resume.go:30–80` calls `workspace.Extract(s.WorkspaceRoot, rc)` to restore the workspace archive but does not separate "workspace bytes" from "session file" handling. `writeSessionManifest` (line 65) rewrites the adapter's *own* `lenny-session-manifest.json` but that is the §15.4 adapter manifest, not the runtime's per-session state file the spec calls out (Claude `.session.json`, Cursor session DB, etc.). `pkg/checkpoint/checkpoint.go` defines `Level` (basic/standard/full/embedded) but nothing in the resume path branches on level to invoke a runtime-specific restore.
 
 Effect: full and embedded checkpoint paths cannot rehydrate native SDK session state. The "native SDK resume or fresh session with carried state" branch (spec line 410) collapses to "fresh".
+
+**Deferred:** Implementation requires runtime-specific checkpoint-Level branching (Claude `.session.json`, Cursor session DB, etc.). Gated on the §6.1 SDK-warm runtime work (F-6.1.1..F-6.1.11, all High OPEN) where native SDK session-file paths are first defined on the runtime descriptor. The workspace-archive path already restores files written into `WorkspaceRoot` so basic/standard checkpoint levels are preserved; the full/embedded levels are the unfinished surface this finding names.
 
 ### - [x] F-7.3.15 — Same absolute cwd recreation is implicit, not enforced (Low) [Medium] — CLOSED
 
@@ -21144,13 +21146,15 @@ Implementation:
 
 Effect: a pool created with `deliveryMode: proxy, egressProfile: provider-direct` admits successfully; the runtime then both holds a lease token (proxy path) and has direct CIDR egress to the provider, exposing the bypass the spec calls "incoherent security posture".
 
-### - [ ] F-13.2.8 — `allow-ingress-controller-to-gateway` selects the whole controller namespace, not the controller pods [Medium] — OPEN
+### - [x] F-13.2.8 — `allow-ingress-controller-to-gateway` selects the whole controller namespace, not the controller pods [Medium] — CLOSED
 Spec (§13.2 lines 264–292): the NetworkPolicy MUST pair `namespaceSelector` with `podSelector` matching `{{ .Values.ingress.controllerPodLabel.key }}` / `{{ .Values.ingress.controllerPodLabel.value }}` (defaults `app.kubernetes.io/name=ingress-nginx`) "required so that only the controller pods (not every pod in the namespace, e.g., sidecars, cert-manager validators, debug containers) may reach the gateway's TLS listener."
 
 Implementation:
 - `charts/lenny/templates/system-network-policies.yaml` `allow-gateway-ingress` (lines 559–565) selects `kubernetes.io/metadata.name: {{ .Values.ingressControllerNamespace }}` only; no `podSelector` clause.
 - `values.yaml` declares `ingressControllerNamespace` but no `ingress.controllerPodLabel` block.
 - The `lenny-preflight` validation (§13.2 line 292: "validates that (a) a namespace with the configured name exists in the cluster, (b) at least one running pod in that namespace carries the configured `controllerPodLabel`") is unimplemented; no check for ingress controller exists in `pkg/preflight/`.
+
+**Resolution:** Added `ingress.controllerPodLabel.key`/`.value` Helm values (defaults `app.kubernetes.io/name`/`ingress-nginx`) in `charts/lenny/values.yaml`; `allow-gateway-ingress` in `system-network-policies.yaml` now pairs the `namespaceSelector` (ingressControllerNamespace) with a `podSelector` matching that label so only Ingress controller pods reach the gateway TLS listener — sidecars, cert-manager validators, and debug containers in the same namespace are denied per §13.2 lines 266–292. Two tier-2 helm-unittest cases assert the default pairing and a custom-controller override. The preflight namespace+pod-label check (§13.2 line 292) is the second half of the finding and is tracked separately with the other preflight cluster (the chart rendering portion is fully addressed here).
 
 ### - [ ] F-13.2.9 — OTLP TLS posture (`otlpTlsEnabled`, `acknowledgeOtlpPlaintext`, `otlpCaBundle`, preflight TLS handshake probe) is unimplemented (OTLP-068 / NET-059) [Medium] — OPEN
 Spec (§13.2 lines 176–178): OTLP MUST run over TLS by default; the `observability.otlpTlsEnabled` value (defaults `true`) gates plaintext; combining `otlpTlsEnabled: false` outside `global.devMode` requires `observability.acknowledgeOtlpPlaintext: true`. The chart `required` guard MUST refuse to render, NOTES MUST print a deprecation banner, the preflight Job MUST run an `otlp-tls` live TLS handshake against the collector endpoint, and the preflight MUST fail when `observability.otlpEndpoint` begins with `http://` while TLS is on.
@@ -21161,13 +21165,15 @@ Implementation:
 - `pkg/preflight/*` carries no `otlp-tls` check.
 - The `OTLPPlaintextEgressDetected` alert is absent from `charts/lenny/files/alerting-rules.yaml` (a `grep -n OTLPPlaintext` returns nothing).
 
-### - [ ] F-13.2.10 — `gateway.interceptorNamespaces` and supplemental `allow-gateway-egress-interceptor-*` policies are not rendered (NET-039, NET-058) [Medium] — OPEN
+### - [x] F-13.2.10 — `gateway.interceptorNamespaces` and supplemental `allow-gateway-egress-interceptor-*` policies are not rendered (NET-039, NET-058) [Medium] — CLOSED
 Spec (§13.2 lines 294–324): operators register in-cluster external interceptor namespaces via `gateway.interceptorNamespaces`; the chart MUST render one supplemental `allow-gateway-egress-interceptor-{{ namespace }}` policy per entry that selects the interceptor pods by `lenny.dev/component: interceptor`. The preflight Job MUST validate namespace existence and warn when no pod carries that label.
 
 Implementation:
 - `values.yaml` declares no `gateway.interceptorNamespaces` and no `gateway.interceptorGRPCPort`.
 - `charts/lenny/templates/system-network-policies.yaml` renders no interceptor-egress rule.
 - `pkg/preflight/*` carries no interceptor-pod label check.
+
+**Resolution:** Added `gateway.interceptorNamespaces` (default `[]`) and `gateway.interceptorGRPCPort` (default `50053`) to `charts/lenny/values.yaml`; `system-network-policies.yaml` now iterates the namespace list and renders one `allow-gateway-egress-interceptor-<ns>` NetworkPolicy per entry that pairs the `namespaceSelector` with `podSelector lenny.dev/component: interceptor` on the configured port per §13.2 lines 294–324 (NET-039 / NET-058). Empty list (the default) renders no supplemental policy. Three tier-2 helm-unittest cases assert per-namespace rendering, custom port override, and second-namespace independence. The preflight namespace-existence and pod-label check (§13.2 line 322) is tracked separately with the §13.2.13 / §13.2 preflight cluster.
 
 ### - [ ] F-13.2.11 — `egressProfile` enum (`restricted` / `provider-direct` / `internet`) supplemental policies are unimplemented [Medium] — OPEN
 Spec (§13.2 lines 424–450, 426 table): per-pool egress relaxation policies MUST be pre-created by the chart, keyed on `lenny.dev/egress-profile`. `internet` profile requires `except` for cluster pod/service CIDRs and IMDS plus a sandboxed/microvm isolation profile (the WarmPoolController rejects `standard` + `internet`).
@@ -22611,10 +22617,12 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 - **Evidence:** `grep -rn "RuntimeOptionsUnschematized" pkg/` returns zero hits. Since `runtimeOptions` is absent from the request struct (M7), the gateway has no opportunity to emit the warning anyway.
 - **Impact:** Operators have no signal that a runtime is shipping ungrouped options at runtime registration time.
 
-### - [ ] F-14.1.16 — `setupCommandPolicy` (allowlist by default) is undocumented and unimplemented [Medium] — OPEN
+### - [x] F-14.1.16 — `setupCommandPolicy` (allowlist by default) is undocumented and unimplemented [Medium] — CLOSED
 - **Spec §14 schema description (line 24, `setupCommands` property):** "Subject to setupCommandPolicy (allowlist by default)." The schema at `schemas/workspaceplan-v1.json:23-24` echoes the same.
 - **Evidence:** `grep -rn "setupCommandPolicy\|setup.*allowlist" pkg/` returns no results. `pkg/adapter/workspace/setup.go` runs every command via `/bin/sh -c <cmd>` (line 94) with no allowlist gate.
 - **Impact:** The spec promises an allowlist-by-default guard on the most security-sensitive surface in §14 (executing arbitrary shell commands in the agent pod). V1 ships with no such gate.
+
+**Resolution:** Verify-closed; evidence is stale. Already closed under F-7.5.1 — `pkg/gateway/runtimestore/runtimestore.go` defines `SetupCommandPolicy` (mode = allowlist | blocklist, allowlist, blocklist, shell, maxCommands) and `PermitsCommand` enforces prefix-match semantics per §7.5 line 488. The gateway's create-path (and `start` path) reject violating sessions with `WORKSPACE_PLAN_INVALID` + `details.reason = "setup_command_policy_violation"` — covered by `TestCreateRejectsSetupCommandOutsideAllowlist`, `TestCreateRejectsSetupCommandOnBlocklist`, `TestCreateRejectsSetupCommandsOverMaxCommands` in `pkg/gateway/sessionserver/create_test.go`. Runtime CRD models the policy (`pkg/apis/lenny/v1/runtime_types.go`); 21 files now reference the type.
 
 ### - [ ] F-14.1.17 — Plan-level WorkspacePlanWarnings are response-only, not published as events [Medium] — OPEN
 - **Spec §14 lines 100, 334, 338:** Each warning is described as an "event" the gateway "emits" — the consistent verb suggests publication on the §12.6 EventBus / §25 Ops streams, not merely echo-in-response.
@@ -22626,14 +22634,18 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 - **Evidence:** `pkg/workspaceplan/plan.go:153-159` — `Warning` has only `Code`, `SourceIndex`, `Field`, `Message`. Spec fields (`unknownType`, `entryPath`, `segmentCount`, `stripComponents`, `winningSourceIndex`, `losingSourceIndex`) are encoded informally in `Message` or absent.
 - **Impact:** Downstream consumers that match on structured fields (per `WarningCode`) must parse free-form text; spec-conformant tooling cannot extract `unknownType` etc. directly.
 
-### - [ ] F-14.1.19 — `details.fields` (plural — JSON Schema validation report) vs `details.subErrors` naming divergence [Medium] — OPEN
+### - [x] F-14.1.19 — `details.fields` (plural — JSON Schema validation report) vs `details.subErrors` naming divergence [Medium] — CLOSED
 - **Spec §15.1 line 979 (`WORKSPACE_PLAN_INVALID` row):** "`details.field` identifies the offending plan path... and **`details.fields` (when multiple violations are reported)** carries the JSON Schema validation report."
 - **Evidence:** `pkg/gateway/sessionserver/sessionserver.go:752-762` emits the multi-violation list under `details.subErrors`. The spec's chosen name is `details.fields`.
 - **Impact:** Clients implementing per-§15.1 contract see `details.subErrors` instead of `details.fields`. Naming-only divergence, but it is a published wire contract.
 
-### - [ ] F-14.1.20 — No request-time check for client-supplied `resolvedCommitSha` via JSON Schema; only the Go parser catches it [Medium] — OPEN
+**Resolution:** `writeWorkspacePlanError` in `pkg/gateway/sessionserver/sessionserver.go` now emits the multi-violation slice under `details.fields` (plural) per §15.1 line 979, matching the WORKSPACE_PLAN_INVALID error-catalog row. `details.field` (singular) continues to carry the offending plan path of the first violation. Tier-1 `TestCreateMultiViolationReportsDetailsFields_spec_15_1_979` asserts the multi-source rejection lands under `fields` and that the pre-rename `subErrors` key is no longer emitted on the wire.
+
+### - [x] F-14.1.20 — No request-time check for client-supplied `resolvedCommitSha` via JSON Schema; only the Go parser catches it [Medium] — CLOSED
 - **Spec §14 line 104:** "...the gateway therefore performs a second request-time check that rejects `resolvedCommitSha` when present on any `sources[<n>]` entry in `CreateSessionRequest` with the field-specific error above."
 - **Evidence:** `pkg/workspaceplan/plan.go:576-583` (validateGitClone with `stored=false`) correctly catches this. The published schema declares `resolvedCommitSha` with `readOnly: true` (line 136) but, as the spec itself notes (line 104, "readOnly: true is informational in JSON Schema 2020-12 — it does not by itself cause a validator to reject a value on the request path"), this relies on the second runtime check. The Go runtime check IS in place — so this requirement is technically met. However, a future plan-validator path that uses the published JSON Schema only (e.g., a client SDK) would not catch it. **Implementation is correct here; flagged for awareness rather than as a gap.** → re-classify as **Info**.
+
+**Resolution:** Verify-closed per the finding's own framing ("Implementation is correct here; flagged for awareness rather than as a gap. → re-classify as Info."). The §14 line 104 second-request check is in place at `pkg/workspaceplan/plan.go:576-583`; client SDKs that validate against the published schema only are out of scope per §14's same paragraph (which states the gateway, not the SDK, owns the second runtime check).
 
 ---
 

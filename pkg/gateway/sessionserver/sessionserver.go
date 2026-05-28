@@ -1561,7 +1561,11 @@ func (s *Server) writeWorkspacePlanError(w http.ResponseWriter, err error) {
 				"message":     se.Message,
 			})
 		}
-		details["subErrors"] = subs
+		// spec: §15.1 line 979. F-14.1.19. The multi-violation report
+		// rides under details.fields (plural) per the WORKSPACE_PLAN_INVALID
+		// error-catalog row; details.field (singular) carries the offending
+		// plan path of the first violation.
+		details["fields"] = subs
 	}
 	s.writeError(w, http.StatusBadRequest, "WORKSPACE_PLAN_INVALID", ve.Error(), details)
 }

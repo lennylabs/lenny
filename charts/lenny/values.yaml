@@ -193,6 +193,21 @@ egressCIDRs:
 # by the immutable kubernetes.io/metadata.name namespace label.
 ingressControllerNamespace: "ingress-nginx"
 
+# ingress.controllerPodLabel identifies the pod label applied to the
+# Ingress controller pods themselves (§13.2 lines 266-292, NET-038 /
+# NET-049). The allow-gateway-ingress NetworkPolicy pairs the
+# namespaceSelector (ingressControllerNamespace) with a podSelector on
+# this label so that only the Ingress controller pods — not sidecars,
+# cert-manager validators, or debug containers in the same namespace —
+# can reach the gateway TLS listener. Defaults target the standard
+# ingress-nginx chart labels; set both to match the chart for the
+# Ingress controller running in the cluster (e.g., traefik,
+# kourier-system).
+ingress:
+  controllerPodLabel:
+    key: "app.kubernetes.io/name"
+    value: "ingress-nginx"
+
 # tokenService configures the §4.3 Token Service. The lenny-token-
 # service Deployment runs the §13.3 Token Service binary; it is
 # stateless and runs with 2 replicas (§17.1).
@@ -925,6 +940,22 @@ gateway:
   # httpsPort is the gateway's external TLS listener (§13.2 NET-038).
   # The Ingress controller forwards external HTTPS traffic to it.
   httpsPort: 443
+  # interceptorNamespaces lists the namespaces where in-cluster external
+  # interceptors run (§13.2 NET-039 / NET-058). For each entry, the
+  # chart renders a supplemental allow-gateway-egress-interceptor-<ns>
+  # NetworkPolicy that admits gateway egress to pods labelled
+  # lenny.dev/component: interceptor in that namespace on
+  # interceptorGRPCPort. Empty (the default) renders no supplemental
+  # policy and is safe — no in-cluster interceptors are registered.
+  # External-only interceptors reachable via 0.0.0.0/0 do not need an
+  # entry here.
+  interceptorNamespaces: []
+  # interceptorGRPCPort is the port the supplemental
+  # allow-gateway-egress-interceptor-<ns> NetworkPolicies allow gateway
+  # egress on (§13.2 NET-039). Interceptor pods must listen on this
+  # port; the actual gRPC endpoint address is specified in the
+  # interceptor registration configuration.
+  interceptorGRPCPort: 50053
   image:
     repository: ghcr.io/lennylabs/lenny-gateway
     # tag defaults to the chart appVersion when left empty.

@@ -562,10 +562,18 @@ spec:
     matchLabels:
       lenny.dev/component: gateway
   ingress:
+    # spec: §13.2 lines 266-292. F-13.2.8. The from: clause pairs the
+    # namespaceSelector with a podSelector matching the configured
+    # ingress controllerPodLabel so only Ingress controller pods reach
+    # the gateway TLS listener; sidecars, cert-manager validators, and
+    # debug containers co-located in the same namespace are denied.
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.ingressControllerNamespace }}
+          podSelector:
+            matchLabels:
+              {{ .Values.ingress.controllerPodLabel.key | quote }}: {{ .Values.ingress.controllerPodLabel.value | quote }}
       ports:
         - port: {{ .Values.gateway.httpsPort }}
           protocol: TCP
@@ -729,3 +737,40 @@ spec:
         - port: 53
           protocol: TCP
   policyTypes: [Ingress, Egress]
+{{- /*
+allow-gateway-egress-interceptor-<ns> re-admits gateway egress to
+in-cluster external interceptors (§13.2 NET-039 / NET-058). One
+NetworkPolicy is rendered per namespace declared in
+gateway.interceptorNamespaces (default: []). The lenny-system
+default-deny otherwise blocks every gateway-to-interceptor gRPC call,
+causing fail-closed interceptors to reject all requests. The
+podSelector pairs the namespaceSelector so only interceptor pods
+(labelled lenny.dev/component: interceptor) are reachable — other
+tenant pods co-located in the namespace remain isolated.
+*/}}
+{{- range $namespace := .Values.gateway.interceptorNamespaces }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress-interceptor-{{ $namespace }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $namespace | quote }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: interceptor
+      ports:
+        - port: {{ $.Values.gateway.interceptorGRPCPort }}
+          protocol: TCP
+  policyTypes: [Egress]
+{{- end }}

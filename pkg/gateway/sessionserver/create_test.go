@@ -475,6 +475,51 @@ func TestCreateRejectsMalformedWorkspacePlan(t *testing.T) {
 	}
 }
 
+// TestCreateMultiViolationReportsDetailsFields covers F-14.1.19 / §15.1
+// line 979: when multiple WorkspacePlan sub-errors are aggregated the
+// envelope rides under `details.fields` (plural — the JSON Schema
+// validation report), not `details.subErrors`. `details.field`
+// (singular) carries the offending plan path.
+func TestCreateMultiViolationReportsDetailsFields_spec_15_1_979(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	// Two bad sources — parser aggregates both into SubErrs and the
+	// gateway maps them to details.fields per the spec.
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+		WorkspacePlan: json.RawMessage(`{
+			"schemaVersion": 1,
+			"sources": [
+				{"type":"inlineFile","path":"/abs","content":""},
+				{"type":"gitClone","url":"ftp://x","ref":"main"}
+			]
+		}`),
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Code != "WORKSPACE_PLAN_INVALID" {
+		t.Fatalf("error code: got %q, want WORKSPACE_PLAN_INVALID", env.Error.Code)
+	}
+	fields, ok := env.Error.Details["fields"].([]any)
+	if !ok || len(fields) != 2 {
+		t.Fatalf("details.fields: got %v, want a slice of length 2; full details=%v", env.Error.Details["fields"], env.Error.Details)
+	}
+	if _, has := env.Error.Details["subErrors"]; has {
+		t.Errorf("details.subErrors is the pre-F-14.1.19 wire name; spec uses details.fields (plural)")
+	}
+}
+
 func TestCreatePropagatesUnknownSourceWarning(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_warn" }})
