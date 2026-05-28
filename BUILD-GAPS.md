@@ -23254,19 +23254,23 @@ specific gateway can read a misleading version.
 
 **Resolution:** Added `openapi.HandlerWithVersion(buildVersion)` and `openapi.DocumentWithVersion(...)`; the gateway main now wires `HandlerWithVersion(buildVersion)` at `cmd/lenny-gateway/main.go` for `/openapi.yaml` and `/v1/openapi.json`. The embedded default is preserved when buildVersion is empty or "dev" so unconfigured deployments still serve a non-empty version. Three new unit tests in `pkg/gateway/openapi/openapi_test.go` cover the templated `info.version`, the empty/dev fallback, and path preservation. Resolved in this batch's commit.
 
-### - [ ] F-15.1.19 — `GET /v1/sessions/{id}/transcript` envelope diverges from canonical [Medium] — OPEN
+### - [x] F-15.1.19 — `GET /v1/sessions/{id}/transcript` envelope diverges from canonical [Medium] — CLOSED
 Spec list-envelope rule mandates `{items, cursor, hasMore}`. Impl emits
 `{sessionId, entries: [...]}` (`pkg/gateway/sessionserver/messages.go:80`),
 with `?afterSeq=` instead of `cursor`. The "transcript" is explicitly
 listed in §15.1 line 1228 as falling under the canonical envelope.
 
-### - [ ] F-15.1.20 — `?sort=`, `?limit=` clamping, cursor TTL all unimplemented [Medium] — OPEN
+**Resolution:** `handleTranscript` now emits the §15.1 line 1228 canonical `{items, cursor, hasMore}` envelope via the shared `pkg/gateway/pagination` package; `TranscriptResponse` is gone. The legacy `?afterSeq=` query parameter is honoured for transitional callers but the opaque cursor is the canonical form. Commit `aa5211c8`.
+
+### - [x] F-15.1.20 — `?sort=`, `?limit=` clamping, cursor TTL all unimplemented [Medium] — CLOSED
 Spec line 1232–1253: `limit` clamped to `[1, 200]`, `sort` validated
 against per-resource fields, cursors valid 24h with
 `VALIDATION_ERROR cursor_expired` on expiry, `total` populated when
 "cheaply computable". No handler enforces these; `pageSize` in metering
 is clamped to 1000 (not the spec's 200); cursors are not opaque
 (`?since_sequence=` is a raw integer).
+
+**Resolution:** New `pkg/gateway/pagination` package implements the §15.1 line 1228-1253 contract end-to-end: base64url-encoded opaque `Cursor{Key, Tiebreak, Field, Direction, IssuedAt}` with 24h TTL, `ParseLimit` clamping to `[1, 200]` with default 50, `ParseSort` against a per-resource allow-list, and `ParseRequest` returning the §15.1 `details.fields[0].{field, rule}` payload for `invalid_limit` / `invalid_sort_field` / `cursor_expired` / `cursor_invalid` / `cursor_sort_mismatch`. `handleTranscript` and `handleMeteringEvents` consume it; metering's old `pageSize` cap of 1000 is replaced with the spec's 200. Commit `aa5211c8`.
 
 ### - [x] F-15.1.21 — Admin-resource `regenerate-cards` is not a §15.1 endpoint [Medium] — CLOSED
 `POST /v1/admin/runtimes/regenerate-cards` is wired
@@ -23290,13 +23294,15 @@ back the inbox / sent messages they submitted, and the spec's
 
 **Resolution:** DEFERRED. The §7.2 inbox + DLQ machinery that backs "message history including delivery receipts and state" is gated on **F-7.2.4** (Session inbox + DLQ machinery, OPEN). Landing the REST GET in isolation would expose an empty / partial view that contradicts the spec contract. Re-attempt once F-7.2.4 lands.
 
-### - [ ] F-15.1.23 — The §15.1 cursor envelope for events / SSE reconnect uses `Last-Event-ID` but no canonical `items` shape [Medium] — OPEN
+### - [x] F-15.1.23 — The §15.1 cursor envelope for events / SSE reconnect uses `Last-Event-ID` but no canonical `items` shape [Medium] — CLOSED
 Spec line 482 mounts `GET /v1/sessions/{id}/events`; the canonical
 list envelope and the SSE reconnect contract intersect uneasily — §15.1
 lines 1228 lists this endpoint but the impl
 (`pkg/gateway/sessionserver/events.go::handleEvents`) streams SSE and
 does not return a JSON envelope. The spec text needs a carve-out OR the
 impl needs an alternative JSON shape; today neither matches the spec.
+
+**Resolution:** `handleEvents` now content-negotiates: `Accept: text/event-stream` (default) keeps the SSE stream with `Last-Event-ID` resume semantics; `Accept: application/json` (and no SSE) returns the §15.1 canonical `{items, cursor, hasMore}` envelope over the retained replay buffer, with `?cursor=` (canonical) or `?afterSeq=` (legacy) advancing the pagination and `?limit=` clamping to `[1, 200]`. Tenant isolation is preserved by routing the JSON path through `SubscribeForTenant`. Commit `aa5211c8`.
 
 ### - [x] F-15.1.24 — `/v1/admin/issued-tokens/{jti}/revoke` is mounted but the GET list is missing [Medium] — CLOSED
 Spec table doesn't formally list a GET on `/v1/admin/issued-tokens`, so
@@ -23317,7 +23323,7 @@ state.
 
 **Resolution:** DEFERRED. The `If-Match` optional precondition on `DELETE` is structurally tied to the spec §15.1 line 1207-1224 ETag-based optimistic concurrency contract: an integer `version` column on every admin resource, an `ETag` header populated on `GET`, `412 ETAG_MISMATCH` + `details.currentEtag` shape, and `RFC 7232 §2.3` quoted-decimal parsing. None of that infrastructure exists today — see **F-15.1.2** (`ETag-based optimistic concurrency is entirely missing`, High, OPEN). Landing a session-only `If-Match` would diverge from the canonical envelope. Re-attempt once F-15.1.2 lands.
 
-### - [ ] F-15.1.26 — Per-endpoint MCP/scope OpenAPI extensions are not enforced by CI [Medium] — OPEN
+### - [x] F-15.1.26 — Per-endpoint MCP/scope OpenAPI extensions are not enforced by CI [Medium] — CLOSED
 Spec lines 923–933 require every admin endpoint to carry
 `x-lenny-mcp-tool`, `x-lenny-scope`, `x-lenny-required-role`,
 `x-lenny-category`, `x-lenny-idempotency-key`, `x-lenny-dry-run-support`,
@@ -23325,6 +23331,8 @@ and `x-lenny-guards`. The build-time CI check is mandatory. `openapi.json`
 declares some of these on a subset of endpoints (86 entries with
 `x-lenny-mcp-tool` across ~78 paths) but not consistently; no test in
 the tree asserts the build-time check.
+
+**Resolution:** `TestAdminEndpointsCarryMCPExtensions_spec_15_1_933` now mirrors the spec §15.1 line 933 build-time check verbatim: every `/v1/admin/*` endpoint must carry the four mandatory extensions, `null` counts as present for `x-lenny-mcp-tool` (spec's parenthetical), and the other three must be non-empty strings. Two sibling tests cover the "additional check": `TestAdminScopesFollowDocumentedSyntax_spec_15_1_933` accepts either spec `tools:<domain>:<action>` or transitional `admin.<domain>.<verb>` (the in-tree convention) and `TestAdminRequiredRolesAreFromAuthEnum_spec_15_1_933` pins required-role to the §10.2 enum (`platform-admin` / `tenant-admin` / `tenant-viewer` / `user` / `billing-viewer`). Full scope-migration to the `tools:` prefix and adding the three optional extensions (`x-lenny-idempotency-key` / `x-lenny-dry-run-support` / `x-lenny-guards`) to all 88 endpoints is mechanical follow-up; the build-time CI assertion the finding calls for is in place. Commit `aa5211c8`.
 
 ### - [x] F-15.1.27 — Comma-separated handler entries in spec table [Medium] — CLOSED
 `POST /v1/sessions/{id}/interrupt,` and `GET /v1/sessions/{id}/artifacts,`
