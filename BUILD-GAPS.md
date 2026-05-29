@@ -26022,7 +26022,7 @@ retention regime:
 
 ### Findings
 
-### - [ ] F-16.4.1 — No production binary uses the structured logger; every binary uses the standard `log` package [High] — OPEN
+### - [x] F-16.4.1 — No production binary uses the structured logger; every binary uses the standard `log` package [High] — CLOSED
 
 **High.** `pkg/observability/logging.NewJSONHandler` is imported by
 exactly one file outside the package itself:
@@ -26057,7 +26057,9 @@ lines through the standard library logger, which is not parseable as
 JSON and is therefore unusable as a structured log source for the
 documented log aggregation backends (ELK, Loki, CloudWatch).
 
-### - [ ] F-16.4.2 — None of the §16.4 mandated correlation fields appear on any log line [High] — OPEN
+**Resolution (70834ab1):** Added `logging.Setup(w, component)`, a shared bootstrap that installs the `pkg/observability/logging` JSON handler as the process-wide slog default and routes the stdlib `log` package through it (`slog.SetDefault` reroutes `log.Default()` on Go 1.21+, reinforced by an explicit `log.SetOutput` bridge that strips the trailing newline). Every binary main now calls it — gateway, controller, token-service, adapter, webhook, preflight, tier-promote, and echo-embedded — so the existing `log.Printf` / `log.Fatalf` sites emit the §16.4 envelope (ts, level, msg, component) as JSON without a per-site rewrite. `lenny-ops`, which already had a local bridge, now delegates to the shared helper and its `slogWriter` duplicate is removed.
+
+### - [x] F-16.4.2 — None of the §16.4 mandated correlation fields appear on any log line [High] — CLOSED
 
 **High.** The handler in `pkg/observability/logging` is the only code
 path that projects `session_id`, `tenant_id`, `trace_id`, `span_id`,
@@ -26085,7 +26087,9 @@ operation_id, agent_name, session_id, or trace_id is unachievable
 against the current emission, because the fields are simply not in the
 output stream.
 
-### - [ ] F-16.4.3 — The `X-Lenny-Operation-ID` and `X-Lenny-Agent-Name` headers are read by no production code path [High] — OPEN
+**Resolution (70834ab1):** With F-16.4.1 every binary now uses the structured handler, which already projects `session_id`, `tenant_id`, `trace_id`, `span_id`, `operation_id`, `agent_name`, and `component` from a `correlation.Fields` value on the record's context. The new outermost gateway middleware `pkg/gateway/middleware/correlation` populates that context from the inbound request and emits one structured `http_request` completion line per request, so the correlation fields now appear on real log output. `component` (gateway/controller/token-service/etc.) is on every line via the handler's `DefaultComponent`. Verified by `TestWrapEmitsCorrelationFieldsOnLogLine_spec_16_4_372`, which asserts operation_id/agent_name/session_id/tenant_id/trace_id/span_id/component all land on the emitted JSON line.
+
+### - [x] F-16.4.3 — The `X-Lenny-Operation-ID` and `X-Lenny-Agent-Name` headers are read by no production code path [High] — CLOSED
 
 **High.** `pkg/observability/correlation.FromHTTPHeader` (lines 178-191)
 reads `X-Lenny-Operation-ID` and `X-Lenny-Agent-Name` into a `Fields`
@@ -26114,7 +26118,9 @@ structured handler), there is no way for a request that sets
 handler reads `correlation.Fields` from the context, and nothing puts
 the header value into the context.
 
-### - [ ] F-16.4.4 — `time` is emitted in place of `ts`; UTC normalization is not enforced [High] — OPEN
+**Resolution (70834ab1):** Added `pkg/gateway/middleware/correlation`, mounted as the gateway's outermost middleware. It calls `correlation.FromHTTPHeader` to read `X-Lenny-Operation-ID`, `X-Lenny-Agent-Name`, `traceparent`, `X-Lenny-Session-ID`, and `X-Lenny-Tenant-ID`, merges them onto any Fields already on the request context, and re-attaches the merged value so every downstream handler and log line inherits them — the production code path the finding said was absent. The middleware's `captureRW` forwards `Flush` and exposes `Unwrap` so SSE/streaming through this outermost layer is preserved. Verified by `TestWrapReadsOperationAndAgentHeadersIntoContext_spec_16_4_372`. The gateway→adapter gRPC-metadata leg of header propagation is the separate §16.3 tracing concern.
+
+### - [x] F-16.4.4 — `time` is emitted in place of `ts`; UTC normalization is not enforced [High] — CLOSED
 
 **High.** The slog handler in `pkg/observability/logging/logging.go`
 delegates timestamp emission to slog's default JSON handler. slog's
@@ -26136,6 +26142,8 @@ A consumer matching the spec's documented `ts` field name receives no
 hits against actual log output (when H1 is also addressed). A consumer
 matching `time` receives values in the deployer's local timezone unless
 the deployer manually sets the gateway process to UTC.
+
+**Resolution (70834ab1):** `NewJSONHandler` and `NewTextHandler` now pass a `ReplaceAttr` hook that renames the top-level `slog.TimeKey` ("time") to `ts` and forces `t.UTC()` before formatting, so the JSON handler emits `"ts":"…Z"` in RFC 3339 UTC. The rename is scoped to the record-level time (groups empty), leaving a caller-added attribute literally named `time` inside a group untouched. Verified by `TestHandlerEmitsTimestampAsTSInUTC_spec_16_4_372` (RFC 3339 parse + zero-offset + `Z` suffix) and `TestTextHandlerRenamesTimeToTS_spec_16_4_372`; the prior `logging_test.go` assertion on the `time` key was updated to require `ts` and forbid `time`.
 
 ### - [x] F-16.4.5 — Setup command stdout/stderr is discarded; EventStore is never written to [High] — CLOSED
 
