@@ -88,6 +88,21 @@ type Store struct {
 // database that has the migrations/ schema applied.
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
+// Eraser is the §12.1 mandatory-erasure surface. The compile-time
+// assertion below proves the TokenIssuanceStore honors the erasure
+// primitives, so a future refactor that drops either method fails to
+// build. The full pluggable-backend role interface for the
+// interface-less §12.2 stores is tracked separately (F-12.1.3).
+//
+// spec: §12.1 line 5 — "enforced at compile time by Go interface
+// satisfaction".
+type Eraser interface {
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
+var _ Eraser = (*Store)(nil)
+
 const selectList = `jti, tenant_id, sub, token_hash, scope, audience,
 	audiences, dialect_cap_applied_seconds,
 	issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti`
@@ -306,6 +321,62 @@ func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.
 		tag, err := tx.Exec(ctx,
 			`DELETE FROM issued_tokens WHERE tenant_id = $1 AND exp <= $2`,
 			tenantID, cutoff)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+// DeleteByUser implements the §12.1 mandatory-erasure primitive for the
+// §12.2 TokenIssuanceStore role. It hard-deletes every issued-token row
+// whose subject is userID within tenantID and returns the count
+// removed. RevokeBySubject only marks rows revoked (the row, including
+// its token hash, survives); a GDPR erasure must remove the row
+// outright, so the §12.8 user-erasure path calls DeleteByUser rather
+// than RevokeBySubject. Deleting an erased user's tokens is safe
+// because a deleted token can no longer be presented for validation.
+//
+// spec: §12.1 line 5, §12.8 step `TokenStore`.
+func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("issuedtokenstore: DeleteByUser requires non-empty tenant_id and user_id")
+	}
+	var deleted int
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM issued_tokens WHERE tenant_id = $1 AND sub = $2`,
+			tenantID, userID)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive. It
+// hard-deletes every issued-token row owned by tenantID — the §12.8
+// Phase 4 tenant-teardown path for the TokenIssuanceStore role.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("issuedtokenstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var deleted int
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM issued_tokens WHERE tenant_id = $1`, tenantID)
 		if err != nil {
 			return err
 		}

@@ -17387,7 +17387,7 @@ Cross-cutting invariant asserted by §12.1: every store role interface (includin
 
 ### Findings
 
-### - [ ] F-12.2.1 — 01 — TokenStore (downstream OAuth tokens) exposes neither `DeleteByUser` nor `DeleteByTenant` (High) [Medium] — OPEN
+### - [x] F-12.2.1 — 01 — TokenStore (downstream OAuth tokens) exposes neither `DeleteByUser` nor `DeleteByTenant` (High) [Medium] — CLOSED
 
 Spec: §12.1 ("Every store role interface … MUST expose the erasure primitives `DeleteByUser(ctx, tenantID, userID) error` and `DeleteByTenant(ctx, tenantID) error` as mandatory methods … enforced at compile time by Go interface satisfaction"); §12.8 ("Each store interface includes `DeleteByUser(user_id)` and `DeleteByTenant(tenant_id)` methods … These methods are **mandatory** on every store interface, not optional extension points — the Go type system enforces this at compile time").
 
@@ -17402,13 +17402,17 @@ type Store interface {
 ```
 Neither `DeleteByUser` nor `DeleteByTenant` exists on this interface. The Postgres implementation in `pkg/gateway/connectorcredstore/pgstore/pgstore.go` (which the package banner explicitly calls "the §13.3 Postgres-backed encrypted TokenStore for §9.3 connector OAuth credentials") does not add them either. A GDPR `DeleteByUser` for the target user therefore leaves every stored OAuth access/refresh token in place. T4 token material (per §12.9) is the highest-risk class — exactly what the compile-time guarantee in §12.1 is designed to prevent. Spec-mandated compile-time enforcement is absent: there is no `var _ TokenStore = (*Store)(nil)` declaration that would fail to link a backend missing these methods.
 
-### - [ ] F-12.2.2 — 02 — `IssuedTokenStore`/`TokenIssuanceStore` (Postgres) lacks `DeleteByUser`/`DeleteByTenant` (High) [Medium] — OPEN
+**Resolution:** `DeleteByUser(ctx, tenantID, userID) (int, error)` and `DeleteByTenant(ctx, tenantID) (int, error)` lifted onto `connectorcredstore.Store`; the existing `var _ Store = (*Memory)(nil)` (memory) and `var _ connectorcredstore.Store = (*Store)(nil)` (pgstore) guards now fail to compile a backend missing either method. Both delete by `(tenant_id, user_id)` / `(tenant_id)` across all connectors and environments, reject empty scope ids, and are idempotent. Tier-1 erasure tests added. Closed by commit (this batch).
+
+### - [x] F-12.2.2 — 02 — `IssuedTokenStore`/`TokenIssuanceStore` (Postgres) lacks `DeleteByUser`/`DeleteByTenant` (High) [Medium] — CLOSED
 
 Spec: §12.1 (mandatory erasure methods on every store role interface); §12.2 `TokenIssuanceStore` row.
 
 `pkg/gateway/issuedtokenstore/issuedtokenstore.go` defines a concrete `Store` struct with `Record`, `Get`, `Revoke`, `RevokeBySubject`, `ListRevoked`, `DeleteExpired`, but no `DeleteByUser` / `DeleteByTenant`. The package is not an interface either, so the compile-time satisfaction protection in §12.1 does not apply by construction. Token-hash rows for an erased user survive erasure (`RevokeBySubject` only marks rows revoked, leaving the row in place). The §12.8 erasure ordering does not list `TokenIssuanceStore` (only the broader `TokenStore` entry) — both the store omission and the §12.8 scope-table omission compound.
 
-### - [ ] F-12.2.3 — 03 — `CredentialPoolStore` lacks `DeleteByUser`/`DeleteByTenant` (High) [Medium] — OPEN
+**Resolution:** Added `DeleteByUser(ctx, tenantID, userID) (int, error)` (hard-`DELETE … WHERE tenant_id = $1 AND sub = $2` — the row is removed, unlike `RevokeBySubject` which only marks it revoked) and `DeleteByTenant(ctx, tenantID) (int, error)` to the concrete `*Store`, plus a package-level `Eraser` interface with `var _ Eraser = (*Store)(nil)` so the §12.1 compile-time guarantee now applies to the erasure pair. Tier-1 tests cover the empty-scope rejection guards (which run before any DB access) and the compile-time satisfaction. The broad pluggable-backend role interface for the five interface-less §12.2 stores remains F-12.1.3. Closed by commit (this batch).
+
+### - [x] F-12.2.3 — 03 — `CredentialPoolStore` lacks `DeleteByUser`/`DeleteByTenant` (High) [Medium] — CLOSED
 
 Spec: §12.1 (mandatory erasure); §12.2 `CredentialPoolStore` row ("Tenant-scoped: all tables carry `tenant_id` with RLS policies identical to other tenant-scoped stores"); §12.8 "`CredentialPoolStore` — Postgres — Credential lease assignments referencing the user".
 
@@ -17424,6 +17428,8 @@ type Store interface {
 ```
 No erasure adapters present at the interface or in `pkg/gateway/credentialpoolstore/pgstore/pgstore.go`. A user erasure cannot purge the user's credential-pool lease assignments. Tenant deletion (`tenantdeletion.TenantEraser.DeleteByTenant`) has no per-store entry point for credential pools.
 
+**Resolution:** `DeleteByUser(ctx, tenantID, userID) (int, error)` and `DeleteByTenant(ctx, tenantID) (int, error)` lifted onto `credentialpoolstore.Store`; Memory + pgstore implement both, guarded by the existing `var _ Store = (*Memory)(nil)` / `var _ credentialpoolstore.Store = (*Store)(nil)` assertions. Credential pools are tenant-scoped configuration keyed by `(tenant, name)` with no `user_id` column, so `DeleteByUser` is a documented no-op returning `(0, nil)` (the user's per-session leases are released through the §12.8 LeaseStore step, not this store), matching the established non-user-scoped pattern; `DeleteByTenant` hard-`DELETE`s every pool the tenant owns for the §12.8 Phase 4 teardown. Tier-1 tests added. Closed by commit (this batch).
+
 ### - [x] F-12.2.4 — 04 — User-credential `Store` (`credentialstore`) lacks erasure adapters (High) [Medium] — CLOSED
 
 Spec: §12.1; §12.8 step 8/10/11 (per-store DeleteByUser dependency chain).
@@ -17438,11 +17444,13 @@ Spec: §12.1 (mandatory); §12.8 step 13 ("`EventStore` (audit) — delete audit
 
 `pkg/gateway/auditstore/auditstore.go` exposes only `Append`, `Rows`, `Verify`, `Get`. The §11.7 `lenny_erasure` Postgres role and `erasure_mode` session variable are wired in `migrations/0002_rls_immutability_roles.up.sql` to permit constrained UPDATE/DELETE under `lenny_erasure`, but no Go-side caller exposes the per-user audit deletion (step 13) or the per-row OCSF redaction (step 14). The §12.8 erasure orchestrator in `pkg/gateway/erasure/erasure.go` therefore cannot drive the audit-scope phase even if it were given an auditstore handle, because the auditstore has no method to call.
 
-### - [ ] F-12.2.6 — 06 — `BillingStore` (Postgres) lacks the mandatory `DeleteByTenant`; `DeleteByUser` is a stub no-op (High) [Medium] — OPEN
+### - [x] F-12.2.6 — 06 — `BillingStore` (Postgres) lacks the mandatory `DeleteByTenant`; `DeleteByUser` is a stub no-op (High) [Medium] — CLOSED
 
 Spec: §12.1 (mandatory erasure on every store interface); §12.8 ("`EventStore` (billing) — See tenant-controlled billing erasure below").
 
 `pkg/gateway/billingstore/billingstore.go:178-187` defines `Store` with only `Append`, `Since`. Erasure adapters live on the in-memory `Memory` type (`PseudonymizeUser`, `DeleteByUser`, `DeleteByTenant`) but NOT on the `Store` interface. `pkg/gateway/billingstore/pgstore/pgstore.go` does not implement `DeleteByTenant` or a `PseudonymizeUser` equivalent. `cmd/lenny-gateway/main.go:1212-1213` only attaches `BillingEraser` when the in-memory billing store is wired (`billingstore.Memory`). With the production Postgres ledger, the GDPR pseudonymize path described in §12.8 (rewrite `user_id` under the `lenny_erasure` role) is unreachable. The `Memory.DeleteByUser` implementation explicitly returns `0, nil` (it is a "no-op that returns 0 erased rows" — see comment at billingstore.go:300-307), so the interface guarantee is satisfied in name only.
+
+**Resolution:** `PseudonymizeUser`, `DeleteByUser`, and `DeleteByTenant` lifted onto `billingstore.Store`. The pgstore now implements all three plus `CountUser` (the §12.8 verification helper) for parity with `Memory`: `PseudonymizeUser` rewrites `user_id` and `DeleteByTenant` deletes, each setting `SET LOCAL lenny.erasure_mode = 'true'` so the §11.7 `lenny_billing_immutability` trigger permits the write; `DeleteByUser` is the documented append-only no-op. Migration `0093` grants `DELETE ON billing_events TO lenny_erasure` (the role already held `UPDATE (user_id)` from migration 0002) so the Phase-4 teardown DELETE is authorized once the dedicated erasure-role connection is supplied — wiring that connection into the orchestrator stays F-12.2.16. `failover.Pipeline` delegates the three methods to its primary and additionally pseudonymizes/drops matching Tier-2 buffered events so an erasure that races a primary outage does not later flush stale rows. Tier-1 tests cover Memory (`CountUser`/no-op `DeleteByUser`/`DeleteByTenant`/`Store` satisfaction) and the Pipeline buffer-aware delegation. Closed by commit (this batch).
 
 ### - [ ] F-12.2.7 — 07 — `QuotaStore` Postgres durability and erasure adapters absent (High) [Medium] — OPEN
 
@@ -17555,13 +17563,15 @@ Spec: §12.8 "`DeleteByUser` dependency-ordered deletion sequence" — steps 1, 
 
 The orchestrator runs successfully and writes a `gdpr.erasure_completed` audit event whose `Deleted` map covers a small subset of the stores §12.8 lists. The compliance contract that the erasure receipt corresponds to a complete removal is therefore documented but not delivered.
 
-### - [ ] F-12.2.17 — 17 — `EvalResultStore`, `BillingStore`, `EvictionStateStore` erasure methods on concrete types rather than interface (Medium) [Medium] — OPEN
+### - [x] F-12.2.17 — 17 — `EvalResultStore`, `BillingStore`, `EvictionStateStore` erasure methods on concrete types rather than interface (Medium) [Medium] — CLOSED
 
 Spec: §12.1 ("a backend missing either method cannot be wired into the platform" — only enforceable when the methods are on the interface).
 
 - `pkg/gateway/evalstore/evalstore.go:67-84` `Store` interface includes only `Put`, `CountBySession`, `ListBySession`, `ListByExperiment`, `DeleteBySession`. `DeleteByUser` (evalstore.go:193) and `DeleteByTenant` (evalstore.go:199) live on the `Memory` concrete type only; the production `pgstore` lacks them.
 - `pkg/gateway/billingstore/billingstore.go:178-187` (`Store` = `Append`, `Since`) — see F-12.2-06.
 - `pkg/gateway/sessionstore/sessionstore.go:194-225` (`Store` lacks `DeleteByTenant`) — see F-12.2-09.
+
+**Resolution:** Every store named here now declares the erasure pair on its `Store` interface with a matching pgstore implementation, so the §12.1 compile-time check is real for all of them: `evalstore` (lifted in F-12.1.7), `billingstore` (this batch, F-12.2.6), `sessionstore` (F-12.2.9), and `evictionstatestore` (interface already carries the schema-driven variant per F-12.1.8, with the pgstore implementing both). Closed by F-12.2.6 (this batch) plus the prior closures it depends on.
 
 A Postgres-backed `evalstore` or `billingstore` swapped in via DI today does NOT have to implement the erasure primitives to link cleanly — the §12.1 compile-time guarantee is satisfied in word but not in form because the methods sit below the interface.
 

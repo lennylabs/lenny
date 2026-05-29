@@ -128,6 +128,26 @@ type Store interface {
 	// §4.3 line 202 (environment-scoped credentials),
 	// §9.3 lines 152–155 (connector token lifecycle).
 	RotateAccessToken(ctx context.Context, rot RotationRecord) error
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Hard-deletes every connector credential owned by (tenantID,
+	// userID) across all connectors and environments. The §12.2
+	// TokenStore role holds downstream OAuth access/refresh tokens —
+	// the T4-classified material §12.9 calls highest-risk — so this is
+	// the load-bearing path that a §12.8 user-erasure job drives to
+	// remove the user's stored tokens. Returns the number of rows
+	// removed; an erasure for a user with no stored credentials returns
+	// (0, nil).
+	//
+	// spec: §12.1 line 5, §12.8 step `TokenStore`.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Hard-deletes every connector credential owned by tenantID — the
+	// §12.8 Phase 4 tenant-teardown path for the TokenStore role.
+	//
+	// spec: §12.1 line 5, §12.8 Phase 4.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // RotationRecord carries the new token material produced by an RFC 6749
@@ -294,4 +314,44 @@ func (m *Memory) RotateAccessToken(_ context.Context, rot RotationRecord) error 
 	cred.UpdatedAt = now
 	m.creds[k] = cred
 	return nil
+}
+
+// DeleteByUser implements Store. It removes every credential keyed to
+// (tenantID, userID), regardless of connector or environment.
+//
+// spec: §12.1 line 5.
+func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("connectorcredstore: DeleteByUser requires non-empty tenant_id and user_id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k, c := range m.creds {
+		if c.TenantID == tenantID && c.UserID == userID {
+			delete(m.creds, k)
+			n++
+		}
+	}
+	return n, nil
+}
+
+// DeleteByTenant implements Store. It removes every credential owned by
+// tenantID.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("connectorcredstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k, c := range m.creds {
+		if c.TenantID == tenantID {
+			delete(m.creds, k)
+			n++
+		}
+	}
+	return n, nil
 }

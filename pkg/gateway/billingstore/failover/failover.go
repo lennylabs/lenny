@@ -212,6 +212,67 @@ func (p *Pipeline) Since(ctx context.Context, tenantID string, since uint64, lim
 	return p.primary.Since(ctx, tenantID, since, limit)
 }
 
+// PseudonymizeUser implements billingstore.Store. It rewrites the
+// durable ledger through the primary store and then pseudonymizes any
+// matching events still sitting in the Tier 2 write-ahead buffer, so a
+// user erasure that races a primary outage does not leave the user id
+// in the buffered events the flusher will later commit. It returns the
+// total count rewritten across both.
+//
+// spec: §12.8 tenant-controlled billing erasure.
+func (p *Pipeline) PseudonymizeUser(ctx context.Context, tenantID, userID string, salt []byte) (int, error) {
+	n, err := p.primary.PseudonymizeUser(ctx, tenantID, userID, salt)
+	if err != nil {
+		return 0, err
+	}
+	pseudonym := billingstore.Pseudonymize(userID, salt)
+	p.mu.Lock()
+	for i := range p.buffer {
+		if p.buffer[i].TenantID == tenantID && p.buffer[i].UserID == userID {
+			p.buffer[i].UserID = pseudonym
+			n++
+		}
+	}
+	p.mu.Unlock()
+	return n, nil
+}
+
+// DeleteByUser implements billingstore.Store. Billing user erasure
+// pseudonymizes rather than deletes, so this delegates to the primary
+// no-op and leaves the buffer untouched.
+//
+// spec: §12.1 line 5.
+func (p *Pipeline) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	return p.primary.DeleteByUser(ctx, tenantID, userID)
+}
+
+// DeleteByTenant implements billingstore.Store. It removes the tenant's
+// durable events through the primary store and drops any of the
+// tenant's events still held in the Tier 2 buffer so a tenant teardown
+// that races an outage does not later flush deleted-tenant rows. It
+// returns the total count removed across both.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (p *Pipeline) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	n, err := p.primary.DeleteByTenant(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	p.mu.Lock()
+	kept := p.buffer[:0]
+	for _, e := range p.buffer {
+		if e.TenantID == tenantID {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	p.buffer = kept
+	delete(p.seq, tenantID)
+	p.mu.Unlock()
+	return n, nil
+}
+
 // nextProvisional returns the next provisional per-tenant sequence
 // number for an event that could not reach the primary store.
 func (p *Pipeline) nextProvisional(tenantID string) uint64 {

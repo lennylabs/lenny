@@ -55,6 +55,20 @@ func (f *flakyStore) Since(ctx context.Context, tenantID string, since uint64, l
 	return f.inner.Since(ctx, tenantID, since, limit)
 }
 
+// The erasure primitives delegate to the in-memory ledger; the failover
+// tests do not model an erasure-time outage.
+func (f *flakyStore) PseudonymizeUser(ctx context.Context, tenantID, userID string, salt []byte) (int, error) {
+	return f.inner.PseudonymizeUser(ctx, tenantID, userID, salt)
+}
+
+func (f *flakyStore) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	return f.inner.DeleteByUser(ctx, tenantID, userID)
+}
+
+func (f *flakyStore) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	return f.inner.DeleteByTenant(ctx, tenantID)
+}
+
 // setDown toggles the simulated outage.
 func (f *flakyStore) setDown(down bool) {
 	f.mu.Lock()

@@ -274,6 +274,28 @@ type Store interface {
 	// revoked credential silently becomes accepted on a replica that
 	// missed the original pub/sub notification.
 	RevokedCredentials(ctx context.Context) ([]RevokedCredential, error)
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Credential pools are tenant-scoped configuration keyed by
+	// (tenant, name); they carry no user_id column, so a user erasure
+	// removes no pool definition. The §12.8 user-erasure path releases
+	// the user's per-session credential leases through the LeaseStore,
+	// not through this store. DeleteByUser is therefore a no-op that
+	// returns (0, nil); the method is mandatory at the interface level
+	// so the §12.1 compile-time contract holds for every backend, and
+	// the no-op mirrors the documented pattern for non-user-scoped
+	// stores.
+	//
+	// spec: §12.1 line 5.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Hard-deletes every credential pool owned by tenantID — the §12.8
+	// Phase 4 tenant-teardown path for the CredentialPoolStore role.
+	// Returns the number of pools removed.
+	//
+	// spec: §12.1 line 5, §12.8 Phase 4.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // ListFilter narrows the List result.
@@ -568,6 +590,32 @@ func clonePool(p CredentialPool) CredentialPool {
 	p.Credentials = append([]Credential(nil), p.Credentials...)
 	p.HostPatterns = append([]string(nil), p.HostPatterns...)
 	return p
+}
+
+// DeleteByUser implements Store. Credential pools are tenant-scoped, so
+// a user erasure removes no pool; it returns (0, nil).
+//
+// spec: §12.1 line 5.
+func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("credentialpoolstore: DeleteByUser requires non-empty tenant_id and user_id")
+	}
+	return 0, nil
+}
+
+// DeleteByTenant implements Store. It removes every credential pool the
+// tenant owns and returns the count.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("credentialpoolstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := len(m.pools[tenantID])
+	delete(m.pools, tenantID)
+	return n, nil
 }
 
 var _ Store = (*Memory)(nil)

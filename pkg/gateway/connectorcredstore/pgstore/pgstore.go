@@ -264,6 +264,59 @@ func (s *Store) Delete(ctx context.Context, tenantID, connectorID, userID, envir
 	})
 }
 
+// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+// Hard-deletes every connector credential row owned by (tenantID,
+// userID) across all connectors and environments — the §12.8
+// user-erasure path for the §12.2 TokenStore role. Returns the number
+// of rows removed.
+//
+// spec: §12.1 line 5, §12.8 step `TokenStore`.
+func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("connectorcredstore/pgstore: DeleteByUser requires non-empty tenant_id and user_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM connector_credentials WHERE tenant_id = $1 AND user_id = $2`,
+			tenantID, userID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+// Hard-deletes every connector credential row owned by tenantID — the
+// §12.8 Phase 4 tenant-teardown path for the TokenStore role.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("connectorcredstore/pgstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM connector_credentials WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 // ListByConnector implements connectorcredstore.Store.
 // spec: §4.3 line 202.
 func (s *Store) ListByConnector(ctx context.Context, tenantID, connectorID string) ([]connectorcredstore.ConnectorCredential, error) {

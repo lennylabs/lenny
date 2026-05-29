@@ -15,6 +15,7 @@ package pgstore
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -212,4 +213,118 @@ func (s *Store) InsertFromStream(ctx context.Context, e billingstore.Event, stre
 			e.CorrectionDetail, e.EnvironmentID, streamEntryID, e.CreatedAt)
 		return err
 	})
+}
+
+// PseudonymizeUser rewrites every billing event in tenantID owned by
+// userID to the §12.8 salted-hash pseudonym and returns the count
+// rewritten. It is idempotent: a second call finds no event still keyed
+// to userID.
+//
+// billing_events is append-only; the §11.7 lenny_billing_immutability
+// trigger permits the UPDATE only when the transaction has set
+// lenny.erasure_mode = 'true'. The connection must additionally run as
+// the lenny_erasure role, which is the only role granted
+// UPDATE (user_id) ON billing_events (migration 0002); the lenny_app
+// pool used for normal writes is intentionally not authorized to
+// rewrite the ledger. Wiring that dedicated erasure-role connection
+// into the §12.8 orchestrator is the F-12.2.16 follow-up — the durable
+// pseudonymize path is implemented here so the §12.1 contract is
+// satisfied and the orchestrator has a real method to call once the
+// erasure-role pool is supplied.
+//
+// spec: §12.8 tenant-controlled billing erasure; §11.7 immutability.
+func (s *Store) PseudonymizeUser(ctx context.Context, tenantID, userID string, salt []byte) (int, error) {
+	if tenantID == "" || userID == "" || len(salt) == 0 {
+		return 0, billingstore.ErrPseudonymizeArg
+	}
+	pseudonym := billingstore.Pseudonymize(userID, salt)
+	var n int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE billing_events SET user_id = $3 WHERE tenant_id = $1 AND user_id = $2`,
+			tenantID, userID, pseudonym)
+		if err != nil {
+			return err
+		}
+		n = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+// CountUser returns the number of billing events in tenantID still keyed
+// to userID. The §12.8 post-pseudonymization verification calls it to
+// confirm the rewrite removed every reference to the original user id.
+// It is a read, so it runs under the normal SELECT grant.
+//
+// spec: §12.8 erasure verification.
+func (s *Store) CountUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("billingstore/pgstore: CountUser requires non-empty tenant_id and user_id")
+	}
+	var n int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT COUNT(*) FROM billing_events WHERE tenant_id = $1 AND user_id = $2`,
+			tenantID, userID).Scan(&n)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+// DeleteByUser implements the §12.1 mandatory-erasure primitive. Billing
+// events are append-only and the user-erasure path pseudonymizes (see
+// PseudonymizeUser) rather than deletes, so DeleteByUser is a no-op that
+// returns (0, nil). The method is mandatory at the interface level so
+// the §12.1 compile-time contract holds.
+//
+// spec: §12.1 line 5, §12.8.
+func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("billingstore/pgstore: DeleteByUser requires non-empty tenant_id and user_id")
+	}
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive. It
+// hard-deletes every billing event owned by tenantID — the §12.8
+// Phase 4 tenant-teardown path. The §11.2.1 immutability constraint
+// does not apply to a tenant being torn down.
+//
+// As with PseudonymizeUser, billing_events is append-only: the
+// lenny_billing_immutability trigger permits the DELETE only under
+// lenny.erasure_mode, and the lenny_erasure role must hold
+// GRANT DELETE ON billing_events (migration 0093). The erasure-role
+// connection wiring is the F-12.2.16 follow-up.
+//
+// spec: §12.1 line 5, §12.8 Phase 4; §11.7 immutability.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("billingstore/pgstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var n int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM billing_events WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		n = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }

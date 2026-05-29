@@ -242,6 +242,45 @@ func (s *Store) SoftDelete(ctx context.Context, tenantID, name string, at time.T
 	})
 }
 
+// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+// Credential pools are tenant-scoped configuration with no user_id
+// column; a user erasure removes no pool definition (the user's
+// per-session leases are released through the LeaseStore in §12.8). It
+// returns (0, nil) so the §12.1 contract holds at the interface level.
+//
+// spec: §12.1 line 5.
+func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("credentialpoolstore/pgstore: DeleteByUser requires non-empty tenant_id and user_id")
+	}
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+// Hard-deletes every credential pool row owned by tenantID — the §12.8
+// Phase 4 tenant-teardown path for the CredentialPoolStore role.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("credentialpoolstore/pgstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM credential_pools WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 // RevokedCredentials implements credentialpoolstore.Store. It scans
 // every tenant's active (not soft-deleted) pools for revoked
 // credentials, for the §4.9 startup deny-list rebuild. It reads across

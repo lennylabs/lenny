@@ -191,6 +191,37 @@ type Store interface {
 	// than since, in ascending sequence order, capped at limit. A
 	// limit of zero or less applies no cap.
 	Since(ctx context.Context, tenantID string, since uint64, limit int) ([]Event, error)
+
+	// PseudonymizeUser rewrites every billing event in tenantID owned
+	// by userID, replacing the user id with its §12.8 salted-hash
+	// pseudonym. Billing events are append-only per §11.2.1, so the
+	// GDPR user-erasure path de-identifies them rather than deleting
+	// them: the sequence numbers, tenant id, and cost dimensions
+	// survive for financial reconciliation while the user id becomes
+	// irreversible once the per-tenant salt is destroyed. Returns the
+	// count rewritten; idempotent.
+	//
+	// spec: §12.8 — tenant-controlled billing erasure (GDPR Recital 26
+	// pseudonymization).
+	PseudonymizeUser(ctx context.Context, tenantID, userID string, salt []byte) (int, error)
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Billing events are append-only and the user-erasure path
+	// pseudonymizes rather than deletes, so DeleteByUser is a no-op
+	// that returns (0, nil); the method is mandatory at the interface
+	// level so the §12.1 compile-time contract holds for every backend.
+	// The user-scoped erasure runs through PseudonymizeUser.
+	//
+	// spec: §12.1 line 5.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Tenant teardown is the only path that removes billing events; the
+	// §11.2.1 immutability constraint does not apply to a tenant being
+	// torn down. Returns the count removed.
+	//
+	// spec: §12.1 line 5, §12.8 Phase 4.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // Validate reports the §11.2.1 minimum-field requirements. Every Store
