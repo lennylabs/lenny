@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 )
@@ -425,4 +426,61 @@ func correctionAt(tenant string, seq, orig, tokensIn, tokensOut uint64) billings
 	c := correction(tenant, orig, tokensIn, tokensOut)
 	c.SequenceNumber = seq
 	return c
+}
+
+// createdAt builds a session.created event stamped at t so the
+// retention-sweep test can place events on either side of the cutoff.
+func createdAt(tenant, session string, t time.Time) billingstore.Event {
+	e := sessionCreated(tenant, session)
+	e.CreatedAt = t
+	return e
+}
+
+// spec: §11.2.1 line 151 — DeleteOlderThan prunes a tenant's events with
+// created_at before the cutoff, leaves newer events, is tenant-scoped,
+// and is idempotent on an empty range. F-11.2.15.
+func TestMemoryDeleteOlderThan_spec_11_2_151(t *testing.T) {
+	ctx := context.Background()
+	store := billingstore.NewMemory()
+	old1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	old2 := time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	if _, err := store.Append(ctx, createdAt("acme", "s1", old1)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if _, err := store.Append(ctx, createdAt("acme", "s2", old2)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if _, err := store.Append(ctx, createdAt("acme", "s3", recent)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	// A different tenant's old event must survive an acme-scoped prune.
+	if _, err := store.Append(ctx, createdAt("globex", "g1", old1)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	removed, err := store.DeleteOlderThan(ctx, "acme", cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOlderThan: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+
+	acme, _ := store.Since(ctx, "acme", 0, 0)
+	if len(acme) != 1 || acme[0].SessionID != "s3" {
+		t.Errorf("acme survivors = %+v, want only the recent s3", acme)
+	}
+	globex, _ := store.Since(ctx, "globex", 0, 0)
+	if len(globex) != 1 {
+		t.Errorf("globex must be untouched by an acme-scoped prune, got %d events", len(globex))
+	}
+
+	// Idempotent: a second prune over the same cutoff removes nothing.
+	again, err := store.DeleteOlderThan(ctx, "acme", cutoff)
+	if err != nil || again != 0 {
+		t.Errorf("second prune = (%d, %v), want (0, nil)", again, err)
+	}
 }

@@ -442,10 +442,11 @@ tests:
       #   LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS /
       #   LENNY_CREDENTIAL_POOL_LOW_THRESHOLD (§25.13 line 4737,
       #   F-25.13.2)
-      # + LENNY_QUOTA_SYNC_INTERVAL_SECONDS (§11.2 line 44, F-11.2.16) = 32.
+      # + LENNY_QUOTA_SYNC_INTERVAL_SECONDS (§11.2 line 44, F-11.2.16)
+      # + LENNY_BILLING_RETENTION_DAYS (§11.2.1 line 151, F-11.2.15) = 33.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 32
+          count: 33
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -835,6 +836,34 @@ tests:
           content:
             name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
             value: "10"
+
+  # spec: §11.2.1 line 151 — billing.retentionDays (default 395) flows
+  # through to LENNY_BILLING_RETENTION_DAYS. F-11.2.15.
+  - it: wires LENNY_BILLING_RETENTION_DAYS from the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_RETENTION_DAYS
+            value: "395"
+
+  # spec: §11.2.1 line 151 — an operator override propagates to the
+  # binary, which enforces the compliance floor at startup. F-11.2.15.
+  - it: wires LENNY_BILLING_RETENTION_DAYS from a billing.retentionDays override
+    set:
+      billing.retentionDays: 2190
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_RETENTION_DAYS
+            value: "2190"
 
   # spec: §8.10 lines 1022-1023 / 1078 / 1103 — delegation block surfaces
   # the operator-tunable per-level, whole-tree, cascade, and orphan-cap

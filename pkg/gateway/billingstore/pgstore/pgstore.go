@@ -328,3 +328,34 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	}
 	return int(n), nil
 }
+
+// DeleteOlderThan prunes the tenant's billing events older than cutoff —
+// the §11.2.1 retention sweep. As with DeleteByTenant, billing_events is
+// append-only: the lenny_billing_immutability trigger permits the DELETE
+// only under lenny.erasure_mode, and the lenny_erasure role must hold
+// GRANT DELETE ON billing_events (migration 0093). The erasure-role
+// connection wiring is the F-12.2.16 follow-up.
+//
+// spec: §11.2.1 line 151; §11.7 immutability. F-11.2.15.
+func (s *Store) DeleteOlderThan(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("billingstore/pgstore: DeleteOlderThan requires a concrete tenant_id")
+	}
+	var n int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM billing_events WHERE tenant_id = $1 AND created_at < $2`, tenantID, cutoff)
+		if err != nil {
+			return err
+		}
+		n = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}

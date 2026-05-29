@@ -677,6 +677,12 @@ billing:
   # rule evaluates lenny_billing_correction_rate_24h >
   # scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
   correctionRateThreshold: 0.05
+  # §11.2.1 line 151 billing.retentionDays: how long billing events are
+  # retained (default 395 days / ~13 months) before the periodic
+  # retention pruner deletes them. Compliance-aware floors apply: when a
+  # tenant runs a regulated complianceProfile the gateway rejects a value
+  # below that floor at startup (hipaa 2190, soc2 365, fedramp 365).
+  retentionDays: 395
 
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render

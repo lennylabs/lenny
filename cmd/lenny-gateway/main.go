@@ -85,6 +85,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterregistry"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover/redisstream"
@@ -546,6 +547,8 @@ func main() {
 		"§11.2.1 billing.dualControlThreshold: an operator-initiated billing correction whose absolute adjustment value exceeds this requires a second platform-admin's approval. The default of 0 makes every correction dual-control. Override via LENNY_BILLING_DUAL_CONTROL_THRESHOLD.")
 	billingCorrectionRateThreshold := flag.Float64("billing-correction-rate-threshold", envFloat("LENNY_BILLING_CORRECTION_RATE_THRESHOLD", 0.05),
 		"§11.2.1 line 187 billing.correctionRateThreshold: BillingCorrectionRateHigh alert threshold as a fraction (0.05 = 5%). Emitted at startup on the lenny_billing_correction_rate_threshold gauge so the §16.5 alert can evaluate via scalar(lenny_billing_correction_rate_threshold). Override via LENNY_BILLING_CORRECTION_RATE_THRESHOLD.")
+	billingRetentionDays := flag.Int("billing-retention-days", envInt("LENNY_BILLING_RETENTION_DAYS", billingretention.DefaultRetentionDays),
+		"§11.2.1 line 151 billing.retentionDays: how long billing events are retained before the periodic retention pruner deletes them (default 395). The gateway rejects a value below the compliance floor of any tenant's regulated complianceProfile at startup (hipaa 2190, soc2 365, fedramp 365). Override via LENNY_BILLING_RETENTION_DAYS.")
 	// §27.2 web-playground flags. These mirror the playground.* Helm
 	// values; the gateway reads them from its own configuration so the
 	// playground is gated without a separate deployment target.
@@ -969,6 +972,17 @@ func main() {
 	// store directly.
 	billingLedger := billing
 	billing = billingPipeline
+
+	// spec: §11.2.1 line 151 — reject a billing.retentionDays below the
+	// compliance floor of any tenant's regulated complianceProfile at
+	// startup, mirroring the audit.gdprRetentionDays floor pattern. A
+	// transient tenant-list failure degrades to a warning rather than
+	// crashing the boot. F-11.2.15.
+	if profiles, err := activeComplianceProfiles(context.Background(), tenants); err != nil {
+		log.Printf("lenny-gateway: WARNING: billing.retentionDays compliance-floor preflight could not list tenants: %v", err)
+	} else if err := billingretention.ValidateRetentionDays(*billingRetentionDays, profiles); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 
 	// ----- §7.1 uploadToken KeyRing + rotator -----
 	// The §7.1 line 67 contract requires the gateway to rotate signing
@@ -3316,6 +3330,29 @@ func main() {
 	// itself through its own consumer-group flusher.
 	go billingPipeline.RunFlusher(watchdogCtx)
 
+	// ----- §11.2.1 billing retention pruner -----
+	// Periodically deletes billing events past the configured
+	// billing.retentionDays window across every registered tenant. The
+	// DELETE is idempotent, so running it on every replica is safe (a
+	// replica that loses the race prunes zero rows). Best-effort: a
+	// per-tenant failure is logged and the sweep continues.
+	// spec: §11.2.1 line 151. F-11.2.15.
+	billingPruner := billingretention.New(billing, tenantsLister{tenants}, billingretention.Options{
+		RetentionDays: *billingRetentionDays,
+		Clock:         clockinject.Now,
+	})
+	log.Printf("lenny-gateway: §11.2.1 billing retention pruner active (retention %d days)", billingPruner.RetentionDays())
+	go billingPruner.Run(watchdogCtx, func(pruned int, err error) {
+		if err != nil {
+			log.Printf("lenny-gateway: §11.2.1 billing retention sweep error: %v", err)
+			return
+		}
+		if pruned > 0 {
+			log.Printf("lenny-gateway: §11.2.1 billing retention pruned %d events past the %d-day window",
+				pruned, billingPruner.RetentionDays())
+		}
+	})
+
 	// ----- §4.9 / §10.3 / §13.3 security-cache pub/sub subscribers -----
 	// Active only with Redis: each subscribe loop applies a peer
 	// replica's revocations and deny-list mutations onto this replica's
@@ -4453,6 +4490,28 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 		out = append(out, row.ID)
 	}
 	return out, nil
+}
+
+// activeComplianceProfiles returns the distinct, non-empty
+// complianceProfile values across the registered tenants. It backs the
+// §11.2.1 billing.retentionDays compliance-floor preflight: a profile
+// active on any tenant raises the deployment's retention floor.
+// spec: §11.2.1 line 151. F-11.2.15.
+func activeComplianceProfiles(ctx context.Context, store tenantstore.Store) ([]string, error) {
+	rows, err := store.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var profiles []string
+	for _, row := range rows {
+		if row.ComplianceProfile == "" || seen[row.ComplianceProfile] {
+			continue
+		}
+		seen[row.ComplianceProfile] = true
+		profiles = append(profiles, row.ComplianceProfile)
+	}
+	return profiles, nil
 }
 
 // playgroundTenantRegistry adapts a tenantstore.Store into the

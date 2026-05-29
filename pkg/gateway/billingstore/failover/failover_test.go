@@ -69,6 +69,10 @@ func (f *flakyStore) DeleteByTenant(ctx context.Context, tenantID string) (int, 
 	return f.inner.DeleteByTenant(ctx, tenantID)
 }
 
+func (f *flakyStore) DeleteOlderThan(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
+	return f.inner.DeleteOlderThan(ctx, tenantID, cutoff)
+}
+
 // setDown toggles the simulated outage.
 func (f *flakyStore) setDown(down bool) {
 	f.mu.Lock()

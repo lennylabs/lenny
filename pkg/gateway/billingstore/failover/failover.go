@@ -273,6 +273,32 @@ func (p *Pipeline) DeleteByTenant(ctx context.Context, tenantID string) (int, er
 	return n, nil
 }
 
+// DeleteOlderThan implements billingstore.Store. It prunes the tenant's
+// durable events older than cutoff through the primary store and drops
+// any of the tenant's buffered Tier 2 events older than cutoff so the
+// retention sweep does not later flush rows it should have pruned. It
+// returns the total count removed across both.
+//
+// spec: §11.2.1 line 151. F-11.2.15.
+func (p *Pipeline) DeleteOlderThan(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
+	n, err := p.primary.DeleteOlderThan(ctx, tenantID, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	p.mu.Lock()
+	kept := p.buffer[:0]
+	for _, e := range p.buffer {
+		if e.TenantID == tenantID && e.CreatedAt.Before(cutoff) {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	p.buffer = kept
+	p.mu.Unlock()
+	return n, nil
+}
+
 // nextProvisional returns the next provisional per-tenant sequence
 // number for an event that could not reach the primary store.
 func (p *Pipeline) nextProvisional(tenantID string) uint64 {

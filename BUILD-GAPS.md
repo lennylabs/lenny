@@ -14951,11 +14951,13 @@ Spec §11.2.1 "Event schema (all events)" lists fields including `corrects_seque
 
 The metering wire shape `meteringEvent` (`/Users/joan/projects/lenny/pkg/gateway/sessionserver/metering.go:24-36`) is even narrower — `PodMinutes`, `CorrectsSequence`, `CorrectionReasonCode`, `CorrectionDetail` are dropped during JSON serialization. The `toMeteringEvent` mapping function (line 102) omits them. A consumer following the §11.2.1 "Correction semantics" section reconstructs the ledger from `tokens_input`, `tokens_output`, `pod_minutes`, and the corrects-reference; the wire shape lets none of the correction fields out. The spec's "consumers reconstruct the accurate billing ledger by processing events in `sequence_number` order and applying each correction to the referenced original" is unworkable against this endpoint.
 
-### - [ ] F-11.2.13 — Billing events are not auto-populated with the session's experiment / variant id [Medium] — OPEN
+### - [x] F-11.2.13 — Billing events are not auto-populated with the session's experiment / variant id [Medium] — CLOSED
 
 Spec §11.2.1 schema: `experiment_id` "Auto-populated from the session's `experimentContext.experimentId` when present"; `variant_id` same.
 
 `sessionserver/usage.go:75-81` constructs `billingstore.Event{TenantID, UserID, SessionID, EventType}` without `ExperimentID`/`VariantID`; likewise `usage.go:162-167` for `session.completed` and `watchdog/watchdog.go:339-344`. The session row carries `ExperimentContext` (`sessionstore.go:133-142`) but no read-through in the billing emit. Per-experiment / per-variant cost analysis the spec promises is therefore unavailable for the two event types that are emitted.
+
+**Resolution (5a49f9c2):** Added a nil-safe `ExperimentContext.Enrollment()` accessor and stamped `ExperimentID`/`VariantID` from `sess.ExperimentContext` on all three billing emit sites — `recordSessionCreated`, `recordSessionCompleted` (sessionserver), and the watchdog-forced terminal path. Unenrolled sessions carry the empty (nullable) values.
 
 ### - [ ] F-11.2.14 — Billing event delivery sinks (webhook, message queue) are unimplemented [Medium] — OPEN
 
@@ -14968,15 +14970,19 @@ The Helm value `billing.sink` (`charts/lenny/values.yaml:301-302`) is a single s
 
 This includes `billing.approverNotificationWebhook` for billing-correction approvals (§11.2.1 dual-control "The gateway notifies eligible approvers via the configured notification channel"). Grep for `approverNotificationWebhook` returned spec and review-finding references only.
 
-### - [ ] F-11.2.15 — Compliance-aware billing retention floor and the configurable `billing.retentionDays` are unimplemented [Medium] — OPEN
+### - [x] F-11.2.15 — Compliance-aware billing retention floor and the configurable `billing.retentionDays` are unimplemented [Medium] — CLOSED
 
 Spec §11.2.1: "Events are retained for a deployer-configurable retention period (`billing.retentionDays`, default: 395 days)". Compliance-aware floors: HIPAA 2190 days, SOC2 365, FedRAMP 365; the gateway "rejects configurations below the applicable floor at startup with `CONFIG_INVALID: billing.retentionDays below compliance floor`".
 
 Grep across `pkg/`, `charts/`, `migrations/`, `cmd/` for `billing.retentionDays`, `billingRetentionDays`, `billing_retention` returned no matches. There is no retention-sweep goroutine that prunes `billing_events` by `created_at`. The `audit.gdprRetentionDays` floor enforcement the spec cites as the analog is implemented (`pkg/audit/audit.go:140`) but the billing analog is not.
 
-### - [ ] F-11.2.16 — `quotaSyncIntervalSeconds` knob is not exposed as a flag or Helm value [Medium] — OPEN
+**Resolution (this batch):** New `pkg/gateway/billingretention` package: `ComplianceFloorDays`/`ValidateRetentionDays` enforce the compliance-aware floor (hipaa 2190, soc2 365, fedramp 365), and a `Pruner` runs the periodic per-tenant retention sweep. Added `DeleteOlderThan(ctx, tenantID, cutoff)` to `billingstore.Store` (Memory + pgstore under the §11.7 immutability bypass + failover Pipeline). Wired `--billing-retention-days` flag (env `LENNY_BILLING_RETENTION_DAYS`) + `billing.retentionDays` Helm value (default 395); the gateway runs the compliance-floor preflight at startup (fatal on violation) and the pruner under watchdogCtx. The pgstore DELETE grant lands with F-12.2.16 (erasure-role connection), consistent with `DeleteByTenant`.
+
+### - [x] F-11.2.16 — `quotaSyncIntervalSeconds` knob is not exposed as a flag or Helm value [Medium] — CLOSED
 
 Spec §11.2 defaults `quotaSyncIntervalSeconds` to 30s with a 10s minimum and an operator-tunable surface. No flag is registered (grep `-quota-sync` / `LENNY_QUOTA_SYNC` in `cmd/`); no Helm value (grep `quotaSync` in `charts/`). The pure helper takes the value as an argument (`quota.MaxOvershoot`) but no entry point reads it.
+
+**Resolution (2f57a191):** Added `quota.{DefaultSyncIntervalSeconds,MinSyncIntervalSeconds,ClampSyncIntervalSeconds}` (default 30, floor 10, kept `time`-free to match `MaxOvershoot`), a `--quota-sync-interval-seconds` flag (env `LENNY_QUOTA_SYNC_INTERVAL_SECONDS`) that clamps the operator value up to the floor and logs the effective checkpoint cadence at startup, and a `gateway.quotaSyncIntervalSeconds` Helm value wired through the gateway deployment env. The periodic Postgres checkpoint loop that consumes the cadence remains the separate F-11.2.4.
 
 ### - [ ] F-11.2.17 — Concurrent-session quota check scans every session row per request [Medium] — OPEN
 
@@ -16903,7 +16909,7 @@ event has no producer.
 a missing component, but it does not actively misclassify or expose
 PII, so calibrated below the High-severity write-time controls.
 
-### - [ ] F-11.7.18 — 18  No `interceptor.rejected` registration in §16.7 catalog despite production emission [Medium] — OPEN
+### - [x] F-11.7.18 — 18  No `interceptor.rejected` registration in §16.7 catalog despite production emission [Medium] — CLOSED
 
 **Spec:** §11.7 line 331 cites "session.created, token.exchanged,
 interceptor.rejected" as the per-tenant audit-write traffic the
@@ -16925,6 +16931,8 @@ list and is included here for completeness.
 
 **Severity:** Medium — catalog completeness affects audit-tooling
 correctness; arguably Low at the §11.7 boundary.
+
+**Resolution (5a49f9c2):** `interceptor.rejected` is a §11.7-path core event, not a §16.7/§25 addition, so adding it to `Catalog()` would break `TestCatalogHasNoUnspecifiedEvents`. Added an `auxKnownEventTypes` set (currently `EventInterceptorRejected`) that `IsKnownEventType` consults alongside the §16.7 catalog, so audit-sink validators no longer discard the rows while `Catalog()` stays a faithful §16.7 transcription. Corrected the misleading "§16.7 event" comment on `policy.EventTypeInterceptorRejected`.
 
 ### - [x] F-11.7.19 — 19  `lenny_erasure` billing UPDATE grant is scoped to `user_id` only; the spec also names "free-text PII columns" [Low] — CLOSED
 

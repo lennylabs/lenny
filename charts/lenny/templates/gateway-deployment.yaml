@@ -558,6 +558,13 @@ spec:
             # lenny_billing_correction_rate_threshold at startup.
             - name: LENNY_BILLING_CORRECTION_RATE_THRESHOLD
               value: {{ .Values.billing.correctionRateThreshold | default 0.05 | quote }}
+            # §11.2.1 line 151 billing.retentionDays: how long billing
+            # events are retained before the retention pruner deletes
+            # them (default 395). The gateway rejects a value below a
+            # tenant's regulated complianceProfile floor at startup.
+            # F-11.2.15.
+            - name: LENNY_BILLING_RETENTION_DAYS
+              value: {{ .Values.billing.retentionDays | default 395 | quote }}
             # §25.13 line 4798 healthTracker.useCompiledRules: gates the
             # gateway's in-process §16.5 alert evaluator. Set false to
             # suppress the per-replica tracker and let /v1/admin/health

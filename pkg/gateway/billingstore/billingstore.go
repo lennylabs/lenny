@@ -222,6 +222,18 @@ type Store interface {
 	//
 	// spec: §12.1 line 5, §12.8 Phase 4.
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+
+	// DeleteOlderThan prunes every billing event for tenantID whose
+	// created_at precedes cutoff, implementing the §11.2.1 retention
+	// sweep. Events are retained for the deployer-configurable
+	// `billing.retentionDays` window (default 395); the periodic
+	// retention pruner computes cutoff = now − retentionDays and calls
+	// this per tenant. Like the erasure primitives, the durable backend
+	// performs the DELETE under the §11.7 append-only immutability
+	// bypass. Returns the count removed; idempotent on an empty range.
+	//
+	// spec: §11.2.1 line 151. F-11.2.15.
+	DeleteOlderThan(ctx context.Context, tenantID string, cutoff time.Time) (int, error)
 }
 
 // Validate reports the §11.2.1 minimum-field requirements. Every Store
@@ -354,6 +366,33 @@ func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error)
 	n := len(m.events[tenantID])
 	delete(m.events, tenantID)
 	return n, nil
+}
+
+// DeleteOlderThan implements Store. It drops every event for tenantID
+// whose CreatedAt precedes cutoff, preserving the relative order of the
+// surviving events. spec: §11.2.1 line 151. F-11.2.15.
+func (m *Memory) DeleteOlderThan(_ context.Context, tenantID string, cutoff time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	events := m.events[tenantID]
+	kept := events[:0:0]
+	removed := 0
+	for _, e := range events {
+		if e.CreatedAt.Before(cutoff) {
+			removed++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	if len(kept) == 0 {
+		delete(m.events, tenantID)
+	} else {
+		m.events[tenantID] = kept
+	}
+	return removed, nil
 }
 
 // Since implements Store.
