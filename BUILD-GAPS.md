@@ -17918,7 +17918,7 @@ Sink response loses the record even when Postgres committed it, because no
 forwarder re-reads Postgres-committed rows. The spec's HIPAA AU-9 / FedRAMP
 AU-10 / SOC2 CC7.2 completeness guarantee is not met.
 
-### - [ ] F-12.3.7 — Per-tier Postgres write IOPS metric (`lenny_postgres_write_iops`) is never emitted (§12.3 lines 115–125) [High] — OPEN
+### - [ ] F-12.3.7 — Per-tier Postgres write IOPS metric (`lenny_postgres_write_iops`) is never emitted (§12.3 lines 115–125) [High] — CLOSED
 
 The `PostgresWriteSaturation` and `PostgresWriteBurstIops` alerts both
 evaluate `lenny_postgres_write_iops` and `lenny_postgres_write_ceiling_iops`.
@@ -17941,7 +17941,17 @@ The spec's stated monitoring/operator action (review
 `postgres.writeCeilingIops`) cannot be triggered because the signal is
 absent.
 
-### - [ ] F-12.3.8 — `postgres.writeCeilingIops` Helm override is referenced but absent (§12.3 line 123) [High] — OPEN
+**Resolution (19f567f0):** New `pkg/pgwritemetrics.Sampler` differentiates the
+`pg_stat_database` row-write total (`tup_inserted + tup_updated + tup_deleted`
+for the current database) into a per-second rate and publishes it on the new
+`lenny_postgres_write_iops` gateway gauge. The gateway runs it as a background
+sampler (cadence `--postgres-write-iops-sample-interval-seconds`, default 15s)
+whenever a Postgres pool is configured, so the `PostgresWriteSaturation`
+numerator is populated. The Sampler handles counter resets and zero intervals;
+the gauge is excluded from the §16.1 catalog (the metric is implementation-named,
+matching the `rateLimitRejected` precedent).
+
+### - [ ] F-12.3.8 — `postgres.writeCeilingIops` Helm override is referenced but absent (§12.3 line 123) [High] — CLOSED
 
 "The `PostgresWriteSaturation` alert uses the configured ceiling value, not a
 hard-coded constant — set `postgres.writeCeilingIops` to the measured
@@ -17955,7 +17965,16 @@ Evidence:
   `lenny_postgres_write_ceiling_iops` but no code emits it and no Helm
   value installs it.
 
-### - [ ] F-12.3.9 — Startup audit chain-continuity check is not invoked by the gateway (§12.3 line 101) [High] — OPEN
+**Resolution (19f567f0):** Added `postgres.writeCeilingIops` (default 200) to
+`values.yaml` plus tier2 (600) and tier3 (1600) presets; the gateway Deployment
+renders it into `LENNY_POSTGRES_WRITE_CEILING_IOPS` and the binary emits it
+unlabelled on the new `lenny_postgres_write_ceiling_iops` gauge at startup
+(`--postgres-write-ceiling-iops`, validated > 0). The `PostgresWriteSaturation`
+alert's `scalar(lenny_postgres_write_ceiling_iops)` denominator now resolves to
+the operator-configured ceiling. Paired with F-12.3.7 the alert is fully
+evaluable.
+
+### - [ ] F-12.3.9 — Startup audit chain-continuity check is not invoked by the gateway (§12.3 line 101) [High] — CLOSED
 
 "On gateway startup, after Postgres becomes reachable, the gateway verifies
 that the audit hash chain is unbroken for each active tenant by querying the
@@ -17975,6 +17994,19 @@ Evidence:
   startup invocation of `CheckChainContinuity`, no `AuditChainGap` alert
   trigger from gateway startup, and no respect for
   `audit.startupChainCheckEntries`.
+
+**Resolution (19f567f0):** Added `integrity.CheckChainContinuityRecent`, a
+windowed walk over the most-recent N rows per tenant that asserts the genesis
+sentinel only when the window reaches the chain head and otherwise verifies
+sequence contiguity plus `prev_hash` links (both gap-free in normal operation
+because the durable store assigns `sequence_number = tail+1` transactionally).
+The gateway invokes it at startup after Postgres is reachable
+(`audit.startupChainCheckEntries`, default 1000, via
+`LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES`), emits the §16.1
+`lenny_audit_chain_integrity_total{state}` counter per tenant (so the
+`AuditChainGap` alert fires on `state="broken"`), logs the spec WARN message
+with the gap boundary sequences and timestamp range, and does not refuse to
+start.
 
 ### - [ ] F-12.3.10 — PgBouncer Deployment, PDB, readiness probe, and exporter are not chart-managed (§12.3 lines 40–47) [Medium] — OPEN
 
@@ -18043,7 +18075,7 @@ Evidence:
 Result: in self-managed PgBouncer mode, the second layer of defense
 (connection-checkout sentinel) is unconfigured.
 
-### - [ ] F-12.3.13 — `billingFlushIntervalMs`, `billingFlushBatchSize`, `billingFlushMaxPending`, `billing_flush_pressure` not tunable / not emitted (§12.3 line 76) [Medium] — OPEN
+### - [ ] F-12.3.13 — `billingFlushIntervalMs`, `billingFlushBatchSize`, `billingFlushMaxPending`, `billing_flush_pressure` not tunable / not emitted (§12.3 line 76) [Medium] — CLOSED
 
 The spec mandates configurable buffering of billing inserts (default
 500ms / 50 events / 500 max pending), with `billing_flush_pressure` metric
@@ -18060,6 +18092,17 @@ Evidence:
   --include="*.yaml"` returns no results.
 - `grep -rn "billing_flush_pressure\|BillingFlushPressure" --include="*.go"`
   returns no hits. The metric is not emitted.
+
+**Resolution (19f567f0):** `failover.DefaultFlushInterval` corrected to 500ms;
+the `Pipeline` `Options` gained `BatchSize` (billingFlushBatchSize, default 50,
+bounding the per-flush multi-row drain), `MaxPending` (billingFlushMaxPending,
+default 500, clamped below the write-ahead cap) and `OnFlushPressure`. An
+`Append` that leaves the Tier 2 buffer over `MaxPending` emits the new
+`lenny_billing_flush_pressure_total` counter and triggers an immediate flush;
+`RunFlusher` loops the batched drain until empty. The three knobs are exposed as
+`--billing-flush-interval-ms/-batch-size/-max-pending` (env + `billing.flush*`
+Helm values). `billing_flush_pressure` is implementation-named so it is excluded
+from the §16.1 catalog (the `rateLimitRejected` precedent).
 
 ### - [ ] F-12.3.14 — `audit.batchingEnabled`, `auditFlushIntervalMs`, [Medium] — OPEN
 `auditFlushBatchSize`, and `audit.syncWritePoolSize` are not implemented (§12.3 lines 79–81)
