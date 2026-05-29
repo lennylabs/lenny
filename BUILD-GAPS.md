@@ -13159,7 +13159,7 @@ corresponding `_test.go` files were inspected for coverage.
 
 ### Findings
 
-### - [ ] F-10.6.1 — 01  Explicit-environment session endpoint does not check membership of the named environment [High] — OPEN
+### - [x] F-10.6.1 — 01  Explicit-environment session endpoint does not check membership of the named environment [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-10.6.5 — Both concern environment access control, but one is the missing membership check on the explicit endpoint and the other is the absence of role-level enforcement beyond membership.
 
@@ -13201,6 +13201,19 @@ only by `memberOfEnvironment(res, parent.Environment)` — but that check
 runs at delegate time, not at session-create time, and a session in an
 environment the caller does not belong to is still persisted and
 auditable). The explicit endpoint is a confused-deputy hole.
+
+**Resolution (2c91f2b5):** `requireEnvironmentAdmission` now routes a
+session create that names an environment through a new
+`requireExplicitEnvironmentAdmission` branch (`pkg/gateway/sessionserver/runtimes.go`).
+It rejects with 403 FORBIDDEN when (a) the named environment is not
+defined in the caller's tenant (`environment_not_found`), (b) the caller
+holds no role in it (`not_environment_member`), or (c) the requested
+runtime is not admitted by the environment's `runtimeSelector`
+(`runtime_not_in_environment`). The gate is nil-safe (no registry / no
+principal passes through, preserving the dev-header posture). Role
+enforcement is the §10.6 line 605 check shared with F-10.6.5. Six tier-1
+tests in `create_test.go` cover the unknown/non-member/out-of-scope-runtime
+rejections, the creator-admitted path, and the no-principal pass-through.
 
 ### - [ ] F-10.6.2 — 02  `mcpRuntimeFilters` capability filtering is stored but never enforced [High] — OPEN
 
@@ -13269,7 +13282,7 @@ bodies and is invisible on `GET`. This compounds with F-10.6-02: there
 is no connector capability filter either, but here even the schema is
 missing.
 
-### - [ ] F-10.6.4 — 04  Bilateral cross-environment-delegation wire shape uses `environment`, spec defines `targetEnvironment`/`sourceEnvironment` [High] — OPEN
+### - [x] F-10.6.4 — 04  Bilateral cross-environment-delegation wire shape uses `environment`, spec defines `targetEnvironment`/`sourceEnvironment` [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-10.6.13 — F-10.6.4 is the wire field-name deviation (environment vs targetEnvironment/sourceEnvironment) while F-10.6.13 is the outbound wildcard asymmetry; same subsystem, different defects.
 
@@ -13301,7 +13314,19 @@ falls back to the empty-string peer which `outboundPermits` and
 lines 213–232 will never match. The result is that an admin POST in
 the spec's documented form silently creates no-op rules.
 
-### - [ ] F-10.6.5 — 05  No environment `Role` enforcement gates beyond membership detection [High] — OPEN
+**Resolution (2c91f2b5):** `CrossEnvRulePayload` is split into
+`CrossEnvOutboundRulePayload` (`targetEnvironment`) and
+`CrossEnvInboundRulePayload` (`sourceEnvironment`) in
+`pkg/gateway/admin/environments.go`, with direction-specific
+`toCrossEnvOutbound`/`toCrossEnvInbound`/`fromCrossEnvOutbound`/`fromCrossEnvInbound`
+conversions. Both wire field names now round-trip to the shared
+`environmentstore.CrossEnvRule.Environment` instead of being dropped. The
+spec's documented YAML form posts correctly and `GET` emits the §10.6
+field names. Tier-1 test `TestCrossEnvironmentDelegationWireRoundTrip_spec_10_6_613`
+asserts the peer names persist and the JSON keys are
+`targetEnvironment`/`sourceEnvironment` with no legacy `environment` key.
+
+### - [x] F-10.6.5 — 05  No environment `Role` enforcement gates beyond membership detection [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-10.6.1 — Both concern environment access control, but one is the missing membership check on the explicit endpoint and the other is the absence of role-level enforcement beyond membership.
 
@@ -13336,6 +13361,23 @@ sessions in it (or, with F-10.6-01, in any environment), reach the
 environment's runtimes through transparent filtering, and (through the
 parent session's `Environment` field) reach cross-environment-delegated
 runtimes — none of which the `viewer` role is meant to grant.
+
+**Resolution (2c91f2b5):** the role enum is no longer dead weight — the
+session-create path now consults the resolved role and requires at least
+`creator` (`role.AtLeast(environment.RoleCreator)`) for every session that
+names an environment, whether via the explicit endpoint or the body field
+(`requireExplicitEnvironmentAdmission`, §10.6 line 605 "creator creates
+sessions"). This is the load-bearing role gate. The two remaining items
+the finding enumerates are addressed by construction: (1) the
+transparent-filter runtime *view* returning the union to a `viewer` is the
+read-only access the `viewer` role grants (§10.2 line 262 — viewers may
+view runtimes), so it is not an escalation; (2) cross-environment
+delegation reach via `parent.Environment` is now transitively gated,
+because a session can only carry an environment if a `creator`+ created it,
+so a `viewer` can no longer obtain the parent session that the delegate-time
+`memberOfEnvironment` check operates on. Verified by
+`TestExplicitEnvironmentViewerRejected_spec_10_6_605` (viewer → 403) and
+`TestExplicitEnvironmentCreatorAdmitted_spec_10_6_605` (creator → 201).
 
 ### - [ ] F-10.6.6 — 06  Tenant RBAC Config payload omits `identityProvider`, `tokenPolicy`, `capabilities`, `mcpAnnotationMapping` [High] — OPEN
 
