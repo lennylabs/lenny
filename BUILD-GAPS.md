@@ -21329,7 +21329,7 @@ Evidence:
   list)
 - spec/13_security-model.md:16, 23
 
-### - [ ] F-13.1.8 — 1-02 — Pod-security baseline (capabilities, RO root, seccomp, runAsNonRoot) is not enforced on ephemeral containers [Medium] — OPEN
+### - [x] F-13.1.8 — 1-02 — Pod-security baseline (capabilities, RO root, seccomp, runAsNonRoot) is not enforced on ephemeral containers [Medium] — CLOSED
 
 §13.1 line 8-9 mandate "All dropped" capabilities and a read-only root
 filesystem on every container in the pod; §13.1 line 27 calls out
@@ -21366,7 +21366,25 @@ Evidence:
   (CREATE only)
 - spec/13_security-model.md:8-9, 27
 
-### - [ ] F-13.1.9 — 1-03 — Agent pods do not set `automountServiceAccountToken: false`; SA token mounting is implicit, not the spec's projected token [Medium] — OPEN
+**Resolution (ffa24ca1):** The `lenny-pod-security` translator
+(`translatePodSpec`) now walks `pod.Spec.EphemeralContainers` and
+flattens them into the validator's container set via the
+field-for-field `corev1.Container(ec.EphemeralContainerCommon)`
+conversion, so the §13.1 per-container baseline (no privileged, drop
+ALL caps, read-only root, RuntimeDefault seccomp) applies to ephemeral
+debug containers. The webhook config gains a second rule for the
+`pods/ephemeralcontainers` subresource (`operations: ["UPDATE"]`, the
+only verb that adds an ephemeral container), so the baseline is checked
+when one is attached post-hoc. The dedicated
+`lenny-ephemeral-container-cred-guard` still owns the credential-read
+boundary; this rule covers the general baseline so an actor with
+`update` on `pods/ephemeralcontainers` cannot attach a privileged or
+capability-adding container. Tier-1
+`TestPodSecurityValidatesEphemeralContainers_spec_13_1` (privileged
+ephemeral container rejected) and tier-2 helm-unittest (the
+`pods/ephemeralcontainers` UPDATE rule renders) cover it.
+
+### - [x] F-13.1.9 — 1-03 — Agent pods do not set `automountServiceAccountToken: false`; SA token mounting is implicit, not the spec's projected token [Medium] — CLOSED
 
 §13.1 Credentials row (line 12) states "No standing credentials;
 projected SA token + short-lived credential lease only". The agent pod
@@ -21391,7 +21409,18 @@ Evidence:
   (`pkg/controller/sandbox/podspec/podspec.go:358-368`)
 - spec/13_security-model.md:12
 
-### - [ ] F-13.1.10 — 1-04 — Egress-capture sidecar inherits `lenny-cred-readers` via pod-level fsGroup; validator only checks `runAsGroup` [Medium] — OPEN
+**Resolution:** Verify-closed — resolved by `b04e6923`
+(F-6.1.4/F-6.1.8/F-6.1.9 agent-pod identity surface), the finding's
+evidence is stale. `basePod` sets `AutomountServiceAccountToken:
+ptr.To(false)` unconditionally, so the kubelet's long-lived
+cluster-audience default token is never mounted, and
+`injectSATokenVolume` mounts the §10.3 audience-bound projected token
+(900s TTL) when an audience is configured — exactly the §13.1 line 12
+"projected SA token + short-lived credential lease only" posture. Added
+tier-1 lock-in test `TestBuildDisablesDefaultSATokenAutomount_spec_13_1`
+(ffa24ca1) so a regression that drops the automount-disable is caught.
+
+### - [x] F-13.1.10 — 1-04 — Egress-capture sidecar inherits `lenny-cred-readers` via pod-level fsGroup; validator only checks `runAsGroup` [Medium] — CLOSED
 
 §13.1 line 27 confines the `lenny-cred-readers` GID to "exactly two
 UIDs: the adapter UID (which writes the file) and the agent UID (which
@@ -21428,7 +21457,24 @@ Evidence:
   RunAsGroup only)
 - spec/13_security-model.md:27
 
-### - [ ] F-13.1.11 — 1-05 — Adapter and agent UIDs are not explicitly declared in `supplementalGroups`; spec's normative wording is not satisfied [Medium] — OPEN
+**Resolution (ffa24ca1):** `ValidateAgentPod` now inspects each
+container's `VolumeMounts` (new `ContainerSpec.VolumeMounts` +
+`PodSpec.CredVolumeName`, populated by the translator). A non-adapter,
+non-agent container that mounts the credential volume by name, or
+mounts a path equal to or under `/run/lenny`, is rejected with
+`POD_SPEC_CRED_GROUP_OVERBROAD`. Per the §13.1 line 27 four-condition
+rationale, the volume mount — not group membership — is the operative
+credential-read surface, because the pod-level fsGroup grants every
+container `lenny-cred-readers` membership regardless of its explicit
+`runAsGroup`; the mount check closes that side-channel for regular
+containers exactly as the ephemeral cred-guard condition (iv) does for
+ephemeral ones. The egress-capture sidecar mounts `/run/lenny-capture`,
+a sibling of `/run/lenny` (not nested under `/run/lenny/`, cross-checks
+F-6.4.16), so it is correctly allowed. Tier-1: by-name mount, by-path
+mount, sibling-path allow, cred-container allow, and the producer-level
+`TestBuildEgressCaptureSidecarStaysOffCredentialPath_spec_13_1`.
+
+### - [x] F-13.1.11 — 1-05 — Adapter and agent UIDs are not explicitly declared in `supplementalGroups`; spec's normative wording is not satisfied [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-13.1.15 — Both concern supplementalGroups, but one is the podspec producer not declaring the GIDs and the other is the validator API field never being consulted.
 
@@ -21466,6 +21512,25 @@ Evidence:
   (PodSpec.SupplementalGroups field defined but unused in
   ValidateAgentPod, lines 109-191)
 - spec/13_security-model.md:25
+
+**Resolution (ffa24ca1):** Closed on both sides. Producer:
+`podspec.basePod` now sets pod-level
+`SecurityContext.SupplementalGroups: []int64{CredReadersGID}`, the
+§13.1 line 25 explicit declaration that makes both the adapter UID and
+the agent UID members of `lenny-cred-readers` rather than relying on
+the kubelet's implicit fsGroup-to-supplementary-group propagation.
+Validator: `ValidateAgentPod` now requires the cred-readers GID to be
+present in `spec.SupplementalGroups` (the previously-dead
+`PodSpec.SupplementalGroups` field), rejecting a pod that sets the
+fsGroup but omits the explicit declaration with
+`POD_SPEC_CRED_FSGROUP_MISSING` — the §13.1 line 25 webhook obligation
+to "validate the presence ... of the fsGroup and supplementalGroups
+settings". Tier-1:
+`TestBuildDeclaresCredReadersSupplementalGroups_spec_13_1` (producer)
+and `TestValidateRejectsMissingCredSupplementalGroups_spec_13_1` /
+`TestValidateRejectsWrongCredSupplementalGroups_spec_13_1` (validator).
+Closes F-13.1.15 in the same commit (the validator now consults the
+field the producer emits).
 
 ### - [ ] F-13.1.12 — 1-06 — Pod-level baseline (capabilities, RO root, seccomp) is not enforced on `lenny-system` pods by either webhook or preflight [Medium] — OPEN
 
@@ -21543,7 +21608,7 @@ implementation ("non-root, distinct UIDs"); Helm-tunability of the GID is
 a forward-looking ergonomics item tracked alongside F-13.1.16, not a §13.1
 correctness gap.
 
-### - [ ] F-13.1.15 — 1-02 — `pkg/podsecurity.PodSpec.SupplementalGroups` is part of the validator API but never consulted [Low] — DEFERRED
+### - [x] F-13.1.15 — 1-02 — `pkg/podsecurity.PodSpec.SupplementalGroups` is part of the validator API but never consulted [Low] — CLOSED
 
 **Potential overlap** (confidence: high) — F-13.1.11 — Both concern supplementalGroups, but one is the podspec producer not declaring the GIDs and the other is the validator API field never being consulted.
 
@@ -21565,7 +21630,14 @@ Evidence:
 - `pkg/podsecurity/podsecurity.go:109-191` (field never read in
   ValidateAgentPod)
 
-**Resolution:** Deferred — blocked by F-13.1.11 (still OPEN Medium, the controller-side producer not declaring supplementalGroups). The validator can only consume what the producer emits; resolving F-13.1.11 (controller stamps the cred-readers GID into `supplementalGroups`) is the prerequisite for the validator to enforce the explicit-declaration invariant. The current `FSGroup` check is functionally sufficient for the cross-UID delivery (kubelet automatically adds fsGroup to every container's supplementary groups), so this is a doc-correctness gap rather than a runtime risk.
+**Resolution (ffa24ca1):** Unblocked by F-13.1.11 and closed with it.
+F-13.1.11 made `podspec.basePod` stamp the cred-readers GID into the
+pod-level `supplementalGroups`; `ValidateAgentPod` now reads the
+previously-dead `PodSpec.SupplementalGroups` field and rejects a pod
+that omits the GID (`POD_SPEC_CRED_FSGROUP_MISSING`). The field is no
+longer dead code — the validator enforces the explicit-declaration
+invariant the §13.1 line 25 webhook obligation requires. See F-13.1.11
+for the test list.
 
 ### - [ ] F-13.1.16 — 1-03 — Non-root UIDs are pinned to spec-generic constants without a Helm or per-pool override [Low] — DEFERRED
 
