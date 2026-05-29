@@ -40340,7 +40340,7 @@ Enumerated the normative requirements from §27.3 and §27.3.1. The spec organiz
 
 ### Findings
 
-### - [ ] F-27.3.1 — `pg:revoked:{jti}` per-request revocation check is never consulted by the auth chain [High] — OPEN
+### - [x] F-27.3.1 — `pg:revoked:{jti}` per-request revocation check is never consulted by the auth chain [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-27.6.3 — Both report that IsBearerRevoked exists but is never called by the auth chain, so the per-request playground bearer-revocation check never runs.
 
@@ -40366,6 +40366,8 @@ Consequences:
 This is the §27.3.1 correctness boundary the spec explicitly designates as "the correctness guarantee that a logout on one replica cannot be bypassed by presenting the same cookie or bearer to a peer replica."
 
 **Severity rationale (High):** correctness/security regression. The §27.3.1 contract advertises immediate cross-replica revocation; the implementation provides none.
+
+**Resolution (commit 88a53d5d):** Closed together with its duplicate F-27.6.3. The auth middleware (`pkg/gateway/middleware/auth/auth.go`) gained an `Options.PlaygroundRevocations` hook (interface `IsBearerRevoked(ctx, tenant, jti) (bool, error)`); `serveBearer` consults it after tenant extraction for every verified bearer whose `origin` claim is `playground` (§27.3 line 63 literal, duplicated to avoid an import cycle). A revocation hit → `401 UNAUTHORIZED` with `details.reason: "bearer_revoked"` (§27.3.1 line 95); a store-unreachable error → `503 REDIS_UNAVAILABLE` fail-closed (§27.3.1 line 97). `cmd/lenny-gateway/main.go` hoists the `pg` handler into the auth Options so the check runs on every replica. Non-playground bearers carry no origin claim and skip the check.
 
 ### - [ ] F-27.3.2 — User invalidation (`POST /v1/admin/users/{user_id}/invalidate`) does not revoke playground sessions [High] — OPEN
 
@@ -40536,7 +40538,7 @@ A minimal fix is to store the `tenant → session-id` mapping under a fan-in ind
 
 **Resolution:** Verify-closed per the finding's own framing ("the implementation choice is the correct one"). `Strict` would drop the OAuth callback cookie; `Lax` is the correct choice and is what the code emits. Pinning the value in §27.3.1 is a spec edit that rule B forbids.
 
-### - [x] F-27.3.10 — Mandated integration tests are absent [Low] — DEFERRED
+### - [x] F-27.3.10 — Mandated integration tests are absent [Low] — CLOSED
 
 Spec §27.3.1 "Integration test" (line 98) mandates:
 
@@ -40553,7 +40555,7 @@ The package's `TestMemorySessionStorePerTenantIsolation`, `TestMemorySessionStor
 
 **Severity rationale (Low):** absence of the spec-mandated integration tests. The underlying capability gap is captured in the High finding above; this is the corresponding test-coverage gap.
 
-**Deferred:** Verify-closed per the finding's own framing ("the underlying capability gap is captured in the High finding above; this is the corresponding test-coverage gap"). Gated on F-27.3.1 / F-27.6.3 (per-request bearer-revocation check unwired, High, OPEN) — until the auth chain calls `IsBearerRevoked`, `TestPlaygroundSessionRevocationCrossReplica` would only assert the absent enforcement, so the test lands with the wiring fix as a single coordinated change.
+**Resolution (commit 4541d078):** Unblocked by F-27.3.1 / F-27.6.3 (per-request bearer-revocation check now wired) and F-27.6.7 (cross-replica pattern subscription). Added both spec-mandated tests in `pkg/gateway/playground/cross_replica_test.go`: `TestPlaygroundSessionRevocationCrossReplica` asserts a logout/revoke on replica A invalidates replica B both before pub/sub delivery (a subscription-less replica observes the marker via the authoritative Redis check) and after (a subscribed replica observes it via the pub/sub-warmed negative cache); `TestRedisSessionStoreTenantKeyIsolation` extends the §12.4 tenant-key-isolation guarantee to the `pg:sess:*` and `pg:revoked:*` prefixes (a record/marker for tenant acme is invisible to a tenant globex request reusing the same session id / jti).
 
 ### - [x] F-27.3.11 — Mode-polymorphic mint endpoint, per-mode admission, and PKCE state-cookie are implemented correctly [Info] — CLOSED
 
@@ -40809,13 +40811,15 @@ Spec: line 200 — "**Hard duration cap.** `min(sandboxTemplate.spec.maxSessionM
 
 Evidence: `pkg/gateway/playground/playground.go:214` defines `(Config).effectiveSessionMinutes(runtimeMinutes int) int`. Its only callers are the package's own unit tests (`pkg/gateway/playground/playground_test.go:129-133`). `grep -rn 'effectiveSessionMinutes' pkg/ cmd/` finds no caller in the session-creation path. Neither `derive.go`, `start.go`, nor `sessionserver.go` inspects the JWT `Origin` claim or consults the playground `Config`. A playground-originated session is therefore bounded only by the sandbox-template `maxSessionMinutes`; the configured `playground.maxSessionMinutes` cap (default 30) is dead config.
 
-### - [ ] F-27.6.3 — Per-request playground bearer-revocation check is not wired into the auth chain. (High) [Medium] — OPEN
+### - [x] F-27.6.3 — Per-request playground bearer-revocation check is not wired into the auth chain. (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-27.3.1 — Both report that IsBearerRevoked exists but is never called by the auth chain, so the per-request playground bearer-revocation check never runs.
 
 Spec: line 204 — "The authoritative per-request revocation check runs on every playground-origin request (identified by the `origin: "playground"` claim) against `pg:revoked:{jti}`."
 
 Evidence: `pkg/gateway/playground/auth.go:283` exports `(Handler).IsBearerRevoked(ctx, tenant, jti)` and `pkg/gateway/playground/sessionrecord.go:339` implements the Redis lookup with a negative cache. `grep -rn 'IsBearerRevoked' cmd/ pkg/auth/ pkg/gateway/` finds zero callers outside the playground package itself and its tests. The gateway auth middleware constructed in `cmd/lenny-gateway/main.go` mounts `pg.PlaygroundRoutes()` at `/playground/*` and `pg.TokenRoutes()` at `/v1/playground/token` (lines 1419-1421) but never injects the `IsBearerRevoked` hook into the bearer-token validator used by `/v1/sessions`, `/v1/admin/*`, or the MCP streaming endpoints. A bearer minted by `/v1/playground/token` and subsequently revoked via `POST /playground/auth/logout` continues to be honoured on the data path until its `exp` elapses, defeating the §27.6 logout/idle/admin-revoke semantics.
+
+**Resolution (commit 88a53d5d):** Closed with its duplicate F-27.3.1. The auth middleware now injects the playground `IsBearerRevoked` check via `Options.PlaygroundRevocations`; `serveBearer` consults it for every `origin: "playground"` bearer (hit → `401` `bearer_revoked`; store error → `503 REDIS_UNAVAILABLE` fail-closed). See the F-27.3.1 resolution for the full description and the auth-middleware test matrix (`playground_revocation_test.go`: revoked/live/store-error/non-playground-skip/no-checker-wired).
 
 ### - [ ] F-27.6.4 — `user.invalidated` and admin-revocation paths never call into the playground revocation primitive. (High) [Medium] — OPEN
 
@@ -40829,17 +40833,21 @@ Spec: line 202 — "On browser close / navigation away, the client sends `sessio
 
 Evidence: the client side is implemented at `pkg/gateway/playground/ui/app.js:465-466`, which invokes the `lenny/session_cancel` tool with `reason: "playground_client_closed"`. `grep -rn 'lenny/session_cancel\|session_cancel\|sessionCancel\|playground_client_closed' pkg/gateway/sessionserver/ pkg/gateway/` finds no server-side tool registration, dispatch path, or reason-aware handler. `pkg/gateway/sessionserver/usage.go:95` references `opsevents.EventSessionCancelled` only for usage accounting. The "best-effort hint" pathway therefore drops on the floor: the gateway neither tears the session down promptly nor records a metric for the reason. The spec's claim that the idle-timeout path is the fallback when the cancel hint fails to deliver still requires the cancel-success path to exist as the fast track; absent F1's idle-cap enforcement, neither path operates.
 
-### - [ ] F-27.6.6 — Logout-propagation metric measures the local Redis write, not cross-replica visibility. (Medium) [Medium] — OPEN
+### - [x] F-27.6.6 — Logout-propagation metric measures the local Redis write, not cross-replica visibility. (Medium) [Medium] — CLOSED
 
 Spec: line 204 — "The **logout propagation SLO** (P99 ≤ 500 ms across all gateway replicas) is pinned in §27.3.1 and measured via the `lenny_playground_session_revocation_propagation_seconds` histogram in §27.8."
 
 Evidence: `pkg/gateway/playground/auth.go:247-256` measures elapsed time across the single `sessions.RevokeSession` call inside the revoking replica and emits the histogram with `outcome="redis_authoritative"` (`metrics.go:128`). That timer is bounded by a Redis MULTI/EXEC round-trip on the issuing replica; it does not observe the moment at which the deny-list entry becomes visible to a peer replica's auth path (via either the Redis `EXISTS` consult or the pub/sub-warmed negative cache). The spec's SLO is an end-to-end "across all gateway replicas" metric and the implementation does not measure that quantity; the histogram is mis-labelled relative to its semantic. A peer-replica observability hook (for example, the time between a `PUBLISH` and the subscribing replica's cache-insert) is not wired.
 
-### - [ ] F-27.6.7 — Cross-tenant fan-out subscribes only to a startup-time tenant list, leaking deny-list updates for new tenants. (Medium) [Medium] — OPEN
+**Resolution (commit 88a53d5d):** Removed the mislabeled local-write `redis_authoritative` sample from `revokeSessionRecord`. The revocation pub/sub payload now carries `(originReplicaID|publishNano|jti)`; the subscribe loop (`handleRevocationMessage`) computes `now − publishNano` on receipt and records the §27.8 histogram under `outcome="pubsub_delivered"` — the genuine cross-replica visibility latency §27.8 line 241 defines ("from when written on the originating replica to when peer replicas observe it"). Messages a replica published itself (origin id == self) warm the cache but are not sampled. A dropped subscription re-subscribes and records the outage duration under `outcome="resubscribe"` (§27.3.1 line 96). The `redis_authoritative` outcome is intentionally not emitted per-request to avoid histogram skew (a Redis-`Exists` hit recurs on every request, not once per propagation). Pure helpers + a miniredis cross-replica end-to-end test cover the path.
+
+### - [x] F-27.6.7 — Cross-tenant fan-out subscribes only to a startup-time tenant list, leaking deny-list updates for new tenants. (Medium) [Medium] — CLOSED
 
 Spec: line 204 — "the in-process negative-cache warmed by pub/sub is a latency optimization."
 
 Evidence: `cmd/lenny-gateway/main.go:1400-1402` iterates `playgroundSubscribeTenants(pgCfg)` once at startup and spawns one `SubscribeRevocations` goroutine per tenant returned. There is no per-tenant subscription enrolment when a new tenant is provisioned post-startup. In multi-tenant deployments (`auth.multiTenant=true`) the pub/sub channel for a tenant created after gateway start is never consulted, so the negative cache for that tenant is never warmed. The Redis `EXISTS` fallback still gives correctness, but the cache-acceleration property the spec specifies as "warmed by pub/sub" is absent for those tenants. This compounds F6: the propagation SLO measurement, were it implemented, would degrade for late-bound tenants.
+
+**Resolution (commit 88a53d5d):** Replaced the per-tenant `SubscribeRevocations` startup loop (and the now-dead `playgroundSubscribeTenants`) with a single `SubscribeAllRevocations` using `PSUBSCRIBE t:*:pg:revocations`. One pattern subscription covers every tenant's revocation channel, including tenants provisioned after gateway start, so the §27.6 line 204 / §27.3.1 line 96 "every replica subscribes" guarantee holds for late-bound tenants without a per-tenant enrolment step. The consume loop extracts the tenant from each concrete channel name (`tenantFromRevocationChannel`) for the per-tenant negative-cache key, preserving §12.4 tenant isolation. A miniredis test proves a peer revocation for a never-pre-registered tenant warms the subscriber's cache.
 
 ### - [ ] F-27.6.8 — Audit labelling guarantee for `origin=playground` on every session record is unverifiable. (Medium) [Medium] — OPEN
 
@@ -40855,9 +40863,11 @@ Evidence: `pkg/gateway/playground/sessionrecord.go:157-176` implements `MemorySe
 
 **Resolution:** `cmd/lenny-gateway/main.go` now logs a startup WARNING when the playground falls back to `MemorySessionStore` (no `--redis-url`), citing §27.6 line 204 and stating that production deployments MUST set `--redis-url` so bearer revocations are durable across restarts and propagate across replicas. The message surfaces in the gateway's standard log stream so an operator running a Tier-2/3 deployment without Redis sees the violation at boot rather than discovering it on a post-restart audit.
 
-### - [ ] F-27.6.10 — `revokedMarkerTTL` derives the marker lifetime from the record's `CurrentExp`, which is never updated when a bearer is minted. (Medium) [Medium] — OPEN
+### - [x] F-27.6.10 — `revokedMarkerTTL` derives the marker lifetime from the record's `CurrentExp`, which is never updated when a bearer is minted. (Medium) [Medium] — CLOSED
 
 Evidence: `pkg/gateway/playground/sessionrecord.go:45` defines `CurrentExp` as the "`exp` of the most-recently-minted bearer", and `auth.go:294-303` uses it to compute `revokedMarkerTTL`. `grep -rn 'CurrentExp' pkg/gateway/playground/` shows no callsite that writes `CurrentExp` outside the test-fixture constructor (`sessionrecord_test.go:59`). The token-mint path in `token.go` adds the new JTI to `BearerJTIs` but does not update `CurrentExp`. As a result, every revocation call falls through to the `rec.CurrentExp == 0` branch and uses `BearerTTL + 5s`. That branch is conservative for the just-issued bearer, but for an older bearer whose actual `exp` is close to now, it sets a longer-than-necessary marker; for a bearer whose `exp` is in the past but whose grace skew is exhausted, the marker is still applied, which is harmless. The functional impact is minor (markers live a little longer than the §27.3.1 "remaining bearer lifetime plus skew budget" formula), but the inconsistency between the comment-stated computation and the actual behaviour is a maintenance trap.
+
+**Resolution (commit 88a53d5d):** Verify-closed — the evidence is stale. `pkg/gateway/playground/token.go:271` already sets `updated.CurrentExp = exp.Unix()` on every successful mint in the oidc path (the only auth mode carrying a server-side session record; apiKey/dev mint with `ref == nil` have no record to update, which is correct). `revokedMarkerTTL` therefore takes the live-exp branch, matching the §27.3.1 line 93 "rewrite the session record in place with the new bearer jti/exp" contract. Added a regression test (`token_currentexp_test.go`) asserting the minted bearer's `exp` claim equals the record's stamped `CurrentExp`.
 
 ### - [x] F-27.6.11 — `lenny_playground_sessions_created_total` counter is defined but the session-creation path does not call `sessionCreated`. (Low) [Medium] — DEFERRED
 
