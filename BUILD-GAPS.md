@@ -13658,7 +13658,7 @@ spec mandates is unbuilt and unconnected.
 
 ---
 
-### - [ ] F-10.7.2 — 02  OpenFeature targeting circuit breaker (SCL-023) is unimplemented; metric is declared but never emitted [High] — OPEN
+### - [x] F-10.7.2 — 02  OpenFeature targeting circuit breaker (SCL-023) is unimplemented; metric is declared but never emitted [High] — CLOSED
 
 **Spec:** §10.7 lines 835–844 — every tenant requires a per-tenant circuit
 breaker on the OpenFeature evaluation hot path: open after 5 consecutive
@@ -13693,6 +13693,18 @@ every session creation on a tenant with a degraded provider pays the full
 configured `timeoutMs` (default 200ms), so under sustained provider failure
 the gateway absorbs the cost the spec is designed to bound. The corresponding
 alert is also fundamentally inert.
+
+**Resolution** (commit `d52ad11a`): Added a per-(tenant, provider) breaker
+(`pkg/gateway/sessionserver/targetingbreaker.go`) consulted inside
+`buildExternalEvaluator`'s closure — it opens after `failureThreshold`
+consecutive failures within `windowSeconds`, stays open `openDurationSeconds`,
+then admits one half-open probe (success closes, failure re-arms). While open
+the gateway skips the OFREP call entirely. The
+`lenny_experiment_targeting_circuit_open{tenant_id, provider}` gauge is now
+registered and set on transitions, so the §16.5 alert can fire. Config block
+`experimentTargeting.circuitBreaker.{failureThreshold=5, windowSeconds=10,
+openDurationSeconds=30}` added to `TargetingConfig` with default-aware
+accessors, Clone, and non-negative Validate.
 
 ---
 
@@ -14031,7 +14043,7 @@ documented error catalog is divergent from the actual wire response.
 
 ---
 
-### - [ ] F-10.7.12 — 12  `lenny_eval_aggregates` materialized view is not defined in any migration [Medium] — OPEN
+### - [ ] F-10.7.12 — 12  `lenny_eval_aggregates` materialized view is not defined in any migration [Medium] — DEFERRED
 
 **Spec:** §10.7 line 1088 — "the materialized view (`lenny_eval_aggregates`)
 is defined in the schema migration system (alongside all other DDL) and is
@@ -14057,9 +14069,23 @@ who would otherwise opt into the materialized-view path have no view to
 refresh. The default `0`-value path (on-read aggregation from base tables) is
 functional and is the only path the gateway exercises.
 
+**Deferred:** `eval_results` is `FORCE ROW LEVEL SECURITY` (§12.3), so a
+cross-tenant `REFRESH MATERIALIZED VIEW` run by the gateway's `lenny_app` role
+is RLS-filtered to a single tenant — populating the view correctly requires a
+dedicated `BYPASSRLS` aggregator role owning the matview plus a `SECURITY
+DEFINER` refresh function (and a tenant-filtering view for the gateway read).
+That is a §12.3/§13 security-model addition the cited §10.7 text does not
+specify, and the security-sensitive DDL (`CONCURRENTLY` refresh,
+`percentile_disc` over jsonb dimensions, the definer function) cannot be
+validated against real Postgres in this environment (Docker unavailable, so
+the tier-2 `tests/tier2_component/migrations` harness cannot run). Deferring to
+a dedicated batch where the migration can be applied and the cross-tenant
+isolation re-verified, rather than ship unvalidated DDL that could break the
+prod-schema migration round-trip. The default on-read path remains functional.
+
 ---
 
-### - [ ] F-10.7.13 — 13  Variant-labelled rollback metrics (`lenny_session_error_total`, `lenny_session_duration_seconds`, `lenny_eval_score`) are not emitted [Medium] — OPEN
+### - [x] F-10.7.13 — 13  Variant-labelled rollback metrics (`lenny_session_error_total`, `lenny_session_duration_seconds`, `lenny_eval_score`) are not emitted [Medium] — CLOSED
 
 **Spec:** §10.7 lines 1120–1132 (Manual Rollback Triggers) — the example
 rollback signals depend on three variant-labelled metrics:
@@ -14085,6 +14111,18 @@ not exist at runtime.
 nonetheless required for the documented integration to work. Operators
 following the spec verbatim will write rules against series that the
 gateway never publishes.
+
+**Resolution** (commit `9436e793`): Registered and emitted the §16.1 lines
+161-164 family. `lenny_session_total` / `lenny_session_error_total` /
+`lenny_session_duration_seconds` {tenant_id, session_type, variant_id} are
+emitted at every terminal transition via a new `RecordSessionTerminal` hook
+from `emitTerminalLifecycle` (session_type = §5.2 ExecutionMode; variant_id =
+§10.7 enrollment; the failed state is the error outcome; duration is
+creation-to-terminal wall-clock). `lenny_eval_score` {tenant_id, scorer,
+variant_id} is emitted per submitted eval (scalar score) via a new
+`ObserveEvalScore` hook from `handleEval`. `lenny_session_total` is included
+because §16.1 line 162 makes it the rollback ratio's denominator. Both hooks
+wired from `cmd/lenny-gateway`.
 
 ---
 
