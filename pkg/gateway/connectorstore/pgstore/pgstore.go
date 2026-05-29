@@ -225,6 +225,42 @@ func (s *Store) SoftDelete(ctx context.Context, tenantID, id string, at time.Tim
 	})
 }
 
+// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+// Connectors are tenant-scoped and carry no user attribution, so the
+// method returns (0, nil) — the orchestrator skips connectorstore on
+// user-scoped runs.
+//
+// spec: §12.1 line 5.
+func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+// Hard-deletes every connector owned by tenantID, returning the
+// number of rows removed. The erasure orchestrator invokes this from
+// the §12.8 Phase 4 tenant-deletion controller.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" || tenantID == connectorstore.AllTenantsSentinel {
+		return 0, errors.New("connectorstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM connectors WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 // runRead wraps fn in either a tenant-scoped or all-tenants transaction
 // depending on tenantID. The AllTenantsSentinel value invokes the §4.2
 // platform-admin bypass; concrete tenant ids invoke the per-tenant

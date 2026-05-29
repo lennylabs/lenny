@@ -153,6 +153,44 @@ func (s *Store) Page(ctx context.Context, tenantID, sessionID string, afterSeq u
 	return out, nil
 }
 
+// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+// Transcripts are session-scoped, so the §12.8 orchestrator walks the
+// user's sessions and calls DeleteBySession. DeleteByUser at this
+// layer returns (0, nil).
+//
+// spec: §12.1 line 5.
+func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+// Removes every session_messages row belonging to the tenant by
+// joining the sessions parent. session_messages also cascades on
+// session deletion via the FK, so this is a defensive direct delete
+// for the §12.8 Phase 4 path.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("transcriptstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM session_messages
+			   WHERE session_id IN (SELECT id FROM sessions WHERE tenant_id = $1)`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 // scanEntry reads one row in (seq, role, content, created_at) order.
 func scanEntry(row pgx.Row) (transcriptstore.Entry, error) {
 	var (

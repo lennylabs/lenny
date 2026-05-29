@@ -247,7 +247,7 @@ func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) (int, error
 	return count, nil
 }
 
-// DeleteByTenant implements the §12.2.1 / §14.10 mandatory-erasure
+// DeleteByTenant implements the §12.1 / §14.10 mandatory-erasure
 // interface. Removes every session belonging to tenantID.
 func (s *Store) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	s.mu.Lock()

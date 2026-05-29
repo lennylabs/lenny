@@ -17,6 +17,7 @@ package pgstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -197,6 +198,40 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 		return 0, err
 	}
 	return deleted, nil
+}
+
+// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+// Eval results carry no user_id directly; the §12.8 orchestrator
+// walks the user's sessions and calls DeleteBySession per session.
+// DeleteByUser at this layer returns (0, nil).
+//
+// spec: §12.1 line 5.
+func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+// Removes every eval-result row belonging to tenantID.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("evalstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM eval_results WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
 }
 
 // scanResult reads one row in selectList order into an EvalResult. The

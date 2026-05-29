@@ -173,6 +173,40 @@ func (s *Store) Delete(ctx context.Context, tenantID, name string) error {
 	})
 }
 
+// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+// Custom roles are tenant-scoped, not user-scoped, so the method
+// returns (0, nil); the role definition itself is not removed when a
+// user inside the tenant is erased.
+//
+// spec: §12.1 line 5.
+func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+// Removes every custom-role row belonging to tenantID.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("customrolestore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM custom_roles WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 // scanRole reads one row in selectList order into a CustomRole.
 func scanRole(row pgx.Row) (customrolestore.CustomRole, error) {
 	var (

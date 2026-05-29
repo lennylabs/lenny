@@ -567,3 +567,40 @@ func TestListByRootCrossTenantIsolation_spec_8_9_1010(t *testing.T) {
 		t.Errorf("cross-tenant ListByRoot returned %d rows, want 0", len(got))
 	}
 }
+
+// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant hard-deletes
+// every session row belonging to the tenant; rows owned by other
+// tenants survive unchanged.
+func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_a1", TenantID: "acme", UserID: "alice", State: session.StateRunning})
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_a2", TenantID: "acme", UserID: "bob", State: session.StateRunning})
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_g1", TenantID: "globex", UserID: "carol", State: session.StateRunning})
+
+	n, err := s.DeleteByTenant(ctx, "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteByTenant should remove 2 acme rows, got %d", n)
+	}
+	for _, id := range []string{"sess_a1", "sess_a2"} {
+		if _, err := s.Get(ctx, "acme", id); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("session %s should be erased", id)
+		}
+	}
+	if _, err := s.Get(ctx, "globex", "sess_g1"); err != nil {
+		t.Errorf("globex session must survive: %v", err)
+	}
+}
+
+// spec: §12.1 line 5 — DeleteByTenant is idempotent: a second call on
+// an empty scope returns (0, nil), never ErrNotFound.
+func TestDeleteByTenantIdempotent_spec_12_1(t *testing.T) {
+	s := memstore.New()
+	n, err := s.DeleteByTenant(context.Background(), "acme")
+	if err != nil || n != 0 {
+		t.Errorf("DeleteByTenant on empty store: n=%d err=%v", n, err)
+	}
+}

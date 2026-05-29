@@ -38,6 +38,13 @@ type Entry struct {
 var ErrNotFound = errors.New("transcriptstore: no transcript for session")
 
 // Store is the transcript registry contract.
+//
+// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// mandatory erasure primitives every storage role exposes at the
+// interface level. Transcripts are session-scoped; the §12.8
+// orchestrator walks the user's sessions and calls DeleteBySession.
+// DeleteByUser at this layer is a no-op that returns 0 erased rows;
+// DeleteByTenant hard-deletes every transcript owned by the tenant.
 type Store interface {
 	// Append adds entries to a session's transcript, assigning each
 	// a monotonic Seq. The entries are recorded in the order given.
@@ -50,6 +57,15 @@ type Store interface {
 	// Page returns up to limit entries after afterSeq. Returns
 	// ErrNotFound when the session has no transcript at all.
 	Page(ctx context.Context, tenantID, sessionID string, afterSeq uint64, limit int) ([]Entry, error)
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Transcripts are session-scoped; the orchestrator walks the user's
+	// sessions and calls DeleteBySession per session.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Removes every transcript belonging to tenantID.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // Memory is the in-memory Store implementation.
@@ -61,6 +77,10 @@ type Memory struct {
 
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory { return &Memory{transcripts: map[string][]Entry{}} }
+
+// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// erasure-bearing Store interface.
+var _ Store = (*Memory)(nil)
 
 func key(tenantID, sessionID string) string { return tenantID + "/" + sessionID }
 
@@ -136,7 +156,7 @@ func (m *Memory) DeleteBySession(_ context.Context, tenantID, sessionID string) 
 	return n, nil
 }
 
-// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// DeleteByUser implements the §12.1 mandatory-erasure interface.
 // Transcripts are session-scoped, not user-scoped; the erasure
 // orchestrator walks the user's sessions and calls DeleteBySession
 // per session. DeleteByUser at this layer is a no-op that returns
@@ -145,7 +165,7 @@ func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
 
-// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// DeleteByTenant implements the §12.1 mandatory-erasure interface.
 // Removes every transcript whose key prefix matches the tenant id.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	m.mu.Lock()

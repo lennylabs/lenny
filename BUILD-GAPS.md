@@ -17201,7 +17201,7 @@ Findings count: 3 High, 4 Medium, 2 Low.
 - **Gap:** The spec's "every store role interface MUST expose the erasure primitives ... enforced at compile time" is contradicted by the implementation in almost every direction. Three of the v1 store roles satisfy the contract (`MemoryStore`, `SemanticCache`, `EvictionStateStore`, the last with a signature drift); the rest either have no interface (so the compile-time check is structurally impossible) or have an interface that omits the methods. A deployer wiring an alternative backend for, say, `BillingStore`, `CredentialPoolStore`, or `ArtifactStore` would not be stopped at link time by the absence of `DeleteByUser` / `DeleteByTenant` — the spec's central fail-closed guarantee.
 - **Suggested resolution:** Two options. (a) Lift `DeleteByUser` and `DeleteByTenant` onto every §12.2 store's `Store interface`, normalize the return signature to `error` (or `(int, error)` and update the spec line to admit that variant), introduce an interface where one is currently missing (`LeaseStore`, `QuotaStore`, `EventStore`, `TokenIssuanceStore`, `ArtifactStore`), and add `var _ X = (*concrete)(nil)` checks in each concrete-backend package. (b) Rewrite §12.1 line 5 to scope the compile-time contract to the pluggable roles it actually applies to (the spec already calls out `MemoryStore` and `SemanticCache` as the pluggable cases) and explicitly excludes the platform-internal roles whose backends are not deployer-substitutable. Either way, code and spec must converge.
 
-### - [ ] F-12.1.2 — sessionstore.Store interface declares non-conforming DeleteByUser signature and has no DeleteByTenant [High] — OPEN
+### - [x] F-12.1.2 — sessionstore.Store interface declares non-conforming DeleteByUser signature and has no DeleteByTenant [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.2.9 — Both report that the SessionStore interface lacks DeleteByTenant (and the non-conforming DeleteByUser signature), blocking the tenant-deletion Phase 4 contract.
 
@@ -17213,6 +17213,8 @@ Findings count: 3 High, 4 Medium, 2 Low.
   - `pkg/gateway/sessionstore/memstore/memstore.go:138-148` and `:152-167` — the in-memory test backend has both methods, but its `DeleteByTenant` is not declared on the interface and so is reached only via concrete-type assertion (it has no callers in non-test code; the §12.8 tenant-deletion controller is unimplemented — see F-12.1.4).
 - **Gap:** `SessionStore` is the canonical tenant-scoped role and the highest-volume one. Without an interface-level `DeleteByTenant`, the §12.8 "Phase 4 — Delete data" tenant-deletion lifecycle cannot reach the session table through the typed contract; the existing concrete `DeleteByTenant` on memstore is dead code outside tests.
 - **Suggested resolution:** Add `DeleteByTenant(ctx context.Context, tenantID string) error` to `sessionstore.Store`, implement it on `pgstore.Store` (using `DELETE FROM sessions WHERE tenant_id = $1` inside `pgtenant.InTx`), reconcile the `DeleteByUser` return signature with the spec (either widen the spec to admit `(int, error)` or drop the count from the interface and surface it through observability). Add `var _ sessionstore.Store = (*pgstore.Store)(nil)` and `var _ sessionstore.Store = (*memstore.Store)(nil)` checks.
+
+**Resolution:** `DeleteByTenant(ctx, tenantID) (int, error)` added to `sessionstore.Store` and implemented in `pgstore.Store`; memstore already had it. `(int, error)` signature retained to match the orchestrator-side `DeleteByUserFunc` convention; the spec-literal `error`-only divergence remains the F-12.2.11 scope. Closed by the same commit as F-12.2.9.
 
 ### - [ ] F-12.1.3 — LeaseStore, QuotaStore, EventStore, TokenIssuanceStore, ArtifactStore expose only concrete structs, not interfaces — the §12.1 compile-time enforcement is structurally impossible [High] — OPEN
 - **Spec:** Line 5 — "Every store role interface ... MUST expose the erasure primitives ... enforced at compile time by Go interface satisfaction."
@@ -17246,7 +17248,7 @@ Findings count: 3 High, 4 Medium, 2 Low.
 - **Gap:** The spec's mental model is "if the interface lacks the method, the program does not link." The orchestrator's actual model is "if the caller forgets to register the adapter, the store is silently skipped." A custom backend that satisfies (or fails to satisfy) the typed interface produces no visible difference at the orchestrator-call site, undermining the §12.1 compile-time guarantee.
 - **Suggested resolution:** Make `erasure.Config` accept the typed store interfaces directly (e.g., `MemoryStore memorystore.Store`, `SemanticCache semanticcache.Store`, etc.) and call `.DeleteByUser` / `.DeleteByTenant` on each. Then a missing method is a compile error, and a missing field in `Config` is also a compile error (vs. a no-op skip). Keep the `Name` mapping for telemetry only.
 
-### - [ ] F-12.1.6 — §12.2.1 references in concrete store comments do not match the spec section numbering [Medium] — OPEN
+### - [x] F-12.1.6 — §12.2.1 references in concrete store comments do not match the spec section numbering [Medium] — CLOSED
 - **Spec:** §12.1 is the design-principle subsection; §12.2 lists the roles. There is no §12.2.1 in the spec (`grep -n "12\.2\.1" spec/12_storage-architecture.md` returns no matches).
 - **Evidence:** Numerous concrete-store comments cite a non-existent `§12.2.1`:
   - `pkg/gateway/connectorstore/connectorstore.go:263`, `:273` — "§12.2.1 mandatory-erasure interface".
@@ -17262,7 +17264,9 @@ Findings count: 3 High, 4 Medium, 2 Low.
 - **Gap:** The §12.2.1 number is a stale reference, presumably from an earlier version of the spec where the design principle and mandatory-erasure rule lived in §12.2.1. The implementation comments now point at a section that does not exist. Future readers cross-referencing comments back to spec text will misnavigate.
 - **Suggested resolution:** Renumber every `§12.2.1` comment to `§12.1` (the design-principle home of the mandatory-erasure rule), via a single `replace_all` per file. No code changes required.
 
-### - [ ] F-12.1.7 — Several concrete *Memory stores declare DeleteByUser/DeleteByTenant on the struct but not on the Store interface — the typed contract is not what the comments claim [Medium] — OPEN
+**Resolution:** All 35 `§12.2.1` references across 18 source/test files renumbered: `§12.1` for mandatory-erasure citations, `§12.2` for storage-role table references. Verified `grep -rn "§12\.2\.1" pkg/ cmd/` returns zero matches.
+
+### - [x] F-12.1.7 — Several concrete *Memory stores declare DeleteByUser/DeleteByTenant on the struct but not on the Store interface — the typed contract is not what the comments claim [Medium] — CLOSED
 - **Spec:** Line 5 — the spec is explicit that the erasure primitives are "mandatory methods, not optional extensions" on the **interface**.
 - **Evidence:** The following concrete `Memory` types implement `DeleteByUser` and `DeleteByTenant` (often with a comment that asserts "implements the §12.2.1 mandatory-erasure interface"), but the package's `Store` interface declares neither method:
   - `pkg/gateway/connectorstore/connectorstore.go:263-281` — `DeleteByUser` and `DeleteByTenant` on `Memory`; interface at line 75-81 has only CRUD.
@@ -17275,6 +17279,8 @@ Findings count: 3 High, 4 Medium, 2 Low.
   Several of these implementations are also semantic no-ops (`DeleteByUser` returns `(0, nil)` because the store is session-scoped or tenant-scoped, not user-scoped) — see `evalstore.Memory.DeleteByUser`, `transcriptstore.Memory.DeleteByUser`, `customrolestore.Memory.DeleteByUser`, `experimentstore.Memory.DeleteByUser`.
 - **Gap:** The comments claim contract conformance with §12.1, but the typed contract (`Store interface`) does not require it. Concrete-type erasure methods are reachable only by callers who hold the `*Memory` pointer; the typed orchestrator path (`erasure.Config.UserScoped`) cannot enforce them at the interface boundary. Adding a Postgres-backed implementation alongside `Memory` would require duplicating the methods — there is no interface declaration to fail-compile against.
 - **Suggested resolution:** Lift the `DeleteByUser` / `DeleteByTenant` methods onto each `Store interface` so the comments and code align with the §12.1 contract. For roles that are not user-scoped (eval, transcript, custom-role, experiment), keep the no-op `DeleteByUser` semantics but make the method mandatory at the interface level — the §12.8 orchestrator already documents this pattern (it walks the user's sessions and calls `DeleteBySession`, not `DeleteByUser`, on session-scoped stores). The no-op is fine; what is missing is the interface declaration.
+
+**Resolution:** Lifted `DeleteByUser(ctx, tenantID, userID) (int, error)` and `DeleteByTenant(ctx, tenantID) (int, error)` onto the `Store interface` of `connectorstore`, `customrolestore`, `experimentstore`, `transcriptstore`, `userstore`, `evalstore`. Each pgstore gained matching implementations; each Memory got `var _ Store = (*Memory)(nil)` compile-time satisfaction. Tier-1 erasure semantics tests added per store.
 
 ### - [x] F-12.1.8 — evictionstatestore.DeleteByUser carries a fourth sessionIDs argument that diverges from the spec signature [Low] — CLOSED
 - **Spec:** Line 5 — "the erasure primitives `DeleteByUser(ctx, tenantID, userID) error` and `DeleteByTenant(ctx, tenantID) error`."
@@ -17372,11 +17378,13 @@ type Store interface {
 ```
 No erasure adapters present at the interface or in `pkg/gateway/credentialpoolstore/pgstore/pgstore.go`. A user erasure cannot purge the user's credential-pool lease assignments. Tenant deletion (`tenantdeletion.TenantEraser.DeleteByTenant`) has no per-store entry point for credential pools.
 
-### - [ ] F-12.2.4 — 04 — User-credential `Store` (`credentialstore`) lacks erasure adapters (High) [Medium] — OPEN
+### - [x] F-12.2.4 — 04 — User-credential `Store` (`credentialstore`) lacks erasure adapters (High) [Medium] — CLOSED
 
 Spec: §12.1; §12.8 step 8/10/11 (per-store DeleteByUser dependency chain).
 
 `pkg/gateway/credentialstore/credentialstore.go:75-96` defines `Store` with `Register`, `Get`, `List`, `Rotate`, `Revoke`, `Delete`, but no `DeleteByUser` / `DeleteByTenant`. This store holds the §4.9 user-credential registry (envelope-encrypted secret material). The orchestrator wiring in `cmd/lenny-gateway/main.go:1192-1201` does not include a credentialstore eraser — GDPR erasure leaves the user's encrypted credential rows in place.
+
+**Resolution:** `DeleteByUser(ctx, tenantID, userID) (int, error)` and `DeleteByTenant(ctx, tenantID) (int, error)` added to `credentialstore.Store` interface with rejection of empty scope ids, idempotent semantics, and scope-index cleanup. Memory + pgstore implementations + `var _ Store = (*Memory)(nil)` satisfaction; pgstore deletes by `(tenant_id, user_id)`. Orchestrator wiring follow-up tracked separately (the eraser registration in `cmd/lenny-gateway/main.go` is the F-12.2.16 scope).
 
 ### - [ ] F-12.2.5 — 05 — `EventStore` (audit) exposes no erasure interface (High) [Medium] — OPEN
 
@@ -17404,13 +17412,15 @@ Spec: §12.2 ("`LeaseStore` — Redis (fallback: Postgres advisory locks)"); §1
 
 `pkg/gateway/leasestore/leasestore.go:16-17` admits the gap inline: "`§12.4 specifies a Postgres advisory-lock fallback for the Redis outage window; that degraded-mode path is not yet implemented.`" The store also exposes only `Acquire`, `Renew`, `Release`, `Get` — no `DeleteByUser` or `DeleteByTenant`. The §12.8 step-1 user-erasure adapter that releases the user's session leases has no callable method on the store; the erasure orchestrator wiring in `cmd/lenny-gateway/main.go:1166-1201` correspondingly does not include a LeaseStore eraser at all, so step 1 of the documented sequence is unexecuted.
 
-### - [ ] F-12.2.9 — 09 — `SessionStore.DeleteByTenant` missing from production interface (High) [Medium] — OPEN
+### - [x] F-12.2.9 — 09 — `SessionStore.DeleteByTenant` missing from production interface (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.1.2 — Both report that the SessionStore interface lacks DeleteByTenant (and the non-conforming DeleteByUser signature), blocking the tenant-deletion Phase 4 contract.
 
 Spec: §12.1 (mandatory `DeleteByTenant`); §12.8 (tenant-deletion Phase 4 driven by `TenantEraser.DeleteByTenant`).
 
 `pkg/gateway/sessionstore/sessionstore.go:194-225` declares `Store` with `DeleteByUser` but not `DeleteByTenant`. The in-memory `memstore` adds a private `DeleteByTenant(_ context.Context, tenantID string) (int, error)` method (memstore.go:151-160) but it is not on the interface, so the production `pkg/gateway/sessionstore/pgstore/pgstore.go` does not implement it. `tenantdeletion.TenantEraser` (Phase 4) requires a per-store `DeleteByTenant`; the missing interface method means the production sessionstore cannot be plugged into that contract. The §12.1 compile-time check (`var _ Store = (*pgstore.Store)(nil)`) does not catch the gap because `DeleteByTenant` is not part of the interface to satisfy.
+
+**Resolution:** `DeleteByTenant(ctx, tenantID) (int, error)` lifted onto `sessionstore.Store`; pgstore gained matching implementation (`DELETE FROM sessions WHERE tenant_id = $1` under `pgtenant.InTx`). Test fakes in `delegation/service_test.go`, `admin/custom_roles_test.go`, `mcptools/elicitation_perhop_internal_test.go` updated. Closes the §12.8 Phase 4 contract gap; the typed compile-time check now catches both the user and tenant erasure surface. Duplicate F-12.1.2 closed by the same change.
 
 ### - [ ] F-12.2.10 — 10 — `MemoryStore` startup and per-job erasure preflight (§12.8) unimplemented (High) [Medium] — OPEN
 
@@ -17438,7 +17448,7 @@ Actual return-type divergence among the stores that do implement the adapter:
 
 The orchestrator (`pkg/gateway/erasure/erasure.go:28-33`) standardizes on `(int, error)` for `DeleteByUserFunc` and `DeleteBySessionFunc`, which is itself a different signature from the spec text. There is no single named Go interface that captures the §12.1 contract, so the spec's "compile-time enforcement" is not actually compile-enforced anywhere.
 
-### - [ ] F-12.2.12 — 12 — §12.2.1 referenced throughout code but does not exist in the spec (Medium) [Medium] — OPEN
+### - [x] F-12.2.12 — 12 — §12.2.1 referenced throughout code but does not exist in the spec (Medium) [Medium] — CLOSED
 
 Multiple production source files cite `§12.2.1`:
 - `pkg/gateway/evictionstatestore/evictionstatestore.go:3` ("Package evictionstatestore is the §12.2.1 EvictionStateStore role.")
@@ -17449,6 +17459,8 @@ Multiple production source files cite `§12.2.1`:
 - `BUILD-PROGRESS.md:177-194` cites `§12.2.1`, `§12.2.2`, `§12.2.3`, `§12.2.4`, `§12.2.5` as sub-section labels.
 
 The spec's `spec/12_storage-architecture.md` has no `### 12.2.1` (or any other §12.2.X) heading — §12.2 is a single table without sub-subsections. Either the spec needs the subsections that the code/build-progress assumes, or the citations need to be rewritten to point at the actual §12.2 / §12.8 anchors. The discrepancy currently makes the cross-references unverifiable.
+
+**Resolution:** Closed by F-12.1.6 — same root cause. All 35 `§12.2.1` citations across `pkg/` and `cmd/` renumbered: `§12.1` for mandatory-erasure references, `§12.2` for storage-role table references. Verified `grep -rn "§12\.2\.1" pkg/ cmd/` returns zero matches.
 
 ### - [ ] F-12.2.13 — 13 — `StoreRouter` (R-03) never wired into billing or audit write paths (High) [Medium] — OPEN
 

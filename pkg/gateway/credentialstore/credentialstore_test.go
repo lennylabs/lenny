@@ -190,3 +190,88 @@ func TestRegisterEnvironmentScopedCredentials(t *testing.T) {
 		t.Errorf("re-registered secret = %q, want staging-v2", got2.Secret)
 	}
 }
+
+// spec: §12.1 line 5 — DeleteByUser is mandatory on Store and the
+// user is the load-bearing key for the §4.9 credential registry.
+func TestDeleteByUserRemovesUserCredentials_spec_12_1(t *testing.T) {
+	s := newStore()
+	ctx := context.Background()
+	_, _ = s.Register(ctx, "acme", "alice", credential.ProviderAnthropicDirect, "", "sk-1")
+	_, _ = s.Register(ctx, "acme", "alice", credential.ProviderGitHub, "staging", "gh-1")
+	_, _ = s.Register(ctx, "acme", "bob", credential.ProviderAnthropicDirect, "", "sk-2")
+	n, err := s.DeleteByUser(ctx, "acme", "alice")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteByUser should remove 2 alice rows, got %d", n)
+	}
+	if got, _ := s.List(ctx, "acme", "alice"); len(got) != 0 {
+		t.Errorf("alice credentials should be gone, got %d", len(got))
+	}
+	if got, _ := s.List(ctx, "acme", "bob"); len(got) != 1 {
+		t.Errorf("bob credential should survive, got %d", len(got))
+	}
+}
+
+// spec: §12.1 line 5 — DeleteByUser is idempotent — a second call on
+// an already-erased scope returns 0 and nil per §12.8 semantics.
+func TestDeleteByUserIdempotent_spec_12_1(t *testing.T) {
+	s := newStore()
+	ctx := context.Background()
+	n, err := s.DeleteByUser(ctx, "acme", "alice")
+	if err != nil || n != 0 {
+		t.Errorf("DeleteByUser on empty store: n=%d err=%v", n, err)
+	}
+}
+
+// spec: §12.1 line 5 — DeleteByUser rejects empty scope ids; the
+// spec is explicit that empty arguments are not "delete everything".
+func TestDeleteByUserRejectsEmptyScope_spec_12_1(t *testing.T) {
+	s := newStore()
+	if _, err := s.DeleteByUser(context.Background(), "", "alice"); err == nil {
+		t.Error("DeleteByUser must reject empty tenantID")
+	}
+	if _, err := s.DeleteByUser(context.Background(), "acme", ""); err == nil {
+		t.Error("DeleteByUser must reject empty userID")
+	}
+}
+
+// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant hard-deletes
+// every credential row belonging to the tenant.
+func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
+	s := newStore()
+	ctx := context.Background()
+	_, _ = s.Register(ctx, "acme", "alice", credential.ProviderAnthropicDirect, "", "sk-1")
+	_, _ = s.Register(ctx, "acme", "bob", credential.ProviderGitHub, "", "gh-1")
+	_, _ = s.Register(ctx, "globex", "carol", credential.ProviderAnthropicDirect, "", "sk-2")
+	n, err := s.DeleteByTenant(ctx, "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteByTenant should remove 2 acme rows, got %d", n)
+	}
+	if got, _ := s.List(ctx, "globex", "carol"); len(got) != 1 {
+		t.Errorf("globex/carol credential should survive: %d", len(got))
+	}
+}
+
+// spec: §12.1 line 5 — re-registering after DeleteByUser yields a
+// fresh credential ref (no scope-key residue).
+func TestDeleteByUserClearsScopeIndex_spec_12_1(t *testing.T) {
+	s := newStore()
+	ctx := context.Background()
+	c1, _ := s.Register(ctx, "acme", "alice", credential.ProviderGitHub, "", "gh-1")
+	_, _ = s.DeleteByUser(ctx, "acme", "alice")
+	c2, err := s.Register(ctx, "acme", "alice", credential.ProviderGitHub, "", "gh-2")
+	if err != nil {
+		t.Fatalf("re-Register: %v", err)
+	}
+	if c1.Ref == c2.Ref {
+		t.Errorf("DeleteByUser must purge scope index; got reused ref %q", c1.Ref)
+	}
+	if _, err := s.Get(ctx, "acme", c1.Ref); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Errorf("old ref should be gone: %v", err)
+	}
+}

@@ -166,3 +166,45 @@ func scorers(rs []evalstore.EvalResult) []string {
 	}
 	return out
 }
+
+// spec: §12.1 line 5 — eval results carry no user_id, so the
+// orchestrator walks the user's sessions and calls DeleteBySession.
+// DeleteByUser at this layer is a no-op that returns 0.
+func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
+	m := evalstore.NewMemory(0, nil)
+	if _, err := m.Put(context.Background(), result("sess_1", "llm-judge")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	n, err := m.DeleteByUser(context.Background(), "acme", "alice")
+	if err != nil || n != 0 {
+		t.Errorf("DeleteByUser: n=%d err=%v", n, err)
+	}
+	if got, _ := m.CountBySession(context.Background(), "acme", "sess_1"); got != 1 {
+		t.Errorf("eval result should survive DeleteByUser, count = %d", got)
+	}
+}
+
+// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// eval result belonging to the tenant.
+func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
+	m := evalstore.NewMemory(0, nil)
+	ctx := context.Background()
+	_, _ = m.Put(ctx, result("sess_a", "exact-match"))
+	_, _ = m.Put(ctx, result("sess_b", "llm-judge"))
+	other := result("sess_c", "exact-match")
+	other.TenantID = "globex"
+	_, _ = m.Put(ctx, other)
+	n, err := m.DeleteByTenant(ctx, "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteByTenant should remove 2 acme rows, got %d", n)
+	}
+	if got, _ := m.CountBySession(ctx, "acme", "sess_a"); got != 0 {
+		t.Errorf("acme/sess_a should be gone, count = %d", got)
+	}
+	if got, _ := m.CountBySession(ctx, "globex", "sess_c"); got != 1 {
+		t.Errorf("globex/sess_c should survive, count = %d", got)
+	}
+}

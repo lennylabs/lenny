@@ -91,6 +91,12 @@ var (
 
 // Store is the §10.7 experiment registry contract. Every method is
 // goroutine-safe and tenant-scoped.
+//
+// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// mandatory erasure primitives every storage role exposes at the
+// interface level. Experiment definitions are tenant-scoped, not
+// user-owned, so DeleteByUser is a no-op; DeleteByTenant hard-deletes
+// every experiment owned by the tenant.
 type Store interface {
 	// Create persists a fresh experiment. Returns ErrAlreadyExists when
 	// the (tenant, id) pair is taken, or a validation error.
@@ -106,6 +112,15 @@ type Store interface {
 	List(ctx context.Context, tenantID string) ([]Experiment, error)
 	// Delete removes the experiment. Returns ErrNotFound when missing.
 	Delete(ctx context.Context, tenantID, id string) error
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Experiment definitions are tenant-scoped and not user-owned;
+	// DeleteByUser is a no-op that returns 0 erased rows.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Removes every experiment definition belonging to tenantID.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // Memory is the in-memory Store implementation.
@@ -116,6 +131,10 @@ type Memory struct {
 
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory { return &Memory{experiments: map[string]Experiment{}} }
+
+// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// erasure-bearing Store interface.
+var _ Store = (*Memory)(nil)
 
 func key(tenantID, id string) string { return tenantID + "/" + id }
 
@@ -199,14 +218,14 @@ func (m *Memory) Delete(_ context.Context, tenantID, id string) error {
 	return nil
 }
 
-// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// DeleteByUser implements the §12.1 mandatory-erasure interface.
 // Experiment definitions are tenant-scoped and not user-owned;
 // DeleteByUser is a no-op that returns 0 erased rows.
 func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
 
-// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// DeleteByTenant implements the §12.1 mandatory-erasure interface.
 // Removes every experiment definition belonging to tenantID.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	m.mu.Lock()

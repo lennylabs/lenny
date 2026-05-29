@@ -64,6 +64,13 @@ var ErrQuotaExceeded = errors.New("evalstore: per-session eval quota exceeded")
 
 // Store is the §10.7 eval-result registry contract. Every method is
 // goroutine-safe and tenant-scoped.
+//
+// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// mandatory erasure primitives every storage role exposes at the
+// interface level. Eval results are session-scoped; the §12.8
+// orchestrator walks the user's sessions and calls DeleteBySession.
+// DeleteByUser at this layer is a no-op; DeleteByTenant hard-deletes
+// every eval result owned by the tenant.
 type Store interface {
 	// Put assigns an ID and CreatedAt, enforces the per-session storage
 	// bound, and stores the result. Returns ErrQuotaExceeded when the
@@ -81,6 +88,15 @@ type Store interface {
 	// DeleteBySession removes every eval result for the session and
 	// returns the count deleted — the §12.8 GDPR-erasure adapter.
 	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Eval results carry no user_id directly; the orchestrator walks
+	// the user's sessions and calls DeleteBySession.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Removes every eval result belonging to tenantID.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // Memory is the in-memory Store implementation.
@@ -103,6 +119,10 @@ func NewMemory(maxPerSession int, clock func() time.Time) *Memory {
 	}
 	return &Memory{results: map[string]EvalResult{}, maxPerSession: maxPerSession, clock: clock}
 }
+
+// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// erasure-bearing Store interface.
+var _ Store = (*Memory)(nil)
 
 // Put implements Store.
 func (m *Memory) Put(_ context.Context, r EvalResult) (EvalResult, error) {
@@ -185,7 +205,7 @@ func (m *Memory) DeleteBySession(_ context.Context, tenantID, sessionID string) 
 	return deleted, nil
 }
 
-// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// DeleteByUser implements the §12.1 mandatory-erasure interface.
 // Eval results carry no user_id directly; user-scoped erasure walks
 // the user's sessions via the orchestrator's session lister and then
 // calls DeleteBySession per session. DeleteByUser at this layer is
@@ -194,7 +214,7 @@ func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
 
-// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// DeleteByTenant implements the §12.1 mandatory-erasure interface.
 // Removes every eval result belonging to tenantID.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	m.mu.Lock()

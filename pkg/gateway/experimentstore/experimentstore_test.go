@@ -171,3 +171,39 @@ func ids(es []experimentstore.Experiment) []string {
 	}
 	return out
 }
+
+// spec: §12.1 line 5 — DeleteByUser on an experiment-definitions
+// store is a no-op (experiments are tenant-scoped) and returns 0.
+func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
+	m := experimentstore.NewMemory()
+	_ = m.Create(context.Background(), validExperiment("acme", "exp_1"))
+	n, err := m.DeleteByUser(context.Background(), "acme", "alice")
+	if err != nil || n != 0 {
+		t.Errorf("DeleteByUser: n=%d err=%v", n, err)
+	}
+	if _, err := m.Get(context.Background(), "acme", "exp_1"); err != nil {
+		t.Errorf("experiment should survive DeleteByUser: %v", err)
+	}
+}
+
+// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// experiment belonging to the tenant.
+func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
+	m := experimentstore.NewMemory()
+	_ = m.Create(context.Background(), validExperiment("acme", "exp_a"))
+	_ = m.Create(context.Background(), validExperiment("acme", "exp_b"))
+	_ = m.Create(context.Background(), validExperiment("globex", "exp_a"))
+	n, err := m.DeleteByTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteByTenant should remove 2 acme experiments, got %d", n)
+	}
+	if _, err := m.Get(context.Background(), "acme", "exp_a"); !errors.Is(err, experimentstore.ErrNotFound) {
+		t.Errorf("acme/exp_a should be gone: %v", err)
+	}
+	if _, err := m.Get(context.Background(), "globex", "exp_a"); err != nil {
+		t.Errorf("globex/exp_a should survive: %v", err)
+	}
+}

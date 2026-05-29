@@ -210,3 +210,46 @@ func TestStoredRoleIsolatedFromCallerMutation(t *testing.T) {
 		t.Errorf("stored role mutated through a returned copy: %v", fresh.Permissions[0])
 	}
 }
+
+// spec: §12.1 line 5 — DeleteByUser is mandatory but custom roles are
+// tenant-scoped, so the call returns 0 erased rows; the role
+// definition itself is not removed when a user inside the tenant is
+// erased.
+func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
+	ctx := context.Background()
+	store := customrolestore.NewMemory()
+	_ = store.Create(ctx, sampleRole("acme", "r1"))
+	n, err := store.DeleteByUser(ctx, "acme", "alice")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("DeleteByUser should return 0 erased rows, got %d", n)
+	}
+	if _, err := store.Get(ctx, "acme", "r1"); err != nil {
+		t.Errorf("role should survive DeleteByUser: %v", err)
+	}
+}
+
+// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// custom role belonging to the tenant.
+func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
+	ctx := context.Background()
+	store := customrolestore.NewMemory()
+	_ = store.Create(ctx, sampleRole("acme", "r1"))
+	_ = store.Create(ctx, sampleRole("acme", "r2"))
+	_ = store.Create(ctx, sampleRole("globex", "r1"))
+	n, err := store.DeleteByTenant(ctx, "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteByTenant should remove 2 acme rows, got %d", n)
+	}
+	if _, err := store.Get(ctx, "acme", "r1"); !errors.Is(err, customrolestore.ErrNotFound) {
+		t.Errorf("r1 should be gone: %v", err)
+	}
+	if _, err := store.Get(ctx, "globex", "r1"); err != nil {
+		t.Errorf("globex.r1 should survive: %v", err)
+	}
+}

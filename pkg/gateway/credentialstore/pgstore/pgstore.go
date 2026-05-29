@@ -424,6 +424,57 @@ func (s *Store) Delete(ctx context.Context, tenantID, ref string) error {
 	})
 }
 
+// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+// Hard-deletes every credential row owned by (tenantID, userID) — the
+// §4.9 user-credential registry is user-keyed, so DeleteByUser is the
+// load-bearing path for GDPR erasure of this store.
+//
+// spec: §12.1 line 5.
+func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("credentialstore: DeleteByUser requires non-empty tenant_id and user_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM credentials WHERE tenant_id = $1 AND user_id = $2`,
+			tenantID, userID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+// Hard-deletes every credential row belonging to tenantID.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("credentialstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM credentials WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 // scanCredential reads one row in selectList order into a Credential.
 // The secret column holds the envelope ciphertext blob; scanCredential
 // returns it and the secret_key_version unchanged rather than the

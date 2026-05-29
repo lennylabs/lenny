@@ -42,12 +42,28 @@ type CustomRole struct {
 
 // Store is the §10.2 custom-role registry contract. Every method is
 // tenant-scoped.
+//
+// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// mandatory erasure primitives every storage role exposes at the
+// interface level. Custom roles are tenant-scoped definitions with
+// no user attribution, so DeleteByUser is a no-op; DeleteByTenant
+// hard-deletes every role owned by the tenant.
 type Store interface {
 	Create(ctx context.Context, r CustomRole) error
 	Get(ctx context.Context, tenantID, name string) (CustomRole, error)
 	Update(ctx context.Context, tenantID, name string, mutate func(*CustomRole) error) (CustomRole, error)
 	List(ctx context.Context, tenantID string) ([]CustomRole, error)
 	Delete(ctx context.Context, tenantID, name string) error
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Custom roles are tenant-scoped, not user-scoped, so DeleteByUser
+	// returns 0 erased rows; the role definition itself is not
+	// removed when a user inside the tenant is erased.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Removes every custom role belonging to tenantID.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // Sentinel errors.
@@ -194,7 +210,7 @@ func (m *Memory) Delete(_ context.Context, tenantID, name string) error {
 	return nil
 }
 
-// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// DeleteByUser implements the §12.1 mandatory-erasure interface.
 // Custom roles are tenant-scoped, not user-scoped, so DeleteByUser
 // is a no-op that returns 0 erased rows; the role definition itself
 // is not removed when a user inside the tenant is erased.
@@ -202,7 +218,7 @@ func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
 
-// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// DeleteByTenant implements the §12.1 mandatory-erasure interface.
 // Removes every custom role belonging to tenantID.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	m.mu.Lock()

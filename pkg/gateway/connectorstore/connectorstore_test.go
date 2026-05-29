@@ -286,3 +286,48 @@ func TestWritesRejectSentinel(t *testing.T) {
 		t.Error("SoftDelete with sentinel must be rejected")
 	}
 }
+
+// spec: §12.1 line 5 — DeleteByUser is mandatory on the Store
+// interface; connectors are tenant-scoped so the call is a no-op that
+// returns 0 erased rows.
+func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
+	s := connectorstore.NewMemory()
+	_ = s.Create(context.Background(), validConnector())
+	n, err := s.DeleteByUser(context.Background(), "acme", "alice")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("DeleteByUser must return 0 erased rows for tenant-scoped store, got %d", n)
+	}
+	// The connector survives.
+	if _, err := s.Get(context.Background(), testTenantID, "github"); err != nil {
+		t.Errorf("connector should survive DeleteByUser: %v", err)
+	}
+}
+
+// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// connector belonging to the tenant.
+func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
+	s := connectorstore.NewMemory()
+	a := validConnector()
+	a.TenantID = "acme"
+	b := validConnector()
+	b.TenantID = "globex"
+	_ = s.Create(context.Background(), a)
+	_ = s.Create(context.Background(), b)
+	n, err := s.DeleteByTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("DeleteByTenant should remove 1 row, got %d", n)
+	}
+	// Acme connector gone; globex untouched.
+	if _, err := s.Get(context.Background(), "acme", "github"); !errors.Is(err, connectorstore.ErrNotFound) {
+		t.Errorf("acme connector should be gone: %v", err)
+	}
+	if _, err := s.Get(context.Background(), "globex", "github"); err != nil {
+		t.Errorf("globex connector should survive: %v", err)
+	}
+}

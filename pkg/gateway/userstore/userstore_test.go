@@ -189,3 +189,54 @@ func TestValidateSubject(t *testing.T) {
 		}
 	}
 }
+
+// spec: §12.1 line 5 — DeleteByUser is mandatory on Store and the
+// user is the primary entity of this store, so DeleteByUser purges
+// the row hard.
+func TestDeleteByUserHardPurges_spec_12_1(t *testing.T) {
+	s := userstore.NewMemory()
+	u := userstore.User{Subject: "alice@acme.com", TenantID: "acme", Roles: []auth.Role{auth.RoleUser}}
+	_ = s.Create(context.Background(), u)
+	n, err := s.DeleteByUser(context.Background(), "acme", "alice@acme.com")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("DeleteByUser should report 1, got %d", n)
+	}
+	if _, err := s.Get(context.Background(), "acme", "alice@acme.com"); !errors.Is(err, userstore.ErrNotFound) {
+		t.Errorf("user should be gone: %v", err)
+	}
+}
+
+// spec: §12.1 line 5 — DeleteByUser is idempotent: a second call on
+// the same scope returns 0 and nil per §12.8 erasure semantics.
+func TestDeleteByUserIdempotent_spec_12_1(t *testing.T) {
+	s := userstore.NewMemory()
+	n, err := s.DeleteByUser(context.Background(), "acme", "alice@acme.com")
+	if err != nil || n != 0 {
+		t.Errorf("DeleteByUser on missing row: n=%d err=%v", n, err)
+	}
+}
+
+// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant hard-deletes
+// every user row belonging to the tenant; other tenants are unaffected.
+func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
+	s := userstore.NewMemory()
+	_ = s.Create(context.Background(), userstore.User{Subject: "alice@acme.com", TenantID: "acme", Roles: []auth.Role{auth.RoleUser}})
+	_ = s.Create(context.Background(), userstore.User{Subject: "bob@acme.com", TenantID: "acme", Roles: []auth.Role{auth.RoleUser}})
+	_ = s.Create(context.Background(), userstore.User{Subject: "carol@globex.com", TenantID: "globex", Roles: []auth.Role{auth.RoleUser}})
+	n, err := s.DeleteByTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteByTenant should remove 2 acme rows, got %d", n)
+	}
+	if _, err := s.Get(context.Background(), "acme", "alice@acme.com"); !errors.Is(err, userstore.ErrNotFound) {
+		t.Errorf("alice should be gone")
+	}
+	if _, err := s.Get(context.Background(), "globex", "carol@globex.com"); err != nil {
+		t.Errorf("carol@globex should survive: %v", err)
+	}
+}

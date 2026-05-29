@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// ValidateSemanticCacheErasure is the §4.9 / §12.2.1 erasure contract
+// ValidateSemanticCacheErasure is the §4.9 / §12.1 erasure contract
 // validation helper. Pluggable SemanticCache implementations import it
 // and must pass it: it is exported (not a local _test.go helper) so a
 // third-party implementation in another module can call it.

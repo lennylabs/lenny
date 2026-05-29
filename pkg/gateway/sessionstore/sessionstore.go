@@ -451,7 +451,18 @@ type Store interface {
 	// tenantID and returns the count deleted. It is the §12.8
 	// GDPR-erasure per-store adapter — erasing a user with no sessions
 	// is a no-op that returns (0, nil), never ErrNotFound.
+	//
+	// spec: §12.1 line 5, §12.8 step 17.
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant removes every session row belonging to tenantID
+	// and returns the count deleted. It is the §12.1 / §12.8 Phase 4
+	// tenant-deletion erasure adapter — a tenant with no sessions is
+	// a no-op that returns (0, nil), never ErrNotFound. Cross-tenant
+	// rows are never touched.
+	//
+	// spec: §12.1 line 5, §12.8 Phase 4.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 
 	// GetActiveSlotsByPod returns the number of live (non-terminal)
 	// sessions bound to podID across every tenant. It is the §5.2

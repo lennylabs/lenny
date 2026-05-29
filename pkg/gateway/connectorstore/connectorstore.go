@@ -86,12 +86,30 @@ type ConnectorAuth struct {
 // the §4.2 line 173 tenant context: a concrete tenant id scopes the
 // operation to that tenant, and the AllTenantsSentinel value (`__all__`)
 // lets a platform-admin code path span tenants on reads.
+//
+// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// mandatory erasure primitives every storage role exposes at the
+// interface level. Connectors are tenant-scoped resources with no
+// user attribution, so DeleteByUser is a no-op that returns 0 erased
+// rows; DeleteByTenant hard-deletes every connector owned by the
+// tenant.
 type Store interface {
 	Create(ctx context.Context, c Connector) error
 	Get(ctx context.Context, tenantID, id string) (Connector, error)
 	Update(ctx context.Context, tenantID, id string, mutate func(*Connector) error) (Connector, error)
 	List(ctx context.Context, tenantID string, filter ListFilter) ([]Connector, error)
 	SoftDelete(ctx context.Context, tenantID, id string, at time.Time) error
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Connectors are tenant-scoped resources keyed by (tenant_id, id)
+	// and carry no user attribution; per-user erasure has nothing to
+	// scope on at this layer, so the method returns 0 erased rows.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Hard-deletes every connector owned by tenantID, returning the
+	// number of rows removed.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // ListFilter narrows List results.
@@ -226,6 +244,10 @@ type Memory struct {
 func NewMemory() *Memory {
 	return &Memory{connectors: map[string]map[string]Connector{}}
 }
+
+// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// erasure-bearing Store interface.
+var _ Store = (*Memory)(nil)
 
 // Create implements Store. The tenant_id is read from c.TenantID;
 // Validate rejects empty values.
@@ -369,7 +391,7 @@ func (m *Memory) SoftDelete(_ context.Context, tenantID, id string, at time.Time
 	return nil
 }
 
-// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// DeleteByUser implements the §12.1 mandatory-erasure interface.
 // Connectors are tenant-scoped resources keyed by (tenant_id, id) and
 // carry no user attribution; per-user erasure has nothing to scope on
 // at this layer. The orchestrator skips connectorstore on user-scoped
@@ -378,7 +400,7 @@ func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
 
-// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// DeleteByTenant implements the §12.1 mandatory-erasure interface.
 // Hard-deletes every connector owned by tenantID, returning the number
 // of rows removed. The erasure orchestrator invokes this after
 // soft-deletes have propagated through downstream consumers.

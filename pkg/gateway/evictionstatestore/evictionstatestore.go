@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package evictionstatestore is the §12.2.1 EvictionStateStore role.
+// Package evictionstatestore is the §12.2 EvictionStateStore role.
 // It persists the minimal-state record written during the §4.4
 // eviction-checkpoint fallback path: when MinIO is unreachable
 // mid-checkpoint, the gateway falls back to recording the
@@ -114,7 +114,7 @@ type Record struct {
 	DeletedAt time.Time
 }
 
-// Store persists §12.2.1 eviction-state records. The production
+// Store persists §12.2 eviction-state records. The production
 // implementation is the Postgres backend in pgstore; the in-memory
 // MemoryStore in this package backs unit tests and the developer-mode
 // deployment.

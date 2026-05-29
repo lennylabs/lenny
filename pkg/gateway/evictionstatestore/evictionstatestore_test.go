@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/evictionstatestore"
 )
 
-// spec: §12.2.1 (Put + Get round-trip)
+// spec: §12.2 (Put + Get round-trip)
 // diagnosis: Put persists the record and Get reads it back with the
 // CreatedAt and UpdatedAt timestamps the store stamped.
 func TestPutAndGet(t *testing.T) {
@@ -38,7 +38,7 @@ func TestPutAndGet(t *testing.T) {
 	}
 }
 
-// spec: §12.2.1 (upsert preserves CreatedAt and bumps UpdatedAt)
+// spec: §12.2 (upsert preserves CreatedAt and bumps UpdatedAt)
 // diagnosis: a second Put under the same composite key updates the
 // LastMessageContext, preserves CreatedAt, and advances UpdatedAt.
 func TestPutPreservesCreatedAtOnUpdate(t *testing.T) {
@@ -66,7 +66,7 @@ func TestPutPreservesCreatedAtOnUpdate(t *testing.T) {
 	}
 }
 
-// spec: §12.2.1 (Get on a missing row returns ErrNotFound)
+// spec: §12.2 (Get on a missing row returns ErrNotFound)
 func TestGetMissingReturnsNotFound(t *testing.T) {
 	store := evictionstatestore.NewMemoryStore(nil)
 	_, err := store.Get(context.Background(), "acme", "missing-session")
@@ -75,7 +75,7 @@ func TestGetMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
-// spec: §12.2.1 (Delete is idempotent)
+// spec: §12.2 (Delete is idempotent)
 // diagnosis: a missing row does not error so the terminal-state
 // cleanup path can replay deletes after a partial failure.
 func TestDeleteIsIdempotent(t *testing.T) {
@@ -134,7 +134,7 @@ func TestDeleteByTenantSweepsAll(t *testing.T) {
 	}
 }
 
-// spec: §12.2.1 (Put rejects empty composite-key inputs)
+// spec: §12.2 (Put rejects empty composite-key inputs)
 // diagnosis: an empty tenant or session id is a programming error;
 // rejecting at the store boundary prevents a malformed row from
 // landing in storage.

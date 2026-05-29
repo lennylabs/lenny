@@ -91,3 +91,41 @@ func TestAppendEmptyIsNoOp(t *testing.T) {
 		t.Error("empty append should not create a transcript")
 	}
 }
+
+// spec: §12.1 line 5 — DeleteByUser on a session-scoped store is a
+// no-op that returns 0 erased rows; the §12.8 orchestrator walks the
+// user's sessions and calls DeleteBySession per session.
+func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
+	s := transcriptstore.NewMemory()
+	_ = s.Append(context.Background(), "acme", "sess_1",
+		transcriptstore.Entry{Role: "user", Content: "hi"})
+	n, err := s.DeleteByUser(context.Background(), "acme", "alice")
+	if err != nil || n != 0 {
+		t.Errorf("DeleteByUser: n=%d err=%v", n, err)
+	}
+	if got, _ := s.Get(context.Background(), "acme", "sess_1"); len(got) != 1 {
+		t.Errorf("transcript should survive DeleteByUser: %d", len(got))
+	}
+}
+
+// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// transcript belonging to the tenant; other tenants are unaffected.
+func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
+	s := transcriptstore.NewMemory()
+	_ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "a"})
+	_ = s.Append(context.Background(), "acme", "sess_2", transcriptstore.Entry{Content: "b"})
+	_ = s.Append(context.Background(), "globex", "sess_1", transcriptstore.Entry{Content: "c"})
+	n, err := s.DeleteByTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteByTenant should remove 2 acme transcripts, got %d", n)
+	}
+	if _, err := s.Get(context.Background(), "acme", "sess_1"); !errors.Is(err, transcriptstore.ErrNotFound) {
+		t.Errorf("acme/sess_1 should be gone: %v", err)
+	}
+	if _, err := s.Get(context.Background(), "globex", "sess_1"); err != nil {
+		t.Errorf("globex/sess_1 should survive: %v", err)
+	}
+}

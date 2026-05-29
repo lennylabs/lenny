@@ -472,6 +472,29 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 	return deleted, err
 }
 
+// DeleteByTenant implements Store — the §12.1 / §12.8 Phase 4
+// tenant-deletion erasure adapter. Removes every session row
+// belonging to tenantID and returns the count deleted; a tenant with
+// no sessions yields (0, nil).
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("sessionstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	deleted := 0
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM sessions WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	})
+	return deleted, err
+}
+
 // GetActiveSlotsByPod implements Store — the §5.2 rehydration seed
 // source. It counts live (non-terminal) sessions bound to podID. The
 // read runs cross-tenant (InAllTenants) because the rehydration path

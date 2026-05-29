@@ -220,7 +220,7 @@ func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, 
 	return deleted, nil
 }
 
-// DeleteByTenant implements the §12.2.1 / §14.10 mandatory-erasure
+// DeleteByTenant implements the §12.1 / §14.10 mandatory-erasure
 // interface. Removes every interaction belonging to tenantID.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	m.mu.Lock()

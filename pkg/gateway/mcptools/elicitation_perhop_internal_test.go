@@ -54,6 +54,9 @@ func (s *slowAncestorStore) Delete(context.Context, string, string) error { pani
 func (s *slowAncestorStore) DeleteByUser(context.Context, string, string) (int, error) {
 	panic("unused")
 }
+func (s *slowAncestorStore) DeleteByTenant(context.Context, string) (int, error) {
+	panic("unused")
+}
 func (s *slowAncestorStore) GetActiveSlotsByPod(context.Context, string) (int, error) {
 	panic("unused")
 }

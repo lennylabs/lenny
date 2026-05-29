@@ -297,7 +297,7 @@ func (m *Memory) CountUser(_ context.Context, tenantID, userID string) (int, err
 	return n, nil
 }
 
-// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// DeleteByUser implements the §12.1 mandatory-erasure interface.
 // Billing events are append-only per §11.2.1; the §12.8 erasure path
 // pseudonymizes rather than deletes them so the chain stays intact.
 // DeleteByUser at this layer is a no-op that returns 0 erased rows;
@@ -306,7 +306,7 @@ func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
 
-// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// DeleteByTenant implements the §12.1 mandatory-erasure interface.
 // Tenant deletion is the only path that removes billing events; the
 // §11.2.1 immutability constraint does not apply to a tenant being
 // torn down.

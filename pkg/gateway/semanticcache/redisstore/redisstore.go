@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package redisstore is the Redis-backed §12.2.1 SemanticCache. It is
+// Package redisstore is the Redis-backed §12.2 SemanticCache. It is
 // the default backend for the §4.9 CachePolicy on a CredentialPool and
 // a drop-in alternative to semanticcache.InMemory.
 //
@@ -27,7 +27,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 )
 
-// Store is the Redis-backed §12.2.1 SemanticCache. Construct with New.
+// Store is the Redis-backed §12.2 SemanticCache. Construct with New.
 type Store struct {
 	client   redis.UniversalClient
 	embedder memorystore.Embedder

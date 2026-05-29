@@ -204,6 +204,56 @@ func (s *Store) SoftDelete(ctx context.Context, tenantID, subject string, at tim
 	})
 }
 
+// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+// Hard-deletes the user row keyed by (tenantID, userID); returns the
+// number of rows removed (0 if no such row).
+//
+// spec: §12.1 line 5.
+func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("userstore: DeleteByUser requires non-empty tenant_id and user_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM users WHERE tenant_id = $1 AND subject = $2`,
+			tenantID, userID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+// Removes every user row belonging to tenantID.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("userstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM users WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 // scanUser reads one row in selectList order into a User.
 func scanUser(row pgx.Row) (userstore.User, error) {
 	var (

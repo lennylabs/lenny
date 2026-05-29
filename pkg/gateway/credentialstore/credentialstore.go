@@ -118,6 +118,21 @@ type Store interface {
 
 	// Delete removes the credential row.
 	Delete(ctx context.Context, tenantID, ref string) error
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Removes every credential row owned by (tenantID, userID) — the
+	// §4.9 user-credential registry is user-keyed, so DeleteByUser is
+	// the load-bearing path for GDPR erasure of this store. Returns
+	// the number of rows removed.
+	//
+	// spec: §12.1 line 5, §12.8 step `TokenStore`.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Hard-deletes every credential row owned by tenantID.
+	//
+	// spec: §12.1 line 5, §12.8 Phase 4.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // Memory is the in-memory Store implementation.
@@ -270,6 +285,55 @@ func (m *Memory) Delete(_ context.Context, tenantID, ref string) error {
 	delete(m.refByTriple, scopeKey(tenantID, c.UserID, c.Provider, c.Environment))
 	return nil
 }
+
+// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+// Removes every credential row owned by (tenantID, userID) — the §4.9
+// user-credential registry is user-keyed, so DeleteByUser is the
+// load-bearing path for GDPR erasure of this store. Returns the
+// number of rows removed; idempotent (a second call returns 0, nil).
+//
+// spec: §12.1 line 5.
+func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	if tenantID == "" || userID == "" {
+		return 0, errors.New("credentialstore: DeleteByUser requires non-empty tenant_id and user_id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for k, c := range m.byRef {
+		if c.TenantID == tenantID && c.UserID == userID {
+			delete(m.byRef, k)
+			delete(m.refByTriple, scopeKey(tenantID, c.UserID, c.Provider, c.Environment))
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+// Hard-deletes every credential row belonging to tenantID.
+//
+// spec: §12.1 line 5, §12.8 Phase 4.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("credentialstore: DeleteByTenant requires a concrete tenant_id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for k, c := range m.byRef {
+		if c.TenantID == tenantID {
+			delete(m.byRef, k)
+			delete(m.refByTriple, scopeKey(tenantID, c.UserID, c.Provider, c.Environment))
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// erasure-bearing Store interface.
+var _ Store = (*Memory)(nil)
 
 func randomHex(n int) string {
 	buf := make([]byte, n)

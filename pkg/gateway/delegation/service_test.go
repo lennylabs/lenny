@@ -388,6 +388,9 @@ func (c *countingStore) Delete(ctx context.Context, tenantID, id string) error {
 func (c *countingStore) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	return c.inner.DeleteByUser(ctx, tenantID, userID)
 }
+func (c *countingStore) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	return c.inner.DeleteByTenant(ctx, tenantID)
+}
 func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
 	return c.inner.GetActiveSlotsByPod(ctx, podID)
 }

@@ -74,12 +74,27 @@ type User struct {
 func (u User) IsActive() bool { return !u.Disabled && u.DeletedAt.IsZero() }
 
 // Store is the §11.4 / §15.1 user registry contract.
+//
+// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// mandatory erasure primitives every storage role exposes at the
+// interface level. The user is the primary entity of this store, so
+// DeleteByUser purges the row hard rather than soft-deleting;
+// DeleteByTenant hard-deletes every user row belonging to the tenant.
 type Store interface {
 	Create(ctx context.Context, u User) error
 	Get(ctx context.Context, tenantID, subject string) (User, error)
 	Update(ctx context.Context, tenantID, subject string, mutate func(*User) error) (User, error)
 	List(ctx context.Context, tenantID string, filter ListFilter) ([]User, error)
 	SoftDelete(ctx context.Context, tenantID, subject string, at time.Time) error
+
+	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
+	// Hard-deletes the user row keyed by (tenantID, userID); returns
+	// the number of rows removed (0 if no such row).
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
+	// Removes every user row belonging to tenantID.
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // ListFilter narrows List results.
@@ -118,6 +133,10 @@ type Memory struct {
 
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory { return &Memory{users: map[string]User{}} }
+
+// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// erasure-bearing Store interface.
+var _ Store = (*Memory)(nil)
 
 func key(tenantID, subject string) string { return tenantID + "/" + subject }
 
@@ -228,7 +247,7 @@ func (m *Memory) SoftDelete(_ context.Context, tenantID, subject string, at time
 	return nil
 }
 
-// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// DeleteByUser implements the §12.1 mandatory-erasure interface.
 // Removes the user row identified by (tenantID, userID); the user
 // is the primary entity of this store, so DeleteByUser purges the
 // row hard rather than soft-deleting.
@@ -243,7 +262,7 @@ func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, 
 	return 1, nil
 }
 
-// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// DeleteByTenant implements the §12.1 mandatory-erasure interface.
 // Removes every user row belonging to tenantID.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	m.mu.Lock()

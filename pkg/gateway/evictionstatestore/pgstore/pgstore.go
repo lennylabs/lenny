@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package pgstore is the Postgres-backed §12.2.1 EvictionStateStore.
+// Package pgstore is the Postgres-backed §12.2 EvictionStateStore.
 // It persists eviction-state rows to the session_eviction_state table
 // from migration 0045 and applies the §12.3 tenant-context RLS guard
 // via pgtenant.InTx.
@@ -21,7 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 )
 
-// Store is the Postgres-backed §12.2.1 EvictionStateStore. Construct
+// Store is the Postgres-backed §12.2 EvictionStateStore. Construct
 // with New.
 type Store struct {
 	pool *pgxpool.Pool

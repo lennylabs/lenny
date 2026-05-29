@@ -227,7 +227,7 @@ func EvictionContextObjectKey(tenantID, sessionID string) string {
 // the optional pool / prior-checkpoint signals used for the
 // total-loss telemetry.
 type WriteParams struct {
-	// Record is the §12.2.1 row template carrying the tenant,
+	// Record is the §12.2 row template carrying the tenant,
 	// session, generations, cursor, and evicted-at fields. The
 	// writer derives LastMessageContext, IsMinIOKey, and
 	// ContextTruncated from the encoder and overwrites them on the

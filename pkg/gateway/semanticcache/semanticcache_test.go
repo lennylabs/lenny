@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 )
 
-// spec: §12.2.1 SemanticCache — the Redis-backed LLM query/response
+// spec: §12.2 SemanticCache — the Redis-backed LLM query/response
 // cache. These unit tests exercise the in-memory implementation; the
 // component test exercises the Redis backend.
 
