@@ -14088,7 +14088,7 @@ gateway never publishes.
 
 ---
 
-### - [ ] F-10.7.14 — 14  `lenny_experiment_targeting_duration_seconds` and `lenny_experiment_targeting_error_total` are not emitted; `experiment.unknown_external_id` event is unused [Medium] — OPEN
+### - [x] F-10.7.14 — 14  `lenny_experiment_targeting_duration_seconds` and `lenny_experiment_targeting_error_total` are not emitted; `experiment.unknown_external_id` event is unused [Medium] — CLOSED
 
 **Spec:** §10.7 line 833 — on OpenFeature failure "the
 `lenny_experiment_targeting_error_total` metric is incremented (labeled by
@@ -14125,6 +14125,21 @@ info event and otherwise ignored".
 either inert (the two metrics) or structurally unreachable (the event).
 The duration histogram in particular is the only mechanism for measuring the
 external-targeting latency the spec sizes the 200ms timeout against.
+
+**Resolution:** `gatewaymetrics` now registers and emits
+`lenny_experiment_targeting_duration_seconds` (provider label) and
+`lenny_experiment_targeting_error_total` (provider, error_type) via
+`ObserveExperimentTargetingDuration` / `RecordExperimentTargetingError`. The
+§10.7 OFREP closure in `sessionserver/experimentrouter.go` times every
+evaluation, classifies failures into a bounded `error_type` set
+(timeout / transport / OFREP errorCode / http_error per §16.1 line 157), and
+derives the `provider` label from the OFREP endpoint hostname per §16.1 line
+156. The `experiment.unknown_external_id` info event (§16.6 line 651) is now
+emitted — and the unregistered experiment ignored — when a provider response
+echoes a flag/experiment `key` Lenny never registered, which is the genuine
+reachable case of §10.7 line 829 in the per-flag OFREP model. Reporting flows
+through the existing `ExperimentRejectionReporter` interface; the production
+bridge in `cmd/lenny-gateway/main.go` records into the metrics registry.
 
 ---
 

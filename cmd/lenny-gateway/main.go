@@ -155,11 +155,11 @@ import (
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/memorystore/pgstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
+	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/deprecation"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
-	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/deprecation"
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
@@ -4298,6 +4298,22 @@ func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx cont
 			DataContentType: "application/json",
 			Data:            data,
 		})
+	}
+}
+
+// ObserveTargetingDuration records the §16.1 line 156
+// lenny_experiment_targeting_duration_seconds histogram.
+func (e experimentRejectionReporter) ObserveTargetingDuration(_ context.Context, provider string, seconds float64) {
+	if e.metrics != nil {
+		e.metrics.ObserveExperimentTargetingDuration(provider, seconds)
+	}
+}
+
+// RecordTargetingError increments the §16.1 line 157
+// lenny_experiment_targeting_error_total counter.
+func (e experimentRejectionReporter) RecordTargetingError(_ context.Context, provider, errorType string) {
+	if e.metrics != nil {
+		e.metrics.RecordExperimentTargetingError(provider, errorType)
 	}
 }
 

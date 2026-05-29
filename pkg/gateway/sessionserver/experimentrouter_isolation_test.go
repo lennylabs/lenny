@@ -59,14 +59,35 @@ func postSessionIso(t *testing.T, h http.Handler, path, runtime, iso string) *ht
 	return rr
 }
 
-// recordingRejectionReporter captures the §10.7 rejection reports the
-// ExperimentRouter emits when it fails a session closed.
+// recordingRejectionReporter captures the §10.7 ExperimentRouter
+// observability reports: fail-closed rejections plus the §16.1
+// external-targeting duration observations and error classifications.
 type recordingRejectionReporter struct {
-	events []sessionserver.ExperimentIsolationRejection
+	events          []sessionserver.ExperimentIsolationRejection
+	targetingDurs   []targetingDur
+	targetingErrors []targetingErr
+}
+
+type targetingDur struct {
+	provider string
+	seconds  float64
+}
+
+type targetingErr struct {
+	provider  string
+	errorType string
 }
 
 func (r *recordingRejectionReporter) ReportExperimentIsolationRejection(_ context.Context, ev sessionserver.ExperimentIsolationRejection) {
 	r.events = append(r.events, ev)
+}
+
+func (r *recordingRejectionReporter) ObserveTargetingDuration(_ context.Context, provider string, seconds float64) {
+	r.targetingDurs = append(r.targetingDurs, targetingDur{provider: provider, seconds: seconds})
+}
+
+func (r *recordingRejectionReporter) RecordTargetingError(_ context.Context, provider, errorType string) {
+	r.targetingErrors = append(r.targetingErrors, targetingErr{provider: provider, errorType: errorType})
 }
 
 // errorDetails parses a §15.1 error envelope and returns its code and

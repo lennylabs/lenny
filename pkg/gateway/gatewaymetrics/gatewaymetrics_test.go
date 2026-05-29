@@ -402,6 +402,37 @@ func TestOrphanMetricsNilSafe(t *testing.T) {
 	m.IncTreeRecoveryTimeout("pool", "level")
 }
 
+// TestExperimentTargetingMetricsRegistered_spec_10_7_833 covers the
+// §10.7 line 833 / §16.1 lines 156-157 external-targeting observability
+// surface: the per-provider duration histogram and the per-provider,
+// per-error_type failure counter must be registered and visible on
+// /metrics. F-10.7.14.
+func TestExperimentTargetingMetricsRegistered_spec_10_7_833(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.ObserveExperimentTargetingDuration("flags.acme.com", 0.042)
+	m.RecordExperimentTargetingError("flags.acme.com", "FLAG_NOT_FOUND")
+	m.RecordExperimentTargetingError("flags.acme.com", "timeout")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_experiment_targeting_duration_seconds_count{provider="flags.acme.com"} 1`,
+		`lenny_experiment_targeting_error_total{error_type="FLAG_NOT_FOUND",provider="flags.acme.com"} 1`,
+		`lenny_experiment_targeting_error_total{error_type="timeout",provider="flags.acme.com"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
 func TestSetScalarGaugesEmitsConfiguredValues(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {

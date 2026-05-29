@@ -7,14 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/experiment"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ofrep"
-	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -37,16 +39,26 @@ func (e *variantIsolationError) Error() string {
 	)
 }
 
-// ExperimentRejectionReporter records a §10.7 ExperimentRouter
-// fail-closed rejection. The gateway wires an implementation that
-// emits the `experiment.isolation_mismatch` operational event and
-// increments the `lenny_experiment_isolation_rejections_total` counter
-// (§16.1). Defining the interface here keeps the session server
-// decoupled from the audit and metrics subsystems, matching the
-// DeriveAuditSink pattern. A nil reporter disables reporting; the 422
-// rejection still fires.
+// ExperimentRejectionReporter receives §10.7 ExperimentRouter
+// observability reports. ReportExperimentIsolationRejection records a
+// fail-closed rejection (the `experiment.isolation_mismatch` event and
+// the `lenny_experiment_isolation_rejections_total` counter). The
+// targeting methods record the §16.1 lines 156-157 external-targeting
+// metrics on the `mode: external` evaluation path. Defining the
+// interface here keeps the session server decoupled from the audit and
+// metrics subsystems, matching the DeriveAuditSink pattern. A nil
+// reporter disables reporting; routing still proceeds.
 type ExperimentRejectionReporter interface {
 	ReportExperimentIsolationRejection(ctx context.Context, ev ExperimentIsolationRejection)
+	// ObserveTargetingDuration records one external-targeting evaluation
+	// latency for `lenny_experiment_targeting_duration_seconds` (§16.1
+	// line 156). provider is the OpenFeature provider name, or the OFREP
+	// endpoint hostname when provider:ofrep.
+	ObserveTargetingDuration(ctx context.Context, provider string, seconds float64)
+	// RecordTargetingError increments `lenny_experiment_targeting_error_total`
+	// (§16.1 line 157) on a §10.7 targeting_failed condition. errorType
+	// classifies the cause (timeout, transport, or the OFREP errorCode).
+	RecordTargetingError(ctx context.Context, provider, errorType string)
 }
 
 // ExperimentIsolationRejection is the §16.6 `experiment.isolation_mismatch`
@@ -199,15 +211,34 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		SessionID: row.ID,
 		Runtime:   row.RuntimeRef,
 	})
+	// spec: §16.1 line 156 — the provider metric label is the OFREP
+	// endpoint hostname for provider:ofrep. Computed once for the closure.
+	providerLabel := targetingProviderLabel(cfg.Provider, cfg.OFREP.Endpoint)
+	knownIDs := knownExperimentIDs(candidates)
 	failed := false
 	return func(experimentID string) (string, bool) {
 		if failed {
 			return "", false
 		}
+		start := time.Now()
 		result, err := client.Evaluate(ctx, experimentID, evalCtx)
+		// spec: §16.1 line 156 — record latency for every evaluation
+		// attempt, success or failure.
+		s.observeTargetingDuration(ctx, providerLabel, time.Since(start).Seconds())
 		if err != nil {
 			failed = true
+			// spec: §10.7 line 833 / §16.1 line 157 — increment the
+			// targeting-error counter alongside the targeting_failed event.
+			s.recordTargetingError(ctx, providerLabel, classifyTargetingError(err))
 			s.emitExperimentTargetingFailed(ctx, row, string(cfg.Provider), err)
+			return "", false
+		}
+		// spec: §10.7 line 829 / §16.6 line 651 — a provider response that
+		// echoes a flag/experiment key Lenny did not register is logged
+		// with experiment.unknown_external_id and otherwise ignored (no
+		// enrollment is made from an unregistered external experiment).
+		if result.Key != "" && result.Key != experimentID && !knownIDs[result.Key] {
+			s.emitExperimentUnknownExternalID(ctx, row, string(cfg.Provider), result.Key)
 			return "", false
 		}
 		variantID, known := experiment.ResolveExternalVariant(
@@ -219,6 +250,74 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		}
 		return variantID, true
 	}
+}
+
+// observeTargetingDuration forwards an external-targeting evaluation
+// latency to the wired reporter. Best-effort: a nil reporter is a no-op.
+// spec: §16.1 line 156.
+func (s *Server) observeTargetingDuration(ctx context.Context, provider string, seconds float64) {
+	if s.experimentReporter == nil {
+		return
+	}
+	s.experimentReporter.ObserveTargetingDuration(ctx, provider, seconds)
+}
+
+// recordTargetingError forwards a §10.7 targeting_failed classification
+// to the wired reporter. Best-effort: a nil reporter is a no-op.
+// spec: §16.1 line 157.
+func (s *Server) recordTargetingError(ctx context.Context, provider, errorType string) {
+	if s.experimentReporter == nil {
+		return
+	}
+	s.experimentReporter.RecordTargetingError(ctx, provider, errorType)
+}
+
+// targetingProviderLabel derives the §16.1 line 156 `provider` metric
+// label. For provider:ofrep the OFREP endpoint hostname is used; any
+// other provider uses its name verbatim. An unparseable endpoint falls
+// back to the provider name so the label is never empty.
+func targetingProviderLabel(provider experiment.TargetingProvider, endpoint string) string {
+	if provider == experiment.TargetingProviderOFREP {
+		if u, err := url.Parse(endpoint); err == nil && u.Hostname() != "" {
+			return u.Hostname()
+		}
+	}
+	return string(provider)
+}
+
+// classifyTargetingError reduces an OFREP evaluation failure to a bounded
+// §16.1 line 157 error_type label. A provider-level *ofrep.EvalError
+// carries the OFREP errorCode (or "http_error" when the non-2xx response
+// had no code); a timeout is "timeout"; any other transport failure is
+// "transport". The label set is bounded so the counter does not explode
+// cardinality on arbitrary error strings.
+func classifyTargetingError(err error) string {
+	var ee *ofrep.EvalError
+	if errors.As(err, &ee) {
+		if ee.Code != "" {
+			return ee.Code
+		}
+		return "http_error"
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return "timeout"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	return "transport"
+}
+
+// knownExperimentIDs is the set of registered experiment IDs among the
+// routable candidates — the keys a provider response is matched against
+// for the §10.7 line 829 unknown_external_id check.
+func knownExperimentIDs(candidates []experimentstore.Experiment) map[string]bool {
+	ids := make(map[string]bool, len(candidates))
+	for _, e := range candidates {
+		ids[e.ID] = true
+	}
+	return ids
 }
 
 // variantIDsOf returns the registered variant IDs of the named
@@ -279,6 +378,29 @@ func (s *Server) emitExperimentUnknownVariant(ctx context.Context, row *sessions
 		Source:          "/v1/sessions",
 		Type:            events.EventExperimentUnknownVariantFromProvider.CloudEventsType(),
 		Severity:        "warning",
+		DataContentType: "application/json",
+		Data:            data,
+	})
+}
+
+// emitExperimentUnknownExternalID records the §16.6 line 651
+// experiment.unknown_external_id info event when an OpenFeature provider
+// returns a flag/experiment key that is not registered in Lenny's
+// mode:external catalog. Best-effort: a nil emitter is a no-op.
+func (s *Server) emitExperimentUnknownExternalID(ctx context.Context, row *sessionstore.Session, provider, externalID string) {
+	if s.opsEmitter == nil {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{
+		"tenant_id":              row.TenantID,
+		"user_id":                row.UserID,
+		"provider":               provider,
+		"external_experiment_id": externalID,
+	})
+	_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
+		Source:          "/v1/sessions",
+		Type:            events.EventExperimentUnknownExternalID.CloudEventsType(),
+		Severity:        "info",
 		DataContentType: "application/json",
 		Data:            data,
 	})

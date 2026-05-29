@@ -24,16 +24,16 @@ import (
 type Metrics struct {
 	reg *prometheus.Registry
 
-	requestsTotal             *prometheus.CounterVec
-	requestDuration           *prometheus.HistogramVec
-	activeSessions            prometheus.Gauge
-	activeStreams             prometheus.Gauge
-	requestQueueDepth         prometheus.Gauge
-	rejectionRate             prometheus.Gauge
-	maxSessionsPerReplica     *prometheus.GaugeVec
-	minReplicas               prometheus.Gauge
-	streamCeiling             prometheus.Gauge
-	replicaCount              prometheus.Gauge
+	requestsTotal         *prometheus.CounterVec
+	requestDuration       *prometheus.HistogramVec
+	activeSessions        prometheus.Gauge
+	activeStreams         prometheus.Gauge
+	requestQueueDepth     prometheus.Gauge
+	rejectionRate         prometheus.Gauge
+	maxSessionsPerReplica *prometheus.GaugeVec
+	minReplicas           prometheus.Gauge
+	streamCeiling         prometheus.Gauge
+	replicaCount          prometheus.Gauge
 	// billingCorrectionRateThreshold is the §11.2.1 / §16.5 startup-set
 	// gauge that exposes the deployer-configurable percentage (default
 	// 5%) the BillingCorrectionRateHigh alert reads via
@@ -49,16 +49,16 @@ type Metrics struct {
 	gatewayQueueDepthThreshold     prometheus.Gauge
 	gatewayLatencyThresholdSeconds prometheus.Gauge
 	credentialPoolLowThreshold     prometheus.Gauge
-	extractionThreshold       *prometheus.GaugeVec
-	storageQuotaUsed          *prometheus.GaugeVec
-	storageQuotaLimit         *prometheus.GaugeVec
-	circuitBreakerOpen        *prometheus.GaugeVec
-	cbRejections              *prometheus.CounterVec
-	cbRejectionsSuppressed    *prometheus.CounterVec
-	cbCacheStale              prometheus.Gauge
-	cbCacheInitialized        prometheus.Gauge
-	elicitationDropped        *prometheus.CounterVec
-	elicitationTamperDetected *prometheus.CounterVec
+	extractionThreshold            *prometheus.GaugeVec
+	storageQuotaUsed               *prometheus.GaugeVec
+	storageQuotaLimit              *prometheus.GaugeVec
+	circuitBreakerOpen             *prometheus.GaugeVec
+	cbRejections                   *prometheus.CounterVec
+	cbRejectionsSuppressed         *prometheus.CounterVec
+	cbCacheStale                   prometheus.Gauge
+	cbCacheInitialized             prometheus.Gauge
+	elicitationDropped             *prometheus.CounterVec
+	elicitationTamperDetected      *prometheus.CounterVec
 	// elicitationPending is the §16.1 line 61 unlabelled gauge of
 	// in-flight elicitations the §16.5 ElicitationBacklogHigh alert
 	// keys on (`lenny_elicitation_pending > 50 for > 30s`). The
@@ -76,9 +76,11 @@ type Metrics struct {
 	// from admit to resolve / dismiss / timeout per the §16.1 line 60
 	// histogram contract. spec: §16.1 line 60. F-9.2.14.
 	elicitationRoundtripSeconds prometheus.Observer
-	experimentIsoRej          *prometheus.CounterVec
-	noEnvPolicyAllowAll       *prometheus.CounterVec
-	gcPauseP99Ms              prometheus.Gauge
+	experimentIsoRej            *prometheus.CounterVec
+	experimentTargetingDur      *prometheus.HistogramVec
+	experimentTargetingErr      *prometheus.CounterVec
+	noEnvPolicyAllowAll         *prometheus.CounterVec
+	gcPauseP99Ms                prometheus.Gauge
 	// replayBufferUtilization is the §16.1
 	// lenny_event_bus_replay_buffer_utilization gauge — ratio of the
 	// in-memory replay buffer in use relative to capacity (0..1; 1.0
@@ -753,6 +755,29 @@ func New() (*Metrics, error) {
 		Name: "lenny_experiment_isolation_rejections_total",
 		Help: "Total sessions the §10.7 ExperimentRouter rejected closed because the variant pool's isolation profile was weaker than the session's.",
 	}, []string{"tenant_id", "experiment_id", "variant_id"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §10.7 line 833 / §16.1 lines 156-157 — external experiment
+	// targeting observability. The `provider` label carries the
+	// OpenFeature provider name; for provider:ofrep the OFREP endpoint
+	// hostname is used (§16.1 line 156). Buckets resolve the sub-second
+	// range the §10.7 200ms targeting timeout is sized against.
+	experimentTargetingDur, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_experiment_targeting_duration_seconds",
+		Help:    "§10.7 external experiment targeting evaluation latency by provider (§16.1 line 156).",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1, 2, 5},
+	}, []string{"provider"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §10.7 line 833 / §16.1 line 157 — targeting_failed counter.
+	// error_type classifies the §10.7 failure cause (timeout, transport,
+	// or the OFREP errorCode).
+	experimentTargetingErr, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_experiment_targeting_error_total",
+		Help: "§10.7 external experiment targeting evaluation failures by provider and error_type (§16.1 line 157).",
+	}, []string{"provider", "error_type"})
 	if err != nil {
 		return nil, err
 	}
@@ -1492,6 +1517,7 @@ func New() (*Metrics, error) {
 		elicitationPending, elicitationTimeout, elicitationSuppressed,
 		elicitationRoundtripSeconds,
 		experimentIsoRej,
+		experimentTargetingDur, experimentTargetingErr,
 		noEnvPolicyAllowAll, tokenServiceCircuitState,
 		kmsSigningErrors, kmsSigningCircuitState,
 		checkpointStaleSessions,
@@ -1610,6 +1636,8 @@ func New() (*Metrics, error) {
 		elicitationSuppressed:                elicitationSuppressed.WithLabelValues(),
 		elicitationRoundtripSeconds:          elicitationRoundtripSeconds.WithLabelValues(),
 		experimentIsoRej:                     experimentIsoRej,
+		experimentTargetingDur:               experimentTargetingDur,
+		experimentTargetingErr:               experimentTargetingErr,
 		noEnvPolicyAllowAll:                  noEnvPolicyAllowAll,
 		gcPauseP99Ms:                         gcPause,
 		replayBufferUtilization:              replayBufferUtilizationChild,
@@ -2683,6 +2711,23 @@ func (m *Metrics) ObserveElicitationRoundtrip(d time.Duration) {
 // isolation profile is weaker than the session's.
 func (m *Metrics) RecordExperimentIsolationRejection(tenantID, experimentID, variantID string) {
 	m.experimentIsoRej.WithLabelValues(tenantID, experimentID, variantID).Inc()
+}
+
+// ObserveExperimentTargetingDuration records one §10.7 external
+// experiment targeting evaluation against the §16.1 line 156
+// lenny_experiment_targeting_duration_seconds histogram. provider is the
+// OpenFeature provider name, or the OFREP endpoint hostname when
+// provider:ofrep.
+func (m *Metrics) ObserveExperimentTargetingDuration(provider string, seconds float64) {
+	m.experimentTargetingDur.WithLabelValues(provider).Observe(seconds)
+}
+
+// RecordExperimentTargetingError increments the §16.1 line 157
+// lenny_experiment_targeting_error_total counter on a §10.7
+// targeting_failed condition. errorType classifies the failure cause
+// (timeout, transport, or the OFREP errorCode).
+func (m *Metrics) RecordExperimentTargetingError(provider, errorType string) {
+	m.experimentTargetingErr.WithLabelValues(provider, errorType).Inc()
 }
 
 // RecordNoEnvironmentPolicyAllowAll increments the §10.6
