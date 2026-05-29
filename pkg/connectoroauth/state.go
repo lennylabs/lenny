@@ -90,6 +90,20 @@ type FlowContext struct {
 
 	// CreatedAt is the gateway clock instant the flow was initiated.
 	CreatedAt time.Time
+
+	// InitiatorIP / InitiatorUA bind the authorize-time request to the
+	// authenticated principal. The §9.3 callback carries no Bearer
+	// token (it is a browser redirect) and the `state` parameter is
+	// the only server-side binding. Capturing the client IP / user
+	// agent at authorize time lets the audit row distinguish
+	// `initiated_by` from `completed_by` (the same fields captured at
+	// callback time) so an operator can investigate a state replay or
+	// session hijack between authorize and callback. Empty strings
+	// preserve back-compat for code paths that do not stamp them.
+	// spec: §9.3 line 140 — audit logging is the prescribed forensic
+	// surface. F-9.3.11.
+	InitiatorIP string
+	InitiatorUA string
 }
 
 // StateSigner mints and verifies the §9.3 anti-CSRF `state` parameter.

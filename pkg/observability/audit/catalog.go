@@ -117,6 +117,21 @@ const (
 	// reconstruct what happened without parsing the gRPC error string.
 	// spec: §7.5 line 475, §7.3 line 387 — F-7.5.9.
 	EventSessionSetupCommandFailed EventType = "session.setup_command_failed"
+
+	// §9.3 connector lifecycle audit events. The §15.1 admin connector
+	// CRUD endpoints (`POST /v1/admin/connectors`, `PUT`, `DELETE`) and
+	// the §9.3 OAuth-flow endpoints (authorize / callback) emit these
+	// strings through the standard hash-chain audit pipeline. The
+	// §11.7 audit-log row records who registered, updated, soft-deleted,
+	// initiated, or completed a connector OAuth flow against which
+	// connector_id; the §16.7 catalog enumerates each so audit-sink
+	// validators (IsKnownEventType) do not discard the rows as unknown
+	// event types. spec: §9.3 line 116-164 — F-9.3.9.
+	EventAdminConnectorCreated              EventType = "admin.connector.created"
+	EventAdminConnectorUpdated              EventType = "admin.connector.updated"
+	EventAdminConnectorSoftDeleted          EventType = "admin.connector.soft_deleted"
+	EventConnectorOAuthAuthorizationInitiated EventType = "connector.oauth.authorization_initiated"
+	EventConnectorOAuthCredentialStored     EventType = "connector.oauth.credential_stored"
 )
 
 // The §16.7 / §25.4 lenny-ops remediation-lock and escalation audit
@@ -258,6 +273,10 @@ var catalog = []EventType{
 	// §7.3 retry/resume lifecycle. F-7.3.25.
 	EventSessionResumed, EventSessionRetryAttempted, EventSessionAwaitingActionEntered,
 	EventSessionExpiredInAwaitingAction, EventSessionCascadeApplied,
+
+	// §9.3 connector lifecycle and OAuth flow. F-9.3.9.
+	EventAdminConnectorCreated, EventAdminConnectorUpdated, EventAdminConnectorSoftDeleted,
+	EventConnectorOAuthAuthorizationInitiated, EventConnectorOAuthCredentialStored,
 
 	EventRemediationLockAcquired, EventRemediationLockExtended, EventRemediationLockReleased,
 	EventRemediationLockExpired, EventRemediationLockStolen, EventRemediationLockSplitBrainDetected,

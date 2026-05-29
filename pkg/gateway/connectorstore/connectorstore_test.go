@@ -53,13 +53,24 @@ func TestCreateRejectsNonHTTPSMCPURL(t *testing.T) {
 	}
 }
 
+// validOAuth2 returns an oauth2 auth block populated with every
+// §9.3 line 116-130 required field so a test can attach it to a
+// validConnector() and only mutate the field under inspection.
+func validOAuth2() *connectorstore.ConnectorAuth {
+	return &connectorstore.ConnectorAuth{
+		Type:                  "oauth2",
+		AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
+		TokenEndpoint:         "https://github.com/login/oauth/access_token",
+		ClientID:              "client-abc",
+		ClientSecretRef:       "lenny-system/github-client-secret",
+	}
+}
+
 func TestCreateRejectsNonHTTPSAuthEndpoints(t *testing.T) {
 	s := connectorstore.NewMemory()
 	c := validConnector()
-	c.Auth = &connectorstore.ConnectorAuth{
-		Type:                  "oauth2",
-		AuthorizationEndpoint: "http://github.com/login/oauth/authorize",
-	}
+	c.Auth = validOAuth2()
+	c.Auth.AuthorizationEndpoint = "http://github.com/login/oauth/authorize"
 	if err := s.Create(context.Background(), c); err == nil {
 		t.Error("http:// authorizationEndpoint should be rejected")
 	}
@@ -68,10 +79,8 @@ func TestCreateRejectsNonHTTPSAuthEndpoints(t *testing.T) {
 func TestCreateRejectsInlineClientSecret(t *testing.T) {
 	s := connectorstore.NewMemory()
 	c := validConnector()
-	c.Auth = &connectorstore.ConnectorAuth{
-		Type:            "oauth2",
-		ClientSecretRef: "inline-secret-no-slash",
-	}
+	c.Auth = validOAuth2()
+	c.Auth.ClientSecretRef = "inline-secret-no-slash"
 	if err := s.Create(context.Background(), c); err == nil {
 		t.Error("inline clientSecretRef should be rejected (must be namespace/name)")
 	}
@@ -80,12 +89,46 @@ func TestCreateRejectsInlineClientSecret(t *testing.T) {
 func TestCreateAcceptsRefClientSecret(t *testing.T) {
 	s := connectorstore.NewMemory()
 	c := validConnector()
-	c.Auth = &connectorstore.ConnectorAuth{
-		Type:            "oauth2",
-		ClientSecretRef: "lenny-system/github-client-secret",
-	}
+	c.Auth = validOAuth2()
 	if err := s.Create(context.Background(), c); err != nil {
 		t.Errorf("namespace/name clientSecretRef should be accepted: %v", err)
+	}
+}
+
+// spec: §9.3 line 116-130 — the oauth2 example block declares
+// authorizationEndpoint, tokenEndpoint, and clientId as mandatory.
+// F-9.3.6 — every field is required at registration time.
+func TestCreateRejectsIncompleteOAuth2_spec_9_3_116(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		drop func(*connectorstore.ConnectorAuth)
+	}{
+		{"missing authorizationEndpoint", func(a *connectorstore.ConnectorAuth) { a.AuthorizationEndpoint = "" }},
+		{"missing tokenEndpoint", func(a *connectorstore.ConnectorAuth) { a.TokenEndpoint = "" }},
+		{"missing clientId", func(a *connectorstore.ConnectorAuth) { a.ClientID = "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := connectorstore.NewMemory()
+			c := validConnector()
+			c.Auth = validOAuth2()
+			tc.drop(c.Auth)
+			if err := s.Create(context.Background(), c); err == nil {
+				t.Errorf("%s: incomplete oauth2 should be rejected", tc.name)
+			}
+		})
+	}
+}
+
+// spec: §9.3 line 140 — all connectors must be registered before
+// they can be used. An empty mcpServerUrl admits a connector that
+// cannot be dialed. F-9.3.10 — registration must reject the empty
+// value before the registry advertises the row.
+func TestCreateRejectsEmptyMCPServerURL_spec_9_3_140(t *testing.T) {
+	s := connectorstore.NewMemory()
+	c := validConnector()
+	c.MCPServerURL = ""
+	if err := s.Create(context.Background(), c); err == nil {
+		t.Error("empty mcpServerUrl should be rejected at registration")
 	}
 }
 

@@ -215,6 +215,114 @@ func TestAuthorizeConnectorNotOAuth(t *testing.T) {
 	}
 }
 
+// spec: §9.3 line 140 — audit logging is the prescribed forensic
+// surface for the connector OAuth flow. F-9.3.11 — the
+// `connector.oauth.credential_stored` audit detail must carry the
+// initiator IP + user agent (captured at authorize time) and the
+// completer IP + user agent (captured at callback time) so an
+// operator can investigate a state replay or session hijack between
+// authorize and callback. The pair is recorded verbatim.
+func TestConnectorOAuthCredentialStoredAuditCarriesInitiatorAndCompleterIP_spec_9_3_140(t *testing.T) {
+	f := newOAuthFixture(t)
+	f.registerOAuthConnector(t, false)
+
+	// Initiate the flow from a specific authorize-time IP / UA.
+	authorizeReq := withUser(httptest.NewRequest(http.MethodPost,
+		"/v1/admin/connectors/github/oauth/authorize", nil))
+	authorizeReq.RemoteAddr = "10.0.0.7:54321"
+	authorizeReq.Header.Set("User-Agent", "Alice/Browser-1.0")
+	authorizeRR := httptest.NewRecorder()
+	f.router.Handler().ServeHTTP(authorizeRR, authorizeReq)
+	if authorizeRR.Code != http.StatusOK {
+		t.Fatalf("authorize status: %d, body=%s", authorizeRR.Code, authorizeRR.Body.String())
+	}
+	var resp admin.AuthorizeConnectorResponse
+	if err := json.Unmarshal(authorizeRR.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode authorize: %v", err)
+	}
+	state := stateFromAuthURL(t, resp.AuthorizationURL)
+
+	// Complete the flow from a different IP / UA — simulating the
+	// browser-rendered redirect arriving from a different network or
+	// after a hijack.
+	cbReq := httptest.NewRequest(http.MethodGet,
+		"/v1/admin/connectors/oauth/callback?code=code-1&state="+url.QueryEscape(state), nil)
+	cbReq.RemoteAddr = "10.0.0.99:33333"
+	cbReq.Header.Set("User-Agent", "Different/Browser-2.0")
+	cbRR := httptest.NewRecorder()
+	f.router.Handler().ServeHTTP(cbRR, cbReq)
+	if cbRR.Code != http.StatusOK {
+		t.Fatalf("callback status: %d, body=%s", cbRR.Code, cbRR.Body.String())
+	}
+
+	var got admin.AuditEvent
+	var found bool
+	for _, ev := range f.audit.snapshot() {
+		if ev.Type == "connector.oauth.credential_stored" {
+			got = ev
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected connector.oauth.credential_stored event, got %+v", f.audit.snapshot())
+	}
+	if got.Detail["initiated_ip"] != "10.0.0.7" {
+		t.Errorf("initiated_ip = %v, want 10.0.0.7", got.Detail["initiated_ip"])
+	}
+	if got.Detail["initiated_user_agent"] != "Alice/Browser-1.0" {
+		t.Errorf("initiated_user_agent = %v, want Alice/Browser-1.0", got.Detail["initiated_user_agent"])
+	}
+	if got.Detail["completed_ip"] != "10.0.0.99" {
+		t.Errorf("completed_ip = %v, want 10.0.0.99", got.Detail["completed_ip"])
+	}
+	if got.Detail["completed_user_agent"] != "Different/Browser-2.0" {
+		t.Errorf("completed_user_agent = %v, want Different/Browser-2.0", got.Detail["completed_user_agent"])
+	}
+}
+
+// spec: §9.3 line 140 — F-9.3.11. When a deployment terminates
+// TLS at a proxy, the authorize-time / callback-time IP must be
+// taken from the first-hop client in X-Forwarded-For so the audit
+// trail records the user's client IP instead of the proxy's.
+func TestConnectorOAuthCallbackIPHonoursXForwardedFor_spec_9_3_140(t *testing.T) {
+	f := newOAuthFixture(t)
+	f.registerOAuthConnector(t, false)
+	authorizeReq := withUser(httptest.NewRequest(http.MethodPost,
+		"/v1/admin/connectors/github/oauth/authorize", nil))
+	authorizeReq.Header.Set("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
+	authorizeRR := httptest.NewRecorder()
+	f.router.Handler().ServeHTTP(authorizeRR, authorizeReq)
+	if authorizeRR.Code != http.StatusOK {
+		t.Fatalf("authorize: %d", authorizeRR.Code)
+	}
+	var resp admin.AuthorizeConnectorResponse
+	_ = json.Unmarshal(authorizeRR.Body.Bytes(), &resp)
+	state := stateFromAuthURL(t, resp.AuthorizationURL)
+
+	cbReq := httptest.NewRequest(http.MethodGet,
+		"/v1/admin/connectors/oauth/callback?code=code-1&state="+url.QueryEscape(state), nil)
+	cbReq.Header.Set("X-Forwarded-For", "203.0.113.20")
+	cbRR := httptest.NewRecorder()
+	f.router.Handler().ServeHTTP(cbRR, cbReq)
+	if cbRR.Code != http.StatusOK {
+		t.Fatalf("callback: %d, body=%s", cbRR.Code, cbRR.Body.String())
+	}
+
+	var got admin.AuditEvent
+	for _, ev := range f.audit.snapshot() {
+		if ev.Type == "connector.oauth.credential_stored" {
+			got = ev
+		}
+	}
+	if got.Detail["initiated_ip"] != "203.0.113.10" {
+		t.Errorf("initiated_ip = %v, want 203.0.113.10 (first XFF hop)", got.Detail["initiated_ip"])
+	}
+	if got.Detail["completed_ip"] != "203.0.113.20" {
+		t.Errorf("completed_ip = %v, want 203.0.113.20 (first XFF hop)", got.Detail["completed_ip"])
+	}
+}
+
 // TestConnectorOAuthCallbackHappyPath runs the full flow: initiate,
 // then call the callback with the real state and a code, and confirm
 // the connector credential is stored for the flow's triple.

@@ -11121,7 +11121,7 @@ Files:
 - `/Users/joan/projects/lenny/cmd/lenny-gateway/main.go:987, 1000-1005`
 - `/Users/joan/projects/lenny/pkg/gateway/connectorcredstore/pgstore/pgstore.go` (exists, unused)
 
-### - [ ] F-9.3.6 — `auth.type: oauth2` accepted without the required endpoints or `clientId` [Medium] — OPEN
+### - [x] F-9.3.6 — `auth.type: oauth2` accepted without the required endpoints or `clientId` [Medium] — CLOSED
 
 `connectorstore.Connector.Validate` (`pkg/gateway/connectorstore/connectorstore.go:114-153`)
 validates `auth.type` against the allowed set and runs `requireHTTPS`
@@ -11138,7 +11138,9 @@ Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/connectorstore/connectorstore.go:114-153`
 
-### - [ ] F-9.3.7 — `Connector.TenantID` absent: `visibility: tenant` cannot be enforced [Medium] — OPEN
+**Resolution:** `connectorstore.Connector.Validate` now rejects an `auth.type: oauth2` block missing `authorizationEndpoint`, `tokenEndpoint`, or `clientId` (per §9.3 line 116-130). The admin `POST /v1/admin/connectors` and `PUT` surfaces return `400 VALIDATION_ERROR` at registration time instead of `CONNECTOR_OAUTH_INCOMPLETE` at authorize time. Tier-1 coverage: `TestCreateRejectsIncompleteOAuth2_spec_9_3_116` (connectorstore) and `TestCreateConnectorRejectsIncompleteOAuth2_spec_9_3_116` (admin).
+
+### - [x] F-9.3.7 — `Connector.TenantID` absent: `visibility: tenant` cannot be enforced [Medium] — CLOSED
 
 Spec §9.3 (line 131) declares `visibility: tenant` as the default and
 contrasts it with `platform`. The implementation persists the
@@ -11181,6 +11183,8 @@ Files:
 - `/Users/joan/projects/lenny/pkg/gateway/connectorstore/connectorstore.go:28-57, 263-280`
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connectors.go:86-230` (no TenantID filter applied)
 
+**Resolution:** Verify-closed; the gap text reflected a snapshot before migration 0053 landed. `migrations/0053_connectors_tenant_scoped.up.sql` adds `tenant_id`, switches the primary key to `(tenant_id, id)`, enables RLS with `FORCE`, and `pkg/gateway/connectorstore` now carries `Connector.TenantID` plus per-tenant indexes; the pgstore selects/inserts include `tenant_id`. `pkg/gateway/admin/connectors.go:282-314` (`resolveTargetTenant`/`listTenantScope`) refuses tenant-admins writing across tenants and scopes platform-admin reads via `?tenant_id=` (default sentinel). `DeleteByTenant` purges per-tenant rows. The visibility/platform split is now enforceable end-to-end.
+
 ### - [ ] F-9.3.8 — Tool capability inference not run at connector registration [Medium] — OPEN
 
 Spec §9.3 (line 136): "Tool capability metadata derived from MCP
@@ -11208,7 +11212,7 @@ Files:
 - `/Users/joan/projects/lenny/pkg/gateway/connectorstore/connectorstore.go:28-57`
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connectors.go`
 
-### - [ ] F-9.3.9 — Connector OAuth audit event types not in the §16.7 catalog [Medium] — OPEN
+### - [x] F-9.3.9 — Connector OAuth audit event types not in the §16.7 catalog [Medium] — CLOSED
 
 `pkg/observability/audit/catalog.go` declares the §16.7 typed
 enumeration of audit event types and the closed `catalog` slice. The
@@ -11237,7 +11241,9 @@ Files:
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connectors.go:125, 207, 228`
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connector_oauth.go:215, 364`
 
-### - [ ] F-9.3.10 — `mcpServerUrl` not required at registration [Medium] — OPEN
+**Resolution:** Added `EventAdminConnectorCreated`, `EventAdminConnectorUpdated`, `EventAdminConnectorSoftDeleted`, `EventConnectorOAuthAuthorizationInitiated`, and `EventConnectorOAuthCredentialStored` to `pkg/observability/audit/catalog.go`; the closed `catalog` slice now carries them so `IsKnownEventType` recognizes each row. The admin handlers (`connectors.go`, `connector_oauth.go`) emit through the typed constants, and `pkg/audit/ocsf/mapping.go` resolves the connector CRUD events to OCSF EntityManagement and the OAuth flow events to Authentication so SIEM consumers receive distinguished class/activity pairs instead of the generic `admin.` prefix fallback. Tier-1 coverage: `TestCatalogIsCompleteAgainstSpec167` (extended) and `TestConnectorEventsResolveToTypedClasses_spec_9_3_116` (OCSF).
+
+### - [x] F-9.3.10 — `mcpServerUrl` not required at registration [Medium] — CLOSED
 
 `Connector.Validate` runs `requireHTTPS` only when `MCPServerURL != ""`
 (`connectorstore.go:121-125`). A connector with an empty
@@ -11252,7 +11258,9 @@ Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/connectorstore/connectorstore.go:121-125`
 
-### - [ ] F-9.3.11 — Auditing skips the live actor on `connector.oauth.credential_stored` [Medium] — OPEN
+**Resolution:** `connectorstore.Connector.Validate` now treats an empty `MCPServerURL` as a registration-time validation error per §9.3 line 140. Tier-1 coverage: `TestCreateRejectsEmptyMCPServerURL_spec_9_3_140` (connectorstore) and `TestCreateConnectorRejectsEmptyMCPServerURL_spec_9_3_140` (admin).
+
+### - [x] F-9.3.11 — Auditing skips the live actor on `connector.oauth.credential_stored` [Medium] — CLOSED
 
 `handleConnectorOAuthCallback` emits its `credential_stored` audit
 event with `ActorSubject = flow.UserID, ActorTenantID = flow.TenantID`
@@ -11272,6 +11280,8 @@ surface (§9.3 line 140: "audit logging" is one of the named uses).
 Files:
 
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connector_oauth.go:362-374`
+
+**Resolution:** Added `InitiatorIP` + `InitiatorUA` to `connectoroauth.FlowContext` and the connector OAuth authorize handler captures both (honouring `X-Forwarded-For` first-hop). `handleConnectorOAuthCallback` now stamps the credential-stored audit detail with `initiated_ip` / `initiated_user_agent` (the authorize-time pair) plus `completed_ip` / `completed_user_agent` (the callback-time pair), giving operators the distinction §9.3 line 140 names as the prescribed forensic surface. Tier-1 coverage: `TestConnectorOAuthCredentialStoredAuditCarriesInitiatorAndCompleterIP_spec_9_3_140` and `TestConnectorOAuthCallbackIPHonoursXForwardedFor_spec_9_3_140`.
 
 ### - [ ] F-9.3.12 — Spec-mandated `POST /v1/admin/connectors/{id}/test` endpoint unimplemented [Medium] — OPEN
 

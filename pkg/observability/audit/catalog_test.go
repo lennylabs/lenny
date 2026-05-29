@@ -121,6 +121,17 @@ var spec167AuditEvents = []string{
 	"session.awaiting_action_entered",
 	"session.expired_in_awaiting_action",
 	"session.cascade_applied",
+	// §9.3 connector lifecycle and OAuth flow. F-9.3.9 — the
+	// §9.3 admin connector CRUD endpoints and OAuth flow emit
+	// these strings; §9.3 line 140 names audit logging as one of
+	// the prescribed forensic surfaces. The catalog enumerates the
+	// rows so audit-sink validators (IsKnownEventType) do not
+	// discard them as unknown event types.
+	"admin.connector.created",
+	"admin.connector.updated",
+	"admin.connector.soft_deleted",
+	"connector.oauth.authorization_initiated",
+	"connector.oauth.credential_stored",
 }
 
 func TestCatalogIsNonEmpty(t *testing.T) {

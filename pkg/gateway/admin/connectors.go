@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
 // ConnectorPayload is the §9.3 / §15.1 admin-connector wire shape.
@@ -134,7 +135,9 @@ func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	stored, _ := r.connectors.Get(req.Context(), tenantID, body.ID)
-	r.emit(req.Context(), principal, "admin.connector.created", body.ID, map[string]any{
+	// spec: §16.7 / §9.3 line 116-164 — emit through the typed catalog
+	// so audit-sink validators recognize the event type. F-9.3.9.
+	r.emit(req.Context(), principal, audit.EventAdminConnectorCreated.String(), body.ID, map[string]any{
 		"tenant_id":  tenantID,
 		"transport":  stored.Transport,
 		"visibility": stored.Visibility,
@@ -236,7 +239,7 @@ func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
-	r.emit(req.Context(), principal, "admin.connector.updated", id, map[string]any{
+	r.emit(req.Context(), principal, audit.EventAdminConnectorUpdated.String(), id, map[string]any{
 		"tenant_id": tenantID,
 	})
 	w.Header().Set("Content-Type", "application/json")
@@ -264,7 +267,7 @@ func (r *Router) handleDeleteConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	r.emit(req.Context(), principal, "admin.connector.soft_deleted", id, map[string]any{
+	r.emit(req.Context(), principal, audit.EventAdminConnectorSoftDeleted.String(), id, map[string]any{
 		"tenant_id": tenantID,
 	})
 	w.WriteHeader(http.StatusNoContent)

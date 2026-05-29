@@ -125,6 +125,13 @@ func ValidateID(id string) error {
 // Security: every URL must be HTTPS so a registered connector
 // cannot become an http:// SSRF pivot, and the §9.3 v1 transport
 // constraint (`streamable_http` only) is enforced.
+//
+// spec: §9.3 line 116-130 — the connector YAML example treats
+// `mcpServerUrl` and the oauth2 endpoint+clientId triple as
+// mandatory. The validator rejects malformed connectors at
+// registration time so the §15.1 admin API matches the documented
+// syntactic-validation contract instead of failing late at OAuth
+// authorize time with CONNECTOR_OAUTH_INCOMPLETE. F-9.3.6, F-9.3.10.
 func (c Connector) Validate() error {
 	if c.TenantID == "" {
 		return errors.New("connectorstore: tenant_id is required")
@@ -135,10 +142,15 @@ func (c Connector) Validate() error {
 	if c.Transport != "" && c.Transport != "streamable_http" {
 		return errors.New("connectorstore: v1 transport must be streamable_http")
 	}
-	if c.MCPServerURL != "" {
-		if err := requireHTTPS(c.MCPServerURL, "mcpServerUrl"); err != nil {
-			return err
-		}
+	// spec: §9.3 line 140 — every connector must be registered before
+	// it can be used. The mcpServerUrl is the endpoint the registry
+	// authorizes; an empty value admits a connector that cannot be
+	// dialed and would later fail at adapter-manifest time. F-9.3.10.
+	if c.MCPServerURL == "" {
+		return errors.New("connectorstore: mcpServerUrl is required")
+	}
+	if err := requireHTTPS(c.MCPServerURL, "mcpServerUrl"); err != nil {
+		return err
 	}
 	switch c.Visibility {
 	case "", "tenant", "platform":
@@ -149,6 +161,22 @@ func (c Connector) Validate() error {
 	if c.Auth != nil {
 		if c.Auth.Type != "" && c.Auth.Type != "oauth2" {
 			return errors.New("connectorstore: auth.type must be oauth2")
+		}
+		// spec: §9.3 line 116-130 — an oauth2 auth block must carry
+		// authorizationEndpoint, tokenEndpoint, and clientId. Without
+		// these the OAuth authorize endpoint fails late at
+		// `handleAuthorizeConnector` with CONNECTOR_OAUTH_INCOMPLETE
+		// instead of rejecting at registration time. F-9.3.6.
+		if c.Auth.Type == "oauth2" {
+			if c.Auth.AuthorizationEndpoint == "" {
+				return errors.New("connectorstore: auth.authorizationEndpoint is required when auth.type is oauth2")
+			}
+			if c.Auth.TokenEndpoint == "" {
+				return errors.New("connectorstore: auth.tokenEndpoint is required when auth.type is oauth2")
+			}
+			if c.Auth.ClientID == "" {
+				return errors.New("connectorstore: auth.clientId is required when auth.type is oauth2")
+			}
 		}
 		for _, pair := range []struct{ field, value string }{
 			{"auth.authorizationEndpoint", c.Auth.AuthorizationEndpoint},

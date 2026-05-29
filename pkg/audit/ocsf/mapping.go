@@ -110,6 +110,19 @@ var exactCatalog = map[string]ClassMapping{
 	"gdpr.erasure_blocked_by_hold":                entityMgmt(ActivityUnknown),
 	"gdpr.legal_hold_overridden":                  entityMgmt(ActivityUpdate),
 	"gdpr.legal_hold_overridden_tenant":           entityMgmt(ActivityUpdate),
+
+	// §9.3 connector lifecycle → Entity Management (5001). The
+	// ConnectorDefinition is a managed admin-API resource so its
+	// create/update/soft-delete map alongside admin.tenant.* and
+	// admin.runtime.*. The OAuth-flow events surface as Authentication
+	// (3002) so SIEM consumers see authorization initiation and a
+	// stored credential under the user-authentication class.
+	// F-9.3.9.
+	"admin.connector.created":                   entityMgmt(ActivityCreate),
+	"admin.connector.updated":                   entityMgmt(ActivityUpdate),
+	"admin.connector.soft_deleted":              entityMgmt(ActivityDelete),
+	"connector.oauth.authorization_initiated":   authn(ActivityCreate),
+	"connector.oauth.credential_stored":         authn(ActivityCreate),
 }
 
 // prefixCatalog maps an event-type namespace prefix to a §11.7 class.

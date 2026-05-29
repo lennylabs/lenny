@@ -52,9 +52,12 @@ func TestCreateConnectorHappyPath(t *testing.T) {
 		DisplayName:  "GitHub",
 		MCPServerURL: "https://mcp.github.com",
 		Auth: &admin.ConnectorAuthPayload{
-			Type:            "oauth2",
-			ClientSecretRef: "lenny-system/github-client-secret",
-			Scopes:          []string{"repo"},
+			Type:                  "oauth2",
+			AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
+			TokenEndpoint:         "https://github.com/login/oauth/access_token",
+			ClientID:              "client-abc",
+			ClientSecretRef:       "lenny-system/github-client-secret",
+			Scopes:                []string{"repo"},
 		},
 	})
 	if rr.Code != http.StatusCreated {
@@ -94,12 +97,49 @@ func TestCreateConnectorRejectsInlineSecret(t *testing.T) {
 		ID:           "github",
 		MCPServerURL: "https://mcp.github.com",
 		Auth: &admin.ConnectorAuthPayload{
-			Type:            "oauth2",
-			ClientSecretRef: "raw-inline-secret",
+			Type:                  "oauth2",
+			AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
+			TokenEndpoint:         "https://github.com/login/oauth/access_token",
+			ClientID:              "client-abc",
+			ClientSecretRef:       "raw-inline-secret",
 		},
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("inline secret: got %d, want 400", rr.Code)
+	}
+}
+
+// spec: §9.3 line 116-130 — admin Create rejects oauth2 blocks
+// missing authorizationEndpoint, tokenEndpoint, or clientId.
+// F-9.3.6 — validator surfaces the failure at registration time
+// instead of CONNECTOR_OAUTH_INCOMPLETE at authorize time.
+func TestCreateConnectorRejectsIncompleteOAuth2_spec_9_3_116(t *testing.T) {
+	router, _, _ := newConnectorAdmin(t)
+	rr := connReq(t, router.Handler(), http.MethodPost, "/v1/admin/connectors", admin.ConnectorPayload{
+		TenantID:     "acme",
+		ID:           "github",
+		MCPServerURL: "https://mcp.github.com",
+		Auth: &admin.ConnectorAuthPayload{
+			Type:            "oauth2",
+			ClientSecretRef: "lenny-system/github-client-secret",
+		},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("incomplete oauth2 block: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// spec: §9.3 line 140 — every connector must be registered with a
+// dialable MCP endpoint. F-9.3.10 — admin Create rejects an empty
+// mcpServerUrl at registration.
+func TestCreateConnectorRejectsEmptyMCPServerURL_spec_9_3_140(t *testing.T) {
+	router, _, _ := newConnectorAdmin(t)
+	rr := connReq(t, router.Handler(), http.MethodPost, "/v1/admin/connectors", admin.ConnectorPayload{
+		TenantID: "acme",
+		ID:       "github",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("missing mcpServerUrl: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
 	}
 }
 

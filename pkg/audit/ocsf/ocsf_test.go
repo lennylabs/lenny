@@ -296,3 +296,35 @@ func TestAdminUserInvalidatedMapsToDisable_spec_11_4(t *testing.T) {
 		t.Errorf("admin.user.invalidated activity_id = %d, want %d (Disable)", m.ActivityID, ActivityDisable)
 	}
 }
+
+// spec: §9.3 line 116-164 — F-9.3.9. The §9.3 connector lifecycle
+// audit events must resolve to a distinguished OCSF class so SIEM
+// consumers see registration, update, soft-delete, and OAuth flow
+// rows under the right semantic class instead of the generic admin.*
+// prefix fallback. Connector CRUD maps to EntityManagement and the
+// OAuth flow maps to Authentication.
+func TestConnectorEventsResolveToTypedClasses_spec_9_3_116(t *testing.T) {
+	for _, tc := range []struct {
+		eventType string
+		classUID  int
+		activity  int
+	}{
+		{"admin.connector.created", ClassEntityManagement, ActivityCreate},
+		{"admin.connector.updated", ClassEntityManagement, ActivityUpdate},
+		{"admin.connector.soft_deleted", ClassEntityManagement, ActivityDelete},
+		{"connector.oauth.authorization_initiated", ClassAuthentication, ActivityCreate},
+		{"connector.oauth.credential_stored", ClassAuthentication, ActivityCreate},
+	} {
+		m, ok := LookupClass(tc.eventType)
+		if !ok {
+			t.Errorf("%s: no class mapping", tc.eventType)
+			continue
+		}
+		if m.ClassUID != tc.classUID {
+			t.Errorf("%s class_uid = %d, want %d", tc.eventType, m.ClassUID, tc.classUID)
+		}
+		if m.ActivityID != tc.activity {
+			t.Errorf("%s activity_id = %d, want %d", tc.eventType, m.ActivityID, tc.activity)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
 // ClientSecretResolver resolves a connector's confidential-client
@@ -219,14 +221,27 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 		RedirectURI:  r.connectorOAuth.CallbackURL,
 		Scopes:       conn.Auth.Scopes,
 		CreatedAt:    r.clock(),
+		// spec: §9.3 line 140 — audit logging is the prescribed
+		// forensic surface. Record the authorize-time client IP / UA
+		// so the callback-time pair lets an operator investigate a
+		// state replay or session hijack. F-9.3.11.
+		InitiatorIP: connectorRequestPeerIP(req),
+		InitiatorUA: req.UserAgent(),
 	}
 	if err := r.connectorOAuth.StateStore.Put(state, flow, ttl); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"could not persist the OAuth flow state", nil)
 		return
 	}
-	r.emit(req.Context(), principal, "connector.oauth.authorization_initiated", conn.ID, map[string]any{
-		"connectorId": conn.ID,
+	// spec: §16.7 / §9.3 line 144-164 — emit through the typed catalog
+	// so audit-sink validators recognize the event type. Capture the
+	// initiator IP and user agent (F-9.3.11) so the callback's
+	// `completed_ip` / `completed_user_agent` can be cross-checked for
+	// state replay or hijack between authorize and callback.
+	r.emit(req.Context(), principal, audit.EventConnectorOAuthAuthorizationInitiated.String(), conn.ID, map[string]any{
+		"connectorId":          conn.ID,
+		"initiated_ip":         flow.InitiatorIP,
+		"initiated_user_agent": flow.InitiatorUA,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -374,16 +389,24 @@ func (r *Router) handleConnectorOAuthCallback(w http.ResponseWriter, req *http.R
 	}
 
 	// Audit the completed flow against the flow's principal. The token
-	// material is never in the audit detail per §9.3.
+	// material is never in the audit detail per §9.3. The
+	// initiated/completed IP and user agent pair lets an operator
+	// investigate a state replay or session hijack between authorize
+	// and callback — the callback carries no Bearer token and the
+	// `state` parameter is the only server-side binding. F-9.3.11.
 	if r.audit != nil {
 		r.audit.EmitAdminEvent(req.Context(), AuditEvent{
-			Type:           "connector.oauth.credential_stored",
+			Type:           audit.EventConnectorOAuthCredentialStored.String(),
 			ActorSubject:   flow.UserID,
 			ActorTenantID:  flow.TenantID,
 			TargetResource: flow.ConnectorID,
 			Detail: map[string]any{
-				"connectorId":     flow.ConnectorID,
-				"hasRefreshToken": tok.RefreshToken != "",
+				"connectorId":          flow.ConnectorID,
+				"hasRefreshToken":      tok.RefreshToken != "",
+				"initiated_ip":         flow.InitiatorIP,
+				"initiated_user_agent": flow.InitiatorUA,
+				"completed_ip":         connectorRequestPeerIP(req),
+				"completed_user_agent": req.UserAgent(),
 			},
 			At: now,
 		})
@@ -403,6 +426,30 @@ func (r *Router) connectorHTTPClient() connectoroauth.HTTPDoer {
 		return r.connectorOAuth.HTTPClient
 	}
 	return &http.Client{Timeout: 15 * time.Second}
+}
+
+// connectorRequestPeerIP extracts the connector OAuth caller's IP for
+// the audit trail. It honours `X-Forwarded-For` (first-hop client) when
+// set by a trusted proxy and falls back to `RemoteAddr`. The string is
+// recorded verbatim in the audit detail — `audit.EmitAdminEvent` does
+// not attribute trust to the value beyond "what the gateway observed at
+// authorize / callback time" so an operator investigating a state
+// replay can compare the pair.
+//
+// spec: §9.3 line 140 — audit logging is the prescribed forensic
+// surface. F-9.3.11.
+func connectorRequestPeerIP(req *http.Request) string {
+	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	host, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		return req.RemoteAddr
+	}
+	return host
 }
 
 // splitScope splits an RFC 6749 space-delimited scope string into a
