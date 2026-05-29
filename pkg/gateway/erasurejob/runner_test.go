@@ -5,6 +5,7 @@ package erasurejob_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,6 +162,94 @@ func TestRunnerRunEmptyOrchestratorCompletes(t *testing.T) {
 	job, _ := jobs.Get(context.Background(), id)
 	if job.Phase != erasurejob.PhaseCompleted || job.Total != 0 {
 		t.Errorf("job = %+v, want completed with Total 0", job)
+	}
+}
+
+// spec: §12.8 lines 743-758 (layer 3) — when the per-job MemoryStore
+// erasure preflight passes, the job proceeds through store deletion to
+// completion as normal.
+func TestRunnerRunMemoryPreflightPasses(t *testing.T) {
+	jobs := erasurejob.NewMemory()
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("memory", 2)}})
+	r := erasurejob.NewRunner(jobs, orch, nil).
+		WithMemoryPreflight(func(context.Context) error { return nil })
+
+	id, _ := r.Start(context.Background(), "acme", "alice")
+	if err := r.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	job, _ := jobs.Get(context.Background(), id)
+	if job.Phase != erasurejob.PhaseCompleted {
+		t.Errorf("Phase = %q, want completed", job.Phase)
+	}
+}
+
+// spec: §12.8 lines 743-758 (layer 3) — a failing per-job preflight aborts
+// the job as memory_store_preflight_failed before any store deletion runs,
+// and increments lenny_erasure_job_failed_total{failure_phase=
+// memory_store_preflight} via the failure observer.
+func TestRunnerRunMemoryPreflightFailsAbortsBeforeDeletion(t *testing.T) {
+	jobs := erasurejob.NewMemory()
+	deletions := 0
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{{
+		Name: "memory",
+		DeleteByUser: func(context.Context, string, string) (int, error) {
+			deletions++
+			return 1, nil
+		},
+	}}})
+
+	var gotTenant, gotPhase string
+	observed := 0
+	r := erasurejob.NewRunner(jobs, orch, nil).
+		WithFailureObserver(func(tenantID, phase string) {
+			observed++
+			gotTenant, gotPhase = tenantID, phase
+		}).
+		WithMemoryPreflight(func(context.Context) error {
+			return errors.New("backend DeleteByUser regressed to a no-op")
+		})
+
+	id, _ := r.Start(context.Background(), "acme", "alice")
+	err := r.Run(context.Background(), id)
+	if err == nil {
+		t.Fatal("Run should return the preflight failure")
+	}
+	if deletions != 0 {
+		t.Errorf("store deletion ran %d times — the preflight must abort before step 8", deletions)
+	}
+	job, _ := jobs.Get(context.Background(), id)
+	if job.Phase != erasurejob.PhaseFailed {
+		t.Errorf("Phase = %q, want failed", job.Phase)
+	}
+	if !strings.Contains(job.Failure, "memory_store_preflight_failed") {
+		t.Errorf("Failure = %q, want it to record memory_store_preflight_failed", job.Failure)
+	}
+	if observed != 1 || gotPhase != erasurejob.FailurePhaseMemoryStorePreflight || gotTenant != "acme" {
+		t.Errorf("failure observer got (%d, tenant=%q, phase=%q), want (1, acme, %q)",
+			observed, gotTenant, gotPhase, erasurejob.FailurePhaseMemoryStorePreflight)
+	}
+}
+
+// The failure observer receives the store_delete phase when the
+// orchestrator errors, confirming the §12.8 CMP-026 phase label threads
+// through every fail path.
+func TestRunnerFailureObserverStoreDeletePhase(t *testing.T) {
+	jobs := erasurejob.NewMemory()
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{{
+		Name:         "broken",
+		DeleteByUser: func(context.Context, string, string) (int, error) { return 0, errors.New("store down") },
+	}}})
+	var gotPhase string
+	r := erasurejob.NewRunner(jobs, orch, nil).
+		WithFailureObserver(func(_, phase string) { gotPhase = phase })
+
+	id, _ := r.Start(context.Background(), "acme", "alice")
+	if err := r.Run(context.Background(), id); err == nil {
+		t.Fatal("Run should return the store error")
+	}
+	if gotPhase != erasurejob.FailurePhaseStoreDelete {
+		t.Errorf("failure phase = %q, want %q", gotPhase, erasurejob.FailurePhaseStoreDelete)
 	}
 }
 

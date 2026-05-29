@@ -1507,6 +1507,22 @@ func main() {
 			s.SetObserver(obs)
 		}
 	}
+	// spec: §12.8 lines 743-758 — MemoryStore erasure preflight (stub
+	// detection, defense-in-depth layer 2). Before serving traffic, seed a
+	// probe memory under the reserved (__preflight__, __preflight_user__)
+	// scope, erase it, and assert it does not survive. A backend whose
+	// DeleteByUser / DeleteByTenant satisfies the interface but silently
+	// no-ops makes the gateway refuse to start, so a GDPR erasure can never
+	// report success while memories persist. Skipped when memory.enabled is
+	// false (no store wired). F-9.4.3 / F-12.1.4 / F-12.2.10 / F-12.8.9.
+	if memories != nil {
+		preflightCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		preflightErr := memorystore.ValidateMemoryStoreErasure(preflightCtx, memories)
+		cancel()
+		if preflightErr != nil {
+			log.Fatalf("FATAL: MemoryStore preflight failed — configured backend (%s) does not honor DeleteByUser; GDPR erasure would silently succeed while leaving memories in place (Section 12.8): %v", memoryBackendLabel, preflightErr)
+		}
+	}
 	// §4.1 / §16.1: emit the per-replica capacity ceiling as a startup-set
 	// gauge so the §16.5 GatewaySessionBudgetNearExhaustion alert can
 	// divide active sessions by it. The spec requires both delivery_mode
@@ -2450,7 +2466,21 @@ func main() {
 			},
 		})
 		erasureJobs := erasurejob.NewMemory()
-		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil)
+		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil).
+			WithFailureObserver(gwMetrics.IncErasureJobFailed)
+		// spec: §12.8 lines 743-758 (layer 3) — re-run the MemoryStore
+		// erasure preflight at the start of every job so a backend that
+		// regressed after the startup check (e.g. a rolling upgrade of an
+		// external vector DB) aborts the job as memory_store_preflight_failed
+		// before any deletion, leaving processing_restricted set and
+		// incrementing lenny_erasure_job_failed_total{failure_phase=
+		// memory_store_preflight}. F-9.4.3 / F-12.2.10.
+		if memories != nil {
+			memstore := memories
+			erasureRunner = erasureRunner.WithMemoryPreflight(func(ctx context.Context) error {
+				return memorystore.ValidateMemoryStoreErasure(ctx, memstore)
+			})
+		}
 		// §12.8: billing events are append-only, so the erasure job
 		// pseudonymizes them rather than deleting them. The Postgres
 		// billing store's pseudonymize path is deferred (it needs an

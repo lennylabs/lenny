@@ -127,6 +127,40 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	}
 }
 
+// spec: §12.8 lines 743-758
+// diagnosis: migration 0096 must seed the reserved __preflight__ tenant
+// so the §12.8 MemoryStore erasure preflight's synthetic agent_memory
+// probe row satisfies the agent_memory → tenants(id) foreign key. The row
+// is soft-deleted (deleted_at set) so it is inert for real traffic, and
+// the down migration removes it.
+func TestProdMigration0096SeedsPreflightTenant(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	var deletedAtSet bool
+	if err := pg.Pool.QueryRow(
+		ctx,
+		`SELECT deleted_at IS NOT NULL FROM tenants WHERE id = '__preflight__'`,
+	).Scan(&deletedAtSet); err != nil {
+		t.Fatalf("the reserved __preflight__ tenant is absent after migration 0096: %v", err)
+	}
+	if !deletedAtSet {
+		t.Error("the reserved __preflight__ tenant should be soft-deleted (deleted_at set) so it is inert for real traffic")
+	}
+
+	// The down migration removes the reserved tenant.
+	pg.MigrateDown(t, dir)
+	var stillExists bool
+	if err := pg.Pool.QueryRow(
+		ctx,
+		`SELECT EXISTS (SELECT 1 FROM tenants WHERE id = '__preflight__')`,
+	).Scan(&stillExists); err == nil && stillExists {
+		t.Error("migration 0096 down should remove the reserved __preflight__ tenant")
+	}
+}
+
 // spec: 12.3, 18.5
 // diagnosis: lenny_tenant_guard did not behave as specified. It must
 //

@@ -91,6 +91,7 @@ type Metrics struct {
 	sessionDuration             *prometheus.HistogramVec
 	evalScore                   *prometheus.HistogramVec
 	noEnvPolicyAllowAll         *prometheus.CounterVec
+	erasureJobFailed            *prometheus.CounterVec
 	gcPauseP99Ms                prometheus.Gauge
 	// replayBufferUtilization is the §16.1
 	// lenny_event_bus_replay_buffer_utilization gauge — ratio of the
@@ -907,6 +908,18 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// spec: §12.8 CMP-026 / §16.1 line 262 — user-level erasure job
+	// failures by failure phase. failure_phase distinguishes the §12.8
+	// failure modes (store_delete, pseudonymization, verification, and the
+	// MemoryStore erasure preflight memory_store_preflight); the §16.5
+	// ErasureJobFailed alert fires on any increase.
+	erasureJobFailed, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_erasure_job_failed_total",
+		Help: "§12.8 user-level erasure job failures by tenant and failure_phase.",
+	}, []string{"tenant_id", "failure_phase"})
+	if err != nil {
+		return nil, err
+	}
 	// §4.3 line 211 / §16.5 TokenServiceUnavailable alert reads this
 	// gauge. 0 = closed, 1 = half-open, 2 = open. spec: §4.3 line 211.
 	tokenServiceCircuitState, err := metrics.NewGauge(prometheus.GaugeOpts{
@@ -1678,7 +1691,7 @@ func New() (*Metrics, error) {
 		experimentIsoRej,
 		experimentTargetingDur, experimentTargetingErr, experimentTargetingCircuit,
 		sessionTotal, sessionError, sessionDuration, evalScore,
-		noEnvPolicyAllowAll, tokenServiceCircuitState,
+		noEnvPolicyAllowAll, erasureJobFailed, tokenServiceCircuitState,
 		kmsSigningErrors, kmsSigningCircuitState,
 		checkpointStaleSessions,
 		partialManifestCleanup, checkpointPartialManifestsSuperseded,
@@ -1807,6 +1820,7 @@ func New() (*Metrics, error) {
 		sessionDuration:                      sessionDuration,
 		evalScore:                            evalScore,
 		noEnvPolicyAllowAll:                  noEnvPolicyAllowAll,
+		erasureJobFailed:                     erasureJobFailed,
 		gcPauseP99Ms:                         gcPause,
 		replayBufferUtilization:              replayBufferUtilizationChild,
 		pdbBlockedEvictions:                  pdbBlockedEvictions,
@@ -2951,6 +2965,15 @@ func (m *Metrics) RecordSessionTerminal(tenantID, sessionType, variantID string,
 // scored session was not enrolled).
 func (m *Metrics) ObserveEvalScore(tenantID, scorer, variantID string, score float64) {
 	m.evalScore.WithLabelValues(tenantID, scorer, variantID).Observe(score)
+}
+
+// IncErasureJobFailed increments lenny_erasure_job_failed_total for a
+// failed §12.8 user-level erasure job. failurePhase is the §12.8 CMP-026
+// phase label (store_delete, pseudonymization, verification, or
+// memory_store_preflight). The §16.5 ErasureJobFailed alert fires on any
+// increase. spec: §12.8 CMP-026 / §16.1 line 262.
+func (m *Metrics) IncErasureJobFailed(tenantID, failurePhase string) {
+	m.erasureJobFailed.WithLabelValues(tenantID, failurePhase).Inc()
 }
 
 // RecordNoEnvironmentPolicyAllowAll increments the §10.6

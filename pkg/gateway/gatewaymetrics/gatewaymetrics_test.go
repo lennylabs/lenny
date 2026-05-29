@@ -537,6 +537,35 @@ func TestObserveEvalScore_spec_16_1_164(t *testing.T) {
 	}
 }
 
+// spec: §12.8 CMP-026 / §16.1 line 262 — lenny_erasure_job_failed_total is
+// incremented per failed erasure job, labelled by tenant and failure
+// phase; the memory_store_preflight phase covers the §12.8 MemoryStore
+// erasure preflight.
+func TestIncErasureJobFailed_spec_12_8_cmp_026(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncErasureJobFailed("acme", "memory_store_preflight")
+	m.IncErasureJobFailed("acme", "memory_store_preflight")
+	m.IncErasureJobFailed("acme", "store_delete")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_erasure_job_failed_total{failure_phase="memory_store_preflight",tenant_id="acme"} 2`,
+		`lenny_erasure_job_failed_total{failure_phase="store_delete",tenant_id="acme"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
 func TestSetScalarGaugesEmitsConfiguredValues(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {

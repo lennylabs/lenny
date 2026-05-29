@@ -5,6 +5,7 @@ package erasurejob
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
@@ -22,11 +23,30 @@ import (
 // erasure is effective. Without a BillingEraser the job completes at
 // store deletion.
 type Runner struct {
-	jobs    Store
-	erase   *erasure.Orchestrator
-	billing *BillingEraser
-	clock   func() time.Time
+	jobs            Store
+	erase           *erasure.Orchestrator
+	billing         *BillingEraser
+	memoryPreflight func(context.Context) error
+	onFailure       func(tenantID, failurePhase string)
+	clock           func() time.Time
 }
+
+// FailurePhase labels for the §12.8 CMP-026 lenny_erasure_job_failed_total
+// counter. The MemoryStore erasure preflight (§12.8 lines 743-758) adds
+// PhaseMemoryStorePreflight to the store_delete / pseudonymization /
+// verification phases the spec enumerates.
+const (
+	FailurePhaseMemoryStorePreflight = "memory_store_preflight"
+	FailurePhaseStoreDelete          = "store_delete"
+	FailurePhasePseudonymization     = "pseudonymization"
+	FailurePhaseVerification         = "verification"
+)
+
+// errMemoryStorePreflight is the §12.8 abort cause recorded when the
+// per-job MemoryStore erasure preflight fails. The job aborts before any
+// store deletion and the target user's processing_restricted flag is left
+// set (the admin handler clears it only on PhaseCompleted).
+var errMemoryStorePreflight = errors.New("memory_store_preflight_failed")
 
 // NewRunner builds a Runner over the job registry and the erasure
 // orchestrator. Pass nil for clock to default to time.Now.
@@ -42,6 +62,29 @@ func NewRunner(jobs Store, orch *erasure.Orchestrator, clock func() time.Time) *
 // the Runner for call chaining.
 func (r *Runner) WithBilling(b *BillingEraser) *Runner {
 	r.billing = b
+	return r
+}
+
+// WithMemoryPreflight attaches the §12.8 per-job MemoryStore erasure
+// preflight (lines 743-758, defense-in-depth layer 3). The check re-runs
+// the seeded-row write/erase/requery cycle at job start, before any store
+// deletion; a backend that passed the startup preflight but later
+// regressed (e.g., after a rolling upgrade of an external vector DB)
+// aborts the job here rather than reporting a successful erasure while
+// memories persist. Pass memorystore.ValidateMemoryStoreErasure bound to
+// the wired store. A nil preflight disables the per-job check. Returns
+// the Runner for call chaining.
+func (r *Runner) WithMemoryPreflight(preflight func(context.Context) error) *Runner {
+	r.memoryPreflight = preflight
+	return r
+}
+
+// WithFailureObserver attaches the §12.8 CMP-026 failure counter hook,
+// invoked with the tenant id and failure phase whenever a job transitions
+// to PhaseFailed. Pass gatewaymetrics.Metrics.IncErasureJobFailed. A nil
+// observer disables emission. Returns the Runner for call chaining.
+func (r *Runner) WithFailureObserver(obs func(tenantID, failurePhase string)) *Runner {
+	r.onFailure = obs
 	return r
 }
 
@@ -66,11 +109,12 @@ func recordBilling(o BillingErasureOutcome) func(*Job) {
 }
 
 // fail transitions the job to PhaseFailed with cause as the recorded
-// failure reason. extra, when non-nil, records any partial result
-// first. It returns cause so a synchronous caller observes the
-// failure; a registry-update error preempts it.
-func (r *Runner) fail(ctx context.Context, jobID string, cause error, extra func(*Job)) error {
-	if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
+// failure reason and emits the §12.8 CMP-026 failure counter under
+// failurePhase. extra, when non-nil, records any partial result first. It
+// returns cause so a synchronous caller observes the failure; a
+// registry-update error preempts it.
+func (r *Runner) fail(ctx context.Context, jobID, failurePhase string, cause error, extra func(*Job)) error {
+	job, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
 		if extra != nil {
 			extra(j)
 		}
@@ -78,8 +122,12 @@ func (r *Runner) fail(ctx context.Context, jobID string, cause error, extra func
 		j.Failure = cause.Error()
 		j.CompletedAt = r.clock()
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		return err
+	}
+	if r.onFailure != nil {
+		r.onFailure(job.TenantID, failurePhase)
 	}
 	return cause
 }
@@ -126,6 +174,18 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 		return nil
 	}
 
+	// §12.8 per-job MemoryStore erasure preflight (defense-in-depth layer
+	// 3): re-run the seeded-row check before step 8 (store deletion). On
+	// failure the job aborts as memory_store_preflight_failed before any
+	// data is touched, and the target user's processing_restricted flag is
+	// left set (the admin handler clears it only on PhaseCompleted).
+	if r.memoryPreflight != nil {
+		if err := r.memoryPreflight(ctx); err != nil {
+			return r.fail(ctx, jobID, FailurePhaseMemoryStorePreflight,
+				fmt.Errorf("%w: %v", errMemoryStorePreflight, err), nil)
+		}
+	}
+
 	// Store deletion.
 	if _, err := r.jobs.Update(ctx, jobID, setPhase(PhaseStoreDeleting)); err != nil {
 		return err
@@ -139,7 +199,7 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 		return err
 	}
 	if eraseErr != nil {
-		return r.fail(ctx, jobID, eraseErr, nil)
+		return r.fail(ctx, jobID, FailurePhaseStoreDelete, eraseErr, nil)
 	}
 
 	// §12.8 billing-event pseudonymization, when a BillingEraser is
@@ -152,7 +212,7 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 		}
 		billing, err = r.billing.Pseudonymize(ctx, job.TenantID, job.UserID)
 		if err != nil {
-			return r.fail(ctx, jobID, err, nil)
+			return r.fail(ctx, jobID, FailurePhasePseudonymization, err, nil)
 		}
 		if billing.Disposition != billingExempt {
 			if _, err := r.jobs.Update(ctx, jobID, setPhase(PhaseVerifying)); err != nil {
@@ -160,11 +220,11 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 			}
 			verified, err := r.billing.Verify(ctx, job.TenantID, job.UserID)
 			if err != nil {
-				return r.fail(ctx, jobID, err, recordBilling(billing))
+				return r.fail(ctx, jobID, FailurePhaseVerification, err, recordBilling(billing))
 			}
 			billing.Verified = verified
 			if !verified {
-				return r.fail(ctx, jobID, errBillingVerification, recordBilling(billing))
+				return r.fail(ctx, jobID, FailurePhaseVerification, errBillingVerification, recordBilling(billing))
 			}
 		}
 	}
