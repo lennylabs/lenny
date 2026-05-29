@@ -12192,7 +12192,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 ### Findings
 
-### - [ ] F-10.3.1 — 10.3-G1. Gateway never validates SPIFFE URI on inbound pod mTLS [High] — OPEN
+### - [x] F-10.3.1 — 10.3-G1. Gateway never validates SPIFFE URI on inbound pod mTLS [High] — CLOSED
 
 **Spec lines:** 320–324 (NET-060).
 **Evidence:**
@@ -12203,12 +12203,16 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** A holder of any valid cluster-CA-signed certificate can connect to the gateway as a pod (or to the Token Service as the gateway, and vice-versa). The defense-in-depth posture the spec describes — CA possession is necessary but never sufficient — is unimplemented.
 
-### - [ ] F-10.3.2 — 10.3-G2. Adapter does not pin gateway DNS SAN via explicit `tls.Config.ServerName` [High] — OPEN
+**Resolution (commit `02369575`):** New `spiffe.AgentPeerVerifier` (`pkg/mtls/spiffe/verify.go`) implements a `tls.Config.VerifyPeerCertificate` callback that extracts the peer leaf's `spiffe://` URI SAN, parses it via `spiffe.Parse`, and validates it as an agent identity (`spiffe.ValidateAgent`) whose trust domain equals the configured `global.spiffeTrustDomain`. `adapter.TLSServerOption` now accepts variadic `TLSConfigMod`s; `newGatewayControlServer` installs the verifier on the §8.6 GatewayControl listener whenever `--adapter-ca` and the new `--spiffe-trust-domain` flag (rendered from `global.spiffeTrustDomain` in `gateway-deployment.yaml`) are both set. A foreign trust domain, a non-agent kind, a malformed/absent SPIFFE SAN, or (per F-10.3.7) a revoked certificate is rejected at the TLS handshake with no gRPC frame. CA possession is now necessary but not sufficient (spec line 324). Per-pod `{pool}`/`{pod-name}` cross-referencing against `SandboxClaim`/`Sandbox` records is supported via the verifier's optional `Expect` field but left unset at the handshake layer (no pre-handshake pod identity is available); the cert's own pool/pod segments are shape-validated. The interceptor direction (NET-063) remains tracked by F-10.3.3.
+
+### - [x] F-10.3.2 — 10.3-G2. Adapter does not pin gateway DNS SAN via explicit `tls.Config.ServerName` [High] — CLOSED
 
 **Spec lines:** 322 (NET-060) ("The adapter configures its gRPC client with an explicit `tls.Config.ServerName` equal to this DNS name").
 **Evidence:** `pkg/adapter/transport.go::TLSClientOption` (lines 76–100) builds a `tls.Config{MinVersion, Certificates, RootCAs}`; `ServerName` is never set. With grpc-go, an unset `ServerName` falls back to the dial target host, which is a pod IP rather than `lenny-gateway.lenny-system.svc`, defeating the SAN check the spec mandates.
 
 **Impact:** A pod connecting to a misdirected gateway endpoint accepts any cluster-CA-signed cert whose SAN matches the dial target. Cross-component impersonation succeeds.
+
+**Resolution (commit `02369575`):** Added `adapter.WithServerName` (a `TLSConfigMod` pinning `tls.Config.ServerName`) and variadic mods on `adapter.TLSClientOption`, plus `gatewaycontrol.GatewayDNSName = "lenny-gateway.lenny-system.svc"` (the spec line 322 DNS SAN). The canonical adapter→gateway dial composes `adapter.TLSClientOption(cert, key, ca, adapter.WithServerName(gatewaycontrol.GatewayDNSName))`, so Go's verification refuses any cluster-CA-signed certificate (Token Service, controller, other `lenny-system` workloads) whose SAN does not cover the gateway DNS name, rather than falling back to the dial-target host. The production adapter→gateway dial itself is the documented §8.6 lease-extend SEAM (`pkg/adapter/leaseextend.go` `HandleBudgetExhaustion` has no production caller yet; the LLM-proxy trigger lands with F-8.6.6), which now has the spec-mandated ServerName-pinning mechanism to compose. Unit tests cover the mod, the variadic application, and the pinned DNS constant.
 
 ### - [ ] F-10.3.3 — 10.3-G3. Gateway-to-interceptor mTLS link missing entirely [High] — OPEN
 
@@ -12254,7 +12258,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Resolution:** `charts/lenny/templates/gateway-deployment.yaml` now stamps `lenny.dev/spiffe-trust-domain` (always) and `lenny.dev/sa-token-audience` (when `global.saTokenAudience` is set) on the Deployment's metadata. The preflight enumerator now sees real values and the NET-064 collision checks (`CheckSPIFFETrustDomainUniqueness` / `CheckSATokenAudienceUniqueness`) become enforcing.
 
-### - [ ] F-10.3.7 — 10.3-G7. Deny list is built but never consulted on the mTLS handshake [High] — OPEN
+### - [x] F-10.3.7 — 10.3-G7. Deny list is built but never consulted on the mTLS handshake [High] — CLOSED
 
 **Spec lines:** 352 ("on every subsequent mTLS connection presenting that cert ... gateway adds its certificate to the deny list and rejects").
 **Evidence:**
@@ -12262,6 +12266,8 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - No code path queries the deny list in either the gRPC server's `tls.Config.VerifyPeerCertificate`, the HTTP/REST surface, or any middleware.
 
 **Impact:** An operator who revokes a compromised pod certificate via the propagator API observes a no-op at the rejection path. The deny list is a write-only set.
+
+**Resolution (commit `02369575`):** The §10.3 `spiffe.AgentPeerVerifier` (see F-10.3.1) now consults the deny list on every inbound GatewayControl handshake. `*mtlsdenylist.DenyList` satisfies the verifier's `spiffe.DenyChecker` interface (`Contains(uri) bool`), and `newGatewayControlServer` passes the same `mtlsDeny` set the propagator (`mtlsDenyProp`) writes to. A peer whose parsed SPIFFE URI is on the deny list is rejected at the TLS handshake (`ReasonRevoked`) with no gRPC frame, closing the write-only-set gap so an operator revocation takes effect at the rejection path. Covered by `TestAgentPeerVerifierRejectsRevokedCertificate_spec_10_3_352`.
 
 ### - [ ] F-10.3.8 — 10.3-G8. Filesystem-watching TLS reload (`GetCertificate` / `GetClientCertificate`) absent [High] — OPEN
 
@@ -12318,11 +12324,13 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** A cluster running cert-manager `<v1.12.0` (where `CertificateRequest` approval and `Certificate` webhook behaviour are unstable) installs Lenny with no warning, and a missing-cert-manager cluster fails at first `Certificate`-resource creation rather than at preflight.
 
-### - [ ] F-10.3.13 — 10.3-G13. Gateway and adapter never log `pod_identity_mismatch` / `interceptor_identity_mismatch` [High] — OPEN
+### - [x] F-10.3.13 — 10.3-G13. Gateway and adapter never log `pod_identity_mismatch` / `interceptor_identity_mismatch` [High] — CLOSED
 
 **Spec lines:** 321 ("the attempt is logged as `pod_identity_mismatch`"), 328 ("logged as `interceptor_identity_mismatch`").
 **Evidence:** Repo-wide grep across `*.go` returns no log emission for either token; the strings appear only in `pkg/mtls/spiffe/spiffe.go` package-doc comments (lines 19, 216).
 **Impact:** Even with SPIFFE validation wired (currently missing per G1/G3), an operator has no telemetry to detect impersonation attempts.
+
+**Resolution (commit `02369575`):** The §10.3 `spiffe.AgentPeerVerifier` (F-10.3.1) invokes an `OnMismatch(reason, uri, err)` hook on every rejection; `newGatewayControlServer` wires it to a structured `slog.Warn("pod_identity_mismatch", "net_rule"="NET-060", "reason", "spiffe_uri", "error")` line (the gateway installs the §16.4 slog JSON handler via `logging.Setup`). The classified `reason` (`no_peer_certificate`, `no_spiffe_san`, `spiffe_uri_malformed`, `identity_mismatch`, `certificate_revoked`) gives an operator the telemetry to distinguish a malformed SAN from a foreign trust domain from a revocation hit at handshake time. The `interceptor_identity_mismatch` half is structurally inert until the gateway↔interceptor mTLS link exists (NET-063, tracked by F-10.3.3) — there is no interceptor handshake to instrument — so it is deferred to that work; the pod-impersonation telemetry the finding's impact calls out is now emitted on the only mTLS link that exists in v1.
 
 ### - [ ] F-10.3.14 — 10.3-G14. Startup configuration validation enforces only `noEnvironmentPolicy` [High] — OPEN
 
