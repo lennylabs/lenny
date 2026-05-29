@@ -159,6 +159,18 @@ type Options struct {
 	// signature and expiry are still valid (§13.3 token revocation).
 	Revocations RevocationChecker
 
+	// PlaygroundRevocations, when set, is the §27.6 authoritative
+	// per-request revocation check for playground-origin bearers. It is
+	// consulted on the auth hot path for every verified Bearer whose
+	// `origin` claim is `playground` (the claim §27.3 stamps on every
+	// session-capability JWT minted through a /playground/* ingress
+	// path). A hit rejects with 401 UNAUTHORIZED and
+	// details.reason=bearer_revoked; a backing-store error fails closed
+	// with 503 REDIS_UNAVAILABLE rather than honoring the bearer.
+	// Non-playground bearers (no origin claim) never consult it.
+	// spec: §27.6 line 204 / §27.3.1 lines 95-97. F-27.6.3 / F-27.3.1.
+	PlaygroundRevocations PlaygroundRevocationChecker
+
 	// AuthFailureSink, when set, receives §4.2 line 185 `auth_failure`
 	// audit events for every tenant-claim rejection
 	// (TENANT_CLAIM_MISSING, TENANT_NOT_FOUND, TENANT_CLAIM_INVALID_FORMAT).
@@ -208,6 +220,26 @@ type PlatformRoleResolver interface {
 // RevocationChecker reports whether a token's jti has been revoked.
 type RevocationChecker interface {
 	IsRevoked(jti string) bool
+}
+
+// playgroundOriginClaim is the §27.3 `origin` claim value stamped on
+// every session-capability JWT minted through a /playground/* ingress
+// path. The auth middleware keys the §27.6 per-request revocation check
+// on this claim, not on authMode. It is duplicated here as a literal
+// rather than imported from the playground package to avoid an import
+// cycle (the playground package depends on the auth chain).
+// spec: §27.3 line 63.
+const playgroundOriginClaim = "playground"
+
+// PlaygroundRevocationChecker is the §27.6 / §27.3.1 authoritative
+// per-request revocation check for playground-origin bearers. The auth
+// middleware consults it for every verified Bearer carrying the
+// `origin: "playground"` claim. The error return is non-nil only when
+// the backing store (Redis) is unreachable; §27.3.1 line 97 specifies
+// the middleware fails closed (503) on that error rather than honoring
+// the bearer. spec: §27.6 line 204 / §27.3.1 lines 95-97.
+type PlaygroundRevocationChecker interface {
+	IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error)
 }
 
 // AuthFailureEvent captures the payload of an §4.2 line 185
@@ -328,6 +360,30 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 	if terr != nil {
 		m.writeTenantError(r.Context(), w, terr, rawTenant, claims.Subject, claims.JWTID)
 		return
+	}
+	// §27.6 line 204 / §27.3.1 lines 95-97 — authoritative per-request
+	// revocation check for playground-origin bearers. Every request
+	// carrying the `origin: "playground"` claim MUST consult
+	// pg:revoked:{jti} on the auth hot path before the bearer is honored,
+	// so a logout/idle/admin revocation on one replica cannot be bypassed
+	// by presenting the same bearer to a peer. A hit is 401 with
+	// details.reason=bearer_revoked; a store-unreachable error fails
+	// closed (503 REDIS_UNAVAILABLE). Non-playground bearers carry no
+	// origin claim and skip the check entirely. F-27.6.3 / F-27.3.1.
+	if m.opts.PlaygroundRevocations != nil && claims.Origin == playgroundOriginClaim {
+		revoked, rerr := m.opts.PlaygroundRevocations.IsBearerRevoked(r.Context(), tenant.TenantID, claims.JWTID)
+		if rerr != nil {
+			writeError(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE",
+				"the playground revocation store is unreachable; the bearer cannot be honored",
+				map[string]any{"reason": "revocation_store_unavailable"})
+			return
+		}
+		if revoked {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
+				"the presented playground bearer has been revoked",
+				map[string]any{"reason": "bearer_revoked"})
+			return
+		}
 	}
 	// §25.1: parse the RFC 9068 scope claim into a typed Set. A
 	// malformed claim rejects the token with TOKEN_INVALID so a

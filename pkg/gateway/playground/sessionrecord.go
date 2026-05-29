@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -142,6 +144,60 @@ func revocationChannel(tenant string) string {
 	return "t:" + tenant + ":pg:revocations"
 }
 
+// revocationChannelPattern matches every tenant's §27.3.1 revocation
+// channel. A single PSUBSCRIBE on this pattern subscribes a gateway
+// replica to all current and future tenants, so a tenant provisioned
+// after gateway start still warms the replica's negative cache without
+// a per-tenant subscription enrolment step. spec: §27.6 line 204 /
+// §27.3.1 line 96 — "Every gateway replica subscribes to this channel".
+// F-27.6.7.
+const revocationChannelPattern = "t:*:pg:revocations"
+
+// tenantFromRevocationChannel extracts the tenant id from a concrete
+// revocation channel name produced by revocationChannel. It returns
+// ok=false for any string that is not a t:{tenant}:pg:revocations
+// channel. Tenant ids match ^[a-zA-Z0-9_-]{1,128}$ (§10.2) and carry no
+// colon, so trimming the fixed prefix and suffix is unambiguous.
+func tenantFromRevocationChannel(channel string) (string, bool) {
+	const prefix = "t:"
+	const suffix = ":pg:revocations"
+	if !strings.HasPrefix(channel, prefix) || !strings.HasSuffix(channel, suffix) {
+		return "", false
+	}
+	tenant := channel[len(prefix) : len(channel)-len(suffix)]
+	if tenant == "" {
+		return "", false
+	}
+	return tenant, true
+}
+
+// encodeRevocationMsg renders the §27.3.1 pub/sub payload as
+// "<originReplicaID>|<publishUnixNano>|<jti>". The origin replica id
+// lets a subscriber skip its own publishes when measuring cross-replica
+// propagation latency, and the publish timestamp lets a peer compute
+// the end-to-end §27.8 propagation sample on receipt. The jti is placed
+// last so a SplitN keeps it intact even though §10.2 jti material never
+// contains the delimiter. spec: §27.8 line 241. F-27.6.6.
+func encodeRevocationMsg(originReplicaID string, publishNano int64, jti string) string {
+	return originReplicaID + "|" + strconv.FormatInt(publishNano, 10) + "|" + jti
+}
+
+// parseRevocationMsg inverts encodeRevocationMsg. tsOK is false for a
+// payload that does not carry the origin/timestamp envelope (the jti is
+// still recovered so the negative cache is warmed, but no propagation
+// sample is recorded for it).
+func parseRevocationMsg(payload string) (originReplicaID string, publishNano int64, jti string, tsOK bool) {
+	parts := strings.SplitN(payload, "|", 3)
+	if len(parts) != 3 {
+		return "", 0, payload, false
+	}
+	nano, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return "", 0, parts[2], false
+	}
+	return parts[0], nano, parts[2], true
+}
+
 // newOpaqueID returns a 256-bit base64url random identifier. It backs
 // the opaque session id carried by the lenny_playground_session
 // cookie and the CSRF token.
@@ -257,6 +313,19 @@ type RedisSessionStore struct {
 	client redis.UniversalClient
 	now    func() time.Time
 
+	// replicaID is a stable per-process identifier stamped on every
+	// published revocation message. The pub/sub fan-out reaches every
+	// subscriber including the originating replica, so the subscribe
+	// loop compares this id against the message origin to record the
+	// §27.8 propagation sample only for messages a *peer* published.
+	// spec: §27.8 line 241. F-27.6.6.
+	replicaID string
+
+	// propObserver, when set, receives the §27.8
+	// lenny_playground_session_revocation_propagation_seconds samples the
+	// subscribe loop observes (outcome, seconds). Nil disables sampling.
+	propObserver func(outcome string, seconds float64)
+
 	cacheMu sync.RWMutex
 	cache   map[string]time.Time // revokedKey -> negative-cache entry expiry
 }
@@ -264,11 +333,32 @@ type RedisSessionStore struct {
 // NewRedisSessionStore returns a SessionStore backed by client. A nil
 // client is rejected (the caller wires the in-memory store instead).
 func NewRedisSessionStore(client redis.UniversalClient) *RedisSessionStore {
-	return &RedisSessionStore{
-		client: client,
-		now:    time.Now,
-		cache:  map[string]time.Time{},
+	id, err := newOpaqueID()
+	if err != nil {
+		// rand failure is catastrophic; fall back to a fixed id so the
+		// store still functions (self-publish skipping degrades to never
+		// skipping, which only adds near-zero propagation samples).
+		id = "replica"
 	}
+	return &RedisSessionStore{
+		client:    client,
+		now:       time.Now,
+		replicaID: id,
+		cache:     map[string]time.Time{},
+	}
+}
+
+// WithMetrics wires the §27.8 propagation-latency histogram into the
+// subscribe loop and returns s for chaining. The gateway calls it so a
+// peer-observed revocation records a lenny_playground_session_revocation_propagation_seconds
+// sample. revocationPropagation is itself nil-safe, so WithMetrics(nil)
+// leaves sampling disabled. spec: §27.8 line 241. F-27.6.6.
+func (s *RedisSessionStore) WithMetrics(m *Metrics) *RedisSessionStore {
+	if m == nil {
+		return s
+	}
+	s.propObserver = m.revocationPropagation
+	return s
 }
 
 var _ SessionStore = (*RedisSessionStore)(nil)
@@ -315,14 +405,17 @@ func (s *RedisSessionStore) RevokeSession(ctx context.Context, tenant, id string
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
+	publishNano := s.now().UnixNano()
 	for _, jti := range jtis {
 		if jti == "" {
 			continue
 		}
 		// A publish failure is non-fatal: Redis remains the
 		// authoritative store consulted on every request, so the
-		// fan-out is a propagation accelerator (§27.3.1).
-		_ = s.client.Publish(ctx, revocationChannel(tenant), jti).Err()
+		// fan-out is a propagation accelerator (§27.3.1). The payload
+		// carries this replica's id and the publish instant so a peer
+		// can record the §27.8 cross-replica propagation sample. F-27.6.6.
+		_ = s.client.Publish(ctx, revocationChannel(tenant), encodeRevocationMsg(s.replicaID, publishNano, jti)).Err()
 	}
 	return nil
 }
@@ -335,7 +428,7 @@ func (s *RedisSessionStore) MarkBearerRevoked(ctx context.Context, tenant, jti s
 	if err := s.client.Set(ctx, revokedKey(tenant, jti), "1", ttl).Err(); err != nil {
 		return err
 	}
-	_ = s.client.Publish(ctx, revocationChannel(tenant), jti).Err()
+	_ = s.client.Publish(ctx, revocationChannel(tenant), encodeRevocationMsg(s.replicaID, s.now().UnixNano(), jti)).Err()
 	return nil
 }
 
@@ -363,20 +456,57 @@ func (s *RedisSessionStore) IsBearerRevoked(ctx context.Context, tenant, jti str
 	return false, nil
 }
 
-// SubscribeRevocations runs the §27.3.1 pub/sub consume loop for
-// tenant: every revoked jti published on the per-tenant channel warms
-// the in-process negative cache so the auth hot path can short-circuit
-// the Redis GET. It blocks until ctx is cancelled; the gateway runs it
-// in a goroutine. A nil client subscribes to nothing and returns when
-// ctx is cancelled.
-func (s *RedisSessionStore) SubscribeRevocations(ctx context.Context, tenant string) {
+// SubscribeAllRevocations runs the §27.3.1 pub/sub consume loop over a
+// single PSUBSCRIBE on revocationChannelPattern, so the replica warms
+// its negative cache for every tenant — including tenants provisioned
+// after gateway start — without a per-tenant enrolment step. It blocks
+// until ctx is cancelled; the gateway runs it in a goroutine. A dropped
+// subscription is re-established and the outage duration is recorded as
+// a §27.8 {outcome="resubscribe"} sample. A nil client subscribes to
+// nothing and returns when ctx is cancelled.
+//
+// spec: §27.6 line 204 / §27.3.1 line 96 — every replica subscribes and
+// a dropped subscription re-subscribes and emits the resubscribe
+// outcome. F-27.6.6, F-27.6.7.
+func (s *RedisSessionStore) SubscribeAllRevocations(ctx context.Context) {
 	if s.client == nil {
 		<-ctx.Done()
 		return
 	}
-	sub := s.client.Subscribe(ctx, revocationChannel(tenant))
-	defer func() { _ = sub.Close() }()
-	ch := sub.Channel()
+	var droppedAt time.Time // zero on the first subscribe (no prior outage)
+	const resubscribeBackoff = 250 * time.Millisecond
+	for {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		// A re-subscribe means the prior subscription dropped; the gap
+		// from the drop to a healthy subscription is the propagation
+		// outage the §27.8 resubscribe outcome reports.
+		if !droppedAt.IsZero() {
+			s.recordPropagation("resubscribe", s.now().Sub(droppedAt).Seconds())
+		}
+		sub := s.client.PSubscribe(ctx, revocationChannelPattern)
+		ch := sub.Channel()
+		s.drainRevocations(ctx, ch)
+		_ = sub.Close()
+		if ctx.Err() != nil {
+			return
+		}
+		// The channel closed without ctx cancellation: the subscription
+		// dropped. Mark the outage start and back off before re-subscribing.
+		droppedAt = s.now()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(resubscribeBackoff):
+		}
+	}
+}
+
+// drainRevocations consumes pub/sub messages until ch closes or ctx is
+// cancelled, applying each to the negative cache and propagation
+// histogram via handleRevocationMessage.
+func (s *RedisSessionStore) drainRevocations(ctx context.Context, ch <-chan *redis.Message) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -385,9 +515,44 @@ func (s *RedisSessionStore) SubscribeRevocations(ctx context.Context, tenant str
 			if !ok {
 				return
 			}
-			s.cacheMu.Lock()
-			s.cache[revokedKey(tenant, msg.Payload)] = s.now().Add(maxBearerTTL)
-			s.cacheMu.Unlock()
+			s.handleRevocationMessage(msg.Channel, msg.Payload)
 		}
 	}
+}
+
+// handleRevocationMessage applies one received revocation pub/sub
+// message: it warms the per-tenant negative cache for the carried jti
+// and, when the message was published by a *peer* replica and carries a
+// timestamp, records the §27.8 end-to-end propagation latency under the
+// pubsub_delivered outcome. A message this replica published itself
+// warms the cache but is not sampled (it is not a cross-replica
+// observation). spec: §27.8 line 241. F-27.6.6.
+func (s *RedisSessionStore) handleRevocationMessage(channel, payload string) {
+	tenant, ok := tenantFromRevocationChannel(channel)
+	if !ok {
+		return
+	}
+	originReplicaID, publishNano, jti, tsOK := parseRevocationMsg(payload)
+	if jti == "" {
+		return
+	}
+	s.cacheMu.Lock()
+	s.cache[revokedKey(tenant, jti)] = s.now().Add(maxBearerTTL)
+	s.cacheMu.Unlock()
+	if tsOK && originReplicaID != s.replicaID {
+		latency := s.now().Sub(time.Unix(0, publishNano)).Seconds()
+		if latency < 0 {
+			latency = 0
+		}
+		s.recordPropagation("pubsub_delivered", latency)
+	}
+}
+
+// recordPropagation observes a §27.8 propagation sample when an
+// observer is wired. Nil-safe.
+func (s *RedisSessionStore) recordPropagation(outcome string, seconds float64) {
+	if s.propObserver == nil {
+		return
+	}
+	s.propObserver(outcome, seconds)
 }

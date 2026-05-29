@@ -246,13 +246,19 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 // the §27.8 reason and propagation latency, and emits the §27.3.1
 // step-6 audit event.
 func (h *Handler) revokeSessionRecord(ctx context.Context, tenant, id string, rec SessionRecord, reason RevocationReason) error {
-	start := h.now()
 	revokedTTL := h.revokedMarkerTTL(rec)
 	if err := h.sessions.RevokeSession(ctx, tenant, id, rec.BearerJTIs, revokedTTL); err != nil {
 		return err
 	}
 	h.metrics.revocation(string(reason))
-	h.metrics.revocationPropagation("redis_authoritative", h.now().Sub(start).Seconds())
+	// spec: §27.8 line 241 — the propagation histogram measures latency
+	// "from when a revocation is written on the originating replica to
+	// when peer replicas observe it", so the sample is emitted by the
+	// subscribing (peer) replica in SubscribeAllRevocations, not here on
+	// the originating replica's local write. Recording the local
+	// MULTI/EXEC round-trip under {outcome="redis_authoritative"} (as the
+	// prior code did) mislabelled a same-replica write as a cross-replica
+	// observation and never captured the quantity the SLO bounds. F-27.6.6.
 	h.emitBearerRevokedAudit(ctx, tenant, rec.UserID, id, rec.BearerJTIs)
 	return nil
 }

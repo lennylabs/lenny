@@ -2693,6 +2693,13 @@ func main() {
 	// public MCP and REST surface for session, chat, and discovery
 	// traffic (§27.5); only the auth-gatekeeper endpoints are
 	// playground-specific.
+	//
+	// §27.6 line 204 — the playground handler's authoritative per-request
+	// revocation check is hoisted here so the auth middleware (built
+	// below) can consult it for every origin=playground bearer. It stays
+	// nil when the playground is disabled, leaving the auth hot path
+	// unchanged. F-27.6.3 / F-27.3.1.
+	var playgroundRevocations authmw.PlaygroundRevocationChecker
 	if *playgroundEnabled {
 		pgCfg := playground.Config{
 			Enabled:            true,
@@ -2719,19 +2726,29 @@ func main() {
 		if err := pgCfg.Validate(); err != nil {
 			log.Fatalf("lenny-gateway: %v", err)
 		}
+		// §27.8 playground metrics register against the same private
+		// registry the gateway's /metrics scrape target serves. Created
+		// before the session store so the Redis-backed store can record
+		// §27.8 propagation samples from its subscribe loop. F-27.6.6.
+		pgMetrics, err := playground.NewMetrics(gwMetrics.Registerer())
+		if err != nil {
+			log.Fatalf("lenny-gateway: §27.8 playground metrics: %v", err)
+		}
 		// §27.3.1 session record + revocation backing store: Redis when
 		// --redis-url is set so a logout on one replica revokes the
 		// bearer fleet-wide, in-process otherwise (single-replica).
 		var pgSessions playground.SessionStore
 		if redisClient != nil {
-			redisSessions := playground.NewRedisSessionStore(redisClient)
+			redisSessions := playground.NewRedisSessionStore(redisClient).WithMetrics(pgMetrics)
 			pgSessions = redisSessions
-			// §27.3.1 pub/sub: each replica subscribes to the
-			// per-tenant revocation channel so the auth hot path can
-			// short-circuit the Redis GET on a cache hit.
-			for _, t := range playgroundSubscribeTenants(pgCfg) {
-				go redisSessions.SubscribeRevocations(context.Background(), t)
-			}
+			// §27.3.1 / §27.6 line 204 pub/sub: a single PSUBSCRIBE on
+			// t:*:pg:revocations subscribes this replica to every tenant's
+			// revocation channel — including tenants provisioned after
+			// gateway start — so the auth hot path can short-circuit the
+			// Redis GET on a cache hit and the §27.8 propagation histogram
+			// captures cross-replica visibility for all tenants. F-27.6.6,
+			// F-27.6.7.
+			go redisSessions.SubscribeAllRevocations(context.Background())
 		} else {
 			pgSessions = playground.NewMemorySessionStore()
 			// spec: §27.6 line 204 — Logout endpoints MUST NOT return
@@ -2745,12 +2762,6 @@ func main() {
 			// F-27.6.9.
 			log.Printf("lenny-gateway: §27.6 playground SessionStore is in-memory (no --redis-url): bearer revocations are not durable across gateway restarts and do not propagate across replicas; production deployments MUST set --redis-url")
 		}
-		// §27.8 playground metrics register against the same private
-		// registry the gateway's /metrics scrape target serves.
-		pgMetrics, err := playground.NewMetrics(gwMetrics.Registerer())
-		if err != nil {
-			log.Fatalf("lenny-gateway: §27.8 playground metrics: %v", err)
-		}
 		pg := playground.New(pgCfg, playground.Options{
 			// spec: §10.2 line 225 — Sign goes through the breaker so
 			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE;
@@ -2762,6 +2773,10 @@ func main() {
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
 		}).WithAuditEmitter(playgroundAuditEmitter{})
+		// §27.6 line 204 — expose the per-request revocation check to the
+		// auth middleware so an origin=playground bearer is rejected on
+		// every replica once its session is revoked. F-27.6.3 / F-27.3.1.
+		playgroundRevocations = pg
 		mux.Handle("/playground", pg.PlaygroundRoutes())
 		mux.Handle("/playground/", pg.PlaygroundRoutes())
 		mux.Handle("/v1/playground/token", pg.TokenRoutes())
@@ -2976,6 +2991,10 @@ func main() {
 		AllowDevRoles:   *devMode,
 		Verifier:        bearerVerifier,
 		Revocations:     revProp,
+		// §27.6 line 204 / §27.3.1 lines 95-97 — authoritative per-request
+		// revocation check for origin=playground bearers; nil (and thus a
+		// no-op) when the playground is disabled. F-27.6.3 / F-27.3.1.
+		PlaygroundRevocations: playgroundRevocations,
 		// §4.2 line 185: every tenant-claim rejection writes an
 		// auth_failure audit row alongside the INFO log line.
 		AuthFailureSink: authFailureAuditAdapter{sink: auditSink},
@@ -4765,19 +4784,6 @@ func (r playgroundTenantRegistry) IsRegistered(tenantID string) (bool, error) {
 		return false, err
 	}
 	return row.IsActive(), nil
-}
-
-// playgroundSubscribeTenants returns the tenant set whose §27.3.1
-// playground revocation channel each gateway replica subscribes to.
-// In dev mode that is the configured devTenantId; otherwise the
-// built-in "default" tenant. A multi-tenant production deployment
-// subscribes per-tenant as sessions are established; the initial set
-// covers the common single-tenant case.
-func playgroundSubscribeTenants(cfg playground.Config) []string {
-	if cfg.AuthMode == playground.AuthModeDev {
-		return []string{cfg.DevTenantID}
-	}
-	return []string{"default"}
 }
 
 // playgroundAuditEmitter bridges the playground's §27.3.1 audit
