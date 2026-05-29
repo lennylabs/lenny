@@ -27405,7 +27405,7 @@ Spec section: `spec/16_observability.md` §16.9 (lines 720–730).
 
 ### Findings
 
-### - [ ] F-16.9.1 — ServiceMonitor selects controller, but no controller Service exists [High] — OPEN
+### - [x] F-16.9.1 — ServiceMonitor selects controller, but no controller Service exists [High] — CLOSED
 
 The ServiceMonitor's `matchExpressions` includes `controller` under `lenny.dev/component`:
 
@@ -27434,7 +27434,9 @@ The servicemonitor unit test (`tests/servicemonitor_test.yaml` lines 51–62) as
 
 **Required fix:** Add a `lenny-controller` Service (port `metrics` → targetPort `metrics`) in `templates/controller-deployment.yaml`, parallel to the gateway and token-service Services. Add a test asserting the Service is rendered.
 
-### - [ ] F-16.9.2 — Controller metrics port — Service expectation, NetworkPolicy admission, and container listener disagree [High] — OPEN
+**Resolution:** CLOSED by `e9882485`. Added a `lenny-controller` ClusterIP Service (port `metrics` → targetPort `metrics`, `lenny.dev/component: controller` selector) in `templates/controller-deployment.yaml` so the Prometheus Operator resolves the ServiceMonitor controller selector into Endpoints. `controller-deployment_test.yaml` now asserts the Service renders and tracks a `controller.metricsPort` override.
+
+### - [x] F-16.9.2 — Controller metrics port — Service expectation, NetworkPolicy admission, and container listener disagree [High] — CLOSED
 
 Three different layers state three different things about the controller metrics port:
 
@@ -27446,7 +27448,9 @@ The controller actually serves on 8080. The NetworkPolicy admits 9090. Any Prome
 
 **Required fix:** Either wire `controller.metricsPort` into both the binary flag and the containerPort, or change the value to 8080 and update R2 (spec text claims the canonical port is 9090 for the gateway and `lenny-ops` specifically; controller is unstated). Aligning the binary flag, the containerPort, the NetworkPolicy, and a new controller Service onto the same value is the minimum fix.
 
-### - [ ] F-16.9.3 — PodMonitor port name `metrics` is not present on the `lenny-ops` pod [High] — OPEN
+**Resolution:** CLOSED by `e9882485`. The controller Deployment now binds `--metrics-bind-address=:{{ .Values.controller.metricsPort }}` and names the metrics containerPort on the same value (default 9090), so the binary flag, the containerPort, the `allow-controller-metrics-scrape` NetworkPolicy (already on `controller.metricsPort`), and the new `lenny-controller` Service all agree on one port. Tests assert the flag and containerPort and a `controller.metricsPort` override.
+
+### - [x] F-16.9.3 — PodMonitor port name `metrics` is not present on the `lenny-ops` pod [High] — CLOSED
 
 `templates/podmonitor.yaml:42-46` declares:
 
@@ -27469,6 +27473,8 @@ Note: the Service in front of `lenny-ops` does have a `metrics` port (lines 184�
 
 **Required fix:** Either add a containerPort named `metrics` (containerPort = `ops.metricsPort`) to the `lenny-ops` pod template (the listener is the same as `http`, so the additional port entry is purely a labelling concern), or change the PodMonitor to reference the existing `http` port via `port: http` plus an explicit `path: /metrics`, which is already declared.
 
+**Resolution:** CLOSED. Verify-closed — the `lenny-ops` pod template already exposes a named `metrics` containerPort (added by F-16.9.10, commit `ac2eb08d`), so the PodMonitor `port: metrics` selector matches. `ops-deployment_test.yaml` asserts the named containerPort and `servicemonitor_test.yaml` asserts the PodMonitor endpoint references it.
+
 ### - [ ] F-16.9.4 — Preflight CRD-presence check and automatic `configmap` fallback are absent [High] — OPEN
 
 R8 mandates a preflight check that the Prometheus Operator CRDs are installed before rendering ServiceMonitor / PodMonitor / PrometheusRule, with automatic fallback to `monitoring.format: configmap` plus a warning if they are absent. §18.7 build-sequence line 154 reiterates: "The CRD-presence preflight check that falls back to `configmap` when the Prometheus Operator is absent ships at the same time."
@@ -27481,7 +27487,7 @@ Implementation:
 
 **Required fix:** Add a preflight check that lists CustomResourceDefinitions for `servicemonitors.monitoring.coreos.com`, `podmonitors.monitoring.coreos.com`, and `prometheusrules.monitoring.coreos.com`. If any are absent and `monitoring.format != "configmap"` (or `serviceMonitor.enabled: true`), fail closed with a remediation message, or — per the spec — automatically downgrade `monitoring.format` to `configmap`, emit a Helm `NOTES.txt` warning, and skip rendering ServiceMonitor / PodMonitor. Wire the CRD watch into the preflight RBAC.
 
-### - [ ] F-16.9.5 — `deployment_tier` external label is not attached anywhere [High] — OPEN
+### - [x] F-16.9.5 — `deployment_tier` external label is not attached anywhere [High] — CLOSED
 
 §16.1.1 (line 301) states: "The `deployment_tier` label … is a static label sourced from Helm (`global.deploymentTier`) and always carries one of `tier1`, `tier2`, or `tier3` … It is attached at scrape time to every Lenny metric series via `external_labels` on the Prometheus job (or the equivalent OpenTelemetry resource attribute), so it is available on all alerts without requiring per-metric instrumentation." The §16.5 alert `Tier3GCPressureHigh` and the §16.10 OpenSLO export both depend on this label being present.
 
@@ -27494,6 +27500,8 @@ Implementation:
 `Tier3GCPressureHigh` (`pkg/alerting/rules/rules.go:597`, `charts/lenny/files/alerting-rules.yaml:392`) evaluates `lenny_gateway_gc_pause_fleet_p99_ms{deployment_tier="tier3"} > 50`. With no series carrying the label, the alert can never fire on any tier. The §16.9 ServiceMonitor / PodMonitor templates are the natural place to inject the static relabel.
 
 **Required fix:** Add `global.deploymentTier` to `values.yaml` and tier presets, then add a static relabel in both ServiceMonitor and PodMonitor that writes `deployment_tier = {{ .Values.global.deploymentTier }}` (e.g., via `metricRelabelings` with `replacement` + `targetLabel`). Document that the `external_labels`-mechanism is the operator-managed Prometheus CR which is out of chart scope; the ServiceMonitor relabel is the supported substitute when the chart cannot write to the Prometheus CR.
+
+**Resolution:** CLOSED by `e9882485`. Added `global.deploymentTier` (default `tier1`) to `values.yaml` and to the tier1/2/3 presets alongside `capacityPlanning.tier`, and a `deployment_tier` `metricRelabelings` entry on both the ServiceMonitor and PodMonitor endpoints per §16.1.1, so `Tier3GCPressureHigh` and the §16.10 OpenSLO export resolve the label. The note in `values.yaml` records that the Prometheus CR `external_labels` is out of chart scope and the relabel is the supported substitute. `servicemonitor_test.yaml` covers the default, an override, and the empty-value omission.
 
 ### - [ ] F-16.9.6 — Spec text describes `monitoring.format: prometheusrule` as gating the ServiceMonitor and PodMonitor too; implementation splits the gate [Medium] — OPEN
 
@@ -27509,7 +27517,7 @@ The result: a deployer who sets `monitoring.format: prometheusrule` and runs the
 
 **Required fix:** Either collapse the gates so ServiceMonitor / PodMonitor render whenever `monitoring.format` ∈ {`prometheusrule`, `both`}, or amend the spec text to document the two-gate split with rationale. The chart comment at `templates/servicemonitor.yaml:9-19` explains the split as a CRD-presence concern, which is the same concern §16.9 says the preflight (F4 above) is supposed to handle — so once F4 lands, the split loses its justification and the single-gate model becomes safe.
 
-### - [ ] F-16.9.7 — Token-service Service routes `metrics` to its gRPC container port [Medium] — OPEN
+### - [x] F-16.9.7 — Token-service Service routes `metrics` to its gRPC container port [Medium] — CLOSED
 
 `templates/token-service-deployment.yaml:92-98`:
 
@@ -27527,17 +27535,23 @@ The container exposes only `grpc` and `http-token` containerPorts (lines 48–52
 
 Confirm at the binary level whether `/metrics` is actually served on the gRPC port; if it is, document the mux in the template comment. If it is not, add a separate metrics listener and containerPort.
 
-### - [ ] F-16.9.8 — `monitoring.format` has no validation [Medium] — OPEN
+**Resolution:** CLOSED. Verify-closed — the token-service binary takes `--metrics-addr` (`cmd/lenny-token-service/main.go`) and the Deployment renders `--metrics-addr=:{{ .Values.tokenService.metricsPort }}` with a dedicated `metrics` containerPort and a Service `metrics` port targeting `metrics` (not `grpc`), resolved by `a4229b71`. The finding's described `targetPort: grpc` state is stale. `token-service-deployment_test.yaml` asserts the listener flag, the containerPort, and the Service port → `metrics` target.
+
+### - [x] F-16.9.8 — `monitoring.format` has no validation [Medium] — CLOSED
 
 `templates/prometheusrule.yaml` reads `.Values.monitoring.format` and switches on three string literals. There is no `values.schema.json` (none exists under `charts/lenny/`), no `required` template guard, no allow-list check. A typo (`prometheus-rule`, `Prometheus-rule`) silently renders nothing, with no warning. The same applies to `monitoring.serviceMonitor.enabled` (a non-bool truthy value can confuse Helm's `if`).
 
 **Required fix:** Either add a `required` check (e.g., `{{- if not (has $format (list "prometheusrule" "configmap" "both")) }}{{ fail … }}{{- end }}`) or add a `values.schema.json` with an `enum` constraint.
 
-### - [ ] F-16.9.9 — §16.9 metions one ServiceMonitor "for the gateway, controller, and token service"; CoreDNS (port 9153) is scrapeable per §13.2 NET-045 but not covered [Medium] — OPEN
+**Resolution:** CLOSED by `e9882485`. Added the `lenny.monitoring.validateFormat` helper in `_helpers.tpl`, invoked from `prometheusrule.yaml` ahead of the `bundleRules` gate so it fires on every render regardless of whether the catalog would otherwise emit. An out-of-range `monitoring.format` fails with `monitoring.format must be one of [prometheusrule configmap both]; got %q`. `prometheusrule_test.yaml` asserts the `failedTemplate` message.
+
+### - [x] F-16.9.9 — §16.9 metions one ServiceMonitor "for the gateway, controller, and token service"; CoreDNS (port 9153) is scrapeable per §13.2 NET-045 but not covered [Medium] — CLOSED
 
 The dedicated CoreDNS pod runs in `lenny-system` (per `templates/system-network-policies.yaml:244-280` `allow-dedicated-coredns` opening :9153 to monitoring), and §13.2 NET-045 lists CoreDNS among the components needing Prometheus scrape. §16.9 itself omits CoreDNS from the canonical list and the ServiceMonitor does not include it.
 
 This is technically consistent with §16.9 as written, but the operator-managed flow then leaves CoreDNS unscraped on a stock install — the deployer must add their own scrape config. Either the spec should add CoreDNS to the §16.9 set (and a CoreDNS Service/ServiceMonitor entry should be added), or the chart should document the omission. Treating as Medium because the §16.9 text is silent and the spec is the source of truth; flag for spec-vs-implementation reconciliation.
+
+**Resolution:** CLOSED by `e9882485`. §16.9 defines the canonical scrape set as the gateway, controller, Token Service, and `lenny-ops`; CoreDNS is intentionally outside it, and adding it to the set is spec-edit territory (Rule B). Took the documentation branch: the `servicemonitor.yaml` header now records that the dedicated CoreDNS pod (`lenny-system`, TCP 9153) is scrapeable through the §13.2 NET-045 NetworkPolicy but sits outside the §16.9 operator-managed set, so a deployer who wants CoreDNS metrics supplies their own scrape config.
 
 ### - [x] F-16.9.10 — Container ports lack the named `metrics` entry on gateway and ops pods, masking the F3 / F5 class of bug [Low] — CLOSED
 
