@@ -27008,7 +27008,7 @@ Evidence:
 - `cmd/lenny-gateway/main.go` lacks any `blobstore/replication` import (verified by `grep -n 'blobstore/replication' cmd/lenny-gateway/main.go` returns no hits).
 - `pkg/audit/ocsf/mapping.go` has no `artifact.` or `artifact_replication.` entry in either the exact catalog or the prefix table, so even if these events were appended to a tenant chain the OCSF translator would dead-letter them with `ErrClassMappingMissing`. See F3.
 
-### - [ ] F-16.7.3 — `artifact.cross_region_replication_verified` and `artifact_replication.resumed` have no OCSF class mapping. [High] — OPEN
+### - [x] F-16.7.3 — `artifact.cross_region_replication_verified` and `artifact_replication.resumed` have no OCSF class mapping. [High] — CLOSED
 
 `pkg/audit/ocsf/mapping.go:101-158` (the prefix catalog) has no `artifact.` or `artifact_replication.` entry. The exact-catalog has no entry either:
 
@@ -27032,6 +27032,8 @@ Evidence:
 - `pkg/audit/ocsf/mapping.go` (full file): no `artifact` token.
 - `TestCatalogIsCompleteAgainstSpec167` does not cross-check OCSF mapping coverage.
 - `pkg/audit/ocsf/ocsf.go:374-381`: `if !ok { return Record{}, &TranslateError{Class: ErrClassMappingMissing, ...} }`.
+
+**Resolution (b9c58625):** Added exact OCSF mappings for `artifact.cross_region_replication_verified` (apiActivity Create — per-batch residency attestation) and `artifact_replication.resumed` (apiActivity Update — operator-driven state change) in `pkg/audit/ocsf/mapping.go`, plus `artifact.` / `artifact_replication.` / `node.` prefix fallbacks. The new `TestCatalogHasOCSFCoverage` gate (F-16.7.10) immediately surfaced a third catalogued event with no mapping — `node.drain.forced` (§12 line 291) — which is now also mapped (apiActivity Update). Every `audit.Catalog()` event now resolves via `ocsf.LookupClass`.
 
 ### - [x] F-16.7.4 — `pkg/gateway/admin/breakers.go` emits invented event types `circuit_breaker.opened` and `circuit_breaker.closed` instead of the §16.7-catalogued `circuit_breaker.state_changed`. [High] — CLOSED
 
@@ -27133,7 +27135,7 @@ Evidence:
 - `pkg/ops/backup/orchestrator.go:537-541` — comment explicitly defers emit to opsserver.
 - No `legal_hold.ledger_confirmed_current_at` emit site anywhere in the repo (verified by grep).
 
-### - [ ] F-16.7.9 — Every event maps to OCSF `severity_id: 1` (Informational) regardless of spec-specified severity. [Medium] — OPEN
+### - [x] F-16.7.9 — Every event maps to OCSF `severity_id: 1` (Informational) regardless of spec-specified severity. [Medium] — CLOSED
 
 §16.7 calls out specific severities for several events:
 
@@ -27155,7 +27157,9 @@ Evidence:
 - `pkg/audit/ocsf/ocsf.go:400`: `SeverityID: 1` hard-coded baseline.
 - `pkg/audit/ocsf/mapping.go:15-19`: `ClassMapping` struct has no severity field.
 
-### - [ ] F-16.7.10 — The catalog's round-trip test does not gate OCSF mapping coverage. [Medium] — OPEN
+**Resolution (b9c58625):** Added a per-event-type `severityCatalog` + `severityFor(eventType, payload)` in `pkg/audit/ocsf/ocsf.go`. The §16.7 syslog severities project onto the OCSF scale as INFO→1, Notice→2, Warning→3, Critical→5. Pinned: `compliance.profile_decommissioned`, `gdpr.erasure_blocked_by_hold`, `gdpr.legal_hold_overridden`, `gdpr.legal_hold_overridden_tenant`, `node.drain.forced` (Critical); `delegation.self_recursion_allowed`, `gateway.cycle_detection_mode_changed`, `deployment.feature_flag_downgrade_acknowledged` (Notice); `delegation.cycle_warning` (Warning); `legal_hold.escrow_region_resolved` (INFO). `elicitation.content_tamper_detected` is payload-dependent (`enforcement_mode: enforce`→Critical, `detect-only`→Warning). The `policy_result=deny` escalation is preserved as a Medium floor that never lowers an already-higher severity.
+
+### - [x] F-16.7.10 — The catalog's round-trip test does not gate OCSF mapping coverage. [Medium] — CLOSED
 
 `TestCatalogIsCompleteAgainstSpec167` and `TestCatalogHasNoUnspecifiedEvents` enforce that the §16.7 catalog and the Go constant set match name-for-name. Nothing enforces that each catalogued event has an OCSF class mapping reachable via `ocsf.LookupClass`. The current gap surfaces only at runtime when an emitted event without a mapping dead-letters — and per F1 most events are not emitted, so the dead-letter is latent.
 
@@ -27164,6 +27168,8 @@ Adding a `TestCatalogHasOCSFCoverage` that iterates `audit.Catalog()` and calls 
 Evidence:
 - `pkg/observability/audit/catalog_test.go:132-156` — the two completeness tests check spec ↔ catalog parity but not catalog ↔ OCSF parity.
 - `pkg/audit/ocsf/ocsf_test.go` covers the translator's behavior on a handful of event types but does not iterate the §16.7 catalog.
+
+**Resolution (b9c58625):** Added `TestCatalogHasOCSFCoverage` to `pkg/observability/audit/catalog_test.go`: it iterates `Catalog()`, asserts each event resolves via `ocsf.LookupClass`, and pins the data-subject families (`gdpr.*`, `legal_hold.*`) to OCSF Entity Management (5001) rather than the generic API-activity fallback. The test caught two previously-unmapped catalogued events on its first run (`node.drain.forced` and the F-16.7.3 artifact pair), confirming it gates the exact regression class the finding describes.
 
 ### - [x] F-16.7.11 — `cross_tenant_read` is emitted but is a §12.3 event, not §16.7 — flagging for completeness. [Info] — CLOSED
 
