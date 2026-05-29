@@ -8592,7 +8592,7 @@ Evidence:
 
 **Resolution:** `treeNode` now carries `RuntimeRef` and `walk()` populates it from the session row; the §8.5 MCP projection matches the REST `/tree` shape. `TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1` pins the contract.
 
-### - [ ] F-8.5.2 — `lenny/get_task_tree` ignores `treeVisibility` — High [Medium] — OPEN
+### - [x] F-8.5.2 — `lenny/get_task_tree` ignores `treeVisibility` — High [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.9.2 — F-8.5.2 and F-8.9.2 both report that get_task_tree applies no treeVisibility filtering; F-13.5.8 covers the separate delegate-time messaging-scope rejection check.
 
@@ -8611,6 +8611,17 @@ Evidence:
 
 - `pkg/gateway/mcptools/mcptools.go:345-367`, `:1413-1433`
 - `grep "TREE_VISIBILITY" pkg/` returns no hits.
+
+**Resolution:** Closed by `ad19c525`. `treeVisibility` is now persisted on
+the session row (`session.TreeVisibility`, migration `0094`), and both the
+MCP `lenny/get_task_tree` walker and the REST `GET /v1/sessions/{id}/tree`
+handler route through `sessionstore.VisibleTree` to scope the response by
+the caller's effective visibility: `full` roots at the tree apex (siblings
+visible), `parent-and-self` returns parent+self, `self-only` returns self
+alone. The delegation Service stamps the monotonically-resolved value onto
+every child and rejects a widening child lease with `TREE_VISIBILITY_WEAKENING`
+(the `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE` half is in F-13.5.8,
+also closed by the same commit).
 
 ### - [ ] F-8.5.3 — `lenny/delegate_task` does not surface `LeaseSlice` or `fileExport` — High [Medium] — OPEN
 
@@ -9767,7 +9778,7 @@ Section §8.9 is a short normative declaration: the gateway maintains a complete
 - **Gap:** Operators and parent agents cannot inspect a child's pod assignment, recovery generation, remaining lease, accumulated budget consumption, or prior retry / failure history from the §8.9 tree. The spec's per-node tracking promise is the foundation for the §8.10 bottom-up recovery decision, the §11.2 budget audit, and the §15.1 admin investigation surface; without those attributes, those downstream contracts cannot be served from the tree itself.
 - **Suggested resolution:** Extend both `TreeNode` (REST) and `treeNode` (MCP) with the spec-named fields. Source `pod` from `Session.PoolRef` (or a stronger pod identity if one is tracked elsewhere), `lease` from the lease record persisted alongside the session, `budget consumed` from the Redis delegation counters keyed by `root_session_id`, and `failure history` from a new per-session retry / recovery audit. `generation` requires a new monotonic counter incremented on each recovery reattach.
 
-### - [ ] F-8.9.2 — `treeVisibility` filtering (full / parent-and-self / self-only) is not implemented [High] — OPEN
+### - [x] F-8.9.2 — `treeVisibility` filtering (full / parent-and-self / self-only) is not implemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.5.2 — F-8.5.2 and F-8.9.2 both report that get_task_tree applies no treeVisibility filtering; F-13.5.8 covers the separate delegate-time messaging-scope rejection check.
 
@@ -9778,6 +9789,15 @@ Section §8.9 is a short normative declaration: the gateway maintains a complete
   - There is no field on the session row, the delegation lease structure, or the deps that records the caller's effective `treeVisibility`. The `lenny/delegate_task` tool at `pkg/gateway/mcptools/mcptools.go:920-1003` does not accept or persist a `treeVisibility` value.
 - **Gap:** A low-trust child can call `lenny/get_task_tree` and observe its siblings, uncles, and the entire tree — there is no enforcement of the spec's `parent-and-self` or `self-only` narrowing. The spec also says (line 540) that `messagingScope: siblings` requires `treeVisibility: full`; with no `treeVisibility`, the compatibility check is moot, but the security boundary it is meant to enforce is also absent.
 - **Suggested resolution:** Add `TreeVisibility` to the lease record (or the session row when leases are not persisted independently), default to `"full"`, enforce monotonicity on inheritance (per spec lines 313–319), and filter `buildTree`'s output to honor the caller's effective visibility. Add `TREE_VISIBILITY_WEAKENING` and `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE` rejection codes on `lenny/delegate_task` at lease issuance.
+
+**Resolution:** Closed by `ad19c525` (same root cause as F-8.5.2). `TreeVisibility`
+is stored on the session row (the §4.2 line 161 lease-on-session-row design),
+defaults to `full` via `OrDefault`, and inheritance/monotonicity is enforced
+in `delegation.Service.Delegate` (`resolveChildTreeVisibility`: inherit when
+absent, narrow-or-equal accepted, widen rejected with `TREE_VISIBILITY_WEAKENING`,
+HTTP 422). `buildTree`/`buildTreeNode` honor the caller's effective visibility
+via `sessionstore.VisibleTree`. The `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE`
+rejection (siblings scope vs. non-full visibility) is wired under F-13.5.8.
 
 ### - [ ] F-8.9.3 — §8.10 `session_tree_archive` has no Postgres backing — production loses tree archive on restart [High] — OPEN
 - **Spec:** Lines 129, 1062 in `08_recursive-delegation.md`; §7.1 lines 426–433 in `07_session-lifecycle.md`; §12.7 line 783 in `12_storage-architecture.md`. The `session_tree_archive` is described as a Postgres table keyed by `(root_session_id, node_session_id)` and is listed in the §12.7 erasure ordering (must precede `SessionStore` deletion to satisfy the FK on `session_tree_archive.root_session_id → sessions.id`).
@@ -22573,7 +22593,7 @@ canonical `INTERCEPTOR_WEAKENING_COOLDOWN` code now ships through the
 shared error path and is ready to ride the second cooldown axis as soon
 as F-4.8.17 lands.
 
-### - [ ] F-13.5.8 — `treeVisibility` and `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE` not enforced [Medium] — OPEN
+### - [x] F-13.5.8 — `treeVisibility` and `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE` not enforced [Medium] — CLOSED
 
 §8.3 lines 311–324 require, at delegation time:
 
@@ -22590,6 +22610,22 @@ performs no compatibility check.
 
 `TREE_VISIBILITY_WEAKENING` is documented in
 docs/reference/error-catalog.md:180 but no Go call site produces it.
+
+**Resolution:** Closed by `ad19c525`. The Go API now carries
+`session.TreeVisibility` and `session.MessagingScope`; `delegation.Service`
+resolves the child's effective `treeVisibility` (inherit-or-narrow) and runs
+the §8.3 lines 321-324 compatibility check: a resolved effective
+`messagingScope` of `siblings` against a non-`full` child lease is rejected
+with `*TreeVisibilityMessagingScopeError`, which `lenny/delegate_task`
+surfaces as `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE` (details:
+`effectiveMessagingScope`, `effectiveTreeVisibility`, `requiredTreeVisibility`).
+A widening child lease is rejected with `TREE_VISIBILITY_WEAKENING` — the
+catalog code now has a producing call site. `messagingScope` defaults to
+`direct` (the §7.2 default), so the gate is inert until a `siblings` scope is
+configured; resolving the deployment/tenant/runtime `messagingScope` hierarchy
+onto the session at create time remains the separate §7.2 messaging-config
+concern (the `EffectiveMessagingScope` input is already plumbed through the
+delegation Request for it).
 
 ### - [ ] F-13.5.9 — `maxTreeSize` and `maxTokenBudget` not enforced on `delegate_task` [Medium] — OPEN
 
