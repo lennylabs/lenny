@@ -205,6 +205,20 @@ tests:
       - equal:
           path: webhooks[0].rules[0].operations[1]
           value: UPDATE
+      # spec: §13.1 line 27 — a second rule covers the
+      # pods/ephemeralcontainers subresource so the per-container
+      # baseline applies to ephemeral debug containers attached
+      # post-hoc (F-13.1.8). Ephemeral containers are added only via
+      # UPDATE on the subresource.
+      - equal:
+          path: webhooks[0].rules[1].resources[0]
+          value: pods/ephemeralcontainers
+      - equal:
+          path: webhooks[0].rules[1].operations[0]
+          value: UPDATE
+      - lengthEqual:
+          path: webhooks[0].rules[1].operations
+          count: 1
 
   - it: renders the workload and webhook config for pool-config-validator
     template: admission-policies/pool-config-validator-webhook.yaml

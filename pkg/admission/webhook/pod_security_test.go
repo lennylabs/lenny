@@ -27,6 +27,10 @@ import (
 // psCredReadersGID is the lenny-cred-readers GID used in the tests.
 const psCredReadersGID int64 = 65534
 
+// psCredVolumeName is the credential tmpfs volume name the §13.1
+// membership-boundary check keys on (POD_SPEC_CRED_GROUP_OVERBROAD).
+const psCredVolumeName = "credentials"
+
 // hardenedContainer returns a container that satisfies every §13.1
 // per-container invariant. It sets no seccomp profile of its own and
 // inherits the pod-level profile.
@@ -51,9 +55,10 @@ func hardenedPod() corev1.Pod {
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pod", Namespace: "lenny-agents"},
 		Spec: corev1.PodSpec{
 			SecurityContext: &corev1.PodSecurityContext{
-				RunAsNonRoot:   ptr.To(true),
-				FSGroup:        ptr.To(psCredReadersGID),
-				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+				RunAsNonRoot:       ptr.To(true),
+				FSGroup:            ptr.To(psCredReadersGID),
+				SupplementalGroups: []int64{psCredReadersGID},
+				SeccompProfile:     &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 			Containers: []corev1.Container{
 				hardenedContainer("adapter"),
@@ -74,7 +79,7 @@ func psPodRaw(t *testing.T, pod corev1.Pod) runtime.RawExtension {
 
 func psDecide(t *testing.T, pod corev1.Pod) *admissionv1.AdmissionResponse {
 	t.Helper()
-	return webhook.PodSecurity(psCredReadersGID, podsecurity.RuntimeClassPolicy{})(context.Background(), &admissionv1.AdmissionRequest{
+	return webhook.PodSecurity(psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "ps",
 		Operation: admissionv1.Create,
 		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
@@ -105,7 +110,7 @@ func TestPodSecurityRejectsHostSharing(t *testing.T) {
 // derives from the pod's runtimeClassName.
 func psDecideWithPolicy(t *testing.T, pod corev1.Pod, rc podsecurity.RuntimeClassPolicy) *admissionv1.AdmissionResponse {
 	t.Helper()
-	return webhook.PodSecurity(psCredReadersGID, rc)(context.Background(), &admissionv1.AdmissionRequest{
+	return webhook.PodSecurity(psCredReadersGID, psCredVolumeName, rc)(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "ps",
 		Operation: admissionv1.Create,
 		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
@@ -217,8 +222,98 @@ func TestPodSecurityValidatesInitContainers(t *testing.T) {
 	}
 }
 
+// TestPodSecurityValidatesEphemeralContainers_spec_13_1 asserts §13.1
+// line 27: the per-container baseline applies to ephemeral debug
+// containers attached via pods/ephemeralcontainers. A privileged
+// ephemeral container — one that trips neither the cred UID/GID nor a
+// credential mount, so the dedicated cred-guard would let it through —
+// is rejected by the general baseline this webhook enforces (F-13.1.8).
+func TestPodSecurityValidatesEphemeralContainers_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+			Name:  "debugger",
+			Image: "busybox",
+			SecurityContext: &corev1.SecurityContext{
+				RunAsNonRoot: ptr.To(true),
+				Privileged:   ptr.To(true),
+			},
+		},
+	}}
+	resp := webhook.PodSecurity(psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+		&admissionv1.AdmissionRequest{
+			UID:         "ps-eph",
+			Operation:   admissionv1.Update,
+			SubResource: "ephemeralcontainers",
+			Kind:        metav1.GroupVersionKind{Kind: "Pod"},
+			Object:      psPodRaw(t, pod),
+		})
+	if resp.Allowed {
+		t.Fatalf("a privileged ephemeral container must reject the pod (§13.1 line 27)")
+	}
+	if !strings.Contains(resp.Result.Message, `container "debugger"`) {
+		t.Errorf("rejection should name the ephemeral container, got %q", resp.Result.Message)
+	}
+}
+
+// TestPodSecurityRejectsEphemeralContainerMountingCredVolume_spec_13_1
+// asserts the §13.1 membership boundary applies to ephemeral containers
+// too: an ephemeral container that mounts the credential volume is
+// rejected with POD_SPEC_CRED_GROUP_OVERBROAD, defense-in-depth
+// alongside the dedicated cred-guard (F-13.1.8 + F-13.1.10).
+func TestPodSecurityRejectsEphemeralContainerMountingCredVolume_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+			Name:  "debugger",
+			Image: "busybox",
+			SecurityContext: &corev1.SecurityContext{
+				RunAsNonRoot:             ptr.To(true),
+				AllowPrivilegeEscalation: ptr.To(false),
+				Privileged:               ptr.To(false),
+				ReadOnlyRootFilesystem:   ptr.To(true),
+				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			},
+			VolumeMounts: []corev1.VolumeMount{{Name: psCredVolumeName, MountPath: "/peek"}},
+		},
+	}}
+	resp := webhook.PodSecurity(psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+		&admissionv1.AdmissionRequest{
+			UID:         "ps-eph-mount",
+			Operation:   admissionv1.Update,
+			SubResource: "ephemeralcontainers",
+			Kind:        metav1.GroupVersionKind{Kind: "Pod"},
+			Object:      psPodRaw(t, pod),
+		})
+	if resp.Allowed {
+		t.Fatalf("an ephemeral container mounting the credential volume must be rejected")
+	}
+	if !strings.Contains(resp.Result.Message, "POD_SPEC_CRED_GROUP_OVERBROAD") {
+		t.Errorf("rejection should cite POD_SPEC_CRED_GROUP_OVERBROAD, got %q", resp.Result.Message)
+	}
+}
+
+// TestPodSecurityRejectsSidecarMountingCredVolume_spec_13_1 asserts the
+// §13.1 membership boundary on a regular (non-ephemeral) sidecar that
+// mounts the credential volume: it is rejected with
+// POD_SPEC_CRED_GROUP_OVERBROAD even though it runs as a non-credential
+// name and declares no cred-readers GID (F-13.1.10).
+func TestPodSecurityRejectsSidecarMountingCredVolume_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	sidecar := hardenedContainer("nosy-sidecar")
+	sidecar.VolumeMounts = []corev1.VolumeMount{{Name: psCredVolumeName, MountPath: "/elsewhere"}}
+	pod.Spec.Containers = append(pod.Spec.Containers, sidecar)
+	resp := psDecide(t, pod)
+	if resp.Allowed {
+		t.Fatalf("a sidecar mounting the credential volume must be rejected")
+	}
+	if !strings.Contains(resp.Result.Message, "POD_SPEC_CRED_GROUP_OVERBROAD") {
+		t.Errorf("rejection should cite POD_SPEC_CRED_GROUP_OVERBROAD, got %q", resp.Result.Message)
+	}
+}
+
 func TestPodSecurityRejectsUndecodablePod(t *testing.T) {
-	resp := webhook.PodSecurity(psCredReadersGID, podsecurity.RuntimeClassPolicy{})(context.Background(),
+	resp := webhook.PodSecurity(psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:       "ps-bad",
 			Operation: admissionv1.Create,

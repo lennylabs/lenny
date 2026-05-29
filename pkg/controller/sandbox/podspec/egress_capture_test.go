@@ -57,6 +57,35 @@ func TestBuildSidecarInjectsEgressCaptureWhenConfigured(t *testing.T) {
 	}
 }
 
+// TestBuildEgressCaptureSidecarStaysOffCredentialPath_spec_13_1 asserts
+// the §13.1 membership boundary at the producer: the §12.9.8
+// egress-capture sidecar — a non-adapter, non-agent container that the
+// pod-level fsGroup nonetheless grants lenny-cred-readers supplementary
+// membership — mounts only its capture volume at /run/lenny-capture and
+// never the credential volume or a path under /run/lenny, so it cannot
+// reach /run/lenny/credentials.json. This is the real-world case behind
+// F-13.1.10 and cross-checks the F-6.4.16 sibling-path invariant.
+func TestBuildEgressCaptureSidecarStaysOffCredentialPath_spec_13_1(t *testing.T) {
+	in := inputs()
+	in.EgressCapture = &podspec.EgressCapture{
+		Image:    "ghcr.io/lennylabs/lenny-egress-capture:e2e",
+		Upstream: "api.openai.com:443",
+	}
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	capture := container(t, pod, podspec.EgressCaptureContainerName)
+	for _, m := range capture.VolumeMounts {
+		if m.Name == podspec.CredVolumeName {
+			t.Errorf("egress-capture mounts the credential volume %q (§13.1 membership boundary)", m.Name)
+		}
+		if m.MountPath == "/run/lenny" || strings.HasPrefix(m.MountPath, "/run/lenny/") {
+			t.Errorf("egress-capture mounts %q under the credential path /run/lenny (§13.1 membership boundary)", m.MountPath)
+		}
+	}
+}
+
 // spec: 12.9.8
 // diagnosis: the embedded-model pod also carries the capture sidecar
 // alongside the single runtime container when egress capture is

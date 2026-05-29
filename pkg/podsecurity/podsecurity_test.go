@@ -12,6 +12,7 @@ const lennyCredReadersGID int64 = 65532
 func wellFormedSpec() PodSpec {
 	return PodSpec{
 		FSGroup:            Ptr[int64](lennyCredReadersGID),
+		SupplementalGroups: []int64{lennyCredReadersGID},
 		RunAsNonRoot:       Ptr(true),
 		SeccompProfileType: SeccompRuntimeDefault,
 		Containers: []ContainerSpec{
@@ -73,6 +74,131 @@ func TestValidateAcceptsCredGroupOnCredentialContainer(t *testing.T) {
 	spec.Containers[0].RunAsGroup = Ptr[int64](lennyCredReadersGID)
 	if err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{}); err != nil {
 		t.Errorf("the adapter container may carry the cred-readers GID, got %v", err)
+	}
+}
+
+// TestValidateRejectsMissingCredSupplementalGroups_spec_13_1 asserts
+// §13.1 line 25: the pod-level supplementalGroups must declare the
+// lenny-cred-readers GID. A pod that sets the fsGroup but omits the
+// explicit supplementalGroups declaration is rejected (F-13.1.11 /
+// F-13.1.15).
+func TestValidateRejectsMissingCredSupplementalGroups_spec_13_1(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.SupplementalGroups = nil
+	err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{})
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected a *PodSecurityError, got %v", err)
+	}
+	if !pe.HasViolation("supplementalGroups must include") {
+		t.Errorf("expected a supplementalGroups-missing violation, got %v", pe.Violations)
+	}
+	if !pe.HasViolation("POD_SPEC_CRED_FSGROUP_MISSING") {
+		t.Errorf("expected POD_SPEC_CRED_FSGROUP_MISSING, got %v", pe.Violations)
+	}
+}
+
+// TestValidateRejectsWrongCredSupplementalGroups_spec_13_1 asserts the
+// presence check requires the exact lenny-cred-readers GID: a pod that
+// declares some other supplementary group but not the cred-readers GID
+// is still rejected.
+func TestValidateRejectsWrongCredSupplementalGroups_spec_13_1(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.SupplementalGroups = []int64{12345}
+	err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{})
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) || !pe.HasViolation("supplementalGroups must include") {
+		t.Fatalf("expected a supplementalGroups-missing violation, got %v", err)
+	}
+}
+
+// TestValidateRejectsNonCredContainerMountingCredVolume_spec_13_1
+// asserts §13.1 line 27: a non-adapter, non-agent container that mounts
+// the credential volume by name reaches /run/lenny/credentials.json and
+// is rejected with POD_SPEC_CRED_GROUP_OVERBROAD. This closes the
+// fsGroup-inheritance side-channel the per-container runAsGroup check
+// alone cannot (F-13.1.10).
+func TestValidateRejectsNonCredContainerMountingCredVolume_spec_13_1(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.CredentialContainerNames = []string{"adapter", "agent"}
+	spec.CredVolumeName = "credentials"
+	spec.Containers = append(spec.Containers, ContainerSpec{
+		Name:                     "sidecar",
+		AllowPrivilegeEscalation: Ptr(false),
+		Privileged:               Ptr(false),
+		ReadOnlyRootFilesystem:   Ptr(true),
+		CapabilitiesDrop:         []string{"ALL"},
+		VolumeMounts:             []VolumeMount{{Name: "credentials", MountPath: "/somewhere"}},
+	})
+	err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{})
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected a *PodSecurityError, got %v", err)
+	}
+	if !pe.HasViolation("POD_SPEC_CRED_GROUP_OVERBROAD") {
+		t.Errorf("expected POD_SPEC_CRED_GROUP_OVERBROAD, got %v", pe.Violations)
+	}
+}
+
+// TestValidateRejectsNonCredContainerMountingCredPath_spec_13_1 asserts
+// §13.1 line 27: a non-credential container that mounts a path under
+// /run/lenny — even via a differently-named volume — is rejected
+// (F-13.1.10, the equivalent of cred-guard condition (iv) by-path
+// match).
+func TestValidateRejectsNonCredContainerMountingCredPath_spec_13_1(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.CredentialContainerNames = []string{"adapter", "agent"}
+	spec.CredVolumeName = "credentials"
+	spec.Containers = append(spec.Containers, ContainerSpec{
+		Name:                     "sidecar",
+		AllowPrivilegeEscalation: Ptr(false),
+		Privileged:               Ptr(false),
+		ReadOnlyRootFilesystem:   Ptr(true),
+		CapabilitiesDrop:         []string{"ALL"},
+		VolumeMounts:             []VolumeMount{{Name: "shadow", MountPath: "/run/lenny/sub"}},
+	})
+	err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{})
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) || !pe.HasViolation("POD_SPEC_CRED_GROUP_OVERBROAD") {
+		t.Fatalf("expected POD_SPEC_CRED_GROUP_OVERBROAD, got %v", err)
+	}
+}
+
+// TestValidateAcceptsSiblingPathMount_spec_13_1 asserts the §12.9.8
+// egress-capture sidecar case: a non-credential container that mounts
+// the sibling path /run/lenny-capture (which shares the textual prefix
+// /run/lenny but is not nested under /run/lenny/) is allowed. The
+// by-path match must not false-positive on sibling directories
+// (F-13.1.10, cross-checks F-6.4.16).
+func TestValidateAcceptsSiblingPathMount_spec_13_1(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.CredentialContainerNames = []string{"adapter", "agent"}
+	spec.CredVolumeName = "credentials"
+	spec.Containers = append(spec.Containers, ContainerSpec{
+		Name:                     "egress-capture",
+		AllowPrivilegeEscalation: Ptr(false),
+		Privileged:               Ptr(false),
+		ReadOnlyRootFilesystem:   Ptr(true),
+		CapabilitiesDrop:         []string{"ALL"},
+		VolumeMounts:             []VolumeMount{{Name: "egress-capture", MountPath: "/run/lenny-capture"}},
+	})
+	if err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{}); err != nil {
+		t.Errorf("a sibling /run/lenny-capture mount must be allowed, got %v", err)
+	}
+}
+
+// TestValidateAcceptsCredContainerMountingCredVolume_spec_13_1 asserts
+// the adapter and agent containers MAY mount the credential volume:
+// they are the §13.1 credential containers and the delivery path
+// depends on the mount (F-13.1.10).
+func TestValidateAcceptsCredContainerMountingCredVolume_spec_13_1(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.CredentialContainerNames = []string{"adapter", "agent"}
+	spec.CredVolumeName = "credentials"
+	spec.Containers[0].VolumeMounts = []VolumeMount{{Name: "credentials", MountPath: "/run/lenny"}}
+	spec.Containers[1].VolumeMounts = []VolumeMount{{Name: "credentials", MountPath: "/run/lenny"}}
+	if err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{}); err != nil {
+		t.Errorf("the adapter and agent containers may mount the credential volume, got %v", err)
 	}
 }
 

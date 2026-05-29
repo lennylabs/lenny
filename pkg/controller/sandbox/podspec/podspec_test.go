@@ -96,6 +96,47 @@ func TestBuildAppliesPodSecurityPosture(t *testing.T) {
 	}
 }
 
+// TestBuildDeclaresCredReadersSupplementalGroups_spec_13_1 asserts the
+// agent pod declares the lenny-cred-readers GID in the pod-level
+// supplementalGroups list — the §13.1 line 25 explicit membership the
+// cross-UID credential-delivery path requires, rather than relying on
+// the kubelet's implicit fsGroup-to-supplementary-group propagation
+// (F-13.1.11).
+func TestBuildDeclaresCredReadersSupplementalGroups_spec_13_1(t *testing.T) {
+	pod, err := podspec.Build(inputs())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	sc := pod.Spec.SecurityContext
+	if sc == nil {
+		t.Fatal("pod has no securityContext")
+	}
+	found := false
+	for _, g := range sc.SupplementalGroups {
+		if g == podspec.CredReadersGID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("pod supplementalGroups = %v, want it to include the lenny-cred-readers GID %d (§13.1 line 25)", sc.SupplementalGroups, podspec.CredReadersGID)
+	}
+}
+
+// TestBuildDisablesDefaultSATokenAutomount_spec_13_1 asserts §13.1 line
+// 12 ("No standing credentials"): the agent pod disables the kubelet's
+// default ServiceAccount-token automount so the long-lived
+// cluster-audience token is not mounted; the only token present is the
+// §10.3 audience-bound projected token (F-13.1.9).
+func TestBuildDisablesDefaultSATokenAutomount_spec_13_1(t *testing.T) {
+	pod, err := podspec.Build(inputs())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
+		t.Errorf("automountServiceAccountToken = %v, want false (§13.1 no standing credentials)", pod.Spec.AutomountServiceAccountToken)
+	}
+}
+
 func TestBuildAppliesContainerSecurityPosture(t *testing.T) {
 	pod, err := podspec.Build(inputs())
 	if err != nil {

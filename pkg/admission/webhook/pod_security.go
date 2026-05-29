@@ -38,14 +38,18 @@ import (
 // A decode failure rejects, consistent with the webhook's fail-closed
 // deployment: a pod the webhook cannot inspect must not be admitted
 // with a pod-security posture it could not verify (§13.1).
-func PodSecurity(credReadersGID int64, rcPolicy podsecurity.RuntimeClassPolicy) Decider {
+// credVolumeName is the name of the pod-level credential tmpfs volume
+// carrying /run/lenny/credentials.json. The §13.1 membership boundary
+// (POD_SPEC_CRED_GROUP_OVERBROAD) rejects a non-adapter, non-agent
+// container that mounts it; the binary passes podspec.CredVolumeName.
+func PodSecurity(credReadersGID int64, credVolumeName string, rcPolicy podsecurity.RuntimeClassPolicy) Decider {
 	return func(_ context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		var pod corev1.Pod
 		if err := json.Unmarshal(req.Object.Raw, &pod); err != nil {
 			return Deny(http.StatusBadRequest, "decode Pod object: "+err.Error())
 		}
 
-		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod), credReadersGID, rcPolicy); err != nil {
+		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod, credVolumeName), credReadersGID, rcPolicy); err != nil {
 			return Deny(http.StatusForbidden, err.Error())
 		}
 		return Allow()
@@ -63,17 +67,26 @@ const (
 )
 
 // translatePodSpec projects a Kubernetes Pod into the transport-agnostic
-// podsecurity.PodSpec the §13.1 validator consults. Init containers and
-// regular containers are both flattened into the validator's container
-// list: §13.1 applies the per-container invariants to every container
-// in the pod, init and main alike.
-func translatePodSpec(pod *corev1.Pod) podsecurity.PodSpec {
+// podsecurity.PodSpec the §13.1 validator consults. Init, regular, and
+// ephemeral containers are all flattened into the validator's container
+// list: §13.1 applies the per-container invariants to "every container
+// in the pod" (line 16), and line 27 calls out ephemeral debug
+// containers attached post-hoc via the pods/ephemeralcontainers
+// subresource as a specific risk surface — an actor that does not trip
+// the dedicated lenny-ephemeral-container-cred-guard can still attach an
+// ephemeral container that breaches the general baseline (privileged,
+// added capabilities, writable root, disabled seccomp). Ephemeral
+// containers are never treated as credential containers, so an ephemeral
+// container that mounts the credential volume trips the §13.1 membership
+// boundary here in addition to the cred-guard.
+func translatePodSpec(pod *corev1.Pod, credVolumeName string) podsecurity.PodSpec {
 	spec := podsecurity.PodSpec{
 		ShareProcessNamespace: derefBool(pod.Spec.ShareProcessNamespace),
 		HostPID:               pod.Spec.HostPID,
 		HostNetwork:           pod.Spec.HostNetwork,
 		HostIPC:               pod.Spec.HostIPC,
 		RuntimeClassName:      derefString(pod.Spec.RuntimeClassName),
+		CredVolumeName:        credVolumeName,
 	}
 
 	if sc := pod.Spec.SecurityContext; sc != nil {
@@ -91,6 +104,13 @@ func translatePodSpec(pod *corev1.Pod) podsecurity.PodSpec {
 		if c.Name == adapterContainerName || c.Name == agentContainerName {
 			spec.CredentialContainerNames = append(spec.CredentialContainerNames, c.Name)
 		}
+	}
+	// spec: §13.1 line 27 — ephemeral containers attached via the
+	// pods/ephemeralcontainers subresource carry the same per-container
+	// baseline. EphemeralContainerCommon is a field-for-field copy of
+	// Container, so the conversion reuses the same translation.
+	for _, ec := range pod.Spec.EphemeralContainers {
+		spec.Containers = append(spec.Containers, translateContainer(corev1.Container(ec.EphemeralContainerCommon)))
 	}
 	return spec
 }
@@ -110,6 +130,12 @@ func translateContainer(c corev1.Container) podsecurity.ContainerSpec {
 			out.CapabilitiesDrop = capabilityStrings(caps.Drop)
 			out.CapabilitiesAdd = capabilityStrings(caps.Add)
 		}
+	}
+	// §13.1 credential-boundary surface: the validator rejects a
+	// non-adapter, non-agent container that mounts the credential volume
+	// or the /run/lenny path prefix.
+	for _, m := range c.VolumeMounts {
+		out.VolumeMounts = append(out.VolumeMounts, podsecurity.VolumeMount{Name: m.Name, MountPath: m.MountPath})
 	}
 	return out
 }

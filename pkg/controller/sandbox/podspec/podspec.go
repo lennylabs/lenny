@@ -610,9 +610,20 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 			// present.
 			AutomountServiceAccountToken: ptr.To(false),
 			SecurityContext: &corev1.PodSecurityContext{
-				RunAsNonRoot:   ptr.To(true),
-				FSGroup:        ptr.To(CredReadersGID),
-				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+				RunAsNonRoot: ptr.To(true),
+				FSGroup:      ptr.To(CredReadersGID),
+				// spec: §13.1 line 25 — both the adapter UID and the agent
+				// UID are declared in the pod's
+				// spec.securityContext.supplementalGroups list, making
+				// lenny-cred-readers a shared group of which both
+				// containers are members. The fsGroup above sets the
+				// credential tmpfs group ownership; this explicit
+				// supplementalGroups declaration is the membership the §13.1
+				// cross-UID delivery path requires, rather than relying on
+				// the kubelet's implicit fsGroup-to-supplementary-group
+				// propagation side-effect.
+				SupplementalGroups: []int64{CredReadersGID},
+				SeccompProfile:     &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 		},
 	}
