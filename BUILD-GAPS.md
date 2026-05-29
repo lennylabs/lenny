@@ -10701,7 +10701,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/mcptools/elicitation.go:42-43` declares `audit DelegationAuditor` but the field is only used for the `elicitation.url_mode_domain_rejected` event (F-9.2.10). The tamper branch makes no `EmitDelegationEvent` call.
 - **Gap:** SIEM/audit consumers will never see a tamper row even if a tamper somehow registered. The `ElicitationContentIntegrityPermissiveTamper` warning alert's documented correlation ("paired `elicitation.content_tamper_detected` audit event") cannot be performed; incident-response runbooks that hinge on `original_sha256` / `attempted_sha256` / `divergent_fields` have nothing to query.
 
-### - [ ] F-9.2.4 — Tamper-detection metric label cardinality differs from spec [High] — OPEN
+### - [x] F-9.2.4 — Tamper-detection metric label cardinality differs from spec [High] — CLOSED
 
 - **Spec:** Line 60, §16.1 line 64. `lenny_elicitation_content_tamper_detected_total{origin_pod, tampering_pod, enforcement_mode}`.
 - **Evidence:**
@@ -10711,7 +10711,9 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/gatewaymetrics/gatewaymetrics_test.go:225,228`: tests assert against `{enforcement_mode="enforce",tenant_id="acme"}` — the wrong labels.
 - **Gap:** The §16.5 `ElicitationContentTamperDetected` and `ElicitationContentIntegrityPermissiveTamper` alert descriptions promise that the firing instance carries `origin_pod` and `tampering_pod` labels; an operator following the runbook ("investigate the tampering pod") cannot identify the offending pod from the firing alert. SIEM dashboards that group by `origin_pod`, `tampering_pod` per the §16.1 spec text will return no rows. The cardinality argument the spec makes ("both are bounded by the active delegation-tree depth and therefore safe from cardinality explosion") is moot because the labels are absent.
 
-### - [ ] F-9.2.5 — Standing `ElicitationContentIntegrityWeakened` alert is unbacked by any metric emitter [High] — OPEN
+**Resolution:** Relabelled `lenny_elicitation_content_tamper_detected_total` to the §16.1 line 64 cardinality `{origin_pod, tampering_pod, enforcement_mode}` (tenant_id dropped). `RecordElicitationContentTamperDetected` and the `ElicitationTamperRecorder` interface now take `(originPod, tamperingPod, enforcementMode)`; the dispatcher passes the raising session id as origin_pod and the diverging hop (`*ChainError.Hop`) as tampering_pod. The production binary now wires `ElicitationTamperMetrics: gwMetrics` so the dispatcher's tamper branch is no longer a no-op. Test asserts both pod-labelled streams and that tenant_id is absent. (enforcement_mode value still resolves to enforce until F-9.2.2 wires per-tenant detect-only resolution.) Commit `ee6f51e4`.
+
+### - [x] F-9.2.5 — Standing `ElicitationContentIntegrityWeakened` alert is unbacked by any metric emitter [High] — CLOSED
 
 - **Spec:** Line 66, §16.5 line 460. A standing warning alert fires continuously while any tenant's effective mode is weaker than `enforce`.
 - **Evidence:**
@@ -10720,7 +10722,9 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - There is no reconciliation loop that walks `tenantstore` and emits a gauge per tenant or per platform when the effective mode is `< enforce`.
 - **Gap:** The alert is dead. An operator who weakens a tenant to `detect-only` or `off` will see no continuous reminder of the reduced-integrity posture. The §9.2 contract that "operators remain aware of the reduced-integrity posture" is not honoured.
 
-### - [ ] F-9.2.6 — Provenance metadata is mostly unstamped on recorded interactions and client events [High] — OPEN
+**Resolution:** Registered the `lenny_elicitation_content_integrity_effective_mode_weaker_than_enforce` gauge (unlabelled count of weakened active tenants) in `gatewaymetrics` with a `SetElicitationIntegrityWeakened` setter, and added a `exportElicitationIntegrityWeakened` gateway reconciliation loop that lists active tenants, resolves each effective mode via the shared `elicitation.ResolveEffectiveWithDefaults(floor, stored)` helper, and publishes the weakened count on the existing 30s gauge-export cadence. The standing alert now fires while any tenant resolves below enforce and clears at zero. Metric is implementation-internal (§16.5 alert backing, not a §16.1 row) so it is registered in the live registry but not added to the §16.1-transcription catalog. Tests cover the gauge series and the reconciliation matrix incl. soft-deleted exclusion and floor-clamp resolution. Commit `ee6f51e4`.
+
+### - [x] F-9.2.6 — Provenance metadata is mostly unstamped on recorded interactions and client events [High] — CLOSED
 
 - **Spec:** Lines 70–82. The gateway stamps every elicitation with `origin_pod`, `delegation_depth`, `origin_runtime`, `purpose`, `connector_id`, `expected_domain`, `initiator_type` before forwarding. "Client UIs **must** display provenance prominently so users can distinguish platform OAuth flows from agent-initiated prompts."
 - **Evidence:**
@@ -10728,6 +10732,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/mcptools/mcptools.go:767-774`: the `elicitation_requested` event payload published to the resolver session's event stream carries only `elicitationId`, `message`, `originPod`. The client UI receives no `initiator_type`, `delegation_depth`, `connector_id`, `expected_domain`, or any other provenance attribute over the live channel.
   - `pkg/elicitation/elicitation.go:264-293`: the `Provenance` struct with `Validate()` exists in the primitives package, but no code constructs and stamps a `Provenance` value at origination. `grep -rn "elicitation.Provenance{" /Users/joan/projects/lenny/pkg /Users/joan/projects/lenny/cmd` returns only test callers in `pkg/elicitation/fuzz_test.go:51`.
 - **Gap:** Client UIs cannot display the required provenance because the gateway never delivers it. The "users can distinguish platform OAuth flows from agent-initiated prompts" trust signal is not actionable. The `elicitation.content_tamper_detected` audit row's `delegation_depth` / `initiator_type` fields (when emission is wired) cannot be sourced from a stored elicitation.
+
+**Resolution:** The `lenny/request_elicitation` handler now constructs an `elicitation.Provenance` at origination (`origin_pod`=raising session id, `delegation_depth`=origin hop depth from the chain walk, `origin_runtime`=session `RuntimeRef`, `initiator_type`=agent) and stamps `delegationDepth`/`originRuntime` onto the recorded interaction Detail (alongside the existing originPod/initiatorType) AND onto the `elicitation_request` SSE event payload — so the client receives provenance over the live channel and the §16.7 audit row can source delegation_depth/initiator_type from the stored record. The connector-only fields (connector_id, expected_domain, purpose) are correctly empty on the v1 agent-initiated path (F-9.2.19). Tests assert both the recorded Detail and the SSE payload carry the provenance. Commit `ee6f51e4`.
 
 ### - [ ] F-9.2.7 — Connector `expected_domain` hard boundary is not enforced [High] — OPEN
 
@@ -10758,7 +10764,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** `handlePutElicitationIntegrity` now emits the catalog-canonical `tenant.elicitation_content_integrity_changed` event via `audit.EventTenantElicitationContentIntegrityChanged`, with a Detail map carrying every §16.7 line 675 field (`tenant_id`, `previous_stored_mode` (null on first write), `new_stored_mode`, `platform_floor_at_change`, `effective_mode_at_change`, `justification`, `changed_by`, `changed_by_tenant_id`, `changed_at`). Tests updated to assert spec-name and full payload coverage including the second-write `previous_stored_mode=enforce` case and a floor-clamped `effective_mode_at_change`.
 
-### - [ ] F-9.2.10 — Helm-floor-change audit events are catalogued but never emitted [Medium] — OPEN
+### - [ ] F-9.2.10 — Helm-floor-change audit events are catalogued but never emitted [Medium] — DEFERRED
 
 - **Spec:** Lines 64, 66 and §16.7 lines 676–677. A floor transition that raises the value emits `platform.elicitation_content_integrity_floor_changed` plus one `tenant.elicitation_content_integrity_floor_clamp` per affected tenant.
 - **Evidence:**
@@ -10766,6 +10772,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `grep -rn "platform.elicitation_content_integrity_floor_changed\|tenant.elicitation_content_integrity_floor_clamp\|EventPlatformElicitationContentIntegrityFloorChanged\|EventTenantElicitationContentIntegrityFloorClamp" /Users/joan/projects/lenny/pkg /Users/joan/projects/lenny/cmd` returns only the catalog definitions; no emitter, no Helm hook, no chart render-time guard.
   - `cmd/lenny-gateway/main.go:258`: the gateway accepts `--elicitation-content-integrity-floor`, but reading the flag does not produce an audit row for the floor value itself or for the per-tenant clamps it triggers.
 - **Gap:** Operators have no audit history of platform-floor changes or per-tenant clamps caused by floor changes; the §16.5 standing alert's expected operator workflow ("correlate with the most recent `tenant.elicitation_content_integrity_changed` and `platform.elicitation_content_integrity_floor_changed` audit events") is unsupported.
+
+**Deferred:** §16.7 lines 676–677 scope `platform.elicitation_content_integrity_floor_changed` to "once per Helm install/upgrade that changes the rendered `.Values.security.elicitationContentIntegrity.floor` in the `lenny-deployment-phase-stamp` ConfigMap", carrying `changed_by_sub` (the OIDC `sub` of the operator who ran `helm upgrade`) and a `tenants_affected_count`, with `tenant.elicitation_content_integrity_floor_clamp` fanned out per clamped tenant joined by `paired_platform_event_id`. The operator identity and the install/upgrade-diff trigger are a Helm post-install/post-upgrade hook + tooling surface, not a gateway-runtime concern — the gateway process cannot know the helm operator's `sub` at startup, and there is no persisted prior-floor state to diff against. Warrants a dedicated chart-hook batch (deployment-phase-stamp ConfigMap floor-diff Job emitting both events). Not blocked on the inert tamper detector (F-9.2.1).
 
 ### - [x] F-9.2.11 — The `lenny/request_elicitation` URL-mode rejection event is not in the spec catalog [Medium] — CLOSED
 
@@ -10908,7 +10916,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 | F-9.2.19 | `lenny/request_elicitation` does not enforce an `expected_domain` or `connector_id` argument | Low |
 | F-9.2.20 | Subtree deadlock detector does not interact with elicitation chains | Info |
 
-The §9.2 spec subsection ships a multi-layered defence (hop-by-hop forwarding, content-integrity binding, tenant-mode + platform-floor enforcement, URL-mode security controls, depth suppression, timeout semantics, authorization triple). The primitives package (`pkg/elicitation`) is faithful to the spec in isolation. The integration layer (`pkg/gateway/mcptools` dispatcher + `cmd/lenny-gateway` binary) is where the spec collapses: there is no hop-by-hop wire path, the tamper detector is a tautology, the tenant mode is not consulted, the audit event is never emitted, the metric labels differ from spec, the standing alert is unbacked, the provenance is not stamped, the per-hop timeout is absent, and the binary does not wire the policy fields at all. The structural-untriggerability of the tamper detector (F-9.2.1) is the load-bearing failure that pulls F-9.2.2, F-9.2.3, F-9.2.4, F-9.2.5 along with it.
+The §9.2 spec subsection ships a multi-layered defence (hop-by-hop forwarding, content-integrity binding, tenant-mode + platform-floor enforcement, URL-mode security controls, depth suppression, timeout semantics, authorization triple). The primitives package (`pkg/elicitation`) is faithful to the spec in isolation. The integration layer (`pkg/gateway/mcptools` dispatcher + `cmd/lenny-gateway` binary) is where the spec collapses: there is no hop-by-hop wire path, the tamper detector is a tautology, the tenant mode is not consulted, the audit event is never emitted, the per-hop timeout is absent, and the binary does not wire the per-pool policy fields. The structural untriggerability of the tamper detector (F-9.2.1) is the root failure that keeps F-9.2.2 and F-9.2.3 blocked. F-9.2.4 (metric label cardinality), F-9.2.5 (standing-alert gauge + reconciliation), and F-9.2.6 (origination-time provenance stamping) were closed independently of F-9.2.1, since the metric label schema, the weakened-mode gauge, and the recorded/streamed provenance are correct regardless of whether the per-hop wire path exists.
 
 ---
 
