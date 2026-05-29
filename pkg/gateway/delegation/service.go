@@ -772,6 +772,57 @@ func (s *Service) checkInterceptorWeakeningCooldown(pol delegationpolicystore.De
 	}
 }
 
+// EffectiveDelegationPolicy resolves the §8.3 effective DelegationPolicy
+// for a calling session: the policy named by the session's resolved
+// runtime via DelegationPolicyRef. It returns (policy, true, nil) when
+// an active policy resolves, and (zero, false, nil) when the session
+// names no policy, the runtime or policy is missing or soft-deleted, or
+// no runtime/policy registry is configured. In every "false" case the
+// caller imposes no policy-level restriction, matching the way the
+// Delegate path treats an absent DelegationPolicyRef (it leaves the
+// policy layer at its default rather than denying).
+//
+// The §8.5 lenny/discover_agents handler calls this to narrow the
+// discoverable agent set to the targets the caller's effective policy
+// authorizes (§8.3 line 244). The resolution reads the runtime-level
+// DelegationPolicyRef, the same input the runtime layer of Delegate
+// consults, so discovery and delegation agree on which policy governs a
+// session. The lease-level maxDelegationPolicy intersection and the
+// ancestral-narrowing refinement are not yet part of either path; when
+// they land in Delegate they extend here too.
+//
+// spec: §8.3 line 244. F-8.5.7.
+func (s *Service) EffectiveDelegationPolicy(ctx context.Context, tenantID, sessionID string) (delegationpolicystore.DelegationPolicy, bool, error) {
+	if s.policies == nil || s.runtimes == nil || sessionID == "" {
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	sess, err := s.store.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			return delegationpolicystore.DelegationPolicy{}, false, nil
+		}
+		return delegationpolicystore.DelegationPolicy{}, false, err
+	}
+	if sess.RuntimeRef == "" {
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	rt, err := runtimestore.Resolve(ctx, s.runtimes, sess.RuntimeRef)
+	if err != nil {
+		// An unresolvable runtime imposes no policy filter — the same
+		// conservative fall-through the Delegate path takes when the
+		// runtime registry cannot resolve the target.
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	if rt.DelegationPolicyRef == "" {
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef)
+	if err != nil || !pol.IsActive() {
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	return pol, true, nil
+}
+
 // lineageWalkSafetyMargin is the additive cap above the Helm
 // fallback maxDepth applied to the buildLineage walk. The walk stops
 // once chain length reaches defaultMaxDepth + safetyMargin even when

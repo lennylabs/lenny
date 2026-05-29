@@ -42,6 +42,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
@@ -1363,11 +1364,23 @@ func Register(srv *mcp.Server, deps Deps) {
 	if deps.Runtimes != nil {
 		srv.RegisterTool(mcp.Tool{
 			Name:        "lenny/discover_agents",
-			Description: "List the agent runtimes available as §8 delegation targets.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"nameContains":{"type":"string"}}}`),
+			Description: "List the agent runtimes available as §8 delegation targets, filtered by the caller's effective §8.3 delegation policy.",
+			// spec: §8.3 line 244 — discovery returns only the targets
+			// the calling session's effective DelegationPolicy
+			// authorizes. The session is resolved from the caller's
+			// principal; the optional `sessionId` field is the
+			// transport fallback for dev/test callers without a bound
+			// principal, the same posture the other §8.5 tools take.
+			// F-8.5.7.
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"nameContains":{"type":"string"},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback caller session id; the principal's SessionID claim takes precedence. Resolves the §8.3 effective delegation policy that scopes the result."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			// spec: §9.2 / §15.2 line 1335 — tenant from the caller's
+			// principal so the §8.3 effective-policy lookup stays scoped
+			// to the right tenant. F-9.2.13 / F-15.2.15.
+			tenant := callerTenantID(ctx, tenant)
 			var in struct {
 				NameContains string `json:"nameContains"`
+				SessionID    string `json:"sessionId"`
 			}
 			if len(args) > 0 {
 				if err := json.Unmarshal(args, &in); err != nil {
@@ -1384,6 +1397,15 @@ func Register(srv *mcp.Server, deps Deps) {
 			// §10.6: narrow the list to the runtimes the caller's
 			// environment membership authorizes.
 			runtimes, err = filterByEnvironmentAccess(ctx, deps, runtimes)
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
+			// spec: §8.3 line 244 — narrow the discoverable set to the
+			// agents the caller's effective DelegationPolicy authorizes.
+			// A caller whose session resolves no policy (or no
+			// Delegation service is wired) sees every
+			// environment-authorized agent. F-8.5.7.
+			runtimes, err = filterByEffectiveDelegationPolicy(ctx, deps, tenant, callerSessionID(ctx, in.SessionID), runtimes)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -2141,6 +2163,41 @@ type discoveredAgent struct {
 	Name             string `json:"name"`
 	IntegrationLevel string `json:"integrationLevel"`
 	Description      string `json:"description,omitempty"`
+}
+
+// filterByEffectiveDelegationPolicy narrows a candidate agent set to
+// the runtimes the calling session's §8.3 effective DelegationPolicy
+// authorizes. When no Delegation service is wired, the caller session
+// is unresolved, or the session's runtime names no policy, the set is
+// returned unchanged — discovery then reflects only the §10.6
+// environment scope, the pre-policy behaviour. When a policy resolves,
+// each runtime is evaluated as a §8.3 Candidate (id = runtime name,
+// type = the runtime type, labels = the runtime labels) and is kept
+// only when the policy's tag-based allow/deny rule set permits it.
+// spec: §8.3 line 244; F-8.5.7.
+func filterByEffectiveDelegationPolicy(ctx context.Context, deps Deps, tenant, sessionID string, runtimes []runtimestore.Runtime) ([]runtimestore.Runtime, error) {
+	if deps.Delegation == nil || sessionID == "" {
+		return runtimes, nil
+	}
+	pol, ok, err := deps.Delegation.EffectiveDelegationPolicy(ctx, tenant, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return runtimes, nil
+	}
+	out := make([]runtimestore.Runtime, 0, len(runtimes))
+	for _, rt := range runtimes {
+		cand := delegationpolicystore.Candidate{
+			ID:     rt.Name,
+			Type:   string(rt.Type),
+			Labels: rt.Labels,
+		}
+		if pol.Evaluate(cand) {
+			out = append(out, rt)
+		}
+	}
+	return out, nil
 }
 
 // resolveDerivedRuntimes replaces each §5.1 derived runtime with its
