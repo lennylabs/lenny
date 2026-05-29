@@ -57,6 +57,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/observability/logging"
 	obsmetrics "github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/podsecurity"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -247,6 +248,10 @@ func buildCosignDecider(enabled bool, publicKeyFile, policyFile, verifiedRegistr
 }
 
 func main() {
+	// spec: §16.4 lines 370-372 — structured JSON logs; routes the stdlib
+	// log package through the §16.4 handler (component=webhook). F-16.4.1.
+	logging.Setup(os.Stderr, "webhook")
+
 	addr := flag.String("addr", ":8443", "HTTPS address to bind")
 	certFile := flag.String("tls-cert-file", "/etc/lenny/webhook-tls/tls.crt",
 		"path to the server certificate")

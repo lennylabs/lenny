@@ -14,7 +14,10 @@ package logging
 import (
 	"context"
 	"io"
+	"log"
 	"log/slog"
+	"os"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/observability/correlation"
 )
@@ -45,20 +48,89 @@ type Options struct {
 // lenny-ops (§16.4).
 func NewJSONHandler(w io.Writer, opts Options) slog.Handler {
 	inner := slog.NewJSONHandler(w, &slog.HandlerOptions{
-		AddSource: opts.AddSource,
-		Level:     opts.Level,
+		AddSource:   opts.AddSource,
+		Level:       opts.Level,
+		ReplaceAttr: replaceAttr,
 	})
 	return &handler{inner: inner, defaultComponent: opts.DefaultComponent}
+}
+
+// replaceAttr renames slog's built-in timestamp attribute from its default
+// key "time" to "ts" and forces the value to UTC. §16.4 line 372 requires
+// every log line to carry `ts` (RFC 3339 UTC); slog's JSON handler defaults
+// to the key `time` rendered in the process-local zone. The rename only
+// applies to the top-level record time (groups is empty), so a caller-added
+// attribute literally named "time" inside a group is untouched.
+//
+// spec: §16.4 line 372.
+func replaceAttr(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) == 0 && a.Key == slog.TimeKey {
+		a.Key = "ts"
+		if t, ok := a.Value.Any().(time.Time); ok {
+			a.Value = slog.TimeValue(t.UTC())
+		}
+	}
+	return a
 }
 
 // NewTextHandler is the human-readable companion to NewJSONHandler. Use it
 // in local development and tests.
 func NewTextHandler(w io.Writer, opts Options) slog.Handler {
 	inner := slog.NewTextHandler(w, &slog.HandlerOptions{
-		AddSource: opts.AddSource,
-		Level:     opts.Level,
+		AddSource:   opts.AddSource,
+		Level:       opts.Level,
+		ReplaceAttr: replaceAttr,
 	})
 	return &handler{inner: inner, defaultComponent: opts.DefaultComponent}
+}
+
+// Setup installs a JSON structured logger as the process-wide slog default
+// and bridges the standard library log package onto it. After Setup, both
+// slog calls and legacy log.Printf / log.Fatalf call sites emit the §16.4
+// structured envelope (ts, level, msg, component, plus any correlation
+// fields present on a record's context). component is the binary name
+// emitted as the "component" attribute on every line (§16.4 line 372). The
+// minimum level is read from LENNY_LOG_LEVEL (Info when unset or
+// unparseable). Setup returns the installed logger.
+//
+// §16.4 line 370 mandates structured JSON logs from the gateway, token
+// service, pool controller, runtime adapter, and lenny-ops; calling Setup
+// in each binary's main is how those binaries satisfy that requirement
+// without rewriting their existing log.Printf call sites — slog.SetDefault
+// reroutes the stdlib logger through the same handler.
+//
+// spec: §16.4 lines 370-372; §25.4 lines 2499-2526.
+func Setup(w io.Writer, component string) *slog.Logger {
+	level := slog.LevelInfo
+	if v := os.Getenv("LENNY_LOG_LEVEL"); v != "" {
+		// An unparseable value falls back to Info, the §16.4 default
+		// posture, rather than failing the binary at startup.
+		_ = level.UnmarshalText([]byte(v))
+	}
+	logger := slog.New(NewJSONHandler(w, Options{Level: level, DefaultComponent: component}))
+	slog.SetDefault(logger)
+	// Bridge the stdlib log package so existing log.Printf sites in every
+	// binary surface through the same handler. Flags are cleared so the
+	// stdlib date/time prefix is not duplicated alongside the slog `ts`
+	// attribute.
+	log.SetFlags(0)
+	log.SetOutput(stdlogBridge{logger: logger})
+	return logger
+}
+
+// stdlogBridge routes the standard library log package's output onto a slog
+// logger at Info level. It strips the single trailing newline log.Output
+// always appends so the emitted msg matches the original format string.
+type stdlogBridge struct{ logger *slog.Logger }
+
+// Write implements io.Writer for the stdlib log bridge.
+func (b stdlogBridge) Write(p []byte) (int, error) {
+	msg := string(p)
+	if n := len(msg); n > 0 && msg[n-1] == '\n' {
+		msg = msg[:n-1]
+	}
+	b.logger.Info(msg)
+	return len(p), nil
 }
 
 // Wrap decorates an existing slog.Handler with correlation-field

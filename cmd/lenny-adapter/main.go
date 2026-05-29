@@ -48,6 +48,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/observability/logging"
 )
 
 // version is the adapter build version, reported during gateway
@@ -73,6 +74,11 @@ func resolveRuntimeUID(flagUID uint) uint32 {
 }
 
 func main() {
+	// spec: §16.4 lines 370-372 — structured JSON logs from the runtime
+	// adapter; routes the stdlib log package through the §16.4 handler
+	// (component=adapter) before any subcommand dispatch. F-16.4.1.
+	logging.Setup(os.Stderr, "adapter")
+
 	// spec: §4.6.1 — `lenny-adapter prestop` is the agent-pod preStop
 	// drain hook. It signals the running adapter and waits for it to
 	// drain in-flight checkpoints, so it runs as a distinct subcommand

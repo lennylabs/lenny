@@ -45,6 +45,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
 
@@ -126,6 +127,10 @@ func parseAcceptDowngrade(s string) map[string]bool {
 }
 
 func main() {
+	// spec: §16.4 lines 370-372 — structured JSON logs; routes the stdlib
+	// log package through the §16.4 handler (component=preflight). F-16.4.1.
+	logging.Setup(os.Stderr, "preflight")
+
 	namespace := flag.String("namespace", "lenny-system",
 		"release namespace holding the phase-stamp ConfigMap")
 	llmProxy := flag.Bool("feature-llm-proxy", false, "value of the features.llmProxy chart flag")

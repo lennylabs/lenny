@@ -46,6 +46,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
+	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
@@ -56,12 +57,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
-	"github.com/lennylabs/lenny/pkg/preflight"
-	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
 	sessionstore "github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/observability/logging"
+	"github.com/lennylabs/lenny/pkg/preflight"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // buildScheme assembles the runtime scheme the manager uses: the
@@ -101,9 +102,14 @@ const (
 )
 
 func main() {
+	// spec: §16.4 lines 370-372 — structured JSON logs from the pool
+	// controller; routes the stdlib log package through the §16.4 handler
+	// (component=controller). F-16.4.1.
+	logging.Setup(os.Stderr, "controller")
+
 	var (
-		metricsAddr   string
-		probeAddr     string
+		metricsAddr        string
+		probeAddr          string
 		leaderElect        bool
 		leaderElectNS      string
 		adapterImage       string

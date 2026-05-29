@@ -140,26 +140,25 @@ func TestEnvHelpers(t *testing.T) {
 	}
 }
 
-// TestSlogWriterBridgesStdlibLog_spec_25_4_2512 covers the §25.4
-// stdlib-log → slog bridge. Every legacy log.Printf call must surface
-// as a structured JSON record so no log line escapes the §25.4 format.
-func TestSlogWriterBridgesStdlibLog_spec_25_4_2512(t *testing.T) {
+// TestConfigureStructuredLoggingInstallsOpsBridge_spec_25_4_2512 covers the
+// §25.4 / §16.4 stdlib-log → slog bridge that configureStructuredLogging
+// now wires through the shared logging.Setup helper. Every legacy log.Printf
+// call must surface as a structured JSON record carrying component=lenny-ops
+// and the renamed ts field so no log line escapes the §25.4 format. The
+// generic bridge and ts/UTC behavior are covered in the logging package;
+// this asserts the ops binary's component label and stdlib routing.
+func TestConfigureStructuredLoggingInstallsOpsBridge_spec_25_4_2512(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
-	defer slog.SetDefault(prev)
-	logger := slog.New(opsLogging.NewJSONHandler(&buf, opsLogging.Options{
-		Level:            slog.LevelInfo,
-		DefaultComponent: "lenny-ops",
-	}))
-	slog.SetDefault(logger)
-
+	prevLogger := slog.Default()
 	prevFlags := log.Flags()
-	defer log.SetFlags(prevFlags)
-	prevOut := log.Default().Writer()
-	defer log.SetOutput(prevOut)
-	log.SetFlags(0)
-	log.SetOutput(slogWriter{logger: logger})
+	prevOut := log.Writer()
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		log.SetFlags(prevFlags)
+		log.SetOutput(prevOut)
+	})
 
+	opsLogging.Setup(&buf, "lenny-ops")
 	log.Printf("lenny-ops: %s", "bridged")
 
 	line := strings.TrimSpace(buf.String())
@@ -179,31 +178,7 @@ func TestSlogWriterBridgesStdlibLog_spec_25_4_2512(t *testing.T) {
 	if got["level"] != "INFO" {
 		t.Errorf("level = %v, want INFO", got["level"])
 	}
-}
-
-// TestSlogWriterDropsTrailingNewline_spec_25_4_2512 confirms the stdlib
-// log target's trailing newline is stripped before forwarding, so the
-// emitted msg matches the original Printf string.
-func TestSlogWriterDropsTrailingNewline_spec_25_4_2512(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(opsLogging.NewJSONHandler(&buf, opsLogging.Options{
-		Level:            slog.LevelInfo,
-		DefaultComponent: "lenny-ops",
-	}))
-	w := slogWriter{logger: logger}
-	n, err := w.Write([]byte("trailing-newline\n"))
-	if err != nil {
-		t.Fatalf("Write returned error: %v", err)
-	}
-	if n != len("trailing-newline\n") {
-		t.Errorf("Write returned %d bytes, want %d", n, len("trailing-newline\n"))
-	}
-	line := strings.TrimSpace(buf.String())
-	var got map[string]any
-	if err := json.Unmarshal([]byte(line), &got); err != nil {
-		t.Fatalf("log line is not JSON: %v", err)
-	}
-	if got["msg"] != "trailing-newline" {
-		t.Errorf("msg = %v, want stripped of trailing newline", got["msg"])
+	if _, ok := got["ts"]; !ok {
+		t.Errorf("bridged record missing ts: %v", got)
 	}
 }

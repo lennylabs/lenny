@@ -25,10 +25,16 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/tierpromotion"
 )
 
 func main() {
+	// spec: §16.4 lines 370-372 — structured JSON logs; routes the stdlib
+	// log package through the §16.4 handler (component=tier-promote).
+	// F-16.4.1.
+	logging.Setup(os.Stderr, "tier-promote")
+
 	from := flag.String("from", "", "source tier (tier1, tier2, or tier3)")
 	to := flag.String("to", "", "target tier (tier1, tier2, or tier3)")
 	namespace := flag.String("namespace", tierpromotion.DefaultNamespace,

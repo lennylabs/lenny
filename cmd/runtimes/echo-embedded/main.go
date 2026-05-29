@@ -50,6 +50,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
 )
 
@@ -58,6 +59,11 @@ import (
 var version = "0.1.0"
 
 func main() {
+	// spec: §16.4 lines 370-372 — structured JSON logs; routes the stdlib
+	// log package through the §16.4 handler (component=echo-embedded).
+	// F-16.4.1.
+	logging.Setup(os.Stderr, "echo-embedded")
+
 	addr := flag.String("addr", ":50051", "address the embedded runtime gRPC server binds to")
 	certFile := flag.String("tls-cert-file", "", "path to the server certificate")
 	keyFile := flag.String("tls-key-file", "", "path to the server private key")

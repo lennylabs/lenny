@@ -106,7 +106,7 @@ func TestAccessLogEmitsStructuredLine_spec_25_4_2512(t *testing.T) {
 	if err := json.Unmarshal([]byte(line), &got); err != nil {
 		t.Fatalf("log line is not JSON: %v\nline: %s", err, line)
 	}
-	for _, field := range []string{"time", "level", "msg", "component", "operation_id", "agent_name", "trace_id"} {
+	for _, field := range []string{"ts", "level", "msg", "component", "operation_id", "agent_name", "trace_id"} {
 		if _, ok := got[field]; !ok {
 			t.Errorf("log line missing %q field (§25.4 lines 2512-2526)\nline: %s", field, line)
 		}

@@ -56,6 +56,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
+	"github.com/lennylabs/lenny/pkg/observability/logging"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/spiffeid"
@@ -66,6 +67,11 @@ import (
 )
 
 func main() {
+	// spec: §16.4 lines 370-372 — structured JSON logs from the token
+	// service; routes the stdlib log package through the §16.4 handler
+	// (component=token-service). F-16.4.1.
+	logging.Setup(os.Stderr, "token-service")
+
 	addr := flag.String("addr", ":8081", "address to bind for the HTTP token-exchange surface (host:port)")
 	grpcAddr := flag.String("grpc-addr", "",
 		"address to bind for the §4.3 gRPC TokenService surface (host:port). Empty disables the gRPC listener.")

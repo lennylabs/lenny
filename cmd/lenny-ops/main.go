@@ -31,7 +31,6 @@ import (
 	"errors"
 	"flag"
 	"log"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -500,43 +499,12 @@ func main() {
 // existing log.Printf call sites also surface as structured records and
 // no log line escapes the §25.4 format.
 //
-// spec: §25.4 lines 2499-2526.
+// spec: §25.4 lines 2499-2526; §16.4 lines 370-372. Delegates to the shared
+// logging.Setup so the gateway, lenny-ops, and every other binary install
+// the identical §16.4 handler and stdlib-log bridge (component, ts in UTC,
+// and any context-borne correlation fields). lenny-ops logs to stderr.
 func configureStructuredLogging() {
-	level := slog.LevelInfo
-	if v := os.Getenv("LENNY_LOG_LEVEL"); v != "" {
-		// best-effort parsing: an unknown value falls back to Info, which
-		// matches the §25.4 default posture.
-		_ = level.UnmarshalText([]byte(v))
-	}
-	handler := opsLogging.NewJSONHandler(os.Stderr, opsLogging.Options{
-		Level:            level,
-		DefaultComponent: "lenny-ops",
-	})
-	logger := slog.New(handler)
-	slog.SetDefault(logger)
-	// Bridge the stdlib log package onto slog so legacy log.Printf calls
-	// emit the structured §25.4 envelope. log.Flags is cleared so the
-	// timestamp prefix the stdlib writes is not duplicated alongside slog's
-	// own ts attribute.
-	log.SetFlags(0)
-	log.SetOutput(slogWriter{logger: logger})
-}
-
-// slogWriter bridges io.Writer (the stdlib log target) onto a slog logger
-// so calls like log.Printf surface as Info-level structured records. It
-// strips a single trailing newline because log.Output always appends one.
-type slogWriter struct {
-	logger *slog.Logger
-}
-
-// Write implements io.Writer for the stdlib log bridge.
-func (w slogWriter) Write(p []byte) (int, error) {
-	msg := string(p)
-	if n := len(msg); n > 0 && msg[n-1] == '\n' {
-		msg = msg[:n-1]
-	}
-	w.logger.Info(msg)
-	return len(p), nil
+	opsLogging.Setup(os.Stderr, "lenny-ops")
 }
 
 // envOr returns the environment variable name when set, else fallback.

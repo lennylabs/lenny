@@ -155,6 +155,7 @@ import (
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/memorystore/pgstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
+	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
 	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/deprecation"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
@@ -212,6 +213,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
+	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -238,6 +240,12 @@ var (
 const adapterGRPCPort = 50051
 
 func main() {
+	// spec: §16.4 lines 370-372 — install the structured JSON logger as the
+	// process-wide slog default and route the stdlib log package through it,
+	// so every gateway log line carries ts (RFC 3339 UTC), level, msg, and
+	// component=gateway. F-16.4.1.
+	logging.Setup(os.Stderr, "gateway")
+
 	addr := flag.String("addr", ":8080", "address to bind (host:port)")
 	multiTenant := flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
 	tenantIDClaim := flag.String("tenant-id-claim", envOr("LENNY_TENANT_ID_CLAIM", "tenant_id"),
@@ -2941,6 +2949,22 @@ func main() {
 	// panic from any inner handler (auth, rate limit, business
 	// handlers, SSE writers). F-10.4.9.
 	handler = recovermw.Middleware(handler)
+
+	// spec: §16.4 lines 371-372 — outermost middleware. It reads the inbound
+	// correlation headers (X-Lenny-Operation-ID, X-Lenny-Agent-Name,
+	// traceparent, X-Lenny-Session-ID, X-Lenny-Tenant-ID) and attaches them
+	// to the request context so the §16.4 logging handler projects them onto
+	// every downstream log line, then emits one structured request-completion
+	// line per request carrying those fields. Probe endpoints are skipped so
+	// liveness/readiness/metrics scrapes do not flood the access log.
+	// F-16.4.2, F-16.4.3.
+	handler = correlationmw.Wrap(handler, correlationmw.Options{
+		SkipPaths: map[string]bool{
+			"/healthz":                  true,
+			"/metrics":                  true,
+			"/internal/drain-readiness": true,
+		},
+	})
 
 	httpSrv := &http.Server{
 		Addr:              *addr,
