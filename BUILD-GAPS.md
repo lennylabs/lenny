@@ -11520,7 +11520,7 @@ via `--memory-record-count-interval`).
 
 ---
 
-### - [ ] F-9.4.2 — (High) — `ValidateMemoryStoreIsolation` and `TestMemoryStoreTenantIsolation` are absent [High] — OPEN
+### - [x] F-9.4.2 — (High) — `ValidateMemoryStoreIsolation` and `TestMemoryStoreTenantIsolation` are absent [High] — CLOSED
 
 Spec wording (§9.4 line 200): "a `ValidateMemoryStoreIsolation(t *testing.T, store MemoryStore)` contract validation helper is provided so deployers can verify their implementation."
 
@@ -11535,9 +11535,23 @@ Evidence:
 
 Verdict: **MISSING** — deployers shipping a custom MemoryStore (the explicit Mem0 / Zep / vector-database use case) have no contract test to run, and the spec's startup-time validation against Postgres is absent.
 
+**Resolution (commit a03293b7):** New published helper package
+`pkg/gateway/memorystore/memorystoretest` exports
+`ValidateMemoryStoreIsolation(t, store)`: it asserts cross-tenant
+Query/List return zero, every method rejects an empty TenantID/UserID
+(`ErrEmptyTenant`/`ErrEmptyUser`), all six §16.1 operation labels are
+observed (via the optional Observer seam), and delegates to the §12.8
+`ValidateMemoryStoreErasure` stub-detector. The named integration test
+`TestMemoryStoreTenantIsolation`
+(`pkg/gateway/memorystore/contract_external_test.go`) runs it against the
+in-process backend; the tier-2 component suite
+(`tests/tier2_component/stores/memorystore_preflight_test.go`) runs it
+against Postgres; the gateway runs the erasure half at startup (see
+F-9.4.3).
+
 ---
 
-### - [ ] F-9.4.3 — (High) — §12.8 `ValidateMemoryStoreErasure` startup preflight is absent [High] — OPEN
+### - [x] F-9.4.3 — (High) — §12.8 `ValidateMemoryStoreErasure` startup preflight is absent [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.1.4, F-12.2.10, F-12.8.9 — All four report the §12.8 ValidateMemoryStoreErasure startup and per-job preflight is absent, viewed from different referencing sections.
 
@@ -11552,9 +11566,26 @@ Evidence:
 
 Verdict: **MISSING** — a backend that satisfies the interface but no-ops `DeleteByUser` would silently report successful GDPR erasures while leaking memories. This is the precise failure mode the §12.8 preflight is meant to catch.
 
+**Resolution (commit a03293b7):** `memorystore.ValidateMemoryStoreErasure(ctx, store)`
+seeds a probe row under the reserved `(__preflight__, __preflight_user__)`
+scope, erases it with `DeleteByUser`, asserts zero survivors, verifies the
+§9.4 idempotency contract, then repeats the cycle for `DeleteByTenant`; it
+also guards against a silent-Write-drop and propagates backend errors.
+`cmd/lenny-gateway/main.go` runs it after the store is wired and
+`log.Fatalf`s with the spec's exact §12.8 message on failure (skipped when
+`memory.enabled=false`, i.e. `memories == nil`). The per-job preflight
+(layer 3) is wired via `erasurejob.Runner.WithMemoryPreflight`: it re-runs
+before store deletion, aborts the job as `memory_store_preflight_failed`
+before any data is touched (leaving `processing_restricted` set), and emits
+`lenny_erasure_job_failed_total{failure_phase="memory_store_preflight"}` via
+the new `gatewaymetrics.IncErasureJobFailed` /
+`Runner.WithFailureObserver`. Migration 0096 seeds the reserved
+`__preflight__` tenant (soft-deleted) as the FK parent for the Postgres
+backend's probe row. Closes duplicates F-12.1.4, F-12.2.10, F-12.8.9.
+
 ---
 
-### - [ ] F-9.4.4 — (High) — `MemoryStore.DeleteByTenant` is never called from any tenant-deletion site [High] — OPEN
+### - [ ] F-9.4.4 — (High) — `MemoryStore.DeleteByTenant` is never called from any tenant-deletion site [High] — DEFERRED
 
 Spec wording (§9.4 line 196): "**Erasure contract (mandatory).** `DeleteByUser(ctx, tenantID, userID) error` and `DeleteByTenant(ctx, tenantID) error` are **mandatory** interface methods, not optional extension points. They are invoked by the erasure job ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces)) and must synchronously remove every persisted memory record that matches the supplied scope before returning `nil`."
 
@@ -11567,6 +11598,21 @@ Evidence:
 - The §12.8 / §10.2 tenant-deletion path therefore cannot purge `agent_memory` for an offboarded tenant; the rows would remain forever and only the `agent_memory.tenants(id)` FK would block tenant deletion at the database layer.
 
 Verdict: **MISSING wiring** — the implementation half is correct, the invocation half is unimplemented.
+
+**Deferred (batch a03293b7):** The invocation site is the §12.8 "Tenant
+deletion lifecycle" Phase 4, which executes `DeleteByTenant` on ~20 stores
+in a fixed dependency order (`LeaseStore → … → MemoryStore → … →
+SessionStore → …`) behind the multi-phase tenant-deletion controller
+(`TenantState` machine, Phase 3.5 legal-hold segregation, Phase 4a KMS
+destruction). None of that controller exists yet: `handleDeleteTenant` only
+soft-deletes (`admin/tenants.go:1363`, comment "full hard-delete ships in
+Phase 13"), there is no `TenantState` enum, and no store's `DeleteByTenant`
+has any production call site repo-wide. Wiring only the memory store into a
+non-existent controller — or hooking it into the soft-delete endpoint —
+would contradict §12.8's soft-delete/hard-purge separation (Rule F). The
+MemoryStore implementation half is complete (`InMemory` + `pgstore`
+`DeleteByTenant`); deferred until the §12.8 Phase-4 tenant-deletion
+controller lands as its own batch.
 
 ---
 
@@ -17411,7 +17457,7 @@ Findings count: 3 High, 4 Medium, 2 Low.
 - **Gap:** For five of the §12.2 storage roles, there is no Go interface defining the role's contract. A deployer who wants to substitute an alternative `LeaseStore` (e.g., a Postgres-only variant for the fallback path), `QuotaStore` (sharded Redis Cluster client), `ArtifactStore` (S3 / GCS), or `EventStore` (Kafka-backed alternative discussed in §12.6) cannot do so through an interface — the type itself is the contract. The §12.1 compile-time fail-closed claim for these roles is impossible as currently structured.
 - **Suggested resolution:** Define `LeaseStore`, `QuotaStore` (or `RateLimitCounter`), `EventStore` (or `AuditLog`), `TokenIssuanceStore`, and `ArtifactStore` Go interfaces; have the existing concrete `*Store` types satisfy them via `var _ Interface = (*Store)(nil)` checks; add `DeleteByUser` and `DeleteByTenant` to each. For `LeaseStore` the erasure primitive can be a no-op (leases are TTL-bound) but the method must still be present to satisfy the §12.1 contract. For `EventStore`, the spec's §12.8 carve-out for `gdpr.*` event types must be encoded in the implementation, but the interface still exposes the primitives.
 
-### - [ ] F-12.1.4 — ValidateMemoryStoreErasure startup preflight and per-job preflight are unimplemented [High] — OPEN
+### - [x] F-12.1.4 — ValidateMemoryStoreErasure startup preflight and per-job preflight are unimplemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.2.10, F-12.8.9, F-9.4.3 — All four report the §12.8 ValidateMemoryStoreErasure startup and per-job preflight is absent, viewed from different referencing sections.
 
@@ -17423,6 +17469,12 @@ Findings count: 3 High, 4 Medium, 2 Low.
   - `pkg/gateway/erasure/erasure.go:1-124` — the orchestrator has no preflight hook.
 - **Gap:** The runtime half of the §12.1 fail-closed guarantee — the catch-net for backends that satisfy the signature but no-op on the call — is absent. A deployer who swaps in a `MemoryStore` whose `DeleteByUser` returns `nil` without touching storage would pass the boot check and silently fail every GDPR erasure.
 - **Suggested resolution:** Implement `ValidateMemoryStoreErasure(ctx context.Context, store memorystore.Store) error` in the `memorystore` package (matching §9.4 placement); call it from `cmd/lenny-gateway/main.go` after the store is wired, log-fatal on failure with the spec's exact message; add the per-job version to `pkg/gateway/erasurejob/runner.go` ahead of the memory-store erasure step; wire the `memory.enabled=false` skip case from the spec.
+
+**Resolution:** Closed by **F-9.4.3** (commit a03293b7), which implemented
+exactly this suggested resolution: `memorystore.ValidateMemoryStoreErasure`
++ startup log-fatal wiring (skip when `memory.enabled=false`) + per-job
+preflight on `erasurejob.Runner.WithMemoryPreflight` ahead of store
+deletion, emitting `lenny_erasure_job_failed_total{failure_phase=memory_store_preflight}`.
 
 ### - [ ] F-12.1.5 — erasure orchestrator uses function-pointer adapters, bypassing the typed-interface compile-time check [Medium] — OPEN
 - **Spec:** Line 5 — "a backend that omits them will not compile into the gateway binary." The mechanism is Go interface satisfaction.
@@ -17614,7 +17666,7 @@ Spec: §12.1 (mandatory `DeleteByTenant`); §12.8 (tenant-deletion Phase 4 drive
 
 **Resolution:** `DeleteByTenant(ctx, tenantID) (int, error)` lifted onto `sessionstore.Store`; pgstore gained matching implementation (`DELETE FROM sessions WHERE tenant_id = $1` under `pgtenant.InTx`). Test fakes in `delegation/service_test.go`, `admin/custom_roles_test.go`, `mcptools/elicitation_perhop_internal_test.go` updated. Closes the §12.8 Phase 4 contract gap; the typed compile-time check now catches both the user and tenant erasure surface. Duplicate F-12.1.2 closed by the same change.
 
-### - [ ] F-12.2.10 — 10 — `MemoryStore` startup and per-job erasure preflight (§12.8) unimplemented (High) [Medium] — OPEN
+### - [x] F-12.2.10 — 10 — `MemoryStore` startup and per-job erasure preflight (§12.8) unimplemented (High) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.1.4, F-12.8.9, F-9.4.3 — All four report the §12.8 ValidateMemoryStoreErasure startup and per-job preflight is absent, viewed from different referencing sections.
 
@@ -17624,6 +17676,13 @@ Spec: §12.8 "MemoryStore erasure preflight" — three layers required:
 3. Per-job preflight rerun at job start, with `lenny_erasure_job_failed_total{failure_phase="memory_store_preflight"}` counter and `ErasureJobFailed` alert.
 
 Repo-wide grep for `ValidateMemoryStoreErasure` and `ValidateMemoryStoreIsolation` finds zero Go-source references (only spec markdown and review-finding files). Neither the startup preflight nor the per-job preflight exists, so a deployer who substitutes a no-op pluggable MemoryStore would pass GDPR erasure receipts while leaving memories in place — exactly the failure mode §12.8 calls out as a "fail-closed guarantee that this divergence cannot occur silently". The gateway does not refuse to start when the configured MemoryStore is a silent-success stub.
+
+**Resolution:** Closed by **F-9.4.3** (commit a03293b7). All three §12.8
+layers now hold: compile-time `var _ Store` (already present), the startup
+`ValidateMemoryStoreErasure` stub-detector (gateway log-fatal), and the
+per-job preflight re-run on `erasurejob.Runner` emitting
+`lenny_erasure_job_failed_total{failure_phase="memory_store_preflight"}`
+(the §16.5 ErasureJobFailed alert keys on it).
 
 ### - [ ] F-12.2.11 — 11 — Erasure-method signatures diverge across stores (Medium) [Medium] — OPEN
 
@@ -20195,7 +20254,7 @@ and the equivalent admin-API calls `GET /v1/admin/audit-events?tenantId=...&acto
 
 **Impact:** The spec's DSAR template fails to bind against the schema; deployer DSAR tooling that follows the spec template cannot run. Article 15/20 satisfaction depends on payload JSON traversal not exposed by the API.
 
-### - [ ] F-12.8.9 — MemoryStore erasure preflight (startup + per-job) is unimplemented [Medium] — OPEN
+### - [x] F-12.8.9 — MemoryStore erasure preflight (startup + per-job) is unimplemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.1.4, F-12.2.10, F-9.4.3 — All four report the §12.8 ValidateMemoryStoreErasure startup and per-job preflight is absent, viewed from different referencing sections.
 
@@ -20204,6 +20263,13 @@ and the equivalent admin-API calls `GET /v1/admin/audit-events?tenantId=...&acto
 **Implementation:** `grep -rn "ValidateMemoryStoreErasure\|ValidateMemoryStoreIsolation\|preflight"` in `pkg/gateway/memorystore` and `pkg/gateway/erasurejob` returns nothing. The `pkg/gateway/memorystore/memorystore.go` `Store` interface is correctly defined with `DeleteByUser` and `DeleteByTenant` rejecting empty IDs (lines 310-340), but no preflight harness invokes a synthetic write-delete-query cycle.
 
 **Impact:** A deployer-substituted MemoryStore backend with a silently-no-op `DeleteByUser` will pass GDPR erasure verification (the receipt will record success) while leaving memories in the backend. The compile-time `var _ MemoryStore = (*Custom)(nil)` declaration cannot detect a no-op.
+
+**Resolution:** Closed by **F-9.4.3** (commit a03293b7) — startup
+`ValidateMemoryStoreErasure` (seed → DeleteByUser → requery zero; repeated
+for DeleteByTenant; gateway refuses to start on survival) plus the per-job
+preflight re-run before step 8 of `DeleteByUser`. Deployment guidance (c)
+is the existing §12.8 spec text. Migration 0096 provides the reserved
+`__preflight__` FK parent for the default Postgres backend's probe row.
 
 ### - [ ] F-12.8.10 — `processing_restricted` clear endpoint and erasure-job retry endpoint are unimplemented [Medium] — OPEN
 
