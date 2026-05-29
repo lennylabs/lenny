@@ -24,7 +24,7 @@ groups:
             severity: critical
           annotations:
             description: Sync-replica replication lag exceeds 1 second sustained for 30 seconds. Session state writes risk read-after-write inconsistency.
-            runbook_url: https://docs.lenny.dev/runbooks/postgres-replication-lag
+            runbook_url: https://docs.lenny.dev/runbooks/postgres-failover
             summary: Postgres sync replica lag exceeds 1 second
         - alert: GatewayNoHealthyReplicas
           expr: lenny_gateway_replica_count < scalar(lenny_gateway_min_replicas)
@@ -33,7 +33,7 @@ groups:
             severity: critical
           annotations:
             description: Healthy gateway replicas have fallen below the tier minimum (§17.8) for more than 30s. Request capacity is degraded and session creation may be rejected.
-            runbook_url: https://docs.lenny.dev/runbooks/gateway-no-healthy-replicas
+            runbook_url: https://docs.lenny.dev/runbooks/gateway-replica-failure
             summary: Healthy gateway replicas below tier minimum
         - alert: SessionStoreUnavailable
           expr: lenny_postgres_primary_up == 0
@@ -42,7 +42,7 @@ groups:
             severity: critical
           annotations:
             description: The Postgres primary has been unreachable for more than 15s. Session state writes fail and new session creation is rejected.
-            runbook_url: https://docs.lenny.dev/runbooks/session-store-unavailable
+            runbook_url: https://docs.lenny.dev/runbooks/postgres-failover
             summary: Postgres primary unreachable
         - alert: RedisUnavailable
           expr: rate(lenny_quota_redis_fallback_total[2m]) > 0
@@ -76,7 +76,7 @@ groups:
             severity: critical
           annotations:
             description: The leader-elected continuous KMS probe has not successfully encrypted and decrypted against a T4 tenant's KMS key for at least two probe cycles. Any checkpoint or artifact write for this tenant will be rejected with CLASSIFICATION_CONTROL_VIOLATION / kms_unavailable.
-            runbook_url: https://docs.lenny.dev/runbooks/t4-kms-key-unusable
+            runbook_url: https://docs.lenny.dev/runbooks/kms-unavailable
             summary: T4 tenant KMS key unusable
         - alert: EtcdUnavailable
           expr: rate(lenny_etcd_connectivity_errors_total[1m]) > 0
@@ -85,7 +85,7 @@ groups:
             severity: critical
           annotations:
             description: API server etcd connectivity errors have been sustained for more than 15s. CRD reads and writes fail and warm-pool reconciliation stalls.
-            runbook_url: https://docs.lenny.dev/runbooks/etcd-unavailable
+            runbook_url: https://docs.lenny.dev/runbooks/etcd-operations
             summary: API server etcd connectivity errors
         - alert: CredentialPoolExhausted
           expr: min by (pool) (lenny_credential_pool_assignable_count) == 0
@@ -94,7 +94,7 @@ groups:
             severity: critical
           annotations:
             description: A credential pool has 0 assignable credentials (all exhausted, in cooldown, or revoked) for more than 30s. New session creation returns CREDENTIAL_POOL_EXHAUSTED for this pool.
-            runbook_url: https://docs.lenny.dev/runbooks/credential-pool-exhausted
+            runbook_url: https://docs.lenny.dev/runbooks/credential-pool-exhaustion
             summary: Credential pool has no assignable credentials
         - alert: CredentialCompromised
           expr: (max by (pool, provider) (lenny_credential_revoked_with_active_leases) > 0) or (max by (tenant_id, provider) (lenny_user_credential_revoked_with_active_leases) > 0)
@@ -103,7 +103,7 @@ groups:
             severity: critical
           annotations:
             description: At least one credential in revoked state (pool-scoped or user-scoped) still has active leases alive against it for more than 30s, indicating revocation propagation failure and that the compromised key may still be in use.
-            runbook_url: https://docs.lenny.dev/runbooks/credential-compromised
+            runbook_url: https://docs.lenny.dev/runbooks/credential-revocation
             summary: Revoked credential still has active leases
         - alert: TokenServiceUnavailable
           expr: lenny_token_service_circuit_state == 2
@@ -120,7 +120,7 @@ groups:
             severity: critical
           annotations:
             description: A controller's Lease has not been renewed within leaseDuration (15s); failover is imminent or in progress. Auto-resolves when a new leader acquires the lease.
-            runbook_url: https://docs.lenny.dev/runbooks/controller-leader-election-failed
+            runbook_url: https://docs.lenny.dev/runbooks/controller-leader-election
             summary: Controller Lease has not been renewed
         - alert: DedicatedDNSUnavailable
           expr: kube_deployment_status_replicas_ready{deployment="lenny-agent-dns"} == 0
@@ -129,7 +129,7 @@ groups:
             severity: critical
           annotations:
             description: All dedicated CoreDNS replicas for the agent namespace have zero ready pods. Agent pods lose DNS resolution entirely and cannot reach external tools or LLM endpoints.
-            runbook_url: https://docs.lenny.dev/runbooks/dedicated-dns-unavailable
+            runbook_url: https://docs.lenny.dev/runbooks/dns-outage
             summary: All dedicated agent CoreDNS replicas are down
         - alert: CosignWebhookUnavailable
           expr: up{job="lenny-cosign-webhook"} == 0
@@ -154,7 +154,7 @@ groups:
             severity: critical
           annotations:
             description: The continuous CIDR drift check detected that the installed internet egress NetworkPolicy except blocks no longer match the cluster's actual pod or service CIDRs. Agent pods with internet egress may be able to reach internal cluster IPs, enabling lateral movement.
-            runbook_url: https://docs.lenny.dev/runbooks/network-policy-cidr-drift
+            runbook_url: https://docs.lenny.dev/runbooks/network-policy-drift
             summary: Internet egress NetworkPolicy except blocks are stale
         - alert: AdmissionWebhookUnavailable
           expr: up{job="lenny-admission-policy-webhook"} == 0
@@ -189,7 +189,7 @@ groups:
             severity: critical
           annotations:
             description: 'The lenny-data-residency-validator ValidatingAdmissionWebhook (failurePolicy: Fail) has been unreachable for more than 30s. All operations on tenant-scoped CRD resources with a dataResidencyRegion field are denied.'
-            runbook_url: https://docs.lenny.dev/runbooks/data-residency-webhook-unavailable
+            runbook_url: https://docs.lenny.dev/runbooks/admission-webhook-outage
             summary: Data-residency validator webhook unreachable
         - alert: DataResidencyViolationAttempt
           expr: lenny_data_residency_violation_total > 0
@@ -221,7 +221,7 @@ groups:
             severity: critical
           annotations:
             description: A platform-tenant audit event referencing a non-platform target_tenant_id failed to commit because the target tenant's dataResidencyRegion resolves to no storage.regions.<region>.postgresEndpoint entry or that region's platform-Postgres is unreachable.
-            runbook_url: https://docs.lenny.dev/runbooks/platform-audit-residency-violation
+            runbook_url: https://docs.lenny.dev/runbooks/data-residency-violation
             summary: Platform-tenant audit region unresolvable
         - alert: PgBouncerAllReplicasDown
           expr: kube_deployment_status_replicas_ready{deployment="lenny-pgbouncer"} == 0
@@ -229,7 +229,7 @@ groups:
             severity: critical
           annotations:
             description: All PgBouncer pods in lenny-system have zero ready replicas (self-managed backends only). Postgres is unreachable for all gateway components — session creation and state writes will fail immediately.
-            runbook_url: https://docs.lenny.dev/runbooks/pgbouncer-all-replicas-down
+            runbook_url: https://docs.lenny.dev/runbooks/pgbouncer-saturation
             summary: All PgBouncer replicas are down
         - alert: SessionEvictionTotalLoss
           expr: lenny_session_eviction_total_loss_total > 0
@@ -237,7 +237,7 @@ groups:
             severity: critical
           annotations:
             description: Both MinIO and Postgres were unavailable during an eviction checkpoint, leaving the session unrecoverable with no durable state saved. Any non-zero value is immediately actionable.
-            runbook_url: https://docs.lenny.dev/runbooks/session-eviction-total-loss
+            runbook_url: https://docs.lenny.dev/runbooks/session-eviction-loss
             summary: Session lost with no durable state
         - alert: DelegationBudgetKeysExpired
           expr: lenny_delegation_budget_keys_expired_total > 0
@@ -245,7 +245,7 @@ groups:
             severity: critical
           annotations:
             description: A Lua script returned BUDGET_KEYS_EXPIRED, indicating the delegation budget keys for a root session have expired while the tree was still active. The gateway initiates tree cleanup (cascade cancel + root to failed).
-            runbook_url: https://docs.lenny.dev/runbooks/delegation-budget-keys-expired
+            runbook_url: https://docs.lenny.dev/runbooks/delegation-budget-recovery
             summary: Delegation budget keys expired while tree active
         - alert: BillingStreamEntryAgeHigh
           expr: lenny_billing_redis_stream_oldest_entry_age_seconds > 2880
@@ -253,7 +253,7 @@ groups:
             severity: critical
           annotations:
             description: The oldest unacknowledged entry in a per-tenant billing Redis stream exceeds 80% of billingStreamTTLSeconds. A small number of billing events have been sitting unflushed long enough to be at imminent risk of TTL expiry and permanent loss.
-            runbook_url: https://docs.lenny.dev/runbooks/billing-stream-entry-age-high
+            runbook_url: https://docs.lenny.dev/runbooks/billing-stream-backlog
             summary: Billing Redis stream entry near TTL expiry
         - alert: OTLPPlaintextEgressDetected
           expr: rate(lenny_otlp_export_tls_handshake_total{result="plaintext"}[5m]) > 0
@@ -295,7 +295,7 @@ groups:
             severity: critical
           annotations:
             description: The gateway observed an outbound connection attempt from the gateway pod to a destination outside the allow-gateway-egress-llm-upstream NetworkPolicy allowlist. Steady-state value is zero; any non-zero rate is a potential compromise signal.
-            runbook_url: https://docs.lenny.dev/runbooks/llm-upstream-egress-anomaly
+            runbook_url: https://docs.lenny.dev/runbooks/llm-egress-anomaly
             summary: Gateway LLM upstream egress anomaly
         - alert: TokenStoreUnavailable
           expr: rate(lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}[1m]) > 0
@@ -320,7 +320,7 @@ groups:
             severity: critical
           annotations:
             description: ArtifactStore replication lag exceeds 4x the configured RPO. The replication is severely degraded and a full-site disaster at this point would lose a materially larger artifact window than the deployment contract allows.
-            runbook_url: https://docs.lenny.dev/runbooks/minio-artifact-replication-lag
+            runbook_url: https://docs.lenny.dev/runbooks/minio-replication-lag
             summary: ArtifactStore replication lag exceeds 4x RPO
         - alert: LenniOpsLockSplitBrainDetected
           expr: lenny_ops_lock_split_brain_detected_total > 0
@@ -739,6 +739,38 @@ groups:
           expr: (kube_configmap_labels{configmap="lenny-deployment-phase-stamp", label_lenny_dev_flag_llm_proxy_enabled="true"}) unless on() (kube_validatingwebhookconfiguration_info{name="lenny-direct-mode-isolation"})
           for: 2m
           labels:
+            expected_webhook_name: lenny-direct-mode-isolation
+            flag_name: features.llmProxy
+            severity: warning
+          annotations:
+            description: 'The lenny-deployment-phase-stamp ConfigMap records a feature flag enabled: true but a ValidatingWebhookConfiguration the flag gates is absent from the cluster. Typically an operator helm-upgrade mistake or an out-of-band kubectl delete.'
+            summary: Admission-plane feature-flag downgrade drift
+        - alert: AdmissionPlaneFeatureFlagDowngrade
+          expr: (kube_configmap_labels{configmap="lenny-deployment-phase-stamp", label_lenny_dev_flag_drain_readiness_enabled="true"}) unless on() (kube_validatingwebhookconfiguration_info{name="lenny-drain-readiness"})
+          for: 2m
+          labels:
+            expected_webhook_name: lenny-drain-readiness
+            flag_name: features.drainReadiness
+            severity: warning
+          annotations:
+            description: 'The lenny-deployment-phase-stamp ConfigMap records a feature flag enabled: true but a ValidatingWebhookConfiguration the flag gates is absent from the cluster. Typically an operator helm-upgrade mistake or an out-of-band kubectl delete.'
+            summary: Admission-plane feature-flag downgrade drift
+        - alert: AdmissionPlaneFeatureFlagDowngrade
+          expr: (kube_configmap_labels{configmap="lenny-deployment-phase-stamp", label_lenny_dev_flag_compliance_enabled="true"}) unless on() (kube_validatingwebhookconfiguration_info{name="lenny-data-residency-validator"})
+          for: 2m
+          labels:
+            expected_webhook_name: lenny-data-residency-validator
+            flag_name: features.compliance
+            severity: warning
+          annotations:
+            description: 'The lenny-deployment-phase-stamp ConfigMap records a feature flag enabled: true but a ValidatingWebhookConfiguration the flag gates is absent from the cluster. Typically an operator helm-upgrade mistake or an out-of-band kubectl delete.'
+            summary: Admission-plane feature-flag downgrade drift
+        - alert: AdmissionPlaneFeatureFlagDowngrade
+          expr: (kube_configmap_labels{configmap="lenny-deployment-phase-stamp", label_lenny_dev_flag_compliance_enabled="true"}) unless on() (kube_validatingwebhookconfiguration_info{name="lenny-t4-node-isolation"})
+          for: 2m
+          labels:
+            expected_webhook_name: lenny-t4-node-isolation
+            flag_name: features.compliance
             severity: warning
           annotations:
             description: 'The lenny-deployment-phase-stamp ConfigMap records a feature flag enabled: true but a ValidatingWebhookConfiguration the flag gates is absent from the cluster. Typically an operator helm-upgrade mistake or an out-of-band kubectl delete.'

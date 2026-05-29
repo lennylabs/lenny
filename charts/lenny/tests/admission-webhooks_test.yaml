@@ -265,3 +265,45 @@ tests:
     asserts:
       - hasDocuments:
           count: 3
+
+  # spec: §13.2 NET-068 / §17.2 line 56 — only the drain-readiness
+  # Deployment carries the additive lenny.dev/webhook-name label, so the
+  # gateway-egress sub-rule narrows to that webhook alone. F-17.2.11.
+  - it: stamps the additive webhook-name egress label on the drain-readiness pods
+    template: admission-policies/drain-readiness-webhook.yaml
+    set:
+      features.drainReadiness: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/webhook-name"]
+          value: drain-readiness
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/component"]
+          value: admission-webhook
+
+  - it: narrows the drain-readiness gateway-egress policy to the canonical + additive selector
+    template: admission-policies/drain-readiness-webhook.yaml
+    set:
+      features.drainReadiness: true
+    documentSelector:
+      path: metadata.name
+      value: allow-drain-readiness-gateway-egress
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/component"]
+          value: admission-webhook
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/webhook-name"]
+          value: drain-readiness
+
+  - it: does not stamp the webhook-name label on the other webhooks (least privilege)
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Deployment
+      - notExists:
+          path: spec.template.metadata.labels["lenny.dev/webhook-name"]

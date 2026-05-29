@@ -33,6 +33,11 @@ type WebhookFeatureFlags struct {
 	// CosignVerify gates lenny-cosign-verify, the §5.2 image-signing
 	// webhook, behind imageVerification.cosign.enabled.
 	CosignVerify bool
+	// RegistryDigest gates lenny-registry-digest, the §5.2 / §25.8
+	// digest-pinning webhook, behind platform.registry.requireDigest. It
+	// is fail-closed (failurePolicy: Fail) and air-gap installs mandate
+	// it, so the preflight inventory must track it. spec: §17.2 line 56.
+	RegistryDigest bool
 }
 
 // ExpectedValidatingWebhooks returns the names of the
@@ -53,6 +58,9 @@ func ExpectedValidatingWebhooks(flags WebhookFeatureFlags) []string {
 	}
 	if flags.CosignVerify {
 		expected = append(expected, "lenny-cosign-verify")
+	}
+	if flags.RegistryDigest {
+		expected = append(expected, "lenny-registry-digest")
 	}
 	return expected
 }

@@ -9,10 +9,20 @@ rules and is written by the calling template.
 Invoke with a dict carrying the root context and the webhook name:
 
 	{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-label-immutability") }}
+
+Pass an optional egressLabel (the short, kebab-case webhook name) to
+additionally stamp the NET-068 additive pod label
+lenny.dev/webhook-name: <egressLabel> on this Deployment's pods only, so
+a NetworkPolicy egress sub-rule can narrow to this single webhook
+(§13.2 NET-068, §17.2 line 56). The label is additive to the canonical
+lenny.dev/component: admission-webhook selector and is omitted when
+egressLabel is empty — chart authors MUST NOT add it to webhooks that do
+not have a documented egress-narrowing sub-rule.
 */ -}}
 {{- define "lenny.admissionWebhookWorkload" -}}
 {{- $ := .root -}}
 {{- $name := .name -}}
+{{- $egressLabel := .egressLabel | default "" -}}
 {{- $cfg := $.Values.admissionWebhooks -}}
 ---
 apiVersion: apps/v1
@@ -35,6 +45,9 @@ spec:
         {{- include "lenny.labels" $ | nindent 8 }}
         lenny.dev/component: admission-webhook
         lenny.dev/webhook: {{ $name }}
+        {{- if $egressLabel }}
+        lenny.dev/webhook-name: {{ $egressLabel }}
+        {{- end }}
     spec:
       serviceAccountName: lenny-webhook
       securityContext:

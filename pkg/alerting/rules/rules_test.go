@@ -115,15 +115,93 @@ func TestCatalogValidates(t *testing.T) {
 	if len(c) == 0 {
 		t.Fatal("Catalog should not be empty")
 	}
-	names := map[string]bool{}
+	// A rule's identity is its Name plus its static disambiguating
+	// labels: the §17.2 AdmissionPlaneFeatureFlagDowngrade alert is
+	// rendered as four rules that share one Name but carry distinct
+	// (flag_name, expected_webhook_name) labels, so keying uniqueness on
+	// Name alone would falsely flag that spec-mandated decomposition while
+	// still catching accidental copy-paste of an identical rule.
+	identities := map[string]bool{}
 	for _, r := range c {
 		if err := r.Validate(); err != nil {
 			t.Errorf("Catalog rule %q fails Validate: %v", r.Name, err)
 		}
-		if names[r.Name] {
-			t.Errorf("duplicate rule name %q in Catalog", r.Name)
+		id := r.Name + "\x00" + r.Labels["flag_name"] + "\x00" + r.Labels["expected_webhook_name"]
+		if identities[id] {
+			t.Errorf("duplicate rule identity %q in Catalog (name + disambiguating labels)", id)
 		}
-		names[r.Name] = true
+		identities[id] = true
+	}
+}
+
+// TestAdmissionPlaneFeatureFlagDowngradePairs verifies the §16.5 / §17.2
+// AdmissionPlaneFeatureFlagDowngrade alert is the union of one rule per
+// (flag, webhook) pair in the §17.2 Feature-gated chart inventory: four
+// pairs sharing the alert Name, each with the static flag_name /
+// expected_webhook_name labels and an expression matching the
+// kube-state-metrics slug label the phase-stamp ConfigMap renders.
+// F-17.2.6.
+func TestAdmissionPlaneFeatureFlagDowngradePairs_spec_17_2(t *testing.T) {
+	type pair struct {
+		flag     string
+		labelKey string
+	}
+	want := map[string]pair{
+		"lenny-direct-mode-isolation":    {"features.llmProxy", "label_lenny_dev_flag_llm_proxy_enabled"},
+		"lenny-drain-readiness":          {"features.drainReadiness", "label_lenny_dev_flag_drain_readiness_enabled"},
+		"lenny-data-residency-validator": {"features.compliance", "label_lenny_dev_flag_compliance_enabled"},
+		"lenny-t4-node-isolation":        {"features.compliance", "label_lenny_dev_flag_compliance_enabled"},
+	}
+	got := map[string]bool{}
+	for _, r := range Catalog() {
+		if r.Name != "AdmissionPlaneFeatureFlagDowngrade" {
+			continue
+		}
+		webhook := r.Labels["expected_webhook_name"]
+		exp, ok := want[webhook]
+		if !ok {
+			t.Errorf("unexpected downgrade pair for webhook %q", webhook)
+			continue
+		}
+		got[webhook] = true
+		if r.Labels["flag_name"] != exp.flag {
+			t.Errorf("pair %q flag_name = %q, want %q", webhook, r.Labels["flag_name"], exp.flag)
+		}
+		if r.Severity != SeverityWarning {
+			t.Errorf("pair %q severity = %q, want warning", webhook, r.Severity)
+		}
+		if r.For != 2*time.Minute {
+			t.Errorf("pair %q For = %v, want 2m", webhook, r.For)
+		}
+		if !strings.Contains(r.Expr, exp.labelKey+`="true"`) {
+			t.Errorf("pair %q expr missing flag label %q: %s", webhook, exp.labelKey, r.Expr)
+		}
+		if !strings.Contains(r.Expr, `name="`+webhook+`"`) {
+			t.Errorf("pair %q expr missing webhook matcher: %s", webhook, r.Expr)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("found %d downgrade pairs, want %d", len(got), len(want))
+	}
+}
+
+// TestAdmissionPlaneDowngradeLabelsRender verifies the per-pair static
+// labels survive into the rendered PrometheusRule alongside the
+// mandatory severity label. F-17.2.6.
+func TestAdmissionPlaneDowngradeLabelsRender_spec_17_2(t *testing.T) {
+	groups, err := RenderRuleGroupsBySeverity("lenny", Catalog())
+	if err != nil {
+		t.Fatalf("RenderRuleGroupsBySeverity: %v", err)
+	}
+	rendered := string(groups)
+	for _, frag := range []string{
+		`expected_webhook_name: lenny-direct-mode-isolation`,
+		`expected_webhook_name: lenny-t4-node-isolation`,
+		`flag_name: features.compliance`,
+	} {
+		if !strings.Contains(rendered, frag) {
+			t.Errorf("rendered rule groups missing %q", frag)
+		}
 	}
 }
 

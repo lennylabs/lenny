@@ -1,0 +1,49 @@
+suite: §17.2/§16.5 phase-stamp ConfigMap feature-flag downgrade labels
+templates:
+  - phase-stamp-configmap.yaml
+tests:
+  # spec: §16.5 line 487; §17.2 line 80 — the per-flag label must be the
+  # kebab-case slug with an -enabled suffix so kube-state-metrics surfaces
+  # label_lenny_dev_flag_<slug>_enabled, the series the
+  # AdmissionPlaneFeatureFlagDowngrade alert matches on. F-17.2.5.
+  - it: stamps lenny.dev/flag-<slug>-enabled labels for every enabled flag
+    set:
+      features.llmProxy: true
+      features.drainReadiness: true
+      features.compliance: true
+    asserts:
+      - equal:
+          path: metadata.labels["lenny.dev/flag-llm-proxy-enabled"]
+          value: "true"
+      - equal:
+          path: metadata.labels["lenny.dev/flag-drain-readiness-enabled"]
+          value: "true"
+      - equal:
+          path: metadata.labels["lenny.dev/flag-compliance-enabled"]
+          value: "true"
+
+  # The data keys remain camelCase (one per features.<flag> value) per
+  # §17.2 layer 1; only the metric label uses the slug form.
+  - it: keeps the data keys in camelCase form
+    set:
+      features.llmProxy: true
+    asserts:
+      - exists:
+          path: data.llmProxy
+
+  # The pre-fix chart wrote lenny.dev/flag-llmProxy (camelCase, no suffix),
+  # which kube-state-metrics could never render to the alert's expected
+  # series. Assert the regression cannot return.
+  - it: does not stamp the legacy camelCase label form
+    set:
+      features.llmProxy: true
+    asserts:
+      - notExists:
+          path: metadata.labels["lenny.dev/flag-llmProxy"]
+
+  - it: stamps no per-flag labels when all features are disabled (chart default)
+    asserts:
+      - notExists:
+          path: metadata.labels["lenny.dev/flag-llm-proxy-enabled"]
+      - notExists:
+          path: metadata.labels["lenny.dev/flag-compliance-enabled"]

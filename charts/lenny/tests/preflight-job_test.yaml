@@ -189,3 +189,26 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: "--playground-acknowledge-api-key-mode=false"
+
+  # spec: §17.2 line 56 — the fail-closed lenny-registry-digest webhook
+  # must be tracked by the preflight inventory when digest pinning is on,
+  # so an air-gap install cannot ship without it. F-17.2.13.
+  - it: passes --feature-registry-digest=false at chart defaults
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--feature-registry-digest=false"
+
+  - it: passes --feature-registry-digest=true when platform.registry.requireDigest is set
+    set:
+      platform.registry.requireDigest: true
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--feature-registry-digest=true"

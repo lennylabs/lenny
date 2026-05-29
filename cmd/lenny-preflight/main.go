@@ -137,6 +137,8 @@ func main() {
 	drainReadiness := flag.Bool("feature-drain-readiness", false,
 		"value of the features.drainReadiness chart flag")
 	compliance := flag.Bool("feature-compliance", false, "value of the features.compliance chart flag")
+	registryDigest := flag.Bool("feature-registry-digest", false,
+		"value of the platform.registry.requireDigest chart flag; gates the fail-closed lenny-registry-digest webhook (§17.2 line 56)")
 	acceptDowngrade := flag.String("accept-downgrade", "",
 		"comma-separated feature flags whose admission-plane downgrade is acknowledged")
 	spiffeTrustDomain := flag.String("spiffe-trust-domain", "",
@@ -210,6 +212,7 @@ func main() {
 			LLMProxy:       *llmProxy,
 			DrainReadiness: *drainReadiness,
 			Compliance:     *compliance,
+			RegistryDigest: *registryDigest,
 		},
 		AcceptDowngrade:        parseAcceptDowngrade(*acceptDowngrade),
 		SPIFFETrustDomain:      *spiffeTrustDomain,

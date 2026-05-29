@@ -34,6 +34,7 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 		DrainReadiness: true,
 		Compliance:     true,
 		CosignVerify:   true,
+		RegistryDigest: true,
 	})
 	want := map[string]bool{
 		"lenny-label-immutability":             true,
@@ -46,6 +47,7 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 		"lenny-data-residency-validator":       true,
 		"lenny-t4-node-isolation":              true,
 		"lenny-cosign-verify":                  true,
+		"lenny-registry-digest":                true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("all-flags expected %d webhooks, want %d: %v", len(got), len(want), got)
@@ -74,6 +76,29 @@ func TestExpectedValidatingWebhooksCosignFlag(t *testing.T) {
 	}
 	if !found {
 		t.Error("lenny-cosign-verify must appear when CosignVerify is set")
+	}
+}
+
+// spec: §17.2 line 56 — lenny-registry-digest is fail-closed and is
+// tracked by the preflight inventory only when platform.registry.requireDigest
+// is set, so an air-gap install (where the webhook is mandatory) cannot
+// ship without it being verified. F-17.2.13.
+func TestExpectedValidatingWebhooksRegistryDigestFlag_spec_17_2(t *testing.T) {
+	without := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
+	for _, n := range without {
+		if n == "lenny-registry-digest" {
+			t.Fatal("lenny-registry-digest must not be in the baseline set")
+		}
+	}
+	with := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{RegistryDigest: true})
+	found := false
+	for _, n := range with {
+		if n == "lenny-registry-digest" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("lenny-registry-digest must appear when RegistryDigest is set")
 	}
 }
 

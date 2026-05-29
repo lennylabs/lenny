@@ -198,6 +198,10 @@ spec:
             - --feature-llm-proxy={{ .Values.features.llmProxy }}
             - --feature-drain-readiness={{ .Values.features.drainReadiness }}
             - --feature-compliance={{ .Values.features.compliance }}
+            # §17.2 line 56 — lenny-registry-digest is fail-closed and
+            # mandatory for air-gap installs (§25.8); track it in the
+            # preflight expected set when digest pinning is required.
+            - --feature-registry-digest={{ .Values.platform.registry.requireDigest }}
             - --accept-downgrade={{ join "," $accepted }}
             - --compliance-profile={{ .Values.complianceProfile | default "" }}
             # §10.3 lines 316, 334 (NET-064) uniqueness inputs. The

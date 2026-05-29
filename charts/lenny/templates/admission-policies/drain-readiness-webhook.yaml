@@ -9,7 +9,7 @@ result rejects the eviction. Fail-closed. Rendered only when
 features.drainReadiness is enabled.
 */ -}}
 {{- if .Values.features.drainReadiness }}
-{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-drain-readiness") }}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-drain-readiness" "egressLabel" "drain-readiness") }}
 ---
 {{- /*
 allow-drain-readiness-egress re-admits the §12.5 gateway-probe egress
@@ -20,9 +20,14 @@ eviction; without this egress rule the call times out and the fail-
 closed webhook rejects every eviction with MinIOUnreachable, blocking
 node drain in any cluster that runs Lenny with default network
 policies in place. The allow-gateway-ingress counterpart admits the
-inbound side. Scoped to the drain-readiness pod selector so the
-broader admission-webhook pods stay restricted to apiserver + DNS
-egress.
+inbound side.
+
+Per §13.2 NET-068 / §17.2 line 56 the podSelector uses the canonical
+lenny.dev/component: admission-webhook key plus the additive
+lenny.dev/webhook-name: drain-readiness key, so this gateway-egress
+grant narrows to the drain-readiness pods only. The other eight
+in-process webhooks do not inherit reachability to the gateway internal
+port. F-17.2.11.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -34,7 +39,8 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      lenny.dev/webhook: lenny-drain-readiness
+      lenny.dev/component: admission-webhook
+      lenny.dev/webhook-name: drain-readiness
   egress:
     - to:
         - podSelector:

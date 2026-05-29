@@ -90,6 +90,17 @@ type Rule struct {
 	// SpecRef is the spec section that defines the alert
 	// (e.g., "§16.5", "§4.6.1"). Optional but useful for traceability.
 	SpecRef string
+
+	// Labels are extra static label key/values stamped on every firing
+	// of this rule, merged with the mandatory "severity" label at render
+	// time. Used by the §16.5 / §17.2 AdmissionPlaneFeatureFlagDowngrade
+	// per-(flag, webhook)-pair decomposition, where four rules share one
+	// alert Name but each carries distinct flag_name / expected_webhook_name
+	// labels so a firing identifies the missing admission-plane surface.
+	// Empty for the common single-rule alert. A label here must not be
+	// "severity"; the renderer rejects a catalogue that tries to override
+	// it.
+	Labels map[string]string
 }
 
 // Validate reports the violations of a Rule's invariants. Returns nil
@@ -117,6 +128,9 @@ func (r Rule) Validate() error {
 	if r.Severity == SeverityCritical && strings.TrimSpace(r.RunbookURL) == "" {
 		v = append(v, "Critical severity requires a RunbookURL")
 	}
+	if _, ok := r.Labels["severity"]; ok {
+		v = append(v, "Labels must not override the reserved \"severity\" label")
+	}
 	if len(v) == 0 {
 		return nil
 	}
@@ -143,6 +157,33 @@ func (e *ValidationError) Error() string {
 // rendered-site host pattern.
 func runbook(slug string) string {
 	return "https://docs.lenny.dev/runbooks/" + slug
+}
+
+// admissionPlaneDowngradeRule builds one (flag, webhook) pair of the
+// §16.5 / §17.2 AdmissionPlaneFeatureFlagDowngrade alert. The expression
+// fires when the phase-stamp ConfigMap records the flag as enabled
+// (surfaced as the kube_configmap_labels label labelKey) but the gated
+// ValidatingWebhookConfiguration is absent from the cluster, sustained
+// for more than 2 minutes. flagName and webhook are stamped as static
+// rule labels so each firing identifies the specific missing surface.
+// spec: §16.5 line 487; §17.2 line 80. F-17.2.6.
+func admissionPlaneDowngradeRule(flagName, webhook, labelKey string) Rule {
+	return Rule{
+		Name: "AdmissionPlaneFeatureFlagDowngrade",
+		Expr: fmt.Sprintf(
+			`(kube_configmap_labels{configmap="lenny-deployment-phase-stamp", %s="true"}) unless on() (kube_validatingwebhookconfiguration_info{name=%q})`,
+			labelKey, webhook,
+		),
+		For:         2 * time.Minute,
+		Severity:    SeverityWarning,
+		Summary:     "Admission-plane feature-flag downgrade drift",
+		Description: "The lenny-deployment-phase-stamp ConfigMap records a feature flag enabled: true but a ValidatingWebhookConfiguration the flag gates is absent from the cluster. Typically an operator helm-upgrade mistake or an out-of-band kubectl delete.",
+		SpecRef:     "§16.5",
+		Labels: map[string]string{
+			"flag_name":             flagName,
+			"expected_webhook_name": webhook,
+		},
+	}
 }
 
 // Catalog returns the full §16.5 alert catalog: every critical alert,
@@ -932,15 +973,22 @@ func warningAlerts() []Rule {
 			Description: "The lenny-ephemeral-container-cred-guard ValidatingAdmissionWebhook (failurePolicy: Fail) has been unreachable for more than 5 min. All update operations on pods/ephemeralcontainers in agent namespaces are denied while the webhook is down.",
 			SpecRef:     "§16.5",
 		},
-		{
-			Name:        "AdmissionPlaneFeatureFlagDowngrade",
-			Expr:        `(kube_configmap_labels{configmap="lenny-deployment-phase-stamp", label_lenny_dev_flag_llm_proxy_enabled="true"}) unless on() (kube_validatingwebhookconfiguration_info{name="lenny-direct-mode-isolation"})`,
-			For:         2 * time.Minute,
-			Severity:    SeverityWarning,
-			Summary:     "Admission-plane feature-flag downgrade drift",
-			Description: "The lenny-deployment-phase-stamp ConfigMap records a feature flag enabled: true but a ValidatingWebhookConfiguration the flag gates is absent from the cluster. Typically an operator helm-upgrade mistake or an out-of-band kubectl delete.",
-			SpecRef:     "§16.5",
-		},
+		// spec: §16.5 line 487 / §17.2 line 80 —
+		// AdmissionPlaneFeatureFlagDowngrade is the union of one
+		// single-pair rule per (flag, webhook) entry in the §17.2
+		// Feature-gated chart inventory. All four rules share the alert
+		// Name and each carries static flag_name / expected_webhook_name
+		// labels so a firing identifies the specific missing admission-plane
+		// surface (features.compliance gates two webhooks, so a full
+		// compliance downgrade emits two firings with identical flag_name
+		// but distinct expected_webhook_name). The label selector
+		// label_lenny_dev_flag_<slug>_enabled is the kube-state-metrics
+		// rendering of the phase-stamp ConfigMap's lenny.dev/flag-<slug>-enabled
+		// label (see phase-stamp-configmap.yaml). F-17.2.6.
+		admissionPlaneDowngradeRule("features.llmProxy", "lenny-direct-mode-isolation", "label_lenny_dev_flag_llm_proxy_enabled"),
+		admissionPlaneDowngradeRule("features.drainReadiness", "lenny-drain-readiness", "label_lenny_dev_flag_drain_readiness_enabled"),
+		admissionPlaneDowngradeRule("features.compliance", "lenny-data-residency-validator", "label_lenny_dev_flag_compliance_enabled"),
+		admissionPlaneDowngradeRule("features.compliance", "lenny-t4-node-isolation", "label_lenny_dev_flag_compliance_enabled"),
 		{
 			Name: "WarmPoolReplenishmentSlow",
 			// spec: §16.5 line 488 — fire at 2× the pool's

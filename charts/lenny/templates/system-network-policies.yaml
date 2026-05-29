@@ -665,6 +665,31 @@ spec:
   policyTypes: [Egress]
 ---
 {{- /*
+lenny-ops-deny-all-ingress is the §25.4 baseline default-deny for the
+operability control plane: it selects the lenny-ops pods (app: lenny-ops,
+the §13.2 line 201 selector exception) and admits no ingress. The
+lenny-system namespace default-deny-all already denies ingress, but §17.2
+line 31 and the §17 NetworkPolicy inventory name this policy explicitly as
+the agent-vs-operability boundary enforcer; rendering it by name lets
+operator runbooks and the §13.2 selector-consistency audit assert its
+presence. NetworkPolicies are additive, so the allow-ops Prometheus-scrape
+ingress below still applies. spec: §25.4 line 1123; §17.2 line 31. F-17.2.16.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lenny-ops-deny-all-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: lenny-ops
+  policyTypes: [Ingress]
+  ingress: []
+---
+{{- /*
 allow-ops re-admits the §25.4 lenny-ops Deployment's egress and
 ingress the §13.2 default-deny otherwise blocks. lenny-ops pods carry
 app: lenny-ops (the §13.2 line 201 selector exception), so this policy

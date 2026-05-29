@@ -8,9 +8,31 @@ tests:
   - it: renders the full lenny-system policy set including the new policies
     asserts:
       # default-deny-all plus the per-component allow-lists, including
-      # allow-gateway-ingress, allow-bootstrap-egress, and allow-ops.
+      # allow-gateway-ingress, allow-bootstrap-egress, allow-ops, and the
+      # named lenny-ops-deny-all-ingress baseline (F-17.2.16).
       - hasDocuments:
-          count: 14
+          count: 15
+
+  # spec: §25.4 line 1123; §17.2 line 31 — the operability-vs-agent
+  # boundary names lenny-ops-deny-all-ingress explicitly; render it by
+  # name so runbooks and the §13.2 selector audit can assert its
+  # presence. F-17.2.16.
+  - it: renders the named lenny-ops-deny-all-ingress baseline policy
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-deny-all-ingress
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.podSelector.matchLabels["app"]
+          value: lenny-ops
+      - contains:
+          path: spec.policyTypes
+          content: Ingress
+      - equal:
+          path: spec.ingress
+          value: []
 
   - it: renders a NetworkPolicy named allow-gateway-ingress
     documentSelector:

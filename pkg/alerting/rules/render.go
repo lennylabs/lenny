@@ -47,10 +47,14 @@ func buildRuleGroup(groupName string, catalog []Rule) (promRuleGroup, error) {
 		if err := r.Validate(); err != nil {
 			return promRuleGroup{}, fmt.Errorf("rules: cannot render an invalid catalogue: %w", err)
 		}
+		labels := map[string]string{"severity": string(r.Severity)}
+		for k, val := range r.Labels {
+			labels[k] = val
+		}
 		ar := promAlertRule{
 			Alert:       r.Name,
 			Expr:        r.Expr,
-			Labels:      map[string]string{"severity": string(r.Severity)},
+			Labels:      labels,
 			Annotations: map[string]string{"summary": r.Summary},
 		}
 		if r.For > 0 {
