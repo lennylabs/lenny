@@ -1090,7 +1090,7 @@ func (s *Server) emitWorkspacePlanWarningOps(tenantID, sessionID string, payload
 		data = []byte("{}")
 	}
 	subject := "session/" + sessionID
-	_, _ = s.opsEmitter.Emit(context.Background(), events.OperationalEvent{
+	_ = s.opsEmitter.Emit(context.Background(), events.OperationalEvent{
 		Source:          "/v1/sessions",
 		Subject:         subject,
 		Type:            events.EventWorkspacePlanWarning.CloudEventsType(),

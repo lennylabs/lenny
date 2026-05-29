@@ -2630,7 +2630,7 @@ func main() {
 		data, _ := json.Marshal(map[string]any{
 			"oldStatus": string(prev), "newStatus": string(curr),
 		})
-		_, _ = opsEmitter.Emit(context.Background(), events.OperationalEvent{
+		_ = opsEmitter.Emit(context.Background(), events.OperationalEvent{
 			Source:          "/v1/admin/health",
 			Type:            events.EventHealthStatusChanged.CloudEventsType(),
 			Severity:        "warning",
@@ -4617,7 +4617,7 @@ func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx cont
 	// the §25.3 event buffer so ops agents observe it without log scraping.
 	if e.emitter != nil {
 		data, _ := json.Marshal(detail)
-		_, _ = e.emitter.Emit(ctx, events.OperationalEvent{
+		_ = e.emitter.Emit(ctx, events.OperationalEvent{
 			Source:          "/v1/sessions",
 			Type:            events.EventExperimentIsolationMismatch.CloudEventsType(),
 			Severity:        "warning",

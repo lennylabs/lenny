@@ -69,7 +69,7 @@ func EmitCallbacks(opts EventEmitOptions) (onFired, onResolved func(Alert)) {
 			DataContentType: "application/json",
 			Data:            data,
 		}
-		if _, err := opts.Emitter.Emit(context.Background(), event); err != nil {
+		if err := opts.Emitter.Emit(context.Background(), event); err != nil {
 			log.Printf("alerting/evaluator: emit %s for %s: %v",
 				eventType, a.Rule.Name, err)
 		}

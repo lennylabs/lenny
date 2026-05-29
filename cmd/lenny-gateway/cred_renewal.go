@@ -249,7 +249,7 @@ func (w *credRenewalWiring) emitCredentialRotated(renewed credrenewal.Lease) {
 		"provider":     rp.provider,
 		"reason":       string(credential.TriggerProactiveRenewal),
 	})
-	_, _ = w.emitter.Emit(context.Background(), events.OperationalEvent{
+	_ = w.emitter.Emit(context.Background(), events.OperationalEvent{
 		Source:          "//lenny.dev/credential-pool",
 		Type:            events.EventCredentialRotated.CloudEventsType(),
 		Severity:        "info",
@@ -274,7 +274,7 @@ func (w *credRenewalWiring) emitCredentialPoolExhausted(lease credrenewal.Lease,
 		"leaseId":      lease.LeaseID,
 		"provider":     provider,
 	})
-	_, _ = w.emitter.Emit(context.Background(), events.OperationalEvent{
+	_ = w.emitter.Emit(context.Background(), events.OperationalEvent{
 		Source:          "//lenny.dev/credential-pool",
 		Type:            events.EventCredentialPoolExhausted.CloudEventsType(),
 		Severity:        "warning",

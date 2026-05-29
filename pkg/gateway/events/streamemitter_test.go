@@ -36,20 +36,20 @@ func TestStreamEmitterWritesToRedisAndBuffer(t *testing.T) {
 		Client: client, Buffer: buf, ReplicaID: "replica-1",
 	})
 
-	id, err := em.Emit(context.Background(), events.OperationalEvent{
+	if err := em.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.alert_fired", Severity: "critical",
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	if id != 1 {
-		t.Errorf("Emit returned local id %d, want 1", id)
-	}
 
-	// The event made it to the local buffer.
+	// The event made it to the local buffer; the §25.3 error-only
+	// contract reads the assigned id back via the buffer cursor.
 	page := buf.Query(0, events.EventFilter{}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("local buffer holds %d events, want 1", len(page.Events))
+	}
+	if page.Events[0].ID != 1 {
+		t.Errorf("local buffer id = %d, want 1", page.Events[0].ID)
 	}
 
 	// And to the Redis stream under the §25.5 default key.
@@ -93,7 +93,7 @@ func TestStreamEmitterCapsMaxLen(t *testing.T) {
 	})
 
 	for i := 0; i < 20; i++ {
-		if _, err := em.Emit(context.Background(), events.OperationalEvent{
+		if err := em.Emit(context.Background(), events.OperationalEvent{
 			Type: "dev.lenny.alert_fired",
 		}); err != nil {
 			t.Fatalf("Emit %d: %v", i, err)
@@ -130,16 +130,15 @@ func TestStreamEmitterFallsBackToLocalBufferOnRedisFailure(t *testing.T) {
 	em := events.NewStreamEmitter(events.StreamEmitterOptions{
 		Client: failingRedis{}, Buffer: buf,
 	})
-	id, err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.alert_fired"})
-	if err == nil {
+	if err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.alert_fired"}); err == nil {
 		t.Fatal("Emit on Redis failure returned nil error; want a non-nil error so the caller surfaces the regression")
-	}
-	if id != 1 {
-		t.Errorf("local id = %d, want 1 even on Redis failure (event must reach the local buffer)", id)
 	}
 	page := buf.Query(0, events.EventFilter{}, 100)
 	if len(page.Events) != 1 {
 		t.Errorf("local buffer holds %d events, want 1 (fall-back path must preserve the event)", len(page.Events))
+	}
+	if page.Events[0].ID != 1 {
+		t.Errorf("local id = %d, want 1 even on Redis failure (event must reach the local buffer)", page.Events[0].ID)
 	}
 }
 
@@ -153,7 +152,7 @@ func TestStreamEmitterRespectsContextCancellation(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := em.Emit(ctx, events.OperationalEvent{Type: "dev.lenny.x"}); !errors.Is(err, context.Canceled) {
+	if err := em.Emit(ctx, events.OperationalEvent{Type: "dev.lenny.x"}); !errors.Is(err, context.Canceled) {
 		t.Errorf("Emit on cancelled ctx returned %v, want context.Canceled", err)
 	}
 }
@@ -166,10 +165,10 @@ func TestStreamEmitterStampsSource(t *testing.T) {
 	em := events.NewStreamEmitter(events.StreamEmitterOptions{
 		Client: client, Buffer: buf, Source: "//lenny.dev/gateway/test",
 	})
-	if _, err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.x"}); err != nil {
+	if err := em.Emit(context.Background(), events.OperationalEvent{Type: "dev.lenny.x"}); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	if _, err := em.Emit(context.Background(), events.OperationalEvent{
+	if err := em.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.x", Source: "//lenny.dev/explicit",
 	}); err != nil {
 		t.Fatalf("Emit with explicit source: %v", err)
@@ -227,12 +226,12 @@ func TestStreamEmitterMultiProcessReplay(t *testing.T) {
 		Source: "//lenny.dev/controller/replica-1", ReplicaID: "controller-replica-1",
 	})
 
-	if _, err := gatewayEmitter.Emit(context.Background(), events.OperationalEvent{
+	if err := gatewayEmitter.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.session_failed",
 	}); err != nil {
 		t.Fatalf("gateway Emit: %v", err)
 	}
-	if _, err := controllerEmitter.Emit(context.Background(), events.OperationalEvent{
+	if err := controllerEmitter.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.pool_state_changed",
 	}); err != nil {
 		t.Fatalf("controller Emit: %v", err)

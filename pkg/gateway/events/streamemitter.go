@@ -124,12 +124,15 @@ func NewStreamEmitter(opts StreamEmitterOptions) *StreamEmitter {
 }
 
 // Emit stamps the §25.3 envelope, appends to the local buffer, then
-// publishes the event to the §25.5 Redis stream. The local-buffer id is
-// returned in both the success and the Redis-failure paths so the
-// caller's logging surfaces the local cursor either way.
-func (e *StreamEmitter) Emit(ctx context.Context, event OperationalEvent) (uint64, error) {
+// publishes the event to the §25.5 Redis stream. The buffer write always
+// happens first so the event survives a Redis failure (§25.5 has
+// lenny-ops fall back to the gateway buffer); a Redis-write failure
+// returns a non-nil error the caller may log. The §25.3 EventEmitter
+// contract is error-only; the local-buffer cursor is read back via
+// Buffer().Query.
+func (e *StreamEmitter) Emit(ctx context.Context, event OperationalEvent) error {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return err
 	}
 	if event.SpecVersion == "" {
 		event.SpecVersion = CloudEventsSpecVersion
@@ -143,10 +146,10 @@ func (e *StreamEmitter) Emit(ctx context.Context, event OperationalEvent) (uint6
 	if event.Source == "" && e.source != "" {
 		event.Source = e.source
 	}
-	id := e.buffer.Append(event)
+	e.buffer.Append(event)
 	payload, err := json.Marshal(event)
 	if err != nil {
-		return id, fmt.Errorf("opsevents: marshal event: %w", err)
+		return fmt.Errorf("opsevents: marshal event: %w", err)
 	}
 	args := &redis.XAddArgs{
 		Stream: e.streamKey,
@@ -156,9 +159,9 @@ func (e *StreamEmitter) Emit(ctx context.Context, event OperationalEvent) (uint6
 	}
 	if _, err := e.client.XAdd(ctx, args).Result(); err != nil {
 		log.Printf("opsevents: XADD %s failed: %v (event %s)", e.streamKey, err, event.ID)
-		return id, fmt.Errorf("opsevents: xadd %s: %w", e.streamKey, err)
+		return fmt.Errorf("opsevents: xadd %s: %w", e.streamKey, err)
 	}
-	return id, nil
+	return nil
 }
 
 // Buffer returns the local ring buffer this emitter tees events into.

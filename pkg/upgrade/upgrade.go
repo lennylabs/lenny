@@ -159,7 +159,7 @@ func emitProgressed(ctx context.Context, em Emitter, pool string, oldPhase, newP
 		"imageDigest": imageDigest,
 	}
 	data, _ := json.Marshal(payload)
-	_, _ = em.Emit(ctx, events.OperationalEvent{
+	_ = em.Emit(ctx, events.OperationalEvent{
 		Source:          "//lenny.dev/upgrade",
 		Type:            events.EventUpgradeProgressed.CloudEventsType(),
 		Severity:        severity,

@@ -317,7 +317,7 @@ func (s *Server) emitAwaitingClientActionEntered(ctx context.Context, sess sessi
 			"tenantId":  sess.TenantID,
 		}
 		data, _ := json.Marshal(payload)
-		_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
+		_ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
 			Source:          "/v1/sessions",
 			Type:            events.EventSessionAwaitingAction.CloudEventsType(),
 			Severity:        "warning",

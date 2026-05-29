@@ -80,20 +80,20 @@ func TestRedisFanOutEmitterPublishesToStreamAndLocalBuffer(t *testing.T) {
 	local := opsstream.New(opsstream.Options{})
 
 	em := newRedisFanOutEmitter(client, local, "ops-replica-1")
-	id, err := em.Emit(context.Background(), events.OperationalEvent{
+	if err := em.Emit(context.Background(), events.OperationalEvent{
 		Type: "dev.lenny.escalation_created", Severity: "critical",
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	if id == 0 {
-		t.Error("redisFanOutEmitter returned id=0; local Publish must assign a non-zero cursor")
-	}
 
-	// The local opsstream.Service buffer holds the event.
+	// The local opsstream.Service buffer holds the event; the §25.3
+	// error-only contract reads the assigned cursor back via the buffer.
 	page := local.Query(0, events.EventFilter{}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("local buffer holds %d events, want 1", len(page.Events))
+	}
+	if page.Pagination.Cursor == 0 {
+		t.Error("local Publish must assign a non-zero buffer cursor")
 	}
 	if page.Events[0].Event.Type != "dev.lenny.escalation_created" {
 		t.Errorf("local event type = %q, want dev.lenny.escalation_created", page.Events[0].Event.Type)

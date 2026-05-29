@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -118,11 +117,13 @@ func (s *Service) Publish(ctx context.Context, e gwevents.OperationalEvent) (uin
 	return id, nil
 }
 
-// Emit satisfies the §4.0 gwevents.EventEmitter interface so the
-// Service can be passed to any subsystem that takes an EventEmitter.
-// It is a one-line forward to Publish.
-func (s *Service) Emit(ctx context.Context, e gwevents.OperationalEvent) (uint64, error) {
-	return s.Publish(ctx, e)
+// Emit satisfies the §25.3 gwevents.EventEmitter interface (error-only)
+// so the Service can be passed to any subsystem that takes an
+// EventEmitter. It forwards to Publish and discards the buffer id, which
+// the query side reads back via the buffer cursor.
+func (s *Service) Emit(ctx context.Context, e gwevents.OperationalEvent) error {
+	_, err := s.Publish(ctx, e)
+	return err
 }
 
 // Compile-time guard that *Service satisfies gwevents.EventEmitter.
@@ -139,7 +140,7 @@ func (s *Service) fanOutToSubscribers(ev gwevents.BufferedEvent) {
 		if sub.closed {
 			continue
 		}
-		if !matchFilter(ev.Event, sub.filter) {
+		if !sub.filter.Matches(ev.Event) {
 			continue
 		}
 		select {
@@ -147,20 +148,6 @@ func (s *Service) fanOutToSubscribers(ev gwevents.BufferedEvent) {
 		default:
 		}
 	}
-}
-
-// matchFilter applies the same rules the gateway-side buffer uses
-// (§25.3): both empty-field passes are no-ops, and EventType matches
-// the full CloudEvents type or its short-name suffix.
-func matchFilter(e gwevents.OperationalEvent, f gwevents.EventFilter) bool {
-	if f.Severity != "" && e.Severity != f.Severity {
-		return false
-	}
-	if f.EventType != "" && e.Type != f.EventType &&
-		!strings.HasSuffix(e.Type, "."+f.EventType) {
-		return false
-	}
-	return true
 }
 
 // Query returns the §25.5 polling page: events after the cursor,

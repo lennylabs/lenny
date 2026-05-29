@@ -170,10 +170,10 @@ func TestService_Poll_PaginationEnvelope(t *testing.T) {
 	if len(page.Events) != 3 {
 		t.Errorf("first page size: %d", len(page.Events))
 	}
-	if page.Cursor != 3 {
-		t.Errorf("cursor: %d", page.Cursor)
+	if page.Pagination.Cursor != 3 {
+		t.Errorf("cursor: %d", page.Pagination.Cursor)
 	}
-	if !page.HasMore {
+	if !page.Pagination.HasMore {
 		t.Error("hasMore should be true")
 	}
 
@@ -184,11 +184,11 @@ func TestService_Poll_PaginationEnvelope(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode page2: %v", err)
 	}
-	if len(page.Events) != 2 || page.HasMore {
-		t.Fatalf("page2: events=%d hasMore=%v", len(page.Events), page.HasMore)
+	if len(page.Events) != 2 || page.Pagination.HasMore {
+		t.Fatalf("page2: events=%d hasMore=%v", len(page.Events), page.Pagination.HasMore)
 	}
-	if page.Cursor != 5 {
-		t.Errorf("page2 cursor: %d", page.Cursor)
+	if page.Pagination.Cursor != 5 {
+		t.Errorf("page2 cursor: %d", page.Pagination.Cursor)
 	}
 }
 

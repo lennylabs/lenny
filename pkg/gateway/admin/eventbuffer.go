@@ -40,7 +40,7 @@ func (r *Router) emitOpsEvent(ctx context.Context, eventType events.EventType, s
 			payload = b
 		}
 	}
-	_, _ = r.eventEmitter.Emit(ctx, events.OperationalEvent{
+	_ = r.eventEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/admin",
 		Type:            eventType.CloudEventsType(),
 		Severity:        severity,

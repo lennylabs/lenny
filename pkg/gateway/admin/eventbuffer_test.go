@@ -45,8 +45,8 @@ func TestEventBufferEndpointReturnsEvents(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(page.Events) != 2 || page.Cursor != 2 {
-		t.Errorf("buffer page: %d events, cursor %d; want 2, 2", len(page.Events), page.Cursor)
+	if len(page.Events) != 2 || page.Pagination.Cursor != 2 {
+		t.Errorf("buffer page: %d events, cursor %d; want 2, 2", len(page.Events), page.Pagination.Cursor)
 	}
 }
 
@@ -115,6 +115,36 @@ func TestEventBufferSurfacesCircuitBreakerEvent(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("opening a breaker must emit circuit_breaker_opened into the buffer: %+v", page.Events)
+	}
+}
+
+func TestEventBufferEndpointCSVFilter_spec_25_3_15(t *testing.T) {
+	// spec: §25.2 lines 210-211 — ?severity= and ?eventType= accept the
+	// canonical CSV form; the endpoint returns the union of the tokens
+	// rather than the empty page the literal-match path produced.
+	buf := events.NewEventBuffer(0)
+	buf.Append(opsEvent("alert_fired", "critical"))
+	buf.Append(opsEvent("pool_state_changed", "info"))
+	buf.Append(opsEvent("session_failed", "warning"))
+	router := newEventBufferAdmin(t, buf)
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodGet,
+		"/v1/admin/events/buffer?severity=critical,warning&eventType=alert_fired,session_failed", nil))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var page events.BufferedEventPage
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Events) != 2 {
+		t.Errorf("CSV severity+eventType union: %d events, want 2 (critical alert_fired, warning session_failed)", len(page.Events))
+	}
+	// The canonical pagination envelope rides on the wire response.
+	if page.Pagination.CursorKind != "buffer-seq" {
+		t.Errorf("cursorKind = %q, want buffer-seq", page.Pagination.CursorKind)
 	}
 }
 

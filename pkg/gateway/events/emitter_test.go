@@ -15,16 +15,17 @@ func TestEmitFillsEnvelope(t *testing.T) {
 	at := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	em.now = func() time.Time { return at }
 
-	id, err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"})
-	if err != nil {
+	if err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"}); err != nil {
 		t.Fatalf("Emit: %v", err)
-	}
-	if id != 1 {
-		t.Errorf("first emit id = %d, want 1", id)
 	}
 	page := em.Buffer().Query(0, EventFilter{}, 100)
 	if len(page.Events) != 1 {
 		t.Fatalf("buffer holds %d events, want 1", len(page.Events))
+	}
+	// The error-only EventEmitter contract (§25.3) reads the assigned
+	// monotonic buffer id back through the buffer cursor.
+	if page.Events[0].ID != 1 {
+		t.Errorf("first emit id = %d, want 1", page.Events[0].ID)
 	}
 	got := page.Events[0].Event
 	if got.SpecVersion != CloudEventsSpecVersion {
@@ -41,7 +42,7 @@ func TestEmitFillsEnvelope(t *testing.T) {
 func TestEmitPreservesCallerSetFields(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(8), "replica-1")
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := em.Emit(context.Background(), OperationalEvent{
+	if err := em.Emit(context.Background(), OperationalEvent{
 		ID: "explicit-key", SpecVersion: "1.0.2", Type: "dev.lenny.x", Time: at,
 	}); err != nil {
 		t.Fatalf("Emit: %v", err)
@@ -59,7 +60,7 @@ func TestEmitEventKeysAreUniqueAndMonotonic(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(64), "replica-1")
 	keys := map[string]bool{}
 	for i := 0; i < 50; i++ {
-		if _, err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.x"}); err != nil {
+		if err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.x"}); err != nil {
 			t.Fatalf("Emit: %v", err)
 		}
 	}
@@ -77,7 +78,7 @@ func TestEmitEventKeysAreUniqueAndMonotonic(t *testing.T) {
 
 func TestNewEmitterDefaultsReplicaID(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(8), "")
-	if _, err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.x"}); err != nil {
+	if err := em.Emit(context.Background(), OperationalEvent{Type: "dev.lenny.x"}); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
 	got := em.Buffer().Query(0, EventFilter{}, 100).Events[0].Event
@@ -92,7 +93,7 @@ func TestEmitRespectsContextCancellation(t *testing.T) {
 	em := NewEmitter(NewEventBuffer(8), "replica-1")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := em.Emit(ctx, OperationalEvent{Type: "dev.lenny.x"}); !errors.Is(err, context.Canceled) {
+	if err := em.Emit(ctx, OperationalEvent{Type: "dev.lenny.x"}); !errors.Is(err, context.Canceled) {
 		t.Errorf("Emit on cancelled ctx returned %v, want context.Canceled", err)
 	}
 	page := em.Buffer().Query(0, EventFilter{}, 100)

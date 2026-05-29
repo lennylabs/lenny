@@ -166,7 +166,7 @@ func (s *Server) emitMultiEligibleSkipped(ctx context.Context, row *sessionstore
 		"enrolled_experiment_id": enrolledID,
 		"skipped_experiment_ids": skipped,
 	})
-	_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
+	_ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/sessions",
 		Type:            events.EventExperimentMultiEligibleSkipped.CloudEventsType(),
 		Severity:        "info",
@@ -368,7 +368,7 @@ func (s *Server) emitExperimentTargetingFailed(ctx context.Context, row *session
 		"provider":  provider,
 		"error":     evalErr.Error(),
 	})
-	_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
+	_ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/sessions",
 		Type:            events.EventExperimentTargetingFailed.CloudEventsType(),
 		Severity:        "warning",
@@ -392,7 +392,7 @@ func (s *Server) emitExperimentUnknownVariant(ctx context.Context, row *sessions
 		"provider":      provider,
 		"raw_variant":   rawVariant,
 	})
-	_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
+	_ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/sessions",
 		Type:            events.EventExperimentUnknownVariantFromProvider.CloudEventsType(),
 		Severity:        "warning",
@@ -415,7 +415,7 @@ func (s *Server) emitExperimentUnknownExternalID(ctx context.Context, row *sessi
 		"provider":               provider,
 		"external_experiment_id": externalID,
 	})
-	_, _ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
+	_ = s.opsEmitter.Emit(ctx, events.OperationalEvent{
 		Source:          "/v1/sessions",
 		Type:            events.EventExperimentUnknownExternalID.CloudEventsType(),
 		Severity:        "info",

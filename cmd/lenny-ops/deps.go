@@ -65,15 +65,11 @@ func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Servic
 // §25.5 Redis stream. A Redis write failure is surfaced as the
 // returned error; the local publish has already succeeded so the §25.5
 // "fall back to gateway buffer" path is preserved.
-func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalEvent) (uint64, error) {
-	id, err := e.local.Publish(ctx, event)
-	if err != nil {
-		return id, err
+func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalEvent) error {
+	if _, err := e.local.Publish(ctx, event); err != nil {
+		return err
 	}
-	if _, streamErr := e.stream.Emit(ctx, event); streamErr != nil {
-		return id, streamErr
-	}
-	return id, nil
+	return e.stream.Emit(ctx, event)
 }
 
 // Compile-time guard that *redisFanOutEmitter satisfies the §4.0

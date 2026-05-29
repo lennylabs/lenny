@@ -380,7 +380,7 @@ func (r *Reconciler) emitPoolStateChanged(ctx context.Context, pool string, oldP
 		"oldState": string(oldPhase),
 		"newState": string(newPhase),
 	})
-	if _, err := r.Events.Emit(ctx, events.OperationalEvent{
+	if err := r.Events.Emit(ctx, events.OperationalEvent{
 		Source:          "//lenny.dev/warmpool",
 		Type:            events.EventPoolStateChanged.CloudEventsType(),
 		Severity:        severity,
