@@ -96,6 +96,32 @@ func ResolveEffective(platformFloor, tenantStored EnforcementMode) (EnforcementM
 	return tenantStored, nil
 }
 
+// ResolveEffectiveWithDefaults resolves the §9.2 effective enforcement
+// mode from the raw configured platform floor and the raw tenant
+// stored value, applying the spec defaults so the result is always a
+// valid mode: an unset or invalid floor is treated as off (§9.2 line
+// 64 platform-floor default), and an unset or invalid tenant stored
+// value is treated as the enforce tenant default (§9.2 line 60). The
+// effective mode is max(floor, stored). This is the shared resolver
+// the admin GET response and the §16.5 weakened-mode reconciliation
+// gauge both read so the two surfaces agree on what "weaker than
+// enforce" means. spec: §9.2 lines 60, 64. F-9.2.5.
+func ResolveEffectiveWithDefaults(rawFloor, rawStored string) EnforcementMode {
+	floor := EnforcementMode(rawFloor)
+	if !floor.IsValid() {
+		floor = ModeOff
+	}
+	stored := EnforcementMode(rawStored)
+	if !stored.IsValid() {
+		stored = ModeEnforce
+	}
+	eff, err := ResolveEffective(floor, stored)
+	if err != nil {
+		return stored
+	}
+	return eff
+}
+
 // InvalidModeError captures the §9.2 mode-validation failure surfaced
 // by the gateway admin API as 400 ELICITATION_INTEGRITY_INVALID_MODE.
 type InvalidModeError struct {

@@ -69,6 +69,46 @@ func TestResolveEffectiveRejectsInvalidMode(t *testing.T) {
 	}
 }
 
+// TestResolveEffectiveWithDefaults proves the §9.2 default-applying
+// resolver the §16.5 weakened-mode gauge and the admin GET both read.
+// An unset/invalid floor falls to off (§9.2 line 64); an unset/invalid
+// stored value falls to the enforce tenant default (§9.2 line 60); the
+// effective mode is max(floor, stored). F-9.2.5.
+func TestResolveEffectiveWithDefaults(t *testing.T) {
+	cases := []struct {
+		name        string
+		floor       string
+		stored      string
+		expected    EnforcementMode
+		wantWeakerN bool // expected: effective is weaker than enforce
+	}{
+		// Spec default: no floor, no stored → enforce (the safe default).
+		{"both unset → enforce", "", "", ModeEnforce, false},
+		// Invalid raw values fall to their defaults, not to a panic.
+		{"invalid floor + invalid stored → enforce", "bogus", "nonsense", ModeEnforce, false},
+		// A tenant explicitly weakened to detect-only with no floor.
+		{"stored detect-only, no floor → detect-only", "", "detect-only", ModeDetectOnly, true},
+		{"stored off, no floor → off", "", "off", ModeOff, true},
+		// The platform floor clamps a weak stored value upward.
+		{"floor enforce clamps stored off → enforce", "enforce", "off", ModeEnforce, false},
+		{"floor detect-only over stored off → detect-only", "detect-only", "off", ModeDetectOnly, true},
+		// The stricter tenant value dominates a weaker floor.
+		{"stored enforce over floor detect-only → enforce", "detect-only", "enforce", ModeEnforce, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ResolveEffectiveWithDefaults(c.floor, c.stored)
+			if got != c.expected {
+				t.Errorf("ResolveEffectiveWithDefaults(%q, %q) = %q, want %q", c.floor, c.stored, got, c.expected)
+			}
+			weaker := !got.AtLeast(ModeEnforce)
+			if weaker != c.wantWeakerN {
+				t.Errorf("ResolveEffectiveWithDefaults(%q, %q): weaker-than-enforce = %v, want %v", c.floor, c.stored, weaker, c.wantWeakerN)
+			}
+		})
+	}
+}
+
 func TestAllDepthPoliciesIsExhaustive(t *testing.T) {
 	if got := len(AllDepthPolicies()); got != 3 {
 		t.Errorf("AllDepthPolicies() returned %d, want 3 per §9.2", got)

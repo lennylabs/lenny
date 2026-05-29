@@ -74,22 +74,12 @@ func (r *Router) handleGetElicitationIntegrity(w http.ResponseWriter, req *http.
 // resolveElicitationEffective returns the §9.2 effective mode the
 // gateway enforces for a tenant: `max(platformFloor, stored)`. An
 // unset floor (the default) is `off`, so the result equals the
-// stored mode. An invalid floor is treated as `off` and logged
-// elsewhere; this helper never errors so the admin GET stays stable.
+// stored mode; an invalid floor is treated as `off`. The shared
+// elicitation.ResolveEffectiveWithDefaults resolver applies the spec
+// defaults so this surface and the §16.5 weakened-mode gauge agree on
+// the effective mode. spec: §9.2 lines 60, 64. F-9.2.5.
 func (r *Router) resolveElicitationEffective(stored string) string {
-	floor := elicitation.EnforcementMode(r.elicitationFloor)
-	if !floor.IsValid() {
-		floor = elicitation.ModeOff
-	}
-	storedMode := elicitation.EnforcementMode(stored)
-	if !storedMode.IsValid() {
-		storedMode = elicitation.ModeEnforce
-	}
-	got, err := elicitation.ResolveEffective(floor, storedMode)
-	if err != nil {
-		return string(storedMode)
-	}
-	return string(got)
+	return string(elicitation.ResolveEffectiveWithDefaults(r.elicitationFloor, stored))
 }
 
 // handlePutElicitationIntegrity serves

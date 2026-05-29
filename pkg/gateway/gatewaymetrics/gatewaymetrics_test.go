@@ -689,14 +689,19 @@ func TestRecordElicitationDropExposesCounter(t *testing.T) {
 	}
 }
 
+// spec: §16.1 line 64; §9.2 line 60 — the tamper counter is labelled by
+// origin_pod, tampering_pod, and enforcement_mode (no tenant_id). Two
+// distinct (origin_pod, tampering_pod) pairs under enforce produce two
+// independent series; a detect-only catch on the same pair is a third.
+// F-9.2.4.
 func TestRecordElicitationContentTamperDetectedExposesCounter(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	m.RecordElicitationContentTamperDetected("acme", "enforce")
-	m.RecordElicitationContentTamperDetected("acme", "enforce")
-	m.RecordElicitationContentTamperDetected("acme", "detect-only")
+	m.RecordElicitationContentTamperDetected("pod-origin", "pod-middle", "enforce")
+	m.RecordElicitationContentTamperDetected("pod-origin", "pod-middle", "enforce")
+	m.RecordElicitationContentTamperDetected("pod-origin", "pod-middle", "detect-only")
 
 	rr := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -707,11 +712,41 @@ func TestRecordElicitationContentTamperDetectedExposesCounter(t *testing.T) {
 	if !strings.Contains(body, "lenny_elicitation_content_tamper_detected_total") {
 		t.Fatalf("/metrics output missing lenny_elicitation_content_tamper_detected_total:\n%s", body)
 	}
-	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="enforce",tenant_id="acme"} 2`) {
-		t.Errorf("/metrics output missing enforce-mode count of 2:\n%s", body)
+	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="enforce",origin_pod="pod-origin",tampering_pod="pod-middle"} 2`) {
+		t.Errorf("/metrics output missing enforce-mode count of 2 with origin_pod/tampering_pod labels:\n%s", body)
 	}
-	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="detect-only",tenant_id="acme"} 1`) {
-		t.Errorf("/metrics output missing detect-only count of 1:\n%s", body)
+	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="detect-only",origin_pod="pod-origin",tampering_pod="pod-middle"} 1`) {
+		t.Errorf("/metrics output missing detect-only count of 1 with origin_pod/tampering_pod labels:\n%s", body)
+	}
+	// §16.1 line 64 cardinality: tenant_id must NOT be a label on this
+	// metric — the bounded labels are origin_pod and tampering_pod only.
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "lenny_elicitation_content_tamper_detected_total{") && strings.Contains(line, "tenant_id") {
+			t.Errorf("tamper counter must not carry a tenant_id label (§16.1 line 64): %s", line)
+		}
+	}
+}
+
+// spec: §16.5 line 460 — the weakened-mode gauge is the standing
+// ElicitationContentIntegrityWeakened alert numerator. It is exposed
+// unlabelled and reports the count of active tenants whose effective
+// §9.2 mode is weaker than enforce. F-9.2.5.
+func TestSetElicitationIntegrityWeakenedExposesGauge(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetElicitationIntegrityWeakened(3)
+	body := scrapeMetrics(t, m)
+	if !strings.Contains(body, "lenny_elicitation_content_integrity_effective_mode_weaker_than_enforce 3") {
+		t.Errorf("/metrics output missing weakened gauge value of 3:\n%s", body)
+	}
+	// The gauge resolves to zero once every tenant is on enforce; the
+	// alert must clear, so the series must report exactly 0 (not absent).
+	m.SetElicitationIntegrityWeakened(0)
+	body = scrapeMetrics(t, m)
+	if !strings.Contains(body, "lenny_elicitation_content_integrity_effective_mode_weaker_than_enforce 0") {
+		t.Errorf("/metrics output missing weakened gauge value of 0 after resolve:\n%s", body)
 	}
 }
 

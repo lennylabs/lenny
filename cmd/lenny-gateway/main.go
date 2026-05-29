@@ -80,6 +80,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
+	"github.com/lennylabs/lenny/pkg/elicitation"
 	gwadapter "github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterregistry"
@@ -2228,6 +2229,13 @@ func main() {
 		// drive the ElicitationBacklogHigh alert and the operator
 		// roundtrip / timeout / suppressed dashboards.
 		ElicitationLifecycleMetrics: gwMetrics,
+		// spec: §16.1 line 64; §9.2 line 60 — the §9.2 chain walker
+		// reports a content-tamper detection through this recorder, which
+		// increments lenny_elicitation_content_tamper_detected_total
+		// {origin_pod, tampering_pod, enforcement_mode}. Without it the
+		// dispatcher's tamper branch is a no-op and the §16.5
+		// ElicitationContentTamperDetected alert can never fire. F-9.2.4.
+		ElicitationTamperMetrics: gwMetrics,
 		// spec: §9.2 / §16.1 / §15.2 line 1335 — Deps.TenantID is the
 		// fallback for transports without an authenticated principal
 		// (tests, the dev-headers path). Every production handler
@@ -3610,6 +3618,11 @@ func main() {
 	exportGaugeMetrics := func(ctx context.Context) {
 		exportStorageQuotaMetrics(ctx, tenants, storageCounter, gwMetrics)
 		exportCircuitBreakerMetrics(ctx, breakers, breakerCache, gwMetrics)
+		// §16.5 line 460 — the standing ElicitationContentIntegrityWeakened
+		// alert reads a gauge that must reflect the live tenant posture, so
+		// refresh it on the same 30s cadence as the other gauge exporters.
+		// F-9.2.5.
+		exportElicitationIntegrityWeakened(ctx, tenants, *elicitationFloor, gwMetrics)
 	}
 	exportGaugeMetrics(context.Background())
 	go func() {
@@ -4814,6 +4827,37 @@ func exportStorageQuotaMetrics(ctx context.Context, tenants tenantstore.Store, c
 		}
 		m.SetStorageQuota(t.ID, used, t.StorageQuotaBytes)
 	}
+}
+
+// exportElicitationIntegrityWeakened refreshes the §16.5 line 460
+// ElicitationContentIntegrityWeakened standing-alert gauge: the count
+// of active tenants whose §9.2 effective elicitation content-integrity
+// mode (max(platformFloor, tenantStored)) is weaker than enforce. The
+// gauge keeps the standing warning alert firing while any tenant runs a
+// reduced-integrity posture and resolves it to zero once every active
+// tenant resolves to enforce. List with the zero filter already drops
+// soft-deleted rows, so the count reflects active tenants only. Errors
+// are logged but never bubble — the exporter is a best-effort signal
+// and must not interrupt the gauge-refresh loop.
+//
+// spec: §16.5 line 460 (standing-alert numerator)
+// spec: §9.2 lines 60, 64 (effective-mode resolution + defaults)
+func exportElicitationIntegrityWeakened(ctx context.Context, tenants tenantstore.Store, floor string, m *gatewaymetrics.Metrics) {
+	rows, err := tenants.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("lenny-gateway: elicitation-integrity weakened gauge: listing tenants failed: %v", err)
+		}
+		return
+	}
+	var weakened int
+	for _, t := range rows {
+		eff := elicitation.ResolveEffectiveWithDefaults(floor, t.ElicitationContentIntegrity)
+		if !eff.AtLeast(elicitation.ModeEnforce) {
+			weakened++
+		}
+	}
+	m.SetElicitationIntegrityWeakened(weakened)
 }
 
 // tenantListerForHPA is the narrow interface exportHPAGauges

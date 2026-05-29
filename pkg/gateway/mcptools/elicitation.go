@@ -69,7 +69,8 @@ type elicitationDispatcher struct {
 	// tamperMetrics, when non-nil, receives a notification every time
 	// the §9.2 chain walk catches a tamper at a forwarding hop. The
 	// observer is responsible for incrementing
-	// lenny_elicitation_content_tamper_detected_total{tenant_id}.
+	// lenny_elicitation_content_tamper_detected_total
+	// {origin_pod, tampering_pod, enforcement_mode} per §16.1 line 64.
 	tamperMetrics ElicitationTamperRecorder
 
 	// perHopTimeout overrides the §11.3 line 211 hard-coded 30s per-hop
@@ -84,11 +85,14 @@ type elicitationDispatcher struct {
 // wires into the elicitation dispatcher so the §9.2 chain walker
 // reports tamper detections without depending on the gateway's
 // metrics package directly. *gatewaymetrics.Metrics satisfies it.
-// enforcementMode is the §9.2 mode that was in force at the time
-// the tamper was caught (off | detect-only | enforce); the §16.5
-// alert scopes to enforce-mode catches.
+// originPod is the pod that legitimately originated the elicitation;
+// tamperingPod is the forwarding pod whose re-emission diverged;
+// enforcementMode is the §9.2 effective mode that was in force at the
+// time the tamper was caught (enforce | detect-only — the detector
+// does not run under off). The §16.5 alert scopes to the enforce
+// stream. spec: §16.1 line 64; §9.2 line 60. F-9.2.4.
 type ElicitationTamperRecorder interface {
-	RecordElicitationContentTamperDetected(tenantID, enforcementMode string)
+	RecordElicitationContentTamperDetected(originPod, tamperingPod, enforcementMode string)
 }
 
 // dispatchResult is the outcome of dispatching one elicitation up the
@@ -149,12 +153,12 @@ func (d *elicitationDispatcher) dispatch(
 			// F-8.5.10.
 			return dispatchResult{}, mcp.NewToolError("DOMAIN_NOT_ALLOWLISTED",
 				err.Error(), map[string]any{
-					"url":          rawURL,
-					"host":         rej.Host,
-					"reason":       string(rej.Reason),
-					"allowlist":    rej.Allowlist,
-					"sessionId":    raising.ID,
-					"originPod":    raising.ID,
+					"url":           rawURL,
+					"host":          rej.Host,
+					"reason":        string(rej.Reason),
+					"allowlist":     rej.Allowlist,
+					"sessionId":     raising.ID,
+					"originPod":     raising.ID,
 					"initiatorType": string(initiator),
 				})
 		}
@@ -182,8 +186,16 @@ func (d *elicitationDispatcher) dispatch(
 			var tamper *elicitation.TamperError
 			if errors.As(err, &tamper) {
 				if d.tamperMetrics != nil {
+					// spec: §16.1 line 64; §9.2 line 60 — the metric is
+					// labelled by the origin pod (the raising session that
+					// legitimately produced the elicitation) and the tampering
+					// pod (the forwarding hop whose re-emission diverged,
+					// carried on the *ChainError). enforcement_mode is enforce:
+					// v1 has no per-tenant detect-only resolution at this hot
+					// path (F-9.2.2) and the §9.2 default mode is enforce.
+					// F-9.2.4.
 					d.tamperMetrics.RecordElicitationContentTamperDetected(
-						tenantID, string(elicitation.ModeEnforce),
+						raising.ID, chainErr.Hop, string(elicitation.ModeEnforce),
 					)
 				}
 				// spec: §15.2.1 — surface the canonical lenny code via

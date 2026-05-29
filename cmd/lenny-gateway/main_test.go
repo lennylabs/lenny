@@ -240,6 +240,65 @@ func TestExportHPAGaugesContextCancellation(t *testing.T) {
 	exportHPAGauges(ctx, store, lister, bus, m)
 }
 
+// spec: §16.5 line 460 — exportElicitationIntegrityWeakened counts the
+// active tenants whose §9.2 effective elicitation content-integrity
+// mode is weaker than enforce. With no platform floor, a stored
+// detect-only or off is weakened; an unset value resolves to the
+// enforce default and is not. A soft-deleted tenant is excluded.
+// Raising the floor to enforce clamps every tenant up, resolving the
+// gauge to zero. F-9.2.5.
+func TestExportElicitationIntegrityWeakenedCountsActiveTenants(t *testing.T) {
+	tenants := tenantstore.NewMemory()
+	ctx := context.Background()
+	seed := []tenantstore.Tenant{
+		{ID: "acme", ElicitationContentIntegrity: "enforce"},       // not weakened
+		{ID: "globex", ElicitationContentIntegrity: "detect-only"}, // weakened
+		{ID: "initech", ElicitationContentIntegrity: "off"},        // weakened
+		{ID: "umbrella", ElicitationContentIntegrity: ""},          // unset → enforce default, not weakened
+		{ID: "deleted-co", ElicitationContentIntegrity: "off"},     // soft-deleted → excluded
+	}
+	for _, tn := range seed {
+		if err := tenants.Create(ctx, tn); err != nil {
+			t.Fatalf("seed tenant %s: %v", tn.ID, err)
+		}
+	}
+	if err := tenants.SoftDelete(ctx, "deleted-co", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("soft-delete: %v", err)
+	}
+
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("metrics: %v", err)
+	}
+
+	// No platform floor: globex (detect-only) + initech (off) are
+	// weakened; the soft-deleted off tenant is not counted.
+	exportElicitationIntegrityWeakened(ctx, tenants, "", m)
+	body := scrapeGatewayMetrics(t, m)
+	if !strings.Contains(body, "lenny_elicitation_content_integrity_effective_mode_weaker_than_enforce 2") {
+		t.Errorf("with no floor, want weakened gauge = 2, got:\n%s", body)
+	}
+
+	// Raise the platform floor to enforce: every active tenant clamps up
+	// to enforce, so the standing alert resolves to zero.
+	exportElicitationIntegrityWeakened(ctx, tenants, "enforce", m)
+	body = scrapeGatewayMetrics(t, m)
+	if !strings.Contains(body, "lenny_elicitation_content_integrity_effective_mode_weaker_than_enforce 0") {
+		t.Errorf("with enforce floor, want weakened gauge = 0, got:\n%s", body)
+	}
+}
+
+// scrapeGatewayMetrics renders the /metrics body for assertions.
+func scrapeGatewayMetrics(t *testing.T, m *gatewaymetrics.Metrics) string {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status = %d", rr.Code)
+	}
+	return rr.Body.String()
+}
+
 // staticTenantLister is a test-only TenantLister that returns a
 // fixed slice. It is wired through tenantsLister's interface so the
 // exportHPAGauges signature matches the production code path.
@@ -343,12 +402,12 @@ func TestNewSSEKeyResolverPicksT4AliasOrFallsBack(t *testing.T) {
 // line 646; §17.4 dev mode.
 func TestGatewayConfigValidation_spec_11_1(t *testing.T) {
 	cases := []struct {
-		name        string
-		value       string
-		devMode     bool
-		want        string
-		wantErr     bool
-		wantErrMsg  string
+		name       string
+		value      string
+		devMode    bool
+		want       string
+		wantErr    bool
+		wantErrMsg string
 	}{
 		{
 			name:       "missing outside dev mode emits LENNY_CONFIG_MISSING",

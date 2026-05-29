@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
@@ -87,11 +88,11 @@ func (r *recordingDropMetric) RecordElicitationDrop(reason string) {
 // recordingLifecycleMetric records the §16.1 lines 60–63 admit/terminal
 // lifecycle events the dispatcher reports. F-9.2.14.
 type recordingLifecycleMetric struct {
-	pendingDelta    int
-	pendingMax      int
-	timeouts        int
-	suppressed      int
-	roundtrips      []time.Duration
+	pendingDelta int
+	pendingMax   int
+	timeouts     int
+	suppressed   int
+	roundtrips   []time.Duration
 }
 
 func (r *recordingLifecycleMetric) IncElicitationPending() {
@@ -100,9 +101,9 @@ func (r *recordingLifecycleMetric) IncElicitationPending() {
 		r.pendingMax = r.pendingDelta
 	}
 }
-func (r *recordingLifecycleMetric) DecElicitationPending()           { r.pendingDelta-- }
-func (r *recordingLifecycleMetric) IncElicitationTimeout()           { r.timeouts++ }
-func (r *recordingLifecycleMetric) IncElicitationSuppressed()        { r.suppressed++ }
+func (r *recordingLifecycleMetric) DecElicitationPending()    { r.pendingDelta-- }
+func (r *recordingLifecycleMetric) IncElicitationTimeout()    { r.timeouts++ }
+func (r *recordingLifecycleMetric) IncElicitationSuppressed() { r.suppressed++ }
 func (r *recordingLifecycleMetric) ObserveElicitationRoundtrip(d time.Duration) {
 	r.roundtrips = append(r.roundtrips, d)
 }
@@ -258,6 +259,151 @@ func TestElicitationContentDigestRecorded(t *testing.T) {
 		elicitation.Content{Message: "approve deploy to PROD?", Schema: map[string]any{"type": "boolean"}}); err == nil {
 		t.Error("a rewritten message must fail the recorded-digest check")
 	}
+}
+
+// newMCPForProvenance builds an elicitation-chain MCP server with a
+// §15.1 event bus wired so the §9.2 provenance-stamping tests can
+// inspect both the recorded interaction Detail and the
+// elicitation_request SSE payload. The timeout is short so an
+// unresolved request_elicitation goroutine does not linger. F-9.2.6.
+func newMCPForProvenance(t *testing.T) (*mcp.Server, sessionstore.Store, interactionstore.Store, *sessionevents.Bus) {
+	t.Helper()
+	store := memstore.New()
+	interactions := interactionstore.NewMemory()
+	bus := sessionevents.NewBus(16)
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:              store,
+		Interactions:       interactions,
+		Events:             bus,
+		ElicitationTimeout: 2 * time.Second,
+		IDFunc:             func() string { return "elic_gen" },
+		TenantID:           "acme",
+	})
+	return srv, store, interactions, bus
+}
+
+// mkRuntimeSession seeds a session carrying a RuntimeRef so the §9.2
+// origin_runtime provenance field has a value to stamp.
+func mkRuntimeSession(t *testing.T, store sessionstore.Store, id, user, parent, runtime string) {
+	t.Helper()
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: "acme", UserID: user, State: session.StateRunning,
+		ParentSessionID: parent, RuntimeRef: runtime, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed session %s: %v", id, err)
+	}
+}
+
+// detailInt reads an integer Detail field tolerant of the int / float64
+// representations a store may use after a JSON round-trip.
+func detailInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
+}
+
+// TestElicitationStampsProvenanceOnInteraction proves the §9.2
+// provenance metadata (origin_pod, delegation_depth, origin_runtime,
+// initiator_type) is stamped on the recorded elicitation so the §16.7
+// audit row can source delegation_depth / initiator_type from the
+// stored record and the §15.1 resolver UI can render provenance.
+// spec: §9.2 lines 70–82; §16.7 line 674. F-9.2.6.
+func TestElicitationStampsProvenanceOnInteraction_spec_9_2_F_9_2_6(t *testing.T) {
+	srv, store, interactions, _ := newMCPForProvenance(t)
+	mkUserSession(t, store, "sess_root", "alice", "")
+	// sess_leaf is one delegation hop below the root and runs python-3.12.
+	mkRuntimeSession(t, store, "sess_leaf", "alice", "sess_root", "python-3.12")
+	h := srv.Handler()
+
+	go func() {
+		_ = call(t, h, "lenny/request_elicitation",
+			`{"sessionId":"sess_leaf","message":"approve the deploy?","schema":{"type":"boolean"},"elicitationId":"elic_x"}`)
+	}()
+	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+
+	in, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x")
+	if err != nil {
+		t.Fatalf("get elicitation: %v", err)
+	}
+	if got, _ := in.Detail["originPod"].(string); got != "sess_leaf" {
+		t.Errorf("Detail originPod = %q, want sess_leaf", got)
+	}
+	if got, _ := in.Detail["initiatorType"].(string); got != "agent" {
+		t.Errorf("Detail initiatorType = %q, want agent", got)
+	}
+	if got, ok := detailInt(in.Detail["delegationDepth"]); !ok || got != 1 {
+		t.Errorf("Detail delegationDepth = %v, want 1 (leaf one hop below the root)", in.Detail["delegationDepth"])
+	}
+	if got, _ := in.Detail["originRuntime"].(string); got != "python-3.12" {
+		t.Errorf("Detail originRuntime = %q, want python-3.12", got)
+	}
+	// Unblock the request_elicitation goroutine.
+	resolveAt(t, interactions, "sess_root", "alice", "elic_x", true)
+}
+
+// TestElicitationStampsProvenanceOnEvent proves the §9.2 provenance
+// reaches the client over the live event channel — the
+// elicitation_request SSE payload carries origin_pod, initiator_type,
+// delegation_depth, and origin_runtime so a resolver UI can display
+// provenance prominently and distinguish a platform OAuth flow from an
+// agent-initiated prompt. spec: §9.2 lines 70–82. F-9.2.6.
+func TestElicitationStampsProvenanceOnEvent_spec_9_2_F_9_2_6(t *testing.T) {
+	srv, store, interactions, bus := newMCPForProvenance(t)
+	mkUserSession(t, store, "sess_root", "alice", "")
+	mkRuntimeSession(t, store, "sess_leaf", "alice", "sess_root", "python-3.12")
+
+	// Subscribe to the resolver session before raising so the live
+	// elicitation_request event is delivered to this subscriber.
+	sub := bus.Subscribe("sess_root", 0, 16)
+	defer sub.Close()
+
+	h := srv.Handler()
+	go func() {
+		_ = call(t, h, "lenny/request_elicitation",
+			`{"sessionId":"sess_leaf","message":"approve the deploy?","schema":{"type":"boolean"},"elicitationId":"elic_x"}`)
+	}()
+
+	var ev sessionevents.Event
+	select {
+	case ev = <-sub.Events():
+	case <-time.After(2 * time.Second):
+		t.Fatal("no elicitation_request event published to the resolver session")
+	}
+	if ev.Type != "elicitation_request" {
+		t.Fatalf("event type = %q, want elicitation_request", ev.Type)
+	}
+	var payload struct {
+		OriginPod       string `json:"originPod"`
+		InitiatorType   string `json:"initiatorType"`
+		DelegationDepth int    `json:"delegationDepth"`
+		OriginRuntime   string `json:"originRuntime"`
+	}
+	if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+		t.Fatalf("decode event data: %v; data=%s", err, ev.Data)
+	}
+	if payload.OriginPod != "sess_leaf" {
+		t.Errorf("event originPod = %q, want sess_leaf", payload.OriginPod)
+	}
+	if payload.InitiatorType != "agent" {
+		t.Errorf("event initiatorType = %q, want agent", payload.InitiatorType)
+	}
+	if payload.DelegationDepth != 1 {
+		t.Errorf("event delegationDepth = %d, want 1", payload.DelegationDepth)
+	}
+	if payload.OriginRuntime != "python-3.12" {
+		t.Errorf("event originRuntime = %q, want python-3.12", payload.OriginRuntime)
+	}
+	// Unblock the request_elicitation goroutine.
+	resolveAt(t, interactions, "sess_root", "alice", "elic_x", true)
 }
 
 // TestElicitationDepthSuppressed proves a §9.2 depth-suppressed

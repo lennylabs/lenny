@@ -59,6 +59,12 @@ type Metrics struct {
 	cbCacheInitialized             prometheus.Gauge
 	elicitationDropped             *prometheus.CounterVec
 	elicitationTamperDetected      *prometheus.CounterVec
+	// elicitationIntegrityWeakened is the §16.5 line 460 standing-alert
+	// gauge: the count of active tenants whose §9.2 effective
+	// elicitation content-integrity mode is weaker than enforce. A
+	// gateway reconciliation loop refreshes it from the tenant store.
+	// F-9.2.5.
+	elicitationIntegrityWeakened prometheus.Gauge
 	// elicitationPending is the §16.1 line 61 unlabelled gauge of
 	// in-flight elicitations the §16.5 ElicitationBacklogHigh alert
 	// keys on (`lenny_elicitation_pending > 50 for > 30s`). The
@@ -738,10 +744,34 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// spec: §16.1 line 64; §9.2 line 60 — the tamper counter is labelled
+	// by origin_pod, tampering_pod, and enforcement_mode. origin_pod is
+	// the pod that legitimately originated the elicitation; tampering_pod
+	// is the forwarding pod whose re-emission diverged. Both are bounded
+	// by the active delegation-tree depth, so cardinality is safe under
+	// the §16.1.1 attribute-naming rule. The enforcement_mode label is
+	// one of enforce | detect-only only — the detector does not run under
+	// effective mode off, so no stream is emitted there. F-9.2.4.
 	elicitationTamperDetected, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_elicitation_content_tamper_detected_total",
-		Help: "Total §9.2 elicitation chain walks that detected tampered content at a forwarding hop. Labelled by tenant and enforcement_mode (off | detect-only | enforce) so the §16.5 alert can fire on enforce-mode catches only.",
-	}, []string{"tenant_id", "enforcement_mode"})
+		Help: "Total §9.2 elicitation chain walks that detected tampered content at a forwarding hop. Labelled by origin_pod, tampering_pod, and enforcement_mode (enforce | detect-only) per §16.1 line 64 so the §16.5 alert can fire on the enforce-mode stream only.",
+	}, []string{"origin_pod", "tampering_pod", "enforcement_mode"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.5 line 460 — the standing ElicitationContentIntegrityWeakened
+	// alert reads this gauge. It is a gateway-process count of active
+	// tenants whose §9.2 effective elicitation content-integrity mode
+	// (max(platformFloor, tenantStored)) is weaker than enforce. The
+	// alert fires while the value is > 0 and resolves once every active
+	// tenant's effective mode is enforce. Unlabelled to keep the gauge
+	// cardinality-free; operators identify which tenants are weakened
+	// from the paired tenant.elicitation_content_integrity_changed audit
+	// events, per the §16.5 runbook. F-9.2.5.
+	elicitationIntegrityWeakened, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_elicitation_content_integrity_effective_mode_weaker_than_enforce",
+		Help: "Active tenants whose §9.2 effective elicitation content-integrity enforcement mode is weaker than enforce (§16.5 line 460). Standing-alert numerator; zero when every active tenant resolves to enforce.",
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1642,7 +1672,7 @@ func New() (*Metrics, error) {
 		extractionThreshold,
 		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen,
 		cbRejections, cbRejectionsSuppressed, elicitationDropped,
-		elicitationTamperDetected,
+		elicitationTamperDetected, elicitationIntegrityWeakened,
 		elicitationPending, elicitationTimeout, elicitationSuppressed,
 		elicitationRoundtripSeconds,
 		experimentIsoRej,
@@ -1763,6 +1793,7 @@ func New() (*Metrics, error) {
 		cbCacheInitialized:                   cbInit,
 		elicitationDropped:                   elicitationDropped,
 		elicitationTamperDetected:            elicitationTamperDetected,
+		elicitationIntegrityWeakened:         elicitationIntegrityWeakened.WithLabelValues(),
 		elicitationPending:                   elicitationPending.WithLabelValues(),
 		elicitationTimeout:                   elicitationTimeout.WithLabelValues(),
 		elicitationSuppressed:                elicitationSuppressed.WithLabelValues(),
@@ -2784,13 +2815,27 @@ func (m *Metrics) RecordElicitationDrop(reason string) {
 // RecordElicitationContentTamperDetected increments the §9.2 /
 // §16.5 lenny_elicitation_content_tamper_detected_total counter
 // when the §9.2 chain walk catches a forwarding hop that mutated
-// the elicitation payload. Labelled by tenant and enforcement_mode
-// so the §16.5 ElicitationContentTamperDetected alert (which
-// matches enforcement_mode="enforce") fires only when a tamper
-// caused a hard drop; detect-only catches still bump the metric
-// for visibility without firing the alert.
-func (m *Metrics) RecordElicitationContentTamperDetected(tenantID, enforcementMode string) {
-	m.elicitationTamperDetected.WithLabelValues(tenantID, enforcementMode).Inc()
+// the elicitation payload. Labelled by origin_pod (the pod that
+// legitimately originated the elicitation), tampering_pod (the
+// forwarding pod whose re-emission diverged), and enforcement_mode
+// so the §16.5 ElicitationContentTamperDetected alert (which matches
+// enforcement_mode="enforce") fires only when a tamper caused a hard
+// drop; detect-only catches still bump the metric for visibility
+// without firing the critical alert. spec: §16.1 line 64; §9.2 line
+// 60. F-9.2.4.
+func (m *Metrics) RecordElicitationContentTamperDetected(originPod, tamperingPod, enforcementMode string) {
+	m.elicitationTamperDetected.WithLabelValues(originPod, tamperingPod, enforcementMode).Inc()
+}
+
+// SetElicitationIntegrityWeakened publishes the §16.5 line 460
+// standing-alert gauge: the count of active tenants whose §9.2
+// effective elicitation content-integrity mode is weaker than
+// enforce. The gateway reconciliation loop calls this on every poll
+// so the ElicitationContentIntegrityWeakened alert fires while any
+// tenant is weakened and resolves once the count returns to zero.
+// spec: §16.5 line 460. F-9.2.5.
+func (m *Metrics) SetElicitationIntegrityWeakened(weakenedTenants int) {
+	m.elicitationIntegrityWeakened.Set(float64(weakenedTenants))
 }
 
 // IncElicitationPending increments the §16.1 line 61

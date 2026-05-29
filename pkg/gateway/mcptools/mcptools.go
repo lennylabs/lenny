@@ -1192,13 +1192,38 @@ func Register(srv *mcp.Server, deps Deps) {
 			// parent. The §15.1 respond/dismiss authorization triple then
 			// targets the resolver, not an intermediate hop.
 			resolverSessionID := dr.ResolverSessionID
+			// spec: §9.2 lines 70–82 — the gateway stamps the §9.2
+			// provenance metadata on the elicitation at origination so
+			// client UIs can render it prominently (distinguishing a
+			// platform OAuth flow from an agent-initiated prompt) and the
+			// §16.7 audit row can source delegation_depth / initiator_type
+			// from the stored record. delegation_depth is the origin pod's
+			// depth in the §8 task tree (the chain's deepest hop);
+			// origin_runtime is the raising session's runtime. The
+			// connector-only fields (connector_id, expected_domain,
+			// purpose) are empty for an agent-initiated elicitation — the
+			// only v1 path through this tool (F-9.2.19). F-9.2.6.
+			delegationDepth := 0
+			if len(dr.Chain.Hops) > 0 {
+				delegationDepth = dr.Chain.Hops[0].Depth
+			}
+			prov := elicitation.Provenance{
+				OriginPod:       row.ID,
+				DelegationDepth: delegationDepth,
+				OriginRuntime:   row.RuntimeRef,
+				InitiatorType:   initiator,
+			}
 			detail := map[string]any{
 				"message": in.Message,
 				// §9.2 gateway-origin binding: the recorded digest lets a
 				// forward-hop re-emission be verified against the original.
-				"contentDigest": originalDigest,
-				"originPod":     row.ID,
-				"initiatorType": string(initiator),
+				"contentDigest":   originalDigest,
+				"originPod":       prov.OriginPod,
+				"initiatorType":   string(prov.InitiatorType),
+				"delegationDepth": prov.DelegationDepth,
+			}
+			if prov.OriginRuntime != "" {
+				detail["originRuntime"] = prov.OriginRuntime
 			}
 			if schemaValue != nil {
 				detail["schema"] = schemaValue
@@ -1238,11 +1263,27 @@ func Register(srv *mcp.Server, deps Deps) {
 			// not in the §7.2 catalog; clients filtering on the documented
 			// event name silently missed elicitation prompts. F-7.2.17.
 			if deps.Events != nil {
+				// spec: §9.2 lines 70–82 — the client UI receives the §9.2
+				// provenance over the live channel so it can display the
+				// origin pod, the initiator type, and the delegation depth
+				// alongside the prompt. Without these the UI cannot honour
+				// the "users can distinguish platform OAuth flows from
+				// agent-initiated prompts" trust requirement. F-9.2.6.
 				data, _ := json.Marshal(struct {
-					ElicitationID string `json:"elicitationId"`
-					Message       string `json:"message"`
-					OriginPod     string `json:"originPod"`
-				}{ElicitationID: elicitationID, Message: in.Message, OriginPod: row.ID})
+					ElicitationID   string `json:"elicitationId"`
+					Message         string `json:"message"`
+					OriginPod       string `json:"originPod"`
+					InitiatorType   string `json:"initiatorType"`
+					DelegationDepth int    `json:"delegationDepth"`
+					OriginRuntime   string `json:"originRuntime,omitempty"`
+				}{
+					ElicitationID:   elicitationID,
+					Message:         in.Message,
+					OriginPod:       prov.OriginPod,
+					InitiatorType:   string(prov.InitiatorType),
+					DelegationDepth: prov.DelegationDepth,
+					OriginRuntime:   prov.OriginRuntime,
+				})
 				deps.Events.Publish(resolverSessionID, "elicitation_request", string(data), clock())
 			}
 			// Block until the chain resolver resolves the elicitation or
