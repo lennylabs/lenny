@@ -15391,7 +15391,7 @@ Consequence: in a multi-replica gateway, the §11.4 step 2 Terminate RPC fan-out
 
 Fix sketch: either publish a "session cancelled" message over the existing Redis pub/sub bus and have each replica's `podTerminateFanOut` apply it to its local registry, or add a SessionStore-watch path on the runtime side that initiates self-shutdown on `cancelled` transitions.
 
-### - [ ] F-11.4.4 — MCP runtime adapter ignores the 10s deadline from the §4.7 Terminate RPC [Medium] — OPEN
+### - [x] F-11.4.4 — MCP runtime adapter ignores the 10s deadline from the §4.7 Terminate RPC [Medium] — CLOSED
 
 Spec step 3: "The pod's runtime adapter initiates graceful shutdown (SIGTERM to agent, wait up to 10s, then SIGKILL)."
 
@@ -15401,7 +15401,9 @@ Consequence: the spec's 10s graceful window is not honored by the MCP runtime ad
 
 Fix sketch: in `Server.Shutdown`, plumb `req.GetDeadlineMs()` into the `Runtime.Close` contract (e.g., via a `ShutdownOptions` parameter or a dedicated `Terminate(ctx, sessionID, deadline)` method), and use it in `MCPRuntime.Close` and `SocketRuntimeProcess.Close` in place of the hard-coded defaults.
 
-### - [ ] F-11.4.5 — Handler is synchronous; spec advertises asynchronous propagation [Medium] — OPEN
+**Resolution (commit `7c746a9f`):** `Server.Shutdown` now derives a bounded context from `req.GetDeadlineMs()` via the new `contextWithGraceDeadline` helper and passes it into `Runtime.Close`. Both `MCPRuntime.Close` and `SocketRuntimeProcess.Close` resolve their SIGTERM-to-SIGKILL pivot through the new `resolveShutdownGrace(ctx, configured, fallback)` helper, which prefers the ctx deadline, falls back to the runtime-configured grace, then to the package default — preserving historical behavior when no deadline is plumbed. Tier-1 tests: `TestShutdownPlumbsDeadlineMsIntoRuntimeClose_spec_11_4_258`, `TestShutdownWithoutDeadlineMsInheritsContext_spec_11_4_258`, and four `TestResolveShutdownGrace*_spec_11_4_258` matrix cases (ctx-wins / configured-fallback / default-fallback / expired-ctx).
+
+### - [~] F-11.4.5 — Handler is synchronous; spec advertises asynchronous propagation [Medium] — DEFERRED
 
 Spec Note: "Invalidation is asynchronous — the API call returns immediately and propagation completes within seconds."
 
@@ -15411,7 +15413,9 @@ Consequence: the API does not return "immediately" — it returns after all fan-
 
 Recommended: update the spec to describe synchronous propagation with reported counts, which is the more useful contract. If async is preserved, document the propagation-completion observability surface.
 
-### - [ ] F-11.4.6 — Cross-replica fan-out for credential-lease revocation depends on `denyList` field being a propagator [Medium] — OPEN
+**Resolution:** Deferred — the gap is a spec wording inconsistency, not an implementation defect. The current handler's synchronous-with-counts contract is the more useful surface (callers receive `sessionsTerminated`/`podsTerminated`/`leasesRevoked`/`tokensRevoked` and `GET /v1/sessions` reflects post-propagation state). The finding's preferred resolution ("update the spec to describe synchronous propagation with reported counts") is a docs/spec edit blocked by Rule B (no modifications to `spec/`). Tracked outside this batch's code surface.
+
+### - [x] F-11.4.6 — Cross-replica fan-out for credential-lease revocation depends on `denyList` field being a propagator [Medium] — CLOSED
 
 Spec step 6: "Credential leases held by the user's sessions are revoked (returned to pool)."
 
@@ -15421,7 +15425,9 @@ The wiring at `main.go:1100-1128` always constructs `credRenewalProp` (even with
 
 Recommended: tighten the interface or document the requirement, or add a startup check that asserts `credRenewalProp` is a propagator (not a bare deny list) when more than one replica is configured.
 
-### - [ ] F-11.4.7 — §11.4 step 1 session lookup is O(N) per tenant; no per-user index [Medium] — OPEN
+**Resolution (commit `7c746a9f`):** Added the marker method `IsCrossReplicaPropagator()` on `*credrenewalprop.Propagator` and extended `credentialDenyList` to require it. A bare `*denylist.DenyList` no longer satisfies the interface — wiring downgrade is a compile error. `user_revocation.go` carries `var _ credentialDenyList = (*credrenewalprop.Propagator)(nil)` so a future refactor that drops the marker on the propagator surfaces at build time. `poolCredentialRevoker` (the §4.9 emergency-revocation sibling on the same interface) is hardened for free. Tier-1 test `TestUserLeaseRevokerRequiresCrossReplicaPropagator_spec_11_4_step_6` asserts the bare DenyList is rejected and the propagator is accepted.
+
+### - [x] F-11.4.7 — §11.4 step 1 session lookup is O(N) per tenant; no per-user index [Medium] — CLOSED
 
 Spec step 1: "Gateway looks up all active sessions for the user (via SessionStore)."
 
@@ -15430,6 +15436,8 @@ Implementation: `terminateUserSessions` at `pkg/gateway/admin/users.go:379-404` 
 Consequence: a `full_revoke` in a tenant with many sessions reads every row in process. This is functional but operationally costly at scale. Not a §11.4 conformance gap (the lookup succeeds), but an efficiency concern that grows linearly with tenant session count.
 
 Recommended: extend `ListFilter` with a `UserID` field and let the Postgres-backed store push the filter to SQL.
+
+**Resolution (commit `7c746a9f`):** `sessionstore.ListFilter` gained `UserID`; both memstore and pgstore apply it (pgstore as an extra parameterized AND on `user_id`). Migration `0092_sessions_user_id_index` creates `idx_sessions_tenant_user` so the SQL query is O(user's sessions). `terminateUserSessions` now passes the filter at the store boundary instead of scanning tenant-wide. Tier-1 tests: memstore `TestListFiltersByUserID_spec_11_4_256` + `TestListUserIDIsTenantScoped_spec_11_4_256`; admin `TestFullRevokeNarrowsListByUserID_spec_11_4_256` proves the filter is pushed at the store call.
 
 ### - [x] F-11.4.8 — OCSF mapping for `admin.user.invalidated` falls through to the generic `admin.user` prefix [Low] — CLOSED
 
