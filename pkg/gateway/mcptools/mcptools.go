@@ -2268,24 +2268,42 @@ type discoveredAgent struct {
 }
 
 // filterByEffectiveDelegationPolicy narrows a candidate agent set to
-// the runtimes the calling session's §8.3 effective DelegationPolicy
-// authorizes. When no Delegation service is wired, the caller session
-// is unresolved, or the session's runtime names no policy, the set is
+// the runtimes every DelegationPolicy that governs the calling session
+// authorizes. Two policy layers govern a session:
+//
+//   - the §8.3 runtime-level policy named on the session's resolved
+//     runtime via DelegationPolicyRef (deps.Delegation.EffectiveDelegationPolicy), and
+//   - the §10.6 environment default policy named by the
+//     defaultDelegationPolicy of the environment the session was created
+//     in (environmentDefaultPolicy).
+//
+// A runtime survives only when every resolved policy permits it — the
+// §10.6 line 629 effective scope intersects the environment runtime set
+// with the delegation policy, and the §8.3 least-privilege discipline
+// ("restriction only, never expansion") makes intersection the safe
+// composition of two policies. When neither layer resolves a policy
+// (no Delegation service, an unresolved caller session, or no
+// runtime-level and no environment-default reference), the set is
 // returned unchanged — discovery then reflects only the §10.6
-// environment scope, the pre-policy behaviour. When a policy resolves,
-// each runtime is evaluated as a §8.3 Candidate (id = runtime name,
-// type = the runtime type, labels = the runtime labels) and is kept
-// only when the policy's tag-based allow/deny rule set permits it.
-// spec: §8.3 line 244; F-8.5.7.
+// environment scope, the pre-policy behaviour.
+//
+// spec: §8.3 line 244; §10.6 line 601, line 629. F-8.5.7 / F-10.6.7.
 func filterByEffectiveDelegationPolicy(ctx context.Context, deps Deps, tenant, sessionID string, runtimes []runtimestore.Runtime) ([]runtimestore.Runtime, error) {
 	if deps.Delegation == nil || sessionID == "" {
 		return runtimes, nil
 	}
-	pol, ok, err := deps.Delegation.EffectiveDelegationPolicy(ctx, tenant, sessionID)
-	if err != nil {
+	var policies []delegationpolicystore.DelegationPolicy
+	if pol, ok, err := deps.Delegation.EffectiveDelegationPolicy(ctx, tenant, sessionID); err != nil {
 		return nil, err
+	} else if ok {
+		policies = append(policies, pol)
 	}
-	if !ok {
+	if pol, ok, err := environmentDefaultPolicy(ctx, deps, tenant, sessionID); err != nil {
+		return nil, err
+	} else if ok {
+		policies = append(policies, pol)
+	}
+	if len(policies) == 0 {
 		return runtimes, nil
 	}
 	out := make([]runtimestore.Runtime, 0, len(runtimes))
@@ -2295,11 +2313,64 @@ func filterByEffectiveDelegationPolicy(ctx context.Context, deps Deps, tenant, s
 			Type:   string(rt.Type),
 			Labels: rt.Labels,
 		}
-		if pol.Evaluate(cand) {
+		if allPoliciesPermit(policies, cand) {
 			out = append(out, rt)
 		}
 	}
 	return out, nil
+}
+
+// allPoliciesPermit reports whether c is permitted by every policy —
+// the §8.3 / §10.6 intersection: a candidate is in the effective scope
+// only when no governing policy denies it. An empty policy set permits
+// everything (the caller short-circuits that case before calling here).
+func allPoliciesPermit(policies []delegationpolicystore.DelegationPolicy, c delegationpolicystore.Candidate) bool {
+	for _, p := range policies {
+		if !p.Evaluate(c) {
+			return false
+		}
+	}
+	return true
+}
+
+// environmentDefaultPolicy resolves the §10.6 defaultDelegationPolicy
+// that governs a calling session: the DelegationPolicy named on the
+// environment the session was created in (§10.6 line 601 — "the
+// DelegationPolicy applied to sessions created in this environment").
+// It returns (policy, true, nil) when the session is environment-scoped,
+// the environment names a defaultDelegationPolicy, and that policy
+// resolves active. Every other case returns (zero, false, nil) — no
+// environment or session registry wired, a session that names no
+// environment, an environment with no default policy, or a missing /
+// soft-deleted policy — leaving the environment-default layer imposing
+// no restriction, the same conservative fall-through the runtime-level
+// EffectiveDelegationPolicy applies to an unresolved reference.
+// spec: §10.6 line 601, line 629. F-10.6.7.
+func environmentDefaultPolicy(ctx context.Context, deps Deps, tenant, sessionID string) (delegationpolicystore.DelegationPolicy, bool, error) {
+	if deps.Environments == nil || deps.Store == nil || deps.Delegation == nil || sessionID == "" {
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	sess, err := deps.Store.Get(ctx, tenant, sessionID)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			return delegationpolicystore.DelegationPolicy{}, false, nil
+		}
+		return delegationpolicystore.DelegationPolicy{}, false, err
+	}
+	if sess.Environment == "" {
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	env, err := deps.Environments.Get(ctx, tenant, sess.Environment)
+	if err != nil {
+		if errors.Is(err, environmentstore.ErrNotFound) {
+			return delegationpolicystore.DelegationPolicy{}, false, nil
+		}
+		return delegationpolicystore.DelegationPolicy{}, false, err
+	}
+	if env.DefaultDelegationPolicy == "" {
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	return deps.Delegation.ResolveActivePolicy(ctx, tenant, env.DefaultDelegationPolicy)
 }
 
 // resolveDerivedRuntimes replaces each §5.1 derived runtime with its

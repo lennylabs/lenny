@@ -94,7 +94,7 @@ func (r *Router) handleEnvironmentRuntimeExposure(w http.ResponseWriter, req *ht
 			return
 		}
 		for _, c := range connectors {
-			if env.ConnectorSelector.Matches(environment.Candidate{
+			if env.ConnectorSelector.Selector.Matches(environment.Candidate{
 				Name: c.ID, Labels: c.Labels,
 			}) {
 				out.Connectors = append(out.Connectors, ExposedConnector{

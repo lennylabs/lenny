@@ -47,7 +47,7 @@ func teamEnv(name, team string, members ...environmentstore.Member) environments
 	return environmentstore.Environment{
 		Name: name, TenantID: "acme", Members: members,
 		RuntimeSelector:   environment.Selector{MatchLabels: map[string]string{"team": team}},
-		ConnectorSelector: environment.Selector{MatchLabels: map[string]string{"team": team}},
+		ConnectorSelector: environmentstore.ConnectorSelector{Selector: environment.Selector{MatchLabels: map[string]string{"team": team}}},
 	}
 }
 

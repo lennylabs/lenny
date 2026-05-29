@@ -48,7 +48,7 @@ const selectList = `id, display_name, compliance_profile, data_residency_region,
 	workspace_tier, max_concurrent_sessions, storage_quota_bytes,
 	created_at, updated_at, deleted_at, min_isolation_profile,
 	elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
-	experiment_targeting, credential_policy`
+	experiment_targeting, credential_policy, rbac_config`
 
 // marshalTargeting encodes a tenant's §10.7 experimentTargeting block
 // for the jsonb experiment_targeting column. A zero config encodes to
@@ -68,6 +68,16 @@ func marshalCredentialPolicy(c credential.CredentialPolicy) ([]byte, error) {
 	b, err := json.Marshal(c)
 	if err != nil {
 		return nil, fmt.Errorf("tenantstore: encode credentialPolicy: %w", err)
+	}
+	return b, nil
+}
+
+// marshalRBACConfig encodes a tenant's §10.6 RBACConfig for the jsonb
+// rbac_config column. A zero config encodes to the JSON object {}.
+func marshalRBACConfig(c tenantstore.RBACConfig) ([]byte, error) {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("tenantstore: encode rbacConfig: %w", err)
 	}
 	return b, nil
 }
@@ -98,18 +108,22 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 	if err != nil {
 		return err
 	}
+	rbacConfig, err := marshalRBACConfig(t.RBACConfig)
+	if err != nil {
+		return err
+	}
 	_, err = s.pool.Exec(ctx, `INSERT INTO tenants (
 		id, display_name, compliance_profile, data_residency_region,
 		workspace_tier, max_concurrent_sessions, storage_quota_bytes,
 		genesis_nonce, created_at, updated_at, deleted_at, min_isolation_profile,
 		elicitation_content_integrity, billing_erasure_policy, no_environment_policy,
-		experiment_targeting, credential_policy
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		experiment_targeting, credential_policy, rbac_config
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 		t.ID, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
-		targeting, credPolicy)
+		targeting, credPolicy, rbacConfig)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return tenantstore.ErrAlreadyExists
@@ -164,18 +178,22 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 	if err != nil {
 		return tenantstore.Tenant{}, err
 	}
+	rbacConfig, err := marshalRBACConfig(t.RBACConfig)
+	if err != nil {
+		return tenantstore.Tenant{}, err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE tenants SET
 		display_name = $2, compliance_profile = $3, data_residency_region = $4,
 		workspace_tier = $5, max_concurrent_sessions = $6, storage_quota_bytes = $7,
 		updated_at = $8, deleted_at = $9, min_isolation_profile = $10,
 		elicitation_content_integrity = $11, billing_erasure_policy = $12,
 		no_environment_policy = $13, experiment_targeting = $14,
-		credential_policy = $15 WHERE id = $1`,
+		credential_policy = $15, rbac_config = $16 WHERE id = $1`,
 		id, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
 		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile,
 		t.ElicitationContentIntegrity, t.BillingErasurePolicy, t.NoEnvironmentPolicy,
-		targeting, credPolicy); err != nil {
+		targeting, credPolicy, rbacConfig); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -257,13 +275,14 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, error) {
 		deletedAt  *time.Time
 		targeting  []byte
 		credPolicy []byte
+		rbacConfig []byte
 	)
 	if err := row.Scan(
 		&t.ID, &t.DisplayName, &t.ComplianceProfile, &t.DataResidencyRegion,
 		&t.WorkspaceTier, &t.MaxConcurrentSessions, &t.StorageQuotaBytes,
 		&t.CreatedAt, &t.UpdatedAt, &deletedAt, &t.MinIsolationProfile,
 		&t.ElicitationContentIntegrity, &t.BillingErasurePolicy, &t.NoEnvironmentPolicy,
-		&targeting, &credPolicy,
+		&targeting, &credPolicy, &rbacConfig,
 	); err != nil {
 		return tenantstore.Tenant{}, err
 	}
@@ -278,6 +297,11 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, error) {
 	if len(credPolicy) > 0 {
 		if err := json.Unmarshal(credPolicy, &t.CredentialPolicy); err != nil {
 			return tenantstore.Tenant{}, fmt.Errorf("tenantstore: decode credentialPolicy: %w", err)
+		}
+	}
+	if len(rbacConfig) > 0 {
+		if err := json.Unmarshal(rbacConfig, &t.RBACConfig); err != nil {
+			return tenantstore.Tenant{}, fmt.Errorf("tenantstore: decode rbacConfig: %w", err)
 		}
 	}
 	return t, nil

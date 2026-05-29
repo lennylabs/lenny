@@ -249,6 +249,76 @@ func TestCrossEnvironmentDelegationWireRoundTrip_spec_10_6_613(t *testing.T) {
 	}
 }
 
+// spec: §10.6 lines 595-599 — connectorSelector carries the tag
+// selector plus the allowedCapabilities / deniedCapabilities lists. The
+// admin wire shape must round-trip both halves: the capability lists are
+// no longer silently dropped on write or invisible on GET. F-10.6.3.
+func TestConnectorSelectorCapabilitiesWireRoundTrip_spec_10_6_595(t *testing.T) {
+	router, envs, _ := newEnvironmentAdmin(t)
+	body := validEnvironmentPayload("env-conn")
+	body.ConnectorSelector = admin.ConnectorSelectorPayload{
+		MatchLabels:         map[string]string{"team": "security"},
+		AllowedCapabilities: []string{"read", "search", "network"},
+		DeniedCapabilities:  []string{"write", "delete", "execute", "admin"},
+	}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/environments", body, withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d body %s", rr.Code, rr.Body.String())
+	}
+	got, err := envs.Get(context.Background(), "acme", "env-conn")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ConnectorSelector.Selector.MatchLabels["team"] != "security" {
+		t.Errorf("connectorSelector matchLabels did not persist: %+v", got.ConnectorSelector.Selector)
+	}
+	if strings.Join(got.ConnectorSelector.AllowedCapabilities, ",") != "read,search,network" {
+		t.Errorf("allowedCapabilities did not persist: %+v", got.ConnectorSelector.AllowedCapabilities)
+	}
+	if strings.Join(got.ConnectorSelector.DeniedCapabilities, ",") != "write,delete,execute,admin" {
+		t.Errorf("deniedCapabilities did not persist: %+v", got.ConnectorSelector.DeniedCapabilities)
+	}
+
+	// GET must emit the capability keys under connectorSelector.
+	rr = doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/environments/env-conn?tenantId=acme",
+		nil, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: status %d", rr.Code)
+	}
+	var raw struct {
+		ConnectorSelector map[string]json.RawMessage `json:"connectorSelector"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal GET body: %v", err)
+	}
+	if _, ok := raw.ConnectorSelector["allowedCapabilities"]; !ok {
+		t.Errorf("GET connectorSelector missing allowedCapabilities key: %v", raw.ConnectorSelector)
+	}
+	if _, ok := raw.ConnectorSelector["deniedCapabilities"]; !ok {
+		t.Errorf("GET connectorSelector missing deniedCapabilities key: %v", raw.ConnectorSelector)
+	}
+}
+
+// spec: §10.6 lines 595-599 — a capability that appears in both the
+// allowed and denied lists is a contradictory rule; admission rejects it.
+// F-10.6.3.
+func TestConnectorSelectorCapabilitiesRejectsOverlap_spec_10_6_595(t *testing.T) {
+	router, _, _ := newEnvironmentAdmin(t)
+	body := validEnvironmentPayload("env-bad")
+	body.ConnectorSelector = admin.ConnectorSelectorPayload{
+		MatchLabels:         map[string]string{"team": "security"},
+		AllowedCapabilities: []string{"read"},
+		DeniedCapabilities:  []string{"read"},
+	}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/environments", body, withAdminPrincipal)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("overlapping capability: status %d body %s, want 422", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "allowedCapabilities") {
+		t.Errorf("validation error should name the offending field: %s", rr.Body.String())
+	}
+}
+
 func TestDeleteEnvironment(t *testing.T) {
 	router, envs, _ := newEnvironmentAdmin(t)
 	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/environments",

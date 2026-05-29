@@ -153,6 +153,10 @@ var prodMigrationSchema = []struct {
 	// the workspace upload is incomplete; the resume path uses it to
 	// drive the §10.1 partial-workspace reconstruction.
 	{migration: "0062", table: "session_partial_checkpoint_manifest", create: true},
+	// 0097 adds the §10.6 line 665 tenant RBAC-config blob (identityProvider,
+	// tokenPolicy, capabilities taxonomy, mcpAnnotationMapping overrides)
+	// as the rbac_config jsonb column on tenants.
+	{migration: "0097", table: "tenants", columns: []string{"rbac_config"}},
 }
 
 // spec: 12.2, 18.5

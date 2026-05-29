@@ -5,8 +5,10 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
@@ -17,13 +19,107 @@ const allowAllWarning = `noEnvironmentPolicy: allow-all grants unrestricted ` +
 	`runtime access to all authenticated users with no environment membership ` +
 	`in this tenant. Verify this matches the intended security posture.`
 
+// IdentityProviderPayload is the §10.6 line 661 OIDC identity-provider
+// wire shape.
+type IdentityProviderPayload struct {
+	Type                 string `json:"type,omitempty"`
+	IntrospectionEnabled bool   `json:"introspectionEnabled,omitempty"`
+}
+
 // RBACConfigPayload is the §10.6 / §15.1 tenant RBAC-config admin
-// payload. v1 carries the noEnvironmentPolicy field; the §10.6
-// identityProvider, tokenPolicy, capabilities, and mcpAnnotationMapping
-// fields are not yet stored and are added here as they are built.
+// payload: the noEnvironmentPolicy field plus the §10.6 line 665
+// identityProvider, tokenPolicy, capabilities taxonomy, and
+// mcpAnnotationMapping overrides. PUT replaces the full configuration —
+// an omitted field is cleared, mirroring the noEnvironmentPolicy
+// default-to-deny-all behaviour.
 type RBACConfigPayload struct {
-	TenantID            string `json:"tenantId"`
-	NoEnvironmentPolicy string `json:"noEnvironmentPolicy"`
+	TenantID             string                  `json:"tenantId"`
+	NoEnvironmentPolicy  string                  `json:"noEnvironmentPolicy"`
+	IdentityProvider     IdentityProviderPayload `json:"identityProvider,omitempty"`
+	TokenPolicy          json.RawMessage         `json:"tokenPolicy,omitempty"`
+	Capabilities         []string                `json:"capabilities,omitempty"`
+	MCPAnnotationMapping map[string][]string     `json:"mcpAnnotationMapping,omitempty"`
+}
+
+// toRBACConfig maps the §10.6 extra RBAC-config fields of a payload to
+// the stored tenantstore.RBACConfig (the noEnvironmentPolicy field is a
+// separate column and is not part of this sub-object).
+func toRBACConfig(p RBACConfigPayload) tenantstore.RBACConfig {
+	return tenantstore.RBACConfig{
+		IdentityProvider: tenantstore.IdentityProvider{
+			Type:                 p.IdentityProvider.Type,
+			IntrospectionEnabled: p.IdentityProvider.IntrospectionEnabled,
+		},
+		TokenPolicy:          p.TokenPolicy,
+		Capabilities:         p.Capabilities,
+		MCPAnnotationMapping: p.MCPAnnotationMapping,
+	}
+}
+
+// rbacConfigPayload assembles the full §10.6 RBAC-config wire shape for
+// a tenant: the noEnvironmentPolicy column plus the stored RBACConfig
+// sub-object.
+func rbacConfigPayload(t tenantstore.Tenant) RBACConfigPayload {
+	c := t.RBACConfig
+	return RBACConfigPayload{
+		TenantID:            t.ID,
+		NoEnvironmentPolicy: effectiveNoEnvironmentPolicy(t),
+		IdentityProvider: IdentityProviderPayload{
+			Type:                 c.IdentityProvider.Type,
+			IntrospectionEnabled: c.IdentityProvider.IntrospectionEnabled,
+		},
+		TokenPolicy:          c.TokenPolicy,
+		Capabilities:         c.Capabilities,
+		MCPAnnotationMapping: c.MCPAnnotationMapping,
+	}
+}
+
+// validateRBACConfigExtras reports the §10.6 admission errors for the
+// identityProvider, tokenPolicy, capabilities, and mcpAnnotationMapping
+// fields. It returns a non-empty message on the first violation.
+func validateRBACConfigExtras(p RBACConfigPayload) string {
+	// spec: §10.6 line 661 — the identity model is OIDC. Accept the
+	// empty type (inherit the platform provider) or the literal "oidc";
+	// reject anything else so a typo fails loudly.
+	if t := p.IdentityProvider.Type; t != "" && t != "oidc" {
+		return fmt.Sprintf("identityProvider.type %q is not supported (use \"oidc\")", t)
+	}
+	// §10.6 line 665 — tokenPolicy is an opaque object. Reject a non-object
+	// (array/scalar) so the stored value is always a JSON object the GET
+	// round-trips unchanged.
+	if len(p.TokenPolicy) > 0 {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(p.TokenPolicy, &obj); err != nil {
+			return "tokenPolicy must be a JSON object"
+		}
+	}
+	// §10.6 line 665 — the capability taxonomy is extensible per tenant;
+	// validate the names loosely (non-empty, no duplicates).
+	seen := map[string]bool{}
+	for i, c := range p.Capabilities {
+		if c == "" {
+			return fmt.Sprintf("capabilities[%d] must not be empty", i)
+		}
+		if seen[c] {
+			return fmt.Sprintf("capabilities[%d] duplicates %q", i, c)
+		}
+		seen[c] = true
+	}
+	// §5.1 line 325 — mcpAnnotationMapping overrides the capability
+	// inference, so each mapped value must be a closed §5.3 tool
+	// capability. Reuse the §5.1 toolCapabilityOverrides validator.
+	overrides := make(map[string][]capabilityinference.Capability, len(p.MCPAnnotationMapping))
+	for tool, caps := range p.MCPAnnotationMapping {
+		cc := make([]capabilityinference.Capability, len(caps))
+		for i, c := range caps {
+			cc[i] = capabilityinference.Capability(c)
+		}
+		overrides[tool] = cc
+	}
+	if err := capabilityinference.ValidateOverrides(overrides); err != nil {
+		return "mcpAnnotationMapping: " + err.Error()
+	}
+	return ""
 }
 
 // effectiveNoEnvironmentPolicy reports a tenant's §10.6
@@ -55,10 +151,7 @@ func (r *Router) handleGetRBACConfig(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(RBACConfigPayload{
-		TenantID:            row.ID,
-		NoEnvironmentPolicy: effectiveNoEnvironmentPolicy(row),
-	})
+	_ = json.NewEncoder(w).Encode(rbacConfigPayload(row))
 }
 
 // handlePutRBACConfig serves PUT /v1/admin/tenants/{id}/rbac-config
@@ -89,8 +182,17 @@ func (r *Router) handlePutRBACConfig(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "noEnvironmentPolicy"})
 		return
 	}
+	// spec: §10.6 line 665 — validate the identityProvider, tokenPolicy,
+	// capabilities, and mcpAnnotationMapping fields before persisting.
+	// F-10.6.6.
+	if msg := validateRBACConfigExtras(body); msg != "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, nil)
+		return
+	}
+	rbac := toRBACConfig(body)
 	updated, err := r.tenants.Update(req.Context(), tenant, func(t *tenantstore.Tenant) error {
 		t.NoEnvironmentPolicy = policy
+		t.RBACConfig = rbac
 		return nil
 	})
 	if err != nil {
@@ -117,8 +219,5 @@ func (r *Router) handlePutRBACConfig(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(RBACConfigPayload{
-		TenantID:            updated.ID,
-		NoEnvironmentPolicy: effectiveNoEnvironmentPolicy(updated),
-	})
+	_ = json.NewEncoder(w).Encode(rbacConfigPayload(updated))
 }

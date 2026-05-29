@@ -283,7 +283,7 @@ func connectorWithTeam(id, team string) connectorstore.Connector {
 func teamConnectorEnv(name, team string, members ...environmentstore.Member) environmentstore.Environment {
 	return environmentstore.Environment{
 		Name: name, TenantID: "acme", Members: members,
-		ConnectorSelector: environment.Selector{MatchLabels: map[string]string{"team": team}},
+		ConnectorSelector: environmentstore.ConnectorSelector{Selector: environment.Selector{MatchLabels: map[string]string{"team": team}}},
 	}
 }
 

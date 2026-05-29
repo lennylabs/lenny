@@ -11,6 +11,7 @@ package stores_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -67,6 +68,54 @@ func TestTenantStoreContract(t *testing.T) {
 		}
 		if !got.IsActive() {
 			t.Error("freshly created tenant reports inactive")
+		}
+	})
+
+	// spec: §10.6 line 665 — the rbac_config jsonb column persists the
+	// identityProvider, tokenPolicy, capabilities, and mcpAnnotationMapping
+	// fields through Create and Update. F-10.6.6.
+	t.Run("rbac config round-trip", func(t *testing.T) {
+		id := tenantID(t)
+		want := tenantstore.RBACConfig{
+			IdentityProvider:     tenantstore.IdentityProvider{Type: "oidc", IntrospectionEnabled: true},
+			TokenPolicy:          json.RawMessage(`{"accessTtlSeconds":900}`),
+			Capabilities:         []string{"search", "summarize"},
+			MCPAnnotationMapping: map[string][]string{"dangerous_tool": {"read", "write"}},
+		}
+		if err := store.Create(ctx, tenantstore.Tenant{ID: id, RBACConfig: want}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.RBACConfig.IdentityProvider != want.IdentityProvider {
+			t.Errorf("identityProvider: got %+v, want %+v", got.RBACConfig.IdentityProvider, want.IdentityProvider)
+		}
+		if string(got.RBACConfig.TokenPolicy) != string(want.TokenPolicy) {
+			t.Errorf("tokenPolicy: got %s, want %s", got.RBACConfig.TokenPolicy, want.TokenPolicy)
+		}
+		if strings.Join(got.RBACConfig.Capabilities, ",") != "search,summarize" {
+			t.Errorf("capabilities: got %+v", got.RBACConfig.Capabilities)
+		}
+		if caps := got.RBACConfig.MCPAnnotationMapping["dangerous_tool"]; strings.Join(caps, ",") != "read,write" {
+			t.Errorf("mcpAnnotationMapping: got %+v", got.RBACConfig.MCPAnnotationMapping)
+		}
+
+		// Update replaces the config.
+		if _, err := store.Update(ctx, id, func(tn *tenantstore.Tenant) error {
+			tn.RBACConfig.IdentityProvider.IntrospectionEnabled = false
+			tn.RBACConfig.Capabilities = []string{"search"}
+			return nil
+		}); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		reloaded, _ := store.Get(ctx, id)
+		if reloaded.RBACConfig.IdentityProvider.IntrospectionEnabled {
+			t.Error("Update did not persist the cleared introspectionEnabled")
+		}
+		if len(reloaded.RBACConfig.Capabilities) != 1 {
+			t.Errorf("Update did not persist capabilities: %+v", reloaded.RBACConfig.Capabilities)
 		}
 	})
 

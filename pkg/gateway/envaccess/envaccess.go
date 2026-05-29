@@ -150,7 +150,7 @@ func AuthorizedConnectors(caller Caller, envs []environmentstore.Environment, co
 			if _, seen := admitted[c.ID]; seen {
 				continue
 			}
-			if env.ConnectorSelector.Matches(environment.Candidate{
+			if env.ConnectorSelector.Selector.Matches(environment.Candidate{
 				Name: c.ID, Labels: c.Labels,
 			}) {
 				admitted[c.ID] = c

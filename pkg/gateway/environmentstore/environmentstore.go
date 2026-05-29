@@ -46,6 +46,18 @@ type MCPRuntimeFilter struct {
 	DeniedCapabilities  []string
 }
 
+// ConnectorSelector is the §10.6 connectorSelector: a tag-based
+// connector selection plus the capability allow/deny lists that decide
+// what the selected connectors may do. The Selector chooses which
+// connectors are in scope; AllowedCapabilities and DeniedCapabilities
+// decide what those connectors may do, parallel to MCPRuntimeFilter for
+// `type: mcp` runtimes. spec: §10.6 lines 595-599. F-10.6.3.
+type ConnectorSelector struct {
+	Selector            environment.Selector
+	AllowedCapabilities []string
+	DeniedCapabilities  []string
+}
+
 // CrossEnvRule is one §10.6 bilateral cross-environment-delegation
 // declaration. For an outbound rule Environment is the target; for an
 // inbound rule it is the permitted source ("*" matches any source).
@@ -68,8 +80,10 @@ type Environment struct {
 	RuntimeSelector environment.Selector
 	// MCPRuntimeFilters are the §10.6 capability filters for mcp runtimes.
 	MCPRuntimeFilters []MCPRuntimeFilter
-	// ConnectorSelector is the §10.6 internal connector selection.
-	ConnectorSelector environment.Selector
+	// ConnectorSelector is the §10.6 internal connector selection plus
+	// the capability allow/deny lists that govern what the selected
+	// connectors may do.
+	ConnectorSelector ConnectorSelector
 	// DefaultDelegationPolicy names the DelegationPolicy applied to
 	// sessions created in this environment.
 	DefaultDelegationPolicy string
@@ -121,12 +135,18 @@ func (e Environment) Validate() error {
 	if err := e.RuntimeSelector.Validate(); err != nil {
 		v = append(v, "runtimeSelector: "+err.Error())
 	}
-	if err := e.ConnectorSelector.Validate(); err != nil {
+	if err := e.ConnectorSelector.Selector.Validate(); err != nil {
 		v = append(v, "connectorSelector: "+err.Error())
+	}
+	for _, ce := range validateCapabilityLists(e.ConnectorSelector.AllowedCapabilities, e.ConnectorSelector.DeniedCapabilities) {
+		v = append(v, "connectorSelector."+ce)
 	}
 	for i, f := range e.MCPRuntimeFilters {
 		if err := f.RuntimeSelector.Validate(); err != nil {
 			v = append(v, fmt.Sprintf("mcpRuntimeFilters[%d].runtimeSelector: %v", i, err))
+		}
+		for _, ce := range validateCapabilityLists(f.AllowedCapabilities, f.DeniedCapabilities) {
+			v = append(v, fmt.Sprintf("mcpRuntimeFilters[%d].%s", i, ce))
 		}
 	}
 	for i, r := range e.CrossEnvOutbound {
@@ -164,6 +184,45 @@ func (e Environment) Validate() error {
 		return nil
 	}
 	return fmt.Errorf("environmentstore: %s: %s", e.Name, strings.Join(v, "; "))
+}
+
+// validateCapabilityLists reports the §10.6 admission errors for a
+// connectorSelector or mcpRuntimeFilter capability allow/deny pair: a
+// capability name must be non-empty, must not repeat within its list,
+// and must not appear in both the allowed and denied lists. Names are
+// validated loosely — the §10.6 line 665 capability taxonomy is
+// extensible per tenant (platform defaults plus tenant-custom) and the
+// §10.6 connectorSelector example itself names `search`, which is not a
+// §5.3 tool capability — so membership in the closed §5.3 enum is not
+// required. spec: §10.6 lines 595-599, line 665. F-10.6.3.
+func validateCapabilityLists(allowed, denied []string) []string {
+	var errs []string
+	seenAllowed := map[string]bool{}
+	for i, c := range allowed {
+		if strings.TrimSpace(c) == "" {
+			errs = append(errs, fmt.Sprintf("allowedCapabilities[%d] must not be empty", i))
+			continue
+		}
+		if seenAllowed[c] {
+			errs = append(errs, fmt.Sprintf("allowedCapabilities[%d] duplicates %q", i, c))
+		}
+		seenAllowed[c] = true
+	}
+	seenDenied := map[string]bool{}
+	for i, c := range denied {
+		if strings.TrimSpace(c) == "" {
+			errs = append(errs, fmt.Sprintf("deniedCapabilities[%d] must not be empty", i))
+			continue
+		}
+		if seenDenied[c] {
+			errs = append(errs, fmt.Sprintf("deniedCapabilities[%d] duplicates %q", i, c))
+		}
+		seenDenied[c] = true
+		if seenAllowed[c] {
+			errs = append(errs, fmt.Sprintf("deniedCapabilities[%d] %q also appears in allowedCapabilities", i, c))
+		}
+	}
+	return errs
 }
 
 // Sentinel errors.

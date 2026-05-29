@@ -77,6 +77,49 @@ func TestCreateRejectsInvalidEnvironment(t *testing.T) {
 	}
 }
 
+// spec: §10.6 lines 595-599 — the connectorSelector and the
+// mcpRuntimeFilter capability lists are validated: a name must be
+// non-empty, must not repeat within a list, and must not appear in both
+// the allowed and denied lists. F-10.6.3.
+func TestConnectorSelectorCapabilityValidation_spec_10_6_595(t *testing.T) {
+	m := environmentstore.NewMemory()
+
+	ok := validEnvironment("acme", "caps-ok")
+	ok.ConnectorSelector = environmentstore.ConnectorSelector{
+		AllowedCapabilities: []string{"read", "search"},
+		DeniedCapabilities:  []string{"write", "admin"},
+	}
+	if err := m.Create(context.Background(), ok); err != nil {
+		t.Fatalf("a valid capability pair must be accepted: %v", err)
+	}
+
+	cases := map[string]environmentstore.ConnectorSelector{
+		"overlap": {AllowedCapabilities: []string{"read"}, DeniedCapabilities: []string{"read"}},
+		"empty":   {AllowedCapabilities: []string{""}},
+		"dup":     {AllowedCapabilities: []string{"read", "read"}},
+	}
+	for name, sel := range cases {
+		t.Run(name, func(t *testing.T) {
+			bad := validEnvironment("acme", "caps-bad-"+name)
+			bad.ConnectorSelector = sel
+			if err := m.Create(context.Background(), bad); err == nil {
+				t.Errorf("Create accepted an invalid capability pair (%s)", name)
+			}
+		})
+	}
+
+	// The same validation applies to an mcpRuntimeFilter capability pair.
+	badFilter := validEnvironment("acme", "filter-bad")
+	badFilter.MCPRuntimeFilters = []environmentstore.MCPRuntimeFilter{{
+		AllowedCapabilities: []string{"read"},
+		DeniedCapabilities:  []string{"read"},
+	}}
+	if err := m.Create(context.Background(), badFilter); err == nil ||
+		!strings.Contains(err.Error(), "mcpRuntimeFilters[0]") {
+		t.Errorf("mcpRuntimeFilter overlapping capability: got %v, want a filter-scoped error", err)
+	}
+}
+
 func TestCreateRejectsDuplicate(t *testing.T) {
 	m := environmentstore.NewMemory()
 	if err := m.Create(context.Background(), validEnvironment("acme", "dup")); err != nil {

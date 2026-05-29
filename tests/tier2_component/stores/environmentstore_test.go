@@ -40,8 +40,14 @@ func sampleEnvironment(tenant, name string) environmentstore.Environment {
 				Role:     environment.RoleViewer,
 			},
 		},
-		RuntimeSelector:   environment.Selector{MatchLabels: map[string]string{"team": "security"}},
-		ConnectorSelector: environment.Selector{MatchLabels: map[string]string{"tier": "internal"}},
+		RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+		// spec: §10.6 lines 595-599 — the connectorSelector carries the
+		// tag selector plus the capability allow/deny lists. F-10.6.3.
+		ConnectorSelector: environmentstore.ConnectorSelector{
+			Selector:            environment.Selector{MatchLabels: map[string]string{"tier": "internal"}},
+			AllowedCapabilities: []string{"read", "search", "network"},
+			DeniedCapabilities:  []string{"write", "delete", "execute", "admin"},
+		},
 		MCPRuntimeFilters: []environmentstore.MCPRuntimeFilter{
 			{
 				RuntimeSelector:     environment.Selector{MatchLabels: map[string]string{"type": "mcp"}},

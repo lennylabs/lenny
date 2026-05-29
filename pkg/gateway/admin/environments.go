@@ -56,6 +56,20 @@ type MCPRuntimeFilterPayload struct {
 	DeniedCapabilities  []string        `json:"deniedCapabilities,omitempty"`
 }
 
+// ConnectorSelectorPayload is the wire shape of a §10.6
+// connectorSelector: the tag-based selector fields plus the capability
+// allow/deny lists that govern what the selected connectors may do.
+// spec: §10.6 lines 595-599. F-10.6.3.
+type ConnectorSelectorPayload struct {
+	MatchLabels         map[string]string    `json:"matchLabels,omitempty"`
+	MatchExpressions    []RequirementPayload `json:"matchExpressions,omitempty"`
+	Types               []string             `json:"types,omitempty"`
+	Include             []string             `json:"include,omitempty"`
+	Exclude             []string             `json:"exclude,omitempty"`
+	AllowedCapabilities []string             `json:"allowedCapabilities,omitempty"`
+	DeniedCapabilities  []string             `json:"deniedCapabilities,omitempty"`
+}
+
 // CrossEnvOutboundRulePayload is one §10.6 outbound cross-environment
 // delegation rule. spec: §10.6 lines 613-625 — the outbound declaration
 // names the permitted delegation target under `targetEnvironment`. The
@@ -91,7 +105,7 @@ type EnvironmentPayload struct {
 	Members                    []MemberPayload           `json:"members,omitempty"`
 	RuntimeSelector            SelectorPayload           `json:"runtimeSelector"`
 	MCPRuntimeFilters          []MCPRuntimeFilterPayload `json:"mcpRuntimeFilters,omitempty"`
-	ConnectorSelector          SelectorPayload           `json:"connectorSelector"`
+	ConnectorSelector          ConnectorSelectorPayload  `json:"connectorSelector"`
 	DefaultDelegationPolicy    string                    `json:"defaultDelegationPolicy,omitempty"`
 	CrossEnvironmentDelegation CrossEnvDelegationPayload `json:"crossEnvironmentDelegation"`
 	CreatedAt                  string                    `json:"createdAt,omitempty"`
@@ -119,6 +133,27 @@ func fromSelector(s environment.Selector) SelectorPayload {
 	return SelectorPayload{
 		MatchLabels: s.MatchLabels, MatchExpressions: reqs,
 		Types: s.Types, Include: s.Include, Exclude: s.Exclude,
+	}
+}
+
+func toConnectorSelector(p ConnectorSelectorPayload) environmentstore.ConnectorSelector {
+	return environmentstore.ConnectorSelector{
+		Selector: toSelector(SelectorPayload{
+			MatchLabels: p.MatchLabels, MatchExpressions: p.MatchExpressions,
+			Types: p.Types, Include: p.Include, Exclude: p.Exclude,
+		}),
+		AllowedCapabilities: p.AllowedCapabilities,
+		DeniedCapabilities:  p.DeniedCapabilities,
+	}
+}
+
+func fromConnectorSelector(c environmentstore.ConnectorSelector) ConnectorSelectorPayload {
+	s := fromSelector(c.Selector)
+	return ConnectorSelectorPayload{
+		MatchLabels: s.MatchLabels, MatchExpressions: s.MatchExpressions,
+		Types: s.Types, Include: s.Include, Exclude: s.Exclude,
+		AllowedCapabilities: c.AllowedCapabilities,
+		DeniedCapabilities:  c.DeniedCapabilities,
 	}
 }
 
@@ -191,7 +226,7 @@ func toEnvironment(p EnvironmentPayload, tenant string) environmentstore.Environ
 		Members:                 members,
 		RuntimeSelector:         toSelector(p.RuntimeSelector),
 		MCPRuntimeFilters:       filters,
-		ConnectorSelector:       toSelector(p.ConnectorSelector),
+		ConnectorSelector:       toConnectorSelector(p.ConnectorSelector),
 		DefaultDelegationPolicy: p.DefaultDelegationPolicy,
 		CrossEnvOutbound:        toCrossEnvOutbound(p.CrossEnvironmentDelegation.Outbound),
 		CrossEnvInbound:         toCrossEnvInbound(p.CrossEnvironmentDelegation.Inbound),
@@ -222,7 +257,7 @@ func fromEnvironment(e environmentstore.Environment) EnvironmentPayload {
 		Members:                 members,
 		RuntimeSelector:         fromSelector(e.RuntimeSelector),
 		MCPRuntimeFilters:       filters,
-		ConnectorSelector:       fromSelector(e.ConnectorSelector),
+		ConnectorSelector:       fromConnectorSelector(e.ConnectorSelector),
 		DefaultDelegationPolicy: e.DefaultDelegationPolicy,
 		CrossEnvironmentDelegation: CrossEnvDelegationPayload{
 			Outbound: fromCrossEnvOutbound(e.CrossEnvOutbound),

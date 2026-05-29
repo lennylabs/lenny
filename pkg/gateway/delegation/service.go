@@ -917,6 +917,40 @@ func (s *Service) EffectiveDelegationPolicy(ctx context.Context, tenantID, sessi
 	return pol, true, nil
 }
 
+// ResolveActivePolicy returns the named §8.3 DelegationPolicy when the
+// policy registry is wired, the name is non-empty, and the policy
+// resolves to an active (non-soft-deleted) row. Every other case —
+// no registry, empty name, a missing policy, or a soft-deleted policy —
+// returns (zero, false, nil), so a caller treats an unresolved
+// reference as "no policy-level restriction", matching the conservative
+// fall-through EffectiveDelegationPolicy applies to a runtime-level
+// reference.
+//
+// The §10.6 environment layer in the gateway calls this to apply an
+// environment's defaultDelegationPolicy (§10.6 line 601 — "the
+// DelegationPolicy applied to sessions created in this environment") as
+// an additional intersection in the §10.6 line 629 effective-scope
+// formula. The delegation Service does not itself read the §10.6
+// Environment registry; the gateway resolves the policy name from the
+// environment and hands it here for a uniform active-policy lookup.
+// spec: §10.6 line 601, line 629. F-10.6.7.
+func (s *Service) ResolveActivePolicy(ctx context.Context, tenantID, name string) (delegationpolicystore.DelegationPolicy, bool, error) {
+	if s.policies == nil || name == "" {
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	pol, err := s.policies.Get(ctx, tenantID, name)
+	if err != nil {
+		if errors.Is(err, delegationpolicystore.ErrNotFound) {
+			return delegationpolicystore.DelegationPolicy{}, false, nil
+		}
+		return delegationpolicystore.DelegationPolicy{}, false, err
+	}
+	if !pol.IsActive() {
+		return delegationpolicystore.DelegationPolicy{}, false, nil
+	}
+	return pol, true, nil
+}
+
 // lineageWalkSafetyMargin is the additive cap above the Helm
 // fallback maxDepth applied to the buildLineage walk. The walk stops
 // once chain length reaches defaultMaxDepth + safetyMargin even when

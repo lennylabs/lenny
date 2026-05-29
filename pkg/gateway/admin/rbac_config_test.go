@@ -119,6 +119,124 @@ func TestRBACConfigTenantNotFound(t *testing.T) {
 	}
 }
 
+// spec: §10.6 line 665 — the RBAC config carries identityProvider,
+// tokenPolicy, the capabilities taxonomy, and the mcpAnnotationMapping
+// overrides. A PUT must persist all four and a GET must round-trip them;
+// they are no longer silently dropped. F-10.6.6.
+func TestRBACConfigRoundTripsExtraFields_spec_10_6_665(t *testing.T) {
+	router, tenants := newRBACConfigAdmin(t)
+	body, _ := json.Marshal(admin.RBACConfigPayload{
+		NoEnvironmentPolicy: "deny-all",
+		IdentityProvider:    admin.IdentityProviderPayload{Type: "oidc", IntrospectionEnabled: true},
+		TokenPolicy:         json.RawMessage(`{"accessTtlSeconds":900}`),
+		Capabilities:        []string{"search", "summarize"},
+		MCPAnnotationMapping: map[string][]string{
+			"dangerous_tool": {"read", "write"},
+		},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// Stored on the tenant row.
+	row, _ := tenants.Get(context.Background(), "acme")
+	if row.RBACConfig.IdentityProvider.Type != "oidc" || !row.RBACConfig.IdentityProvider.IntrospectionEnabled {
+		t.Errorf("identityProvider did not persist: %+v", row.RBACConfig.IdentityProvider)
+	}
+	if string(row.RBACConfig.TokenPolicy) != `{"accessTtlSeconds":900}` {
+		t.Errorf("tokenPolicy did not persist verbatim: %s", row.RBACConfig.TokenPolicy)
+	}
+	if len(row.RBACConfig.Capabilities) != 2 || row.RBACConfig.Capabilities[0] != "search" {
+		t.Errorf("capabilities did not persist: %+v", row.RBACConfig.Capabilities)
+	}
+	if caps := row.RBACConfig.MCPAnnotationMapping["dangerous_tool"]; len(caps) != 2 || caps[0] != "read" {
+		t.Errorf("mcpAnnotationMapping did not persist: %+v", row.RBACConfig.MCPAnnotationMapping)
+	}
+
+	// GET round-trips the fields.
+	getReq := withAdminPrincipal(httptest.NewRequest(http.MethodGet,
+		"/v1/admin/tenants/acme/rbac-config", nil))
+	getRR := httptest.NewRecorder()
+	router.Handler().ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("GET status %d", getRR.Code)
+	}
+	var resp admin.RBACConfigPayload
+	if err := json.Unmarshal(getRR.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal GET: %v", err)
+	}
+	if resp.IdentityProvider.Type != "oidc" || !resp.IdentityProvider.IntrospectionEnabled {
+		t.Errorf("GET identityProvider: %+v", resp.IdentityProvider)
+	}
+	if len(resp.Capabilities) != 2 {
+		t.Errorf("GET capabilities: %+v", resp.Capabilities)
+	}
+	if len(resp.MCPAnnotationMapping["dangerous_tool"]) != 2 {
+		t.Errorf("GET mcpAnnotationMapping: %+v", resp.MCPAnnotationMapping)
+	}
+}
+
+func TestRBACConfigPutRejectsUnsupportedIdentityProvider_spec_10_6_661(t *testing.T) {
+	router, _ := newRBACConfigAdmin(t)
+	body, _ := json.Marshal(admin.RBACConfigPayload{
+		IdentityProvider: admin.IdentityProviderPayload{Type: "saml"},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("unsupported identity provider: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRBACConfigPutRejectsNonObjectTokenPolicy_spec_10_6_665(t *testing.T) {
+	router, _ := newRBACConfigAdmin(t)
+	body, _ := json.Marshal(admin.RBACConfigPayload{
+		TokenPolicy: json.RawMessage(`["not","an","object"]`),
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("non-object tokenPolicy: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRBACConfigPutRejectsInvalidMCPCapability_spec_5_1_325(t *testing.T) {
+	// mcpAnnotationMapping overrides the §5.1 capability inference, so the
+	// mapped values must be closed §5.3 tool capabilities.
+	router, _ := newRBACConfigAdmin(t)
+	body, _ := json.Marshal(admin.RBACConfigPayload{
+		MCPAnnotationMapping: map[string][]string{"tool": {"frobnicate"}},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("invalid mcpAnnotationMapping capability: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRBACConfigPutRejectsDuplicateCapability_spec_10_6_665(t *testing.T) {
+	router, _ := newRBACConfigAdmin(t)
+	body, _ := json.Marshal(admin.RBACConfigPayload{
+		Capabilities: []string{"search", "search"},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("duplicate capability: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
 // fakeRBACMetrics records the §10.6 allow-all counter calls.
 type fakeRBACMetrics struct{ allowAllTenants []string }
 

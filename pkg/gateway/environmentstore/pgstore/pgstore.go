@@ -57,7 +57,7 @@ type envBody struct {
 	Members                 []environmentstore.Member           `json:"members,omitempty"`
 	RuntimeSelector         environment.Selector                `json:"runtimeSelector,omitempty"`
 	MCPRuntimeFilters       []environmentstore.MCPRuntimeFilter `json:"mcpRuntimeFilters,omitempty"`
-	ConnectorSelector       environment.Selector                `json:"connectorSelector,omitempty"`
+	ConnectorSelector       environmentstore.ConnectorSelector  `json:"connectorSelector,omitempty"`
 	DefaultDelegationPolicy string                              `json:"defaultDelegationPolicy,omitempty"`
 	CrossEnvOutbound        []environmentstore.CrossEnvRule     `json:"crossEnvOutbound,omitempty"`
 	CrossEnvInbound         []environmentstore.CrossEnvRule     `json:"crossEnvInbound,omitempty"`

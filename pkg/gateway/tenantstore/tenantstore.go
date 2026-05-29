@@ -11,6 +11,7 @@ package tenantstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
@@ -91,6 +92,13 @@ type Tenant struct {
 	// tenant.
 	NoEnvironmentPolicy string
 
+	// RBACConfig is the rest of the §10.6 tenant RBAC configuration set
+	// through PUT /v1/admin/tenants/{id}/rbac-config: the OIDC identity
+	// provider, the token policy, the tenant-custom capability taxonomy,
+	// and the per-tenant MCP-annotation capability-inference overrides.
+	// The zero value means the tenant configured none of these.
+	RBACConfig RBACConfig
+
 	// ExperimentTargeting is the §10.7 experimentTargeting block: how
 	// the tenant resolves mode:external experiment assignment. The zero
 	// value means the tenant configures no external targeting and only
@@ -128,6 +136,67 @@ type Tenant struct {
 
 // IsActive reports whether the tenant has not been soft-deleted.
 func (t Tenant) IsActive() bool { return t.DeletedAt.IsZero() }
+
+// IdentityProvider is the §10.6 tenant identity-provider configuration.
+// v1 carries the OIDC provider type and the introspectionEnabled toggle
+// the §10.6 line 661 real-time group check reads. spec: §10.6 line 661.
+type IdentityProvider struct {
+	// Type names the identity provider. The §10.6 identity model is
+	// OIDC; an empty Type means the tenant inherits the platform OIDC
+	// configuration.
+	Type string `json:"type,omitempty"`
+
+	// IntrospectionEnabled turns on the §10.6 line 661 real-time group
+	// check (RFC 7662 token introspection) at the documented latency
+	// cost. The default is off — JWT group claims alone carry group
+	// identity.
+	IntrospectionEnabled bool `json:"introspectionEnabled,omitempty"`
+}
+
+// RBACConfig is the §10.6 tenant RBAC configuration carried by
+// PUT /v1/admin/tenants/{id}/rbac-config beyond the noEnvironmentPolicy
+// column. spec: §10.6 line 665.
+type RBACConfig struct {
+	// IdentityProvider is the §10.6 OIDC identity-provider configuration.
+	IdentityProvider IdentityProvider `json:"identityProvider,omitempty"`
+
+	// TokenPolicy is the §10.6 tenant token policy. §10.6 line 665 names
+	// the field but does not define its sub-fields; the gateway stores
+	// it verbatim as an opaque JSON object and round-trips it without
+	// interpreting fields the spec does not define. A nil or empty value
+	// means the tenant set no token policy.
+	TokenPolicy json.RawMessage `json:"tokenPolicy,omitempty"`
+
+	// Capabilities is the §10.6 tenant-custom capability taxonomy: the
+	// capability names this tenant adds on top of the platform defaults.
+	Capabilities []string `json:"capabilities,omitempty"`
+
+	// MCPAnnotationMapping is the §10.6 / §5.1 line 325 per-tenant
+	// override of the MCP-annotation capability inference: a tool name
+	// maps to the §5.3 capability set the gateway assigns it, overriding
+	// the value inferred from the tool's MCP ToolAnnotations.
+	MCPAnnotationMapping map[string][]string `json:"mcpAnnotationMapping,omitempty"`
+}
+
+// Clone deep-copies the RBACConfig so a stored value and a returned copy
+// never share the TokenPolicy backing array, the Capabilities slice, or
+// the MCPAnnotationMapping map.
+func (c RBACConfig) Clone() RBACConfig {
+	cp := c
+	if c.TokenPolicy != nil {
+		cp.TokenPolicy = append(json.RawMessage(nil), c.TokenPolicy...)
+	}
+	if c.Capabilities != nil {
+		cp.Capabilities = append([]string(nil), c.Capabilities...)
+	}
+	if c.MCPAnnotationMapping != nil {
+		cp.MCPAnnotationMapping = make(map[string][]string, len(c.MCPAnnotationMapping))
+		for k, v := range c.MCPAnnotationMapping {
+			cp.MCPAnnotationMapping[k] = append([]string(nil), v...)
+		}
+	}
+	return cp
+}
 
 // §12.8 BillingErasurePolicy values.
 const (
@@ -239,6 +308,7 @@ func cloneTenant(t Tenant) Tenant {
 	}
 	cp.ExperimentTargeting = t.ExperimentTargeting.Clone()
 	cp.CredentialPolicy = t.CredentialPolicy.Clone()
+	cp.RBACConfig = t.RBACConfig.Clone()
 	return cp
 }
 

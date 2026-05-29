@@ -45,7 +45,7 @@ func TestEnvironmentRuntimeExposure(t *testing.T) {
 	if err := envs.Create(context.Background(), environmentstore.Environment{
 		Name: "security-team", TenantID: "acme",
 		RuntimeSelector:   environment.Selector{MatchLabels: map[string]string{"team": "security"}},
-		ConnectorSelector: environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+		ConnectorSelector: environmentstore.ConnectorSelector{Selector: environment.Selector{MatchLabels: map[string]string{"team": "security"}}},
 	}); err != nil {
 		t.Fatalf("seed environment: %v", err)
 	}

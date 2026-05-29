@@ -4,6 +4,7 @@ package tenantstore_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -13,6 +14,53 @@ import (
 )
 
 // spec: §12.5/§12.8 tenant registry; §10.2 IsRegistered consumer.
+
+// spec: §10.6 line 665 — the §10.6 RBACConfig sub-objects (tokenPolicy,
+// capabilities, mcpAnnotationMapping) must deep-copy so a stored row and
+// a returned copy never share backing memory. A Get-mutate-Get round
+// trip must not leak the mutation back into the registry. F-10.6.6.
+func TestRBACConfigCloneIsDeep_spec_10_6_665(t *testing.T) {
+	ctx := context.Background()
+	m := tenantstore.NewMemory()
+	if err := m.Create(ctx, tenantstore.Tenant{
+		ID: "acme",
+		RBACConfig: tenantstore.RBACConfig{
+			IdentityProvider:     tenantstore.IdentityProvider{Type: "oidc", IntrospectionEnabled: true},
+			TokenPolicy:          json.RawMessage(`{"accessTtlSeconds":900}`),
+			Capabilities:         []string{"search"},
+			MCPAnnotationMapping: map[string][]string{"tool": {"read"}},
+		},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := m.Get(ctx, "acme")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	// Mutate the returned copy's nested slices and map.
+	got.RBACConfig.Capabilities[0] = "mutated"
+	got.RBACConfig.MCPAnnotationMapping["tool"][0] = "mutated"
+	got.RBACConfig.MCPAnnotationMapping["added"] = []string{"x"}
+	got.RBACConfig.TokenPolicy[0] = 'X'
+
+	again, err := m.Get(ctx, "acme")
+	if err != nil {
+		t.Fatalf("Get again: %v", err)
+	}
+	if again.RBACConfig.Capabilities[0] != "search" {
+		t.Errorf("Capabilities leaked a mutation: %+v", again.RBACConfig.Capabilities)
+	}
+	if again.RBACConfig.MCPAnnotationMapping["tool"][0] != "read" {
+		t.Errorf("MCPAnnotationMapping value leaked a mutation: %+v", again.RBACConfig.MCPAnnotationMapping)
+	}
+	if _, ok := again.RBACConfig.MCPAnnotationMapping["added"]; ok {
+		t.Error("MCPAnnotationMapping leaked an added key")
+	}
+	if string(again.RBACConfig.TokenPolicy) != `{"accessTtlSeconds":900}` {
+		t.Errorf("TokenPolicy leaked a mutation: %s", again.RBACConfig.TokenPolicy)
+	}
+}
 
 func TestCreateAndGet(t *testing.T) {
 	s := tenantstore.NewMemory()
