@@ -154,6 +154,11 @@ type Router struct {
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
 
+	// leaseDenials clears the §8.6 extension-denied flag, backing the
+	// §15.1 line 868 DELETE …/extension-denial admin endpoint. Nil leaves
+	// the endpoint unregistered.
+	leaseDenials LeaseDenialClearer
+
 	// devMode mirrors Options.DevMode; it selects the §5.3 line 677
 	// dev-mode isolation default for pools and runtimes that omit
 	// isolationProfile.
@@ -563,6 +568,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/circuit-breakers/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetBreaker)))
 		mux.Handle("POST /v1/admin/circuit-breakers/{name}/open", r.requireAdmin(http.HandlerFunc(r.handleOpenBreaker)))
 		mux.Handle("POST /v1/admin/circuit-breakers/{name}/close", r.requireAdmin(http.HandlerFunc(r.handleCloseBreaker)))
+	}
+	if r.leaseDenials != nil {
+		// §15.1 line 868 — clear the §8.6 extension-denied flag on a
+		// subtree, bypassing the rejection cool-off window. Requires
+		// platform-admin or tenant-admin.
+		mux.Handle("DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial",
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleClearExtensionDenial)))
 	}
 	if r.tenants != nil || r.runtimes != nil || r.users != nil {
 		mux.Handle("POST /v1/admin/bootstrap", r.requireAdmin(http.HandlerFunc(r.handleBootstrap)))

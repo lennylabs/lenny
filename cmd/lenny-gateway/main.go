@@ -2345,6 +2345,16 @@ func main() {
 	// delegationPolicies was constructed above so the delegation
 	// admission gate (§8.2 LayerPolicy) and the admin CRUD share one
 	// store handle.
+	// §8.6 GatewayControl lease-extension budget state. Created here, when
+	// the GatewayControl listener is enabled via --grpc-addr, so the same
+	// per-tree denial flags are shared between the ExtendLease handler and
+	// the §15.1 line 868 admin extension-denial clear endpoint — the admin
+	// handler must mutate the very state the handler reads. F-8.6.8.
+	var leaseBudgets *leasecontrol.MemoryBudgetSource
+	if *grpcAddr != "" {
+		leaseBudgets = leasecontrol.NewMemoryBudgetSource()
+	}
+
 	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics, DevMode: *devMode}).
 		WithRuntimes(runtimes).
 		WithUsers(users).
@@ -2368,6 +2378,11 @@ func main() {
 		WithEventBuffer(opsEventBuffer).
 		WithEventEmitter(opsEmitter).
 		WithOperationsInventory(operations.New())
+	if leaseBudgets != nil {
+		// §15.1 line 868: expose DELETE …/extension-denial backed by the
+		// same leasecontrol budget source the GatewayControl handler reads.
+		adminRouter = adminRouter.WithLeaseDenials(leaseBudgets)
+	}
 	// §5.2 line 629: surface live poolCondition / idlePodCount on the
 	// admin pool GET when the gateway has a Kubernetes client (an
 	// agent-namespace deployment). The minimal Postgres-only posture
@@ -3088,7 +3103,7 @@ func main() {
 	// principal-bound context to satisfy §11.7 line 428 actor-tenant
 	// validation. F-8.6.10.
 	leaseExtensionAuditor := leaseExtensionAuditAdapter{appender: auditAppender}
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, gwMetrics, leaseExtensionAuditor, replica)
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -4025,24 +4040,36 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // empty, which disables the GatewayControl listener. A non-empty addr
 // that cannot be bound returns the error so the gateway fails fast.
 //
-// The server hosts the §8.6 ExtendLease RPC. Its budget state is held
-// in a MemoryBudgetSource, which doubles as the TenantResolver. The
-// §8.6 durability requirement — persisting the extension-denied flag
-// and cool-off expiry to the delegation_tree_budget Postgres table so
-// a coordinator handoff cannot bypass a user rejection — is met by
-// swapping in a Postgres-backed leasecontrol.BudgetSource with the
-// Wave 1 store-persistence work; leasecontrol.Service depends only on
-// the interface.
+// The server hosts the §8.6 ExtendLease RPC. Its budget state is the
+// caller-supplied MemoryBudgetSource (shared with the §15.1 admin
+// extension-denial clear endpoint so both mutate one set of per-tree
+// denial flags), which doubles as the TenantResolver; a nil budgets
+// argument falls back to a fresh source. The §8.6 durability
+// requirement — persisting the extension-denied flag and cool-off
+// expiry to the delegation_tree_budget Postgres table so a coordinator
+// handoff cannot bypass a user rejection — is met by swapping in a
+// Postgres-backed leasecontrol.BudgetSource with the Wave 1
+// store-persistence work; leasecontrol.Service depends only on the
+// interface.
+//
+// tlsCert/tlsKey/clientCA carry the §4.7 mesh credentials (the gateway's
+// own --adapter-tls-* material). When clientCA is set the listener
+// requires and verifies the pod adapter's client certificate, and the
+// RequireVerifiedPeerInterceptor fails any call lacking a verified
+// chain; all three empty selects the local-development plaintext path.
+// F-8.6.4 / F-15.3.1.
 //
 // metrics may be nil for the no-metrics test path; in production the
 // gatewaymetrics.Metrics implements leasecontrol.MetricEmitter so
 // every ExtendLease decision drives the §16 line 66
 // `lenny_delegation_lease_extension_total` counter. F-8.6.13.
-func newGatewayControlServer(addr string, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, replicaID string) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, replicaID, tlsCert, tlsKey, clientCA string) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	if budgets == nil {
+		budgets = leasecontrol.NewMemoryBudgetSource()
+	}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:           budgets,
 		Tenants:           budgets,
@@ -4058,7 +4085,31 @@ func newGatewayControlServer(addr string, metrics leasecontrol.MetricEmitter, au
 	if err != nil {
 		return nil, nil, fmt.Errorf("bind GatewayControl listener on %s: %w", addr, err)
 	}
-	gs := grpc.NewServer()
+	// spec: §4.7 line 616 / §15.3 — the adapter↔gateway channel is mTLS.
+	// The pod adapter is the client of this listener, so the gateway
+	// presents its mesh server cert (--adapter-tls-cert/key, its §4.7
+	// identity) and requires + verifies the adapter's client cert against
+	// the mesh CA (--adapter-ca). The same adapter.TLSServerOption helper
+	// the pod-facing Adapter service uses builds the credentials, so both
+	// directions of the channel share one mTLS configuration. When no
+	// cert material is configured the option is nil and the listener
+	// serves plaintext — the documented local-development path only.
+	// F-8.6.4 / F-15.3.1.
+	tlsOpt, err := adapter.TLSServerOption(tlsCert, tlsKey, clientCA)
+	if err != nil {
+		return nil, nil, fmt.Errorf("§8.6 GatewayControl mTLS credentials: %w", err)
+	}
+	var opts []grpc.ServerOption
+	if tlsOpt != nil {
+		opts = append(opts, tlsOpt)
+	}
+	// The interceptor fails closed when client-cert verification is
+	// active (clientCA set): every ExtendLease call must arrive over a
+	// verified mTLS chain, since the handler trusts the session_id in the
+	// request body and has no other proof of the caller's identity.
+	// F-8.6.4 / F-15.3.1.
+	opts = append(opts, grpc.UnaryInterceptor(leasecontrol.RequireVerifiedPeerInterceptor(clientCA != "")))
+	gs := grpc.NewServer(opts...)
 	adapterv1.RegisterGatewayControlServer(gs, svc)
 	return gs, lis, nil
 }

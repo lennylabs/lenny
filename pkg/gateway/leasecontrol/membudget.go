@@ -309,6 +309,33 @@ func (m *MemoryBudgetSource) ClearDenial(rootSessionID string) {
 	}
 }
 
+// ClearSubtreeDenial clears the §8.6 extension-denied flag for the
+// subtree rooted at sessionID inside the delegation tree rooted at
+// rootSessionID, backing the §15.1 line 868 admin endpoint
+// DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial.
+// It returns found=false when rootSessionID names no known tree so the
+// admin handler can answer 404 rather than silently succeeding.
+//
+// The in-memory source records the §8.6 denial tree-wide rather than
+// per-subtree (see memTree.extensionDenied), so clearing any subtree of
+// a tree clears the tree's denial. The handoff-safe Postgres source
+// keys the flag with a per-row subtree id and clears only the named
+// subtree; the (found bool, error) signature is the seam for it — a
+// Postgres implementation returns the not-found and storage-error cases
+// through the same two return values.
+// spec: §8.6 line 735; §15.1 line 868
+func (m *MemoryBudgetSource) ClearSubtreeDenial(_ context.Context, rootSessionID, _ string) (found bool, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.trees[rootSessionID]
+	if !ok {
+		return false, nil
+	}
+	t.extensionDenied = false
+	t.coolOffExpiry = time.Time{}
+	return true, nil
+}
+
 // TenantOf resolves a session's tenant, satisfying TenantResolver so a
 // MemoryBudgetSource can serve both roles in tests and the minimal
 // gateway.
