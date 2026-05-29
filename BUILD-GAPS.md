@@ -13782,7 +13782,7 @@ the spec relies on to prevent abusive eval flooding.
 
 ---
 
-### - [ ] F-10.7.5 — 05  Eval handler does not populate `submitted_after_conclusion` or `delegation_depth` [High] — OPEN
+### - [x] F-10.7.5 — 05  Eval handler does not populate `submitted_after_conclusion` or `delegation_depth` [High] — CLOSED
 
 **Spec:** §10.7 lines 868 and 905–907 — every `EvalResult` carries
 `delegation_depth` (uint32, 0 for root sessions) "auto-populated by the
@@ -13828,6 +13828,14 @@ the filter (e.g., `TestExperimentResultsDelegationDepthFilter` and
 `/Users/joan/projects/lenny/pkg/gateway/admin/experiment_results_test.go`
 lines 177 and 216) seed the field directly via `evalstore.Put`, masking the
 absence in the production write path.
+
+**Resolution:** `Session.DelegationDepth` (migration 0095, pgstore
+round-trip) is stamped at delegation time (`parent.depth+1`) by
+`delegation.Service.Delegate`; the eval handler copies it onto
+`EvalResult.DelegationDepth` and computes `SubmittedAfterConclusion` by
+consulting the attributed experiment's status (true when `concluded`).
+Both fields now flow from the production write path. Closed by commit
+df2deef2.
 
 ---
 
@@ -13901,7 +13909,7 @@ definition), absorbing the full pod-startup latency for early traffic.
 
 ---
 
-### - [ ] F-10.7.8 — 08  Cross-experiment `Σ variant_weights ≥ 1` is not rejected at admission (`INVALID_VARIANT_WEIGHTS`) [Medium] — OPEN
+### - [x] F-10.7.8 — 08  Cross-experiment `Σ variant_weights ≥ 1` is not rejected at admission (`INVALID_VARIANT_WEIGHTS`) [Medium] — CLOSED
 
 **Spec:** §4.6.2 (referenced from §10.7 line 1092 and line 705) — when
 multiple active experiments divert traffic from the same base pool, the
@@ -13930,9 +13938,16 @@ whose combined weight exceeds the base pool's traffic budget. The error
 surfaces only when the controller eventually runs (which it doesn't, per
 F-10.7-01), so the safety net the spec calls out is missing at both edges.
 
+**Resolution:** `handleCreateExperiment` / `handleUpdateExperiment` now
+call `rejectIfCrossExperimentWeightsExceed`, which sums variant weights
+across the candidate (when active) plus every other active experiment on
+the same `baseRuntime` and rejects Σ ≥ 1 with 422 INVALID_VARIANT_WEIGHTS.
+Paused/concluded experiments and other base runtimes are excluded. Closed
+by commit df2deef2.
+
 ---
 
-### - [ ] F-10.7.9 — 09  Per-dimension scores do not separately track `count` of submitting rows [Medium] — OPEN
+### - [x] F-10.7.9 — 09  Per-dimension scores do not separately track `count` of submitting rows [Medium] — CLOSED
 
 **Spec:** §10.7 line 1088 — "**Per-dimension aggregation semantics:** for
 each dimension `d`, `count` equals the number of `EvalResult` records for
@@ -13951,9 +13966,15 @@ No gap.
 **Classification:** Resolved during audit — left in the document as positive
 coverage evidence.
 
+**Resolution:** Verify-closed. `aggregateVariant` populates
+`byScorerDim[scorer][dim]` only from rows whose `Scores` map contains
+`dim`, so each dimension's `count` reflects only the rows that supplied a
+non-null value for it. Pinned by `TestExperimentResultsPerDimensionCount_spec_10_7_1088`
+(commit df2deef2).
+
 ---
 
-### - [ ] F-10.7.10 — 10  `?delegation_depth=K&breakdown_by=delegation_depth` is not rejected with `400 INVALID_QUERY_PARAMS` [Medium] — OPEN
+### - [x] F-10.7.10 — 10  `?delegation_depth=K&breakdown_by=delegation_depth` is not rejected with `400 INVALID_QUERY_PARAMS` [Medium] — CLOSED
 
 **Spec:** §10.7 line 952 — `breakdown_by` is "not combinable with the
 equality filter for the same field (i.e., `?delegation_depth=0&breakdown_by=delegation_depth`
@@ -13973,6 +13994,13 @@ returns nothing.
 guard against operator confusion. Today the gateway silently returns a
 degenerate breakdown response (one bucket at the filtered value) instead of
 the documented `400`.
+
+**Resolution:** `handleExperimentResults` now rejects `breakdown_by`
+combined with the equality/exclusion filter on the same field
+(delegation_depth, inherited, or submitted_after_conclusion via its
+`exclude_post_conclusion` filter) with 400 INVALID_QUERY_PARAMS, via the
+new `conflictingFilterParam` helper. A breakdown on a different field than
+the filter remains allowed. Closed by commit df2deef2.
 
 ---
 
@@ -14100,7 +14128,7 @@ external-targeting latency the spec sizes the 200ms timeout against.
 
 ---
 
-### - [ ] F-10.7.15 — 15  `ExperimentDefinition` admin API does not support `?dryRun=true` [Medium] — OPEN
+### - [x] F-10.7.15 — 15  `ExperimentDefinition` admin API does not support `?dryRun=true` [Medium] — CLOSED
 
 **Spec:** §15.1 lines 1140 and 1145 — "Most admin `POST` and `PUT`
 endpoints accept `?dryRun=true`. … **Experiments (`POST
@@ -14125,6 +14153,13 @@ configuration against the isolation-monotonicity check or the tenant-floor
 advisory without committing the change. The §15.1 `dryRun` contract is part
 of the documented surface and several other admin resources implement it
 (e.g., runtimes).
+
+**Resolution:** Both handlers now branch on `?dryRun=true`: they run the
+isolation-monotonicity check, the §4.6.2 cross-experiment weight check,
+the single-experiment `Validate()`, and the tenant-floor advisory (which
+the spec mandates under dryRun), then return the computed representation
+with `X-Dry-Run: true` and no persistence or audit emission via the shared
+`writeDryRun` helper. Closed by commit df2deef2.
 
 ---
 
