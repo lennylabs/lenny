@@ -36,8 +36,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
-	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
+	"github.com/lennylabs/lenny/pkg/gateway/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
@@ -53,6 +53,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -126,11 +127,20 @@ type Server struct {
 	// multi-tenant deployments). When false (single-tenant or no-OIDC
 	// dev), the gate retains the historical fall-through.
 	// spec: §10.2 lines 256–264, F-10.2.4.
-	multiTenant bool
-	podBinder       *podsession.Binder
-	podRegistry     *podsession.Registry
-	agentNamespace  string
-	sealer          Sealer
+	multiTenant    bool
+	podBinder      *podsession.Binder
+	podRegistry    *podsession.Registry
+	agentNamespace string
+	// admissionRL is the §11.1 line 7 per-minute counter used for the
+	// per-runtime and per-pool admission scopes enforced at session
+	// creation (the global/per-user/per-tenant scopes run in the §11.1
+	// HTTP middleware). Nil disables the per-runtime/per-pool scopes.
+	// F-11.1.2.
+	admissionRL      ratelimit.Counter
+	perRuntimePerMin int
+	perPoolPerMin    int
+	rlMetrics        AdmissionRateLimitMetrics
+	sealer           Sealer
 	// sealMaxDuration bounds the §7.1 seal-and-export retry window
 	// (maxWorkspaceSealDurationSeconds). A non-positive value falls
 	// through to DefaultWorkspaceSealMaxDuration (300s).
@@ -640,6 +650,31 @@ type Options struct {
 	// in. Required when PodBinder is set.
 	AgentNamespace string
 
+	// AdmissionRateLimitCounter is the §11.1 line 7 per-minute counter
+	// used for the per-runtime and per-pool admission scopes enforced at
+	// session creation. Nil disables both scopes (the global, per-user,
+	// and per-tenant scopes run in the §11.1 HTTP middleware regardless).
+	// Production wires the shared Redis-backed counter so the limit holds
+	// across replicas. spec: §11.1 line 7. F-11.1.2.
+	AdmissionRateLimitCounter ratelimit.Counter
+
+	// PerRuntimePerMinute caps session-creation requests against a single
+	// runtime per minute. Zero or less leaves the per-runtime scope
+	// unlimited. spec: §11.1 line 7. F-11.1.2.
+	PerRuntimePerMinute int
+
+	// PerPoolPerMinute caps session-creation requests against a single
+	// resolved warm pool per minute. The scope is skipped when no pool
+	// resolves (the Postgres-only posture). Zero or less leaves the
+	// per-pool scope unlimited. spec: §11.1 line 7. F-11.1.2.
+	PerPoolPerMinute int
+
+	// RateLimitMetrics, when set, receives the §11.1 rejection counter
+	// and counter-failure bump for the per-runtime / per-pool gate.
+	// *gatewaymetrics.Metrics satisfies it. Nil leaves the gate
+	// enforcing without observability. spec: §11.1 line 7. F-11.1.2.
+	RateLimitMetrics AdmissionRateLimitMetrics
+
 	// Sealer, when set, takes the §7.1 final workspace snapshot when a
 	// session reaches a terminal state. Nil disables seal-and-export.
 	Sealer Sealer
@@ -874,75 +909,79 @@ type Options struct {
 // New returns a Server bound to the supplied store.
 func New(store sessionstore.Store, opts Options) *Server {
 	s := &Server{
-		store:                  store,
-		clock:                  opts.Clock,
-		idFn:                   opts.IDFunc,
-		deriveAuditSink:        opts.DeriveAuditSink,
-		deriveLock:             opts.DeriveLock,
-		uploadIssuer:           opts.UploadTokenIssuer,
-		uploadVerifier:         opts.UploadTokenVerifier,
-		blobs:                  opts.Blobs,
-		executor:               opts.Executor,
-		transcripts:            opts.Transcripts,
-		evals:                  opts.Evals,
-		memory:                 opts.Memory,
-		experiments:            opts.Experiments,
-		pools:                  opts.Pools,
-		experimentReporter:     opts.ExperimentRejections,
-		events:                 opts.Events,
-		interactions:           opts.Interactions,
-		usage:                  opts.Usage,
-		users:                  opts.Users,
-		billing:                opts.Billing,
-		tenants:                opts.Tenants,
-		storageQuota:           opts.StorageQuota,
-		defaultIsoProf:         opts.DefaultIsolationProfile,
-		devMode:                opts.DevMode,
-		multiTenant:            opts.MultiTenant,
-		podBinder:              opts.PodBinder,
-		podRegistry:            opts.PodRegistry,
-		agentNamespace:         opts.AgentNamespace,
-		sealer:                 opts.Sealer,
-		sealMaxDuration:        opts.WorkspaceSealMaxDuration,
-		sealSleep:              opts.SealSleep,
-		observeSealDuration:    opts.ObserveWorkspaceSealDuration,
-		recordSessionTerminal:  opts.RecordSessionTerminal,
-		observeEvalScore:       opts.ObserveEvalScore,
-		partialManifestCleaner: opts.PartialManifestCleaner,
-		evictionStateLookup:    opts.EvictionStateLookup,
-		partialManifestLookup:  opts.PartialManifestLookup,
-		treeArchive:            opts.TreeArchive,
-		maxOrphanTasks:         opts.MaxOrphanTasksPerTenant,
-		runtimes:               opts.Runtimes,
-		environments:           opts.Environments,
-		tenantAccess:           opts.TenantAccess,
-		opsEmitter:             opts.OpsEmitter,
-		refResolver:            opts.RefResolver,
-		credPools:              opts.CredentialPools,
-		defaultNoEnvPolicy:     opts.DefaultNoEnvironmentPolicy,
-		customRoles:            opts.CustomRoles,
-		interceptors:           opts.Interceptors,
-		policyAuditSink:        opts.PolicyAuditSink,
-		uploadSubsystem:        opts.UploadSubsystem,
-		resumeWindow:           opts.ResumeWindow,
-		sessionLogHook:         opts.SessionLogHook,
-		warmupEstimateSeconds:  opts.WarmupEstimateSeconds,
-		credRouter:             opts.CredentialRouter,
-		preclaimMismatch:       opts.PreclaimMismatch,
-		observeStartupDuration:  opts.ObserveStartupDuration,
-		observeStartupPhase:     opts.ObserveStartupPhase,
-		observeTimeToFirstToken: opts.ObserveTimeToFirstToken,
-		lifecycleAudit:         opts.LifecycleAuditSink,
-		interactionAudit:       opts.InteractionAuditSink,
-		treeCycleObserver:      opts.TreeCycleObserver,
-		inputWaits:             opts.InputWaits,
-		defaultRetention:       opts.DefaultRetention,
-		retryPolicyCaps:        opts.RetryPolicyCaps,
-		incSessionResumeAttempt: opts.IncSessionResumeAttempt,
-		incSessionRetry:        opts.IncSessionRetry,
+		store:                    store,
+		clock:                    opts.Clock,
+		idFn:                     opts.IDFunc,
+		deriveAuditSink:          opts.DeriveAuditSink,
+		deriveLock:               opts.DeriveLock,
+		uploadIssuer:             opts.UploadTokenIssuer,
+		uploadVerifier:           opts.UploadTokenVerifier,
+		blobs:                    opts.Blobs,
+		executor:                 opts.Executor,
+		transcripts:              opts.Transcripts,
+		evals:                    opts.Evals,
+		memory:                   opts.Memory,
+		experiments:              opts.Experiments,
+		pools:                    opts.Pools,
+		experimentReporter:       opts.ExperimentRejections,
+		events:                   opts.Events,
+		interactions:             opts.Interactions,
+		usage:                    opts.Usage,
+		users:                    opts.Users,
+		billing:                  opts.Billing,
+		tenants:                  opts.Tenants,
+		storageQuota:             opts.StorageQuota,
+		defaultIsoProf:           opts.DefaultIsolationProfile,
+		devMode:                  opts.DevMode,
+		multiTenant:              opts.MultiTenant,
+		podBinder:                opts.PodBinder,
+		podRegistry:              opts.PodRegistry,
+		agentNamespace:           opts.AgentNamespace,
+		admissionRL:              opts.AdmissionRateLimitCounter,
+		perRuntimePerMin:         opts.PerRuntimePerMinute,
+		perPoolPerMin:            opts.PerPoolPerMinute,
+		rlMetrics:                opts.RateLimitMetrics,
+		sealer:                   opts.Sealer,
+		sealMaxDuration:          opts.WorkspaceSealMaxDuration,
+		sealSleep:                opts.SealSleep,
+		observeSealDuration:      opts.ObserveWorkspaceSealDuration,
+		recordSessionTerminal:    opts.RecordSessionTerminal,
+		observeEvalScore:         opts.ObserveEvalScore,
+		partialManifestCleaner:   opts.PartialManifestCleaner,
+		evictionStateLookup:      opts.EvictionStateLookup,
+		partialManifestLookup:    opts.PartialManifestLookup,
+		treeArchive:              opts.TreeArchive,
+		maxOrphanTasks:           opts.MaxOrphanTasksPerTenant,
+		runtimes:                 opts.Runtimes,
+		environments:             opts.Environments,
+		tenantAccess:             opts.TenantAccess,
+		opsEmitter:               opts.OpsEmitter,
+		refResolver:              opts.RefResolver,
+		credPools:                opts.CredentialPools,
+		defaultNoEnvPolicy:       opts.DefaultNoEnvironmentPolicy,
+		customRoles:              opts.CustomRoles,
+		interceptors:             opts.Interceptors,
+		policyAuditSink:          opts.PolicyAuditSink,
+		uploadSubsystem:          opts.UploadSubsystem,
+		resumeWindow:             opts.ResumeWindow,
+		sessionLogHook:           opts.SessionLogHook,
+		warmupEstimateSeconds:    opts.WarmupEstimateSeconds,
+		credRouter:               opts.CredentialRouter,
+		preclaimMismatch:         opts.PreclaimMismatch,
+		observeStartupDuration:   opts.ObserveStartupDuration,
+		observeStartupPhase:      opts.ObserveStartupPhase,
+		observeTimeToFirstToken:  opts.ObserveTimeToFirstToken,
+		lifecycleAudit:           opts.LifecycleAuditSink,
+		interactionAudit:         opts.InteractionAuditSink,
+		treeCycleObserver:        opts.TreeCycleObserver,
+		inputWaits:               opts.InputWaits,
+		defaultRetention:         opts.DefaultRetention,
+		retryPolicyCaps:          opts.RetryPolicyCaps,
+		incSessionResumeAttempt:  opts.IncSessionResumeAttempt,
+		incSessionRetry:          opts.IncSessionRetry,
 		incWarmpoolWarmupFailure: opts.IncWarmpoolWarmupFailure,
-		uploadTokenTTL:         opts.UploadTokenTTL,
-		uploadAborts:           newUploadAbortRegistry(),
+		uploadTokenTTL:           opts.UploadTokenTTL,
+		uploadAborts:             newUploadAbortRegistry(),
 	}
 	if s.defaultRetention <= 0 {
 		// spec: §7.1 line 77 — default the artifact-retention window to
@@ -1293,6 +1332,19 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	}
 	tenantID := s.resolveTenant(r)
 	if !s.requireSessionQuota(w, r, tenantID) {
+		return
+	}
+	// spec: §11.1 line 7 — per-runtime and per-pool requests-per-minute
+	// admission limits. Enforced before the §4.8 policy chain (so an
+	// over-limit create never reserves token budget) using the requested
+	// isolation profile to resolve the pool. An empty RuntimeRef is left
+	// to the required-field check below; an invalid profile resolves to
+	// no pool and the per-pool scope is skipped. F-11.1.2.
+	rlProfile := req.IsolationProfile
+	if rlProfile == "" {
+		rlProfile = s.defaultIsoProf
+	}
+	if !s.requireAdmissionRateLimit(w, r, tenantID, req.RuntimeRef, rlProfile) {
 		return
 	}
 	if !s.requirePolicyChain(w, r, tenantID) {

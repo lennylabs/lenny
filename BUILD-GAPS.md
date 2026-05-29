@@ -14550,7 +14550,7 @@ a no-op when the gateway runs without the §10.6 registries
 (`Environments` or `Tenants` nil), matching the minimal-deployment
 posture. Closed by the F-11.1 batch commit.
 
-### - [ ] F-11.1.2 — 02  Rate-limit middleware covers only global and per-user scopes; per-runtime and per-pool unimplemented [High] — OPEN
+### - [x] F-11.1.2 — 02  Rate-limit middleware covers only global and per-user scopes; per-runtime and per-pool unimplemented [High] — CLOSED
 
 **Spec:** §11.1 line 7 — "Rate limits (requests/min) | Global,
 per-user, per-runtime, per-pool". The table names four enforcement
@@ -14577,6 +14577,25 @@ unimplemented. A deployer cannot cap requests against a single runtime
 or pool, which leaves no admission control for a runaway client that
 saturates one runtime's adapter or pool's pod capacity while staying
 under the global and per-user caps.
+
+**Resolution:** The per-runtime and per-pool scopes are enforced on the
+session-creation path (`sessionserver.requireAdmissionRateLimit`,
+`pkg/gateway/sessionserver/admission_ratelimit.go`), the point where the
+target runtime (`req.RuntimeRef`) and, when the pool model is wired, the
+resolved pool (`podsession.ResolvePool`) are known — the §11.1 HTTP
+middleware lacks both at its boundary, which is why its doc-comment
+deferred these two scopes. The gate increments the same Redis-backed
+per-minute `ratelimit.Counter` the middleware uses, under keys
+`rt:<tenant>:<runtime>` and `po:<tenant>:<pool>`, rejects with 429
+`RATE_LIMITED` (scope `runtime`/`pool`, `Retry-After`) past the limit,
+and fails open on a counter error per §11.1. The per-pool scope is
+skipped when no pool resolves (the Postgres-only posture). New flags
+`--rate-limit-per-runtime-per-min` / `--rate-limit-per-pool-per-min`
+(default 0 = disabled) and the `gwMetrics` rejection/counter-failure
+sink are wired in `cmd/lenny-gateway/main.go`. Tier-1:
+`pkg/gateway/sessionserver/admission_ratelimit_test.go` (per-runtime
+reject/isolation/fail-open/nil-counter/empty-runtime-skip, per-pool
+reject via a fake-client-resolved pool, per-pool skip without a binder).
 
 ### - [ ] F-11.1.3 — 03  Concurrency limits cover only per-tenant; per-user, per-team, per-runtime, and the global scope unimplemented [High] — OPEN
 
@@ -14738,7 +14757,7 @@ threads the metrics interface into the middleware options. Per-runtime
 and per-pool scopes remain blocked on F-11.1.2. Closed by the F-11.1
 batch commit.
 
-### - [ ] F-11.1.8 — 08  Per-tenant rate-limit scope is absent — only global and per-user are configurable [Medium] — OPEN
+### - [x] F-11.1.8 — 08  Per-tenant rate-limit scope is absent — only global and per-user are configurable [Medium] — CLOSED
 
 **Spec:** §11.1 line 7 explicitly enumerates the rate-limit scopes as
 global, per-user, per-runtime, and per-pool. The table does not list a
@@ -14768,6 +14787,24 @@ purposes through the rate-limit knobs. The discrepancy with §13.3's
 token-bucket claim is a doc/code disagreement that should be
 reconciled (either implement a token bucket or update §13.3 to match
 the fixed-window implementation).
+
+**Resolution:** Added a `PerTenantPerMinute` scope to the §11.1
+middleware (`pkg/gateway/middleware/ratelimit/ratelimit.go`): the
+request principal carries the tenant, so a per-tenant counter under key
+`t:<tenant>` runs at the HTTP boundary alongside global and per-user,
+rejecting with 429 `RATE_LIMITED` (scope `tenant`) and failing open on a
+counter error like the other scopes. This is the §13.3 line 607
+per-tenant axis ("a separate global per-tenant limit … enforced … using
+the rate limiter in §11.1") — a fair-share brake a tenant cannot evade
+by spreading load across users under the per-user cap. Wired via
+`--rate-limit-per-tenant-per-min` (default 0 = disabled) in
+`cmd/lenny-gateway/main.go`. The §13.3 per-tenant *OAuth-endpoint* limit
+already exists separately in `pkg/tokenservice/ratelimit.go`
+(`TenantPerSecond`); the token-bucket-vs-fixed-window wording in §13.3
+is a spec matter left untouched (the implementation is a fixed-window
+counter consistent with the existing global/per-user scopes). Tier-1:
+`pkg/gateway/middleware/ratelimit/ratelimit_test.go` (cross-user tenant
+aggregate reject, per-tenant isolation, no-principal skip, fail-open).
 
 ### - [x] F-11.1.9 — 09  Rate-limit middleware fails open silently with no observability of counter failures [Low] — CLOSED
 

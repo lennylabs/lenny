@@ -310,9 +310,9 @@ func TestCounterRecoveryClearsFailopen_spec_16_5(t *testing.T) {
 // movingClock is a test clock advanced one second per Now() call so a
 // fail-open episode can cross the cap deterministically.
 type movingClock struct {
-	mu    sync.Mutex
-	cur   time.Time
-	step  time.Duration
+	mu   sync.Mutex
+	cur  time.Time
+	step time.Duration
 }
 
 func (c *movingClock) Now() time.Time {
@@ -449,5 +449,95 @@ func TestNoMetricsIsSafe_spec_11_1(t *testing.T) {
 	})
 	if code := fire(h, "/v1/sessions", ""); code != http.StatusNoContent {
 		t.Errorf("fail-open with nil metrics: status %d, want 204", code)
+	}
+}
+
+// fireAs sends one request through h carrying a principal for the
+// given (subject, tenant) pair so the per-tenant scope can be exercised
+// across distinct tenants. spec: §13.3 line 607.
+func fireAs(h http.Handler, path, subject, tenant string) int {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject: subject, TenantID: tenant,
+	}))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr.Code
+}
+
+// spec: §13.3 line 607 — the per-tenant fair-share brake counts every
+// request from a tenant's users together, so users who each stay under
+// the per-user cap cannot collectively evade the tenant cap. F-11.1.8.
+func TestOverPerTenantLimitRejected_spec_13_3_607(t *testing.T) {
+	rm := &recordingMetrics{}
+	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: rlcounter.NewMemory(), PerTenantPerMinute: 2, Clock: fixedClock, Metrics: rm,
+	})
+	// Two distinct users of the same tenant exhaust the tenant cap.
+	if code := fireAs(h, "/v1/sessions", "alice@acme.com", "acme"); code != http.StatusNoContent {
+		t.Fatalf("alice's request: status %d, want 204", code)
+	}
+	if code := fireAs(h, "/v1/sessions", "bob@acme.com", "acme"); code != http.StatusNoContent {
+		t.Fatalf("bob's request: status %d, want 204", code)
+	}
+	// A third request from any user of the tenant exceeds the aggregate.
+	if code := fireAs(h, "/v1/sessions", "carol@acme.com", "acme"); code != http.StatusTooManyRequests {
+		t.Fatalf("carol's request: status %d, want 429 (tenant aggregate exceeded)", code)
+	}
+	rejected, _, _ := rm.snapshot()
+	if rejected["tenant"] != 1 {
+		t.Errorf("tenant-scope rejection counter = %d, want 1", rejected["tenant"])
+	}
+}
+
+// spec: §13.3 line 607 — the per-tenant counter is keyed on tenant id
+// alone, so one tenant's saturation never throttles another. F-11.1.8.
+func TestPerTenantLimitIsPerTenant_spec_13_3_607(t *testing.T) {
+	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: rlcounter.NewMemory(), PerTenantPerMinute: 2, Clock: fixedClock,
+	})
+	// acme exhausts its allowance.
+	fireAs(h, "/v1/sessions", "alice@acme.com", "acme")
+	fireAs(h, "/v1/sessions", "bob@acme.com", "acme")
+	if code := fireAs(h, "/v1/sessions", "carol@acme.com", "acme"); code != http.StatusTooManyRequests {
+		t.Fatalf("acme's 3rd request: status %d, want 429", code)
+	}
+	// globex's first request is unaffected.
+	if code := fireAs(h, "/v1/sessions", "dave@globex.com", "globex"); code != http.StatusNoContent {
+		t.Errorf("globex's request: status %d, want 204 (per-tenant limits are isolated)", code)
+	}
+}
+
+// spec: §13.3 line 607 — an unauthenticated request carries no tenant,
+// so the per-tenant scope is skipped (the global scope still applies).
+// F-11.1.8.
+func TestPerTenantSkippedWithoutPrincipal_spec_13_3_607(t *testing.T) {
+	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: rlcounter.NewMemory(), PerTenantPerMinute: 1, Clock: fixedClock,
+	})
+	for i := 1; i <= 5; i++ {
+		if code := fire(h, "/v1/sessions", ""); code != http.StatusNoContent {
+			t.Fatalf("anonymous request %d: status %d, want 204 (no tenant to scope on)", i, code)
+		}
+	}
+}
+
+// spec: §11.1 line 7 — a per-tenant counter error fails open (admission
+// must not block on a transient counter outage) and records the
+// counter-failure metric. F-11.1.8.
+func TestPerTenantFailsOpenOnCounterError_spec_11_1(t *testing.T) {
+	rm := &recordingMetrics{}
+	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
+		Counter: erroringCounter{}, PerTenantPerMinute: 1, Clock: fixedClock, Metrics: rm,
+		FailOpenMax: -1, // disable the per-episode cap so every request fails open
+	})
+	for i := 1; i <= 5; i++ {
+		if code := fireAs(h, "/v1/sessions", "alice@acme.com", "acme"); code != http.StatusNoContent {
+			t.Fatalf("request %d during a tenant-counter outage: status %d, want 204 (fail open)", i, code)
+		}
+	}
+	_, _, failures := rm.snapshot()
+	if failures == 0 {
+		t.Error("a tenant-counter outage must bump the counter-failure metric")
 	}
 }

@@ -303,6 +303,12 @@ func main() {
 		"§11.1 global requests-per-minute admission limit. Zero disables the global rate limit.")
 	rlPerUserPerMin := flag.Int("rate-limit-per-user-per-min", 0,
 		"§11.1 per-user requests-per-minute admission limit. Zero disables the per-user rate limit.")
+	rlPerTenantPerMin := flag.Int("rate-limit-per-tenant-per-min", 0,
+		"§13.3 line 607 / §11.1 per-tenant requests-per-minute admission limit (fair-share brake across a tenant's users). Zero disables the per-tenant rate limit. F-11.1.8.")
+	rlPerRuntimePerMin := flag.Int("rate-limit-per-runtime-per-min", 0,
+		"§11.1 line 7 per-runtime session-creation requests-per-minute admission limit. Zero disables the per-runtime rate limit. F-11.1.2.")
+	rlPerPoolPerMin := flag.Int("rate-limit-per-pool-per-min", 0,
+		"§11.1 line 7 per-pool session-creation requests-per-minute admission limit (skipped when no warm pool resolves). Zero disables the per-pool rate limit. F-11.1.2.")
 	// spec: §11.3 line 222 — rateLimitFailOpenMaxSeconds, operator-tunable.
 	// Once a fail-open episode (counter-error window) has run past this
 	// cap, the middleware switches to fail-closed and rejects requests
@@ -1978,16 +1984,24 @@ func main() {
 			metrics: gwMetrics,
 			emitter: opsEmitter,
 		},
-		Usage:                   usage,
-		Users:                   users,
-		Billing:                 billing,
-		Tenants:                 tenants,
-		StorageQuota:            storageCounter,
-		PodBinder:               podBinder,
-		PodRegistry:             podRegistry,
-		AgentNamespace:          *agentNamespace,
-		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
-		DevMode:                 *devMode,
+		Usage:          usage,
+		Users:          users,
+		Billing:        billing,
+		Tenants:        tenants,
+		StorageQuota:   storageCounter,
+		PodBinder:      podBinder,
+		PodRegistry:    podRegistry,
+		AgentNamespace: *agentNamespace,
+		// spec: §11.1 line 7 — per-runtime and per-pool admission rate
+		// limits, enforced at session creation where the runtime/pool are
+		// known. Shares the same per-minute counter the §11.1 HTTP
+		// middleware uses for global/per-user/per-tenant. F-11.1.2.
+		AdmissionRateLimitCounter: rateLimiter,
+		PerRuntimePerMinute:       *rlPerRuntimePerMin,
+		PerPoolPerMinute:          *rlPerPoolPerMin,
+		RateLimitMetrics:          gwMetrics,
+		DefaultIsolationProfile:   isolation.Profile(*defaultIsolationProfile),
+		DevMode:                   *devMode,
 		// spec: §10.2 lines 256–264. F-10.2.4. Multi-tenant deployments
 		// fail closed on a no-role principal at the session RBAC gate.
 		MultiTenant: *multiTenant,
@@ -2983,7 +2997,10 @@ func main() {
 		Counter:          rateLimiter,
 		GlobalPerMinute:  *rlGlobalPerMin,
 		PerUserPerMinute: *rlPerUserPerMin,
-		Metrics:          gwMetrics,
+		// spec: §13.3 line 607 / §11.1 — per-tenant fair-share brake.
+		// F-11.1.8.
+		PerTenantPerMinute: *rlPerTenantPerMin,
+		Metrics:            gwMetrics,
 		// spec: §11.3 line 222 / §12.4 line 220 — operator-tunable cap on
 		// the fail-open episode. F-11.3.22.
 		FailOpenMax: time.Duration(*rlFailOpenMaxSeconds) * time.Second,

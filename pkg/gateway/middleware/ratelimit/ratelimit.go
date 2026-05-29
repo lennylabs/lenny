@@ -1,20 +1,28 @@
 // SPDX-License-Identifier: MIT
 
 // Package ratelimit is the §11.1 requests-per-minute admission
-// middleware. It increments a global and a per-user request counter
-// on every API request and rejects with 429 RATE_LIMITED once a
-// scope's count exceeds its configured per-minute limit.
+// middleware. It increments a global, a per-user, and a per-tenant
+// request counter on every API request and rejects with 429
+// RATE_LIMITED once a scope's count exceeds its configured per-minute
+// limit.
+//
+// The §11.1 line 7 table names global, per-user, per-runtime, and
+// per-pool scopes; the per-tenant scope is the §13.3 line 607
+// per-tenant axis ("a separate global per-tenant limit … enforced …
+// using the rate limiter in §11.1"). Global, per-user, and per-tenant
+// run here at the HTTP boundary because the request principal carries
+// the tenant and subject. The per-runtime and per-pool scopes need the
+// request's resolved runtime and pool, which are not available at the
+// middleware boundary; they are enforced on the session-creation path
+// where the runtime and pool are known (sessionserver
+// requireAdmissionRateLimit, F-11.1.2).
 //
 // A counter error fails open: §11.1 admission must not block traffic
 // on a transient counter outage. The fail-open path emits the
 // lenny_rate_limit_failopen_active gauge that the §16.5
 // RateLimitDegraded alert reads and increments
 // lenny_rate_limit_counter_failure_total so an outage is observable
-// even before the alert's persistence window. The per-runtime and
-// per-pool scopes the §11.1 table also names need the request's
-// resolved runtime and pool, which are not available at the
-// middleware boundary; they are enforced deeper once the pool model
-// is wired.
+// even before the alert's persistence window.
 package ratelimit
 
 import (
@@ -60,6 +68,13 @@ type Options struct {
 	// PerUserPerMinute caps one authenticated user's requests per
 	// minute. Zero or less leaves the per-user scope unlimited.
 	PerUserPerMinute int
+
+	// PerTenantPerMinute caps one tenant's requests per minute across
+	// all of its users. It is the §13.3 line 607 per-tenant axis (a
+	// fair-share brake a single tenant cannot evade by spreading load
+	// across users under the per-user cap). Zero or less leaves the
+	// per-tenant scope unlimited. spec: §13.3 line 607; §11.1 line 7.
+	PerTenantPerMinute int
 
 	// Clock overrides time.Now for the window computation. Tests inject
 	// a fixed clock; production leaves this nil.
@@ -214,6 +229,25 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// spec: §13.3 line 607 / §11.1 line 7 — per-tenant fair-share brake.
+	// A tenant whose users collectively saturate the gateway while each
+	// stays under PerUserPerMinute is still capped as a whole. F-11.1.8.
+	if m.opts.PerTenantPerMinute > 0 {
+		if key, ok := tenantKey(r); ok {
+			count, err := m.opts.Counter.Incr(r.Context(), key, now)
+			if err != nil {
+				counterFailed = true
+				m.onCounterError("tenant", err, now)
+			} else {
+				m.onCounterSuccess()
+				if count > m.opts.PerTenantPerMinute {
+					m.writeRateLimited(w, "tenant", m.opts.PerTenantPerMinute, now)
+					return
+				}
+			}
+		}
+	}
+
 	// spec: §11.3 line 222; §12.4 line 220 — after the cumulative
 	// fail-open episode exceeds the cap, switch to fail-closed: a
 	// sustained Redis outage cannot keep the gateway in unbounded
@@ -294,7 +328,7 @@ func (m *middleware) writeFailOpenExceeded(w http.ResponseWriter, now time.Time)
 			"message":   "rate-limit counter unavailable; fail-open ceiling exceeded — failing closed",
 			"retryable": true,
 			"details": map[string]any{
-				"scope":             "failopen_exceeded",
+				"scope":              "failopen_exceeded",
 				"failOpenMaxSeconds": int(m.effectiveFailOpenMax() / time.Second),
 			},
 		},
@@ -316,6 +350,19 @@ func userKey(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return "u:" + p.TenantID + ":" + p.Subject, true
+}
+
+// tenantKey returns the per-tenant counter key for the request, or
+// ("", false) when the request carries no authenticated tenant. The
+// "t:" prefix keeps the tenant bucket disjoint from the "u:" per-user
+// and "global" buckets so the three scopes count independently.
+// spec: §13.3 line 607; §11.1 line 7. F-11.1.8.
+func tenantKey(r *http.Request) (string, bool) {
+	p, ok := authmw.FromContext(r.Context())
+	if !ok || p.TenantID == "" {
+		return "", false
+	}
+	return "t:" + p.TenantID, true
 }
 
 // isInfraPath reports whether a path is an operational endpoint that
