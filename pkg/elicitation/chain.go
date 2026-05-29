@@ -115,6 +115,22 @@ type ChainInput struct {
 	// SuppressAtDepth carries the threshold N for the
 	// DepthSuppressAtDepth policy; ignored for the other policies.
 	SuppressAtDepth int
+
+	// ForwardedContent, when non-nil, supplies the {message, schema}
+	// pair a forwarding hop re-emitted so the §9.2 gateway-origin
+	// binding can compare it against the origination digest. The spec
+	// forward-hop wire mechanism is the native MCP `elicitation/create`
+	// frame an intermediate pod re-emits; the gateway canonicalizes the
+	// re-emission and rejects a divergence. v1 intermediate pods forward
+	// by `elicitation_id` only and re-emit nothing, so the production
+	// dispatcher leaves this nil and a hop forwards unverified — the
+	// per-hop re-emission wire path is the deferred surface tracked by
+	// F-9.2.1. When the hook returns a content for a hop, that content
+	// is verified; a divergence aborts the walk with a *ChainError
+	// wrapping a *TamperError. The caller's enforcement mode (off →
+	// nil hook) decides whether verification runs at all. spec: §9.2
+	// lines 56–62.
+	ForwardedContent func(hop Hop) (Content, bool)
 }
 
 // ChainError is a §9.2 hop-by-hop walk failure that is not a normal
@@ -218,17 +234,28 @@ func WalkChain(in ChainInput) (ChainResult, error) {
 		}, nil
 	}
 
-	// Forward up the task tree hop by hop. Each parent hop re-emits the
-	// upstream elicitation/create frame; the gateway re-verifies the
-	// {message, schema} digest before the elicitation advances past
-	// that hop (§9.2 gateway-origin binding).
+	// Forward up the task tree hop by hop. A §9.2 intermediate pod
+	// forwards by elicitation_id only and re-emits nothing, so by
+	// default a hop advances unverified (the gateway-recorded original
+	// remains authoritative for the rendered text). When the caller
+	// supplies a re-emitted frame for a hop via ForwardedContent, the
+	// gateway canonicalizes it and compares its digest against the
+	// origination digest; a divergence is a §9.2 tamper that aborts the
+	// walk with a *ChainError wrapping a *TamperError. Comparing the
+	// gateway-held original against its own digest would be a tautology,
+	// so verification runs only against an actual re-emission. spec:
+	// §9.2 lines 56–62; F-9.2.1.
 	for i := 1; i < len(in.Hops); i++ {
 		hop := in.Hops[i]
-		if err := VerifyContent(originalDigest, in.OriginalContent); err != nil {
-			return ChainResult{}, &ChainError{
-				Reason: "content-integrity divergence",
-				Hop:    hop.effectivePod(),
-				Cause:  err,
+		if in.ForwardedContent != nil {
+			if forwarded, ok := in.ForwardedContent(hop); ok {
+				if err := VerifyContent(originalDigest, forwarded); err != nil {
+					return ChainResult{}, &ChainError{
+						Reason: "content-integrity divergence",
+						Hop:    hop.effectivePod(),
+						Cause:  err,
+					}
+				}
 			}
 		}
 		traversed = append(traversed, hop)

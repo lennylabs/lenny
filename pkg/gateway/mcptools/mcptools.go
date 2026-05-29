@@ -239,6 +239,16 @@ type Deps struct {
 	// ElicitationTamperRecorder interface.
 	ElicitationTamperMetrics ElicitationTamperRecorder
 
+	// ElicitationModeResolver resolves the §9.2 effective elicitation
+	// content-integrity enforcement mode (off | detect-only | enforce)
+	// for a tenant — max(platform floor, tenant stored). The dispatcher
+	// consults it on the content-integrity hot path: `off` skips the
+	// check, `detect-only` records a divergence but forwards as received,
+	// `enforce` drops the divergent forward. Optional — a nil resolver
+	// defaults to the §9.2 enforce tenant default. spec: §9.2 lines
+	// 58–64. F-9.2.2.
+	ElicitationModeResolver func(ctx context.Context, tenantID string) elicitation.EnforcementMode
+
 	// ElicitationDepthPolicy is the §9.2 depth policy applied to an
 	// agent-initiated elicitation. An unset or invalid value resolves
 	// to `allow_all` (no depth suppression).
@@ -1059,6 +1069,12 @@ func Register(srv *mcp.Server, deps Deps) {
 			intercepts:       deps.ElicitationIntercepts,
 			dropMetrics:      deps.ElicitationMetrics,
 			tamperMetrics:    deps.ElicitationTamperMetrics,
+			// spec: §9.2 lines 58–64 — the dispatcher resolves the tenant's
+			// effective content-integrity mode and emits the §16.7 tamper
+			// audit event on a divergence. F-9.2.2, F-9.2.3.
+			effectiveMode: deps.ElicitationModeResolver,
+			audit:         deps.Audit,
+			clock:         clock,
 		}
 		srv.RegisterTool(mcp.Tool{
 			Name: "lenny/request_elicitation",

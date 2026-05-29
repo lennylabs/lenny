@@ -2270,6 +2270,20 @@ func main() {
 		// dispatcher's tamper branch is a no-op and the §16.5
 		// ElicitationContentTamperDetected alert can never fire. F-9.2.4.
 		ElicitationTamperMetrics: gwMetrics,
+		// spec: §9.2 lines 58–64 — resolve the per-tenant effective
+		// content-integrity enforcement mode (max of the platform floor
+		// and the tenant stored mode) on the elicitation dispatch path so
+		// an operator's enforce / detect-only / off setting takes effect:
+		// off skips the integrity check, detect-only records a divergence
+		// but forwards as received, enforce drops the divergent forward.
+		// A lookup error fails safe to the enforce default. F-9.2.2.
+		ElicitationModeResolver: func(ctx context.Context, tenantID string) elicitation.EnforcementMode {
+			stored := ""
+			if t, err := tenants.Get(ctx, tenantID); err == nil {
+				stored = t.ElicitationContentIntegrity
+			}
+			return elicitation.ResolveEffectiveWithDefaults(*elicitationFloor, stored)
+		},
 		// spec: §9.2 / §16.1 / §15.2 line 1335 — Deps.TenantID is the
 		// fallback for transports without an authenticated principal
 		// (tests, the dev-headers path). Every production handler

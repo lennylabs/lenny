@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
 // ElicitationPerHopForwardingTimeout caps a single forwarding hop on
@@ -79,6 +80,36 @@ type elicitationDispatcher struct {
 	// branch deterministically; production binaries leave it zero,
 	// which selects ElicitationPerHopForwardingTimeout.
 	perHopTimeout time.Duration
+
+	// effectiveMode resolves the §9.2 elicitation content-integrity
+	// enforcement mode in force for a tenant: max(platform floor,
+	// tenant stored), one of off | detect-only | enforce. The dispatch
+	// path consults it to decide whether to run the content-integrity
+	// check at all (off skips it) and, on a divergence, whether to
+	// reject the forward (enforce) or forward as received and record the
+	// divergence (detect-only). A nil resolver defaults to the §9.2
+	// enforce tenant default so a misconfigured binary fails safe.
+	// spec: §9.2 lines 58–64. F-9.2.2.
+	effectiveMode func(ctx context.Context, tenantID string) elicitation.EnforcementMode
+
+	// audit, when non-nil, receives the §16.7 line 674
+	// `elicitation.content_tamper_detected` event whenever the chain
+	// walk catches a forward-hop divergence under detect-only or
+	// enforce. spec: §9.2 lines 60–61; §16.7 line 674. F-9.2.3.
+	audit DelegationAuditor
+
+	// clock stamps the audit event's detected_at field. Tests inject a
+	// fixed clock; production passes time.Now via the handler default.
+	clock func() time.Time
+
+	// forwardedContentFor, when non-nil, supplies the {message, schema}
+	// pair a forwarding hop re-emitted, so the §9.2 content-integrity
+	// check has something to compare against the origination digest.
+	// v1 has no per-hop re-emission wire mechanism (F-9.2.1), so the
+	// production dispatcher leaves this nil and the check never fires;
+	// tests inject a provider to drive the enforce / detect-only
+	// branches deterministically. spec: §9.2 lines 56–62.
+	forwardedContentFor func(hop elicitation.Hop) (elicitation.Content, bool)
 }
 
 // ElicitationTamperRecorder is the metric-emission hook the gateway
@@ -170,39 +201,42 @@ func (d *elicitationDispatcher) dispatch(
 		return dispatchResult{}, err
 	}
 
+	// §9.2 lines 58–64: resolve the tenant's effective content-integrity
+	// enforcement mode (max of the platform floor and the tenant stored
+	// mode). It governs the content-integrity check: `off` performs no
+	// canonicalization or comparison; `detect-only` and `enforce` both
+	// run the check and record a divergence, differing only in whether
+	// the divergent forward is dropped (enforce) or delivered as received
+	// (detect-only). F-9.2.2.
+	mode := d.resolveMode(ctx, tenantID)
+
+	// Under `off` the detector does not run, so no re-emission is
+	// verified. Under detect-only / enforce, hand WalkChain the
+	// re-emission provider so a supplied forward-hop frame is compared
+	// against the origination digest. spec: §9.2 line 62.
+	var forwarded func(hop elicitation.Hop) (elicitation.Content, bool)
+	if mode != elicitation.ModeOff {
+		forwarded = d.forwardedContentFor
+	}
+
 	res, err := elicitation.WalkChain(elicitation.ChainInput{
-		Hops:            hops,
-		OriginalContent: originalContent,
-		Initiator:       initiator,
-		DepthPolicy:     d.depthPolicy,
-		SuppressAtDepth: d.suppressAtDepth,
+		Hops:             hops,
+		OriginalContent:  originalContent,
+		Initiator:        initiator,
+		DepthPolicy:      d.depthPolicy,
+		SuppressAtDepth:  d.suppressAtDepth,
+		ForwardedContent: forwarded,
 	})
 	if err != nil {
 		// A chain walk error is a §9.2 content-integrity divergence or a
-		// malformed chain. Surface it to the originating pod and, on a
-		// tamper, increment the §16.5 content-tamper-detected counter.
+		// malformed chain. A tamper is dispatched to handleTamper, which
+		// applies the §9.2 enforcement-mode contract; any other chain
+		// failure surfaces to the originating pod unchanged.
 		var chainErr *elicitation.ChainError
 		if errors.As(err, &chainErr) {
 			var tamper *elicitation.TamperError
 			if errors.As(err, &tamper) {
-				if d.tamperMetrics != nil {
-					// spec: §16.1 line 64; §9.2 line 60 — the metric is
-					// labelled by the origin pod (the raising session that
-					// legitimately produced the elicitation) and the tampering
-					// pod (the forwarding hop whose re-emission diverged,
-					// carried on the *ChainError). enforcement_mode is enforce:
-					// v1 has no per-tenant detect-only resolution at this hot
-					// path (F-9.2.2) and the §9.2 default mode is enforce.
-					// F-9.2.4.
-					d.tamperMetrics.RecordElicitationContentTamperDetected(
-						raising.ID, chainErr.Hop, string(elicitation.ModeEnforce),
-					)
-				}
-				// spec: §15.2.1 — surface the canonical lenny code via
-				// *mcp.ToolError so REST and MCP envelopes share the
-				// same (category, retryable) pair. F-8.5.10.
-				return dispatchResult{}, mcp.NewToolError("ELICITATION_CONTENT_TAMPERED",
-					err.Error(), nil)
+				return d.handleTamper(ctx, tenantID, raising, originalContent, initiator, hops, mode, chainErr, tamper)
 			}
 		}
 		return dispatchResult{}, err
@@ -215,6 +249,164 @@ func (d *elicitationDispatcher) dispatch(
 		Chain:             res,
 		ResolverSessionID: res.ResolverSessionID,
 	}, nil
+}
+
+// eventElicitationContentTamperDetected is the §16.7 line 674 audit
+// event type emitted on a §9.2 content-integrity divergence. It is the
+// closed audit-catalog constant so a sink that whitelists by the spec
+// catalog accepts the row. spec: §16.7 line 674. F-9.2.3.
+var eventElicitationContentTamperDetected = string(audit.EventElicitationContentTamperDetected)
+
+// resolveMode returns the §9.2 effective content-integrity enforcement
+// mode for tenantID. A nil resolver or an invalid result defaults to
+// the §9.2 enforce tenant default so a misconfigured binary fails safe
+// (the stricter behavior). spec: §9.2 lines 58–64. F-9.2.2.
+func (d *elicitationDispatcher) resolveMode(ctx context.Context, tenantID string) elicitation.EnforcementMode {
+	if d.effectiveMode == nil {
+		return elicitation.ModeEnforce
+	}
+	mode := d.effectiveMode(ctx, tenantID)
+	if !mode.IsValid() {
+		return elicitation.ModeEnforce
+	}
+	return mode
+}
+
+// handleTamper applies the §9.2 enforcement-mode contract to a
+// forward-hop content divergence caught by the chain walk. Both
+// detect-only and enforce record the §16.1 line 64 counter (labelled
+// with the resolved mode) and emit the §16.7 line 674
+// elicitation.content_tamper_detected audit event; the two modes then
+// diverge:
+//
+//   - enforce: the forward is dropped and ELICITATION_CONTENT_TAMPERED
+//     (PERMANENT/409) is returned to the originating pod
+//     (forward_outcome = rejected).
+//   - detect-only: the divergent payload is delivered as received — the
+//     walk is re-run with verification disabled to resolve the chain
+//     terminus — and the originating pod sees a normal result
+//     (forward_outcome = forwarded_as_received).
+//
+// Under off this method is never reached: the dispatcher hands WalkChain
+// no re-emission provider, so the check does not run. spec: §9.2 lines
+// 60–62; §16.1 line 64; §16.7 line 674. F-9.2.2, F-9.2.3.
+func (d *elicitationDispatcher) handleTamper(
+	ctx context.Context,
+	tenantID string,
+	raising sessionstore.Session,
+	originalContent elicitation.Content,
+	initiator elicitation.InitiatorType,
+	hops []elicitation.Hop,
+	mode elicitation.EnforcementMode,
+	chainErr *elicitation.ChainError,
+	tamper *elicitation.TamperError,
+) (dispatchResult, error) {
+	tamperingPod := chainErr.Hop
+	forwardOutcome := "rejected"
+	if mode == elicitation.ModeDetectOnly {
+		forwardOutcome = "forwarded_as_received"
+	}
+	divergent := d.divergentFields(originalContent, tamperingPod, hops)
+
+	if d.tamperMetrics != nil {
+		// spec: §16.1 line 64 — {origin_pod, tampering_pod,
+		// enforcement_mode}. The mode label is the resolved tenant mode,
+		// so an operator's detect-only → enforce pivot is observable here
+		// (the §16.5 alert scopes to the enforce stream). F-9.2.4.
+		d.tamperMetrics.RecordElicitationContentTamperDetected(
+			raising.ID, tamperingPod, string(mode),
+		)
+	}
+
+	if d.audit != nil {
+		// spec: §16.7 line 674 — the full content-tamper audit payload an
+		// incident-response runbook queries (origin/tampering pod, the two
+		// digests, the divergent fields, and the forward outcome). F-9.2.3.
+		d.audit.EmitDelegationEvent(ctx, eventElicitationContentTamperDetected, map[string]any{
+			"enforcement_mode": string(mode),
+			"origin_pod":       raising.ID,
+			"tampering_pod":    tamperingPod,
+			"session_id":       raising.ID,
+			"tenant_id":        tenantID,
+			"user_id":          raising.UserID,
+			"delegation_depth": originDepth(hops),
+			"initiator_type":   string(initiator),
+			"divergent_fields": divergent,
+			"original_sha256":  tamper.ExpectedDigest,
+			"attempted_sha256": tamper.ObservedDigest,
+			"forward_outcome":  forwardOutcome,
+			"detected_at":      d.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+		})
+	}
+
+	if mode == elicitation.ModeDetectOnly {
+		// §9.2 line 61: forward the divergent payload as received. Re-run
+		// the walk with no re-emission provider so the divergence does not
+		// abort routing; the gateway never substitutes the recorded
+		// original back in, but it still delivers the elicitation.
+		res, err := elicitation.WalkChain(elicitation.ChainInput{
+			Hops:            hops,
+			OriginalContent: originalContent,
+			Initiator:       initiator,
+			DepthPolicy:     d.depthPolicy,
+			SuppressAtDepth: d.suppressAtDepth,
+		})
+		if err != nil {
+			return dispatchResult{}, err
+		}
+		if res.Termination == elicitation.TerminateSuppressed {
+			return dispatchResult{Chain: res, Suppressed: true}, nil
+		}
+		return dispatchResult{Chain: res, ResolverSessionID: res.ResolverSessionID}, nil
+	}
+
+	// enforce: drop the forward with the canonical lenny code so REST and
+	// MCP envelopes share the same (category, retryable) pair. spec:
+	// §15.2.1; §9.2 line 60. F-8.5.10.
+	return dispatchResult{}, mcp.NewToolError("ELICITATION_CONTENT_TAMPERED",
+		tamper.Error(), map[string]any{
+			"originPod":       raising.ID,
+			"tamperingPod":    tamperingPod,
+			"divergentFields": divergent,
+		})
+}
+
+// divergentFields reports which §9.2 {message, schema} fields the
+// tampering pod's re-emission diverged on, for the audit event's
+// divergent_fields payload. It locates the tampering hop and re-reads
+// its re-emitted frame via the dispatcher's provider; when no provider
+// is wired (production, where the per-hop re-emission wire mechanism is
+// the deferred F-9.2.1 surface) it returns an empty slice. spec: §9.2
+// line 56; §16.7 line 674.
+func (d *elicitationDispatcher) divergentFields(original elicitation.Content, tamperingPod string, hops []elicitation.Hop) []string {
+	if d.forwardedContentFor != nil {
+		for _, h := range hops {
+			if h.SessionID == tamperingPod || h.PodID == tamperingPod {
+				if forwarded, ok := d.forwardedContentFor(h); ok {
+					return elicitation.DivergentFields(original, forwarded)
+				}
+				break
+			}
+		}
+	}
+	return []string{}
+}
+
+// originDepth is the §8 delegation depth of the elicitation's origin pod
+// (the chain's deepest hop), the audit event's delegation_depth field.
+func originDepth(hops []elicitation.Hop) int {
+	if len(hops) > 0 {
+		return hops[0].Depth
+	}
+	return 0
+}
+
+// now returns the dispatcher's clock, defaulting to wall-clock time.
+func (d *elicitationDispatcher) now() time.Time {
+	if d.clock != nil {
+		return d.clock()
+	}
+	return time.Now()
 }
 
 // buildHops walks the §8 delegation tree from raising up to the root,

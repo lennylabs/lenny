@@ -293,6 +293,32 @@ func (e *TamperError) Error() string {
 	return fmt.Sprintf("elicitation: content tampered: expected digest %s, observed %s (§9.2 gateway-origin-binding)", e.ExpectedDigest, e.ObservedDigest)
 }
 
+// DivergentFields reports which of the §9.2 `{message, schema}` fields
+// differ between the gateway-recorded original and a forward-hop
+// re-emission. It is the `divergent_fields` payload of the
+// `elicitation.content_tamper_detected` audit event (§16.7 line 674):
+// an incident responder reads it to learn whether the tampering pod
+// rewrote the human-visible message, the input schema, or both. The
+// schema comparison is over the canonical digest so key reordering or
+// whitespace differences do not register as a divergence. Fields are
+// returned in a stable order (message before schema); an empty slice
+// means the two contents are semantically equal. spec: §9.2 line 56;
+// §16.7 line 674.
+func DivergentFields(original, forwarded Content) []string {
+	out := make([]string, 0, 2)
+	if original.Message != forwarded.Message {
+		out = append(out, "message")
+	}
+	// Isolate the schema by zeroing the message on both sides; the
+	// resulting digests differ iff the schemas differ canonically.
+	od, oerr := Content{Schema: original.Schema}.Digest()
+	fd, ferr := Content{Schema: forwarded.Schema}.Digest()
+	if oerr != nil || ferr != nil || od != fd {
+		out = append(out, "schema")
+	}
+	return out
+}
+
 // Provenance is the §9.2 provenance metadata the gateway stamps on
 // every elicitation before forwarding it. Client UIs render the
 // fields prominently so users can distinguish platform OAuth flows
