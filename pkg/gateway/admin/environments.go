@@ -56,19 +56,31 @@ type MCPRuntimeFilterPayload struct {
 	DeniedCapabilities  []string        `json:"deniedCapabilities,omitempty"`
 }
 
-// CrossEnvRulePayload is one §10.6 bilateral cross-environment rule.
-// The `environment` field names the peer — the target for an outbound
-// rule, the permitted source for an inbound rule.
-type CrossEnvRulePayload struct {
-	Environment string          `json:"environment"`
-	Runtimes    SelectorPayload `json:"runtimes"`
+// CrossEnvOutboundRulePayload is one §10.6 outbound cross-environment
+// delegation rule. spec: §10.6 lines 613-625 — the outbound declaration
+// names the permitted delegation target under `targetEnvironment`. The
+// bilateral field names carry the direction semantics, so the wire shape
+// keeps them distinct from the inbound `sourceEnvironment` rather than
+// collapsing both onto a single `environment` field. F-10.6.4.
+type CrossEnvOutboundRulePayload struct {
+	TargetEnvironment string          `json:"targetEnvironment"`
+	Runtimes          SelectorPayload `json:"runtimes"`
+}
+
+// CrossEnvInboundRulePayload is one §10.6 inbound cross-environment
+// delegation rule. spec: §10.6 lines 613-625 — the inbound declaration
+// names the permitted delegation source under `sourceEnvironment` ("*"
+// matches any source). F-10.6.4.
+type CrossEnvInboundRulePayload struct {
+	SourceEnvironment string          `json:"sourceEnvironment"`
+	Runtimes          SelectorPayload `json:"runtimes"`
 }
 
 // CrossEnvDelegationPayload is the §10.6 crossEnvironmentDelegation
 // block.
 type CrossEnvDelegationPayload struct {
-	Outbound []CrossEnvRulePayload `json:"outbound,omitempty"`
-	Inbound  []CrossEnvRulePayload `json:"inbound,omitempty"`
+	Outbound []CrossEnvOutboundRulePayload `json:"outbound,omitempty"`
+	Inbound  []CrossEnvInboundRulePayload  `json:"inbound,omitempty"`
 }
 
 // EnvironmentPayload is the §15.1 environment wire shape.
@@ -110,24 +122,46 @@ func fromSelector(s environment.Selector) SelectorPayload {
 	}
 }
 
-func toCrossEnvRules(ps []CrossEnvRulePayload) []environmentstore.CrossEnvRule {
+func toCrossEnvOutbound(ps []CrossEnvOutboundRulePayload) []environmentstore.CrossEnvRule {
 	if len(ps) == 0 {
 		return nil
 	}
 	out := make([]environmentstore.CrossEnvRule, len(ps))
 	for i, p := range ps {
-		out[i] = environmentstore.CrossEnvRule{Environment: p.Environment, Runtimes: toSelector(p.Runtimes)}
+		out[i] = environmentstore.CrossEnvRule{Environment: p.TargetEnvironment, Runtimes: toSelector(p.Runtimes)}
 	}
 	return out
 }
 
-func fromCrossEnvRules(rs []environmentstore.CrossEnvRule) []CrossEnvRulePayload {
+func toCrossEnvInbound(ps []CrossEnvInboundRulePayload) []environmentstore.CrossEnvRule {
+	if len(ps) == 0 {
+		return nil
+	}
+	out := make([]environmentstore.CrossEnvRule, len(ps))
+	for i, p := range ps {
+		out[i] = environmentstore.CrossEnvRule{Environment: p.SourceEnvironment, Runtimes: toSelector(p.Runtimes)}
+	}
+	return out
+}
+
+func fromCrossEnvOutbound(rs []environmentstore.CrossEnvRule) []CrossEnvOutboundRulePayload {
 	if len(rs) == 0 {
 		return nil
 	}
-	out := make([]CrossEnvRulePayload, len(rs))
+	out := make([]CrossEnvOutboundRulePayload, len(rs))
 	for i, r := range rs {
-		out[i] = CrossEnvRulePayload{Environment: r.Environment, Runtimes: fromSelector(r.Runtimes)}
+		out[i] = CrossEnvOutboundRulePayload{TargetEnvironment: r.Environment, Runtimes: fromSelector(r.Runtimes)}
+	}
+	return out
+}
+
+func fromCrossEnvInbound(rs []environmentstore.CrossEnvRule) []CrossEnvInboundRulePayload {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]CrossEnvInboundRulePayload, len(rs))
+	for i, r := range rs {
+		out[i] = CrossEnvInboundRulePayload{SourceEnvironment: r.Environment, Runtimes: fromSelector(r.Runtimes)}
 	}
 	return out
 }
@@ -159,8 +193,8 @@ func toEnvironment(p EnvironmentPayload, tenant string) environmentstore.Environ
 		MCPRuntimeFilters:       filters,
 		ConnectorSelector:       toSelector(p.ConnectorSelector),
 		DefaultDelegationPolicy: p.DefaultDelegationPolicy,
-		CrossEnvOutbound:        toCrossEnvRules(p.CrossEnvironmentDelegation.Outbound),
-		CrossEnvInbound:         toCrossEnvRules(p.CrossEnvironmentDelegation.Inbound),
+		CrossEnvOutbound:        toCrossEnvOutbound(p.CrossEnvironmentDelegation.Outbound),
+		CrossEnvInbound:         toCrossEnvInbound(p.CrossEnvironmentDelegation.Inbound),
 	}
 }
 
@@ -191,8 +225,8 @@ func fromEnvironment(e environmentstore.Environment) EnvironmentPayload {
 		ConnectorSelector:       fromSelector(e.ConnectorSelector),
 		DefaultDelegationPolicy: e.DefaultDelegationPolicy,
 		CrossEnvironmentDelegation: CrossEnvDelegationPayload{
-			Outbound: fromCrossEnvRules(e.CrossEnvOutbound),
-			Inbound:  fromCrossEnvRules(e.CrossEnvInbound),
+			Outbound: fromCrossEnvOutbound(e.CrossEnvOutbound),
+			Inbound:  fromCrossEnvInbound(e.CrossEnvInbound),
 		},
 		CreatedAt: rfc3339Nano(e.CreatedAt),
 		UpdatedAt: rfc3339Nano(e.UpdatedAt),

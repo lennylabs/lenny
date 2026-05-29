@@ -413,21 +413,26 @@ func (s *Server) resolveEnvironmentForRequest(r *http.Request) (environmentmw.Re
 	return resolved, true, nil
 }
 
-// requireEnvironmentAdmission enforces the §11.1 line 13 admission
-// gate: a session create that does not name an environment is
-// admitted only when the caller's tenant resolves to allow-all (or
-// when the caller is a member of at least one environment, in which
-// case the transparent filter governs runtime access for the
-// runtimeRef). The platform default deny-all rejects the request with
-// 403 FORBIDDEN; an empty NoEnvironmentPolicy is treated as deny-all
-// per §10.6 line 646. Returns true when admission passes. A nil
-// environment registry leaves admission open — the gateway runs in a
-// posture where §10.6 transparent filtering is disabled. spec: §11.1
-// line 13; §10.6 line 643; §15.1 FORBIDDEN.
-func (s *Server) requireEnvironmentAdmission(w http.ResponseWriter, r *http.Request, requestedEnvironment string) bool {
-	if requestedEnvironment != "" {
-		return true
-	}
+// requireEnvironmentAdmission enforces the §11.1 line 13 / §10.6
+// admission gate at session create. It governs the two §10.6 access
+// paths:
+//
+//   - When the request names an environment (the explicit-environment
+//     endpoint /v1/environments/{name}/sessions, the opt-in RBAC scope),
+//     admission requires that the environment exists in the caller's
+//     tenant, the caller holds at least the `creator` role in it, and the
+//     requested runtime is admitted by the environment's runtimeSelector.
+//   - When the request names no environment, admission requires either
+//     membership of at least one environment (the transparent filter then
+//     governs runtime access) or a tenant noEnvironmentPolicy of
+//     allow-all. The platform default deny-all rejects with 403.
+//
+// A nil environment registry leaves admission open — the gateway runs in
+// a posture where §10.6 RBAC is disabled. An unauthenticated /
+// unconfigured request also passes through (the dev-header / single-tenant
+// posture). spec: §11.1 line 13; §10.6 lines 557, 605, 629, 643; §15.1
+// FORBIDDEN. F-10.6.1 / F-10.6.5.
+func (s *Server) requireEnvironmentAdmission(w http.ResponseWriter, r *http.Request, requestedEnvironment, runtimeRef string) bool {
 	if s.environments == nil || s.tenants == nil {
 		return true
 	}
@@ -440,6 +445,13 @@ func (s *Server) requireEnvironmentAdmission(w http.ResponseWriter, r *http.Requ
 	}
 	if !hasPrincipal || !res.Configured {
 		return true
+	}
+	// spec: §10.6 lines 557, 605, 629 — the explicit-environment endpoint
+	// is opt-in RBAC and must enforce membership, the session-creating
+	// role, and runtime scope; otherwise it is a confused-deputy bypass of
+	// the transparent filter's boundary. F-10.6.1 / F-10.6.5.
+	if requestedEnvironment != "" {
+		return s.requireExplicitEnvironmentAdmission(w, r, requestedEnvironment, runtimeRef, res)
 	}
 	if len(res.MemberEnvironments) > 0 {
 		return true
@@ -454,9 +466,66 @@ func (s *Server) requireEnvironmentAdmission(w http.ResponseWriter, r *http.Requ
 	s.writeError(w, http.StatusForbidden, "FORBIDDEN",
 		"session creation requires either an environment in the request or the tenant's noEnvironmentPolicy to be allow-all (§11.1, §10.6)",
 		map[string]any{
-			"reason":               "no_environment_policy_deny_all",
-			"noEnvironmentPolicy":  policy,
-			"memberEnvironments":   0,
+			"reason":              "no_environment_policy_deny_all",
+			"noEnvironmentPolicy": policy,
+			"memberEnvironments":  0,
 		})
+	return false
+}
+
+// requireExplicitEnvironmentAdmission enforces the §10.6 opt-in
+// explicit-environment access path at session create. The caller named
+// an environment (via /v1/environments/{name}/sessions); the gateway
+// admits the create only when the environment exists in the caller's
+// tenant, the caller holds a role of at least `creator` in it, and the
+// requested runtime is admitted by the environment's runtimeSelector.
+// Each failure is a distinct 403 FORBIDDEN reason. spec: §10.6 line 557
+// (explicit endpoint is opt-in), line 605 (`creator` creates sessions),
+// line 629 (effective scope is bounded by the environment definition).
+// F-10.6.1 / F-10.6.5.
+func (s *Server) requireExplicitEnvironmentAdmission(w http.ResponseWriter, r *http.Request, envName, runtimeRef string, res environmentmw.Resolution) bool {
+	for _, env := range res.AllEnvironments {
+		if env.Name != envName {
+			continue
+		}
+		role, member := envaccess.Membership(res.Caller, env)
+		if !member {
+			s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+				"caller is not a member of the named environment (§10.6)",
+				map[string]any{"reason": "not_environment_member", "environment": envName})
+			return false
+		}
+		// spec: §10.6 line 605 — a `viewer` reads; creating a session
+		// requires at least `creator`.
+		if !role.AtLeast(environment.RoleCreator) {
+			s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+				"environment role does not permit session creation; requires at least creator (§10.6)",
+				map[string]any{"reason": "insufficient_environment_role", "environment": envName, "role": string(role)})
+			return false
+		}
+		// spec: §10.6 line 629 — the session's own runtime must be inside
+		// the environment definition (its runtimeSelector). A runtime the
+		// registry cannot resolve is left to the downstream runtime checks;
+		// only an in-registry runtime the selector rejects is blocked here.
+		if s.runtimes != nil && runtimeRef != "" {
+			if rt, rerr := runtimestore.Resolve(r.Context(), s.runtimes, runtimeRef); rerr == nil {
+				if !env.RuntimeSelector.Matches(environment.Candidate{
+					Name: rt.Name, Type: string(rt.Type), Labels: rt.Labels,
+				}) {
+					s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+						"requested runtime is not in scope for the named environment (§10.6)",
+						map[string]any{"reason": "runtime_not_in_environment", "environment": envName, "runtimeRef": runtimeRef})
+					return false
+				}
+			}
+		}
+		return true
+	}
+	// The named environment is not defined in the caller's tenant. From
+	// the caller's perspective it confers no access; reject as 403 rather
+	// than disclose which environment names exist.
+	s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+		"named environment is not defined in the caller's tenant (§10.6)",
+		map[string]any{"reason": "environment_not_found", "environment": envName})
 	return false
 }

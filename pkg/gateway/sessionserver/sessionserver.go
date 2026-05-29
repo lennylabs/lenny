@@ -1361,7 +1361,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// tenant's noEnvironmentPolicy resolves to allow-all. The platform
 	// default deny-all rejects with 403 so an empty Environment field
 	// no longer bypasses the §10.6 access-path default.
-	if !s.requireEnvironmentAdmission(w, r, req.Environment) {
+	if !s.requireEnvironmentAdmission(w, r, req.Environment, req.RuntimeRef) {
 		return
 	}
 

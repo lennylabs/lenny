@@ -780,19 +780,189 @@ func TestCreateWithoutEnvironmentEmptyTenantPolicyDefaultsToDenyAll_spec_10_6(t 
 	}
 }
 
-// TestCreateWithNamedEnvironmentBypassesAdmissionGate_spec_11_1 — when
-// the request names an environment the §11.1 line 13 gate does not
-// apply: the explicit-environment path is governed by §10.6
-// membership checks (out of scope for this gap).
-func TestCreateWithNamedEnvironmentBypassesAdmissionGate_spec_11_1(t *testing.T) {
-	srv, _ := seedNoEnvServer(t, "sess_named", tenantstore.NoEnvPolicyDenyAll, tenantstore.NoEnvPolicyDenyAll)
+// --- §10.6 explicit-environment access path (F-10.6.1 / F-10.6.5) -----
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
-		RuntimeRef:  "claude-code",
-		Environment: "security-team",
+// seedExplicitEnvServer wires the §10.6 environment + tenant + runtime
+// registries so the explicit-environment admission path can resolve
+// membership, role, and runtime scope. A zero-Name runtime is left
+// unseeded so the runtimeSelector sub-check (c) is skipped.
+func seedExplicitEnvServer(t *testing.T, sessionID string, rt runtimestore.Runtime, envs ...environmentstore.Environment) (*sessionserver.Server, *memstore.Store) {
+	t.Helper()
+	store := memstore.New()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	es := environmentstore.NewMemory()
+	for _, e := range envs {
+		if err := es.Create(context.Background(), e); err != nil {
+			t.Fatalf("seed environment %q: %v", e.Name, err)
+		}
+	}
+	ts := tenantstore.NewMemory()
+	if err := ts.Create(context.Background(), tenantstore.Tenant{ID: "acme", NoEnvironmentPolicy: tenantstore.NoEnvPolicyDenyAll}); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	rts := runtimestore.NewMemory()
+	if rt.Name != "" {
+		if err := rts.Create(context.Background(), rt); err != nil {
+			t.Fatalf("seed runtime: %v", err)
+		}
+	}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:                      clock,
+		IDFunc:                     func() string { return sessionID },
+		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
+		Environments:               es,
+		Tenants:                    ts,
+		Runtimes:                   rts,
+		DefaultNoEnvironmentPolicy: tenantstore.NoEnvPolicyDenyAll,
+	})
+	return srv, store
+}
+
+// createEnvRequestAs drives a POST to the §10.6 explicit-environment
+// endpoint /v1/environments/{name}/sessions with an authenticated
+// principal.
+func createEnvRequestAs(t *testing.T, h http.Handler, envName string, body sessionserver.CreateSessionRequest, principal authmw.Principal) *httptest.ResponseRecorder {
+	t.Helper()
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/v1/environments/"+envName+"/sessions", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), principal))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// envWithMembers builds a §10.6 environment whose runtimeSelector admits
+// runtimes labelled team=security.
+func envWithMembers(name string, members ...environmentstore.Member) environmentstore.Environment {
+	return environmentstore.Environment{
+		Name:            name,
+		TenantID:        "acme",
+		Members:         members,
+		RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	}
+}
+
+func member(value string, role environment.Role) environmentstore.Member {
+	return environmentstore.Member{Identity: environmentstore.Identity{Type: "user", Value: value}, Role: role}
+}
+
+// TestExplicitEnvironmentUnknownRejected_spec_10_6_557 — naming an
+// environment that is not defined in the caller's tenant is rejected
+// with 403, closing the confused-deputy hole where any authenticated
+// caller could create a session "in" any environment name. F-10.6.1.
+func TestExplicitEnvironmentUnknownRejected_spec_10_6_557(t *testing.T) {
+	srv, store := seedExplicitEnvServer(t, "sess_unknown", runtimestore.Runtime{})
+
+	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for an undefined environment; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "environment_not_found") {
+		t.Errorf("body must carry environment_not_found reason: %s", rr.Body.String())
+	}
+	if _, err := store.Get(context.Background(), "acme", "sess_unknown"); err == nil {
+		t.Error("a rejected create must not persist a session row")
+	}
+}
+
+// TestExplicitEnvironmentNonMemberRejected_spec_10_6_557 — a caller with
+// no role in the named environment is rejected. F-10.6.1.
+func TestExplicitEnvironmentNonMemberRejected_spec_10_6_557(t *testing.T) {
+	env := envWithMembers("security-team", member("alice@acme.com", environment.RoleCreator))
+	srv, _ := seedExplicitEnvServer(t, "sess_nonmember", runtimestore.Runtime{}, env)
+
+	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	}, authmw.Principal{Subject: "carol@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a non-member; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "not_environment_member") {
+		t.Errorf("body must carry not_environment_member reason: %s", rr.Body.String())
+	}
+}
+
+// TestExplicitEnvironmentViewerRejected_spec_10_6_605 — §10.6 line 605:
+// a `viewer` reads; creating a session requires at least `creator`. A
+// viewer-only member is rejected. F-10.6.5.
+func TestExplicitEnvironmentViewerRejected_spec_10_6_605(t *testing.T) {
+	env := envWithMembers("security-team", member("bob@acme.com", environment.RoleViewer))
+	srv, _ := seedExplicitEnvServer(t, "sess_viewer", runtimestore.Runtime{}, env)
+
+	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+	}, authmw.Principal{Subject: "bob@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a viewer; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "insufficient_environment_role") {
+		t.Errorf("body must carry insufficient_environment_role reason: %s", rr.Body.String())
+	}
+}
+
+// TestExplicitEnvironmentCreatorAdmitted_spec_10_6_605 — a `creator`
+// member whose requested runtime is in the environment's runtimeSelector
+// is admitted, and the session is recorded in the environment. F-10.6.5.
+func TestExplicitEnvironmentCreatorAdmitted_spec_10_6_605(t *testing.T) {
+	env := envWithMembers("security-team", member("alice@acme.com", environment.RoleCreator))
+	rt := runtimestore.Runtime{Name: "claude-code", Type: runtimestore.TypeAgent, Labels: map[string]string{"team": "security"}}
+	srv, store := seedExplicitEnvServer(t, "sess_creator", rt, env)
+
+	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201 (named environment bypasses the §11.1 line 13 gate); body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("status = %d, want 201 for a creator member; body=%s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_creator")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if row.Environment != "security-team" {
+		t.Errorf("stored environment = %q, want security-team", row.Environment)
+	}
+}
+
+// TestExplicitEnvironmentRuntimeNotInScopeRejected_spec_10_6_629 — §10.6
+// line 629: the session's runtime must be inside the environment
+// definition. A creator member requesting a runtime the environment's
+// runtimeSelector does not admit is rejected. F-10.6.1.
+func TestExplicitEnvironmentRuntimeNotInScopeRejected_spec_10_6_629(t *testing.T) {
+	env := envWithMembers("security-team", member("alice@acme.com", environment.RoleCreator))
+	rogue := runtimestore.Runtime{Name: "rogue", Type: runtimestore.TypeAgent, Labels: map[string]string{"team": "platform"}}
+	srv, _ := seedExplicitEnvServer(t, "sess_rogue", rogue, env)
+
+	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+		RuntimeRef: "rogue",
+	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for an out-of-scope runtime; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "runtime_not_in_environment") {
+		t.Errorf("body must carry runtime_not_in_environment reason: %s", rr.Body.String())
+	}
+}
+
+// TestExplicitEnvironmentNoPrincipalPassesThrough_spec_10_6 — the
+// explicit-environment gate is nil-safe for an unauthenticated request:
+// with no principal there is no identity to resolve membership against,
+// so the dev-header / single-tenant posture passes through. F-10.6.1.
+func TestExplicitEnvironmentNoPrincipalPassesThrough_spec_10_6(t *testing.T) {
+	env := envWithMembers("security-team", member("alice@acme.com", environment.RoleCreator))
+	srv, _ := seedExplicitEnvServer(t, "sess_noprincipal", runtimestore.Runtime{}, env)
+
+	body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/environments/security-team/sessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 when no principal is present; body=%s", rr.Code, rr.Body.String())
 	}
 }
 

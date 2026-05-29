@@ -185,6 +185,70 @@ func TestUpdateEnvironmentRoundTripsSelectorExpressions(t *testing.T) {
 	}
 }
 
+// spec: §10.6 lines 613-625 — the bilateral cross-environment-delegation
+// block names the peer under `targetEnvironment` (outbound) and
+// `sourceEnvironment` (inbound). The wire shape must round-trip both
+// distinct field names rather than collapse them onto a single
+// `environment` key that silently drops the peer on every write.
+// F-10.6.4.
+func TestCrossEnvironmentDelegationWireRoundTrip_spec_10_6_613(t *testing.T) {
+	router, envs, _ := newEnvironmentAdmin(t)
+	body := validEnvironmentPayload("env-xenv")
+	body.CrossEnvironmentDelegation = admin.CrossEnvDelegationPayload{
+		Outbound: []admin.CrossEnvOutboundRulePayload{{
+			TargetEnvironment: "platform-services",
+			Runtimes:          admin.SelectorPayload{MatchLabels: map[string]string{"shared": "true"}},
+		}},
+		Inbound: []admin.CrossEnvInboundRulePayload{{
+			SourceEnvironment: "*",
+			Runtimes:          admin.SelectorPayload{MatchLabels: map[string]string{"shared": "true"}},
+		}},
+	}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/environments", body, withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d body %s", rr.Code, rr.Body.String())
+	}
+	// The peer names must reach the store, not be dropped to empty.
+	got, err := envs.Get(context.Background(), "acme", "env-xenv")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.CrossEnvOutbound) != 1 || got.CrossEnvOutbound[0].Environment != "platform-services" {
+		t.Errorf("outbound targetEnvironment did not persist: %+v", got.CrossEnvOutbound)
+	}
+	if len(got.CrossEnvInbound) != 1 || got.CrossEnvInbound[0].Environment != "*" {
+		t.Errorf("inbound sourceEnvironment did not persist: %+v", got.CrossEnvInbound)
+	}
+
+	// GET must emit the spec field names, not a legacy `environment` key.
+	rr = doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/environments/env-xenv?tenantId=acme",
+		nil, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: status %d", rr.Code)
+	}
+	var raw struct {
+		CrossEnvironmentDelegation struct {
+			Outbound []map[string]json.RawMessage `json:"outbound"`
+			Inbound  []map[string]json.RawMessage `json:"inbound"`
+		} `json:"crossEnvironmentDelegation"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal GET body: %v", err)
+	}
+	if len(raw.CrossEnvironmentDelegation.Outbound) != 1 {
+		t.Fatalf("GET outbound = %+v", raw.CrossEnvironmentDelegation.Outbound)
+	}
+	if _, ok := raw.CrossEnvironmentDelegation.Outbound[0]["targetEnvironment"]; !ok {
+		t.Errorf("outbound rule missing targetEnvironment key: %v", raw.CrossEnvironmentDelegation.Outbound[0])
+	}
+	if _, ok := raw.CrossEnvironmentDelegation.Outbound[0]["environment"]; ok {
+		t.Errorf("outbound rule must not carry a legacy environment key: %v", raw.CrossEnvironmentDelegation.Outbound[0])
+	}
+	if _, ok := raw.CrossEnvironmentDelegation.Inbound[0]["sourceEnvironment"]; !ok {
+		t.Errorf("inbound rule missing sourceEnvironment key: %v", raw.CrossEnvironmentDelegation.Inbound[0])
+	}
+}
+
 func TestDeleteEnvironment(t *testing.T) {
 	router, envs, _ := newEnvironmentAdmin(t)
 	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/environments",
