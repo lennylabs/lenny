@@ -103,6 +103,59 @@ const (
 	dispositionDenied  = 2
 )
 
+// OCSF severity_id values. §16.7 annotates several audit events with a
+// syslog-style severity word; these project onto the OCSF v1.1.0
+// severity scale as INFO → Informational(1), Notice → Low(2),
+// Warning → Medium(3), and Critical → Critical(5). Events §16.7 does
+// not annotate default to Informational; a payload carrying
+// policy_result=deny raises the floor to Medium so a security-salient
+// denial is never reported below Medium. spec: §16.7. F-16.7.9.
+const (
+	severityInformational = 1
+	severityLow           = 2 // §16.7 "Notice"
+	severityMedium        = 3 // §16.7 "Warning"; also the policy-deny floor
+	severityCritical      = 5 // §16.7 "Critical"
+)
+
+// severityCatalog pins the OCSF severity_id for the §16.7 events that
+// carry an explicit severity. elicitation.content_tamper_detected is
+// payload-dependent and is resolved in severityFor rather than here.
+// spec: §16.7. F-16.7.9.
+var severityCatalog = map[string]int{
+	"compliance.profile_decommissioned":              severityCritical,      // §16.7 line 681
+	"gdpr.erasure_blocked_by_hold":                   severityCritical,      // §16.7 line 693
+	"gdpr.legal_hold_overridden":                     severityCritical,      // §16.7 line 693
+	"gdpr.legal_hold_overridden_tenant":              severityCritical,      // §16.7 line 694
+	"delegation.self_recursion_allowed":              severityLow,           // §16.7 line 670 (Notice)
+	"delegation.cycle_warning":                       severityMedium,        // §16.7 line 671 (Warning)
+	"gateway.cycle_detection_mode_changed":           severityLow,           // §16.7 line 672 (Notice)
+	"deployment.feature_flag_downgrade_acknowledged": severityLow,           // §16.7 line 682 (Notice)
+	"legal_hold.escrow_region_resolved":              severityInformational, // §16.7 line 694 (INFO)
+	"node.drain.forced":                              severityCritical,      // §12 line 291 (critical)
+}
+
+// severityFor returns the OCSF severity_id for an event type. Most
+// events fall to Informational; the §16.7 events with an explicit
+// severity are pinned in severityCatalog.
+// elicitation.content_tamper_detected is Critical under enforcement
+// mode `enforce` (the divergent forward was dropped) and Medium
+// (Warning) under `detect-only` (the divergent payload was forwarded
+// as received), keyed off the `enforcement_mode` payload field. An
+// absent or unrecognised mode defaults to the Critical reading.
+// spec: §16.7 lines 670-694. F-16.7.9.
+func severityFor(eventType string, payload map[string]any) int {
+	if eventType == "elicitation.content_tamper_detected" {
+		if mode, ok := stringField(payload, "enforcement_mode"); ok && mode == "detect-only" {
+			return severityMedium
+		}
+		return severityCritical
+	}
+	if sev, ok := severityCatalog[eventType]; ok {
+		return sev
+	}
+	return severityInformational
+}
+
 // actor.user.type_id values: §11.7 maps caller_kind human → User (1),
 // service → System (3), agent → Other (99).
 const (
@@ -417,7 +470,7 @@ func Translate(in Input) (rec Record, err error) {
 		ActivityID:  class.ActivityID,
 		TypeUID:     class.ClassUID*100 + class.ActivityID,
 		Time:        in.CreatedAtUnixMs,
-		SeverityID:  1, // Informational; raised below for a denial.
+		SeverityID:  severityFor(in.EventType, payload), // §16.7 per-event severity; a policy denial raises the floor below. F-16.7.9.
 		Metadata: Metadata{
 			UID:       in.ID,
 			Sequence:  in.Sequence,
@@ -467,7 +520,12 @@ func Translate(in Input) (rec Record, err error) {
 			rec.DispositionID = dispositionAllowed
 		case "deny":
 			rec.DispositionID = dispositionDenied
-			rec.SeverityID = 3 // Medium — a denial is security-salient.
+			// A denial is security-salient: never report it below Medium.
+			// An event whose §16.7 severity is already higher (e.g.
+			// Critical) keeps its higher value. F-16.7.9.
+			if rec.SeverityID < severityMedium {
+				rec.SeverityID = severityMedium
+			}
 		}
 	}
 	// denial_reason → status_detail.

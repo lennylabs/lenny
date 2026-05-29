@@ -104,6 +104,12 @@ var exactCatalog = map[string]ClassMapping{
 	// §16.7 compliance posture → Account Change (3006).
 	"compliance.profile_decommissioned": accountChange(ActivityUpdate),
 
+	// §12 line 291 — operator-forced emergency node drain that bypasses
+	// the MinIO drain-readiness gate. An operator infrastructure action
+	// → API Activity (6003), Update (it transitions the node to
+	// draining). Critical severity is assigned in ocsf.go. F-16.7.3.
+	"node.drain.forced": apiActivity(ActivityUpdate),
+
 	// §16.7 GDPR erasure receipts → Entity Management (5001), Delete.
 	"gdpr.erasure_deadletter_redacted":            entityMgmt(ActivityDelete),
 	"gdpr.erasure_deadletter_downstream_notified": entityMgmt(ActivityDelete),
@@ -118,11 +124,22 @@ var exactCatalog = map[string]ClassMapping{
 	// (3002) so SIEM consumers see authorization initiation and a
 	// stored credential under the user-authentication class.
 	// F-9.3.9.
-	"admin.connector.created":                   entityMgmt(ActivityCreate),
-	"admin.connector.updated":                   entityMgmt(ActivityUpdate),
-	"admin.connector.soft_deleted":              entityMgmt(ActivityDelete),
-	"connector.oauth.authorization_initiated":   authn(ActivityCreate),
-	"connector.oauth.credential_stored":         authn(ActivityCreate),
+	"admin.connector.created":                 entityMgmt(ActivityCreate),
+	"admin.connector.updated":                 entityMgmt(ActivityUpdate),
+	"admin.connector.soft_deleted":            entityMgmt(ActivityDelete),
+	"connector.oauth.authorization_initiated": authn(ActivityCreate),
+	"connector.oauth.credential_stored":       authn(ActivityCreate),
+
+	// §16.7 line 690 / §25.11 cross-region replication audit → API
+	// Activity (6003). These are ArtifactStore replication lifecycle
+	// events catalogued alongside the backup.* / restore.* operational
+	// family rather than workspace file access: the verified event is a
+	// per-batch positive residency attestation (Create) and the resumed
+	// event is an operator-driven replication state change (Update). The
+	// paired failure case is the separate DataResidencyViolationAttempt
+	// finding, not these positive rows. F-16.7.3.
+	"artifact.cross_region_replication_verified": apiActivity(ActivityCreate),
+	"artifact_replication.resumed":               apiActivity(ActivityUpdate),
 }
 
 // prefixCatalog maps an event-type namespace prefix to a §11.7 class.
@@ -171,6 +188,19 @@ var prefixCatalog = []struct {
 	// backup / restore → API Activity (6003).
 	{"backup.", apiActivity(ActivityUnknown)},
 	{"restore.", apiActivity(ActivityUnknown)},
+
+	// §16.7 artifact replication lifecycle → API Activity (6003),
+	// consistent with the backup.* / restore.* operational family so a
+	// future artifact.* / artifact_replication.* event resolves via the
+	// namespace prefix rather than dead-lettering. The "artifact."
+	// prefix does not match "artifact_replication." (the eighth byte is
+	// "_" vs "."), so both prefixes are required. F-16.7.3.
+	{"artifact_replication.", apiActivity(ActivityUnknown)},
+	{"artifact.", apiActivity(ActivityUnknown)},
+
+	// §12 node lifecycle (operator-forced drain) → API Activity (6003).
+	// F-16.7.3.
+	{"node.", apiActivity(ActivityUnknown)},
 
 	// platform lifecycle → API Activity (6003).
 	{"platform.", apiActivity(ActivityUnknown)},

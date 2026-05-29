@@ -5,6 +5,8 @@ package audit
 import (
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 )
 
 // spec167AuditEvents is the §16.7 "Section 25 Audit Events" catalog —
@@ -227,6 +229,36 @@ func TestEventTypesAreNonEmptyIdentifiers(t *testing.T) {
 		}
 		if s != strings.ToLower(s) {
 			t.Errorf("audit event type %q is not lower-case", et)
+		}
+	}
+}
+
+// TestCatalogHasOCSFCoverage asserts every §16.7 catalogued event
+// resolves to an OCSF class via ocsf.LookupClass. Without this gate the
+// catalog ↔ OCSF parity is unenforced: a catalogued event with no class
+// mapping dead-letters at translation and never reaches a SIEM in OCSF
+// form (the latent gap F-16.7.3 surfaced for the artifact replication
+// events). The test also pins family-appropriate classes for the
+// data-subject erasure and legal-hold families the §11.7 mapping calls
+// out, so a gdpr.* / legal_hold.* event cannot silently regress into
+// the generic API-activity fallback. spec: §16.7; §11.7 OCSF mapping;
+// §12.8. F-16.7.10.
+func TestCatalogHasOCSFCoverage(t *testing.T) {
+	for _, et := range Catalog() {
+		m, ok := ocsf.LookupClass(string(et))
+		if !ok {
+			t.Errorf("§16.7 event %q has no OCSF class mapping; it would dead-letter at translation", et)
+			continue
+		}
+		// Family-appropriateness: the data-subject erasure / legal-hold
+		// families map to OCSF Entity Management (5001), never the
+		// generic API-activity fallback.
+		switch {
+		case strings.HasPrefix(string(et), "gdpr."), strings.HasPrefix(string(et), "legal_hold."):
+			if m.ClassUID != ocsf.ClassEntityManagement {
+				t.Errorf("event %q maps to OCSF class %d, want EntityManagement(%d)",
+					et, m.ClassUID, ocsf.ClassEntityManagement)
+			}
 		}
 	}
 }
