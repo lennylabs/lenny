@@ -379,6 +379,13 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 		args = append(args, string(filter.FailureClass))
 		q += fmt.Sprintf(" AND failure_class = $%d", len(args))
 	}
+	// spec: §11.4 line 256 — full_revoke step 1 narrows to the
+	// invalidation subject. Pushes the filter to SQL so a tenant with
+	// many sessions does not scan tenant-wide.
+	if filter.UserID != "" {
+		args = append(args, filter.UserID)
+		q += fmt.Sprintf(" AND user_id = $%d", len(args))
+	}
 	q += ` ORDER BY created_at DESC, id`
 
 	var out []sessionstore.Session

@@ -95,6 +95,45 @@ func TestListFiltersByState(t *testing.T) {
 	}
 }
 
+// TestListFiltersByUserID asserts the §11.4 full_revoke step-1
+// SessionStore lookup narrows to the invalidation subject, so a tenant
+// with many sessions does not read tenant-wide on every revoke.
+// spec: §11.4 line 256.
+func TestListFiltersByUserID_spec_11_4_256(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_a1", TenantID: "acme", UserID: "alice@acme.com", State: session.StateRunning})
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_a2", TenantID: "acme", UserID: "alice@acme.com", State: session.StateCreated})
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_b1", TenantID: "acme", UserID: "bob@acme.com", State: session.StateRunning})
+
+	got, err := s.List(ctx, "acme", sessionstore.ListFilter{UserID: "alice@acme.com"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("filtered List: want 2 alice rows, got %d (%v)", len(got), got)
+	}
+	for _, row := range got {
+		if row.UserID != "alice@acme.com" {
+			t.Errorf("user filter leaked a foreign-user row: %s/%s", row.UserID, row.ID)
+		}
+	}
+}
+
+// TestListUserIDIsTenantScoped asserts a UserID match in a peer tenant
+// is not surfaced by the §11.4 lookup. spec: §11.4 line 256.
+func TestListUserIDIsTenantScoped_spec_11_4_256(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "acme_a", TenantID: "acme", UserID: "alice", State: session.StateRunning})
+	_ = s.Create(ctx, sessionstore.Session{ID: "globex_a", TenantID: "globex", UserID: "alice", State: session.StateRunning})
+
+	got, _ := s.List(ctx, "acme", sessionstore.ListFilter{UserID: "alice"})
+	if len(got) != 1 || got[0].ID != "acme_a" {
+		t.Errorf("UserID filter must respect tenant scope; got %v", got)
+	}
+}
+
 func TestListExcludesForeignTenant(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()

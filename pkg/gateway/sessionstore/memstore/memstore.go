@@ -167,6 +167,11 @@ func (s *Store) List(_ context.Context, tenantID string, f sessionstore.ListFilt
 		if f.FailureClass != "" && row.FailureClass != f.FailureClass {
 			continue
 		}
+		// spec: §11.4 line 256 — full_revoke step 1 narrows to the
+		// invalidation subject.
+		if f.UserID != "" && row.UserID != f.UserID {
+			continue
+		}
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })

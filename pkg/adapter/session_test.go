@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,6 +21,8 @@ type fakeRuntime struct {
 	envelopes    [][]byte
 	writeErr     error
 	closed       []string
+	closeCtxDL   time.Duration // remaining ctx deadline at Close, if any
+	closeHadDL   bool
 	interrupts   []bool // the hard flag of each Interrupt call
 	interruptErr error
 	output       chan []byte // when set, Output returns it
@@ -66,8 +69,12 @@ func (f *fakeRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
 	return nil
 }
 
-func (f *fakeRuntime) Close(_ context.Context, sessionID string) error {
+func (f *fakeRuntime) Close(ctx context.Context, sessionID string) error {
 	f.closed = append(f.closed, sessionID)
+	if dl, ok := ctx.Deadline(); ok {
+		f.closeHadDL = true
+		f.closeCtxDL = time.Until(dl)
+	}
 	return nil
 }
 
@@ -205,6 +212,51 @@ func TestShutdownClosesRuntimeAndReleasesPod(t *testing.T) {
 	// The pod must be idle again so a replacement session can be assigned.
 	if _, retryErr := s.StartSession(context.Background(), startReq("sess-2")); retryErr != nil {
 		t.Errorf("pod was not released after Shutdown: %v", retryErr)
+	}
+}
+
+// TestShutdownPlumbsDeadlineMsIntoRuntimeClose asserts §11.4 step 3:
+// the §4.7 ShutdownRequest.deadline_ms field flows into the runtime
+// adapter's Close as a context deadline, so the §11.4 10s graceful
+// window is honored by the adapter instead of an internal default.
+// spec: §11.4 line 258.
+func TestShutdownPlumbsDeadlineMsIntoRuntimeClose_spec_11_4_258(t *testing.T) {
+	s, rt, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId:  &adapterv1.SessionId{Value: "sess-1"},
+		DeadlineMs: 10_000,
+	}); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if !rt.closeHadDL {
+		t.Fatal("Runtime.Close got no context deadline; §11.4 step-3 grace window is dropped")
+	}
+	// The remaining must be ≤10s (the request grace) and >0; CI jitter
+	// can shave milliseconds off the budget.
+	if rt.closeCtxDL <= 0 || rt.closeCtxDL > 10*time.Second {
+		t.Errorf("Close ctx deadline remaining = %v, want (0, 10s]", rt.closeCtxDL)
+	}
+}
+
+// TestShutdownWithoutDeadlineMsInheritsContext asserts that a request
+// with a zero (or absent) deadline_ms falls through to the inbound RPC
+// context, preserving the legacy behavior for callers that do not pin
+// the §11.4 graceful window. spec: §11.4 line 258.
+func TestShutdownWithoutDeadlineMsInheritsContext_spec_11_4_258(t *testing.T) {
+	s, rt, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+	}); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if rt.closeHadDL {
+		t.Errorf("Runtime.Close got a derived deadline when none was requested (remaining=%v)", rt.closeCtxDL)
 	}
 }
 

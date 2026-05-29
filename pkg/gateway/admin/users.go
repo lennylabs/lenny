@@ -377,13 +377,17 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 // session this step cancelled was non-terminal, so its pod may still be
 // running and its leases may still be live.
 func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID string) ([]string, error) {
-	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
+	// spec: §11.4 line 256 — narrow the SessionStore lookup to the
+	// invalidation subject. The Postgres-backed store pushes the filter
+	// to `idx_sessions_tenant_user` so a tenant with many sessions does
+	// not scan tenant-wide on every full_revoke.
+	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{UserID: userID})
 	if err != nil {
 		return nil, err
 	}
 	var terminated []string
 	for _, row := range rows {
-		if row.UserID != userID || session.IsTerminal(row.State) {
+		if session.IsTerminal(row.State) {
 			continue
 		}
 		updated, err := r.sessions.Update(ctx, tenantID, row.ID, func(s *sessionstore.Session) error {

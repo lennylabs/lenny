@@ -255,9 +255,15 @@ func (r *MCPRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
 }
 
 // Close tears the type: mcp runtime down: it closes the MCP connection,
-// waits ShutdownGrace for the process to exit, then sends SIGKILL if it
-// has not. The Output channel is closed exactly once.
-func (r *MCPRuntime) Close(_ context.Context, _ string) error {
+// waits the resolved grace window for the process to exit, then sends
+// SIGKILL if it has not. The Output channel is closed exactly once.
+//
+// The grace window is derived from the §4.7 ShutdownRequest.deadline_ms
+// the caller plumbed into ctx (the gateway's §11.4 step-3 10s window).
+// A context with no deadline falls back to ShutdownGrace, then to
+// defaultMCPShutdownGrace, preserving the historical defaults for
+// callers that do not pin a deadline. spec: §11.4 line 258.
+func (r *MCPRuntime) Close(ctx context.Context, _ string) error {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -286,9 +292,7 @@ func (r *MCPRuntime) Close(_ context.Context, _ string) error {
 		return nil
 	}
 
-	if grace <= 0 {
-		grace = defaultMCPShutdownGrace
-	}
+	grace = resolveShutdownGrace(ctx, grace, defaultMCPShutdownGrace)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {
@@ -299,6 +303,25 @@ func (r *MCPRuntime) Close(_ context.Context, _ string) error {
 		<-done
 		return nil
 	}
+}
+
+// resolveShutdownGrace picks the SIGTERM-to-SIGKILL pivot interval. It
+// prefers the deadline plumbed into ctx by Server.Shutdown (the §4.7
+// ShutdownRequest.deadline_ms the gateway pinned), falling back to the
+// runtime-configured grace, then to the package default. spec: §11.4
+// line 258.
+func resolveShutdownGrace(ctx context.Context, configured, fallback time.Duration) time.Duration {
+	if ctx != nil {
+		if dl, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(dl); remaining > 0 {
+				return remaining
+			}
+		}
+	}
+	if configured > 0 {
+		return configured
+	}
+	return fallback
 }
 
 // InitializeResult reports the agent MCP server's negotiated protocol

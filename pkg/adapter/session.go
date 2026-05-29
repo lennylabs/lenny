@@ -140,6 +140,14 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 // Shutdown terminates the pod's runtime and releases the session
 // (§4.7). It closes the runtime process and returns the pod toward
 // termination; a session-mode pod is replaced rather than reused.
+//
+// The §4.7 ShutdownRequest carries `deadline_ms` — the §11.4 step-3
+// graceful window the gateway pinned at full_revoke (10s by default).
+// Close runs under a context bounded by that deadline so the runtime
+// adapter's SIGTERM/SIGKILL pivot honors the spec window instead of an
+// internal default. A non-positive `deadline_ms` falls through to the
+// inbound RPC context, preserving the previous behavior. spec: §11.4
+// line 258; §4.7 ShutdownRequest.deadline_ms.
 func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
@@ -152,9 +160,23 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	// control stream before the stream closes, so the gateway can run
 	// budget_return.lua (§8.3) with the session's complete token totals.
 	s.emitFinalUsage(ctx, sessionID)
-	closeErr := s.Runtime.Close(ctx, sessionID)
+	closeCtx, cancel := contextWithGraceDeadline(ctx, time.Duration(req.GetDeadlineMs())*time.Millisecond)
+	closeErr := s.Runtime.Close(closeCtx, sessionID)
+	cancel()
 	s.releaseSession()
 	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil
+}
+
+// contextWithGraceDeadline derives a context bounded by `grace` from
+// `parent`, returning a no-op cancel when `grace` is non-positive. The
+// adapter's RuntimeProcess.Close implementations read the derived
+// context's deadline to size their SIGTERM/SIGKILL pivot. spec: §11.4
+// line 258.
+func contextWithGraceDeadline(parent context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
+	if grace <= 0 {
+		return parent, func() {}
+	}
+	return context.WithTimeout(parent, grace)
 }
 
 // emitFinalUsage reads the session's accumulated usage and pushes a

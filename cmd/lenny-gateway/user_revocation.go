@@ -9,9 +9,17 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 )
+
+// Compile-time assertion that the §4.9 credential-lease revocation
+// propagator satisfies credentialDenyList. A refactor that drops the
+// `IsCrossReplicaPropagator()` marker on *credrenewalprop.Propagator
+// fails to build, so the §11.4 step-6 wiring contract is enforced at
+// compile time rather than runtime. spec: §11.4 step 6.
+var _ credentialDenyList = (*credrenewalprop.Propagator)(nil)
 
 // This file wires the §11.4 full_revoke fan-out dependencies the admin
 // router consumes. handleInvalidateUser raises the user's tombstone and
@@ -87,10 +95,18 @@ type userLeaseStore interface {
 }
 
 // credentialDenyList is the §4.9 deny list the full_revoke fan-out adds
-// a revoked user's credentials to. denylist.DenyList and its
-// cross-replica propagator both satisfy it.
+// a revoked user's credentials to. The marker method
+// `IsCrossReplicaPropagator()` is intentional: §11.4 step 6 must reach
+// every replica's deny list, and a bare *denylist.DenyList carries the
+// revocation only on the calling replica. Requiring the marker bars an
+// accidental wiring downgrade — only *credrenewalprop.Propagator (which
+// applies locally and publishes on Redis pub/sub) satisfies it. A
+// Propagator built with a nil bus still satisfies the marker; that is
+// the explicit local-only single-replica posture, not the silent
+// downgrade the marker rejects. spec: §11.4 step 6.
 type credentialDenyList interface {
 	Revoke(key credential.CredentialKey)
+	IsCrossReplicaPropagator()
 }
 
 // userLeaseRevoker revokes the §4.9 credential leases held by a revoked

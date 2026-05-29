@@ -479,10 +479,15 @@ type Store interface {
 }
 
 // ListFilter narrows the List result. Empty fields mean "no filter".
+// UserID narrows to the named §11.4 invalidation subject; the
+// Postgres-backed store pushes the filter to SQL so a `full_revoke` in
+// a tenant with many sessions reads O(user's sessions) rows instead of
+// O(tenant). spec: §11.4 line 256 (full_revoke step 1).
 type ListFilter struct {
 	State        session.State
 	RuntimeRef   string
 	FailureClass session.FailureClass
+	UserID       string
 }
 
 // Sentinel errors. The sessionserver maps these to the §15.1 error

@@ -10,9 +10,23 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 )
+
+// newLocalRevocationDenyList builds the §11.4 step-6 deny list the
+// userLeaseRevoker requires: a *credrenewalprop.Propagator wrapping a
+// fresh single-replica DenyList with a nil bus. The propagator is a
+// local-only pass-through in this configuration (no pub/sub) but still
+// satisfies the cross-replica marker so the §11.4 wiring contract is
+// honored. The returned denylist.DenyList is the underlying state for
+// assertions; the propagator is what the userLeaseRevoker drives.
+// spec: §11.4 step 6.
+func newLocalRevocationDenyList() (*credrenewalprop.Propagator, *denylist.DenyList) {
+	dl := denylist.New()
+	return credrenewalprop.New(dl, nil, nil), dl
+}
 
 // spec: §11.4 full_revoke — the gateway-side fan-out adapters.
 
@@ -38,12 +52,12 @@ func poolLease(leaseID, sessionID string) credential.Lease {
 
 func TestUserLeaseRevokerRevokesAndDenies(t *testing.T) {
 	leases := credleasestore.New()
-	deny := denylist.New()
+	prop, deny := newLocalRevocationDenyList()
 	_ = leases.Put(poolLease("l1", "run_a"))
 	_ = leases.Put(poolLease("l2", "run_a"))
 	_ = leases.Put(poolLease("l3", "run_b")) // a session not being revoked
 
-	revoker := &userLeaseRevoker{leases: leases, denyList: deny}
+	revoker := &userLeaseRevoker{leases: leases, denyList: prop}
 	n := revoker.RevokeUserLeases("acme", "alice@acme.com", []string{"run_a"})
 	if n != 2 {
 		t.Fatalf("RevokeUserLeases revoked %d leases, want 2", n)
@@ -74,8 +88,8 @@ func TestUserLeaseRevokerRevokesAndDenies(t *testing.T) {
 
 func TestUserLeaseRevokerNoLeases(t *testing.T) {
 	leases := credleasestore.New()
-	deny := denylist.New()
-	revoker := &userLeaseRevoker{leases: leases, denyList: deny}
+	prop, deny := newLocalRevocationDenyList()
+	revoker := &userLeaseRevoker{leases: leases, denyList: prop}
 	if n := revoker.RevokeUserLeases("acme", "bob@acme.com", []string{"run_x"}); n != 0 {
 		t.Errorf("RevokeUserLeases for a session with no leases revoked %d, want 0", n)
 	}
@@ -86,9 +100,9 @@ func TestUserLeaseRevokerNoLeases(t *testing.T) {
 
 func TestUserLeaseRevokerEmptySessionSet(t *testing.T) {
 	leases := credleasestore.New()
-	deny := denylist.New()
+	prop, _ := newLocalRevocationDenyList()
 	_ = leases.Put(poolLease("l1", "run_a"))
-	revoker := &userLeaseRevoker{leases: leases, denyList: deny}
+	revoker := &userLeaseRevoker{leases: leases, denyList: prop}
 	if n := revoker.RevokeUserLeases("acme", "carol@acme.com", nil); n != 0 {
 		t.Errorf("RevokeUserLeases with no sessions revoked %d, want 0", n)
 	}
@@ -97,10 +111,24 @@ func TestUserLeaseRevokerEmptySessionSet(t *testing.T) {
 	}
 }
 
-// userLeaseRevoker's deny-list dependency is satisfied by the
-// cross-replica propagator as well as the raw deny list.
-func TestUserLeaseRevokerAcceptsADenyListInterface(t *testing.T) {
-	var _ credentialDenyList = denylist.New()
+// TestUserLeaseRevokerRequiresCrossReplicaPropagator asserts the §11.4
+// step-6 wiring contract: only *credrenewalprop.Propagator satisfies
+// credentialDenyList. A bare *denylist.DenyList carries the revocation
+// only on the calling replica and is no longer accepted by the
+// interface, so an accidental future wiring downgrade fails at compile
+// time. spec: §11.4 step 6.
+func TestUserLeaseRevokerRequiresCrossReplicaPropagator_spec_11_4_step_6(t *testing.T) {
+	// Compile-time assertion that the propagator satisfies the
+	// interface; the file would not compile if it did not.
+	var _ credentialDenyList = (*credrenewalprop.Propagator)(nil)
+	// Sibling assertion in a runtime form so the test names the bare
+	// DenyList path explicitly. The line is dead code — the if check
+	// is unreachable — but `denylist.DenyList` not satisfying the
+	// interface is the entire point.
+	var d any = denylist.New()
+	if _, ok := d.(credentialDenyList); ok {
+		t.Fatalf("bare *denylist.DenyList satisfies credentialDenyList; the cross-replica marker is missing — §11.4 step 6 would be replica-local")
+	}
 }
 
 func TestPodTerminateFanOutSkipsUnboundSessions(t *testing.T) {

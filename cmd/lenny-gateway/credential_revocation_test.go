@@ -9,7 +9,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 )
 
 // spec: §4.9 lines 1640-1652 — the gateway-side emergency-revocation
@@ -24,12 +23,13 @@ func credLease(leaseID, credID string) credential.Lease {
 
 func TestPoolCredentialRevokerRevokesAndDenies(t *testing.T) {
 	leases := credleasestore.New()
-	deny := denylist.New()
+	prop, deny := newLocalRevocationDenyList()
+	_ = prop // wired below for the §11.4 step-6 cross-replica marker
 	_ = leases.Put(credLease("l1", "key-1"))
 	_ = leases.Put(credLease("l2", "key-1")) // same credential
 	_ = leases.Put(credLease("l3", "key-2")) // a different credential
 
-	rev := &poolCredentialRevoker{leases: leases, denyList: deny}
+	rev := &poolCredentialRevoker{leases: leases, denyList: prop}
 	n := rev.RevokePoolCredentials(context.Background(), "claude-prod", []string{"key-1"})
 	if n != 2 {
 		t.Fatalf("RevokePoolCredentials terminated %d leases, want 2", n)
@@ -56,11 +56,12 @@ func TestPoolCredentialRevokerRevokesAndDenies(t *testing.T) {
 // call (the §4.9 pool-wide force-rotate), summing the terminated leases.
 func TestPoolCredentialRevokerPoolWide(t *testing.T) {
 	leases := credleasestore.New()
-	deny := denylist.New()
+	prop, deny := newLocalRevocationDenyList()
+	_ = prop // wired below for the §11.4 step-6 cross-replica marker
 	_ = leases.Put(credLease("l1", "key-1"))
 	_ = leases.Put(credLease("l2", "key-2"))
 
-	rev := &poolCredentialRevoker{leases: leases, denyList: deny}
+	rev := &poolCredentialRevoker{leases: leases, denyList: prop}
 	n := rev.RevokePoolCredentials(context.Background(), "claude-prod", []string{"key-1", "key-2"})
 	if n != 2 {
 		t.Fatalf("RevokePoolCredentials terminated %d leases, want 2", n)
@@ -78,8 +79,9 @@ func TestPoolCredentialRevokerPoolWide(t *testing.T) {
 // a peer replica's cached lease for it is rejected (§4.9 step 3/4).
 func TestPoolCredentialRevokerNoLeasesStillDenies(t *testing.T) {
 	leases := credleasestore.New()
-	deny := denylist.New()
-	rev := &poolCredentialRevoker{leases: leases, denyList: deny}
+	prop, deny := newLocalRevocationDenyList()
+	_ = prop // wired below for the §11.4 step-6 cross-replica marker
+	rev := &poolCredentialRevoker{leases: leases, denyList: prop}
 	n := rev.RevokePoolCredentials(context.Background(), "claude-prod", []string{"key-1"})
 	if n != 0 {
 		t.Fatalf("RevokePoolCredentials terminated %d leases, want 0", n)

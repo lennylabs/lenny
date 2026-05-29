@@ -236,9 +236,14 @@ func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, ha
 }
 
 // Close tears the runtime down: it closes the socket connection (the
-// §15.4 clean-exit signal), waits briefly for a spawned child to exit,
-// and closes the listener.
-func (p *SocketRuntimeProcess) Close(_ context.Context, sessionID string) error {
+// §15.4 clean-exit signal), waits the resolved grace window for a
+// spawned child to exit, and closes the listener.
+//
+// The grace window is derived from the §4.7 ShutdownRequest.deadline_ms
+// the caller plumbed into ctx (the gateway's §11.4 step-3 10s window).
+// A context with no deadline falls back to defaultSocketShutdownGrace,
+// preserving the historical 10s behavior. spec: §11.4 line 258.
+func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) error {
 	p.mu.Lock()
 	conn := p.conn
 	cmd := p.cmd
@@ -251,17 +256,23 @@ func (p *SocketRuntimeProcess) Close(_ context.Context, sessionID string) error 
 		_ = conn.Close()
 	}
 	if cmd != nil && cmd.Process != nil {
+		grace := resolveShutdownGrace(ctx, 0, defaultSocketShutdownGrace)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		select {
 		case <-done:
-		case <-time.After(10 * time.Second):
+		case <-time.After(grace):
 			_ = cmd.Process.Kill()
 			<-done
 		}
 	}
 	return p.listener.Close()
 }
+
+// defaultSocketShutdownGrace is the SIGTERM-to-SIGKILL pivot window the
+// socket runtime falls back to when Close has no plumbed deadline. It
+// matches the §11.4 step-3 10s default the gateway sends.
+const defaultSocketShutdownGrace = 10 * time.Second
 
 // clearSession resets the bound session after a failed Start.
 func (p *SocketRuntimeProcess) clearSession() {

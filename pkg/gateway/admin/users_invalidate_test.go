@@ -186,6 +186,54 @@ func TestFullRevokeTerminatesActiveSessions(t *testing.T) {
 	}
 }
 
+// listFilterCapturingStore wraps a sessionstore.Store and records the
+// ListFilter values it is called with. It lets the user-invalidation
+// test prove the §11.4 step-1 lookup is narrowed by `UserID` at the
+// store boundary rather than scanned in-process.
+type listFilterCapturingStore struct {
+	sessionstore.Store
+	listFilters []sessionstore.ListFilter
+}
+
+func (s *listFilterCapturingStore) List(ctx context.Context, tenantID string, f sessionstore.ListFilter) ([]sessionstore.Session, error) {
+	s.listFilters = append(s.listFilters, f)
+	return s.Store.List(ctx, tenantID, f)
+}
+
+// TestFullRevokeNarrowsListByUserID asserts the §11.4 step-1
+// SessionStore lookup pushes the user filter into the store call so
+// the Postgres-backed store reads `idx_sessions_tenant_user` instead
+// of scanning tenant-wide. spec: §11.4 line 256.
+func TestFullRevokeNarrowsListByUserID_spec_11_4_256(t *testing.T) {
+	users := userstore.NewMemory()
+	base := memstore.New()
+	cap := &listFilterCapturingStore{Store: base}
+	interactions := interactionstore.NewMemory()
+	audit := &recordingAudit{}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		Audit: audit,
+	}).WithUsers(users).WithSessions(cap).WithInteractions(interactions)
+
+	seedUser(t, users, "acme", "alice@acme.com")
+	seedSession(t, cap, sessionstore.Session{ID: "a1", TenantID: "acme", UserID: "alice@acme.com", State: session.StateRunning})
+	seedSession(t, cap, sessionstore.Session{ID: "b1", TenantID: "acme", UserID: "bob@acme.com", State: session.StateRunning})
+
+	rr := invalidateUser(t, router.Handler(), "alice@acme.com",
+		admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateFullRevoke}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("full_revoke: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if len(cap.listFilters) == 0 {
+		t.Fatal("session store List was never called; §11.4 step-1 lookup did not run")
+	}
+	for i, f := range cap.listFilters {
+		if f.UserID != "alice@acme.com" {
+			t.Errorf("List call %d: UserID = %q, want alice@acme.com (tenant-wide scan would be O(N))", i, f.UserID)
+		}
+	}
+}
+
 func TestFullRevokeLeavesOtherUsersSessions(t *testing.T) {
 	router, users, sessions, _, _ := newUserAdminWithSessions(t)
 	seedUser(t, users, "acme", "alice@acme.com")
