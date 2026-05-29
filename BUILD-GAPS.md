@@ -40530,7 +40530,7 @@ This is the §27.3.1 correctness boundary the spec explicitly designates as "the
 
 **Resolution (commit 88a53d5d):** Closed together with its duplicate F-27.6.3. The auth middleware (`pkg/gateway/middleware/auth/auth.go`) gained an `Options.PlaygroundRevocations` hook (interface `IsBearerRevoked(ctx, tenant, jti) (bool, error)`); `serveBearer` consults it after tenant extraction for every verified bearer whose `origin` claim is `playground` (§27.3 line 63 literal, duplicated to avoid an import cycle). A revocation hit → `401 UNAUTHORIZED` with `details.reason: "bearer_revoked"` (§27.3.1 line 95); a store-unreachable error → `503 REDIS_UNAVAILABLE` fail-closed (§27.3.1 line 97). `cmd/lenny-gateway/main.go` hoists the `pg` handler into the auth Options so the check runs on every replica. Non-playground bearers carry no origin claim and skip the check.
 
-### - [ ] F-27.3.2 — User invalidation (`POST /v1/admin/users/{user_id}/invalidate`) does not revoke playground sessions [High] — OPEN
+### - [x] F-27.3.2 — User invalidation (`POST /v1/admin/users/{user_id}/invalidate`) does not revoke playground sessions [High] — CLOSED
 
 Spec §27.3.1 step 4 "OIDC claim invalidation" (line 148) and §27.6 "Server-side session-record lifecycle" (line 204):
 
@@ -40550,6 +40550,8 @@ Consequences:
 3. The user's already-minted playground bearers are not on the §13.3 deny list (because the mint did not register them), so the §10.2 auth chain does not reject them.
 
 **Severity rationale (High):** correctness/security regression. A revoked user retains a working playground session and can continue minting fresh playground bearers until the OIDC session cookie naturally expires.
+
+**Resolution (commit c709fb42):** Closed together with F-27.6.4. The §11.4 `runFullRevokeFanOut` now drives the user's playground sessions through the §27.6 revocation primitive via `admin.Router.WithPlaygroundRevocation` → `playground.Handler.RevokeSessionsForUser`. The playground `SessionStore` gained a per-user index (`SessionsForUser`; Redis `t:{tenant}:pg:user:{user}` set on `PutSession`, Memory derives by scan), so the fan-out finds every session the user holds and DELs each record + SETs each minted bearer's `pg:revoked:{jti}` marker + PUBLISHes (reason `user_invalidated`). Consequence 1 (record left live) and consequence 2 (silent re-mint) are fixed: the record is gone so `mintOIDC`'s `GetSession` returns 401. Consequence 3 (bearers not denied): the §27.3.1 `pg:revoked` markers are the playground deny list the auth chain consults for every `origin=playground` bearer (already wired by F-27.6.3), so in-flight bearers are now rejected.
 
 ### - [ ] F-27.3.3 — Bearer mint does not stamp the `origin: "playground"` claim on a path that is enforced; §27.6 caps go unenforced [High] — OPEN
 
@@ -40606,7 +40608,7 @@ The playground UI cannot complete a session against this gateway as built. This 
 
 **Severity rationale (High):** capability is entirely absent. The "playground is a working client of the public MCP surface" claim is unsatisfiable, and the sub-protocol credential-redaction obligation is unmet by construction.
 
-### - [ ] F-27.3.5 — Playground audit events do not reach the durable §11.7 audit sink [Medium] — OPEN
+### - [x] F-27.3.5 — Playground audit events do not reach the durable §11.7 audit sink [Medium] — CLOSED
 
 Spec §27.3.1 step 6 "Audit events" (line 156):
 
@@ -40627,7 +40629,9 @@ The comment at line 2034 explicitly says the durable §11.7 audit sink is wired 
 
 **Severity rationale (Medium):** SHOULD-equivalent observability/audit gap. The events exist and carry the correct fields, but they are not persisted to the audit channel the spec routes them through.
 
-### - [ ] F-27.3.6 — Pub/sub subscription set is hardcoded to `default` (or the configured dev tenant); multi-tenant deployments do not warm the negative cache for any other tenant [Medium] — OPEN
+**Resolution (commit c709fb42):** `playgroundAuditEmitter` (`cmd/lenny-gateway/main.go`) now carries the durable `admin.AuditSink` and maps each `playground.AuditEvent`/`MintRejectedEvent` to an `admin.AuditEvent` committed to the principal's per-tenant §11.7 hash chain (`bearer_minted`/`bearer_revoked` on the user's `tenant_id`, `bearer_mint_rejected` on the tenant or platform chain), carrying `session_cookie_id`, `bearer_jti`, `bearer_ttl_seconds`, `origin`, and the session labels. The lightweight log line is retained; a nil sink degrades to log-only (no durable trail) so the playground still serves. Tests: `cmd/lenny-gateway/playground_audit_test.go` (forward-to-sink for both event kinds, field mapping, nil-sink no-panic). spec: §27.3.1 step 6 line 156, §10.2 line 243.
+
+### - [x] F-27.3.6 — Pub/sub subscription set is hardcoded to `default` (or the configured dev tenant); multi-tenant deployments do not warm the negative cache for any other tenant [Medium] — CLOSED
 
 Spec §27.3.1 "Pub/sub propagation" (line 96):
 
@@ -40657,6 +40661,8 @@ In a multi-tenant OIDC or apiKey deployment (the common shape), every replica su
 The spec also reserves an `outcome="resubscribe"` label on the propagation metric (§27.3.1 line 96) that the `RedisSessionStore.SubscribeRevocations` loop (`sessionrecord.go:366-387`) does not emit; the only outcome reported is `redis_authoritative` from `revokeSessionRecord` (`auth.go:254`).
 
 **Severity rationale (Medium):** SHOULD-equivalent capability gap. Cross-tenant pub/sub fan-out is wired only for one tenant, and the spec-mandated resubscribe outcome metric is absent.
+
+**Resolution (commit 88a53d5d, verified this batch):** Already resolved by F-27.6.7 + F-27.6.6. The hardcoded `playgroundSubscribeTenants` per-tenant startup loop is gone (`grep` confirms no remaining reference); `cmd/lenny-gateway/main.go` now runs a single `RedisSessionStore.SubscribeAllRevocations` over `PSUBSCRIBE t:*:pg:revocations`, warming the negative cache for every tenant including those provisioned after gateway start. The spec-reserved `outcome="resubscribe"` propagation sample is emitted by the re-subscribe path (`sessionrecord.go:486`). Both stale evidence points are satisfied; closed as a duplicate of [[F-27.6.7]]/[[F-27.6.6]].
 
 ### - [ ] F-27.3.7 — Idle-timeout sweep and admin revocation entry points exist but are not wired to any caller [Medium] — OPEN
 
@@ -40982,11 +40988,13 @@ Evidence: `pkg/gateway/playground/auth.go:283` exports `(Handler).IsBearerRevoke
 
 **Resolution (commit 88a53d5d):** Closed with its duplicate F-27.3.1. The auth middleware now injects the playground `IsBearerRevoked` check via `Options.PlaygroundRevocations`; `serveBearer` consults it for every `origin: "playground"` bearer (hit → `401` `bearer_revoked`; store error → `503 REDIS_UNAVAILABLE` fail-closed). See the F-27.3.1 resolution for the full description and the auth-middleware test matrix (`playground_revocation_test.go`: revoked/live/store-error/non-playground-skip/no-checker-wired).
 
-### - [ ] F-27.6.4 — `user.invalidated` and admin-revocation paths never call into the playground revocation primitive. (High) [Medium] — OPEN
+### - [x] F-27.6.4 — `user.invalidated` and admin-revocation paths never call into the playground revocation primitive. (High) [Medium] — CLOSED
 
 Spec: line 204 — "Logout (`POST /playground/auth/logout`), `user.invalidated` (§11.4), idle timeout, and admin revocation all drive the same revocation path."
 
 Evidence: `pkg/gateway/playground/auth.go:265` exports `(Handler).RevokeSession(ctx, tenant, id, reason)` and the package defines reason codes for `user_invalidated`, `idle_timeout`, and `admin_revoke` (`pkg/gateway/playground/sessionrecord.go:56-67`). `grep -rn 'playground\.RevokeSession\|pg\.RevokeSession' cmd/ pkg/` finds no production caller. The §11.4 user-invalidation handler at `pkg/gateway/admin/users.go:506` emits `admin.user.invalidated` but does not fan out into the playground store. There is no scheduled sweep, admin endpoint, or invalidation handler that calls `pg.RevokeSession`, so only the explicit `POST /playground/auth/logout` path ever lands on the revocation primitive.
+
+**Resolution (commit c709fb42):** The `user.invalidated` half is closed. `admin.Router.WithPlaygroundRevocation` wires the new `playground.Handler.RevokeSessionsForUser` into the §11.4 `runFullRevokeFanOut`, so a `full_revoke` now drives every playground session the user holds through `revokeSessionRecord` with reason `RevokeUserInvalidated` (DEL record + SET `pg:revoked` per bearer + PUBLISH), exercising the previously-dead `user_invalidated` reason end-to-end. The fan-out is best-effort (a playground-store error is recorded in the audit detail + response, not fatal); `soft_disable`/`hard_disable` skip it. The remaining drivers — the idle-timeout sweep (`RevokeIdleTimeout`) and a standalone admin-revocation surface (`RevokeAdmin`) — are tracked separately by [[F-27.3.7]] and stay OPEN. Tests: `user_invalidation_test.go` (per-user index, revoke-all, idempotency, nil-store, Redis index + tenant isolation) and `users_invalidate_fanout_test.go` (fan-out call, best-effort error, soft-disable skip). spec: §27.3.1 line 148, §27.6 line 204.
 
 ### - [ ] F-27.6.5 — `session.cancel` MCP tool with `playground_client_closed` reason has no server-side handler. (High) [Medium] — OPEN
 
