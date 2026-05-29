@@ -8703,7 +8703,7 @@ Evidence:
 - `grep -r "deliveryReceipt\|delivery_receipt" pkg/gateway/mcptools/ pkg/gateway/executor/` returns no hits
 - `grep -r "CROSS_TENANT_MESSAGE_DENIED\|SCOPE_DENIED\|scope_denied\|messagingScope" pkg/gateway/mcptools/` returns no hits
 
-### - [ ] F-8.5.7 — `lenny/discover_agents` does not filter by effective `DelegationPolicy` — High [Medium] — OPEN
+### - [x] F-8.5.7 — `lenny/discover_agents` does not filter by effective `DelegationPolicy` — High [Medium] — CLOSED
 
 **Severity: High** (spec MUST: §8.3 effective-policy filtering boundary)
 
@@ -8717,6 +8717,8 @@ Evidence:
 
 - `pkg/gateway/mcptools/mcptools.go:819-861` (no session lookup, no policy consultation)
 - `grep -r "delegationPolicyRef\|maxDelegationPolicy\|DelegationPolicy" pkg/gateway/mcptools/` returns no hits
+
+**Resolution (2e3e2279):** Added `delegation.Service.EffectiveDelegationPolicy(ctx, tenantID, sessionID)`, which resolves the §8.3 effective policy for a calling session — the policy named by the session's resolved runtime via `DelegationPolicyRef`, the same input the `Delegate` cycle-gate already reads. It returns `(policy, true, nil)` only when an active policy resolves and otherwise `(zero, false, nil)`, so an unresolved session/runtime/policy imposes no restriction (matching `Delegate`'s treatment of an absent ref). The `lenny/discover_agents` handler now accepts the caller `sessionId` (principal `SessionID` claim, with a dev/test transport-fallback arg), lists `type:agent` runtimes, applies the §10.6 environment filter, then narrows through the new `filterByEffectiveDelegationPolicy` helper: each surviving runtime is evaluated as a §8.3 `delegationpolicystore.Candidate{ID,Type,Labels}` against `DelegationPolicy.Evaluate`, so the existing tag-based allow/deny rule set (deny-overrides-allow, default-deny) governs visibility. Tier-1 `pkg/gateway/mcptools/discover_agents_policy_test.go` covers allow/deny matching, explicit-deny-over-allow precedence, no-effective-policy (returns all), unbound-caller fail-open, and policy resolution via the `sessionId` arg. The lease-level `maxDelegationPolicy` intersection and ancestral narrowing are not yet in either path; when they land in `Delegate` they extend the shared resolver.
 
 ### - [x] F-8.5.8 — `lenny/delegate_task` emits no `delegation.spawned` audit event — High [Medium] — CLOSED
 
