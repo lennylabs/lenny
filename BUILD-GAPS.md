@@ -10679,7 +10679,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 ### Findings
 
-### - [ ] F-9.2.1 — Tamper detector is structurally untriggerable; per-hop content verification is a tautology [High] — OPEN
+### - [ ] F-9.2.1 — Tamper detector is structurally untriggerable; per-hop content verification is a tautology [High] — DEFERRED
 
 - **Spec:** Lines 56–62, 68. "Intermediate pods forward elicitations upstream by `elicitation_id` only ... The forward-hop wire mechanism is the native MCP `elicitation/create` frame ... an intermediate pod re-emits the upstream `elicitation/create` frame carrying the original `{message, schema}` payload. The gateway canonicalizes the forwarded frame's `{message, schema}` pair ... and compares its SHA-256 digest against the digest recorded at origination."
 - **Evidence:**
@@ -10688,7 +10688,9 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/mcptools/mcptools.go:648-815`: the `lenny/request_elicitation` handler is a single MCP tool call. The dispatcher walks the lineage server-side, records the interaction, polls for the resolution. There is no per-hop forwarding mechanism that would surface a re-emitted `elicitation/create` frame to the gateway for digest comparison. `grep -rn "elicitation/create" pkg/` shows only documentation comments.
 - **Gap:** The §9.2 gateway-origin binding cannot detect any tamper attempt because no second submission of `{message, schema}` is ever made for the gateway to compare against. The detector is structurally inert in v1. The `ELICITATION_CONTENT_TAMPERED` error path can only be hit by a contrived caller passing a pre-mutated `OriginalContent` through `WalkChain`, which is not a code path any pod can drive.
 
-### - [ ] F-9.2.2 — Tenant enforcement mode is not consulted at dispatch time [High] — OPEN
+**Deferred (commit `684ab36e`):** The tautological `VerifyContent(originalDigest, in.OriginalContent)` the finding names was removed in `684ab36e`: `WalkChain` now verifies a forward-hop re-emission only when one is supplied via the new `ChainInput.ForwardedContent` provider, and forwards unverified otherwise (matching the §9.2 "intermediate pods forward by `elicitation_id` only" model). The remaining work is the production wire mechanism that would populate that provider — intermediate pods re-emitting the upstream `elicitation/create` frame over virtual MCP so the gateway receives a second `{message, schema}` submission to compare. That is a dedicated subsystem (per-hop MCP forwarding of elicitation frames), parallel to the SDK-warm path, and is out of scope for a single batch. The handling once a divergence IS surfaced is now spec-correct and tested (F-9.2.2, F-9.2.3); only the triggering wire path remains.
+
+### - [x] F-9.2.2 — Tenant enforcement mode is not consulted at dispatch time [High] — CLOSED
 
 - **Spec:** Lines 58–62. Each tenant carries `enforce | detect-only | off`; the platform floor clamps from below; `enforce` drops the forward with `ELICITATION_CONTENT_TAMPERED`; `detect-only` records but forwards as received; `off` performs no check.
 - **Evidence:**
@@ -10697,7 +10699,9 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - The `Deps` struct has no `EffectiveModeResolver func(ctx, tenantID) (EnforcementMode, error)` or equivalent.
 - **Gap:** The §9.2 enforcement-mode contract collapses into a single mode at the dispatch point. The `enforce → detect-only` admin pivot has no behavioural effect at the elicitation hot path; an operator who weakens a tenant cannot observe the difference because (a) the detector is inert (F-9.2.1) and (b) the dispatcher would still drop the forward and label the metric `enforce` regardless of the tenant's mode.
 
-### - [ ] F-9.2.3 — `elicitation.content_tamper_detected` audit event is never emitted [High] — OPEN
+**Resolution:** Addresses gap (b). The dispatcher now carries an `effectiveMode func(ctx, tenantID) elicitation.EnforcementMode` resolver (wired in `cmd/lenny-gateway/main.go` from the tenant store + `*elicitationFloor` via `ResolveEffectiveWithDefaults`, falling back to the §9.2 enforce default on lookup error or nil resolver). `dispatch` resolves the mode and branches: `off` hands `WalkChain` no re-emission provider so the integrity check never runs (no metric, no audit, forwarded as received per §9.2 line 62); `detect-only` records the divergence and re-walks with verification disabled to forward as received (§9.2 line 61); `enforce` records and drops with `ELICITATION_CONTENT_TAMPERED` (§9.2 line 60). The §16.1 line 64 tamper counter is now labelled with the resolved mode rather than a hard-coded `enforce`, so the admin pivot is observable. Tests cover all three modes plus the nil-resolver enforce default. The detector triggering (gap a) remains the deferred wire-mechanism work tracked by F-9.2.1. Commit `684ab36e`.
+
+### - [x] F-9.2.3 — `elicitation.content_tamper_detected` audit event is never emitted [High] — CLOSED
 
 - **Spec:** Lines 60–61, 64; spec §16.7 line 674. Every tamper detection emits the `elicitation.content_tamper_detected` audit event carrying `enforcement_mode`, `elicitation_id`, `origin_pod`, `tampering_pod`, `session_id`, `tenant_id`, `user_id`, `delegation_depth`, `initiator_type`, `divergent_fields`, `original_sha256`, `attempted_sha256`, `forward_outcome`, `detected_at`.
 - **Evidence:**
@@ -10706,6 +10710,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/mcptools/elicitation.go:122-138`: the dispatcher's tamper handler increments the metric only. `grep -rn "elicitation.content_tamper_detected\|EventElicitationContentTamperDetected" pkg/gateway/` returns the catalog and OCSF declaration sites, plus alert rules and metric help text — never an emitter.
   - `pkg/gateway/mcptools/elicitation.go:42-43` declares `audit DelegationAuditor` but the field is only used for the `elicitation.url_mode_domain_rejected` event (F-9.2.10). The tamper branch makes no `EmitDelegationEvent` call.
 - **Gap:** SIEM/audit consumers will never see a tamper row even if a tamper somehow registered. The `ElicitationContentIntegrityPermissiveTamper` warning alert's documented correlation ("paired `elicitation.content_tamper_detected` audit event") cannot be performed; incident-response runbooks that hinge on `original_sha256` / `attempted_sha256` / `divergent_fields` have nothing to query.
+
+**Resolution:** The dispatcher now carries a `DelegationAuditor` (wired from `deps.Audit`) and emits the `elicitation.content_tamper_detected` event on every divergence under `detect-only` and `enforce` (never under `off`). The event type is the closed audit-catalog constant `audit.EventElicitationContentTamperDetected`, so a sink whitelisting by the spec catalog accepts the row. The Detail map carries the full §16.7 line 674 payload: `enforcement_mode`, `origin_pod`, `tampering_pod`, `session_id`, `tenant_id`, `user_id`, `delegation_depth`, `initiator_type`, `divergent_fields` (computed by the new `elicitation.DivergentFields` over the original vs. re-emitted `{message, schema}`), `original_sha256`, `attempted_sha256`, `forward_outcome` (rejected | forwarded_as_received), and `detected_at`. Tests assert the catalog name and every field under both enforce and detect-only. Commit `684ab36e`.
 
 ### - [x] F-9.2.4 — Tamper-detection metric label cardinality differs from spec [High] — CLOSED
 
@@ -10741,7 +10747,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 
 **Resolution:** The `lenny/request_elicitation` handler now constructs an `elicitation.Provenance` at origination (`origin_pod`=raising session id, `delegation_depth`=origin hop depth from the chain walk, `origin_runtime`=session `RuntimeRef`, `initiator_type`=agent) and stamps `delegationDepth`/`originRuntime` onto the recorded interaction Detail (alongside the existing originPod/initiatorType) AND onto the `elicitation_request` SSE event payload — so the client receives provenance over the live channel and the §16.7 audit row can source delegation_depth/initiator_type from the stored record. The connector-only fields (connector_id, expected_domain, purpose) are correctly empty on the v1 agent-initiated path (F-9.2.19). Tests assert both the recorded Detail and the SSE payload carry the provenance. Commit `ee6f51e4`.
 
-### - [ ] F-9.2.7 — Connector `expected_domain` hard boundary is not enforced [High] — OPEN
+### - [ ] F-9.2.7 — Connector `expected_domain` hard boundary is not enforced [High] — DEFERRED
 
 - **Spec:** Line 87. "**URL domain validation is a hard enforcement boundary.** The gateway rejects any URL-mode elicitation whose URL domain does not match the registered connector's `expected_domain`. This is not a metadata annotation — the elicitation is dropped and an error is returned to the originator."
 - **Evidence:**
@@ -10750,7 +10756,9 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/mcptools/elicitation.go:96-108` (dispatch path) and `pkg/gateway/mcptools/mcptools.go:651-672` (input schema) accept no `connectorId` parameter; the dispatcher cannot identify which connector the elicitation belongs to even if a registered `expected_domain` table existed.
 - **Gap:** A connector-registered OAuth flow whose URL has been mutated (by a compromised connector, by a man-in-the-middle, or by misconfiguration) is admitted to the chain unchecked. The spec's hardest security boundary on URL-mode elicitations is unenforced.
 
-### - [ ] F-9.2.8 — 30s per-hop forwarding timeout is absent [High] — OPEN
+**Deferred:** The hard boundary applies to a *connector-initiated* url-mode elicitation (the §9.3 gateway-OAuth flow, where step 3 emits a url-mode elicitation through the chain). v1 has no connector-initiated elicitation dispatch path: `lenny/request_elicitation` is the only elicitation entry point and is always agent-initiated (F-9.2.19 removed the self-declarable `InitiatorType` input precisely so an agent cannot assert `connector`). With no connector elicitation surface, there is no `connector_id` / `expected_domain` in scope at any dispatch site to enforce against, and `CheckURLModeProvenance` correctly admits the (nonexistent in v1) connector path. The enforcement site is created by the §9.3 gateway-OAuth elicitation subsystem (gateway acting as MCP client, receiving the auth challenge, emitting the url-mode elicitation bound to the registered connector); that subsystem is unbuilt. Re-attempt once the connector-initiated elicitation path exists — the host-vs-`expected_domain` match itself reuses the existing `hostMatchesAllowlist` exact/`*.suffix` logic.
+
+### - [x] F-9.2.8 — 30s per-hop forwarding timeout is absent [High] — CLOSED
 
 - **Spec:** Line 104. "**Per-hop forwarding timeout:** Each hop in the elicitation chain has a forwarding timeout (30s). If a hop doesn't forward the elicitation within 30s, the gateway treats it as a failure and returns a timeout to the originating pod."
 - **Evidence:**
@@ -10758,6 +10766,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/elicitation/chain.go:164-259`: `WalkChain` is a synchronous in-memory walk; no context with per-hop deadlines, no per-hop forward attempt that could time out.
   - `grep -rn "perHop\|per-hop\|forwardingTimeout\|forwarding_timeout" /Users/joan/projects/lenny/pkg /Users/joan/projects/lenny/cmd` returns only documentation comments.
 - **Gap:** The §9.2 forwarding-timeout contract that bounds intermediate-hop dwell time is absent. In the current architecture this is conceptually moot because there is no actual hop-by-hop forwarding (F-9.2.1) — but as soon as the wire mechanism is added, the timeout requirement re-emerges as an unbuilt control.
+
+**Resolution:** Verify-closed; stale evidence. The control was implemented in commit `0dd63522` (F-11.3.16/20/21/22 operator-tunable timeouts). `pkg/gateway/mcptools/elicitation.go` defines `ElicitationPerHopForwardingTimeout = 30 * time.Second`; `buildHops` bounds every ancestor lookup with `lookupAncestor`'s `context.WithTimeout(ctx, effectivePerHopTimeout())` and surfaces `ELICITATION_PER_HOP_TIMEOUT` (with the stalled hop's session id, the timeout, and timeoutSeconds in the error details) on `context.DeadlineExceeded`. The 30s default and the timeout branch are covered by `TestElicitationPerHopForwardingTimeoutDefaultConstant_spec_11_3_211` and `TestBuildHopsAncestorLookupTimeoutReturnsPerHopError_spec_11_3_211` in `elicitation_perhop_internal_test.go`. The §11.3 line 211 hard-coded 30s deadline matches the §9.1 line 104 requirement.
 
 ### - [x] F-9.2.9 — `tenant.elicitation_content_integrity_changed` audit event uses a non-spec name [High] — CLOSED
 
@@ -10922,7 +10932,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
 | F-9.2.19 | `lenny/request_elicitation` does not enforce an `expected_domain` or `connector_id` argument | Low |
 | F-9.2.20 | Subtree deadlock detector does not interact with elicitation chains | Info |
 
-The §9.2 spec subsection ships a multi-layered defence (hop-by-hop forwarding, content-integrity binding, tenant-mode + platform-floor enforcement, URL-mode security controls, depth suppression, timeout semantics, authorization triple). The primitives package (`pkg/elicitation`) is faithful to the spec in isolation. The integration layer (`pkg/gateway/mcptools` dispatcher + `cmd/lenny-gateway` binary) is where the spec collapses: there is no hop-by-hop wire path, the tamper detector is a tautology, the tenant mode is not consulted, the audit event is never emitted, the per-hop timeout is absent, and the binary does not wire the per-pool policy fields. The structural untriggerability of the tamper detector (F-9.2.1) is the root failure that keeps F-9.2.2 and F-9.2.3 blocked. F-9.2.4 (metric label cardinality), F-9.2.5 (standing-alert gauge + reconciliation), and F-9.2.6 (origination-time provenance stamping) were closed independently of F-9.2.1, since the metric label schema, the weakened-mode gauge, and the recorded/streamed provenance are correct regardless of whether the per-hop wire path exists.
+The §9.2 spec subsection ships a multi-layered defence (hop-by-hop forwarding, content-integrity binding, tenant-mode + platform-floor enforcement, URL-mode security controls, depth suppression, timeout semantics, authorization triple). The primitives package (`pkg/elicitation`) is faithful to the spec in isolation. The integration layer (`pkg/gateway/mcptools` dispatcher + `cmd/lenny-gateway` binary) is where the spec historically collapsed. The content-integrity handling has since been brought to spec: the per-hop timeout is present (F-9.2.8, commit `0dd63522`), the tenant mode is resolved and branched at dispatch (F-9.2.2), and the `elicitation.content_tamper_detected` audit event is emitted with the full payload (F-9.2.3) — all in commit `684ab36e`, which also removed the tautological per-hop verify. F-9.2.4 (metric label cardinality), F-9.2.5 (standing-alert gauge + reconciliation), and F-9.2.6 (origination-time provenance stamping) were closed earlier. The one remaining structural gap is the production wire path that would actually surface a divergence — intermediate pods re-emitting the `elicitation/create` frame so the gateway has a second `{message, schema}` to compare (F-9.2.1, deferred as a dedicated per-hop-forwarding subsystem). The mode-resolution, audit-emission, and metric-labelling handling is now correct and tested for when that wire path exists, exactly as the F-9.2.4/5/6 closures were independent of it.
 
 ---
 
