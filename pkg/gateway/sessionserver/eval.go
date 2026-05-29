@@ -160,6 +160,16 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §16.1 line 164 / §10.7 line 1128 — record one lenny_eval_score
+	// observation per submitted eval run so the rollback-trigger safety and
+	// mean-score regression queries (rate(_sum)/rate(_count)) resolve per
+	// scorer and variant. Only the aggregate score is observed; a submission
+	// carrying only the per-dimension scores map has no scalar observation.
+	// variant_id is empty for an un-enrolled session. F-10.7.13.
+	if s.observeEvalScore != nil && stored.Score != nil {
+		s.observeEvalScore(tenantID, stored.Scorer, stored.VariantID, *stored.Score)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(EvalResponse{

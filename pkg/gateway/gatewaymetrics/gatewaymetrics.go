@@ -79,6 +79,10 @@ type Metrics struct {
 	experimentIsoRej            *prometheus.CounterVec
 	experimentTargetingDur      *prometheus.HistogramVec
 	experimentTargetingErr      *prometheus.CounterVec
+	sessionTotal                *prometheus.CounterVec
+	sessionError                *prometheus.CounterVec
+	sessionDuration             *prometheus.HistogramVec
+	evalScore                   *prometheus.HistogramVec
 	noEnvPolicyAllowAll         *prometheus.CounterVec
 	gcPauseP99Ms                prometheus.Gauge
 	// replayBufferUtilization is the §16.1
@@ -778,6 +782,49 @@ func New() (*Metrics, error) {
 		Name: "lenny_experiment_targeting_error_total",
 		Help: "§10.7 external experiment targeting evaluation failures by provider and error_type (§16.1 line 157).",
 	}, []string{"provider", "error_type"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 lines 161-163 / §10.7 lines 1120-1132 — the variant-labelled
+	// rollback-trigger metric family. session_type carries the session's
+	// §5.2 ExecutionMode ("session", "task", "concurrent"); variant_id carries
+	// the §10.7 experiment enrollment ("" for control / un-enrolled sessions).
+	// lenny_session_total is the denominator for the variant error rate
+	// (§16.1 line 162); lenny_session_error_total is the numerator (line 161).
+	sessionTotal, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_total",
+		Help: "§16.1 line 162 sessions total by variant; denominator for the §10.7 rollback-trigger error rate.",
+	}, []string{"tenant_id", "session_type", "variant_id"})
+	if err != nil {
+		return nil, err
+	}
+	sessionError, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_error_total",
+		Help: "§16.1 line 161 session errors by variant; numerator for the §10.7 rollback-trigger error rate.",
+	}, []string{"tenant_id", "session_type", "variant_id"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 line 163 — per-session wall-clock duration sampled at
+	// completion. Buckets span the §10.7 / §6 session lifetime (1s to the
+	// 4-hour cert-expiry bound) so histogram_quantile(0.95, ...) resolves
+	// the variant-vs-control p95 comparison the rollback table cites.
+	sessionDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_session_duration_seconds",
+		Help:    "§16.1 line 163 per-session wall-clock duration by variant, sampled at completion.",
+		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 14400},
+	}, []string{"tenant_id", "session_type", "variant_id"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 line 164 — one observation per submitted eval run. Scores
+	// are normalized 0.0-1.0; the 0.95 bucket resolves the §10.7 line 1128
+	// safety-score-regression threshold.
+	evalScore, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_eval_score",
+		Help:    "§16.1 line 164 eval score by variant; one observation per submitted eval run.",
+		Buckets: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0},
+	}, []string{"tenant_id", "scorer", "variant_id"})
 	if err != nil {
 		return nil, err
 	}
@@ -1518,6 +1565,7 @@ func New() (*Metrics, error) {
 		elicitationRoundtripSeconds,
 		experimentIsoRej,
 		experimentTargetingDur, experimentTargetingErr,
+		sessionTotal, sessionError, sessionDuration, evalScore,
 		noEnvPolicyAllowAll, tokenServiceCircuitState,
 		kmsSigningErrors, kmsSigningCircuitState,
 		checkpointStaleSessions,
@@ -1638,6 +1686,10 @@ func New() (*Metrics, error) {
 		experimentIsoRej:                     experimentIsoRej,
 		experimentTargetingDur:               experimentTargetingDur,
 		experimentTargetingErr:               experimentTargetingErr,
+		sessionTotal:                         sessionTotal,
+		sessionError:                         sessionError,
+		sessionDuration:                      sessionDuration,
+		evalScore:                            evalScore,
 		noEnvPolicyAllowAll:                  noEnvPolicyAllowAll,
 		gcPauseP99Ms:                         gcPause,
 		replayBufferUtilization:              replayBufferUtilizationChild,
@@ -2728,6 +2780,31 @@ func (m *Metrics) ObserveExperimentTargetingDuration(provider string, seconds fl
 // (timeout, transport, or the OFREP errorCode).
 func (m *Metrics) RecordExperimentTargetingError(provider, errorType string) {
 	m.experimentTargetingErr.WithLabelValues(provider, errorType).Inc()
+}
+
+// RecordSessionTerminal records the §16.1 lines 161-163 / §10.7
+// rollback-trigger session metrics at a terminal session transition: it
+// increments lenny_session_total, increments lenny_session_error_total when
+// the terminal state is an error outcome, and observes the per-session
+// wall-clock duration on lenny_session_duration_seconds. sessionType is the
+// §5.2 ExecutionMode; variantID is the §10.7 enrollment ("" for
+// control / un-enrolled).
+func (m *Metrics) RecordSessionTerminal(tenantID, sessionType, variantID string, isError bool, seconds float64) {
+	if sessionType == "" {
+		sessionType = "session"
+	}
+	m.sessionTotal.WithLabelValues(tenantID, sessionType, variantID).Inc()
+	if isError {
+		m.sessionError.WithLabelValues(tenantID, sessionType, variantID).Inc()
+	}
+	m.sessionDuration.WithLabelValues(tenantID, sessionType, variantID).Observe(seconds)
+}
+
+// ObserveEvalScore records one §16.1 line 164 lenny_eval_score observation
+// per submitted eval run. variantID is the §10.7 enrollment ("" when the
+// scored session was not enrolled).
+func (m *Metrics) ObserveEvalScore(tenantID, scorer, variantID string, score float64) {
+	m.evalScore.WithLabelValues(tenantID, scorer, variantID).Observe(score)
 }
 
 // RecordNoEnvironmentPolicyAllowAll increments the §10.6

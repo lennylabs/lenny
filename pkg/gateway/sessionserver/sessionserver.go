@@ -144,6 +144,14 @@ type Server struct {
 	// lenny_workspace_seal_duration_seconds{pool,outcome} histogram. Nil
 	// disables the emission.
 	observeSealDuration func(pool, outcome string, seconds float64)
+	// recordSessionTerminal, when set, records the §16.1 lines 161-163 /
+	// §10.7 rollback-trigger session metric family at terminal transition.
+	// Nil disables the emission. spec: §10.7 lines 1120-1132.
+	recordSessionTerminal func(tenantID, sessionType, variantID string, isError bool, seconds float64)
+	// observeEvalScore, when set, records the §16.1 line 164 lenny_eval_score
+	// observation per submitted eval. Nil disables the emission.
+	// spec: §10.7 line 1128.
+	observeEvalScore func(tenantID, scorer, variantID string, score float64)
 	// partialManifestCleaner, when set, executes the §4.4 line 236
 	// partial-manifest cleanup after the resume path completes.
 	// Nil leaves the resume path unchanged (cleanup is deferred to
@@ -644,6 +652,19 @@ type Options struct {
 	// outcome is "success" or "timeout". Nil disables the emission.
 	ObserveWorkspaceSealDuration func(pool, outcome string, seconds float64)
 
+	// RecordSessionTerminal, when set, records the §16.1 lines 161-163 /
+	// §10.7 rollback-trigger metric family at every terminal session
+	// transition (lenny_session_total, lenny_session_error_total, and
+	// lenny_session_duration_seconds). sessionType is the §5.2
+	// ExecutionMode; variantID is the §10.7 enrollment. Nil disables the
+	// emission. spec: §10.7 lines 1120-1132, §16.1 lines 161-163.
+	RecordSessionTerminal func(tenantID, sessionType, variantID string, isError bool, seconds float64)
+
+	// ObserveEvalScore, when set, records one §16.1 line 164
+	// lenny_eval_score observation per submitted eval run. Nil disables
+	// the emission. spec: §10.7 line 1128, §16.1 line 164.
+	ObserveEvalScore func(tenantID, scorer, variantID string, score float64)
+
 	// SealSleep overrides the seal-retry backoff wait. Production leaves
 	// it nil (a context-aware time.Sleep); tests inject a no-op so the
 	// bounded-backoff loop runs without real delays.
@@ -873,6 +894,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		sealMaxDuration:        opts.WorkspaceSealMaxDuration,
 		sealSleep:              opts.SealSleep,
 		observeSealDuration:    opts.ObserveWorkspaceSealDuration,
+		recordSessionTerminal:  opts.RecordSessionTerminal,
+		observeEvalScore:       opts.ObserveEvalScore,
 		partialManifestCleaner: opts.PartialManifestCleaner,
 		evictionStateLookup:    opts.EvictionStateLookup,
 		partialManifestLookup:  opts.PartialManifestLookup,

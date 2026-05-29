@@ -37,6 +37,95 @@ func sseEventsOfType(bus *sessionevents.Bus, sessionID, typ string) []sessioneve
 	return out
 }
 
+// --- F-10.7.13: variant-labelled rollback metrics ----------------------
+
+type capturedTerminalMetric struct {
+	tenantID, sessionType, variantID string
+	isError                          bool
+	seconds                          float64
+}
+
+// spec: §10.7 lines 1120-1132 / §16.1 lines 161-163 — every terminal
+// transition records the variant-labelled session metric family. The
+// variant comes from the §10.7 experiment context, session_type from the
+// §5.2 ExecutionMode, the error flag from the failed state, and the
+// duration from creation to the terminal transition.
+func TestEmitTerminalLifecycleRecordsVariantMetrics_spec_10_7_1124(t *testing.T) {
+	created := time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC)
+	terminal := created.Add(90 * time.Second)
+	cases := []struct {
+		name  string
+		state session.State
+		ec    *sessionstore.ExperimentContext
+		mode  string
+		want  capturedTerminalMetric
+	}{
+		{
+			name:  "failed treatment task session is an error",
+			state: session.StateFailed,
+			ec:    &sessionstore.ExperimentContext{ExperimentID: "exp_a", VariantID: "treatment"},
+			mode:  "task",
+			want:  capturedTerminalMetric{"acme", "task", "treatment", true, 90},
+		},
+		{
+			name:  "completed enrolled session is not an error",
+			state: session.StateCompleted,
+			ec:    &sessionstore.ExperimentContext{ExperimentID: "exp_a", VariantID: "treatment"},
+			mode:  "session",
+			want:  capturedTerminalMetric{"acme", "session", "treatment", false, 90},
+		},
+		{
+			name:  "un-enrolled session reports empty variant",
+			state: session.StateCancelled,
+			ec:    nil,
+			mode:  "",
+			want:  capturedTerminalMetric{"acme", "", "", false, 90},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []capturedTerminalMetric
+			srv := New(memstore.New(), Options{
+				Clock: func() time.Time { return terminal },
+				RecordSessionTerminal: func(tenantID, sessionType, variantID string, isError bool, seconds float64) {
+					got = append(got, capturedTerminalMetric{tenantID, sessionType, variantID, isError, seconds})
+				},
+			})
+			srv.emitTerminalLifecycle(context.Background(), sessionstore.Session{
+				ID: "s", TenantID: "acme", State: tc.state,
+				ExecutionMode: tc.mode, ExperimentContext: tc.ec, CreatedAt: created,
+			})
+			if len(got) != 1 {
+				t.Fatalf("hook calls: got %d, want 1", len(got))
+			}
+			if got[0] != tc.want {
+				t.Errorf("metric = %+v, want %+v", got[0], tc.want)
+			}
+		})
+	}
+}
+
+// A non-terminal state must never reach the metric hook.
+func TestEmitTerminalLifecycleSkipsNonTerminalMetric_spec_10_7_1124(t *testing.T) {
+	called := false
+	srv := New(memstore.New(), Options{
+		Clock:                 func() time.Time { return time.Unix(0, 0) },
+		RecordSessionTerminal: func(string, string, string, bool, float64) { called = true },
+	})
+	srv.emitTerminalLifecycle(context.Background(), sessionstore.Session{
+		ID: "s", TenantID: "acme", State: session.StateRunning,
+	})
+	if called {
+		t.Errorf("metric hook fired for a non-terminal state")
+	}
+}
+
+// A nil hook must be a no-op (the metric subsystem is optional wiring).
+func TestRecordTerminalSessionMetricsNilHookIsSafe_spec_10_7_1124(t *testing.T) {
+	srv := New(memstore.New(), Options{Clock: func() time.Time { return time.Unix(0, 0) }})
+	srv.recordTerminalSessionMetrics(sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateFailed})
+}
+
 // --- F-7.1.10: session lifecycle audit events --------------------------
 
 func TestRecordSessionCreatedEmitsAuditEvent_spec_7_1_10(t *testing.T) {

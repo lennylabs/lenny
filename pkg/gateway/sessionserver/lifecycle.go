@@ -254,10 +254,35 @@ func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Se
 		}
 	}
 	s.rollRetentionOnTerminal(ctx, sess)
+	s.recordTerminalSessionMetrics(sess)
 	// spec: §6.3 line 356 — the §6.3 TTFT tracker is in-memory only.
 	// On terminal, drop the entry so the map size scales with
 	// concurrently-streaming sessions rather than lifetime sessions.
 	s.firstTokenObserved.Delete(sess.ID)
+}
+
+// recordTerminalSessionMetrics emits the §16.1 lines 161-163 / §10.7
+// rollback-trigger metric family at a terminal session transition: every
+// terminal session increments lenny_session_total and observes its
+// wall-clock duration on lenny_session_duration_seconds; a session that
+// reached the failed state additionally increments lenny_session_error_total.
+// session_type is the §5.2 ExecutionMode (defaulting to "session"); variant_id
+// is the §10.7 enrollment, empty for control / un-enrolled sessions. The
+// duration is measured from session creation to the terminal transition.
+// Best-effort: a nil hook disables the emission.
+//
+// spec: §10.7 lines 1120-1132 (Manual Rollback Triggers), §16.1 lines 161-163.
+func (s *Server) recordTerminalSessionMetrics(sess sessionstore.Session) {
+	if s.recordSessionTerminal == nil {
+		return
+	}
+	_, variantID := sess.ExperimentContext.Enrollment()
+	duration := s.clock().Sub(sess.CreatedAt).Seconds()
+	if duration < 0 {
+		duration = 0
+	}
+	s.recordSessionTerminal(sess.TenantID, sess.ExecutionMode, variantID,
+		sess.State == session.StateFailed, duration)
 }
 
 // emitAwaitingClientActionEntered fires the §16.6 / §11.7 / §7.2 signals

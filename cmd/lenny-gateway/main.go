@@ -1971,7 +1971,12 @@ func main() {
 		// §7.1 line 112 — seal-and-export retry window + outcome histogram.
 		WorkspaceSealMaxDuration:     time.Duration(*workspaceSealMaxDurationSeconds) * time.Second,
 		ObserveWorkspaceSealDuration: gwMetrics.ObserveWorkspaceSealDuration,
-		Clock:                        clockinject.Now,
+		// §10.7 lines 1120-1132, §16.1 lines 161-164 — variant-labelled
+		// rollback-trigger metric family emitted at terminal session
+		// transition and at each built-in eval submission.
+		RecordSessionTerminal: gwMetrics.RecordSessionTerminal,
+		ObserveEvalScore:      gwMetrics.ObserveEvalScore,
+		Clock:                 clockinject.Now,
 		UploadSubsystem:              uploadSubsystem,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,

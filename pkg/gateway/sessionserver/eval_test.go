@@ -77,6 +77,55 @@ func postEval(t *testing.T, h http.Handler, sessionID string, body sessionserver
 
 func evalScore(v float64) *float64 { return &v }
 
+// capturedEvalScore records an ObserveEvalScore hook call.
+type capturedEvalScore struct {
+	tenantID, scorer, variantID string
+	score                       float64
+}
+
+// spec: §16.1 line 164 / §10.7 line 1128 — a submitted eval with a scalar
+// score records one lenny_eval_score observation labelled by scorer and the
+// session's variant. A submission carrying only the per-dimension scores map
+// has no scalar observation and must not call the hook. F-10.7.13.
+func TestEvalEmitsEvalScoreMetric_spec_16_1_164(t *testing.T) {
+	store := memstore.New()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_e", TenantID: "default", UserID: "alice", State: session.StateRunning,
+		ExperimentContext: &sessionstore.ExperimentContext{ExperimentID: "exp_a", VariantID: "treatment"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_d", TenantID: "default", UserID: "alice", State: session.StateRunning,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var got []capturedEvalScore
+	srv := sessionserver.New(store, sessionserver.Options{
+		Evals: evalstore.NewMemory(0, nil),
+		ObserveEvalScore: func(tenantID, scorer, variantID string, score float64) {
+			got = append(got, capturedEvalScore{tenantID, scorer, variantID, score})
+		},
+	})
+	h := srv.Handler()
+
+	if rr := postEval(t, h, "sess_e", sessionserver.EvalRequest{Scorer: "safety", Score: evalScore(0.97)}); rr.Code != http.StatusCreated {
+		t.Fatalf("scalar eval: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	// Dimension-only submission: no scalar score, so no observation.
+	if rr := postEval(t, h, "sess_d", sessionserver.EvalRequest{Scorer: "rubric", Scores: map[string]float64{"a": 0.4}}); rr.Code != http.StatusCreated {
+		t.Fatalf("dimension eval: status %d, body %s", rr.Code, rr.Body.String())
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("observations: got %d, want 1 (%+v)", len(got), got)
+	}
+	want := capturedEvalScore{"default", "safety", "treatment", 0.97}
+	if got[0] != want {
+		t.Errorf("observation = %+v, want %+v", got[0], want)
+	}
+}
+
 func TestEvalIngestsScore(t *testing.T) {
 	h, evals := evalServer(t, 0, evalSession("sess_1", session.StateRunning))
 	rr := postEval(t, h, "sess_1", sessionserver.EvalRequest{Scorer: "llm-judge", Score: evalScore(0.82)})
