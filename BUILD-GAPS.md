@@ -28612,7 +28612,7 @@ Cross-checked against:
 
 ---
 
-### - [ ] F-17.2.5 — 2-5  Phase-stamp ConfigMap labels do not match the alert's PromQL series [High] — OPEN
+### - [x] F-17.2.5 — 2-5  Phase-stamp ConfigMap labels do not match the alert's PromQL series [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-17.2.17 — Both report the phase-stamp ConfigMap renders camelCase flag labels rather than the slug/-enabled form the alert PromQL and docs expect.
 
@@ -28626,14 +28626,18 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 **Impact:** The `AdmissionPlaneFeatureFlagDowngrade` alert evaluates empty in every cluster and cannot fire on the drift class it is the sole runtime signal for. The spec's four-layer defense reduces to three layers in practice.
 
+**Resolution:** Closed by `ac7f69af`. `phase-stamp-configmap.yaml` now renders `lenny.dev/flag-{{ kebabcase $flag }}-enabled: "true"` (slugs `llm-proxy`, `drain-readiness`, `compliance`), the exact label `kube-state-metrics` lowercases to `label_lenny_dev_flag_<slug>_enabled` — the series the §16.5 / §17.2 alert and the operator docs already expect. The camelCase data keys are unchanged per §17.2 layer 1. Regression: `charts/lenny/tests/phase-stamp-configmap_test.yaml` asserts the slug+`-enabled` labels render, the camelCase legacy label does not, and no per-flag label appears when all flags are disabled. Closes its explicit duplicate F-17.2.17.
+
 ---
 
-### - [ ] F-17.2.6 — 2-6  AdmissionPlaneFeatureFlagDowngrade alert covers only one (flag, webhook) pair [High] — OPEN
+### - [x] F-17.2.6 — 2-6  AdmissionPlaneFeatureFlagDowngrade alert covers only one (flag, webhook) pair [High] — CLOSED
 **Spec requirement** (§17.2 layer 4, line 80): "The canonical PromQL expression, its per-`(flag, webhook)`-pair rule decomposition, the labelling mechanism … are all defined at [§16.5]." The Feature-gated chart inventory table has four pairs: `llmProxy`/`lenny-direct-mode-isolation`; `drainReadiness`/`lenny-drain-readiness`; `compliance`/`lenny-data-residency-validator`; `compliance`/`lenny-t4-node-isolation`.
 
 **Implementation:** `/Users/joan/projects/lenny/pkg/alerting/rules/rules.go` lines 895–903 registers a single rule (`AdmissionPlaneFeatureFlagDowngrade`) whose expression checks only the `llmProxy` flag against `lenny-direct-mode-isolation`. Three of the four pairs (`drainReadiness`, the two `compliance`-gated pairs) are not surfaced.
 
 **Impact:** A drainReadiness or compliance flag downgrade is invisible at runtime — the spec's "sole runtime signal" guarantee is partial.
+
+**Resolution:** Closed by `ac7f69af`. The catalog now emits all four single-pair rules (`features.llmProxy`→`lenny-direct-mode-isolation`, `features.drainReadiness`→`lenny-drain-readiness`, `features.compliance`→`lenny-data-residency-validator`, `features.compliance`→`lenny-t4-node-isolation`) via the `admissionPlaneDowngradeRule` helper. A new `Rule.Labels` field carries the static `flag_name` / `expected_webhook_name` labels, merged with `severity` at render time, so the four rules share the `AdmissionPlaneFeatureFlagDowngrade` alert name and each firing identifies the missing webhook. The catalog uniqueness invariant now keys on (name + disambiguating labels). Regenerated `charts/lenny/files/alerting-rules.yaml` + `docs/alerting/rules.yaml`. Regression: `TestAdmissionPlaneFeatureFlagDowngradePairs_spec_17_2` and `TestAdmissionPlaneDowngradeLabelsRender_spec_17_2`.
 
 ---
 
@@ -28681,12 +28685,14 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.11 — 2-11  Per-webhook narrow egress uses a different label key than NET-068 specifies [Medium] — OPEN
+### - [x] F-17.2.11 — 2-11  Per-webhook narrow egress uses a different label key than NET-068 specifies [Medium] — CLOSED
 **Spec requirement** (§17.2 line 56 "Additive per-webhook labels for egress-narrowing (NET-068)"): The `lenny-drain-readiness` Deployment carries the additive label `lenny.dev/webhook-name: drain-readiness` on its pods so the gateway-egress sub-rule narrows to only that webhook. The spec explicitly forbids the label on the ingress side and restricts it to egress allow-lists.
 
 **Implementation:** `/Users/joan/projects/lenny/charts/lenny/templates/admission-policies/_webhook.tpl` line 31, 37 stamps `lenny.dev/webhook: lenny-drain-readiness` (key `lenny.dev/webhook`, value the full webhook name) on every webhook Deployment. The narrow egress NetworkPolicy in `/Users/joan/projects/lenny/charts/lenny/templates/admission-policies/drain-readiness-webhook.yaml` line 37 selects on this same key.
 
 **Impact:** Functionally equivalent — the egress narrowing works because the matcher is consistent. But the key and value differ from NET-068's `lenny.dev/webhook-name: drain-readiness`, and crucially the label is applied to **every** webhook Deployment (not only `lenny-drain-readiness`), violating the spec's "applied only to that Deployment's pods" constraint. The `lenny-preflight` audit treats unreferenced additive labels as lint-level warnings per spec — that audit is not implemented either.
+
+**Resolution:** Closed by `ac7f69af`. `_webhook.tpl` gained an optional `egressLabel` parameter that stamps the additive `lenny.dev/webhook-name: <short>` pod label only on the Deployment whose caller passes it; only `drain-readiness-webhook.yaml` passes `egressLabel: drain-readiness`. The `allow-drain-readiness-gateway-egress` NetworkPolicy now selects on the canonical `lenny.dev/component: admission-webhook` key plus the additive `lenny.dev/webhook-name: drain-readiness` key, matching NET-068 exactly and keeping the other eight in-process webhooks off the gateway internal port. Regression in `admission-webhooks_test.yaml`: the additive label is present on drain-readiness, absent on label-immutability, and drives the egress selector. The unimplemented `lenny-preflight` lint-warning audit for unreferenced additive labels is a separate concern out of scope here.
 
 ---
 
@@ -28699,12 +28705,14 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.13 — 2-13  lenny-registry-digest is fail-closed but absent from preflight expected set [Medium] — OPEN
+### - [x] F-17.2.13 — 2-13  lenny-registry-digest is fail-closed but absent from preflight expected set [Medium] — CLOSED
 **Spec requirement** (§17.2 line 56): Every fail-closed webhook must be tracked by the `lenny-preflight` inventory check so a chart-author omission cannot ship silently.
 
 **Implementation:** `/Users/joan/projects/lenny/charts/lenny/templates/admission-policies/registry-digest-webhook.yaml` line 30 sets `failurePolicy: Fail`. The webhook is rendered when `platform.registry.requireDigest: true`. `/Users/joan/projects/lenny/pkg/preflight/webhooks.go` lines 25–58 does not surface a feature flag for this webhook and the expected set never includes `lenny-registry-digest`.
 
 **Impact:** An air-gap installation (where `requireDigest: true` is mandatory per §25.8) can ship without this webhook deployed, and preflight will not catch it.
+
+**Resolution:** Closed by `ac7f69af`. Added `RegistryDigest` to `preflight.WebhookFeatureFlags`; `ExpectedValidatingWebhooks` appends `lenny-registry-digest` when set. `cmd/lenny-preflight` gained a `--feature-registry-digest` flag, and `preflight-job.yaml` wires it from `platform.registry.requireDigest`, so the expected set tracks the rendered webhook in lockstep. Regression: `TestExpectedValidatingWebhooksRegistryDigestFlag_spec_17_2`, the extended all-flags test, and the `preflight-job_test.yaml` flag-render assertions.
 
 ---
 
@@ -28731,7 +28739,7 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 ---
 
-### - [ ] F-17.2.16 — 2-16  lenny-ops-deny-all-ingress NetworkPolicy not rendered [Medium] — OPEN
+### - [x] F-17.2.16 — 2-16  lenny-ops-deny-all-ingress NetworkPolicy not rendered [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.1.4, F-25.4.12 — Two distinct gaps recur: the lenny-ops Ingress (with PDB) is not rendered, and the four lenny-ops/lenny-backup NetworkPolicies are not rendered; F-17.1.2 is the separate gateway-Ingress gap.
 
@@ -28740,6 +28748,8 @@ The label key rendered by the chart and the label key the alert queries cannot m
 **Implementation:** `/Users/joan/projects/lenny/charts/lenny/templates/system-network-policies.yaml` lines 664–725 renders `allow-ops` which permits Prometheus scrape ingress and gateway egress for `lenny-ops` pods. The lenny-system namespace-level `default-deny-all` (lines 12–20) blocks all ingress and egress by default, so lenny-ops inherits a deny. A dedicated NetworkPolicy named `lenny-ops-deny-all-ingress` is not rendered; `grep "lenny-ops-deny-all-ingress" /Users/joan/projects/lenny/charts` returns no matches.
 
 **Impact:** Functionally the deny posture is reached via the namespace default-deny. Spec calls out a specific named policy; absence may surface in operator runbooks or audits that grep for the name. Confirm with §13.2 whether the named policy is a normative requirement or descriptive.
+
+**Resolution:** Closed by `ac7f69af`. `system-network-policies.yaml` now renders the named `lenny-ops-deny-all-ingress` NetworkPolicy verbatim from §25.4 line 1123 (`podSelector: app: lenny-ops`, `policyTypes: [Ingress]`, `ingress: []`). NetworkPolicies are additive, so the existing `allow-ops` Prometheus-scrape ingress still applies; the named baseline satisfies §17.2 line 31 and the §13.2 selector-consistency audit. Regression in `system-network-policies_test.yaml` (doc count 14→15 + named-policy assertions). The other three §17 lenny-ops/backup NetworkPolicies (`lenny-ops-allow-ingress-from-ingress-controller`, `lenny-ops-egress`, `lenny-backup-job`) remain tracked under F-25.4.12 / F-17.1.4.
 
 ---
 
@@ -28753,7 +28763,7 @@ The label key rendered by the chart and the label key the alert queries cannot m
 
 **Impact:** Same root cause as Finding 17.2-5, surfaced here for completeness: the camelCase data key versus slug label is internally inconsistent across the implementation. The spec text in §17.2 line 74 itself does not dictate the slug form, but the alert PromQL and docs do — the chart needs to either rename to slug form with `-enabled` suffix or the alert/docs need to drop the `-enabled` suffix and use camelCase.
 
-**Resolution:** Verify-closed; explicit duplicate of F-17.2.5 (High, still OPEN) per the finding's own framing ("Same root cause as Finding 17.2-5, surfaced here for completeness"). Phase-stamp/alert label coherence is owned by the §17.2 High remediation.
+**Resolution:** Explicit duplicate of F-17.2.5 per the finding's own framing ("Same root cause as Finding 17.2-5, surfaced here for completeness"). Closed by F-17.2.5 (commit `ac7f69af`): the chart now renders the slug + `-enabled` label form (`lenny.dev/flag-llm-proxy-enabled` etc.) instead of the camelCase `lenny.dev/flag-llmProxy` key, resolving the camelCase-vs-slug internal inconsistency this finding flagged.
 
 ---
 
