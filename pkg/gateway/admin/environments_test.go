@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +59,37 @@ func TestCreateEnvironment(t *testing.T) {
 	}
 	if snap := audit.snapshot(); len(snap) != 1 || snap[0].Type != "admin.environment.created" {
 		t.Errorf("audit: %+v", snap)
+	}
+}
+
+// spec: §10.6 line 562 — a tenant-admin asserting a tenantId different
+// from its own authorized tenant must be rejected, not silently
+// rewritten to its own tenant. F-10.6.12.
+func TestCreateEnvironmentRejectsMismatchedTenantID_spec_10_6_562(t *testing.T) {
+	router, _, _ := newEnvironmentAdmin(t)
+	body := validEnvironmentPayload("env-x")
+	body.TenantID = "globex" // tenant-admin is "acme"
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/environments",
+		body, withTenantAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched tenant id: status %d body %s, want 400", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "TENANT_ID_MISMATCH") {
+		t.Errorf("response body should carry TENANT_ID_MISMATCH code: %s", rr.Body.String())
+	}
+}
+
+// spec: §10.6 line 562 — same cross-check on Update. F-10.6.12.
+func TestUpdateEnvironmentRejectsMismatchedTenantID_spec_10_6_562(t *testing.T) {
+	router, _, _ := newEnvironmentAdmin(t)
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/environments",
+		validEnvironmentPayload("env-y"), withTenantAdminPrincipal)
+	body := validEnvironmentPayload("env-y")
+	body.TenantID = "globex"
+	rr := doAdminReq(t, router.Handler(), http.MethodPut, "/v1/admin/environments/env-y",
+		body, withTenantAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched tenant id on update: status %d body %s, want 400", rr.Code, rr.Body.String())
 	}
 }
 

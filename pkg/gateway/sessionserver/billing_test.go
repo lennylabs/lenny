@@ -107,6 +107,49 @@ func TestCreateAndStartEmitsSessionCreatedBillingEvent(t *testing.T) {
 	}
 }
 
+// spec: §10.6 line 663 — `environmentId` populated on all billing events
+// for sessions created in an environment context. F-10.6.9.
+func TestCreateEmitsBillingEventEnvironmentID_spec_10_6_663(t *testing.T) {
+	billing := billingstore.NewMemory()
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef:  "claude-code",
+		UserID:      "alice@acme.com",
+		Environment: "research",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	events, err := billing.Since(context.Background(), "acme", 0, 0)
+	if err != nil {
+		t.Fatalf("Since: %v", err)
+	}
+	if len(events) != 1 || events[0].EnvironmentID != "research" {
+		t.Fatalf("billing event must carry environment_id=research, got %+v", events)
+	}
+}
+
+// spec: §10.6 line 663 — sessions outside an environment carry the
+// empty environment id (no stamp). F-10.6.9.
+func TestCreateEmitsBillingEventNoEnvironmentWhenUnscoped_spec_10_6_663(t *testing.T) {
+	billing := billingstore.NewMemory()
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code",
+		UserID:     "alice@acme.com",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	events, err := billing.Since(context.Background(), "acme", 0, 0)
+	if err != nil {
+		t.Fatalf("Since: %v", err)
+	}
+	if len(events) != 1 || events[0].EnvironmentID != "" {
+		t.Fatalf("unscoped session must carry empty environment_id, got %+v", events)
+	}
+}
+
 func TestCreateWithoutBillingStoreDoesNotFail(t *testing.T) {
 	// Billing is nil: the create path must still succeed.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})

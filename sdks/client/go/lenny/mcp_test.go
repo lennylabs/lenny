@@ -263,6 +263,82 @@ func TestMCPCallToolFailureIsResultNotError(t *testing.T) {
 	}
 }
 
+// spec: §15.2.1 rule 5(d), §15.2 line 944, 972 — every MCP tool
+// failure that carries a `lenny/error` block surfaces the §15.2.1
+// parity triple (code, category, retryable). The SDK helper parses
+// the block so callers do not hand-decode the JSON. F-15.2.10.
+func TestMCPToolResultLennyErrorParsesEnvelope_spec_15_2_1(t *testing.T) {
+	res := MCPToolResult{
+		IsError: true,
+		Content: []MCPContent{
+			{Type: "text", Text: "session is terminal"},
+			{Type: "lenny/error", Text: `{"code":"INVALID_STATE_TRANSITION","category":"PERMANENT","message":"session is terminal","retryable":false,"details":{"state":"completed"}}`},
+		},
+	}
+	env := res.LennyError()
+	if env == nil {
+		t.Fatal("LennyError must surface the envelope, got nil")
+	}
+	if env.Code != "INVALID_STATE_TRANSITION" {
+		t.Errorf("Code: got %q, want INVALID_STATE_TRANSITION", env.Code)
+	}
+	if env.Category != "PERMANENT" {
+		t.Errorf("Category: got %q, want PERMANENT", env.Category)
+	}
+	if env.Retryable {
+		t.Errorf("Retryable: got true, want false")
+	}
+	if env.Message != "session is terminal" {
+		t.Errorf("Message: got %q", env.Message)
+	}
+	if !env.Retryable && env.Error() == "" {
+		t.Errorf("Error(): empty string for non-empty Code")
+	}
+}
+
+// spec: §15.2.1 — a result without a `lenny/error` block returns nil
+// so callers can fall back to Text(). F-15.2.10.
+func TestMCPToolResultLennyErrorAbsentBlockReturnsNil_spec_15_2_1(t *testing.T) {
+	res := MCPToolResult{
+		IsError: true,
+		Content: []MCPContent{{Type: "text", Text: "human-readable failure"}},
+	}
+	if env := res.LennyError(); env != nil {
+		t.Errorf("no lenny/error block: got %+v, want nil", env)
+	}
+}
+
+// spec: §15.2.1 — a malformed envelope returns nil rather than a
+// partially-populated struct so the caller never sees a misleading
+// retryable=false default. F-15.2.10.
+func TestMCPToolResultLennyErrorMalformedReturnsNil_spec_15_2_1(t *testing.T) {
+	res := MCPToolResult{
+		IsError: true,
+		Content: []MCPContent{{Type: "lenny/error", Text: `{not-json`}},
+	}
+	if env := res.LennyError(); env != nil {
+		t.Errorf("malformed envelope: got %+v, want nil", env)
+	}
+}
+
+// spec: §15.2.1 — a TRANSIENT/retryable=true envelope round-trips so
+// callers can drive a retry loop off the parity triple. F-15.2.10.
+func TestMCPToolResultLennyErrorRetryableTrueRoundTrips_spec_15_2_1(t *testing.T) {
+	res := MCPToolResult{
+		IsError: true,
+		Content: []MCPContent{
+			{Type: "lenny/error", Text: `{"code":"INTERCEPTOR_WEAKENING_COOLDOWN","category":"TRANSIENT","message":"cooldown active","retryable":true,"details":{"retryAfterSeconds":30}}`},
+		},
+	}
+	env := res.LennyError()
+	if env == nil {
+		t.Fatal("LennyError returned nil")
+	}
+	if !env.Retryable || env.Category != "TRANSIENT" {
+		t.Errorf("Retryable/Category mismatch: %+v", env)
+	}
+}
+
 func TestMCPNonJSONRPCStatusIsAPIError(t *testing.T) {
 	// spec: §15.2.1 a non-2xx status uses the shared §15.1 error
 	// taxonomy so one error-handling strategy covers both surfaces.

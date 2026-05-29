@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
@@ -68,6 +69,13 @@ func mcpEndpointFor(rt runtimestore.Runtime) string {
 // environment access: a caller sees only the runtimes its environment
 // membership authorizes. A not-authorized runtime is simply absent
 // from the list, so the response does not enable enumeration.
+//
+// spec: §10.6 line 672 — accept the optional `?environmentId=` stub.
+// When non-empty, the result is further narrowed to runtimes that
+// belong to the named environment; the caller still has to be a
+// member, so a runtime not in the named environment is dropped from
+// the response. An empty value is the v1 default (no narrowing).
+// F-10.6.10.
 func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.runtimes == nil {
@@ -84,6 +92,9 @@ func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 	}
 	rows = s.resolveRuntimes(r.Context(), rows)
 	rows = s.filterRuntimesByEnvironment(r, rows)
+	if envID := r.URL.Query().Get("environmentId"); envID != "" {
+		rows = s.narrowRuntimesToEnvironment(r, rows, envID)
+	}
 
 	out := make([]RuntimeDiscoveryEntry, 0, len(rows))
 	for _, rt := range rows {
@@ -313,6 +324,45 @@ func (s *Server) filterRuntimesByEnvironment(r *http.Request, runtimes []runtime
 		res = resolved
 	}
 	return res.FilterRuntimes(runtimes)
+}
+
+// narrowRuntimesToEnvironment further restricts a runtime list to those
+// reachable through environmentName's runtimeSelector, on top of the
+// §10.6 transparent filter already applied by
+// filterRuntimesByEnvironment. It is the `?environmentId=` v1 stub: it
+// does not promote access (a runtime the transparent filter already
+// excluded is still excluded), it lets the caller scope the response to
+// a single named environment. A nil environment registry or an unknown
+// environmentName collapses the list to empty — an unknown environment
+// is treated as a not-allowed scope so a typo never broadens visibility.
+// spec: §10.6 line 672. F-10.6.10.
+func (s *Server) narrowRuntimesToEnvironment(r *http.Request, runtimes []runtimestore.Runtime, environmentName string) []runtimestore.Runtime {
+	if s.environments == nil || environmentName == "" {
+		return runtimes
+	}
+	tenantID := ""
+	if principal, ok := getPrincipal(r); ok {
+		tenantID = principal.TenantID
+	}
+	if tenantID == "" {
+		tenantID = r.Header.Get("X-Lenny-Tenant-ID")
+	}
+	if tenantID == "" {
+		return []runtimestore.Runtime{}
+	}
+	env, err := s.environments.Get(r.Context(), tenantID, environmentName)
+	if err != nil || env.Name == "" {
+		return []runtimestore.Runtime{}
+	}
+	out := make([]runtimestore.Runtime, 0, len(runtimes))
+	for _, rt := range runtimes {
+		if env.RuntimeSelector.Matches(environment.Candidate{
+			Name: rt.Name, Type: string(rt.Type), Labels: rt.Labels,
+		}) {
+			out = append(out, rt)
+		}
+	}
+	return out
 }
 
 // resolveEnvironmentForRequest returns the §10.6 Resolution for the

@@ -59,7 +59,7 @@ func TestOpenBreakerHappyPath(t *testing.T) {
 	if row.State != circuitbreaker.StateOpen || row.Reason != "incident #42" {
 		t.Errorf("stored: %+v", row)
 	}
-	if len(audit.snapshot()) != 1 || audit.snapshot()[0].Type != "circuit_breaker.opened" {
+	if len(audit.snapshot()) != 1 || audit.snapshot()[0].Type != "circuit_breaker.state_changed" {
 		t.Errorf("audit: %+v", audit.snapshot())
 	}
 }
@@ -118,7 +118,7 @@ func TestCloseBreaker(t *testing.T) {
 	if row.State != circuitbreaker.StateClosed {
 		t.Errorf("state: %q", row.State)
 	}
-	if len(audit.snapshot()) != 1 || audit.snapshot()[0].Type != "circuit_breaker.closed" {
+	if len(audit.snapshot()) != 1 || audit.snapshot()[0].Type != "circuit_breaker.state_changed" {
 		t.Errorf("audit: %+v", audit.snapshot())
 	}
 }
@@ -148,6 +148,79 @@ func TestListBreakers(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.CircuitBreakers) != 1 || resp.CircuitBreakers[0].Name != "rt" {
 		t.Errorf("List: %+v", resp.CircuitBreakers)
+	}
+}
+
+// spec: §16.7 line 673 — the operator-managed breaker lifecycle
+// event is `circuit_breaker.state_changed` with `old_state` /
+// `new_state`. The open transition writes `closed → open` carrying
+// the spec-mandated payload fields. F-16.7.4.
+func TestOpenBreakerEmitsStateChangedAuditPayload_spec_16_7_673(t *testing.T) {
+	router, _, audit := newBreakerAdmin(t)
+	breakerReq(t, router.Handler(), http.MethodPost,
+		"/v1/admin/circuit-breakers/rt-emergency/open",
+		admin.OpenBreakerRequest{
+			Reason:    "incident #42",
+			LimitTier: "runtime",
+			Scope:     admin.ScopePayload{Runtime: "echo"},
+		})
+	rows := audit.snapshot()
+	if len(rows) != 1 {
+		t.Fatalf("want 1 audit row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.Type != "circuit_breaker.state_changed" {
+		t.Errorf("Type = %q, want circuit_breaker.state_changed", row.Type)
+	}
+	if row.Detail["old_state"] != "closed" || row.Detail["new_state"] != "open" {
+		t.Errorf("state transition: old=%v new=%v, want closed→open",
+			row.Detail["old_state"], row.Detail["new_state"])
+	}
+	if row.Detail["limit_tier"] != "runtime" {
+		t.Errorf("limit_tier = %v, want runtime", row.Detail["limit_tier"])
+	}
+	if row.Detail["operator_sub"] != "admin@acme.com" {
+		t.Errorf("operator_sub = %v, want admin@acme.com", row.Detail["operator_sub"])
+	}
+	scope, _ := row.Detail["scope"].(map[string]any)
+	if scope == nil || scope["runtime"] != "echo" {
+		t.Errorf("scope.runtime = %v, want echo (full scope=%+v)", scope["runtime"], scope)
+	}
+}
+
+// spec: §16.7 line 673 — close transition writes `open → closed` with
+// the platform-generated `"operator close"` reason and the persisted
+// `limit_tier` / `scope` so the SIEM joins the pair on `limit_tier`.
+// F-16.7.4.
+func TestCloseBreakerEmitsStateChangedAuditPayload_spec_16_7_673(t *testing.T) {
+	router, store, audit := newBreakerAdmin(t)
+	_, _ = store.Open(context.Background(), circuitbreaker.Breaker{
+		Name: "rt", State: circuitbreaker.StateOpen,
+		LimitTier: circuitbreaker.TierPool,
+		Scope:     circuitbreaker.Scope{Pool: "default"},
+	})
+	breakerReq(t, router.Handler(), http.MethodPost, "/v1/admin/circuit-breakers/rt/close", nil)
+	rows := audit.snapshot()
+	if len(rows) != 1 {
+		t.Fatalf("want 1 audit row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.Type != "circuit_breaker.state_changed" {
+		t.Errorf("Type = %q, want circuit_breaker.state_changed", row.Type)
+	}
+	if row.Detail["old_state"] != "open" || row.Detail["new_state"] != "closed" {
+		t.Errorf("state transition: old=%v new=%v, want open→closed",
+			row.Detail["old_state"], row.Detail["new_state"])
+	}
+	if row.Detail["reason"] != "operator close" {
+		t.Errorf("reason = %v, want %q", row.Detail["reason"], "operator close")
+	}
+	if row.Detail["limit_tier"] != "pool" {
+		t.Errorf("limit_tier = %v, want pool", row.Detail["limit_tier"])
+	}
+	scope, _ := row.Detail["scope"].(map[string]any)
+	if scope == nil || scope["pool"] != "default" {
+		t.Errorf("scope.pool = %v, want default (full scope=%+v)", scope["pool"], scope)
 	}
 }
 

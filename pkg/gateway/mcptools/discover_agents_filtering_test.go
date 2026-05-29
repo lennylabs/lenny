@@ -168,6 +168,65 @@ func TestListRuntimesToolCoversAllTypesAndFilters(t *testing.T) {
 	}
 }
 
+// spec: §10.6 line 672 — `list_runtimes` accepts the optional
+// `environmentId` stub. When the named environment is known and
+// reachable, the response narrows to runtimes that environment admits.
+// F-10.6.10.
+func TestListRuntimesToolEnvironmentIDStubNarrows_spec_10_6_672(t *testing.T) {
+	srv, runtimes, envs, tenants := newMCPFiltered(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "security"},
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "research-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "research"},
+	})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
+	_ = envs.Create(context.Background(), environmentstore.Environment{
+		Name: "research-team", TenantID: "acme",
+		Members: []environmentstore.Member{{
+			Identity: environmentstore.Identity{Type: "oidc-group", Value: "security-engineers"},
+			Role:     environment.RoleCreator,
+		}},
+		RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "research"}},
+	})
+
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes",
+		`{"environmentId":"research-team"}`))
+	if !strings.Contains(text, "research-agent") {
+		t.Errorf("environmentId=research-team must surface research-agent: %q", text)
+	}
+	if strings.Contains(text, "sec-agent") {
+		t.Errorf("environmentId=research-team must drop sec-agent: %q", text)
+	}
+}
+
+// spec: §10.6 line 672 — an unknown `environmentId` collapses the
+// response to empty so a typo never broadens visibility. F-10.6.10.
+func TestListRuntimesToolEnvironmentIDStubUnknownEnvIsEmpty_spec_10_6_672(t *testing.T) {
+	srv, runtimes, envs, tenants := newMCPFiltered(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "security"},
+	})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
+
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes",
+		`{"environmentId":"does-not-exist"}`))
+	if strings.Contains(text, "sec-agent") {
+		t.Errorf("unknown environmentId must drop every runtime: %q", text)
+	}
+}
+
 func TestListRuntimesToolSurfacesAgentInterface(t *testing.T) {
 	srv, runtimes, envs, tenants := newMCPFiltered(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

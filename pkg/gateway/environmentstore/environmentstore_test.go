@@ -46,6 +46,24 @@ func TestCreateAndGet(t *testing.T) {
 	}
 }
 
+// spec: §10.6 lines 562-565 — description is a human-facing label and
+// must be bounded so a misuse cannot deposit an unbounded blob. The
+// at-the-cap value round-trips; one byte over is rejected. F-10.6.12.
+func TestDescriptionLengthIsCapped_spec_10_6_562(t *testing.T) {
+	m := environmentstore.NewMemory()
+	atCap := validEnvironment("acme", "exactly-cap")
+	atCap.Description = strings.Repeat("a", environmentstore.MaxDescriptionLen)
+	if err := m.Create(context.Background(), atCap); err != nil {
+		t.Fatalf("description at the cap must round-trip: %v", err)
+	}
+	overCap := validEnvironment("acme", "over-cap")
+	overCap.Description = strings.Repeat("a", environmentstore.MaxDescriptionLen+1)
+	if err := m.Create(context.Background(), overCap); err == nil ||
+		!strings.Contains(err.Error(), "description") {
+		t.Fatalf("description one byte over cap: got %v, want a description-bound error", err)
+	}
+}
+
 func TestCreateRejectsInvalidEnvironment(t *testing.T) {
 	m := environmentstore.NewMemory()
 	bad := validEnvironment("acme", "bad")

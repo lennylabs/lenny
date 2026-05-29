@@ -793,11 +793,14 @@ func (w *Watchdog) recordCompleted(ctx context.Context, sess sessionstore.Sessio
 	if w.billing == nil {
 		return
 	}
+	// spec: §10.6 line 663 — watchdog-driven terminal also stamps env.
+	// F-10.6.9.
 	_, _ = w.billing.Append(ctx, billingstore.Event{
-		TenantID:  sess.TenantID,
-		UserID:    sess.UserID,
-		SessionID: sess.ID,
-		EventType: billingstore.EventSessionCompleted,
+		TenantID:      sess.TenantID,
+		UserID:        sess.UserID,
+		SessionID:     sess.ID,
+		EventType:     billingstore.EventSessionCompleted,
+		EnvironmentID: sess.Environment,
 	})
 }
 

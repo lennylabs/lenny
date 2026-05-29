@@ -38,7 +38,7 @@ var _ billingstore.Store = (*Store)(nil)
 const selectList = `sequence_number, schema_version, user_id, session_id,
 	experiment_id, variant_id, event_type, tokens_input, tokens_output,
 	pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
-	created_at`
+	environment_id, created_at`
 
 // Append commits a billing event to the tenant's ledger and returns
 // the sealed event. The per-tenant advisory lock makes the tail read
@@ -68,13 +68,13 @@ func (s *Store) Append(ctx context.Context, e billingstore.Event) (billingstore.
 			tenant_id, sequence_number, schema_version, user_id, session_id,
 			experiment_id, variant_id, event_type, tokens_input, tokens_output,
 			pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
-			created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+			environment_id, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 			e.TenantID, int64(e.SequenceNumber), int32(e.SchemaVersion), e.UserID,
 			pgtenant.NullString(e.SessionID), e.ExperimentID, e.VariantID,
 			string(e.EventType), int64(e.TokensInput), int64(e.TokensOutput),
 			e.PodMinutes, correctsSequence(e), string(e.CorrectionReasonCode),
-			e.CorrectionDetail, e.CreatedAt); err != nil {
+			e.CorrectionDetail, e.EnvironmentID, e.CreatedAt); err != nil {
 			return err
 		}
 		committed = e
@@ -135,7 +135,8 @@ func scanEvent(row pgx.Row, tenantID string) (billingstore.Event, error) {
 	)
 	if err := row.Scan(&seq, &schemaVer, &e.UserID, &sessionID,
 		&e.ExperimentID, &e.VariantID, &eventType, &tokensIn, &tokensOut,
-		&e.PodMinutes, &correctsTo, &reasonCode, &detail, &e.CreatedAt); err != nil {
+		&e.PodMinutes, &correctsTo, &reasonCode, &detail, &e.EnvironmentID,
+		&e.CreatedAt); err != nil {
 		return billingstore.Event{}, err
 	}
 	e.TenantID = tenantID
@@ -201,14 +202,14 @@ func (s *Store) InsertFromStream(ctx context.Context, e billingstore.Event, stre
 			tenant_id, sequence_number, schema_version, user_id, session_id,
 			experiment_id, variant_id, event_type, tokens_input, tokens_output,
 			pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
-			stream_entry_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			environment_id, stream_entry_id, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING`,
 			e.TenantID, int64(e.SequenceNumber), int32(e.SchemaVersion), e.UserID,
 			pgtenant.NullString(e.SessionID), e.ExperimentID, e.VariantID,
 			string(e.EventType), int64(e.TokensInput), int64(e.TokensOutput),
 			e.PodMinutes, correctsSequence(e), string(e.CorrectionReasonCode),
-			e.CorrectionDetail, streamEntryID, e.CreatedAt)
+			e.CorrectionDetail, e.EnvironmentID, streamEntryID, e.CreatedAt)
 		return err
 	})
 }

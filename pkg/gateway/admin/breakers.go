@@ -9,9 +9,47 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
+
+// scopeDetail returns the §16.7 line 673 tier-specific scope object the
+// `circuit_breaker.state_changed` audit row carries. The shape mirrors
+// the admin API body and the persisted `cb:{name}` value: a single
+// key keyed by `limit_tier` (`runtime`, `pool`, `connector`, or
+// `operation_type`). F-16.7.4.
+func scopeDetail(s ScopePayload) map[string]any {
+	switch {
+	case s.Runtime != "":
+		return map[string]any{"runtime": s.Runtime}
+	case s.Pool != "":
+		return map[string]any{"pool": s.Pool}
+	case s.Connector != "":
+		return map[string]any{"connector": s.Connector}
+	case s.OperationType != "":
+		return map[string]any{"operation_type": s.OperationType}
+	}
+	return map[string]any{}
+}
+
+// scopeDetailFromStored returns the spec-mandated scope object from a
+// stored Breaker — used on Close where the admin request carries an
+// empty body but the persisted `cb:{name}` value supplies the tier and
+// scope SIEM consumers join on. F-16.7.4.
+func scopeDetailFromStored(b circuitbreaker.Breaker) map[string]any {
+	switch {
+	case b.Scope.Runtime != "":
+		return map[string]any{"runtime": b.Scope.Runtime}
+	case b.Scope.Pool != "":
+		return map[string]any{"pool": b.Scope.Pool}
+	case b.Scope.Connector != "":
+		return map[string]any{"connector": b.Scope.Connector}
+	case b.Scope.OperationType != "":
+		return map[string]any{"operation_type": string(b.Scope.OperationType)}
+	}
+	return map[string]any{}
+}
 
 // BreakerPayload is the §15.1 admin-circuit-breaker wire shape.
 type BreakerPayload struct {
@@ -122,10 +160,22 @@ func (r *Router) handleOpenBreaker(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
-	r.emit(req.Context(), principal, "circuit_breaker.opened", name, map[string]any{
-		"reason":     body.Reason,
-		"limit_tier": body.LimitTier,
-		"scope":      body.Scope,
+	// spec: §16.7 line 673 — the operator-managed circuit-breaker
+	// lifecycle event is `circuit_breaker.state_changed` with
+	// old_state/new_state fields. The `circuit_breaker.opened` /
+	// `circuit_breaker.closed` strings the gateway used to emit are
+	// not in the §16.7 catalog and have no OCSF mapping; rows would
+	// dead-letter at translation. F-16.7.4.
+	r.emit(req.Context(), principal, audit.EventCircuitBreakerStateChanged.String(), name, map[string]any{
+		"circuit_name":       name,
+		"old_state":          "closed",
+		"new_state":          "open",
+		"reason":             body.Reason,
+		"limit_tier":         body.LimitTier,
+		"scope":              scopeDetail(body.Scope),
+		"operator_sub":       principal.Subject,
+		"operator_tenant_id": principal.TenantID,
+		"timestamp":          rfc3339Nano(stored.OpenedAt),
 	})
 	// §25.3: surface the breaker transition as an operational event so
 	// ops agents observe it through the event buffer.
@@ -153,7 +203,23 @@ func (r *Router) handleCloseBreaker(w http.ResponseWriter, req *http.Request) {
 			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	r.emit(req.Context(), principal, "circuit_breaker.closed", name, nil)
+	// spec: §16.7 line 673 — close path emits the same
+	// `circuit_breaker.state_changed` event with old_state=open,
+	// new_state=closed and a platform-generated reason ("operator
+	// close"). The persisted tier/scope are echoed so a SIEM joining
+	// on `limit_tier` finds both transitions for the same breaker.
+	// F-16.7.4.
+	r.emit(req.Context(), principal, audit.EventCircuitBreakerStateChanged.String(), name, map[string]any{
+		"circuit_name":       name,
+		"old_state":          "open",
+		"new_state":          "closed",
+		"reason":             "operator close",
+		"limit_tier":         string(closed.LimitTier),
+		"scope":              scopeDetailFromStored(closed),
+		"operator_sub":       principal.Subject,
+		"operator_tenant_id": principal.TenantID,
+		"timestamp":          rfc3339Nano(r.clock()),
+	})
 	r.emitOpsEvent(req.Context(), events.EventCircuitBreakerClosed, "info", map[string]any{
 		"name": name, "closedBy": principal.Subject,
 	})

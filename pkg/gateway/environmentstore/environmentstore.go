@@ -82,6 +82,13 @@ type Environment struct {
 	UpdatedAt time.Time
 }
 
+// MaxDescriptionLen bounds the §10.6 environment Description so the
+// admin API does not accept an unbounded human-facing label. 1 KiB is
+// the same ceiling adopted for adjacent §10.6 free-text fields and
+// fits the §10.6 example (`Security engineering workspace`) two orders
+// of magnitude over. F-10.6.12.
+const MaxDescriptionLen = 1024
+
 // Validate reports the §10.6 admission errors for an Environment.
 func (e Environment) Validate() error {
 	var v []string
@@ -90,6 +97,12 @@ func (e Environment) Validate() error {
 	}
 	if e.TenantID == "" {
 		v = append(v, "tenantId is required")
+	}
+	// spec: §10.6 lines 562-565 — description is a human-facing label;
+	// bound it so a misuse cannot deposit an unbounded blob into the
+	// registry. F-10.6.12.
+	if n := len(e.Description); n > MaxDescriptionLen {
+		v = append(v, fmt.Sprintf("description: %d bytes exceeds the §10.6 cap of %d", n, MaxDescriptionLen))
 	}
 	seen := map[string]bool{}
 	for i, m := range e.Members {

@@ -62,6 +62,64 @@ func (r MCPToolResult) Text() string {
 	return b.String()
 }
 
+// LennyError is the §15.2.1 shared error envelope a Lenny MCP tool
+// surfaces in a `lenny/error` content block when IsError is true. The
+// Code/Category/Retryable triple is the §15.2.1 REST↔MCP parity contract
+// (item 5(d)): a client compares them across the REST and MCP surfaces
+// and gets the same retry decision either way. spec: §15.2 line 944, 972.
+type LennyError struct {
+	// Code is the machine-readable error code from the §15.2.1 catalog
+	// (for example `VALIDATION_ERROR`, `INVALID_STATE_TRANSITION`,
+	// `INTERCEPTOR_WEAKENING_COOLDOWN`).
+	Code string `json:"code"`
+
+	// Category is the §16.3 envelope category, one of `TRANSIENT`,
+	// `PERMANENT`, `POLICY`, `UPSTREAM`.
+	Category string `json:"category"`
+
+	// Message is the human-readable description.
+	Message string `json:"message"`
+
+	// Retryable reports whether the client should retry. Authoritative
+	// across REST and MCP under the §15.2.1 parity contract.
+	Retryable bool `json:"retryable"`
+
+	// Details carries error-specific context. Structure varies by Code.
+	Details json.RawMessage `json:"details,omitempty"`
+}
+
+// Error implements the error interface so callers can return *LennyError
+// directly from helpers that unwrap a §15.2.1 failure envelope.
+func (e *LennyError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Code == "" {
+		return e.Message
+	}
+	return fmt.Sprintf("lenny: %s (%s, retryable=%t): %s",
+		e.Code, e.Category, e.Retryable, e.Message)
+}
+
+// LennyError returns the §15.2.1 error envelope surfaced in the result's
+// `lenny/error` content block, when present. Returns nil when the
+// result carries no such block (a transport-level success without a
+// tool-level failure envelope) or when the envelope JSON is malformed —
+// callers that want to fall back to the human Text() can do so on nil.
+// F-15.2.10.
+func (r MCPToolResult) LennyError() *LennyError {
+	for _, c := range r.Content {
+		if c.Type != "lenny/error" {
+			continue
+		}
+		var env LennyError
+		if err := json.Unmarshal([]byte(c.Text), &env); err == nil {
+			return &env
+		}
+	}
+	return nil
+}
+
 // MCPContent is one content block in an MCP tool result.
 type MCPContent struct {
 	// Type is the content block type. The gateway tools emit text.

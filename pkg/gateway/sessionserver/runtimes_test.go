@@ -503,6 +503,116 @@ func TestListRuntimesEnvironmentFiltered(t *testing.T) {
 	}
 }
 
+// spec: §10.6 line 672 — `GET /v1/runtimes` accepts the optional
+// `?environmentId=` stub. When the named environment is known, the
+// response narrows to runtimes that environment's runtimeSelector
+// admits. F-10.6.10.
+func TestListRuntimesEnvironmentIDStubNarrows_spec_10_6_672(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "security"},
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "research-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "research"},
+	})
+	envs := environmentstore.NewMemory()
+	_ = envs.Create(context.Background(), environmentstore.Environment{
+		Name: "security-team", TenantID: "acme",
+		Members: []environmentstore.Member{{
+			Identity: environmentstore.Identity{Type: "oidc-group", Value: "security-engineers"},
+			Role:     environment.RoleCreator,
+		}},
+		RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	})
+	_ = envs.Create(context.Background(), environmentstore.Environment{
+		Name: "research-team", TenantID: "acme",
+		Members: []environmentstore.Member{{
+			Identity: environmentstore.Identity{Type: "oidc-group", Value: "security-engineers"},
+			Role:     environment.RoleCreator,
+		}},
+		RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "research"}},
+	})
+	tenants := tenantstore.NewMemory()
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		Runtimes: runtimes, Environments: envs, Tenants: tenants,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes?environmentId=research-team", nil)
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"},
+	}))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Runtimes) != 1 || resp.Runtimes[0].Name != "research-agent" {
+		t.Errorf("environmentId=research-team narrowed: got %+v, want only research-agent", resp.Runtimes)
+	}
+}
+
+// spec: §10.6 line 672 — an unknown `environmentId` collapses the
+// response to empty so a typo never broadens visibility. F-10.6.10.
+func TestListRuntimesEnvironmentIDStubUnknownEnvIsEmpty_spec_10_6_672(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "claude-agent", Type: runtimestore.TypeAgent,
+	})
+	envs := environmentstore.NewMemory()
+	tenants := tenantstore.NewMemory()
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme", NoEnvironmentPolicy: "allow-all"})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		Runtimes: runtimes, Environments: envs, Tenants: tenants,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes?environmentId=does-not-exist", nil)
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject: "bob", TenantID: "acme",
+	}))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Runtimes) != 0 {
+		t.Errorf("unknown environmentId must collapse to empty list, got %+v", resp.Runtimes)
+	}
+}
+
+// spec: §10.6 line 672 — empty `?environmentId=` (the v1 default)
+// must behave exactly like an absent param so existing clients are
+// unaffected. F-10.6.10.
+func TestListRuntimesEmptyEnvironmentIDStubIsNoOp_spec_10_6_672(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "claude-agent", Type: runtimestore.TypeAgent,
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "gemini-agent", Type: runtimestore.TypeAgent,
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes?environmentId=", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Runtimes) != 2 {
+		t.Errorf("empty environmentId stub must be a no-op, got %d runtimes", len(resp.Runtimes))
+	}
+}
+
 // TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38 pins the
 // §9.1 line 38 / §15.1 line 698 discovery contract: every type:mcp
 // runtime carries `mcpEndpoint: /mcp/runtimes/{name}` in REST

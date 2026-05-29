@@ -123,6 +123,13 @@ type Event struct {
 	PodMinutes     float64
 	CreatedAt      time.Time
 
+	// EnvironmentID is the §10.6 environment the session was created in,
+	// empty for sessions not scoped to an environment. Populated on
+	// every billing event for sessions created in an environment context
+	// so downstream rollups can aggregate by environment without joining
+	// the session row. spec: §10.6 line 663, §10.6 line 674. F-10.6.9.
+	EnvironmentID string
+
 	// CorrectsSequence references the original event a billing_correction
 	// adjusts (§11.2.1). It is zero for every non-correction event;
 	// sequence numbers start at 1, so zero is never a valid reference.

@@ -108,11 +108,15 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 		})
 	}
 	if s.billing != nil {
+		// spec: §10.6 line 663 — stamp the session's environment on the
+		// billing event so downstream rollups aggregate by environment.
+		// F-10.6.9.
 		_, _ = s.billing.Append(ctx, billingstore.Event{
-			TenantID:  sess.TenantID,
-			UserID:    sess.UserID,
-			SessionID: sess.ID,
-			EventType: billingstore.EventSessionCreated,
+			TenantID:      sess.TenantID,
+			UserID:        sess.UserID,
+			SessionID:     sess.ID,
+			EventType:     billingstore.EventSessionCreated,
+			EnvironmentID: sess.Environment,
 		})
 	}
 	// §7.1 / §16.6: write the `session.created` event to the §11.7
@@ -289,11 +293,14 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	if s.billing == nil {
 		return
 	}
+	// spec: §10.6 line 663 — environment stamp on terminal-state billing
+	// event. F-10.6.9.
 	_, _ = s.billing.Append(ctx, billingstore.Event{
-		TenantID:  sess.TenantID,
-		UserID:    sess.UserID,
-		SessionID: sess.ID,
-		EventType: billingstore.EventSessionCompleted,
+		TenantID:      sess.TenantID,
+		UserID:        sess.UserID,
+		SessionID:     sess.ID,
+		EventType:     billingstore.EventSessionCompleted,
+		EnvironmentID: sess.Environment,
 	})
 }
 

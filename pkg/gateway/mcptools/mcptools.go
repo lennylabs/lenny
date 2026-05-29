@@ -39,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/elicitation"
+	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
@@ -1297,10 +1298,15 @@ func Register(srv *mcp.Server, deps Deps) {
 		srv.RegisterTool(mcp.Tool{
 			Name:        "lenny/list_runtimes",
 			Description: "List the runtimes available to the caller (§9.1 discovery).",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"nameContains":{"type":"string"}}}`),
+			// spec: §10.6 line 672 — optional `environmentId` stub
+			// narrows the discovery view to one named environment. The
+			// v1 stub is non-promoting: a runtime the §10.6 transparent
+			// filter already excluded stays excluded. F-10.6.10.
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"nameContains":{"type":"string"},"environmentId":{"type":"string","description":"§10.6 v1 stub: narrow discovery to runtimes admitted by this environment's runtimeSelector."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			var in struct {
-				NameContains string `json:"nameContains"`
+				NameContains  string `json:"nameContains"`
+				EnvironmentID string `json:"environmentId"`
 			}
 			if len(args) > 0 {
 				if err := json.Unmarshal(args, &in); err != nil {
@@ -1323,6 +1329,13 @@ func Register(srv *mcp.Server, deps Deps) {
 			runtimes, err = filterByEnvironmentAccess(ctx, deps, runtimes)
 			if err != nil {
 				return mcp.ToolResult{}, err
+			}
+			// spec: §10.6 line 672 — `environmentId` stub narrows to one
+			// environment when supplied; unknown environment collapses
+			// the result to empty so a typo never broadens visibility.
+			// F-10.6.10.
+			if in.EnvironmentID != "" {
+				runtimes = narrowRuntimesToEnvironment(ctx, deps, runtimes, in.EnvironmentID)
 			}
 			needle := strings.ToLower(in.NameContains)
 			out := make([]discoveredRuntime, 0, len(runtimes))
@@ -2045,6 +2058,40 @@ func filterByEnvironmentAccess(ctx context.Context, deps Deps, runtimes []runtim
 		return nil, err
 	}
 	return res.FilterRuntimes(runtimes), nil
+}
+
+// narrowRuntimesToEnvironment narrows runtimes to those admitted by
+// environmentName's runtimeSelector — the §10.6 line 672
+// `environmentId` v1 stub. The narrowing applies on top of the §10.6
+// transparent filter already applied upstream: a runtime the filter
+// excluded stays excluded. A nil environment registry leaves the list
+// unchanged; an unknown environmentName collapses it to empty so a
+// typo never broadens visibility. F-10.6.10.
+func narrowRuntimesToEnvironment(ctx context.Context, deps Deps, runtimes []runtimestore.Runtime, environmentName string) []runtimestore.Runtime {
+	if deps.Environments == nil || environmentName == "" {
+		return runtimes
+	}
+	res, err := environmentResolution(ctx, deps)
+	if err != nil {
+		return []runtimestore.Runtime{}
+	}
+	tenant := res.TenantID
+	if tenant == "" {
+		tenant = deps.TenantID
+	}
+	env, err := deps.Environments.Get(ctx, tenant, environmentName)
+	if err != nil || env.Name == "" {
+		return []runtimestore.Runtime{}
+	}
+	out := make([]runtimestore.Runtime, 0, len(runtimes))
+	for _, rt := range runtimes {
+		if env.RuntimeSelector.Matches(environment.Candidate{
+			Name: rt.Name, Type: string(rt.Type), Labels: rt.Labels,
+		}) {
+			out = append(out, rt)
+		}
+	}
+	return out
 }
 
 // runtimeAuthorizedForCaller reports whether the caller's §10.6

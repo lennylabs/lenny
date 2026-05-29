@@ -210,6 +210,16 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
+	// spec: §10.6 line 562 — admin caller asserts a tenantId on the
+	// body. When the asserted value disagrees with the authorized
+	// tenant, fail loudly rather than silently rewrite the row.
+	// F-10.6.12.
+	if body.TenantID != "" && body.TenantID != tenant {
+		writeError(w, http.StatusBadRequest, "TENANT_ID_MISMATCH",
+			"request body tenantId does not match the authorized tenant",
+			map[string]any{"bodyTenantId": body.TenantID, "authorizedTenantId": tenant})
+		return
+	}
 	env := toEnvironment(body, tenant)
 	if err := r.environments.Create(req.Context(), env); err != nil {
 		if errors.Is(err, environmentstore.ErrAlreadyExists) {
@@ -276,6 +286,15 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 	tenant, _, err := r.authorizedTenantForUser(req, body.TenantID)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	// spec: §10.6 line 562 — body tenantId must match the authorized
+	// tenant on Update too; a silent rewrite would let an admin re-tag
+	// a row to look like it belonged to a different tenant. F-10.6.12.
+	if body.TenantID != "" && body.TenantID != tenant {
+		writeError(w, http.StatusBadRequest, "TENANT_ID_MISMATCH",
+			"request body tenantId does not match the authorized tenant",
+			map[string]any{"bodyTenantId": body.TenantID, "authorizedTenantId": tenant})
 		return
 	}
 	desired := toEnvironment(body, tenant)
