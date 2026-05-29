@@ -17667,13 +17667,15 @@ Spec: §12.3 item 5 — "An integration test (`TestRLSTenantGuardMissingSetLocal
 
 Repo-wide grep for `TestRLSTenantGuardMissingSetLocal` finds zero Go test files (only spec/review-findings markdown). Grep for `LENNY_POOLER_MODE` startup detection in `cmd/lenny-gateway/` also returns nothing. The CI-required negative test that asserts the trigger blocks a no-SET-LOCAL query, and the gateway-startup refusal path, are both unimplemented. The `lenny_tenant_guard` trigger itself (`migrations/0002_rls_immutability_roles.up.sql:36-62`) exists and is correctly attached to `sessions`, `session_messages`, `issued_tokens`, `audit_log`, `billing_events` (and via subsequent migrations to credential_pools, etc.), but the spec's secondary defense — that any binary lacking the trigger refuses to boot under cloud-managed pooler mode — is not in the binary.
 
-### - [ ] F-12.2.15 — 15 — ArtifactStore interface-level `/{tenant_id}/` prefix validation not enforced (Medium) [Medium] — OPEN
+### - [ ] F-12.2.15 — 15 — ArtifactStore interface-level `/{tenant_id}/` prefix validation not enforced (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.5.8, F-4.5.1 — All three report that ArtifactStore does not enforce per-tenant prefix validation at the interface boundary and ErrCrossTenant is never returned.
 
 Spec: §12.2 line 26 ("The `ArtifactStore` (MinIO) **must** use `/{tenant_id}/` path prefixes for all object keys, with mandatory prefix validation at the interface level").
 
 `pkg/blobstore/blobstore.go` `Store` interface accepts a `URI` struct with `TenantID` field but performs no interface-level check that the `TenantID` matches the caller's authorized tenant; the field is treated as caller-supplied. `pkg/blobstore/miniostore/miniostore.go:111-120` builds the key as `tenantID/sessionID/partID/` (no leading slash, matching MinIO bucket key conventions but diverging from the spec's `/{tenant_id}/` literal). No `PrefixValidator` interface or per-call assertion exists in the package — a repo-wide grep for `PrefixValidator|validate.*prefix|prefix.*valid` against `pkg/blobstore/` returns nothing. A bug in a calling site that supplied the wrong `TenantID` would silently write into another tenant's prefix; the spec's "mandatory prefix validation at the interface level" is not present.
+
+- **Resolution (`c5519211`):** Closed by F-12.5.8 / F-12.5.9 / F-4.5.1 (same root cause). The `blobstore.TenantScoped` decorator performs the `/{tenant_id}/` interface-level prefix validation (returning `ErrCrossTenant` on mismatch) and is now wired into the gateway's caller-supplied-URI blob paths, so a calling site that supplied the wrong `TenantID` is rejected at the store boundary rather than writing into another tenant's prefix.
 
 ### - [ ] F-12.2.16 — 16 — Erasure orchestrator wiring omits LeaseStore, SemanticCache, Redis caches, billing-write-ahead buffer, QuotaStore, eviction-state, audit (Medium) [Medium] — OPEN
 
@@ -18851,7 +18853,7 @@ key prefix)" (line 315) cannot be implemented as written because no caller
 puts an `eviction/` segment into the key. The GC sweep loses its only
 identifier for the eviction-context object class.
 
-### - [ ] F-12.5.7 — `DeleteByTenant` prefix-scoped bulk delete is absent (§12.5 line 295) [High] — OPEN
+### - [ ] F-12.5.7 — `DeleteByTenant` prefix-scoped bulk delete is absent (§12.5 line 295) [High] — CLOSED
 
 Line 295: "DeleteByTenant(tenant_id) performs a prefix-scoped bulk delete on
 `/{tenant_id}/*`."
@@ -18873,7 +18875,21 @@ imposes the multi-minute "per-tenant" erasure SLO breach
 `pkg/alerting/rules/rules.go:971` warns about and turns the §12.8 Phase 4
 deadline into a function of session count.
 
-### - [ ] F-12.5.8 — interface boundary does not enforce caller-tenant prefix; `ErrCrossTenant` is unused (§12.5 line 295) [High] — OPEN
+- **Resolution (`c5519211`):** Added `blobstore.TenantPrefixDeleter` with
+  `DeleteByTenant(ctx, tenantID) (int, error)` and implemented it on
+  `MemoryStore`, `miniostore`, `s3`, `gcs`, and `azureblob` as a single
+  prefix-scoped bulk delete on `/{tenant_id}/*` (MinIO lists+RemoveObjects the
+  prefix; S3 pages `ListObjectsV2(Prefix)`; GCS/Azure filter the bucket list).
+  The `cataloging` decorator forwards to the inner deleter and reconciles the
+  metadata via a new `artifactcatalog.Store.DeleteByTenant`
+  (`DELETE … WHERE tenant_id=$1 AND legal_hold=false`). The §12.8 Phase 4
+  orchestrator's `TenantEraser` seam now has a real blob primitive instead of
+  the O(#sessions) per-session enumeration. miniostore aborts the sweep on an
+  in-process §12.8 legal hold. Tests: MemoryStore prefix-scope / cross-tenant /
+  empty no-op, s3/gcs/azure prefix-scope, miniostore interface assertion,
+  cataloging forward / legal-hold preserve / inner-abort.
+
+### - [ ] F-12.5.8 — interface boundary does not enforce caller-tenant prefix; `ErrCrossTenant` is unused (§12.5 line 295) [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.2.15, F-4.5.1 — All three report that ArtifactStore does not enforce per-tenant prefix validation at the interface boundary and ErrCrossTenant is never returned.
 
@@ -18903,7 +18919,19 @@ overwrite cross-tenant blobs — the §15.1 403 boundary the comment alludes to
 must therefore be enforced redundantly in every caller, contradicting the
 "lives at the interface boundary, not in individual callers" mandate.
 
-### - [ ] F-12.5.9 — `lenny-blob` URI lacks the spec's tenant-prefix enforcement entry point (§12.5 line 295) [High] — OPEN
+- **Resolution (`c5519211`):** The `blobstore.TenantScoped` decorator (which
+  binds a caller-tenant at construction and returns `ErrCrossTenant` on any
+  URI whose tenant differs) is now wired into every caller-supplied-URI blob
+  path in the gateway: `GET /v1/blobs/{ref}` (`handleBlob`), the upload `Put`,
+  and the derive snapshot `Copy`. The per-handler `uri.TenantID != callerTenant`
+  comparison in `handleBlob` was removed; the read now flows through
+  `NewTenantScoped(callerTenant, blobs).Get(uri)` and maps `ErrCrossTenant` to
+  403 before the underlying store is touched (existence is never leaked).
+  `ErrCrossTenant` is therefore returned from the production path rather than
+  being a dead sentinel. `TestBlobGetRejectsCrossTenant` exercises the boundary;
+  the blobstore-level `TestTenantScoped*` tests pin the decorator contract.
+
+### - [ ] F-12.5.9 — `lenny-blob` URI lacks the spec's tenant-prefix enforcement entry point (§12.5 line 295) [High] — CLOSED
 
 The §12.5 line 295 architectural requirement is best satisfied by giving every
 `Store` method a caller-tenant argument (or building Stores with a fixed
@@ -18920,6 +18948,16 @@ Evidence:
 
 This is the architectural root of the previous finding; recording it separately
 because the fix is a v1 interface change (not a per-call defense addition).
+
+- **Resolution (`c5519211`):** Satisfied by the decorator option the finding
+  itself names ("building Stores with a fixed caller-tenant scope and a derived
+  URI"). `blobstore.NewTenantScoped(tenant, store)` is the entry point: every
+  `Get`/`Put`/`Copy`/`DeleteByTenant` issued through the returned handle
+  validates the operation's URI tenant against the bound tenant and returns
+  `ErrCrossTenant` on mismatch, so the §15.1 blob-serving layer routes the call
+  through a check the interface enforces. The gateway constructs it from the
+  resolved request tenant (see F-12.5.8) rather than relying on a per-caller
+  comparison.
 
 ### - [ ] F-12.5.10 — gateway-level GC orchestrator (leader-elected) is missing (§12.5 lines 317, 318, 320, 331–339) [High] — OPEN
 
