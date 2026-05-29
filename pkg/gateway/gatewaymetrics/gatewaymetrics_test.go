@@ -127,6 +127,42 @@ func TestCircuitBreakerMetricsExposeGauges(t *testing.T) {
 	}
 }
 
+// TestStorageWriteMetricsExposeValues covers the §12.3 write-pressure
+// and billing-pressure metrics: the write-IOPS gauge, the configured
+// ceiling, the billing_flush_pressure counter, and the audit chain
+// integrity counter all surface on /metrics. F-12.3.7 / F-12.3.8 /
+// F-12.3.9 / F-12.3.13.
+func TestStorageWriteMetricsExposeValues(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetPostgresWriteIops(123)
+	m.SetPostgresWriteCeilingIops(600)
+	m.IncBillingFlushPressure()
+	m.IncBillingFlushPressure()
+	m.IncAuditChainIntegrity("verified")
+	m.IncAuditChainIntegrity("broken")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_postgres_write_iops 123`,
+		`lenny_postgres_write_ceiling_iops 600`,
+		`lenny_billing_flush_pressure_total 2`,
+		`lenny_audit_chain_integrity_total{state="verified"} 1`,
+		`lenny_audit_chain_integrity_total{state="broken"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
 func TestMiddlewareRecordsRequests(t *testing.T) {
 	m, _ := gatewaymetrics.New()
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

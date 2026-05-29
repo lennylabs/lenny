@@ -45,10 +45,21 @@ import (
 // many events per gateway replica before Append starts rejecting.
 const DefaultWriteAheadBufferSize = 10_000
 
-// DefaultFlushInterval is the §11.2.1 billingFlushIntervalMs default
-// expressed as a duration: how often the background flusher re-attempts
-// the primary store.
-const DefaultFlushInterval = 5 * time.Second
+// DefaultFlushInterval is the §12.3 line 76 billingFlushIntervalMs
+// default expressed as a duration: how often the background flusher
+// re-attempts the primary store and drains the buffered batch.
+const DefaultFlushInterval = 500 * time.Millisecond
+
+// DefaultFlushBatchSize is the §12.3 line 76 billingFlushBatchSize
+// default: the maximum number of buffered events the flusher drains
+// into the primary store in a single multi-row replay batch.
+const DefaultFlushBatchSize = 50
+
+// DefaultFlushMaxPending is the §12.3 line 76 billingFlushMaxPending
+// default: when the Tier 2 buffer grows past this many events the
+// pipeline flushes immediately (out of band of the interval tick) and
+// emits the billing_flush_pressure metric.
+const DefaultFlushMaxPending = 500
 
 // ErrBufferFull is returned by Append when both the primary store and
 // the Redis stream tier are unavailable and the Tier 2 in-memory
@@ -93,8 +104,27 @@ type Options struct {
 	WriteAheadBufferSize int
 
 	// FlushInterval is how often the background flusher re-attempts the
-	// primary store. Zero uses DefaultFlushInterval.
+	// primary store. Zero uses DefaultFlushInterval (§12.3
+	// billingFlushIntervalMs).
 	FlushInterval time.Duration
+
+	// BatchSize bounds the number of buffered events drained into the
+	// primary store per flush call (§12.3 billingFlushBatchSize), so the
+	// replay proceeds as bounded multi-row batches rather than one
+	// unbounded statement. Zero or negative uses DefaultFlushBatchSize.
+	BatchSize int
+
+	// MaxPending is the §12.3 billingFlushMaxPending threshold: once the
+	// Tier 2 buffer grows beyond it, Append flushes immediately and
+	// invokes OnFlushPressure. Zero or negative uses
+	// DefaultFlushMaxPending; it is clamped to at most
+	// WriteAheadBufferSize so a small buffer still signals pressure.
+	MaxPending int
+
+	// OnFlushPressure is invoked each time an Append finds the buffer
+	// over MaxPending. The gateway wires it to the §12.3
+	// billing_flush_pressure metric. Nil disables the callback.
+	OnFlushPressure func()
 
 	// Clock overrides time.Now. Nil uses time.Now.
 	Clock Clock
@@ -119,11 +149,14 @@ const (
 // implements billingstore.Store, so it is a drop-in replacement for the
 // bare durable store.
 type Pipeline struct {
-	primary   billingstore.Store
-	stream    StreamTier
-	bufferCap int
-	interval  time.Duration
-	clock     Clock
+	primary    billingstore.Store
+	stream     StreamTier
+	bufferCap  int
+	interval   time.Duration
+	batchSize  int
+	maxPending int
+	onPressure func()
+	clock      Clock
 
 	mu       sync.Mutex
 	buffer   []billingstore.Event // Tier 2 write-ahead buffer, sequence order.
@@ -148,17 +181,34 @@ func New(opts Options) *Pipeline {
 	if interval <= 0 {
 		interval = DefaultFlushInterval
 	}
+	batchSize := opts.BatchSize
+	if batchSize <= 0 {
+		batchSize = DefaultFlushBatchSize
+	}
+	maxPending := opts.MaxPending
+	if maxPending <= 0 {
+		maxPending = DefaultFlushMaxPending
+	}
+	// A small write-ahead buffer must still be able to signal pressure:
+	// clamp the threshold below the hard capacity so ErrBufferFull is
+	// preceded by at least one billing_flush_pressure emission.
+	if maxPending >= cap {
+		maxPending = cap - 1
+	}
 	clock := opts.Clock
 	if clock == nil {
 		clock = time.Now
 	}
 	return &Pipeline{
-		primary:   opts.Primary,
-		stream:    opts.Stream,
-		bufferCap: cap,
-		interval:  interval,
-		clock:     clock,
-		seq:       make(map[string]uint64),
+		primary:    opts.Primary,
+		stream:     opts.Stream,
+		bufferCap:  cap,
+		interval:   interval,
+		batchSize:  batchSize,
+		maxPending: maxPending,
+		onPressure: opts.OnFlushPressure,
+		clock:      clock,
+		seq:        make(map[string]uint64),
 	}
 }
 
@@ -196,11 +246,41 @@ func (p *Pipeline) Append(ctx context.Context, e billingstore.Event) (billingsto
 		}
 	}
 	// Tier 2: the bounded in-memory write-ahead buffer.
-	if err := p.bufferEvent(provisional); err != nil {
+	overPending, err := p.bufferEvent(provisional)
+	if err != nil {
 		return billingstore.Event{}, err
 	}
 	p.setLastTier(TierBuffer)
+	// §12.3 line 76: once the buffer exceeds billingFlushMaxPending the
+	// gateway flushes immediately and emits billing_flush_pressure. The
+	// flush is best-effort — if the primary is still down it drains
+	// nothing and the events stay buffered for the next cycle.
+	if overPending {
+		if hook := p.pressureHook(); hook != nil {
+			hook()
+		}
+		_, _ = p.FlushBuffer(ctx)
+	}
 	return provisional, nil
+}
+
+// SetFlushPressureHook installs (or replaces) the §12.3 line 76
+// billing_flush_pressure callback after construction. The gateway wires
+// gatewaymetrics.IncBillingFlushPressure here once the metric registry
+// exists, which is built after the Pipeline. Safe to call before any
+// Append because access is mutex-guarded.
+func (p *Pipeline) SetFlushPressureHook(fn func()) {
+	p.mu.Lock()
+	p.onPressure = fn
+	p.mu.Unlock()
+}
+
+// pressureHook returns the current billing_flush_pressure callback under
+// the lock so a deferred SetFlushPressureHook does not race Append.
+func (p *Pipeline) pressureHook() func() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.onPressure
 }
 
 // Since implements billingstore.Store. Reads are served from the
@@ -310,15 +390,17 @@ func (p *Pipeline) nextProvisional(tenantID string) uint64 {
 
 // bufferEvent appends e to the Tier 2 write-ahead buffer. It returns
 // ErrBufferFull when the buffer is at capacity, which §11.2.1 maps to a
-// 503 on session-progressing requests.
-func (p *Pipeline) bufferEvent(e billingstore.Event) error {
+// 503 on session-progressing requests. The bool reports whether the
+// append left the buffer over the §12.3 billingFlushMaxPending
+// threshold so the caller can emit billing_flush_pressure and flush.
+func (p *Pipeline) bufferEvent(e billingstore.Event) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.buffer) >= p.bufferCap {
-		return ErrBufferFull
+		return false, ErrBufferFull
 	}
 	p.buffer = append(p.buffer, e)
-	return nil
+	return len(p.buffer) > p.maxPending, nil
 }
 
 func (p *Pipeline) setLastTier(t Tier) {
@@ -374,6 +456,7 @@ func (p *Pipeline) FlushBuffer(ctx context.Context) (int, error) {
 	// sequence so the replay preserves §11.2.1 monotonic ordering.
 	p.mu.Lock()
 	pending := append([]billingstore.Event(nil), p.buffer...)
+	batchSize := p.batchSize
 	p.mu.Unlock()
 	sort.SliceStable(pending, func(i, j int) bool {
 		if pending[i].TenantID != pending[j].TenantID {
@@ -381,6 +464,12 @@ func (p *Pipeline) FlushBuffer(ctx context.Context) (int, error) {
 		}
 		return pending[i].SequenceNumber < pending[j].SequenceNumber
 	})
+	// §12.3 billingFlushBatchSize: drain at most one batch per call so
+	// the replay is a bounded multi-row INSERT. RunFlusher loops until
+	// the buffer is empty, so a backlog still drains fully.
+	if batchSize > 0 && len(pending) > batchSize {
+		pending = pending[:batchSize]
+	}
 
 	flushed := 0
 	for _, e := range pending {
@@ -440,10 +529,15 @@ func (p *Pipeline) RunFlusher(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if p.BufferLen() == 0 {
-				continue
+			// Drain the backlog in §12.3 billingFlushBatchSize batches
+			// until the buffer empties or a batch fails (primary still
+			// down), in which case the next tick retries from the head.
+			for p.BufferLen() > 0 {
+				flushed, err := p.FlushBuffer(ctx)
+				if err != nil || flushed == 0 {
+					break
+				}
 			}
-			_, _ = p.FlushBuffer(ctx)
 		}
 	}
 }

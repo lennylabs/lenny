@@ -565,6 +565,37 @@ spec:
             # F-11.2.15.
             - name: LENNY_BILLING_RETENTION_DAYS
               value: {{ .Values.billing.retentionDays | default 395 | quote }}
+            # §12.3 line 76 billing-event buffering tunables. The gateway
+            # flushes the Tier 2 write-ahead buffer in flushBatchSize
+            # batches every flushIntervalMs, and emits
+            # billing_flush_pressure once the buffer exceeds
+            # flushMaxPending. F-12.3.13.
+            {{- if hasKey .Values.billing "flushIntervalMs" }}
+            - name: LENNY_BILLING_FLUSH_INTERVAL_MS
+              value: {{ .Values.billing.flushIntervalMs | quote }}
+            {{- end }}
+            {{- if hasKey .Values.billing "flushBatchSize" }}
+            - name: LENNY_BILLING_FLUSH_BATCH_SIZE
+              value: {{ .Values.billing.flushBatchSize | quote }}
+            {{- end }}
+            {{- if hasKey .Values.billing "flushMaxPending" }}
+            - name: LENNY_BILLING_FLUSH_MAX_PENDING
+              value: {{ .Values.billing.flushMaxPending | quote }}
+            {{- end }}
+            # §12.3 line 123 postgres.writeCeilingIops — emitted on
+            # lenny_postgres_write_ceiling_iops for the §16.5
+            # PostgresWriteSaturation alert. F-12.3.8.
+            {{- if hasKey .Values.postgres "writeCeilingIops" }}
+            - name: LENNY_POSTGRES_WRITE_CEILING_IOPS
+              value: {{ .Values.postgres.writeCeilingIops | quote }}
+            {{- end }}
+            # §12.3 line 101 audit.startupChainCheckEntries — the
+            # most-recent N audit rows per tenant re-verified by the
+            # startup chain-continuity check. F-12.3.9.
+            {{- if and .Values.audit (hasKey .Values.audit "startupChainCheckEntries") }}
+            - name: LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES
+              value: {{ .Values.audit.startupChainCheckEntries | quote }}
+            {{- end }}
             # §25.13 line 4798 healthTracker.useCompiledRules: gates the
             # gateway's in-process §16.5 alert evaluator. Set false to
             # suppress the per-replica tracker and let /v1/admin/health

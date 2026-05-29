@@ -216,6 +216,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
+	"github.com/lennylabs/lenny/pkg/pgwritemetrics"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
@@ -359,6 +360,24 @@ func main() {
 	credentialPoolLowThreshold := flag.Float64("credential-pool-low-threshold",
 		envFloat("LENNY_CREDENTIAL_POOL_LOW_THRESHOLD", 0.80),
 		"§25.13 line 4737 / §16.5 monitoring.alertThresholds.credentialPoolLow.utilizationThreshold: the per-pool utilisation fraction the CredentialPoolLow alert reads via scalar(lenny_credential_pool_low_threshold). Tier presets tighten this (Tier 2: 0.70, Tier 3: 0.60). Override via LENNY_CREDENTIAL_POOL_LOW_THRESHOLD. F-25.13.2.")
+	billingFlushIntervalMs := flag.Int("billing-flush-interval-ms",
+		envInt("LENNY_BILLING_FLUSH_INTERVAL_MS", int(failover.DefaultFlushInterval/time.Millisecond)),
+		"§12.3 line 76 billingFlushIntervalMs: cadence (ms) at which the billing failover flusher drains the Tier 2 write-ahead buffer into Postgres in multi-row batches. Default 500. Override via LENNY_BILLING_FLUSH_INTERVAL_MS. F-12.3.13.")
+	billingFlushBatchSize := flag.Int("billing-flush-batch-size",
+		envInt("LENNY_BILLING_FLUSH_BATCH_SIZE", failover.DefaultFlushBatchSize),
+		"§12.3 line 76 billingFlushBatchSize: maximum buffered billing events drained into Postgres per flush call (one multi-row INSERT batch). Default 50. Override via LENNY_BILLING_FLUSH_BATCH_SIZE. F-12.3.13.")
+	billingFlushMaxPending := flag.Int("billing-flush-max-pending",
+		envInt("LENNY_BILLING_FLUSH_MAX_PENDING", failover.DefaultFlushMaxPending),
+		"§12.3 line 76 billingFlushMaxPending: once the Tier 2 write-ahead buffer grows past this many events, the gateway flushes immediately and emits the billing_flush_pressure metric. Default 500. Override via LENNY_BILLING_FLUSH_MAX_PENDING. F-12.3.13.")
+	postgresWriteCeilingIops := flag.Float64("postgres-write-ceiling-iops",
+		envFloat("LENNY_POSTGRES_WRITE_CEILING_IOPS", 200),
+		"§12.3 line 123 postgres.writeCeilingIops: the measured sustained write-IOPS ceiling for the primary Postgres instance. Emitted unlabelled on lenny_postgres_write_ceiling_iops so the §16.5 PostgresWriteSaturation alert reads scalar(lenny_postgres_write_ceiling_iops). Tier presets set 200/600/1600. Override via LENNY_POSTGRES_WRITE_CEILING_IOPS. F-12.3.8.")
+	postgresWriteIopsSampleSeconds := flag.Int("postgres-write-iops-sample-interval-seconds",
+		envInt("LENNY_POSTGRES_WRITE_IOPS_SAMPLE_INTERVAL_SECONDS", 15),
+		"§12.3 lines 115-125 cadence (seconds) at which the gateway samples pg_stat_database row-write deltas to publish the lenny_postgres_write_iops gauge feeding the §16.5 PostgresWriteSaturation alert. Default 15. Override via LENNY_POSTGRES_WRITE_IOPS_SAMPLE_INTERVAL_SECONDS. F-12.3.7.")
+	auditStartupChainCheckEntries := flag.Int("audit-startup-chain-check-entries",
+		envInt("LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES", 1000),
+		"§12.3 line 101 audit.startupChainCheckEntries: the most-recent N audit rows per tenant the startup chain-continuity check re-verifies. A non-positive value walks each chain in full. Default 1000. Override via LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES. F-12.3.9.")
 	retryMaxRetries := flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	maxResumePendingSeconds := flag.Int("max-resume-pending-seconds",
@@ -970,7 +989,13 @@ func main() {
 	billingPipeline := failover.New(failover.Options{
 		Primary: billing,
 		Stream:  billingStream,
-		Clock:   clockinject.Now,
+		// §12.3 line 76 billingFlushIntervalMs / billingFlushBatchSize /
+		// billingFlushMaxPending. OnFlushPressure is wired after
+		// gatewaymetrics.New() below. F-12.3.13.
+		FlushInterval: time.Duration(*billingFlushIntervalMs) * time.Millisecond,
+		BatchSize:     *billingFlushBatchSize,
+		MaxPending:    *billingFlushMaxPending,
+		Clock:         clockinject.Now,
 	})
 	// The pipeline is a billingstore.Store, so it replaces the bare
 	// ledger everywhere downstream — billing emission, the metering API,
@@ -1596,6 +1621,27 @@ func main() {
 	}
 	gwMetrics.SetBillingCorrectionRateThreshold(*billingCorrectionRateThreshold)
 
+	// §12.3 line 76 — wire the billing_flush_pressure callback now that
+	// the metric registry exists (the billing Pipeline was constructed
+	// earlier). F-12.3.13.
+	billingPipeline.SetFlushPressureHook(gwMetrics.IncBillingFlushPressure)
+	// §12.3 line 123 — emit the configured Postgres sustained write-IOPS
+	// ceiling so the §16.5 PostgresWriteSaturation alert resolves
+	// scalar(lenny_postgres_write_ceiling_iops). F-12.3.8.
+	if *postgresWriteCeilingIops <= 0 {
+		log.Fatalf("lenny-gateway: --postgres-write-ceiling-iops must be > 0 (got %v) (§12.3 line 123)", *postgresWriteCeilingIops)
+	}
+	gwMetrics.SetPostgresWriteCeilingIops(*postgresWriteCeilingIops)
+	// §12.3 line 101 — startup chain-continuity check. After Postgres is
+	// reachable the gateway re-verifies the most recent
+	// audit.startupChainCheckEntries rows of each tenant's hash chain,
+	// emits lenny_audit_chain_integrity_total per tenant, and logs a WARN
+	// per detected gap. It never refuses to start — a gap is a compliance
+	// signal. F-12.3.9.
+	if pgPool != nil {
+		runStartupChainContinuityCheck(context.Background(), pgPool, *auditStartupChainCheckEntries, gwMetrics)
+	}
+
 	// spec: §25.13 line 4737 / §16.5 — emit the configured Tier preset
 	// for the §25.13 tier-dependent thresholds (gateway queue depth,
 	// gateway p95 latency, credential pool utilisation). The
@@ -1980,7 +2026,7 @@ func main() {
 		// circuit-breaker open/closed gauge.
 		SetExperimentTargetingCircuitOpen: gwMetrics.SetExperimentTargetingCircuitOpen,
 		Clock:                             clockinject.Now,
-		UploadSubsystem:              uploadSubsystem,
+		UploadSubsystem:                   uploadSubsystem,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
 		// §6.3 lines 348, 372 — startup-latency histograms observed on
@@ -3362,6 +3408,31 @@ func main() {
 	// itself through its own consumer-group flusher.
 	go billingPipeline.RunFlusher(watchdogCtx)
 
+	// ----- §12.3 lines 115-125 Postgres write-IOPS sampler -----
+	// Periodically differentiates the pg_stat_database row-write total
+	// into a sustained write-IOPS rate and publishes
+	// lenny_postgres_write_iops so the §16.5 PostgresWriteSaturation
+	// alert has a numerator. Only the Postgres-backed deployment has a
+	// pool to sample. F-12.3.7.
+	if pgPool != nil {
+		pool := pgPool
+		sampler := pgwritemetrics.New(func(ctx context.Context) (uint64, error) {
+			// §12.3 line 62 write sources are row-level inserts/updates/
+			// deletes; pg_stat_database aggregates them per database.
+			var n int64
+			if err := pool.QueryRow(ctx,
+				`SELECT COALESCE(SUM(tup_inserted + tup_updated + tup_deleted), 0)::bigint
+				 FROM pg_stat_database WHERE datname = current_database()`).Scan(&n); err != nil {
+				return 0, err
+			}
+			if n < 0 {
+				n = 0
+			}
+			return uint64(n), nil
+		}, gwMetrics, clockinject.Now)
+		go sampler.Start(watchdogCtx, time.Duration(*postgresWriteIopsSampleSeconds)*time.Second)
+	}
+
 	// ----- §11.2.1 billing retention pruner -----
 	// Periodically deletes billing events past the configured
 	// billing.retentionDays window across every registered tenant. The
@@ -4109,6 +4180,35 @@ func (o *kmsBreakerObserver) metrics() *gatewaymetrics.Metrics {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.m
+}
+
+// runStartupChainContinuityCheck implements the §12.3 line 101 startup
+// chain-continuity check: it re-verifies the most recent lastN audit
+// rows of every tenant's hash chain, increments
+// lenny_audit_chain_integrity_total per tenant by §11.7 state, and logs
+// the spec WARN message for each detected gap. A broken chain fires the
+// §16.5 AuditChainGap alert through the metric; the gateway does not
+// refuse to start. spec: §12.3 line 101. F-12.3.9.
+func runStartupChainContinuityCheck(ctx context.Context, db integrity.Querier, lastN int, m *gatewaymetrics.Metrics) {
+	results, err := integrity.CheckChainContinuityRecent(ctx, db, lastN)
+	if err != nil {
+		log.Printf("lenny-gateway: WARNING: §12.3 startup audit chain-continuity check could not run: %v", err)
+		return
+	}
+	for _, r := range results {
+		m.IncAuditChainIntegrity(string(r.Result.Integrity))
+		if !r.Broken() {
+			continue
+		}
+		if r.GapHighSeq() > 0 {
+			log.Printf("Audit chain gap detected for tenant %s: gap between sequence %d and %d (~%s to %s). This indicates T2 audit events were lost from the in-memory batch buffer during a previous gateway crash. T3/T4 events are synchronous and will not appear in chain gaps.",
+				r.TenantID, r.GapLowSeq(), r.GapHighSeq(),
+				r.GapStart().Format(time.RFC3339), r.GapEnd().Format(time.RFC3339))
+			continue
+		}
+		log.Printf("lenny-gateway: WARNING: §12.3 audit chain broken for tenant %s at sequence %d: %s",
+			r.TenantID, r.Result.BreakSeq, r.Result.Detail)
+	}
 }
 
 func (o *kmsBreakerObserver) OnSigningFailure() {

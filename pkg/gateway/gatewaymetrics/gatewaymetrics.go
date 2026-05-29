@@ -351,6 +351,36 @@ type Metrics struct {
 	// spec: §11.1 line 7 fail-open observability.
 	rateLimitCounterFailure prometheus.Counter
 
+	// billingFlushPressure counts §12.3 line 76 billing_flush_pressure
+	// events: each Append that finds the failover Tier 2 write-ahead
+	// buffer over the configured billingFlushMaxPending threshold. The
+	// spec names the bare metric `billing_flush_pressure`; the lenny_
+	// prefix and _total suffix follow the §16.1.1 naming rules. It is
+	// not in the §16.1 catalog because §12.3 leaves the metric name to
+	// the implementation, so the catalog (which transcribes §16.1 only)
+	// excludes it. F-12.3.13.
+	billingFlushPressure prometheus.Counter
+	// postgresWriteIops is the §12.3 lines 115-125 sustained Postgres
+	// write-IOPS gauge the §16.5 PostgresWriteSaturation alert reads as
+	// the numerator of `lenny_postgres_write_iops /
+	// scalar(lenny_postgres_write_ceiling_iops)`. A periodic sampler
+	// (cmd/lenny-gateway) sets it from the pg_stat_database row-write
+	// delta rate. Not in the §16.1 catalog: §16.5 names the alert in
+	// prose but §16.1 does not define the metric. F-12.3.7.
+	postgresWriteIops prometheus.Gauge
+	// postgresWriteCeilingIops is the §12.3 line 123
+	// postgres.writeCeilingIops configured ceiling, emitted unlabelled
+	// at startup so the PostgresWriteSaturation alert resolves
+	// scalar(lenny_postgres_write_ceiling_iops) to an operator-tunable
+	// value rather than a literal. Not in the §16.1 catalog. F-12.3.8.
+	postgresWriteCeilingIops prometheus.Gauge
+	// auditChainIntegrity is the §16.1 lenny_audit_chain_integrity_total
+	// counter classified by `state` (the §11.7 ChainIntegrity enum). The
+	// §12.3 line 101 startup chain-continuity check increments it once
+	// per tenant; the §16.5 AuditChainGap alert reads the broken series
+	// via `increase(lenny_audit_chain_integrity_total{state="broken"}[15m])`.
+	// F-12.3.9.
+	auditChainIntegrity *prometheus.CounterVec
 	// idempotencyCacheWriteFailures counts §11.5 idempotency-key cache
 	// Put failures: the inner handler already executed (the client
 	// already got the response), but the durable store rejected the
@@ -1409,6 +1439,46 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §12.3 line 76 — billing_flush_pressure: emitted when the failover
+	// Tier 2 write-ahead buffer crosses billingFlushMaxPending. F-12.3.13.
+	billingFlushPressure, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_billing_flush_pressure_total",
+		Help: "§12.3 billing_flush_pressure: billing write-ahead buffer crossed billingFlushMaxPending and was force-flushed.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §12.3 lines 115-125 — sustained Postgres write IOPS, sampled from
+	// pg_stat_database row-write deltas. Numerator of the §16.5
+	// PostgresWriteSaturation ratio. F-12.3.7.
+	postgresWriteIops, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_postgres_write_iops",
+		Help: "§12.3 sustained Postgres write IOPS sampled from pg_stat_database row-write deltas.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §12.3 line 123 — configured postgres.writeCeilingIops, emitted at
+	// startup so PostgresWriteSaturation reads an operator-tunable
+	// scalar() denominator. F-12.3.8.
+	postgresWriteCeilingIops, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_postgres_write_ceiling_iops",
+		Help: "§12.3 line 123 configured Postgres sustained write-IOPS ceiling (postgres.writeCeilingIops).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 lenny_audit_chain_integrity_total — the §12.3 line 101
+	// startup chain-continuity check classifies each tenant's chain by
+	// §11.7 state; the §16.5 AuditChainGap alert reads state="broken".
+	// F-12.3.9.
+	auditChainIntegrity, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_audit_chain_integrity_total",
+		Help: "§11.7 audit chain integrity classifications by state, incremented by the §12.3 startup chain-continuity check.",
+	}, []string{"state"})
+	if err != nil {
+		return nil, err
+	}
 	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert reads
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` as the cap denominator.
 	// Exposing the ceiling as an unlabeled gauge lets the alert resolve
@@ -1603,6 +1673,8 @@ func New() (*Metrics, error) {
 		delegationDepth, delegationWouldHaveBlocked, delegationTreeCycleDetected,
 		rateLimitRejected, rateLimitFailopenActive, rateLimitCounterFailure,
 		idempotencyCacheWriteFailures, idempotencyCacheSkipped,
+		billingFlushPressure, postgresWriteIops, postgresWriteCeilingIops,
+		auditChainIntegrity,
 		maxOrphanTasksPerTenant,
 		orphanCleanupRuns, orphanTasksTerminated, orphanTasksActive,
 		orphanTasksActivePerTenant,
@@ -1757,6 +1829,10 @@ func New() (*Metrics, error) {
 		rateLimitCounterFailure:              rateLimitCounterFailure,
 		idempotencyCacheWriteFailures:        idempotencyCacheWriteFailures,
 		idempotencyCacheSkipped:              idempotencyCacheSkipped,
+		billingFlushPressure:                 billingFlushPressure.WithLabelValues(),
+		postgresWriteIops:                    postgresWriteIops.WithLabelValues(),
+		postgresWriteCeilingIops:             postgresWriteCeilingIops.WithLabelValues(),
+		auditChainIntegrity:                  auditChainIntegrity,
 		maxOrphanTasksPerTenant:              maxOrphanTasksPerTenant.WithLabelValues(),
 		orphanCleanupRuns:                    orphanCleanupRuns,
 		orphanTasksTerminated:                orphanTasksTerminated,
@@ -3004,6 +3080,51 @@ func (m *Metrics) SetGatewayLatencyThresholdSeconds(value float64) {
 // scalar(lenny_credential_pool_low_threshold). F-25.13.2.
 func (m *Metrics) SetCredentialPoolLowThreshold(value float64) {
 	m.credentialPoolLowThreshold.Set(value)
+}
+
+// IncBillingFlushPressure advances the §12.3 line 76
+// billing_flush_pressure counter. The failover Pipeline invokes it
+// (via its OnFlushPressure callback) each time an Append leaves the
+// Tier 2 write-ahead buffer over billingFlushMaxPending. F-12.3.13.
+func (m *Metrics) IncBillingFlushPressure() {
+	if m == nil {
+		return
+	}
+	m.billingFlushPressure.Inc()
+}
+
+// SetPostgresWriteIops sets the §12.3 lines 115-125 sustained Postgres
+// write-IOPS gauge. The periodic sampler computes the rate from
+// pg_stat_database row-write deltas and pushes it here so the §16.5
+// PostgresWriteSaturation alert can evaluate. F-12.3.7.
+func (m *Metrics) SetPostgresWriteIops(iops float64) {
+	if m == nil {
+		return
+	}
+	m.postgresWriteIops.Set(iops)
+}
+
+// SetPostgresWriteCeilingIops emits the §12.3 line 123 configured
+// postgres.writeCeilingIops ceiling so the PostgresWriteSaturation
+// alert resolves scalar(lenny_postgres_write_ceiling_iops) to an
+// operator-tunable denominator. F-12.3.8.
+func (m *Metrics) SetPostgresWriteCeilingIops(iops float64) {
+	if m == nil {
+		return
+	}
+	m.postgresWriteCeilingIops.Set(iops)
+}
+
+// IncAuditChainIntegrity advances the §16.1
+// lenny_audit_chain_integrity_total counter for one tenant's §11.7
+// chain state. The §12.3 line 101 startup chain-continuity check calls
+// it once per tenant; state="broken" drives the §16.5 AuditChainGap
+// alert. F-12.3.9.
+func (m *Metrics) IncAuditChainIntegrity(state string) {
+	if m == nil {
+		return
+	}
+	m.auditChainIntegrity.WithLabelValues(state).Inc()
 }
 
 // SetExtractionThreshold emits the §4.1 configured per-subsystem

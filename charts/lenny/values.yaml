@@ -653,6 +653,16 @@ postgres:
   # renders the value into the lenny-datastore-conn Secret and both
   # Deployments read LENNY_POSTGRES_DSN from that Secret.
   dsn: ""
+  # §12.3 line 123 writeCeilingIops: the measured sustained write-IOPS
+  # ceiling for the primary Postgres instance. The gateway emits it
+  # unlabelled on lenny_postgres_write_ceiling_iops at startup so the
+  # §16.5 PostgresWriteSaturation alert reads
+  # scalar(lenny_postgres_write_ceiling_iops) rather than a literal. The
+  # default matches the Tier-1 reference instance; tier presets raise it
+  # to 600 (Tier 2) and 1600 (Tier 3). Operators MUST recalibrate this
+  # against the Phase 13.5 write-pattern benchmark for their instance
+  # class. F-12.3.8.
+  writeCeilingIops: 200
 
 # billing configures the §11.2.1 billing-event publisher sink. The v1
 # default writes events synchronously to Postgres with a Redis stream
@@ -683,6 +693,26 @@ billing:
   # tenant runs a regulated complianceProfile the gateway rejects a value
   # below that floor at startup (hipaa 2190, soc2 365, fedramp 365).
   retentionDays: 395
+  # §12.3 line 76 billing-event buffering tunables. The failover Tier 2
+  # write-ahead buffer is drained into Postgres in multi-row batches:
+  #   flushIntervalMs — flush cadence in ms (billingFlushIntervalMs).
+  #   flushBatchSize  — events per flush batch (billingFlushBatchSize).
+  #   flushMaxPending — buffer depth past which the gateway flushes
+  #                     immediately and emits billing_flush_pressure
+  #                     (billingFlushMaxPending).
+  # F-12.3.13.
+  flushIntervalMs: 500
+  flushBatchSize: 50
+  flushMaxPending: 500
+
+# audit configures the §11.7 / §12.3 audit-ledger integrity controls.
+audit:
+  # §12.3 line 101 startupChainCheckEntries: the most-recent N audit
+  # rows per tenant the gateway re-verifies on startup (the
+  # chain-continuity check). A gap fires the §16.5 AuditChainGap alert;
+  # the gateway logs a WARN but does not refuse to start. A non-positive
+  # value walks each tenant chain in full. F-12.3.9.
+  startupChainCheckEntries: 1000
 
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render

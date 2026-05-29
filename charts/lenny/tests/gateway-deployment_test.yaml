@@ -443,10 +443,15 @@ tests:
       #   LENNY_CREDENTIAL_POOL_LOW_THRESHOLD (§25.13 line 4737,
       #   F-25.13.2)
       # + LENNY_QUOTA_SYNC_INTERVAL_SECONDS (§11.2 line 44, F-11.2.16)
-      # + LENNY_BILLING_RETENTION_DAYS (§11.2.1 line 151, F-11.2.15) = 33.
+      # + LENNY_BILLING_RETENTION_DAYS (§11.2.1 line 151, F-11.2.15)
+      # + LENNY_BILLING_FLUSH_INTERVAL_MS / _BATCH_SIZE / _MAX_PENDING
+      #   (§12.3 line 76, F-12.3.13)
+      # + LENNY_POSTGRES_WRITE_CEILING_IOPS (§12.3 line 123, F-12.3.8)
+      # + LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES (§12.3 line 101,
+      #   F-12.3.9) = 38.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 33
+          count: 38
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -864,6 +869,102 @@ tests:
           content:
             name: LENNY_BILLING_RETENTION_DAYS
             value: "2190"
+
+  # spec: §12.3 line 76 — billing flush tunables (default 500ms / 50 / 500)
+  # flow through to the gateway binary. F-12.3.13.
+  - it: wires the §12.3 billing flush tunables from chart defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_FLUSH_INTERVAL_MS
+            value: "500"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_FLUSH_BATCH_SIZE
+            value: "50"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_FLUSH_MAX_PENDING
+            value: "500"
+
+  - it: wires the §12.3 billing flush tunables from billing.flush* overrides
+    set:
+      billing.flushIntervalMs: 250
+      billing.flushBatchSize: 100
+      billing.flushMaxPending: 1000
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_FLUSH_INTERVAL_MS
+            value: "250"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_BILLING_FLUSH_MAX_PENDING
+            value: "1000"
+
+  # spec: §12.3 line 123 — postgres.writeCeilingIops (default 200) flows
+  # through to LENNY_POSTGRES_WRITE_CEILING_IOPS; tier3 raises it to 1600.
+  # F-12.3.8.
+  - it: wires LENNY_POSTGRES_WRITE_CEILING_IOPS from the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_WRITE_CEILING_IOPS
+            value: "200"
+
+  - it: wires LENNY_POSTGRES_WRITE_CEILING_IOPS from a postgres.writeCeilingIops override
+    set:
+      postgres.writeCeilingIops: 1600
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_WRITE_CEILING_IOPS
+            value: "1600"
+
+  # spec: §12.3 line 101 — audit.startupChainCheckEntries (default 1000)
+  # flows through to LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES. F-12.3.9.
+  - it: wires LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES from the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES
+            value: "1000"
+
+  - it: wires LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES from an audit.startupChainCheckEntries override
+    set:
+      audit.startupChainCheckEntries: 5000
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES
+            value: "5000"
 
   # spec: §8.10 lines 1022-1023 / 1078 / 1103 — delegation block surfaces
   # the operator-tunable per-level, whole-tree, cascade, and orphan-cap

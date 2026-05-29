@@ -10,6 +10,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/lennylabs/lenny/pkg/audit"
 )
 
@@ -26,6 +28,13 @@ type ChainContinuityResult struct {
 
 	// Result is the verifier's §11.7 chain state.
 	Result audit.VerifyResult
+
+	// gap boundary fields populated by the windowed startup check when
+	// Result is ChainBroken (§12.3 line 101 WARN message inputs).
+	gapLowSeq  uint64
+	gapHighSeq uint64
+	gapStart   time.Time
+	gapEnd     time.Time
 }
 
 // Broken reports whether the tenant's chain verified as broken — the
@@ -33,6 +42,16 @@ type ChainContinuityResult struct {
 func (r ChainContinuityResult) Broken() bool {
 	return r.Result.Integrity == audit.ChainBroken
 }
+
+// GapLowSeq and GapHighSeq bound the detected gap (the last intact
+// sequence number and the first sequence number past the break); the
+// timestamps bracket the approximate range of the missing entries.
+// They are populated only on a broken windowed check and feed the
+// §12.3 line 101 WARN message. spec: §12.3 line 101. F-12.3.9.
+func (r ChainContinuityResult) GapLowSeq() uint64   { return r.gapLowSeq }
+func (r ChainContinuityResult) GapHighSeq() uint64  { return r.gapHighSeq }
+func (r ChainContinuityResult) GapStart() time.Time { return r.gapStart }
+func (r ChainContinuityResult) GapEnd() time.Time   { return r.gapEnd }
 
 // CheckChainContinuity walks every tenant's audit hash chain on a live
 // Postgres connection and reports each chain's §11.7 integrity state.
@@ -64,6 +83,89 @@ func CheckChainContinuity(ctx context.Context, db Querier) ([]ChainContinuityRes
 		})
 	}
 	return out, nil
+}
+
+// CheckChainContinuityRecent runs the §12.3 line 101 startup chain-
+// continuity check over the most recent lastN entries of every tenant's
+// audit chain. lastN is the audit.startupChainCheckEntries bound
+// (default 1000 at the call site); lastN <= 0 walks each chain in full
+// and is equivalent to CheckChainContinuity.
+//
+// The genesis sentinel is asserted only when the window reaches the
+// chain head (sequence_number 1); a partial window is verified by its
+// per-tenant sequence contiguity and prev_hash links alone. Because the
+// durable store assigns sequence_number = tail+1 transactionally and
+// prev_hash = LinkHash(tail), committed numbers are gap-free in normal
+// operation: a sequence gap or a non-linking prev_hash both signal lost
+// or tampered entries, reported as a broken chain with the boundary
+// sequence numbers and timestamp range the §12.3 WARN message needs.
+func CheckChainContinuityRecent(ctx context.Context, db Querier, lastN int) ([]ChainContinuityResult, error) {
+	tenants, err := auditTenants(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ChainContinuityResult, 0, len(tenants))
+	for _, tenantID := range tenants {
+		rows, err := loadRecentChainRows(ctx, db, tenantID, lastN)
+		if err != nil {
+			return nil, err
+		}
+		res, gap := verifyChainWindow(tenantID, rows)
+		out = append(out, ChainContinuityResult{
+			TenantID:   tenantID,
+			Rows:       len(rows),
+			Result:     res,
+			gapLowSeq:  gap.lowSeq,
+			gapHighSeq: gap.highSeq,
+			gapStart:   gap.start,
+			gapEnd:     gap.end,
+		})
+	}
+	return out, nil
+}
+
+// chainGap brackets a detected break for the §12.3 WARN message.
+type chainGap struct {
+	lowSeq  uint64
+	highSeq uint64
+	start   time.Time
+	end     time.Time
+}
+
+// verifyChainWindow walks a sequence-ordered window of a tenant's chain
+// and reports its §11.7 integrity state. The genesis sentinel is
+// asserted only when the window starts at sequence_number 1, so a
+// partial recent-N window is verified by sequence contiguity and
+// prev_hash links. The returned chainGap is populated on a break.
+func verifyChainWindow(tenantID string, rows []audit.Row) (audit.VerifyResult, chainGap) {
+	if len(rows) == 0 {
+		return audit.VerifyResult{Integrity: audit.ChainVerified}, chainGap{}
+	}
+	if rows[0].Seq == 1 && rows[0].PrevHash != audit.GenesisPrevHash {
+		return audit.VerifyResult{
+			Integrity: audit.ChainBroken,
+			BreakSeq:  rows[0].Seq,
+			Detail:    fmt.Sprintf("genesis row %d prev_hash is not the sentinel", rows[0].Seq),
+		}, chainGap{}
+	}
+	for i := 1; i < len(rows); i++ {
+		prev, cur := rows[i-1], rows[i]
+		if cur.Seq != prev.Seq+1 {
+			return audit.VerifyResult{
+				Integrity: audit.ChainBroken,
+				BreakSeq:  cur.Seq,
+				Detail:    fmt.Sprintf("sequence gap between %d and %d", prev.Seq, cur.Seq),
+			}, chainGap{lowSeq: prev.Seq, highSeq: cur.Seq, start: prev.Timestamp, end: cur.Timestamp}
+		}
+		if cur.PrevHash != audit.LinkHash(prev) {
+			return audit.VerifyResult{
+				Integrity: audit.ChainBroken,
+				BreakSeq:  cur.Seq,
+				Detail:    fmt.Sprintf("row %d prev_hash does not link to row %d", cur.Seq, prev.Seq),
+			}, chainGap{lowSeq: prev.Seq, highSeq: cur.Seq, start: prev.Timestamp, end: cur.Timestamp}
+		}
+	}
+	return audit.VerifyResult{Integrity: audit.ChainVerified}, chainGap{}
 }
 
 // FirstBroken returns the first broken-chain result, or nil when every
@@ -113,6 +215,37 @@ func loadChainRows(ctx context.Context, db Querier, tenantID string) ([]audit.Ro
 	if err != nil {
 		return nil, fmt.Errorf("integrity: query chain rows for %q: %w", tenantID, err)
 	}
+	return scanChainRows(rows, tenantID)
+}
+
+// loadRecentChainRows reads the most recent lastN rows of a tenant's
+// chain (the §12.3 line 101 audit.startupChainCheckEntries window) and
+// returns them in ascending sequence order. lastN <= 0 loads the chain
+// in full.
+func loadRecentChainRows(ctx context.Context, db Querier, tenantID string, lastN int) ([]audit.Row, error) {
+	if lastN <= 0 {
+		return loadChainRows(ctx, db, tenantID)
+	}
+	rows, err := db.Query(ctx, `
+		SELECT sequence_number, event_type, payload, created_at, prev_hash
+		FROM (
+			SELECT sequence_number, event_type, payload, created_at, prev_hash
+			FROM audit_log
+			WHERE tenant_id = $1
+			ORDER BY sequence_number DESC
+			LIMIT $2
+		) recent
+		ORDER BY sequence_number ASC`, tenantID, lastN)
+	if err != nil {
+		return nil, fmt.Errorf("integrity: query recent chain rows for %q: %w", tenantID, err)
+	}
+	return scanChainRows(rows, tenantID)
+}
+
+// scanChainRows scans a sequence-ordered audit_log result set into
+// audit.Row values, recomputing each row's content hash (the table
+// does not store it). It closes rows before returning.
+func scanChainRows(rows pgx.Rows, tenantID string) ([]audit.Row, error) {
 	defer rows.Close()
 	var out []audit.Row
 	for rows.Next() {

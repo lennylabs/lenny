@@ -29,6 +29,13 @@ capacityPlanning:
 global:
   deploymentTier: tier3
 
+# §12.3 line 117 per-tier write ceiling: Tier 3 reference instance
+# (8 vCPU / 32 GB) sustains ~1600 write IOPS. Emitted on
+# lenny_postgres_write_ceiling_iops for the PostgresWriteSaturation
+# alert. F-12.3.8.
+postgres:
+  writeCeilingIops: 1600
+
 # Gateway replica floor of 5 (§17.8.2 gateway table: min 5, max 30).
 # Five replicas keep the deployment above the Tier 3 minimum healthy
 # count of 5 during a single voluntary disruption. maxSessionsPerReplica
