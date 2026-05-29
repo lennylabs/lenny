@@ -95,17 +95,94 @@ func TestTreeWithChildren(t *testing.T) {
 	}
 }
 
-func TestTreeSubtreeFromMidNode(t *testing.T) {
+// seedTreeSessionVis seeds a session with an explicit §8.5
+// treeVisibility so the visibility-scoping tests can exercise the three
+// enum values. spec: §8.5 line 540.
+func seedTreeSessionVis(t *testing.T, store sessionstore.Store, id, parent string, vis session.TreeVisibility) {
+	t.Helper()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	row := sessionstore.Session{
+		ID: id, TenantID: "acme", State: session.StateRunning,
+		ParentSessionID: parent, RuntimeRef: "echo",
+		TreeVisibility: vis,
+		CreatedAt:      now, UpdatedAt: now,
+	}
+	if err := store.Create(context.Background(), row); err != nil {
+		t.Fatalf("seed %s: %v", id, err)
+	}
+}
+
+// TestTreeFullVisibilityShowsEntireTreeFromApex_spec_8_5_540 verifies the
+// §8.5 `full` (default) semantics: a mid-tree session sees the entire
+// tree rooted at the apex, including its parent and siblings, not just
+// its own subtree. F-8.5.2 / F-8.9.2.
+func TestTreeFullVisibilityShowsEntireTreeFromApex_spec_8_5_540(t *testing.T) {
 	store := memstore.New()
 	seedTreeSession(t, store, "sess_root", "")
 	seedTreeSession(t, store, "sess_mid", "sess_root")
 	seedTreeSession(t, store, "sess_leaf", "sess_mid")
 	srv := sessionserver.New(store, sessionserver.Options{})
 
-	// Requesting the tree from sess_mid returns only mid + leaf.
+	// sess_mid carries the default (empty → full) visibility, so the
+	// tree it sees is rooted at the apex (sess_root) with all 3 nodes.
 	_, resp := getTree(t, srv.Handler(), "sess_mid")
-	if resp.NodeCount != 2 || resp.Root.TaskID != "sess_mid" {
-		t.Errorf("subtree from mid: %+v", resp)
+	if resp.NodeCount != 3 || resp.Root.TaskID != "sess_root" {
+		t.Errorf("full from mid: got root=%q count=%d, want sess_root/3 (§8.5 line 540)", resp.Root.TaskID, resp.NodeCount)
+	}
+}
+
+// TestTreeParentAndSelfVisibility_spec_8_5_540 verifies the §8.5
+// `parent-and-self` scoping: the session sees only its own node and its
+// direct parent's node — sibling subtrees are pruned. F-8.5.2 / F-8.9.2.
+func TestTreeParentAndSelfVisibility_spec_8_5_540(t *testing.T) {
+	store := memstore.New()
+	seedTreeSession(t, store, "sess_root", "")
+	seedTreeSessionVis(t, store, "sess_mid", "sess_root", session.VisibilityParentAndSelf)
+	seedTreeSession(t, store, "sess_sibling", "sess_root")
+	seedTreeSession(t, store, "sess_leaf", "sess_mid")
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	_, resp := getTree(t, srv.Handler(), "sess_mid")
+	// Rooted at the parent (sess_root) with exactly sess_mid as its only
+	// visible child; the sibling and the leaf are pruned. 2 nodes.
+	if resp.NodeCount != 2 || resp.Root.TaskID != "sess_root" {
+		t.Fatalf("parent-and-self: got root=%q count=%d, want sess_root/2", resp.Root.TaskID, resp.NodeCount)
+	}
+	if len(resp.Root.Children) != 1 || resp.Root.Children[0].TaskID != "sess_mid" {
+		t.Errorf("parent-and-self children: %+v, want [sess_mid]", resp.Root.Children)
+	}
+	if len(resp.Root.Children[0].Children) != 0 {
+		t.Errorf("parent-and-self must prune the leaf under self: %+v", resp.Root.Children[0].Children)
+	}
+}
+
+// TestTreeSelfOnlyVisibility_spec_8_5_540 verifies the §8.5 `self-only`
+// scoping: the session sees only its own node. F-8.5.2 / F-8.9.2.
+func TestTreeSelfOnlyVisibility_spec_8_5_540(t *testing.T) {
+	store := memstore.New()
+	seedTreeSession(t, store, "sess_root", "")
+	seedTreeSessionVis(t, store, "sess_mid", "sess_root", session.VisibilitySelfOnly)
+	seedTreeSession(t, store, "sess_leaf", "sess_mid")
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	_, resp := getTree(t, srv.Handler(), "sess_mid")
+	if resp.NodeCount != 1 || resp.Root.TaskID != "sess_mid" || len(resp.Root.Children) != 0 {
+		t.Errorf("self-only: got %+v, want sess_mid alone", resp)
+	}
+}
+
+// TestTreeParentAndSelfAtRootDegradesToSelf_spec_8_3_315 verifies that a
+// root session (no parent) with parent-and-self visibility sees only
+// itself rather than fabricating a parent node. spec: §8.3 line 315.
+func TestTreeParentAndSelfAtRootDegradesToSelf_spec_8_3_315(t *testing.T) {
+	store := memstore.New()
+	seedTreeSessionVis(t, store, "sess_root", "", session.VisibilityParentAndSelf)
+	seedTreeSession(t, store, "sess_child", "sess_root")
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	_, resp := getTree(t, srv.Handler(), "sess_root")
+	if resp.NodeCount != 1 || resp.Root.TaskID != "sess_root" || len(resp.Root.Children) != 0 {
+		t.Errorf("parent-and-self at root: got %+v, want sess_root alone", resp)
 	}
 }
 

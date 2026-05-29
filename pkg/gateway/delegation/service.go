@@ -86,6 +86,30 @@ type Request struct {
 	//
 	// spec: §8.4 lines 515-521. F-8.4.1, F-8.4.2, F-8.4.3.
 	ApprovalMode lease.ApprovalMode
+
+	// TreeVisibility is the §8.5 visibility boundary the parent declares
+	// on the child lease. Empty inherits the parent's effective value
+	// per the §8.3 inheritance rule (the child lease's declared value if
+	// present, otherwise the parent's effective value). A value broader
+	// than the parent's effective visibility is rejected with
+	// *TreeVisibilityWeakeningError before the child row is created. The
+	// resolved value is stamped onto the child session row.
+	//
+	// spec: §8.3 lines 311-319; §8.5 line 540. F-8.5.2 / F-8.9.2 / F-13.5.8.
+	TreeVisibility session.TreeVisibility
+
+	// EffectiveMessagingScope is the child's resolved effective §7.2
+	// messagingScope (the narrowest of deployment maxScope, tenant scope,
+	// and the top-most parent runtime scope). It is not a per-delegation
+	// lease field; the caller resolves it from the configuration
+	// hierarchy and passes it here. Empty resolves to the §7.2 default
+	// `direct`. When it resolves to `siblings` and the child's effective
+	// treeVisibility is not `full`, Delegate rejects with
+	// *TreeVisibilityMessagingScopeError so a child cannot gain sibling
+	// messaging without the visibility needed to discover those siblings.
+	//
+	// spec: §8.3 lines 321-324; §7.2 lines 236-266. F-13.5.8.
+	EffectiveMessagingScope session.MessagingScope
 }
 
 // Result is the outcome of a successful Delegate call.
@@ -366,6 +390,43 @@ func (e *IsolationViolationError) Error() string {
 		e.ChildProfile, e.ParentProfile)
 }
 
+// TreeVisibilityWeakeningError reports a §8.3 lines 313-317 monotonicity
+// failure: the child lease declares a `treeVisibility` broader than the
+// parent's effective value. The §8.5 handler maps it to
+// TREE_VISIBILITY_WEAKENING (POLICY, HTTP 422) with
+// `details.parentTreeVisibility` and `details.childTreeVisibility`.
+// F-8.5.2 / F-8.9.2 / F-13.5.8.
+type TreeVisibilityWeakeningError struct {
+	ParentVisibility session.TreeVisibility
+	ChildVisibility  session.TreeVisibility
+}
+
+func (e *TreeVisibilityWeakeningError) Error() string {
+	return fmt.Sprintf(
+		"delegation: child treeVisibility %q widens the parent's effective %q (§8.3 lines 313-317; ordering full → parent-and-self → self-only is strict)",
+		e.ChildVisibility, e.ParentVisibility)
+}
+
+// TreeVisibilityMessagingScopeError reports a §8.3 lines 321-324
+// compatibility failure: the child's resolved effective messagingScope
+// is `siblings` but its effective treeVisibility is not `full`, so a
+// child could gain sibling messaging without the visibility required to
+// discover those siblings via lenny/get_task_tree. The §8.5 handler maps
+// it to TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE (POLICY, HTTP
+// 422) with `details.effectiveMessagingScope`,
+// `details.effectiveTreeVisibility`, and `details.requiredTreeVisibility`
+// (`"full"`). F-13.5.8.
+type TreeVisibilityMessagingScopeError struct {
+	EffectiveMessagingScope session.MessagingScope
+	EffectiveTreeVisibility session.TreeVisibility
+}
+
+func (e *TreeVisibilityMessagingScopeError) Error() string {
+	return fmt.Sprintf(
+		"delegation: effective messagingScope %q requires treeVisibility full, but the child lease resolves to %q (§8.3 lines 321-324)",
+		e.EffectiveMessagingScope, e.EffectiveTreeVisibility)
+}
+
 // Delegate validates a §8 delegation request against the parent's
 // lineage and creates the child session. The validation order is:
 //
@@ -431,6 +492,28 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		return Result{}, &IsolationViolationError{
 			ParentProfile: parent.IsolationProfile,
 			ChildProfile:  childProfile,
+		}
+	}
+
+	// §8.3 lines 311-319: treeVisibility inheritance + monotonicity. The
+	// child inherits the parent's effective visibility when it declares
+	// none; a declared value may narrow but never widen it. The check
+	// runs before pod allocation (the lineage / cycle / create steps
+	// below), mirroring the isolation-monotonicity rejection above.
+	childVis, err := resolveChildTreeVisibility(parent.TreeVisibility, req.TreeVisibility)
+	if err != nil {
+		return Result{}, err
+	}
+	// §8.3 lines 321-324: a resolved effective messagingScope of
+	// `siblings` requires treeVisibility `full` so children can discover
+	// one another via lenny/get_task_tree. messagingScope is resolved by
+	// the caller from the §7.2 deployment/tenant/runtime hierarchy and
+	// defaults to `direct`, so this gate is inert until a `siblings`
+	// scope is configured for the child.
+	if req.EffectiveMessagingScope.OrDefault() == session.MessagingScopeSiblings && childVis != session.VisibilityFull {
+		return Result{}, &TreeVisibilityMessagingScopeError{
+			EffectiveMessagingScope: session.MessagingScopeSiblings,
+			EffectiveTreeVisibility: childVis,
 		}
 	}
 
@@ -551,6 +634,11 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		IsolationProfile: childProfile,
 		ParentSessionID:  parent.ID,
 		RootSessionID:    rootSessionID,
+		// §8.3 lines 311-319: the monotonically-resolved visibility
+		// boundary (inherited from the parent or narrowed by the lease)
+		// is stamped on the child so lenny/get_task_tree scopes the
+		// child's view from creation. F-8.5.2 / F-8.9.2.
+		TreeVisibility: childVis,
 		// §8.3: the gateway attaches the parent's registered
 		// tracingContext to every child it delegates.
 		TracingContext: copyTracingContext(parent.TracingContext),
@@ -884,6 +972,29 @@ func (s *Service) buildLineage(ctx context.Context, tenantID string, parent sess
 	}
 	// The parent's depth is its index in the root-first chain.
 	return lineage, len(chain) - 1, nil
+}
+
+// resolveChildTreeVisibility applies the §8.3 lines 313-319
+// treeVisibility inheritance and monotonicity rules. An absent child
+// value (field omitted) inherits the parent's effective value; a present
+// value must be at least as narrow as the parent's effective value (the
+// strict ordering full → parent-and-self → self-only: a child may narrow
+// at any hop but never widen). An unrecognised explicit value is
+// rejected with a plain error the §8.5 handler maps to
+// INVALID_LEASE_FIELD; a widening is rejected with the typed
+// *TreeVisibilityWeakeningError. spec: §8.3 lines 311-319.
+func resolveChildTreeVisibility(parent, child session.TreeVisibility) (session.TreeVisibility, error) {
+	parentEff := parent.OrDefault()
+	if child == "" {
+		return parentEff, nil
+	}
+	if !child.IsValid() {
+		return "", fmt.Errorf("delegation: treeVisibility %q is not a recognised §8.5 value (full, parent-and-self, self-only)", child)
+	}
+	if !child.AtLeastAsNarrow(parentEff) {
+		return "", &TreeVisibilityWeakeningError{ParentVisibility: parentEff, ChildVisibility: child}
+	}
+	return child, nil
 }
 
 // copyTracingContext returns a deep copy of the §8.3 tracingContext so

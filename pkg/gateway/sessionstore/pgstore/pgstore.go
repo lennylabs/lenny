@@ -84,7 +84,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	last_seq,
 	workspace_root,
 	tracing_context, cascade_on_failure,
-	COALESCE(root_session_id::text, '')`
+	COALESCE(root_session_id::text, ''),
+	tree_visibility`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -140,7 +141,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		retry_policy, last_checkpoint_workspace_bytes,
 		last_seq,
 		workspace_root,
-		tracing_context, cascade_on_failure
+		tracing_context, cascade_on_failure,
+		tree_visibility
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -166,7 +168,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$39::jsonb, $40,
 		$41,
 		$42,
-		$43::jsonb, $44
+		$43::jsonb, $44,
+		$46
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -201,7 +204,13 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			string(sess.CascadeOnFailure),
 			// $45 — §8.9 RootSessionID; empty falls back to the
 			// session's own id via SQL COALESCE in insertSQL. F-8.9.8.
-			sess.RootSessionID)
+			sess.RootSessionID,
+			// $46 — §8.5 tree_visibility persisted raw; empty stays the
+			// in-Go "resolve to default full" convention (the read path
+			// normalises via TreeVisibility.OrDefault). The §8.2
+			// delegation Service stamps an explicit resolved value onto
+			// every child it admits. F-8.5.2 / F-8.9.2.
+			string(sess.TreeVisibility))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -279,7 +288,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			ELSE $40
 		END,
 		tracing_context = $41::jsonb,
-		cascade_on_failure = $42
+		cascade_on_failure = $42,
+		tree_visibility = $43
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -351,6 +361,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			sess.WorkspaceRoot,
 			tracingContextArg(sess.TracingContext),
 			string(sess.CascadeOnFailure),
+			// $43 — §8.5 tree_visibility; see Create. F-8.5.2 / F-8.9.2.
+			string(sess.TreeVisibility),
 		); err != nil {
 			return err
 		}
@@ -562,6 +574,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// (F-8.2.14 / F-8.2.15).
 		tracingContextJSON []byte
 		cascadeOnFailure   string
+		// §8.5 tree_visibility visibility boundary from migration 0094
+		// (F-8.5.2 / F-8.9.2).
+		treeVisibility string
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -602,6 +617,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// apex on every row in the tree so a single-shard query can
 		// rebuild the §8.9 tree without walking ParentSessionID. F-8.9.8.
 		&s.RootSessionID,
+		// §8.5 line 540 — tree_visibility scopes get_task_tree for this
+		// session; from migration 0094 (F-8.5.2 / F-8.9.2).
+		&treeVisibility,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
@@ -634,6 +652,10 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	if cascadeOnFailure != "" {
 		s.CascadeOnFailure = session.CascadePolicy(cascadeOnFailure)
 	}
+	// spec: §8.5 line 540 — tree_visibility persisted raw; the empty
+	// string preserves the in-Go "resolve to default full" convention
+	// (TreeVisibility.OrDefault). F-8.5.2 / F-8.9.2.
+	s.TreeVisibility = session.TreeVisibility(treeVisibility)
 	if resumeUntil != nil {
 		s.ResumeEligibleUntil = *resumeUntil
 	}

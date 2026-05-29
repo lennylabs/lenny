@@ -80,11 +80,13 @@ type TreeResponse struct {
 // handleTree implements GET /v1/sessions/{id}/tree per §15.1.
 //
 // The tree is reconstructed from the §7.1 ParentSessionID lineage
-// pointers on the session rows: every session whose parent chain
-// leads back to the requested session is a descendant. The minimal
-// gateway returns the full subtree (the §8.3 `treeVisibility`
-// `parent-and-self` / `self-only` scoping is applied by the
-// delegation-policy layer that ships with `lenny/delegate_task`).
+// pointers on the session rows, then scoped to the {id} session's
+// effective §8.3 `treeVisibility` per §8.5 line 540: `full` returns the
+// entire tree rooted at the apex (including siblings and their
+// descendants), `parent-and-self` returns the session's parent and
+// itself, and `self-only` returns just the session. This keeps the REST
+// projection semantically equivalent to the MCP `lenny/get_task_tree`
+// tool per §15.2.1. F-8.5.2 / F-8.9.2.
 //
 // Returns 404 RESOURCE_NOT_FOUND when the session does not exist or
 // belongs to another tenant.
@@ -92,7 +94,7 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
 
-	root, err := s.store.Get(r.Context(), tenantID, id)
+	caller, err := s.store.Get(r.Context(), tenantID, id)
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
 			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
@@ -107,9 +109,9 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	// rows belonging to the requested session's delegation tree
 	// instead of the whole tenant; the cost is O(tree size), not
 	// O(tenant size). F-8.9.7.
-	rootSessionID := root.RootSessionID
+	rootSessionID := caller.RootSessionID
 	if rootSessionID == "" {
-		rootSessionID = root.ID
+		rootSessionID = caller.ID
 	}
 	all, err := s.store.ListByRoot(r.Context(), tenantID, rootSessionID)
 	if err != nil {
@@ -123,14 +125,18 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// spec: §8.5 line 540 / §8.3 lines 311-319 — scope the response to the
+	// session's effective treeVisibility. F-8.5.2 / F-8.9.2.
+	respRoot, allowed := sessionstore.VisibleTree(caller, all, caller.TreeVisibility)
 	count := 0
 	ctx := treeWalkContext{
 		ctx:           r.Context(),
 		tenantID:      tenantID,
-		rootSessionID: root.ID,
+		rootSessionID: caller.ID,
 		observer:      s.treeCycleObserver,
+		allowed:       allowed,
 	}
-	node := buildTreeNode(ctx, root, childrenByParent, &count, map[string]bool{})
+	node := buildTreeNode(ctx, respRoot, childrenByParent, &count, map[string]bool{})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(TreeResponse{Root: node, NodeCount: count})
 }
@@ -144,6 +150,10 @@ type treeWalkContext struct {
 	tenantID      string
 	rootSessionID string
 	observer      TreeCycleObserver
+	// allowed, when non-nil, restricts the §8.5 treeVisibility-scoped
+	// walk to exactly its member session IDs; a nil set means "no
+	// restriction" (the `full` visibility case). F-8.5.2 / F-8.9.2.
+	allowed map[string]bool
 }
 
 // buildTreeNode recursively assembles the subtree rooted at sess.
@@ -174,6 +184,12 @@ func buildTreeNode(wctx treeWalkContext, sess sessionstore.Session, childrenByPa
 	}
 	seen[sess.ID] = true
 	for _, child := range childrenByParent[sess.ID] {
+		// spec: §8.5 line 540 — under a narrowed treeVisibility the walker
+		// descends only into the visible nodes; an out-of-scope child is
+		// pruned. F-8.5.2 / F-8.9.2.
+		if wctx.allowed != nil && !wctx.allowed[child.ID] {
+			continue
+		}
 		node.Children = append(node.Children, buildTreeNode(wctx, child, childrenByParent, count, seen))
 	}
 	return node

@@ -598,7 +598,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
 		}
-		root, err := deps.Store.Get(ctx, tenant, sessionID)
+		caller, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 		}
@@ -606,21 +606,29 @@ func Register(srv *mcp.Server, deps Deps) {
 		// requested session's delegation tree via the §12.5
 		// `idx_sessions_root` index; the cost is O(tree size) instead
 		// of O(tenant size). F-8.9.7.
-		rootSessionID := root.RootSessionID
+		rootSessionID := caller.RootSessionID
 		if rootSessionID == "" {
-			rootSessionID = root.ID
+			rootSessionID = caller.ID
 		}
 		all, err := deps.Store.ListByRoot(ctx, tenant, rootSessionID)
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
+		// spec: §8.5 line 540 / §8.3 lines 311-319 — scope the response to
+		// the caller's effective treeVisibility. `full` roots the response
+		// at the tree apex (the caller sees the whole tree including
+		// siblings); `parent-and-self` and `self-only` narrow it to the
+		// caller's parent+self or self alone. The allowed set restricts
+		// which children the walker descends into. F-8.5.2 / F-8.9.2.
+		respRoot, allowed := sessionstore.VisibleTree(caller, all, caller.TreeVisibility)
 		wctx := treeWalkContext{
 			ctx:           ctx,
 			tenantID:      tenant,
-			rootSessionID: root.ID,
+			rootSessionID: caller.ID,
 			observer:      deps.TreeCycleObserver,
+			allowed:       allowed,
 		}
-		tree := buildTree(wctx, root, all)
+		tree := buildTree(wctx, respRoot, all)
 		body, _ := json.Marshal(tree)
 		return textResult(string(body)), nil
 	})
@@ -1502,7 +1510,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			// SpawnChild is one of the six §11.5 critical operations and
 			// the MCP path is its only client surface. spec: F-11.5.1,
 			// F-11.5.6.
-			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
 			// principal so the §4 chain payload, §8.2 service Delegate, and
@@ -1520,6 +1528,12 @@ func Register(srv *mcp.Server, deps Deps) {
 				// validates the closed enum and short-circuits on
 				// "deny" before any side effects. F-8.4.1, F-8.4.2.
 				ApprovalMode string `json:"approvalMode,omitempty"`
+				// TreeVisibility is the §8.5 lease visibility boundary
+				// forwarded onto the delegation Request. Empty inherits the
+				// parent's effective value; a value broader than the
+				// parent's is rejected with TREE_VISIBILITY_WEAKENING.
+				// F-8.5.2 / F-8.9.2 / F-13.5.8.
+				TreeVisibility string `json:"treeVisibility,omitempty"`
 				// IdempotencyKey is read by the MCP idempotency hook
 				// before the handler runs and is intentionally accepted
 				// + ignored here. spec: §11.5 line 277; F-11.5.1,
@@ -1538,6 +1552,16 @@ func Register(srv *mcp.Server, deps Deps) {
 				return mcp.ToolResult{}, mcp.NewToolError("INVALID_LEASE_FIELD",
 					err.Error(),
 					map[string]any{"field": "approvalMode", "value": in.ApprovalMode})
+			}
+			// §8.5: validate the treeVisibility closed enum at the MCP
+			// boundary so a typo is rejected with INVALID_LEASE_FIELD
+			// before the parent lookup. An empty value (inherit) is valid.
+			// The service repeats the check as defence-in-depth.
+			// F-8.5.2 / F-8.9.2.
+			if in.TreeVisibility != "" && !session.TreeVisibility(in.TreeVisibility).IsValid() {
+				return mcp.ToolResult{}, mcp.NewToolError("INVALID_LEASE_FIELD",
+					fmt.Sprintf("treeVisibility %q is not a recognised §8.5 value (full, parent-and-self, self-only)", in.TreeVisibility),
+					map[string]any{"field": "treeVisibility", "value": in.TreeVisibility})
 			}
 			// spec: §8.2 line 50 — `lenny/delegate_task` rejects
 			// `type: mcp` targets with `target_not_an_agent`. The check
@@ -1664,6 +1688,13 @@ func Register(srv *mcp.Server, deps Deps) {
 				MaxDepth:         in.MaxDepth,
 				IsolationProfile: resolvePoolIsolation(ctx, deps, in.PoolRef),
 				ApprovalMode:     lease.ApprovalMode(in.ApprovalMode),
+				// §8.3 lines 311-319: the lease visibility boundary. Empty
+				// inherits the parent's effective value in the Service.
+				// EffectiveMessagingScope is left unset (resolves to the
+				// §7.2 default `direct`); the deployment/tenant/runtime
+				// messagingScope resolver is the separate §7.2 concern.
+				// F-8.5.2 / F-8.9.2 / F-13.5.8.
+				TreeVisibility: session.TreeVisibility(in.TreeVisibility),
 			})
 			if err != nil {
 				// §10.6 / §8.3: a SEC-001 isolation-monotonicity failure
@@ -1765,6 +1796,36 @@ func Register(srv *mcp.Server, deps Deps) {
 							"policyName":        cdErr.PolicyName,
 							"cooldownSeconds":   cdErr.CooldownSeconds,
 							"retryAfterSeconds": cdErr.RetryAfterSeconds,
+						})
+				}
+				// spec: §8.3 lines 313-317 — the child lease's treeVisibility
+				// widens the parent's effective visibility. Surface the
+				// canonical TREE_VISIBILITY_WEAKENING (POLICY, HTTP 422) with
+				// both sides of the mismatch so REST and MCP envelopes share
+				// the same (category, retryable) pair. F-8.5.2 / F-13.5.8.
+				var tvwErr *delegation.TreeVisibilityWeakeningError
+				if errors.As(err, &tvwErr) {
+					return mcp.ToolResult{}, mcp.NewToolError("TREE_VISIBILITY_WEAKENING",
+						err.Error(),
+						map[string]any{
+							"parentTreeVisibility": string(tvwErr.ParentVisibility),
+							"childTreeVisibility":  string(tvwErr.ChildVisibility),
+						})
+				}
+				// spec: §8.3 lines 321-324 — the child's effective
+				// messagingScope is `siblings` but its effective
+				// treeVisibility is not `full`. Surface the canonical
+				// TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE with the
+				// resolved scope, resolved visibility, and the required
+				// `full` value. F-13.5.8.
+				var tvmErr *delegation.TreeVisibilityMessagingScopeError
+				if errors.As(err, &tvmErr) {
+					return mcp.ToolResult{}, mcp.NewToolError("TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE",
+						err.Error(),
+						map[string]any{
+							"effectiveMessagingScope": string(tvmErr.EffectiveMessagingScope),
+							"effectiveTreeVisibility": string(tvmErr.EffectiveTreeVisibility),
+							"requiredTreeVisibility":  string(session.VisibilityFull),
 						})
 				}
 				return mcp.ToolResult{}, err
@@ -2589,6 +2650,11 @@ type treeWalkContext struct {
 	tenantID      string
 	rootSessionID string
 	observer      TreeCycleObserver
+	// allowed, when non-nil, restricts the §8.5 treeVisibility-scoped
+	// walk to exactly its member session IDs: the walker descends into a
+	// child only when allowed[childID] is true. A nil set means "no
+	// restriction" (the `full` visibility case). F-8.5.2 / F-8.9.2.
+	allowed map[string]bool
 }
 
 func buildTree(wctx treeWalkContext, root sessionstore.Session, all []sessionstore.Session) treeNode {
@@ -2630,6 +2696,13 @@ func walk(wctx treeWalkContext, s sessionstore.Session, byParent map[string][]se
 	}
 	seen[s.ID] = true
 	for _, c := range byParent[s.ID] {
+		// spec: §8.5 line 540 — under a narrowed treeVisibility the walker
+		// descends only into the visible nodes; an out-of-scope child (a
+		// sibling subtree under `parent-and-self`, any child under
+		// `self-only`) is pruned. F-8.5.2 / F-8.9.2.
+		if wctx.allowed != nil && !wctx.allowed[c.ID] {
+			continue
+		}
 		node.Children = append(node.Children, walk(wctx, c, byParent, seen))
 	}
 	return node

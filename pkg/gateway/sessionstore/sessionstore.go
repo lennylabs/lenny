@@ -293,6 +293,19 @@ type Session struct {
 	// session ran no setup commands. F-7.5.4 / F-7.5.11.
 	// spec: §7.5 lines 475, 488.
 	SetupOutput []SetupCommandOutput
+
+	// TreeVisibility is the §8.5 / §8.3 delegation-lease visibility
+	// boundary realised on the session row (the §4.2 line 161 design
+	// clarification: in v1 the delegation lease is the child session
+	// row). It scopes what lenny/get_task_tree and
+	// GET /v1/sessions/{id}/tree return for this session: `full` (the
+	// entire tree rooted at the apex), `parent-and-self`, or `self-only`.
+	// Empty resolves to the §8.5 default `full` on the read path; the
+	// §8.2 delegation Service stamps the monotonically-resolved value
+	// onto every child it admits (a child may narrow but never widen the
+	// parent's effective visibility). spec: §8.5 line 540; §8.3 lines
+	// 311-319. F-8.5.2 / F-8.9.2 / F-13.5.8.
+	TreeVisibility session.TreeVisibility
 }
 
 // SetupCommandOutput is one §7.5 line 475 setup-command record retained
@@ -329,6 +342,64 @@ type SetupCommandOutput struct {
 	// reason (e.g. `setup_command_policy_violation`,
 	// `setup_commands_max_exceeded`). Empty for executed entries.
 	RejectionReason string
+}
+
+// VisibleTree computes the §8.5 treeVisibility-scoped projection of a
+// delegation tree for a caller session. Given the caller row, the full
+// set of rows in the caller's tree (as returned by ListByRoot on the
+// caller's RootSessionID), and the caller's effective visibility, it
+// returns the session that roots the response and a predicate set of
+// session IDs that may appear in the response.
+//
+//   - full: the response is rooted at the tree apex (RootSessionID) and
+//     no node is filtered (a nil allowed set). The caller sees the
+//     entire tree including siblings and their descendants.
+//   - parent-and-self: the response is rooted at the caller's direct
+//     parent and contains exactly the parent and the caller. When the
+//     caller is the tree root (no parent), it degenerates to self-only.
+//   - self-only: the response is rooted at the caller and contains only
+//     the caller.
+//
+// A nil allowed set means "no restriction"; a non-nil set restricts the
+// walk to exactly its members. The caller threads allowed into its tree
+// walker so descent skips any child outside the set. Keeping the
+// decision here (rather than duplicated in the MCP and REST walkers)
+// keeps the two §15.2.1 projections of the operation in lockstep.
+//
+// spec: §8.5 line 540; §8.3 lines 311-319. F-8.5.2 / F-8.9.2.
+func VisibleTree(caller Session, all []Session, vis session.TreeVisibility) (Session, map[string]bool) {
+	switch vis.OrDefault() {
+	case session.VisibilitySelfOnly:
+		return caller, map[string]bool{caller.ID: true}
+	case session.VisibilityParentAndSelf:
+		if caller.ParentSessionID == "" {
+			// The tree root has no parent; parent-and-self degenerates to
+			// self-only rather than fabricating a parent node.
+			return caller, map[string]bool{caller.ID: true}
+		}
+		for _, s := range all {
+			if s.ID == caller.ParentSessionID {
+				return s, map[string]bool{s.ID: true, caller.ID: true}
+			}
+		}
+		// Parent row absent from the tree set (GC'd or a cross-tree
+		// pointer); fall back to self-only so the caller never observes
+		// more than its own node.
+		return caller, map[string]bool{caller.ID: true}
+	default: // full
+		apexID := caller.RootSessionID
+		if apexID == "" {
+			apexID = caller.ID
+		}
+		for _, s := range all {
+			if s.ID == apexID {
+				return s, nil
+			}
+		}
+		// Apex row absent (a legacy row without root_session_id, or the
+		// caller is its own root); root the response at the caller.
+		return caller, nil
+	}
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a
