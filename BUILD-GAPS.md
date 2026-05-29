@@ -13252,7 +13252,7 @@ delete, admin]` on a security-team environment today has no effect on
 what tools the agents in that environment may invoke against a matching
 mcp runtime.
 
-### - [ ] F-10.6.3 — 03  `connectorSelector.allowedCapabilities`/`deniedCapabilities` are not modeled [High] — OPEN
+### - [x] F-10.6.3 — 03  `connectorSelector.allowedCapabilities`/`deniedCapabilities` are not modeled [High] — CLOSED
 
 **Spec:** §10.6 lines 595–599 — `connectorSelector` carries
 `matchLabels`, `allowedCapabilities`, and `deniedCapabilities`. The
@@ -13281,6 +13281,21 @@ through any code path; the field is silently dropped from request
 bodies and is invisible on `GET`. This compounds with F-10.6-02: there
 is no connector capability filter either, but here even the schema is
 missing.
+
+**Resolution:** new `environmentstore.ConnectorSelector{Selector,
+AllowedCapabilities, DeniedCapabilities}` type; `Environment.ConnectorSelector`
+now carries the capability lists alongside the tag selector. The admin wire
+shape gains `ConnectorSelectorPayload` with `allowedCapabilities`/
+`deniedCapabilities`, round-tripped through Create/Get/Update and persisted in
+the environments `body` jsonb. `environmentstore.Validate` rejects empty,
+duplicate, and allowed∩denied-overlapping capability names (loose validation —
+the §10.6 line 665 taxonomy is extensible and the §10.6 example itself names
+`search`, not a §5.3 capability); the same check now also covers
+mcpRuntimeFilter capability lists. Capability *enforcement* at connector
+dispatch remains the separate gap noted alongside F-10.6.2. Tier-1
+`TestConnectorSelectorCapabilityValidation_spec_10_6_595` +
+`TestConnectorSelectorCapabilitiesWireRoundTrip_spec_10_6_595` /
+`...RejectsOverlap...`; tier-2 store round-trip extended.
 
 ### - [x] F-10.6.4 — 04  Bilateral cross-environment-delegation wire shape uses `environment`, spec defines `targetEnvironment`/`sourceEnvironment` [High] — CLOSED
 
@@ -13379,7 +13394,7 @@ so a `viewer` can no longer obtain the parent session that the delegate-time
 `TestExplicitEnvironmentViewerRejected_spec_10_6_605` (viewer → 403) and
 `TestExplicitEnvironmentCreatorAdmitted_spec_10_6_605` (creator → 201).
 
-### - [ ] F-10.6.6 — 06  Tenant RBAC Config payload omits `identityProvider`, `tokenPolicy`, `capabilities`, `mcpAnnotationMapping` [High] — OPEN
+### - [x] F-10.6.6 — 06  Tenant RBAC Config payload omits `identityProvider`, `tokenPolicy`, `capabilities`, `mcpAnnotationMapping` [High] — CLOSED
 
 **Spec:** §10.6 line 665 — "Tenant RBAC Config: Managed via
 `PUT /v1/admin/tenants/{id}/rbac-config`. Includes `noEnvironmentPolicy`,
@@ -13406,7 +13421,26 @@ the OIDC provider per tenant, cannot set the token policy per tenant,
 cannot extend the capability taxonomy with tenant-custom capabilities,
 and cannot override an mcp tool's inferred capability.
 
-### - [ ] F-10.6.7 — 07  `defaultDelegationPolicy` is stored but never applied at session create [High] — OPEN
+**Resolution:** `tenantstore.Tenant` gains an `RBACConfig` sub-object
+(`IdentityProvider{Type, IntrospectionEnabled}`, opaque `TokenPolicy`
+json.RawMessage, `Capabilities []string`, `MCPAnnotationMapping
+map[string][]string`) persisted in a new `rbac_config` jsonb column
+(migration 0097). `RBACConfigPayload` carries all four; PUT validates
+(`identityProvider.type` ∈ {"", oidc}; `tokenPolicy` must be a JSON object;
+`capabilities` non-empty + deduped; `mcpAnnotationMapping` values validated as
+§5.3 capabilities via the existing `capabilityinference.ValidateOverrides`) and
+GET round-trips them. `tokenPolicy` is stored verbatim and not interpreted —
+§10.6 line 665 names the field but defines no sub-fields, so inventing its
+structure would change the spec; the gateway round-trips it for forward
+compatibility. `mcpAnnotationMapping` matches the `capabilityinference.Resolve`
+overrides contract (§5.1 line 325). The live OIDC introspection check the
+`identityProvider.introspectionEnabled` toggle gates is the separate F-10.6.8;
+this finding lands the storage it reads. Tier-1
+`TestRBACConfigRoundTripsExtraFields_spec_10_6_665` + four validation tests +
+`TestRBACConfigCloneIsDeep_spec_10_6_665`; tier-2 pgstore round-trip + 0097
+column assertion.
+
+### - [x] F-10.6.7 — 07  `defaultDelegationPolicy` is stored but never applied at session create [High] — CLOSED
 
 **Spec:** §10.6 line 601 and lines 629–637 — `defaultDelegationPolicy`
 names the `DelegationPolicy` "applied to sessions created in this
@@ -13434,6 +13468,26 @@ the delegation policy. A session created in a security-team environment
 that points at a tightly-scoped `defaultDelegationPolicy` (the documented
 purpose of the field) instead uses the platform-default or
 request-supplied delegation policy.
+
+**Resolution:** the effective DelegationPolicy resolution now consults the
+session's environment. `filterByEffectiveDelegationPolicy` (the §8.3 line 244
+discovery surface, the only place a DelegationPolicy is applied to narrow
+runtimes today) collects every governing policy — the §8.3 runtime-level
+policy plus the §10.6 environment `defaultDelegationPolicy` resolved via a new
+`environmentDefaultPolicy` helper (session.Environment → environment →
+`Service.ResolveActivePolicy`) — and admits a target only when all of them
+permit it, the §10.6 line 629 `∩ delegation policy` intersection. The
+intersection is restriction-only, matching the §8.3 least-privilege doctrine.
+An unresolved env-default reference (no environment, no default, missing or
+soft-deleted policy) imposes no restriction, the same conservative
+fall-through the runtime-level resolver uses. The delegate-time target gate
+that would consume the same resolution is the separate (still-absent) §8.3
+tag-gate at admission; this finding closes the "stored but never applied" gap
+by making the env-default participate in the effective scope. Tier-1
+`TestDiscoverAgentsAppliesEnvironmentDefaultPolicy` /
+`...IntersectsRuntimeAndEnvironmentPolicy` / `...MissingEnvironmentPolicyFailsOpen`
+/ `...EnvironmentWithNoDefaultPolicyUsesRuntimeOnly` +
+`TestResolveActivePolicy_spec_10_6_601` (+ nil-registry).
 
 ### - [ ] F-10.6.8 — 08  OIDC `introspectionEnabled` real-time group check is absent [Medium] — OPEN
 
