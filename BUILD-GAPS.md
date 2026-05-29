@@ -19572,7 +19572,7 @@ plus a Helm chart MinIO-side configuration pass.
 
 ---
 
-### - [ ] F-12.6.10 — `EventBus` is not exposed as an interface; production wiring is absent [High] — OPEN
+### - [x] F-12.6.10 — `EventBus` is not exposed as an interface; production wiring is absent [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.7.4 — Both describe EventBus being only a concrete RedisEventBus struct with no interface declared for backend swaps.
 
@@ -19584,9 +19584,11 @@ plus a Helm chart MinIO-side configuration pass.
 
 **Fix.** Define an `EventBus` interface with the spec's two methods; have `RedisEventBus` (and any future NATS/Kafka implementation) satisfy it. Wire a real `RedisEventBus` into `cmd/lenny-gateway/main.go` (with `pubsub.New(redisClient)` as the substrate) and pass it as `EventBus` to the audit-write path and the retranscriber.
 
+**Resolution:** Closed by `f9ac30e2`. `pkg/gateway/eventbus/eventbus.go` now declares `type EventBus interface { Publish; Subscribe }` with the §12.6 line 658-662 signatures; `RedisEventBus` satisfies it (compile-time `var _ EventBus = (*RedisEventBus)(nil)`), and the audit-write path (`auditstore.PublishingAppender.Publisher`) plus the narrow `RetranscribePublisher` now depend on the interface rather than the concrete struct. The "swap is a configuration-only change" guarantee is now structural. The remaining production-startup wiring (constructing the `RedisEventBus` + leader-elected `Retranscriber` in `cmd/lenny-gateway/main.go`) needs leader-election infra the gateway does not yet have and is tracked by the dedicated wiring finding **F-12.6.22**.
+
 ---
 
-### - [ ] F-12.6.11 — EventBus `Subscription` shape diverges from spec [High] — OPEN
+### - [x] F-12.6.11 — EventBus `Subscription` shape diverges from spec [High] — CLOSED
 
 **Spec.** §12.6 lines 411–414 and 660–661:
 ```go
@@ -19603,9 +19605,11 @@ Subscribe(...) (Subscription, error)
 
 **Fix.** Rename the method to `Unsubscribe() error` and either (a) introduce a `Subscription` interface plus a private concrete type, or (b) keep the struct and change the spec — but per F10's broader goal of plug-in backends, the interface form is the right one.
 
+**Resolution:** Closed by `f9ac30e2`. `Subscription` is now the spec's `interface { Unsubscribe() error }`; the concrete handle is the unexported `subscription` (idempotent `Unsubscribe` via `sync.Once`, returns nil for the v1 Redis backend). `RedisEventBus.Subscribe` returns `(Subscription, error)`. Took option (a). The tier-2 component test callers now use `Unsubscribe()`.
+
 ---
 
-### - [ ] F-12.6.12 — `EventBus.Publish` failure-after-durable-commit replay buffer is not implemented [High] — OPEN
+### - [x] F-12.6.12 — `EventBus.Publish` failure-after-durable-commit replay buffer is not implemented [High] — CLOSED
 
 **Spec.** §12.6 line 683: "the gateway: (a) increments `lenny_event_bus_publish_dropped_total{topic}` ...; (b) writes the serialized CloudEvents envelope to a bounded in-memory replay buffer (default 10k events per replica, oldest-first eviction) for opportunistic re-publish when the backend recovers; and (c) for audit-bearing topics, marks the source Postgres audit row with `eventbus_publish_state = 'failed'` and leaves `retry_count = 0`." Plus the `lenny_event_bus_replay_buffer_utilization` gauge.
 
@@ -19614,6 +19618,8 @@ Subscribe(...) (Subscription, error)
 **Impact.** Same-replica recovery, the spec's "latency optimization" layer, is missing. Every transient Redis hiccup forces the retranscribe-worker sweep (60s default) to drain the queue, instead of the originating replica drafting from RAM in the seconds-after-recovery window.
 
 **Fix.** Add a bounded ring buffer (default 10k) to `RedisEventBus`; on a publish drop, append the serialized envelope; on a subsequent successful publish (or a periodic flush), drain in FIFO order and emit the utilization gauge.
+
+**Resolution:** Closed by `f9ac30e2`. `RedisEventBus` carries a bounded replay buffer (`defaultReplayBufferCap = 10_000`, oldest-first eviction). A backend/timeout drop appends the byte-identical serialized envelope (preserving the original `id`/`time`/`source`); a serialization failure is not retryable and is not buffered. The next successful publish drains the buffer in FIFO order (the recovering event, then oldest-first). Every append, eviction, and drain step emits `lenny_event_bus_replay_buffer_utilization` (`ratio = len/cap`) via the `BusMetrics.ReplayBufferUtilization` method. Note: the spec attributes this gauge to §12.6 (§16.1 line 233); a prior §10.4 SSE-buffer wiring (F-10.4.11) reused the same Prometheus name, so binding the EventBus gauge to a production collector is deferred to the F-12.6.22 wiring batch, which must reconcile the name. The "drained events flip the source audit row to published" coupling is part of that audit-path wiring. Tests: buffer-on-failure, FIFO drain, oldest-first eviction, serialization-not-buffered.
 
 ---
 
@@ -19673,7 +19679,7 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 
 ---
 
-### - [ ] F-12.6.16 — spec-required typed string `TenantID` is not used by `EventBus` [Medium] — OPEN
+### - [x] F-12.6.16 — spec-required typed string `TenantID` is not used by `EventBus` [Medium] — CLOSED
 
 **Spec.** §12.6 line 369–373 enumerates `PodID`, `PoolID`, `TenantID`, `SessionID`, `ClusterID` as typed strings, and `EventBus.Publish` / `Subscribe` (line 659–661) take `tenantID TenantID`.
 
@@ -19683,9 +19689,11 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 
 **Fix.** Either reuse `storerouter.TenantID` (preferred — single source of truth) or define `eventbus.TenantID` typed identically. Update Publish/Subscribe signatures.
 
+**Resolution:** Closed by `f9ac30e2`. Defined `eventbus.TenantID` (typed string); `Publish`, `Subscribe`, and `ChannelName` now take it. Chose the local definition over importing `storerouter.TenantID` to keep the lightweight eventbus package free of the storerouter (pgx) dependency; the §12.6 shared `platform/store` package (F-12.6.20) is the eventual single home for this and the sibling ID types. Call sites convert the Postgres-sourced string tenant id with `eventbus.TenantID(...)`.
+
 ---
 
-### - [ ] F-12.6.17 — EventBus `Publish` does not record the publish-duration histogram [Medium] — OPEN
+### - [x] F-12.6.17 — EventBus `Publish` does not record the publish-duration histogram [Medium] — CLOSED
 
 **Spec.** §12.6 line 709: "Every `EventBus` implementation MUST emit: `lenny_event_bus_publish_total{topic}` (counter), `lenny_event_bus_publish_duration_seconds{topic}` (histogram), `lenny_event_bus_handler_duration_seconds{topic}` (histogram), and `lenny_event_bus_handler_error_total{topic}` (counter)."
 
@@ -19694,6 +19702,8 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 **Impact.** Two of the four required metrics — `lenny_event_bus_publish_duration_seconds` and `lenny_event_bus_handler_duration_seconds` — are catalogued but never emitted. Operators cannot detect "slow handlers" or "slow publishes" per the §12.6 motivation.
 
 **Fix.** Extend `BusMetrics` with `PublishDuration(topic, dur)` and `HandlerDuration(topic, dur)`. Have `RedisEventBus.Publish` wrap its `bus.Publish` call with `time.Since` and emit; have `Subscribe`'s consume loop measure handler invocation time.
+
+**Resolution:** Closed by `f9ac30e2`. `BusMetrics` gained `PublishDuration(topic, seconds)` and `HandlerDuration(topic, seconds)`. `Publish` records the send-latency sample (`lenny_event_bus_publish_duration_seconds`) around `b.send`; `Subscribe`'s consume loop records the caller-supplied handler's wall-clock (`lenny_event_bus_handler_duration_seconds`), measuring the handler and not the transport per §12.6 line 709. A clock hook makes the publish-duration unit test deterministic; the handler-duration path is asserted in the tier-2 component test against real Redis delivery.
 
 ---
 
@@ -19984,7 +19994,7 @@ Files:
 - `cmd/lenny-gateway/main.go:393-409` (hard-coded MinIO vs in-memory branch).
 - `charts/lenny/values.yaml:157-173` (`minio:` block only).
 
-### - [ ] F-12.7.4 — 4 — EventBus is a concrete struct, not an interface [Medium] — OPEN
+### - [x] F-12.7.4 — 4 — EventBus is a concrete struct, not an interface [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.6.10 — Both describe EventBus being only a concrete RedisEventBus struct with no interface declared for backend swaps.
 
@@ -19997,6 +20007,8 @@ Files:
 Files:
 - `pkg/gateway/eventbus/eventbus.go:111-180` (only `RedisEventBus`, no `EventBus` interface).
 - `pkg/gateway/auditstore/translation.go:16`, `pkg/gateway/auditstore/retranscribe.go:16` (import the concrete type).
+
+**Resolution:** Closed by F-12.6.10 (`f9ac30e2`). The `EventBus` interface now exists and `RedisEventBus` satisfies it; the audit-write path depends on the interface. (The two auditstore files cited here only ever referenced eventbus value types — `Event`, `RetranscribeRow`, `PublishState` — never the concrete `*RedisEventBus`, so they needed no change.)
 
 ### - [ ] F-12.7.5 — 5 — Token-store / Vault-migration seam present and aligned [Medium] — OPEN
 
