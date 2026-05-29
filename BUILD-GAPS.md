@@ -36618,7 +36618,7 @@ Spec: lines 596–604, 622–625. `gateway.recommendations.windowOverrides` (per
 
 Implementation: `pkg/gateway/recommendations/service.go` `NewCapacityService` accepts only a `MetricReader`; no `disabledRules`, no `windowOverrides`. `pkg/gateway/admin/recommendations.go` `handleRecommendations` writes `INTERNAL_ERROR` on any service error (line 28) rather than mapping to `UNKNOWN_RECOMMENDATION_CATEGORY` or `RECOMMENDATIONS_UNAVAILABLE`. `grep -rn "disabledRules\|windowOverrides\|disableOnPrometheusOutage\|UNKNOWN_RECOMMENDATION_CATEGORY\|RECOMMENDATIONS_UNAVAILABLE" /Users/joan/projects/lenny/pkg/ /Users/joan/projects/lenny/charts/ /Users/joan/projects/lenny/cmd/` returns zero hits across the implementation (only spec references). Consequence: operators cannot disable a noisy rule, cannot reduce window sizes for memory pressure, and cannot opt out of fan-out fallback during a Prometheus outage; agents receive an `INTERNAL_ERROR` rather than the categorised error codes §25.3 names.
 
-### - [ ] F-25.3.13 — `OperationalEvent` is a local struct, not a `cloudevents.Event` alias; `subject` / extension attributes are absent. (Medium) [Medium] — OPEN
+### - [x] F-25.3.13 — `OperationalEvent` is a local struct, not a `cloudevents.Event` alias; `subject` / extension attributes are absent. (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-25.3.19 — F-25.3.13 and F-25.3.19 both report the absent subject attribute on OperationalEvent; F-12.6.21 concerns a different struct (eventbus Event) in another package.
 
@@ -36626,7 +36626,9 @@ Spec: lines 654–663 — "OperationalEvent is a CloudEvents v1.0.2 Event — se
 
 Implementation: `pkg/gateway/opsevents/buffer.go` lines 27–52 defines a local `OperationalEvent` struct with `ID`, `Source`, `SpecVersion`, `Type`, `Time`, `Severity`, `DataContentType`, `Data`. No `subject`, no extension-attribute map. `grep -rn "cloudevents/sdk-go\|cloudevents.Event" /Users/joan/projects/lenny/pkg/ /Users/joan/projects/lenny/cmd/` returns no hits — the CloudEvents SDK is not used. (A separate `pkg/gateway/eventbus/cloudevents.go` exists but is the audit-event pipeline, unrelated to `opsevents`.) Consequence: the wire format diverges from the §12.6 CloudEvents envelope contract `opsevents` claims to implement. A `lenny-ops` or external CloudEvents consumer cannot rely on standard CE attributes that aren't on the wire (`subject` in particular is documented as a §16.6 attribute and is missing).
 
-### - [ ] F-25.3.14 — `EventEmitter` Go interface signature does not match the spec. (Medium) [Medium] — OPEN
+**Resolution (662adf20):** `subject` was already first-class (F-25.3.19). Added an `Extensions map[string]string` to `OperationalEvent` (`pkg/gateway/events/buffer.go`) with custom `MarshalJSON`/`UnmarshalJSON` that flatten extension attributes into the top-level CloudEvents structured-content object and round-trip them back, mirroring `pkg/gateway/eventbus.Event`; a stray extension keyed on a structured attribute name never clobbers the first-class field. The literal `type OperationalEvent = cloudevents.Event` go-sdk alias is intentionally not adopted — the CloudEvents SDK is deliberately not vendored, the same documented decision the §12.3.7 audit envelope (`eventbus.Event`) follows, and the native struct marshals to the identical CloudEvents v1.0.2 wire format. Tier-1: extension flatten/round-trip + no-clobber.
+
+### - [x] F-25.3.14 — `EventEmitter` Go interface signature does not match the spec. (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-4.0.10 — Both report that EventEmitter is a concrete struct with an Emit signature that drops ctx and returns uint64 instead of matching the spec interface.
 
@@ -36634,11 +36636,17 @@ Spec: lines 660–663 — `type EventEmitter interface { Emit(ctx context.Contex
 
 Implementation: `pkg/gateway/opsevents/emitter.go` line 40 — `func (e *Emitter) Emit(event OperationalEvent) uint64`. No `context.Context` parameter; returns `uint64` (the buffer ID) instead of `error`. There is no `EventEmitter` interface declaration in the package (`grep -rn "type EventEmitter\b" /Users/joan/projects/lenny/pkg/gateway/opsevents/` returns no hits). Consequence: callers cannot pass a cancellation context (relevant once Redis emission lands per F1), and cannot observe emission errors. Sites that call `Emit` (`pkg/gateway/admin/eventbuffer.go` line 42; `pkg/gateway/sessionserver/usage.go` line 124) discard the returned ID and have no error to log.
 
-### - [ ] F-25.3.15 — `eventType` and `severity` query parameters are single-value; spec admits CSV. (Medium) [Medium] — OPEN
+**Resolution (662adf20):** The `EventEmitter` interface and threaded `ctx` already landed (F-4.0.10); the remaining divergence was the `(uint64, error)` return. `EventEmitter.Emit` now returns `error` only per §25.3 lines 660-663, and the buffer id is read back through `Buffer().Query`. All four implementers (`Emitter`, `StreamEmitter`, `pkg/ops/events.Service`, `cmd/lenny-ops` `redisFanOutEmitter`) and every call site (alerting evaluator, warmpool controller, upgrade, experimentrouter, lifecycle, usage, start, admin eventbuffer, gateway main, cred renewal) were updated. Tier-1 emitter/streamemitter tests assert the assigned id via the buffer cursor.
+
+Closes duplicate **F-4.0.10** (already CLOSED; the return-type half is finished here).
+
+### - [x] F-25.3.15 — `eventType` and `severity` query parameters are single-value; spec admits CSV. (Medium) [Medium] — CLOSED
 
 Spec: §25.2 lines 336–340 (cross-cutting filter parameter naming, referenced by §25.3) — `eventType` and `severity` accept CSV form. §25.3 lines 720 specifies the buffer endpoint's `?eventType=` and `?severity=` parameters without restricting to single values.
 
 Implementation: `pkg/gateway/admin/eventbuffer.go` lines 74–77 passes `q.Get("eventType")` and `q.Get("severity")` directly to `opsevents.EventFilter`. `pkg/gateway/opsevents/buffer.go` lines 183–192 `matchFilter` treats each as a single literal match (`f.Severity != ""` → exact-equality; `f.EventType != ""` → exact or short-name-suffix match). No CSV split, no multi-value disjunction. Consequence: an agent that follows §25.2's canonical-filter contract and sends `?severity=critical,warning&eventType=alert_fired,circuit_breaker_opened` to the buffer receives an empty page (the comma-joined token matches nothing) rather than the expected union.
+
+**Resolution (662adf20):** `EventFilter` now exposes `Matches(OperationalEvent)` which splits each field on commas (trimming whitespace, ignoring empty tokens) and matches the §25.2 union per dimension; the two dimensions still intersect. The duplicate `matchFilter` in `pkg/ops/events/service.go` was deleted and delegates to `EventFilter.Matches`, so the gateway buffer and the lenny-ops stream share one matcher. The admin/poll handlers pass the raw CSV query string unchanged. Tier-1 (union, whitespace, all-empty CSV, single-value no-regression, intersection) plus a tier-2 HTTP test for the exact `?severity=critical,warning&eventType=...` scenario.
 
 ### - [ ] F-25.3.16 — `/v1/admin/recommendations` does not surface the `degradation` / `dataAvailable` post-restart contract. (Medium) [Medium] — OPEN
 
@@ -36646,13 +36654,15 @@ Spec: lines 588–597, 606–608. After a gateway restart, ring buffers are empt
 
 Implementation: `pkg/gateway/recommendations/service.go` line 94 — `if !e.Triggered { continue }` skips the recommendation entirely when its evaluator returns `Triggered: false`. The post-restart contract per the spec is that the rule emits a recommendation tagged `confidence: 0` / `dataAvailable: false` so an agent can see the rule exists but is starved of data. The implementation's `DataAvailable: false` path returns no recommendation at all (lines 122/132/142/152/162/172 all return zero-value `Evaluation{}` when the metric is missing). Consequence: an agent cannot distinguish "no warm-pool issue" from "warm-pool rule cannot evaluate because Prometheus / ring buffer is empty"; the spec's "I know the rule ran but it had no data" signal is lost.
 
-### - [ ] F-25.3.17 — Buffer query response uses `gapDetected` at the response root, not under `pagination.gapDetected`. (Medium) [Medium] — OPEN
+### - [x] F-25.3.17 — Buffer query response uses `gapDetected` at the response root, not under `pagination.gapDetected`. (Medium) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-25.2.4 — Both describe the buffer endpoint lacking the canonical §25.2 pagination envelope, with gap fields emitted at the response root instead of under pagination.
 
 Spec: line 750 — "the response includes the canonical `pagination.gapDetected: true` envelope (Section 25.2) along with `pagination.oldestAvailableCursor`." §25.2 pagination envelope is `pagination.{cursor, hasMore, limit, cursorKind, headCursor, gapDetected, gapReason, oldestAvailableCursor, suggestedAction}`.
 
 Implementation: `pkg/gateway/opsevents/buffer.go` lines 73–88 — `BufferedEventPage` has top-level `Events`, `Cursor`, `HasMore`, `GapDetected`, `OldestAvailableCursor`, `BufferAge`. No `pagination` envelope wrapper, no `cursorKind`, no `headCursor`, no `gapReason`, no `suggestedAction: "resync"`. Consequence: agents following §25.2's canonical pagination read `pagination.gapDetected` and receive a missing field, even though the gateway computed the gap. This is the same regression class as F4 in §25.2 audit (no canonical pagination envelope), localised to §25.3's specifically-cited "canonical envelope" promise.
+
+**Resolution (662adf20):** `BufferedEventPage` now nests a `Pagination` struct carrying the §25.2 canonical fields — `cursor`, `hasMore`, `limit`, `cursorKind` (always `buffer-seq`), `headCursor`, and on eviction `gapDetected` + `gapReason` + `oldestAvailableCursor` + `suggestedAction: "resync"`. `Query` populates it; the admin and lenny-ops poll handlers serialize the page unchanged, so the gap fields now ride under `pagination` rather than at the response root. Tier-1 (envelope fields, gap-recovery fields) + a JSON-shape test asserting the gap fields are NOT at the root. **F-25.2.4** is NOT closed by this: it additionally covers the §25.4 locks/escalations/event-subscription list endpoints and the §25.11 backup-list endpoint, which still lack the envelope — only its buffer-endpoint overlap is addressed here.
 
 ### - [ ] F-25.3.18 — `lenny-ops` Redis stream consumer wiring is absent (no producer at gateway, no consumer in opsservice). (High) [Medium] — OPEN
 
