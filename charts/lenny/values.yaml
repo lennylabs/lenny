@@ -1084,6 +1084,14 @@ gateway:
   # behaviour). 0 selects the binary default (60s).
   # F-11.3.22.
   rateLimitFailOpenMaxSeconds: 60
+  # quotaSyncIntervalSeconds — §11.2 line 44. Cadence (seconds) at which
+  # the gateway checkpoints Redis quota and delegation-budget counters to
+  # Postgres, and the final reconciliation baseline on session completion.
+  # The worst-case quota overshoot scales with this value, so lower it
+  # toward the 10s minimum for high-throughput tenants to reduce
+  # crash-recovery exposure. Values below 10 are clamped up by the binary.
+  # Default 30. F-11.2.16.
+  quotaSyncIntervalSeconds: 30
   # streamCeiling is the §4.1 / §16.5 per-replica streaming-connection
   # ceiling read by the GatewayActiveStreamsHigh alert via
   # scalar(lenny_gateway_stream_ceiling). When unset the chart falls

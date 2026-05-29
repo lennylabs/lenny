@@ -206,6 +206,34 @@ func PerUserFailOpenCeiling(effectiveCeiling int64, userFailOpenFraction float64
 	return int64(float64(effectiveCeiling) * userFailOpenFraction)
 }
 
+// DefaultSyncIntervalSeconds is the §11.2 quotaSyncIntervalSeconds
+// default: the cadence at which Redis quota counters are checkpointed
+// to Postgres (and on which delegation budget counters are persisted).
+// spec: §11.2 line 44 ("default: 30s").
+const DefaultSyncIntervalSeconds = 30
+
+// MinSyncIntervalSeconds is the §11.2 floor on quotaSyncIntervalSeconds.
+// A higher-throughput tenant lowers the interval toward this floor to
+// reduce crash-recovery overshoot exposure, but cannot go below it so
+// the checkpoint write cannot busy-loop. spec: §11.2 line 44
+// ("minimum: 10s").
+const MinSyncIntervalSeconds = 10
+
+// ClampSyncIntervalSeconds applies the §11.2 bounds to a configured
+// quotaSyncIntervalSeconds: a non-positive value selects the 30s
+// default, and a positive value below the 10s minimum is raised to the
+// floor. Any value at or above the floor is returned unchanged.
+// spec: §11.2 line 44 (default 30, minimum 10).
+func ClampSyncIntervalSeconds(seconds int) int {
+	if seconds <= 0 {
+		return DefaultSyncIntervalSeconds
+	}
+	if seconds < MinSyncIntervalSeconds {
+		return MinSyncIntervalSeconds
+	}
+	return seconds
+}
+
 // MaxOvershoot computes the §11.2 worst-case quota overshoot during
 // normal operation: quotaSyncIntervalSeconds × max_tokens_per_second
 // × active_sessions_per_tenant. Returns the bound in tokens.

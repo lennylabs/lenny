@@ -465,6 +465,14 @@ spec:
             - name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
               value: {{ .Values.gateway.rateLimitFailOpenMaxSeconds | quote }}
             {{- end }}
+            # §11.2 line 44 — quotaSyncIntervalSeconds: cadence at which
+            # Redis quota and delegation-budget counters checkpoint to
+            # Postgres (default 30, minimum 10). Lower it for high-throughput
+            # tenants to bound crash-recovery overshoot. F-11.2.16.
+            {{- if hasKey .Values.gateway "quotaSyncIntervalSeconds" }}
+            - name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
+              value: {{ .Values.gateway.quotaSyncIntervalSeconds | quote }}
+            {{- end }}
             {{- with .Values.delegation }}
             # §8.10 lines 1022-1023 / 1042 — operator-tunable per-level and
             # whole-tree recovery deadlines feed recovery.Config. F-8.10.6.

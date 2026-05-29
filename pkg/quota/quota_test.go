@@ -193,3 +193,30 @@ func TestReconcileMaxImplementsMaxRule(t *testing.T) {
 		t.Errorf("ReconcileMax(100, 100) = %d, want 100", got)
 	}
 }
+
+// spec: §11.2 line 44 — quotaSyncIntervalSeconds defaults to 30s with a
+// 10s minimum. A non-positive value selects the default; a positive
+// value below the floor is clamped up; anything at or above the floor
+// passes through. F-11.2.16.
+func TestClampSyncIntervalSeconds_spec_11_2_44(t *testing.T) {
+	cases := []struct {
+		in, want int
+	}{
+		{0, DefaultSyncIntervalSeconds},   // unset → 30s default
+		{-5, DefaultSyncIntervalSeconds},  // negative → default
+		{1, MinSyncIntervalSeconds},       // below floor → 10s
+		{9, MinSyncIntervalSeconds},       // just below floor → 10s
+		{MinSyncIntervalSeconds, 10},      // at floor → unchanged
+		{DefaultSyncIntervalSeconds, 30},  // default value → unchanged
+		{120, 120},                        // high-throughput operator value → unchanged
+	}
+	for _, c := range cases {
+		if got := ClampSyncIntervalSeconds(c.in); got != c.want {
+			t.Errorf("ClampSyncIntervalSeconds(%d) = %d, want %d", c.in, got, c.want)
+		}
+	}
+	if DefaultSyncIntervalSeconds != 30 || MinSyncIntervalSeconds != 10 {
+		t.Errorf("spec defaults drifted: default=%d (want 30), min=%d (want 10)",
+			DefaultSyncIntervalSeconds, MinSyncIntervalSeconds)
+	}
+}

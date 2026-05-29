@@ -216,6 +216,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
+	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
@@ -300,6 +301,9 @@ func main() {
 		"§11.2 platform-wide LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the global scope. Zero disables the global token cap. Only active when --redis-url is set.")
 	userTokenQuota := flag.Int64("user-token-quota-per-window", 0,
 		"§11.2 per-user LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the user scope. Zero disables the per-user token cap. Only active when --redis-url is set.")
+	quotaSyncIntervalSeconds := flag.Int("quota-sync-interval-seconds",
+		envInt("LENNY_QUOTA_SYNC_INTERVAL_SECONDS", quota.DefaultSyncIntervalSeconds),
+		"§11.2 line 44 quotaSyncIntervalSeconds: cadence (seconds) at which the gateway checkpoints Redis quota and delegation-budget counters to Postgres. Lower it (toward the 10s minimum) for high-throughput tenants to reduce crash-recovery overshoot; a value below the minimum is clamped up. Default 30s. Override via LENNY_QUOTA_SYNC_INTERVAL_SECONDS.")
 	// §4.8 line 1019: deployer-supplied external interceptors. Each
 	// --external-interceptor value registers one §4 RequestInterceptor
 	// service on the policy chain. Repeatable. Form:
@@ -1756,7 +1760,17 @@ func main() {
 			log.Fatalf("lenny-gateway: register QuotaEvaluator: %v", err)
 		}
 		policyAuditSink = policy.NewAuditSink(auditAppender, nil)
-		log.Printf("lenny-gateway: §4.8 QuotaEvaluator enforcing §11.2 token budgets on the PostAuth chain")
+		// spec: §11.2 line 44 — quotaSyncIntervalSeconds is the cadence
+		// at which Redis quota and delegation-budget counters checkpoint
+		// to Postgres. Clamp the operator-supplied value up to the 10s
+		// floor so a misconfiguration cannot drive a busy-loop, and log
+		// the effective cadence. F-11.2.16.
+		quotaSyncSeconds := quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)
+		if quotaSyncSeconds != *quotaSyncIntervalSeconds && *quotaSyncIntervalSeconds > 0 {
+			log.Printf("lenny-gateway: §11.2 line 44 quotaSyncIntervalSeconds=%d below the %ds floor; clamping to the minimum",
+				*quotaSyncIntervalSeconds, quota.MinSyncIntervalSeconds)
+		}
+		log.Printf("lenny-gateway: §4.8 QuotaEvaluator enforcing §11.2 token budgets on the PostAuth chain (quota checkpoint cadence %ds)", quotaSyncSeconds)
 	}
 
 	// §4.8 line 1019: register each deployer-supplied external

@@ -441,10 +441,11 @@ tests:
       # + LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD /
       #   LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS /
       #   LENNY_CREDENTIAL_POOL_LOW_THRESHOLD (§25.13 line 4737,
-      #   F-25.13.2) = 31.
+      #   F-25.13.2)
+      # + LENNY_QUOTA_SYNC_INTERVAL_SECONDS (§11.2 line 44, F-11.2.16) = 32.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 31
+          count: 32
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -806,6 +807,34 @@ tests:
           content:
             name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
             value: "30"
+
+  # spec: §11.2 line 44 — quotaSyncIntervalSeconds (default 30s) flows
+  # through to LENNY_QUOTA_SYNC_INTERVAL_SECONDS. F-11.2.16.
+  - it: wires LENNY_QUOTA_SYNC_INTERVAL_SECONDS from the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
+            value: "30"
+
+  # spec: §11.2 line 44 — a high-throughput-tenant override propagates to
+  # the binary, which clamps any sub-10s value up to the floor. F-11.2.16.
+  - it: wires LENNY_QUOTA_SYNC_INTERVAL_SECONDS from a gateway.quotaSyncIntervalSeconds override
+    set:
+      gateway.quotaSyncIntervalSeconds: 10
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
+            value: "10"
 
   # spec: §8.10 lines 1022-1023 / 1078 / 1103 — delegation block surfaces
   # the operator-tunable per-level, whole-tree, cascade, and orphan-cap
