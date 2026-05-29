@@ -45,7 +45,13 @@ spec:
           args:
             - --leader-elect
             - --leader-election-namespace={{ .Release.Namespace }}
-            - --metrics-bind-address=:8080
+            {{- /* spec: §16.9 — the controller is one of the canonical
+                   Prometheus scrape targets. Bind the metrics listener to
+                   controller.metricsPort so the binary flag, the metrics
+                   containerPort, the allow-controller-metrics-scrape
+                   NetworkPolicy, and the lenny-controller Service all
+                   agree on one port. F-16.9.2. */}}
+            - --metrics-bind-address=:{{ .Values.controller.metricsPort }}
             - --health-probe-bind-address=:8081
             {{- if .Values.controller.adapterImage }}
             - --adapter-image={{ .Values.controller.adapterImage }}
@@ -89,8 +95,12 @@ spec:
                   key: postgres-dsn
           {{- end }}
           ports:
+            # spec: §16.9 — named metrics containerPort on
+            # controller.metricsPort so the lenny-controller Service and
+            # the ServiceMonitor `port: metrics` selector resolve to the
+            # controller's metrics listener. F-16.9.2.
             - name: metrics
-              containerPort: 8080
+              containerPort: {{ .Values.controller.metricsPort }}
             - name: probes
               containerPort: 8081
           livenessProbe:
@@ -113,3 +123,30 @@ spec:
                 - ALL
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
+---
+# The lenny-controller metrics Service. §16.9 names the controller as one
+# of the canonical scrape targets, served by a single ServiceMonitor for
+# the gateway, controller, and Token Service. The Prometheus Operator can
+# only translate the ServiceMonitor's controller selector entry into a
+# scrape target when a Service carrying the lenny.dev/component: controller
+# label exposes the named metrics port; without it the controller's
+# metrics endpoint is never discovered through the operator path. The
+# controller serves no client traffic, so this Service carries only the
+# metrics port and targets the dedicated metrics listener bound by
+# --metrics-bind-address. F-16.9.1.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: controller
+spec:
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    lenny.dev/component: controller
+  ports:
+    - name: metrics
+      port: {{ .Values.controller.metricsPort }}
+      targetPort: metrics

@@ -44,6 +44,17 @@ spec:
       interval: {{ $sm.interval | quote }}
       scrapeTimeout: {{ $sm.scrapeTimeout | quote }}
       path: {{ $sm.path | default "/metrics" | quote }}
+      {{- with .Values.global.deploymentTier }}
+      # spec: §16.1.1 / §16.9 — inject the static deployment_tier label
+      # onto every scraped lenny-ops series so tier-conditioned alerts
+      # and the §16.10 OpenSLO export resolve it without per-metric
+      # instrumentation. The §16.9 supported substitute for the
+      # operator-managed Prometheus CR external_labels. F-16.9.5.
+      metricRelabelings:
+        - targetLabel: deployment_tier
+          replacement: {{ . | quote }}
+          action: replace
+      {{- end }}
       {{- $smScheme := $sm.scheme | default "http" }}
       {{- if ne $smScheme "http" }}
       # spec: F-16.9.12 — operators fronting /metrics with TLS

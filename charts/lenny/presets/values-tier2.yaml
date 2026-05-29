@@ -25,6 +25,12 @@
 capacityPlanning:
   tier: tier2
 
+# §16.1.1 / §16.9 static metric tier label. Matches capacityPlanning.tier
+# so the deployment_tier series carries the same tier the ResourceQuota
+# selects. F-16.9.5.
+global:
+  deploymentTier: tier2
+
 # Gateway replica floor of 3 (§17.8.2 gateway table: min 3, max 10).
 # Three replicas keep the deployment above the Tier 2 minimum healthy
 # count of 3 during a single voluntary disruption. maxSessionsPerReplica

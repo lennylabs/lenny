@@ -81,3 +81,19 @@ spec:
     name: lenny-mtls-ca
     kind: Issuer
 {{- end -}}
+
+{{/*
+lenny.monitoring.validateFormat fails the render when monitoring.format
+is not one of the §16.9 / §25.13 allow-list values (prometheusrule,
+configmap, both). Without this guard a typo (e.g. "prometheus-rule")
+silently renders no alerting manifest and no scrape configuration, with
+no warning. Invoked from prometheusrule.yaml, which Helm always
+processes, so the check runs on every render. F-16.9.8.
+*/}}
+{{- define "lenny.monitoring.validateFormat" -}}
+{{- $format := .Values.monitoring.format -}}
+{{- $allowed := list "prometheusrule" "configmap" "both" -}}
+{{- if not (has $format $allowed) -}}
+{{- fail (printf "monitoring.format must be one of [prometheusrule configmap both]; got %q" $format) -}}
+{{- end -}}
+{{- end -}}

@@ -91,6 +91,18 @@ tests:
       - hasDocuments:
           count: 2
 
+  # spec: §16.9 / §25.13 — F-16.9.8. An out-of-range monitoring.format
+  # (typo) must fail the render loudly rather than silently emit no
+  # alerting manifest. The guard runs ahead of the bundleRules gate so it
+  # fires regardless of whether the catalog would otherwise render.
+  - it: fails the render when monitoring.format is not in the allow-list
+    set:
+      monitoring:
+        format: prometheus-rule
+    asserts:
+      - failedTemplate:
+          errorMessage: 'monitoring.format must be one of [prometheusrule configmap both]; got "prometheus-rule"'
+
   - it: places the PrometheusRule in an explicit prometheusRule namespace
     set:
       monitoring:

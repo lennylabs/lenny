@@ -238,3 +238,53 @@ tests:
       - equal:
           path: spec.podMetricsEndpoints[0].tlsConfig.serverName
           value: lenny-ops.lenny-system.svc
+
+  # spec: §16.1.1 / §16.9 — F-16.9.5. The static deployment_tier label is
+  # injected onto every scraped series via a metricRelabeling so
+  # tier-conditioned alerts (Tier3GCPressureHigh) and the §16.10 OpenSLO
+  # export resolve it without per-metric instrumentation.
+  - it: injects the deployment_tier metricRelabeling on the ServiceMonitor (default tier1)
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.endpoints[0].metricRelabelings[0].targetLabel
+          value: deployment_tier
+      - equal:
+          path: spec.endpoints[0].metricRelabelings[0].replacement
+          value: tier1
+      - equal:
+          path: spec.endpoints[0].metricRelabelings[0].action
+          value: replace
+
+  - it: injects the deployment_tier metricRelabeling on the PodMonitor (default tier1)
+    template: podmonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].metricRelabelings[0].targetLabel
+          value: deployment_tier
+      - equal:
+          path: spec.podMetricsEndpoints[0].metricRelabelings[0].replacement
+          value: tier1
+
+  - it: carries the configured global.deploymentTier onto the ServiceMonitor relabel
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      global.deploymentTier: tier3
+    asserts:
+      - equal:
+          path: spec.endpoints[0].metricRelabelings[0].replacement
+          value: tier3
+
+  - it: omits the deployment_tier relabel when global.deploymentTier is empty
+    template: podmonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      global.deploymentTier: ""
+    asserts:
+      - notExists:
+          path: spec.podMetricsEndpoints[0].metricRelabelings

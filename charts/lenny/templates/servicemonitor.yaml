@@ -16,6 +16,12 @@ scrape traffic this ServiceMonitor configures.
 Operator discovery: the labels under monitoring.prometheusRule.-
 additionalLabels are applied so the Prometheus Operator's
 serviceMonitorSelector can match this object (§16.9).
+
+The §16.9 canonical scrape-target set is the gateway, controller, Token
+Service, and lenny-ops. The dedicated CoreDNS pod (lenny-system, TCP
+9153) is scrapeable through the §13.2 NET-045 NetworkPolicy but is
+outside the §16.9 operator-managed set, so a deployer who wants CoreDNS
+metrics adds their own scrape config for it. F-16.9.9.
 */ -}}
 {{- if .Values.monitoring.serviceMonitor.enabled }}
 {{- $sm := .Values.monitoring.serviceMonitor }}
@@ -52,6 +58,18 @@ spec:
       interval: {{ $sm.interval | quote }}
       scrapeTimeout: {{ $sm.scrapeTimeout | quote }}
       path: {{ $sm.path | default "/metrics" | quote }}
+      {{- with .Values.global.deploymentTier }}
+      # spec: §16.1.1 / §16.9 — inject the static deployment_tier label
+      # onto every scraped series so tier-conditioned alerts
+      # (Tier3GCPressureHigh) and the §16.10 OpenSLO export resolve it
+      # without per-metric instrumentation. The operator-managed
+      # Prometheus CR external_labels is out of chart scope; this
+      # ServiceMonitor relabel is the §16.9 supported substitute. F-16.9.5.
+      metricRelabelings:
+        - targetLabel: deployment_tier
+          replacement: {{ . | quote }}
+          action: replace
+      {{- end }}
       {{- $smScheme := $sm.scheme | default "http" }}
       {{- if ne $smScheme "http" }}
       # spec: F-16.9.12 — operators fronting /metrics with TLS

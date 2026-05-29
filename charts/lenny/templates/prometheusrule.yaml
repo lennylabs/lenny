@@ -23,6 +23,10 @@ rendered manifest. The override map is applied to both the
 PrometheusRule and the ConfigMap output so a deployer running both
 formats sees the same customised rule set. F-25.13.1.
 */ -}}
+{{- /* spec: §16.9 / §25.13 — reject an out-of-range monitoring.format
+       before any gate so a typo fails loudly instead of silently
+       rendering nothing. F-16.9.8. */ -}}
+{{- include "lenny.monitoring.validateFormat" . -}}
 {{- if .Values.monitoring.bundleRules }}
 {{- $format := .Values.monitoring.format }}
 {{- $ruleNS := .Values.monitoring.prometheusRule.namespace | default .Values.monitoring.namespace }}

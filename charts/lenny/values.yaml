@@ -824,6 +824,15 @@ auth:
 
 # global holds chart-wide settings shared across components.
 global:
+  # deploymentTier is the §16.1.1 static metric label sourced from Helm.
+  # It always carries one of tier1, tier2, or tier3 (the §17.8 capacity
+  # tiers) and is injected onto every scraped series by the §16.9
+  # ServiceMonitor and PodMonitor metricRelabelings, so tier-conditioned
+  # alerts (e.g. Tier3GCPressureHigh) and the §16.10 OpenSLO export
+  # resolve the deployment_tier label without per-metric instrumentation.
+  # The presets/values-tier{1,2,3}.yaml files set it alongside
+  # capacityPlanning.tier. F-16.9.5.
+  deploymentTier: tier1
   # devMode relaxes the multi-tenant admission controls for local
   # development (§4.9). It must never be enabled on a real multi-tenant
   # cluster.

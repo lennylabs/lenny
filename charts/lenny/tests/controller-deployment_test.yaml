@@ -2,15 +2,24 @@ suite: lenny-controller deployment
 templates:
   - controller-deployment.yaml
 tests:
-  - it: renders a Deployment named lenny-controller
+  - it: renders the Deployment and the metrics Service
     asserts:
-      - isKind:
-          of: Deployment
+      - hasDocuments:
+          count: 2
+
+  - it: renders a Deployment named lenny-controller
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
       - equal:
           path: metadata.name
           value: lenny-controller
 
   - it: runs two replicas with leader election by default
+    documentSelector:
+      path: kind
+      value: Deployment
     asserts:
       - equal:
           path: spec.replicas
@@ -22,6 +31,9 @@ tests:
   # spec: §10.3 line 334 (NET-064) — when set the controller stamps the
   # audience-bound projected SA token on every warm pod. F-10.3.5.
   - it: passes --sa-token-audience when global.saTokenAudience is set
+    documentSelector:
+      path: kind
+      value: Deployment
     set:
       global.saTokenAudience: lenny-gateway-acme
     asserts:
@@ -30,18 +42,27 @@ tests:
           content: --sa-token-audience=lenny-gateway-acme
 
   - it: omits --sa-token-audience when global.saTokenAudience is unset (chart default)
+    documentSelector:
+      path: kind
+      value: Deployment
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --sa-token-audience=
 
   - it: runs under the lenny-controller service account
+    documentSelector:
+      path: kind
+      value: Deployment
     asserts:
       - equal:
           path: spec.template.spec.serviceAccountName
           value: lenny-controller
 
   - it: applies the restricted pod security posture
+    documentSelector:
+      path: kind
+      value: Deployment
     asserts:
       - equal:
           path: spec.template.spec.securityContext.runAsNonRoot
@@ -54,17 +75,26 @@ tests:
           content: ALL
 
   - it: defaults the image tag to the chart appVersion
+    documentSelector:
+      path: kind
+      value: Deployment
     asserts:
       - equal:
           path: spec.template.spec.containers[0].image
           value: ghcr.io/lennylabs/lenny-controller:0.1.0
 
   - it: renders no data-store env with stock values
+    documentSelector:
+      path: kind
+      value: Deployment
     asserts:
       - isNull:
           path: spec.template.spec.containers[0].env
 
   - it: wires LENNY_POSTGRES_DSN from the datastore Secret when postgres.dsn is set
+    documentSelector:
+      path: kind
+      value: Deployment
     set:
       postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
     asserts:
@@ -78,15 +108,94 @@ tests:
                 key: postgres-dsn
 
   - it: omits the §12.9.8 egress-capture image arg by default
+    documentSelector:
+      path: kind
+      value: Deployment
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --egress-capture-image=lenny-egress-capture:e2e
 
   - it: renders the §12.9.8 egress-capture image arg when controller.egressCaptureImage is set
+    documentSelector:
+      path: kind
+      value: Deployment
     set:
       controller.egressCaptureImage: "lenny-egress-capture:e2e"
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --egress-capture-image=lenny-egress-capture:e2e
+
+  # spec: §16.9 — F-16.9.2. The controller is a canonical Prometheus
+  # scrape target; the metrics listener flag and the named metrics
+  # containerPort both bind controller.metricsPort so the binary, the
+  # NetworkPolicy, and the Service agree on one port (default 9090).
+  - it: binds the metrics listener and containerPort on controller.metricsPort
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --metrics-bind-address=:9090
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 9090
+
+  - it: tracks a controller.metricsPort override on the flag and the containerPort
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.metricsPort: 9123
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --metrics-bind-address=:9123
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 9123
+
+  # spec: §16.9 — F-16.9.1. Without a Service carrying the
+  # lenny.dev/component: controller label and the named metrics port, the
+  # Prometheus Operator cannot translate the ServiceMonitor controller
+  # selector entry into a scrape target.
+  - it: renders the lenny-controller metrics Service
+    documentSelector:
+      path: kind
+      value: Service
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-controller
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: controller
+      - equal:
+          path: spec.selector["lenny.dev/component"]
+          value: controller
+      - contains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 9090
+            targetPort: metrics
+
+  - it: tracks a controller.metricsPort override on the Service port
+    documentSelector:
+      path: kind
+      value: Service
+    set:
+      controller.metricsPort: 9123
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 9123
+            targetPort: metrics
