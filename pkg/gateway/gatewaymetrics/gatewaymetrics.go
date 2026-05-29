@@ -79,6 +79,7 @@ type Metrics struct {
 	experimentIsoRej            *prometheus.CounterVec
 	experimentTargetingDur      *prometheus.HistogramVec
 	experimentTargetingErr      *prometheus.CounterVec
+	experimentTargetingCircuit  *prometheus.GaugeVec
 	sessionTotal                *prometheus.CounterVec
 	sessionError                *prometheus.CounterVec
 	sessionDuration             *prometheus.HistogramVec
@@ -782,6 +783,17 @@ func New() (*Metrics, error) {
 		Name: "lenny_experiment_targeting_error_total",
 		Help: "§10.7 external experiment targeting evaluation failures by provider and error_type (§16.1 line 157).",
 	}, []string{"provider", "error_type"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §10.7 lines 835-844 (SCL-023) / §16.1 line 64 — the per-tenant
+	// targeting circuit-breaker gauge: 1 while the breaker is open (the
+	// gateway is skipping the OpenFeature call), 0 when closed. The §16.5
+	// ExperimentTargetingCircuitOpen alert fires on a sustained 1.
+	experimentTargetingCircuit, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_experiment_targeting_circuit_open",
+		Help: "§10.7 SCL-023 targeting circuit-breaker state by tenant and provider: 1=open, 0=closed.",
+	}, []string{"tenant_id", "provider"})
 	if err != nil {
 		return nil, err
 	}
@@ -1564,7 +1576,7 @@ func New() (*Metrics, error) {
 		elicitationPending, elicitationTimeout, elicitationSuppressed,
 		elicitationRoundtripSeconds,
 		experimentIsoRej,
-		experimentTargetingDur, experimentTargetingErr,
+		experimentTargetingDur, experimentTargetingErr, experimentTargetingCircuit,
 		sessionTotal, sessionError, sessionDuration, evalScore,
 		noEnvPolicyAllowAll, tokenServiceCircuitState,
 		kmsSigningErrors, kmsSigningCircuitState,
@@ -1686,6 +1698,7 @@ func New() (*Metrics, error) {
 		experimentIsoRej:                     experimentIsoRej,
 		experimentTargetingDur:               experimentTargetingDur,
 		experimentTargetingErr:               experimentTargetingErr,
+		experimentTargetingCircuit:           experimentTargetingCircuit,
 		sessionTotal:                         sessionTotal,
 		sessionError:                         sessionError,
 		sessionDuration:                      sessionDuration,
@@ -2780,6 +2793,18 @@ func (m *Metrics) ObserveExperimentTargetingDuration(provider string, seconds fl
 // (timeout, transport, or the OFREP errorCode).
 func (m *Metrics) RecordExperimentTargetingError(provider, errorType string) {
 	m.experimentTargetingErr.WithLabelValues(provider, errorType).Inc()
+}
+
+// SetExperimentTargetingCircuitOpen sets the §10.7 SCL-023 targeting
+// circuit-breaker gauge for (tenant, provider): true → 1 (open, the
+// gateway skips the OpenFeature call), false → 0 (closed). spec: §16.1
+// line 64, §10.7 line 838.
+func (m *Metrics) SetExperimentTargetingCircuitOpen(tenantID, provider string, open bool) {
+	v := 0.0
+	if open {
+		v = 1.0
+	}
+	m.experimentTargetingCircuit.WithLabelValues(tenantID, provider).Set(v)
 }
 
 // RecordSessionTerminal records the §16.1 lines 161-163 / §10.7

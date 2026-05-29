@@ -1976,7 +1976,10 @@ func main() {
 		// transition and at each built-in eval submission.
 		RecordSessionTerminal: gwMetrics.RecordSessionTerminal,
 		ObserveEvalScore:      gwMetrics.ObserveEvalScore,
-		Clock:                 clockinject.Now,
+		// §10.7 lines 835-844 (SCL-023) — the per-tenant targeting
+		// circuit-breaker open/closed gauge.
+		SetExperimentTargetingCircuitOpen: gwMetrics.SetExperimentTargetingCircuitOpen,
+		Clock:                             clockinject.Now,
 		UploadSubsystem:              uploadSubsystem,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,

@@ -215,9 +215,24 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 	// endpoint hostname for provider:ofrep. Computed once for the closure.
 	providerLabel := targetingProviderLabel(cfg.Provider, cfg.OFREP.Endpoint)
 	knownIDs := knownExperimentIDs(candidates)
+	// spec: §10.7 lines 835-844 (SCL-023) — the per-tenant targeting
+	// circuit-breaker thresholds resolved from the tenant config.
+	breakerParams := targetingBreakerParams{
+		threshold: cfg.BreakerFailureThreshold(),
+		window:    time.Duration(cfg.BreakerWindowSeconds()) * time.Second,
+		openDur:   time.Duration(cfg.BreakerOpenSeconds()) * time.Second,
+	}
 	failed := false
 	return func(experimentID string) (string, bool) {
 		if failed {
+			return "", false
+		}
+		// spec: §10.7 lines 835-838 — while the circuit is open the gateway
+		// skips the OpenFeature call entirely and returns empty assignment
+		// with zero wait, same as a provider error. Latch so no further
+		// external experiment is evaluated for this session.
+		if !s.targetingBreaker.Allow(row.TenantID, providerLabel) {
+			failed = true
 			return "", false
 		}
 		start := time.Now()
@@ -225,6 +240,9 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		// spec: §16.1 line 156 — record latency for every evaluation
 		// attempt, success or failure.
 		s.observeTargetingDuration(ctx, providerLabel, time.Since(start).Seconds())
+		// spec: §10.7 lines 837-839 — feed the outcome back so consecutive
+		// failures open the breaker and a half-open probe success closes it.
+		s.targetingBreaker.Record(row.TenantID, providerLabel, breakerParams, err == nil)
 		if err != nil {
 			failed = true
 			// spec: §10.7 line 833 / §16.1 line 157 — increment the

@@ -87,6 +87,59 @@ func TestTargetingConfigEffectiveTimeout(t *testing.T) {
 	}
 }
 
+// spec: §10.7 lines 841-843 (SCL-023) — the circuit-breaker accessors
+// return the configured value when positive, else the default.
+func TestTargetingConfigBreakerAccessors(t *testing.T) {
+	zero := TargetingConfig{}
+	if got := zero.BreakerFailureThreshold(); got != DefaultTargetingFailureThreshold {
+		t.Errorf("BreakerFailureThreshold default = %d, want %d", got, DefaultTargetingFailureThreshold)
+	}
+	if got := zero.BreakerWindowSeconds(); got != DefaultTargetingBreakerWindowSecs {
+		t.Errorf("BreakerWindowSeconds default = %d, want %d", got, DefaultTargetingBreakerWindowSecs)
+	}
+	if got := zero.BreakerOpenSeconds(); got != DefaultTargetingBreakerOpenSeconds {
+		t.Errorf("BreakerOpenSeconds default = %d, want %d", got, DefaultTargetingBreakerOpenSeconds)
+	}
+	tuned := TargetingConfig{CircuitBreaker: &CircuitBreakerConfig{
+		FailureThreshold: 3, WindowSeconds: 5, OpenDurationSeconds: 60,
+	}}
+	if got := tuned.BreakerFailureThreshold(); got != 3 {
+		t.Errorf("BreakerFailureThreshold = %d, want 3", got)
+	}
+	if got := tuned.BreakerWindowSeconds(); got != 5 {
+		t.Errorf("BreakerWindowSeconds = %d, want 5", got)
+	}
+	if got := tuned.BreakerOpenSeconds(); got != 60 {
+		t.Errorf("BreakerOpenSeconds = %d, want 60", got)
+	}
+}
+
+// spec: §10.7 line 840 — the circuitBreaker block is deep-copied by Clone
+// and a negative field is rejected by Validate.
+func TestTargetingConfigBreakerCloneAndValidate(t *testing.T) {
+	c := TargetingConfig{
+		Provider:       TargetingProviderOFREP,
+		OFREP:          &OFREPConfig{Endpoint: "https://flags/ofrep"},
+		CircuitBreaker: &CircuitBreakerConfig{FailureThreshold: 7},
+	}
+	cp := c.Clone()
+	if cp.CircuitBreaker == c.CircuitBreaker {
+		t.Fatal("Clone must not share the CircuitBreaker pointer")
+	}
+	cp.CircuitBreaker.FailureThreshold = 99
+	if c.CircuitBreaker.FailureThreshold != 7 {
+		t.Errorf("Clone aliased the breaker block: original mutated to %d", c.CircuitBreaker.FailureThreshold)
+	}
+	bad := TargetingConfig{
+		Provider:       TargetingProviderOFREP,
+		OFREP:          &OFREPConfig{Endpoint: "https://flags/ofrep"},
+		CircuitBreaker: &CircuitBreakerConfig{WindowSeconds: -1},
+	}
+	if err := bad.Validate(); err == nil {
+		t.Error("Validate must reject a negative circuitBreaker field")
+	}
+}
+
 func TestTargetingConfigValidatesProviders(t *testing.T) {
 	valid := []TargetingConfig{
 		{Provider: TargetingProviderOFREP, OFREP: &OFREPConfig{Endpoint: "https://flags/ofrep"}},

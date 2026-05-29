@@ -152,6 +152,11 @@ type Server struct {
 	// observation per submitted eval. Nil disables the emission.
 	// spec: §10.7 line 1128.
 	observeEvalScore func(tenantID, scorer, variantID string, score float64)
+	// targetingBreaker is the §10.7 SCL-023 per-tenant OpenFeature
+	// targeting circuit breaker. Never nil after New; it is consulted on
+	// the external-targeting hot path so sustained provider failures skip
+	// the OpenFeature call entirely. spec: §10.7 lines 835-844.
+	targetingBreaker *targetingBreaker
 	// partialManifestCleaner, when set, executes the §4.4 line 236
 	// partial-manifest cleanup after the resume path completes.
 	// Nil leaves the resume path unchanged (cleanup is deferred to
@@ -665,6 +670,13 @@ type Options struct {
 	// the emission. spec: §10.7 line 1128, §16.1 line 164.
 	ObserveEvalScore func(tenantID, scorer, variantID string, score float64)
 
+	// SetExperimentTargetingCircuitOpen, when set, reports the §10.7
+	// SCL-023 targeting circuit-breaker open/closed transitions through
+	// the lenny_experiment_targeting_circuit_open gauge. Nil disables the
+	// gauge emission; the breaker still gates the OpenFeature call.
+	// spec: §10.7 line 838, §16.1 line 64.
+	SetExperimentTargetingCircuitOpen func(tenantID, provider string, open bool)
+
 	// SealSleep overrides the seal-retry backoff wait. Production leaves
 	// it nil (a context-aware time.Sleep); tests inject a no-op so the
 	// bounded-backoff loop runs without real delays.
@@ -981,6 +993,10 @@ func New(store sessionstore.Store, opts Options) *Server {
 		// (runc) when no explicit default isolation profile is configured.
 		s.defaultIsoProf = isolation.DefaultForMode(s.devMode)
 	}
+	// spec: §10.7 lines 835-844 (SCL-023) — the per-tenant targeting
+	// circuit breaker shares the server clock so tests drive the open /
+	// half-open transitions deterministically.
+	s.targetingBreaker = newTargetingBreaker(s.clock, opts.SetExperimentTargetingCircuitOpen)
 	return s
 }
 
