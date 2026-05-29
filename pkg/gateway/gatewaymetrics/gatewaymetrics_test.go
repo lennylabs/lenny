@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 )
@@ -577,6 +578,59 @@ func TestRecordElicitationContentTamperDetectedExposesCounter(t *testing.T) {
 	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="detect-only",tenant_id="acme"} 1`) {
 		t.Errorf("/metrics output missing detect-only count of 1:\n%s", body)
 	}
+}
+
+// TestElicitationLifecycleMetricsExposeCounters proves the §16.1
+// lines 60-63 elicitation lifecycle metrics are registered and
+// observable on /metrics: the in-flight gauge, the timeout counter,
+// the suppressed counter, and the round-trip histogram. F-9.2.14.
+//
+// spec: §16.1 lines 60–63; §16.5 line 458 ElicitationBacklogHigh
+// alert.
+func TestElicitationLifecycleMetricsExposeCounters_spec_16_1_F_9_2_14(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// One admit, three drops, one round-trip observation.
+	m.IncElicitationPending()
+	m.IncElicitationPending()
+	m.DecElicitationPending() // net pending = 1
+	m.IncElicitationTimeout()
+	m.IncElicitationTimeout()
+	m.IncElicitationSuppressed()
+	m.ObserveElicitationRoundtrip(45 * time.Second)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+
+	for _, want := range []string{
+		"lenny_elicitation_pending 1",
+		"lenny_elicitation_timeout_total 2",
+		"lenny_elicitation_suppressed_total 1",
+		// Histogram count and sum lines.
+		"lenny_elicitation_roundtrip_seconds_count 1",
+		"lenny_elicitation_roundtrip_seconds_sum 45",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
+// TestElicitationLifecycleMetricsNilSafe proves the helpers are
+// nil-safe so an absent metrics dependency does not panic. F-9.2.14.
+func TestElicitationLifecycleMetricsNilSafe_spec_16_1_F_9_2_14(t *testing.T) {
+	var m *gatewaymetrics.Metrics // nil
+	m.IncElicitationPending()
+	m.DecElicitationPending()
+	m.IncElicitationTimeout()
+	m.IncElicitationSuppressed()
+	m.ObserveElicitationRoundtrip(1 * time.Second)
 }
 
 func TestRecordExperimentIsolationRejectionExposesCounter(t *testing.T) {

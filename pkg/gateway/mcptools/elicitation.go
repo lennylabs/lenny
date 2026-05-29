@@ -54,8 +54,13 @@ type elicitationDispatcher struct {
 	// every elicitation forwards to the human-facing edge.
 	intercepts func(sess sessionstore.Session) bool
 
-	// audit records the §11.7 url-mode rejection audit event. Optional.
-	audit DelegationAuditor
+	// dropMetrics, when non-nil, receives a §9.1 drop event for a
+	// url-mode rejection (`reason="domain_not_allowlisted"`). The
+	// §16.7 catalog does not declare a `elicitation.url_mode_domain_rejected`
+	// audit event, so the rejection surfaces only through the metric
+	// and the per-hop tool error envelope. spec: §9.2 line 86;
+	// F-9.2.11.
+	dropMetrics ElicitationDropRecorder
 
 	// tamperMetrics, when non-nil, receives a notification every time
 	// the §9.2 chain walk catches a tamper at a forwarding hop. The
@@ -116,11 +121,18 @@ func (d *elicitationDispatcher) dispatch(
 ) (dispatchResult, error) {
 	// §9.2 url-mode security controls. An agent-initiated url-mode
 	// elicitation is dropped unless the pool allowlists the URL's
-	// domain; the rejection emits the §11.7 audit event.
+	// domain; the rejection increments the §9.1
+	// lenny_elicitation_dropped_total{reason="domain_not_allowlisted"}
+	// counter and returns the per-hop DOMAIN_NOT_ALLOWLISTED error.
+	// The §16.7 audit catalog is closed and does not list
+	// `elicitation.url_mode_domain_rejected`, so the rejection does
+	// not write an audit row. F-9.2.11.
 	if err := elicitation.CheckURLModeProvenance(initiator, rawURL, d.urlModeAllowlist); err != nil {
 		var rej *elicitation.URLModeRejection
 		if errors.As(err, &rej) {
-			d.emitURLModeRejection(ctx, raising, initiator, rawURL, rej)
+			if d.dropMetrics != nil {
+				d.dropMetrics.RecordElicitationDrop(elicitationDropDomainNotAllowlisted)
+			}
 			// §15.1 DOMAIN_NOT_ALLOWLISTED is the spec error code for the
 			// disallowed-domain drop; the disabled / malformed cases share
 			// the same drop semantics. spec: §15.2.1 — surface the
@@ -128,7 +140,15 @@ func (d *elicitationDispatcher) dispatch(
 			// envelopes share the same (category, retryable) pair.
 			// F-8.5.10.
 			return dispatchResult{}, mcp.NewToolError("DOMAIN_NOT_ALLOWLISTED",
-				err.Error(), map[string]any{"url": rawURL})
+				err.Error(), map[string]any{
+					"url":          rawURL,
+					"host":         rej.Host,
+					"reason":       string(rej.Reason),
+					"allowlist":    rej.Allowlist,
+					"sessionId":    raising.ID,
+					"originPod":    raising.ID,
+					"initiatorType": string(initiator),
+				})
 		}
 		return dispatchResult{}, err
 	}
@@ -266,33 +286,6 @@ func (d *elicitationDispatcher) lookupAncestor(ctx context.Context, parentID str
 	hopCtx, cancel := context.WithTimeout(ctx, d.effectivePerHopTimeout())
 	defer cancel()
 	return d.store.Get(hopCtx, d.tenantID, parentID)
-}
-
-// emitURLModeRejection records the §11.7 audit event for a §9.2
-// url-mode elicitation that was dropped. The event names the
-// originating pod, the rejection reason, and the URL host so an
-// operator can trace an agent attempting to phish via a crafted URL.
-func (d *elicitationDispatcher) emitURLModeRejection(
-	ctx context.Context,
-	raising sessionstore.Session,
-	initiator elicitation.InitiatorType,
-	rawURL string,
-	rej *elicitation.URLModeRejection,
-) {
-	if d.audit == nil {
-		return
-	}
-	d.audit.EmitDelegationEvent(ctx, "elicitation.url_mode_domain_rejected", map[string]any{
-		"sessionId":     raising.ID,
-		"originPod":     raising.ID,
-		"tenantId":      raising.TenantID,
-		"userId":        raising.UserID,
-		"initiatorType": string(initiator),
-		"reason":        string(rej.Reason),
-		"host":          rej.Host,
-		"allowlist":     rej.Allowlist,
-		"url":           rawURL,
-	})
 }
 
 // ErrElicitationNotFound is the §9.2 / §15.1 ELICITATION_NOT_FOUND

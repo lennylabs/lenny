@@ -38,9 +38,14 @@ type chainOpts struct {
 	timeout    time.Duration
 	urlMode    elicitation.URLModeAllowlist
 	intercepts func(sessionstore.Session) bool
-	audit      mcptools.DelegationAuditor
 	depth      elicitation.DepthPolicy
 	suppressAt int
+	// drops, when set, receives a §9.1 drop-counter notification for
+	// every dispatcher rejection. F-9.2.11 / F-9.2.14.
+	drops mcptools.ElicitationDropRecorder
+	// lifecycle, when set, receives the §16.1 admit/terminal lifecycle
+	// notifications. F-9.2.14.
+	lifecycle mcptools.ElicitationLifecycleRecorder
 }
 
 func newMCPForChain(t *testing.T, opts chainOpts) (*mcp.Server, sessionstore.Store, interactionstore.Store) {
@@ -60,11 +65,46 @@ func newMCPForChain(t *testing.T, opts chainOpts) (*mcp.Server, sessionstore.Sto
 		ElicitationIntercepts:       opts.intercepts,
 		ElicitationDepthPolicy:      opts.depth,
 		ElicitationSuppressAtDepth:  opts.suppressAt,
-		Audit:                       opts.audit,
+		ElicitationMetrics:          opts.drops,
+		ElicitationLifecycleMetrics: opts.lifecycle,
 		IDFunc:                      func() string { return "elic_gen" },
 		TenantID:                    "acme",
 	})
 	return srv, store, interactions
+}
+
+// recordingDropMetric records each §9.1 drop the dispatcher reports so
+// tests can assert which `reason` label fired (spec: §9.1 line ~/§16.1
+// drops counter). F-9.2.11 / F-9.2.14.
+type recordingDropMetric struct {
+	reasons []string
+}
+
+func (r *recordingDropMetric) RecordElicitationDrop(reason string) {
+	r.reasons = append(r.reasons, reason)
+}
+
+// recordingLifecycleMetric records the §16.1 lines 60–63 admit/terminal
+// lifecycle events the dispatcher reports. F-9.2.14.
+type recordingLifecycleMetric struct {
+	pendingDelta    int
+	pendingMax      int
+	timeouts        int
+	suppressed      int
+	roundtrips      []time.Duration
+}
+
+func (r *recordingLifecycleMetric) IncElicitationPending() {
+	r.pendingDelta++
+	if r.pendingDelta > r.pendingMax {
+		r.pendingMax = r.pendingDelta
+	}
+}
+func (r *recordingLifecycleMetric) DecElicitationPending()           { r.pendingDelta-- }
+func (r *recordingLifecycleMetric) IncElicitationTimeout()           { r.timeouts++ }
+func (r *recordingLifecycleMetric) IncElicitationSuppressed()        { r.suppressed++ }
+func (r *recordingLifecycleMetric) ObserveElicitationRoundtrip(d time.Duration) {
+	r.roundtrips = append(r.roundtrips, d)
 }
 
 // waitElicitationFor blocks until an elicitation is recorded against
@@ -246,31 +286,117 @@ func TestElicitationDepthSuppressed(t *testing.T) {
 	}
 }
 
-// fakeAuditor records the §11.7 audit events the dispatcher emits.
-type fakeAuditor struct {
-	events []struct {
-		typ    string
-		detail map[string]any
+// TestElicitationLifecycleAdmitAndResolveBumpsMetrics_spec_16_1_F_9_2_14
+// proves the §16.1 lifecycle hooks fire on the happy path: pending
+// gauge +1 on admit, -1 on terminal, and one roundtrip observation
+// covering the wall-clock from admit to resolve. F-9.2.14.
+func TestElicitationLifecycleAdmitAndResolveBumpsMetrics_spec_16_1_F_9_2_14(t *testing.T) {
+	lc := &recordingLifecycleMetric{}
+	srv, store, interactions := newMCPForChain(t, chainOpts{
+		lifecycle: lc,
+	})
+	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+	h := srv.Handler()
+
+	go func() {
+		_ = call(t, h, "lenny/request_elicitation",
+			`{"sessionId":"sess_leaf","message":"ok?","schema":{},"elicitationId":"elic_x"}`)
+	}()
+	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+	// Admit → pending gauge incremented to at least 1.
+	if lc.pendingMax < 1 {
+		t.Errorf("pendingMax = %d, want >= 1 (admit must Inc the pending gauge)", lc.pendingMax)
+	}
+	resolveAt(t, interactions, "sess_root", "alice", "elic_x", "yes")
+	// Wait until the dispatcher records terminal — Allow time for the
+	// poll cycle.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(lc.roundtrips) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(lc.roundtrips) != 1 {
+		t.Errorf("roundtrips = %d, want exactly 1", len(lc.roundtrips))
+	}
+	if lc.pendingDelta != 0 {
+		t.Errorf("pendingDelta = %d, want net 0 (Inc + Dec)", lc.pendingDelta)
+	}
+	if lc.timeouts != 0 {
+		t.Errorf("timeouts = %d, want 0 on the resolved-happy path", lc.timeouts)
 	}
 }
 
-func (f *fakeAuditor) EmitDelegationEvent(_ context.Context, typ string, detail map[string]any) {
-	f.events = append(f.events, struct {
-		typ    string
-		detail map[string]any
-	}{typ, detail})
+// TestElicitationLifecycleTimeoutBumpsTimeoutCounter_spec_16_1_F_9_2_14
+// proves the §16.1 line 63 timeout counter increments and pending
+// decrements when the §9.1 maxElicitationWait fires. F-9.2.14.
+func TestElicitationLifecycleTimeoutBumpsTimeoutCounter_spec_16_1_F_9_2_14(t *testing.T) {
+	lc := &recordingLifecycleMetric{}
+	srv, store, _ := newMCPForChain(t, chainOpts{
+		lifecycle: lc,
+		timeout:   80 * time.Millisecond,
+	})
+	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+
+	resp := call(t, srv.Handler(), "lenny/request_elicitation",
+		`{"sessionId":"sess_leaf","message":"ok?","schema":{},"elicitationId":"elic_x"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("expected ELICITATION_TIMEOUT error: %+v", resp)
+	}
+	if lc.timeouts != 1 {
+		t.Errorf("timeouts = %d, want 1 after maxElicitationWait fires", lc.timeouts)
+	}
+	if lc.pendingDelta != 0 {
+		t.Errorf("pendingDelta = %d, want net 0 (Inc + Dec on timeout)", lc.pendingDelta)
+	}
+	if len(lc.roundtrips) != 1 {
+		t.Errorf("roundtrips = %d, want 1 observation on timeout path", len(lc.roundtrips))
+	}
+}
+
+// TestElicitationLifecycleSuppressionBumpsSuppressedCounter_spec_16_1_F_9_2_14
+// proves the §16.1 line 62 suppressed counter increments when a §9.2
+// depth-policy suppression fires; the pending gauge is NOT touched
+// because the suppression rejects before admit. F-9.2.14.
+func TestElicitationLifecycleSuppressionBumpsSuppressedCounter_spec_16_1_F_9_2_14(t *testing.T) {
+	lc := &recordingLifecycleMetric{}
+	srv, store, _ := newMCPForChain(t, chainOpts{
+		depth:      elicitation.DepthSuppressAtDepth,
+		suppressAt: 1,
+		lifecycle:  lc,
+	})
+	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_leaf", "alice", "sess_root") // depth 1
+
+	resp := call(t, srv.Handler(), "lenny/request_elicitation",
+		`{"sessionId":"sess_leaf","message":"ok?","schema":{},"elicitationId":"elic_x"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, "suppressed") {
+		t.Fatalf("expected suppressed response, got %q", text)
+	}
+	if lc.suppressed != 1 {
+		t.Errorf("suppressed = %d, want 1 after depth suppression", lc.suppressed)
+	}
+	if lc.pendingMax != 0 {
+		t.Errorf("pendingMax = %d, want 0 (suppression must reject before admit)", lc.pendingMax)
+	}
 }
 
 // TestURLModeElicitationAllowedDomain proves a §9.2 url-mode
 // elicitation whose domain is on the connector allowlist proceeds.
+// F-9.2.11: no §9.1 drop metric is incremented on the happy path.
 func TestURLModeElicitationAllowedDomain(t *testing.T) {
-	audit := &fakeAuditor{}
+	drops := &recordingDropMetric{}
 	srv, store, interactions := newMCPForChain(t, chainOpts{
 		urlMode: elicitation.URLModeAllowlist{
 			Enabled:         true,
 			DomainAllowlist: []string{"accounts.example.com"},
 		},
-		audit: audit,
+		drops: drops,
 	})
 	mkUserSession(t, store, "sess_root", "alice", "")
 	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
@@ -283,23 +409,27 @@ func TestURLModeElicitationAllowedDomain(t *testing.T) {
 	// An allowlisted url-mode elicitation is recorded — it forwarded up
 	// the chain normally.
 	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
-	if len(audit.events) != 0 {
-		t.Errorf("an allowed url-mode elicitation emitted audit events: %+v", audit.events)
+	if len(drops.reasons) != 0 {
+		t.Errorf("an allowed url-mode elicitation incremented drop counter: %+v", drops.reasons)
 	}
 }
 
 // TestURLModeElicitationDisallowedDomain proves a §9.2 url-mode
 // elicitation whose domain is not on the connector allowlist is
-// dropped with DOMAIN_NOT_ALLOWLISTED and emits the §11.7 audit
-// event.
-func TestURLModeElicitationDisallowedDomain(t *testing.T) {
-	audit := &fakeAuditor{}
+// dropped with DOMAIN_NOT_ALLOWLISTED and increments the
+// `domain_not_allowlisted` drop counter. The §16.7 audit catalog is
+// closed and does not list this rejection, so the dispatcher does
+// not emit an audit row (F-9.2.11).
+//
+// spec: §9.2 line 86; F-9.2.11.
+func TestURLModeElicitationDisallowedDomain_spec_9_2_F_9_2_11(t *testing.T) {
+	drops := &recordingDropMetric{}
 	srv, store, interactions := newMCPForChain(t, chainOpts{
 		urlMode: elicitation.URLModeAllowlist{
 			Enabled:         true,
 			DomainAllowlist: []string{"accounts.example.com"},
 		},
-		audit: audit,
+		drops: drops,
 	})
 	mkUserSession(t, store, "sess_root", "alice", "")
 	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
@@ -315,23 +445,9 @@ func TestURLModeElicitationDisallowedDomain(t *testing.T) {
 	if msg, _ := c0["text"].(string); !strings.Contains(msg, "DOMAIN_NOT_ALLOWLISTED") {
 		t.Errorf("error = %q, want DOMAIN_NOT_ALLOWLISTED", msg)
 	}
-	// §11.7: the rejection emitted exactly one audit event naming the
-	// originating pod and the rejected host.
-	if len(audit.events) != 1 {
-		t.Fatalf("recorded %d audit events, want 1", len(audit.events))
-	}
-	ev := audit.events[0]
-	if ev.typ != "elicitation.url_mode_domain_rejected" {
-		t.Errorf("audit event type = %q", ev.typ)
-	}
-	if ev.detail["host"] != "phish.evil.test" {
-		t.Errorf("audit host = %v, want the rejected host", ev.detail["host"])
-	}
-	if ev.detail["originPod"] != "sess_leaf" {
-		t.Errorf("audit originPod = %v, want the raising session", ev.detail["originPod"])
-	}
-	if ev.detail["reason"] != "domain_not_allowlisted" {
-		t.Errorf("audit reason = %v", ev.detail["reason"])
+	// F-9.2.11: exactly one §9.1 drop, reason="domain_not_allowlisted".
+	if len(drops.reasons) != 1 || drops.reasons[0] != "domain_not_allowlisted" {
+		t.Errorf("drop reasons = %v, want [domain_not_allowlisted]", drops.reasons)
 	}
 	// The dropped elicitation was not recorded.
 	if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
@@ -341,12 +457,15 @@ func TestURLModeElicitationDisallowedDomain(t *testing.T) {
 
 // TestURLModeElicitationAgentBlockedByDefault proves §9.2 control 1:
 // an agent-initiated url-mode elicitation is blocked when the pool
-// does not allowlist url-mode at all.
+// does not allowlist url-mode at all. F-9.2.11: the rejection
+// increments the §9.1 drop counter with reason="domain_not_allowlisted"
+// (the disabled-allowlist case shares the metric reason with the
+// unmatched-domain case).
 func TestURLModeElicitationAgentBlockedByDefault(t *testing.T) {
-	audit := &fakeAuditor{}
+	drops := &recordingDropMetric{}
 	// No urlMode allowlist configured — the §9.2 default blocks
 	// agent-initiated url-mode.
-	srv, store, _ := newMCPForChain(t, chainOpts{audit: audit})
+	srv, store, _ := newMCPForChain(t, chainOpts{drops: drops})
 	mkUserSession(t, store, "sess_root", "alice", "")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
@@ -355,8 +474,8 @@ func TestURLModeElicitationAgentBlockedByDefault(t *testing.T) {
 	if result["isError"] != true {
 		t.Fatalf("an agent url-mode elicitation should be blocked by default: %+v", resp)
 	}
-	if len(audit.events) != 1 || audit.events[0].detail["reason"] != "url_mode_disabled" {
-		t.Errorf("audit events = %+v, want one url_mode_disabled rejection", audit.events)
+	if len(drops.reasons) != 1 || drops.reasons[0] != "domain_not_allowlisted" {
+		t.Errorf("drop reasons = %v, want one [domain_not_allowlisted]", drops.reasons)
 	}
 }
 
@@ -372,8 +491,8 @@ func TestURLModeElicitationAgentBlockedByDefault(t *testing.T) {
 // spec: §9.2 lines 87–88 (agent binaries cannot self-declare as a
 // connector); F-9.2.19.
 func TestRequestElicitationDropsSelfAssertedConnector_spec_9_2(t *testing.T) {
-	audit := &fakeAuditor{}
-	srv, store, interactions := newMCPForChain(t, chainOpts{audit: audit})
+	drops := &recordingDropMetric{}
+	srv, store, interactions := newMCPForChain(t, chainOpts{drops: drops})
 	mkUserSession(t, store, "sess_root", "alice", "")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
@@ -382,8 +501,8 @@ func TestRequestElicitationDropsSelfAssertedConnector_spec_9_2(t *testing.T) {
 	if result["isError"] != true {
 		t.Fatalf("a self-asserted connector url-mode elicitation must not be admitted: %+v", resp)
 	}
-	if len(audit.events) != 1 || audit.events[0].detail["reason"] != "url_mode_disabled" {
-		t.Errorf("audit events = %+v, want exactly one url_mode_disabled rejection (agent-initiated path)", audit.events)
+	if len(drops.reasons) != 1 || drops.reasons[0] != "domain_not_allowlisted" {
+		t.Errorf("drop reasons = %v, want one [domain_not_allowlisted] (agent-initiated path)", drops.reasons)
 	}
 	// The dropped elicitation was never recorded against the resolver.
 	if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {

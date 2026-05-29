@@ -171,11 +171,20 @@ func WalkChain(in ChainInput) (ChainResult, error) {
 	// the elicitation may be forwarded at all. A connector-initiated
 	// elicitation is exempt (gateway-initiated OAuth flows are never
 	// suppressed). A suppressed elicitation does not advance.
+	//
+	// spec: §9.2 line 92 — when a pool ships no elicitationDepthPolicy
+	// the platform default is `suppress_at_depth: 3`, NOT `allow_all`.
+	// The pool can opt back to `allow_all` explicitly; an unset value
+	// must take the safe-by-default policy. F-9.2.16.
 	policy := in.DepthPolicy
+	suppressAt := in.SuppressAtDepth
 	if !policy.IsValid() {
-		policy = DepthAllowAll
+		policy = DepthSuppressAtDepth
+		if suppressAt <= 0 {
+			suppressAt = DefaultSuppressAtDepth
+		}
 	}
-	if policy.ShouldSuppress(in.Initiator, origin.Depth, in.SuppressAtDepth) {
+	if policy.ShouldSuppress(in.Initiator, origin.Depth, suppressAt) {
 		return ChainResult{
 			Termination: TerminateSuppressed,
 			Hops:        []Hop{origin},

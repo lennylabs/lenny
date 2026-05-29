@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
 // elicitationIntegrityResponse is the §9.2 elicitation-content-integrity
@@ -94,8 +95,12 @@ func (r *Router) resolveElicitationEffective(stored string) string {
 // handlePutElicitationIntegrity serves
 // PUT /v1/admin/tenants/{id}/elicitation-content-integrity (§9.2). A
 // write that relaxes the mode below `enforce` requires a non-empty
-// justification; the change emits the
-// `tenant.elicitation_content_integrity_mode_changed` audit event.
+// justification; the change emits the §16.7 line 675
+// `tenant.elicitation_content_integrity_changed` audit event with the
+// `previous_stored_mode`, `new_stored_mode`, `platform_floor_at_change`,
+// `effective_mode_at_change`, `justification`, `changed_by`,
+// `changed_by_tenant_id`, `changed_at` payload SIEM consumers index on.
+// spec: §9.2 line 66; §16.7 line 675. F-9.2.9.
 func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
 	var body putElicitationIntegrityRequest
@@ -137,9 +142,15 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 		}
 	}
 
-	var oldMode string
+	// previousStoredRaw captures the tenant's literal stored value
+	// before the update so the audit row can distinguish "first write"
+	// (null) from "explicit prior value". The §16.7 line 675 payload
+	// requires `previous_stored_mode` ∈ {enforce | detect-only | off |
+	// null}; the §9.2 default of `enforce` is computed at resolve-time,
+	// not persisted, so an unset stored value emits null.
+	var previousStoredRaw string
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
-		oldMode = effectiveStoredMode(*t)
+		previousStoredRaw = t.ElicitationContentIntegrity
 		t.ElicitationContentIntegrity = string(mode)
 		return nil
 	})
@@ -157,13 +168,35 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	r.emit(req.Context(), principal, "tenant.elicitation_content_integrity_mode_changed", id, map[string]any{
-		"oldMode":       oldMode,
-		"newMode":       string(mode),
-		"justification": body.Justification,
-	})
 	stored := string(mode)
 	effective := r.resolveElicitationEffective(stored)
+	// §16.7 line 675 — `platform_floor_at_change` records the floor
+	// value rendered at the time of the write so audit analysis can
+	// reconstruct the effective mode without re-resolving the floor
+	// post-hoc. Empty string when the floor is unset.
+	platformFloor := r.elicitationFloor
+	// `previous_stored_mode` is null on the first write (no prior
+	// stored value); JSON-encodes as `null` rather than `""`. The
+	// `justification` field is included unconditionally so a row from
+	// a strengthening write is still queryable, even when the field
+	// is empty.
+	var previousStoredValue any
+	if previousStoredRaw != "" {
+		previousStoredValue = previousStoredRaw
+	}
+	r.emit(req.Context(), principal,
+		string(audit.EventTenantElicitationContentIntegrityChanged), id,
+		map[string]any{
+			"tenant_id":                id,
+			"previous_stored_mode":     previousStoredValue,
+			"new_stored_mode":          stored,
+			"platform_floor_at_change": platformFloor,
+			"effective_mode_at_change": effective,
+			"justification":            body.Justification,
+			"changed_by":               principal.Subject,
+			"changed_by_tenant_id":     principal.TenantID,
+			"changed_at":               r.clock().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+		})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(elicitationIntegrityResponse{
 		TenantID:      updated.ID,

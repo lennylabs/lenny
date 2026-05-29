@@ -197,6 +197,74 @@ func TestWalkChainBlockAllSuppressesDelegatedSession(t *testing.T) {
 	}
 }
 
+// TestWalkChainUnsetPolicyDefaultsToSuppressAtDepth3 proves the §9.2
+// line 92 platform default: when a pool ships no elicitationDepthPolicy
+// the chain auto-suppresses agent-initiated elicitations at depth >= 3.
+// Previously the coercion path resolved an unset value to `allow_all`,
+// silently disabling the spec-default backpressure for deep trees.
+//
+// spec: §9.2 line 92. F-9.2.16.
+func TestWalkChainUnsetPolicyDefaultsToSuppressAtDepth3_spec_9_2_F_9_2_16(t *testing.T) {
+	// A four-hop chain places the raising session at depth 3 — exactly
+	// at the spec-default threshold. The agent-initiated request must
+	// be suppressed.
+	res, err := WalkChain(ChainInput{
+		Hops:            chainHops(4),
+		OriginalContent: content(),
+		Initiator:       InitiatorAgent,
+		// Intentionally leave DepthPolicy and SuppressAtDepth unset.
+	})
+	if err != nil {
+		t.Fatalf("WalkChain: %v", err)
+	}
+	if res.Termination != TerminateSuppressed {
+		t.Errorf("termination = %q, want suppressed at depth=3 under the §9.2 default",
+			res.Termination)
+	}
+	if len(res.Hops) != 1 {
+		t.Errorf("traversed %d hops, want 1 (suppressed before forwarding)", len(res.Hops))
+	}
+}
+
+// TestWalkChainUnsetPolicyDoesNotSuppressShallowChain proves the §9.2
+// default is `suppress_at_depth: 3` rather than `block_all`: a chain
+// shallower than 3 still forwards normally. F-9.2.16.
+func TestWalkChainUnsetPolicyDoesNotSuppressShallowChain_spec_9_2_F_9_2_16(t *testing.T) {
+	// Three hops places the raising session at depth 2 — below the
+	// suppression threshold. The elicitation forwards to the root.
+	res, err := WalkChain(ChainInput{
+		Hops:            chainHops(3),
+		OriginalContent: content(),
+		Initiator:       InitiatorAgent,
+		// DepthPolicy / SuppressAtDepth unset — the §9.2 default kicks in.
+	})
+	if err != nil {
+		t.Fatalf("WalkChain: %v", err)
+	}
+	if res.Termination != TerminateHuman {
+		t.Errorf("termination = %q, want human (depth 2 < default threshold 3)",
+			res.Termination)
+	}
+}
+
+// TestWalkChainUnsetPolicyExemptsConnectorAtAnyDepth proves the §9.2
+// connector-exempt rule still applies even when the policy is
+// defaulted by the coercion path. F-9.2.16.
+func TestWalkChainUnsetPolicyExemptsConnectorAtAnyDepth_spec_9_2_F_9_2_16(t *testing.T) {
+	res, err := WalkChain(ChainInput{
+		Hops:            chainHops(8),
+		OriginalContent: content(),
+		Initiator:       InitiatorConnector,
+	})
+	if err != nil {
+		t.Fatalf("WalkChain: %v", err)
+	}
+	if res.Termination != TerminateHuman {
+		t.Errorf("termination = %q, want human (connector exempt from depth default)",
+			res.Termination)
+	}
+}
+
 // tamperHop is a Hop whose verification is exercised against a
 // divergent content payload — see TestWalkChainDigestVerifiedEachHop.
 func TestWalkChainDigestVerifiedEachHop(t *testing.T) {

@@ -124,6 +124,12 @@ const (
 	DepthBlockAll DepthPolicy = "block_all"
 )
 
+// DefaultSuppressAtDepth is the §9.2 line 92 platform-default threshold
+// applied when a pool ships no elicitationDepthPolicy: deep-tree
+// agent-initiated elicitation spam is auto-suppressed at delegation
+// depth >= 3. spec: §9.2 line 92. F-9.2.16.
+const DefaultSuppressAtDepth = 3
+
 // AllDepthPolicies returns the closed enum.
 func AllDepthPolicies() []DepthPolicy {
 	return []DepthPolicy{DepthAllowAll, DepthSuppressAtDepth, DepthBlockAll}

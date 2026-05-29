@@ -92,11 +92,16 @@ func TestPutElicitationIntegrityWeakeningRequiresJustification(t *testing.T) {
 	}
 }
 
-func TestPutElicitationIntegrityWeakensWithJustification(t *testing.T) {
+// spec: §9.2 line 66; §16.7 line 675. F-9.2.9.
+// Verify the weakening write emits the canonical
+// `tenant.elicitation_content_integrity_changed` audit event (NOT the
+// legacy `_mode_changed` typo) and that the Detail carries every
+// §16.7 line 675 spec-mandated payload field.
+func TestPutElicitationIntegrityWeakensWithJustification_spec_9_2_F_9_2_9(t *testing.T) {
 	store := tenantstore.NewMemory()
-	audit := &recordingAudit{}
+	auditSink := &recordingAudit{}
 	router := admin.NewRouter(store, admin.Options{
-		Audit: audit,
+		Audit: auditSink,
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 	})
 	seedAdminTenant(t, store, "acme")
@@ -113,19 +118,106 @@ func TestPutElicitationIntegrityWeakensWithJustification(t *testing.T) {
 	if row.ElicitationContentIntegrity != "off" {
 		t.Errorf("stored mode = %q, want off", row.ElicitationContentIntegrity)
 	}
-	// The weakening emitted the §11.7 audit event.
+	// spec: §16.7 line 675 — canonical event name and payload.
 	var found *admin.AuditEvent
-	for _, e := range audit.snapshot() {
-		if e.Type == "tenant.elicitation_content_integrity_mode_changed" {
+	for _, e := range auditSink.snapshot() {
+		if e.Type == "tenant.elicitation_content_integrity_changed" {
 			ev := e
 			found = &ev
 		}
+		if e.Type == "tenant.elicitation_content_integrity_mode_changed" {
+			t.Fatalf("emitted legacy event name %q; F-9.2.9 requires %q",
+				e.Type, "tenant.elicitation_content_integrity_changed")
+		}
 	}
 	if found == nil {
-		t.Fatal("no tenant.elicitation_content_integrity_mode_changed audit event")
+		t.Fatal("no tenant.elicitation_content_integrity_changed audit event")
 	}
-	if found.Detail["newMode"] != "off" || found.Detail["oldMode"] != "enforce" {
-		t.Errorf("audit detail = %v, want oldMode=enforce newMode=off", found.Detail)
+	if found.Detail["new_stored_mode"] != "off" {
+		t.Errorf("new_stored_mode = %v, want off", found.Detail["new_stored_mode"])
+	}
+	// First write — previous_stored_mode must be null (not the resolved
+	// default `enforce`). JSON encoding represents this as a nil any.
+	if v, ok := found.Detail["previous_stored_mode"]; !ok || v != nil {
+		t.Errorf("previous_stored_mode = %v (present=%v), want nil for the first write", v, ok)
+	}
+	if found.Detail["effective_mode_at_change"] != "off" {
+		t.Errorf("effective_mode_at_change = %v, want off (no floor)", found.Detail["effective_mode_at_change"])
+	}
+	if found.Detail["platform_floor_at_change"] != "" {
+		t.Errorf("platform_floor_at_change = %v, want \"\" (no floor wired)", found.Detail["platform_floor_at_change"])
+	}
+	if found.Detail["justification"] != "staging tenant, integrity tooling offline" {
+		t.Errorf("justification = %v", found.Detail["justification"])
+	}
+	if found.Detail["changed_by"] == "" || found.Detail["changed_by"] == nil {
+		t.Errorf("changed_by must be the operator's sub, got %v", found.Detail["changed_by"])
+	}
+	if _, ok := found.Detail["changed_by_tenant_id"]; !ok {
+		t.Errorf("changed_by_tenant_id missing")
+	}
+	if _, ok := found.Detail["changed_at"]; !ok {
+		t.Errorf("changed_at missing")
+	}
+	if found.Detail["tenant_id"] != "acme" {
+		t.Errorf("tenant_id = %v, want acme", found.Detail["tenant_id"])
+	}
+}
+
+// spec: §9.2 line 66; §16.7 line 675. F-9.2.9.
+// A second write must carry the prior stored mode in previous_stored_mode,
+// and a write under a non-empty floor must record the floor value.
+func TestPutElicitationIntegrityRecordsPriorModeAndFloor_spec_9_2_F_9_2_9(t *testing.T) {
+	store := tenantstore.NewMemory()
+	auditSink := &recordingAudit{}
+	router := admin.NewRouter(store, admin.Options{
+		Audit: auditSink,
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithElicitationFloor("detect-only")
+	seedAdminTenant(t, store, "acme")
+
+	// First write: from null → enforce, under a detect-only floor.
+	body1, _ := json.Marshal(map[string]string{"mode": "enforce"})
+	rr1 := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr1, withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body1))))
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first PUT status %d, body %s", rr1.Code, rr1.Body.String())
+	}
+	// Second write: from enforce → enforce (no-op). Confirms an unchanged
+	// write still emits, with previous_stored_mode = "enforce".
+	body2, _ := json.Marshal(map[string]string{"mode": "enforce"})
+	rr2 := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr2, withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+		"/v1/admin/tenants/acme/elicitation-content-integrity", bytes.NewReader(body2))))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second PUT status %d", rr2.Code)
+	}
+	events := auditSink.snapshot()
+	var second *admin.AuditEvent
+	count := 0
+	for i := range events {
+		if events[i].Type != "tenant.elicitation_content_integrity_changed" {
+			continue
+		}
+		count++
+		ev := events[i]
+		second = &ev
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 audit events, got %d", count)
+	}
+	if second.Detail["previous_stored_mode"] != "enforce" {
+		t.Errorf("second-write previous_stored_mode = %v, want enforce",
+			second.Detail["previous_stored_mode"])
+	}
+	if second.Detail["platform_floor_at_change"] != "detect-only" {
+		t.Errorf("platform_floor_at_change = %v, want detect-only",
+			second.Detail["platform_floor_at_change"])
+	}
+	if second.Detail["effective_mode_at_change"] != "enforce" {
+		t.Errorf("effective_mode_at_change = %v, want enforce (max of floor and stored)",
+			second.Detail["effective_mode_at_change"])
 	}
 }
 

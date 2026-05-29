@@ -2133,7 +2133,12 @@ func main() {
 		Interactions:               interactions,
 		Memory:                     memories,
 		ElicitationMetrics:         gwMetrics,
-		TenantID:                   "default",
+		// spec: §16.1 lines 60–63; §16.5 line 458. F-9.2.14 — the
+		// §9.2 dispatcher emits admit/terminal lifecycle samples that
+		// drive the ElicitationBacklogHigh alert and the operator
+		// roundtrip / timeout / suppressed dashboards.
+		ElicitationLifecycleMetrics: gwMetrics,
+		TenantID:                    "default",
 		Clock:                      clockinject.Now,
 		// §8.9 line 1003 / §11.7 / §16.1 — same tree-walker cycle
 		// observer the REST /tree handler uses, so the audit row +

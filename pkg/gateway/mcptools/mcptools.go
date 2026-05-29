@@ -224,6 +224,13 @@ type Deps struct {
 	// every elicitation the gateway drops. Optional.
 	ElicitationMetrics ElicitationDropRecorder
 
+	// ElicitationLifecycleMetrics, when set, receives the §16.1 admit
+	// and terminal lifecycle events the operator dashboards and the
+	// §16.5 ElicitationBacklogHigh alert read. Optional; nil disables
+	// the histograms, the pending gauge, and the timeout/suppressed
+	// counters. spec: §16.1 lines 60–63; §16.5 line 458. F-9.2.14.
+	ElicitationLifecycleMetrics ElicitationLifecycleRecorder
+
 	// ElicitationTamperMetrics, when set, receives a §9.2 / §16.5
 	// content-tamper-detected notification each time the chain walk
 	// catches a forwarding hop that mutated the elicitation payload.
@@ -289,6 +296,13 @@ const (
 	// elicitationDropDepthSuppressed — the §9.2 depth policy suppressed
 	// the request.
 	elicitationDropDepthSuppressed = "depth_suppressed"
+	// elicitationDropDomainNotAllowlisted — the §9.2 line 86 url-mode
+	// allowlist rejected the request. The metric drop substitutes for
+	// the unspec'd `elicitation.url_mode_domain_rejected` audit event
+	// the dispatcher previously emitted; the §16.7 catalog enumerates
+	// the closed set of audit events and does not list one for this
+	// rejection. spec: §9.2 line 86; F-9.2.11.
+	elicitationDropDomainNotAllowlisted = "domain_not_allowlisted"
 )
 
 // ElicitationDropRecorder records a §9.1 elicitation drop for the
@@ -296,6 +310,28 @@ const (
 // satisfies it.
 type ElicitationDropRecorder interface {
 	RecordElicitationDrop(reason string)
+}
+
+// ElicitationLifecycleRecorder hooks the §16.1 admit/terminal metric
+// sites the elicitation handler instruments. *gatewaymetrics.Metrics
+// satisfies it. spec: §16.1 lines 60–63 — pending gauge, timeout /
+// suppressed counters, roundtrip histogram. F-9.2.14.
+type ElicitationLifecycleRecorder interface {
+	// IncElicitationPending increments the lenny_elicitation_pending
+	// gauge when the dispatcher admits an elicitation onto the chain.
+	IncElicitationPending()
+	// DecElicitationPending decrements the gauge on every terminal
+	// phase (responded | dismissed | timeout).
+	DecElicitationPending()
+	// IncElicitationTimeout counts a §9.1 maxElicitationWait deadline
+	// drop.
+	IncElicitationTimeout()
+	// IncElicitationSuppressed counts a §9.2 depth-policy suppression
+	// or per-session budget rejection.
+	IncElicitationSuppressed()
+	// ObserveElicitationRoundtrip records the admit-to-terminal
+	// wall-clock latency.
+	ObserveElicitationRoundtrip(d time.Duration)
 }
 
 // Register installs the §8.5 tools onto the MCP server.
@@ -986,7 +1022,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			suppressAtDepth:  deps.ElicitationSuppressAtDepth,
 			urlModeAllowlist: deps.ElicitationURLModeAllowlist,
 			intercepts:       deps.ElicitationIntercepts,
-			audit:            deps.Audit,
+			dropMetrics:      deps.ElicitationMetrics,
 			tamperMetrics:    deps.ElicitationTamperMetrics,
 		}
 		srv.RegisterTool(mcp.Tool{
@@ -1062,6 +1098,11 @@ func Register(srv *mcp.Server, deps Deps) {
 				if deps.ElicitationMetrics != nil {
 					deps.ElicitationMetrics.RecordElicitationDrop(elicitationDropBudgetExceeded)
 				}
+				// spec: §16.1 line 62 — a per-session budget drop is a
+				// §9.1 suppression. F-9.2.14.
+				if deps.ElicitationLifecycleMetrics != nil {
+					deps.ElicitationLifecycleMetrics.IncElicitationSuppressed()
+				}
 				return mcp.ToolResult{}, fmt.Errorf(
 					"elicitation budget exhausted: session %s has reached the maxElicitationsPerSession limit of %d",
 					sessionID, maxElicitations,
@@ -1093,6 +1134,12 @@ func Register(srv *mcp.Server, deps Deps) {
 				// response the originating pod handles as "user declined".
 				if deps.ElicitationMetrics != nil {
 					deps.ElicitationMetrics.RecordElicitationDrop(elicitationDropDepthSuppressed)
+				}
+				// spec: §16.1 line 62 — every §9.2 depth-policy
+				// suppression bumps the suppression counter; the metric
+				// is what the operator-facing dashboard reads. F-9.2.14.
+				if deps.ElicitationLifecycleMetrics != nil {
+					deps.ElicitationLifecycleMetrics.IncElicitationSuppressed()
 				}
 				return textResult(fmt.Sprintf(`{"elicitationId":%q,"suppressed":true}`, elicitationOrGen(in.ElicitationID, idFn))), nil
 			}
@@ -1130,6 +1177,21 @@ func Register(srv *mcp.Server, deps Deps) {
 			}); err != nil {
 				return mcp.ToolResult{}, err
 			}
+			// spec: §16.1 lines 60–61 — admit-time stamp drives the
+			// admit-to-terminal roundtrip histogram and the in-flight
+			// pending gauge. Every return path below the put MUST hit
+			// the matching Dec / Observe sites. F-9.2.14.
+			admittedAt := clock()
+			if deps.ElicitationLifecycleMetrics != nil {
+				deps.ElicitationLifecycleMetrics.IncElicitationPending()
+			}
+			recordTerminal := func() {
+				if deps.ElicitationLifecycleMetrics == nil {
+					return
+				}
+				deps.ElicitationLifecycleMetrics.DecElicitationPending()
+				deps.ElicitationLifecycleMetrics.ObserveElicitationRoundtrip(clock().Sub(admittedAt))
+			}
 			// spec: §7.2 line 136 — surface the elicitation on the resolver
 			// session's event stream as the canonical `elicitation_request`
 			// SSE event. The previous `elicitation_requested` synonym was
@@ -1151,20 +1213,24 @@ func Register(srv *mcp.Server, deps Deps) {
 			for {
 				cur, err := deps.Interactions.Get(ctx, tenant, resolverSessionID, row.UserID, elicitationID)
 				if err != nil {
+					recordTerminal()
 					return mcp.ToolResult{}, fmt.Errorf("elicitation lookup: %w", err)
 				}
 				switch cur.Phase {
 				case interactionstore.PhaseResponded:
+					recordTerminal()
 					body, _ := json.Marshal(struct {
 						ElicitationID string `json:"elicitationId"`
 						Response      any    `json:"response"`
 					}{ElicitationID: elicitationID, Response: cur.Response})
 					return textResult(string(body)), nil
 				case interactionstore.PhaseDismissed:
+					recordTerminal()
 					return textResult(fmt.Sprintf(`{"elicitationId":%q,"dismissed":true}`, elicitationID)), nil
 				}
 				select {
 				case <-ctx.Done():
+					recordTerminal()
 					return mcp.ToolResult{}, ctx.Err()
 				case <-timeout:
 					// §9.1 line 103: on timeout the elicitation is dismissed
@@ -1180,6 +1246,13 @@ func Register(srv *mcp.Server, deps Deps) {
 							}
 							return nil
 						})
+					// spec: §16.1 line 63 — record the timeout site so
+					// operators can graph the rate. Pair with the
+					// admit/decrement bookkeeping. F-9.2.14.
+					if deps.ElicitationLifecycleMetrics != nil {
+						deps.ElicitationLifecycleMetrics.IncElicitationTimeout()
+					}
+					recordTerminal()
 					expiredAt := clock().UTC().Format(time.RFC3339Nano)
 					return mcp.ToolResult{}, mcp.NewToolError("ELICITATION_TIMEOUT",
 						fmt.Sprintf("no response for %s within %s (expiredAt=%s)", elicitationID, elicitationTimeout, expiredAt),

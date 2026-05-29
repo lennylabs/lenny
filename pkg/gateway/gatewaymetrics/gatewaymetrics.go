@@ -59,6 +59,23 @@ type Metrics struct {
 	cbCacheInitialized        prometheus.Gauge
 	elicitationDropped        *prometheus.CounterVec
 	elicitationTamperDetected *prometheus.CounterVec
+	// elicitationPending is the §16.1 line 61 unlabelled gauge of
+	// in-flight elicitations the §16.5 ElicitationBacklogHigh alert
+	// keys on (`lenny_elicitation_pending > 50 for > 30s`). The
+	// dispatcher's request_elicitation handler increments on admit
+	// and decrements on terminal phase. spec: §16.1 line 61; §16.5
+	// line 458. F-9.2.14.
+	elicitationPending prometheus.Gauge
+	// elicitationTimeout counts §9.1 line 103 elicitation drops on the
+	// maxElicitationWait deadline. spec: §16.1 line 63. F-9.2.14.
+	elicitationTimeout prometheus.Counter
+	// elicitationSuppressed counts §9.2 depth-policy suppressions and
+	// per-session budget exhaustions. spec: §16.1 line 62. F-9.2.14.
+	elicitationSuppressed prometheus.Counter
+	// elicitationRoundtripSeconds observes the wall-clock duration
+	// from admit to resolve / dismiss / timeout per the §16.1 line 60
+	// histogram contract. spec: §16.1 line 60. F-9.2.14.
+	elicitationRoundtripSeconds prometheus.Observer
 	experimentIsoRej          *prometheus.CounterVec
 	noEnvPolicyAllowAll       *prometheus.CounterVec
 	gcPauseP99Ms              prometheus.Gauge
@@ -688,6 +705,47 @@ func New() (*Metrics, error) {
 		Name: "lenny_elicitation_content_tamper_detected_total",
 		Help: "Total §9.2 elicitation chain walks that detected tampered content at a forwarding hop. Labelled by tenant and enforcement_mode (off | detect-only | enforce) so the §16.5 alert can fire on enforce-mode catches only.",
 	}, []string{"tenant_id", "enforcement_mode"})
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 line 61 — in-flight elicitation gauge the §16.5
+	// ElicitationBacklogHigh alert reads. Unlabelled; the gauge is a
+	// gateway-process count. F-9.2.14.
+	elicitationPending, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_elicitation_pending",
+		Help: "In-flight §9.2 elicitations awaiting human or intercepting-parent resolution (§16.1 line 61).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 line 63 — elicitation-timeout counter the operator
+	// dashboards read; the maxElicitationWait drop site increments it.
+	// F-9.2.14.
+	elicitationTimeout, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_elicitation_timeout_total",
+		Help: "§9.1 line 103 elicitation drops on the maxElicitationWait deadline (§16.1 line 63).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 line 62 — suppression / budget-exhaustion counter.
+	// F-9.2.14.
+	elicitationSuppressed, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_elicitation_suppressed_total",
+		Help: "§9.2 elicitations dropped by depth policy or per-session budget (§16.1 line 62).",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// spec: §16.1 line 60 — admit-to-terminal round-trip histogram.
+	// Buckets cover the §9.1 default elicitationTimeout (600s) with
+	// reasonable granularity on the typical-human-response range
+	// (1s..10min). F-9.2.14.
+	elicitationRoundtripSeconds, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_elicitation_roundtrip_seconds",
+		Help:    "§9.2 elicitation admit-to-terminal wall-clock latency (§16.1 line 60).",
+		Buckets: []float64{0.5, 1, 5, 15, 30, 60, 120, 300, 600},
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1430,7 +1488,10 @@ func New() (*Metrics, error) {
 		extractionThreshold,
 		storageQuotaUsed, storageQuotaLimit, circuitBreakerOpen,
 		cbRejections, cbRejectionsSuppressed, elicitationDropped,
-		elicitationTamperDetected, experimentIsoRej,
+		elicitationTamperDetected,
+		elicitationPending, elicitationTimeout, elicitationSuppressed,
+		elicitationRoundtripSeconds,
+		experimentIsoRej,
 		noEnvPolicyAllowAll, tokenServiceCircuitState,
 		kmsSigningErrors, kmsSigningCircuitState,
 		checkpointStaleSessions,
@@ -1544,6 +1605,10 @@ func New() (*Metrics, error) {
 		cbCacheInitialized:                   cbInit,
 		elicitationDropped:                   elicitationDropped,
 		elicitationTamperDetected:            elicitationTamperDetected,
+		elicitationPending:                   elicitationPending.WithLabelValues(),
+		elicitationTimeout:                   elicitationTimeout.WithLabelValues(),
+		elicitationSuppressed:                elicitationSuppressed.WithLabelValues(),
+		elicitationRoundtripSeconds:          elicitationRoundtripSeconds.WithLabelValues(),
 		experimentIsoRej:                     experimentIsoRej,
 		noEnvPolicyAllowAll:                  noEnvPolicyAllowAll,
 		gcPauseP99Ms:                         gcPause,
@@ -2557,6 +2622,59 @@ func (m *Metrics) RecordElicitationDrop(reason string) {
 // for visibility without firing the alert.
 func (m *Metrics) RecordElicitationContentTamperDetected(tenantID, enforcementMode string) {
 	m.elicitationTamperDetected.WithLabelValues(tenantID, enforcementMode).Inc()
+}
+
+// IncElicitationPending increments the §16.1 line 61
+// `lenny_elicitation_pending` in-flight gauge. The §16.5
+// ElicitationBacklogHigh alert reads `> 50 for 30s`. spec: §16.1 line 61.
+// F-9.2.14.
+func (m *Metrics) IncElicitationPending() {
+	if m == nil {
+		return
+	}
+	m.elicitationPending.Inc()
+}
+
+// DecElicitationPending decrements the §16.1 line 61 gauge on every
+// terminal phase (responded | dismissed | timeout). spec: §16.1
+// line 61. F-9.2.14.
+func (m *Metrics) DecElicitationPending() {
+	if m == nil {
+		return
+	}
+	m.elicitationPending.Dec()
+}
+
+// IncElicitationTimeout increments the §16.1 line 63
+// `lenny_elicitation_timeout_total` counter when the dispatcher
+// drops a pending elicitation on the §9.1 maxElicitationWait
+// deadline. spec: §16.1 line 63. F-9.2.14.
+func (m *Metrics) IncElicitationTimeout() {
+	if m == nil {
+		return
+	}
+	m.elicitationTimeout.Inc()
+}
+
+// IncElicitationSuppressed increments the §16.1 line 62
+// `lenny_elicitation_suppressed_total` counter for a §9.2 depth-policy
+// suppression or a §9.1 per-session budget rejection. spec: §16.1
+// line 62. F-9.2.14.
+func (m *Metrics) IncElicitationSuppressed() {
+	if m == nil {
+		return
+	}
+	m.elicitationSuppressed.Inc()
+}
+
+// ObserveElicitationRoundtrip records the §16.1 line 60
+// `lenny_elicitation_roundtrip_seconds` admit-to-terminal latency.
+// spec: §16.1 line 60. F-9.2.14.
+func (m *Metrics) ObserveElicitationRoundtrip(d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.elicitationRoundtripSeconds.Observe(d.Seconds())
 }
 
 // RecordExperimentIsolationRejection increments the §16.1
