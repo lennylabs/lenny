@@ -13312,7 +13312,7 @@ as a tunable, not as a hard requirement (the default is implicitly
 "off"). The capability is unimplemented but the platform's safe-default
 behavior is consistent with `introspectionEnabled: false`.
 
-### - [ ] F-10.6.9 — 09  Billing-event schema has no `environmentId` field [Medium] — OPEN
+### - [x] F-10.6.9 — 09  Billing-event schema has no `environmentId` field [Medium] — CLOSED
 
 **Spec:** §10.6 line 663 — "Environment-level billing rollup (v1):
 `environmentId` populated on all billing events for sessions created in
@@ -13338,7 +13338,16 @@ session retention windows. Severity is Medium rather than High because
 the spec frames the rollup as a v1 accommodation (line 663 prefixes it
 "v1") and downstream analytics aren't blocked, just less precise.
 
-### - [ ] F-10.6.10 — 10  `GET /v1/runtimes` and `list_runtimes` do not accept the `?environmentId=` stub [Medium] — OPEN
+**Resolution:** `billingstore.Event` gains an `EnvironmentID` field,
+migration 0091 adds the `environment_id TEXT NOT NULL DEFAULT ''`
+column to `billing_events`, and pgstore round-trips it through Append /
+Since / InsertFromStream. The three production emit sites
+(`sessionserver.recordSessionCreated`, `sessionserver.markSessionTerminal`,
+`watchdog.recordCompleted`) now stamp `sess.Environment` so every
+environment-scoped session contributes to the §10.6 rollup. Unscoped
+sessions retain the empty value.
+
+### - [x] F-10.6.10 — 10  `GET /v1/runtimes` and `list_runtimes` do not accept the `?environmentId=` stub [Medium] — CLOSED
 
 **Spec:** §10.6 line 672 — "`GET /v1/runtimes` and `list_runtimes`
 accept optional `?environmentId=` stub". The accommodation is part of
@@ -13359,6 +13368,14 @@ anything per spec ("stub"), but the field's absence prevents clients
 from probing the explicit-environment scope through the discovery
 surface and prevents forward compatibility with the eventual scoping
 behavior.
+
+**Resolution:** REST `GET /v1/runtimes?environmentId=<name>` and MCP
+`lenny/list_runtimes` (`environmentId` in InputSchema) now narrow the
+post-transparent-filter result to runtimes the named environment's
+`runtimeSelector` admits. A non-promoting stub: a runtime the §10.6
+transparent filter already excluded stays excluded; an unknown
+environment collapses the list to empty so a typo never broadens
+visibility; an empty value is the v1 default no-op.
 
 ### - [ ] F-10.6.11 — 11  No `/mcp/environments/{name}` explicit-MCP endpoint dispatcher [Medium] — OPEN
 
@@ -13386,7 +13403,7 @@ F-10.6-01 documents that the implemented one of these endpoints is
 itself unenforced — fixing the broad explicit-endpoint coverage gap
 also needs the membership enforcement fix.
 
-### - [ ] F-10.6.12 — 12  Environment `Description` lacks validation; tenantId path/body cross-check absent [Medium] — OPEN
+### - [x] F-10.6.12 — 12  Environment `Description` lacks validation; tenantId path/body cross-check absent [Medium] — CLOSED
 
 **Spec:** §10.6 lines 562–565 — the resource has `description: "Security
 engineering workspace"`. The implicit expectation is that descriptions
@@ -13410,6 +13427,12 @@ is also re-resolved silently.
 substitution makes audit trails harder to reconcile (the request body
 disagrees with the persisted row, but the API returned 201/200 without
 a warning). Description length is unbounded.
+
+**Resolution:** `environmentstore.Environment.Validate` rejects a
+description longer than `MaxDescriptionLen` (1024 bytes); `Create` and
+`Update` admin handlers fail loudly with 400 `TENANT_ID_MISMATCH` when
+the body asserts a `tenantId` that disagrees with the authorized
+tenant rather than silently rewriting the row.
 
 ### - [x] F-10.6.13 — 13  `targetEnvironment: "*"` wildcard semantics asymmetric with inbound `sourceEnvironment: "*"` [Low] — CLOSED
 
@@ -23619,12 +23642,13 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
   - The REST event surface at `pkg/gateway/sessionserver/events.go` supports `Last-Event-ID` reconnect on the `GET /v1/sessions/{id}/events` SSE path (lines 90-93), but it is a separate transport from the MCP one the spec describes, and emits no `gap_detected` frame.
 - **Impact:** Reconnect with stale `resumeFromSeq` past the (non-existent) buffer's eviction window has no documented gap signal on MCP, and the operator-tunable buffer depth knob the spec promises has no implementation. Clients that lose events silently because the buffer evicted them have no way to detect that loss.
 
-### - [ ] F-15.2.10 — `lenny/error` content-type fallback parsing not exercised in the SDK or non-Go SDKs [Medium] — OPEN
+### - [x] F-15.2.10 — `lenny/error` content-type fallback parsing not exercised in the SDK or non-Go SDKs [Medium] — CLOSED
 - **Spec §15.2.1 rule 3 (line 1384):** parity contract on `code`/`category` fields, with §15.2 line 1370 reminding clients to "ignore" unknown `notifications/lenny/*` frames per MCP convention.
 - **Evidence:**
   - Go SDK `sdks/client/go/lenny/mcp.go:55-63` (`MCPToolResult.Text()`) only concatenates blocks where `Type == "text"`; a `lenny/error` block is silently dropped on the caller-visible path. `sdks/client/go/lenny/mcp.go:269,290` checks `res.IsError` and returns the human text but never surfaces the parity triple.
   - `grep -rn "lenny/error\|LennyError\|lennyError" sdks/client/` returns zero hits — Python, TypeScript, and the Go-helper SDKs do not parse the envelope either.
 - **Impact:** A caller that wants to retry on `retryable: true` against an MCP tool error has no SDK helper to read that flag; they must hand-decode the `content[].text` JSON. The "single error-handling strategy regardless of API surface" promise (rule 3) is not realised on the client side.
+- **Resolution:** Go SDK gains `LennyError` (Code/Category/Message/Retryable/Details) and `MCPToolResult.LennyError()` which parses any `lenny/error` content block into the typed envelope; nil on absent or malformed. `LennyError.Error()` implements `error`. Non-Go SDKs out of scope for this batch.
 
 ### - [ ] F-15.2.11 — `lenny/delegate_task` "manual MCP-only" path must still use the shared error taxonomy — partial compliance [Medium] — OPEN
 - **Spec §15.2.1 rule 4 last sentence (line 1386):** "Any manual MCP-only tool (e.g., `lenny/delegate_task`) that has no REST counterpart is authored independently but must use the shared error taxonomy (item 3)."
@@ -26878,7 +26902,7 @@ Evidence:
 - `TestCatalogIsCompleteAgainstSpec167` does not cross-check OCSF mapping coverage.
 - `pkg/audit/ocsf/ocsf.go:374-381`: `if !ok { return Record{}, &TranslateError{Class: ErrClassMappingMissing, ...} }`.
 
-### - [ ] F-16.7.4 — `pkg/gateway/admin/breakers.go` emits invented event types `circuit_breaker.opened` and `circuit_breaker.closed` instead of the §16.7-catalogued `circuit_breaker.state_changed`. [High] — OPEN
+### - [x] F-16.7.4 — `pkg/gateway/admin/breakers.go` emits invented event types `circuit_breaker.opened` and `circuit_breaker.closed` instead of the §16.7-catalogued `circuit_breaker.state_changed`. [High] — CLOSED
 
 §16.7 names the operator-managed breaker lifecycle event `circuit_breaker.state_changed` (a single event with `old_state` and `new_state` payload fields). The implementation emits two different event-type strings:
 
@@ -26908,6 +26932,8 @@ Evidence:
 - `pkg/gateway/admin/breakers.go:125,156` — literal strings differ from the §16.7 catalog.
 - `pkg/observability/audit/catalog.go:56` — `EventCircuitBreakerStateChanged EventType = "circuit_breaker.state_changed"`.
 - `pkg/audit/ocsf/mapping.go:82` — only `circuit_breaker.state_changed` has an OCSF mapping; the prefix table at lines 101-158 has no `circuit_breaker.` entry.
+
+**Resolution:** Both emit sites now use `audit.EventCircuitBreakerStateChanged` and write the spec-mandated payload (`circuit_name`, `old_state`/`new_state`, `reason`, `limit_tier`, `scope`, `operator_sub`, `operator_tenant_id`, `timestamp`). Close emits the platform-generated `"operator close"` reason and echoes the persisted tier/scope so a SIEM joining on `limit_tier` resolves both transitions for the same breaker. The standalone operational-event-stream constants `circuit_breaker_opened/closed` (events package) are unchanged — they are a separate gateway-emitted stream per §16.5 line 646.
 
 ### - [ ] F-16.7.5 — `token.revoked` emit site covers only one of the three spec-required revocation paths. [High] — OPEN
 
