@@ -13,7 +13,30 @@ import (
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/gateway/translator"
 )
+
+// modelsAdapterCapabilities resolves the §9.1 line 35 "capabilities of
+// the adapter serving the request" rule on the dual-mounted /v1/models
+// endpoint: both the OpenAI Chat Completions and Open Responses
+// adapters share the path, so the consumer selects via the optional
+// `?adapter=` query parameter:
+//
+//   - `openai-completions` (default) — the OpenAI Chat surface served at
+//     /v1/chat/completions.
+//   - `open-responses` — the Open Responses surface served at /v1/responses.
+//
+// An unrecognised value falls through to the default so a stale or
+// forward-compatible consumer still gets a well-formed capability
+// block. spec: §9.1 line 35; §15.1 line 575. F-9.1.6 / F-9.1.8.
+func modelsAdapterCapabilities(adapterID string) adapter.Capabilities {
+	switch adapterID {
+	case "open-responses":
+		return translator.OpenResponsesAdapterCapabilities()
+	default:
+		return translator.OpenAIChatAdapterCapabilities()
+	}
+}
 
 // restAdapterCapabilities reports the §15 AdapterCapabilities of the REST
 // adapter the sessionserver implements. The REST surface owns the /v1
@@ -149,10 +172,11 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	caps := modelsAdapterCapabilities(r.URL.Query().Get("adapter"))
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"object":              "list",
 		"data":                models,
-		"adapterCapabilities": restAdapterCapabilities(),
+		"adapterCapabilities": caps,
 	})
 }
 

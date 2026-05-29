@@ -365,6 +365,11 @@ func Register(srv *mcp.Server, deps Deps) {
 		// rejected with IDEMPOTENCY_KEY_REUSED. spec: F-11.5.1.
 		InputSchema: json.RawMessage(`{"type":"object","required":["runtimeRef"],"properties":{"runtimeRef":{"type":"string"},"userId":{"type":"string"},"environment":{"type":"string"},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached result without re-executing."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant is the
+		// authenticated principal's, not the Register-time default,
+		// so a multi-tenant deployment scopes the session row to the
+		// caller's tenant. F-9.2.13 / F-15.2.15.
+		tenant := callerTenantID(ctx, tenant)
 		var in struct {
 			RuntimeRef  string `json:"runtimeRef"`
 			UserID      string `json:"userId"`
@@ -417,6 +422,10 @@ func Register(srv *mcp.Server, deps Deps) {
 		// F-8.5.16 (rename), F-7.2.22 (fromSessionId).
 		InputSchema: json.RawMessage(`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId (§8.5 line 537)."},"message":{"type":"string","description":"Message content (§8.5 line 537)."},"inReplyTo":{"type":"string","description":"§8.8 line 951 — when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"§15.4 line 1784 sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces the §7.2 line 240 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// principal so the §7.2 topology lookup and the §4 chain payload
+		// stay scoped to the right tenant. F-9.2.13 / F-15.2.15.
+		tenant := callerTenantID(ctx, tenant)
 		var in struct {
 			// To is the §8.5 target session id (renamed from the legacy
 			// `sessionId` to match the §8.5 line 537 schema). F-8.5.16.
@@ -568,6 +577,9 @@ func Register(srv *mcp.Server, deps Deps) {
 		Description: "Return the §8 delegation task tree rooted at the calling session (visibility scoped by §8.3 treeVisibility).",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}},"required":[]}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// principal. F-9.2.13 / F-15.2.15.
+		tenant := callerTenantID(ctx, tenant)
 		var in struct {
 			// SessionID is the §15.2.1 transport fallback used when the
 			// principal carries no SessionID claim. The spec schema
@@ -623,6 +635,9 @@ func Register(srv *mcp.Server, deps Deps) {
 		Description: "Cancel a child session and cascade the cancellation to its descendants (§8.5).",
 		InputSchema: json.RawMessage(`{"type":"object","required":["childSessionId"],"properties":{"childSessionId":{"type":"string"},"parentSessionId":{"type":"string","description":"§15.2.1 transport-fallback parent session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// principal. F-9.2.13 / F-15.2.15.
+		tenant := callerTenantID(ctx, tenant)
 		var in struct {
 			// ParentSessionID is the transport fallback used when the
 			// principal carries no SessionID claim. F-8.5.15.
@@ -691,6 +706,9 @@ func Register(srv *mcp.Server, deps Deps) {
 		Description: "Wait for delegated child sessions to reach terminal states (§8.5).",
 		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","childIds"],"properties":{"sessionId":{"type":"string"},"childIds":{"type":"array","items":{"type":"string"}},"mode":{"type":"string","enum":["all","any","settled"]}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// principal. F-9.2.13 / F-15.2.15.
+		tenant := callerTenantID(ctx, tenant)
 		var in struct {
 			SessionID string   `json:"sessionId"`
 			ChildIDs  []string `json:"childIds"`
@@ -752,6 +770,9 @@ func Register(srv *mcp.Server, deps Deps) {
 		Description: "Register §8.3 tracing identifiers on a session for propagation through delegation.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","context"],"properties":{"sessionId":{"type":"string"},"context":{"type":"object","additionalProperties":{"type":"string"}}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// principal. F-9.2.13 / F-15.2.15.
+		tenant := callerTenantID(ctx, tenant)
 		var in struct {
 			SessionID string            `json:"sessionId"`
 			Context   map[string]string `json:"context"`
@@ -810,6 +831,9 @@ func Register(srv *mcp.Server, deps Deps) {
 			Description: "Emit output parts to the parent/client (§8.5).",
 			InputSchema: json.RawMessage(`{"type":"object","required":["output"],"properties":{"output":{"type":"array","items":{"type":"object"}},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+			// principal. F-9.2.13 / F-15.2.15.
+			tenant := callerTenantID(ctx, tenant)
 			var in struct {
 				// SessionID is the transport fallback used when the
 				// principal carries no SessionID claim. F-8.5.11.
@@ -870,6 +894,9 @@ func Register(srv *mcp.Server, deps Deps) {
 			Description: "Block until a peer answers via lenny/send_message with a matching inReplyTo (§8.5).",
 			InputSchema: json.RawMessage(`{"type":"object","required":["parts"],"properties":{"parts":{"type":"array","items":{"type":"object"},"description":"OutputPart[] describing the structured question."},"requestId":{"type":"string","description":"Optional caller-supplied request id; gateway assigns one when absent."},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+			// principal. F-9.2.13 / F-15.2.15.
+			tenant := callerTenantID(ctx, tenant)
 			var in struct {
 				// SessionID is the transport fallback used when the
 				// principal carries no SessionID claim. F-8.5.12.
@@ -1017,7 +1044,6 @@ func Register(srv *mcp.Server, deps Deps) {
 		}
 		dispatcher := &elicitationDispatcher{
 			store:            deps.Store,
-			tenantID:         tenant,
 			depthPolicy:      deps.ElicitationDepthPolicy,
 			suppressAtDepth:  deps.ElicitationSuppressAtDepth,
 			urlModeAllowlist: deps.ElicitationURLModeAllowlist,
@@ -1043,6 +1069,11 @@ func Register(srv *mcp.Server, deps Deps) {
 			Description: "Request human input via the §9.2 elicitation chain and block until it resolves.",
 			InputSchema: json.RawMessage(`{"type":"object","required":["schema","message"],"properties":{"schema":{"type":"object","description":"JSON Schema describing the input to collect from the user."},"message":{"type":"string","description":"Human-readable prompt displayed to the user."},"elicitationId":{"type":"string"},"url":{"type":"string"},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+			// principal so the elicitation budget, lookup, and tamper metric
+			// scope to the right tenant in a multi-tenant deployment.
+			// F-9.2.13 / F-15.2.15.
+			tenant := callerTenantID(ctx, tenant)
 			var in struct {
 				// SessionID is the transport fallback used when the
 				// principal carries no SessionID claim. F-8.5.13.
@@ -1125,7 +1156,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			// delegation tree from this session upward verifying the
 			// content-integrity digest at each forward hop, applies the
 			// depth policy, and reports the chain resolver.
-			dr, err := dispatcher.dispatch(ctx, row, originalContent, initiator, in.URL)
+			dr, err := dispatcher.dispatch(ctx, tenant, row, originalContent, initiator, in.URL)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -1279,6 +1310,9 @@ func Register(srv *mcp.Server, deps Deps) {
 			Description: "Respond to a pending §9.2 elicitation on the calling session.",
 			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","elicitationId","response"],"properties":{"sessionId":{"type":"string"},"elicitationId":{"type":"string"},"response":{}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+			// principal. F-9.2.13 / F-15.2.15.
+			tenant := callerTenantID(ctx, tenant)
 			var in struct {
 				SessionID     string          `json:"sessionId"`
 				ElicitationID string          `json:"elicitationId"`
@@ -1305,6 +1339,9 @@ func Register(srv *mcp.Server, deps Deps) {
 			Description: "Dismiss a pending §9.2 elicitation on the calling session.",
 			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","elicitationId"],"properties":{"sessionId":{"type":"string"},"elicitationId":{"type":"string"},"reason":{"type":"string"}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+			// principal. F-9.2.13 / F-15.2.15.
+			tenant := callerTenantID(ctx, tenant)
 			var in struct {
 				SessionID     string `json:"sessionId"`
 				ElicitationID string `json:"elicitationId"`
@@ -1445,6 +1482,11 @@ func Register(srv *mcp.Server, deps Deps) {
 			// F-11.5.6.
 			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+			// principal so the §4 chain payload, §8.2 service Delegate, and
+			// §16.7 audit emission all stamp the right tenant.
+			// F-9.2.13 / F-15.2.15.
+			tenant := callerTenantID(ctx, tenant)
 			var in struct {
 				ParentSessionID string `json:"parentSessionId"`
 				RuntimeRef      string `json:"runtimeRef"`
@@ -1537,7 +1579,15 @@ func Register(srv *mcp.Server, deps Deps) {
 				})
 				if res.Action == interceptor.ActionReject {
 					recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreDelegation, res)
-					return mcp.ToolResult{}, fmt.Errorf("delegation rejected by policy: %s", res.Reason)
+					// spec: §15.2.1 line 1386 — a manual MCP-only tool
+					// (lenny/delegate_task) must use the shared error
+					// taxonomy. INTERCEPTOR_REJECTED is the canonical
+					// CategoryPolicy / retryable:false code for a
+					// deliberate interceptor REJECT, so REST and MCP
+					// parity is preserved. F-15.2.11.
+					return mcp.ToolResult{}, mcp.NewToolError("INTERCEPTOR_REJECTED",
+						res.Reason,
+						map[string]any{"phase": string(interceptor.PhasePreDelegation)})
 				}
 				if res.Action == interceptor.ActionModify {
 					taskInput = string(res.ModifiedContent)
@@ -1569,7 +1619,13 @@ func Register(srv *mcp.Server, deps Deps) {
 				})
 				if res.Action == interceptor.ActionReject {
 					recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreRoute, res)
-					return mcp.ToolResult{}, fmt.Errorf("delegation rejected by policy: %s", res.Reason)
+					// spec: §15.2.1 line 1386 — see PreDelegation site
+					// above. INTERCEPTOR_REJECTED preserves REST/MCP
+					// (category, retryable) parity for a deliberate
+					// PreRoute reject. F-15.2.11.
+					return mcp.ToolResult{}, mcp.NewToolError("INTERCEPTOR_REJECTED",
+						res.Reason,
+						map[string]any{"phase": string(interceptor.PhasePreRoute)})
 				}
 				if res.Action == interceptor.ActionModify {
 					var modified childRouteSpec
@@ -1879,6 +1935,9 @@ func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID stri
 // lenny/memory_query platform MCP tools. A memory is written under
 // the calling session's user, runtime, and session scope; a query
 // recalls across all of the user's sessions within the tenant.
+// The tenant parameter is the Register-time fallback; each tool
+// handler re-resolves the per-request tenant from the authenticated
+// principal via callerTenantID. spec: §9.2 / §16.1; F-9.2.13 / F-15.2.15.
 func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() time.Time) {
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/memory_write",
@@ -1892,6 +1951,10 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		Description: "Write a memory to the §9.4 memory store, scoped to the calling session's user.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["content"],"properties":{"content":{"type":"string","description":"The memory content to store."},"metadata":{"type":"object","description":"Optional key-value metadata attached to the memory record.","additionalProperties":{"type":"string"}},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// principal so the §9.4 memory scope and the session lookup
+		// stay tenant-correct. F-9.2.13 / F-15.2.15.
+		tenant := callerTenantID(ctx, tenant)
 		var in struct {
 			// SessionID is the transport fallback used when the
 			// principal carries no SessionID claim. F-8.5.14.
@@ -1949,6 +2012,10 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		Description: "Query the §9.4 memory store across the calling session's user's memories.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string","description":"Natural-language query for semantic search over the memory store."},"limit":{"type":"integer","description":"Maximum number of results to return. Default: 10.","default":10},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// principal so the §9.4 user-scoped memory query stays tenant-
+		// correct. F-9.2.13 / F-15.2.15.
+		tenant := callerTenantID(ctx, tenant)
 		var in struct {
 			// SessionID is the transport fallback used when the
 			// principal carries no SessionID claim. F-8.5.14.
@@ -2278,6 +2345,27 @@ func callerSessionID(ctx context.Context, fallback string) string {
 		return p.SessionID
 	}
 	return fallback
+}
+
+// callerTenantID resolves the per-request tenant id from the
+// authenticated principal, falling back to the binary's configured
+// default. The §15.2 / §10.2 production posture mounts the MCP
+// adapter under the auth middleware so every authenticated request
+// carries the caller's tenant on the request context. Tests and the
+// dev-headers transport do not carry a principal; the fallback (the
+// Register-time Deps.TenantID, which defaults to "default") keeps the
+// tool surface usable in those minimal deployments. A bare "default"
+// is the absolute floor — never an empty tenant id, which would
+// collapse into an unbounded scan on the session store.
+// spec: §9.2 / §16.1 / §15.2 line 1335; F-9.2.13, F-15.2.15.
+func callerTenantID(ctx context.Context, fallback string) string {
+	if p, ok := authmw.FromContext(ctx); ok && p.TenantID != "" {
+		return p.TenantID
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return "default"
 }
 
 // taskResult is the §8.8 TaskResult lenny/await_children returns for a

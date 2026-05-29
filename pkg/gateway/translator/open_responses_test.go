@@ -167,6 +167,28 @@ func TestOpenResponsesDelete(t *testing.T) {
 	}
 }
 
+// TestOpenResponsesAdapterCapabilities pins §9.1 line 35 + §15.1
+// line 575: the Open Responses adapter publishes its own capability
+// block. previous_response_id threads a multi-turn conversation
+// through the same Lenny session, so the adapter reports session
+// continuity; delegation, elicitation, and interrupt are not part
+// of the Open Responses envelope. F-9.1.6 / F-9.1.8.
+func TestOpenResponsesAdapterCapabilities_spec_9_1_35(t *testing.T) {
+	caps := translator.OpenResponsesAdapterCapabilities()
+	if caps.PathPrefix != "/v1/responses" {
+		t.Errorf("PathPrefix: %q", caps.PathPrefix)
+	}
+	if caps.Protocol != "open-responses" {
+		t.Errorf("Protocol: %q", caps.Protocol)
+	}
+	if !caps.SupportsSessionContinuity {
+		t.Error("Open Responses threads previous_response_id and must report continuity")
+	}
+	if caps.SupportsDelegation || caps.SupportsElicitation || caps.SupportsInterrupt {
+		t.Errorf("Open Responses adapter exposes no Lenny surfaces: %+v", caps)
+	}
+}
+
 func TestOpenResponsesPreservesPreviousResponseID(t *testing.T) {
 	h, store := newResponsesHandler(t)
 	rr := respPost(t, h.Handler(), map[string]any{

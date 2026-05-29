@@ -188,3 +188,24 @@ func TestOpenAIChatDisabledWhenExecutorMissing(t *testing.T) {
 		t.Errorf("no executor: got %d, want 503", rr.Code)
 	}
 }
+
+// TestOpenAIChatAdapterCapabilities pins §9.1 line 35 + §15.1 line 575:
+// the OpenAI Chat Completions adapter publishes its own capability
+// block. The OpenAI envelope is stateless and exposes none of the
+// Lenny session-continuity, delegation, elicitation, or interrupt
+// surfaces. F-9.1.6 / F-9.1.8.
+func TestOpenAIChatAdapterCapabilities_spec_9_1_35(t *testing.T) {
+	caps := translator.OpenAIChatAdapterCapabilities()
+	if caps.PathPrefix != "/v1/chat/completions" {
+		t.Errorf("PathPrefix: %q", caps.PathPrefix)
+	}
+	if caps.Protocol != "openai-completions" {
+		t.Errorf("Protocol: %q", caps.Protocol)
+	}
+	if caps.SupportsSessionContinuity {
+		t.Error("OpenAI Chat does not thread Lenny session continuity across calls")
+	}
+	if caps.SupportsDelegation || caps.SupportsElicitation || caps.SupportsInterrupt {
+		t.Errorf("OpenAI Chat exposes no Lenny surfaces: %+v", caps)
+	}
+}

@@ -125,34 +125,119 @@ func TestDiscoveryEmbedsAdapterCapabilities(t *testing.T) {
 	})
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
 
-	// §9.1: every discovery response embeds a top-level adapterCapabilities
-	// block describing the adapter serving the request.
-	for _, path := range []string{"/v1/runtimes", "/v1/models"} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.Header.Set("X-Lenny-Tenant-ID", "acme")
-		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Fatalf("%s status: %d", path, rr.Code)
-		}
-		var resp struct {
-			AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
-		}
-		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("%s decode: %v", path, err)
-		}
-		caps := resp.AdapterCapabilities
-		if caps.PathPrefix != "/v1" || caps.Protocol != "rest" {
-			t.Errorf("%s: adapterCapabilities routing fields: %+v", path, caps)
-		}
-		// The REST adapter persists sessions and serves the resume,
-		// interrupt, and elicitation-respond endpoints.
-		if !caps.SupportsElicitation || !caps.SupportsInterrupt || !caps.SupportsSessionContinuity {
-			t.Errorf("%s: REST adapter must report elicitation, interrupt, continuity: %+v", path, caps)
-		}
-		if caps.SupportsDelegation {
-			t.Errorf("%s: REST adapter has no delegate route, SupportsDelegation must be false", path)
-		}
+	// §9.1 line 35: every discovery response embeds a top-level
+	// adapterCapabilities block describing the adapter serving the
+	// request. /v1/runtimes is the REST native discovery surface and
+	// reports the REST adapter capabilities.
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/v1/runtimes status: %d", rr.Code)
+	}
+	var resp struct {
+		AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	caps := resp.AdapterCapabilities
+	if caps.PathPrefix != "/v1" || caps.Protocol != "rest" {
+		t.Errorf("adapterCapabilities routing fields: %+v", caps)
+	}
+	if !caps.SupportsElicitation || !caps.SupportsInterrupt || !caps.SupportsSessionContinuity {
+		t.Errorf("REST adapter must report elicitation, interrupt, continuity: %+v", caps)
+	}
+	if caps.SupportsDelegation {
+		t.Errorf("REST adapter has no delegate route, SupportsDelegation must be false: %+v", caps)
+	}
+}
+
+// TestListModelsAdapterCapabilitiesDefaultsToOpenAIChat pins §9.1
+// line 35 — /v1/models is shared by both the OpenAI Chat Completions
+// and Open Responses adapters, so the response reflects the adapter
+// the consumer requests via `?adapter=`. The default (no query param)
+// is the OpenAI Chat surface, the historic /v1/models consumer.
+// spec: §9.1 line 35; F-9.1.6 / F-9.1.8.
+func TestListModelsAdapterCapabilitiesDefaultsToOpenAIChat_spec_9_1_35(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var resp struct {
+		AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	caps := resp.AdapterCapabilities
+	if caps.Protocol != "openai-completions" || caps.PathPrefix != "/v1/chat/completions" {
+		t.Errorf("default /v1/models adapterCapabilities: got %+v, want openai-completions/v1/chat/completions", caps)
+	}
+	if caps.SupportsSessionContinuity || caps.SupportsElicitation || caps.SupportsDelegation || caps.SupportsInterrupt {
+		t.Errorf("OpenAI Chat is stateless and exposes no Lenny surfaces: %+v", caps)
+	}
+}
+
+// TestListModelsAdapterCapabilitiesSelectsOpenResponses pins the
+// `?adapter=open-responses` discriminator: a consumer of the Open
+// Responses adapter that fetches /v1/models receives the
+// open-responses capability block (PathPrefix /v1/responses, session
+// continuity true). spec: §9.1 line 35; F-9.1.6 / F-9.1.8.
+func TestListModelsAdapterCapabilitiesSelectsOpenResponses_spec_9_1_35(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?adapter=open-responses", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var resp struct {
+		AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	caps := resp.AdapterCapabilities
+	if caps.Protocol != "open-responses" || caps.PathPrefix != "/v1/responses" {
+		t.Errorf("adapter=open-responses adapterCapabilities: got %+v", caps)
+	}
+	if !caps.SupportsSessionContinuity {
+		t.Errorf("Open Responses threads previous_response_id, must report session continuity: %+v", caps)
+	}
+	if caps.SupportsDelegation || caps.SupportsElicitation || caps.SupportsInterrupt {
+		t.Errorf("Open Responses adapter exposes no Lenny surfaces: %+v", caps)
+	}
+}
+
+// TestListModelsAdapterCapabilitiesUnknownDefaults pins that an
+// unknown ?adapter= value falls through to the default (openai-completions)
+// rather than emitting an empty / malformed capability block. A stale
+// or forward-compatible consumer still receives a well-formed response.
+// spec: §9.1 line 35; F-9.1.6 / F-9.1.8.
+func TestListModelsAdapterCapabilitiesUnknownDefaults_spec_9_1_35(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?adapter=does-not-exist", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var resp struct {
+		AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.AdapterCapabilities.Protocol != "openai-completions" {
+		t.Errorf("unknown adapter must fall through to default openai-completions: %+v", resp.AdapterCapabilities)
 	}
 }
 

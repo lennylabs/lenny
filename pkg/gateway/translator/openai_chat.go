@@ -20,9 +20,28 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
+
+// OpenAIChatAdapterCapabilities reports the §15 AdapterCapabilities of
+// the OpenAI Chat Completions translator that owns `/v1/chat/completions`.
+// Lenny session continuity, delegation, elicitation, and interrupt
+// surfaces are not part of the OpenAI Chat wire shape — a consumer of
+// this adapter is treated as stateless across calls and cannot resolve
+// elicitations or approve tool use through the OpenAI envelope.
+// spec: §9.1 line 35; §15.1 line 575. F-9.1.6 / F-9.1.8.
+func OpenAIChatAdapterCapabilities() adapter.Capabilities {
+	return adapter.Capabilities{
+		PathPrefix:                "/v1/chat/completions",
+		Protocol:                  "openai-completions",
+		SupportsSessionContinuity: false,
+		SupportsDelegation:        false,
+		SupportsElicitation:       false,
+		SupportsInterrupt:         false,
+	}
+}
 
 // OpenAIChatCompletionsRequest is the OpenAI request shape this
 // translator accepts. Only the v1 essential fields are modelled;

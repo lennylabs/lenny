@@ -125,6 +125,48 @@ func TestDelegateTaskPreDelegationRejects(t *testing.T) {
 	}
 }
 
+// TestDelegateTaskPreDelegationRejectUsesSharedErrorTaxonomy pins
+// §15.2.1 line 1386: the manual MCP-only lenny/delegate_task tool
+// must use the shared error taxonomy. A deliberate PreDelegation
+// REJECT surfaces as the canonical INTERCEPTOR_REJECTED envelope on
+// the MCP wire (CategoryPolicy, retryable:false) instead of a bare
+// fmt.Errorf the dispatcher would default to INTERNAL_ERROR/TRANSIENT.
+// F-15.2.11.
+func TestDelegateTaskPreDelegationRejectUsesSharedErrorTaxonomy_spec_15_2_1_1386(t *testing.T) {
+	chain := interceptor.NewChain()
+	if err := chain.Register(interceptor.PhasePreDelegation, staticInterceptor{
+		result: interceptor.Result{Action: interceptor.ActionReject, Reason: "policy says no"},
+	}); err != nil {
+		t.Fatalf("register interceptor: %v", err)
+	}
+	rec := newRecordingExecutor()
+	srv, _ := newMCPForDelegate(t, rec, chain)
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"echo","taskInput":"do something bad"}`)
+	if code := errorEnvelope(t, resp); code != "INTERCEPTOR_REJECTED" {
+		t.Errorf("code = %q, want INTERCEPTOR_REJECTED", code)
+	}
+}
+
+// TestDelegateTaskPreRouteRejectUsesSharedErrorTaxonomy mirrors the
+// PreDelegation test for the §8.2 line 90 PreRoute hop. Same
+// §15.2.1 line 1386 contract. F-15.2.11.
+func TestDelegateTaskPreRouteRejectUsesSharedErrorTaxonomy_spec_15_2_1_1386(t *testing.T) {
+	chain := interceptor.NewChain()
+	if err := chain.Register(interceptor.PhasePreRoute, staticInterceptor{
+		result: interceptor.Result{Action: interceptor.ActionReject, Reason: "route-time policy says no"},
+	}); err != nil {
+		t.Fatalf("register interceptor: %v", err)
+	}
+	rec := newRecordingExecutor()
+	srv, _ := newMCPForDelegate(t, rec, chain)
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"echo","taskInput":"work"}`)
+	if code := errorEnvelope(t, resp); code != "INTERCEPTOR_REJECTED" {
+		t.Errorf("code = %q, want INTERCEPTOR_REJECTED", code)
+	}
+}
+
 func TestDelegateTaskPreDelegationModifies(t *testing.T) {
 	chain := interceptor.NewChain()
 	if err := chain.Register(interceptor.PhasePreDelegation, staticInterceptor{

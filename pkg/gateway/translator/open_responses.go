@@ -11,9 +11,28 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
+
+// OpenResponsesAdapterCapabilities reports the §15 AdapterCapabilities
+// of the Open Responses translator that owns `/v1/responses`. The Open
+// Responses wire shape carries `previous_response_id` so a consumer can
+// thread a multi-turn conversation through the same Lenny session — the
+// adapter therefore reports session continuity. Delegation, elicitation,
+// and interrupt surfaces are not native to the Open Responses envelope.
+// spec: §9.1 line 35; §15.1 line 575. F-9.1.6 / F-9.1.8.
+func OpenResponsesAdapterCapabilities() adapter.Capabilities {
+	return adapter.Capabilities{
+		PathPrefix:                "/v1/responses",
+		Protocol:                  "open-responses",
+		SupportsSessionContinuity: true,
+		SupportsDelegation:        false,
+		SupportsElicitation:       false,
+		SupportsInterrupt:         false,
+	}
+}
 
 // OpenResponsesRequest is the §15.1 POST /v1/responses body. Only
 // v1 essential fields are modelled; extension fields such as

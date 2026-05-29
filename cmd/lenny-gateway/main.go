@@ -2138,8 +2138,16 @@ func main() {
 		// drive the ElicitationBacklogHigh alert and the operator
 		// roundtrip / timeout / suppressed dashboards.
 		ElicitationLifecycleMetrics: gwMetrics,
-		TenantID:                    "default",
-		Clock:                      clockinject.Now,
+		// spec: §9.2 / §16.1 / §15.2 line 1335 — Deps.TenantID is the
+		// fallback for transports without an authenticated principal
+		// (tests, the dev-headers path). Every production handler
+		// re-resolves the per-request tenant from the auth middleware's
+		// principal via callerTenantID, so a multi-tenant deployment
+		// scopes session creation, the elicitation budget, the §9.2
+		// chain lookup, the §16.7 audit emission, and the §16.1 tamper
+		// metric to the right tenant. F-9.2.13 / F-15.2.15.
+		TenantID: "default",
+		Clock:    clockinject.Now,
 		// §8.9 line 1003 / §11.7 / §16.1 — same tree-walker cycle
 		// observer the REST /tree handler uses, so the audit row +
 		// counter fire regardless of which surface walked the tree.

@@ -91,10 +91,9 @@ func TestBuildHopsAncestorLookupTimeoutReturnsPerHopError_spec_11_3_211(t *testi
 	store := &slowAncestorStore{leaf: leaf, mid: mid, slowID: "sess_mid"}
 	d := &elicitationDispatcher{
 		store:         store,
-		tenantID:      "acme",
 		perHopTimeout: 10 * time.Millisecond,
 	}
-	_, err := d.buildHops(context.Background(), leaf)
+	_, err := d.buildHops(context.Background(), "acme", leaf)
 	if err == nil {
 		t.Fatalf("buildHops returned nil error, want ELICITATION_PER_HOP_TIMEOUT")
 	}
@@ -127,10 +126,9 @@ func TestBuildHopsFastAncestorLookupSucceeds_spec_11_3_211(t *testing.T) {
 	store := &slowAncestorStore{leaf: leaf, mid: mid, slowID: ""}
 	d := &elicitationDispatcher{
 		store:         store,
-		tenantID:      "acme",
 		perHopTimeout: 5 * time.Second,
 	}
-	hops, err := d.buildHops(context.Background(), leaf)
+	hops, err := d.buildHops(context.Background(), "acme", leaf)
 	if err != nil {
 		t.Fatalf("buildHops error: %v", err)
 	}

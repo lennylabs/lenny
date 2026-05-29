@@ -34,9 +34,13 @@ const ElicitationPerHopForwardingTimeout = 30 * time.Second
 // §9.2 url-mode provenance check, and reports where the chain
 // terminates so the request_elicitation handler knows which session
 // owns resolution.
+//
+// The dispatcher is per-Register and stateless w.r.t. tenant: the
+// raising session's TenantID flows through dispatch() into every
+// store lookup and metric emission so multi-tenant deployments scope
+// elicitations correctly. spec: §9.2 / §16.1; F-9.2.13, F-15.2.15.
 type elicitationDispatcher struct {
-	store    sessionstore.Store
-	tenantID string
+	store sessionstore.Store
 
 	// depthPolicy + suppressAtDepth are the §9.2 elicitationDepthPolicy
 	// in force for agent-initiated elicitations.
@@ -109,11 +113,15 @@ type dispatchResult struct {
 // raised by raising. It builds the chain of hops from the §8
 // delegation tree, runs the url-mode provenance check, verifies the
 // content-integrity digest at each forward hop, and reports the
-// resolver. originalContent is the {message, schema} pair recorded at
-// origination; rawURL is the URL a url-mode elicitation carries
-// (empty for a non-url-mode elicitation).
+// resolver. tenantID scopes the §16.1 tamper metric and the §8
+// delegation-tree lookups to the raising session's tenant — multi-
+// tenant deployments must not commingle these. originalContent is
+// the {message, schema} pair recorded at origination; rawURL is the
+// URL a url-mode elicitation carries (empty for a non-url-mode
+// elicitation). spec: §9.2 / §16.1; F-9.2.13, F-15.2.15.
 func (d *elicitationDispatcher) dispatch(
 	ctx context.Context,
+	tenantID string,
 	raising sessionstore.Session,
 	originalContent elicitation.Content,
 	initiator elicitation.InitiatorType,
@@ -153,7 +161,7 @@ func (d *elicitationDispatcher) dispatch(
 		return dispatchResult{}, err
 	}
 
-	hops, err := d.buildHops(ctx, raising)
+	hops, err := d.buildHops(ctx, tenantID, raising)
 	if err != nil {
 		return dispatchResult{}, err
 	}
@@ -175,7 +183,7 @@ func (d *elicitationDispatcher) dispatch(
 			if errors.As(err, &tamper) {
 				if d.tamperMetrics != nil {
 					d.tamperMetrics.RecordElicitationContentTamperDetected(
-						d.tenantID, string(elicitation.ModeEnforce),
+						tenantID, string(elicitation.ModeEnforce),
 					)
 				}
 				// spec: §15.2.1 — surface the canonical lenny code via
@@ -211,7 +219,7 @@ func (d *elicitationDispatcher) dispatch(
 // deadline aborts the walk and surfaces ELICITATION_PER_HOP_TIMEOUT
 // to the originating pod so the agent can either give up or raise a
 // fresh elicitation. spec: §11.3 line 211; §9.1 line 104.
-func (d *elicitationDispatcher) buildHops(ctx context.Context, raising sessionstore.Session) ([]elicitation.Hop, error) {
+func (d *elicitationDispatcher) buildHops(ctx context.Context, tenantID string, raising sessionstore.Session) ([]elicitation.Hop, error) {
 	var chain []sessionstore.Session
 	visited := map[string]bool{}
 	cur := raising
@@ -224,7 +232,7 @@ func (d *elicitationDispatcher) buildHops(ctx context.Context, raising sessionst
 		if cur.ParentSessionID == "" {
 			break
 		}
-		parent, err := d.lookupAncestor(ctx, cur.ParentSessionID)
+		parent, err := d.lookupAncestor(ctx, tenantID, cur.ParentSessionID)
 		if err != nil {
 			if errors.Is(err, sessionstore.ErrNotFound) {
 				break // ancestor GC'd — treat current as the root
@@ -282,10 +290,10 @@ func (d *elicitationDispatcher) effectivePerHopTimeout() time.Duration {
 // under the per-hop deadline. The deadline is layered onto the
 // caller's context — if the caller's deadline is sooner, that one
 // wins. spec: §11.3 line 211; §9.1 line 104.
-func (d *elicitationDispatcher) lookupAncestor(ctx context.Context, parentID string) (sessionstore.Session, error) {
+func (d *elicitationDispatcher) lookupAncestor(ctx context.Context, tenantID, parentID string) (sessionstore.Session, error) {
 	hopCtx, cancel := context.WithTimeout(ctx, d.effectivePerHopTimeout())
 	defer cancel()
-	return d.store.Get(hopCtx, d.tenantID, parentID)
+	return d.store.Get(hopCtx, tenantID, parentID)
 }
 
 // ErrElicitationNotFound is the §9.2 / §15.1 ELICITATION_NOT_FOUND
