@@ -39,10 +39,12 @@ import (
 type PublishingAppender struct {
 	// Store is the §11.7 Postgres-backed audit chain. Required.
 	Store *Store
-	// Publisher is the §12.3.7 RedisEventBus the wrapper publishes onto.
-	// A nil Publisher disables the EventBus path entirely (the wrapper
-	// then is functionally identical to Store.Append).
-	Publisher *eventbus.RedisEventBus
+	// Publisher is the §12.6 EventBus the wrapper publishes onto. It is
+	// the interface, not the concrete RedisEventBus, so a Tier-4 backend
+	// swap needs no change here. A nil Publisher disables the EventBus
+	// path entirely (the wrapper then is functionally identical to
+	// Store.Append).
+	Publisher eventbus.EventBus
 	// PublisherID is the §12.3.7 gateway-replica id (gw-<5-hex>) the
 	// CloudEvents envelope stamps onto its `source` URI and the id
 	// segment. Required when Publisher is wired; the constructor
@@ -57,7 +59,7 @@ type PublishingAppender struct {
 // NewPublishingAppender returns a PublishingAppender over store. The
 // publisher and publisherID may be empty; in that case Append still
 // commits the row and skips the publish.
-func NewPublishingAppender(store *Store, publisher *eventbus.RedisEventBus, publisherID string) *PublishingAppender {
+func NewPublishingAppender(store *Store, publisher eventbus.EventBus, publisherID string) *PublishingAppender {
 	if publisherID == "" {
 		publisherID = "gw-init"
 	}
@@ -116,7 +118,7 @@ func (a *PublishingAppender) publishAndMark(ctx context.Context, row audit.Row) 
 			eventbus.PublishRetryPending, 0)
 		return fmt.Errorf("ocsf translate: %w", ocsfErr)
 	}
-	if pubErr := a.Publisher.Publish(ctx, row.TenantID,
+	if pubErr := a.Publisher.Publish(ctx, eventbus.TenantID(row.TenantID),
 		eventbus.TopicSessionLifecycle, env); pubErr != nil {
 		_ = a.Store.SetPublishState(ctx, row.TenantID, row.Seq,
 			eventbus.PublishRetryPending, 0)

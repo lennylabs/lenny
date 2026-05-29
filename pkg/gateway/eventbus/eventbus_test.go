@@ -135,7 +135,7 @@ type flakyPublisher struct {
 	failNext int
 }
 
-func (p *flakyPublisher) Publish(_ context.Context, _ string, _ EventTopic, _ Event) error {
+func (p *flakyPublisher) Publish(_ context.Context, _ TenantID, _ EventTopic, _ Event) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.failNext > 0 {

@@ -46,10 +46,12 @@ type RetranscribeStore interface {
 		state PublishState, retryCount int) error
 }
 
-// RetranscribePublisher is the publish surface the worker drives — the
-// RedisEventBus satisfies it.
+// RetranscribePublisher is the narrow publish surface the worker drives —
+// the §12.6 RedisEventBus satisfies it (a subset of the EventBus
+// interface). It is kept separate from EventBus so the worker depends only
+// on the method it uses.
 type RetranscribePublisher interface {
-	Publish(ctx context.Context, tenantID string, topic EventTopic, event Event) error
+	Publish(ctx context.Context, tenantID TenantID, topic EventTopic, event Event) error
 }
 
 // RetranscribeMetrics is the §12.3.7 retranscribe-worker metric
@@ -152,7 +154,7 @@ func (r *Retranscriber) Sweep(ctx context.Context) (SweepResult, error) {
 	}
 	var res SweepResult
 	for _, row := range rows {
-		perr := r.publisher.Publish(ctx, row.TenantID, row.Topic, row.Event)
+		perr := r.publisher.Publish(ctx, TenantID(row.TenantID), row.Topic, row.Event)
 		if perr == nil {
 			if e := r.store.SetPublishState(ctx, row.TenantID, row.Seq,
 				PublishPublished, row.RetryCount); e != nil {

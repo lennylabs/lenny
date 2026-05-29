@@ -322,7 +322,7 @@ func cryptoNonce() (string, error) {
 // ChannelName returns the §12.4 tenant-prefixed Redis channel for a
 // (tenant, topic) pair: t:{tenant_id}:evt:{topic}. Callers never build
 // raw channel names — tenant isolation is enforced at this boundary.
-func ChannelName(tenantID string, topic EventTopic) string {
+func ChannelName(tenantID TenantID, topic EventTopic) string {
 	return fmt.Sprintf("t:%s:evt:%s", tenantID, topic)
 }
 

@@ -362,7 +362,7 @@ func TestEventBusContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Subscribe: %v", err)
 		}
-		defer sub.Close()
+		defer func() { _ = sub.Unsubscribe() }()
 
 		ev := mustBusEvent(t, "acme", "session_state_changed")
 		// Redis pub/sub is at-most-once: retry the publish until the
@@ -386,6 +386,19 @@ func TestEventBusContract(t *testing.T) {
 		if metrics.Published(eventbus.TopicSessionLifecycle) == 0 {
 			t.Error("publish-attempt metric was not recorded")
 		}
+		if metrics.PublishDurationCount(eventbus.TopicSessionLifecycle) == 0 {
+			t.Error("spec: §12.6 line 709 — publish_duration_seconds histogram was not recorded")
+		}
+		// spec: §12.6 line 709 — handler_duration_seconds is recorded after
+		// the handler returns, which races the channel read; poll briefly.
+		deadline := time.After(2 * time.Second)
+		for metrics.HandlerDurationCount(eventbus.TopicSessionLifecycle) == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("spec: §12.6 line 709 — handler_duration_seconds histogram was never recorded")
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
 	})
 
 	t.Run("tenant-prefixed channels isolate subscribers", func(t *testing.T) {
@@ -400,7 +413,7 @@ func TestEventBusContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Subscribe globex: %v", err)
 		}
-		defer subG.Close()
+		defer func() { _ = subG.Unsubscribe() }()
 
 		// Subscribe acme too so the test knows the publish landed (the
 		// consume loops are attached).
@@ -413,7 +426,7 @@ func TestEventBusContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Subscribe acme: %v", err)
 		}
-		defer subA.Close()
+		defer func() { _ = subA.Unsubscribe() }()
 
 		acmeEvent := mustBusEvent(t, "acme", "session_state_changed")
 		if _, ok := publishUntilReceived(t, ctx, bus, "acme", acmeEvent, acmeEvents); !ok {
@@ -449,7 +462,7 @@ func TestPublishingAppenderAuditBearingPublish(t *testing.T) {
 	// Subscribe before publishing so the at-most-once Redis path
 	// reliably delivers.
 	received := make(chan eventbus.Event, 4)
-	sub, err := bus.Subscribe(ctx, tenant, eventbus.TopicSessionLifecycle,
+	sub, err := bus.Subscribe(ctx, eventbus.TenantID(tenant), eventbus.TopicSessionLifecycle,
 		func(_ context.Context, ev eventbus.Event) error {
 			received <- ev
 			return nil
@@ -457,7 +470,7 @@ func TestPublishingAppenderAuditBearingPublish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	defer sub.Close()
+	defer func() { _ = sub.Unsubscribe() }()
 
 	// publishUntilReceived loop: at-most-once delivery means we may
 	// need to call Append more than once to win the subscriber attach
@@ -566,7 +579,7 @@ func publishUntilReceived(t *testing.T, ctx context.Context, bus *eventbus.Redis
 			return eventbus.Event{}, false
 		default:
 		}
-		if err := bus.Publish(ctx, tenant, eventbus.TopicSessionLifecycle, ev); err != nil {
+		if err := bus.Publish(ctx, eventbus.TenantID(tenant), eventbus.TopicSessionLifecycle, ev); err != nil {
 			t.Fatalf("Publish: %v", err)
 		}
 		select {
