@@ -646,6 +646,59 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 	return len(objects), nil
 }
 
+// DeleteByTenant implements blobstore.TenantPrefixDeleter: a single
+// prefix-scoped bulk delete on `{tenant_id}/*` for the §12.8 Phase 4
+// tenant-deletion orchestrator. It lists every object under the
+// tenant prefix (across all object_type / session segments) and
+// removes it in one RemoveObjects batch, returning the count removed.
+// A tenant with no objects is a no-op returning (0, nil); an empty
+// tenantID matches nothing so a mis-scoped call cannot wipe the
+// bucket.
+//
+// §12.8 legal hold: the sweep aborts if any object under the prefix
+// carries an in-process legal-hold marker, so a held tenant survives
+// until the hold is lifted. Tenant deletion is additionally gated by
+// the §12.8 legal-hold preflight at the orchestrator; this per-object
+// check is the in-process defense for dev-mode deployments without a
+// durable catalog.
+//
+// spec: §12.5 ll. 295; §12.8 line 735.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, nil
+	}
+	prefix := tenantID + "/"
+	var objects []minio.ObjectInfo
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return 0, fmt.Errorf("miniostore: list %s: %w", prefix, obj.Err)
+		}
+		objects = append(objects, obj)
+	}
+	if len(objects) == 0 {
+		return 0, nil
+	}
+	for _, obj := range objects {
+		if s.hasLegalHold(obj.Key) {
+			return 0, fmt.Errorf("miniostore: %s is under a §12.8 legal hold", obj.Key)
+		}
+	}
+	objectsCh := make(chan minio.ObjectInfo, len(objects))
+	for _, obj := range objects {
+		objectsCh <- obj
+	}
+	close(objectsCh)
+	for rerr := range s.client.RemoveObjects(ctx, s.bucket, objectsCh, minio.RemoveObjectsOptions{}) {
+		if rerr.Err != nil {
+			return 0, fmt.Errorf("miniostore: remove %s: %w", rerr.ObjectName, rerr.Err)
+		}
+	}
+	return len(objects), nil
+}
+
 // tombstoneTag is the §12.5 soft-delete tag key the Store stamps on
 // SoftDelete. The value is the RFC 3339 UTC timestamp the object was
 // deleted at. MinIO exposes the same object-tag surface as S3, so the

@@ -245,7 +245,12 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		TTL:        UploadDefaultTTL,
 	}
 	bytesRead := newCountingReader(src)
-	ref, err := s.blobs.Put(uri, mimeType, bytesRead)
+	// spec: §12.5 ll. 295 — the staged-blob write goes through the
+	// tenant-scoped boundary so the URI tenant is validated against the
+	// authenticated caller at the store interface; a constructed URI that
+	// ever diverged from the caller tenant is rejected with ErrCrossTenant
+	// rather than silently writing into another tenant's prefix.
+	ref, err := blobstore.NewTenantScoped(tenantID, s.blobs).Put(uri, mimeType, bytesRead)
 	if err != nil {
 		if reservation != nil {
 			// The upload failed: release the whole reservation.
@@ -277,6 +282,14 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			// retryable. Client-retriable, not a breaker failure.
 			s.writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
 				"blob already exists; retry the upload", nil)
+			return
+		}
+		if errors.Is(err, blobstore.ErrCrossTenant) {
+			// §12.5 ll. 295 interface-boundary rejection: the URI tenant
+			// did not match the caller. Client-side error, not a breaker
+			// failure.
+			s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+				"caller cannot write to this tenant's blob namespace", nil)
 			return
 		}
 		// Downstream blob store failure — feed the §4.1 Upload Handler
@@ -543,14 +556,18 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	callerTenant := s.resolveTenant(r)
-	if uri.TenantID != callerTenant {
-		s.writeError(w, http.StatusForbidden, "FORBIDDEN",
-			"caller has no read access to this blob", nil)
-		return
-	}
-
-	info, body, err := s.blobs.Get(uri)
+	// spec: §12.5 ll. 295 / §4.5 ll. 309 — the tenant-prefix check lives
+	// at the blob-store interface boundary, not in this handler. Route
+	// the read through a tenant-scoped view so a caller-supplied URI
+	// naming another tenant is rejected with ErrCrossTenant before the
+	// underlying store is touched (and existence is never leaked).
+	info, body, err := blobstore.NewTenantScoped(callerTenant, s.blobs).Get(uri)
 	if err != nil {
+		if errors.Is(err, blobstore.ErrCrossTenant) {
+			s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+				"caller has no read access to this blob", nil)
+			return
+		}
 		if errors.Is(err, blobstore.ErrNotFound) {
 			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
 				"blob not found or expired", nil)

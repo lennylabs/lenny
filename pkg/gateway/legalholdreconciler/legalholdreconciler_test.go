@@ -51,6 +51,8 @@ func (f *fakeCatalog) SessionsWithLegalHoldAndCheckpoints(context.Context) ([]ar
 	return f.candidates, nil
 }
 
+func (f *fakeCatalog) DeleteByTenant(context.Context, string) (int, error) { return 0, nil }
+
 // fakeAppender records every Append.
 type fakeAppender struct {
 	rows []record

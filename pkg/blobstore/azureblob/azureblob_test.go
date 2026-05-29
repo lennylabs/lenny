@@ -202,3 +202,36 @@ func TestHardPrune(t *testing.T) {
 		t.Error("HardPrune did not delete the tombstoned blob")
 	}
 }
+
+// TestDeleteByTenant asserts the §12.5 ll. 295 prefix-scoped bulk
+// delete removes every blob under one tenant prefix while another
+// tenant's blobs survive.
+//
+// spec: §12.5 ll. 295.
+func TestDeleteByTenant(t *testing.T) {
+	store, f := newStore(t)
+	for _, u := range []blobstore.URI{
+		testURI("acme", "s1", "p1"),
+		testURI("acme", "s2", "p2"),
+		testURI("globex", "s1", "p1"),
+	} {
+		if _, err := store.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+			t.Fatalf("Put %s/%s: %v", u.TenantID, u.PartID, err)
+		}
+	}
+	deleted, err := store.DeleteByTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+	if _, ok := f.objects[objectKey(testURI("globex", "s1", "p1"))]; !ok {
+		t.Error("globex blob erased by acme tenant delete (cross-tenant leak)")
+	}
+	for _, u := range []blobstore.URI{testURI("acme", "s1", "p1"), testURI("acme", "s2", "p2")} {
+		if _, ok := f.objects[objectKey(u)]; ok {
+			t.Errorf("acme blob %s survived tenant delete", u.PartID)
+		}
+	}
+}

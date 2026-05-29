@@ -154,6 +154,21 @@ func (f *fakeCatalog) SessionsWithLegalHoldAndCheckpoints(_ context.Context) ([]
 	return out, nil
 }
 
+// DeleteByTenant mirrors PgStore.DeleteByTenant: drop every non-held
+// row for the tenant and return the count removed.
+func (f *fakeCatalog) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for uri, r := range f.rows {
+		if r.TenantID == tenantID && !r.LegalHold {
+			delete(f.rows, uri)
+			count++
+		}
+	}
+	return count, nil
+}
+
 // spec: §12.5 ll. 309 — every artifact_store row is inserted alongside
 // the bucket object. A successful Put through the decorator both
 // stores the bytes and creates the matching catalog row.
@@ -549,5 +564,115 @@ func TestSoftDeleteSessionTransitionsEveryLiveRow(t *testing.T) {
 	}
 	if otherRow.State != artifactcatalog.StateLive {
 		t.Errorf("s_2 row State = %q, want live (untouched by s_1 sweep)", otherRow.State)
+	}
+}
+
+// erroringTenantDeleter wraps a MemoryStore but fails DeleteByTenant,
+// modeling the §12.8 legal-hold abort the production bucket store
+// raises before any catalog row is reconciled.
+type erroringTenantDeleter struct {
+	*blobstore.MemoryStore
+	err error
+}
+
+func (e erroringTenantDeleter) DeleteByTenant(context.Context, string) (int, error) {
+	return 0, e.err
+}
+
+// TestDeleteByTenantForwarded asserts the §12.8 Phase 4 prefix-scoped
+// bulk delete forwards to the inner store and drops the tenant's
+// catalog rows while a different tenant's bucket object and catalog
+// row both survive.
+//
+// spec: §12.5 ll. 295; §12.8 Phase 4.
+func TestDeleteByTenantForwarded(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	store := New(inner, cat, Options{})
+
+	acme1 := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace, SessionID: "s1", PartID: "a", TTL: time.Hour}
+	acme2 := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint, SessionID: "s2", PartID: "b", TTL: time.Hour}
+	globex := blobstore.URI{TenantID: "globex", ObjectType: blobstore.ObjectTypeWorkspace, SessionID: "s1", PartID: "a", TTL: time.Hour}
+	for _, u := range []blobstore.URI{acme1, acme2, globex} {
+		if _, err := store.Put(u, "application/gzip", strings.NewReader("b")); err != nil {
+			t.Fatalf("Put %s: %v", u.TenantID, err)
+		}
+	}
+
+	deleted, err := store.DeleteByTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+	if _, err := inner.Stat(acme1); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("acme1 bucket object survived: %v", err)
+	}
+	if _, err := inner.Stat(globex); err != nil {
+		t.Errorf("globex bucket object erased (cross-tenant leak): %v", err)
+	}
+	if _, err := cat.Get(context.Background(), acme1.String()); !errors.Is(err, artifactcatalog.ErrNotFound) {
+		t.Errorf("acme1 catalog row survived: %v", err)
+	}
+	if _, err := cat.Get(context.Background(), globex.String()); err != nil {
+		t.Errorf("globex catalog row erased (cross-tenant leak): %v", err)
+	}
+}
+
+// TestDeleteByTenantPreservesLegalHeldCatalogRow asserts the catalog's
+// `legal_hold = false` guard keeps a §12.8-held row out of the Phase 4
+// bulk delete; the unheld row in the same tenant is removed.
+//
+// spec: §12.5 ll. 295; §12.8 line 735.
+func TestDeleteByTenantPreservesLegalHeldCatalogRow(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	store := New(inner, cat, Options{})
+
+	held := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint, SessionID: "s_held", PartID: "h", TTL: time.Hour}
+	free := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace, SessionID: "s_free", PartID: "f", TTL: time.Hour}
+	for _, u := range []blobstore.URI{held, free} {
+		if _, err := store.Put(u, "application/gzip", strings.NewReader("b")); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+	}
+	if err := cat.SetLegalHold(context.Background(), held.String(), true); err != nil {
+		t.Fatalf("SetLegalHold: %v", err)
+	}
+
+	if _, err := store.DeleteByTenant(context.Background(), "acme"); err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if _, err := cat.Get(context.Background(), held.String()); err != nil {
+		t.Errorf("legal-held catalog row removed by tenant delete: %v", err)
+	}
+	if _, err := cat.Get(context.Background(), free.String()); !errors.Is(err, artifactcatalog.ErrNotFound) {
+		t.Errorf("unheld catalog row survived tenant delete: %v", err)
+	}
+}
+
+// TestDeleteByTenantInnerAbortLeavesCatalog asserts that when the
+// bucket store aborts the bulk delete (the §12.8 legal-hold abort),
+// the error propagates and no catalog row is reconciled — a held
+// tenant survives intact.
+//
+// spec: §12.5 ll. 295; §12.8 line 735.
+func TestDeleteByTenantInnerAbortLeavesCatalog(t *testing.T) {
+	mem := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	holdErr := errors.New("under §12.8 legal hold")
+	store := New(erroringTenantDeleter{MemoryStore: mem, err: holdErr}, cat, Options{})
+
+	u := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace, SessionID: "s1", PartID: "p", TTL: time.Hour}
+	if _, err := store.Put(u, "application/gzip", strings.NewReader("body")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if _, err := store.DeleteByTenant(context.Background(), "acme"); !errors.Is(err, holdErr) {
+		t.Fatalf("DeleteByTenant: got %v, want the inner abort error", err)
+	}
+	if _, err := cat.Get(context.Background(), u.String()); err != nil {
+		t.Errorf("catalog row removed despite inner abort: %v", err)
 	}
 }

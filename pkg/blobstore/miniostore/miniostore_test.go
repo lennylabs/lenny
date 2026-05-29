@@ -213,3 +213,13 @@ func TestReadTombstoneNilSafe(t *testing.T) {
 		t.Error("readTombstone(nil) reported a tombstone")
 	}
 }
+
+// TestStoreImplementsTenantPrefixDeleter pins the §12.5 ll. 295
+// prefix-scoped bulk-delete contract at compile time. The behavioral
+// path (ListObjects + RemoveObjects under the tenant prefix) needs a
+// live MinIO and is exercised by the higher-tier integration suite.
+//
+// spec: §12.5 ll. 295.
+func TestStoreImplementsTenantPrefixDeleter(t *testing.T) {
+	var _ blobstore.TenantPrefixDeleter = (*Store)(nil)
+}

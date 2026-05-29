@@ -686,3 +686,98 @@ func TestTenantScopedCopyRejectsCrossTenantBetweenURIs(t *testing.T) {
 		t.Errorf("Copy cross-tenant src/dst: got %v, want ErrCrossTenant", err)
 	}
 }
+
+// TestMemoryStoreDeleteByTenantRemovesOnlyNamedTenant asserts the
+// §12.5 ll. 295 prefix-scoped bulk delete erases every object under
+// one tenant prefix (across sessions and object types) while a
+// different tenant's blobs survive.
+//
+// spec: §12.5 ll. 295.
+func TestMemoryStoreDeleteByTenantRemovesOnlyNamedTenant(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	acme1 := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeUpload, SessionID: "s1", PartID: "a", TTL: time.Hour}
+	acme2 := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint, SessionID: "s2", PartID: "b", TTL: time.Hour}
+	globex := blobstore.URI{TenantID: "globex", ObjectType: blobstore.ObjectTypeUpload, SessionID: "s1", PartID: "a", TTL: time.Hour}
+	for _, u := range []blobstore.URI{acme1, acme2, globex} {
+		if _, err := s.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+			t.Fatalf("Put %s/%s: %v", u.TenantID, u.PartID, err)
+		}
+	}
+	deleted, err := s.DeleteByTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2 (both acme blobs across sessions and object types)", deleted)
+	}
+	if _, err := s.Stat(acme1); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("acme1 survived tenant delete: got %v", err)
+	}
+	if _, err := s.Stat(acme2); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("acme2 survived tenant delete: got %v", err)
+	}
+	if _, err := s.Stat(globex); err != nil {
+		t.Errorf("globex blob erased by acme tenant delete (cross-tenant leak): %v", err)
+	}
+}
+
+// TestMemoryStoreDeleteByTenantEmptyTenantIsNoOp asserts an empty
+// tenantID matches nothing so a mis-scoped call cannot wipe the store.
+//
+// spec: §12.5 ll. 295.
+func TestMemoryStoreDeleteByTenantEmptyTenantIsNoOp(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	u := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeUpload, SessionID: "s", PartID: "p", TTL: time.Hour}
+	if _, err := s.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	deleted, err := s.DeleteByTenant(context.Background(), "")
+	if err != nil {
+		t.Fatalf("DeleteByTenant(\"\"): %v", err)
+	}
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0 for empty tenant", deleted)
+	}
+	if _, err := s.Stat(u); err != nil {
+		t.Errorf("blob erased by empty-tenant delete: %v", err)
+	}
+}
+
+// TestTenantScopedDeleteByTenantRestrictsToBoundTenant asserts a
+// scoped store bound to tenant T only permits DeleteByTenant(T); a
+// request for another tenant returns ErrCrossTenant before any object
+// is touched, and an unscoped (empty) wrapper forwards any tenant.
+//
+// spec: §12.5 ll. 295.
+func TestTenantScopedDeleteByTenantRestrictsToBoundTenant(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	acme := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeUpload, SessionID: "s", PartID: "p", TTL: time.Hour}
+	globex := blobstore.URI{TenantID: "globex", ObjectType: blobstore.ObjectTypeUpload, SessionID: "s", PartID: "p", TTL: time.Hour}
+	for _, u := range []blobstore.URI{acme, globex} {
+		if _, err := inner.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+			t.Fatalf("seed %s: %v", u.TenantID, err)
+		}
+	}
+	scoped := blobstore.NewTenantScoped("acme", inner)
+	if _, err := scoped.DeleteByTenant(context.Background(), "globex"); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Errorf("DeleteByTenant(globex) on acme-scoped store: got %v, want ErrCrossTenant", err)
+	}
+	if _, err := inner.Stat(globex); err != nil {
+		t.Errorf("globex blob removed despite cross-tenant rejection: %v", err)
+	}
+	deleted, err := scoped.DeleteByTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant(acme) on acme-scoped store: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want 1", deleted)
+	}
+	// Unscoped wrapper forwards any tenant (the §12.8 Phase 4 path).
+	unscoped := blobstore.NewTenantScoped("", inner)
+	if _, err := unscoped.DeleteByTenant(context.Background(), "globex"); err != nil {
+		t.Fatalf("unscoped DeleteByTenant(globex): %v", err)
+	}
+	if _, err := inner.Stat(globex); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("globex blob survived unscoped tenant delete: got %v", err)
+	}
+}

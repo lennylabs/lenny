@@ -323,10 +323,15 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	// implements Copier (production MinIO/S3/GCS), the copy runs
 	// natively; otherwise we keep the previous ref-rewrite
 	// behavior (tests + the minimal gateway).
-	if cop, ok := s.blobs.(blobstore.Copier); ok && source.WorkspaceSnapshot != nil && source.WorkspaceSnapshot.Ref != "" {
+	if _, ok := s.blobs.(blobstore.Copier); ok && source.WorkspaceSnapshot != nil && source.WorkspaceSnapshot.Ref != "" {
 		srcURI, dstURI, ok := parseDeriveURIs(source.WorkspaceSnapshot.Ref, derivedRef, tenantID, source.ID, derivedID)
 		if ok {
-			if err := cop.Copy(srcURI, dstURI); err != nil && !errors.Is(err, blobstore.ErrConflict) {
+			// spec: §12.5 ll. 295 — run the snapshot copy through the
+			// tenant-scoped boundary so both the parent (src) and derived
+			// (dst) URIs are validated against the caller tenant at the
+			// store interface rather than trusted from the constructed URI.
+			scoped := blobstore.NewTenantScoped(tenantID, s.blobs)
+			if err := scoped.Copy(srcURI, dstURI); err != nil && !errors.Is(err, blobstore.ErrConflict) {
 				if errors.Is(err, blobstore.ErrNotFound) {
 					s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
 						"parent workspace snapshot object is absent in storage",

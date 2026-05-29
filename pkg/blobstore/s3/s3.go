@@ -414,6 +414,47 @@ func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
 	return count
 }
 
+// DeleteByTenant implements blobstore.TenantPrefixDeleter: a
+// prefix-scoped bulk delete on `{tenant_id}/*` for the §12.8 Phase 4
+// tenant-deletion orchestrator. It pages the bucket under the tenant
+// prefix and removes every object, returning the count removed. A
+// tenant with no objects is a no-op returning (0, nil); an empty
+// tenantID matches nothing.
+//
+// spec: §12.5 ll. 295.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, nil
+	}
+	prefix := tenantID + "/"
+	count := 0
+	var token *string
+	for {
+		out, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            awssdk.String(s.bucket),
+			Prefix:            awssdk.String(prefix),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			return count, fmt.Errorf("blobstore/s3: list %s: %w", prefix, err)
+		}
+		for _, obj := range out.Contents {
+			if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: awssdk.String(s.bucket),
+				Key:    obj.Key,
+			}); err != nil {
+				return count, fmt.Errorf("blobstore/s3: delete %s: %w", awssdk.ToString(obj.Key), err)
+			}
+			count++
+		}
+		if out.IsTruncated == nil || !*out.IsTruncated {
+			break
+		}
+		token = out.NextContinuationToken
+	}
+	return count, nil
+}
+
 // headLive reports whether a live (non-tombstoned) object exists for
 // key. A tombstoned object reports false so a Put on a soft-deleted
 // path is admitted.

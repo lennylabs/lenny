@@ -247,6 +247,30 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 	return deleted, nil
 }
 
+// DeleteByTenant forwards the §12.8 Phase 4 prefix-scoped bulk delete
+// to the inner store, then drops the tenant's catalog rows so the
+// §12.5 ledger no longer references the erased tenant. The bucket
+// delete runs first: when the inner store aborts on a §12.8 legal
+// hold the error propagates before any catalog row is removed, so a
+// held tenant survives intact. An inner store without the
+// TenantPrefixDeleter contract is a no-op returning (0, nil).
+//
+// spec: §12.5 ll. 295; §12.8 Phase 4.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	inner, ok := s.inner.(blobstore.TenantPrefixDeleter)
+	if !ok {
+		return 0, nil
+	}
+	deleted, err := inner.DeleteByTenant(ctx, tenantID)
+	if err != nil {
+		return deleted, err
+	}
+	if _, cerr := s.catalog.DeleteByTenant(ctx, tenantID); cerr != nil {
+		return deleted, fmt.Errorf("cataloging: delete tenant catalog rows for %s: %w", tenantID, cerr)
+	}
+	return deleted, nil
+}
+
 // HardPrune drives the §12.5 ll. 341 hard-prune sweep: the catalog
 // returns the rows whose tombstone deadline has elapsed, the
 // decorator removes the matching bucket objects, and the catalog row

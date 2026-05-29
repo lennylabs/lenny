@@ -308,6 +308,26 @@ type Tombstoner interface {
 	StatIncludingTombstones(u URI) (BlobInfo, BlobState, error)
 }
 
+// TenantPrefixDeleter extends the blob store with the §12.5 ll. 295
+// prefix-scoped bulk delete the §12.8 Phase 4 tenant-deletion
+// orchestrator runs. DeleteByTenant removes every object under the
+// `/{tenant_id}/` prefix in a single prefix-scoped sweep instead of
+// the O(#sessions) per-session enumeration DeleteBySession requires;
+// it returns the count removed and is idempotent — a tenant with no
+// objects is a no-op returning (0, nil).
+//
+// Backends that hold the bytes (Memory, MinIO, S3, GCS, Azure)
+// implement it directly; the cataloging decorator forwards to the
+// inner store and reconciles the matching catalog rows. The
+// TenantScoped wrapper restricts DeleteByTenant to the bound tenant
+// so a scoped handle cannot erase a foreign tenant's prefix.
+//
+// spec: §12.5 ll. 295 — "DeleteByTenant(tenant_id) performs a
+// prefix-scoped bulk delete on /{tenant_id}/*."
+type TenantPrefixDeleter interface {
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
 // BlobState is the §12.5 lifecycle classification surfaced by
 // StatIncludingTombstones. The GC sweep and observability paths use
 // it to distinguish a soft-deleted blob (still discoverable for the
@@ -565,6 +585,30 @@ func (s *MemoryStore) DeleteBySession(_ context.Context, tenantID, sessionID str
 	return deleted, nil
 }
 
+// DeleteByTenant implements TenantPrefixDeleter — the §12.8 Phase 4
+// tenant-erasure adapter. It drops every blob under the tenant's
+// prefix (live or tombstoned) in a single pass and returns the count
+// removed; a tenant with no blobs is a no-op returning (0, nil). An
+// empty tenantID matches nothing so a mis-scoped call cannot wipe the
+// whole store.
+//
+// spec: §12.5 ll. 295.
+func (s *MemoryStore) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted := 0
+	for k, b := range s.blobs {
+		if b.info.URI.TenantID == tenantID {
+			delete(s.blobs, k)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 // Copy implements Copier. It duplicates src into a new in-memory
 // blob at dst with a freshly minted ExpiresAt; returns
 // ErrCrossTenant when src and dst name different tenants,
@@ -696,4 +740,22 @@ func (s *TenantScoped) Copy(src, dst URI) error {
 		return fmt.Errorf("blobstore: underlying store %T does not implement Copier", s.inner)
 	}
 	return cop.Copy(src, dst)
+}
+
+// DeleteByTenant implements TenantPrefixDeleter with the §12.5 ll. 295
+// tenant-prefix invariant: a store bound to tenant T only permits
+// DeleteByTenant(T); a request to bulk-delete a different tenant
+// returns ErrCrossTenant before any object is touched. An unscoped
+// wrapper (empty tenant) forwards any tenant through to the inner
+// deleter for the §12.8 Phase 4 orchestrator that legitimately spans
+// tenants.
+func (s *TenantScoped) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if s.tenant != "" && tenantID != s.tenant {
+		return 0, ErrCrossTenant
+	}
+	del, ok := s.inner.(TenantPrefixDeleter)
+	if !ok {
+		return 0, fmt.Errorf("blobstore: underlying store %T does not implement TenantPrefixDeleter", s.inner)
+	}
+	return del.DeleteByTenant(ctx, tenantID)
 }

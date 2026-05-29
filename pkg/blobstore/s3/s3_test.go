@@ -101,10 +101,14 @@ func (f *fakeS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...
 	return &s3.DeleteObjectOutput{}, nil
 }
 
-func (f *fakeS3) ListObjectsV2(_ context.Context, _ *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+func (f *fakeS3) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	prefix := awssdk.ToString(in.Prefix)
 	out := &s3.ListObjectsV2Output{}
 	t := false
 	for k := range f.objects {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
 		key := k
 		out.Contents = append(out.Contents, types.Object{Key: &key})
 	}
@@ -281,5 +285,60 @@ func TestPutAppliesSSEKMSResolver(t *testing.T) {
 	}
 	if got := f.objects[objectKey(u)].sseKMSKeyID; got != "alias/lenny/tenant/acme" {
 		t.Errorf("SSEKMSKeyID: got %q, want alias/lenny/tenant/acme", got)
+	}
+}
+
+// TestDeleteByTenant asserts the §12.5 ll. 295 prefix-scoped bulk
+// delete removes every object under one tenant prefix (across
+// sessions) while another tenant's objects survive.
+//
+// spec: §12.5 ll. 295.
+func TestDeleteByTenant(t *testing.T) {
+	store, f := newStore(t)
+	for _, u := range []blobstore.URI{
+		testURI("acme", "s1", "p1"),
+		testURI("acme", "s2", "p2"),
+		testURI("globex", "s1", "p1"),
+	} {
+		if _, err := store.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+			t.Fatalf("Put %s/%s: %v", u.TenantID, u.PartID, err)
+		}
+	}
+	deleted, err := store.DeleteByTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+	if _, ok := f.objects[objectKey(testURI("globex", "s1", "p1"))]; !ok {
+		t.Error("globex object erased by acme tenant delete (cross-tenant leak)")
+	}
+	for _, u := range []blobstore.URI{testURI("acme", "s1", "p1"), testURI("acme", "s2", "p2")} {
+		if _, ok := f.objects[objectKey(u)]; ok {
+			t.Errorf("acme object %s survived tenant delete", u.PartID)
+		}
+	}
+}
+
+// TestDeleteByTenantEmptyIsNoOp asserts an empty tenantID matches
+// nothing so a mis-scoped call cannot wipe the bucket.
+//
+// spec: §12.5 ll. 295.
+func TestDeleteByTenantEmptyIsNoOp(t *testing.T) {
+	store, f := newStore(t)
+	u := testURI("acme", "s1", "p1")
+	if _, err := store.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	deleted, err := store.DeleteByTenant(context.Background(), "")
+	if err != nil {
+		t.Fatalf("DeleteByTenant(\"\"): %v", err)
+	}
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0", deleted)
+	}
+	if _, ok := f.objects[objectKey(u)]; !ok {
+		t.Error("object erased by empty-tenant delete")
 	}
 }

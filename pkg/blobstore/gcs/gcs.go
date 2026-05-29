@@ -317,6 +317,36 @@ func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
 	return count
 }
 
+// DeleteByTenant implements blobstore.TenantPrefixDeleter: a
+// prefix-scoped bulk delete on `{tenant_id}/*` for the §12.8 Phase 4
+// tenant-deletion orchestrator. It lists the bucket, removes every
+// object under the tenant prefix, and returns the count removed. A
+// tenant with no objects is a no-op returning (0, nil); an empty
+// tenantID matches nothing.
+//
+// spec: §12.5 ll. 295.
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, nil
+	}
+	prefix := tenantID + "/"
+	keys, err := s.client.List(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("blobstore/gcs: list: %w", err)
+	}
+	count := 0
+	for _, key := range keys {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if err := s.client.Delete(ctx, key); err != nil {
+			return count, fmt.Errorf("blobstore/gcs: delete %s: %w", key, err)
+		}
+		count++
+	}
+	return count, nil
+}
+
 func (s *Store) isTombstoned(ctx context.Context, key string) (bool, error) {
 	attrs, err := s.client.Attrs(ctx, key)
 	if err != nil {
