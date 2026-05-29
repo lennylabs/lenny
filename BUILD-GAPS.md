@@ -10722,7 +10722,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `grep -rn "perHop\|per-hop\|forwardingTimeout\|forwarding_timeout" /Users/joan/projects/lenny/pkg /Users/joan/projects/lenny/cmd` returns only documentation comments.
 - **Gap:** The §9.2 forwarding-timeout contract that bounds intermediate-hop dwell time is absent. In the current architecture this is conceptually moot because there is no actual hop-by-hop forwarding (F-9.2.1) — but as soon as the wire mechanism is added, the timeout requirement re-emerges as an unbuilt control.
 
-### - [ ] F-9.2.9 — `tenant.elicitation_content_integrity_changed` audit event uses a non-spec name [High] — OPEN
+### - [x] F-9.2.9 — `tenant.elicitation_content_integrity_changed` audit event uses a non-spec name [High] — CLOSED
 
 - **Spec:** Line 66 and §16.7 line 675. "the `tenant.elicitation_content_integrity_changed` audit event on every write."
 - **Evidence:**
@@ -10730,6 +10730,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/admin/elicitation_integrity.go:160`: `r.emit(req.Context(), principal, "tenant.elicitation_content_integrity_mode_changed", id, ...)` — the admin handler emits a literal that does not match the catalog constant.
   - `pkg/gateway/admin/elicitation_integrity_test.go:119,125`: tests assert against the wrong name as well, so the typo is locked in.
 - **Gap:** The audit catalog row `tenant.elicitation_content_integrity_changed` is unreachable; the admin handler writes an undeclared event type (`tenant.elicitation_content_integrity_mode_changed`) that is not in the catalog, has no OCSF mapping, and will be rejected or quarantined by any audit-sink filter that whitelists by the spec catalog. The §9.2 payload-shape requirement (the spec mandates `previous_stored_mode`, `new_stored_mode`, `platform_floor_at_change`, `effective_mode_at_change`, `justification`, `changed_by`, `changed_by_tenant_id`, `changed_at`) is also unmet — the emitted detail only carries `oldMode`, `newMode`, `justification`.
+
+**Resolution:** `handlePutElicitationIntegrity` now emits the catalog-canonical `tenant.elicitation_content_integrity_changed` event via `audit.EventTenantElicitationContentIntegrityChanged`, with a Detail map carrying every §16.7 line 675 field (`tenant_id`, `previous_stored_mode` (null on first write), `new_stored_mode`, `platform_floor_at_change`, `effective_mode_at_change`, `justification`, `changed_by`, `changed_by_tenant_id`, `changed_at`). Tests updated to assert spec-name and full payload coverage including the second-write `previous_stored_mode=enforce` case and a floor-clamped `effective_mode_at_change`.
 
 ### - [ ] F-9.2.10 — Helm-floor-change audit events are catalogued but never emitted [Medium] — OPEN
 
@@ -10740,7 +10742,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `cmd/lenny-gateway/main.go:258`: the gateway accepts `--elicitation-content-integrity-floor`, but reading the flag does not produce an audit row for the floor value itself or for the per-tenant clamps it triggers.
 - **Gap:** Operators have no audit history of platform-floor changes or per-tenant clamps caused by floor changes; the §16.5 standing alert's expected operator workflow ("correlate with the most recent `tenant.elicitation_content_integrity_changed` and `platform.elicitation_content_integrity_floor_changed` audit events") is unsupported.
 
-### - [ ] F-9.2.11 — The `lenny/request_elicitation` URL-mode rejection event is not in the spec catalog [Medium] — OPEN
+### - [x] F-9.2.11 — The `lenny/request_elicitation` URL-mode rejection event is not in the spec catalog [Medium] — CLOSED
 
 - **Spec:** §16.7 audit-event catalog (§9.2 references nothing called `elicitation.url_mode_domain_rejected`).
 - **Evidence:**
@@ -10748,6 +10750,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/observability/audit/catalog.go`: the catalog does not declare this event type.
   - `pkg/audit/ocsf/mapping.go`: no OCSF mapping for this event.
 - **Gap:** The dispatcher emits an audit event not in the closed catalog. Audit-sink validators that reject unknown event types (`IsKnownEventType` in `pkg/observability/audit/catalog.go:253`) will discard these rows. Either the catalog needs this row (with the schema fields the dispatcher writes — `sessionId`, `originPod`, `tenantId`, `userId`, `initiatorType`, `reason`, `host`, `allowlist`, `url`) or the dispatcher should emit a different event the catalog already knows about.
+
+**Resolution:** §16.7 catalog is closed; §9.2 does not list this rejection. Removed `emitURLModeRejection` and replaced the audit emit with a §9.1 drop-counter increment (`reason="domain_not_allowlisted"`). The rich forensic context (host, allowlist, originPod, initiatorType) is preserved on the `DOMAIN_NOT_ALLOWLISTED` `*mcp.ToolError`'s `details` payload, so the rejection is still operator-observable through the metric + the surfaced tool error.
 
 ### - [ ] F-9.2.12 — Production binary does not wire pool-level elicitation policy fields [High] — OPEN
 
@@ -10772,7 +10776,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/mcptools/mcptools.go:633-647`: the dispatcher is constructed with `tenantID: tenant` once at MCP registration; there is no per-request tenant resolution from the authenticated principal.
 - **Gap:** The §9.1 per-session `maxElicitationsPerSession` budget enforcement (`CountElicitations(ctx, tenant, in.SessionID)`) always uses `"default"` as the tenant scope; multi-tenant deployments will commingle counts. The tamper metric and the `lenny_elicitation_dropped_total` counter will likewise carry `tenant_id="default"` for every tenant.
 
-### - [ ] F-9.2.14 — The `lenny_elicitation_pending`, `lenny_elicitation_timeout_total`, `lenny_elicitation_suppressed_total`, `lenny_elicitation_roundtrip_seconds` metrics are declared but unwired [Medium] — OPEN
+### - [x] F-9.2.14 — The `lenny_elicitation_pending`, `lenny_elicitation_timeout_total`, `lenny_elicitation_suppressed_total`, `lenny_elicitation_roundtrip_seconds` metrics are declared but unwired [Medium] — CLOSED
 
 - **Spec:** §16.1 + §16.5. The `ElicitationBacklogHigh` alert reads `lenny_elicitation_pending > 50`; observability dashboards rely on the four counters/gauges/histograms.
 - **Evidence:**
@@ -10781,6 +10785,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `grep -rn "lenny_elicitation_pending\|lenny_elicitation_timeout_total\|lenny_elicitation_suppressed_total\|lenny_elicitation_roundtrip_seconds" pkg/gateway` returns only the catalog and alert rule sites; no `prometheus.NewGauge` / `NewCounter` / `NewHistogram` registration in `pkg/gateway/gatewaymetrics/gatewaymetrics.go` and no emission site.
   - The `lenny_elicitation_dropped_total{reason}` counter declared in `gatewaymetrics.go:132-137` is the only elicitation-lifecycle metric actually wired; even it is missing from the `pkg/observability/metrics/catalog.go` enumeration.
 - **Gap:** The `ElicitationBacklogHigh` alert can never fire. Operators have no dashboard view of pending-elicitation depth, timeout rate, suppression rate, or round-trip latency. The §16.1 metric catalog ships with declarations the gateway never emits.
+
+**Resolution:** Registered all four metrics in `gatewaymetrics.go` with the §16.1 catalog names and 4 Inc/Dec/Observe helpers (`IncElicitationPending`, `DecElicitationPending`, `IncElicitationTimeout`, `IncElicitationSuppressed`, `ObserveElicitationRoundtrip`). Added `mcptools.ElicitationLifecycleRecorder` interface + Deps field; the request_elicitation handler stamps admit + every terminal path (responded/dismissed/timeout/ctx-done) with the histogram observation and pending decrement, while the budget-exceeded and depth-suppression drop paths bump the suppressed counter. `cmd/lenny-gateway/main.go` wires `ElicitationLifecycleMetrics: gwMetrics`. The `ElicitationBacklogHigh` alert can now fire.
 
 ### - [ ] F-9.2.15 — Idle-timer pause for "waiting_for_human" is unimplemented [Medium] — OPEN
 
@@ -10791,7 +10797,7 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `pkg/gateway/mcptools/mcptools.go:753-774` records the elicitation against the resolver session but does not alter session state. There is no per-session "idle since" tracking that would need pausing.
 - **Gap:** A session that raises a request_elicitation continues to accumulate idle time against `maxIdleTime`. A long-running human-facing elicitation can therefore time out the session via the idle path, contradicting the §9.2 contract that the elicitation timeout (`maxElicitationWait`) is the only one that applies while waiting on a human.
 
-### - [ ] F-9.2.16 — Depth policy default `suppress_at_depth: 3` is not in effect [Medium] — OPEN
+### - [x] F-9.2.16 — Depth policy default `suppress_at_depth: 3` is not in effect [Medium] — CLOSED
 
 - **Spec:** Line 92. "At delegation depth >= 3, agent-initiated elicitations are **auto-suppressed by default** unless the elicitation type appears in the pool's allow list."
 - **Evidence:**
@@ -10800,6 +10806,8 @@ Findings count: 9 High, 6 Medium, 3 Low, 1 Info.
   - `cmd/lenny-gateway/main.go:1030-1049`: the binary does not pass either field; the dispatcher therefore runs with `DepthPolicy("")` and `SuppressAtDepth=0`, resolving to `allow_all` per the coercion above.
   - The pool CRD and `pkg/apis/lenny/v1` spec do not carry an `elicitationDepthPolicy` field, so even per-pool wiring (when added) would have nowhere to read from.
 - **Gap:** Agent-initiated elicitations at arbitrary delegation depth are admitted; the §9.2 default that limits deep-tree elicitation spam is not in effect.
+
+**Resolution:** `WalkChain` (`pkg/elicitation/chain.go`) now coerces an unset/invalid `DepthPolicy` to `DepthSuppressAtDepth` with threshold `DefaultSuppressAtDepth=3` rather than `DepthAllowAll`. The pool-CRD plumbing finding lives elsewhere; this closure handles the §9.2 line 92 default at the chain-walker boundary so a binary that ships nothing still backpressures deep-tree agent-initiated elicitations. Three new tests cover the depth=3 suppression, the depth-2 happy path, and the connector-exempt rule under the defaulted policy.
 
 ### - [x] F-9.2.17 — `respond_to_elicitation` MCP tool is not registered; only the REST endpoints exist [Low] — CLOSED
 
