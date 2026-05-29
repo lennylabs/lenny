@@ -794,13 +794,17 @@ func (w *Watchdog) recordCompleted(ctx context.Context, sess sessionstore.Sessio
 		return
 	}
 	// spec: §10.6 line 663 — watchdog-driven terminal also stamps env.
-	// F-10.6.9.
+	// F-10.6.9. spec: §11.2 lines 87-88 — experiment/variant
+	// auto-population on the watchdog-forced terminal event. F-11.2.13.
+	expID, varID := sess.ExperimentContext.Enrollment()
 	_, _ = w.billing.Append(ctx, billingstore.Event{
 		TenantID:      sess.TenantID,
 		UserID:        sess.UserID,
 		SessionID:     sess.ID,
 		EventType:     billingstore.EventSessionCompleted,
 		EnvironmentID: sess.Environment,
+		ExperimentID:  expID,
+		VariantID:     varID,
 	})
 }
 

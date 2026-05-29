@@ -92,6 +92,42 @@ func TestTickEmitsSessionCompletedBillingEvent(t *testing.T) {
 	}
 }
 
+// spec: §11.2 lines 87-88 — a watchdog-forced terminal billing event
+// auto-populates experiment_id/variant_id from the session's
+// experimentContext, just like the gateway-driven terminal path.
+// F-11.2.13.
+func TestForcedTerminalBillingEventStampsExperimentVariant_spec_11_2_87(t *testing.T) {
+	store := memstore.New()
+	billing := billingstore.NewMemory()
+	stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_enrolled", TenantID: "acme", State: session.StateCreated,
+		CreatedAt: stale, UpdatedAt: stale,
+		ExperimentContext: &sessionstore.ExperimentContext{
+			ExperimentID: "exp-checkout", VariantID: "treatment",
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithBilling(billing)
+
+	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	events, err := billing.Since(context.Background(), "acme", 0, 0)
+	if err != nil {
+		t.Fatalf("Since: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("billing events: got %d, want 1", len(events))
+	}
+	if events[0].ExperimentID != "exp-checkout" || events[0].VariantID != "treatment" {
+		t.Fatalf("forced-terminal event must carry experiment_id/variant_id, got %+v", events[0])
+	}
+}
+
 func TestTickExpiresOverAgeSession(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

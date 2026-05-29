@@ -110,13 +110,18 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 	if s.billing != nil {
 		// spec: §10.6 line 663 — stamp the session's environment on the
 		// billing event so downstream rollups aggregate by environment.
-		// F-10.6.9.
+		// F-10.6.9. spec: §11.2 lines 87-88 — auto-populate
+		// experiment_id/variant_id from the session's experimentContext
+		// for per-experiment / per-variant cost attribution. F-11.2.13.
+		expID, varID := sess.ExperimentContext.Enrollment()
 		_, _ = s.billing.Append(ctx, billingstore.Event{
 			TenantID:      sess.TenantID,
 			UserID:        sess.UserID,
 			SessionID:     sess.ID,
 			EventType:     billingstore.EventSessionCreated,
 			EnvironmentID: sess.Environment,
+			ExperimentID:  expID,
+			VariantID:     varID,
 		})
 	}
 	// §7.1 / §16.6: write the `session.created` event to the §11.7
@@ -294,13 +299,17 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 		return
 	}
 	// spec: §10.6 line 663 — environment stamp on terminal-state billing
-	// event. F-10.6.9.
+	// event. F-10.6.9. spec: §11.2 lines 87-88 — experiment/variant
+	// auto-population. F-11.2.13.
+	expID, varID := sess.ExperimentContext.Enrollment()
 	_, _ = s.billing.Append(ctx, billingstore.Event{
 		TenantID:      sess.TenantID,
 		UserID:        sess.UserID,
 		SessionID:     sess.ID,
 		EventType:     billingstore.EventSessionCompleted,
 		EnvironmentID: sess.Environment,
+		ExperimentID:  expID,
+		VariantID:     varID,
 	})
 }
 

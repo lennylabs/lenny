@@ -249,6 +249,25 @@ const (
 	EventLegalHoldCheckpointGapDetected EventType = "legal_hold.checkpoint_gap_detected"
 )
 
+// §11.7-path audit event types that are written through the standard
+// hash-chained audit log but are not §16.7 / §25-additions. §16.7
+// enumerates only the events §25 adds on top of the standard §11.7
+// path, so these core §11.7 events are deliberately absent from
+// catalog (and from Catalog()) yet must still be recognized by
+// IsKnownEventType so audit-sink validators do not discard the rows as
+// unknown event types.
+const (
+	// EventInterceptorRejected is the §4.8 interceptor-chain REJECT
+	// audit event. §11.7 line 331 names it in the per-tenant
+	// audit-write traffic list ("session.created, token.exchanged,
+	// interceptor.rejected"); §4.8 / §16.7 mention it only to contrast
+	// it with admission.circuit_breaker_rejected (the pre-chain gate,
+	// which is not an interceptor). It is emitted in production by
+	// pkg/gateway/policy.RecordRejection on every chain REJECT.
+	// spec: §11.7 line 331; §16.7 line 669 (contrast). F-11.7.18.
+	EventInterceptorRejected EventType = "interceptor.rejected"
+)
+
 // catalog is the §16.7 closed enumeration of §25 audit event types.
 // The slice is declared in §16.7 catalog order.
 var catalog = []EventType{
@@ -317,16 +336,37 @@ var catalog = []EventType{
 	EventLegalHoldCheckpointGapDetected,
 }
 
+// auxKnownEventTypes are §11.7-path audit event types emitted through
+// the standard hash-chained audit log that are not §16.7 / §25
+// additions. They are recognized by IsKnownEventType so audit-sink
+// validators accept the rows, but are intentionally excluded from
+// Catalog() because Catalog() transcribes only the §16.7 enumeration.
+// spec: §11.7 line 331. F-11.7.18.
+var auxKnownEventTypes = []EventType{
+	EventInterceptorRejected,
+}
+
 // Catalog returns the §16.7 catalog of §25 audit event types. The
 // slice is fresh on every call so callers may sort or filter it
-// freely.
+// freely. §11.7-path core events (see auxKnownEventTypes) are not
+// included — Catalog() is the §16.7 / §25-additions surface only.
 func Catalog() []EventType {
 	return append([]EventType(nil), catalog...)
 }
 
-// IsKnownEventType reports whether t is a §16.7 audit event type.
+// IsKnownEventType reports whether t is a recognized audit event type:
+// either a §16.7 / §25-additions catalogue entry or a §11.7-path core
+// event (auxKnownEventTypes). It is the discard gate for audit-sink
+// validators, so it must accept every event the gateway emits through
+// the standard §11.7 audit path, not only the §16.7 subset.
+// spec: §11.7 line 331. F-11.7.18.
 func IsKnownEventType(t EventType) bool {
 	for _, v := range catalog {
+		if t == v {
+			return true
+		}
+	}
+	for _, v := range auxKnownEventTypes {
 		if t == v {
 			return true
 		}

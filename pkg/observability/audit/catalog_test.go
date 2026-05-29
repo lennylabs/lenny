@@ -194,6 +194,26 @@ func TestIsKnownEventType(t *testing.T) {
 	}
 }
 
+// TestInterceptorRejectedIsKnownButNotCatalogued asserts the §11.7-path
+// core event interceptor.rejected (emitted by
+// pkg/gateway/policy.RecordRejection) is recognized by IsKnownEventType
+// so audit-sink validators do not discard the rows, while staying out
+// of Catalog() because §16.7 enumerates only the §25 additions.
+// spec: §11.7 line 331; §16.7 line 669 (contrast). F-11.7.18.
+func TestInterceptorRejectedIsKnownButNotCatalogued_spec_11_7_331(t *testing.T) {
+	if string(EventInterceptorRejected) != "interceptor.rejected" {
+		t.Fatalf("event wire string = %q, want %q", EventInterceptorRejected, "interceptor.rejected")
+	}
+	if !IsKnownEventType(EventInterceptorRejected) {
+		t.Error("interceptor.rejected is emitted on the §11.7 audit path and must be a known event type")
+	}
+	for _, et := range Catalog() {
+		if et == EventInterceptorRejected {
+			t.Error("interceptor.rejected is a §11.7-path event, not a §16.7 / §25 addition — it must not appear in Catalog()")
+		}
+	}
+}
+
 // TestEventTypesAreNonEmptyIdentifiers asserts every §16.7 event type
 // is a non-empty lower-case identifier. Almost every §16.7 event is
 // dot-namespaced; quota_failopen_started is the one spec exception,

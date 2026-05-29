@@ -425,6 +425,19 @@ type ExperimentContext struct {
 	Inherited bool
 }
 
+// Enrollment returns the experiment and variant ids carried by the
+// context, or empty strings when the context is nil. Billing events
+// auto-populate the §11.2.1 experiment_id/variant_id fields from it so
+// per-experiment and per-variant cost attribution works without joining
+// the session row. Safe to call on a nil receiver (an unenrolled
+// session). spec: §11.2 lines 87-88. F-11.2.13.
+func (c *ExperimentContext) Enrollment() (experimentID, variantID string) {
+	if c == nil {
+		return "", ""
+	}
+	return c.ExperimentID, c.VariantID
+}
+
 // WorkspaceSnapshot describes a stored workspace artifact attached to
 // a session. Mirrors the §7.1 derive response fields
 // (`workspaceSnapshotSource`, `workspaceSnapshotTimestamp`,

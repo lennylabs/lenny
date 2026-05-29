@@ -11,11 +11,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 )
 
-// EventTypeInterceptorRejected is the §16.7 audit event type written
-// when a §4.8 interceptor chain REJECTs a request. §4.8 names it
-// `interceptor.rejected` and contrasts it explicitly with
-// `admission.circuit_breaker_rejected` (the pre-chain circuit-breaker
-// gate, which is not an interceptor).
+// EventTypeInterceptorRejected is the §11.7-path audit event type
+// written when a §4.8 interceptor chain REJECTs a request. §11.7 line
+// 331 lists it in the per-tenant audit-write traffic; §4.8 / §16.7
+// mention it only to contrast it with `admission.circuit_breaker_rejected`
+// (the pre-chain circuit-breaker gate, which is not an interceptor). It
+// is a core §11.7 event rather than a §16.7 / §25 addition, so the
+// pkg/observability/audit catalog recognizes it via auxKnownEventTypes
+// (IsKnownEventType) without listing it in Catalog(). spec: §11.7 line
+// 331. F-11.7.18.
 const EventTypeInterceptorRejected = "interceptor.rejected"
 
 // AuditAppender is the §11.7 per-tenant audit hash-chain surface the
