@@ -330,6 +330,13 @@ spec:
             - --adapter-tls-cert=/etc/lenny/mtls/tls.crt
             - --adapter-tls-key=/etc/lenny/mtls/tls.key
             - --adapter-ca=/etc/lenny/mtls/ca.crt
+            # §10.3 line 321 (NET-060): validate each inbound pod
+            # certificate's spiffe://<trust-domain>/agent/{pool}/{pod}
+            # URI SAN against this trust domain at the GatewayControl
+            # handshake. Paired with --adapter-ca above so SPIFFE
+            # validation layers on top of CA chain verification.
+            # F-10.3.1.
+            - --spiffe-trust-domain={{ .Values.global.spiffeTrustDomain }}
             {{- end }}
             # §9.2 platform-wide elicitation content-integrity floor.
             # The admin API's GET endpoint reports the effective mode

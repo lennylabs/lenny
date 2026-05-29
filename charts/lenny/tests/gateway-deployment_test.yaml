@@ -70,6 +70,41 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --adapter-ca=/etc/lenny/mtls/ca.crt
 
+  # spec: §10.3 line 321 (NET-060) — the gateway validates each inbound
+  # pod certificate's SPIFFE URI SAN against this trust domain at the
+  # GatewayControl handshake; without the flag the listener falls back
+  # to CA-only trust. F-10.3.1.
+  - it: passes --spiffe-trust-domain when mtls.enabled (default)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --spiffe-trust-domain=cluster.local
+
+  - it: renders --spiffe-trust-domain from a deployment-specific global.spiffeTrustDomain
+    set:
+      global.spiffeTrustDomain: lenny-acme-prod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --spiffe-trust-domain=lenny-acme-prod
+
+  - it: omits --spiffe-trust-domain when mtls.enabled=false
+    set:
+      mtls.enabled: false
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --spiffe-trust-domain=cluster.local
+
   # spec: §10.3 lines 316, 334 (NET-064) — the lenny-preflight Job reads
   # these annotations to enforce uniqueness across Lenny Deployments in
   # the same cluster; without them the collision check is a no-op.

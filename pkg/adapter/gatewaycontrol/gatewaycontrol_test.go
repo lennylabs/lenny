@@ -225,3 +225,11 @@ func TestDialBadTarget(t *testing.T) {
 		t.Fatal("Dial should reject an unusable target")
 	}
 }
+
+// TestGatewayDNSNameMatchesSpec pins the §10.3 line 322 (NET-060)
+// gateway Service DNS SAN the adapter must pin as tls.Config.ServerName.
+func TestGatewayDNSNameMatchesSpec_spec_10_3_322(t *testing.T) {
+	if gatewaycontrol.GatewayDNSName != "lenny-gateway.lenny-system.svc" {
+		t.Errorf("GatewayDNSName = %q, want the NET-060 gateway Service DNS SAN", gatewaycontrol.GatewayDNSName)
+	}
+}

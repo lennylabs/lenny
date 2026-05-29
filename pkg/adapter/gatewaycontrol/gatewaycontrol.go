@@ -24,6 +24,18 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
+// GatewayDNSName is the §10.3 line 322 (NET-060) DNS SAN that every
+// gateway replica's certificate carries — the Service DNS under which
+// all gateway replicas are reachable. The adapter pins it as
+// tls.Config.ServerName on the outbound GatewayControl dial (via
+// adapter.WithServerName) so Go's standard verification chain rejects
+// any cluster-CA-signed certificate whose SAN does not cover it, in
+// particular certificates issued to the Token Service, controller, or
+// any other lenny-system workload. The gateway dial MUST pin this name
+// rather than fall back to CA-only trust (spec line 324).
+// spec: §10.3 line 322 (NET-060)
+const GatewayDNSName = "lenny-gateway.lenny-system.svc"
+
 // Client is an adapter-side connection to the gateway's GatewayControl
 // service.
 type Client struct {

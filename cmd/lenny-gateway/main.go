@@ -37,6 +37,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -214,6 +215,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
+	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/ops/operations"
@@ -417,6 +419,8 @@ func main() {
 		"§9.2 platform-wide elicitation content-integrity floor (off | detect-only | enforce). The §15.1 admin GET endpoint reports the resolved effective mode as max(floor, tenantStored). A PUT below the floor is rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR. Empty defaults to `off` (no floor).")
 	grpcAddr := flag.String("grpc-addr", os.Getenv("LENNY_GRPC_ADDR"),
 		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — currently the ExtendLease lease-extension RPC — on this address. Empty disables the GatewayControl listener.")
+	spiffeTrustDomain := flag.String("spiffe-trust-domain", os.Getenv("LENNY_SPIFFE_TRUST_DOMAIN"),
+		"§10.3 NET-060 SPIFFE trust domain (global.spiffeTrustDomain). When set together with --adapter-ca, the §8.6 GatewayControl listener validates each inbound pod certificate's spiffe://<trust-domain>/agent/{pool}/{pod} URI SAN at TLS handshake and rejects a foreign trust domain, a non-agent identity, or a revoked certificate with no gRPC response (logged pod_identity_mismatch). Empty disables SPIFFE peer validation (local development only).")
 	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
 		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
 	llmSemanticCache := flag.Bool("llm-semantic-cache", os.Getenv("LENNY_LLM_SEMANTIC_CACHE") == "1",
@@ -3122,7 +3126,7 @@ func main() {
 	// principal-bound context to satisfy §11.7 line 428 actor-tenant
 	// validation. F-8.6.10.
 	leaseExtensionAuditor := leaseExtensionAuditAdapter{appender: auditAppender}
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA)
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, mtlsDeny)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -4082,7 +4086,17 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // gatewaymetrics.Metrics implements leasecontrol.MetricEmitter so
 // every ExtendLease decision drives the §16 line 66
 // `lenny_delegation_lease_extension_total` counter. F-8.6.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, replicaID, tlsCert, tlsKey, clientCA string) (*grpc.Server, net.Listener, error) {
+//
+// trustDomain and denyList wire the §10.3 NET-060 inbound peer
+// validation: when both clientCA and trustDomain are set, the listener
+// installs a SPIFFE VerifyPeerCertificate callback that validates each
+// inbound pod certificate's `spiffe://<trust-domain>/agent/{pool}/{pod}`
+// URI SAN at handshake (spec line 321) and rejects a certificate on the
+// §10.3 revocation deny list (spec line 352). A rejection aborts the
+// handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
+// log. trustDomain empty leaves CA-only verification in place (the
+// local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, replicaID, tlsCert, tlsKey, clientCA, trustDomain string, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
@@ -4114,7 +4128,33 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// cert material is configured the option is nil and the listener
 	// serves plaintext — the documented local-development path only.
 	// F-8.6.4 / F-15.3.1.
-	tlsOpt, err := adapter.TLSServerOption(tlsCert, tlsKey, clientCA)
+	// spec: §10.3 line 321 (NET-060) — the gateway validates the pod's
+	// SPIFFE URI on every inbound handshake. The verifier runs as a
+	// VerifyPeerCertificate callback on top of CA chain verification, so
+	// possession of a cluster-CA cert is necessary but never sufficient
+	// (spec line 324). It also consults the §10.3 revocation deny list
+	// (spec line 352) so a cert revoked between rotations is rejected at
+	// handshake. Only installed when client-cert verification is active
+	// (clientCA set) and a trust domain is configured; otherwise the
+	// local-development plaintext/CA-only path is preserved.
+	var tlsMods []adapter.TLSConfigMod
+	if clientCA != "" && trustDomain != "" {
+		verifier := spiffe.AgentPeerVerifier{
+			TrustDomain: trustDomain,
+			DenyList:    denyList,
+			OnMismatch: func(reason spiffe.MismatchReason, uri string, mErr error) {
+				slog.Warn("pod_identity_mismatch",
+					"net_rule", "NET-060",
+					"reason", string(reason),
+					"spiffe_uri", uri,
+					"error", mErr.Error())
+			},
+		}
+		tlsMods = append(tlsMods, func(c *tls.Config) {
+			c.VerifyPeerCertificate = verifier.VerifyPeerCertificate
+		})
+	}
+	tlsOpt, err := adapter.TLSServerOption(tlsCert, tlsKey, clientCA, tlsMods...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("§8.6 GatewayControl mTLS credentials: %w", err)
 	}
@@ -4176,13 +4216,13 @@ func (a leaseExtensionAuditAdapter) RecordExtension(ctx context.Context, e lease
 		"service_instance_id":         e.ServiceInstanceID,
 		"client_ip":                   e.ClientIP,
 		"new_limits": map[string]any{
-			"token_budget":       e.NewLimits.Tokens,
-			"max_age_seconds":    e.NewLimits.Seconds,
-			"children":           e.NewLimits.Children,
-			"parallel_children":  e.NewLimits.ParallelChildren,
-			"tree_size":          e.NewLimits.TreeSize,
-			"file_export_files":  e.NewLimits.FileExportFiles,
-			"file_export_bytes":  e.NewLimits.FileExportBytes,
+			"token_budget":      e.NewLimits.Tokens,
+			"max_age_seconds":   e.NewLimits.Seconds,
+			"children":          e.NewLimits.Children,
+			"parallel_children": e.NewLimits.ParallelChildren,
+			"tree_size":         e.NewLimits.TreeSize,
+			"file_export_files": e.NewLimits.FileExportFiles,
+			"file_export_bytes": e.NewLimits.FileExportBytes,
 		},
 	}
 	data, err := json.Marshal(payload)

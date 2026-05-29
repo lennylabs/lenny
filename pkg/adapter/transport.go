@@ -33,6 +33,27 @@ func NewGRPCServer(s *Server, opts ...grpc.ServerOption) *grpc.Server {
 	return gs
 }
 
+// TLSConfigMod mutates the tls.Config a transport option assembles
+// before it is wrapped in gRPC credentials. It lets a caller install a
+// peer-validation callback (the §10.3 NET-060 SPIFFE VerifyPeerCertificate
+// hook) or pin a ServerName without this package taking a dependency on
+// the validator. Mods run after the base config (certificates, CA pool,
+// client-auth mode) is built, so they can override or extend it.
+type TLSConfigMod func(*tls.Config)
+
+// WithServerName returns a TLSConfigMod that pins tls.Config.ServerName.
+// A client with a pinned ServerName makes Go's standard crypto/tls
+// verification chain reject any certificate whose SAN does not cover
+// that exact name, regardless of the dial target host. The §10.3
+// NET-060 adapter→gateway dial pins the gateway's DNS SAN this way
+// (spec line 322) so a cluster-CA-signed certificate issued to the
+// Token Service, controller, or any other lenny-system workload cannot
+// impersonate the gateway.
+// spec: §10.3 line 322 (NET-060)
+func WithServerName(name string) TLSConfigMod {
+	return func(c *tls.Config) { c.ServerName = name }
+}
+
 // TLSServerOption builds the gRPC server option that serves the
 // adapter over TLS. The §4.7 gateway↔adapter link is mTLS in
 // production: when clientCAFile is supplied, the adapter requires and
@@ -40,7 +61,12 @@ func NewGRPCServer(s *Server, opts ...grpc.ServerOption) *grpc.Server {
 // and keyFile are both empty the adapter serves plaintext, which is
 // intended only for local development; the returned option is nil in
 // that case.
-func TLSServerOption(certFile, keyFile, clientCAFile string) (grpc.ServerOption, error) {
+//
+// Optional mods run after the base config is assembled. The gateway's
+// §8.6 GatewayControl listener passes a mod that installs the §10.3
+// NET-060 SPIFFE VerifyPeerCertificate callback so each inbound pod
+// certificate's identity is validated at handshake.
+func TLSServerOption(certFile, keyFile, clientCAFile string, mods ...TLSConfigMod) (grpc.ServerOption, error) {
 	if certFile == "" && keyFile == "" {
 		return nil, nil
 	}
@@ -64,16 +90,24 @@ func TLSServerOption(certFile, keyFile, clientCAFile string) (grpc.ServerOption,
 		cfg.ClientCAs = pool
 		cfg.ClientAuth = tls.RequireAndVerifyClientCert
 	}
+	for _, m := range mods {
+		m(cfg)
+	}
 	return grpc.Creds(credentials.NewTLS(cfg)), nil
 }
 
-// TLSClientOption builds the gRPC dial option the gateway uses to reach
-// a pod's adapter over the §4.7 mTLS link. When certFile and keyFile are
-// supplied the gateway presents that client certificate to the adapter;
-// caFile verifies the adapter's server certificate. When all three are
-// empty the dial is plaintext, which is intended only for local
-// development against an adapter started without TLSServerOption.
-func TLSClientOption(certFile, keyFile, caFile string) (grpc.DialOption, error) {
+// TLSClientOption builds the gRPC dial option used to reach a gRPC peer
+// over the §4.7/§10.3 mTLS link. When certFile and keyFile are supplied
+// the dialer presents that client certificate; caFile verifies the
+// peer's server certificate. When all three are empty the dial is
+// plaintext, which is intended only for local development.
+//
+// Optional mods run after the base config is assembled. The §10.3
+// NET-060 adapter→gateway dial passes WithServerName(gatewaycontrol.GatewayDNSName)
+// so the gateway's DNS SAN is pinned (spec line 322); the gateway→adapter
+// dial passes no mod because a pod's serving certificate carries a
+// SPIFFE URI SAN rather than a DNS name.
+func TLSClientOption(certFile, keyFile, caFile string, mods ...TLSConfigMod) (grpc.DialOption, error) {
 	if certFile == "" && keyFile == "" && caFile == "" {
 		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 	}
@@ -95,6 +129,9 @@ func TLSClientOption(certFile, keyFile, caFile string) (grpc.DialOption, error) 
 			return nil, errors.New("adapter server CA file contains no usable certificate")
 		}
 		cfg.RootCAs = pool
+	}
+	for _, m := range mods {
+		m(cfg)
 	}
 	return grpc.WithTransportCredentials(credentials.NewTLS(cfg)), nil
 }
