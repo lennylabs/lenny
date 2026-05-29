@@ -72,8 +72,8 @@ func TestExtendLeaseGranted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TreeBudget: %v", err)
 	}
-	if tb.CurrentTokenBudget != 300_000 {
-		t.Errorf("current budget = %d, want 300000", tb.CurrentTokenBudget)
+	if tb.Current.Tokens != 300_000 {
+		t.Errorf("current budget = %d, want 300000", tb.Current.Tokens)
 	}
 }
 
@@ -203,8 +203,8 @@ func TestExtendLeaseRejectedDuringCoolOff(t *testing.T) {
 
 	// The denied request must not raise the budget.
 	tb, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
-	if tb.CurrentTokenBudget != 100_000 {
-		t.Errorf("current budget = %d, want 100000 (rejection must not grant)", tb.CurrentTokenBudget)
+	if tb.Current.Tokens != 100_000 {
+		t.Errorf("current budget = %d, want 100000 (rejection must not grant)", tb.Current.Tokens)
 	}
 }
 
@@ -349,13 +349,13 @@ func TestExtendLeaseChildSessionResolvesTree(t *testing.T) {
 		t.Errorf("status = %v, want GRANTED", resp.Status)
 	}
 	childView, _ := budgets.TreeBudget(context.Background(), "acme", "child-7")
-	if childView.CurrentTokenBudget != 150_000 {
-		t.Errorf("child view = %d, want 150000 — the requester sees its own bump", childView.CurrentTokenBudget)
+	if childView.Current.Tokens != 150_000 {
+		t.Errorf("child view = %d, want 150000 — the requester sees its own bump", childView.Current.Tokens)
 	}
 	rootView, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
-	if rootView.CurrentTokenBudget != 100_000 {
+	if rootView.Current.Tokens != 100_000 {
 		t.Errorf("root view = %d, want 100000 — extensions apply to the requesting session only (§8.6 line 737)",
-			rootView.CurrentTokenBudget)
+			rootView.Current.Tokens)
 	}
 }
 
@@ -387,14 +387,14 @@ func TestExtendLeaseExtensionScopedToRequestingSession_spec_8_6_line_737(t *test
 	ab, _ := budgets.TreeBudget(context.Background(), "acme", "sib-a")
 	bb, _ := budgets.TreeBudget(context.Background(), "acme", "sib-b")
 	eb, _ := budgets.TreeBudget(context.Background(), "acme", "sib-existing")
-	if ab.CurrentTokenBudget != 150_000 {
-		t.Errorf("sib-a view = %d, want 150000 (base + own delta)", ab.CurrentTokenBudget)
+	if ab.Current.Tokens != 150_000 {
+		t.Errorf("sib-a view = %d, want 150000 (base + own delta)", ab.Current.Tokens)
 	}
-	if bb.CurrentTokenBudget != 300_000 {
-		t.Errorf("sib-b view = %d, want 300000 (base + own delta)", bb.CurrentTokenBudget)
+	if bb.Current.Tokens != 300_000 {
+		t.Errorf("sib-b view = %d, want 300000 (base + own delta)", bb.Current.Tokens)
 	}
-	if eb.CurrentTokenBudget != 100_000 {
-		t.Errorf("sib-existing view = %d, want 100000 — sibling extensions must not bleed through", eb.CurrentTokenBudget)
+	if eb.Current.Tokens != 100_000 {
+		t.Errorf("sib-existing view = %d, want 100000 — sibling extensions must not bleed through", eb.Current.Tokens)
 	}
 }
 
@@ -479,8 +479,8 @@ func TestExtendLeaseAuditRecorded(t *testing.T) {
 	if e.Outcome != leasecontrol.AuditOutcomeCapped {
 		t.Errorf("audit outcome = %q, want capped", e.Outcome)
 	}
-	if e.RequestedTokens != 200_000 || e.GrantedTokens != 50_000 {
-		t.Errorf("audit amounts = (req %d, grant %d), want (200000, 50000)", e.RequestedTokens, e.GrantedTokens)
+	if e.Requested.Tokens != 200_000 || e.Granted.Tokens != 50_000 {
+		t.Errorf("audit amounts = (req %d, grant %d), want (200000, 50000)", e.Requested.Tokens, e.Granted.Tokens)
 	}
 	if e.RootSessionID != "root-1" || e.TenantID != "acme" {
 		t.Errorf("audit identity = (%q, %q), want (root-1, acme)", e.RootSessionID, e.TenantID)
@@ -725,8 +725,8 @@ func TestExtendLeaseAuditCarriesSpec_8_6_line_743_fields(t *testing.T) {
 	if e.ClientIP != "203.0.113.5" {
 		t.Errorf("ClientIP = %q, want 203.0.113.5", e.ClientIP)
 	}
-	if e.NewLimits.TokenBudget != 150_000 {
-		t.Errorf("NewLimits.TokenBudget = %d, want 150000 (100000 base + 50000 grant)", e.NewLimits.TokenBudget)
+	if e.NewLimits.Tokens != 150_000 {
+		t.Errorf("NewLimits.TokenBudget = %d, want 150000 (100000 base + 50000 grant)", e.NewLimits.Tokens)
 	}
 }
 
@@ -769,8 +769,8 @@ func TestExtendLeaseAuditDeniedCoolOffApproverIsClient_spec_8_6_line_743(t *test
 	if e.ApprovalMode != leasecontrol.ApprovalModeElicitation {
 		t.Errorf("ApprovalMode = %q, want elicitation", e.ApprovalMode)
 	}
-	if e.NewLimits.TokenBudget != 100_000 {
-		t.Errorf("NewLimits.TokenBudget = %d, want 100000 (no grant applied)", e.NewLimits.TokenBudget)
+	if e.NewLimits.Tokens != 100_000 {
+		t.Errorf("NewLimits.TokenBudget = %d, want 100000 (no grant applied)", e.NewLimits.Tokens)
 	}
 }
 
@@ -899,11 +899,11 @@ func (r *raceBudgetSource) TreeBudget(ctx context.Context, tenantID, sessionID s
 	return r.inner.TreeBudget(ctx, tenantID, sessionID)
 }
 
-func (r *raceBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, grantedTokens, grantedSeconds int64) (leasecontrol.NewLimits, error) {
+func (r *raceBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted leasecontrol.Dimensions) (leasecontrol.NewLimits, error) {
 	if r.denyOnApply {
 		r.inner.MarkDenied(rootSessionID)
 	}
-	return r.inner.ApplyGrant(ctx, tenantID, rootSessionID, requestingSessionID, grantedTokens, grantedSeconds)
+	return r.inner.ApplyGrant(ctx, tenantID, rootSessionID, requestingSessionID, granted)
 }
 
 func (r *raceBudgetSource) RejectionCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration {
@@ -938,7 +938,7 @@ func (e errBudgetSource) TreeBudget(context.Context, string, string) (leasecontr
 	return leasecontrol.TreeBudget{}, e.err
 }
 
-func (e errBudgetSource) ApplyGrant(context.Context, string, string, string, int64, int64) (leasecontrol.NewLimits, error) {
+func (e errBudgetSource) ApplyGrant(context.Context, string, string, string, leasecontrol.Dimensions) (leasecontrol.NewLimits, error) {
 	return leasecontrol.NewLimits{}, e.err
 }
 
@@ -1162,8 +1162,8 @@ func TestExtendLeaseSecondsDimensionGranted_spec_8_6_line_643(t *testing.T) {
 		t.Errorf("granted_seconds = %d, want %d", got, want)
 	}
 	tb, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
-	if tb.CurrentMaxAgeSeconds != 1500 {
-		t.Errorf("current max age = %d, want 1500 (600 + 900)", tb.CurrentMaxAgeSeconds)
+	if tb.Current.Seconds != 1500 {
+		t.Errorf("current max age = %d, want 1500 (600 + 900)", tb.Current.Seconds)
 	}
 }
 
@@ -1260,8 +1260,8 @@ func TestExtendLeaseSecondsDimensionAudited_spec_8_6_line_743(t *testing.T) {
 		t.Fatalf("audit entries = %d, want 1", len(rec.entries))
 	}
 	e := rec.entries[0]
-	if e.RequestedSeconds != 900 || e.GrantedSeconds != 900 {
-		t.Errorf("audit seconds = (req %d, grant %d), want (900, 900)", e.RequestedSeconds, e.GrantedSeconds)
+	if e.Requested.Seconds != 900 || e.Granted.Seconds != 900 {
+		t.Errorf("audit seconds = (req %d, grant %d), want (900, 900)", e.Requested.Seconds, e.Granted.Seconds)
 	}
 }
 

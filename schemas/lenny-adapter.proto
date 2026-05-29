@@ -872,10 +872,28 @@ message ReportUsageResponse {
   int64 wall_clock_ms = 3;
 }
 
+// FileExportLimitsDelta is the §8.6 line 643 fileExportLimits extension:
+// the additional file-count and total-byte headroom an ExtendLease
+// request asks for, and the amount the gateway granted on the response.
+// fileExportLimits is one of the six extendable dimensions; it carries
+// two scalar components so the wire mirrors the policy field's shape.
+// F-8.6.1.
+message FileExportLimitsDelta {
+  int64 additional_max_files = 1;
+  int64 additional_max_bytes = 2;
+}
+
 message ExtendLeaseRequest {
   SessionId session_id = 1;
   int64 requested_tokens = 2;
   int32 requested_seconds = 3;
+  // §8.6 line 643 extendable dimensions beyond maxTokenBudget (field 2)
+  // and perChildMaxAge (field 3). Zero — or an absent message, for
+  // file_export_limits — requests no change on that dimension. F-8.6.1.
+  int64 requested_children = 4;          // additionalChildren → maxChildrenTotal
+  int64 requested_parallel_children = 5; // maxParallelChildren
+  int64 requested_tree_size = 6;         // maxTreeSize
+  FileExportLimitsDelta requested_file_export_limits = 7; // fileExportLimits
 }
 
 message ExtendLeaseResponse {
@@ -908,6 +926,15 @@ message ExtendLeaseResponse {
   // the status field.
   // spec: §15.1 line 1080; F-8.6.9
   Error error = 7;
+  // §8.6 granted amounts for the extendable dimensions beyond
+  // granted_tokens (field 2) and granted_seconds (field 3). Each is the
+  // amount actually added to the tree budget after the §8.6 ceilings,
+  // so the adapter knows exactly what it received per dimension.
+  // F-8.6.1.
+  int64 granted_children = 8;
+  int64 granted_parallel_children = 9;
+  int64 granted_tree_size = 10;
+  FileExportLimitsDelta granted_file_export_limits = 11;
 
   enum Status {
     STATUS_UNSPECIFIED = 0;

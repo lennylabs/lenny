@@ -43,40 +43,39 @@ type MemoryBudgetSource struct {
 
 // memTree is one delegation tree's mutable §8.6 extension state.
 type memTree struct {
-	rootSessionID  string
-	tenantID       string
-	baseBudget     int64
+	rootSessionID string
+	tenantID      string
+
+	// base holds each §8.6 line 643 dimension's present value. base.Tokens
+	// is the configured CurrentTokenBudget, base.Seconds the
+	// CurrentMaxAgeSeconds, and so on for the remaining dimensions.
+	// F-8.6.1.
+	base Dimensions
+
+	// deployment/tenant/runtime inputs resolve the tokens dimension's
+	// layered maxExtendableBudget ceiling (§8.6 configuration layering).
 	deploymentMax  int64
 	tenantMax      int64
 	tenantBase     int64
 	runtimeBase    int64
 	deploymentBase int64
 
-	// baseMaxAgeSeconds / effectiveMaxAgeSeconds carry the §8.6 line
-	// 643 additionalMaxAge dimension. The seconds dimension is
-	// independent of the tokens dimension: a request that exhausts only
-	// one of them still applies the other. F-8.6.11.
-	baseMaxAgeSeconds      int64
-	effectiveMaxAgeSeconds int64
+	// effMaxCeilings holds the flat per-dimension effective ceiling for
+	// every dimension except tokens, whose ceiling the layering above
+	// computes. The Tokens slot is ignored. A zero ceiling disables that
+	// dimension: a request against it yields CEILING_REACHED for that
+	// dimension while the others proceed independently. F-8.6.1; F-8.6.11.
+	effMaxCeilings Dimensions
 
 	// extensions records per-requesting-session §8.6 line 737-741
-	// extension bumps. Keyed by sessionID, each value carries the
-	// session-specific deltas atop the tree's baseBudget /
-	// baseMaxAgeSeconds. TreeBudget(sessionID) returns the requesting
-	// session's view (base + delta); other sessions in the same tree
-	// see the unchanged base, satisfying "Extensions apply to the
-	// requesting session only" and "Existing children are unaffected".
-	// F-8.6.12.
+	// extension deltas. Keyed by sessionID, each value carries the
+	// session-specific per-dimension deltas atop base. TreeBudget
+	// (sessionID) returns the requesting session's view (base + delta);
+	// other sessions in the same tree see the unchanged base, satisfying
+	// "Extensions apply to the requesting session only" and "Existing
+	// children are unaffected". F-8.6.12.
 	// spec: §8.6 line 737-741
-	extensions map[string]sessionExtension
-
-	// parentLeaseTokenCeiling / parentLeaseMaxAgeCeiling capture the
-	// §8.6 line 648 "parent's own lease limits" hard ceiling. Set by
-	// AddSession to the delegated child's parent grant; zero on the
-	// root session (no parent). The handler caps EffectiveMax at the
-	// parent ceiling when both are positive. F-8.6.15.
-	parentLeaseTokenCeiling  int64
-	parentLeaseMaxAgeCeiling int64
+	extensions map[string]Dimensions
 
 	// extensionDenied and coolOffExpiry are the §8.6 per-tree denial
 	// state. The in-memory source applies them tree-wide; the spec
@@ -104,27 +103,20 @@ type memTree struct {
 	successCoolOff time.Duration
 }
 
-// sessionExtension is one requesting session's accumulated §8.6 line
-// 737-741 extension deltas atop the tree's base budget. The in-memory
-// source records these per-session so a sibling reading the tree
-// budget does not observe the requester's bump.
-// F-8.6.12.
-// spec: §8.6 line 737-741
-type sessionExtension struct {
-	tokens  int64
-	seconds int64
-}
-
-// effectiveMax resolves the tree's §8.6 layered ceiling with the pure
-// pkg/leaseextension math.
-func (t *memTree) effectiveMax() int64 {
-	return leaseextension.ResolveEffectiveMax(
+// effectiveMaxDims resolves the tree's §8.6 per-dimension effective
+// ceilings: the tokens dimension via the pure pkg/leaseextension
+// layering math, every other dimension from its stored flat ceiling.
+// F-8.6.1.
+func (t *memTree) effectiveMaxDims() Dimensions {
+	d := t.effMaxCeilings
+	d.Tokens = leaseextension.ResolveEffectiveMax(
 		t.deploymentBase,
 		t.deploymentMax,
 		t.tenantBase,
 		t.tenantMax,
 		t.runtimeBase,
 	)
+	return d
 }
 
 // NewMemoryBudgetSource returns an empty MemoryBudgetSource.
@@ -184,6 +176,22 @@ type TreeConfig struct {
 	// this value. F-8.6.11.
 	EffectiveMaxAgeSeconds int64
 
+	// The §8.6 line 643 extendable dimensions beyond tokens and seconds:
+	// maxChildrenTotal, maxParallelChildren, maxTreeSize, and the two
+	// fileExportLimits components. Each carries a current value and a
+	// flat effective ceiling, following the seconds-dimension pattern. A
+	// zero ceiling disables that dimension. F-8.6.1.
+	CurrentChildren              int64
+	EffectiveMaxChildren         int64
+	CurrentParallelChildren      int64
+	EffectiveMaxParallelChildren int64
+	CurrentTreeSize              int64
+	EffectiveMaxTreeSize         int64
+	CurrentFileExportFiles       int64
+	EffectiveMaxFileExportFiles  int64
+	CurrentFileExportBytes       int64
+	EffectiveMaxFileExportBytes  int64
+
 	// RejectionCoolOff overrides DefaultRejectionCoolOff for the tree.
 	RejectionCoolOff time.Duration
 
@@ -217,6 +225,29 @@ type SessionLease struct {
 	// grant at the parent lease's perChildMaxAge value. Zero means "no
 	// cap on this dimension".
 	MaxAgeCeiling int64
+
+	// The remaining §8.6 line 643 dimensions' parent-lease caps. Zero on
+	// any of them disables that dimension's per-parent cap. F-8.6.1.
+	ChildrenCeiling         int64
+	ParallelChildrenCeiling int64
+	TreeSizeCeiling         int64
+	FileExportFilesCeiling  int64
+	FileExportBytesCeiling  int64
+}
+
+// ceilings projects the SessionLease onto a Dimensions value so the
+// handler's per-dimension ceiling computation reads it uniformly.
+// F-8.6.1.
+func (l SessionLease) ceilings() Dimensions {
+	return Dimensions{
+		Tokens:           l.TokenCeiling,
+		Seconds:          l.MaxAgeCeiling,
+		Children:         l.ChildrenCeiling,
+		ParallelChildren: l.ParallelChildrenCeiling,
+		TreeSize:         l.TreeSizeCeiling,
+		FileExportFiles:  l.FileExportFilesCeiling,
+		FileExportBytes:  l.FileExportBytesCeiling,
+	}
 }
 
 // RegisterTree records a delegation tree's §8.6 budget configuration,
@@ -230,20 +261,34 @@ func (m *MemoryBudgetSource) RegisterTree(rootSessionID string, cfg TreeConfig) 
 		mode = DefaultApprovalMode
 	}
 	m.trees[rootSessionID] = &memTree{
-		rootSessionID:          rootSessionID,
-		tenantID:               cfg.TenantID,
-		baseBudget:             cfg.CurrentTokenBudget,
-		deploymentBase:         cfg.DeploymentBase,
-		deploymentMax:          cfg.DeploymentMax,
-		tenantBase:             cfg.TenantBase,
-		tenantMax:              cfg.TenantMax,
-		runtimeBase:            cfg.RuntimeBase,
-		baseMaxAgeSeconds:      cfg.CurrentMaxAgeSeconds,
-		effectiveMaxAgeSeconds: cfg.EffectiveMaxAgeSeconds,
-		extensions:             map[string]sessionExtension{},
-		rejectionCoolOff:       cfg.RejectionCoolOff,
-		approvalMode:           mode,
-		successCoolOff:         cfg.SuccessCoolOff,
+		rootSessionID:  rootSessionID,
+		tenantID:       cfg.TenantID,
+		deploymentBase: cfg.DeploymentBase,
+		deploymentMax:  cfg.DeploymentMax,
+		tenantBase:     cfg.TenantBase,
+		tenantMax:      cfg.TenantMax,
+		runtimeBase:    cfg.RuntimeBase,
+		base: Dimensions{
+			Tokens:           cfg.CurrentTokenBudget,
+			Seconds:          cfg.CurrentMaxAgeSeconds,
+			Children:         cfg.CurrentChildren,
+			ParallelChildren: cfg.CurrentParallelChildren,
+			TreeSize:         cfg.CurrentTreeSize,
+			FileExportFiles:  cfg.CurrentFileExportFiles,
+			FileExportBytes:  cfg.CurrentFileExportBytes,
+		},
+		effMaxCeilings: Dimensions{
+			Seconds:          cfg.EffectiveMaxAgeSeconds,
+			Children:         cfg.EffectiveMaxChildren,
+			ParallelChildren: cfg.EffectiveMaxParallelChildren,
+			TreeSize:         cfg.EffectiveMaxTreeSize,
+			FileExportFiles:  cfg.EffectiveMaxFileExportFiles,
+			FileExportBytes:  cfg.EffectiveMaxFileExportBytes,
+		},
+		extensions:       map[string]Dimensions{},
+		rejectionCoolOff: cfg.RejectionCoolOff,
+		approvalMode:     mode,
+		successCoolOff:   cfg.SuccessCoolOff,
 	}
 	m.sessionTree[rootSessionID] = rootSessionID
 	m.sessionTenant[rootSessionID] = cfg.TenantID
@@ -352,11 +397,11 @@ func (m *MemoryBudgetSource) TenantOf(_ context.Context, sessionID string) (stri
 // TreeBudget returns the §8.6 extension state for the tree that
 // contains sessionID. The cool-off comparison uses the source's own
 // clock, which the in-memory source treats as authoritative. The
-// returned CurrentTokenBudget / CurrentMaxAgeSeconds reflect the
-// requesting session's per-session view: the tree base plus any
-// extension previously granted to sessionID itself. Siblings see the
-// unchanged base — extensions apply to the requesting session only
-// per §8.6 line 737-741. F-8.6.12.
+// returned Current dimensions reflect the requesting session's
+// per-session view: the tree base plus any extension previously granted
+// to sessionID itself. Siblings see the unchanged base — extensions
+// apply to the requesting session only per §8.6 line 737-741. F-8.6.1;
+// F-8.6.12.
 func (m *MemoryBudgetSource) TreeBudget(_ context.Context, tenantID, sessionID string) (TreeBudget, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -366,31 +411,26 @@ func (m *MemoryBudgetSource) TreeBudget(_ context.Context, tenantID, sessionID s
 	}
 	denied := t.extensionDenied && m.clock().Before(t.coolOffExpiry)
 	parent := m.parentLease[sessionID]
-	ext := t.extensions[sessionID]
 	return TreeBudget{
-		RootSessionID:             t.rootSessionID,
-		CurrentTokenBudget:        t.baseBudget + ext.tokens,
-		EffectiveMax:              t.effectiveMax(),
-		ParentLeaseTokenCeiling:   parent.TokenCeiling,
-		CurrentMaxAgeSeconds:      t.baseMaxAgeSeconds + ext.seconds,
-		EffectiveMaxMaxAgeSeconds: t.effectiveMaxAgeSeconds,
-		ParentLeaseMaxAgeCeiling:  parent.MaxAgeCeiling,
-		ExtensionDenied:           denied,
-		CoolOffExpiry:             t.coolOffExpiry,
+		RootSessionID:   t.rootSessionID,
+		Current:         t.base.add(t.extensions[sessionID]),
+		EffectiveMax:    t.effectiveMaxDims(),
+		ParentCeiling:   parent.ceilings(),
+		ExtensionDenied: denied,
+		CoolOffExpiry:   t.coolOffExpiry,
 	}, nil
 }
 
-// ApplyGrant raises the requesting session's extension deltas by
-// grantedTokens / grantedSeconds. §8.6 lines 737-741 scope an
-// extension to the requesting session only — existing children are
-// unaffected, only new children spawned after the extension benefit
-// from the expanded parent budget — so the bump is recorded against
-// requestingSessionID rather than the tree root. ApplyGrant re-checks
-// the §8.6 extension-denied flag under the lock — the in-memory
-// analogue of the Postgres in-transaction re-check — and returns
-// ErrExtensionDenied when a denial landed since the TreeBudget read.
-// F-8.6.11; F-8.6.12.
-func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSessionID, requestingSessionID string, grantedTokens, grantedSeconds int64) (NewLimits, error) {
+// ApplyGrant raises the requesting session's extension deltas by the
+// per-dimension grant. §8.6 lines 737-741 scope an extension to the
+// requesting session only — existing children are unaffected, only new
+// children spawned after the extension benefit from the expanded parent
+// budget — so the bump is recorded against requestingSessionID rather
+// than the tree root. ApplyGrant re-checks the §8.6 extension-denied
+// flag under the lock — the in-memory analogue of the Postgres
+// in-transaction re-check — and returns ErrExtensionDenied when a denial
+// landed since the TreeBudget read. F-8.6.1; F-8.6.11; F-8.6.12.
+func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSessionID, requestingSessionID string, granted Dimensions) (NewLimits, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, err := m.lookupLocked(tenantID, rootSessionID)
@@ -401,7 +441,7 @@ func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSession
 		return NewLimits{}, ErrExtensionDenied
 	}
 	if t.extensions == nil {
-		t.extensions = map[string]sessionExtension{}
+		t.extensions = map[string]Dimensions{}
 	}
 	scope := requestingSessionID
 	if scope == "" {
@@ -410,18 +450,9 @@ func (m *MemoryBudgetSource) ApplyGrant(_ context.Context, tenantID, rootSession
 		// session test cases continue to read the bumped view.
 		scope = rootSessionID
 	}
-	ext := t.extensions[scope]
-	if grantedTokens > 0 {
-		ext.tokens += grantedTokens
-	}
-	if grantedSeconds > 0 {
-		ext.seconds += grantedSeconds
-	}
+	ext := t.extensions[scope].add(granted)
 	t.extensions[scope] = ext
-	return NewLimits{
-		TokenBudget:   t.baseBudget + ext.tokens,
-		MaxAgeSeconds: t.baseMaxAgeSeconds + ext.seconds,
-	}, nil
+	return t.base.add(ext), nil
 }
 
 // RejectionCoolOff returns the §8.6 rejectionCoolOffSeconds configured
