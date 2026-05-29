@@ -491,14 +491,15 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 	}
 	sessionsTerminated := len(liveSessions)
 	detail := map[string]any{
-		"tenantId":              tenant,
-		"mode":                  body.Mode,
-		"reason":                body.Reason,
-		"sessionsTerminated":    sessionsTerminated,
-		"podsTerminated":        fanOut.podsTerminated,
-		"leasesRevoked":         fanOut.leasesRevoked,
-		"tokensRevoked":         fanOut.tokensRevoked,
-		"elicitationsDismissed": elicitationsDismissed,
+		"tenantId":                  tenant,
+		"mode":                      body.Mode,
+		"reason":                    body.Reason,
+		"sessionsTerminated":        sessionsTerminated,
+		"podsTerminated":            fanOut.podsTerminated,
+		"leasesRevoked":             fanOut.leasesRevoked,
+		"tokensRevoked":             fanOut.tokensRevoked,
+		"playgroundSessionsRevoked": fanOut.playgroundSessionsRevoked,
+		"elicitationsDismissed":     elicitationsDismissed,
 	}
 	if len(fanOut.podTerminateFailed) > 0 {
 		detail["podTerminationFailures"] = fanOut.podTerminateFailed
@@ -506,25 +507,32 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 	if fanOut.tokenRevokeError != "" {
 		detail["tokenRevocationError"] = fanOut.tokenRevokeError
 	}
+	if fanOut.playgroundRevokeError != "" {
+		detail["playgroundRevocationError"] = fanOut.playgroundRevokeError
+	}
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.user.invalidated", subject, detail)
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]any{
-		"subject":               subject,
-		"tenantId":              tenant,
-		"mode":                  body.Mode,
-		"sessionsTerminated":    sessionsTerminated,
-		"podsTerminated":        fanOut.podsTerminated,
-		"leasesRevoked":         fanOut.leasesRevoked,
-		"tokensRevoked":         fanOut.tokensRevoked,
-		"elicitationsDismissed": elicitationsDismissed,
-		"user":                  fromUser(updated),
+		"subject":                   subject,
+		"tenantId":                  tenant,
+		"mode":                      body.Mode,
+		"sessionsTerminated":        sessionsTerminated,
+		"podsTerminated":            fanOut.podsTerminated,
+		"leasesRevoked":             fanOut.leasesRevoked,
+		"tokensRevoked":             fanOut.tokensRevoked,
+		"playgroundSessionsRevoked": fanOut.playgroundSessionsRevoked,
+		"elicitationsDismissed":     elicitationsDismissed,
+		"user":                      fromUser(updated),
 	}
 	if len(fanOut.podTerminateFailed) > 0 {
 		resp["podTerminationFailures"] = fanOut.podTerminateFailed
 	}
 	if fanOut.tokenRevokeError != "" {
 		resp["tokenRevocationError"] = fanOut.tokenRevokeError
+	}
+	if fanOut.playgroundRevokeError != "" {
+		resp["playgroundRevocationError"] = fanOut.playgroundRevokeError
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 }

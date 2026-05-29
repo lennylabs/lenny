@@ -121,6 +121,7 @@ type Router struct {
 	userPods           UserPodTerminator
 	userLeases         UserLeaseRevoker
 	userTokens         UserTokenRevoker
+	userPlayground     UserPlaygroundRevoker
 	erasureRunner      ErasureRunner
 	erasureJobs        erasurejob.Store
 	billing            billingstore.Store

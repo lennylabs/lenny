@@ -2820,11 +2820,18 @@ func main() {
 			Tenants:  playgroundTenantRegistry{store: tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
-		}).WithAuditEmitter(playgroundAuditEmitter{})
+		}).WithAuditEmitter(playgroundAuditEmitter{sink: auditSink})
 		// §27.6 line 204 — expose the per-request revocation check to the
 		// auth middleware so an origin=playground bearer is rejected on
 		// every replica once its session is revoked. F-27.6.3 / F-27.3.1.
 		playgroundRevocations = pg
+		// §11.4 / §27.6 line 204 — drive the §11.4 user-invalidation
+		// fan-out into the playground revocation primitive so an OIDC
+		// principal invalidation revokes the user's playground sessions.
+		// adminRouter is a pointer the mounted handlers read at request
+		// time, so wiring it here (after the admin mux is built) takes
+		// effect on the next invalidate call. F-27.6.4 / F-27.3.2.
+		adminRouter = adminRouter.WithPlaygroundRevocation(pg)
 		mux.Handle("/playground", pg.PlaygroundRoutes())
 		mux.Handle("/playground/", pg.PlaygroundRoutes())
 		mux.Handle("/v1/playground/token", pg.TokenRoutes())
@@ -4873,23 +4880,68 @@ func (r playgroundTenantRegistry) IsRegistered(tenantID string) (bool, error) {
 	return row.IsActive(), nil
 }
 
-// playgroundAuditEmitter bridges the playground's §27.3.1 audit
-// events to the gateway log. A durable §11.7 audit sink is wired by
-// the admin router; the playground emitter keeps a lightweight log
-// record so a bearer mint and revoke are observable without coupling
-// the playground package to the admin audit taxonomy.
-type playgroundAuditEmitter struct{}
-
-func (playgroundAuditEmitter) EmitPlaygroundEvent(_ context.Context, ev playground.AuditEvent) {
-	log.Printf("lenny-gateway: §27 audit %s tenant=%s user=%s jti=%s", ev.Type, ev.TenantID, ev.UserID, ev.BearerJTI)
+// playgroundAuditEmitter bridges the playground's §27.3.1 / §10.2
+// audit events into the durable §11.7 audit chain. spec: §27.3.1 step
+// 6 (line 156) — playground.bearer_minted and playground.bearer_revoked
+// "share the taxonomy and redaction rules of other auth events in
+// §11.7", so they are committed to the principal's per-tenant hash
+// chain, not just logged. It keeps the lightweight log line so a mint
+// and revoke remain observable in the gateway log stream, and falls
+// back to log-only when no durable sink is wired. F-27.3.5.
+type playgroundAuditEmitter struct {
+	sink admin.AuditSink
 }
 
-// EmitMintRejected logs the §10.2 line 243
-// playground.bearer_mint_rejected event so a rejected mint surfaces in
-// the gateway log alongside the metric increment.
-func (playgroundAuditEmitter) EmitMintRejected(_ context.Context, ev playground.MintRejectedEvent) {
+func (e playgroundAuditEmitter) EmitPlaygroundEvent(ctx context.Context, ev playground.AuditEvent) {
+	log.Printf("lenny-gateway: §27 audit %s tenant=%s user=%s jti=%s", ev.Type, ev.TenantID, ev.UserID, ev.BearerJTI)
+	if e.sink == nil {
+		return
+	}
+	detail := map[string]any{
+		"session_cookie_id": ev.SessionCookieID,
+		"bearer_jti":        ev.BearerJTI,
+		"origin":            ev.Origin,
+	}
+	if ev.BearerTTLSeconds > 0 {
+		detail["bearer_ttl_seconds"] = ev.BearerTTLSeconds
+	}
+	for k, v := range ev.Labels {
+		detail["label_"+k] = v
+	}
+	// The event lands on the principal's tenant chain (§11.7 is
+	// tenant-scoped); ActorSubject is the playground user.
+	e.sink.EmitAdminEvent(ctx, admin.AuditEvent{
+		Type:           ev.Type,
+		ActorSubject:   ev.UserID,
+		ActorTenantID:  ev.TenantID,
+		TargetResource: ev.SessionCookieID,
+		Detail:         detail,
+		At:             ev.At,
+	})
+}
+
+// EmitMintRejected routes the §10.2 line 243
+// playground.bearer_mint_rejected event to the durable §11.7 sink and
+// logs it alongside the metric increment. A rejection that fires before
+// tenant extraction carries an empty tenant; the sink commits it to the
+// platform chain. F-27.3.5.
+func (e playgroundAuditEmitter) EmitMintRejected(ctx context.Context, ev playground.MintRejectedEvent) {
 	log.Printf("lenny-gateway: §10.2 audit playground.bearer_mint_rejected tenant=%s subject_jti=%s subject_typ=%s invariant=%s ingress=%s",
 		ev.TenantID, ev.SubjectJTI, ev.SubjectTyp, ev.InvariantViolated, ev.IngressPath)
+	if e.sink == nil {
+		return
+	}
+	e.sink.EmitAdminEvent(ctx, admin.AuditEvent{
+		Type:          "playground.bearer_mint_rejected",
+		ActorTenantID: ev.TenantID,
+		Detail: map[string]any{
+			"subject_jti":        ev.SubjectJTI,
+			"subject_typ":        ev.SubjectTyp,
+			"invariant_violated": ev.InvariantViolated,
+			"ingress_path":       ev.IngressPath,
+		},
+		At: ev.At,
+	})
 }
 
 // splitCSV splits a comma-separated flag value into a trimmed,

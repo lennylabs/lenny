@@ -71,6 +71,23 @@ type UserTokenRevoker interface {
 	RevokeUserTokens(ctx context.Context, tenantID, subject, reason string, at time.Time) ([]string, error)
 }
 
+// UserPlaygroundRevoker revokes a user's §27 playground sessions on
+// §11.4 full_revoke. On user invalidation the gateway drives every
+// playground session the user holds through the §27.6 revocation
+// primitive (DEL the session record, deny-list each minted bearer, fan
+// the change out to peer replicas), so the user's in-flight playground
+// bearers are disconnected at the next frame boundary and a subsequent
+// POST /v1/playground/token returns 401. The playground Handler
+// satisfies it; a deployment with the playground disabled wires nil.
+type UserPlaygroundRevoker interface {
+	// RevokeSessionsForUser revokes every playground session the user
+	// holds under tenant and returns the count revoked. It is
+	// best-effort: a per-session failure is returned after the rest are
+	// attempted so a partial propagation is recorded rather than aborting
+	// full_revoke.
+	RevokeSessionsForUser(ctx context.Context, tenantID, userID string) (int, error)
+}
+
 // WithUserRevocation wires the §11.4 full_revoke fan-out dependencies
 // onto the Router: the pod terminator, the credential-lease revoker,
 // and the issued-token revoker. Each argument is independently
@@ -89,6 +106,16 @@ func (r *Router) WithUserRevocation(pods UserPodTerminator, leases UserLeaseRevo
 	return r
 }
 
+// WithPlaygroundRevocation wires the §27 playground session revoker into
+// the §11.4 full_revoke fan-out so an OIDC invalidation drives the
+// user's playground sessions through the §27.6 revocation primitive.
+// Nil leaves the playground step inactive (the playground is disabled or
+// not wired). spec: §27.3.1 line 148, §27.6 line 204.
+func (r *Router) WithPlaygroundRevocation(pg UserPlaygroundRevoker) *Router {
+	r.userPlayground = pg
+	return r
+}
+
 // fullRevokeOutcome accumulates the §11.4 full_revoke fan-out results
 // the handler reports in the audit event and the response body.
 type fullRevokeOutcome struct {
@@ -101,6 +128,12 @@ type fullRevokeOutcome struct {
 	// to the operator. Empty when the token revocation succeeded or no
 	// token revoker is wired.
 	tokenRevokeError string
+	// playgroundSessionsRevoked counts the §27 playground sessions the
+	// fan-out revoked. playgroundRevokeError is the message of a failure
+	// to reach the playground store, recorded so a partial propagation is
+	// visible. Both are zero/empty when no playground revoker is wired.
+	playgroundSessionsRevoked int
+	playgroundRevokeError     string
 }
 
 // runFullRevokeFanOut runs the §11.4 full_revoke infrastructure
@@ -144,6 +177,19 @@ func (r *Router) runFullRevokeFanOut(ctx context.Context, tenantID, userID, reas
 					r.revocationCache.Revoke(jti)
 				}
 			}
+		}
+	}
+
+	// §11.4 / §27.6 line 204: drive the user's playground sessions through
+	// the §27.6 revocation primitive so the OIDC invalidation disconnects
+	// the user's in-flight playground bearers and blocks new mints.
+	// Best-effort: a playground-store failure is recorded and does not
+	// abort the rest of full_revoke.
+	if r.userPlayground != nil {
+		n, err := r.userPlayground.RevokeSessionsForUser(ctx, tenantID, userID)
+		out.playgroundSessionsRevoked = n
+		if err != nil {
+			out.playgroundRevokeError = err.Error()
 		}
 	}
 

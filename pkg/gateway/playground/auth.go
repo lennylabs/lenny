@@ -281,6 +281,47 @@ func (h *Handler) RevokeSession(ctx context.Context, tenant, id string, reason R
 	return h.revokeSessionRecord(ctx, tenant, id, rec, reason)
 }
 
+// RevokeSessionsForUser is the §11.4 user-invalidation entry point into
+// the §27.6 revocation primitive. It revokes every playground session
+// the named user holds — DEL the session record, SET a pg:revoked
+// marker for each minted bearer, PUBLISH the fan-out — so an OIDC
+// principal invalidation (POST /v1/admin/users/{user_id}/invalidate,
+// §11.4) disconnects the user's in-flight playground bearers at the next
+// frame boundary and blocks new mints (a subsequent
+// POST /v1/playground/token finds no record and returns 401). It is
+// best-effort across the user's sessions: a per-session store error is
+// returned after the remaining sessions are attempted, so the §11.4
+// fan-out records a partial propagation rather than aborting. spec:
+// §27.3.1 line 148, §27.6 line 204.
+func (h *Handler) RevokeSessionsForUser(ctx context.Context, tenant, userID string) (int, error) {
+	if h.sessions == nil {
+		return 0, nil
+	}
+	ids, err := h.sessions.SessionsForUser(ctx, tenant, userID)
+	if err != nil {
+		return 0, err
+	}
+	var (
+		revoked  int
+		firstErr error
+	)
+	for _, id := range ids {
+		rec, err := h.sessions.GetSession(ctx, tenant, id)
+		if err != nil {
+			// Already expired or revoked: revocation is idempotent.
+			continue
+		}
+		if err := h.revokeSessionRecord(ctx, tenant, id, rec, RevokeUserInvalidated); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		revoked++
+	}
+	return revoked, firstErr
+}
+
 // IsBearerRevoked is the §27.3.1 per-request revocation check. The
 // gateway auth chain calls it for every playground-origin bearer
 // (identified by the origin claim) before the bearer is honored. A

@@ -122,6 +122,15 @@ type SessionStore interface {
 	// fails closed (503) on that error rather than honoring the
 	// bearer.
 	IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error)
+
+	// SessionsForUser returns the session ids the named user holds under
+	// tenant. The §11.4 user-invalidation fan-out
+	// (Handler.RevokeSessionsForUser) reads it to revoke every playground
+	// session the user established. The ids are a best-effort lookup
+	// hint: the caller revalidates each against GetSession, so a stale id
+	// (a session already revoked or expired) is harmless. spec: §27.3.1
+	// line 148, §11.4.
+	SessionsForUser(ctx context.Context, tenant, userID string) ([]string, error)
 }
 
 // sessionKey is the §12.4 / §27.3.1 Redis key for a playground
@@ -134,6 +143,15 @@ func sessionKey(tenant, id string) string {
 // marker.
 func revokedKey(tenant, jti string) string {
 	return "t:" + tenant + ":pg:revoked:" + jti
+}
+
+// userIndexKey is the §11.4 Redis key for the set of playground session
+// ids a user holds. The §11.4 user-invalidation fan-out reads it to
+// revoke every playground session the user established. It carries the
+// §12.4 per-tenant prefix so a cross-tenant read is impossible. spec:
+// §27.3.1 line 148, §27.6 line 204.
+func userIndexKey(tenant, userID string) string {
+	return "t:" + tenant + ":pg:user:" + userID
 }
 
 // revocationChannel is the §27.3.1 per-tenant pub/sub channel the
@@ -299,6 +317,25 @@ func (m *MemorySessionStore) IsBearerRevoked(_ context.Context, tenant, jti stri
 	return true, nil
 }
 
+// SessionsForUser implements SessionStore. It scans the in-process
+// session map for the live records the user holds under tenant. The
+// scan is always consistent (an expired or deleted record is never
+// returned), so the in-memory store needs no separate user index.
+func (m *MemorySessionStore) SessionsForUser(_ context.Context, tenant, userID string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := sessionKey(tenant, "")
+	now := m.now()
+	var ids []string
+	for key, s := range m.sessions {
+		if !strings.HasPrefix(key, prefix) || now.After(s.expiresAt) || s.rec.UserID != userID {
+			continue
+		}
+		ids = append(ids, strings.TrimPrefix(key, prefix))
+	}
+	return ids, nil
+}
+
 // RedisSessionStore is the §27.3.1 Redis-backed SessionStore. It
 // holds the session record and the revocation markers under the
 // §12.4 per-tenant key prefix, fans revocations out on the
@@ -363,13 +400,28 @@ func (s *RedisSessionStore) WithMetrics(m *Metrics) *RedisSessionStore {
 
 var _ SessionStore = (*RedisSessionStore)(nil)
 
-// PutSession implements SessionStore.
+// PutSession implements SessionStore. It writes the session record and
+// indexes the session under the user so the §11.4 user-invalidation
+// fan-out can revoke every playground session the user holds. The user
+// index is a best-effort lookup hint (RevokeSessionsForUser revalidates
+// each member against GetSession), so a member that outlives its record
+// is harmless; the index set self-expires at the session TTL.
 func (s *RedisSessionStore) PutSession(ctx context.Context, tenant, id string, rec SessionRecord, ttl time.Duration) error {
 	payload, err := json.Marshal(rec)
 	if err != nil {
 		return err
 	}
-	return s.client.Set(ctx, sessionKey(tenant, id), payload, ttl).Err()
+	pipe := s.client.TxPipeline()
+	pipe.Set(ctx, sessionKey(tenant, id), payload, ttl)
+	if rec.UserID != "" {
+		uk := userIndexKey(tenant, rec.UserID)
+		pipe.SAdd(ctx, uk, id)
+		if ttl > 0 {
+			pipe.Expire(ctx, uk, ttl)
+		}
+	}
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // GetSession implements SessionStore.
@@ -454,6 +506,13 @@ func (s *RedisSessionStore) IsBearerRevoked(ctx context.Context, tenant, jti str
 		return true, nil
 	}
 	return false, nil
+}
+
+// SessionsForUser implements SessionStore. It reads the §11.4 user
+// index set. A missing key returns an empty slice, so a user with no
+// playground session yields no ids.
+func (s *RedisSessionStore) SessionsForUser(ctx context.Context, tenant, userID string) ([]string, error) {
+	return s.client.SMembers(ctx, userIndexKey(tenant, userID)).Result()
 }
 
 // SubscribeAllRevocations runs the §27.3.1 pub/sub consume loop over a

@@ -72,6 +72,23 @@ func (f *fakeUserTokenRevoker) RevokeUserTokens(_ context.Context, tenantID, sub
 	return f.jtis, f.err
 }
 
+// fakePlaygroundRevoker records the §11.4 → §27.6 playground revocation
+// fan-out and reports a configurable count or error. It satisfies
+// admin.UserPlaygroundRevoker.
+type fakePlaygroundRevoker struct {
+	calls     int
+	gotTenant string
+	gotUser   string
+	revoked   int
+	err       error
+}
+
+func (f *fakePlaygroundRevoker) RevokeSessionsForUser(_ context.Context, tenantID, userID string) (int, error) {
+	f.calls++
+	f.gotTenant, f.gotUser = tenantID, userID
+	return f.revoked, f.err
+}
+
 // newFullRevokeAdmin builds an admin router with the §11.4 full_revoke
 // fan-out dependencies and a recording revocation cache wired.
 func newFullRevokeAdmin(t *testing.T, pods admin.UserPodTerminator, leases admin.UserLeaseRevoker, tokens admin.UserTokenRevoker) (*admin.Router, userstore.Store, sessionstore.Store, *fakeRevCache) {
@@ -425,6 +442,94 @@ func TestFullRevokeWithoutFanOutDepsStillSucceeds(t *testing.T) {
 	if resp["podsTerminated"] != float64(0) || resp["leasesRevoked"] != float64(0) ||
 		resp["tokensRevoked"] != float64(0) {
 		t.Errorf("a minimal router reported non-zero fan-out counts: %v", resp)
+	}
+}
+
+// spec: §27.6 line 204 — user.invalidated drives the §27 playground
+// revocation primitive for every session the user holds. F-27.6.4,
+// F-27.3.2.
+func TestFullRevokeRevokesPlaygroundSessions(t *testing.T) {
+	pg := &fakePlaygroundRevoker{revoked: 2}
+	users := userstore.NewMemory()
+	sessions := memstore.New()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithUsers(users).WithSessions(sessions).WithPlaygroundRevocation(pg)
+	seedUser(t, users, "acme", "alice@acme.com")
+
+	rr := invalidateUser(t, router.Handler(), "alice@acme.com",
+		admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateFullRevoke}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("full_revoke: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if pg.calls != 1 || pg.gotTenant != "acme" || pg.gotUser != "alice@acme.com" {
+		t.Fatalf("playground revoker calls=%d tenant=%q user=%q, want 1/acme/alice@acme.com",
+			pg.calls, pg.gotTenant, pg.gotUser)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["playgroundSessionsRevoked"] != float64(2) {
+		t.Errorf("playgroundSessionsRevoked = %v, want 2", resp["playgroundSessionsRevoked"])
+	}
+}
+
+func TestFullRevokeRecordsPlaygroundRevokeError(t *testing.T) {
+	// A failure to reach the playground store is recorded; the rest of
+	// full_revoke still completes and the request still succeeds.
+	pg := &fakePlaygroundRevoker{err: errors.New("playground store unreachable")}
+	leases := &fakeLeaseRevoker{revoked: 1}
+	users := userstore.NewMemory()
+	sessions := memstore.New()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithUsers(users).WithSessions(sessions).
+		WithUserRevocation(nil, leases, nil).
+		WithPlaygroundRevocation(pg)
+	seedUser(t, users, "acme", "bob@acme.com")
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "run_1", TenantID: "acme", UserID: "bob@acme.com", State: session.StateRunning,
+	})
+
+	rr := invalidateUser(t, router.Handler(), "bob@acme.com",
+		admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateFullRevoke}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("full_revoke with a playground failure: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["playgroundRevocationError"] == nil {
+		t.Error("playgroundRevocationError not reported on a playground-store failure")
+	}
+	if resp["playgroundSessionsRevoked"] != float64(0) {
+		t.Errorf("playgroundSessionsRevoked = %v, want 0 on a failure", resp["playgroundSessionsRevoked"])
+	}
+	// A playground failure must not abort the rest of full_revoke.
+	if leases.calls != 1 || resp["leasesRevoked"] != float64(1) {
+		t.Errorf("lease revocation did not run after a playground failure: calls=%d body=%v",
+			leases.calls, resp["leasesRevoked"])
+	}
+	got, _ := users.Get(context.Background(), "acme", "bob@acme.com")
+	if !got.Disabled || got.DeletedAt.IsZero() {
+		t.Error("full_revoke must tombstone the user even when the playground step fails")
+	}
+}
+
+func TestSoftDisableSkipsPlaygroundRevocation(t *testing.T) {
+	pg := &fakePlaygroundRevoker{revoked: 1}
+	users := userstore.NewMemory()
+	sessions := memstore.New()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithUsers(users).WithSessions(sessions).WithPlaygroundRevocation(pg)
+	seedUser(t, users, "acme", "carol@acme.com")
+
+	rr := invalidateUser(t, router.Handler(), "carol@acme.com",
+		admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateSoftDisable}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("soft_disable: status %d", rr.Code)
+	}
+	if pg.calls != 0 {
+		t.Errorf("soft_disable drove the playground revocation %d times, want 0", pg.calls)
 	}
 }
 
