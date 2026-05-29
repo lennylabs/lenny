@@ -3,12 +3,14 @@
 package sessionserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
@@ -43,6 +45,23 @@ type EvalResponse struct {
 	CreatedAt                string             `json:"createdAt"`
 }
 
+// evalSubmittedAfterConclusion reports whether an eval submitted now
+// lands after its attributed experiment transitioned to `concluded`.
+// spec: §10.7 line 907 / line 937. An unenrolled session, an unwired
+// experiment store, or an experiment that has since been deleted yields
+// false (the submission is treated as in-window) — the eval is stored
+// regardless; only the post-conclusion flag is affected.
+func (s *Server) evalSubmittedAfterConclusion(ctx context.Context, tenantID, experimentID string) bool {
+	if experimentID == "" || s.experiments == nil {
+		return false
+	}
+	exp, err := s.experiments.Get(ctx, tenantID, experimentID)
+	if err != nil {
+		return false
+	}
+	return exp.Status == experiment.StatusConcluded
+}
+
 // evalEligible reports whether a session in state st accepts eval
 // submissions. §10.7 accepts active (running), completed, and failed
 // sessions; cancelled and expired sessions are rejected.
@@ -55,11 +74,13 @@ func evalEligible(st session.State) bool {
 // enforces the §10.7 per-session storage bound, and stores an
 // EvalResult.
 //
-// Experiment attribution (experiment_id, variant_id) and the
-// delegation-depth / inherited fields are auto-populated from the
-// session's experiment context; that context is set by the
-// ExperimentRouter, which is not yet built, so v1 stores results with
-// empty attribution.
+// Experiment attribution (experiment_id, variant_id, inherited) is
+// auto-populated from the session's experiment context. delegation_depth
+// is copied from the session record (stamped at delegation time per
+// §10.7 line 905), and submitted_after_conclusion is computed by
+// consulting the attributed experiment's current status per §10.7 lines
+// 907 / 937. An unenrolled session leaves the attribution empty and its
+// depth at 0. F-10.7.5.
 func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 	if s.evals == nil {
 		s.writeError(w, http.StatusServiceUnavailable, "EVAL_UNAVAILABLE",
@@ -113,11 +134,20 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		Score:     req.Score,
 		Scores:    req.Scores,
 		Metadata:  req.Metadata,
+		// §10.7 line 905 — delegation_depth is auto-populated from the
+		// session's delegation lineage (0 for a root session). The depth
+		// is stamped on the session row at delegation time. F-10.7.5.
+		DelegationDepth: sess.DelegationDepth,
 	}
 	if ec := sess.ExperimentContext; ec != nil {
 		result.ExperimentID = ec.ExperimentID
 		result.VariantID = ec.VariantID
 		result.Inherited = ec.Inherited
+		// §10.7 lines 907 / 937 — the eval is stored with the session's
+		// original attribution regardless of the experiment's status, but
+		// the gateway flags submissions that arrive after the experiment
+		// concluded so operators can filter them in analysis. F-10.7.5.
+		result.SubmittedAfterConclusion = s.evalSubmittedAfterConclusion(r.Context(), tenantID, ec.ExperimentID)
 	}
 	stored, err := s.evals.Put(r.Context(), result)
 	if err != nil {

@@ -221,6 +221,62 @@ func (r *Router) checkTenantIsolationFloor(ctx context.Context, principal authmw
 	}
 }
 
+// rejectIfCrossExperimentWeightsExceed runs the §4.6.2 admission-time
+// cross-experiment variant-weight aggregate check. The base pool must
+// retain a positive control-group remainder, so Σ variant_weights across
+// the candidate (when it will be active) plus every other active
+// experiment targeting the same base runtime must stay below 1.0. On
+// breach it writes 422 INVALID_VARIANT_WEIGHTS and returns false. The
+// §10.7 PoolScalingController enforces the same aggregate at reconcile
+// time; catching it at admission keeps an over-budget configuration from
+// ever activating. A paused or concluded candidate contributes nothing
+// because it diverts no traffic. spec: §4.6.2 line 545 / §10.7 line 1102.
+// F-10.7.8.
+func (r *Router) rejectIfCrossExperimentWeightsExceed(w http.ResponseWriter, ctx context.Context, candidate experimentstore.Experiment) bool {
+	if r.experiments == nil {
+		return true
+	}
+	sum := 0.0
+	if candidate.Status == experiment.StatusActive {
+		for _, v := range candidate.Variants {
+			sum += v.Weight
+		}
+	}
+	siblings, err := r.experiments.List(ctx, candidate.TenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return false
+	}
+	for _, sib := range siblings {
+		if sib.ID == candidate.ID || sib.BaseRuntime != candidate.BaseRuntime ||
+			sib.Status != experiment.StatusActive {
+			continue
+		}
+		for _, v := range sib.Variants {
+			sum += v.Weight
+		}
+	}
+	if sum >= 1 {
+		writeError(w, http.StatusUnprocessableEntity, experiment.CodeInvalidVariantWeights,
+			fmt.Sprintf("Σ variant_weights %g across active experiments on base runtime %q must be < 1 "+
+				"(the base pool retains the remainder for the control group)", sum, candidate.BaseRuntime),
+			map[string]any{"field": "variants", "value": sum, "baseRuntime": candidate.BaseRuntime})
+		return false
+	}
+	return true
+}
+
+// writeDryRun emits the §15.1 line 1140 dry-run success response: the
+// computed resource representation plus the `X-Dry-Run: true` header,
+// with no persistence and no audit emission. The status code mirrors the
+// non-dry-run success (201 for create, 200 for update). F-10.7.15.
+func writeDryRun(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("X-Dry-Run", "true")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
 func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request) {
 	var body ExperimentPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -239,6 +295,25 @@ func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request
 			map[string]any{"conflicts": conflicts})
 		return
 	}
+	if !r.rejectIfCrossExperimentWeightsExceed(w, req.Context(), exp) {
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	// §15.1 line 1140 — `?dryRun=true` runs full validation but persists
+	// nothing and emits no audit event. The §10.7 line 854/856 isolation
+	// and tenant-floor checks above already ran in this path; the
+	// remaining single-experiment definition validation (the check the
+	// store would run on Create) runs here so the dry run is exhaustive.
+	// F-10.7.15.
+	if req.URL.Query().Get("dryRun") == "true" {
+		if err := exp.Validate(); err != nil {
+			writeExperimentValidationError(w, err)
+			return
+		}
+		r.checkTenantIsolationFloor(req.Context(), principal, exp)
+		writeDryRun(w, http.StatusCreated, fromExperiment(exp))
+		return
+	}
 	if err := r.experiments.Create(req.Context(), exp); err != nil {
 		if errors.Is(err, experimentstore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -249,7 +324,6 @@ func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request
 		return
 	}
 	stored, _ := r.experiments.Get(req.Context(), tenant, exp.ID)
-	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.experiment.created", exp.ID, map[string]any{
 		"tenantId": tenant,
 		"status":   string(stored.Status),
@@ -313,11 +387,44 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
+	// §10.7: PUT replaces the definition but never the status (status
+	// transitions go through PATCH). Resolve the existing record first so
+	// the §4.6.2 cross-experiment weight check and the dry-run preview
+	// reflect the experiment's real (unchanged) status, not whatever the
+	// body claims.
+	existing, err := r.experiments.Get(req.Context(), tenant, name)
+	if err != nil {
+		if errors.Is(err, experimentstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "experiment not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
 	desired := toExperiment(body, tenant)
+	desired.ID = existing.ID
+	desired.CreatedAt = existing.CreatedAt
+	desired.Status = existing.Status
 	if conflicts := r.checkVariantIsolation(req.Context(), desired); len(conflicts) > 0 {
 		writeError(w, http.StatusUnprocessableEntity, "CONFIGURATION_CONFLICT",
 			"a variant pool's isolation profile is weaker than the base runtime",
 			map[string]any{"conflicts": conflicts})
+		return
+	}
+	if !r.rejectIfCrossExperimentWeightsExceed(w, req.Context(), desired) {
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	// §15.1 line 1140 — `?dryRun=true` validates and previews the merged
+	// definition without persisting or emitting an audit event; §10.7
+	// line 856 — the tenant-floor advisory still runs. F-10.7.15.
+	if req.URL.Query().Get("dryRun") == "true" {
+		if err := desired.Validate(); err != nil {
+			writeExperimentValidationError(w, err)
+			return
+		}
+		r.checkTenantIsolationFloor(req.Context(), principal, desired)
+		writeDryRun(w, http.StatusOK, fromExperiment(desired))
 		return
 	}
 	updated, err := r.experiments.Update(req.Context(), tenant, name, func(e *experimentstore.Experiment) error {
@@ -336,7 +443,6 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 		writeExperimentValidationError(w, err)
 		return
 	}
-	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.experiment.updated", name, map[string]any{"tenantId": tenant})
 	r.checkTenantIsolationFloor(req.Context(), principal, updated)
 	w.Header().Set("Content-Type", "application/json")

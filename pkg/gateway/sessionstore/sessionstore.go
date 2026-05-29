@@ -118,6 +118,16 @@ type Session struct {
 	// line 101. F-8.9.7 / F-8.9.8.
 	RootSessionID string
 
+	// DelegationDepth is the session's depth in its delegation tree: 0
+	// for a root (standalone) session, parent.DelegationDepth+1 for a
+	// delegated child. The §8.2 delegation Service stamps it on every
+	// child it admits; the value is invariant once the row is created.
+	// The §10.7 built-in eval endpoint copies it onto each EvalResult so
+	// the Results API `?delegation_depth=` filter and
+	// `?breakdown_by=delegation_depth` operate on truthful data. spec:
+	// §10.7 lines 868, 905. F-10.7.5.
+	DelegationDepth uint32
+
 	// ParentWorkspaceRef is the §4.5 metadata lineage pointer to the
 	// parent session's workspace object. Audit / observability only;
 	// not a reference-counted dependency.

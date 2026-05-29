@@ -85,7 +85,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	workspace_root,
 	tracing_context, cascade_on_failure,
 	COALESCE(root_session_id::text, ''),
-	tree_visibility`
+	tree_visibility,
+	delegation_depth`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -142,7 +143,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		last_seq,
 		workspace_root,
 		tracing_context, cascade_on_failure,
-		tree_visibility
+		tree_visibility,
+		delegation_depth
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -169,7 +171,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$41,
 		$42,
 		$43::jsonb, $44,
-		$46
+		$46,
+		$47
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -210,7 +213,11 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// normalises via TreeVisibility.OrDefault). The §8.2
 			// delegation Service stamps an explicit resolved value onto
 			// every child it admits. F-8.5.2 / F-8.9.2.
-			string(sess.TreeVisibility))
+			string(sess.TreeVisibility),
+			// $47 — §10.7 delegation_depth; 0 for a root session, stamped
+			// to parent.depth+1 by the §8.2 delegation Service. Invariant
+			// after creation, so it is absent from updateSQL. F-10.7.5.
+			int(sess.DelegationDepth))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -577,6 +584,8 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §8.5 tree_visibility visibility boundary from migration 0094
 		// (F-8.5.2 / F-8.9.2).
 		treeVisibility string
+		// §10.7 delegation_depth from migration 0095 (F-10.7.5).
+		delegationDepth int
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -620,9 +629,13 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §8.5 line 540 — tree_visibility scopes get_task_tree for this
 		// session; from migration 0094 (F-8.5.2 / F-8.9.2).
 		&treeVisibility,
+		// §10.7 line 905 — delegation_depth feeds the eval_results copy
+		// the Results API filters on; from migration 0095 (F-10.7.5).
+		&delegationDepth,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
+	s.DelegationDepth = uint32(delegationDepth)
 	if len(policyJSON) > 0 {
 		s.PolicyEnforcementState = policyJSON
 	}

@@ -634,6 +634,12 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		IsolationProfile: childProfile,
 		ParentSessionID:  parent.ID,
 		RootSessionID:    rootSessionID,
+		// §10.7 lines 868, 905 — the child's delegation depth is the
+		// parent's depth + 1, fixed at admission. Recording it here lets
+		// the built-in eval endpoint populate EvalResult.delegation_depth
+		// without re-walking the lineage on every submission. `depth` is
+		// the parent's depth resolved by buildLineage above. F-10.7.5.
+		DelegationDepth: uint32(depth + 1),
 		// §8.3 lines 311-319: the monotonically-resolved visibility
 		// boundary (inherited from the parent or narrowed by the lease)
 		// is stamped on the child so lenny/get_task_tree scopes the

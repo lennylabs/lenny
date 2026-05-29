@@ -286,6 +286,92 @@ func TestExperimentResultsRejectsBadFilter(t *testing.T) {
 	}
 }
 
+// TestExperimentResultsRejectsBreakdownFilterOverlap_spec_10_7_952 pins
+// §10.7 line 952: breakdown_by is not combinable with the equality /
+// exclusion filter on the same field — the combination would collapse to
+// a degenerate single-bucket response, so it is rejected with 400
+// INVALID_QUERY_PARAMS. F-10.7.10.
+func TestExperimentResultsRejectsBreakdownFilterOverlap_spec_10_7_952(t *testing.T) {
+	router, exps, _ := newResultsAdmin(t)
+	seedExperiment(t, exps, "exp_ov")
+	cases := []string{
+		"delegation_depth=0&breakdown_by=delegation_depth",
+		"inherited=false&breakdown_by=inherited",
+		"exclude_post_conclusion=true&breakdown_by=submitted_after_conclusion",
+	}
+	for _, q := range cases {
+		rr := doAdminReq(t, router.Handler(), http.MethodGet,
+			"/v1/admin/experiments/exp_ov/results?tenantId=acme&"+q, nil, withAdminPrincipal)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", q, rr.Code)
+			continue
+		}
+		var resp map[string]any
+		_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+		errBlk, _ := resp["error"].(map[string]any)
+		if errBlk["code"] != "INVALID_QUERY_PARAMS" {
+			t.Errorf("%s: code = %v, want INVALID_QUERY_PARAMS", q, errBlk["code"])
+		}
+	}
+}
+
+// TestExperimentResultsAllowsBreakdownWithDifferentFilter_spec_10_7_952
+// pins that filtering one field and breaking down by a different field is
+// permitted — only the same-field overlap is rejected. F-10.7.10.
+func TestExperimentResultsAllowsBreakdownWithDifferentFilter_spec_10_7_952(t *testing.T) {
+	router, exps, _ := newResultsAdmin(t)
+	seedExperiment(t, exps, "exp_ok")
+	rr := doAdminReq(t, router.Handler(), http.MethodGet,
+		"/v1/admin/experiments/exp_ok/results?tenantId=acme&delegation_depth=0&breakdown_by=inherited",
+		nil, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Errorf("filter on one field + breakdown on another: status %d, want 200, body %s",
+			rr.Code, rr.Body.String())
+	}
+}
+
+// TestExperimentResultsPerDimensionCount_spec_10_7_1088 pins §10.7 line
+// 1088: a dimension's count equals the number of EvalResult rows that
+// supplied a non-null value for that dimension, which may be lower than
+// the enclosing scorer's count when some rows omit the dimension.
+// F-10.7.9.
+func TestExperimentResultsPerDimensionCount_spec_10_7_1088(t *testing.T) {
+	router, exps, evals := newResultsAdmin(t)
+	seedExperiment(t, exps, "exp_dim")
+	put := func(sessionID string, scores map[string]float64) {
+		if _, err := evals.Put(context.Background(), evalstore.EvalResult{
+			TenantID: "acme", SessionID: sessionID, ExperimentID: "exp_dim",
+			VariantID: "treatment", Scorer: "judge", Score: scorePtr(0.5), Scores: scores,
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	put("s1", map[string]float64{"coherence": 0.9, "relevance": 0.8})
+	put("s2", map[string]float64{"coherence": 0.7}) // omits relevance
+	rr := doAdminReq(t, router.Handler(), http.MethodGet,
+		"/v1/admin/experiments/exp_dim/results?tenantId=acme", nil, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("results: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var res admin.ExperimentResults
+	_ = json.Unmarshal(rr.Body.Bytes(), &res)
+	var judge admin.ScorerStats
+	for _, v := range res.Variants {
+		if v.VariantID == "treatment" {
+			judge = v.Scorers["judge"]
+		}
+	}
+	if judge.Count != 2 {
+		t.Errorf("scorer count = %d, want 2", judge.Count)
+	}
+	if judge.Dimensions["coherence"].Count != 2 {
+		t.Errorf("coherence count = %d, want 2 (both rows supplied it)", judge.Dimensions["coherence"].Count)
+	}
+	if judge.Dimensions["relevance"].Count != 1 {
+		t.Errorf("relevance count = %d, want 1 (one row omitted it)", judge.Dimensions["relevance"].Count)
+	}
+}
+
 func TestExperimentResultsNotFound(t *testing.T) {
 	router, _, _ := newResultsAdmin(t)
 	rr := doAdminReq(t, router.Handler(), http.MethodGet,

@@ -236,6 +236,58 @@ func TestDelegateChildInheritsParentRootSessionID_spec_8_9_1010(t *testing.T) {
 	}
 }
 
+// TestDelegateStampsDelegationDepth_spec_10_7_905 pins §10.7 lines
+// 868/905: a delegated child's delegation_depth is parent.depth+1, fixed
+// at admission. A root parent is depth 0, its child depth 1, and a
+// grandchild depth 2. The eval endpoint copies this onto EvalResult so
+// the Results API delegation_depth filter operates on truthful data.
+// F-10.7.5.
+func TestDelegateStampsDelegationDepth_spec_10_7_905(t *testing.T) {
+	store := memstore.New()
+	seedParent(t, store, "sess_root_p", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	root, _ := store.Get(context.Background(), "acme", "sess_root_p")
+	if root.DelegationDepth != 0 {
+		t.Fatalf("root.DelegationDepth = %d, want 0", root.DelegationDepth)
+	}
+	svc := newService(t, store, func() string { return "sess_kid" })
+	res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_root_p",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	if res.Child.DelegationDepth != 1 {
+		t.Errorf("child.DelegationDepth = %d, want 1", res.Child.DelegationDepth)
+	}
+	// The stamped depth must survive the round-trip through the store.
+	persisted, _ := store.Get(context.Background(), "acme", "sess_kid")
+	if persisted.DelegationDepth != 1 {
+		t.Errorf("persisted child.DelegationDepth = %d, want 1", persisted.DelegationDepth)
+	}
+	if _, err := store.Update(context.Background(), "acme", "sess_kid", func(s *sessionstore.Session) error {
+		s.State = session.StateRunning
+		return nil
+	}); err != nil {
+		t.Fatalf("Update kid to running: %v", err)
+	}
+	svc2 := newService(t, store, func() string { return "sess_gc" })
+	res2, err := svc2.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_kid",
+		RuntimeRef:       "claude",
+		PoolRef:          "pool-c",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err != nil {
+		t.Fatalf("Delegate grandchild: %v", err)
+	}
+	if res2.Child.DelegationDepth != 2 {
+		t.Errorf("grandchild.DelegationDepth = %d, want 2", res2.Child.DelegationDepth)
+	}
+}
+
 func TestDelegateRejectsNonRunningParent(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()

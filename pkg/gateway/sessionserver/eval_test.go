@@ -12,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -33,8 +35,35 @@ func evalServer(t *testing.T, maxPerSession int, seed ...sessionstore.Session) (
 	return srv.Handler(), evals
 }
 
+func evalServerWithExperiments(t *testing.T, exps experimentstore.Store, seed ...sessionstore.Session) (http.Handler, evalstore.Store) {
+	t.Helper()
+	store := memstore.New()
+	for _, s := range seed {
+		if err := store.Create(context.Background(), s); err != nil {
+			t.Fatalf("seed session %q: %v", s.ID, err)
+		}
+	}
+	evals := evalstore.NewMemory(0, nil)
+	srv := sessionserver.New(store, sessionserver.Options{Evals: evals, Experiments: exps})
+	return srv.Handler(), evals
+}
+
 func evalSession(id string, state session.State) sessionstore.Session {
 	return sessionstore.Session{ID: id, TenantID: "default", UserID: "alice", State: state}
+}
+
+// concludedExperiment seeds a valid §10.7 experiment in the given status.
+func seedExperiment(t *testing.T, exps experimentstore.Store, id string, status experiment.Status) {
+	t.Helper()
+	if err := exps.Create(context.Background(), experimentstore.Experiment{
+		ID: id, TenantID: "default", Status: status, BaseRuntime: "claude",
+		Variants:      []experimentstore.Variant{{ID: "treatment", Weight: 0.5}},
+		TargetingMode: experiment.TargetingPercentage,
+		Sticky:        experiment.StickyUser,
+		Propagation:   experiment.PropagationInherit,
+	}); err != nil {
+		t.Fatalf("seed experiment %q: %v", id, err)
+	}
 }
 
 func postEval(t *testing.T, h http.Handler, sessionID string, body sessionserver.EvalRequest) *httptest.ResponseRecorder {
@@ -187,5 +216,128 @@ func TestEvalResponseCarriesExperimentAttribution_spec_10_7(t *testing.T) {
 	}
 	if strings.Contains(rr2.Body.String(), `"experimentId"`) || strings.Contains(rr2.Body.String(), `"variantId"`) {
 		t.Errorf("unenrolled response should omit empty attribution fields: %s", rr2.Body.String())
+	}
+}
+
+// TestEvalPopulatesDelegationDepth_spec_10_7_905 pins §10.7 lines
+// 868/905: the eval endpoint copies the session's stamped
+// delegation_depth onto the EvalResult so the Results API
+// `?delegation_depth=` filter and `?breakdown_by=delegation_depth`
+// operate on truthful data. F-10.7.5.
+func TestEvalPopulatesDelegationDepth_spec_10_7_905(t *testing.T) {
+	deep := sessionstore.Session{
+		ID: "sess_deep", TenantID: "default", UserID: "alice",
+		State: session.StateRunning, DelegationDepth: 3,
+	}
+	h, evals := evalServer(t, 0, deep)
+	rr := postEval(t, h, "sess_deep", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("eval: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.EvalResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.DelegationDepth != 3 {
+		t.Errorf("response delegationDepth = %d, want 3", resp.DelegationDepth)
+	}
+	rows, _ := evals.ListBySession(context.Background(), "default", "sess_deep")
+	if len(rows) != 1 || rows[0].DelegationDepth != 3 {
+		t.Errorf("stored delegation_depth = %+v, want one row at depth 3", rows)
+	}
+}
+
+// TestEvalRootSessionDelegationDepthZero_spec_10_7_905 pins that a root
+// session yields depth 0 and the response omits the zero field. F-10.7.5.
+func TestEvalRootSessionDelegationDepthZero_spec_10_7_905(t *testing.T) {
+	h, evals := evalServer(t, 0, evalSession("sess_root", session.StateRunning))
+	rr := postEval(t, h, "sess_root", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("eval: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), `"delegationDepth"`) {
+		t.Errorf("root session response should omit zero delegationDepth: %s", rr.Body.String())
+	}
+	rows, _ := evals.ListBySession(context.Background(), "default", "sess_root")
+	if len(rows) != 1 || rows[0].DelegationDepth != 0 {
+		t.Errorf("stored delegation_depth = %+v, want one row at depth 0", rows)
+	}
+}
+
+// TestEvalSubmittedAfterConclusion_spec_10_7_907 pins §10.7 lines
+// 907/937: an eval submitted against a session whose attributed
+// experiment has concluded is stored with the original attribution and
+// flagged submitted_after_conclusion=true. F-10.7.5.
+func TestEvalSubmittedAfterConclusion_spec_10_7_907(t *testing.T) {
+	exps := experimentstore.NewMemory()
+	seedExperiment(t, exps, "exp-done", experiment.StatusConcluded)
+	enrolled := sessionstore.Session{
+		ID: "sess_post", TenantID: "default", UserID: "alice", State: session.StateRunning,
+		ExperimentContext: &sessionstore.ExperimentContext{ExperimentID: "exp-done", VariantID: "treatment"},
+	}
+	h, evals := evalServerWithExperiments(t, exps, enrolled)
+	rr := postEval(t, h, "sess_post", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("eval: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.EvalResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if !resp.SubmittedAfterConclusion {
+		t.Errorf("submittedAfterConclusion = false, want true (experiment concluded)")
+	}
+	if resp.ExperimentID != "exp-done" {
+		t.Errorf("experimentId = %q, want exp-done (attribution preserved post-conclusion)", resp.ExperimentID)
+	}
+	rows, _ := evals.ListBySession(context.Background(), "default", "sess_post")
+	if len(rows) != 1 || !rows[0].SubmittedAfterConclusion {
+		t.Errorf("stored submitted_after_conclusion = %+v, want one flagged row", rows)
+	}
+}
+
+// TestEvalNotSubmittedAfterConclusionWhenActive_spec_10_7_907 pins that
+// an active experiment's evals are not flagged. F-10.7.5.
+func TestEvalNotSubmittedAfterConclusionWhenActive_spec_10_7_907(t *testing.T) {
+	exps := experimentstore.NewMemory()
+	seedExperiment(t, exps, "exp-live", experiment.StatusActive)
+	enrolled := sessionstore.Session{
+		ID: "sess_live", TenantID: "default", UserID: "alice", State: session.StateRunning,
+		ExperimentContext: &sessionstore.ExperimentContext{ExperimentID: "exp-live", VariantID: "treatment"},
+	}
+	h, _ := evalServerWithExperiments(t, exps, enrolled)
+	rr := postEval(t, h, "sess_live", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	var resp sessionserver.EvalResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.SubmittedAfterConclusion {
+		t.Errorf("submittedAfterConclusion = true, want false (experiment active)")
+	}
+	if strings.Contains(rr.Body.String(), `"submittedAfterConclusion"`) {
+		t.Errorf("active-experiment response should omit the false flag: %s", rr.Body.String())
+	}
+}
+
+// TestEvalSubmittedAfterConclusionUnresolvedIsFalse_spec_10_7_907 pins
+// that an unenrolled session and an unwired experiment store both leave
+// the flag false rather than erroring — the eval is still stored.
+// F-10.7.5.
+func TestEvalSubmittedAfterConclusionUnresolvedIsFalse_spec_10_7_907(t *testing.T) {
+	// Unenrolled session, experiment store wired.
+	exps := experimentstore.NewMemory()
+	h, _ := evalServerWithExperiments(t, exps, evalSession("sess_plain", session.StateRunning))
+	rr := postEval(t, h, "sess_plain", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("unenrolled eval: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	// Enrolled in a concluded experiment, but the experiment store is not
+	// wired: the handler must fail open (flag false), not panic.
+	enrolled := sessionstore.Session{
+		ID: "sess_nostore", TenantID: "default", UserID: "alice", State: session.StateRunning,
+		ExperimentContext: &sessionstore.ExperimentContext{ExperimentID: "exp-x", VariantID: "treatment"},
+	}
+	h2, evals := evalServer(t, 0, enrolled)
+	rr2 := postEval(t, h2, "sess_nostore", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	if rr2.Code != http.StatusCreated {
+		t.Fatalf("no-store eval: status %d, body %s", rr2.Code, rr2.Body.String())
+	}
+	rows, _ := evals.ListBySession(context.Background(), "default", "sess_nostore")
+	if len(rows) != 1 || rows[0].SubmittedAfterConclusion {
+		t.Errorf("no-store enrolled eval should leave flag false: %+v", rows)
 	}
 }

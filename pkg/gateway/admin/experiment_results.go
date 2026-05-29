@@ -103,6 +103,16 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 			"breakdown_by must be delegation_depth, inherited, or submitted_after_conclusion", nil)
 		return
 	}
+	// spec: §10.7 line 952 — breakdown_by is not combinable with the
+	// equality/exclusion filter on the same field, since filtering a field
+	// to a single value and then bucketing by it yields a degenerate
+	// single-bucket response. F-10.7.10.
+	if p := conflictingFilterParam(breakdownBy); p != "" && req.URL.Query().Get(p) != "" {
+		writeError(w, http.StatusBadRequest, "INVALID_QUERY_PARAMS",
+			"breakdown_by="+breakdownBy+" cannot be combined with the "+p+
+				" filter on the same field", nil)
+		return
+	}
 
 	byVariant := map[string][]evalstore.EvalResult{}
 	for _, row := range rows {
@@ -222,6 +232,25 @@ func aggregateVariant(variantID string, rows []evalstore.EvalResult) VariantResu
 func validBreakdownField(field string) bool {
 	return field == "delegation_depth" || field == "inherited" ||
 		field == "submitted_after_conclusion"
+}
+
+// conflictingFilterParam returns the §10.7 equality/exclusion filter
+// query parameter that operates on the same field as a breakdown_by
+// dimension, or "" when breakdownBy names no field with such a filter.
+// The Results API rejects breakdown_by combined with this filter
+// (§10.7 line 952): exclude_post_conclusion restricts
+// submitted_after_conclusion to a single value, the analogue of an
+// equality filter for the boolean and numeric fields. F-10.7.10.
+func conflictingFilterParam(breakdownBy string) string {
+	switch breakdownBy {
+	case "delegation_depth":
+		return "delegation_depth"
+	case "inherited":
+		return "inherited"
+	case "submitted_after_conclusion":
+		return "exclude_post_conclusion"
+	}
+	return ""
 }
 
 // breakdownValue extracts the breakdown-field value from a row.

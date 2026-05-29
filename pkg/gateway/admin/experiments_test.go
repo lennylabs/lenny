@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -319,3 +320,135 @@ func TestExperimentTenantAdminScoped(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// weightedPayload builds a §10.7 experiment payload with a single
+// variant of the given weight on the given base runtime.
+func weightedPayload(id, baseRuntime string, weight float64) admin.ExperimentPayload {
+	p := validExperimentPayload(id)
+	p.BaseRuntime = baseRuntime
+	p.Variants = []admin.ExperimentVariant{{ID: "treatment", Weight: weight}}
+	return p
+}
+
+// TestCreateExperimentRejectsCrossExperimentWeights_spec_4_6_2 pins
+// §4.6.2 line 545: Σ variant_weights across all active experiments on
+// the same base runtime must stay < 1, rejected at admission with
+// INVALID_VARIANT_WEIGHTS. F-10.7.8.
+func TestCreateExperimentRejectsCrossExperimentWeights_spec_4_6_2(t *testing.T) {
+	router, _, _ := newExperimentAdmin(t)
+	if rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+		weightedPayload("exp_a", "claude-worker", 0.6), withAdminPrincipal); rr.Code != http.StatusCreated {
+		t.Fatalf("first experiment: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	// A second active experiment on the same base would push the aggregate
+	// to 1.1 — the base pool would have no control-group remainder.
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+		weightedPayload("exp_b", "claude-worker", 0.5), withAdminPrincipal)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("cross-experiment Σ≥1: status %d, want 422, body %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	errBlk, _ := resp["error"].(map[string]any)
+	if errBlk["code"] != "INVALID_VARIANT_WEIGHTS" {
+		t.Errorf("code = %v, want INVALID_VARIANT_WEIGHTS", errBlk["code"])
+	}
+}
+
+// TestCreateExperimentCrossWeightsScopedToBaseRuntime_spec_4_6_2 pins
+// that experiments on different base runtimes do not aggregate. F-10.7.8.
+func TestCreateExperimentCrossWeightsScopedToBaseRuntime_spec_4_6_2(t *testing.T) {
+	router, _, _ := newExperimentAdmin(t)
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+		weightedPayload("exp_a", "claude-worker", 0.6), withAdminPrincipal)
+	// Same weight, different base runtime: admitted (disjoint pools).
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+		weightedPayload("exp_b", "gemini-worker", 0.6), withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("different base runtime: status %d, want 201, body %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateExperimentCrossWeightsIgnoresInactiveSibling_spec_4_6_2 pins
+// that only active experiments contribute to the aggregate — a paused
+// sibling diverts no traffic. F-10.7.8.
+func TestCreateExperimentCrossWeightsIgnoresInactiveSibling_spec_4_6_2(t *testing.T) {
+	router, _, _ := newExperimentAdmin(t)
+	paused := weightedPayload("exp_a", "claude-worker", 0.6)
+	paused.Status = "paused"
+	if rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+		paused, withAdminPrincipal); rr.Code != http.StatusCreated {
+		t.Fatalf("paused experiment: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+		weightedPayload("exp_b", "claude-worker", 0.6), withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("active sibling with paused peer: status %d, want 201, body %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateExperimentDryRun_spec_15_1_1140 pins §15.1 line 1140:
+// ?dryRun=true performs validation, returns the computed representation
+// with X-Dry-Run: true, but persists nothing and emits no audit event.
+// F-10.7.15.
+func TestCreateExperimentDryRun_spec_15_1_1140(t *testing.T) {
+	router, exps, audit := newExperimentAdmin(t)
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments?dryRun=true",
+		validExperimentPayload("exp_dry"), withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("dryRun create: status %d, want 201, body %s", rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("X-Dry-Run") != "true" {
+		t.Errorf("X-Dry-Run = %q, want true", rr.Header().Get("X-Dry-Run"))
+	}
+	if _, err := exps.Get(context.Background(), "acme", "exp_dry"); !errors.Is(err, experimentstore.ErrNotFound) {
+		t.Errorf("dryRun create persisted the experiment: err=%v", err)
+	}
+	if snap := audit.snapshot(); len(snap) != 0 {
+		t.Errorf("dryRun create emitted audit events: %+v", snap)
+	}
+}
+
+// TestCreateExperimentDryRunStillValidates_spec_15_1_1140 pins that the
+// dry-run path runs full validation (reserved variant id rejected) and
+// persists nothing on failure. F-10.7.15.
+func TestCreateExperimentDryRunStillValidates_spec_15_1_1140(t *testing.T) {
+	router, exps, _ := newExperimentAdmin(t)
+	body := validExperimentPayload("exp_bad_dry")
+	body.Variants = []admin.ExperimentVariant{{ID: "control", Weight: 0.1}}
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments?dryRun=true",
+		body, withAdminPrincipal)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("dryRun invalid: status %d, want 422, body %s", rr.Code, rr.Body.String())
+	}
+	if _, err := exps.Get(context.Background(), "acme", "exp_bad_dry"); !errors.Is(err, experimentstore.ErrNotFound) {
+		t.Errorf("failed dryRun persisted the experiment: err=%v", err)
+	}
+}
+
+// TestUpdateExperimentDryRun_spec_15_1_1140 pins that PUT ?dryRun=true
+// validates and previews without mutating the stored definition. F-10.7.15.
+func TestUpdateExperimentDryRun_spec_15_1_1140(t *testing.T) {
+	router, exps, _ := newExperimentAdmin(t)
+	if rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+		validExperimentPayload("exp_up"), withAdminPrincipal); rr.Code != http.StatusCreated {
+		t.Fatalf("seed create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	changed := validExperimentPayload("exp_up")
+	changed.Variants = []admin.ExperimentVariant{{ID: "treatment", Weight: 0.42}}
+	rr := doAdminReq(t, router.Handler(), http.MethodPut, "/v1/admin/experiments/exp_up?dryRun=true",
+		changed, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("dryRun update: status %d, want 200, body %s", rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("X-Dry-Run") != "true" {
+		t.Errorf("X-Dry-Run = %q, want true", rr.Header().Get("X-Dry-Run"))
+	}
+	stored, err := exps.Get(context.Background(), "acme", "exp_up")
+	if err != nil {
+		t.Fatalf("Get after dryRun update: %v", err)
+	}
+	if len(stored.Variants) != 1 || stored.Variants[0].Weight != 0.1 {
+		t.Errorf("dryRun update mutated the stored definition: %+v", stored.Variants)
+	}
+}
