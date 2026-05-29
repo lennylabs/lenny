@@ -9088,7 +9088,7 @@ Each is mapped to the implementation below.
 
 ---
 
-### - [ ] F-8.6.1 — ExtendLease wire schema covers only one of three extendable dimensions [High] — OPEN
+### - [x] F-8.6.1 — ExtendLease wire schema covers only one of three extendable dimensions [High] — CLOSED
 
 **Spec:** §8.6 request payload (line 633–641) carries `additionalChildren`, `additionalTokenBudget`, `additionalMaxAge`. Extendable fields enumeration (line 643) includes `maxChildrenTotal`, `maxParallelChildren`, `maxTokenBudget`, `maxTreeSize`, `perChildMaxAge`, `fileExportLimits`.
 
@@ -9099,6 +9099,8 @@ Each is mapped to the implementation below.
 **Severity:** High — the wire and decision surface omit four of the six extendable dimensions §8.6 mandates.
 
 **Files:** `schemas/lenny-adapter.proto:506–526`; `pkg/proto/adapter/v1/lenny-adapter.pb.go:2440–2553`; `pkg/leaseextension/leaseextension.go:50–62`; `pkg/gateway/leasecontrol/leasecontrol.go:208–275`.
+
+**Resolution (ea5a80a7):** `ExtendLeaseRequest`/`ExtendLeaseResponse` now carry `requested_children`/`requested_parallel_children`/`requested_tree_size` and a `FileExportLimitsDelta` (`requested_/granted_file_export_limits`), so all six §8.6 line 643 extendable dimensions are on the wire. `leasecontrol` models the extendable set as a `Dimensions` value and runs the `leaseextension.Grant` math over each via a single `allDims` enumeration; per-dimension effective ceilings and the §8.6 line 648 parent-lease caps, the §8.6 line 737-741 per-session scoping, and the line 743 audit fields extend to every dimension. The adapter convenience wrapper still sends only tokens because its production trigger (F-8.6.6, the LLM-proxy budget-rejection caller) remains a v1 follow-on; the wire and gateway grant all dimensions.
 
 ### - [ ] F-8.6.2 — No approval-mode dispatch; the gateway acts as if `auto` mode is the only behavior [High] — OPEN
 
@@ -9124,7 +9126,7 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:250–267`; `pkg/gateway/leasecontrol/membudget.go:223–237`; `pkg/delegation/lease/lease.go`.
 
-### - [ ] F-8.6.4 — GatewayControl gRPC listener has no TLS and no auth [High] — OPEN
+### - [x] F-8.6.4 — GatewayControl gRPC listener has no TLS and no auth [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-15.3.1 — Both report that the gateway-hosted GatewayControl gRPC listener uses bare grpc.NewServer() with no mTLS/auth despite the spec mandating mTLS.
 
@@ -9137,6 +9139,8 @@ Each is mapped to the implementation below.
 **Severity:** High — security boundary missing on a budget-mutating control plane.
 
 **Files:** `cmd/lenny-gateway/main.go:1838–1858`.
+
+**Resolution (19983f41):** `newGatewayControlServer` now serves the listener with §4.7/§15.3 mTLS via `adapter.TLSServerOption(--adapter-tls-cert/key, --adapter-ca)` — the gateway presents its mesh server cert and (when `--adapter-ca` is set) requires + verifies the pod adapter's client cert (`tls.RequireAndVerifyClientCert`). A new `leasecontrol.RequireVerifiedPeerInterceptor` fails closed: every `ExtendLease` call must arrive over a verified mTLS chain, since the handler resolves identity from the request-body `session_id` and has no other proof. This closes the unauthenticated-access hole — a process without a mesh client cert can no longer reach `ExtendLease`. All-empty cert material keeps the documented local-dev plaintext path. Closes the duplicate F-15.3.1.
 
 ### - [ ] F-8.6.5 — Rejection-denial durability is in-memory only; coordinator handoff bypasses the denial [High] — OPEN
 
@@ -9174,7 +9178,7 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go`; `pkg/gateway/leasecontrol/membudget.go`.
 
-### - [ ] F-8.6.8 — Admin API for clearing the extension-denied flag does not exist [High] — OPEN
+### - [x] F-8.6.8 — Admin API for clearing the extension-denied flag does not exist [High] — CLOSED
 
 **Spec:** §8.6 (line 735) cross-links to §15.1 for `DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial`. `spec/15_external-api-surface.md:868` re-states the endpoint and its RBAC requirement.
 
@@ -9185,6 +9189,8 @@ Each is mapped to the implementation below.
 **Severity:** High — listed admin surface absent.
 
 **Files:** `pkg/gateway/admin/`; `pkg/gateway/leasecontrol/membudget.go:176–183` (orphaned).
+
+**Resolution (19983f41):** Added `DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial` (`pkg/gateway/admin/lease_extension.go`), gated on `requireTenantResourceAdmin` (platform-admin or tenant-admin per §15.1 line 868) and backed by a new `MemoryBudgetSource.ClearSubtreeDenial`. The gateway now creates one `leasecontrol.MemoryBudgetSource` and shares it between the `ExtendLease` handler and the admin endpoint, so the clear mutates the same per-tree denial state the handler reads; the clear emits an `admin.delegation.extension_denial_cleared` §10.6 audit row, returns 404 for an unknown tree, and is unregistered when no GatewayControl control plane is running.
 
 ---
 
@@ -24021,7 +24027,7 @@ RPC surface) and §15.4 (machine-readable artifacts). The audit scope per the
 task brief: internal gRPC control surface, gateway↔adapter RPCs, lease
 extension, control-plane separation.
 
-### - [ ] F-15.3.1 — GatewayControl gRPC server is plaintext; spec mandates mTLS [High] — OPEN
+### - [x] F-15.3.1 — GatewayControl gRPC server is plaintext; spec mandates mTLS [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-8.6.4 — Both report that the gateway-hosted GatewayControl gRPC listener uses bare grpc.NewServer() with no mTLS/auth despite the spec mandating mTLS.
 
@@ -24060,6 +24066,8 @@ that §4.9 makes for `proxyEndpoint` (where `http://` is rejected outright).
 
 Severity: High (security/correctness). Files: `cmd/lenny-gateway/main.go:260`,
 `:1538`, `:1838–1858`.
+
+**Resolution (19983f41):** Closed by F-8.6.4. `newGatewayControlServer` now builds the listener with `adapter.TLSServerOption(--adapter-tls-cert/key, --adapter-ca)` — the same §4.7 mesh credentials the pod-facing Adapter service uses — instead of bare `grpc.NewServer()`, and `leasecontrol.RequireVerifiedPeerInterceptor` rejects any call without a verified client cert when mTLS is active. The adapter↔gateway control channel is now mTLS in production, matching §15.3 "gRPC + mTLS" and §4.7.
 
 ### - [ ] F-15.3.2 — Half of the §4.7 gateway→adapter RPC surface is absent [High] — OPEN
 
