@@ -1558,7 +1558,11 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 			DelegationLeaseID: row.ID,
 		}
 		if session.IsTerminal(row.State) {
-			child.Result, _ = json.Marshal(archivedTaskResult(row))
+			// spec: §8.8 lines 885-940 — replay the same §8.8 TaskResult
+			// body the §8.10 archive holds for this terminal child so a
+			// resumed parent's reattach payload matches the archived result.
+			// F-8.8.2.
+			child.Result, _ = json.Marshal(s.materializeTaskResult(ctx, row, 0))
 		} else {
 			anyActive = true
 			// spec: §7.2 line 153 — populate the pending_request_id when

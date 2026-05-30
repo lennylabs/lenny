@@ -11,13 +11,16 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
+	"github.com/lennylabs/lenny/pkg/task"
 	taskstate "github.com/lennylabs/lenny/pkg/task/state"
 )
 
@@ -321,7 +324,21 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 	if s.treeArchive == nil || sess.ParentSessionID == "" {
 		return
 	}
-	result, _ := json.Marshal(archivedTaskResult(sess))
+	// spec: §8.8 lines 825-827 — the envelope schemaVersion is immutable
+	// once the first writer sets it. The archive is the durable carrier of
+	// the §8.8 body, so this read-modify-write site preserves any version
+	// a prior archive of the same node already recorded (a re-archive on
+	// cascade, or a settle after a partial write). A rolling upgrade where
+	// a newer replica knows a later schema therefore cannot silently
+	// rewrite a record an older replica created. F-8.8.11.
+	existingVer := 0
+	if prev, err := s.treeArchive.GetByNode(ctx, sess.TenantID, sess.ID); err == nil {
+		var prevResult task.Result
+		if json.Unmarshal([]byte(prev.Result), &prevResult) == nil {
+			existingVer = prevResult.SchemaVersion
+		}
+	}
+	result, _ := json.Marshal(s.materializeTaskResult(ctx, sess, existingVer))
 	_ = s.treeArchive.Archive(ctx, treearchive.ArchivedNode{
 		TenantID:        sess.TenantID,
 		RootSessionID:   s.treeRoot(ctx, sess),
@@ -446,34 +463,115 @@ func (s *Server) treeRoot(ctx context.Context, sess sessionstore.Session) string
 	return cur.ID
 }
 
-// archivedTaskResult is the §8.8 TaskResult body the tree archive
-// stores for a settled child session.
-type archivedTaskResult sessionstore.Session
+// materializeTaskResult builds the §8.8 TaskResult body the tree archive
+// stores for a settled child. This is the single materialization site
+// for the rich body: the gateway has the session row, its transcript,
+// and the §12.5 artifact catalog in scope here, so it populates
+// output.parts (the child's final emitted turn) and output.artifactRefs
+// (the child's catalogued `lenny-blob://` artifacts) for a completed
+// child, and the error block (code, category, retriesExhausted) for a
+// terminal failure. usage / treeUsage stay nil: per-task usage metering
+// is not yet tracked (F-8.8.3), and §8.8 line 917 keeps treeUsage null
+// until every descendant settles. existingSchemaVersion carries the
+// version a prior archive of this node already recorded (0 when none);
+// the body preserves it per the §8.8 immutability rule. The `state`
+// field uses the §8.8 line 857 MCP protocol spelling so a resumed parent
+// replaying the archive sees the same value a live row would yield.
+// spec: §8.8 lines 855-940. F-8.8.2 / F-8.8.4 / F-8.8.7 / F-8.8.11.
+func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Session, existingSchemaVersion int) task.Result {
+	res := task.Result{
+		SchemaVersion: task.ReconcileSchemaVersion(existingSchemaVersion, task.SchemaVersion),
+		TaskID:        sess.ID,
+		State:         mcpStateForSession(sess.State),
+	}
+	if sess.State == session.StateCompleted {
+		res.Output = s.buildTaskOutput(ctx, sess)
+	} else {
+		res.Error = taskErrorForSession(sess)
+	}
+	return res
+}
 
-// MarshalJSON renders the §8.8 TaskResult fields v1 records: identity,
-// terminal state, and an error code for a non-completed terminal state.
-// The `state` field uses the §8.8 line 857 MCP protocol spelling so a
-// resumed parent rebuilding the TaskResult from the archive sees the
-// same value it would see if the session row were still live (e.g.,
-// `canceled` for cancelled, `failed` for expired). F-8.8.7.
-// spec: §8.8 lines 855-867.
-func (a archivedTaskResult) MarshalJSON() ([]byte, error) {
-	body := map[string]any{
-		"schemaVersion": 1,
-		"taskId":        a.ID,
-		"state":         mcpStateForSession(a.State),
-	}
-	if a.State != session.StateCompleted {
-		code := a.FailureReason
-		if code == "" {
-			code = "CHILD_" + strings.ToUpper(string(a.State))
+// buildTaskOutput projects the §8.8 TaskResult.output block for a
+// completed child: the child's final emitted part (the last non-caller
+// turn of its transcript, mirroring the §8.8 line 815 "terminal state on
+// the final agent turn" projection) plus every deliverable
+// `lenny-blob://` artifact the child catalogued. Both arrays are always
+// present (possibly empty) when output is set, per the §8.8 / §15.4.1
+// contract.
+// spec: §8.8 lines 888-896; §15.4.1. F-8.8.2.
+func (s *Server) buildTaskOutput(ctx context.Context, sess sessionstore.Session) *task.Output {
+	out := &task.Output{Parts: []task.OutputPart{}, ArtifactRefs: []string{}}
+	if s.transcripts != nil {
+		if entries, err := s.transcripts.Get(ctx, sess.TenantID, sess.ID); err == nil {
+			for i := len(entries) - 1; i >= 0; i-- {
+				// spec: §8.8 lines 810-817 — the transcript's user role maps
+				// to caller; assistant/system map to agent. The child's
+				// emitted result is its final agent turn.
+				if entries[i].Role != "user" {
+					out.Parts = append(out.Parts, task.TextPart(entries[i].Content))
+					break
+				}
+			}
 		}
-		body["error"] = map[string]any{
-			"code":    code,
-			"message": "child session ended in state " + string(a.State),
+	}
+	if s.artifacts != nil {
+		if rows, err := s.artifacts.ListBySession(ctx, sess.TenantID, sess.ID); err == nil {
+			for _, r := range rows {
+				if isDeliverableArtifact(r) {
+					out.ArtifactRefs = append(out.ArtifactRefs, r.URI)
+				}
+			}
 		}
 	}
-	return json.Marshal(body)
+	return out
+}
+
+// isDeliverableArtifact reports whether a §12.5 catalog row is a child's
+// deliverable output: a live (non-soft-deleted, non-tombstoned)
+// workspace or export artifact. Internal artifact kinds (checkpoint,
+// eviction_context, session_log) are gateway bookkeeping rather than the
+// child's emitted output and are excluded from artifactRefs. The empty
+// ArtifactType defaults to workspace per the §12.5 catalog Insert.
+// spec: §8.8 lines 888-896; §12.5 lines 309-321. F-8.8.2.
+func isDeliverableArtifact(r artifactcatalog.Record) bool {
+	if r.State != artifactcatalog.StateLive {
+		return false
+	}
+	switch r.ArtifactType {
+	case artifactcatalog.ArtifactTypeWorkspace, artifactcatalog.ArtifactTypeExport, "":
+		return true
+	default:
+		return false
+	}
+}
+
+// taskErrorForSession builds the §8.8 TaskResult.error block for a
+// non-completed terminal child from the session row. The code falls back
+// to the per-state CHILD_<STATE> literal when no FailureReason is set;
+// the category routes through the shared §15.2.1 classifier so the value
+// matches the REST and MCP error envelopes for the same code; and
+// retriesExhausted reports whether the gateway consumed the row's
+// automatic-recovery budget. This mirrors the mcptools row-only fallback
+// so the await path sees identical error blocks whether it reads the
+// archived body or the live row.
+// spec: §8.8 lines 922-940; §15.2.1. F-8.8.4.
+func taskErrorForSession(sess sessionstore.Session) *task.Error {
+	code := sess.FailureReason
+	if code == "" {
+		code = "CHILD_" + strings.ToUpper(string(sess.State))
+	}
+	cat, _ := errorclassify.Classify(code)
+	maxRetries := 0
+	if sess.RetryPolicy != nil {
+		maxRetries = sess.RetryPolicy.MaxRetries
+	}
+	return &task.Error{
+		Code:             code,
+		Category:         string(cat),
+		Message:          "child session ended in state " + string(sess.State),
+		RetriesExhausted: task.RetriesExhausted(sess.RetryCount, maxRetries),
+	}
 }
 
 // mcpStateForSession mirrors the §8.8 MCP projection used by the MCP

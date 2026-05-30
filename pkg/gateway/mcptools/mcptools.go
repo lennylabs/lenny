@@ -45,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
@@ -63,6 +64,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
+	"github.com/lennylabs/lenny/pkg/task"
 	taskstate "github.com/lennylabs/lenny/pkg/task/state"
 )
 
@@ -827,7 +829,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if settled {
 				body, _ := json.Marshal(struct {
-					Results []taskResult `json:"results"`
+					Results []task.Result `json:"results"`
 				}{Results: results})
 				return textResult(string(body)), nil
 			}
@@ -2669,37 +2671,51 @@ func callerTenantID(ctx context.Context, fallback string) string {
 	return "default"
 }
 
-// taskResult is the §8.8 TaskResult lenny/await_children returns for a
-// settled child. v1 reports the identity and terminal state; the §8.8
-// usage and treeUsage rollups are not yet tracked.
-type taskResult struct {
-	SchemaVersion int        `json:"schemaVersion"`
-	TaskID        string     `json:"taskId"`
-	State         string     `json:"state"`
-	Error         *taskError `json:"error,omitempty"`
-}
-
-// taskError is the §8.8 TaskResult.error payload for a non-completed
-// terminal child.
-type taskError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-// toTaskResult builds the §8.8 TaskResult for a settled child session.
-// spec: §8.8 line 855-867 — the MCP state field uses the protocol
-// spelling (`canceled`, `failed` for `expired`); the Lenny-native row
-// state is translated through state.MCPProtocolState at this boundary.
-func toTaskResult(s sessionstore.Session) taskResult {
-	tr := taskResult{SchemaVersion: 1, TaskID: s.ID, State: mcpStateForSession(s.State)}
+// toTaskResult builds the §8.8 TaskResult for a settled child session
+// from the live session row alone. It is the minimal fallback the await
+// path uses when the §8.10 archive's richer materialization (output
+// parts, artifactRefs — built where the transcript and artifact catalog
+// are in scope) is unavailable for a terminal child. The error block is
+// fully populated from the row: the code falls back to the per-state
+// `CHILD_<STATE>` literal when no FailureReason is set, the category
+// comes from the shared §15.2.1 classifier so the value matches the REST
+// and MCP error envelopes for the same code, and retriesExhausted
+// reports whether the gateway consumed the row's automatic-recovery
+// budget. Output is left nil here; a completed child's parts ride on the
+// archived body.
+// spec: §8.8 line 855-867 (MCP state spelling), lines 922-940
+// (error: code, category, message, retriesExhausted). F-8.8.4.
+func toTaskResult(s sessionstore.Session) task.Result {
+	tr := task.Result{SchemaVersion: task.SchemaVersion, TaskID: s.ID, State: mcpStateForSession(s.State)}
 	if s.State != session.StateCompleted {
-		code := s.FailureReason
-		if code == "" {
-			code = "CHILD_" + strings.ToUpper(string(s.State))
-		}
-		tr.Error = &taskError{Code: code, Message: "child session ended in state " + string(s.State)}
+		tr.Error = taskErrorForRow(s)
 	}
 	return tr
+}
+
+// taskErrorForRow builds the §8.8 TaskResult.error block for a
+// non-completed terminal child from the row. The category routes through
+// the shared §15.2.1 classifier (errorclassify.Classify), so an unknown
+// terminal code falls back to the classifier's documented (TRANSIENT,
+// retryable) pair rather than an invented category — the §8.8 example's
+// RUNTIME_CRASH → TRANSIENT mapping is exactly this fallback.
+// spec: §8.8 lines 922-940; §15.2.1. F-8.8.4.
+func taskErrorForRow(s sessionstore.Session) *task.Error {
+	code := s.FailureReason
+	if code == "" {
+		code = "CHILD_" + strings.ToUpper(string(s.State))
+	}
+	cat, _ := errorclassify.Classify(code)
+	maxRetries := 0
+	if s.RetryPolicy != nil {
+		maxRetries = s.RetryPolicy.MaxRetries
+	}
+	return &task.Error{
+		Code:             code,
+		Category:         string(cat),
+		Message:          "child session ended in state " + string(s.State),
+		RetriesExhausted: task.RetriesExhausted(s.RetryCount, maxRetries),
+	}
 }
 
 // childOutcome is a child's resolved state for lenny/await_children,
@@ -2708,7 +2724,7 @@ func toTaskResult(s sessionstore.Session) taskResult {
 type childOutcome struct {
 	parentID string
 	state    session.State
-	result   taskResult
+	result   task.Result
 	// settledAt is the wall-clock instant the child reached its terminal
 	// state. Sourced from the live row's UpdatedAt (the row mutates on
 	// terminal transition) or, when the row is gone, the §8.10 archive's
@@ -2728,21 +2744,31 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 ) (childOutcome, error) {
 	row, err := store.Get(ctx, tenant, childID)
 	if err == nil {
-		// spec: §8.8 line 945 — the live row mutates on terminal
-		// transition; UpdatedAt is the closest in-tree witness of when
-		// the row reached that state. The archive's SettledAt is more
-		// precise once the row migrates, but until then UpdatedAt is the
-		// authoritative settle witness. F-8.8.12.
-		var settled time.Time
+		oc := childOutcome{parentID: row.ParentSessionID, state: row.State, result: toTaskResult(row)}
 		if session.IsTerminal(row.State) {
-			settled = row.UpdatedAt
+			// spec: §8.8 line 945 — the live row mutates on terminal
+			// transition; UpdatedAt is the closest in-tree witness of when
+			// the row reached that state. The archive's SettledAt is more
+			// precise once the row migrates, but until then UpdatedAt is the
+			// authoritative settle witness. F-8.8.12.
+			oc.settledAt = row.UpdatedAt
+			// spec: §8.8 lines 887-917 — a terminal child's full TaskResult
+			// body (output.parts, artifactRefs) is materialized into the
+			// §8.10 archive at settle time, where the transcript and the
+			// artifact catalog are in scope. Prefer that richer body over the
+			// row-only projection; the row-only toTaskResult above remains the
+			// fallback when archiving is disabled or the node is not yet
+			// written. F-8.8.2.
+			if archive != nil {
+				if node, gerr := archive.GetByNode(ctx, tenant, childID); gerr == nil {
+					var tr task.Result
+					if json.Unmarshal([]byte(node.Result), &tr) == nil && tr.TaskID != "" {
+						oc.result = tr
+					}
+				}
+			}
 		}
-		return childOutcome{
-			parentID:  row.ParentSessionID,
-			state:     row.State,
-			result:    toTaskResult(row),
-			settledAt: settled,
-		}, nil
+		return oc, nil
 	}
 	if !errors.Is(err, sessionstore.ErrNotFound) || archive == nil {
 		return childOutcome{}, fmt.Errorf("child %s lookup: %w", childID, err)
@@ -2751,8 +2777,10 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 	if archiveErr != nil {
 		return childOutcome{}, fmt.Errorf("child %s lookup: %w", childID, err)
 	}
-	var tr taskResult
-	_ = json.Unmarshal([]byte(node.Result), &tr)
+	var tr task.Result
+	if json.Unmarshal([]byte(node.Result), &tr) != nil {
+		tr = task.Result{SchemaVersion: task.SchemaVersion, State: mcpStateForSession(session.State(node.State))}
+	}
 	if tr.TaskID == "" {
 		tr.TaskID = childID
 	}
@@ -2778,11 +2806,11 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 // spec: §8.8 lines 945-949
 func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store,
 	tenant string, childIDs []string, mode string,
-) ([]taskResult, bool, error) {
+) ([]task.Result, bool, error) {
 	type settled struct {
 		at     time.Time
 		idx    int
-		result taskResult
+		result task.Result
 	}
 	var terminal []settled
 	allTerminal := true
@@ -2812,10 +2840,10 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 				first = c
 			}
 		}
-		return []taskResult{first.result}, true, nil
+		return []task.Result{first.result}, true, nil
 	}
 	if allTerminal {
-		out := make([]taskResult, len(terminal))
+		out := make([]task.Result, len(terminal))
 		for i, t := range terminal {
 			out[i] = t.result
 		}
@@ -3022,14 +3050,26 @@ func archiveCancelled(ctx context.Context, archive treearchive.Store,
 	for _, s := range all {
 		parentOf[s.ID] = s.ParentSessionID
 	}
+	// spec: §15.2.1 — the cancel code's category is stable across nodes,
+	// so classify once before the loop. F-8.8.4.
+	cancelCat, _ := errorclassify.Classify("CHILD_CANCELLED")
 	for _, id := range cancelled {
-		result, _ := json.Marshal(taskResult{
-			SchemaVersion: 1,
+		result, _ := json.Marshal(task.Result{
+			SchemaVersion: task.SchemaVersion,
 			TaskID:        id,
-			State:         string(session.StateCancelled),
-			Error: &taskError{
-				Code:    "CHILD_CANCELLED",
-				Message: "child session ended in state cancelled",
+			// spec: §8.8 line 857 — the result body's state uses the MCP
+			// protocol spelling (`canceled`), matching the settle-path
+			// archive body so a resumed parent replaying either archive
+			// route sees the same value. F-8.8.7.
+			State: mcpStateForSession(session.StateCancelled),
+			// spec: §8.8 lines 922-940 — a cancel-cascade node carries the
+			// error block; category routes through the §15.2.1 classifier.
+			// retriesExhausted stays false: a parent-cancelled child did not
+			// consume its automatic-recovery budget. F-8.8.4.
+			Error: &task.Error{
+				Code:     "CHILD_CANCELLED",
+				Category: string(cancelCat),
+				Message:  "child session ended in state cancelled",
 			},
 		})
 		_ = archive.Archive(ctx, treearchive.ArchivedNode{

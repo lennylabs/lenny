@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/task"
 )
 
 func newMCP(t *testing.T) (*mcp.Server, sessionstore.Store) {
@@ -1952,6 +1953,139 @@ func TestAwaitChildrenSettledBlocksUntilAll_spec_8_8_945(t *testing.T) {
 	case <-got:
 	case <-time.After(2 * time.Second):
 		t.Fatal("settled mode did not return after the last child settled")
+	}
+}
+
+// awaitResults parses the lenny/await_children JSON body into the §8.8
+// TaskResult list the tool returns. F-8.8.2 / F-8.8.4.
+func awaitResults(t *testing.T, text string) []task.Result {
+	t.Helper()
+	var body struct {
+		Results []task.Result `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(text), &body); err != nil {
+		t.Fatalf("decode await_children body %q: %v", text, err)
+	}
+	return body.Results
+}
+
+// TestAwaitChildrenFailedSurfacesErrorBlock_spec_8_8_4 asserts a failed
+// child's §8.8 TaskResult.error carries the code, the §15.2.1 classifier
+// category, and retriesExhausted sourced from the row's retry budget.
+// F-8.8.4.
+func TestAwaitChildrenFailedSurfacesErrorBlock_spec_8_8_4(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	// A failed child that consumed its whole automatic-recovery budget.
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_fail", TenantID: "acme", State: session.StateFailed, ParentSessionID: "sess_p",
+		FailureReason: "DELEGATION_BUDGET_EXHAUSTED", RetryCount: 2,
+		RetryPolicy: &session.RetryPolicy{MaxRetries: 2},
+		CreatedAt:   time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed failed child: %v", err)
+	}
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_fail"],"mode":"all"}`)
+	results := awaitResults(t, resultText(t, resp))
+	if len(results) != 1 || results[0].Error == nil {
+		t.Fatalf("await_children = %+v, want one result with an error block", results)
+	}
+	e := results[0].Error
+	if e.Code != "DELEGATION_BUDGET_EXHAUSTED" || e.Category != "POLICY" || !e.RetriesExhausted {
+		t.Errorf("error block = %+v, want code=DELEGATION_BUDGET_EXHAUSTED category=POLICY retriesExhausted=true", e)
+	}
+	if results[0].State != "failed" {
+		t.Errorf("state = %q, want failed", results[0].State)
+	}
+}
+
+// TestAwaitChildrenUnknownCodeFallsBackToTransient_spec_8_8_4 covers the
+// classifier's documented fallback: a terminal child with no
+// FailureReason surfaces the per-state CHILD_<STATE> code, which is
+// unknown to the §15.2.1 table and resolves to (TRANSIENT) — the §8.8
+// RUNTIME_CRASH → TRANSIENT example is exactly this path. retriesExhausted
+// is false because the row consumed no retry budget. F-8.8.4.
+func TestAwaitChildrenUnknownCodeFallsBackToTransient_spec_8_8_4(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_c", session.StateFailed, "sess_p")
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_c"],"mode":"all"}`)
+	results := awaitResults(t, resultText(t, resp))
+	if len(results) != 1 || results[0].Error == nil {
+		t.Fatalf("await_children = %+v, want one errored result", results)
+	}
+	e := results[0].Error
+	if e.Code != "CHILD_FAILED" || e.Category != "TRANSIENT" || e.RetriesExhausted {
+		t.Errorf("error block = %+v, want code=CHILD_FAILED category=TRANSIENT retriesExhausted=false", e)
+	}
+}
+
+// TestAwaitChildrenPrefersArchivedRichBody_spec_8_8_2 asserts the await
+// path prefers the §8.10 archive's richer TaskResult body (output.parts +
+// artifactRefs, materialized at settle time where the transcript and
+// catalog are in scope) over the row-only projection for a terminal
+// child whose live row is still present. F-8.8.2.
+func TestAwaitChildrenPrefersArchivedRichBody_spec_8_8_2(t *testing.T) {
+	srv, store, archive := newMCPForArchive(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_c", session.StateCompleted, "sess_p")
+	rich, _ := json.Marshal(task.Result{
+		SchemaVersion: task.SchemaVersion,
+		TaskID:        "sess_c",
+		State:         "completed",
+		Output: &task.Output{
+			Parts:        []task.OutputPart{task.TextPart("ANSWER42")},
+			ArtifactRefs: []string{"lenny-blob://acme/workspace/sess_c/part_1"},
+		},
+	})
+	if err := archive.Archive(context.Background(), treearchive.ArchivedNode{
+		TenantID: "acme", RootSessionID: "sess_p", NodeSessionID: "sess_c",
+		ParentSessionID: "sess_p", State: "completed", Result: string(rich),
+		SettledAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed archive: %v", err)
+	}
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_c"],"mode":"all"}`)
+	results := awaitResults(t, resultText(t, resp))
+	if len(results) != 1 || results[0].Output == nil {
+		t.Fatalf("await_children = %+v, want one result carrying the archived output", results)
+	}
+	out := results[0].Output
+	if len(out.Parts) != 1 || out.Parts[0].Inline != "ANSWER42" {
+		t.Errorf("output.parts = %+v, want the archived ANSWER42 text part", out.Parts)
+	}
+	if len(out.ArtifactRefs) != 1 || out.ArtifactRefs[0] != "lenny-blob://acme/workspace/sess_c/part_1" {
+		t.Errorf("output.artifactRefs = %v, want the archived blob ref", out.ArtifactRefs)
+	}
+}
+
+// TestArchiveCancelledMCPSpellingAndCategory_spec_8_8_7 asserts a
+// cancel-cascade node lands in the §8.10 archive with the §8.8 MCP state
+// spelling (`canceled`) and a classifier-populated error block, matching
+// the settle-path body so a resumed parent replaying either route sees
+// the same value. F-8.8.7 / F-8.8.4.
+func TestArchiveCancelledMCPSpellingAndCategory_spec_8_8_7(t *testing.T) {
+	srv, store, archive := newMCPForArchive(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_c", session.StateRunning, "sess_p")
+	call(t, srv.Handler(), "lenny/cancel_child",
+		`{"parentSessionId":"sess_p","childSessionId":"sess_c"}`)
+	node, err := archive.GetByNode(context.Background(), "acme", "sess_c")
+	if err != nil {
+		t.Fatalf("archive GetByNode: %v", err)
+	}
+	var res task.Result
+	if err := json.Unmarshal([]byte(node.Result), &res); err != nil {
+		t.Fatalf("decode archived body %q: %v", node.Result, err)
+	}
+	if res.State != "canceled" {
+		t.Errorf("archived state = %q, want MCP spelling canceled", res.State)
+	}
+	if res.Error == nil || res.Error.Code != "CHILD_CANCELLED" || res.Error.Category == "" {
+		t.Errorf("archived error = %+v, want CHILD_CANCELLED with a classifier category", res.Error)
 	}
 }
 

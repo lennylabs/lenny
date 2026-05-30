@@ -2088,10 +2088,15 @@ func main() {
 		UploadTokenIssuer:       uploadIssuer,
 		UploadTokenVerifier:     uploadVerifier,
 		// F-7.4.7: §7.1 line 58 TTL = maxCreatedStateTimeoutSeconds.
-		UploadTokenTTL:             time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
-		Blobs:                      blobs,
-		Executor:                   exec,
-		Transcripts:                transcripts,
+		UploadTokenTTL: time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
+		Blobs:          blobs,
+		Executor:       exec,
+		Transcripts:    transcripts,
+		// spec: §8.8 lines 888-896 — the §8.10 archive materialization
+		// lists a settled child's catalogued artifacts to populate
+		// TaskResult.output.artifactRefs. Nil in the in-memory posture.
+		// F-8.8.2.
+		Artifacts:                  artifactCatalog,
 		Events:                     eventBus,
 		Messaging:                  messagingCoord,
 		Interactions:               interactions,

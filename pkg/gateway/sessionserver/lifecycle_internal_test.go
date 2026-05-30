@@ -313,7 +313,7 @@ func TestFailSessionEmitsTerminalLifecycle_spec_7_2_2(t *testing.T) {
 func TestEmitStatusChangeNoBusIsSafe_spec_7_2_2(t *testing.T) {
 	srv := New(memstore.New(), Options{})
 	srv.emitStatusChange("acme", "s", session.StateSuspended) // nil bus must not panic
-	srv.emitSessionComplete(sessionstore.Session{ID: "s", State: session.StateCompleted})
+	srv.emitSessionComplete(context.Background(), sessionstore.Session{ID: "s", State: session.StateCompleted})
 }
 
 // --- F-7.1.5 / F-7.1.16: artifact retention default + terminal roll ----

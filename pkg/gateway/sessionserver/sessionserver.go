@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credrouter"
@@ -114,7 +115,13 @@ type Server struct {
 	blobs           blobstore.Store
 	executor        executor.Executor
 	transcripts     transcriptstore.Store
-	events          *sessionevents.Bus
+	// artifacts is the §12.5 artifact catalog. The §8.10 archive
+	// materialization reads it (ListBySession) to populate the §8.8
+	// TaskResult.output.artifactRefs for a completed child. Nil when the
+	// catalog is not wired (in-memory / dev posture); the artifactRefs
+	// array then materializes empty. spec: §8.8 lines 888-896. F-8.8.2.
+	artifacts artifactcatalog.Store
+	events    *sessionevents.Bus
 	// messaging is the §7.2 session-inbox + DLQ coordinator. It drives
 	// the inbox-to-DLQ migration on resume_pending and the inbox+DLQ
 	// drain on terminal transition. Nil when messaging durability is not
@@ -558,6 +565,13 @@ type Options struct {
 	// `404 RESOURCE_NOT_FOUND` for every session.
 	Transcripts transcriptstore.Store
 
+	// Artifacts is the §12.5 artifact catalog. When set, the §8.10
+	// archive materialization lists a settled child's catalogued
+	// `lenny-blob://` artifacts to populate the §8.8
+	// TaskResult.output.artifactRefs. Nil leaves artifactRefs empty.
+	// spec: §8.8 lines 888-896. F-8.8.2.
+	Artifacts artifactcatalog.Store
+
 	// Events is the §15.1 session event bus backing the SSE stream.
 	// When nil, `GET /v1/sessions/{id}/events` returns
 	// `503 EVENT_STREAM_UNAVAILABLE` and message injection skips
@@ -964,6 +978,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		blobs:                    opts.Blobs,
 		executor:                 opts.Executor,
 		transcripts:              opts.Transcripts,
+		artifacts:                opts.Artifacts,
 		evals:                    opts.Evals,
 		memory:                   opts.Memory,
 		experiments:              opts.Experiments,

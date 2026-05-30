@@ -211,8 +211,15 @@ func (s *Server) emitStatusChange(tenantID, sessionID string, st session.State) 
 //
 // spec: §7.2 line 141 — "session_complete(result) | Session finished,
 // result available".
-func (s *Server) emitSessionComplete(sess sessionstore.Session) {
-	s.publishEvent(sess.TenantID, sess.ID, "session_complete", archivedTaskResult(sess))
+func (s *Server) emitSessionComplete(ctx context.Context, sess sessionstore.Session) {
+	// The on-stream result reuses the same §8.8 materialization the §8.10
+	// tree archive writes, so a client reading session_complete and a
+	// resumed parent replaying the archive see the same body (state,
+	// output.parts, artifactRefs, or error). The event is an ephemeral
+	// re-projection, so it carries the current producer schemaVersion
+	// (existingVer 0); the durable immutability rule is enforced at the
+	// archive write site. spec: §7.2 line 141; §8.8 lines 885-940.
+	s.publishEvent(sess.TenantID, sess.ID, "session_complete", s.materializeTaskResult(ctx, sess, 0))
 }
 
 // emitTerminalLifecycle fires the client- and audit-visible signals
@@ -238,7 +245,7 @@ func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Se
 		return
 	}
 	s.emitStatusChange(sess.TenantID, sess.ID, sess.State)
-	s.emitSessionComplete(sess)
+	s.emitSessionComplete(ctx, sess)
 	if s.lifecycleAudit != nil {
 		if et, ok := auditEventTypeForTerminal(sess.State); ok {
 			s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{
