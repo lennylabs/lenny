@@ -33,6 +33,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
 )
 
+// version is the CLI build version. The release pipeline stamps it via
+// -ldflags "-X main.version=<tag>"; source builds report "dev". The
+// symbol must exist for the linker override to bind (the release job
+// passes the ldflag to ./cmd/lenny as well as ./cmd/lenny-ctl).
+// spec: §24.0 line 23, §17.6 line 360.
+var version = "dev"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -66,6 +73,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdImage(args[1:], stdout, stderr)
 	case "session":
 		return cmdSession(args[1:], stdout, stderr)
+	case "version", "--version", "-v":
+		// Local CLI build version. Offline by design so it works before
+		// `lenny up` brings up the embedded stack.
+		// spec: §24.0 line 23, §17.6 line 360.
+		fmt.Fprintf(stdout, "lenny %s\n", version)
+		return 0
 	case "__supervise":
 		// Reachable only via the env-gated path above; a direct
 		// invocation is rejected.
@@ -98,6 +111,7 @@ Embedded Mode commands (§17.4):
   session new --runtime <name>
                            Start a session against the running gateway
                            and print the new session id
+  version                  Print the local CLI build version (offline)
 
 Flags:
   up    --http-port <n>    Gateway plaintext port (default 8080)

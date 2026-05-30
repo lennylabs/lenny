@@ -36,7 +36,17 @@ func TestParseGlobalFlags(t *testing.T) {
 	}
 }
 
+// clearCLIEnv neutralizes the ambient operator environment so flag-default
+// assertions are deterministic regardless of the developer's shell.
+func clearCLIEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("LENNY_API_URL", "")
+	t.Setenv("LENNY_OPS_URL", "")
+	t.Setenv("LENNY_API_TOKEN", "")
+}
+
 func TestParseGlobalFlagsDefaultsAPIURL(t *testing.T) {
+	clearCLIEnv(t)
 	f, rest := parseGlobalFlags([]string{"health"})
 	if f.apiURL != "http://localhost:8080" {
 		t.Errorf("default apiURL: %q", f.apiURL)
@@ -47,6 +57,7 @@ func TestParseGlobalFlagsDefaultsAPIURL(t *testing.T) {
 }
 
 func TestParseGlobalFlagsStopsAtCommand(t *testing.T) {
+	clearCLIEnv(t)
 	// A bare command with no global flags.
 	f, rest := parseGlobalFlags([]string{"admin", "--api-url", "ignored"})
 	if f.apiURL != "http://localhost:8080" {
@@ -54,6 +65,95 @@ func TestParseGlobalFlagsStopsAtCommand(t *testing.T) {
 	}
 	if len(rest) != 3 {
 		t.Errorf("rest should include everything from the command on: %v", rest)
+	}
+}
+
+// spec: §24.0 line 26, §24.16 lines 197/199 — LENNY_API_URL / LENNY_OPS_URL
+// / LENNY_API_TOKEN supply defaults when the matching flag is absent.
+// Closes F-24.0.6 and its duplicate F-24.16.1.
+func TestParseGlobalFlagsHonorsEnv(t *testing.T) {
+	t.Setenv("LENNY_API_URL", "https://gw.acme.example")
+	t.Setenv("LENNY_OPS_URL", "https://ops.acme.example")
+	t.Setenv("LENNY_API_TOKEN", "env-tok")
+	f, rest := parseGlobalFlags([]string{"health"})
+	if f.apiURL != "https://gw.acme.example" {
+		t.Errorf("apiURL from env: %q", f.apiURL)
+	}
+	if f.opsServer != "https://ops.acme.example" {
+		t.Errorf("opsServer from env: %q", f.opsServer)
+	}
+	if f.bearer != "env-tok" {
+		t.Errorf("bearer from env: %q", f.bearer)
+	}
+	if len(rest) != 1 || rest[0] != "health" {
+		t.Errorf("rest: %v", rest)
+	}
+}
+
+// spec: §24.0 line 26 — an explicit flag overrides the environment.
+func TestParseGlobalFlagsFlagOverridesEnv(t *testing.T) {
+	t.Setenv("LENNY_API_URL", "https://env.example")
+	t.Setenv("LENNY_API_TOKEN", "env-tok")
+	f, _ := parseGlobalFlags([]string{
+		"--api-url", "https://flag.example",
+		"--token", "flag-tok",
+		"health",
+	})
+	if f.apiURL != "https://flag.example" {
+		t.Errorf("flag should override env apiURL: %q", f.apiURL)
+	}
+	if f.bearer != "flag-tok" {
+		t.Errorf("--token should set bearer over env: %q", f.bearer)
+	}
+}
+
+// An explicitly-empty env var is treated as unset so `export LENNY_API_URL=`
+// does not blank the default gateway URL.
+func TestParseGlobalFlagsEmptyEnvIsUnset(t *testing.T) {
+	t.Setenv("LENNY_API_URL", "   ")
+	f, _ := parseGlobalFlags([]string{"health"})
+	if f.apiURL != "http://localhost:8080" {
+		t.Errorf("blank env should fall back to default: %q", f.apiURL)
+	}
+}
+
+// spec: §24 preamble line 8 — --token is the spec-facing flag; --bearer is
+// an alias. Both populate the bearer credential.
+func TestParseGlobalFlagsTokenAlias(t *testing.T) {
+	clearCLIEnv(t)
+	f, _ := parseGlobalFlags([]string{"--token", "abc", "health"})
+	if f.bearer != "abc" {
+		t.Errorf("--token should populate bearer: %q", f.bearer)
+	}
+	g, _ := parseGlobalFlags([]string{"--bearer", "xyz", "health"})
+	if g.bearer != "xyz" {
+		t.Errorf("--bearer alias should populate bearer: %q", g.bearer)
+	}
+}
+
+// spec: §24.0 line 23, §17.6 line 360 — `version` and `--version` print
+// the local CLI build and never touch the gateway, so they work before a
+// deployment exists. Closes F-24.0.4 and F-24.0.7.
+func TestVersionCommandIsOfflineLocal(t *testing.T) {
+	clearCLIEnv(t)
+	for _, arg := range []string{"version", "--version", "-V"} {
+		var stdout, stderr bytes.Buffer
+		// An unroutable gateway URL would force a non-zero exit if the
+		// command attempted a network call.
+		code := run([]string{"--api-url", "http://127.0.0.1:0", arg}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%s: exit %d, stderr=%q", arg, code, stderr.String())
+		}
+		out := stdout.String()
+		if !strings.Contains(out, version) {
+			t.Errorf("%s: output %q missing version %q", arg, out, version)
+		}
+		if !strings.HasPrefix(out, "lenny-ctl ") {
+			t.Errorf("%s: output %q should name the binary", arg, out)
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("%s: unexpected stderr %q", arg, stderr.String())
+		}
 	}
 }
 

@@ -21,7 +21,7 @@
 // Standalone commands:
 //
 //	lenny-ctl health
-//	lenny-ctl version
+//	lenny-ctl version          (local CLI build; offline)
 //	lenny-ctl bootstrap --from-values <file>
 //	lenny-ctl install [--answer-file <file>]
 //
@@ -30,10 +30,11 @@
 // Mode. The target gateway is --api-url (default
 // http://localhost:8080).
 //
-// Routing (§25.14): health and version target the gateway directly.
-// The operability groups target lenny-ops. The ops URL comes from the
-// --ops-server flag, or is auto-discovered from the gateway's
-// GET /v1/admin/platform/version response (the opsServiceURL field).
+// Routing (§25.14): health targets the gateway directly; version is a
+// local-only command that prints the CLI build. The operability groups
+// target lenny-ops. The ops URL comes from the --ops-server flag, or is
+// auto-discovered from the gateway's GET /v1/admin/platform/version
+// response (the opsServiceURL field).
 package main
 
 import (
@@ -43,6 +44,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -52,8 +54,28 @@ import (
 	"github.com/lennylabs/lenny/pkg/ctl"
 )
 
+// version is the CLI build version. The release pipeline stamps it via
+// -ldflags "-X main.version=<tag>"; source builds without the ldflag
+// report "dev". The §17.6 krew CI invariant asserts that
+// `kubectl lenny --version` reports the release tag, so this symbol must
+// exist for the linker override to bind.
+// spec: §24.0 line 23, §17.6 line 360.
+var version = "dev"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// progName reports the invocation name the binary should print in its
+// version line. The same build ships as lenny-ctl (standalone, Homebrew)
+// and kubectl-lenny (krew); the version string names whichever was run.
+// spec: §17.6 line 358 (two binaries from the same build).
+func progName() string {
+	base := filepath.Base(os.Args[0])
+	if strings.HasPrefix(base, "kubectl-lenny") {
+		return "kubectl-lenny"
+	}
+	return "lenny-ctl"
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -74,8 +96,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch rest[0] {
 	case "health":
 		return cmdHealth(ctx, client, stdout, stderr)
-	case "version":
-		return cmdVersion(ctx, client, stdout, stderr)
+	case "version", "--version", "-V":
+		// version prints the local CLI build and runs offline. It is not
+		// routed to the gateway: §25.14's routing table covers health and
+		// recommendations, not version, and the §17.6 krew check requires
+		// `kubectl lenny --version` to succeed before any gateway exists.
+		// spec: §24.0 line 23, §17.6 line 360.
+		return cmdVersion(stdout)
 	case "bootstrap":
 		return cmdBootstrap(ctx, client, rest[1:], stdout, stderr)
 	case "install":
@@ -127,16 +154,16 @@ const usage = `lenny-ctl — Lenny gateway operator CLI
 Usage:
   lenny-ctl [global flags] <command> [args]
 
-Global flags:
-  --api-url <url>      Gateway base URL (default http://localhost:8080)
-  --ops-server <url>   lenny-ops base URL (auto-discovered when omitted)
-  --bearer <token>     Operator bearer token
+Global flags (env fallbacks in parentheses):
+  --api-url <url>      Gateway base URL (LENNY_API_URL; default http://localhost:8080)
+  --ops-server <url>   lenny-ops base URL (LENNY_OPS_URL; auto-discovered when omitted)
+  --token <token>      Operator bearer token (LENNY_API_TOKEN); --bearer is an alias
   --dev-tenant <id>    Dev-header tenant (Embedded Mode)
   --dev-roles <roles>  Dev-header roles, comma-separated (Embedded Mode)
 
 Gateway commands:
   health                                Print the platform health report
-  version                               Print the gateway version
+  version                               Print the local CLI build version (offline)
   bootstrap --from-values <f> [--wait-timeout <secs>]
                                         Apply a seed file (tenants/runtimes/users); --wait-timeout defaults to 120s (§17.6)
   install [--answer-file <f>]           Run the installation wizard (§17.6)
@@ -186,10 +213,29 @@ type globalFlags struct {
 	devRoles  string
 }
 
+// envOr returns the trimmed value of environment variable key, or def
+// when the variable is unset or empty. An explicitly-empty variable is
+// treated as unset so a stray `export LENNY_API_URL=` does not blank the
+// default gateway URL.
+func envOr(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return def
+}
+
 // parseGlobalFlags pulls the leading --flag value pairs off args and
-// returns the remainder as the command + its arguments.
+// returns the remainder as the command + its arguments. Defaults come
+// from the environment when the corresponding flag is absent: LENNY_API_URL
+// for --api-url, LENNY_OPS_URL for --ops-server, and LENNY_API_TOKEN for
+// --token/--bearer. An explicit flag always overrides the environment.
+// spec: §24.0 line 26, §24.16 lines 197 and 199, §24 preamble line 8.
 func parseGlobalFlags(args []string) (globalFlags, []string) {
-	f := globalFlags{apiURL: "http://localhost:8080"}
+	f := globalFlags{
+		apiURL:    envOr("LENNY_API_URL", "http://localhost:8080"),
+		opsServer: envOr("LENNY_OPS_URL", ""),
+		bearer:    envOr("LENNY_API_TOKEN", ""),
+	}
 	i := 0
 	for i < len(args) {
 		switch args[i] {
@@ -205,7 +251,9 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 				i += 2
 				continue
 			}
-		case "--bearer":
+		case "--bearer", "--token":
+			// --token is the spec-facing name (§24 preamble line 8);
+			// --bearer is kept as an equivalent alias.
 			if i+1 < len(args) {
 				f.bearer = args[i+1]
 				i += 2
@@ -253,13 +301,14 @@ func cmdHealth(ctx context.Context, c *ctl.Client, stdout, stderr io.Writer) int
 	return 0
 }
 
-func cmdVersion(ctx context.Context, c *ctl.Client, stdout, stderr io.Writer) int {
-	var v map[string]any
-	if err := c.Do(ctx, "GET", "/v1/admin/platform/version", nil, &v); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	printJSON(stdout, v)
+// cmdVersion prints the local CLI build version. Operators and the §17.6
+// release CI use it for offline introspection (`lenny-ctl version` and
+// `kubectl lenny --version`), so it makes no network call. The gateway's
+// own platform version is a separate concern surfaced by the ops
+// auto-discovery path (§25.14), not by this command.
+// spec: §24.0 line 23, §17.6 line 360.
+func cmdVersion(stdout io.Writer) int {
+	fmt.Fprintf(stdout, "%s %s\n", progName(), version)
 	return 0
 }
 

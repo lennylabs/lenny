@@ -32,6 +32,23 @@ func TestRunHelp(t *testing.T) {
 	}
 }
 
+// spec: §24.0 line 23, §17.6 line 360 — the embedded binary prints its
+// local build version offline. Confirms the -X main.version ldflag has a
+// symbol to bind to (F-24.0.4).
+func TestRunVersion(t *testing.T) {
+	for _, arg := range []string{"version", "--version", "-v"} {
+		var stdout, stderr bytes.Buffer
+		code := run([]string{arg}, &stdout, &stderr)
+		if code != 0 {
+			t.Errorf("%s: exit code = %d, want 0", arg, code)
+		}
+		out := stdout.String()
+		if !strings.HasPrefix(out, "lenny ") || !strings.Contains(out, version) {
+			t.Errorf("%s: stdout = %q, want 'lenny %s'", arg, out, version)
+		}
+	}
+}
+
 func TestRunUnknownCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"frobnicate"}, &stdout, &stderr)
