@@ -30,10 +30,7 @@ import (
 // it falls back to Close (echo, subprocess, and other executors with no
 // Sandbox phase). spec: §6.2 lines 105-117, 305.
 func releaseExecutor(ctx context.Context, exec executor.Executor, sessionID string, disp executor.Disposition) error {
-	if r, ok := exec.(executor.SessionReleaser); ok {
-		return r.Release(ctx, sessionID, disp)
-	}
-	return exec.Close(ctx, sessionID)
+	return executor.ReleaseSession(ctx, exec, sessionID, disp)
 }
 
 // dispositionForState maps a session's terminal §6.2 state to the executor
@@ -411,6 +408,19 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 			continue
 		}
 		s.archiveSettledChild(ctx, updated)
+		// spec: §11.3 line 236 / §11.4 line 258 — a cascaded cancel must
+		// drain the descendant's pod, not merely flip its row. Releasing the
+		// executor records the §6.2 cancelled disposition and triggers the
+		// adapter's graceful shutdown so the descendant runtime stops holding
+		// tokens, executing tool calls, and charging its credential lease.
+		// Without this the only sink for a cascaded cancel is the watchdog's
+		// maxSessionAge clock (hours later) and every descendant pod leaks.
+		// Best-effort: a teardown failure never unwinds the cancel. F-11.3.9.
+		if s.executor != nil {
+			if err := releaseExecutor(ctx, s.executor, cur.ID, executor.DispositionCancelled); err != nil {
+				log.Printf("lenny-gateway: cascade executor release session=%s: %v", cur.ID, err)
+			}
+		}
 		if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
 			queue = append(queue, byParent[cur.ID]...)
 		}

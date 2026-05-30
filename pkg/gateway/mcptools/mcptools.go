@@ -807,6 +807,19 @@ func Register(srv *mcp.Server, deps Deps) {
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
+		// spec: §11.3 line 236 / §11.4 line 258 — a cancel must drain each
+		// cancelled runtime's pod, not merely flip its row. Without this the
+		// child agents keep running, holding tokens, executing tool calls, and
+		// charging their credential leases until the watchdog's maxSessionAge
+		// clock fires hours later. ReleaseSession records the §6.2 cancelled
+		// disposition and triggers the adapter's graceful shutdown; it no-ops
+		// on a nil executor (the in-memory dev posture). Best-effort per id.
+		// F-11.3.1.
+		if deps.Executor != nil {
+			for _, id := range cancelled {
+				_ = executor.ReleaseSession(ctx, deps.Executor, id, executor.DispositionCancelled)
+			}
+		}
 		// §8.10: a child reaching a terminal state is archived to the
 		// session_tree_archive so a resumed parent can replay its
 		// result. Archiving is best-effort observability — the
