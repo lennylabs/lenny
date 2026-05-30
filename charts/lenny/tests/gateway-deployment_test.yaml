@@ -877,6 +877,54 @@ tests:
             name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
             value: "10"
 
+  # spec: §11.1 lines 10-11 — upload-admission caps. The chart default
+  # (0) leaves each scope unlimited, so no env var is rendered. F-11.1.5,
+  # F-11.1.6.
+  - it: omits the upload-limit env vars at the chart default of zero
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION
+            value: "0"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_UPLOAD_MAX_BYTES_PER_SESSION
+            value: "0"
+
+  # spec: §11.1 lines 10-11 — operator overrides propagate to the binary.
+  # F-11.1.5, F-11.1.6.
+  - it: wires the §11.1 upload-admission caps from gateway.uploadLimits overrides
+    set:
+      gateway.uploadLimits.maxConcurrentPerSession: 4
+      gateway.uploadLimits.maxConcurrentGlobal: 200
+      # Quoted so helm-unittest does not coerce the large integer to a
+      # float64 (which would render as 5.36870912e+08).
+      gateway.uploadLimits.maxBytesPerSession: "536870912"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION
+            value: "4"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL
+            value: "200"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_UPLOAD_MAX_BYTES_PER_SESSION
+            value: "536870912"
+
   # spec: §11.2.1 line 151 — billing.retentionDays (default 395) flows
   # through to LENNY_BILLING_RETENTION_DAYS. F-11.2.15.
   - it: wires LENNY_BILLING_RETENTION_DAYS from the chart default

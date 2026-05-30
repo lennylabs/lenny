@@ -14767,7 +14767,7 @@ unenforced. A user with many sessions can collectively saturate the
 gateway's delegation capacity even when each individual session stays
 within its per-session lease budget.
 
-### - [ ] F-11.1.5 — 05  Concurrent uploads are not bounded per-session or globally [Medium] — OPEN
+### - [x] F-11.1.5 — 05  Concurrent uploads are not bounded per-session or globally [Medium] — CLOSED
 
 **Spec:** §11.1 line 10 — "Concurrent uploads | Per-session, global".
 The two scopes bound the in-flight upload requests against a single
@@ -14797,7 +14797,19 @@ data through them in parallel against the same session, magnifying
 upstream load on MinIO and the gateway's read buffers without an
 admission brake.
 
-### - [ ] F-11.1.6 — 06  Per-session upload-size cap is absent; only per-file (per-blob) cap exists [Medium] — OPEN
+**Resolution:** New `sessionserver.uploadLimiter` (`upload_limits.go`)
+tracks per-session and per-replica in-flight upload counts; `runUpload`
+acquires a slot after the §15.1 precondition gate (so rejected
+preconditions do not count) and before streaming, rejecting with 429
+`RATE_LIMITED` (`scope: upload_session|upload_global`) when a scope is
+saturated. The per-replica count is the meaningful "global" figure
+because an in-flight upload holds its body stream on one replica.
+Operator-tunable via `--upload-max-concurrent-per-session` /
+`--upload-max-concurrent-global` (env + `gateway.uploadLimits.*` Helm
+values); zero leaves a scope unlimited, distinct from the §4.1
+back-pressure semaphore. Committed in this batch.
+
+### - [x] F-11.1.6 — 06  Per-session upload-size cap is absent; only per-file (per-blob) cap exists [Medium] — CLOSED
 
 **Spec:** §11.1 line 11 — "Upload size | Per-file, per-session". The
 two scopes bound (a) the size of any single uploaded file and (b) the
@@ -14823,6 +14835,18 @@ total, but the per-session axis the §11.1 spec names is missing — a
 session is not isolated from the tenant's quota and cannot be
 ringfenced by the deployer. Severity is Medium because the larger
 per-tenant cap does provide an upper bound on consumption.
+
+**Resolution:** The same `uploadLimiter` tracks the per-session
+cumulative upload-byte total. `runUpload` early-rejects on the declared
+Content-Length (`wouldExceedBytes`) and re-checks authoritatively
+against the bytes actually streamed (`commitBytes`, an atomic
+check-and-add) so a client that under-declares Content-Length cannot
+bypass the cap; an over-cap upload is unwound (storage-quota release +
+soft delete) and rejected with 429 `QUOTA_EXCEEDED`
+(`scope: session_upload_bytes`). The total is cleared on the §7.4 line
+463 finalize/upload-window-close hook. Operator-tunable via
+`--upload-max-bytes-per-session` (env + `gateway.uploadLimits.maxBytesPerSession`);
+zero leaves it unlimited. Committed in this batch.
 
 ### - [x] F-11.1.7 — 07  No rate-limit observability counter; admission rejections are not metered [Medium] — CLOSED
 

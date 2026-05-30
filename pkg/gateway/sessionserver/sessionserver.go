@@ -338,6 +338,13 @@ type Server struct {
 	// state so any in-flight stream surfaces UPLOAD_CHANNEL_CLOSED.
 	// Always non-nil after New. spec: §7.4 line 463. F-7.4.16.
 	uploadAborts *uploadAbortRegistry
+
+	// uploadLimits enforces the §11.1 line 10-11 per-session and global
+	// concurrent-upload caps and the per-session cumulative upload-size
+	// cap. Nil when no §11.1 upload cap is configured (the pass-through
+	// posture); every call site tolerates a nil limiter. spec: §11.1
+	// lines 10-11. F-11.1.5, F-11.1.6.
+	uploadLimits *uploadLimiter
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -820,6 +827,28 @@ type Options struct {
 	// configure a limit).
 	UploadSubsystem *subsystem.Subsystem
 
+	// MaxConcurrentUploadsPerSession is the §11.1 line 10 per-session
+	// concurrent-upload admission cap: the gateway rejects a new upload
+	// with 429 RATE_LIMITED once a session already holds this many
+	// in-flight uploads on the replica. Zero leaves the per-session
+	// concurrency scope unlimited. spec: §11.1 line 10. F-11.1.5.
+	MaxConcurrentUploadsPerSession int
+
+	// MaxConcurrentUploadsGlobal is the §11.1 line 10 global
+	// concurrent-upload admission cap: the gateway rejects a new upload
+	// with 429 RATE_LIMITED once the replica already holds this many
+	// in-flight uploads across all sessions. Zero leaves the global
+	// concurrency scope unlimited. spec: §11.1 line 10. F-11.1.5.
+	MaxConcurrentUploadsGlobal int
+
+	// MaxUploadBytesPerSession is the §11.1 line 11 per-session
+	// cumulative upload-size cap: the gateway rejects an upload with 429
+	// QUOTA_EXCEEDED once the sum of all uploads in a session would
+	// exceed this value. The per-file (per-blob) cap is the separate
+	// UploadMaxBodyBytes ceiling. Zero leaves the per-session size scope
+	// unlimited. spec: §11.1 line 11. F-11.1.6.
+	MaxUploadBytesPerSession int64
+
 	// SessionLogHook, when set, receives the §4.4 line 226 close-hook
 	// on every session transition to a terminal state. The production
 	// wiring lives in pkg/gateway/sessionlogstore (CloseHook). Nil
@@ -982,6 +1011,11 @@ func New(store sessionstore.Store, opts Options) *Server {
 		incWarmpoolWarmupFailure: opts.IncWarmpoolWarmupFailure,
 		uploadTokenTTL:           opts.UploadTokenTTL,
 		uploadAborts:             newUploadAbortRegistry(),
+		uploadLimits: newUploadLimiter(
+			opts.MaxConcurrentUploadsPerSession,
+			opts.MaxConcurrentUploadsGlobal,
+			opts.MaxUploadBytesPerSession,
+		),
 	}
 	if s.defaultRetention <= 0 {
 		// spec: §7.1 line 77 — default the artifact-retention window to
@@ -1870,6 +1904,10 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// late /upload register that races finalize gets an
 	// already-closed abort signal on the next Read. F-7.4.16.
 	s.uploadAborts.closeSession(updated.ID)
+	// §11.1 line 11: the upload window has closed, so drop the
+	// per-session cumulative upload-byte total. In-flight concurrency
+	// slots self-release; only the byte total is freed here. F-11.1.6.
+	s.uploadLimits.closeSession(updated.ID)
 	// spec: §7.2 line 137 — surface the created → ready transition.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	// F-7.4.17: §16.6 session.finalize_workspace audit row. The row

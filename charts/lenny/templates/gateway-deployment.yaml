@@ -480,6 +480,24 @@ spec:
             - name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
               value: {{ .Values.gateway.quotaSyncIntervalSeconds | quote }}
             {{- end }}
+            # §11.1 lines 10-11 — concurrent-upload and per-session
+            # upload-size admission caps, distinct from the §4.1 upload
+            # handler back-pressure semaphore. Zero leaves each scope
+            # unlimited. F-11.1.5, F-11.1.6.
+            {{- with .Values.gateway.uploadLimits }}
+            {{- if gt (int .maxConcurrentPerSession) 0 }}
+            - name: LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION
+              value: {{ .maxConcurrentPerSession | quote }}
+            {{- end }}
+            {{- if gt (int .maxConcurrentGlobal) 0 }}
+            - name: LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL
+              value: {{ .maxConcurrentGlobal | quote }}
+            {{- end }}
+            {{- if gt (int .maxBytesPerSession) 0 }}
+            - name: LENNY_UPLOAD_MAX_BYTES_PER_SESSION
+              value: {{ .maxBytesPerSession | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.delegation }}
             # §8.10 lines 1022-1023 / 1042 — operator-tunable per-level and
             # whole-tree recovery deadlines feed recovery.Config. F-8.10.6.

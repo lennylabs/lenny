@@ -1137,6 +1137,23 @@ gateway:
   # crash-recovery exposure. Values below 10 are clamped up by the binary.
   # Default 30. F-11.2.16.
   quotaSyncIntervalSeconds: 30
+  # uploadLimits — §11.1 lines 10-11 upload-admission caps. These are
+  # the policy fairness caps, distinct from the §4.1 upload-handler
+  # back-pressure semaphore (extractionThresholds.uploadHandler). Each
+  # scope is unlimited when its value is 0 or omitted, so the default
+  # posture is unchanged until an operator opts in.
+  #   maxConcurrentPerSession — §11.1 line 10. Cap on in-flight uploads
+  #     against one session; excess uploads get 429 RATE_LIMITED.
+  #   maxConcurrentGlobal — §11.1 line 10. Per-replica cap on in-flight
+  #     uploads across all sessions; excess uploads get 429 RATE_LIMITED.
+  #   maxBytesPerSession — §11.1 line 11. Cap on the cumulative size of
+  #     all uploads in one session; excess uploads get 429 QUOTA_EXCEEDED.
+  #     The per-file ceiling is the separate 64 MiB request-body cap.
+  # F-11.1.5, F-11.1.6.
+  uploadLimits:
+    maxConcurrentPerSession: 0
+    maxConcurrentGlobal: 0
+    maxBytesPerSession: 0
   # streamCeiling is the §4.1 / §16.5 per-replica streaming-connection
   # ceiling read by the GatewayActiveStreamsHigh alert via
   # scalar(lenny_gateway_stream_ceiling). When unset the chart falls

@@ -196,6 +196,42 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		return
 	}
 
+	// §11.1 line 10: per-session and global concurrent-upload admission.
+	// Acquired after the precondition gate so a rejected-precondition
+	// request never counts against the cap, and before any body is read
+	// so a flood of parallel uploads is throttled at admission rather
+	// than after streaming. A saturated scope is a retryable 429
+	// RATE_LIMITED (the caller proceeds once an in-flight upload
+	// finishes); the §4.1 subsystem 503 above is a distinct
+	// degradation signal. F-11.1.5.
+	if release, scope, ok := s.uploadLimits.acquireSlot(row.ID); ok {
+		defer release()
+	} else {
+		s.writeError(w, http.StatusTooManyRequests, "RATE_LIMITED",
+			"the concurrent-upload limit was reached",
+			map[string]any{"scope": scope})
+		return
+	}
+
+	// §11.1 line 11: per-session cumulative upload-size admission. When
+	// the client declares a Content-Length, reject early — before
+	// streaming — if the declared size alone would push the session past
+	// its cumulative cap. The authoritative check against the bytes
+	// actually streamed runs after the body is read (commitBytes below)
+	// so a client that under-declares Content-Length cannot bypass the
+	// cap. F-11.1.6.
+	if current, limit, exceeds := s.uploadLimits.wouldExceedBytes(row.ID, r.ContentLength); exceeds {
+		s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED",
+			"the upload would exceed the session's cumulative upload-size limit",
+			map[string]any{
+				"scope":         "session_upload_bytes",
+				"currentBytes":  current,
+				"limitBytes":    limit,
+				"incomingBytes": r.ContentLength,
+			})
+		return
+	}
+
 	mimeType := r.Header.Get("Content-Type")
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
@@ -364,6 +400,29 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 				"upload channel closed by finalize", nil)
 			return
 		}
+	}
+
+	// §11.1 line 11: authoritative per-session cumulative-size check
+	// against the bytes actually streamed. The early Content-Length
+	// gate above is an optimization; this atomic check-and-add is the
+	// binding enforcement, so a client that under-declares its
+	// Content-Length still cannot exceed the session cap. On rejection
+	// the committed blob is unwound (storage-quota release + soft
+	// delete) exactly as the hash-mismatch abort path does. F-11.1.6.
+	if total, limit, ok := s.uploadLimits.commitBytes(row.ID, bytesRead.n); !ok {
+		if reservation != nil {
+			_ = s.storageQuota.Adjust(r.Context(), tenantID, -bytesRead.n)
+		}
+		s.softDeleteStagedBlob(uri, ref)
+		s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED",
+			"the upload would exceed the session's cumulative upload-size limit",
+			map[string]any{
+				"scope":         "session_upload_bytes",
+				"currentBytes":  total,
+				"limitBytes":    limit,
+				"incomingBytes": bytesRead.n,
+			})
+		return
 	}
 
 	resp := UploadResponse{

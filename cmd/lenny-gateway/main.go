@@ -309,6 +309,19 @@ func main() {
 		"§11.1 line 7 per-runtime session-creation requests-per-minute admission limit. Zero disables the per-runtime rate limit. F-11.1.2.")
 	rlPerPoolPerMin := flag.Int("rate-limit-per-pool-per-min", 0,
 		"§11.1 line 7 per-pool session-creation requests-per-minute admission limit (skipped when no warm pool resolves). Zero disables the per-pool rate limit. F-11.1.2.")
+	// spec: §11.1 lines 10-11 — concurrent-upload and per-session
+	// upload-size admission caps, distinct from the §4.1 upload-handler
+	// back-pressure semaphore. Zero leaves each scope unlimited; operators
+	// opt in. F-11.1.5, F-11.1.6.
+	uploadMaxConcurrentPerSession := flag.Int("upload-max-concurrent-per-session",
+		envInt("LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION", 0),
+		"§11.1 line 10 per-session concurrent-upload admission cap. Excess in-flight uploads against one session are rejected with 429 RATE_LIMITED. Zero disables the per-session concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION. F-11.1.5.")
+	uploadMaxConcurrentGlobal := flag.Int("upload-max-concurrent-global",
+		envInt("LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL", 0),
+		"§11.1 line 10 global (per-replica) concurrent-upload admission cap. Excess in-flight uploads across all sessions are rejected with 429 RATE_LIMITED. Zero disables the global concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL. F-11.1.5.")
+	uploadMaxBytesPerSession := flag.Int64("upload-max-bytes-per-session",
+		envInt64("LENNY_UPLOAD_MAX_BYTES_PER_SESSION", 0),
+		"§11.1 line 11 per-session cumulative upload-size cap (bytes). The sum of all uploads in a session is rejected with 429 QUOTA_EXCEEDED past this value; the per-file cap is the separate 64 MiB body ceiling. Zero disables the per-session size cap. Override via LENNY_UPLOAD_MAX_BYTES_PER_SESSION. F-11.1.6.")
 	// spec: §11.3 line 222 — rateLimitFailOpenMaxSeconds, operator-tunable.
 	// Once a fail-open episode (counter-error window) has run past this
 	// cap, the middleware switches to fail-closed and rejects requests
@@ -2062,6 +2075,11 @@ func main() {
 		SetExperimentTargetingCircuitOpen: gwMetrics.SetExperimentTargetingCircuitOpen,
 		Clock:                             clockinject.Now,
 		UploadSubsystem:                   uploadSubsystem,
+		// spec: §11.1 lines 10-11 — concurrent-upload + per-session
+		// upload-size admission caps. F-11.1.5, F-11.1.6.
+		MaxConcurrentUploadsPerSession: *uploadMaxConcurrentPerSession,
+		MaxConcurrentUploadsGlobal:     *uploadMaxConcurrentGlobal,
+		MaxUploadBytesPerSession:       *uploadMaxBytesPerSession,
 		// §4.9 line 1220 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
 		// §6.3 lines 348, 372 — startup-latency histograms observed on
