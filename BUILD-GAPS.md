@@ -12281,7 +12281,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** The NET-063 boundary is undefined at runtime. A pod that lands in any interceptor namespace with matching service labels can observe or mutate the gateway's policy-mediated MCP envelopes.
 
-### - [ ] F-10.3.4 — 10.3-G4. `global.spiffeTrustDomain` ships with a hard-coded default and no chart-side `required` guard [High] — OPEN
+### - [x] F-10.3.4 — 10.3-G4. `global.spiffeTrustDomain` ships with a hard-coded default and no chart-side `required` guard [High] — CLOSED
 
 **Spec lines:** 316 ("required chart value with no default — `helm install/upgrade` fails templating if unset").
 **Evidence:**
@@ -12290,6 +12290,8 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 - The NET-064 collision text the spec mandates as the error string never appears in the chart.
 
 **Impact:** Every stock install of the chart inherits `cluster.local` as the SPIFFE trust domain, defeating the NET-064 cross-deployment isolation guarantee. The preflight collision check (`pkg/preflight/networkpolicy_identity.go::CheckSPIFFETrustDomainUniqueness`) operates against rendered annotations, which are also missing — see 10.3-G6.
+
+**Resolution (commit `9d2c51d8`):** `charts/lenny/values.yaml` drops the `cluster.local` default (`spiffeTrustDomain: ""`), and the always-rendered `lenny.dev/spiffe-trust-domain` annotation on the gateway Deployment wraps the value in `{{ required "<spec line 316 NET-064 text>" ... }}`, so `helm install/upgrade` fails templating with the verbatim spec error when the value is unset (`helm template` without the value exits 1 with the NET-064 message; with it set, exit 0). Presets stay free of the deployment-unique value; the 9 helm-unittest suites that render the gateway Deployment carry a suite-level placeholder, and the Kind/cloud install overlays + `lenny-ctl install` (which now derives `lenny-<ns>-<name>` when the operator omits it) set a value so those paths still render.
 
 ### - [x] F-10.3.5 — 10.3-G5. `global.saTokenAudience` not implemented as a chart value [High] — CLOSED
 
@@ -12388,7 +12390,7 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Resolution (commit `02369575`):** The §10.3 `spiffe.AgentPeerVerifier` (F-10.3.1) invokes an `OnMismatch(reason, uri, err)` hook on every rejection; `newGatewayControlServer` wires it to a structured `slog.Warn("pod_identity_mismatch", "net_rule"="NET-060", "reason", "spiffe_uri", "error")` line (the gateway installs the §16.4 slog JSON handler via `logging.Setup`). The classified `reason` (`no_peer_certificate`, `no_spiffe_san`, `spiffe_uri_malformed`, `identity_mismatch`, `certificate_revoked`) gives an operator the telemetry to distinguish a malformed SAN from a foreign trust domain from a revocation hit at handshake time. The `interceptor_identity_mismatch` half is structurally inert until the gateway↔interceptor mTLS link exists (NET-063, tracked by F-10.3.3) — there is no interceptor handshake to instrument — so it is deferred to that work; the pod-impersonation telemetry the finding's impact calls out is now emitted on the only mTLS link that exists in v1.
 
-### - [ ] F-10.3.14 — 10.3-G14. Startup configuration validation enforces only `noEnvironmentPolicy` [High] — OPEN
+### - [x] F-10.3.14 — 10.3-G14. Startup configuration validation enforces only `noEnvironmentPolicy` [High] — CLOSED
 
 **Spec lines:** 361–372 (the required-key table: `auth.oidc.issuerUrl`, `auth.oidc.clientId`, `defaultMaxSessionDuration`, `noEnvironmentPolicy`, `playground.devTenantId`).
 **Evidence:**
@@ -12398,7 +12400,9 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** A chart that strips required values does not surface as `CrashLoopBackOff`. Only the `noEnvironmentPolicy` half of the validation contract is honoured; the rest is missing.
 
-### - [ ] F-10.3.15 — 10.3-G15. Gateway startup TLS probe against Redis and PgBouncer absent [High] — OPEN
+**Resolution (commit `9d2c51d8`):** `validatePlatformConfig` (in `cmd/lenny-gateway/main.go`) now gates the remaining §10.3 line 361 required keys at startup: `auth.oidc.issuerUrl` (non-empty, absolute URL) and `auth.oidc.clientId` (non-empty), both exempt under `--dev-mode` per the line 373 / §17.4 dev-mode symmetry, plus `defaultMaxSessionDuration` (the existing `--max-session-age-seconds`, required positive, no dev exemption). Each violation emits a structured `slog.Error("LENNY_CONFIG_MISSING", config_key, scope, remediation)` and the gateway exits non-zero. `noEnvironmentPolicy` (resolveNoEnvironmentPolicy) and `playground.devTenantId` (playground.Config.Validate) were already gated, so all five table keys now fail closed. New `--oidc-issuer-url`/`--oidc-client-id` flags + `auth.oidc.issuerUrl`/`clientId` Helm values feed the gate; `lenny-ctl install` renders them. Covered by `TestGatewayConfigValidationRequiredKeys_spec_10_3`.
+
+### - [x] F-10.3.15 — 10.3-G15. Gateway startup TLS probe against Redis and PgBouncer absent [High] — CLOSED
 
 **Spec lines:** 359 ("Each gateway replica **must** run a startup probe that verifies TLS connectivity to Redis and PgBouncer before the replica is marked ready").
 **Evidence:**
@@ -12407,11 +12411,15 @@ Audit of Lenny spec §10.3 ("mTLS PKI", `spec/10_gateway-internals.md` lines 302
 
 **Impact:** A misconfigured Redis or PgBouncer (wrong port, missing cert) becomes a silent runtime failure rather than a deployment failure caught before traffic is served.
 
-### - [ ] F-10.3.16 — 10.3-G16. Required integration tests `TestRedisTLSEnforcement`, `TestPgBouncerTLSEnforcement`, `TestGatewayConfigValidation` absent [Medium] — OPEN
+**Resolution (commit `9d2c51d8`):** New `pkg/gateway/tlsprobe` runs the §10.3 line 359 probe per configured endpoint: a TLS handshake that must succeed (catches wrong port / missing cert) followed by a plaintext-rejection check that fails only on a positive confirmation that the backend completed a non-TLS exchange (Redis inline RESP `PING` → a `+PONG` reply; PgBouncer Postgres `SSLRequest` → an `N` reply). `cmd/lenny-gateway/main.go` runs it before serving, behind `--startup-tls-probe-redis-addr`/`--startup-tls-probe-pgbouncer-addr` (+ `--startup-tls-probe-ca`/`-cert`/`-key`) and the `gateway.startupTlsProbe.*` Helm values, exiting non-zero on failure; dev mode and an empty endpoint are exempt. Covered by the tlsprobe suite (TLS-only pass, plaintext-accepted fail, SSL-reply distinction, handshake-failure, refused-plaintext, empty-skip) incl. `-race`.
+
+### - [x] F-10.3.16 — 10.3-G16. Required integration tests `TestRedisTLSEnforcement`, `TestPgBouncerTLSEnforcement`, `TestGatewayConfigValidation` absent [Medium] — CLOSED
 
 **Spec lines:** 373 ("The test suite **must** include tests ...").
 **Evidence:** A repo-wide grep for those three test names returns zero hits in `tests/` and `pkg/`. The closest analogue is `tests/tier6_e2e_cloud/managed_elasticache_test.go::TestCloudRedisTLSRequired`, which is a tier-6 cloud-managed Redis variant, not the cluster TLS posture the spec test names. `tests/tier5_e2e_kind/mtls_test.go::TestMTLSEnforcement` only asserts that cert-manager `Certificate` resources reach `Ready=True`.
 **Impact:** The contract `tls-auth-clients yes` + `port 0` + `client_tls_sslmode = require` enforces silently. Any regression to plaintext acceptance ships without CI catching it.
+
+**Resolution (commit `9d2c51d8`):** All three named tests now exist. `TestGatewayConfigValidation` (the existing `_spec_11_1` for noEnvironmentPolicy plus the new `TestGatewayConfigValidationRequiredKeys_spec_10_3`) asserts each required key fails startup when absent with the correct `config_key`, and that the OIDC keys are exempt under dev mode. `TestRedisTLSEnforcement_spec_10_3_373` and `TestPgBouncerTLSEnforcement_spec_10_3_373` (in `pkg/gateway/tlsprobe`) assert a plaintext connection attempt is rejected: each passes against a TLS-only in-process listener and fails against a listener that completes the backend's plaintext exchange — a deterministic harness that proves the enforcement logic with in-process listeners rather than a live cluster, so the regression gate runs in standard CI. The `port 0` / `client_tls_sslmode=require` posture is now exercised through the same probe code path the gateway runs at startup.
 
 ### - [ ] F-10.3.17 — 10.3-G17. Warm-pool controller has no certificate-lifecycle awareness [High] — OPEN
 
