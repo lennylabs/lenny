@@ -146,6 +146,10 @@ bootstrap:
 # to in-memory backends.
 global:
   devMode: true
+  # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
+  # value with no default; the gateway-deployment annotation wraps it in
+  # `required`. The Kind e2e overlay pins a deployment-unique placeholder.
+  spiffeTrustDomain: lenny-kind-e2e
 
 # In-cluster data stores. install.sh deploys Postgres, Redis, and MinIO
 # from datastores.yaml into lenny-system and runs the lenny-migrate Job

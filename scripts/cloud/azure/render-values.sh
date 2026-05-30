@@ -51,6 +51,8 @@ cat > "${OUT}" <<YAML
 
 global:
   devMode: true
+  # §10.3 (NET-064) F-10.3.4: required chart value (no default).
+  spiffeTrustDomain: lenny-azure-e2e
 
 controller:
   image:

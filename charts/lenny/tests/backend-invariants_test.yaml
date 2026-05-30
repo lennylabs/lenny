@@ -133,3 +133,9 @@ tests:
               secretKeyRef:
                 name: lenny-datastore-conn
                 key: minio-secret-key
+
+# §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
+# value with no default; a placeholder lets the gateway-deployment
+# annotation `required` guard render in this suite.
+set:
+  global.spiffeTrustDomain: cluster.local

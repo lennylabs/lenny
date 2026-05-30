@@ -145,7 +145,12 @@ metadata:
   # deployments as having empty annotations and never flags a clash.
   # F-10.3.6.
   annotations:
-    lenny.dev/spiffe-trust-domain: {{ .Values.global.spiffeTrustDomain | quote }}
+    # §10.3 line 316 (NET-064) — global.spiffeTrustDomain is a required
+    # chart value with no default; `required` fails `helm install/upgrade`
+    # templating with the spec-mandated error when it is unset so two
+    # deployments cannot silently share a trust domain. This annotation is
+    # always rendered, so it is the single enforcement point. F-10.3.4.
+    lenny.dev/spiffe-trust-domain: {{ required "global.spiffeTrustDomain is required; set it to a deployment-specific value (e.g. 'lenny-<cluster-name>-<namespace>') — see Section 10.3 (NET-064). Two Lenny deployments that share a trust domain and CA have overlapping SPIFFE URIs and one deployment's pod certificate validates against the other's gateway, enabling cross-deployment pod impersonation and audit-log attribution forgery." .Values.global.spiffeTrustDomain | quote }}
     {{- with .Values.global.saTokenAudience }}
     lenny.dev/sa-token-audience: {{ . | quote }}
     {{- end }}
@@ -292,6 +297,17 @@ spec:
             # canonical claim name still works without a code change.
             # F-10.2.9.
             - --tenant-id-claim={{ .Values.auth.tenantIdClaim }}
+            # §10.3 lines 365-366 — OIDC issuer + client registration the
+            # gateway's token validation trusts. Required platform keys
+            # outside global.devMode; the gateway fails closed at startup
+            # (LENNY_CONFIG_MISSING) when unset on a non-dev install.
+            # F-10.3.14.
+            {{- with .Values.auth.oidc.issuerUrl }}
+            - --oidc-issuer-url={{ . }}
+            {{- end }}
+            {{- with .Values.auth.oidc.clientId }}
+            - --oidc-client-id={{ . }}
+            {{- end }}
             # §4.3 trust boundary: the gateway materializes every §4.9
             # credential lease through lenny-token-service over mTLS;
             # the in-process MintLease path is reserved for dev mode.
@@ -343,6 +359,28 @@ spec:
             # as max(floor, tenantStored); a PUT below the floor is
             # rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR.
             - --elicitation-content-integrity-floor={{ .Values.security.elicitationContentIntegrity.floor }}
+            {{- /* §10.3 line 359 — gateway startup TLS probe. When
+                  enabled the gateway verifies a TLS handshake to Redis
+                  and PgBouncer succeeds and a plaintext connection is
+                  refused before becoming ready. Off by default (dev /
+                  in-memory installs). F-10.3.15. */ -}}
+            {{- if .Values.gateway.startupTlsProbe.enabled }}
+            {{- with .Values.gateway.startupTlsProbe.redisAddr }}
+            - --startup-tls-probe-redis-addr={{ . }}
+            {{- end }}
+            {{- with .Values.gateway.startupTlsProbe.pgbouncerAddr }}
+            - --startup-tls-probe-pgbouncer-addr={{ . }}
+            {{- end }}
+            {{- with .Values.gateway.startupTlsProbe.ca }}
+            - --startup-tls-probe-ca={{ . }}
+            {{- end }}
+            {{- with .Values.gateway.startupTlsProbe.cert }}
+            - --startup-tls-probe-cert={{ . }}
+            {{- end }}
+            {{- with .Values.gateway.startupTlsProbe.key }}
+            - --startup-tls-probe-key={{ . }}
+            {{- end }}
+            {{- end }}
             {{- /* §4.6 pod placement: pin the gateway at the first
                   agent namespace so SandboxClaims land against live
                   warm pods. Without --agent-namespace the gateway

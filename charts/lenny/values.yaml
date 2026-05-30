@@ -851,6 +851,21 @@ auth:
   # path (tenancy.mode=single) ignores this value and stamps the
   # built-in `default` tenant on every request.
   tenantIdClaim: tenant_id
+  # oidc names the OIDC issuer the gateway's Bearer-token validation
+  # trusts (§10.3 lines 365-366). Both keys are required platform
+  # configuration outside global.devMode: the gateway refuses to become
+  # ready and emits LENNY_CONFIG_MISSING when either is unset on a
+  # non-dev install (§10.3 lines 361-371). They default empty so a
+  # `helm install --set global.devMode=true` local run starts without an
+  # external IdP. F-10.3.14.
+  oidc:
+    # issuerUrl is the OIDC issuer URL (e.g.
+    # https://idp.acme.example/realms/lenny). Flows to the gateway as
+    # --oidc-issuer-url; must be an absolute URL outside dev mode.
+    issuerUrl: ""
+    # clientId is the OIDC client registration whose audience the gateway
+    # checks. Flows to the gateway as --oidc-client-id.
+    clientId: ""
 
 # global holds chart-wide settings shared across components.
 global:
@@ -869,12 +884,15 @@ global:
   devMode: false
   # spiffeTrustDomain is the SPIFFE trust domain anchoring agent-pod
   # and in-cluster-interceptor identities (§10.3 line 316). It is the
-  # host component of every spiffe:// URI Lenny issues. Production
-  # deployments SHOULD override this with a deployment-unique value
-  # (e.g. `lenny-<cluster-name>-<namespace>`); the lenny-preflight Job
-  # rejects an install whose value collides with an existing Lenny
-  # Deployment in the same cluster (NET-064).
-  spiffeTrustDomain: cluster.local
+  # host component of every spiffe:// URI Lenny issues. This is a
+  # REQUIRED chart value with no default: `helm install/upgrade` fails
+  # templating when it is unset (the gateway-deployment annotation wraps
+  # it in `required`), so an operator must choose a deployment-unique
+  # value (e.g. `lenny-<cluster-name>-<namespace>`). The lenny-preflight
+  # Job additionally rejects an install whose value collides with an
+  # existing Lenny Deployment in the same cluster (NET-064). The embedded
+  # Quickstart path (§17.4) derives a per-install value instead. F-10.3.4.
+  spiffeTrustDomain: ""
   # saTokenAudience is the §10.3 line 334 projected SA-token audience
   # the gateway validates on every pod→gateway request. The value MUST
   # be deployment-specific (e.g. `lenny-gateway-<cluster-name>`) so a
@@ -1014,6 +1032,30 @@ gateway:
   # session names no environment. It MUST be "deny-all" or "allow-all";
   # the gateway refuses to start when it is unset (LENNY_CONFIG_MISSING).
   noEnvironmentPolicy: deny-all
+  # startupTlsProbe drives the §10.3 line 359 gateway startup TLS probe:
+  # before a replica is marked ready it verifies a TLS handshake to Redis
+  # and PgBouncer succeeds and that a plaintext connection is refused,
+  # converting a misconfigured backend (wrong port, missing cert) into a
+  # startup failure rather than a silent runtime failure. Disabled by
+  # default (dev / in-memory installs have no Redis or PgBouncer);
+  # production operators set the listener addresses and enable it. The
+  # probe is also exempt under global.devMode. F-10.3.15.
+  startupTlsProbe:
+    enabled: false
+    # redisAddr / pgbouncerAddr are the host:port of each backend's TLS
+    # listener (e.g. lenny-redis.lenny-system.svc:6380). An empty address
+    # skips that backend's leg.
+    redisAddr: ""
+    pgbouncerAddr: ""
+    # ca / cert / key are paths (inside the gateway container) to the CA
+    # bundle verifying the backend server certificates and the client
+    # certificate the probe presents (Redis tls-auth-clients requires
+    # one). Empty ca uses the system trust store; empty cert/key presents
+    # no client certificate. Operators mount the material and set the
+    # paths.
+    ca: ""
+    cert: ""
+    key: ""
   # deprecatedAPIVersions is the §15.5 item 1 sunset list: every URL
   # version prefix in this list receives the `X-Lenny-Deprecated-Version`
   # response header during its 6-month deprecation window. The list

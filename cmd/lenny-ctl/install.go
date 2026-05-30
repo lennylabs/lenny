@@ -80,6 +80,13 @@ type installAnswers struct {
 	// DevMode sets global.devMode. It is valid only for the local
 	// environment and must stay false on any multi-tenant cluster.
 	DevMode bool `json:"devMode,omitempty"`
+	// SpiffeTrustDomain sets the §10.3 (NET-064) global.spiffeTrustDomain,
+	// a required chart value with no default. When empty the wizard
+	// derives a deployment-unique default from the release identity so a
+	// wizard-driven install renders; operators set a globally-unique value
+	// (e.g. lenny-<cluster>-<namespace>) so two deployments cannot share a
+	// trust domain. F-10.3.4.
+	SpiffeTrustDomain string `json:"spiffeTrustDomain,omitempty"`
 }
 
 // installRelease is the Helm release name and target namespace.
@@ -475,6 +482,27 @@ func validateAnswers(a installAnswers) []string {
 }
 
 // composeValues renders the answer set into a Helm values document.
+// deriveSpiffeTrustDomain produces a deployment-unique §10.3 (NET-064)
+// trust domain from the release identity when the operator did not set
+// one. The result is sanitized to lowercase alphanumerics and hyphens
+// so it is a valid SPIFFE trust-domain host component. spec: §10.3
+// line 316. F-10.3.4.
+func deriveSpiffeTrustDomain(namespace, name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower("lenny-" + namespace + "-" + name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	if d := strings.Trim(b.String(), "-"); d != "" {
+		return d
+	}
+	return "lenny"
+}
+
 // The result is the per-question override layer; the tier preset is
 // layered under it by helm itself via a second -f argument.
 func composeValues(a installAnswers) ([]byte, error) {
@@ -485,8 +513,33 @@ func composeValues(a installAnswers) ([]byte, error) {
 	if a.DevMode {
 		global["devMode"] = true
 	}
+	// §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required
+	// chart value with no default. Use the operator's value or derive a
+	// deployment-unique default from the release identity so the install
+	// renders; the lenny-preflight Job still rejects a cross-deployment
+	// collision.
+	trustDomain := a.SpiffeTrustDomain
+	if trustDomain == "" {
+		trustDomain = deriveSpiffeTrustDomain(a.Release.Namespace, a.Release.Name)
+	}
+	global["spiffeTrustDomain"] = trustDomain
 	if len(global) > 0 {
 		values["global"] = global
+	}
+
+	// §10.3 lines 365-366 F-10.3.14: auth.oidc.issuerUrl / clientId are
+	// required platform keys outside dev mode. Render the collected OIDC
+	// registration so a wizard-driven production install passes the
+	// gateway startup configuration gate rather than CrashLoopBackOff.
+	oidc := map[string]any{}
+	if a.Auth.OIDCIssuer != "" {
+		oidc["issuerUrl"] = a.Auth.OIDCIssuer
+	}
+	if a.Auth.OIDCClientID != "" {
+		oidc["clientId"] = a.Auth.OIDCClientID
+	}
+	if len(oidc) > 0 {
+		values["auth"] = map[string]any{"oidc": oidc}
 	}
 
 	if a.Postgres.DSN != "" {

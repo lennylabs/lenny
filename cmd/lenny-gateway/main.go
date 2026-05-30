@@ -40,6 +40,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -201,6 +202,7 @@ import (
 	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/tenantstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tlsprobe"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/transcriptstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
@@ -254,6 +256,10 @@ func main() {
 	multiTenant := flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
 	tenantIDClaim := flag.String("tenant-id-claim", envOr("LENNY_TENANT_ID_CLAIM", "tenant_id"),
 		"§10.2 line 212 OIDC claim name the gateway reads the tenant identifier from. Defaults to `tenant_id` (matches the canonical Lenny claim shape); set to e.g. `https://acme.example/tenant` when the upstream IdP stamps tenant identity under a different claim. Mirrors the `auth.tenantIdClaim` Helm value. F-10.2.9.")
+	oidcIssuerURL := flag.String("oidc-issuer-url", os.Getenv("LENNY_OIDC_ISSUER_URL"),
+		"§10.3 line 365 auth.oidc.issuerUrl: the OIDC issuer the gateway's token validation trusts. A §10.3 required platform key — outside --dev-mode an empty or non-absolute-URL value is a fatal startup misconfiguration (LENNY_CONFIG_MISSING config_key=auth.oidc.issuerUrl). Override via LENNY_OIDC_ISSUER_URL. F-10.3.14.")
+	oidcClientID := flag.String("oidc-client-id", os.Getenv("LENNY_OIDC_CLIENT_ID"),
+		"§10.3 line 366 auth.oidc.clientId: the OIDC client registration whose audience the gateway checks. A §10.3 required platform key — outside --dev-mode an empty value is a fatal startup misconfiguration (LENNY_CONFIG_MISSING config_key=auth.oidc.clientId). Override via LENNY_OIDC_CLIENT_ID. F-10.3.14.")
 	devMode := flag.Bool("dev-mode", envFlag("LENNY_DEV_MODE"),
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
 	sloValidated := flag.Bool("slo-validated", envFlag("LENNY_SLO_VALIDATED"),
@@ -284,6 +290,22 @@ func main() {
 		"§12.4 request TLS on the Sentinel path. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set, in which case this flag opts a dev Sentinel topology back into TLS. Override via LENNY_REDIS_TLS.")
 	redisAllowInsecure := flag.Bool("redis-allow-insecure", envFlag("LENNY_REDIS_ALLOW_INSECURE"),
 		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. The spec requires both on every Redis instance, so this defaults off and a missing password or plaintext connection fails startup. Set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
+	// spec: §10.3 line 359 — gateway startup TLS probe. When an endpoint
+	// host:port is set the gateway verifies a TLS handshake succeeds and a
+	// plaintext connection is refused before it becomes ready, converting a
+	// misconfigured backend (wrong port, missing cert) into a startup
+	// failure. Empty disables the probe for that backend (dev / in-memory).
+	// F-10.3.15.
+	startupProbeRedisAddr := flag.String("startup-tls-probe-redis-addr", os.Getenv("LENNY_STARTUP_TLS_PROBE_REDIS_ADDR"),
+		"§10.3 line 359 host:port of the Redis TLS listener the startup probe checks (TLS handshake must succeed; plaintext must be refused). Empty disables the Redis leg. Override via LENNY_STARTUP_TLS_PROBE_REDIS_ADDR. F-10.3.15.")
+	startupProbePgBouncerAddr := flag.String("startup-tls-probe-pgbouncer-addr", os.Getenv("LENNY_STARTUP_TLS_PROBE_PGBOUNCER_ADDR"),
+		"§10.3 line 359 host:port of the PgBouncer TLS listener the startup probe checks. Empty disables the PgBouncer leg. Override via LENNY_STARTUP_TLS_PROBE_PGBOUNCER_ADDR. F-10.3.15.")
+	startupProbeCA := flag.String("startup-tls-probe-ca", os.Getenv("LENNY_STARTUP_TLS_PROBE_CA"),
+		"§10.3 line 359 CA bundle that verifies the Redis/PgBouncer server certificates during the startup TLS probe. Empty uses the system trust store. Override via LENNY_STARTUP_TLS_PROBE_CA. F-10.3.15.")
+	startupProbeCert := flag.String("startup-tls-probe-cert", os.Getenv("LENNY_STARTUP_TLS_PROBE_CERT"),
+		"§10.3 line 359 client certificate presented during the startup TLS probe (Redis tls-auth-clients requires one). Empty presents no client certificate. Override via LENNY_STARTUP_TLS_PROBE_CERT. F-10.3.15.")
+	startupProbeKey := flag.String("startup-tls-probe-key", os.Getenv("LENNY_STARTUP_TLS_PROBE_KEY"),
+		"§10.3 line 359 private key for --startup-tls-probe-cert. Override via LENNY_STARTUP_TLS_PROBE_KEY. F-10.3.15.")
 	coordInterval := flag.Duration("coordination-interval", 15*time.Second,
 		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
@@ -720,6 +742,43 @@ func main() {
 	resolvedNoEnvPolicy, err := resolveNoEnvironmentPolicy(*noEnvPolicy, *devMode)
 	if err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
+	}
+
+	// spec: §10.3 lines 361-371 — startup configuration validation. Each
+	// missing required platform key emits a structured LENNY_CONFIG_MISSING
+	// log entry (config_key/scope/remediation fields) and the gateway
+	// refuses to become ready by exiting non-zero so Kubernetes surfaces
+	// CrashLoopBackOff rather than the replica silently serving with
+	// undefined semantics. noEnvironmentPolicy is gated just above;
+	// playground.devTenantId by playground.Config.Validate; this covers the
+	// OIDC and session-duration keys. The OIDC keys are exempt in dev mode
+	// (§10.3 line 373 / §17.4). F-10.3.14.
+	if missing := validatePlatformConfig(*devMode, *oidcIssuerURL, *oidcClientID, *maxSessionAgeSeconds); len(missing) > 0 {
+		for _, m := range missing {
+			slog.Error("LENNY_CONFIG_MISSING", "config_key", m.configKey, "scope", m.scope, "remediation", m.remediation)
+		}
+		log.Fatalf("lenny-gateway: %d required platform configuration key(s) missing or invalid (§10.3); see the LENNY_CONFIG_MISSING entries above", len(missing))
+	}
+
+	// spec: §10.3 line 359 — gateway startup TLS probe. Before the replica
+	// is marked ready, verify a TLS handshake to Redis and PgBouncer
+	// succeeds and that a plaintext connection is refused, so a
+	// misconfigured backend (wrong port, missing cert) fails startup
+	// rather than degrading silently at runtime. Dev mode is exempt (the
+	// line 373 dev-mode symmetry / §17.4) and an unset endpoint is skipped.
+	// F-10.3.15.
+	if !*devMode && (*startupProbeRedisAddr != "" || *startupProbePgBouncerAddr != "") {
+		probeTLS, perr := buildStartupProbeTLSConfig(*startupProbeCA, *startupProbeCert, *startupProbeKey)
+		if perr != nil {
+			log.Fatalf("lenny-gateway: §10.3 startup TLS probe configuration: %v", perr)
+		}
+		if err := tlsprobe.Probe(context.Background(), tlsprobe.Config{TLSConfig: probeTLS},
+			tlsprobe.Target{Backend: tlsprobe.BackendRedis, Addr: *startupProbeRedisAddr},
+			tlsprobe.Target{Backend: tlsprobe.BackendPgBouncer, Addr: *startupProbePgBouncerAddr},
+		); err != nil {
+			log.Fatalf("lenny-gateway: §10.3 startup TLS probe failed: %v", err)
+		}
+		log.Printf("lenny-gateway: §10.3 startup TLS probe passed (redis=%q pgbouncer=%q)", *startupProbeRedisAddr, *startupProbePgBouncerAddr)
 	}
 
 	// spec: §4.2 line 165 — LENNY_POOLER_MODE must be one of the two
@@ -4334,6 +4393,98 @@ func verifyPostgresSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("postgres: schema not migrated (the sessions table is absent); apply migrations/ before starting the gateway")
 	}
 	return nil
+}
+
+// platformConfigMissing is one §10.3 line 361 LENNY_CONFIG_MISSING
+// violation: a required platform configuration key that is absent or
+// invalid. The fields mirror the structured-log fields §10.3 line 371
+// mandates (config_key, scope, remediation).
+type platformConfigMissing struct {
+	configKey   string
+	scope       string
+	remediation string
+}
+
+// validatePlatformConfig returns the §10.3 line 361 required-key
+// violations for the platform keys gated at this point in gateway
+// startup: the OIDC issuer URL and client ID (both exempt in dev mode
+// per the line 373 dev-mode symmetry and §17.4), and the
+// defaultMaxSessionDuration (always required to be a positive duration).
+// The remaining required keys fail closed elsewhere so each key is
+// gated before the replica is marked ready: noEnvironmentPolicy by
+// resolveNoEnvironmentPolicy, playground.devTenantId by
+// playground.Config.Validate. Extracted from main() so the
+// TestGatewayConfigValidation regression test can cover the §10.3
+// contract without booting a gateway. spec: §10.3 lines 361-373;
+// §17.4 dev mode.
+func validatePlatformConfig(devMode bool, oidcIssuerURL, oidcClientID string, defaultMaxSessionSeconds int) []platformConfigMissing {
+	var missing []platformConfigMissing
+	if !devMode {
+		switch issuer := strings.TrimSpace(oidcIssuerURL); {
+		case issuer == "":
+			missing = append(missing, platformConfigMissing{
+				configKey:   "auth.oidc.issuerUrl",
+				scope:       "platform",
+				remediation: "set auth.oidc.issuerUrl (Helm) / --oidc-issuer-url / LENNY_OIDC_ISSUER_URL to the OIDC issuer URL, or run with LENNY_DEV_MODE=true",
+			})
+		case !isAbsoluteURL(issuer):
+			missing = append(missing, platformConfigMissing{
+				configKey:   "auth.oidc.issuerUrl",
+				scope:       "platform",
+				remediation: "auth.oidc.issuerUrl must be an absolute URL (scheme://host); fix --oidc-issuer-url / LENNY_OIDC_ISSUER_URL",
+			})
+		}
+		if strings.TrimSpace(oidcClientID) == "" {
+			missing = append(missing, platformConfigMissing{
+				configKey:   "auth.oidc.clientId",
+				scope:       "platform",
+				remediation: "set auth.oidc.clientId (Helm) / --oidc-client-id / LENNY_OIDC_CLIENT_ID, or run with LENNY_DEV_MODE=true",
+			})
+		}
+	}
+	if defaultMaxSessionSeconds <= 0 {
+		missing = append(missing, platformConfigMissing{
+			configKey:   "defaultMaxSessionDuration",
+			scope:       "platform",
+			remediation: "set gateway.maxSessionAgeSeconds (Helm) / --max-session-age-seconds / LENNY_MAX_SESSION_AGE_SECONDS to a positive number of seconds",
+		})
+	}
+	return missing
+}
+
+// isAbsoluteURL reports whether s parses as an absolute URL with a
+// scheme and host — the §10.3 line 365 "Non-empty URL" acceptance
+// criterion for auth.oidc.issuerUrl.
+func isAbsoluteURL(s string) bool {
+	u, err := url.Parse(strings.TrimSpace(s))
+	return err == nil && u.IsAbs() && u.Host != ""
+}
+
+// buildStartupProbeTLSConfig assembles the §10.3 line 359 startup TLS
+// probe's client config from the optional CA bundle and client
+// certificate. An empty CA uses the system trust store; an empty
+// cert/key presents no client certificate. spec: §10.3 line 359.
+func buildStartupProbeTLSConfig(caFile, certFile, keyFile string) (*tls.Config, error) {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caFile != "" {
+		pem, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read --startup-tls-probe-ca: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("--startup-tls-probe-ca %s contains no PEM certificates", caFile)
+		}
+		cfg.RootCAs = pool
+	}
+	if certFile != "" || keyFile != "" {
+		crt, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load --startup-tls-probe-cert/--startup-tls-probe-key: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{crt}
+	}
+	return cfg, nil
 }
 
 // resolveNoEnvironmentPolicy returns the resolved §10.6 / §11.1

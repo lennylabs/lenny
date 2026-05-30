@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -465,5 +466,159 @@ func TestGatewayConfigValidation_spec_11_1(t *testing.T) {
 				t.Errorf("resolved = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestGatewayConfigValidationRequiredKeys_spec_10_3 asserts the §10.3
+// line 361 required-key table contract for the keys gated by
+// validatePlatformConfig: outside dev mode an empty or non-URL
+// auth.oidc.issuerUrl, an empty auth.oidc.clientId, and a non-positive
+// defaultMaxSessionDuration each produce a LENNY_CONFIG_MISSING
+// violation carrying the correct config_key; the OIDC keys are exempt
+// when dev mode is on (the §10.3 line 373 / §17.4 dev-mode symmetry);
+// the session-duration key is gated even in dev mode (no dev exemption
+// in the table). spec: §10.3 lines 361-373; §17.4.
+func TestGatewayConfigValidationRequiredKeys_spec_10_3(t *testing.T) {
+	const validIssuer = "https://idp.acme.example/realms/lenny"
+	const validClient = "lenny-gateway"
+	const validMaxSession = 7200
+
+	keysOf := func(ms []platformConfigMissing) []string {
+		out := make([]string, len(ms))
+		for i, m := range ms {
+			out[i] = m.configKey
+			if m.scope != "platform" {
+				t.Errorf("scope = %q, want platform", m.scope)
+			}
+			if m.remediation == "" {
+				t.Errorf("config_key %q has an empty remediation", m.configKey)
+			}
+		}
+		return out
+	}
+	contains := func(keys []string, want string) bool {
+		for _, k := range keys {
+			if k == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	cases := []struct {
+		name      string
+		devMode   bool
+		issuer    string
+		clientID  string
+		maxSecs   int
+		wantKeys  []string
+		wantEmpty bool
+	}{
+		{
+			name:      "all present passes outside dev mode",
+			issuer:    validIssuer,
+			clientID:  validClient,
+			maxSecs:   validMaxSession,
+			wantEmpty: true,
+		},
+		{
+			name:     "empty issuer outside dev mode flags auth.oidc.issuerUrl",
+			issuer:   "",
+			clientID: validClient,
+			maxSecs:  validMaxSession,
+			wantKeys: []string{"auth.oidc.issuerUrl"},
+		},
+		{
+			name:     "non-URL issuer outside dev mode flags auth.oidc.issuerUrl",
+			issuer:   "not-a-url",
+			clientID: validClient,
+			maxSecs:  validMaxSession,
+			wantKeys: []string{"auth.oidc.issuerUrl"},
+		},
+		{
+			name:     "empty clientId outside dev mode flags auth.oidc.clientId",
+			issuer:   validIssuer,
+			clientID: "",
+			maxSecs:  validMaxSession,
+			wantKeys: []string{"auth.oidc.clientId"},
+		},
+		{
+			name:     "non-positive session duration flags defaultMaxSessionDuration",
+			issuer:   validIssuer,
+			clientID: validClient,
+			maxSecs:  0,
+			wantKeys: []string{"defaultMaxSessionDuration"},
+		},
+		{
+			name:     "all three keys missing reports all three",
+			issuer:   "",
+			clientID: "",
+			maxSecs:  -1,
+			wantKeys: []string{"auth.oidc.issuerUrl", "auth.oidc.clientId", "defaultMaxSessionDuration"},
+		},
+		{
+			name:      "dev mode exempts the OIDC keys",
+			devMode:   true,
+			issuer:    "",
+			clientID:  "",
+			maxSecs:   validMaxSession,
+			wantEmpty: true,
+		},
+		{
+			name:     "dev mode does not exempt the session-duration key",
+			devMode:  true,
+			issuer:   "",
+			clientID: "",
+			maxSecs:  0,
+			wantKeys: []string{"defaultMaxSessionDuration"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := keysOf(validatePlatformConfig(tc.devMode, tc.issuer, tc.clientID, tc.maxSecs))
+			if tc.wantEmpty {
+				if len(got) != 0 {
+					t.Fatalf("want no violations, got %v", got)
+				}
+				return
+			}
+			if len(got) != len(tc.wantKeys) {
+				t.Fatalf("violations = %v, want %v", got, tc.wantKeys)
+			}
+			for _, k := range tc.wantKeys {
+				if !contains(got, k) {
+					t.Errorf("missing expected config_key %q in %v", k, got)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildStartupProbeTLSConfig_spec_10_3 asserts the §10.3 line 359
+// probe TLS config builder: no material yields system roots with no
+// client cert, a missing CA file is a hard error, and a malformed CA
+// bundle is rejected. spec: §10.3 line 359.
+func TestBuildStartupProbeTLSConfig_spec_10_3(t *testing.T) {
+	cfg, err := buildStartupProbeTLSConfig("", "", "")
+	if err != nil {
+		t.Fatalf("empty material should succeed, got %v", err)
+	}
+	if cfg.RootCAs != nil {
+		t.Error("no CA file should leave RootCAs nil (system trust store)")
+	}
+	if len(cfg.Certificates) != 0 {
+		t.Error("no cert/key should present no client certificate")
+	}
+
+	if _, err := buildStartupProbeTLSConfig("/nonexistent/ca.pem", "", ""); err == nil {
+		t.Error("a missing CA file must be a hard error")
+	}
+
+	bad := t.TempDir() + "/bad-ca.pem"
+	if werr := os.WriteFile(bad, []byte("not a pem"), 0o600); werr != nil {
+		t.Fatalf("write fixture: %v", werr)
+	}
+	if _, err := buildStartupProbeTLSConfig(bad, "", ""); err == nil {
+		t.Error("a CA bundle with no certificates must be rejected")
 	}
 }

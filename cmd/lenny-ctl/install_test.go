@@ -365,7 +365,12 @@ func TestComposeValuesEmitsFeatureFlags(t *testing.T) {
 	}
 }
 
-func TestComposeValuesEmptyWhenAllDefault(t *testing.T) {
+// TestComposeValuesAlwaysSetsRequiredSpiffeTrustDomain_spec_10_3 asserts
+// that even an all-default answer set emits a derived
+// global.spiffeTrustDomain. The §10.3 (NET-064) value is a required
+// chart value with no default (F-10.3.4), so the wizard must render one
+// or the install fails templating.
+func TestComposeValuesAlwaysSetsRequiredSpiffeTrustDomain_spec_10_3(t *testing.T) {
 	a := installAnswers{
 		Release:     installRelease{Name: "lenny", Namespace: "lenny-system"},
 		Environment: "local",
@@ -376,16 +381,65 @@ func TestComposeValuesEmptyWhenAllDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("composeValues: %v", err)
 	}
-	// The header comment is always present; no values keys are emitted.
 	if !bytes.HasPrefix(out, []byte("# Helm values composed")) {
 		t.Errorf("header missing: %q", out)
 	}
 	var v map[string]any
 	if err := yaml.Unmarshal(out, &v); err != nil {
-		t.Fatalf("header-only output should still be valid YAML: %v", err)
+		t.Fatalf("output should be valid YAML: %v", err)
 	}
-	if len(v) != 0 {
-		t.Errorf("expected no values keys, got %+v", v)
+	global, ok := v["global"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a global block carrying the required spiffeTrustDomain, got %+v", v)
+	}
+	if got := global["spiffeTrustDomain"]; got != "lenny-lenny-system-lenny" {
+		t.Errorf("derived spiffeTrustDomain = %v, want lenny-lenny-system-lenny", got)
+	}
+	// Only the required global.spiffeTrustDomain should be emitted when
+	// every other answer is a default.
+	if len(v) != 1 || len(global) != 1 {
+		t.Errorf("expected only global.spiffeTrustDomain, got %+v", v)
+	}
+}
+
+// TestComposeValuesRendersOIDCAndExplicitSpiffe_spec_10_3 asserts the
+// wizard renders the collected OIDC registration into auth.oidc.* (the
+// §10.3 lines 365-366 required keys, F-10.3.14) and honors an explicit
+// operator-supplied global.spiffeTrustDomain (F-10.3.4).
+func TestComposeValuesRendersOIDCAndExplicitSpiffe_spec_10_3(t *testing.T) {
+	a := installAnswers{
+		Release:           installRelease{Name: "lenny", Namespace: "lenny-system"},
+		Environment:       "prod",
+		Tier:              "tier2",
+		SpiffeTrustDomain: "lenny-acme-prod",
+		Auth: installAuth{
+			Mode:         "oidc",
+			OIDCIssuer:   "https://idp.acme.example/realms/lenny",
+			OIDCClientID: "lenny-gateway",
+		},
+	}
+	out, err := composeValues(a)
+	if err != nil {
+		t.Fatalf("composeValues: %v", err)
+	}
+	var v map[string]any
+	if err := yaml.Unmarshal(out, &v); err != nil {
+		t.Fatalf("invalid YAML: %v", err)
+	}
+	global := v["global"].(map[string]any)
+	if got := global["spiffeTrustDomain"]; got != "lenny-acme-prod" {
+		t.Errorf("explicit spiffeTrustDomain = %v, want lenny-acme-prod", got)
+	}
+	auth, ok := v["auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected an auth block, got %+v", v)
+	}
+	oidc := auth["oidc"].(map[string]any)
+	if oidc["issuerUrl"] != "https://idp.acme.example/realms/lenny" {
+		t.Errorf("auth.oidc.issuerUrl = %v", oidc["issuerUrl"])
+	}
+	if oidc["clientId"] != "lenny-gateway" {
+		t.Errorf("auth.oidc.clientId = %v", oidc["clientId"])
 	}
 }
 

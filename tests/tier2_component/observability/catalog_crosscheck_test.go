@@ -87,7 +87,11 @@ func helmTemplatePrometheusRule(t *testing.T, root string, setArgs ...string) re
 		t.Skipf("helm not on PATH: %v", err)
 	}
 	chart := filepath.Join(root, "charts", "lenny")
-	args := []string{"template", chart, "--show-only", "templates/prometheusrule.yaml"}
+	// §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required
+	// chart value with no default. `helm template --show-only` still
+	// renders every template (the filter applies afterward), so the
+	// gateway-deployment `required` guard fires unless a value is set.
+	args := []string{"template", chart, "--show-only", "templates/prometheusrule.yaml", "--set", "global.spiffeTrustDomain=lenny-test"}
 	args = append(args, setArgs...)
 	out, err := exec.Command(helm, args...).CombinedOutput()
 	if err != nil {

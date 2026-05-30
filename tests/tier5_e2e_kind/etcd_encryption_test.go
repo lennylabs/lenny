@@ -185,6 +185,11 @@ func renderEncryptionConfig(t *testing.T, root string) string {
 	cmd := exec.Command(
 		helm, "template", chart,
 		"--show-only", "templates/etcd-encryption.yaml",
+		// §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required
+		// chart value with no default; --show-only still renders every
+		// template, so the gateway-deployment `required` guard fires
+		// unless a value is set.
+		"--set", "global.spiffeTrustDomain=lenny-test",
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
