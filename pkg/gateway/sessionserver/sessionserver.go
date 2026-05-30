@@ -67,6 +67,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/task"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
@@ -1279,6 +1280,16 @@ type SessionResponse struct {
 	// gateway never rejected one. F-7.5.4 / F-7.5.11.
 	// spec: §7.5 lines 475, 488.
 	SetupOutput []SetupOutputEntry `json:"setupOutput,omitempty"`
+
+	// TaskRecord is the §8.8 TaskRecord envelope projected from the
+	// session row plus its transcript: the durable, protocol-bridging
+	// task-level record (schemaVersion, taskId, sessionId, state, the
+	// caller/agent messages array, usage, treeUsage). Populated only on
+	// the single-session read (GET /v1/sessions/{id}); the list endpoint
+	// omits it to avoid a transcript fetch per row. Absent when the
+	// gateway has no transcript store wired. F-8.8.1.
+	// spec: §8.8 lines 806-823.
+	TaskRecord *task.Record `json:"taskRecord,omitempty"`
 }
 
 // SetupOutputEntry is one §7.5 setup-command record on the §15.1 session
@@ -1740,7 +1751,15 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	s.writeSession(w, http.StatusOK, row)
+	// spec: §8.8 lines 806-823 — the single-session read materializes the
+	// §8.8 TaskRecord envelope (projected from the row + transcript) so a
+	// consumer expecting §8.8 semantics can read it off GET
+	// /v1/sessions/{id}. F-8.8.1.
+	resp := toResponse(row)
+	resp.TaskRecord = s.buildTaskRecord(r.Context(), row)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleList implements GET /v1/sessions. Supports the §15.1 ?state=
