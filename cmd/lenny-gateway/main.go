@@ -101,6 +101,7 @@ import (
 	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpointretention/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectorcredstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorsecret"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
@@ -614,6 +615,8 @@ func main() {
 		"§9.3 absolute URL the connector OAuth provider redirects back to (the gateway's GET /v1/admin/connectors/oauth/callback). Wiring the connector OAuth 2.1 flow requires it. Override via LENNY_CONNECTOR_OAUTH_CALLBACK_URL.")
 	connectorOAuthCA := flag.String("connector-oauth-ca", os.Getenv("LENNY_CONNECTOR_OAUTH_CA"),
 		"path to a CA bundle that verifies the §9.3 connector OAuth provider's token-endpoint TLS certificate. Empty uses the system trust store. Set this for a provider behind a private CA. Override via LENNY_CONNECTOR_OAUTH_CA.")
+	connectorOAuthClientSecretKey := flag.String("connector-oauth-client-secret-key", envOr("LENNY_CONNECTOR_OAUTH_CLIENT_SECRET_KEY", connectorsecret.DefaultSecretKey),
+		"§9.3 Kubernetes Secret data key the confidential-client resolver reads when a connector's auth.clientSecretRef names only namespace/name. A three-segment namespace/name/key reference overrides it per connector. Override via LENNY_CONNECTOR_OAUTH_CLIENT_SECRET_KEY.")
 	opsServiceURL := flag.String("ops-service-url", os.Getenv("LENNY_OPS_SERVICE_URL"),
 		"§25.14 public URL of the lenny-ops service (the ops.ingress.host Helm value). Advertised in GET /v1/admin/platform/version so lenny-ctl auto-discovers the ops endpoint. Override via LENNY_OPS_SERVICE_URL.")
 	billingDualControlThreshold := flag.Float64("billing-dual-control-threshold", envFloat("LENNY_BILLING_DUAL_CONTROL_THRESHOLD", 0),
@@ -2244,15 +2247,33 @@ func main() {
 			log.Fatalf("lenny-gateway: connector OAuth state signer: %v", err)
 		}
 		// spec: §9.3 line 157 — pending state binds to (session, connector)
-		// with TTL=10min. The in-memory store grows monotonically without
-		// a Sweep driver; a periodic Sweep is scheduled below in the
-		// watchdog group (F-9.3.16).
-		connectorStateStore = connectoroauth.NewMemoryStateStore()
+		// with TTL=10min. Production binds it to Redis so the flow survives
+		// a gateway restart and a callback resolves on any replica
+		// (F-9.3.5); the in-memory store is the single-process fallback and
+		// alone needs the periodic Sweep scheduled below in the watchdog
+		// group (Redis relies on native key expiry). F-9.3.16.
+		var connectorStateBacking connectoroauth.StateStore
+		if redisClient != nil {
+			connectorStateBacking = connectoroauth.NewRedisStateStore(redisClient)
+			log.Printf("lenny-gateway: §9.3 connector OAuth state backed by Redis (TTL=10m, cross-replica)")
+		} else {
+			connectorStateStore = connectoroauth.NewMemoryStateStore()
+			connectorStateBacking = connectorStateStore
+		}
 		connectorOAuth = &admin.ConnectorOAuth{
 			StateSigner: stateSigner,
-			StateStore:  connectorStateStore,
+			StateStore:  connectorStateBacking,
 			Credentials: connectorCreds,
 			CallbackURL: *connectorOAuthCallbackURL,
+		}
+		// spec: §9.3 line 129 — resolve a confidential connector's client
+		// secret from its auth.clientSecretRef Kubernetes Secret at
+		// token-exchange time. Wired whenever the gateway holds a cluster
+		// client (the production --agent-namespace path); without it a
+		// confidential-client callback returns a clear "no client-secret
+		// resolver is wired" error instead of failing on exchange. F-9.3.4.
+		if clusterClient != nil {
+			connectorOAuth.ClientSecrets = connectorsecret.NewKubeResolver(clusterClient, *connectorOAuthClientSecretKey)
 		}
 		// §9.3: when the provider's token endpoint is behind a private
 		// CA, --connector-oauth-ca supplies the bundle that verifies it.
