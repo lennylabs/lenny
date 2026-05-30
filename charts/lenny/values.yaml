@@ -2090,6 +2090,12 @@ bootstrap:
   #     # `tenant` (cross-user sharing) is rejected for a tenant with a
   #     # regulated complianceProfile (hipaa, fedramp).
   #     cacheScope: per-user
+  #     # deliveryMode (proxy|direct) and egressProfile
+  #     # (restricted|provider-direct|internet) are validated together at
+  #     # render time by the §13.2 NET-006 guard: deliveryMode: proxy with
+  #     # egressProfile: provider-direct is rejected (mutually exclusive).
+  #     deliveryMode: proxy
+  #     egressProfile: restricted
   #     credentials:
   #       - id: primary
   #         secretRef: anthropic-api-key

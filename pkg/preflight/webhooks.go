@@ -12,18 +12,30 @@ import "fmt"
 //
 // lenny-pod-security is a §13.1 pod-security baseline control: it
 // renders unconditionally and so belongs in the baseline set.
+//
+// lenny-direct-mode-isolation renders unconditionally (§13.2 line 440
+// step 2): its enforcement target is a pool's credential-delivery and
+// egress configuration — the §13.2 NET-006 proxy/provider-direct mutual
+// exclusivity (every tenancy mode) and the §4.9 direct/standard and
+// proxy/spiffe rules (multi-tenant mode) — which is independent of the
+// LLM-proxy feature flag, so it is part of the baseline set rather than
+// feature-gated.
 var baselineValidatingWebhooks = []string{
 	"lenny-label-immutability",
 	"lenny-sandboxclaim-guard",
 	"lenny-pool-config-validator",
 	"lenny-ephemeral-container-cred-guard",
 	"lenny-pod-security",
+	"lenny-direct-mode-isolation",
 }
 
 // WebhookFeatureFlags are the §17.2 chart feature flags that gate the
 // non-baseline admission webhooks.
 type WebhookFeatureFlags struct {
-	// LLMProxy gates lenny-direct-mode-isolation.
+	// LLMProxy records whether the §4.9 LLM-proxy feature is enabled. It
+	// no longer gates an admission webhook (lenny-direct-mode-isolation is
+	// a baseline control, see baselineValidatingWebhooks); it is retained
+	// for the §17.2 phase-stamp feature-flag downgrade audit.
 	LLMProxy bool
 	// DrainReadiness gates lenny-drain-readiness.
 	DrainReadiness bool
@@ -47,9 +59,6 @@ type WebhookFeatureFlags struct {
 // installs cleanly while a missing baseline webhook still fails.
 func ExpectedValidatingWebhooks(flags WebhookFeatureFlags) []string {
 	expected := append([]string(nil), baselineValidatingWebhooks...)
-	if flags.LLMProxy {
-		expected = append(expected, "lenny-direct-mode-isolation")
-	}
 	if flags.DrainReadiness {
 		expected = append(expected, "lenny-drain-readiness")
 	}

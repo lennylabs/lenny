@@ -17,6 +17,9 @@ func TestExpectedValidatingWebhooksBaseline(t *testing.T) {
 		"lenny-pool-config-validator":          true,
 		"lenny-ephemeral-container-cred-guard": true,
 		"lenny-pod-security":                   true,
+		// spec: §13.2 line 440 step 2 — renders unconditionally, so the
+		// inventory expects it in the baseline set (F-13.2.12).
+		"lenny-direct-mode-isolation": true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("baseline expected %d webhooks, want %d: %v", len(got), len(want), got)
@@ -55,6 +58,24 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 	for _, name := range got {
 		if !want[name] {
 			t.Errorf("unexpected webhook %q in the all-flags set", name)
+		}
+	}
+}
+
+// spec: §13.2 line 440 step 2 (F-13.2.12) — lenny-direct-mode-isolation
+// is no longer gated on the LLM-proxy feature flag; it appears in the
+// inventory whether or not LLMProxy is set.
+func TestExpectedValidatingWebhooksDirectModeIsolationUngated_spec_13_2(t *testing.T) {
+	for _, llmProxy := range []bool{false, true} {
+		got := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{LLMProxy: llmProxy})
+		found := false
+		for _, n := range got {
+			if n == "lenny-direct-mode-isolation" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("lenny-direct-mode-isolation must be expected with LLMProxy=%v", llmProxy)
 		}
 	}
 }

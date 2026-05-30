@@ -528,6 +528,61 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 	})
 }
 
+// spec: §13.2 lines 438-442 (NET-006) — deliveryMode: proxy with
+// egressProfile: provider-direct is mutually exclusive. The check is
+// independent of executionMode, so it fires for session, task, and
+// concurrent pools alike, and names the InvalidPoolEgressDeliveryCombo
+// sub-code while keeping the INVALID_POOL_CONFIGURATION reason.
+func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
+	t.Run("proxy + provider-direct rejected regardless of execution mode", func(t *testing.T) {
+		for _, mode := range []string{"", "session", "task", "concurrent"} {
+			d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+				ExecutionMode: mode,
+				DeliveryMode:  "proxy",
+				EgressProfile: "provider-direct",
+			}))
+			assertRejected(t, d, "InvalidPoolEgressDeliveryCombo")
+			if !strings.Contains(d.Reason, "NET-006") {
+				t.Errorf("executionMode=%q: reason %q does not cite NET-006", mode, d.Reason)
+			}
+		}
+	})
+
+	t.Run("coherent pairings admitted (egress combo gate alone)", func(t *testing.T) {
+		for _, tc := range []struct {
+			name          string
+			delivery, egr string
+		}{
+			{"proxy + restricted", "proxy", "restricted"},
+			{"direct + provider-direct", "direct", "provider-direct"},
+			{"proxy + empty egress", "proxy", ""},
+			{"empty delivery + provider-direct", "", "provider-direct"},
+			{"direct + internet", "direct", "internet"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				// session mode carries no other invariant, isolating the combo gate.
+				d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+					DeliveryMode:  tc.delivery,
+					EgressProfile: tc.egr,
+				}))
+				assertAllowed(t, d)
+			})
+		}
+	})
+
+	t.Run("combo gate runs before mode-specific rejection", func(t *testing.T) {
+		// A task-mode pool missing taskPolicy would normally reject with
+		// the §5.2 task message; the NET-006 combo must take precedence so
+		// the reported defect is the security-relevant one.
+		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			ExecutionMode: "task",
+			DeliveryMode:  "proxy",
+			EgressProfile: "provider-direct",
+		}))
+		assertRejected(t, d, "InvalidPoolEgressDeliveryCombo")
+	})
+}
+
 // spec: §10.1 lines 104-108 (spec/10_gateway-internals.md) — the tier
 // table maps workspace size to the max checkpoint cap. Unset/unknown
 // workspace size falls back to the 90s conservative tier per line 108.

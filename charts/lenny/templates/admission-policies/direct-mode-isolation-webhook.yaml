@@ -1,13 +1,21 @@
 {{- /*
 lenny-direct-mode-isolation ValidatingAdmissionWebhook (§4.9, §13.2).
 Rejects SandboxTemplate resources whose credential-delivery
-configuration exposes cross-tenant credential risk in a multi-tenant
-deployment: deliveryMode direct with isolationProfile standard, and
-deliveryMode proxy with spiffeBinding disabled. Scoped to agent
-namespaces and the sandboxtemplates resource; fail-closed. Rendered
-only when features.llmProxy is enabled.
+configuration exposes cross-tenant credential risk: deliveryMode direct
+with isolationProfile standard, and deliveryMode proxy with spiffeBinding
+disabled (both in multi-tenant mode), plus the §13.2 NET-006 deliveryMode
+proxy / egressProfile provider-direct mutual exclusivity (every tenancy
+mode). Scoped to agent namespaces and the sandboxtemplates resource;
+fail-closed.
+
+Rendered unconditionally (§13.2 line 440 step 2): the enforcement target
+is the credential-delivery / egress configuration of a pool, which is
+independent of whether the LLM proxy feature is enabled. A multi-tenant
+install with features.llmProxy: false still admits direct + standard
+SandboxTemplates without this webhook — the precise cross-tenant
+credential exposure §4.9 names — so the webhook must not be gated on
+features.llmProxy.
 */ -}}
-{{- if .Values.features.llmProxy }}
 {{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-direct-mode-isolation") }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -42,4 +50,3 @@ webhooks:
         namespace: {{ .Release.Namespace }}
         path: /direct-mode-isolation
         port: 443
-{{- end }}

@@ -260,9 +260,9 @@ func main() {
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second,
 		"graceful shutdown timeout")
 	tenancyMode := flag.String("tenancy-mode", os.Getenv("LENNY_TENANCY_MODE"),
-		"platform tenancy.mode (\"multi\" or \"single\"). The direct-mode-isolation webhook enforces the §4.9 credential-delivery rules only in multi-tenant mode.")
+		"platform tenancy.mode (\"multi\" or \"single\"). The direct-mode-isolation webhook enforces the §4.9 direct/standard and proxy/spiffe rules only in multi-tenant mode; the §13.2 NET-006 egress/delivery mutual exclusivity is enforced in every mode.")
 	devMode := flag.Bool("dev-mode", os.Getenv("LENNY_DEV_MODE") == "true",
-		"platform global.devMode. When true the direct-mode-isolation webhook admits every template, matching the §4.9 development-mode allowance.")
+		"platform global.devMode. When true the direct-mode-isolation webhook admits the §4.9 multi-tenant combinations (development-mode allowance); the §13.2 NET-006 proxy/provider-direct mutual exclusivity is still rejected.")
 	drainReadinessURL := flag.String("gateway-drain-readiness-url", os.Getenv("LENNY_GATEWAY_DRAIN_READINESS_URL"),
 		"gateway GET /internal/drain-readiness endpoint the §12.5 drain-readiness webhook probes before admitting a node-drain pod eviction.")
 	drainAuditURL := flag.String("gateway-drain-audit-url", os.Getenv("LENNY_GATEWAY_DRAIN_AUDIT_URL"),

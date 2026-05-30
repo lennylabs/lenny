@@ -19,7 +19,9 @@ import (
 // rejects, fail-closed, the credential-delivery configurations that
 // expose cross-tenant credential risk in a multi-tenant deployment:
 // deliveryMode direct with isolationProfile standard, and deliveryMode
-// proxy with spiffeBinding disabled.
+// proxy with spiffeBinding disabled. It also rejects the §13.2 NET-006
+// deliveryMode proxy / egressProfile provider-direct combination in
+// every tenancy mode.
 //
 // tenancyMode is the platform tenancy.mode setting and devMode is
 // global.devMode. Together they determine whether the webhook enforces
@@ -38,6 +40,7 @@ func DirectModeIsolation(tenancyMode string, devMode bool) Decider {
 			DeliveryMode:     tmpl.Spec.DeliveryMode,
 			IsolationProfile: tmpl.Spec.IsolationProfile,
 			SpiffeBinding:    tmpl.Spec.SpiffeBinding,
+			EgressProfile:    tmpl.Spec.EgressProfile,
 		})
 		if decision.Allowed {
 			return Allow()

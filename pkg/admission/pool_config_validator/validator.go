@@ -387,6 +387,15 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 	spec := tpl.Spec
 
+	// spec: §13.2 line 439 — the §13.2 egress/delivery coherence
+	// cross-controls are independent of executionMode, so they run before
+	// the mode-specific switch. This is the pool-registration-validation
+	// layer (layer 1) of the NET-006 mutual exclusivity; the
+	// lenny-direct-mode-isolation webhook is the second admission layer.
+	if d := decideEgressDeliveryCombo(spec); !d.Allowed {
+		return d
+	}
+
 	switch spec.ExecutionMode {
 	case "task":
 		return decideTaskMode(spec)
@@ -399,6 +408,33 @@ func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 		// "" (session) and "session" carry no pool-config invariant.
 		return allow()
 	}
+}
+
+// decideEgressDeliveryCombo enforces the §13.2 NET-006 mutual
+// exclusivity between deliveryMode and egressProfile at the
+// pool-config-validation (CRD admission) layer. A pool that sets both
+// deliveryMode: proxy and egressProfile: provider-direct is rejected:
+// proxy mode routes LLM traffic through the gateway to keep API keys off
+// the pod, while provider-direct egress opens a direct CIDR path to the
+// same provider endpoints, the silent bypass the spec calls an
+// "incoherent security posture". The rejection names the spec's
+// InvalidPoolEgressDeliveryCombo sub-code while keeping the webhook's
+// INVALID_POOL_CONFIGURATION reason so the PoolScalingController's
+// admission-denial backoff keys consistently across every rule-set-1
+// rejection.
+//
+// spec: §13.2 lines 438-442 (NET-006).
+func decideEgressDeliveryCombo(spec lennyv1.SandboxTemplateSpec) Decision {
+	if spec.DeliveryMode == "proxy" && spec.EgressProfile == "provider-direct" {
+		return reject(
+			"InvalidPoolEgressDeliveryCombo: spec.deliveryMode \"proxy\" is mutually exclusive with " +
+				"spec.egressProfile \"provider-direct\" (NET-006); provider-direct egress would give a " +
+				"proxy-mode pod a direct CIDR bypass to provider endpoints the proxy is meant to mediate. " +
+				"Use egressProfile: restricted with deliveryMode: proxy, or egressProfile: provider-direct " +
+				"with deliveryMode: direct (Section 13.2)",
+		)
+	}
+	return allow()
 }
 
 // decideTaskMode validates the §5.2 task-mode taskPolicy invariants.

@@ -1,0 +1,49 @@
+suite: direct-mode-isolation webhook (§13.2 NET-006 / §4.9)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - admission-policies/direct-mode-isolation-webhook.yaml
+tests:
+  # spec: §13.2 line 440 step 2 (F-13.2.12) — the webhook enforces a
+  # pool's credential-delivery / egress coherence, independent of the
+  # LLM-proxy feature flag, so it must render even with llmProxy: false.
+  - it: renders the workload + webhook config even when features.llmProxy is false
+    set:
+      features.llmProxy: false
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: still renders when features.llmProxy is true
+    set:
+      features.llmProxy: true
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: scopes the fail-closed ValidatingWebhookConfiguration to sandboxtemplates
+    set:
+      features.llmProxy: false
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail
+      - equal:
+          path: webhooks[0].rules[0].resources[0]
+          value: sandboxtemplates
+
+  - it: runs the webhook binary with the tenancy-mode and dev-mode flags
+    set:
+      features.llmProxy: false
+      tenancy.mode: single
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Deployment
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tenancy-mode=single

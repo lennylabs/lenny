@@ -17,10 +17,20 @@
 //	    SPIFFE-binding removes the defense against cross-pod lease-token
 //	    replay.
 //
-// The webhook enforces only in multi-tenant mode. In single-tenant mode
-// or development mode both configurations are permitted (the warm pool
-// controller's pool-registration validation handles the opt-in fields
-// there), so the decision is an allow outside multi-tenant mode.
+// Those two checks enforce only in multi-tenant mode. In single-tenant
+// mode or development mode both configurations are permitted (the warm
+// pool controller's pool-registration validation handles the opt-in
+// fields there), so the decision is an allow outside multi-tenant mode.
+//
+// A third combination is rejected in every tenancy mode:
+//
+//	(3) deliveryMode: proxy with egressProfile: provider-direct — the
+//	    §13.2 NET-006 mutual exclusivity. Proxy mode keeps API keys off
+//	    the pod by routing LLM traffic through the gateway, but
+//	    provider-direct egress opens a CIDR path from the pod straight to
+//	    the same provider endpoints, a silent bypass. The two settings
+//	    are mutually exclusive regardless of tenancy, so this check runs
+//	    before the multi-tenant gate.
 //
 // The decision logic is split from the webhook HTTP/AdmissionReview
 // transport so it can be unit-tested without the controller-runtime
@@ -37,7 +47,20 @@ const (
 	// RejectProxyModeSpiffeBindingDisabled rejects deliveryMode: proxy
 	// combined with spiffeBinding: disabled in multi-tenant mode.
 	RejectProxyModeSpiffeBindingDisabled = "ProxyModeSpiffeBindingDisabledMultiTenantRejected"
+	// RejectInvalidPoolEgressDeliveryCombo rejects deliveryMode: proxy
+	// combined with egressProfile: provider-direct in any tenancy mode,
+	// the §13.2 NET-006 mutual exclusivity.
+	RejectInvalidPoolEgressDeliveryCombo = "InvalidPoolEgressDeliveryCombo"
 )
+
+// EgressProviderDirect is the §13.2 egressProfile value that opens a
+// direct CIDR egress path from the pod to LLM provider endpoints. It is
+// mutually exclusive with deliveryMode: proxy (NET-006).
+const EgressProviderDirect = "provider-direct"
+
+// DeliveryProxy is the §4.9 deliveryMode value that routes LLM traffic
+// through the gateway proxy rather than letting the pod hold an API key.
+const DeliveryProxy = "proxy"
 
 // TenancyMulti is the platform tenancy.mode value that activates
 // webhook enforcement.
@@ -64,6 +87,11 @@ type Request struct {
 	// ("enabled" or "disabled"). Empty selects the default, which is
 	// enabled for proxy-mode pools.
 	SpiffeBinding string
+	// EgressProfile is the resource's §13.2 egressProfile
+	// ("restricted", "provider-direct", or "internet"). Empty selects
+	// the default ("restricted"). Combining "provider-direct" with
+	// DeliveryMode "proxy" is rejected under NET-006.
+	EgressProfile string
 }
 
 // Decision is the admission outcome.
@@ -79,13 +107,27 @@ type Decision struct {
 	Code int
 }
 
-// Decide applies the §4.9 multi-tenant credential-delivery rules. It
-// allows every resource outside multi-tenant mode; in multi-tenant mode
-// it rejects the direct/standard and proxy/spiffe-disabled
-// combinations. The opt-in fields that permit those combinations in
-// single-tenant mode do not rescue them here — the webhook enforces
-// regardless of any opt-in field value.
+// Decide applies the §4.9 / §13.2 credential-delivery rules. The §13.2
+// NET-006 proxy/provider-direct mutual exclusivity is rejected in every
+// tenancy mode; the §4.9 direct/standard and proxy/spiffe-disabled
+// combinations are rejected only in multi-tenant mode. The opt-in fields
+// that permit the multi-tenant-gated combinations in single-tenant mode
+// do not rescue them here — the webhook enforces regardless of any
+// opt-in field value.
 func Decide(r Request) Decision {
+	// spec: §13.2 line 438 (NET-006) — proxy + provider-direct is an
+	// incoherent security posture in any tenancy mode, so this check is
+	// not gated on enforced(). The proxy path is designed to keep API
+	// keys off the pod; provider-direct egress would hand the pod a
+	// bypass route to the same provider CIDRs.
+	if r.DeliveryMode == DeliveryProxy && r.EgressProfile == EgressProviderDirect {
+		return reject(RejectInvalidPoolEgressDeliveryCombo, r.Kind,
+			"deliveryMode: proxy with egressProfile: provider-direct is mutually exclusive "+
+				"(NET-006): proxy mode routes LLM traffic through the gateway to keep API keys "+
+				"off the pod, but provider-direct egress opens a direct CIDR path to the same "+
+				"provider endpoints. Use deliveryMode: proxy with egressProfile: restricted, or "+
+				"deliveryMode: direct with egressProfile: provider-direct.")
+	}
 	if !enforced(r) {
 		return Decision{Allowed: true, Code: 200}
 	}

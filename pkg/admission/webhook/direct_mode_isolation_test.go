@@ -83,6 +83,35 @@ func TestDirectModeIsolationAdmitsEverythingInSingleTenant(t *testing.T) {
 	}
 }
 
+// spec: §13.2 lines 438-442 (NET-006) — the transport threads
+// tmpl.Spec.EgressProfile into the decider, and the proxy/provider-direct
+// mutual exclusivity is enforced even in single-tenant mode (it is not
+// gated on tenancy).
+func TestDirectModeIsolationRejectsProxyProviderDirect_spec_13_2_NET006(t *testing.T) {
+	raw, err := json.Marshal(lennyv1.SandboxTemplate{
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:    "claude-code",
+			DeliveryMode:  "proxy",
+			EgressProfile: "provider-direct",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal SandboxTemplate: %v", err)
+	}
+	for _, tenancy := range []string{"multi", "single"} {
+		resp := directModeDecide(tenancy, false, runtime.RawExtension{Raw: raw})
+		if resp.Allowed {
+			t.Fatalf("%s-tenant: proxy + provider-direct SandboxTemplate admitted, want NET-006 rejection", tenancy)
+		}
+		if resp.Result == nil || resp.Result.Code != 403 {
+			t.Fatalf("%s-tenant: response = %+v, want a 403 rejection", tenancy, resp.Result)
+		}
+		if !strings.Contains(resp.Result.Message, dmi.RejectInvalidPoolEgressDeliveryCombo) {
+			t.Errorf("%s-tenant: message %q does not carry the NET-006 rejection code", tenancy, resp.Result.Message)
+		}
+	}
+}
+
 func TestDirectModeIsolationRejectsMalformedObject(t *testing.T) {
 	resp := directModeDecide("multi", false, runtime.RawExtension{Raw: []byte(`{not json`)})
 	if resp.Allowed {
