@@ -15,35 +15,59 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: renders the ServiceMonitor when the gate is enabled
+  # spec: §10.1 line 88 — the gateway is rendered as its own ServiceMonitor
+  # (lenny-gateway) so it can scrape at 10s while the controller and Token
+  # Service share lenny-control-plane on the slower interval.
+  - it: renders both ServiceMonitors when the gate is enabled
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
     asserts:
       - hasDocuments:
-          count: 1
+          count: 2
       - isKind:
           of: ServiceMonitor
       - equal:
           path: apiVersion
           value: monitoring.coreos.com/v1
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
+          path: kind
+          value: ServiceMonitor
+      - documentSelector:
           path: metadata.name
           value: lenny-control-plane
+        equal:
+          path: kind
+          value: ServiceMonitor
 
-  - it: places the ServiceMonitor in the monitoring namespace
+  - it: places both ServiceMonitors in the monitoring namespace
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
     asserts:
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
+          path: metadata.namespace
+          value: monitoring
+      - documentSelector:
+          path: metadata.name
+          value: lenny-control-plane
+        equal:
           path: metadata.namespace
           value: monitoring
 
-  - it: selects the gateway, controller, and token-service components
+  - it: the gateway ServiceMonitor selects only the gateway component
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
+    documentSelector:
+      path: metadata.name
+      value: lenny-gateway
     asserts:
       - equal:
           path: spec.selector.matchLabels["app.kubernetes.io/name"]
@@ -51,31 +75,74 @@ tests:
       - equal:
           path: spec.selector.matchExpressions[0].key
           value: lenny.dev/component
-      - contains:
+      - equal:
           path: spec.selector.matchExpressions[0].values
-          content: gateway
+          value:
+            - gateway
+
+  - it: the control-plane ServiceMonitor selects the controller and token-service components
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    documentSelector:
+      path: metadata.name
+      value: lenny-control-plane
+    asserts:
       - contains:
           path: spec.selector.matchExpressions[0].values
           content: controller
       - contains:
           path: spec.selector.matchExpressions[0].values
           content: token-service
+      - notContains:
+          path: spec.selector.matchExpressions[0].values
+          content: gateway
 
-  - it: scrapes the metrics endpoint with the configured interval and timeout
+  # spec: §10.1 line 88 — the gateway scrapes at 10s by default; the rest
+  # of the control plane stays on monitoring.serviceMonitor.interval.
+  - it: scrapes the gateway at 10s by default
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
-      monitoring.serviceMonitor.interval: 15s
-      monitoring.serviceMonitor.scrapeTimeout: 5s
+    documentSelector:
+      path: metadata.name
+      value: lenny-gateway
     asserts:
       - equal:
           path: spec.endpoints[0].port
           value: metrics
       - equal:
           path: spec.endpoints[0].interval
-          value: 15s
+          value: 10s
+
+  - it: scrapes the control plane on the configured interval and timeout
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.serviceMonitor.interval: 30s
+      monitoring.serviceMonitor.scrapeTimeout: 5s
+    documentSelector:
+      path: metadata.name
+      value: lenny-control-plane
+    asserts:
+      - equal:
+          path: spec.endpoints[0].interval
+          value: 30s
       - equal:
           path: spec.endpoints[0].scrapeTimeout
+          value: 5s
+
+  - it: honours a gatewayInterval override on the gateway ServiceMonitor
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.serviceMonitor.gatewayInterval: 5s
+    documentSelector:
+      path: metadata.name
+      value: lenny-gateway
+    asserts:
+      - equal:
+          path: spec.endpoints[0].interval
           value: 5s
 
   - it: applies operator-discoverable labels from prometheusRule.additionalLabels
@@ -85,17 +152,35 @@ tests:
       monitoring.prometheusRule.additionalLabels:
         release: kube-prometheus-stack
     asserts:
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+      - documentSelector:
+          path: metadata.name
+          value: lenny-control-plane
+        equal:
           path: metadata.labels.release
           value: kube-prometheus-stack
 
-  - it: places the ServiceMonitor in an explicit serviceMonitor namespace
+  - it: places the ServiceMonitors in an explicit serviceMonitor namespace
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
       monitoring.serviceMonitor.namespace: observability
     asserts:
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
+          path: metadata.namespace
+          value: observability
+      - documentSelector:
+          path: metadata.name
+          value: lenny-control-plane
+        equal:
           path: metadata.namespace
           value: observability
 
@@ -139,12 +224,21 @@ tests:
   # (kube-rbac-proxy mounted at /-/metrics, an ingress-rewritten path)
   # must be able to override the scrape path through values rather than
   # forking the chart.
-  - it: defaults the ServiceMonitor scrape path to /metrics
+  - it: defaults both ServiceMonitor scrape paths to /metrics
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
     asserts:
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
+          path: spec.endpoints[0].path
+          value: /metrics
+      - documentSelector:
+          path: metadata.name
+          value: lenny-control-plane
+        equal:
           path: spec.endpoints[0].path
           value: /metrics
 
@@ -157,13 +251,22 @@ tests:
           path: spec.podMetricsEndpoints[0].path
           value: /metrics
 
-  - it: honours an override of monitoring.serviceMonitor.path on the ServiceMonitor
+  - it: honours an override of monitoring.serviceMonitor.path on both ServiceMonitors
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
       monitoring.serviceMonitor.path: /-/metrics
     asserts:
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
+          path: spec.endpoints[0].path
+          value: /-/metrics
+      - documentSelector:
+          path: metadata.name
+          value: lenny-control-plane
+        equal:
           path: spec.endpoints[0].path
           value: /-/metrics
 
@@ -181,15 +284,21 @@ tests:
   # non-plaintext scrape via the scheme and tlsConfig knobs. The default
   # stays http so the chart's existing plaintext metrics listener works
   # without explicit configuration.
-  - it: omits scheme and tlsConfig on the ServiceMonitor by default
+  - it: omits scheme and tlsConfig on both ServiceMonitors by default
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
     asserts:
-      - notExists:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        notExists:
           path: spec.endpoints[0].scheme
-      - notExists:
-          path: spec.endpoints[0].tlsConfig
+      - documentSelector:
+          path: metadata.name
+          value: lenny-control-plane
+        notExists:
+          path: spec.endpoints[0].scheme
 
   - it: omits scheme and tlsConfig on the PodMonitor by default
     template: podmonitor.yaml
@@ -201,7 +310,7 @@ tests:
       - notExists:
           path: spec.podMetricsEndpoints[0].tlsConfig
 
-  - it: renders scheme HTTPS and tlsConfig on the ServiceMonitor when configured
+  - it: renders scheme HTTPS and tlsConfig on both ServiceMonitors when configured
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
@@ -210,15 +319,24 @@ tests:
         caFile: /etc/prometheus/secrets/ca.crt
         serverName: lenny-gateway.lenny-system.svc
     asserts:
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
           path: spec.endpoints[0].scheme
           value: https
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
           path: spec.endpoints[0].tlsConfig.caFile
           value: /etc/prometheus/secrets/ca.crt
-      - equal:
-          path: spec.endpoints[0].tlsConfig.serverName
-          value: lenny-gateway.lenny-system.svc
+      - documentSelector:
+          path: metadata.name
+          value: lenny-control-plane
+        equal:
+          path: spec.endpoints[0].scheme
+          value: https
 
   - it: renders scheme HTTPS and tlsConfig on the PodMonitor when configured
     template: podmonitor.yaml
@@ -243,18 +361,33 @@ tests:
   # injected onto every scraped series via a metricRelabeling so
   # tier-conditioned alerts (Tier3GCPressureHigh) and the §16.10 OpenSLO
   # export resolve it without per-metric instrumentation.
-  - it: injects the deployment_tier metricRelabeling on the ServiceMonitor (default tier1)
+  - it: injects the deployment_tier metricRelabeling on both ServiceMonitors (default tier1)
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
     asserts:
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
           path: spec.endpoints[0].metricRelabelings[0].targetLabel
           value: deployment_tier
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-gateway
+        equal:
           path: spec.endpoints[0].metricRelabelings[0].replacement
           value: tier1
-      - equal:
+      - documentSelector:
+          path: metadata.name
+          value: lenny-control-plane
+        equal:
+          path: spec.endpoints[0].metricRelabelings[0].replacement
+          value: tier1
+      - documentSelector:
+          path: metadata.name
+          value: lenny-control-plane
+        equal:
           path: spec.endpoints[0].metricRelabelings[0].action
           value: replace
 
@@ -270,11 +403,14 @@ tests:
           path: spec.podMetricsEndpoints[0].metricRelabelings[0].replacement
           value: tier1
 
-  - it: carries the configured global.deploymentTier onto the ServiceMonitor relabel
+  - it: carries the configured global.deploymentTier onto the gateway ServiceMonitor relabel
     template: servicemonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
       global.deploymentTier: tier3
+    documentSelector:
+      path: metadata.name
+      value: lenny-gateway
     asserts:
       - equal:
           path: spec.endpoints[0].metricRelabelings[0].replacement

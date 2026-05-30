@@ -54,7 +54,7 @@ func TestPoolConfigValidatorAdmitsValidWarmPool(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 2, MaxWarm: 10},
 	}
-	resp := webhook.PoolConfigValidator()(context.Background(), poolConfigReq(t, "SandboxWarmPool", pool))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxWarmPool", pool))
 	if !resp.Allowed {
 		t.Fatalf("a SandboxWarmPool with minWarm <= maxWarm must be admitted: %+v", resp.Result)
 	}
@@ -65,7 +65,7 @@ func TestPoolConfigValidatorRejectsWarmPoolBudgetViolation(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 20, MaxWarm: 10},
 	}
-	resp := webhook.PoolConfigValidator()(context.Background(), poolConfigReq(t, "SandboxWarmPool", pool))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxWarmPool", pool))
 	if resp.Allowed {
 		t.Fatal("a SandboxWarmPool with minWarm above maxWarm must be rejected")
 	}
@@ -85,7 +85,7 @@ func TestPoolConfigValidatorAdmitsValidTemplate(t *testing.T) {
 			TaskPolicy: &lennyv1.TaskPolicy{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 50},
 		},
 	}
-	resp := webhook.PoolConfigValidator()(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
 	if !resp.Allowed {
 		t.Fatalf("an acknowledged task-mode SandboxTemplate must be admitted: %+v", resp.Result)
 	}
@@ -96,7 +96,7 @@ func TestPoolConfigValidatorRejectsTemplateInvariantViolation(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "r", ExecutionMode: "task"},
 	}
-	resp := webhook.PoolConfigValidator()(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
 	if resp.Allowed {
 		t.Fatal("a task-mode SandboxTemplate without taskPolicy must be rejected")
 	}
@@ -106,7 +106,7 @@ func TestPoolConfigValidatorRejectsTemplateInvariantViolation(t *testing.T) {
 }
 
 func TestPoolConfigValidatorRejectsUnknownKind(t *testing.T) {
-	resp := webhook.PoolConfigValidator()(context.Background(),
+	resp := webhook.PoolConfigValidator(nil)(context.Background(),
 		poolConfigReq(t, "Sandbox", lennyv1.Sandbox{}))
 	if resp.Allowed {
 		t.Fatal("an unexpected resource kind must be rejected fail-closed")
@@ -127,7 +127,7 @@ func TestPoolConfigValidatorRejectsManualWarmPoolWrite(t *testing.T) {
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 2, MaxWarm: 10},
 	}
 	req := poolConfigReqAs(t, "SandboxWarmPool", pool, "system:serviceaccount:acme:platform-admin")
-	resp := webhook.PoolConfigValidator()(context.Background(), req)
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)
 	if resp.Allowed {
 		t.Fatal("a budget-valid SandboxWarmPool written by a non-PSC principal must be rejected by rule set 2")
 	}
@@ -148,7 +148,7 @@ func TestPoolConfigValidatorRejectsManualTemplateWrite(t *testing.T) {
 		},
 	}
 	req := poolConfigReqAs(t, "SandboxTemplate", tpl, "kubernetes-admin")
-	resp := webhook.PoolConfigValidator()(context.Background(), req)
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)
 	if resp.Allowed {
 		t.Fatal("a budget-valid SandboxTemplate written by a non-PSC principal must be rejected by rule set 2")
 	}
@@ -166,7 +166,7 @@ func TestPoolConfigValidatorBudgetViolationPrecedesAuthz(t *testing.T) {
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 20, MaxWarm: 10},
 	}
 	req := poolConfigReqAs(t, "SandboxWarmPool", pool, "system:serviceaccount:acme:platform-admin")
-	resp := webhook.PoolConfigValidator()(context.Background(), req)
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)
 	if resp.Allowed {
 		t.Fatal("a budget-violating write must be rejected regardless of principal")
 	}
@@ -193,7 +193,7 @@ func TestPoolConfigValidatorPropagatesTerminationGraceWarning_spec_5_2_516(t *te
 			},
 		},
 	}
-	resp := webhook.PoolConfigValidator()(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
 	if !resp.Allowed {
 		t.Fatalf("an above-600s floor must be admitted with a warning: %+v", resp.Result)
 	}
@@ -224,7 +224,7 @@ func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t 
 			},
 		},
 	}
-	resp := webhook.PoolConfigValidator()(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
 	if resp.Allowed {
 		t.Fatal("a floor above maxTerminationGracePeriodSeconds must be rejected")
 	}
@@ -236,6 +236,90 @@ func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t 
 	}
 }
 
+// spec: §16.1 line 129 / §10.1 line 119 — every SandboxTemplate write
+// the webhook rejects on the termination-budget inequality increments
+// lenny_pool_termination_budget_exceeded_total, labeled by pool. The
+// BarrierAck-floor and execution-mode rejections must NOT increment it.
+type budgetCounterSpy struct{ pools []string }
+
+func (s *budgetCounterSpy) IncPoolTerminationBudgetExceeded(pool string) {
+	s.pools = append(s.pools, pool)
+}
+
+func TestPoolConfigValidatorEmitsBudgetCounter_spec_16_1_129(t *testing.T) {
+	int64p := func(v int64) *int64 { return &v }
+
+	t.Run("budget rejection increments the counter with the pool label", func(t *testing.T) {
+		spy := &budgetCounterSpy{}
+		// session-mode pool, default 90s tier, grace 1s → floor 210s > 1s.
+		tpl := lennyv1.SandboxTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
+			Spec: lennyv1.SandboxTemplateSpec{
+				RuntimeRef:                    "r",
+				TerminationGracePeriodSeconds: int64p(1),
+			},
+		}
+		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+		if resp.Allowed {
+			t.Fatal("a below-floor template must be rejected")
+		}
+		if len(spy.pools) != 1 || spy.pools[0] != "agent-template" {
+			t.Fatalf("counter pools = %v, want one increment labeled agent-template", spy.pools)
+		}
+	})
+
+	t.Run("BarrierAck-floor rejection does not increment the budget counter", func(t *testing.T) {
+		spy := &budgetCounterSpy{}
+		tpl := lennyv1.SandboxTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
+			Spec: lennyv1.SandboxTemplateSpec{
+				RuntimeRef:                         "r",
+				WorkspaceSizeLimitBytes:            int64p(300 * 1024 * 1024),
+				CheckpointBarrierAckTimeoutSeconds: int64p(30),
+			},
+		}
+		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+		if resp.Allowed {
+			t.Fatal("a BarrierAck-floor violation must be rejected")
+		}
+		if len(spy.pools) != 0 {
+			t.Fatalf("counter pools = %v, want no increment for a non-budget rejection", spy.pools)
+		}
+	})
+
+	t.Run("admitted template does not increment the counter", func(t *testing.T) {
+		spy := &budgetCounterSpy{}
+		tpl := lennyv1.SandboxTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
+			Spec: lennyv1.SandboxTemplateSpec{
+				RuntimeRef:                    "r",
+				TerminationGracePeriodSeconds: int64p(210),
+			},
+		}
+		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+		if !resp.Allowed {
+			t.Fatalf("an at-floor template must be admitted: %+v", resp.Result)
+		}
+		if len(spy.pools) != 0 {
+			t.Fatalf("counter pools = %v, want no increment on admit", spy.pools)
+		}
+	})
+
+	t.Run("nil sink is safe on a budget rejection", func(t *testing.T) {
+		tpl := lennyv1.SandboxTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
+			Spec: lennyv1.SandboxTemplateSpec{
+				RuntimeRef:                    "r",
+				TerminationGracePeriodSeconds: int64p(1),
+			},
+		}
+		resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+		if resp.Allowed {
+			t.Fatal("a below-floor template must be rejected even with a nil metrics sink")
+		}
+	})
+}
+
 func TestPoolConfigValidatorRejectsMalformedObject(t *testing.T) {
 	req := &admissionv1.AdmissionRequest{
 		UID:       "test-uid",
@@ -243,7 +327,7 @@ func TestPoolConfigValidatorRejectsMalformedObject(t *testing.T) {
 		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1", Kind: "SandboxWarmPool"},
 		Object:    runtime.RawExtension{Raw: []byte("{not json")},
 	}
-	resp := webhook.PoolConfigValidator()(context.Background(), req)
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)
 	if resp.Allowed {
 		t.Fatal("a SandboxWarmPool the webhook cannot decode must be rejected fail-closed")
 	}

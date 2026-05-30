@@ -507,24 +507,113 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		assertAllowed(t, d)
 	})
 
-	t.Run("non-concurrent pool does not run the budget check", func(t *testing.T) {
-		// A session-mode pool with a tiny deployer grace period must not
-		// be rejected — the floor rule is concurrent-workspace only.
+	// spec: §10.1 line 116 — the budget rule applies to EVERY
+	// SandboxTemplate write regardless of executionMode. A session-mode
+	// pool that allows a (default-tier 90s) workspace but declares a
+	// 1s grace period has a floor of 1*90 + 90 + 30 = 210s and must be
+	// rejected, not silently admitted to SIGKILL on drain.
+	t.Run("session-mode pool below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
-			RuntimeRef:                   "r",
+			RuntimeRef:                    "r",
 			TerminationGracePeriodSeconds: int64p(1),
+		}))
+		assertRejected(t, d, "below the §5.2 floor for this pool (210s")
+		if !d.BudgetExceeded {
+			t.Error("a grace-period-floor rejection must set BudgetExceeded so the counter increments")
+		}
+	})
+
+	t.Run("session-mode pool at the floor → admitted (§10.1 line 116)", func(t *testing.T) {
+		// floor = 1*90 + 90 + 30 = 210s.
+		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                    "r",
+			TerminationGracePeriodSeconds: int64p(210),
 		}))
 		assertAllowed(t, d)
 	})
 
-	t.Run("stateless concurrent pool does not run the budget check", func(t *testing.T) {
+	t.Run("session-mode pool with no grace period set → admitted (no comparison)", func(t *testing.T) {
+		// terminationGracePeriodSeconds unset means the deployer accepts
+		// the chart/§4.6.1 default; the webhook rejects only an explicit
+		// value below the floor.
+		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{RuntimeRef: "r"}))
+		assertAllowed(t, d)
+	})
+
+	t.Run("stateless concurrent pool below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
+		// A stateless-concurrent pool checkpoints a single workspace, so
+		// the multiplier is 1: floor = 1*90 + 90 + 30 = 210s.
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
-			RuntimeRef:                   "r",
-			ExecutionMode:                "concurrent",
-			ConcurrencyStyle:             "stateless",
+			RuntimeRef:                    "r",
+			ExecutionMode:                 "concurrent",
+			ConcurrencyStyle:              "stateless",
 			TerminationGracePeriodSeconds: int64p(1),
 		}))
-		assertAllowed(t, d)
+		assertRejected(t, d, "below the §5.2 floor for this pool (210s")
+		if !d.BudgetExceeded {
+			t.Error("a grace-period-floor rejection must set BudgetExceeded so the counter increments")
+		}
+	})
+
+	t.Run("task-mode pool below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
+		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                    "r",
+			ExecutionMode:                 "task",
+			TaskPolicy:                    &lennyv1.TaskPolicy{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 10},
+			TerminationGracePeriodSeconds: int64p(1),
+		}))
+		assertRejected(t, d, "below the §5.2 floor for this pool (210s")
+		if !d.BudgetExceeded {
+			t.Error("a grace-period-floor rejection must set BudgetExceeded so the counter increments")
+		}
+	})
+}
+
+// spec: §10.1 line 119 / §16.1 line 129 — only the two grace-period
+// budget rejections (floor > terminationGracePeriodSeconds, floor >
+// maxTerminationGracePeriodSeconds) set Decision.BudgetExceeded so the
+// webhook increments lenny_pool_termination_budget_exceeded_total. The
+// BarrierAck-floor rule (§10.1 line 124) and the warm-count / acknowledgment
+// rejections are distinct and must NOT increment that counter.
+func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) {
+	int64p := func(v int64) *int64 { return &v }
+
+	t.Run("maxTerminationGracePeriodSeconds breach sets BudgetExceeded", func(t *testing.T) {
+		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                       "r",
+			ExecutionMode:                    "concurrent",
+			ConcurrencyStyle:                 "workspace",
+			MaxConcurrent:                    8,
+			MaxTerminationGracePeriodSeconds: int64p(600),
+			ConcurrentWorkspacePolicy: &lennyv1.ConcurrentWorkspacePolicy{
+				AcknowledgeProcessLevelIsolation: true,
+				CleanupTimeoutSeconds:            60,
+			},
+		}))
+		assertRejected(t, d, "exceeds spec.maxTerminationGracePeriodSeconds")
+		if !d.BudgetExceeded {
+			t.Error("ceiling breach must set BudgetExceeded")
+		}
+	})
+
+	t.Run("BarrierAck-floor rejection does NOT set BudgetExceeded", func(t *testing.T) {
+		// 300 MB → 60s tier; ack 30s < tier cap → BarrierAck-floor reject.
+		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                         "r",
+			WorkspaceSizeLimitBytes:            int64p(300 * 1024 * 1024),
+			CheckpointBarrierAckTimeoutSeconds: int64p(30),
+		}))
+		assertRejected(t, d, "must be >= max_tiered_checkpoint_cap")
+		if d.BudgetExceeded {
+			t.Error("the BarrierAck-floor rule is distinct from the termination budget and must not set BudgetExceeded")
+		}
+	})
+
+	t.Run("warm-count rejection does NOT set BudgetExceeded", func(t *testing.T) {
+		d := pcv.DecideWarmPool(warmPool(lennyv1.SandboxWarmPoolSpec{MinWarm: 20, MaxWarm: 10}))
+		if d.Allowed || d.BudgetExceeded {
+			t.Errorf("a warm-count rejection must reject without BudgetExceeded: %+v", d)
+		}
 	})
 }
 

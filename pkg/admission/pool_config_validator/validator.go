@@ -13,13 +13,17 @@
 // invariants that are visible at the CRD layer — the relationships
 // between minWarm, maxWarm, bootstrap and schedule overrides on a
 // SandboxWarmPool, and the execution-mode acknowledgment and budget
-// rules on a SandboxTemplate. The §5.2 line 516 per-pod
-// `terminationGracePeriodSeconds` floor for concurrent-workspace pools
+// rules on a SandboxTemplate. The §10.1 line 116 / §5.2 line 516 per-pod
+// `terminationGracePeriodSeconds` floor
 // (`maxConcurrent × max_tiered_checkpoint_cap +
 // checkpointBarrierAckTimeoutSeconds + 30`) is enforced here against
 // `spec.workspaceSizeLimitBytes`, `spec.checkpointBarrierAckTimeoutSeconds`,
 // `spec.terminationGracePeriodSeconds`, and `spec.maxTerminationGracePeriodSeconds`
-// — see decideTerminationBudget.
+// — see decideTerminationBudget. Per §10.1 line 116 the budget rule
+// applies to EVERY SandboxTemplate write regardless of execution mode;
+// only a concurrent-workspace pool fans the per-slot checkpoint cap
+// across `maxConcurrent` slots, so session, task, and stateless-concurrent
+// pools use a multiplier of 1.
 //
 // The decision logic is split from the webhook HTTP/JSON-AdmissionReview
 // transport so it can be unit-tested without the controller-runtime
@@ -125,6 +129,17 @@ type Decision struct {
 	// 600s emits a warning, not a rejection, unless
 	// `maxTerminationGracePeriodSeconds` is set and breached.
 	Warnings []string
+
+	// BudgetExceeded marks a rejection caused by the §10.1 line 119
+	// tiered-cap + BarrierAck termination-budget inequality (the computed
+	// preStop floor exceeds the deployer's terminationGracePeriodSeconds
+	// or the maxTerminationGracePeriodSeconds ceiling). The webhook
+	// transport increments `lenny_pool_termination_budget_exceeded_total`
+	// (labeled by pool) on these rejections so the §16.1 line 129 counter
+	// surfaces budget-driven admission failures. Other rule-set-1
+	// rejections (warm-count budgets, execution-mode acknowledgments, the
+	// BarrierAck floor) leave it false.
+	BudgetExceeded bool
 }
 
 // allow builds an admitting Decision.
@@ -146,6 +161,19 @@ func reject(msg string) Decision {
 		Reason:  ReasonInvalidPoolConfiguration + ": " + msg,
 		Code:    codeInvalidPoolConfiguration,
 	}
+}
+
+// rejectBudget builds a rule-set-1 rejection flagged as a
+// termination-budget violation so the webhook transport increments
+// `lenny_pool_termination_budget_exceeded_total` (spec/16_observability.md
+// line 129). It is used only for the two grace-period-budget rejections
+// in decideTerminationBudget — the floor-vs-terminationGracePeriodSeconds
+// and floor-vs-maxTerminationGracePeriodSeconds comparisons named by
+// spec/10_gateway-internals.md §10.1 line 119.
+func rejectBudget(msg string) Decision {
+	d := reject(msg)
+	d.BudgetExceeded = true
+	return d
 }
 
 // DecideAuthorization implements rule set 2 of §4.6.3: the
@@ -396,18 +424,49 @@ func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 		return d
 	}
 
+	// Execution-mode acknowledgment invariants. A rejection here
+	// short-circuits; on allow, the §10.1 termination-budget rule below
+	// still runs for every mode.
 	switch spec.ExecutionMode {
 	case "task":
-		return decideTaskMode(spec)
+		if d := decideTaskMode(spec); !d.Allowed {
+			return d
+		}
 	case "concurrent":
 		if spec.ConcurrencyStyle == "workspace" {
-			return decideConcurrentWorkspace(spec)
+			if d := decideConcurrentWorkspace(spec); !d.Allowed {
+				return d
+			}
 		}
-		return allow()
 	default:
-		// "" (session) and "session" carry no pool-config invariant.
-		return allow()
+		// "" (session) and "session" carry no execution-mode invariant.
 	}
+
+	// spec: §10.1 line 116 — the tiered-cap + BarrierAck termination
+	// budget rule applies to EVERY admission request that mutates a
+	// SandboxTemplate.spec, not only concurrent-workspace pools. A
+	// session-mode pool that allows a 512 MB workspace but declares a
+	// terminationGracePeriodSeconds below the 90s + 90s + 30s floor would
+	// be SIGKILL'd mid-checkpoint on drain exactly as a concurrent pool
+	// would; the rule is not subject to the executionMode the deployer
+	// happened to pick.
+	return decideTerminationBudget(spec, effectiveMaxConcurrent(spec))
+}
+
+// effectiveMaxConcurrent resolves the per-pod slot multiplier the §10.1
+// line 119 / §5.2 line 516 termination-budget floor uses. Only a
+// concurrent-workspace pool fans the per-slot checkpoint cap across
+// `maxConcurrent` slots (the floor sums per-slot caps); every other mode
+// checkpoints a single workspace, so the multiplier is 1. An unset or
+// sub-1 maxConcurrent collapses to a single slot.
+//
+// spec: §10.1 line 119 (single-workspace floor), §5.2 line 516
+// (concurrent-workspace floor).
+func effectiveMaxConcurrent(spec lennyv1.SandboxTemplateSpec) int32 {
+	if spec.ExecutionMode == "concurrent" && spec.ConcurrencyStyle == "workspace" && spec.MaxConcurrent > 1 {
+		return spec.MaxConcurrent
+	}
+	return 1
 }
 
 // decideEgressDeliveryCombo enforces the §13.2 NET-006 mutual
@@ -512,7 +571,11 @@ func decideConcurrentWorkspace(spec lennyv1.SandboxTemplateSpec) Decision {
 			cw.CleanupTimeoutSeconds, maxConcurrent, cleanupFloor,
 		))
 	}
-	return decideTerminationBudget(spec, maxConcurrent)
+	// The §10.1 line 119 / §5.2 line 516 termination-budget floor is
+	// enforced centrally in DecideTemplate (it applies to every execution
+	// mode, with this pool's maxConcurrent multiplier), so it is not
+	// repeated here.
+	return allow()
 }
 
 // MaxTieredCheckpointCapSeconds returns the §10.1 line 104 tiered
@@ -563,9 +626,12 @@ const minStreamDrainSeconds = 30
 // MaxTerminationGracePeriodSeconds is set and breached.
 const nodeDrainWarnSeconds = 600
 
-// decideTerminationBudget enforces the §5.2 line 516 per-pod
-// `terminationGracePeriodSeconds` floor for concurrent-workspace pools.
-// The webhook computes
+// decideTerminationBudget enforces the §10.1 line 116 / §5.2 line 516
+// per-pod `terminationGracePeriodSeconds` floor. It runs for every
+// SandboxTemplate execution mode (DecideTemplate calls it after the
+// mode-specific acknowledgment checks); maxConcurrent is the slot
+// multiplier, which effectiveMaxConcurrent collapses to 1 for every mode
+// except concurrent-workspace. The webhook computes
 //
 //	floor = maxConcurrent * max_tiered_checkpoint_cap
 //	      + checkpointBarrierAckTimeoutSeconds
@@ -611,7 +677,7 @@ func decideTerminationBudget(spec lennyv1.SandboxTemplateSpec, maxConcurrent int
 	}
 	floor := int64(maxConcurrent)*tierCap + barrierAck + int64(minStreamDrainSeconds)
 	if spec.MaxTerminationGracePeriodSeconds != nil && floor > *spec.MaxTerminationGracePeriodSeconds {
-		return reject(fmt.Sprintf(
+		return rejectBudget(fmt.Sprintf(
 			"computed terminationGracePeriodSeconds floor (%ds) exceeds spec.maxTerminationGracePeriodSeconds (%ds); "+
 				"reduce spec.maxConcurrent (%d), spec.workspaceSizeLimitBytes, or spec.checkpointBarrierAckTimeoutSeconds, "+
 				"or raise the hard ceiling",
@@ -619,7 +685,7 @@ func decideTerminationBudget(spec lennyv1.SandboxTemplateSpec, maxConcurrent int
 		))
 	}
 	if spec.TerminationGracePeriodSeconds != nil && *spec.TerminationGracePeriodSeconds < floor {
-		return reject(fmt.Sprintf(
+		return rejectBudget(fmt.Sprintf(
 			"spec.terminationGracePeriodSeconds (%ds) is below the §5.2 floor for this pool (%ds = %d x %d tier cap + "+
 				"%d ack + %d drain); raise spec.terminationGracePeriodSeconds or reduce spec.maxConcurrent / "+
 				"spec.workspaceSizeLimitBytes",

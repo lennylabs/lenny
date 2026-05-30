@@ -129,6 +129,16 @@ spec:
         threshold: "200"
 ```
 
+### Reducing Custom-Metric Pipeline Lag
+
+The custom-metric pipeline that feeds the HPA has three latency stages: the Prometheus scrape interval, the Prometheus Adapter cache TTL, and the HPA evaluation interval. With defaults the worst-case lag is approximately 60 seconds. Two configuration changes reduce it.
+
+The gateway Helm chart renders a dedicated `lenny-gateway` ServiceMonitor that scrapes the gateway at `monitoring.serviceMonitor.gatewayInterval` (default `10s`), separate from the `lenny-control-plane` ServiceMonitor that scrapes the controller and Token Service at `monitoring.serviceMonitor.interval` (default `30s`). Lower `gatewayInterval` further only when the Prometheus server can absorb the added scrape load.
+
+The Prometheus Adapter is an external dependency that the operator installs; the chart does not render it. Set `metricsRelistInterval: 15s` and `cacheMetricResolutionPeriod: 15s` in the adapter configuration so the adapter relists and refreshes the gateway metric on the same cadence as the scrape. A larger value extends the adapter cache TTL and the pipeline lag.
+
+When KEDA replaces the Prometheus Adapter, set `pollingInterval: 10s` on the `ScaledObject` to bypass the adapter cache. The worst-case pipeline lag then drops to approximately 20 seconds.
+
 ### HPA Queue Depth Targets by Deployment Size
 
 The `lenny_gateway_request_queue_depth` HPA target `averageValue` varies by deployment size to provide tighter back-pressure control at higher scale:

@@ -72,32 +72,39 @@ func buildScheme() *runtime.Scheme {
 	return s
 }
 
-// newMux wires every admission route plus the probes. reader backs the
-// sandboxclaim-guard and drain-readiness routes' API-server lookups;
-// tenancyMode and devMode configure the direct-mode-isolation route's
-// §4.9 enforcement; drainReadinessURL is the gateway endpoint the
-// drain-readiness route probes; declaredRegions is the deployment's
-// storage.regions key set the §12.8 data-residency-validator route
-// validates against; cosignDecider is the §5.2 cosign image-signature
-// Decider, nil when cosign verification is disabled in the chart;
-// requireDigest is the §13.1 platform.registry.requireDigest flag the
-// registry-digest route enforces.
+// webhookMetrics carries the metric vectors the lenny-webhook binary
+// owns, all registered on one private registry exposed on /metrics.
+type webhookMetrics struct {
+	reg        *prometheus.Registry
+	drain      *prometheus.CounterVec
+	poolBudget *prometheus.CounterVec
+}
+
 // newWebhookMetrics constructs a private Prometheus registry holding
 // the metric vectors the lenny-webhook binary owns. The
 // lenny_drain_readiness_checks_total counter lands here so the §12.5
 // line 291 metric surfaces on the webhook's own /metrics scrape target
-// even before any traffic reaches the gateway.
-func newWebhookMetrics() (*prometheus.Registry, *prometheus.CounterVec, error) {
+// even before any traffic reaches the gateway, alongside the §10.1
+// line 122 / §16.1 line 129 lenny_pool_termination_budget_exceeded_total
+// counter the pool-config-validator increments on a budget rejection.
+func newWebhookMetrics() (*webhookMetrics, error) {
 	reg := prometheus.NewRegistry()
 	drain, err := obsmetrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_drain_readiness_checks_total",
 		Help: "Drain readiness admission decisions (§12.5 line 291) by outcome.",
 	}, []string{"outcome"})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	reg.MustRegister(drain)
-	return reg, drain, nil
+	poolBudget, err := obsmetrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pool_termination_budget_exceeded_total",
+		Help: "Pool config writes rejected on the §10.1 termination budget, by pool.",
+	}, []string{"pool"})
+	if err != nil {
+		return nil, err
+	}
+	reg.MustRegister(drain, poolBudget)
+	return &webhookMetrics{reg: reg, drain: drain, poolBudget: poolBudget}, nil
 }
 
 // drainCounterSink adapts a Prometheus CounterVec to the
@@ -108,7 +115,27 @@ func (s drainCounterSink) IncDrainReadinessCheck(outcome string) {
 	s.vec.WithLabelValues(outcome).Inc()
 }
 
-func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, rcPolicy podsecurity.RuntimeClassPolicy, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink) *http.ServeMux {
+// poolConfigCounterSink adapts a Prometheus CounterVec to the
+// PoolConfigMetricsSink interface, emitting the §16.1 line 129
+// lenny_pool_termination_budget_exceeded_total counter labeled by pool.
+type poolConfigCounterSink struct{ vec *prometheus.CounterVec }
+
+func (s poolConfigCounterSink) IncPoolTerminationBudgetExceeded(pool string) {
+	s.vec.WithLabelValues(pool).Inc()
+}
+
+// newMux wires every admission route plus the probes. reader backs the
+// sandboxclaim-guard and drain-readiness routes' API-server lookups;
+// tenancyMode and devMode configure the direct-mode-isolation route's
+// §4.9 enforcement; drainReadinessURL is the gateway endpoint the
+// drain-readiness route probes; declaredRegions is the deployment's
+// storage.regions key set the §12.8 data-residency-validator route
+// validates against; cosignDecider is the §5.2 cosign image-signature
+// Decider, nil when cosign verification is disabled in the chart;
+// requireDigest is the §13.1 platform.registry.requireDigest flag the
+// registry-digest route enforces; drainSink and poolBudgetSink receive
+// the §12.5 and §10.1 webhook counters.
+func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, rcPolicy podsecurity.RuntimeClassPolicy, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink, poolBudgetSink webhook.PoolConfigMetricsSink) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	// §5.2 line 392 — lenny-tenant-label-immutability is a sibling
@@ -121,7 +148,7 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	// §4.6.2/§4.6.3 semantic budget invariants on SandboxWarmPool and
 	// SandboxTemplate spec writes. Pure in-process validation, so it
 	// needs no API-server reader.
-	mux.Handle("/pool-config-validator", webhook.Handler(webhook.PoolConfigValidator()))
+	mux.Handle("/pool-config-validator", webhook.Handler(webhook.PoolConfigValidator(poolBudgetSink)))
 	mux.Handle("/ephemeral-container-cred-guard", webhook.Handler(webhook.EphemeralContainerCredGuard(
 		podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName,
 	)))
@@ -306,13 +333,13 @@ func main() {
 		log.Fatalf("lenny-webhook: build cluster client: %v", err)
 	}
 
-	metricsReg, drainCounter, err := newWebhookMetrics()
+	metrics, err := newWebhookMetrics()
 	if err != nil {
 		log.Fatalf("lenny-webhook: build metrics: %v", err)
 	}
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, *drainAuditURL, declaredRegions, cosignDecider, *requireDigest, rcPolicy, metricsReg, drainCounterSink{vec: drainCounter}),
+		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, *drainAuditURL, declaredRegions, cosignDecider, *requireDigest, rcPolicy, metrics.reg, drainCounterSink{vec: metrics.drain}, poolConfigCounterSink{vec: metrics.poolBudget}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

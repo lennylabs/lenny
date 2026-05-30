@@ -479,9 +479,19 @@ monitoring:
     # namespace is where the ServiceMonitor and PodMonitor are created.
     # Defaults to monitoring.namespace when empty.
     namespace: ""
-    # interval is the §16.9 scrape interval applied to every endpoint.
+    # interval is the §16.9 scrape interval for the controller and Token
+    # Service ServiceMonitor (lenny-control-plane). The gateway scrapes on
+    # its own faster interval below.
     interval: "30s"
-    # scrapeTimeout bounds a single scrape; it must not exceed interval.
+    # gatewayInterval is the §10.1 line 88 gateway scrape interval. The
+    # gateway is rendered as a dedicated ServiceMonitor (lenny-gateway) so
+    # it can scrape at 10s while the rest of the control plane stays on
+    # interval: a faster gateway scrape keeps the custom-metric pipeline
+    # lag the HPA reads near the §10.1 budget at Tier 2/3. scrapeTimeout
+    # must not exceed this value.
+    gatewayInterval: "10s"
+    # scrapeTimeout bounds a single scrape; it must not exceed interval
+    # (or gatewayInterval).
     scrapeTimeout: "10s"
     # path is the HTTP path Prometheus scrapes from each control-plane
     # component. The Lenny binaries serve metrics on /metrics; an
@@ -1392,6 +1402,16 @@ autoscaling:
   # Deployment runs at the static gateway.replicas count with no
   # autoscaler. The base default is false so a stock render needs no
   # KEDA or Prometheus Adapter install; the tier presets enable it.
+  #
+  # §10.1 line 89 operator action (Prometheus Adapter path): the adapter
+  # is an external dependency this chart does not render. To hold the
+  # custom-metric pipeline lag near the §10.1 budget, set
+  # metricsRelistInterval: 15s and cacheMetricResolutionPeriod: 15s in
+  # the adapter config so it relists and refreshes the gateway metric on
+  # the same cadence as the monitoring.serviceMonitor.gatewayInterval
+  # scrape (10s). On the KEDA path set pollingInterval: 10s on the
+  # ScaledObject instead. See docs/operator-guide/scaling.md
+  # "Reducing Custom-Metric Pipeline Lag".
   enabled: false
   # provider selects the scaler. It MUST be "hpa" or "keda". Any other
   # value fails the render with a descriptive error (§10.1 SCL-024).
