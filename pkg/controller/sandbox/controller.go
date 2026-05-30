@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
+	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
@@ -276,6 +277,13 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		profile = string(isolation.DefaultForMode(r.DevMode))
 	}
 	graceBase, graceMax := r.resolveTerminationGrace(ctx, sb)
+	// spec: §6.4 line 409 — encode the Runtime's inline sharedAssets for the
+	// adapter's --shared-assets flag so it materializes them into the
+	// read-only /workspace/shared tree at warm time. F-6.4.3.
+	sharedAssetsArg, err := encodeSharedAssets(rt.Spec.SharedAssets)
+	if err != nil {
+		return fmt.Errorf("encode shared assets for runtime %s: %w", sb.Spec.RuntimeRef, err)
+	}
 	pod, err := podspec.Build(podspec.Inputs{
 		Name:             sb.Name,
 		Namespace:        sb.Namespace,
@@ -312,6 +320,9 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// (failurePolicy: Fail) rejects any T4 pod missing these constraints
 		// with the §6.4 STR-003 message.
 		WorkspaceTier: rt.Spec.WorkspaceTier,
+		// spec: §6.4 line 409 — the encoded inline shared-asset set the
+		// adapter materializes into the read-only /workspace/shared tree.
+		SharedAssetsArg: sharedAssetsArg,
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)
@@ -612,4 +623,24 @@ func (r *Reconciler) resolveEgressCapture(sb *lennyv1.Sandbox) *podspec.EgressCa
 		Image:    r.EgressCaptureImage,
 		Upstream: upstream,
 	}
+}
+
+// encodeSharedAssets converts a Runtime's inline §6.4 sharedAssets into
+// the transport-safe form the pod spec carries to the adapter on the
+// --shared-assets flag. An empty list yields the empty string, which the
+// pod builder reads as "mount /workspace/shared empty and read-only".
+// spec: §6.4 line 409 — F-6.4.3.
+func encodeSharedAssets(assets []lennyv1.SharedAsset) (string, error) {
+	if len(assets) == 0 {
+		return "", nil
+	}
+	specs := make([]sharedassets.FileSpec, 0, len(assets))
+	for _, a := range assets {
+		specs = append(specs, sharedassets.FileSpec{
+			Path:    a.Path,
+			Content: a.Content,
+			Mode:    a.Mode,
+		})
+	}
+	return sharedassets.Encode(specs)
 }

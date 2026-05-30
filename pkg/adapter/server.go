@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -67,6 +68,16 @@ type Server struct {
 	// workspace staging area. Empty leaves PrepareWorkspace returning
 	// FailedPrecondition.
 	StagingDir string
+	// SharedAssetsDir is the §6.4 /workspace/shared directory the adapter
+	// materializes read-only shared assets into at warm time, before the
+	// pod is claimed. The adapter mounts it read-write; the runtime
+	// container mounts it read-only. Empty skips the populate step (the
+	// volume is still mounted read-only and empty by the pod spec).
+	SharedAssetsDir string
+	// SharedAssets is the §6.4 line 409 inline shared-asset set
+	// EnsureWarmWorkspaceLayout writes into SharedAssetsDir. Nil or empty
+	// leaves /workspace/shared empty. spec: §6.4 line 409 — F-6.4.3.
+	SharedAssets []sharedassets.FileSpec
 	// CredentialsDir is the directory the credential RPCs materialize
 	// the §4.7 credential file into — the pod's /run/lenny.
 	CredentialsDir string

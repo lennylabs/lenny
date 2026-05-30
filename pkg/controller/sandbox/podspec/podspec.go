@@ -96,6 +96,19 @@ const (
 	sessionsVolumeName  = "sessions"
 	artifactsVolumeName = "artifacts"
 
+	// sharedMount is the §6.4 line 409 /workspace/shared path: a separate
+	// emptyDir holding read-only assets shared across a concurrent-workspace
+	// pod's slots. It is mounted on every pod (empty when the Runtime
+	// declares no sharedAssets) so the runtime cannot use the path as
+	// writable scratch space. The runtime container's mount is read-only, so
+	// an agent write returns EROFS.
+	sharedMount = workspaceMount + "/shared"
+	// sharedVolumeName backs sharedMount. It is a separate volume from
+	// `workspace` so the read-only volumeMount enforces immutability at the
+	// kernel level rather than relying on file modes inside the shared
+	// workspace emptyDir.
+	sharedVolumeName = "shared"
+
 	// tmpfsSizeLimit is the §6.4 line 413 recommended cap for the
 	// memory-backed /sessions and /tmp tmpfs volumes (256Mi each). The cap
 	// gives a predictable OOM boundary instead of silent memory pressure:
@@ -265,6 +278,15 @@ type Inputs struct {
 	// node. Any other value (including the empty default `T3`) leaves the
 	// pod with no T4 injection.
 	WorkspaceTier string
+
+	// SharedAssetsArg is the §6.4 line 409 inline shared-asset set encoded
+	// for the adapter's --shared-assets flag (sharedassets.Encode of the
+	// Runtime's sharedAssets). The adapter materializes these into
+	// /workspace/shared at warm time, before any slot is assigned. Empty
+	// leaves the shared volume mounted but empty — the runtime still cannot
+	// write it (read-only mount), so the scrub-space-prevention guarantee
+	// holds with or without configured assets. spec: §6.4 line 409 — F-6.4.3.
+	SharedAssetsArg string
 }
 
 // EgressCapture configures the §12.9.8 egress-capture sidecar an
@@ -343,6 +365,10 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: sessionsVolumeName, MountPath: sessionsMount},
 		{Name: artifactsVolumeName, MountPath: artifactsMount},
 		{Name: dshmVolumeName, MountPath: dshmMount},
+		// spec: §6.4 line 409 — the adapter populates /workspace/shared at
+		// warm time, so its mount is read-write. The runtime container's is
+		// read-only, which is where the EROFS write boundary is enforced.
+		{Name: sharedVolumeName, MountPath: sharedMount},
 	}
 	runtimeMounts := []corev1.VolumeMount{
 		{Name: "workspace", MountPath: workspaceMount},
@@ -351,6 +377,9 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: sessionsVolumeName, MountPath: sessionsMount},
 		{Name: artifactsVolumeName, MountPath: artifactsMount},
 		{Name: dshmVolumeName, MountPath: dshmMount},
+		// spec: §6.4 line 409 — read-only on the runtime container: any write
+		// the agent process attempts under /workspace/shared returns EROFS.
+		{Name: sharedVolumeName, MountPath: sharedMount, ReadOnly: true},
 	}
 
 	pod := basePod(in, runtimeClass)
@@ -358,7 +387,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{
 			Name:  "adapter",
 			Image: in.AdapterImage,
-			Args: []string{
+			Args: append([]string{
 				fmt.Sprintf("--addr=:%d", adapterPort),
 				// spec: §6.4 line 407 — session-mode and task-mode pods use the
 				// single `/workspace/current` cwd. The concurrent-workspace
@@ -376,7 +405,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 				// §4.7 sidecar transport: the adapter binds the abstract
 				// runtime socket the runtime container dials.
 				"--runtime-socket=" + RuntimeSocketName,
-			},
+			}, sharedAssetsArgs(in)...),
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    adapterMounts,
 			SecurityContext: containerSecurityContext(AdapterUID),
@@ -425,6 +454,14 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: sessionsVolumeName, MountPath: sessionsMount},
 		{Name: artifactsVolumeName, MountPath: artifactsMount},
 		{Name: dshmVolumeName, MountPath: dshmMount},
+		// spec: §6.4 line 409 — the embedded runtime is the adapter, so it
+		// populates /workspace/shared itself and mounts it read-write. The
+		// kernel-level EROFS boundary is a sidecar-model property (the agent
+		// and adapter are separate containers there); in the embedded model
+		// the single process is trusted not to write the shared tree after
+		// the warm-time populate, the same tradeoff the credential mount
+		// makes.
+		{Name: sharedVolumeName, MountPath: sharedMount},
 	}
 
 	pod := basePod(in, runtimeClass)
@@ -432,7 +469,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{
 			Name:  "runtime",
 			Image: in.RuntimeImage,
-			Args: []string{
+			Args: append([]string{
 				fmt.Sprintf("--addr=:%d", adapterPort),
 				// spec: §6.4 line 407 — session-mode and task-mode pods use the
 				// single `/workspace/current` cwd. The concurrent-workspace
@@ -444,7 +481,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 				// §4.7: the embedded runtime is the adapter, so it stages
 				// uploads the same way the sidecar adapter does.
 				"--staging-dir=" + stagingPath,
-			},
+			}, sharedAssetsArgs(in)...),
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 			VolumeMounts:    runtimeMounts,
 			SecurityContext: containerSecurityContext(AgentUID),
@@ -541,6 +578,21 @@ func injectEgressCaptureSidecar(in Inputs, pod *corev1.Pod, mountOn []int) {
 	})
 }
 
+// sharedAssetsArgs returns the §6.4 line 409 adapter flags for the
+// /workspace/shared read-only asset tree. The --shared-assets-dir flag
+// is always set so the adapter ensures the directory at warm time (it is
+// mounted read-write on the adapter container, read-only on the runtime
+// container). --shared-assets carries the inline asset set only when the
+// Runtime declares any; an empty set leaves the directory mounted but
+// empty. spec: §6.4 line 409 — F-6.4.3.
+func sharedAssetsArgs(in Inputs) []string {
+	args := []string{"--shared-assets-dir=" + sharedMount}
+	if in.SharedAssetsArg != "" {
+		args = append(args, "--shared-assets="+in.SharedAssetsArg)
+	}
+	return args
+}
+
 // podVolumes returns the §6.1 / §6.4 / §13.1 pod volumes: the
 // disk-backed workspace and artifacts emptyDirs, the memory-backed
 // credential, tmp, and sessions tmpfs volumes, and the §6.4 size-capped
@@ -555,6 +607,11 @@ func podVolumes() []corev1.Volume {
 		// exceed the pod memory budget.
 		{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: artifactsVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		// spec: §6.4 line 409 — /workspace/shared is a separate emptyDir so
+		// the read-only volumeMount on the runtime container enforces
+		// immutability at the kernel level. It is disk-backed: shared assets
+		// can exceed the pod memory budget, the same as the workspace volume.
+		{Name: sharedVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: CredVolumeName, VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
 		}},

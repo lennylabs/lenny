@@ -50,6 +50,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
 )
@@ -75,8 +76,17 @@ func main() {
 	// across the v1 surface.
 	workspaceRoot := flag.String("workspace-root", "/workspace/current",
 		"directory the session workspace is materialized into")
+	stagingDir := flag.String("staging-dir", "/workspace/.staging",
+		"directory PrepareWorkspace streams uploaded files into before "+
+			"FinalizeWorkspace materializes them")
 	credentialsDir := flag.String("credentials-dir", "/run/lenny",
 		"directory the §4.7 credential file and adapter manifest are materialized into")
+	sharedAssetsDir := flag.String("shared-assets-dir", "/workspace/shared",
+		"§6.4 directory the embedded runtime materializes read-only shared assets "+
+			"into at warm time; empty skips the populate step")
+	sharedAssets := flag.String("shared-assets", "",
+		"§6.4 base64-encoded JSON array of inline shared-asset file specs "+
+			"(sharedassets.Encode); empty leaves /workspace/shared empty")
 	flag.Parse()
 
 	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
@@ -90,8 +100,23 @@ func main() {
 
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
+	adapterSrv.StagingDir = *stagingDir
 	adapterSrv.CredentialsDir = *credentialsDir
 	adapterSrv.ManifestDir = *credentialsDir
+	// §6.4 line 409: the embedded runtime is the adapter, so it populates
+	// /workspace/shared itself from the inline shared-asset set the
+	// controller renders onto --shared-assets.
+	adapterSrv.SharedAssetsDir = *sharedAssetsDir
+	parsedShared, err := sharedassets.Decode(*sharedAssets)
+	if err != nil {
+		log.Fatalf("echo-embedded: %v", err)
+	}
+	adapterSrv.SharedAssets = parsedShared
+	// §6.1 / §6.4: create /workspace/current, the staging area, and the
+	// read-only /workspace/shared tree before the pod is claimed.
+	if err := adapterSrv.EnsureWarmWorkspaceLayout(); err != nil {
+		log.Fatalf("echo-embedded: %v", err)
+	}
 	// §4.7 embedded model: the runtime logic runs in this process. The
 	// adapter drives it through an in-process pipe instead of a socket
 	// or a child process's stdin/stdout — the §15.4.1 framing is the

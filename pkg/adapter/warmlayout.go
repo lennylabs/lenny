@@ -5,6 +5,8 @@ package adapter
 import (
 	"fmt"
 	"os"
+
+	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 )
 
 // warmWorkspaceRootMode is the permission mode of the warm-time
@@ -12,6 +14,14 @@ import (
 // it, so it carries group/other read+execute (0o755) — the same mode
 // workspace materialization creates parent directories with.
 const warmWorkspaceRootMode = 0o755
+
+// warmSharedMode is the permission mode of the warm-time
+// /workspace/shared directory. The runtime container reads from it
+// (through a read-only mount), so it carries group/other read+execute
+// (0o755). The directory exists even when no shared assets are
+// configured, so the runtime cannot treat the mountpoint as writable
+// scratch space (§6.4 line 409).
+const warmSharedMode = 0o755
 
 // warmStagingMode is the permission mode of the warm-time staging
 // directory. Only the adapter UID stages uploaded content there before
@@ -51,6 +61,36 @@ func (s *Server) EnsureWarmWorkspaceLayout() error {
 		if err := os.MkdirAll(s.StagingDir, warmStagingMode); err != nil {
 			return fmt.Errorf("adapter: create staging directory %q: %w", s.StagingDir, err)
 		}
+	}
+	if err := s.ensureSharedAssets(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureSharedAssets creates the §6.4 /workspace/shared directory and
+// materializes the configured inline shared assets into it, read-only,
+// before the pod is claimed. The directory is created even when no
+// assets are configured so the runtime cannot use the read-only
+// mountpoint as writable scratch space. An empty SharedAssetsDir skips
+// the step entirely (the pod spec still mounts the volume read-only), so
+// an adapter wired without the layout still starts.
+//
+// spec: §6.4 line 409 — F-6.4.3.
+func (s *Server) ensureSharedAssets() error {
+	if s.SharedAssetsDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(s.SharedAssetsDir, warmSharedMode); err != nil {
+		return fmt.Errorf("adapter: create shared-assets directory %q: %w", s.SharedAssetsDir, err)
+	}
+	// MkdirAll honors the umask; pin the exact mode so the runtime can
+	// traverse the directory regardless of the inherited umask.
+	if err := os.Chmod(s.SharedAssetsDir, warmSharedMode); err != nil {
+		return fmt.Errorf("adapter: chmod shared-assets directory %q: %w", s.SharedAssetsDir, err)
+	}
+	if err := sharedassets.Materialize(s.SharedAssetsDir, s.SharedAssets); err != nil {
+		return fmt.Errorf("adapter: %w", err)
 	}
 	return nil
 }

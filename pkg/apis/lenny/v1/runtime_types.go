@@ -83,6 +83,18 @@ type RuntimeSpec struct {
 	// +optional
 	WorkspaceTier string `json:"workspaceTier,omitempty"`
 
+	// SharedAssets is the §6.4 concurrent-workspace read-only shared-asset
+	// list. Each entry is an inline file the platform materializes into the
+	// pod's `/workspace/shared/` directory at warm time, before any slot is
+	// assigned. `/workspace/shared/` is then mounted read-only on the
+	// runtime container, so a runtime write returns EROFS. The directory is
+	// mounted (empty, read-only) even when this list is empty, denying the
+	// runtime writable scratch space there. Artifact-reference assets
+	// (§4.5) are delivered by the gateway during pod initialization and are
+	// not expressed inline here. spec: §6.4 line 409 — F-6.4.3.
+	// +optional
+	SharedAssets []SharedAsset `json:"sharedAssets,omitempty"`
+
 	// SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block: the
 	// per-runtime command allow/block list, shell-execution flag, and
 	// per-session command cap the gateway enforces at session create-time
@@ -191,6 +203,35 @@ type ArchivePolicy struct {
 	// extraction aborts on any symlink with details.reason = "symlink".
 	// +optional
 	AllowSymlinks bool `json:"allowSymlinks,omitempty"`
+}
+
+// SharedAsset is one §6.4 read-only shared-asset entry the platform
+// materializes into the pod's `/workspace/shared/` directory at warm
+// time. The directory is mounted read-only on the runtime container, so
+// the agent reads these files but a write returns EROFS. spec: §6.4 line
+// 409 — F-6.4.3.
+type SharedAsset struct {
+	// Path is the destination path relative to `/workspace/shared/`. It
+	// must be a relative path with no parent-directory (`..`) segment; the
+	// adapter rejects an absolute path or one that escapes the shared root.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
+
+	// Content is the inline file body. An empty value materializes an empty
+	// file. The length is capped so the rendered pod spec stays within the
+	// API-server object-size budget; larger cross-slot assets are delivered
+	// by the gateway as artifact references during pod initialization.
+	// +optional
+	// +kubebuilder:validation:MaxLength=32768
+	Content string `json:"content,omitempty"`
+
+	// Mode is the octal file mode for the materialized file (for example
+	// `0444`). An empty value defaults to `0444` (read-only for all),
+	// matching the read-only mount. setuid and setgid modes are rejected.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[0-7]{3,4}$`
+	Mode string `json:"mode,omitempty"`
 }
 
 // SetupCommandPolicy mirrors the §5.1 / §7.5 setupCommandPolicy block onto

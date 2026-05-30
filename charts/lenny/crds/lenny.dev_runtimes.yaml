@@ -271,6 +271,51 @@ spec:
                       metacharacters per §7.5 line 490.
                     type: boolean
                 type: object
+              sharedAssets:
+                description: |-
+                  SharedAssets is the §6.4 concurrent-workspace read-only shared-asset
+                  list. Each entry is an inline file the platform materializes into the
+                  pod's `/workspace/shared/` directory at warm time, before any slot is
+                  assigned. `/workspace/shared/` is then mounted read-only on the
+                  runtime container, so a runtime write returns EROFS. The directory is
+                  mounted (empty, read-only) even when this list is empty, denying the
+                  runtime writable scratch space there. Artifact-reference assets
+                  (§4.5) are delivered by the gateway during pod initialization and are
+                  not expressed inline here. spec: §6.4 line 409 — F-6.4.3.
+                items:
+                  description: |-
+                    SharedAsset is one §6.4 read-only shared-asset entry the platform
+                    materializes into the pod's `/workspace/shared/` directory at warm
+                    time. The directory is mounted read-only on the runtime container, so
+                    the agent reads these files but a write returns EROFS. spec: §6.4 line
+                    409 — F-6.4.3.
+                  properties:
+                    content:
+                      description: |-
+                        Content is the inline file body. An empty value materializes an empty
+                        file. The length is capped so the rendered pod spec stays within the
+                        API-server object-size budget; larger cross-slot assets are delivered
+                        by the gateway as artifact references during pod initialization.
+                      maxLength: 32768
+                      type: string
+                    mode:
+                      description: |-
+                        Mode is the octal file mode for the materialized file (for example
+                        `0444`). An empty value defaults to `0444` (read-only for all),
+                        matching the read-only mount. setuid and setgid modes are rejected.
+                      pattern: ^[0-7]{3,4}$
+                      type: string
+                    path:
+                      description: |-
+                        Path is the destination path relative to `/workspace/shared/`. It
+                        must be a relative path with no parent-directory (`..`) segment; the
+                        adapter rejects an absolute path or one that escapes the shared root.
+                      minLength: 1
+                      type: string
+                  required:
+                  - path
+                  type: object
+                type: array
               supportedProviders:
                 description: |-
                   SupportedProviders lists the LLM providers the runtime accepts

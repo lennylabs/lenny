@@ -47,6 +47,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 )
@@ -104,6 +105,12 @@ func main() {
 			"returning FailedPrecondition")
 	credentialsDir := flag.String("credentials-dir", "/run/lenny",
 		"directory the §4.7 credential file is materialized into")
+	sharedAssetsDir := flag.String("shared-assets-dir", "/workspace/shared",
+		"§6.4 directory the adapter materializes read-only shared assets into at "+
+			"warm time; empty skips the populate step")
+	sharedAssets := flag.String("shared-assets", "",
+		"§6.4 base64-encoded JSON array of inline shared-asset file specs "+
+			"(sharedassets.Encode); empty leaves /workspace/shared empty")
 	runtimeUID := flag.Uint("runtime-uid", 0,
 		"UID the agent runtime process runs as (the pod spec runAsUser); "+
 			"the adapter applies the §4.7/§13 SO_PEERCRED MCP peer check against "+
@@ -192,9 +199,19 @@ func main() {
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
 	adapterSrv.StagingDir = *stagingDir
+	// §6.4 line 409: decode the inline shared-asset set the controller
+	// rendered onto --shared-assets so EnsureWarmWorkspaceLayout can
+	// materialize it into the read-only /workspace/shared tree.
+	adapterSrv.SharedAssetsDir = *sharedAssetsDir
+	parsedShared, err := sharedassets.Decode(*sharedAssets)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	adapterSrv.SharedAssets = parsedShared
 	// §6.1: /workspace/current and the staging area must exist before the
 	// pod is claimed. The pod spec mounts one emptyDir at /workspace, so
 	// create the subdirectories at startup rather than lazily at claim time.
+	// §6.4: the same step materializes /workspace/shared read-only.
 	if err := adapterSrv.EnsureWarmWorkspaceLayout(); err != nil {
 		log.Fatalf("lenny-adapter: %v", err)
 	}

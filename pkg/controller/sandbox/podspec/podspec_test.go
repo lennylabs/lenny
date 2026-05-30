@@ -680,6 +680,120 @@ func TestBuildMountsTheWorkspaceVolume_spec_6_4(t *testing.T) {
 	}
 }
 
+// TestBuildMountsSharedReadOnly_spec_6_4 confirms the §6.4 line 409
+// /workspace/shared layout: a separate disk-backed emptyDir is always
+// present, mounted read-only on the runtime container (the EROFS write
+// boundary) and read-write on the adapter container (the populator). The
+// volume is mounted even with no sharedAssets configured, so the runtime
+// cannot use the path as writable scratch space.
+func TestBuildMountsSharedReadOnly_spec_6_4(t *testing.T) {
+	pod, err := podspec.Build(inputs())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	// spec: §6.4 line 409 — a separate disk-backed emptyDir backs the mount.
+	shared := findVolume(t, pod, "shared").VolumeSource.EmptyDir
+	if shared == nil || shared.Medium != "" {
+		t.Errorf("shared volume must be a disk-backed emptyDir, got %+v", shared)
+	}
+	// spec: §6.4 line 409 — read-only on the runtime container (EROFS).
+	if !mountsPathReadOnly(container(t, pod, "runtime"), "shared", "/workspace/shared", true) {
+		t.Error("runtime container must mount shared at /workspace/shared read-only")
+	}
+	// The adapter populates the tree at warm time, so its mount is writable.
+	if !mountsPathReadOnly(container(t, pod, "adapter"), "shared", "/workspace/shared", false) {
+		t.Error("adapter container must mount shared at /workspace/shared read-write")
+	}
+}
+
+// TestBuildEmbeddedMountsShared_spec_6_4 confirms the embedded model
+// mounts /workspace/shared read-write on its single container, which is
+// both adapter and runtime and therefore the populator. The kernel-level
+// EROFS boundary is a sidecar-model property.
+func TestBuildEmbeddedMountsShared_spec_6_4(t *testing.T) {
+	in := inputs()
+	in.DeploymentModel = "embedded"
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build(embedded): %v", err)
+	}
+	if _, err := findVolumeErr(pod, "shared"); err != nil {
+		t.Fatal("embedded pod is missing the shared volume")
+	}
+	if !mountsPathReadOnly(container(t, pod, "runtime"), "shared", "/workspace/shared", false) {
+		t.Error("embedded runtime must mount shared at /workspace/shared read-write (it is the populator)")
+	}
+}
+
+// TestBuildWiresSharedAssetsArgs_spec_6_4 confirms the §6.4 line 409
+// adapter wiring: --shared-assets-dir is always passed, and the inline
+// asset set rides --shared-assets only when the Runtime declares any.
+func TestBuildWiresSharedAssetsArgs_spec_6_4(t *testing.T) {
+	t.Run("no assets passes only the dir flag", func(t *testing.T) {
+		pod, err := podspec.Build(inputs())
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		args := container(t, pod, "adapter").Args
+		if !hasArg(args, "--shared-assets-dir=/workspace/shared") {
+			t.Errorf("adapter args %v must set --shared-assets-dir", args)
+		}
+		if hasArgPrefix(args, "--shared-assets=") {
+			t.Errorf("adapter args %v must omit --shared-assets when none configured", args)
+		}
+	})
+	t.Run("assets ride the shared-assets flag", func(t *testing.T) {
+		in := inputs()
+		in.SharedAssetsArg = "ZW5jb2RlZA==" // opaque encoded payload
+		pod, err := podspec.Build(in)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		args := container(t, pod, "adapter").Args
+		if !hasArg(args, "--shared-assets=ZW5jb2RlZA==") {
+			t.Errorf("adapter args %v must carry the encoded --shared-assets payload", args)
+		}
+	})
+}
+
+// mountsPathReadOnly reports whether c mounts name at path with the
+// expected ReadOnly setting.
+func mountsPathReadOnly(c corev1.Container, name, path string, readOnly bool) bool {
+	for _, m := range c.VolumeMounts {
+		if m.Name == name && m.MountPath == path {
+			return m.ReadOnly == readOnly
+		}
+	}
+	return false
+}
+
+func findVolumeErr(pod *corev1.Pod, name string) (corev1.Volume, error) {
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == name {
+			return v, nil
+		}
+	}
+	return corev1.Volume{}, fmt.Errorf("no %q volume", name)
+}
+
+func hasArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArgPrefix(args []string, prefix string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestBuildInjectsT4NodeIsolation_spec_6_4 confirms the §6.4 lines 416-419
 // dedicated-node injection: a Runtime declared at `workspaceTier: T4`
 // produces a pod carrying the `lenny.dev/workspace-tier: t4` label, the T4
