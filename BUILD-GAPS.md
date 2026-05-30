@@ -7520,7 +7520,7 @@ Implementation:
 
 Consequence: a runtime cannot delegate any file-bearing subtask. The `workspaceFiles.export` spec is a no-op even if the schema were accepted. This also removes the file-channel prompt-injection mitigation specified in §8.3 (`scanExportedFiles`) — there is nothing for it to scan.
 
-### - [ ] F-8.2.5 — No audit emission for `delegation.self_recursion_allowed`, `delegation.cycle_warning`, `gateway.cycle_detection_mode_changed`, `delegation.export_*`, `delegation.export_scan_failed_open`, or `delegation_policy.export_scan_*` [High] — OPEN
+### - [ ] F-8.2.5 — No audit emission for `delegation.self_recursion_allowed`, `delegation.cycle_warning`, `gateway.cycle_detection_mode_changed`, `delegation.export_*`, `delegation.export_scan_failed_open`, or `delegation_policy.export_scan_*` [High] — DEFERRED
 
 Spec §8.2 line 77 names four audit events:
 - `delegation.self_recursion_allowed` — emitted on every admitted self-recursive hop when the three-layer AND gate evaluates all `true`.
@@ -7537,6 +7537,8 @@ Implementation:
 - The `lenny_delegation_would_have_blocked_total{layer, mode="warn"}` counter (spec §8.2 line 70) has its name in the metrics catalog (`pkg/observability/metrics/catalog.go:135`) but no incrementer in code.
 
 Consequence: the operator-facing "where is my admission going?" surface is dark. A deployer running `mode: warn` to scope a rollout has no signal at all (no event, no counter); a deployer running `mode: enforce` cannot see which self-recursion was admitted by the three-layer AND gate because none ever is (see H-3) and the audit trail does not record the decision.
+
+**DEFERRED — re-verified; finding text is stale, 6/7 emitters now exist.** The original "No emitter exists" claim no longer holds. Verified present in current code: `delegation.self_recursion_allowed` and `delegation.cycle_warning` (`pkg/gateway/delegation/service.go:737,748` via `recordCycleAudit`), the `lenny_delegation_would_have_blocked_total` counter (`service.go:782` via `recordCycleDecision`), `delegation.export_file_scan_rejected` / `delegation.export_scan_failed_open` (`pkg/gateway/interceptor/export.go`, `pkg/gateway/policy/exportscanobserver.go`), and `delegation_policy.export_scan_weakened` / `_strengthened` (`pkg/gateway/admin/delegation_policies.go:151,154`). The `service.go` Auditor is wired in `cmd/lenny-gateway/main.go`. The lone residual is `gateway.cycle_detection_mode_changed`, a Helm-upgrade transition event that spec §8.2 line 344 ties to "the same render-time emission discipline as `deployment.feature_flag_downgrade_acknowledged`". That discipline is itself unimplemented (`deployment.feature_flag_downgrade_acknowledged`, `gateway.allow_self_recursion_changed`, and `gateway.default_max_depth_changed` are all catalog/OCSF-only with no emitter and no persisted prior-value comparison point). Closing this requires building the render-time/startup deployment-change-audit subsystem (prior-value stamp + comparison emitting under the platform tenant), a dedicated batch shared with the feature-flag-downgrade family — not the per-request delegation path this finding's text targets.
 
 ### - [x] F-8.2.6 — Cycle-detection runs on the parent's lineage but `delegationLease.maxDepth` precedence chain is not fully wired; `maxDepth` is taken verbatim from the caller [High] — CLOSED
 
@@ -11143,7 +11145,7 @@ Files:
 - `/Users/joan/projects/lenny/pkg/gateway/connectorcredstore/pgstore/pgstore.go:42` (stale doc comment)
 - `/Users/joan/projects/lenny/migrations/0048_connector_credentials.up.sql:42-44` (`rotated_at`, `revoked_at` columns present but unused)
 
-### - [ ] F-9.3.4 — Production gateway wiring drops the client-secret resolver [High] — OPEN
+### - [x] F-9.3.4 — Production gateway wiring drops the client-secret resolver [High] — CLOSED
 
 The handler hard-errors a confidential-client callback when
 `ConnectorOAuth.ClientSecrets` is nil
@@ -11174,7 +11176,9 @@ Files:
 - `/Users/joan/projects/lenny/cmd/lenny-gateway/main.go:1000-1005`
 - `/Users/joan/projects/lenny/pkg/gateway/admin/connector_oauth.go:29-66, 303-307`
 
-### - [ ] F-9.3.5 — Production gateway uses in-process StateStore and CredentialStore even with Postgres [High] — OPEN
+**Resolution (`af11e5fe`):** The cited line pointers were stale (the wiring moved to `cmd/lenny-gateway/main.go:~2251`). New `pkg/gateway/connectorsecret.KubeResolver` reads a confidential connector's client secret from its §9.3 `auth.clientSecretRef` Kubernetes Secret (`namespace/name` using a flag-tunable default data key `clientSecret`, or an explicit `namespace/name/key`), returning `ErrClientSecretNotFound` for an absent Secret/key. The gateway main now sets `ConnectorOAuth.ClientSecrets = connectorsecret.NewKubeResolver(clusterClient, *connectorOAuthClientSecretKey)` whenever it holds a cluster client (the production `--agent-namespace` path), so a confidential connector OAuth callback resolves its secret instead of returning the unconditional 500. The `--connector-oauth-client-secret-key` flag (env `LENNY_CONNECTOR_OAUTH_CLIENT_SECRET_KEY`) is operator-tunable. Deployment prerequisite (noted for the separate chart-wiring of connector OAuth): the gateway ServiceAccount needs `get` on the connector-secret Secrets; a read failure surfaces as a descriptive error rather than a silent misconfiguration. Tests: 7 tier-1 in `pkg/gateway/connectorsecret` (default/explicit key, not-found, missing/empty value, malformed refs, default-key constructor) via the controller-runtime fake client.
+
+### - [x] F-9.3.5 — Production gateway uses in-process StateStore and CredentialStore even with Postgres [High] — CLOSED
 
 Spec (§9.3, line 157): the state binding is "Redis, TTL = 10 min".
 The production main wires
@@ -11197,6 +11201,8 @@ Files:
 
 - `/Users/joan/projects/lenny/cmd/lenny-gateway/main.go:987, 1000-1005`
 - `/Users/joan/projects/lenny/pkg/gateway/connectorcredstore/pgstore/pgstore.go` (exists, unused)
+
+**Resolution (`af11e5fe`):** New `connectoroauth.RedisStateStore` is the production §9.3 StateStore: `Put` stores the JSON-encoded `FlowContext` under `conn:oauth:state:{state}` with the §9.3 10-minute TTL via Redis native key expiry, and `Consume` runs one atomic Lua round-trip that swaps the live entry for a NUL-prefixed tombstone, so two concurrent callbacks for the same `state` cannot both succeed and a replay returns `ErrStateConsumed` (verified by a 16-goroutine single-winner test). The gateway main wires it when Redis is configured (`redisClient != nil`), falling back to the in-process `MemoryStateStore` (with its periodic Sweep) only in single-process dev. This addresses consequences (a) restart-survival and (b) cross-replica state sharing. Consequence (c) was already resolved: `cmd/lenny-gateway/main.go:2218` constructs the envelope-encrypted `connectorcredstore/pgstore` and assigns it to `connectorCreds` whenever `pgPool != nil`, so the "exists, unused" / "no production code path constructs it" claims were stale. Tests: 8 tier-1 in `pkg/connectoroauth` (round-trip, unknown, replay, TTL-expiry, replace, empty-key, default-TTL, concurrent single-winner) against miniredis with `-race`.
 
 ### - [x] F-9.3.6 — `auth.type: oauth2` accepted without the required endpoints or `clientId` [Medium] — CLOSED
 
