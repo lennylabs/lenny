@@ -255,11 +255,15 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 
 	var req jsonRPCRequest
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		s.writeError(w, nil, errParse, "request is not valid JSON")
+		// spec: §15.2.1 rule 3 (line 1384) — even transport-level
+		// JSON-RPC errors carry the shared lenny envelope (code,
+		// category, retryable) in error.data so a client applies one
+		// error-handling strategy across REST and MCP. F-15.2.6.
+		s.WriteLennyError(w, nil, errParse, "VALIDATION_ERROR", "request is not valid JSON", nil)
 		return
 	}
 	if req.JSONRPC != "2.0" {
-		s.writeError(w, req.ID, errInvalidRequest, "jsonrpc must be \"2.0\"")
+		s.WriteLennyError(w, req.ID, errInvalidRequest, "VALIDATION_ERROR", "jsonrpc must be \"2.0\"", nil)
 		return
 	}
 
@@ -277,7 +281,10 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		s.writeResult(w, req.ID, map[string]any{})
 	default:
-		s.writeError(w, req.ID, errMethodNotFound, "unknown method "+req.Method)
+		// spec: §15.2.1 rule 3 — an unknown JSON-RPC method is a
+		// permanent client error; surface RESOURCE_NOT_FOUND so the
+		// client does not retry. F-15.2.6.
+		s.WriteLennyError(w, req.ID, errMethodNotFound, "RESOURCE_NOT_FOUND", "unknown method "+req.Method, nil)
 	}
 }
 
@@ -296,12 +303,15 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 		Arguments json.RawMessage `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		s.writeError(w, req.ID, errInvalidParams, "params is not a valid tools/call object")
+		s.WriteLennyError(w, req.ID, errInvalidParams, "VALIDATION_ERROR", "params is not a valid tools/call object", nil)
 		return
 	}
 	handler, ok := s.handlers[params.Name]
 	if !ok {
-		s.writeError(w, req.ID, errMethodNotFound, "unknown tool "+params.Name)
+		// spec: §15.2.1 rule 3 — a tools/call naming an unregistered
+		// tool is RESOURCE_NOT_FOUND (the tool resource does not
+		// exist), permanent and not retryable. F-15.2.6.
+		s.WriteLennyError(w, req.ID, errMethodNotFound, "RESOURCE_NOT_FOUND", "unknown tool "+params.Name, nil)
 		return
 	}
 	// spec: §11.5 line 277 — when the tool admits an idempotencyKey field
@@ -326,8 +336,8 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 				// missing tenant means the auth chain was bypassed for
 				// this request, so collapsing keys under a shared
 				// bucket would violate §11.5's per-tenant scope.
-				s.writeError(w, req.ID, errInvalidRequest,
-					"idempotency: tenant could not be resolved for MCP tool call; auth chain must precede MCP dispatch")
+				s.WriteLennyError(w, req.ID, errInvalidRequest, "UNAUTHORIZED",
+					"idempotency: tenant could not be resolved for MCP tool call; auth chain must precede MCP dispatch", nil)
 				return
 			}
 			var handled bool
@@ -414,23 +424,16 @@ func (s *Server) writeResult(w http.ResponseWriter, id json.RawMessage, result a
 	})
 }
 
-func (s *Server) writeError(w http.ResponseWriter, id json.RawMessage, code int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	// JSON-RPC transport errors still return HTTP 200; the error is
-	// in the body. Parse errors are the exception — there is no id.
-	_ = json.NewEncoder(w).Encode(jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error:   &jsonRPCError{Code: code, Message: message},
-	})
-}
-
 // WriteLennyError writes a JSON-RPC error response whose Data field
 // carries the §15.2.1 lenny error envelope (code, category, message,
-// retryable, details). The JSON-RPC code stays the generic
-// errInvalidRequest for client-side errors and errInternal for
-// server-side ones; the lenny code identifies the domain reason on
-// both REST and MCP surfaces so the parity contract holds.
+// retryable, details). It is the single transport-error writer for
+// every JSON-RPC error path (parse, bad version, unknown method,
+// invalid params, unknown tool, idempotency tenant): jsonRPCCode is
+// the standard JSON-RPC error code and lennyCode identifies the domain
+// reason so the same (category, retryable) pair reaches the client on
+// both REST and MCP surfaces. The response is HTTP 200 with the error
+// in the body per JSON-RPC; a parse error before an id is decoded
+// passes a nil id. spec: §15.2.1 rule 3 (line 1384). F-15.2.6.
 func (s *Server) WriteLennyError(w http.ResponseWriter, id json.RawMessage, jsonRPCCode int, lennyCode, message string, details map[string]any) {
 	envelope := NewLennyErrorDetail(lennyCode, message, details)
 	w.Header().Set("Content-Type", "application/json")

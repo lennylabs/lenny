@@ -16,17 +16,17 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/elicitation"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
@@ -695,7 +695,7 @@ func TestDelegateTaskRejectsMCPTargetSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t
 		ID: "sess_parent_810", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 	_ = rt.Create(context.Background(), runtimestore.Runtime{
 		Name: "fs-mcp", Type: runtimestore.TypeMCP, Image: "lenny/fs-mcp@sha256:abc",
@@ -739,6 +739,63 @@ func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing
 	}
 }
 
+// TestToolErrorsCarryCanonicalEnvelopeCode asserts the §15.2.12
+// conversion: tool error paths that previously returned a plain Go
+// error (and so fell back to INTERNAL_ERROR / TRANSIENT / retryable=true
+// in handleToolCall) now return *mcp.ToolError carrying the canonical
+// lenny code, so the §15.2.1 rule 5(d) (category, retryable) pair
+// matches the REST surface. spec: §15.2.1 rule 5(d) line 1396. F-15.2.12.
+func TestToolErrorsCarryCanonicalEnvelopeCode(t *testing.T) {
+	srv, store := newMCP(t)
+	now := time.Now()
+	mustCreate := func(id string, st session.State) {
+		if err := store.Create(context.Background(), sessionstore.Session{
+			ID: id, TenantID: "acme", State: st, CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	mustCreate("sess_run", session.StateRunning)
+	mustCreate("sess_done", session.StateCompleted)
+	h := srv.Handler()
+
+	cases := []struct {
+		name      string
+		tool      string
+		args      string
+		wantCode  string
+		wantCat   string
+		wantRetry bool
+	}{
+		// spec: 15:998 — a message to a terminal target is TARGET_TERMINAL.
+		{"send_message_terminal_target", "lenny/send_message", `{"to":"sess_done","message":"x"}`, "TARGET_TERMINAL", "PERMANENT", false},
+		// spec: 15:981 — a message to an unknown session is RESOURCE_NOT_FOUND.
+		{"send_message_unknown_target", "lenny/send_message", `{"to":"sess_missing","message":"x"}`, "RESOURCE_NOT_FOUND", "PERMANENT", false},
+		// spec: 15:978 — a missing required argument is VALIDATION_ERROR.
+		{"set_tracing_missing_sessionid", "lenny/set_tracing_context", `{"context":{"k":"v"}}`, "VALIDATION_ERROR", "PERMANENT", false},
+		// spec: 15:980 — output to the caller's own terminal session is INVALID_STATE_TRANSITION.
+		{"output_terminal_session", "lenny/output", `{"sessionId":"sess_done","output":[{"type":"text","text":"x"}]}`, "INVALID_STATE_TRANSITION", "PERMANENT", false},
+		// spec: 15:978 — await_children with empty childIds is VALIDATION_ERROR.
+		{"await_children_missing_childids", "lenny/await_children", `{"sessionId":"sess_run","childIds":[]}`, "VALIDATION_ERROR", "PERMANENT", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resp := call(t, h, c.tool, c.args)
+			result, _ := resp["result"].(map[string]any)
+			env := readLennyErrorEnvelope(t, result)
+			if env["code"] != c.wantCode {
+				t.Errorf("code = %v, want %s", env["code"], c.wantCode)
+			}
+			if env["category"] != c.wantCat {
+				t.Errorf("category = %v, want %s", env["category"], c.wantCat)
+			}
+			if env["retryable"] != c.wantRetry {
+				t.Errorf("retryable = %v, want %v", env["retryable"], c.wantRetry)
+			}
+		})
+	}
+}
+
 // TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181
 // verifies that the §8.3 line 181 cluster-scoped weakening cooldown
 // rejects every `delegate_task` whose effective DelegationPolicy is
@@ -756,7 +813,7 @@ func TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181(t *t
 		ID: "sess_parent_cd", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed parent: %v", err)
 	}
@@ -930,7 +987,7 @@ func TestDelegateTaskTool(t *testing.T) {
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b"}`)
@@ -954,7 +1011,7 @@ func TestDelegateTaskToolDetectsCycle(t *testing.T) {
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 	// Delegating back to the parent's own (runtime, pool) is a cycle.
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
@@ -976,7 +1033,7 @@ func TestDelegateTaskToolReturnsTaskHandleEnvelope(t *testing.T) {
 		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b"}`)
@@ -1015,7 +1072,7 @@ func TestDelegateTaskToolRejectsUserlessParent(t *testing.T) {
 		ID: "sess_parent", TenantID: "acme",
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
-		CreatedAt:  now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","runtimeRef":"gemini","poolRef":"pool-b"}`)

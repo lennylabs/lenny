@@ -94,6 +94,69 @@ func TestClassifyKnownCodes(t *testing.T) {
 	}
 }
 
+// TestClassifyCatalogMatrixCodes asserts that every error class the
+// §15.2.1 rule 5(b)/(c) contract test matrix (spec 15:1408) and the
+// §15.4 session-creation rejection family name now resolves to its
+// authoritative §15 catalog (category, retryable) pair instead of the
+// (TRANSIENT, true) unknown-code fallback. Because REST writeError and
+// MCP handleToolCall both classify through this one table, a correct
+// entry is what keeps rule 5(d) parity. F-15.2.6.
+func TestClassifyCatalogMatrixCodes(t *testing.T) {
+	cases := []struct {
+		code     string
+		wantCat  Category
+		wantRetr bool
+	}{
+		// §15.2.1 matrix (spec 15:1408).
+		{"INVALID_STATE_TRANSITION", CategoryPermanent, false}, // spec: 15:980
+		{"PERMISSION_DENIED", CategoryPolicy, false},           // spec: 15:1028
+		{"CREDENTIAL_REVOKED", CategoryPolicy, false},          // spec: 15:1030
+		{"CIRCUIT_BREAKER_OPEN", CategoryPolicy, false},        // spec: 15:1032
+		// §15.4 session-creation rejection family (spec 15:1408).
+		{"VARIANT_ISOLATION_UNAVAILABLE", CategoryPolicy, false},     // spec: 15:1056
+		{"REGION_CONSTRAINT_UNRESOLVABLE", CategoryPermanent, false}, // spec: 15:1058
+		{"GIT_CLONE_AUTH_UNSUPPORTED_HOST", CategoryPolicy, false},   // spec: 15:1063
+		{"GIT_CLONE_AUTH_HOST_AMBIGUOUS", CategoryPolicy, false},     // spec: 15:1064
+		{"GIT_CLONE_REF_UNRESOLVABLE", CategoryPermanent, false},     // spec: 15:1065
+		{"GIT_CLONE_REF_RESOLVE_TRANSIENT", CategoryTransient, true}, // spec: 15:1066
+		{"ENV_VAR_BLOCKLISTED", CategoryPermanent, false},            // spec: 15:1062
+		{"SDK_DEMOTION_NOT_SUPPORTED", CategoryPermanent, false},     // spec: 15:1083
+		{"POOL_DRAINING", CategoryTransient, true},                   // spec: 15:1034
+		{"ERASURE_IN_PROGRESS", CategoryPolicy, false},               // spec: 15:1040
+		{"TENANT_SUSPENDED", CategoryPolicy, false},                  // spec: 15:1096
+		// A representative spread of other newly-added catalog codes.
+		{"TARGET_NOT_READY", CategoryTransient, true},      // spec: 15:1094
+		{"TARGET_TERMINAL", CategoryPermanent, false},      // spec: 15:998
+		{"STORAGE_QUOTA_EXCEEDED", CategoryPolicy, false},  // spec: 15:1024
+		{"BUDGET_EXHAUSTED", CategoryPolicy, false},        // spec: 15:1079
+		{"POD_CRASH", CategoryTransient, true},             // spec: 15:995
+		{"OUTPUTPART_TOO_LARGE", CategoryPermanent, false}, // spec: 15:1038
+		{"ETAG_MISMATCH", CategoryPermanent, false},        // spec: 15:984
+		// spec: §8.8 line 869 — a one_shot second input round is 400.
+		{"ONE_SHOT_INPUT_EXHAUSTED", CategoryPermanent, false},
+		// Code-internal delegate_task / request_input codes classified
+		// by sibling analogy (no §15.4 catalog row).
+		{"INVALID_LEASE_FIELD", CategoryPermanent, false},
+		{"DELEGATION_DENIED", CategoryPolicy, false},
+		{"REQUEST_INPUT_CANCELLED", CategoryTransient, false},
+	}
+	for _, c := range cases {
+		t.Run(c.code, func(t *testing.T) {
+			cat, retr := Classify(c.code)
+			if cat != c.wantCat {
+				t.Errorf("category = %q, want %q", cat, c.wantCat)
+			}
+			if retr != c.wantRetr {
+				t.Errorf("retryable = %v, want %v", retr, c.wantRetr)
+			}
+			// A matrix code must never resolve to the unknown fallback.
+			if cat == CategoryTransient && retr && c.wantCat != CategoryTransient {
+				t.Errorf("%s fell through to the unknown-code fallback", c.code)
+			}
+		})
+	}
+}
+
 func TestClassifyUnknownCodeIsTransientRetryable(t *testing.T) {
 	cat, retr := Classify("UNDEFINED_FUTURE_CODE")
 	if cat != CategoryTransient {

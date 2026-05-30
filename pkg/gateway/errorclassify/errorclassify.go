@@ -54,12 +54,12 @@ type entry struct {
 // table is the §15.2.1 code → (category, retryable) map. The keys
 // are the canonical lenny error codes the gateway emits.
 var table = map[string]entry{
-	"INVALID_REQUEST":             {CategoryPermanent, false},
-	"VALIDATION_ERROR":            {CategoryPermanent, false},
-	"WORKSPACE_PLAN_INVALID":      {CategoryPermanent, false},
-	"RESOURCE_NOT_FOUND":          {CategoryPermanent, false},
-	"RESOURCE_HAS_DEPENDENTS":     {CategoryPolicy, false},
-	"IDEMPOTENCY_KEY_REUSED":      {CategoryPermanent, false},
+	"INVALID_REQUEST":         {CategoryPermanent, false},
+	"VALIDATION_ERROR":        {CategoryPermanent, false},
+	"WORKSPACE_PLAN_INVALID":  {CategoryPermanent, false},
+	"RESOURCE_NOT_FOUND":      {CategoryPermanent, false},
+	"RESOURCE_HAS_DEPENDENTS": {CategoryPolicy, false},
+	"IDEMPOTENCY_KEY_REUSED":  {CategoryPermanent, false},
 	// spec: §11.5 line 277 ("returns the cached response … without
 	// re-executing the operation"). The middleware atomically claims the
 	// (tenant_id, idempotency_key) row before executing the inner handler;
@@ -68,7 +68,7 @@ var table = map[string]entry{
 	// retries do not double-execute the side effect. POLICY: the gate is a
 	// deliberate concurrency rule. retryable=true: once the original
 	// finishes, the next retry replays the cached response. F-11.5.2.
-	"IDEMPOTENCY_KEY_IN_FLIGHT": {CategoryPolicy, true},
+	"IDEMPOTENCY_KEY_IN_FLIGHT":   {CategoryPolicy, true},
 	"PRECONDITION_FAILED":         {CategoryPermanent, false},
 	"UNAUTHORIZED":                {CategoryPermanent, false},
 	"FORBIDDEN":                   {CategoryPermanent, false},
@@ -269,4 +269,114 @@ var table = map[string]entry{
 	// parent's identity stays empty until it is re-bound by a new
 	// session-create flow. F-8.5.10.
 	"DELEGATION_PARENT_NO_USER": {CategoryPermanent, false},
+
+	// spec: §15 error-code catalog (15_external-api-surface.md:976-1099).
+	// The (category, retryable) pair below is transcribed from the
+	// authoritative catalog table's Category column and its prose
+	// retry language so REST `writeError` and MCP `handleToolCall` —
+	// both of which classify through this one table — report the same
+	// §15.2.1 rule 5(d) pair for every catalog code instead of falling
+	// back to (TRANSIENT, true). F-15.2.6.
+	//
+	// PERMANENT — request fails identically until the body/state changes.
+	"INVALID_STATE_TRANSITION":                     {CategoryPermanent, false}, // spec: 15:980
+	"RESOURCE_ALREADY_EXISTS":                      {CategoryPermanent, false}, // spec: 15:982
+	"ETAG_MISMATCH":                                {CategoryPermanent, false}, // spec: 15:984
+	"ETAG_REQUIRED":                                {CategoryPermanent, false}, // spec: 15:985
+	"IMAGE_RESOLUTION_FAILED":                      {CategoryPermanent, false}, // spec: 15:1004
+	"RESERVED_IDENTIFIER":                          {CategoryPermanent, false}, // spec: 15:1005
+	"CONFIGURATION_CONFLICT":                       {CategoryPermanent, false}, // spec: 15:1006
+	"SEED_CONFLICT":                                {CategoryPermanent, false}, // spec: 15:1007
+	"INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION":        {CategoryPolicy, false},    // spec: 15:1009
+	"CONNECTOR_REQUEST_REJECTED":                   {CategoryPermanent, false}, // spec: 15:1014
+	"CONNECTOR_RESPONSE_REJECTED":                  {CategoryPermanent, false}, // spec: 15:1015
+	"INVALID_INTERCEPTOR_PRIORITY":                 {CategoryPermanent, false}, // spec: 15:1018
+	"INVALID_INTERCEPTOR_PHASE":                    {CategoryPermanent, false}, // spec: 15:1019
+	"SESSION_NOT_EVAL_ELIGIBLE":                    {CategoryPermanent, false}, // spec: 15:1022
+	"WORKSPACE_PLAN_SCHEMA_UNSUPPORTED":            {CategoryPermanent, false}, // spec: 15:1026
+	"TARGET_TERMINAL":                              {CategoryPermanent, false}, // spec: 15:998
+	"INVALID_POOL_CONFIGURATION":                   {CategoryPermanent, false}, // spec: 15:1031
+	"INVALID_BREAKER_SCOPE":                        {CategoryPermanent, false}, // spec: 15:1033
+	"OUTPUTPART_TOO_LARGE":                         {CategoryPermanent, false}, // spec: 15:1038
+	"LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE":        {CategoryPermanent, false}, // spec: 15:1043
+	"PLATFORM_AUDIT_REGION_UNRESOLVABLE":           {CategoryPermanent, false}, // spec: 15:1044
+	"URL_MODE_ELICITATION_DOMAIN_REQUIRED":         {CategoryPermanent, false}, // spec: 15:1045
+	"UNREGISTERED_PART_TYPE":                       {CategoryPermanent, false}, // spec: 15:1047 (WARNING; pass-through fallback, not retryable)
+	"REPLAY_ON_LIVE_SESSION":                       {CategoryPermanent, false}, // spec: 15:1048
+	"INCOMPATIBLE_RUNTIME":                         {CategoryPermanent, false}, // spec: 15:1049
+	"COMPLIANCE_PGAUDIT_REQUIRED":                  {CategoryPermanent, false}, // spec: 15:1051
+	"ENV_VAR_BLOCKLISTED":                          {CategoryPermanent, false}, // spec: 15:1062 (§15.4 family)
+	"GIT_CLONE_REF_UNRESOLVABLE":                   {CategoryPermanent, false}, // spec: 15:1065 (§15.4 family)
+	"EXPORT_SCAN_REQUIRES_INTERCEPTOR":             {CategoryPermanent, false}, // spec: 15:1070
+	"EXPORT_FILE_SCAN_SIZE_EXCEEDED":               {CategoryPermanent, false}, // spec: 15:1071
+	"OUTPUTPART_INLINE_REF_CONFLICT":               {CategoryPermanent, false}, // spec: 15:1081
+	"INVALID_DELIVERY_VALUE":                       {CategoryPermanent, false}, // spec: 15:1082
+	"SDK_DEMOTION_NOT_SUPPORTED":                   {CategoryPermanent, false}, // spec: 15:1083 (§15.4 family)
+	"ELICITATION_INTEGRITY_JUSTIFICATION_REQUIRED": {CategoryPermanent, false}, // spec: 15:1086
+	"ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR":   {CategoryPermanent, false}, // spec: 15:1087
+	"DUPLICATE_MESSAGE_ID":                         {CategoryPermanent, false}, // spec: 15:1046
+	"UPLOAD_TOKEN_EXPIRED":                         {CategoryPermanent, false}, // spec: 15:1090
+	"UPLOAD_TOKEN_MISMATCH":                        {CategoryPermanent, false}, // spec: 15:1091
+	"UPLOAD_TOKEN_CONSUMED":                        {CategoryPermanent, false}, // spec: 15:1092
+	"UPLOAD_ARCHIVE_LIMIT_EXCEEDED":                {CategoryPermanent, false}, // spec: 15:1093
+	"INVALID_CALLBACK_URL":                         {CategoryPermanent, false}, // spec: 15:1097
+	"LENNY_PLAYGROUND_BEARER_TYPE_REJECTED":        {CategoryPermanent, false}, // spec: 15:1098
+	"EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN":       {CategoryPermanent, false}, // spec: 15:1099
+	"REGION_CONSTRAINT_UNRESOLVABLE":               {CategoryPermanent, false}, // spec: 15:1058 (§15.4 family)
+	"KMS_REGION_UNRESOLVABLE":                      {CategoryPermanent, false}, // spec: 15:1060
+	// spec: §8.8 line 869 — a `one_shot` runtime's second input round is
+	// rejected with HTTP 400. PERMANENT, not retryable.
+	"ONE_SHOT_INPUT_EXHAUSTED": {CategoryPermanent, false},
+	// Code-internal §8.5 delegate_task lease-field validation rejection
+	// (no §15.4 catalog row); a malformed lease field fails identically
+	// until corrected, mirroring VALIDATION_ERROR.
+	"INVALID_LEASE_FIELD": {CategoryPermanent, false},
+
+	// POLICY — a deliberate policy decision rejected a well-formed request.
+	"PERMISSION_DENIED":                       {CategoryPolicy, false}, // spec: 15:1028
+	"SCOPE_FORBIDDEN":                         {CategoryPolicy, false}, // spec: 15:1029
+	"CREDENTIAL_REVOKED":                      {CategoryPolicy, false}, // spec: 15:1030
+	"INJECTION_REJECTED":                      {CategoryPolicy, false}, // spec: 15:999
+	"EVAL_QUOTA_EXCEEDED":                     {CategoryPolicy, false}, // spec: 15:1023
+	"STORAGE_QUOTA_EXCEEDED":                  {CategoryPolicy, false}, // spec: 15:1024
+	"CREDENTIAL_PROVIDER_MISMATCH":            {CategoryPolicy, false}, // spec: 15:1020
+	"DELEGATION_PARENT_REVOKED":               {CategoryPolicy, false}, // spec: 15:1036
+	"ERASURE_IN_PROGRESS":                     {CategoryPolicy, false}, // spec: 15:1040 (§15.4 family)
+	"ERASURE_BLOCKED_BY_LEGAL_HOLD":           {CategoryPolicy, false}, // spec: 15:1041
+	"TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD":     {CategoryPolicy, false}, // spec: 15:1042
+	"REGION_CONSTRAINT_VIOLATED":              {CategoryPolicy, false}, // spec: 15:1057
+	"LEASE_SPIFFE_MISMATCH":                   {CategoryPolicy, false}, // spec: 15:1061
+	"GIT_CLONE_AUTH_UNSUPPORTED_HOST":         {CategoryPolicy, false}, // spec: 15:1063 (§15.4 family)
+	"GIT_CLONE_AUTH_HOST_AMBIGUOUS":           {CategoryPolicy, false}, // spec: 15:1064 (§15.4 family)
+	"CONTENT_POLICY_WEAKENING":                {CategoryPolicy, false}, // spec: 15:1068
+	"CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION": {CategoryPolicy, false}, // spec: 15:1069
+	"EXPORT_FILE_SCAN_REJECTED":               {CategoryPolicy, false}, // spec: 15:1072
+	"DELEGATION_POLICY_WEAKENING":             {CategoryPolicy, false}, // spec: 15:1074
+	"COMPLIANCE_SIEM_REQUIRED":                {CategoryPolicy, false}, // spec: 15:1076
+	"COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED": {CategoryPolicy, false}, // spec: 15:1077
+	"CLASSIFICATION_CONTROL_VIOLATION":        {CategoryPolicy, false}, // spec: 15:1078
+	"BUDGET_EXHAUSTED":                        {CategoryPolicy, false}, // spec: 15:1079
+	"EXTENSION_COOL_OFF_ACTIVE":               {CategoryPolicy, false}, // spec: 15:1080
+	"COMPLIANCE_CROSS_USER_CACHE_PROHIBITED":  {CategoryPolicy, false}, // spec: 15:1088
+	"VARIANT_ISOLATION_UNAVAILABLE":           {CategoryPolicy, false}, // spec: 15:1056 (§15.4 family)
+	"TENANT_SUSPENDED":                        {CategoryPolicy, false}, // spec: 15:1096 (§15.4 family)
+	// Code-internal §8.5 delegate_task policy denial (no §15.4 catalog
+	// row); a delegation rejected by policy fails identically on retry.
+	"DELEGATION_DENIED": {CategoryPolicy, false},
+
+	// TRANSIENT — a retry is expected to clear the condition.
+	"POD_CRASH":                       {CategoryTransient, true}, // spec: 15:995
+	"DEADLOCK_TIMEOUT":                {CategoryTransient, true}, // spec: 15:1021
+	"CREDENTIAL_RENEWAL_FAILED":       {CategoryTransient, true}, // spec: 15:1025
+	"BUDGET_STATE_UNRECOVERABLE":      {CategoryTransient, true}, // spec: 15:1027
+	"DELEGATION_AUDIT_CONTENTION":     {CategoryTransient, true}, // spec: 15:1037
+	"POOL_DRAINING":                   {CategoryTransient, true}, // spec: 15:1034 (§15.4 family)
+	"GIT_CLONE_REF_RESOLVE_TRANSIENT": {CategoryTransient, true}, // spec: 15:1066 (§15.4 family)
+	"EXPORT_FILE_SCAN_UNAVAILABLE":    {CategoryTransient, true}, // spec: 15:1073
+	"REGION_UNAVAILABLE":              {CategoryTransient, true}, // spec: 15:1059
+	"TARGET_NOT_READY":                {CategoryTransient, true}, // spec: 15:1094
+	// Code-internal §8.5 request_input cancellation (no §15.4 catalog
+	// row); mirrors REQUEST_INPUT_TIMEOUT — the original request id is
+	// consumed, so the same call is not retryable.
+	"REQUEST_INPUT_CANCELLED": {CategoryTransient, false},
 }

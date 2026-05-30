@@ -101,6 +101,35 @@ func nodeProtocolState(s session.State) (string, map[string]any) {
 	return sessionstate.MCPProtocolState(sessionstate.State(s))
 }
 
+// The parity helpers below wrap the recurring MCP tool error
+// conditions as *mcp.ToolError carrying the canonical lenny code so
+// the shared §15.2.1 errorclassify table assigns the same (category,
+// retryable) pair the REST surface returns, instead of the handler
+// error falling back to INTERNAL_ERROR / (TRANSIENT, true). spec:
+// §15.2.1 rule 5(d) line 1396. F-15.2.12.
+
+// errInvalidArgs maps a tools/call argument-unmarshal failure to the
+// REST VALIDATION_ERROR (PERMANENT, not retryable).
+func errInvalidArgs(err error) error {
+	return mcp.NewToolError("VALIDATION_ERROR", fmt.Sprintf("invalid arguments: %v", err), nil)
+}
+
+// errSessionLookup maps a session-store Get failure to
+// RESOURCE_NOT_FOUND (PERMANENT, not retryable), matching the REST 404
+// for a session that does not exist or is not visible to the caller.
+func errSessionLookup(err error) error {
+	return mcp.NewToolError("RESOURCE_NOT_FOUND", fmt.Sprintf("session lookup: %v", err), nil)
+}
+
+// errSessionTerminalState maps an operation on the caller's own
+// terminal session to INVALID_STATE_TRANSITION (PERMANENT, not
+// retryable), the REST code for an operation invalid in the current
+// state.
+func errSessionTerminalState(id string, state session.State) error {
+	return mcp.NewToolError("INVALID_STATE_TRANSITION",
+		fmt.Sprintf("session %s is terminal (%s)", id, state), nil)
+}
+
 // DelegationAuditor records §11.7 audit events for delegation
 // operations such as the §10.6 isolation-monotonicity violation.
 type DelegationAuditor interface {
@@ -494,7 +523,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			FromSessionID string `json:"fromSessionId"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
 		if in.To == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
@@ -502,10 +531,14 @@ func Register(srv *mcp.Server, deps Deps) {
 		}
 		row, err := deps.Store.Get(ctx, tenant, in.To)
 		if err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+			return mcp.ToolResult{}, errSessionLookup(err)
 		}
 		if session.IsTerminal(row.State) {
-			return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.To, row.State)
+			// spec: §15 catalog (15:998) — a message to a terminal
+			// target is TARGET_TERMINAL (PERMANENT), distinct from the
+			// caller's own INVALID_STATE_TRANSITION. F-15.2.12.
+			return mcp.ToolResult{}, mcp.NewToolError("TARGET_TERMINAL",
+				fmt.Sprintf("session %s is terminal (%s)", in.To, row.State), nil)
 		}
 		// spec: §7.2 line 268 — cross-tenant validation runs before
 		// scope evaluation and rate limiting and applies to every
@@ -588,7 +621,12 @@ func Register(srv *mcp.Server, deps Deps) {
 			})
 			if res.Action == interceptor.ActionReject {
 				recordChainRejection(ctx, deps, tenant, row.ID, interceptor.PhasePreMessageDelivery, res)
-				return mcp.ToolResult{}, fmt.Errorf("message delivery rejected by policy: %s", res.Reason)
+				// spec: §15.2.1 rule 3 — a PreMessageDelivery REJECT is a
+				// policy decision; emit INTERCEPTOR_REJECTED so the
+				// envelope is POLICY / not-retryable, matching the
+				// PostAgentOutput path below. F-15.2.12.
+				return mcp.ToolResult{}, mcp.NewToolError("INTERCEPTOR_REJECTED",
+					fmt.Sprintf("message delivery rejected by policy: %s", res.Reason), nil)
 			}
 			if res.Action == interceptor.ActionModify {
 				messageBody = string(res.ModifiedContent)
@@ -657,7 +695,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		}
 		if len(args) > 0 {
 			if err := json.Unmarshal(args, &in); err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+				return mcp.ToolResult{}, errInvalidArgs(err)
 			}
 		}
 		sessionID := callerSessionID(ctx, in.SessionID)
@@ -667,7 +705,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		}
 		caller, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+			return mcp.ToolResult{}, errSessionLookup(err)
 		}
 		// spec: §8.9 line 1010 — read only the rows belonging to the
 		// requested session's delegation tree via the §12.5
@@ -721,7 +759,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			ChildSessionID  string `json:"childSessionId"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
 		parentSessionID := callerSessionID(ctx, in.ParentSessionID)
 		if parentSessionID == "" {
@@ -733,11 +771,13 @@ func Register(srv *mcp.Server, deps Deps) {
 				"childSessionId is required", nil)
 		}
 		if parentSessionID == in.ChildSessionID {
-			return mcp.ToolResult{}, errors.New("a session cannot cancel itself as its own child")
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"a session cannot cancel itself as its own child", nil)
 		}
 		child, err := deps.Store.Get(ctx, tenant, in.ChildSessionID)
 		if err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("child session lookup: %w", err)
+			return mcp.ToolResult{}, mcp.NewToolError("RESOURCE_NOT_FOUND",
+				fmt.Sprintf("child session lookup: %v", err), nil)
 		}
 		// spec: §8.9 line 1010 — read only the rows in the child's
 		// delegation tree (the parent must be in the same tree to
@@ -753,12 +793,15 @@ func Register(srv *mcp.Server, deps Deps) {
 		// Authorization: the caller may cancel only sessions inside its
 		// own §8 delegation subtree.
 		if !isDescendant(child, parentSessionID, all) {
-			return mcp.ToolResult{}, fmt.Errorf("session %s is not a child of %s",
-				in.ChildSessionID, parentSessionID)
+			// spec: §15 catalog (15:1028) — cancelling outside the
+			// caller's own subtree is an authorization failure;
+			// PERMISSION_DENIED (POLICY), not a generic error. F-15.2.12.
+			return mcp.ToolResult{}, mcp.NewToolError("PERMISSION_DENIED",
+				fmt.Sprintf("session %s is not a child of %s", in.ChildSessionID, parentSessionID), nil)
 		}
 		if session.IsTerminal(child.State) {
-			return mcp.ToolResult{}, fmt.Errorf("child session %s is already terminal (%s)",
-				in.ChildSessionID, child.State)
+			return mcp.ToolResult{}, mcp.NewToolError("TARGET_TERMINAL",
+				fmt.Sprintf("child session %s is already terminal (%s)", in.ChildSessionID, child.State), nil)
 		}
 		cancelled, err := cancelSubtree(ctx, deps.Store, tenant, child, all)
 		if err != nil {
@@ -791,20 +834,22 @@ func Register(srv *mcp.Server, deps Deps) {
 			Mode      string   `json:"mode"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
 		if in.SessionID == "" || len(in.ChildIDs) == 0 {
-			return mcp.ToolResult{}, errors.New("sessionId and a non-empty childIds are required")
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"sessionId and a non-empty childIds are required", nil)
 		}
 		mode := in.Mode
 		if mode == "" {
 			mode = "all"
 		}
 		if mode != "all" && mode != "any" && mode != "settled" {
-			return mcp.ToolResult{}, fmt.Errorf("mode %q is not one of all, any, or settled", mode)
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				fmt.Sprintf("mode %q is not one of all, any, or settled", mode), nil)
 		}
 		if _, err := deps.Store.Get(ctx, tenant, in.SessionID); err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+			return mcp.ToolResult{}, errSessionLookup(err)
 		}
 		// Authorization: every awaited id must be a direct child of the
 		// caller — a session may only await children it delegated. A
@@ -816,7 +861,11 @@ func Register(srv *mcp.Server, deps Deps) {
 				return mcp.ToolResult{}, err
 			}
 			if oc.parentID != in.SessionID {
-				return mcp.ToolResult{}, fmt.Errorf("session %s is not a child of %s", cid, in.SessionID)
+				// spec: §15 catalog (15:1028) — awaiting a session the
+				// caller did not delegate is an authorization failure.
+				// F-15.2.12.
+				return mcp.ToolResult{}, mcp.NewToolError("PERMISSION_DENIED",
+					fmt.Sprintf("session %s is not a child of %s", cid, in.SessionID), nil)
 			}
 		}
 		// Poll the child states until the mode's settle condition holds.
@@ -854,17 +903,18 @@ func Register(srv *mcp.Server, deps Deps) {
 			Context   map[string]string `json:"context"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
 		if in.SessionID == "" {
-			return mcp.ToolResult{}, errors.New("sessionId is required")
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"sessionId is required", nil)
 		}
 		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
 		if err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+			return mcp.ToolResult{}, errSessionLookup(err)
 		}
 		if session.IsTerminal(row.State) {
-			return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+			return mcp.ToolResult{}, errSessionTerminalState(in.SessionID, row.State)
 		}
 		// §8.3: new entries merge with the inherited context and cannot
 		// overwrite or remove existing (parent) entries. Validation runs
@@ -917,7 +967,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				Output    json.RawMessage `json:"output"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+				return mcp.ToolResult{}, errInvalidArgs(err)
 			}
 			sessionID := callerSessionID(ctx, in.SessionID)
 			if sessionID == "" {
@@ -926,17 +976,19 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			var parts []json.RawMessage
 			if err := json.Unmarshal(in.Output, &parts); err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("output must be an array of output parts: %w", err)
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					fmt.Sprintf("output must be an array of output parts: %v", err), nil)
 			}
 			if len(parts) == 0 {
-				return mcp.ToolResult{}, errors.New("output must contain at least one part")
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					"output must contain at least one part", nil)
 			}
 			row, err := deps.Store.Get(ctx, tenant, sessionID)
 			if err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+				return mcp.ToolResult{}, errSessionLookup(err)
 			}
 			if session.IsTerminal(row.State) {
-				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", sessionID, row.State)
+				return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
 			}
 			// §15.4.1: lenny/output parts are surfaced on the session's
 			// event stream as an agent_output event, the same stream the
@@ -981,7 +1033,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				Parts     []json.RawMessage `json:"parts"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+				return mcp.ToolResult{}, errInvalidArgs(err)
 			}
 			sessionID := callerSessionID(ctx, in.SessionID)
 			if sessionID == "" {
@@ -998,10 +1050,10 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			row, err := deps.Store.Get(ctx, tenant, sessionID)
 			if err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+				return mcp.ToolResult{}, errSessionLookup(err)
 			}
 			if session.IsTerminal(row.State) {
-				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", sessionID, row.State)
+				return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
 			}
 			// §11.3 / §5.1 limits.maxRequestInputWaitSeconds: the session's
 			// runtime may declare a per-runtime wait cap that overrides the
@@ -1168,7 +1220,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				URL string `json:"url"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+				return mcp.ToolResult{}, errInvalidArgs(err)
 			}
 			sessionID := callerSessionID(ctx, in.SessionID)
 			if sessionID == "" {
@@ -1189,10 +1241,10 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			row, err := deps.Store.Get(ctx, tenant, sessionID)
 			if err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+				return mcp.ToolResult{}, errSessionLookup(err)
 			}
 			if session.IsTerminal(row.State) {
-				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", sessionID, row.State)
+				return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
 			}
 			// spec: §9.2 line 88 — agent binaries cannot self-declare as a
 			// connector. lenny/request_elicitation is the agent surface; an
@@ -1216,10 +1268,13 @@ func Register(srv *mcp.Server, deps Deps) {
 				if deps.ElicitationLifecycleMetrics != nil {
 					deps.ElicitationLifecycleMetrics.IncElicitationSuppressed()
 				}
-				return mcp.ToolResult{}, fmt.Errorf(
-					"elicitation budget exhausted: session %s has reached the maxElicitationsPerSession limit of %d",
-					sessionID, maxElicitations,
-				)
+				// spec: §15 catalog (15:988) — a per-session elicitation
+				// budget drop is a quota condition; QUOTA_EXCEEDED
+				// (POLICY, not retryable) rather than INTERNAL_ERROR.
+				// F-15.2.12.
+				return mcp.ToolResult{}, mcp.NewToolError("QUOTA_EXCEEDED",
+					fmt.Sprintf("elicitation budget exhausted: session %s has reached the maxElicitationsPerSession limit of %d",
+						sessionID, maxElicitations), nil)
 			}
 			// §9.2: the gateway records the original {message, schema}
 			// pair at origination. Its SHA-256 digest is the
@@ -1231,7 +1286,8 @@ func Register(srv *mcp.Server, deps Deps) {
 			originalContent := elicitation.Content{Message: in.Message, Schema: schemaValue}
 			originalDigest, err := originalContent.Digest()
 			if err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("elicitation content is not canonicalizable: %w", err)
+				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+					fmt.Sprintf("elicitation content is not canonicalizable: %v", err), nil)
 			}
 			// §9.2: dispatch the elicitation up the hop-by-hop chain. The
 			// dispatcher runs the url-mode provenance check, walks the
@@ -1506,7 +1562,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if len(args) > 0 {
 				if err := json.Unmarshal(args, &in); err != nil {
-					return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+					return mcp.ToolResult{}, errInvalidArgs(err)
 				}
 			}
 			// §8.5: discovery returns `type: agent` runtimes only —
@@ -1564,7 +1620,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if len(args) > 0 {
 				if err := json.Unmarshal(args, &in); err != nil {
-					return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+					return mcp.ToolResult{}, errInvalidArgs(err)
 				}
 			}
 			// §9.1 discovery lists every runtime type; the store filter
@@ -1655,7 +1711,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				IdempotencyKey string `json:"idempotencyKey,omitempty"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+				return mcp.ToolResult{}, errInvalidArgs(err)
 			}
 			// §8.4: validate the closed enum at the MCP boundary so a
 			// malformed value (typo, casing, post-v1 mode) is rejected
@@ -2178,7 +2234,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		}
 		row, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+			return mcp.ToolResult{}, errSessionLookup(err)
 		}
 		scope := memorystore.MemoryScope{
 			TenantID: tenant, UserID: row.UserID,
@@ -2221,7 +2277,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 			Limit     int    `json:"limit"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
 		sessionID := callerSessionID(ctx, in.SessionID)
 		if sessionID == "" {
@@ -2242,7 +2298,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		}
 		row, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+			return mcp.ToolResult{}, errSessionLookup(err)
 		}
 		// §9.4: memory recall is user-scoped — it spans every session
 		// the user has run, not just the calling session.
