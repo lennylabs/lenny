@@ -15446,7 +15446,7 @@ Severity definitions:
 
 ---
 
-### - [ ] F-11.3.1 — Cancellation never reaches the runtime; the gateway only mutates a row [High] — OPEN
+### - [x] F-11.3.1 — Cancellation never reaches the runtime; the gateway only mutates a row [High] — CLOSED
 
 Spec §11.3 line 236: "Cancellation is first-class: clients and parent agents can cancel sessions/tasks cleanly." A clean cancellation requires the runtime process to actually be signalled to stop work and exit; the spec's `/v1/sessions/{id}` DELETE, `/v1/sessions/{id}/interrupt`, and `lenny/cancel_child` are the three entry points.
 
@@ -15464,7 +15464,9 @@ The Interrupt RPC and its plumbing exist on both sides but are wired only in tes
 
 Consequence: a parent agent calling `lenny/cancel_child`, an operator hitting DELETE, or the watchdog forcing an expiry observes the row flip to `cancelled` / `expired` / `failed`, but the child agent process keeps running, holding tokens, executing tool calls, charging the credential lease, and emitting output. The spec's "cleanly" guarantee is violated.
 
-### - [ ] F-11.3.2 — Watchdog timeouts do not signal the runtime; expired/failed sessions keep running [High] — OPEN
+**Resolution (this batch + verify):** All three entry points now reach the runtime. (1) **DELETE** already drained the target pod: `handleDelete` → `recordSessionCompleted` → `releaseExecutor` → `PodExecutor.Release` → `binder.Release` runs the §6.2 claimed → draining → terminated transition, which the spec (§11.4 line 258) defines as the clean-cancellation mechanism (the adapter does SIGTERM, wait, then SIGKILL). (2) **`/interrupt`** is stale: it no longer routes through the row-only `handleTransition`. Commit `816881aa` (F-7.2.7) added the dedicated `handleInterrupt` → `signalAdapterInterrupt` → `bind.Adapter.Interrupt(ctx, id, hard=false, deadline)` (MODE_CLEAN), with STATUS_BUSY → 409, INTERRUPT_TIMEOUT → still-suspended, and a §6.2 attached → suspended Sandbox phase write; the pod is correctly held (suspend is non-terminal). The "only test-code call sites" evidence predates that commit. (3) **`lenny/cancel_child`** was the remaining real gap and is fixed here: `cancelSubtree` left descendant pods running; the handler now calls `executor.ReleaseSession(deps.Executor, id, DispositionCancelled)` for every cancelled id (see F-11.3.9). Test: `TestCancelChildDrainsCancelledRuntimes_spec_11_3_1`.
+
+### - [x] F-11.3.2 — Watchdog timeouts do not signal the runtime; expired/failed sessions keep running [High] — CLOSED
 
 The §11.3 pre-running state caps (`maxCreated/Finalizing/Ready/StartingTimeoutSeconds`), `maxSessionAge`, and `maxAwaitingClientAction` are all implemented in `/Users/joan/projects/lenny/pkg/gateway/watchdog/watchdog.go` — but every transition is a `sessionstore.Update` mutating row state only. There is no call into the adapter client or executor.
 
@@ -15473,6 +15475,8 @@ The §11.3 pre-running state caps (`maxCreated/Finalizing/Ready/StartingTimeoutS
 - `sweepAwaitingClientAction` (`watchdog.go:247-275`) — sets `StateExpired` on stuck awaiting-client-action sessions.
 
 `grep -rn "Interrupt\|adapter.*client\|sendInterrupt" pkg/gateway/watchdog` returns nothing. The watchdog's transition to a terminal state does call `recordCompleted` (`watchdog.go:334`) which emits a billing event and archives, but the runtime is never told. Same H1 consequence applies, scoped to gateway-initiated timeouts.
+
+**Resolution:** Verify-closed; resolved by commit `2b826d1b` (F-5.2.26). The watchdog now drives terminal side effects through a `TerminalHook`: `cmd/lenny-gateway/main.go:3410` wires `WithTerminalHook(sessionSrv)`, so every watchdog-forced terminal transition (`recordCompleted` → `OnSessionTerminal` → `recordSessionCompleted` → `releaseExecutor`) drains the bound pod. For a `running`/`suspended` session expired via `sweepMaxAge`, `PodExecutor.Release` → `binder.Release` runs the §6.2 claimed → draining → terminated transition, which triggers the adapter's §11.4 line 258 graceful shutdown (SIGTERM, wait, then SIGKILL) — the runtime is stopped, not left running. For a pre-running session forced to `failed`, no pod is bound yet so the release is a no-op (nothing leaks). The grep-against-`pkg/gateway/watchdog` evidence is stale: the watchdog signals the runtime through the wired terminal hook rather than calling the adapter directly. Slot-release on watchdog expiry is covered by the F-5.2.26 tests.
 
 ### - [ ] F-11.3.3 — `maxSessionAge` runs on a single global default and ignores per-pool/per-runtime configuration [High] — OPEN
 
@@ -15550,7 +15554,7 @@ Implementation: `grep -rn "maxResumeWindow\|MaxResumeWindow\|ResumeWindow" --inc
 
 **Resolution:** Closed by F-6.2.14 (commit ce6bfa37). Identical fix as F-7.3.6.
 
-### - [ ] F-11.3.9 — Cancellation/expiration does not invoke `executor.Close` for cancelled non-terminal cascades or for /interrupt; pods leak under cascade cancel [High] — OPEN
+### - [x] F-11.3.9 — Cancellation/expiration does not invoke `executor.Close` for cancelled non-terminal cascades or for /interrupt; pods leak under cascade cancel [High] — CLOSED
 
 `recordSessionCompleted` (`pkg/gateway/sessionserver/usage.go:142`) calls `executor.Close` only for the session whose row mutated. `cascadeToChildren` (`usage.go:199-246`) walks the subtree and writes `StateCancelled` rows directly via `s.store.Update` without invoking `recordSessionCompleted` or `executor.Close` on the descendants. The cascading cancel flips every descendant's row to `cancelled` but leaves their pods (and runtimes) alive.
 
@@ -15558,7 +15562,9 @@ Also `transitionInterrupt` (`sessionserver.go:943`) transitions running→suspen
 
 Consequence: parent termination under the default `cancel_all` policy leaves every descendant pod running. Combined with H1 / H2, the only sink for a cascaded cancel is the watchdog's `maxSessionAge` clock (2h later), so a single bad `cancel_all` can pin every pod in a delegation tree for hours.
 
-### - [ ] F-11.3.10 — Interceptor phase-specific default timeouts (100ms / 200ms) are unimplemented; every interceptor uses the 500ms default [High] — OPEN
+**Resolution (this batch):** Both cascade paths now drain each cancelled descendant's pod. A shared `executor.ReleaseSession(ctx, exec, sessionID, disp)` helper performs the §6.2 disposition-recording release (or `Close` fallback). `sessionserver.cascadeToChildren` (`usage.go`) calls it with `DispositionCancelled` after flipping each descendant row; `mcptools` `lenny/cancel_child` calls it over the ids `cancelSubtree` returns (using the `deps.Executor` already wired). Draining triggers the §11.4 line 258 adapter graceful shutdown, so a `cancel_all` no longer pins descendant pods until the `maxSessionAge` clock. The `/interrupt` corollary is correct as-is and not a leak: suspend is non-terminal so the pod is deliberately held for resume, and the runtime is signalled by the §7.2 line 169 `handleInterrupt` adapter Interrupt (see F-11.3.1). Tests: `TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9`, `TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9`, `TestCancelChildDrainsCancelledRuntimes_spec_11_3_1`.
+
+### - [x] F-11.3.10 — Interceptor phase-specific default timeouts (100ms / 200ms) are unimplemented; every interceptor uses the 500ms default [High] — CLOSED
 
 Spec §11.3 lines 213-214 split the interceptor default by phase: `PreLLMRequest/PostLLMResponse` interceptors default to 100ms; connector interceptors default to 200ms. The headline (line 212) keeps the general default at 500ms.
 
@@ -15569,6 +15575,8 @@ const DefaultTimeout = 500 * time.Millisecond
 ```
 
 `invoke` (line 273-281) applies `DefaultTimeout` for any interceptor with `Timeout() <= 0`, with no phase parameter. There is no phase-keyed default table — `grep -rn "Default.*100.*Millisecond\|Default.*200.*Millisecond" pkg/gateway/interceptor` returns nothing. So a deployer who registers a PreLLMRequest interceptor without an explicit Timeout receives a 500ms budget rather than the spec's 100ms; the LLM-hotpath protection the spec calibrates is loosened by 5x.
+
+**Resolution:** Verify-closed; resolved by commit `40813f41` (F-4.8.19/20). `pkg/gateway/interceptor/interceptor.go` now defines `DefaultLLMTimeout = 100ms` and `DefaultConnectorTimeout = 200ms`, a `phaseDefaultTimeout(phase)` table mapping `PhasePreLLMRequest`/`PhasePostLLMResponse` → 100ms and `PhasePreConnectorRequest`/`PhasePostConnectorResponse` → 200ms (every other phase → 500ms `DefaultTimeout`), and `effectiveTimeout(ic, phase)` / `invoke` apply it for any interceptor declaring a non-positive `Timeout()`. Matches the §11.3 lines 213-214 table verbatim. Tested by `TestPhaseDefaultTimeoutApplied`. The finding's stale-grep evidence predates that commit.
 
 ---
 
