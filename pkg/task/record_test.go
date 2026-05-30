@@ -1,0 +1,172 @@
+// SPDX-License-Identifier: MIT
+
+package task
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+// spec: §15.4.1 lines 1530-1531 — a `text` OutputPart guarantees type,
+// inline, mimeType (text/plain) and carries its own schemaVersion.
+func TestTextPart_spec_15_4_1(t *testing.T) {
+	p := TextPart("hello")
+	if p.Type != "text" || p.MimeType != "text/plain" || p.Inline != "hello" {
+		t.Fatalf("TextPart = %+v, want text/text-plain/hello", p)
+	}
+	if p.SchemaVersion != SchemaVersion {
+		t.Errorf("part schemaVersion = %d, want %d", p.SchemaVersion, SchemaVersion)
+	}
+	if p.Status != "complete" {
+		t.Errorf("part status = %q, want complete", p.Status)
+	}
+}
+
+// spec: §8.8 lines 825-827; §15.5 item 7 — the envelope schemaVersion is
+// immutable once the first writer sets it. ReconcileSchemaVersion keeps
+// an existing non-zero version and only fills in the producer version
+// for a brand-new record.
+func TestReconcileSchemaVersion_spec_8_8_825(t *testing.T) {
+	cases := []struct {
+		existing, producer, want int
+	}{
+		{0, 1, 1}, // new record: producer version wins
+		{1, 1, 1}, // same version: unchanged
+		{1, 2, 1}, // immutable: a schema-2 writer must not bump a schema-1 record
+		{2, 1, 2}, // a record already at 2 is preserved even by a v1 writer
+	}
+	for _, c := range cases {
+		if got := ReconcileSchemaVersion(c.existing, c.producer); got != c.want {
+			t.Errorf("ReconcileSchemaVersion(%d,%d) = %d, want %d", c.existing, c.producer, got, c.want)
+		}
+	}
+}
+
+// spec: §8.8 lines 936-938 — retriesExhausted is the precise
+// budget-consumed comparison when maxRetries is known, and the
+// row-only "retried at least once" witness when it is not.
+func TestRetriesExhausted_spec_8_8_936(t *testing.T) {
+	cases := []struct {
+		name       string
+		retryCount int64
+		maxRetries int
+		want       bool
+	}{
+		{"budget consumed", 2, 2, true},
+		{"budget left", 1, 2, false},
+		{"over budget", 3, 2, true},
+		{"unknown budget, retried", 1, 0, true},
+		{"unknown budget, no retry", 0, 0, false},
+		{"permanent failure, zero retries", 0, 3, false},
+	}
+	for _, c := range cases {
+		if got := RetriesExhausted(c.retryCount, c.maxRetries); got != c.want {
+			t.Errorf("%s: RetriesExhausted(%d,%d) = %v, want %v", c.name, c.retryCount, c.maxRetries, got, c.want)
+		}
+	}
+}
+
+// spec: §8.8 lines 806-823 — the TaskRecord envelope serializes with the
+// canonical field names and a messages array carrying caller/agent
+// entries with per-entry OutputParts.
+func TestRecord_JSON_spec_8_8_806(t *testing.T) {
+	rec := Record{
+		SchemaVersion: SchemaVersion,
+		TaskID:        "task_abc",
+		SessionID:     "sess_xyz",
+		State:         "completed",
+		Messages: []Message{
+			{Role: RoleCaller, Parts: []OutputPart{TextPart("do the thing")}},
+			{Role: RoleAgent, Parts: []OutputPart{TextPart("done")}, State: "completed"},
+		},
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, k := range []string{"schemaVersion", "taskId", "sessionId", "state", "messages"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("record JSON missing %q: %s", k, b)
+		}
+	}
+	// usage / treeUsage are absent (omitempty) when not populated — the
+	// §8.8 "treeUsage null until descendants settle" contract.
+	if _, ok := got["treeUsage"]; ok {
+		t.Errorf("unpopulated treeUsage should be absent, got: %s", b)
+	}
+	msgs, _ := got["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("messages len = %d, want 2", len(msgs))
+	}
+	agent, _ := msgs[1].(map[string]any)
+	if agent["role"] != RoleAgent || agent["state"] != "completed" {
+		t.Errorf("agent message = %v, want role=agent state=completed", agent)
+	}
+}
+
+// spec: §8.8 lines 904-917 — treeUsage flattens the usage fields and
+// adds totalTasks; the embedded Usage promotes inline rather than
+// nesting under a "usage" key.
+func TestTreeUsage_JSON_spec_8_8_904(t *testing.T) {
+	tu := TreeUsage{Usage: Usage{InputTokens: 45000, OutputTokens: 22000, WallClockSeconds: 450, PodMinutes: 12.5, CredentialLeaseMinutes: 10.2}, TotalTasks: 4}
+	b, err := json.Marshal(tu)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	_ = json.Unmarshal(b, &got)
+	for _, k := range []string{"inputTokens", "outputTokens", "wallClockSeconds", "podMinutes", "credentialLeaseMinutes", "totalTasks"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("treeUsage JSON missing flattened field %q: %s", k, b)
+		}
+	}
+	if _, ok := got["Usage"]; ok {
+		t.Errorf("embedded Usage must promote inline, not nest: %s", b)
+	}
+}
+
+// spec: §8.8 lines 922-940 — the failure example carries an output: null
+// (absent) and a populated error block; the completed example carries
+// output and a nil error.
+func TestResult_JSON_outputErrorMutualExclusion_spec_8_8_922(t *testing.T) {
+	failed := Result{
+		SchemaVersion: SchemaVersion,
+		TaskID:        "child_abc",
+		State:         "failed",
+		Error:         &Error{Code: "RUNTIME_CRASH", Category: "TRANSIENT", Message: "boom", RetriesExhausted: true},
+	}
+	b, _ := json.Marshal(failed)
+	var got map[string]any
+	_ = json.Unmarshal(b, &got)
+	if _, ok := got["output"]; ok {
+		t.Errorf("failed result must omit output, got: %s", b)
+	}
+	errBlock, _ := got["error"].(map[string]any)
+	if errBlock["category"] != "TRANSIENT" || errBlock["retriesExhausted"] != true {
+		t.Errorf("error block = %v, want category=TRANSIENT retriesExhausted=true", errBlock)
+	}
+
+	completed := Result{
+		SchemaVersion: SchemaVersion,
+		TaskID:        "child_abc",
+		State:         "completed",
+		Output:        &Output{Parts: []OutputPart{TextPart("result")}, ArtifactRefs: []string{}},
+	}
+	b, _ = json.Marshal(completed)
+	got = map[string]any{}
+	_ = json.Unmarshal(b, &got)
+	if _, ok := got["error"]; ok {
+		t.Errorf("completed result must omit error, got: %s", b)
+	}
+	out, ok := got["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("completed result must carry output, got: %s", b)
+	}
+	if _, ok := out["artifactRefs"]; !ok {
+		t.Errorf("output must always carry artifactRefs (possibly empty): %s", b)
+	}
+}
