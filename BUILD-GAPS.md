@@ -21879,7 +21879,7 @@ Implementation:
 
 Effect (compounds with H3): when the agent-namespace default-deny is enforced, the pod's resolver targets `kube-system` `kube-dns` but the policy blocks that path; DNS fails entirely. Even after H3 is fixed, until this controller change lands pods will not query the dedicated instance.
 
-### - [ ] F-13.2.5 — Gateway external-HTTPS egress (`allow-gateway-egress-llm-upstream`) is not rendered [High] — OPEN
+### - [x] F-13.2.5 — Gateway external-HTTPS egress (`allow-gateway-egress-llm-upstream`) is not rendered [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.2.18 — Both report the allow-gateway-egress-llm-upstream external-HTTPS egress policy is not rendered; F-13.2.18 just logs the deferral comment for the same gap.
 
@@ -21893,6 +21893,8 @@ Implementation:
 
 Effect: with `lenny-system` default-deny in force, the gateway has no permitted egress path to any LLM provider, connector callback URL, webhook target, or external interceptor endpoint. Every proxy-mode flow that completes session admission still fails on the outbound dial. The preflight NET-057/065 audits (`CheckSSRFPrivateRangeParity`, `CheckClusterCIDRSymmetry`) pass vacuously because both target policies are absent.
 
+- **Resolution:** Verify-closed; stale evidence. `allow-gateway-egress-llm-upstream` is rendered by `charts/lenny/templates/gateway-llm-upstream-egress.yaml` (added in `643fcabc`, F-4.9.22) — the two parallel `ipBlock` peers (`0.0.0.0/0` + `::/0`) with family-partitioned cluster-CIDR / RFC1918 / IMDS `except` lists per NET-062, enabled by default (`gateway.llmUpstreamEgress.enabled: true`), with `egressCIDRs.*` values present and helm-unittest coverage in `gateway-llm-upstream-egress_test.yaml`. The finding's grep (which returned nothing) predates that commit. The duplicate F-13.2.18 is already CLOSED.
+
 ### - [ ] F-13.2.6 — Cluster-CIDR drift detector does not audit `lenny-system` SSRF surfaces or service CIDRs (NET-022, NET-065) [High] — OPEN
 Spec (§13.2 lines 446–450, 416): the WarmPoolController's drift goroutine MUST re-read every 5 minutes and compare cluster pod + service CIDRs against the `except` blocks of (a) the `internet` egress profile policy, (b) the gateway `allow-gateway-egress-llm-upstream` rule, and (c) the `lenny-ops-egress` webhook rule, incrementing `lenny_network_policy_cidr_drift_total{policy=…,field=pod_cidr|service_cidr}`.
 
@@ -21901,7 +21903,7 @@ Implementation (`pkg/controller/cidrdrift/detector.go`):
 - Only `field=pod_cidr` is emitted (line 144); `service_cidr` is never reported. The detector reads only `node.Spec.PodCIDR(s)` (lines 164–195) and never queries the `kubernetes` Service ClusterIP or the cluster service-CIDR range.
 - The cluster pod CIDR aggregation falls through to node `spec.podCIDR`; on a managed cluster where nodes do not report a pod CIDR (EKS without VPC CNI metadata, GKE Autopilot, etc.) the detector silently treats the cluster as having zero CIDRs (line 129: "skip drift comparison").
 
-### - [ ] F-13.2.7 — `provider-direct` + `deliveryMode: proxy` mutual exclusivity is not enforced (NET-006) [High] — OPEN
+### - [x] F-13.2.7 — `provider-direct` + `deliveryMode: proxy` mutual exclusivity is not enforced (NET-006) [High] — CLOSED
 Spec (§13.2 lines 438–442): a pool combining `egressProfile: provider-direct` with `deliveryMode: proxy` is rejected at (1) pool registration validation, (2) the `lenny-direct-mode-isolation` ValidatingAdmissionWebhook, and (3) a Helm pre-install/upgrade hook. Rejection code: `InvalidPoolEgressDeliveryCombo`.
 
 Implementation:
@@ -21911,6 +21913,8 @@ Implementation:
 - No Helm pre-install/upgrade hook validates `credentialPools[*]` for this combination.
 
 Effect: a pool created with `deliveryMode: proxy, egressProfile: provider-direct` admits successfully; the runtime then both holds a lease token (proxy path) and has direct CIDR egress to the provider, exposing the bypass the spec calls "incoherent security posture".
+
+- **Resolution:** Closed by `a367c502`. All three §13.2 enforcement layers now reject the combination, each carrying the `InvalidPoolEgressDeliveryCombo` code. (1) **Pool-config validation (CRD admission):** `pool_config_validator.DecideTemplate` runs a new `decideEgressDeliveryCombo` before the execution-mode switch, so a SandboxTemplate (the warm-pool definition the controller manages) with proxy + provider-direct is rejected in every execution mode. (2) **ValidatingAdmissionWebhook:** the `direct_mode_isolation` guard gained an `EgressProfile` field and an unconditional NET-006 check that runs before the multi-tenant gate (the mutual exclusivity is a coherence defect in any tenancy mode, unlike the §4.9 direct/standard and proxy/spiffe checks); the webhook transport threads `tmpl.Spec.EgressProfile`. (3) **Helm guard:** the new `templates/credentialpool-egress-guard.yaml` fails the install/upgrade render when any `bootstrap.credentialPools` seed entry pairs `deliveryMode: proxy` with `egressProfile: provider-direct`. The admin-API pool model carries `egressProfile` but not `deliveryMode` (delivery mode lives on the separate credential-pool model), so the two CRD webhooks — which see the full SandboxTemplate — are the authoritative enforcement; the standard+internet half of the broader egress cross-control stays with F-13.2.11.
 
 ### - [x] F-13.2.8 — `allow-ingress-controller-to-gateway` selects the whole controller namespace, not the controller pods [Medium] — CLOSED
 Spec (§13.2 lines 264–292): the NetworkPolicy MUST pair `namespaceSelector` with `podSelector` matching `{{ .Values.ingress.controllerPodLabel.key }}` / `{{ .Values.ingress.controllerPodLabel.value }}` (defaults `app.kubernetes.io/name=ingress-nginx`) "required so that only the controller pods (not every pod in the namespace, e.g., sidecars, cert-manager validators, debug containers) may reach the gateway's TLS listener."
@@ -21952,7 +21956,7 @@ Implementation:
 
 Effect: every agent pod silently runs with the base policies only (gateway gRPC + DNS). Pools that declare `egressProfile: provider-direct` or `internet` produce no additional egress; pod-side LLM HTTPS calls cannot reach a provider regardless of the declared profile.
 
-### - [ ] F-13.2.12 — `lenny-direct-mode-isolation` webhook is feature-gated behind `features.llmProxy` but its enforcement target (proxy mode) is independent of LLM-proxy enablement [Medium] — OPEN
+### - [x] F-13.2.12 — `lenny-direct-mode-isolation` webhook is feature-gated behind `features.llmProxy` but its enforcement target (proxy mode) is independent of LLM-proxy enablement [Medium] — CLOSED
 Spec (§13.2 line 440 step 2; §4.9): the webhook enforces "deliveryMode direct with isolationProfile standard, and deliveryMode proxy with spiffeBinding disabled" in multi-tenant mode regardless of whether the LLM proxy feature flag is set.
 
 Implementation:
@@ -21960,6 +21964,8 @@ Implementation:
 - Direct-mode pools (no LLM proxy involved) need this enforcement too: in multi-tenant mode `direct + standard` is the spec's primary rejection case (a runc container escape reaches materialized credentials on the host node).
 
 Effect: a multi-tenant install without the LLM-proxy feature flag silently admits `deliveryMode: direct, isolationProfile: standard` SandboxTemplates, the very combination §4.9 names as cross-tenant credential exposure.
+
+- **Resolution:** Closed by `a367c502`. The `direct-mode-isolation-webhook.yaml` `{{- if .Values.features.llmProxy }}` gate is removed; the webhook (workload + fail-closed ValidatingWebhookConfiguration on `sandboxtemplates`) now renders unconditionally, the §13.2 line 440 step 2 requirement. The server-side `/direct-mode-isolation` route was already registered unconditionally in `cmd/lenny-webhook`, so no handler change was needed; the `--dev-mode` / `--tenancy-mode` flag help was corrected to note that NET-006 is enforced in every mode. The preflight admission-webhook inventory (`pkg/preflight/webhooks.go`) moves `lenny-direct-mode-isolation` from the LLMProxy-gated set to `baselineValidatingWebhooks`, keeping the inventory in sync with the now-unconditional render; the `WebhookFeatureFlags.LLMProxy` field is retained for the §17.2 phase-stamp downgrade audit.
 
 ### - [ ] F-13.2.13 — `webhookIngressCIDR` and `kubeApiServerCIDR` operator-discovery validation is not enforced [Medium] — OPEN
 Spec (§13.2 lines 230–262): the `lenny-preflight` Job MUST validate that (a) the actual `kubernetes.default` Service ClusterIP falls within `kubeApiServerCIDR` and fails the install if it does not, and (b) discovered cluster pod/service CIDRs match `egressCIDRs.excludeClusterPodCIDR` / `excludeClusterServiceCIDR`.
