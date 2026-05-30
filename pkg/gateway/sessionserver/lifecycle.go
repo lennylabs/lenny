@@ -255,6 +255,13 @@ func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Se
 	}
 	s.rollRetentionOnTerminal(ctx, sess)
 	s.recordTerminalSessionMetrics(sess)
+	// spec: §7.2 line 343 / §7.3 line 425 — drain any inbox + DLQ
+	// messages still buffered for this now-terminal session, emitting a
+	// message_expired(target_terminated) event to each registered
+	// sender so a sender that received a `queued` receipt learns its
+	// message was never consumed. Best-effort; no-op without messaging.
+	// F-7.3.12.
+	s.drainMessagingOnTerminal(ctx, sess)
 	// spec: §6.3 line 356 — the §6.3 TTFT tracker is in-memory only.
 	// On terminal, drop the entry so the map size scales with
 	// concurrently-streaming sessions rather than lifetime sessions.

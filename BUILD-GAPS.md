@@ -5929,7 +5929,7 @@ Effect: SSE consumers cannot observe lifecycle transitions live; they must poll 
 
 ---
 
-### - [ ] F-7.2.4 — (High) — Session inbox + DLQ machinery is entirely unimplemented [Medium] — OPEN
+### - [x] F-7.2.4 — (High) — Session inbox + DLQ machinery is entirely unimplemented [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-12.4.6 — F-12.4.6 and F-7.2.4 both report the durable inbox and DLQ stores are entirely unimplemented; F-12.4.27 (dead enum note) and F-7.3.12 (DLQ drain on terminal transition) are related sub-aspects.
 
@@ -5941,6 +5941,11 @@ Implementation:
 - No `inbox_cleared`, `message_dropped`, or `message_expired` events are ever emitted (`grep` returns zero matches).
 
 Effect: every guarantee that depends on inbox semantics is broken — at-least-once inter-session delivery, post-`resume_pending` recovery, overflow signalling to senders, DLQ TTL behavior, and durable-inbox crash recovery. Production cannot ship delegation-heavy or `delivery:"immediate"` workloads.
+
+**Resolution:** Closed this batch. New `pkg/gateway/sessioninbox` implements the §7.2 machinery:
+- **Inbox** (`Inbox` interface) with both §7.2 modes — `MemoryInbox` (default `durableInbox:false`, in-memory FIFO) and `RedisInbox` (`durableInbox:true`, Redis list `t:{tenant}:session:{id}:inbox` via RPUSH/LPOP/LRANGE/LLEN). Both enforce `maxInboxSize` (default 500) by evicting the oldest entry and returning it for the §15.4 `message_dropped(inbox_overflow)` receipt; the durable cap is atomic via a Lua `LLEN`-before-`RPUSH` script (§7.2 line 293). `RedisInbox.Expire` applies the §7.2 line 305 recovery-window EXPIRE.
+- **DLQ** — Redis sorted set `t:{tenant}:session:{id}:dlq` scored by absolute expiry; `Enqueue` caps at `maxDLQSize` (default 500) evicting the lowest-score entry for `message_dropped(dlq_overflow)`, `DrainAll` reads FIFO + deletes the key, `SweepExpired` removes past-expiry entries via Lua (§7.2 line 341).
+- **Coordinator** facade wires the lifecycle: `MigrateInboxToDLQ` performs the §7.2 lines 305-311 atomic inbox-to-DLQ drain on `resume_pending` (in-memory mode) or the EXPIRE-in-place path (durable mode); `DrainOnTerminal` emits §15.4.1 `message_expired(target_terminated)` per buffered sender and deletes the DLQ key. The gateway calls both from `transitionToResumePending` (`failure.go`) and `emitTerminalLifecycle` (`lifecycle.go`); `cmd/lenny-gateway` constructs the coordinator when Redis is wired (flags `--messaging-durable-inbox` / `--messaging-max-inbox-size` / `--messaging-max-dlq-size`). The `message_expired` / `inbox_cleared` event schemas (§15.4.1, §7.2 line 284) and the three-value reason enum are implemented in `events.go`. The live send-path producer that buffers messages into the inbox/DLQ across the seven routing paths is the distinct F-7.2.5 deliverable; the periodic `dlq_ttl_expired` sweeper and the `inbox_cleared`-on-coordinator-failover trigger land with their schedulers (the `SweepExpired` / `NewInboxClearedEvent` machinery is in place). Tier-1 in `pkg/gateway/sessioninbox/*_test.go` covers inbox FIFO/overflow/tenant-isolation/durable-Expire, DLQ FIFO/overflow/sweep, and the coordinator migration/terminal-drain/empty-sender-skip paths; `sessionserver/messaging_internal_test.go` covers the two wiring call sites + the bus emitter.
 
 ---
 
@@ -6231,7 +6236,7 @@ Implementation:
 
 Effect: SSE subscribers receive no terminal frame; senders to a terminated target receive no notification (compounded by F4 — there is no inbox to drain).
 
-**Resolution:** The `session_complete` SSE event aspect is already closed by commit 9d3aa2aa (F-7.1.5 / F-7.1.10 / F-7.1.11 / F-7.1.16): `pkg/gateway/sessionserver/lifecycle.go:123` (`emitSessionComplete`) publishes the §7.2 line 141 event on the session's SSE stream, called from `emitTerminalLifecycle` (line 141) which `recordSessionCompleted` invokes for every terminal transition. The §7.2 line 343 / 425 inbox + DLQ drain with `message_expired(reason: "target_terminated")` emission remains gated on F-7.2.4 (the inbox/DLQ machinery is entirely unimplemented); that drain lands together with the inbox itself. Tier-1 coverage in `lifecycle_internal_test.go:125-217` verifies `session_complete` is emitted exactly once per terminal transition.
+**Resolution:** The `session_complete` SSE event aspect is already closed by commit 9d3aa2aa (F-7.1.5 / F-7.1.10 / F-7.1.11 / F-7.1.16): `pkg/gateway/sessionserver/lifecycle.go:123` (`emitSessionComplete`) publishes the §7.2 line 141 event on the session's SSE stream, called from `emitTerminalLifecycle` (line 141) which `recordSessionCompleted` invokes for every terminal transition. The §7.2 line 343 / 425 inbox + DLQ drain with `message_expired(reason: "target_terminated")` emission landed with the inbox/DLQ machinery (F-7.2.4) and is wired into `emitTerminalLifecycle` (F-7.3.12, same batch): `drainMessagingOnTerminal` runs `sessioninbox.Coordinator.DrainOnTerminal` on every terminal transition. Tier-1 coverage in `lifecycle_internal_test.go:125-217` verifies `session_complete` is emitted exactly once per terminal transition; `messaging_internal_test.go` verifies the drain + `message_expired` emission.
 
 ---
 
@@ -6433,13 +6438,15 @@ Effect: a parent expiring in `awaiting_client_action` leaves its children runnin
 
 **Resolution:** Verified closed by the F-5.2.26 TerminalHook wiring (commit `2b826d1b`). The watchdog's `sweepAwaitingClientAction` calls `w.recordCompleted` (watchdog.go:657) which, when the production TerminalHook is wired (`WithTerminalHook(sessionSrv)` at `cmd/lenny-gateway/main.go:2477`), delegates to `Server.OnSessionTerminal` → `recordSessionCompleted` → `cascadeToChildren` (usage.go:266). The cascadeToChildren walks descendants and applies the parent's `CascadeOnFailure` policy (cancel_all walks children; detach leaves them running; await_completion lets them finish). New regression tests `TestAwaitingExpiredAppliesCascadeViaTerminalHook_spec_7_3_11` and `TestAwaitingExpiredDetachLeavesChildrenRunning_spec_7_3_11` exercise the full integration path.
 
-### - [ ] F-7.3.12 — DLQ drain on terminal transition is unimplemented (High) [Medium] — OPEN
+### - [x] F-7.3.12 — DLQ drain on terminal transition is unimplemented (High) [Medium] — CLOSED
 
 Spec line 425: "On any terminal state transition (`completed`, `failed`, `cancelled`, `expired`) of a session that has an active DLQ … the gateway drains the DLQ by emitting a `message_expired` event on each registered sender session's event stream for each queued entry, with `reason: \"target_terminated\"`. The DLQ Redis key is then deleted."
 
 Evidence: `grep -rn "DLQ\|message_expired\|target_terminated" pkg/` returns alerting-rule prose and metric catalog entries but no implementation. `pkg/storerouter/storerouter.go:53` mentions `RedisConcernSessionData = "session_data" // DLQ, durable inbox` — purely a Redis-routing label, no DLQ writer/reader. `pkg/gateway/sessionserver/messages.go:128–132` explicitly states "The minimal gateway elides … the §7.2 inbox + DLQ persistence". No watchdog path drains a DLQ on expiry.
 
 Effect: senders that delivered to a session via the queueing path before it died receive no `message_expired` notification — they sit blocked indefinitely. The "only acknowledged silent-data-loss path" mentioned in `pkg/alerting/rules/rules.go:1190–1191` is currently every path.
+
+**Resolution:** Closed this batch by the §7.2 inbox/DLQ machinery (F-7.2.4). `sessioninbox.Coordinator.DrainOnTerminal` reads the session's inbox + DLQ, emits a §15.4.1 `message_expired` event with `reason: "target_terminated"` on each registered sender's event stream (via the `sessionserver.NewBusEmitter` adapter onto the §15.1 SSE bus), and deletes the DLQ key (`DLQ.DrainAll` does the ZRANGE + DEL in one transaction). The gateway invokes it from `emitTerminalLifecycle` (`pkg/gateway/sessionserver/lifecycle.go`) — the universal terminal chokepoint shared by `recordSessionCompleted` and `failSession`, guarded by `session.IsTerminal` — so every `completed` / `failed` / `cancelled` / `expired` transition drains. Best-effort: a drain error is logged and does not unwind the terminal transition. Tier-1 `TestEmitTerminalLifecycleDrainsDLQ_spec_7_3_12` asserts the emission + key deletion; `TestCoordinator_DrainOnTerminal_*` covers the reason value, multi-source drain, and the external-client (no-sender) skip.
 
 ### - [x] F-7.3.13 — `session.awaiting_action` webhook event never published (Medium) [Medium] — CLOSED
 
@@ -18751,7 +18758,7 @@ The §12.4 canonical key-prefix table lists the prefixes Redis-backed stores mus
 
 The cumulative effect is that the §12.4 table is no longer the authoritative key namespace; an operator reading §12.4 cannot enumerate what Redis keys the gateway actually writes.
 
-### - [ ] F-12.4.6 — Durable inbox and DLQ Redis stores are unimplemented [High] — OPEN
+### - [x] F-12.4.6 — Durable inbox and DLQ Redis stores are unimplemented [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.2.4 — F-12.4.6 and F-7.2.4 both report the durable inbox and DLQ stores are entirely unimplemented; F-12.4.27 (dead enum note) and F-7.3.12 (DLQ drain on terminal transition) are related sub-aspects.
 
@@ -18762,6 +18769,8 @@ Spec §12.4 key-prefix table:
 Neither store exists. The only artifacts that mention them are observability counters and alerts (`/Users/joan/projects/lenny/pkg/observability/metrics/catalog.go:78-80`, `/Users/joan/projects/lenny/pkg/alerting/rules/rules.go:1188-1200`). The `RedisConcernSessionData` enum label exists (`pkg/storerouter/storerouter.go:53`) and is annotated "DLQ, durable inbox", but no consumer of that concern is wired.
 
 Consequence: sessions created with `messaging.durableInbox: true` have no Redis backing; messages enqueued via the §7.2 path will not survive a coordinator handoff because no `RPUSH` ever happens. The §16.5 `InboxDrainFailure` alert can never fire because the drain path does not exist.
+
+**Resolution:** Closed by F-7.2.4 (same batch). Confirmed duplicate — both stores now exist in `pkg/gateway/sessioninbox` with the §12.4 canonical key formats: `RedisInbox` backs `t:{tenant}:session:{id}:inbox` (Redis list, RPUSH/LPOP/LRANGE/LLEN; the atomic `maxInboxSize` Lua script supplies the `LPOP`-on-overflow eviction; `LTRIM`/`LREM` ACK trimming lands with the durable-inbox delivery path) and `DLQ` backs `t:{tenant}:session:{id}:dlq` (sorted set scored by expiry, ZADD/ZRANGE/ZREMRANGEBYSCORE). The §7.2 inbox-to-DLQ migration on `resume_pending` and the terminal DLQ drain are wired into the gateway (see F-7.2.4 / F-7.3.12 resolutions), giving the `RedisConcernSessionData` concern its first live consumer. The `lenny_inbox_drain_failure_total` counter sink is an optional `DrainFailureRecorder` on the coordinator (the §16.5 InboxDrainFailure alert's source); wiring it to `gatewaymetrics` is a follow-up.
 
 ### - [ ] F-12.4.7 — Experiment sticky-assignment Redis cache is absent [High] — OPEN
 
@@ -24008,7 +24017,7 @@ delivery receipts and state". Impl wires only the POST
 back the inbox / sent messages they submitted, and the spec's
 "delivery receipt" contract from §7.2 is not callable.
 
-**Resolution:** DEFERRED. The §7.2 inbox + DLQ machinery that backs "message history including delivery receipts and state" is gated on **F-7.2.4** (Session inbox + DLQ machinery, OPEN). Landing the REST GET in isolation would expose an empty / partial view that contradicts the spec contract. Re-attempt once F-7.2.4 lands.
+**Resolution:** DEFERRED. F-7.2.4 (the inbox/DLQ machinery) has now landed, but it stores *undelivered* messages (a buffer), not the persisted *message history with delivery receipts and state* this GET must page over. That history is produced by the live send-path routing that records each message + its receipt — the **F-7.2.5** deliverable (message-delivery routing, OPEN) — plus a per-session message store. Re-pointed: re-attempt once F-7.2.5 records message history on the send path; landing the REST GET against only the undelivered buffer would still expose a partial view that contradicts the spec contract.
 
 ### - [x] F-15.1.23 — The §15.1 cursor envelope for events / SSE reconnect uses `Last-Event-ID` but no canonical `items` shape [Medium] — CLOSED
 Spec line 482 mounts `GET /v1/sessions/{id}/events`; the canonical

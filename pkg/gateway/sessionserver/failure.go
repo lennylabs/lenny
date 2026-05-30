@@ -256,6 +256,12 @@ func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore
 	}
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	s.recordSessionRetry(ctx, updated)
+	// spec: §7.2 lines 305-311 — atomically drain the in-memory inbox to
+	// the DLQ now that the session is recovering, so messages buffered
+	// for it survive a coordinator crash during the resume window. In
+	// durable mode the Redis inbox is left in place with an EXPIRE.
+	// F-7.2.4.
+	s.migrateInboxOnResumePending(ctx, updated)
 	return FailureDisposition{
 		Classification: classification, From: row.State, To: updated.State,
 		RetryCount: updated.RetryCount, MaxRetries: maxRetries,

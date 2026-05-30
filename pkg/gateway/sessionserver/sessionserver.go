@@ -56,6 +56,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/subsystem"
@@ -113,14 +114,20 @@ type Server struct {
 	executor        executor.Executor
 	transcripts     transcriptstore.Store
 	events          *sessionevents.Bus
-	interactions    interactionstore.Store
-	usage           usagestore.Store
-	users           userstore.Store
-	billing         billingstore.Store
-	tenants         tenantstore.Store
-	storageQuota    storagequota.Counter
-	defaultIsoProf  isolation.Profile
-	devMode         bool
+	// messaging is the §7.2 session-inbox + DLQ coordinator. It drives
+	// the inbox-to-DLQ migration on resume_pending and the inbox+DLQ
+	// drain on terminal transition. Nil when messaging durability is not
+	// wired (no Redis); every call site no-ops on a nil coordinator.
+	// spec: §7.2 lines 305-311 (migration), 343 (terminal drain).
+	messaging      *sessioninbox.Coordinator
+	interactions   interactionstore.Store
+	usage          usagestore.Store
+	users          userstore.Store
+	billing        billingstore.Store
+	tenants        tenantstore.Store
+	storageQuota   storagequota.Counter
+	defaultIsoProf isolation.Profile
+	devMode        bool
 	// multiTenant mirrors the §10.2 auth.multiTenant Helm value. When
 	// true, the §10.2 RBAC gate fails closed for an authenticated
 	// principal that carries no roles (the matrix is unconditional in
@@ -556,6 +563,14 @@ type Options struct {
 	// event publication.
 	Events *sessionevents.Bus
 
+	// Messaging is the §7.2 session-inbox + DLQ coordinator. When set,
+	// the gateway migrates a session's in-memory inbox to the DLQ on
+	// resume_pending and drains the inbox+DLQ (emitting
+	// message_expired) on terminal transition. Nil disables messaging
+	// durability (the dev / no-Redis posture). spec: §7.2 lines
+	// 305-311, 343.
+	Messaging *sessioninbox.Coordinator
+
 	// Interactions is the §6/§9.2 pending tool-call + elicitation
 	// store backing the §15.1 tool-use and elicitation endpoints.
 	// When nil those endpoints return
@@ -954,6 +969,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		pools:                    opts.Pools,
 		experimentReporter:       opts.ExperimentRejections,
 		events:                   opts.Events,
+		messaging:                opts.Messaging,
 		interactions:             opts.Interactions,
 		usage:                    opts.Usage,
 		users:                    opts.Users,

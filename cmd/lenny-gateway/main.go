@@ -190,6 +190,7 @@ import (
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -449,6 +450,12 @@ func main() {
 		"§8.3 lenny/send_message per-sender lifetime outbound cap. Override via LENNY_MESSAGING_MAX_PER_SESSION.")
 	messagingMaxInboundPerMinute := flag.Int("messaging-max-inbound-per-minute", envInt("LENNY_MESSAGING_MAX_INBOUND_PER_MINUTE", 60),
 		"§8.3 lenny/send_message per-target inbound aggregate limit per minute (the O(N²) sibling-storm brake). Override via LENNY_MESSAGING_MAX_INBOUND_PER_MINUTE.")
+	messagingDurableInbox := flag.Bool("messaging-durable-inbox", envBool("LENNY_MESSAGING_DURABLE_INBOX", false),
+		"§7.2 durableInbox: back the session inbox with a Redis list (t:{tenant}:session:{id}:inbox) so undelivered inter-session messages survive coordinator failover. Requires Redis. Default false (in-memory inbox). Override via LENNY_MESSAGING_DURABLE_INBOX.")
+	messagingMaxInboxSize := flag.Int("messaging-max-inbox-size", envInt("LENNY_MESSAGING_MAX_INBOX_SIZE", 500),
+		"§7.2 maxInboxSize: per-session inbox capacity before the oldest buffered message is evicted with a message_dropped(inbox_overflow) receipt. Override via LENNY_MESSAGING_MAX_INBOX_SIZE.")
+	messagingMaxDLQSize := flag.Int("messaging-max-dlq-size", envInt("LENNY_MESSAGING_MAX_DLQ_SIZE", 500),
+		"§7.2 maxDLQSize: per-session dead-letter-queue capacity before the oldest entry is evicted with a message_dropped(dlq_overflow) receipt. Override via LENNY_MESSAGING_MAX_DLQ_SIZE.")
 	adapterTLSCert := flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),
 		"path to the gateway's client certificate for the §4.7 mTLS link to pod adapters. Empty dials adapters in plaintext (local development only).")
 	adapterTLSKey := flag.String("adapter-tls-key", os.Getenv("LENNY_ADAPTER_TLS_KEY"),
@@ -1489,6 +1496,28 @@ func main() {
 		lastSeq := lastSeqStore{sessions: sessions}
 		eventBus = eventBus.WithLastSeqPersister(lastSeq).WithLastSeqLoader(lastSeq)
 	}
+	// spec: §7.2 lines 274-343 — the session inbox + DLQ coordinator.
+	// The DLQ is a Redis sorted set, so durability requires Redis; the
+	// dev / no-Redis posture leaves messagingCoord nil and the gateway
+	// no-ops the inbox-to-DLQ migration and the terminal DLQ drain. The
+	// inbox is in-memory by default and Redis-list-backed when
+	// durableInbox is set (§7.2 line 286). F-7.2.4, F-12.4.6, F-7.3.12.
+	var messagingCoord *sessioninbox.Coordinator
+	if redisClient != nil {
+		var inbox sessioninbox.Inbox
+		if *messagingDurableInbox {
+			inbox = sessioninbox.NewRedisInbox(redisClient, *messagingMaxInboxSize)
+		} else {
+			inbox = sessioninbox.NewMemoryInbox(*messagingMaxInboxSize)
+		}
+		messagingCoord = sessioninbox.NewCoordinator(sessioninbox.Config{
+			Inbox:   inbox,
+			DLQ:     sessioninbox.NewDLQ(redisClient, *messagingMaxDLQSize),
+			Emitter: sessionserver.NewBusEmitter(eventBus, clockinject.Now),
+			Now:     clockinject.Now,
+			Durable: *messagingDurableInbox,
+		})
+	}
 	// One §8.10 tree archive shared by the sessionserver (which archives
 	// children on terminal transitions) and the platform MCP tools.
 	treeArchive := treearchive.NewMemory()
@@ -2052,6 +2081,7 @@ func main() {
 		Executor:                   exec,
 		Transcripts:                transcripts,
 		Events:                     eventBus,
+		Messaging:                  messagingCoord,
 		Interactions:               interactions,
 		Evals:                      evals,
 		Experiments:                experiments,
