@@ -211,3 +211,63 @@ func TestValidateArchiveAcceptsBoundaryRatio(t *testing.T) {
 		t.Errorf("100:1 ratio at boundary should admit, got %v", err)
 	}
 }
+
+// spec: §13.4 line 659 — a ratio just above the integer boundary must be
+// rejected; integer division previously truncated it to the boundary and
+// admitted it (F-13.4.14).
+func TestValidateArchiveRejectsRatioJustOverBoundary_spec_13_4(t *testing.T) {
+	cases := []struct {
+		name    string
+		archive Archive
+		wantErr bool
+	}{
+		{name: "exactly 100:1 admitted", archive: Archive{CompressedBytes: 100, DecompressedBytes: 10_000, EntryCount: 1}},
+		{name: "100.5:1 rejected", archive: Archive{CompressedBytes: 100, DecompressedBytes: 10_050, EntryCount: 1}, wantErr: true},
+		{name: "one byte over boundary rejected", archive: Archive{CompressedBytes: 1000, DecompressedBytes: 100_001, EntryCount: 1}, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateArchive(tc.archive)
+			if tc.wantErr {
+				var ve *ValidationError
+				if !errors.As(err, &ve) || ve.Reason != ReasonMaxDecompressionRatio {
+					t.Fatalf("want max_decompression_ratio, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want admit, got %v", err)
+			}
+		})
+	}
+}
+
+// spec: §13.4 line 665 — ValidateSymlinkTarget must reject a workspace root
+// that is not a clean absolute slash path so the containment check cannot
+// silently misbehave on a relative or OS-native root (F-13.4.13).
+func TestValidateSymlinkTargetRejectsMalformedRoot_spec_13_4(t *testing.T) {
+	roots := []struct {
+		name string
+		root string
+	}{
+		{name: "relative root", root: "workspace/current"},
+		{name: "windows root", root: `C:\workspace\current`},
+		{name: "empty root", root: ""},
+		{name: "trailing slash", root: "/workspace/current/"},
+		{name: "dotdot in root", root: "/workspace/../current"},
+		{name: "dot in root", root: "/workspace/./current"},
+	}
+	for _, rt := range roots {
+		t.Run(rt.name, func(t *testing.T) {
+			err := ValidateSymlinkTarget("link", "sub/file.txt", rt.root)
+			var ve *ValidationError
+			if !errors.As(err, &ve) || ve.Reason != ReasonPathEscapesRoot {
+				t.Fatalf("want path_escapes_root for root %q, got %v", rt.root, err)
+			}
+		})
+	}
+	// The canonical §13.4 root must remain valid.
+	if err := ValidateSymlinkTarget("link", "sub/file.txt", "/workspace/current"); err != nil {
+		t.Fatalf("canonical root must be accepted, got %v", err)
+	}
+}
