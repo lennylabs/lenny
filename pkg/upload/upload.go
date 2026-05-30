@@ -171,7 +171,7 @@ func ValidateEntry(e Entry, allow RuntimeAllow) error {
 	// would absorb (e.g., "a/b/../../etc" cleans to "etc" but is
 	// still attempting to escape upward through the archive's
 	// implicit root).
-	if containsParentSegment(e.Path) {
+	if ContainsParentSegment(e.Path) {
 		return &ValidationError{Reason: ReasonPathTraversal, Path: e.Path, Detail: "path contains `..` segment"}
 	}
 	cleaned := path.Clean(e.Path)
@@ -292,13 +292,15 @@ func isCleanAbsSlashPath(p string) bool {
 	return path.Clean(p) == p
 }
 
-// containsParentSegment reports whether p contains a `..` component
+// ContainsParentSegment reports whether p contains a `..` component
 // anywhere — at the start, in the middle, or at the end. Used to
 // reject traversal attempts that path.Clean would otherwise absorb
 // into an apparently-clean result (e.g., "a/b/../../etc" → "etc").
 // The check operates on `/`-separated segments, not on substring
 // occurrences, so "foo..bar" (legitimate filename) is admitted.
-func containsParentSegment(p string) bool {
+// Exported so the §8.7 delegation file-export validators can apply the
+// same traversal rule to destPrefix without duplicating it.
+func ContainsParentSegment(p string) bool {
 	for _, seg := range strings.Split(p, "/") {
 		if seg == ".." {
 			return true

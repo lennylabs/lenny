@@ -187,6 +187,33 @@ type Result struct {
 	ModifiedContent []byte
 	RejectedBy      string
 	TimeoutMs       int64
+
+	// FailOpenSkips lists the interceptors the chain skipped on this run
+	// because they errored or timed out under a fail-open FailPolicy
+	// without crossing the §4.8 line 1030 escalation ceiling. It is
+	// populated only on the ALLOW/MODIFY return: a fail-open skip that is
+	// followed by a REJECT does not admit the request, so the skip is
+	// moot on that path and is not reported. The §8.7
+	// PreExportMaterialization caller reads this to emit
+	// delegation.export_scan_failed_open and the
+	// lenny_export_file_scans_total{outcome="failed_open"} metric, which
+	// it cannot otherwise tell apart from a clean ALLOW. spec: §11.7
+	// line 70.
+	FailOpenSkips []FailOpenSkip
+}
+
+// FailOpenSkip records one interceptor the chain skipped under its
+// fail-open FailPolicy after an error or timeout. Reason is the §11.7
+// line 122 classified cause: "timeout" for a context deadline,
+// otherwise "grpc_error". The transport-agnostic core reports the two
+// cases it can observe; the external-interceptor adapter is the layer
+// that can further distinguish "unreachable" from a call-level
+// "grpc_error".
+type FailOpenSkip struct {
+	// Interceptor is the skipped interceptor's Name().
+	Interceptor string
+	// Reason is the §11.7 line 122 token: "timeout" or "grpc_error".
+	Reason string
 }
 
 // Interceptor is one policy hook. A built-in interceptor reports
@@ -318,6 +345,7 @@ func (c *Chain) Len(phase Phase) int { return len(c.byPhase[phase]) }
 func (c *Chain) Run(ctx context.Context, req Request) Result {
 	content := req.Content
 	modified := false
+	var failOpenSkips []FailOpenSkip
 	for _, ic := range c.ordered(req.Phase) {
 		call := req
 		call.Content = content
@@ -339,6 +367,14 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 						TimeoutMs:       effectiveTimeout(ic, req.Phase).Milliseconds(),
 					}
 				}
+				// spec: §11.7 line 70 — the interceptor was skipped under
+				// its fail-open policy; record it so the export-scan caller
+				// can emit delegation.export_scan_failed_open for an admitted
+				// file rather than mistaking the skip for a clean ALLOW.
+				failOpenSkips = append(failOpenSkips, FailOpenSkip{
+					Interceptor: ic.Name(),
+					Reason:      classifyFailOpenReason(err),
+				})
 				continue
 			}
 			return Result{
@@ -390,9 +426,23 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 		}
 	}
 	if modified {
-		return Result{Action: ActionModify, ModifiedContent: content}
+		return Result{Action: ActionModify, ModifiedContent: content, FailOpenSkips: failOpenSkips}
 	}
-	return Result{Action: ActionAllow, ModifiedContent: content}
+	return Result{Action: ActionAllow, ModifiedContent: content, FailOpenSkips: failOpenSkips}
+}
+
+// classifyFailOpenReason maps an interceptor error to the §11.7 line 122
+// delegation.export_scan_failed_open `reason` token. A context deadline
+// is reported as "timeout"; every other error is reported as
+// "grpc_error". The transport-agnostic core cannot distinguish a dial
+// failure ("unreachable") from a call-level error, so it reports the
+// coarser "grpc_error"; the external-interceptor adapter refines that
+// when it can classify the transport failure.
+func classifyFailOpenReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	return "grpc_error"
 }
 
 // effectiveTimeout returns the per-interceptor deadline, selecting the

@@ -1519,6 +1519,30 @@ func TestRateLimitMetricsNilSafe_spec_11_1(t *testing.T) {
 // TestStatelessMetricsRegistered_spec_5_2_573 covers the §5.2 line 573
 // concurrent-stateless demand metrics — counter increment + gauge set,
 // both labeled by pool, exposed on /metrics.
+// spec: §16.1 lines 80-81 — lenny_export_file_scans_total (labelled
+// pool, tenant_id, policy_name, interceptor_ref, outcome) and
+// lenny_export_file_scan_duration_seconds (pool, tenant_id,
+// interceptor_ref) are registered and emit. F-8.7.10.
+func TestExportFileScanMetricsRegistered_spec_16_1_80(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncExportFileScan("orchestrator-pool", "acme", "orchestrator-policy", "export-scanner", "rejected")
+	m.IncExportFileScan("orchestrator-pool", "acme", "orchestrator-policy", "export-scanner", "failed_open")
+	m.ObserveExportFileScanDuration("orchestrator-pool", "acme", "export-scanner", 0.012)
+	body := scrapeMetrics(t, m)
+	for _, want := range []string{
+		`lenny_export_file_scans_total{interceptor_ref="export-scanner",outcome="rejected",policy_name="orchestrator-policy",pool="orchestrator-pool",tenant_id="acme"} 1`,
+		`lenny_export_file_scans_total{interceptor_ref="export-scanner",outcome="failed_open",policy_name="orchestrator-policy",pool="orchestrator-pool",tenant_id="acme"} 1`,
+		`lenny_export_file_scan_duration_seconds_count{interceptor_ref="export-scanner",pool="orchestrator-pool",tenant_id="acme"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q", want)
+		}
+	}
+}
+
 func TestStatelessMetricsRegistered_spec_5_2_573(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {

@@ -93,7 +93,7 @@ func TestRunPreExportMaterializationVerifiesInboundHash(t *testing.T) {
 	tampered := []byte("tampered")
 
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{Path: "lib/x.go", Content: tampered, Hash: stamped},
 	)
 	var scan *interceptor.ExportScanError
@@ -123,7 +123,7 @@ func TestRunPreExportMaterializationStampsOutputHash(t *testing.T) {
 		Hash:    interceptor.ComputeExportFileHash(content),
 	}
 	out, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0, in,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0, in,
 	)
 	if err != nil {
 		t.Fatalf("RunPreExportMaterialization: %v", err)
@@ -165,7 +165,7 @@ func TestRunPreExportMaterializationModifyRewritesHash(t *testing.T) {
 		Hash:    interceptor.ComputeExportFileHash([]byte("secret-original")),
 	}
 	out, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0, in,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0, in,
 	)
 	if err != nil {
 		t.Fatalf("RunPreExportMaterialization: %v", err)
@@ -193,7 +193,7 @@ func TestRunPreExportMaterializationStampsHashEvenWithoutInbound(t *testing.T) {
 
 	content := []byte("xyz")
 	out, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{Path: "a", Content: content},
 	)
 	if err != nil {

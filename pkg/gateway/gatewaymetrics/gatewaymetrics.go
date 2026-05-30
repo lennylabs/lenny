@@ -465,6 +465,21 @@ type Metrics struct {
 	// on every ExtendLease decision. F-8.6.13.
 	delegationLeaseExtension *prometheus.CounterVec
 
+	// exportFileScans is the §16.1 line 80 counter for per-file
+	// PreExportMaterialization scan outcomes on the §8.7 delegation
+	// file-export path. Labels: pool, tenant_id, policy_name,
+	// interceptor_ref, outcome (admitted | modified | rejected |
+	// failed_open | failed_closed). The `failed_open` series drives the
+	// §16.5 ExportFileScanFailOpen alert; `rejected` and `failed_closed`
+	// surface in delegation-rejection dashboards. F-8.7.10.
+	exportFileScans *prometheus.CounterVec
+	// exportFileScanDuration is the §16.1 line 81 histogram for the
+	// per-file PreExportMaterialization interceptor latency. Labels:
+	// pool, tenant_id, interceptor_ref (no outcome/policy_name — latency
+	// is per file regardless of decision). A sustained P99 > 1s flags
+	// the interceptor as being on the delegation hot path. F-8.7.10.
+	exportFileScanDuration *prometheus.HistogramVec
+
 	// memoryStoreOperationDuration is the §9.4 / §16.1 line 151
 	// MemoryStore per-operation duration histogram. Labels: `operation`
 	// (one of write, query, delete, list, delete_by_user,
@@ -1624,6 +1639,26 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	// §16.1 line 80 — per-file PreExportMaterialization scan outcomes on
+	// the §8.7 delegation file-export path. F-8.7.10.
+	exportFileScans, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_export_file_scans_total",
+		Help: "§8.7 PreExportMaterialization per-file scan outcomes (§16.1 line 80).",
+	}, []string{"pool", "tenant_id", "policy_name", "interceptor_ref", "outcome"})
+	if err != nil {
+		return nil, err
+	}
+	// §16.1 line 81 — per-file PreExportMaterialization interceptor
+	// latency. Buckets span sub-millisecond to several seconds so the
+	// P99 > 1s hot-path signal is observable. F-8.7.10.
+	exportFileScanDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lenny_export_file_scan_duration_seconds",
+		Help:    "§8.7 PreExportMaterialization per-file interceptor latency (§16.1 line 81).",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
+	}, []string{"pool", "tenant_id", "interceptor_ref"})
+	if err != nil {
+		return nil, err
+	}
 	// §9.4 line 200 / §16.1 line 151 — MemoryStore per-operation
 	// duration histogram. Six operation labels (write, query, delete,
 	// list, delete_by_user, delete_by_tenant); backend distinguishes
@@ -1724,6 +1759,7 @@ func New() (*Metrics, error) {
 		treeRecoveryDuration, treeRecoveryTimeout,
 		statelessRequests, statelessConcurrentActive, taskReuseCount,
 		delegationLeaseExtension,
+		exportFileScans, exportFileScanDuration,
 		memoryStoreOperationDuration, memoryStoreErrors,
 		memoryStoreRecordCount, memoryStoreUserOverThreshold,
 		timeDriftGauge)
@@ -1889,6 +1925,8 @@ func New() (*Metrics, error) {
 		statelessConcurrentActive:            statelessConcurrentActive,
 		taskReuseCount:                       taskReuseCount,
 		delegationLeaseExtension:             delegationLeaseExtension,
+		exportFileScans:                      exportFileScans,
+		exportFileScanDuration:               exportFileScanDuration,
 		memoryStoreOperationDuration:         memoryStoreOperationDuration,
 		memoryStoreErrors:                    memoryStoreErrors,
 		memoryStoreRecordCount:               memoryStoreRecordCount,
@@ -1910,6 +1948,26 @@ func (m *Metrics) IncDelegationLeaseExtension(tenantID, outcome string) {
 		return
 	}
 	m.delegationLeaseExtension.WithLabelValues(tenantID, outcome).Inc()
+}
+
+// IncExportFileScan records one §8.7 PreExportMaterialization per-file
+// scan outcome. `outcome` is one of admitted, modified, rejected,
+// failed_open, or failed_closed. spec: §16.1 line 80; F-8.7.10.
+func (m *Metrics) IncExportFileScan(pool, tenantID, policyName, interceptorRef, outcome string) {
+	if m == nil {
+		return
+	}
+	m.exportFileScans.WithLabelValues(pool, tenantID, policyName, interceptorRef, outcome).Inc()
+}
+
+// ObserveExportFileScanDuration records the per-file §8.7
+// PreExportMaterialization interceptor latency in seconds. spec: §16.1
+// line 81; F-8.7.10.
+func (m *Metrics) ObserveExportFileScanDuration(pool, tenantID, interceptorRef string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.exportFileScanDuration.WithLabelValues(pool, tenantID, interceptorRef).Observe(seconds)
 }
 
 // IncStatelessRequest records a §5.2 line 573 stateless-pool request.

@@ -79,7 +79,7 @@ func TestRunPreExportMaterializationCleanPass(t *testing.T) {
 	}
 	// 10 MiB — the §8.3 default contentPolicy.maxExportedFileSize.
 	out, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 10<<20, files...,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 10<<20, files...,
 	)
 	if err != nil {
 		t.Fatalf("RunPreExportMaterialization: %v", err)
@@ -112,7 +112,7 @@ func TestRunPreExportMaterializationPayloadShape(t *testing.T) {
 	content := []byte("file body")
 	sum := sha256.Sum256(content)
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{
 			Path:    "lib/x.go",
 			Content: content,
@@ -162,7 +162,7 @@ func TestRunPreExportMaterializationRejectMapsToErrorCode(t *testing.T) {
 		{Path: "never-scanned.go", Content: []byte("after the reject")},
 	}
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0, files...,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0, files...,
 	)
 	if err == nil {
 		t.Fatal("RunPreExportMaterialization should fail on a REJECT")
@@ -199,7 +199,7 @@ func TestRunPreExportMaterializationOverSizeFile(t *testing.T) {
 		{Path: "huge.bin", Content: make([]byte, 64)},
 	}
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 32, files...,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 32, files...,
 	)
 	if err == nil {
 		t.Fatal("RunPreExportMaterialization should fail on an over-size file")
@@ -238,7 +238,7 @@ func TestRunPreExportMaterializationSizeCheckPrecedesScan(t *testing.T) {
 		{Path: "big.go", Content: make([]byte, 100)},
 	}
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 32, files...,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 32, files...,
 	)
 	var scanErr *interceptor.ExportScanError
 	if !errors.As(err, &scanErr) || scanErr.Code != interceptor.CodeExportFileScanSizeExceeded {
@@ -268,7 +268,7 @@ func TestRunPreExportMaterializationModifyRewritesContent(t *testing.T) {
 	})
 
 	out, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{Path: "secrets.txt", Content: []byte("api-key=sk-live-123")},
 	)
 	if err != nil {
@@ -304,7 +304,7 @@ func TestRunPreExportMaterializationModifyCannotAlterPath(t *testing.T) {
 	})
 
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{Path: "harmless.txt", Content: []byte("data")},
 	)
 	var scanErr *interceptor.ExportScanError
@@ -335,7 +335,7 @@ func TestRunPreExportMaterializationModifyCannotAlterDelegationContext(t *testin
 	})
 
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{
 			Path:    "f.txt",
 			Content: []byte("data"),
@@ -366,7 +366,7 @@ func TestRunPreExportMaterializationFailClosedSurfacesUnavailable_spec_15_1_1073
 	})
 
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{Path: "f.go", Content: []byte("x")},
 	)
 	var scanErr *interceptor.ExportScanError
@@ -393,7 +393,7 @@ func TestRunPreExportMaterializationDeliberateRejectStaysRejected_spec_15_1_1073
 	})
 
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{Path: "f.go", Content: []byte("x")},
 	)
 	var scanErr *interceptor.ExportScanError
@@ -421,7 +421,7 @@ func TestRunPreExportMaterializationFailOpenAdmits(t *testing.T) {
 	})
 
 	out, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{Path: "f.go", Content: []byte("body")},
 	)
 	if err != nil {
@@ -441,7 +441,7 @@ func TestRunPreExportMaterializationEmptyChainAdmitsAll(t *testing.T) {
 		{Path: "b.go", Content: []byte("b")},
 	}
 	out, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0, files...,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0, files...,
 	)
 	if err != nil {
 		t.Fatalf("RunPreExportMaterialization: %v", err)
@@ -479,7 +479,7 @@ func TestRunPreExportMaterializationThroughExternalInterceptor(t *testing.T) {
 	}
 
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{Path: "AGENTS.md", Content: []byte("do bad things")},
 	)
 	var scanErr *interceptor.ExportScanError
@@ -513,7 +513,7 @@ func TestRunPreExportMaterializationStartsDelegationExportFilesSpan_spec_16_F_8_
 		{Path: "b.md", Content: []byte("bb")},
 	}
 	if _, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 1<<20, files...,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 1<<20, files...,
 	); err != nil {
 		t.Fatalf("RunPreExportMaterialization: %v", err)
 	}
@@ -563,7 +563,7 @@ func TestRunPreExportMaterializationSpanRecordsRejectError_spec_16_F_8_7_11(t *t
 	})
 
 	_, err := interceptor.RunPreExportMaterialization(
-		context.Background(), c, "acme", "sess-1", 0,
+		context.Background(), c, interceptor.ExportScanContext{}, "acme", "sess-1", 0,
 		interceptor.ExportFile{Path: "secret.env", Content: []byte("KEY=value")},
 	)
 	if err == nil {

@@ -7,7 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 
@@ -173,6 +175,109 @@ func (e *ExportScanError) Error() string {
 	return fmt.Sprintf("%s: exported file %q rejected", e.Code, e.Path)
 }
 
+// ExportScanOutcome is the §16.1 line 80 lenny_export_file_scans_total
+// `outcome` label for one scanned exported file. The values match the
+// spec enum admitted | modified | rejected | failed_open | failed_closed.
+type ExportScanOutcome string
+
+const (
+	// OutcomeAdmitted: the interceptor ALLOWed the file unchanged.
+	OutcomeAdmitted ExportScanOutcome = "admitted"
+	// OutcomeModified: the interceptor MODIFYed the file's content.
+	OutcomeModified ExportScanOutcome = "modified"
+	// OutcomeRejected: the interceptor REJECTed the file (a deliberate
+	// policy decision; §15.1 EXPORT_FILE_SCAN_REJECTED).
+	OutcomeRejected ExportScanOutcome = "rejected"
+	// OutcomeFailedOpen: an interceptor errored or timed out under
+	// fail-open and the file was admitted without inspection (§8.7
+	// rule 3).
+	OutcomeFailedOpen ExportScanOutcome = "failed_open"
+	// OutcomeFailedClosed: an interceptor errored or timed out under
+	// fail-closed and the file was rejected (§15.1
+	// EXPORT_FILE_SCAN_UNAVAILABLE).
+	OutcomeFailedClosed ExportScanOutcome = "failed_closed"
+)
+
+// ExportScanEvent is one scanned exported file's terminal outcome,
+// handed to an ExportScanObserver after the PreExportMaterialization
+// decision. The size pre-gate rejection (EXPORT_FILE_SCAN_SIZE_EXCEEDED)
+// fires before the file enters the chain and is therefore not a scan
+// outcome: the §16.1 counter increments "once per scanned file", so a
+// size-rejected file produces no ExportScanEvent.
+type ExportScanEvent struct {
+	// Pool, TenantID, PolicyName, InterceptorRef are the §16.1 line 80
+	// lenny_export_file_scans_total label set (TenantID comes from the
+	// RunPreExportMaterialization call, the rest from ExportScanContext).
+	Pool           string
+	TenantID       string
+	SessionID      string
+	PolicyName     string
+	InterceptorRef string
+	// FilePath and FileSize are the §11.7 lines 120-121 audit fields:
+	// the exported file's child-workspace-relative path and its byte
+	// length as exported (pre-MODIFY).
+	FilePath string
+	FileSize uint64
+	// Outcome is the §16.1 metric outcome label.
+	Outcome ExportScanOutcome
+	// Reason carries the §11.7 line 122 reason: the interceptor-provided
+	// reason for OutcomeRejected (may be empty) or the timeout/grpc_error
+	// token for OutcomeFailedOpen. Empty for admitted/modified.
+	Reason string
+	// Duration is the per-file interceptor latency for the §16.1 line 80
+	// lenny_export_file_scan_duration_seconds histogram.
+	Duration time.Duration
+}
+
+// ExportScanObserver receives one ExportScanEvent per scanned exported
+// file. The gateway implements it to emit the §11.7 audit events
+// (delegation.export_file_scan_rejected on a REJECT,
+// delegation.export_scan_failed_open on a fail-open admit) and the
+// §16.1 lenny_export_file_scans_total / _duration_seconds metrics. A nil
+// observer disables emission; the scan still runs. This mirrors the
+// FailOpenObserver seam so the audit/metric writers stay in the gateway
+// policy layer and this package remains transport-agnostic.
+type ExportScanObserver interface {
+	ExportFileScanned(ctx context.Context, ev ExportScanEvent)
+}
+
+// ExportScanContext carries the per-delegation labels and the observer
+// the export-scan loop stamps onto each ExportScanEvent. The zero value
+// (nil Observer) makes RunPreExportMaterialization a pure scan with no
+// emission, preserving its use as an independently-testable helper.
+type ExportScanContext struct {
+	// Pool is the §16.1 pool label (the SandboxTemplate name).
+	Pool string
+	// PolicyName is the §11.7 line 119 policy_name: the DelegationPolicy
+	// whose contentPolicy owns the export.
+	PolicyName string
+	// InterceptorRef is the §11.7 / §16.1 interceptor_ref: the policy's
+	// contentPolicy.interceptorRef that routes the per-file scan.
+	InterceptorRef string
+	// Observer receives one event per scanned file. Nil disables
+	// emission.
+	Observer ExportScanObserver
+}
+
+// emit hands one scanned file's outcome to the observer, if configured.
+func (sc ExportScanContext) emit(ctx context.Context, tenantID, sessionID, filePath string, fileSize uint64, outcome ExportScanOutcome, reason string, dur time.Duration) {
+	if sc.Observer == nil {
+		return
+	}
+	sc.Observer.ExportFileScanned(ctx, ExportScanEvent{
+		Pool:           sc.Pool,
+		TenantID:       tenantID,
+		SessionID:      sessionID,
+		PolicyName:     sc.PolicyName,
+		InterceptorRef: sc.InterceptorRef,
+		FilePath:       filePath,
+		FileSize:       fileSize,
+		Outcome:        outcome,
+		Reason:         reason,
+		Duration:       dur,
+	})
+}
+
 // RunPreExportMaterialization runs the PhasePreExportMaterialization
 // interceptor chain over a delegation's exported files, per §8.7. It is
 // the gateway's per-file content-scan entry point: the delegation
@@ -188,9 +293,16 @@ func (e *ExportScanError) Error() string {
 // field. When that path is built it must, when the parent lease's
 // effective contentPolicy.scanExportedFiles is true, call this function
 // with contentPolicy.maxExportedFileSize and contentPolicy.interceptorRef's
-// registered chain, then persist the returned (post-MODIFY) files. This
-// function is the reusable hook that path will call; it is independently
-// testable today.
+// registered chain, then persist the returned (post-MODIFY) files. The
+// fileExport spec is validated first by the pkg/gateway/delegation/
+// fileexport helpers (destPrefix, fileExportLimits, realpath
+// containment). This function is the reusable hook that path will call;
+// it is independently testable today.
+//
+// Pass an ExportScanContext carrying the §11.7 / §16.1 labels (pool,
+// policy_name, interceptor_ref) and an ExportScanObserver to emit the
+// per-file audit events and metrics; the zero ExportScanContext disables
+// emission for a pure scan.
 //
 // maxExportedFileSize is the §8.3 contentPolicy.maxExportedFileSize
 // ceiling. Each file's byte length is checked against it first: an
@@ -210,16 +322,17 @@ func (e *ExportScanError) Error() string {
 //
 // An interceptor error or timeout is resolved inside Chain.Run by the
 // interceptor's FailPolicy: a fail-closed interceptor surfaces here as a
-// REJECT (CodeExportFileScanRejected). The §8.7 fail-open behavior — the
-// file is admitted and a delegation.export_scan_failed_open audit event is
-// emitted — is the Chain skipping the interceptor; the audit-event
-// emission is the export-path caller's responsibility.
+// REJECT (CodeExportFileScanUnavailable for a timeout/error). Under
+// fail-open the Chain skips the interceptor and admits the file; the skip
+// is surfaced on Result.FailOpenSkips so this loop reports the
+// failed_open outcome and the ExportScanObserver emits
+// delegation.export_scan_failed_open. F-8.7.9; F-8.7.10.
 //
 // On success it returns the files with any MODIFY transformations
 // applied, in the input order. On the first REJECT it returns an
 // *ExportScanError and the files scanned so far are discarded by the
 // caller (the delegation is rolled back).
-func RunPreExportMaterialization(ctx context.Context, c *Chain, tenantID, sessionID string, maxExportedFileSize int64, files ...ExportFile) ([]ExportFile, error) {
+func RunPreExportMaterialization(ctx context.Context, c *Chain, sc ExportScanContext, tenantID, sessionID string, maxExportedFileSize int64, files ...ExportFile) ([]ExportFile, error) {
 	// spec: §16.3 / §16 trace inventory (`delegation.export_files` span,
 	// attributed to gateway + parent pod) — every per-file scan loop
 	// runs under a span so distributed traces show the export
@@ -244,6 +357,7 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, tenantID, sessio
 	}()
 	out := make([]ExportFile, 0, len(files))
 	for _, f := range files {
+		fileSize := uint64(len(f.Content))
 		// §7.4 line 446: when the caller stamped an inbound Hash on a
 		// resolved ExportFile (the parent-export step's
 		// ComputeExportFileHash output), verify the bytes have not
@@ -254,19 +368,53 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, tenantID, sessio
 		}
 		// §8.7 rule 2: the per-file ceiling is enforced before any
 		// interceptor call so a single over-size file cannot stall the
-		// interceptor or inflate the gRPC payload.
-		if maxExportedFileSize > 0 && int64(len(f.Content)) > maxExportedFileSize {
+		// interceptor or inflate the gRPC payload. This pre-gate fires
+		// before the file enters the chain, so it is not a "scanned
+		// file" and emits no §16.1 ExportScanEvent (it surfaces to the
+		// caller as EXPORT_FILE_SCAN_SIZE_EXCEEDED instead). F-8.7.10.
+		if maxExportedFileSize > 0 && int64(fileSize) > maxExportedFileSize {
 			spanErr = &ExportScanError{
 				Code: CodeExportFileScanSizeExceeded,
 				Path: f.Path,
 			}
 			return nil, spanErr
 		}
-		scanned, err := scanExportFile(ctx, c, tenantID, sessionID, f)
+		start := time.Now()
+		scanned, res, err := scanExportFile(ctx, c, tenantID, sessionID, f)
+		dur := time.Since(start)
 		if err != nil {
+			// spec: §16.1 line 80 / §11.7 lines 69-70 — classify the
+			// per-file rejection so the observer increments the right
+			// outcome and emits delegation.export_file_scan_rejected for a
+			// deliberate REJECT. A fail-closed scanner outage
+			// (EXPORT_FILE_SCAN_UNAVAILABLE) is the failed_closed outcome
+			// and has no dedicated §11.7 audit event (the §15.1 503 is its
+			// signal). F-8.7.9; F-8.7.10.
+			outcome, reason := OutcomeRejected, ""
+			var ese *ExportScanError
+			if errors.As(err, &ese) {
+				reason = ese.Reason
+				if ese.Code == CodeExportFileScanUnavailable {
+					outcome = OutcomeFailedClosed
+				}
+			}
+			sc.emit(ctx, tenantID, sessionID, f.Path, fileSize, outcome, reason, dur)
 			spanErr = err
 			return nil, err
 		}
+		// spec: §16.1 line 80 — a fail-open skip means the file was
+		// admitted without inspection; report failed_open with the §11.7
+		// line 122 reason token rather than the admitted/modified the
+		// action alone would imply. F-8.7.9; F-8.7.10.
+		outcome, reason := OutcomeAdmitted, ""
+		switch {
+		case len(res.FailOpenSkips) > 0:
+			outcome = OutcomeFailedOpen
+			reason = res.FailOpenSkips[0].Reason
+		case res.Action == ActionModify:
+			outcome = OutcomeModified
+		}
+		sc.emit(ctx, tenantID, sessionID, f.Path, fileSize, outcome, reason, dur)
 		// §7.4 line 446: stamp the post-pipeline Hash so the
 		// child-delivery step can re-verify the bytes against this
 		// reference. MODIFY may have rewritten Content; the stamped
@@ -279,8 +427,11 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, tenantID, sessio
 }
 
 // scanExportFile runs one exported file through the
-// PreExportMaterialization chain and applies the decision.
-func scanExportFile(ctx context.Context, c *Chain, tenantID, sessionID string, f ExportFile) (ExportFile, error) {
+// PreExportMaterialization chain and applies the decision. It returns
+// the chain's Result alongside the (possibly MODIFYed) file so the
+// caller can classify the §16.1 outcome from res.Action and
+// res.FailOpenSkips without re-running the chain.
+func scanExportFile(ctx context.Context, c *Chain, tenantID, sessionID string, f ExportFile) (ExportFile, Result, error) {
 	sum := sha256.Sum256(f.Content)
 	record := exportFileRecord{
 		FilePath:          f.Path,
@@ -291,7 +442,7 @@ func scanExportFile(ctx context.Context, c *Chain, tenantID, sessionID string, f
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
-		return ExportFile{}, fmt.Errorf("interceptor: marshal exported-file record for %q: %w", f.Path, err)
+		return ExportFile{}, Result{}, fmt.Errorf("interceptor: marshal exported-file record for %q: %w", f.Path, err)
 	}
 
 	res := c.Run(ctx, Request{
@@ -317,7 +468,7 @@ func scanExportFile(ctx context.Context, c *Chain, tenantID, sessionID string, f
 		if res.Code == CodeInterceptorTimeout {
 			code = CodeExportFileScanUnavailable
 		}
-		return ExportFile{}, &ExportScanError{
+		return ExportFile{}, res, &ExportScanError{
 			Code:   code,
 			Path:   f.Path,
 			Reason: res.Reason,
@@ -325,11 +476,11 @@ func scanExportFile(ctx context.Context, c *Chain, tenantID, sessionID string, f
 	case ActionModify:
 		modified, err := applyExportModify(f, res.ModifiedContent)
 		if err != nil {
-			return ExportFile{}, err
+			return ExportFile{}, res, err
 		}
-		return modified, nil
+		return modified, res, nil
 	default: // ActionAllow
-		return f, nil
+		return f, res, nil
 	}
 }
 
