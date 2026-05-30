@@ -5957,7 +5957,7 @@ Effect: every spec scenario except a simple "runtime is sitting at stdin" delive
 
 ---
 
-### - [ ] F-7.2.6 — (High) — `lenny/send_message` lacks cross-tenant validation, scope enforcement, and rate limiting [Medium] — OPEN
+### - [x] F-7.2.6 — (High) — `lenny/send_message` lacks cross-tenant validation, scope enforcement, and rate limiting [Medium] — CLOSED
 
 Spec §7.2 (lines 236–272) requires:
 - Cross-tenant validation BEFORE scope evaluation (line 268, `CROSS_TENANT_MESSAGE_DENIED`).
@@ -5970,6 +5970,11 @@ Implementation:
 - `grep -rn "maxPerMinute\|maxInboundPerMinute\|messagingRateLimit"` returns zero matches.
 
 Effect: a session may message any session in its tenant's namespace (no parent/child/sibling scoping). Rate limits cannot be enforced. The "O(N²) messaging storm risk" described at lines 369–371 is unmitigated.
+
+**Resolution:** Closed by `1b5431c7`. The `lenny/send_message` handler now runs the three §7.2 gates in spec order (cross-tenant → scope → rate limit) before delivery:
+- **Cross-tenant (§7.2 line 268).** New `crossTenantDenied(callerTenant, target)` guard returns `CROSS_TENANT_MESSAGE_DENIED` when the target's `TenantID` differs from the caller's, ahead of scope/rate-limit. The session store's documented no-leak invariant (tenant-scoped `Get` returns `ErrNotFound` for foreign rows) means the per-tenant adapter rejects foreign targets as not-found before the guard; the guard is the normative validation any multi-tenant transport relies on, tested directly and via a foreign-tenant store wrapper.
+- **messagingScope (§7.2 lines 236-266).** New `session.ResolveEffectiveMessagingScope(deploymentDefault, deploymentMax, tenantScope, runtimeScope)` computes the narrowest scope (`direct` < `siblings`); `withinMessagingScope` now admits a sibling target only under effective `siblings`, fixing the prior unconditional sibling admission so the §7.2 default `direct` correctly denies siblings with `SCOPE_DENIED`. Deployment default/ceiling are operator-tunable (`LENNY_MESSAGING_DEFAULT_SCOPE` / `_MAX_SCOPE`). The resolver's tenant/runtime inputs default through in v1 (those per-tenant/per-runtime config surfaces are not yet stored; their absence resolves to the deployment scope, which can only narrow).
+- **Rate limiting (§7.2 line 270, §8.3 lines 269-272, 309).** New `messagingLimiter` enforces per-sender `maxPerMinute` (default 30) + lifetime `maxPerSession` (default 200, in-process best-effort until the §7.2 inbox lands) and the per-target aggregate `maxInboundPerMinute` (default 60, the O(N²) storm brake), reusing the §11.1 fixed-window `ratelimit.Counter` (Redis-backed cross-replica when configured). An exceeded limit returns a `RATE_LIMITED` delivery receipt. Limits are flag-tunable; per-lease `messagingRateLimit` overrides land with the §8.2 delegation-lease persistence.
 
 ---
 
@@ -8700,7 +8705,7 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:1385-1411` (`collectChildResults` reads only terminal state, never `input_required`)
 - `pkg/gateway/mcp/mcp.go:1-22` (single-response transport)
 
-### - [ ] F-8.5.6 — `lenny/send_message` does not return a `deliveryReceipt`, does not enforce `messagingScope`, does not rate-limit — High [Medium] — OPEN
+### - [x] F-8.5.6 — `lenny/send_message` does not return a `deliveryReceipt`, does not enforce `messagingScope`, does not rate-limit — High [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-7.2.10 — Both report lenny/send_message does not return the deliveryReceipt envelope; F-8.5.6 additionally covers messagingScope and rate-limit gaps but shares the receipt root cause.
 
@@ -8723,6 +8728,8 @@ Evidence:
 - `pkg/gateway/mcptools/mcptools.go:275-343` (no deliveryReceipt construction)
 - `grep -r "deliveryReceipt\|delivery_receipt" pkg/gateway/mcptools/ pkg/gateway/executor/` returns no hits
 - `grep -r "CROSS_TENANT_MESSAGE_DENIED\|SCOPE_DENIED\|scope_denied\|messagingScope" pkg/gateway/mcptools/` returns no hits
+
+**Resolution:** Closed by F-7.2.6 (same `lenny/send_message` governance fix; confirmed duplicate). The `deliveryReceipt` envelope was already added by F-7.2.10; F-7.2.6 wired the three remaining gates this finding names — `messagingScope` direct/siblings enforcement, the per-sender + per-target rate limits surfacing a `RATE_LIMITED` receipt, and the `CROSS_TENANT_MESSAGE_DENIED` guard. The `rate_limited` receipt status (previously unreachable) now fires from the limiter. The recovering-target queueing path (`resume_pending` / `awaiting_client_action` → queued-with-TTL) the §8.5 row also names lands with the §7.2 inbox + DLQ machinery (F-7.2.4); terminal targets are still rejected as before.
 
 ### - [x] F-8.5.7 — `lenny/discover_agents` does not filter by effective `DelegationPolicy` — High [Medium] — CLOSED
 
