@@ -195,6 +195,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [prepare]
+    permissions:
+      contents: read
+      id-token: write       # keyless cosign sign-blob over the archives
     strategy:
       fail-fast: false
       matrix:
@@ -212,46 +215,79 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build lenny + kubectl-lenny archive
+      - name: Install cosign
+        uses: sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382  # v3.6.0
+
+      # Produce three archives per (os, arch) from two builds (§17.6,
+      # §24.0): the embedded short-name binary `lenny`, the standalone
+      # operator CLI `lenny-ctl`, and the krew plugin `kubectl-lenny`
+      # (the same lenny-ctl build under the fixed kubectl-<plugin>
+      # filename). Archive filenames carry the v-prefixed tag so the
+      # Homebrew formula and krew manifest URLs resolve to the published
+      # assets.
+      - name: Build and sign CLI archives
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          EXT: ${{ matrix.ext }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p dist
           out="dist/${GOOS}-${GOARCH}"
           mkdir -p "${out}"
+          exe=""
+          [[ "${GOOS}" == "windows" ]] && exe=".exe"
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
-            -o "${out}/lenny${{ matrix.goos == 'windows' && '.exe' || '' }}" \
-            ./cmd/lenny
-          # The kubectl-lenny krew plugin resolves to lenny-ctl renamed.
+            -o "${out}/lenny${exe}" ./cmd/lenny
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
-            -o "${out}/kubectl-lenny${{ matrix.goos == 'windows' && '.exe' || '' }}" \
-            ./cmd/lenny-ctl
+            -o "${out}/lenny-ctl${exe}" ./cmd/lenny-ctl
+          # kubectl discovers plugins by the fixed filename kubectl-lenny;
+          # it is the same build as lenny-ctl, copied (not symlinked) per
+          # the §17.6 krew binary-naming contract.
+          cp "${out}/lenny-ctl${exe}" "${out}/kubectl-lenny${exe}"
           cp LICENSE README.md "${out}/" 2>/dev/null || true
-          if [[ "${{ matrix.ext }}" == "zip" ]]; then
-            (cd "${out}" && zip -r "../../dist/lenny-${VERSION}-${GOOS}-${GOARCH}.zip" .)
-            (cd "${out}" && zip -r "../../dist/kubectl-lenny_${VERSION}_${GOOS}_${GOARCH}.zip" kubectl-lenny${{ matrix.goos == 'windows' && '.exe' || '' }})
-          else
-            tar -C "${out}" -czf "dist/lenny-${VERSION}-${GOOS}-${GOARCH}.tar.gz" .
-            tar -C "${out}" -czf "dist/kubectl-lenny_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "kubectl-lenny"
-          fi
+
+          archives=()
+          pack() { # pack <archive-stem> <binary-filename>
+            local path="dist/${1}.${EXT}" bin="$2"
+            if [[ "${EXT}" == "zip" ]]; then
+              ( cd "${out}" && zip -q "../../${path}" "${bin}" LICENSE README.md )
+            else
+              tar -C "${out}" -czf "${path}" "${bin}" LICENSE README.md
+            fi
+            archives+=("${path}")
+          }
+          pack "lenny-${VERSION}-${GOOS}-${GOARCH}"        "lenny${exe}"
+          pack "lenny-ctl_${VERSION}_${GOOS}_${GOARCH}"    "lenny-ctl${exe}"
+          pack "kubectl-lenny_${VERSION}_${GOOS}_${GOARCH}" "kubectl-lenny${exe}"
+
+          # §24.0 ¶3: the standalone CLI archives are signed with cosign.
+          # Keyless sign-blob mints an ephemeral cert from the workflow
+          # OIDC token and emits a detached .sig + .pem per archive.
+          for a in "${archives[@]}"; do
+            cosign sign-blob --yes \
+              --output-signature "${a}.sig" \
+              --output-certificate "${a}.pem" \
+              "${a}"
+          done
           ls -l dist/
 
       - name: Upload CLI archives
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: cli-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/lenny-*.${{ matrix.ext }}
+          path: |
+            dist/lenny-${{ needs.prepare.outputs.version }}-*.${{ matrix.ext }}*
+            dist/lenny-ctl_*.${{ matrix.ext }}*
           retention-days: 90
 
       - name: Upload krew archives
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: krew-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/kubectl-lenny_*.${{ matrix.ext }}
+          path: dist/kubectl-lenny_*.${{ matrix.ext }}*
           retention-days: 90
 
   # Package the Helm chart and sign it with the custodied PGP key
@@ -404,6 +440,15 @@ jobs:
 
           The Helm chart .tgz is PGP-signed; verify it with helm-verify
           against the published lenny-helm-signing-key.asc.
+
+          The standalone CLI archives (lenny-ctl, kubectl-lenny, lenny) are
+          signed keyless with cosign; each carries a detached .sig and .pem.
+          Verify one with:
+
+              cosign verify-blob <archive> \\
+                --signature <archive>.sig --certificate <archive>.pem \\
+                --certificate-identity-regexp 'https://github.com/${{ github.repository }}/' \\
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com
           EOF
           )
           if gh release view "${VERSION}" >/dev/null 2>&1; then
@@ -492,10 +537,11 @@ jobs:
             --body "Automated krew manifest update for Lenny ${VERSION}. Release: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
 
   # Open a homebrew-tap pull request that points the lennylabs/tap
-  # formula at the freshly published release archives.
-  # dist/brew/lenny.rb is the template; the step renders it with the
-  # tag version and the four per-platform SHA-256 digests, then opens
-  # a PR against lennylabs/homebrew-tap.
+  # formulas at the freshly published release archives. Two formulas are
+  # rendered from the in-repo templates: lenny.rb (embedded short-name
+  # binary) and lenny-ctl.rb (standalone operator CLI, §24.0). Each is
+  # stamped with the tag version and the four per-platform SHA-256 digests,
+  # then both are committed in one PR against lennylabs/homebrew-tap.
   homebrew-tap-pr:
     name: open homebrew-tap PR
     runs-on: ubuntu-latest
@@ -506,7 +552,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Render and submit the lenny.rb update
+      - name: Render and submit the formula updates
         env:
           # HOMEBREW_TAP_TOKEN: PAT with push access to the
           # lennylabs/homebrew-tap fork and pull-request scope. The
@@ -520,47 +566,134 @@ jobs:
             exit 1
           fi
           # Strip the leading "v" — Homebrew's version field is a bare
-          # semver. The release tag carries the "v" prefix.
+          # semver. The release tag (and the archive filenames) carry the
+          # "v" prefix, so the download URLs use the tag verbatim.
           short_version="${VERSION#v}"
-          # Compute the SHA-256 of each release tarball.
           python3 - "${VERSION}" "${short_version}" <<'PY'
           import hashlib, os, re, subprocess, sys
           tag, version = sys.argv[1], sys.argv[2]
           repo = os.environ["GITHUB_REPOSITORY"]
-          src = open("dist/brew/lenny.rb").read()
-          # Stamp the version field.
-          src = re.sub(r'version "0\.1\.0".*$', f'version "{version}"', src, count=1, flags=re.MULTILINE)
           platforms = {
               "DARWIN_ARM64":  ("darwin",  "arm64"),
               "DARWIN_AMD64":  ("darwin",  "amd64"),
               "LINUX_ARM64":   ("linux",   "arm64"),
               "LINUX_AMD64":   ("linux",   "amd64"),
           }
-          for placeholder, (os_, arch) in platforms.items():
-              url = (f"https://github.com/{repo}/releases/download/{tag}"
-                     f"/lenny-{version}-{os_}-{arch}.tar.gz")
-              data = subprocess.run(
-                  ["curl", "-fsSL", url], check=True, capture_output=True).stdout
-              digest = hashlib.sha256(data).hexdigest()
-              src = src.replace(f'REPLACE_WITH_{placeholder}_SHA256', digest)
-          open("/tmp/lenny.rb", "w").write(src)
+          # (template, output, archive-filename pattern). The filename uses
+          # the v-prefixed tag so it resolves to the published asset.
+          formulas = [
+              ("dist/brew/lenny.rb",     "/tmp/lenny.rb",     "lenny-{tag}-{os}-{arch}.tar.gz"),
+              ("dist/brew/lenny-ctl.rb", "/tmp/lenny-ctl.rb", "lenny-ctl_{tag}_{os}_{arch}.tar.gz"),
+          ]
+          for tmpl, outp, fname in formulas:
+              src = open(tmpl).read()
+              src = re.sub(r'version "0\.1\.0".*$', f'version "{version}"', src, count=1, flags=re.MULTILINE)
+              for placeholder, (os_, arch) in platforms.items():
+                  archive = fname.format(tag=tag, os=os_, arch=arch)
+                  url = f"https://github.com/{repo}/releases/download/{tag}/{archive}"
+                  data = subprocess.run(
+                      ["curl", "-fsSL", url], check=True, capture_output=True).stdout
+                  digest = hashlib.sha256(data).hexdigest()
+                  src = src.replace(f'REPLACE_WITH_{placeholder}_SHA256', digest)
+              open(outp, "w").write(src)
+              print(f"Rendered {outp}:")
+              print(src)
           PY
-          echo "Rendered Homebrew formula:"
-          cat /tmp/lenny.rb
 
-          # Fork (idempotent), branch, commit the formula, open the PR.
+          # Fork (idempotent), branch, commit both formulas, open the PR.
           gh repo fork lennylabs/homebrew-tap --clone --remote --default-branch-only
           cd homebrew-tap
           branch="lenny-${VERSION}"
           git checkout -b "${branch}"
           mkdir -p Formula
           cp /tmp/lenny.rb Formula/lenny.rb
+          cp /tmp/lenny-ctl.rb Formula/lenny-ctl.rb
           git config user.name "lenny-release-bot"
           git config user.email "release-bot@lennylabs.dev"
-          git add Formula/lenny.rb
-          git commit -s -m "Update lenny to ${VERSION}"
+          git add Formula/lenny.rb Formula/lenny-ctl.rb
+          git commit -s -m "Update lenny and lenny-ctl to ${VERSION}"
           git push -u origin "${branch}"
           gh pr create \
             --repo lennylabs/homebrew-tap \
-            --title "Update lenny to ${VERSION}" \
+            --title "Update lenny and lenny-ctl to ${VERSION}" \
             --body "Automated formula update for Lenny ${VERSION}. Release: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
+
+  # Verify the krew plugin end to end after publish (§17.6 line 360). On a
+  # disposable kind cluster, install the plugin from the freshly rendered
+  # manifest (it points at the just-published archives and validates their
+  # SHA-256), then assert that `kubectl lenny --version` succeeds and
+  # reports the release tag. The upstream krew-index does not yet carry
+  # this version (its PR is still open), so the check installs from the
+  # local manifest via --manifest rather than `kubectl krew install lenny`.
+  krew-verify:
+    name: verify krew install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [prepare, github-release]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Create a disposable kind cluster
+        env:
+          KIND_VERSION: v0.23.0
+        run: |
+          set -euo pipefail
+          curl -fsSLo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind
+          ./kind create cluster --name lenny-krew-verify --wait 60s
+
+      - name: Install krew
+        env:
+          KREW_VERSION: v0.4.4
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"; cd "${tmp}"
+          curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/download/${KREW_VERSION}/krew-linux_amd64.tar.gz"
+          tar zxf krew-linux_amd64.tar.gz
+          ./krew-linux_amd64 install krew
+          echo "${KREW_ROOT:-$HOME/.krew}/bin" >> "$GITHUB_PATH"
+
+      - name: Render the krew manifest for the published release
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 - "${VERSION}" <<'PY'
+          import hashlib, os, re, subprocess, sys
+          version = sys.argv[1]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          src = open("packaging/krew/lenny.yaml").read().replace("v0.0.0", version)
+          platforms = [
+              ("darwin", "amd64", "tar.gz"),
+              ("darwin", "arm64", "tar.gz"),
+              ("linux", "amd64", "tar.gz"),
+              ("linux", "arm64", "tar.gz"),
+              ("windows", "amd64", "zip"),
+          ]
+          for os_, arch, ext in platforms:
+              url = (f"https://github.com/{repo}/releases/download/{version}"
+                     f"/kubectl-lenny_{version}_{os_}_{arch}.{ext}")
+              data = subprocess.run(
+                  ["curl", "-fsSL", url], check=True, capture_output=True).stdout
+              digest = hashlib.sha256(data).hexdigest()
+              pat = re.compile(r'(uri: ' + re.escape(url) + r'\n\s*sha256: )"0{64}"')
+              src, n = pat.subn(r'\g<1>"' + digest + '"', src)
+              if n != 1:
+                  sys.exit(f"failed to patch sha256 for {os_}/{arch}")
+          open("/tmp/lenny.yaml", "w").write(src)
+          PY
+
+      - name: Install the plugin and assert the version
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          kubectl krew install --manifest=/tmp/lenny.yaml
+          got="$(kubectl lenny --version)"
+          echo "kubectl lenny --version -> ${got}"
+          if [[ "${got}" != *"${VERSION}"* ]]; then
+            echo "::error::kubectl lenny --version did not report ${VERSION}: ${got}"
+            exit 1
+          fi
