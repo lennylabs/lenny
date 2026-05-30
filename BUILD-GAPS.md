@@ -30066,7 +30066,7 @@ backends are `MemoryStore`, MinIO, S3, Azure, GCS. Uploads via
 `POST /v1/sessions/{id}/upload` therefore vanish on every `lenny down`, breaking the
 "lenny down preserves state" guarantee for artifacts.
 
-### - [ ] F-17.4.9 — `lenny` and `lenny-ctl` are not the same executable [High] — OPEN
+### - [ ] F-17.4.9 — `lenny` and `lenny-ctl` are not the same executable [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-24.0.1 — Both report that lenny and lenny-ctl are separate binaries with disjoint command sets rather than one executable exposing every subcommand.
 
@@ -30092,6 +30092,8 @@ with disjoint command tables.
 Neither binary inspects `os.Args[0]` to switch behavior based on its invocation name.
 The spec contract that "every command is available under both names" is not satisfied
 in either direction.
+
+**Deferred:** Confirmed duplicate of F-24.0.1; deferred for the same reason. Unifying `cmd/lenny` and `cmd/lenny-ctl` into one binary that exposes every subcommand under both names is a dedicated refactor batch.
 
 ### - [ ] F-17.4.10 — `lenny session` covers only `new`; spec §24.17 lists eight verbs [High] — OPEN
 
@@ -31212,7 +31214,7 @@ at the wrong archive, would surface only when a user attempts
 
 ---
 
-### - [ ] F-17.6.13 — Standalone `lenny-ctl` archive is not published; Homebrew installs `lenny` (Embedded Mode), not `lenny-ctl` [Medium] — OPEN
+### - [x] F-17.6.13 — Standalone `lenny-ctl` archive is not published; Homebrew installs `lenny` (Embedded Mode), not `lenny-ctl` [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.0.2 — Both describe the standalone/Homebrew distribution installing lenny instead of the spec-named lenny-ctl.
 
@@ -31243,6 +31245,8 @@ the `kubectl-lenny` name (via krew) and bundled in the `lenny-*` archive.
 - `/Users/joan/projects/lenny/dist/brew/lenny.rb:56-58`
 
 ---
+
+**Resolution:** Closed by F-24.0.2 (confirmed duplicate). A signed standalone `lenny-ctl_<tag>_<os>_<arch>` archive is now published and `dist/brew/lenny-ctl.rb` installs the `lenny-ctl` binary. Commit 4b666d57.
 
 ### - [ ] F-17.6.14 — `lenny-ctl bootstrap` does not log `first-use` token-retrieval prompt [Medium] — OPEN
 
@@ -33558,7 +33562,7 @@ authoring follows from that remediation and need not double-track here.
 
 ### Findings
 
-### - [ ] F-24.0.1 — 1 — `lenny` and `lenny-ctl` are separate binaries with disjoint command sets (R2 unmet) [High] — OPEN
+### - [ ] F-24.0.1 — 1 — `lenny` and `lenny-ctl` are separate binaries with disjoint command sets (R2 unmet) [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-17.4.9 — Both report that lenny and lenny-ctl are separate binaries with disjoint command sets rather than one executable exposing every subcommand.
 
@@ -33570,7 +33574,9 @@ The implementation has two distinct Go packages with disjoint command surfaces:
 
 Neither binary detects its invocation name (`os.Args[0]` / `filepath.Base`) to alias to the other surface. `lenny bootstrap`, `lenny admin tenants list`, `lenny-ctl up`, and `lenny-ctl session new` all exit non-zero with "unknown command". The release pipeline `release.yml:226-232` even builds the two from different packages (`./cmd/lenny` and `./cmd/lenny-ctl`).
 
-### - [ ] F-24.0.2 — 2 — Standalone `lenny-ctl` archive and Homebrew formula install `lenny`, not `lenny-ctl` (R3, R4 unmet) [High] — OPEN
+**Deferred:** Closing this requires merging `cmd/lenny` and `cmd/lenny-ctl` into one binary (or a shared `pkg/cli` dispatch) so both invocation names expose every subcommand per §24 preamble line 17. That is a dedicated refactor batch touching every command implementation and its tests. The invocation-name detection added in f5a77e54 (`progName`) is a step toward it but does not unify the two command surfaces.
+
+### - [x] F-24.0.2 — 2 — Standalone `lenny-ctl` archive and Homebrew formula install `lenny`, not `lenny-ctl` (R3, R4 unmet) [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-17.6.13 — Both describe the standalone/Homebrew distribution installing lenny instead of the spec-named lenny-ctl.
 
@@ -33588,13 +33594,17 @@ There is no release archive that ships a binary literally named `lenny-ctl`. `re
 
 R6 (direct download of a `lenny-ctl` binary) is also unmet — operators who follow the spec and look for a `lenny-ctl` artifact on the GitHub release page will not find one. The spec contract that "the standalone binary `lenny-ctl`" is distributed is violated.
 
-### - [ ] F-24.0.3 — 3 — Standalone CLI binaries are not signed (R3 / §24.0 ¶3 unmet) [High] — OPEN
+**Resolution:** The release `cli` job now builds and publishes a standalone `lenny-ctl_<tag>_<os>_<arch>` archive (the same build as `kubectl-lenny`), and `dist/brew/lenny-ctl.rb` installs the `lenny-ctl` binary so `brew install lennylabs/tap/lenny-ctl` resolves per §24.0. `homebrew-tap-pr` renders both formulas. The embedded-`lenny` brew references in the docs stay correct for the §17.4 `lenny up` flow; single-binary unification is tracked by F-24.0.1. Commit 4b666d57.
+
+### - [x] F-24.0.3 — 3 — Standalone CLI binaries are not signed (R3 / §24.0 ¶3 unmet) [High] — CLOSED
 
 §24.0 ¶3 (line 28) states: "(a) the standalone `lenny-ctl` binaries (signed with cosign)". §24.0 line 23 reiterates "Released as signed binaries for Linux, macOS, and Windows on every tagged release."
 
 `release.yml:149-157` only calls `cosign sign --recursive` against the GHCR container images. The CLI archive build job (`cli`, `release.yml:193-256`) never invokes `cosign sign-blob`, GPG-signs, or otherwise produces a detached signature for the `lenny-*.tar.gz`, `lenny-*.zip`, `kubectl-lenny_*.tar.gz`, or `kubectl-lenny_*.zip` artifacts. The `github-release` job (`release.yml:332-417`) uploads only the artifacts and a `SHA256SUMS` manifest — no `.sig`, `.cert`, or `.bundle` file.
 
-### - [ ] F-24.0.4 — 4 — `lenny-ctl --version` / `kubectl lenny --version` does not return a CLI binary version; the `-X main.version` ldflag is dropped (R7, R13 unmet) [High] — OPEN
+**Resolution:** The `cli` job now `cosign sign-blob`s every CLI archive (lenny, lenny-ctl, kubectl-lenny) keyless via the workflow OIDC token, emitting a detached `.sig` + `.pem` per archive; the release notes document `cosign verify-blob`. The job gained `id-token: write`. Commit 4b666d57.
+
+### - [x] F-24.0.4 — 4 — `lenny-ctl --version` / `kubectl lenny --version` does not return a CLI binary version; the `-X main.version` ldflag is dropped (R7, R13 unmet) [High] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.0.7 — Related lenny-ctl version defects with distinct remediations: F-24.0.4 the dropped version ldflag/--version flag, F-24.0.7 the version subcommand making a network call instead of printing the local build.
 
@@ -33607,13 +33617,17 @@ Implementation:
 
 The release-time CI check the spec mandates therefore cannot be implemented without code changes to `cmd/lenny-ctl/main.go`. No such CI check exists in `release.yml` or under `tests/` today.
 
-### - [ ] F-24.0.5 — 5 — Krew install verification CI step is absent (R13 unmet) [High] — OPEN
+**Resolution:** `cmd/lenny` and `cmd/lenny-ctl` now declare a package-level `var version` so the release `-X main.version` ldflag binds; `--version` and `version` print the local build, so `kubectl lenny --version` reports the tag and satisfies the §17.6 CI invariant. Commit f5a77e54.
+
+### - [x] F-24.0.5 — 5 — Krew install verification CI step is absent (R13 unmet) [High] — CLOSED
 
 §17.6 line 360 mandates: "CI verifies the invariant after every release by running `kubectl krew install lenny` against a disposable kind cluster and asserting that `kubectl lenny --version` succeeds and reports the release tag."
 
 `grep -rn "kubectl krew install lenny" .github/workflows` returns no matches. The `krew-index-pr` job (`release.yml:421-492`) opens the upstream PR but never installs the rendered manifest and exercises the binary. The `tests/tier11_docs/time_to_hello_world_test.go:67-78` step explicitly punts on this with `t.Logf("...documented external dependency...")`. No tier-5/6 kind-based smoke test installs the krew plugin and runs `kubectl lenny --version`.
 
-### - [ ] F-24.0.6 — 1 — CLI binaries do not read `LENNY_API_URL` / `LENNY_API_TOKEN` / `LENNY_OPS_URL` env vars (R9 unmet) [Medium] — OPEN
+**Resolution:** New `krew-verify` job (release.yml) creates a disposable kind cluster, installs krew, installs the plugin from the rendered manifest pointing at the just-published archives, and asserts `kubectl lenny --version` reports the tag. It installs via `--manifest` because the upstream krew-index PR is not yet merged at release time. Commit 4b666d57.
+
+### - [x] F-24.0.6 — 1 — CLI binaries do not read `LENNY_API_URL` / `LENNY_API_TOKEN` / `LENNY_OPS_URL` env vars (R9 unmet) [Medium] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.16.1 — Both describe lenny-ctl not reading the LENNY_API_URL/LENNY_OPS_URL/LENNY_API_TOKEN environment variables.
 
@@ -33625,17 +33639,23 @@ Implementation:
 
 `kubectl-lenny` users who set `LENNY_API_URL` per the spec contract and never pass `--api-url` will hit `http://localhost:8080` (the hard-coded default at `main.go:182`). The spec's whole rationale for not auto-discovering from kubeconfig (R10) is that operators rely on `LENNY_API_URL`; today that variable is silently ignored. The companion `--token` flag is implemented as `--bearer`, so the spec's `LENNY_API_TOKEN` / `--token` contract is also unmet, but the flag-name mismatch falls in §24 preamble, not §24.0.
 
-### - [ ] F-24.0.7 — 2 — `lenny-ctl version` command sends a network call rather than printing the local CLI version [Medium] — OPEN
+**Resolution:** `parseGlobalFlags` now defaults `--api-url`/`--ops-server`/`--token` from `LENNY_API_URL`/`LENNY_OPS_URL`/`LENNY_API_TOKEN` (an explicit flag overrides env; blank env is treated as unset), and `--token` is added as the spec-facing alias of `--bearer`. Commit f5a77e54.
+
+### - [x] F-24.0.7 — 2 — `lenny-ctl version` command sends a network call rather than printing the local CLI version [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-24.0.4 — Related lenny-ctl version defects with distinct remediations: F-24.0.4 the dropped version ldflag/--version flag, F-24.0.7 the version subcommand making a network call instead of printing the local build.
 
 Closely related to HIGH-4 but distinct in remediation: even after a `var version` is declared, the `version` subcommand (`cmd/lenny-ctl/main.go:246-254`) currently calls `GET /v1/admin/platform/version` and prints the gateway's response. Operators expecting `lenny-ctl version` to print the local binary build (a standard CLI convention) get a connection-refused error when the gateway is unreachable. The current behavior is documented in the source comment ("Routing (§25.14): health and version target the gateway directly"), but it makes the binary unusable for local introspection — including the §17.6 CI check.
 
-### - [ ] F-24.0.8 — 3 — `lenny-ctl install` is missing the spec-documented prerequisite of being usable before a cluster exists [Medium] — OPEN
+**Resolution:** `lenny-ctl version` and `--version` now print the local CLI build and make no gateway call. §25.14's routing table covers `health` and `recommendations` but omits `version`, and the §17.6 krew check runs before any gateway exists, so local-only output is correct; the stale source comment claiming gateway routing was corrected. Commit f5a77e54.
+
+### - [x] F-24.0.8 — 3 — `lenny-ctl install` is missing the spec-documented prerequisite of being usable before a cluster exists [Medium] — CLOSED
 
 §24.0 line 13 (referenced from the §24 preamble exception list): "`lenny-ctl install` … carries the interactive installer's question engine and values-rendering logic locally; it calls `helm` and then `lenny-ctl bootstrap` internally."
 
 `cmd/lenny-ctl/install.go` exists and is wired in (`main.go:80-84`). The CLI form is therefore present. The packaging gap is that there is no published artifact named `lenny-ctl` to actually run this command from (see HIGH-2). Operators who follow the §17.6 quick-start (`brew install lennylabs/tap/lenny-ctl` then `lenny-ctl install …`) cannot reach the install wizard via the documented path.
+
+**Resolution:** Closed by F-24.0.2. The `lenny-ctl install` CLI form already existed; the missing piece was a published `lenny-ctl` artifact to run it from. The standalone `lenny-ctl` archive and the `lennylabs/tap/lenny-ctl` formula now provide the documented §17.6 install path. Commit 4b666d57.
 
 ### - [x] F-24.0.9 — 1 — Krew manifest `homepage` and project repo URLs assume a `lennylabs/lenny` GitHub org that has not been created in any test-bed material [Low] — CLOSED
 
@@ -35972,11 +35992,13 @@ Implementation tree: `cmd/lenny-ctl/`, `pkg/ops/`, `pkg/gateway/admin/platform.g
 
 ### Findings
 
-### - [ ] F-24.16.1 — `LENNY_OPS_URL` and `LENNY_API_URL` env vars are not honored [High] — OPEN
+### - [x] F-24.16.1 — `LENNY_OPS_URL` and `LENNY_API_URL` env vars are not honored [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-24.0.6 — Both describe lenny-ctl not reading the LENNY_API_URL/LENNY_OPS_URL/LENNY_API_TOKEN environment variables.
 
 Spec (§24.16, lines 197 and 199) requires that the `--ops-server` flag has an equivalent `LENNY_OPS_URL` environment variable and that `--api-url` has an equivalent `LENNY_API_URL` environment variable. `cmd/lenny-ctl/main.go:181–231` (`parseGlobalFlags`) reads neither variable; the only `os.Getenv` call in the package is `cmd/lenny-ctl/install.go:366` (unrelated, used by the install wizard). The flag parser defaults `apiURL` to `http://localhost:8080` unconditionally and `opsServer` to empty, with no env-var fallback. The runtime-scaffold templates reference `LENNY_API_URL` (as an instruction to users running their own commands) but the CLI binary itself ignores both variables. Operators who configure their shells with `LENNY_API_URL` / `LENNY_OPS_URL` (per §24's opening prose) will silently target `http://localhost:8080`.
+
+**Resolution:** Closed by F-24.0.6 (confirmed duplicate). `parseGlobalFlags` now honors `LENNY_API_URL`, `LENNY_OPS_URL`, and `LENNY_API_TOKEN`, with an explicit flag taking precedence. Commit f5a77e54.
 
 ### - [ ] F-24.16.2 — Routing rule 3 (gateway-host fallback) is not implemented; auto-discovery errors out instead [High] — OPEN
 Spec (§24.16 line 201) requires that when auto-discovery fails (gateway unreachable or `opsServiceURL` absent because the cluster is mid-upgrade), `lenny-ctl` falls back to the gateway host on the assumption that gateway-hosted §25.3 operability endpoints still serve the request, and surfaces a warning for any ops-exclusive command. `cmd/lenny-ctl/ops.go:52–63` returns an error in both failure paths and `withOps` (lines 26–30) exits 2 without invoking the command. The test `TestOpsAutoDiscoveryMissingURLErrors` (`cmd/lenny-ctl/ops_test.go:281–296`) asserts the error-and-exit-2 behavior, which is the opposite of the spec's fallback rule. No code path attempts to route ops calls to the gateway host when `opsServiceURL` is missing.
