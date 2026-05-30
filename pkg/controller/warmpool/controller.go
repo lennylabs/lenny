@@ -497,9 +497,14 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 			Finalizers: []string{lennyv1.FinalizerSessionCleanup},
 		},
 		Spec: lennyv1.SandboxSpec{
-			RuntimeRef:       tmpl.Spec.RuntimeRef,
-			PoolRef:          pool.Name,
+			RuntimeRef: tmpl.Spec.RuntimeRef,
+			PoolRef:    pool.Name,
+			// spec: §12.6 line 421 — denormalize the pool's isolation
+			// profile and execution mode onto each Sandbox so the
+			// PodRegistry projects PodRecord.{IsolationProfile,ExecutionMode}
+			// without resolving the SandboxTemplate on every read.
 			IsolationProfile: tmpl.Spec.IsolationProfile,
+			ExecutionMode:    tmpl.Spec.ExecutionMode,
 			DeliveryMode:     tmpl.Spec.DeliveryMode,
 			// spec: §5.2 lines 631-636 — the WarmPoolController (which owns
 			// Sandbox.spec) copies the pool's topology spread constraints

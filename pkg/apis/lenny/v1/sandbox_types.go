@@ -34,6 +34,17 @@ type SandboxSpec struct {
 	// +optional
 	IsolationProfile string `json:"isolationProfile,omitempty"`
 
+	// ExecutionMode is the §5.2 pod-reuse mode the pod was warmed
+	// under. spec: §12.6 line 421-422 — the PodRegistry projects it as
+	// PodRecord.ExecutionMode. The WarmPoolController denormalizes it
+	// from the pool's SandboxTemplate.spec.executionMode onto each
+	// Sandbox (the same copy-down as IsolationProfile) so the registry
+	// can project it without resolving the template on every read.
+	// Empty is treated as `session`.
+	// +kubebuilder:validation:Enum=session;task;concurrent
+	// +optional
+	ExecutionMode string `json:"executionMode,omitempty"`
+
 	// DeliveryMode is the §4.9 credential delivery mode.
 	// +kubebuilder:validation:Enum=proxy;direct
 	// +optional
@@ -75,6 +86,15 @@ type SandboxStatus struct {
 	// for the pod's lifetime. Empty for an unassigned pod.
 	// +optional
 	TenantID string `json:"tenantId,omitempty"`
+
+	// SessionID records the session a pod is bound to. spec: §12.6
+	// line 421 — PodRecord.SessionID (nullable), and line 442 / the
+	// agent_pod_state.session_id column ("set on claim"). The §4.6.1
+	// claim path writes it on ClaimPod and clears it on ReleasePod; the
+	// orphan-session reconciler (§10.1) cross-references it via the
+	// partial session_id index. Empty for an unclaimed pod.
+	// +optional
+	SessionID string `json:"sessionId,omitempty"`
 
 	// PodName is the underlying Pod backing this Sandbox. Empty until
 	// the pod is created.

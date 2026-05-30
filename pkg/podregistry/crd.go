@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
@@ -27,7 +28,22 @@ import (
 type CRDPodRegistry struct {
 	Client    client.Client
 	Namespace string
+
+	// watchBufferSize bounds each WatchPods event channel. The §12.6
+	// line 480 contract permits coalescing or dropping events under
+	// backpressure; a full channel is the "fallen behind" condition
+	// that triggers the line 482 resync signal. Zero falls back to
+	// defaultWatchBufferSize.
+	watchBufferSize int
+	// pollInterval is the WatchPods polling cadence. Zero falls back to
+	// watchTickerInterval.
+	pollInterval time.Duration
 }
+
+// defaultWatchBufferSize is the §12.6 WatchPods channel depth. It is
+// large enough to absorb a normal reconcile burst without signalling
+// resync, yet bounded so a stalled consumer is detected.
+const defaultWatchBufferSize = 32
 
 // PoolLabel is the §4.6 label every Sandbox carries so the registry
 // can filter by pool without parsing spec.poolRef on every read.
@@ -45,7 +61,12 @@ func New(c client.Client, namespace string) (*CRDPodRegistry, error) {
 	if namespace == "" {
 		return nil, errors.New("podregistry: namespace is required")
 	}
-	return &CRDPodRegistry{Client: c, Namespace: namespace}, nil
+	return &CRDPodRegistry{
+		Client:          c,
+		Namespace:       namespace,
+		watchBufferSize: defaultWatchBufferSize,
+		pollInterval:    watchTickerInterval,
+	}, nil
 }
 
 func (r *CRDPodRegistry) GetPod(ctx context.Context, podID PodID) (*PodRecord, error) {
@@ -107,6 +128,10 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (*PodReco
 		sb := &pods[i]
 		sb.Status.Phase = "claimed"
 		sb.Status.TenantID = opts.TenantID
+		// spec: §12.6 line 442 / agent_pod_state.session_id — pin the
+		// session to the pod at claim time so the orphan-session
+		// reconciler has a binding to follow.
+		sb.Status.SessionID = opts.SessionID
 		if err := r.Client.Status().Update(ctx, sb); err != nil {
 			if apierrors.IsConflict(err) {
 				continue
@@ -143,6 +168,9 @@ func (r *CRDPodRegistry) ReleasePod(ctx context.Context, podID PodID, reason Rel
 		sb.Status.Phase = "task_cleanup"
 	}
 	sb.Status.TenantID = ""
+	// spec: §12.6 line 442 — releasing a pod unbinds its session so a
+	// released pod no longer reports as bound to the orphan reconciler.
+	sb.Status.SessionID = ""
 	if err := r.Client.Status().Update(ctx, &sb); err != nil {
 		if apierrors.IsConflict(err) {
 			return ErrResourceConflict
@@ -196,6 +224,11 @@ func (r *CRDPodRegistry) CreatePod(ctx context.Context, poolID PoolID, spec PodS
 	sb.Name = name
 	sb.Labels = map[string]string{PoolLabel: string(poolID)}
 	sb.Spec.PoolRef = string(poolID)
+	// spec: §12.6 line 422 — CreatePod stamps the per-pod PodSpec fields
+	// onto the Sandbox so they round-trip through toPodRecord rather than
+	// silently falling back to pool-template defaults.
+	sb.Spec.IsolationProfile = spec.IsolationProfile
+	sb.Spec.ExecutionMode = spec.ExecutionMode
 	if err := r.Client.Create(ctx, sb); err != nil {
 		return nil, fmt.Errorf("podregistry: create sandbox: %w", err)
 	}
@@ -232,55 +265,116 @@ func (r *CRDPodRegistry) WatchPods(ctx context.Context, poolID PoolID) (<-chan P
 	if poolID == "" {
 		return nil, errors.New("podregistry: poolID is required")
 	}
-	out := make(chan PodEvent, 32)
+	bufSize := r.watchBufferSize
+	if bufSize <= 0 {
+		bufSize = defaultWatchBufferSize
+	}
+	out := make(chan PodEvent, bufSize)
 	go r.watchLoop(ctx, poolID, out)
 	return out, nil
 }
 
 // watchLoop polls ListPodsByPool and emits PodEvent frames for
-// transitions (created, updated, deleted). The polling interval is
-// short to keep event latency bounded; the goroutine exits when
+// transitions (created, updated, deleted). The goroutine exits when
 // ctx is cancelled.
+//
+// spec: §12.6 line 482 — the channel MUST NOT emit an initial state
+// snapshot on creation (consumers read initial state via
+// ListPodsByPool), and when the channel falls behind the loop emits a
+// synthetic resync frame carrying no PodRecord instead of blocking.
 func (r *CRDPodRegistry) watchLoop(ctx context.Context, poolID PoolID, out chan<- PodEvent) {
 	defer close(out)
+	// Seed the snapshot WITHOUT emitting: the first ListPodsByPool result
+	// is the consumer's responsibility, not a stream of created events.
 	known := map[PodID]PodRecord{}
-	ticker := newWatchTicker()
-	defer ticker.Stop()
-	for {
-		// First-pass: seed the snapshot before sleeping.
-		records, err := r.ListPodsByPool(ctx, poolID, PodFilter{})
-		if err == nil {
-			seen := map[PodID]bool{}
-			for _, rec := range records {
-				seen[rec.PodID] = true
-				prev, ok := known[rec.PodID]
-				switch {
-				case !ok:
-					emit(ctx, out, PodEvent{PodID: rec.PodID, EventType: EventCreated, PodRecord: rec})
-				case prev.State != rec.State || prev.ResourceVersion != rec.ResourceVersion:
-					emit(ctx, out, PodEvent{PodID: rec.PodID, EventType: EventUpdated, PodRecord: rec})
-				}
-				known[rec.PodID] = rec
-			}
-			for podID, rec := range known {
-				if !seen[podID] {
-					emit(ctx, out, PodEvent{PodID: podID, EventType: EventDeleted, PodRecord: rec})
-					delete(known, podID)
-				}
-			}
+	if records, err := r.ListPodsByPool(ctx, poolID, PodFilter{}); err == nil {
+		for i := range records {
+			known[records[i].PodID] = records[i]
 		}
+	}
+	interval := r.pollInterval
+	if interval <= 0 {
+		interval = watchTickerInterval
+	}
+	ticker := newWatchTicker(interval)
+	defer ticker.Stop()
+	// pendingResync records that the channel has fallen behind: a delta
+	// could not be delivered without blocking. While it is set the loop
+	// keeps the snapshot current but suppresses per-pod deltas until it
+	// can hand the consumer a single resync frame, after which normal
+	// delta emission resumes against current truth.
+	pendingResync := false
+	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C():
 		}
+		records, err := r.ListPodsByPool(ctx, poolID, PodFilter{})
+		if err != nil {
+			continue
+		}
+		if pendingResync {
+			syncKnown(known, records)
+			if trySend(out, PodEvent{EventType: EventResync}) {
+				pendingResync = false
+			}
+			continue
+		}
+		seen := make(map[PodID]bool, len(records))
+		for i := range records {
+			rec := records[i]
+			seen[rec.PodID] = true
+			prev, ok := known[rec.PodID]
+			known[rec.PodID] = rec
+			var ev PodEvent
+			switch {
+			case !ok:
+				ev = PodEvent{PodID: rec.PodID, EventType: EventCreated, PodRecord: rec}
+			case prev.State != rec.State || prev.ResourceVersion != rec.ResourceVersion:
+				ev = PodEvent{PodID: rec.PodID, EventType: EventUpdated, PodRecord: rec}
+			default:
+				continue
+			}
+			if !trySend(out, ev) {
+				pendingResync = true
+			}
+		}
+		for podID, rec := range known {
+			if !seen[podID] {
+				delete(known, podID)
+				if !trySend(out, PodEvent{PodID: podID, EventType: EventDeleted, PodRecord: rec}) {
+					pendingResync = true
+				}
+			}
+		}
 	}
 }
 
-func emit(ctx context.Context, out chan<- PodEvent, event PodEvent) {
+// syncKnown replaces the known snapshot with the observed record set
+// without emitting deltas. The watch loop calls it while a resync is
+// pending so that, once the consumer re-reads via ListPodsByPool, the
+// next deltas are computed against current truth rather than replaying
+// the coalesced changes.
+func syncKnown(known map[PodID]PodRecord, records []PodRecord) {
+	for k := range known {
+		delete(known, k)
+	}
+	for i := range records {
+		known[records[i].PodID] = records[i]
+	}
+}
+
+// trySend delivers event without blocking. It returns false when the
+// channel buffer is full — the §12.6 line 480 backpressure condition
+// under which the loop coalesces and signals a resync rather than
+// blocking the polling goroutine on a slow consumer.
+func trySend(out chan<- PodEvent, event PodEvent) bool {
 	select {
 	case out <- event:
-	case <-ctx.Done():
+		return true
+	default:
+		return false
 	}
 }
 
@@ -306,18 +400,20 @@ func (r *CRDPodRegistry) listSandboxes(ctx context.Context, poolID PoolID, filte
 	return out, nil
 }
 
-// toPodRecord projects a Sandbox onto a PodRecord. ExecutionMode
-// is not carried on the Sandbox CRD spec today (it lives on the
-// SandboxTemplate the pool resolves through); the field is left
-// empty here and a future tier-4 PostgresPodRegistry impl reads
-// it from agent_pod_state.
+// toPodRecord projects a Sandbox onto a PodRecord. spec: §12.6
+// line 421 — every key field, including SessionID (set on claim,
+// from status) and ExecutionMode (denormalized onto the Sandbox spec
+// from the pool's SandboxTemplate), is carried so a consumer can rely
+// on the record for claim attribution and task-vs-session mode.
 func toPodRecord(sb *lennyv1.Sandbox) PodRecord {
 	return PodRecord{
 		PodID:            PodID(sb.Name),
 		PoolID:           PoolID(sb.Spec.PoolRef),
 		State:            sb.Status.Phase,
 		TenantID:         sb.Status.TenantID,
+		SessionID:        sb.Status.SessionID,
 		IsolationProfile: sb.Spec.IsolationProfile,
+		ExecutionMode:    sb.Spec.ExecutionMode,
 		ResourceVersion:  sb.ResourceVersion,
 		NodeName:         sb.Status.NodeName,
 		PodIP:            sb.Status.PodIP,

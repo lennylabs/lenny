@@ -68,6 +68,20 @@ spec:
                 - proxy
                 - direct
                 type: string
+              executionMode:
+                description: |-
+                  ExecutionMode is the §5.2 pod-reuse mode the pod was warmed
+                  under. spec: §12.6 line 421-422 — the PodRegistry projects it as
+                  PodRecord.ExecutionMode. The WarmPoolController denormalizes it
+                  from the pool's SandboxTemplate.spec.executionMode onto each
+                  Sandbox (the same copy-down as IsolationProfile) so the registry
+                  can project it without resolving the template on every read.
+                  Empty is treated as `session`.
+                enum:
+                - session
+                - task
+                - concurrent
+                type: string
               isolationProfile:
                 description: |-
                   IsolationProfile is the §5.3 sandbox isolation profile the pod
@@ -395,6 +409,15 @@ spec:
                 description: |-
                   PodName is the underlying Pod backing this Sandbox. Empty until
                   the pod is created.
+                type: string
+              sessionId:
+                description: |-
+                  SessionID records the session a pod is bound to. spec: §12.6
+                  line 421 — PodRecord.SessionID (nullable), and line 442 / the
+                  agent_pod_state.session_id column ("set on claim"). The §4.6.1
+                  claim path writes it on ClaimPod and clears it on ReleasePod; the
+                  orphan-session reconciler (§10.1) cross-references it via the
+                  partial session_id index. Empty for an unclaimed pod.
                 type: string
               tenantId:
                 description: |-

@@ -11,11 +11,16 @@ import "time"
 const watchTickerInterval = 500 * time.Millisecond
 
 // watchTicker wraps a time.Ticker so the registry can be exercised
-// against a fake clock from tests without exposing time.Ticker
+// against a faster cadence from tests without exposing time.Ticker
 // internals through the public API.
 type watchTicker struct{ t *time.Ticker }
 
-func newWatchTicker() *watchTicker { return &watchTicker{t: time.NewTicker(watchTickerInterval)} }
+func newWatchTicker(interval time.Duration) *watchTicker {
+	if interval <= 0 {
+		interval = watchTickerInterval
+	}
+	return &watchTicker{t: time.NewTicker(interval)}
+}
 
 func (w *watchTicker) C() <-chan time.Time { return w.t.C }
 func (w *watchTicker) Stop()               { w.t.Stop() }

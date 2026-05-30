@@ -126,6 +126,64 @@ func TestClaimPodPicksIdleAndPins(t *testing.T) {
 	if rec.TenantID != "acme" {
 		t.Errorf("TenantID = %q, want acme (pinned)", rec.TenantID)
 	}
+	// spec: §12.6 line 442 — the claim pins the session to the pod, and
+	// the binding persists through a fresh read.
+	if rec.SessionID != "s1" {
+		t.Errorf("SessionID = %q, want s1 (pinned on claim)", rec.SessionID)
+	}
+	got, _ := r.GetPod(context.Background(), rec.PodID)
+	if got.SessionID != "s1" {
+		t.Errorf("persisted SessionID = %q, want s1", got.SessionID)
+	}
+}
+
+// spec: §12.6 line 442 (ClaimPod sets SessionID; ReleasePod clears the
+// session binding so a released pod no longer reports as bound).
+func TestClaimThenReleaseClearsSessionBinding_spec_12_6(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "idle"))
+	if _, err := r.ClaimPod(context.Background(),
+		podregistry.ClaimOpts{PoolID: "echo-pool", TenantID: "acme", SessionID: "s1"}); err != nil {
+		t.Fatalf("ClaimPod: %v", err)
+	}
+	bound, _ := r.GetPod(context.Background(), "alpha")
+	if bound.SessionID != "s1" || bound.TenantID != "acme" {
+		t.Fatalf("after claim SessionID/TenantID = %q/%q, want s1/acme", bound.SessionID, bound.TenantID)
+	}
+	if err := r.ReleasePod(context.Background(), "alpha", podregistry.ReleaseCompleted); err != nil {
+		t.Fatalf("ReleasePod: %v", err)
+	}
+	released, _ := r.GetPod(context.Background(), "alpha")
+	if released.SessionID != "" {
+		t.Errorf("after release SessionID = %q, want cleared", released.SessionID)
+	}
+	if released.TenantID != "" {
+		t.Errorf("after release TenantID = %q, want cleared", released.TenantID)
+	}
+}
+
+// spec: §12.6 line 424 (ClaimOpts carries RequiresDemotion, Priority,
+// ClusterID; v1 leaves them inert but a claim with all three set still
+// succeeds).
+func TestClaimOptsCarriesV1InertFields_spec_12_6_424(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "idle"))
+	prio := int32(5)
+	cid := podregistry.ClusterID("east-1")
+	rec, err := r.ClaimPod(context.Background(), podregistry.ClaimOpts{
+		PoolID:           "echo-pool",
+		TenantID:         "acme",
+		SessionID:        "s1",
+		RequiresDemotion: true,
+		Priority:         &prio,
+		ClusterID:        &cid,
+	})
+	if err != nil {
+		t.Fatalf("ClaimPod with extended opts: %v", err)
+	}
+	if rec.State != "claimed" || rec.SessionID != "s1" {
+		t.Errorf("rec = %+v, want claimed/s1", rec)
+	}
 }
 
 // spec: §4.6.1 (ClaimPod returns ErrPoolExhausted when nothing idle)
@@ -242,24 +300,132 @@ func TestDeletePodRemovesSandbox(t *testing.T) {
 	}
 }
 
-// spec: §12.6 (WatchPods emits a created event for an existing pod)
-func TestWatchPodsEmitsCreatedForExistingPod(t *testing.T) {
+// spec: §12.6 line 482 (WatchPods MUST NOT emit an initial state
+// snapshot; a pre-existing pod produces no event until it changes, at
+// which point a delta — here Updated — is emitted).
+func TestWatchPodsDoesNotEmitInitialSnapshot_spec_12_6_482(t *testing.T) {
 	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
+	r.SetWatchTuningForTest(10*time.Millisecond, 32)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	events, err := r.WatchPods(ctx, "echo-pool")
 	if err != nil {
 		t.Fatalf("WatchPods: %v", err)
 	}
+	// Many poll cycles elapse with the pod stable: the stream stays
+	// silent because the consumer owns initial state via ListPodsByPool.
 	select {
 	case e := <-events:
-		if e.EventType != podregistry.EventCreated {
-			t.Errorf("first event type = %q, want created", e.EventType)
+		t.Fatalf("unexpected initial-snapshot event %+v; want none", e)
+	case <-time.After(150 * time.Millisecond):
+	}
+	// A subsequent state change produces a delta (Updated, not Created).
+	if err := r.UpdatePodState(ctx, "alpha",
+		podregistry.StateTransition{From: "idle", To: "claimed"}); err != nil {
+		t.Fatalf("UpdatePodState: %v", err)
+	}
+	select {
+	case e := <-events:
+		if e.EventType != podregistry.EventUpdated {
+			t.Errorf("event type = %q, want updated", e.EventType)
 		}
 		if e.PodID != "alpha" {
-			t.Errorf("first event PodID = %q, want alpha", e.PodID)
+			t.Errorf("event PodID = %q, want alpha", e.PodID)
+		}
+		if e.PodRecord.State != "claimed" {
+			t.Errorf("event PodRecord.State = %q, want claimed", e.PodRecord.State)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("WatchPods did not emit a created event within 2s")
+		t.Fatal("no Updated event after state change")
+	}
+}
+
+// spec: §12.6 line 482 (when the channel falls behind, WatchPods emits
+// a synthetic resync frame carrying no PodRecord rather than blocking).
+func TestWatchPodsEmitsResyncUnderBackpressure_spec_12_6_482(t *testing.T) {
+	r := newRegistry(t, "lenny-agents",
+		seedSandbox("alpha", "echo-pool", "idle"),
+		seedSandbox("bravo", "echo-pool", "idle"))
+	// A single-slot buffer plus a fast poll makes a non-draining consumer
+	// fall behind within one reconcile: two simultaneous deltas cannot
+	// both fit, so the loop coalesces and signals resync.
+	r.SetWatchTuningForTest(5*time.Millisecond, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, err := r.WatchPods(ctx, "echo-pool")
+	if err != nil {
+		t.Fatalf("WatchPods: %v", err)
+	}
+	// Let the initial snapshot seed before introducing deltas, so the
+	// transitions register as changes against the seeded idle state.
+	time.Sleep(20 * time.Millisecond)
+	for _, name := range []string{"alpha", "bravo"} {
+		if err := r.UpdatePodState(ctx, podregistry.PodID(name),
+			podregistry.StateTransition{From: "idle", To: "claimed"}); err != nil {
+			t.Fatalf("UpdatePodState %s: %v", name, err)
+		}
+	}
+	// Let the poll loop observe both changes and fall behind on the
+	// single-slot buffer.
+	time.Sleep(120 * time.Millisecond)
+	// Draining the channel must surface a resync frame that carries no
+	// PodRecord — the line 482 re-read signal.
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case e := <-events:
+			if e.EventType != podregistry.EventResync {
+				continue
+			}
+			if e.PodID != "" {
+				t.Errorf("resync PodID = %q, want empty", e.PodID)
+			}
+			if e.PodRecord != (podregistry.PodRecord{}) {
+				t.Errorf("resync PodRecord = %+v, want zero", e.PodRecord)
+			}
+			return
+		case <-deadline:
+			t.Fatal("no resync frame within 2s under backpressure")
+		}
+	}
+}
+
+// spec: §12.6 line 421 (toPodRecord projects ExecutionMode from the
+// denormalized Sandbox spec and SessionID from the status).
+func TestToPodRecordProjectsExecutionModeAndSessionID_spec_12_6_421(t *testing.T) {
+	sb := seedSandbox("alpha", "echo-pool", "claimed")
+	sb.Spec.ExecutionMode = "task"
+	sb.Status.SessionID = "sess-9"
+	r := newRegistry(t, "lenny-agents", sb)
+	rec, err := r.GetPod(context.Background(), "alpha")
+	if err != nil {
+		t.Fatalf("GetPod: %v", err)
+	}
+	if rec.ExecutionMode != "task" {
+		t.Errorf("ExecutionMode = %q, want task", rec.ExecutionMode)
+	}
+	if rec.SessionID != "sess-9" {
+		t.Errorf("SessionID = %q, want sess-9", rec.SessionID)
+	}
+}
+
+// spec: §12.6 line 422 (CreatePod stamps the per-pod PodSpec fields onto
+// the Sandbox so they round-trip through toPodRecord).
+func TestCreatePodStampsExecutionModeAndIsolation_spec_12_6_422(t *testing.T) {
+	r := newRegistry(t, "lenny-agents")
+	spec := podregistry.PodSpec{PoolID: "echo-pool", IsolationProfile: "microvm", ExecutionMode: "concurrent"}
+	rec, err := r.CreatePod(context.Background(), "echo-pool", spec)
+	if err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if rec.IsolationProfile != "microvm" {
+		t.Errorf("IsolationProfile = %q, want microvm", rec.IsolationProfile)
+	}
+	if rec.ExecutionMode != "concurrent" {
+		t.Errorf("ExecutionMode = %q, want concurrent", rec.ExecutionMode)
+	}
+	got, _ := r.GetPod(context.Background(), rec.PodID)
+	if got.ExecutionMode != "concurrent" || got.IsolationProfile != "microvm" {
+		t.Errorf("persisted exec/iso = %q/%q, want concurrent/microvm", got.ExecutionMode, got.IsolationProfile)
 	}
 }
