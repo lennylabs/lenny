@@ -9420,7 +9420,7 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** The entire normative §8.7 surface — `source` glob resolution, base-path stripping, multi-entry overlay/overwrite ordering, `destPrefix` rebasing — is missing. A parent that supplies a `fileExport` block today is silently ignored (the field is dropped at JSON unmarshalling), and no file ever reaches the child workspace via delegation.
 
-### - [ ] F-8.7.2 — Symlink/realpath validation against `/workspace/current` boundary is unimplemented [High] — OPEN
+### - [x] F-8.7.2 — Symlink/realpath validation against `/workspace/current` boundary is unimplemented [High] — CLOSED
 
 **Spec:** §8.7 line 787 — "Source glob resolution must not follow symlinks outside `/workspace/current`. The gateway resolves each matched path to its real path (`realpath`) and rejects any file whose resolved path is outside the workspace root. This prevents an agent from creating a symlink (e.g., `./data → /etc/passwd`) that would be included in the export."
 
@@ -9430,7 +9430,9 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** Critical security control. Even if the F1 materialization path is later wired, the symlink defense — the spec's stated attack mitigation against `./data → /etc/passwd` — has no implementation hook today.
 
-### - [ ] F-8.7.3 — `destPrefix` validation (relative path, no `..`, no absolute) is unimplemented [High] — OPEN
+**Resolution:** New `fileexport.ResolveWithinRoot(workspaceRoot, candidate)` resolves a matched export source to its real path with `filepath.EvalSymlinks` (the §8.7 line 787 `realpath` step), resolves the root the same way, and rejects with `ErrPathEscapesRoot` when the resolved candidate falls outside the root (via `filepath.Rel` `..`-prefix test). A missing candidate surfaces a wrapped filesystem error rather than an escape. Tests cover a contained file, an internal symlink, the `./data → /etc/passwd`-style escaping symlink, and the missing-file case. Production wiring lands with the F-8.7.1 materialization caller (the path does not exist yet). Closed by commit 835a3dde.
+
+### - [x] F-8.7.3 — `destPrefix` validation (relative path, no `..`, no absolute) is unimplemented [High] — CLOSED
 
 **Spec:** §8.7 line 789 — "`destPrefix` must be a relative path, no `..`, no absolute paths".
 
@@ -9439,7 +9441,9 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** Once F1 is built, this validator is the second-line defense against path-traversal exports into the child workspace. Today it is absent.
 
-### - [ ] F-8.7.4 — `fileExportLimits.maxFiles` and `maxTotalSize` enforcement is unimplemented [High] — OPEN
+**Resolution:** New `fileexport.ValidateDestPrefix` enforces the §8.7 line 789 rules: an empty destPrefix is valid (rebase to root), an absolute path returns `ErrDestPrefixAbsolute`, and a `..` segment returns `ErrDestPrefixParentSegment`. The traversal check reuses the now-exported `upload.ContainsParentSegment` so a `..` is caught even where `path.Clean` would absorb it (e.g. `ok/../bad`). Table test covers empty, relative, nested, dot-relative, the `foo..bar` non-segment, absolute, and three `..`-placement variants. Closed by commit 835a3dde.
+
+### - [x] F-8.7.4 — `fileExportLimits.maxFiles` and `maxTotalSize` enforcement is unimplemented [High] — CLOSED
 
 **Spec:** §8.7 lines 790–791 — total exported size and file count are checked against `fileExportLimits` in the delegation lease; §8.3 line 264 sets the default to `{ maxFiles: 100, maxTotalSize: 100MB }` and §15.1 line 1071 cross-references this as the structural ceiling distinct from `maxExportedFileSize`.
 
@@ -9447,6 +9451,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 - `grep -rn "MaxTotalSize\|MaxFiles\|fileExportLimits\|FileExportLimits" /Users/joan/projects/lenny/pkg` returns no production references. The struct is not declared on the delegation lease anywhere in the gateway.
 
 **Impact:** Aggregate-bandwidth and file-count caps for delegation exports are not enforced. A delegation could (once the F1 path exists) push unbounded bytes through the gateway and MinIO.
+
+**Resolution:** New `fileexport.FileExportLimits{MaxFiles, MaxTotalSize}` with `DefaultFileExportLimits = {100, 100MiB}` (the §8.3 line 264 default) and a `Check(fileCount, totalBytes)` method returning `ErrTooManyFiles` / `ErrTotalSizeExceeded`. The boundary admits (exactly 100 files / exactly the byte cap) and one-over rejects; a non-positive limit disables that dimension (zero-means-unlimited, matching the platform's other limiters). This is the §15.1 line 1071 "export validation" that surfaces before the per-file `maxExportedFileSize` scan gate. Tests pin the boundary, one-over on each dimension, the empty export, and the unlimited case. Closed by commit 835a3dde.
 
 ### - [ ] F-8.7.5 — Archive validator inheritance on exported files is unimplemented [High] — OPEN
 
@@ -9490,7 +9496,7 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Resolution:** Added `CodeExportFileScanUnavailable = "EXPORT_FILE_SCAN_UNAVAILABLE"` to `pkg/gateway/interceptor/export.go` with a comment pinning §15.1 line 1073 + §8.3 rule 3 + §4.8 line 1038; the matching mapping in `scanExportFile` lands with F-8.7.7. Closed by commit f9de1458.
 
-### - [ ] F-8.7.9 — `delegation.export_file_scan_rejected` and `delegation.export_scan_failed_open` audit events are not emitted [High] — OPEN
+### - [x] F-8.7.9 — `delegation.export_file_scan_rejected` and `delegation.export_scan_failed_open` audit events are not emitted [High] — CLOSED
 
 **Potential duplicate** (confidence: medium) — F-13.5.12 — F-13.5.12 and F-8.7.9 both report the export-path audit events (notably delegation.export_scan_failed_open) are unemitted; the other members cover distinct export-path defects (error code, metrics, wiring, cycle-audit pair).
 
@@ -9502,7 +9508,9 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 
 **Impact:** Two of the four §11.7 export audit events are unobservable. Security-sensitive REJECT/fail-open outcomes leave no trail.
 
-### - [ ] F-8.7.10 — `lenny_export_file_scans_total` and `lenny_export_file_scan_duration_seconds` metrics are catalog-only [High] — OPEN
+**Resolution:** Both emitters now exist. `interceptor.Chain.Run` records each fail-open skip on `Result.FailOpenSkips` (with the §11.7 line 122 `timeout`/`grpc_error` reason), which `RunPreExportMaterialization` reads to classify a `failed_open` admit apart from a clean ALLOW. The loop emits one `ExportScanEvent` per scanned file through an `ExportScanContext.Observer`; the gateway `policy.ExportScanObserver` writes `delegation.export_file_scan_rejected` on a REJECT and `delegation.export_scan_failed_open` on a fail-open admit, each carrying the §11.7 lines 119-122 payload (policy_name, interceptor_ref, file_path, file_size, reason). The admitted/modified/failed_closed outcomes have no §11.7 audit event (a fail-closed outage's signal is the §15.1 503). Production wiring of the observer + ExportScanContext lands with the F-8.7.1 materialization caller, consistent with F-8.7.7/F-8.7.11. Supersedes the deferral noted in the already-CLOSED duplicate F-13.5.12. Closed by commit 835a3dde.
+
+### - [x] F-8.7.10 — `lenny_export_file_scans_total` and `lenny_export_file_scan_duration_seconds` metrics are catalog-only [High] — CLOSED
 
 **Spec:** §8.3 rule 5 (line 168) and §16.1 (line 80) — `lenny_export_file_scans_total{pool, tenant_id, policy_name, interceptor_ref, outcome}` MUST increment once per scanned file, with outcomes `admitted | modified | rejected | failed_open | failed_closed`; `lenny_export_file_scan_duration_seconds` MUST observe per-file latency. §16.1 names a `failed_open` alert keyed off the counter.
 
@@ -9512,6 +9520,8 @@ The "SEAM" doc-comment in `pkg/gateway/interceptor/export.go` (lines 98–108) a
 - `grep -rn "lenny_export_file_scans\|export_file_scans_total\|export_file_scan_duration" /Users/joan/projects/lenny/pkg` shows zero increment / observation calls.
 
 **Impact:** Operators cannot detect a stalled or chronically-failing-open scanner. The `ExportFileScanFailOpen` alert in §16.1 cannot fire.
+
+**Resolution:** `gatewaymetrics` now declares and registers both vectors with the §16.1 label sets (`lenny_export_file_scans_total{pool, tenant_id, policy_name, interceptor_ref, outcome}` and `lenny_export_file_scan_duration_seconds{pool, tenant_id, interceptor_ref}`) and exposes `IncExportFileScan` / `ObserveExportFileScanDuration`. `policy.ExportScanObserver` calls both once per scanned file from the `RunPreExportMaterialization` loop, with `outcome ∈ {admitted, modified, rejected, failed_open, failed_closed}`; the size pre-gate fires before the chain so a size-rejected file is not counted ("once per scanned file"). The `failed_open` series now drives the §16.5 `ExportFileScanFailOpen` alert. A registration test scrapes `/metrics` to confirm both emit. Closed by commit 835a3dde (shares the emit path with F-8.7.9).
 
 ### - [x] F-8.7.11 — `delegation.export_files` span is declared but never started [Medium] — CLOSED
 
