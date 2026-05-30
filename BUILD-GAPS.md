@@ -6062,7 +6062,7 @@ Effect: a client reconnecting after a long disconnect silently misses events. Th
 
 ---
 
-### - [ ] F-7.2.12 — (Medium) — `message_expired`, `message_dropped`, and `inbox_cleared` events are never emitted [Medium] — OPEN
+### - [x] F-7.2.12 — (Medium) — `message_expired`, `message_dropped`, and `inbox_cleared` events are never emitted [Medium] — CLOSED
 
 Spec §7.2 (lines 284, 341, 343, 347, 425) defines these three event types with canonical schemas and reason enums. They are the only signal a sender receives when a queued message never reached its target.
 
@@ -6071,6 +6071,11 @@ Implementation:
 - Without the inbox/DLQ implementation (F4), there is no mechanism to fire these events.
 
 Effect: a sender that received `queued` from `lenny/send_message` has no signal when the target session terminates, when the DLQ TTL expires, or when the inbox overflows. The whole reliable-delivery feedback loop is silent.
+
+**Resolution:** Closed by wiring the two remaining schedulers onto the inbox/DLQ machinery F-7.2.4 landed (the F-7.2.4 resolution explicitly deferred these). The grep-zero-matches evidence is stale. Per event:
+- **`message_expired`** — already emitted by F-7.2.4 on the terminal drain (`reason: target_terminated`). This batch adds the `dlq_ttl_expired` path: new `Watchdog.WithMessaging(DLQSweeper)` + `sweepDLQExpiry` runs `Coordinator.SweepExpired` over every `resume_pending` / `awaiting_client_action` session each tick, the §7.2 line 294 state-gated background trimmer (per-session sweep errors isolated so a Redis blip cannot stall the tick). Wired in `cmd/lenny-gateway` only when the coordinator exists (a nil `*Coordinator` would form a typed-nil interface).
+- **`inbox_cleared`** — new `Coordinator.ClearInboxOnAcquire` emits the §7.2 line 284 event on the target's own stream when the gateway re-acquires a recovering session via `POST /resume` (the v1 coordinator-reacquisition point), `messagesPreservedInDLQ` set to the surviving DLQ depth. Durable mode skips it (the Redis inbox survives failover). Wired via `clearInboxOnResume` in `handleResume`. The multi-replica lease-reacquisition trigger lands with F-10.1.4 coordinator-loss detection.
+- **`message_dropped`** — per §15.4.1 line 1737 this is a synchronous delivery-receipt *status* (`dropped`, `reason: inbox_overflow` / `dlq_overflow`), not an async event; the receipt enum exists (F-7.2.10) and the overflow-detection machinery (inbox/DLQ `Enqueue` returning the evicted message) is in place. Returning it end-to-end requires the send-path router that buffers into the inbox/DLQ, the distinct F-7.2.5 deliverable. Resolved by `652236d8`.
 
 ---
 
