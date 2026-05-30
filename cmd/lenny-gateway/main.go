@@ -642,6 +642,8 @@ func main() {
 		"§11.2.1 line 187 billing.correctionRateThreshold: BillingCorrectionRateHigh alert threshold as a fraction (0.05 = 5%). Emitted at startup on the lenny_billing_correction_rate_threshold gauge so the §16.5 alert can evaluate via scalar(lenny_billing_correction_rate_threshold). Override via LENNY_BILLING_CORRECTION_RATE_THRESHOLD.")
 	billingRetentionDays := flag.Int("billing-retention-days", envInt("LENNY_BILLING_RETENTION_DAYS", billingretention.DefaultRetentionDays),
 		"§11.2.1 line 151 billing.retentionDays: how long billing events are retained before the periodic retention pruner deletes them (default 395). The gateway rejects a value below the compliance floor of any tenant's regulated complianceProfile at startup (hipaa 2190, soc2 365, fedramp 365). Override via LENNY_BILLING_RETENTION_DAYS.")
+	gdprRetentionDays := flag.Int("audit-gdpr-retention-days", envInt("LENNY_AUDIT_GDPR_RETENTION_DAYS", audit.GDPRRetentionDefaultDays),
+		"§12.8 line 839 audit.gdprRetentionDays: how long gdpr.* audit rows (erasure receipts, legal-hold ledger events) are retained, on a window separate from audit.retentionDays (default 2555 / 7 years). The gateway rejects a value below 2190 (6 years) when any tenant has a regulated complianceProfile (soc2, fedramp, hipaa) at startup. Override via LENNY_AUDIT_GDPR_RETENTION_DAYS.")
 	// §27.2 web-playground flags. These mirror the playground.* Helm
 	// values; the gateway reads them from its own configuration so the
 	// playground is gated without a separate deployment target.
@@ -1109,16 +1111,26 @@ func main() {
 	billingLedger := billing
 	billing = billingPipeline
 
-	// spec: §11.2.1 line 151 — reject a billing.retentionDays below the
-	// compliance floor of any tenant's regulated complianceProfile at
-	// startup, mirroring the audit.gdprRetentionDays floor pattern. A
-	// transient tenant-list failure degrades to a warning rather than
-	// crashing the boot. F-11.2.15.
+	// spec: §11.2.1 line 151 / §12.8 line 839 — reject a retention window
+	// below the compliance floor of any tenant's regulated
+	// complianceProfile at startup. billing.retentionDays floors at the
+	// per-profile billing floor (hipaa 2190, soc2/fedramp 365);
+	// audit.gdprRetentionDays floors at 2190 (6 years) under any regulated
+	// profile so gdpr.* erasure receipts outlive the erased user's data
+	// and any subsequent tenant deletion. A transient tenant-list failure
+	// degrades to a warning rather than crashing the boot. F-11.2.15,
+	// F-12.8.16.
 	if profiles, err := activeComplianceProfiles(context.Background(), tenants); err != nil {
-		log.Printf("lenny-gateway: WARNING: billing.retentionDays compliance-floor preflight could not list tenants: %v", err)
-	} else if err := billingretention.ValidateRetentionDays(*billingRetentionDays, profiles); err != nil {
-		log.Fatalf("lenny-gateway: %v", err)
+		log.Printf("lenny-gateway: WARNING: retention-days compliance-floor preflight could not list tenants: %v", err)
+	} else {
+		if err := billingretention.ValidateRetentionDays(*billingRetentionDays, profiles); err != nil {
+			log.Fatalf("lenny-gateway: %v", err)
+		}
+		if err := audit.ValidateGDPRRetentionDays(*gdprRetentionDays, profiles); err != nil {
+			log.Fatalf("lenny-gateway: %v", err)
+		}
 	}
+	log.Printf("lenny-gateway: §12.8 audit.gdprRetentionDays floor active (gdpr.* retention %d days)", *gdprRetentionDays)
 
 	// ----- §7.1 uploadToken KeyRing + rotator -----
 	// The §7.1 line 67 contract requires the gateway to rotate signing

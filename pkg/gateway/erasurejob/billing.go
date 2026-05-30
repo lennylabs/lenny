@@ -44,6 +44,28 @@ type BillingErasureOutcome struct {
 	Verified bool
 }
 
+// VerificationOutcome reports the §12.8 line 851 salt-removal
+// verification result recorded in the erasure receipt: "verified" when
+// billing events were pseudonymized and the post-erasure check passed,
+// "unverified" when pseudonymization ran but the check did not pass (a
+// job in this state fails before completion and never writes a
+// completion receipt), "exempt" when the tenant's billingErasurePolicy
+// skipped pseudonymization, and "not_applicable" when no BillingEraser
+// ran for the job.
+func (o BillingErasureOutcome) VerificationOutcome() string {
+	switch o.Disposition {
+	case billingPseudonymized:
+		if o.Verified {
+			return "verified"
+		}
+		return "unverified"
+	case billingExempt:
+		return "exempt"
+	default:
+		return "not_applicable"
+	}
+}
+
 // BillingEraser runs the §12.8 billing-event pseudonymization step of a
 // user erasure. Billing events are append-only with monotonic sequence
 // numbers, so they are pseudonymized rather than deleted: the user id

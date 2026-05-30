@@ -723,6 +723,18 @@ audit:
   # the gateway logs a WARN but does not refuse to start. A non-positive
   # value walks each tenant chain in full. F-12.3.9.
   startupChainCheckEntries: 1000
+  # §16.4 audit.retentionDays: the general Postgres audit-log retention
+  # window in days. The audit GC applies it to non-gdpr.* rows. gdpr.*
+  # rows are governed separately by gdprRetentionDays below. F-12.8.16.
+  retentionDays: 365
+  # §12.8 line 839 audit.gdprRetentionDays: how long gdpr.* audit rows
+  # (erasure receipts, legal-hold ledger events) are retained, on a
+  # window separate from retentionDays. Default 2555 (7 years). The
+  # gateway rejects a value below 2190 (6 years) at startup with
+  # `CONFIG_INVALID: audit.gdprRetentionDays below compliance floor`
+  # when any tenant has a regulated complianceProfile (soc2, fedramp,
+  # hipaa). F-12.8.16.
+  gdprRetentionDays: 2555
 
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render
@@ -1973,6 +1985,29 @@ preflight:
       cpu: 200m
       memory: 128Mi
 
+# storage carries the §12.8 per-region storage configuration consumed
+# by the tenant-deletion controller. regions maps a dataResidencyRegion
+# to its settings; the chart leaves it empty so a single-region install
+# renders without it. The consuming Phase 3.5 controller is tracked by
+# F-12.8.2.
+storage:
+  # regions maps each dataResidencyRegion key (e.g. eu-west-1) to its
+  # §12.8 settings. legalHoldEscrow names the region-scoped escrow bucket
+  # and KMS material the tenant-deletion legal-hold segregation step
+  # (§12.8 line 883) re-encrypts held evidence into before destroying the
+  # tenant KEK, so held data outlives the tombstone without crossing the
+  # region boundary. spec: §12.8 lines 872, 883.
+  #
+  # Example (uncomment and fill per residency region):
+  # regions:
+  #   eu-west-1:
+  #     legalHoldEscrow:
+  #       endpoint: ""    # escrow object-store endpoint (host:port)
+  #       bucket: ""      # region-scoped escrow bucket
+  #       kmsKeyId: ""    # KMS key id for the escrow bucket
+  #       escrowKekId: "" # platform:legal_hold_escrow:<region> KEK id
+  regions: {}
+
 # backups configures the §25.11 backup-and-restore subsystem. lenny-ops
 # orchestrates backup, verify, and restore Kubernetes Jobs that run the
 # lenny-backup image; the values here cover the shared image, the
@@ -1983,6 +2018,13 @@ backups:
     # tag defaults to the chart appVersion when left empty.
     tag: ""
     pullPolicy: IfNotPresent
+  # erasureReconciler gates the §12.8 post-restore GDPR erasure
+  # reconciler: after a restore replays a backup, it re-applies erasure
+  # jobs whose completion postdates the restored snapshot so a restore
+  # cannot resurrect erased user data. Disabled by default; the
+  # consuming reconciler is tracked by F-12.8.3. spec: §12.8 line 906.
+  erasureReconciler:
+    enabled: false
   # retention is the §25.11 retention policy. The base values are the
   # Tier-2 defaults; values-tier1.yaml and values-tier3.yaml override
   # them. The chart refuses to render retainMinFull or retainCount

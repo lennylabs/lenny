@@ -483,10 +483,11 @@ tests:
       #   (§12.3 line 76, F-12.3.13)
       # + LENNY_POSTGRES_WRITE_CEILING_IOPS (§12.3 line 123, F-12.3.8)
       # + LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES (§12.3 line 101,
-      #   F-12.3.9) = 38.
+      #   F-12.3.9)
+      # + LENNY_AUDIT_GDPR_RETENTION_DAYS (§12.8 line 839, F-12.8.16) = 39.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 38
+          count: 39
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -1048,6 +1049,32 @@ tests:
           content:
             name: LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES
             value: "5000"
+
+  # spec: §12.8 line 839 — audit.gdprRetentionDays flows through to
+  # LENNY_AUDIT_GDPR_RETENTION_DAYS. F-12.8.16.
+  - it: wires LENNY_AUDIT_GDPR_RETENTION_DAYS from the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_GDPR_RETENTION_DAYS
+            value: "2555"
+
+  - it: wires LENNY_AUDIT_GDPR_RETENTION_DAYS from an audit.gdprRetentionDays override
+    set:
+      audit.gdprRetentionDays: 2920
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_GDPR_RETENTION_DAYS
+            value: "2920"
 
   # spec: §8.10 lines 1022-1023 / 1078 / 1103 — delegation block surfaces
   # the operator-tunable per-level, whole-tree, cascade, and orphan-cap

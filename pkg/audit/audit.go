@@ -110,12 +110,20 @@ func (p ComplianceProfile) IsValid() bool {
 	return false
 }
 
+// IsRegulated reports whether the profile is one of the regulated
+// values (soc2, fedramp, hipaa). The regulated profiles trigger the
+// §11.7 SIEM hard-requirement and the §12.8 audit.gdprRetentionDays
+// compliance floor. spec: §12.8 line 839.
+func (p ComplianceProfile) IsRegulated() bool {
+	return p == ComplianceSOC2 || p == ComplianceFedRAMP || p == ComplianceHIPAA
+}
+
 // RequiresSIEM reports whether the profile mandates a configured
 // `audit.siem.endpoint`. Without one, the gateway refuses to start
 // per §16.4 / §11.7 — except under ComplianceNone, where the
 // AuditSIEMNotConfigured warning fires but the gateway starts.
 func (p ComplianceProfile) RequiresSIEM() bool {
-	return p == ComplianceSOC2 || p == ComplianceFedRAMP || p == ComplianceHIPAA
+	return p.IsRegulated()
 }
 
 // RetentionPreset names a Postgres-retention bundle from §16.4. Each
@@ -265,4 +273,58 @@ func (s OCSFTranslationState) IsValid() bool {
 // terminal; pending and retry_pending are not.
 func (s OCSFTranslationState) IsTerminal() bool {
 	return s == OCSFSucceeded || s == OCSFDeadLettered
+}
+
+// GDPRRetentionDefaultDays is the §12.8 audit.gdprRetentionDays default:
+// 2555 days (7 years). gdpr.* audit rows (erasure receipts, legal-hold
+// ledger events) are retained at least this long, on a window separate
+// from the general audit.retentionDays setting. spec: §12.8 line 839.
+const GDPRRetentionDefaultDays = 2555
+
+// GDPRRetentionComplianceFloorDays is the §12.8 minimum
+// audit.gdprRetentionDays under any regulated complianceProfile (soc2,
+// fedramp, hipaa): 2190 days (6 years). A configured value below this
+// floor is rejected at startup. spec: §12.8 line 839.
+const GDPRRetentionComplianceFloorDays = 2190
+
+// GDPRRetentionFloorError reports that the configured
+// audit.gdprRetentionDays is below the §12.8 compliance floor a
+// regulated complianceProfile mandates. Its Error() is the §12.8 line
+// 839 CONFIG_INVALID startup message verbatim; the struct fields carry
+// the configured value, the binding profile, and the floor for logging.
+type GDPRRetentionFloorError struct {
+	RetentionDays int
+	Profile       string
+	FloorDays     int
+}
+
+func (e *GDPRRetentionFloorError) Error() string {
+	return "CONFIG_INVALID: audit.gdprRetentionDays below compliance floor"
+}
+
+// ValidateGDPRRetentionDays enforces the §12.8 audit.gdprRetentionDays
+// compliance floor. profiles is the set of complianceProfile values
+// active across the deployment's tenants. It returns a
+// *GDPRRetentionFloorError when any regulated profile is present and
+// gdprRetentionDays is below GDPRRetentionComplianceFloorDays, and nil
+// otherwise. A non-positive gdprRetentionDays is treated as
+// GDPRRetentionDefaultDays before the comparison so an unset value
+// cannot bypass the floor. spec: §12.8 line 839.
+func ValidateGDPRRetentionDays(gdprRetentionDays int, profiles []string) error {
+	if gdprRetentionDays <= 0 {
+		gdprRetentionDays = GDPRRetentionDefaultDays
+	}
+	if gdprRetentionDays >= GDPRRetentionComplianceFloorDays {
+		return nil
+	}
+	for _, p := range profiles {
+		if ComplianceProfile(p).IsRegulated() {
+			return &GDPRRetentionFloorError{
+				RetentionDays: gdprRetentionDays,
+				Profile:       p,
+				FloorDays:     GDPRRetentionComplianceFloorDays,
+			}
+		}
+	}
+	return nil
 }

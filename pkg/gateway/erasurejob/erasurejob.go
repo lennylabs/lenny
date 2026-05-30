@@ -49,6 +49,14 @@ func (p Phase) Terminal() bool {
 	return p == PhaseCompleted || p == PhaseFailed
 }
 
+// PhaseTransition is one entry in a Job's PhaseLog: the lifecycle phase
+// the job entered and the instant it entered it. spec: §12.8 line 762
+// (each erasure job record persists its phase).
+type PhaseTransition struct {
+	Phase Phase
+	At    time.Time
+}
+
 // Job is one §12.8 DeleteByUser erasure job.
 type Job struct {
 	// ID is the opaque job identifier returned to the admin caller.
@@ -73,6 +81,11 @@ type Job struct {
 	// not reached the pseudonymizing phase or no BillingEraser is
 	// wired into the Runner.
 	Billing BillingErasureOutcome
+	// PhaseLog records every §12.8 lifecycle transition in order with
+	// its timestamp, so the completion receipt presents the per-phase
+	// timeline a compliance auditor uses to reconstruct the erasure
+	// sequence. spec: §12.8 line 762.
+	PhaseLog []PhaseTransition
 	// Failure carries the error reason when Phase is failed.
 	Failure string
 }
@@ -153,8 +166,8 @@ func (m *Memory) Update(_ context.Context, id string, mutate func(*Job) error) (
 	return cloneJob(j), nil
 }
 
-// cloneJob deep-copies the Deleted map so a stored job and a returned
-// copy never share mutable state.
+// cloneJob deep-copies the Deleted map and PhaseLog slice so a stored
+// job and a returned copy never share mutable state.
 func cloneJob(j Job) Job {
 	if j.Deleted != nil {
 		d := make(map[string]int, len(j.Deleted))
@@ -162,6 +175,11 @@ func cloneJob(j Job) Job {
 			d[k] = v
 		}
 		j.Deleted = d
+	}
+	if j.PhaseLog != nil {
+		pl := make([]PhaseTransition, len(j.PhaseLog))
+		copy(pl, j.PhaseLog)
+		j.PhaseLog = pl
 	}
 	return j
 }

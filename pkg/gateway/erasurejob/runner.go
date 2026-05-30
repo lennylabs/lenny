@@ -94,12 +94,16 @@ var errBillingVerification = errors.New(
 	"billing erasure verification failed: the erasure salt or the original user id survived pseudonymization",
 )
 
-// setPhase returns a job mutator that sets the lifecycle phase.
-func setPhase(p Phase) func(*Job) error {
-	return func(j *Job) error {
+// advance sets the job's lifecycle phase and appends the transition to
+// its PhaseLog with the current clock time, so the §12.8 completion
+// receipt can present the per-phase timeline. spec: §12.8 line 762.
+func (r *Runner) advance(ctx context.Context, jobID string, p Phase) error {
+	_, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
 		j.Phase = p
+		j.PhaseLog = append(j.PhaseLog, PhaseTransition{Phase: p, At: r.clock()})
 		return nil
-	}
+	})
+	return err
 }
 
 // recordBilling returns a job mutator that records the §12.8 billing
@@ -119,6 +123,7 @@ func (r *Runner) fail(ctx context.Context, jobID, failurePhase string, cause err
 			extra(j)
 		}
 		j.Phase = PhaseFailed
+		j.PhaseLog = append(j.PhaseLog, PhaseTransition{Phase: PhaseFailed, At: r.clock()})
 		j.Failure = cause.Error()
 		j.CompletedAt = r.clock()
 		return nil
@@ -138,12 +143,14 @@ func (r *Runner) fail(ctx context.Context, jobID, failurePhase string, cause err
 // immediately while erasure proceeds in the background.
 func (r *Runner) Start(ctx context.Context, tenantID, userID string) (string, error) {
 	id := NewID()
+	now := r.clock()
 	if err := r.jobs.Create(ctx, Job{
 		ID:        id,
 		TenantID:  tenantID,
 		UserID:    userID,
 		Phase:     PhaseInitiated,
-		StartedAt: r.clock(),
+		StartedAt: now,
+		PhaseLog:  []PhaseTransition{{Phase: PhaseInitiated, At: now}},
 	}); err != nil {
 		return "", err
 	}
@@ -187,7 +194,7 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 	}
 
 	// Store deletion.
-	if _, err := r.jobs.Update(ctx, jobID, setPhase(PhaseStoreDeleting)); err != nil {
+	if err := r.advance(ctx, jobID, PhaseStoreDeleting); err != nil {
 		return err
 	}
 	res, eraseErr := r.erase.DeleteByUser(ctx, job.TenantID, job.UserID)
@@ -207,7 +214,7 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 	// then the post-pseudonymization check confirms the erasure.
 	billing := BillingErasureOutcome{}
 	if r.billing != nil {
-		if _, err := r.jobs.Update(ctx, jobID, setPhase(PhasePseudonymizing)); err != nil {
+		if err := r.advance(ctx, jobID, PhasePseudonymizing); err != nil {
 			return err
 		}
 		billing, err = r.billing.Pseudonymize(ctx, job.TenantID, job.UserID)
@@ -215,7 +222,7 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 			return r.fail(ctx, jobID, FailurePhasePseudonymization, err, nil)
 		}
 		if billing.Disposition != billingExempt {
-			if _, err := r.jobs.Update(ctx, jobID, setPhase(PhaseVerifying)); err != nil {
+			if err := r.advance(ctx, jobID, PhaseVerifying); err != nil {
 				return err
 			}
 			verified, err := r.billing.Verify(ctx, job.TenantID, job.UserID)
@@ -231,9 +238,11 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 
 	// Completed.
 	if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
+		now := r.clock()
 		j.Billing = billing
 		j.Phase = PhaseCompleted
-		j.CompletedAt = r.clock()
+		j.PhaseLog = append(j.PhaseLog, PhaseTransition{Phase: PhaseCompleted, At: now})
+		j.CompletedAt = now
 		return nil
 	}); err != nil {
 		return err

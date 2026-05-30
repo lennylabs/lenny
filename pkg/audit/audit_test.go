@@ -167,3 +167,73 @@ func TestOCSFStateIsTerminal(t *testing.T) {
 		}
 	}
 }
+
+// spec: §12.8 line 839 — IsRegulated is true exactly for soc2, fedramp,
+// and hipaa; none and the empty profile are unregulated.
+func TestComplianceProfileIsRegulated(t *testing.T) {
+	regulated := map[ComplianceProfile]bool{
+		ComplianceSOC2:        true,
+		ComplianceFedRAMP:     true,
+		ComplianceHIPAA:       true,
+		ComplianceNone:        false,
+		ComplianceProfile(""): false,
+	}
+	for p, want := range regulated {
+		if got := p.IsRegulated(); got != want {
+			t.Errorf("ComplianceProfile(%q).IsRegulated() = %v, want %v", p, got, want)
+		}
+		// RequiresSIEM delegates to IsRegulated; the two must agree.
+		if p.RequiresSIEM() != p.IsRegulated() {
+			t.Errorf("RequiresSIEM(%q)=%v diverges from IsRegulated()=%v", p, p.RequiresSIEM(), p.IsRegulated())
+		}
+	}
+}
+
+// spec: §12.8 line 839 — audit.gdprRetentionDays must be at least 2190
+// (6 years) under any regulated complianceProfile; the default is 2555.
+func TestValidateGDPRRetentionDays(t *testing.T) {
+	cases := []struct {
+		name     string
+		days     int
+		profiles []string
+		wantErr  bool
+	}{
+		{"default under hipaa", GDPRRetentionDefaultDays, []string{"hipaa"}, false},
+		{"floor boundary under soc2", GDPRRetentionComplianceFloorDays, []string{"soc2"}, false},
+		{"one below floor under hipaa", GDPRRetentionComplianceFloorDays - 1, []string{"hipaa"}, true},
+		{"one below floor under fedramp", 1000, []string{"fedramp"}, true},
+		{"below floor but no regulated profile", 30, []string{"none", ""}, false},
+		{"below floor with mixed profiles", 100, []string{"none", "soc2"}, true},
+		{"zero treated as default under hipaa", 0, []string{"hipaa"}, false},
+		{"negative treated as default under hipaa", -5, []string{"hipaa"}, false},
+		{"no profiles", 1, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateGDPRRetentionDays(tc.days, tc.profiles)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("ValidateGDPRRetentionDays(%d, %v) err=%v, wantErr=%v", tc.days, tc.profiles, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// spec: §12.8 line 839 — the startup rejection message is verbatim so
+// operators and tests can match on it.
+func TestGDPRRetentionFloorErrorMessage(t *testing.T) {
+	err := ValidateGDPRRetentionDays(100, []string{"hipaa"})
+	if err == nil {
+		t.Fatal("expected a floor error")
+	}
+	const want = "CONFIG_INVALID: audit.gdprRetentionDays below compliance floor"
+	if err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err.Error(), want)
+	}
+	var floorErr *GDPRRetentionFloorError
+	if !errors.As(err, &floorErr) {
+		t.Fatalf("error is not a *GDPRRetentionFloorError: %T", err)
+	}
+	if floorErr.Profile != "hipaa" || floorErr.FloorDays != GDPRRetentionComplianceFloorDays || floorErr.RetentionDays != 100 {
+		t.Errorf("floor error fields = %+v", floorErr)
+	}
+}

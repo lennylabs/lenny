@@ -659,6 +659,13 @@ spec:
             - name: LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES
               value: {{ .Values.audit.startupChainCheckEntries | quote }}
             {{- end }}
+            # §12.8 line 839 audit.gdprRetentionDays: retention window for
+            # gdpr.* audit rows. The gateway rejects a value below 2190
+            # under a regulated complianceProfile at startup. F-12.8.16.
+            {{- if and .Values.audit (hasKey .Values.audit "gdprRetentionDays") }}
+            - name: LENNY_AUDIT_GDPR_RETENTION_DAYS
+              value: {{ .Values.audit.gdprRetentionDays | quote }}
+            {{- end }}
             # §25.13 line 4798 healthTracker.useCompiledRules: gates the
             # gateway's in-process §16.5 alert evaluator. Set false to
             # suppress the per-replica tracker and let /v1/admin/health

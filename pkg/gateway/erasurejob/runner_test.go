@@ -377,3 +377,154 @@ func TestRunnerRunBillingVerificationFails(t *testing.T) {
 		t.Error("Billing.Verified must be false on a verification failure")
 	}
 }
+
+// phaseSeq extracts the ordered phase sequence from a job's PhaseLog.
+func phaseSeq(job erasurejob.Job) []erasurejob.Phase {
+	seq := make([]erasurejob.Phase, 0, len(job.PhaseLog))
+	for _, tr := range job.PhaseLog {
+		seq = append(seq, tr.Phase)
+	}
+	return seq
+}
+
+// samePhases reports whether two phase sequences are identical.
+func samePhases(a, b []erasurejob.Phase) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// spec: §12.8 line 762 — the job records its phase at each transition so
+// the completion receipt can present the per-phase timeline. Without a
+// BillingEraser the sequence is initiated → store_deleting → completed.
+func TestRunnerRunRecordsPhaseLog(t *testing.T) {
+	jobs := erasurejob.NewMemory()
+	at := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	r := erasurejob.NewRunner(jobs, orch, fixedClock(at))
+
+	id, _ := r.Start(context.Background(), "acme", "alice")
+	if err := r.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	job, _ := jobs.Get(context.Background(), id)
+	want := []erasurejob.Phase{
+		erasurejob.PhaseInitiated,
+		erasurejob.PhaseStoreDeleting,
+		erasurejob.PhaseCompleted,
+	}
+	if got := phaseSeq(job); !samePhases(got, want) {
+		t.Errorf("PhaseLog sequence = %v, want %v", got, want)
+	}
+	for _, tr := range job.PhaseLog {
+		if !tr.At.Equal(at) {
+			t.Errorf("PhaseLog entry %q timestamp = %v, want %v", tr.Phase, tr.At, at)
+		}
+	}
+}
+
+// spec: §12.8 line 762 — a pseudonymizing run logs every phase including
+// pseudonymizing and verifying.
+func TestRunnerRunPhaseLogWithBilling(t *testing.T) {
+	ctx := context.Background()
+	jobs := erasurejob.NewMemory()
+	tenants := tenantstore.NewMemory()
+	seedTenant(t, tenants, tenantstore.Tenant{ID: "acme"})
+	billing := billingstore.NewMemory()
+	seedBilling(t, billing, "acme", "alice@acme", 2)
+
+	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+		WithBilling(erasurejob.NewBillingEraser(billing, tenants))
+	id, _ := r.Start(ctx, "acme", "alice@acme")
+	if err := r.Run(ctx, id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	job, _ := jobs.Get(ctx, id)
+	want := []erasurejob.Phase{
+		erasurejob.PhaseInitiated,
+		erasurejob.PhaseStoreDeleting,
+		erasurejob.PhasePseudonymizing,
+		erasurejob.PhaseVerifying,
+		erasurejob.PhaseCompleted,
+	}
+	if got := phaseSeq(job); !samePhases(got, want) {
+		t.Errorf("PhaseLog sequence = %v, want %v", got, want)
+	}
+}
+
+// spec: §12.8 line 762 — an exempt tenant skips the verifying phase, so
+// the log omits it.
+func TestRunnerRunPhaseLogExemptSkipsVerifying(t *testing.T) {
+	ctx := context.Background()
+	jobs := erasurejob.NewMemory()
+	tenants := tenantstore.NewMemory()
+	seedTenant(t, tenants, tenantstore.Tenant{
+		ID: "acme", BillingErasurePolicy: tenantstore.BillingErasureExempt,
+	})
+
+	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+		WithBilling(erasurejob.NewBillingEraser(billingstore.NewMemory(), tenants))
+	id, _ := r.Start(ctx, "acme", "alice@acme")
+	if err := r.Run(ctx, id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	job, _ := jobs.Get(ctx, id)
+	want := []erasurejob.Phase{
+		erasurejob.PhaseInitiated,
+		erasurejob.PhaseStoreDeleting,
+		erasurejob.PhasePseudonymizing,
+		erasurejob.PhaseCompleted,
+	}
+	if got := phaseSeq(job); !samePhases(got, want) {
+		t.Errorf("PhaseLog sequence = %v, want %v (exempt skips verifying)", got, want)
+	}
+}
+
+// spec: §12.8 line 762 — a failed job's phase log ends with the failed
+// transition so the timeline shows where the erasure stopped.
+func TestRunnerRunPhaseLogOnFailure(t *testing.T) {
+	jobs := erasurejob.NewMemory()
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{
+		{Name: "broken", DeleteByUser: func(context.Context, string, string) (int, error) {
+			return 0, errors.New("store down")
+		}},
+	}})
+	r := erasurejob.NewRunner(jobs, orch, nil)
+	id, _ := r.Start(context.Background(), "acme", "alice")
+	if err := r.Run(context.Background(), id); err == nil {
+		t.Fatal("Run should return the erasure error")
+	}
+	job, _ := jobs.Get(context.Background(), id)
+	seq := phaseSeq(job)
+	if len(seq) == 0 || seq[len(seq)-1] != erasurejob.PhaseFailed {
+		t.Errorf("PhaseLog = %v, want a trailing failed transition", seq)
+	}
+}
+
+// spec: §12.8 line 851 — VerificationOutcome maps the billing outcome to
+// the salt-removal verification result recorded in the erasure receipt.
+func TestBillingErasureOutcomeVerificationOutcome(t *testing.T) {
+	cases := []struct {
+		name string
+		in   erasurejob.BillingErasureOutcome
+		want string
+	}{
+		{"pseudonymized verified", erasurejob.BillingErasureOutcome{Disposition: "pseudonymized", Verified: true}, "verified"},
+		{"pseudonymized unverified", erasurejob.BillingErasureOutcome{Disposition: "pseudonymized", Verified: false}, "unverified"},
+		{"exempt", erasurejob.BillingErasureOutcome{Disposition: "exempt"}, "exempt"},
+		{"no billing eraser", erasurejob.BillingErasureOutcome{}, "not_applicable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.in.VerificationOutcome(); got != tc.want {
+				t.Errorf("VerificationOutcome() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

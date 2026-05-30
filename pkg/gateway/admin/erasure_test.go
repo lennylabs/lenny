@@ -207,8 +207,33 @@ func TestEraseUserReceiptRecordsBillingPseudonymization(t *testing.T) {
 	if be["verified"] != true {
 		t.Errorf("billingErasure.verified = %v, want true", be["verified"])
 	}
+	// spec: §12.8 line 851 — the salt-removal verification outcome is
+	// recorded explicitly in the receipt.
+	if receipt.Detail["verificationOutcome"] != "verified" {
+		t.Errorf("verificationOutcome = %v, want verified", receipt.Detail["verificationOutcome"])
+	}
+	// spec: §12.8 line 762 — the receipt carries the per-phase timeline,
+	// ending in the completed transition.
+	assertReceiptPhaseLogCompleted(t, receipt)
 	if cnt, _ := billing.CountUser(context.Background(), "acme", "alice@acme.com"); cnt != 0 {
 		t.Errorf("%d billing events still carry the original user id, want 0", cnt)
+	}
+}
+
+// assertReceiptPhaseLogCompleted checks the §12.8 receipt phaseLog is a
+// non-empty array whose last entry is the completed phase.
+func assertReceiptPhaseLogCompleted(t *testing.T, receipt admin.AuditEvent) {
+	t.Helper()
+	log, ok := receipt.Detail["phaseLog"].([]map[string]any)
+	if !ok || len(log) == 0 {
+		t.Fatalf("receipt phaseLog missing or empty: %v", receipt.Detail["phaseLog"])
+	}
+	last := log[len(log)-1]
+	if last["phase"] != "completed" {
+		t.Errorf("receipt phaseLog last phase = %v, want completed", last["phase"])
+	}
+	if at, ok := last["at"].(string); !ok || at == "" {
+		t.Errorf("receipt phaseLog entry missing at timestamp: %v", last)
 	}
 }
 
@@ -236,9 +261,34 @@ func TestEraseUserReceiptRecordsBillingExempt(t *testing.T) {
 	if be["disposition"] != "exempt" {
 		t.Errorf("billingErasure.disposition = %v, want exempt", be["disposition"])
 	}
+	// spec: §12.8 line 851 — an exempt tenant runs no salt verification.
+	if receipt.Detail["verificationOutcome"] != "exempt" {
+		t.Errorf("verificationOutcome = %v, want exempt", receipt.Detail["verificationOutcome"])
+	}
 	// §12.8 Article 17(3)(b): an exempt tenant retains the original id.
 	if cnt, _ := billing.CountUser(context.Background(), "acme", "bob@acme.com"); cnt != 1 {
 		t.Errorf("exempt tenant's billing event was rewritten: CountUser=%d, want 1", cnt)
+	}
+}
+
+// spec: §12.8 lines 762, 851 — when no BillingEraser is wired the
+// completion receipt still carries the per-phase timeline and records a
+// not_applicable verification outcome (no salt was destroyed).
+func TestEraseUserReceiptRecordsPhaseLogWithoutBilling(t *testing.T) {
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	router, users, _, audit := newErasureAdmin(t, orch)
+	seedUser(t, users, "acme", "alice@acme.com")
+
+	rr := eraseUser(t, router.Handler(), "alice@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("erase: status %d, body %s", rr.Code, rr.Body.String())
+	}
+
+	receipt := awaitAuditEvent(t, audit, "gdpr.erasure_completed")
+	assertReceiptPhaseLogCompleted(t, receipt)
+	if receipt.Detail["verificationOutcome"] != "not_applicable" {
+		t.Errorf("verificationOutcome = %v, want not_applicable", receipt.Detail["verificationOutcome"])
 	}
 }
 
@@ -450,21 +500,35 @@ func TestEraseUserHoldOverrideProceeds(t *testing.T) {
 	}
 	// §12.8: the override is recorded synchronously as gdpr.legal_hold_overridden.
 	override := awaitAuditEvent(t, audit, "gdpr.legal_hold_overridden")
-	if override.Detail["justification"] != "court order lifted, ticket-9" {
-		t.Errorf("override event justification = %v", override.Detail["justification"])
+	// spec: §12.8 line 796 — the event carries the same fields as the
+	// receipt (legal_hold_override, override_by, override_justification,
+	// override_at, overridden_holds) plus jobId.
+	if override.Detail["overrideJustification"] != "court order lifted, ticket-9" {
+		t.Errorf("override event overrideJustification = %v", override.Detail["overrideJustification"])
 	}
-	// spec: §12.8 line 796 — the legal-hold-override event payload carries
-	// the same fields as the erasure receipt plus jobId, so an auditor can
-	// pivot from admin.user.erasure_initiated to the override decision
-	// without triangulating on userId alone.
+	if override.Detail["legalHoldOverride"] != true {
+		t.Errorf("override event should carry legalHoldOverride=true: %+v", override.Detail)
+	}
+	if at, ok := override.Detail["overrideAt"].(string); !ok || at == "" {
+		t.Errorf("override event overrideAt = %v (want non-empty RFC3339 string per §12.8 line 796)", override.Detail["overrideAt"])
+	}
+	if override.Detail["overriddenHolds"] == nil {
+		t.Errorf("override event should carry the overriddenHolds list: %+v", override.Detail)
+	}
+	// jobId lets an auditor pivot from admin.user.erasure_initiated to the
+	// override decision without triangulating on userId alone.
 	jobID, ok := override.Detail["jobId"].(string)
 	if !ok || jobID == "" {
 		t.Errorf("override event jobId = %v (want non-empty string per §12.8 line 796)", override.Detail["jobId"])
 	}
-	// The completion receipt records that an override was exercised.
+	// The completion receipt records that an override was exercised, with
+	// the same override_at the event carried.
 	receipt := awaitAuditEvent(t, audit, "gdpr.erasure_completed")
 	if receipt.Detail["legalHoldOverride"] != true {
 		t.Errorf("completion receipt should record legalHoldOverride: %+v", receipt.Detail)
+	}
+	if receipt.Detail["overrideAt"] != override.Detail["overrideAt"] {
+		t.Errorf("receipt overrideAt %v diverges from event overrideAt %v", receipt.Detail["overrideAt"], override.Detail["overrideAt"])
 	}
 	if receipt.Detail["jobId"] != jobID {
 		t.Errorf("override event jobId %q diverges from receipt jobId %v", jobID, receipt.Detail["jobId"])

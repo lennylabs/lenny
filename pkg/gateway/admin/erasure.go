@@ -122,10 +122,17 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 				"a legal-hold override requires the platform-admin role", nil)
 			return
 		}
+		// spec: §12.8 line 796 — the receipt records legal_hold_override,
+		// override_by, override_justification, override_at, and the full
+		// list of holds that would otherwise have blocked the erasure.
+		// override_at is captured here, at the instant the override is
+		// recorded, and flows into both the gdpr.legal_hold_overridden
+		// event and the completion receipt so the two agree.
 		overrideReceipt = map[string]any{
 			"legalHoldOverride":     true,
 			"overrideBy":            principal.Subject,
 			"overrideJustification": body.Justification,
+			"overrideAt":            rfc3339Nano(r.clock()),
 			"overriddenHolds":       held,
 		}
 		// The underlying legal-hold rows are left set; the erasure
@@ -142,16 +149,20 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 	if overrideReceipt != nil {
 		// spec: §12.8 line 796 — emit gdpr.legal_hold_overridden after the
 		// job exists so the event payload carries jobId for SIEM pivoting
-		// from admin.user.erasure_initiated to the override decision.
-		r.emit(req.Context(), principal, "gdpr.legal_hold_overridden", subject, map[string]any{
-			"tenantId":      tenant,
-			"userId":        subject,
-			"jobId":         jobID,
-			"overrideBy":    principal.Subject,
-			"justification": body.Justification,
-			"holdCount":     len(held),
-			"heldSessions":  held,
-		})
+		// from admin.user.erasure_initiated to the override decision. The
+		// event carries the same fields as the receipt (legal_hold_override,
+		// override_by, override_justification, override_at, overridden_holds)
+		// plus job_id.
+		overrideEvent := map[string]any{
+			"tenantId":  tenant,
+			"userId":    subject,
+			"jobId":     jobID,
+			"holdCount": len(held),
+		}
+		for k, v := range overrideReceipt {
+			overrideEvent[k] = v
+		}
+		r.emit(req.Context(), principal, "gdpr.legal_hold_overridden", subject, overrideEvent)
 	}
 	// §12.8 / GDPR Article 18: mark the user processing-restricted so
 	// new session creation is rejected while erasure is in progress.
@@ -195,6 +206,22 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 				"verified":      job.Billing.Verified,
 			}
 		}
+		// spec: §12.8 line 762 — the receipt carries the per-phase timeline
+		// so a compliance auditor can reconstruct the erasure sequence from
+		// a single event.
+		if len(job.PhaseLog) > 0 {
+			phaseLog := make([]map[string]any, 0, len(job.PhaseLog))
+			for _, tr := range job.PhaseLog {
+				phaseLog = append(phaseLog, map[string]any{
+					"phase": string(tr.Phase),
+					"at":    rfc3339Nano(tr.At),
+				})
+			}
+			receipt["phaseLog"] = phaseLog
+		}
+		// spec: §12.8 line 851 — the salt-removal verification outcome is
+		// recorded in the erasure receipt.
+		receipt["verificationOutcome"] = job.Billing.VerificationOutcome()
 		for k, v := range overrideReceipt {
 			receipt[k] = v
 		}
@@ -275,6 +302,18 @@ func erasureJobPayload(j erasurejob.Job, now time.Time) map[string]any {
 	}
 	if j.Deleted != nil {
 		out["deleted"] = j.Deleted
+	}
+	// spec: §12.8 line 762 — surface the per-phase timeline so the status
+	// query exposes the same sequence the completion receipt records.
+	if len(j.PhaseLog) > 0 {
+		phaseLog := make([]map[string]any, 0, len(j.PhaseLog))
+		for _, tr := range j.PhaseLog {
+			phaseLog = append(phaseLog, map[string]any{
+				"phase": string(tr.Phase),
+				"at":    rfc3339Nano(tr.At),
+			})
+		}
+		out["phaseLog"] = phaseLog
 	}
 	if !j.CompletedAt.IsZero() {
 		out["completedAt"] = rfc3339Nano(j.CompletedAt)
