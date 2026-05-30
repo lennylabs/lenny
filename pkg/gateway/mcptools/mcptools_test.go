@@ -1736,11 +1736,13 @@ func TestSendMessageTopologyAcceptsParent(t *testing.T) {
 	}
 }
 
-// TestSendMessageTopologyAcceptsSibling — siblings share a parent so
-// the message is in the `siblings` scope (a superset of `direct`).
-// spec: §7.2 line 240; F-7.2.22.
+// TestSendMessageTopologyAcceptsSibling — under `siblings` scope two
+// sessions sharing a parent can message each other. The default `direct`
+// scope denies this (see TestSendMessageScopeDirectRejectsSibling); the
+// deployment must opt in to `siblings`.
+// spec: §7.2 line 241; F-7.2.6, F-7.2.22.
 func TestSendMessageTopologyAcceptsSibling(t *testing.T) {
-	srv, store := newMCP(t)
+	srv, store := newMCPMessaging(t, session.MessagingScopeSiblings, session.MessagingScopeSiblings, mcptools.MessagingRateLimit{})
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
 	mkSession(t, store, "sess_a", session.StateRunning, "sess_parent")
 	mkSession(t, store, "sess_b", session.StateRunning, "sess_parent")
@@ -1750,7 +1752,7 @@ func TestSendMessageTopologyAcceptsSibling(t *testing.T) {
 	if result["isError"] == true {
 		content, _ := result["content"].([]any)
 		c0, _ := content[0].(map[string]any)
-		t.Fatalf("sibling→sibling should be admitted; got error %v", c0["text"])
+		t.Fatalf("sibling→sibling under `siblings` scope should be admitted; got error %v", c0["text"])
 	}
 }
 

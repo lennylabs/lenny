@@ -55,6 +55,7 @@ import (
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -270,6 +271,32 @@ type Deps struct {
 	// task tree to the human-facing edge.
 	ElicitationIntercepts func(sess sessionstore.Session) bool
 
+	// MessagingDefaultScope and MessagingMaxScope are the §7.2
+	// deployment-level messagingScope configuration: the per-session
+	// default and the absolute ceiling. lenny/send_message resolves the
+	// sender's effective scope from them and rejects a sibling target
+	// unless the effective scope is `siblings`. An empty
+	// MessagingDefaultScope resolves to the §7.2 default `direct`; an
+	// empty MessagingMaxScope imposes no ceiling beyond the enum.
+	// Tenant- and runtime-level overrides narrow further once those
+	// configuration surfaces are stored (their absence resolves to the
+	// deployment scope). spec: §7.2 lines 236-266. F-7.2.6.
+	MessagingDefaultScope session.MessagingScope
+	MessagingMaxScope     session.MessagingScope
+
+	// MessagingRateLimit carries the §8.3 per-session lenny/send_message
+	// rate limits (maxPerMinute, maxPerSession, maxInboundPerMinute). A
+	// zero field selects the §8.3 default. spec: §7.2 line 270; §8.3
+	// lines 269-272. F-7.2.6.
+	MessagingRateLimit MessagingRateLimit
+
+	// MessagingRateCounter is the fixed-window counter backing the
+	// per-minute messaging rate limits. Optional — when nil an
+	// in-process counter is used (the minimal-gateway / test default);
+	// production wires the same cross-replica Redis counter the §11.1
+	// admission limits use. spec: §11.1. F-7.2.6.
+	MessagingRateCounter ratelimit.Counter
+
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
 	Clock  func() time.Time
@@ -359,6 +386,15 @@ func Register(srv *mcp.Server, deps Deps) {
 	if tenant == "" {
 		tenant = "default"
 	}
+
+	// §7.2 send_message governance shared per-adapter state: the
+	// fixed-window + lifetime rate limiter and the deployment-resolved
+	// effective messagingScope. The v1 adapter has no per-session
+	// tenant/runtime scope surface stored, so the effective scope is the
+	// deployment resolution (tenant/runtime overrides default through);
+	// it is resolved once here rather than per call. F-7.2.6.
+	msgLimiter := newMessagingLimiter(deps.MessagingRateCounter, deps.MessagingRateLimit)
+	msgScope := session.ResolveEffectiveMessagingScope(deps.MessagingDefaultScope, deps.MessagingMaxScope, "", "")
 
 	// §4.8 PreToolResult: install the transport-layer hook that runs the
 	// interceptor chain over every tool result before it reaches the
@@ -469,13 +505,20 @@ func Register(srv *mcp.Server, deps Deps) {
 		if session.IsTerminal(row.State) {
 			return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.To, row.State)
 		}
-		// spec: §7.2 line 240 (`direct` and `siblings` messagingScope)
-		// and §7.2 line 373 (parent communication asymmetry) — restrict
-		// the target to a parent/child/sibling of the declared sender.
-		// The principal's SessionID claim is the canonical sender id;
-		// the legacy `fromSessionId` field is the transport fallback
-		// for callers that have not yet bound a principal. F-7.2.22,
-		// F-8.5.16.
+		// spec: §7.2 line 268 — cross-tenant validation runs before
+		// scope evaluation and rate limiting and applies to every
+		// message path (inter-session, inReplyTo, delivery:immediate).
+		if crossTenantDenied(tenant, row) {
+			return mcp.ToolResult{}, mcp.NewToolError("CROSS_TENANT_MESSAGE_DENIED",
+				"target session belongs to a different tenant (§7.2 line 268)", nil)
+		}
+		// spec: §7.2 line 240 messagingScope + line 373 parent
+		// asymmetry — restrict the target to the sender's direct
+		// parent/child, and to a sibling only when the effective scope
+		// is `siblings`. The principal's SessionID claim is the
+		// canonical sender id; the legacy `fromSessionId` field is the
+		// transport fallback for callers that have not yet bound a
+		// principal. F-7.2.6, F-7.2.22, F-8.5.16.
 		senderID := callerSessionID(ctx, in.FromSessionID)
 		if senderID != "" {
 			sender, err := deps.Store.Get(ctx, tenant, senderID)
@@ -483,10 +526,10 @@ func Register(srv *mcp.Server, deps Deps) {
 				return mcp.ToolResult{}, mcp.NewToolError("SCOPE_DENIED",
 					fmt.Sprintf("sender session %s not found", senderID), nil)
 			}
-			if !withinMessagingTopology(sender, row) {
+			if !withinMessagingScope(sender, row, msgScope) {
 				return mcp.ToolResult{}, mcp.NewToolError("SCOPE_DENIED",
-					fmt.Sprintf("target %s is not a parent, direct child, or sibling of sender %s",
-						in.To, senderID), nil)
+					fmt.Sprintf("target %s is not reachable from sender %s under messagingScope %q",
+						in.To, senderID, msgScope.OrDefault()), nil)
 			}
 		}
 		// spec: §15.4 line 1784 — the gateway assigns a `msg_` prefix
@@ -495,6 +538,18 @@ func Register(srv *mcp.Server, deps Deps) {
 		messageID := in.MessageID
 		if messageID == "" {
 			messageID = "msg_" + idFn()
+		}
+		// spec: §7.2 line 270 + §8.3 lines 269-272 — per-sender
+		// outbound + lifetime and per-target inbound aggregate rate
+		// limits, evaluated before delivery. An exceeded limit returns a
+		// RATE_LIMITED delivery receipt (§7.2 line 371, §8.3 line 309)
+		// rather than a tool error, so the sender can react. F-7.2.6.
+		allowed, err := msgLimiter.allow(ctx, tenant, senderID, in.To, clock())
+		if err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("messaging rate limit: %w", err)
+		}
+		if !allowed {
+			return textResult(buildSendMessageReceiptStatus(messageID, session.DeliveryStatusRateLimited, clock())), nil
 		}
 		// §8.5: when the message answers a pending lenny/request_input
 		// call, it resolves that blocked call directly instead of being
@@ -2837,31 +2892,6 @@ func walk(wctx treeWalkContext, s sessionstore.Session, byParent map[string][]se
 }
 
 // withinMessagingTopology reports whether target sits in sender's
-// §7.2 line 240 messaging neighborhood: direct parent, direct child,
-// or sibling (same parent). Self-messaging is rejected per the same
-// rule. The check is constant-time — no tree walk — because every
-// admissible relation is a one-hop ParentSessionID comparison.
-// spec: §7.2 line 240 (`direct` / `siblings` scope), §7.2 line 373
-// (parent communication asymmetry). F-7.2.22.
-func withinMessagingTopology(sender, target sessionstore.Session) bool {
-	if sender.ID == target.ID {
-		return false
-	}
-	// target is sender's direct child
-	if target.ParentSessionID == sender.ID {
-		return true
-	}
-	// target is sender's direct parent
-	if sender.ParentSessionID == target.ID && target.ID != "" {
-		return true
-	}
-	// target is sender's sibling (share a non-empty parent)
-	if sender.ParentSessionID != "" && sender.ParentSessionID == target.ParentSessionID {
-		return true
-	}
-	return false
-}
-
 // isDescendant reports whether child sits in the §8 delegation subtree
 // rooted at parentID. It walks the ParentSessionID chain upward from
 // child; the seen set guards against a malformed cyclic chain.
@@ -3044,6 +3074,24 @@ func buildSendMessageReceipt(messageID, resolvedRequestID string, out []executor
 		Resolved: resolvedRequestID,
 		Output:   out,
 	}
+	body, _ := json.Marshal(envelope)
+	return string(body)
+}
+
+// buildSendMessageReceiptStatus builds the §15.4 delivery_receipt
+// envelope for a non-`delivered` terminal status (e.g. `rate_limited`).
+// `deliveredAt` is set only for the `delivered` status; `rate_limited`
+// and `error` carry no timestamp. v1 does not define a `reason` enum
+// value for `rate_limited` — the status alone conveys the condition
+// (§15.4). spec: §15.4 lines 1725-1737; §7.2 line 371. F-7.2.6.
+func buildSendMessageReceiptStatus(messageID string, status session.DeliveryStatus, now time.Time) string {
+	receipt := session.DeliveryReceipt{MessageID: messageID, Status: status}
+	if status == session.DeliveryStatusDelivered {
+		receipt.DeliveredAt = now
+	}
+	envelope := struct {
+		DeliveryReceipt session.DeliveryReceipt `json:"deliveryReceipt"`
+	}{DeliveryReceipt: receipt}
 	body, _ := json.Marshal(envelope)
 	return string(body)
 }

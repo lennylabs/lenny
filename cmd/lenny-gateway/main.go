@@ -439,6 +439,16 @@ func main() {
 		"client-go burst (token-bucket size) for the cluster client. Pairs with --cluster-qps. Override via LENNY_CLUSTER_BURST.")
 	defaultIsolationProfile := flag.String("default-isolation-profile", os.Getenv("LENNY_DEFAULT_ISOLATION_PROFILE"),
 		"§5.3 isolation profile applied to a session that omits isolationProfile on the create body. Defaults to the chart's compiled-in fallback (`sandboxed`); the e2e overlay sets `standard` so every k6 scenario lands on the warm pool the agent-workload defines.")
+	messagingDefaultScope := flag.String("messaging-default-scope", os.Getenv("LENNY_MESSAGING_DEFAULT_SCOPE"),
+		"§7.2 deployment default messagingScope for lenny/send_message (`direct` | `siblings`). Empty resolves to the §7.2 default `direct` (siblings is opt-in). Override via LENNY_MESSAGING_DEFAULT_SCOPE.")
+	messagingMaxScope := flag.String("messaging-max-scope", os.Getenv("LENNY_MESSAGING_MAX_SCOPE"),
+		"§7.2 deployment messagingScope ceiling (`direct` | `siblings`); no tenant or runtime can widen beyond it. Empty imposes no ceiling beyond the enum; `direct` forbids sibling messaging tree-wide. Override via LENNY_MESSAGING_MAX_SCOPE.")
+	messagingMaxPerMinute := flag.Int("messaging-max-per-minute", envInt("LENNY_MESSAGING_MAX_PER_MINUTE", 30),
+		"§8.3 lenny/send_message per-sender outbound burst limit per minute. Override via LENNY_MESSAGING_MAX_PER_MINUTE.")
+	messagingMaxPerSession := flag.Int("messaging-max-per-session", envInt("LENNY_MESSAGING_MAX_PER_SESSION", 200),
+		"§8.3 lenny/send_message per-sender lifetime outbound cap. Override via LENNY_MESSAGING_MAX_PER_SESSION.")
+	messagingMaxInboundPerMinute := flag.Int("messaging-max-inbound-per-minute", envInt("LENNY_MESSAGING_MAX_INBOUND_PER_MINUTE", 60),
+		"§8.3 lenny/send_message per-target inbound aggregate limit per minute (the O(N²) sibling-storm brake). Override via LENNY_MESSAGING_MAX_INBOUND_PER_MINUTE.")
 	adapterTLSCert := flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),
 		"path to the gateway's client certificate for the §4.7 mTLS link to pod adapters. Empty dials adapters in plaintext (local development only).")
 	adapterTLSKey := flag.String("adapter-tls-key", os.Getenv("LENNY_ADAPTER_TLS_KEY"),
@@ -2391,7 +2401,20 @@ func main() {
 		// chain lookup, the §16.7 audit emission, and the §16.1 tamper
 		// metric to the right tenant. F-9.2.13 / F-15.2.15.
 		TenantID: "default",
-		Clock:    clockinject.Now,
+		// spec: §7.2 lines 236-272; §8.3 lines 269-272 — deployment
+		// messagingScope (default + ceiling) and the per-session
+		// send_message rate limits. The same cross-replica rate counter
+		// the §11.1 admission limits use backs the per-minute messaging
+		// windows. F-7.2.6.
+		MessagingDefaultScope: session.MessagingScope(*messagingDefaultScope),
+		MessagingMaxScope:     session.MessagingScope(*messagingMaxScope),
+		MessagingRateLimit: mcptools.MessagingRateLimit{
+			MaxPerMinute:        *messagingMaxPerMinute,
+			MaxPerSession:       *messagingMaxPerSession,
+			MaxInboundPerMinute: *messagingMaxInboundPerMinute,
+		},
+		MessagingRateCounter: rateLimiter,
+		Clock:                clockinject.Now,
 		// §8.9 line 1003 / §11.7 / §16.1 — same tree-walker cycle
 		// observer the REST /tree handler uses, so the audit row +
 		// counter fire regardless of which surface walked the tree.

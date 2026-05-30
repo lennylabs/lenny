@@ -112,3 +112,59 @@ func (s MessagingScope) OrDefault() MessagingScope {
 	}
 	return MessagingScopeDirect
 }
+
+// restrictiveness orders the §7.2 scopes from most to least restrictive:
+// `direct` (0) is narrower than `siblings` (1). An unrecognised value
+// collapses to `direct` via OrDefault. spec: §7.2 line 266
+// ("restrictiveness order is: direct < siblings").
+func (s MessagingScope) restrictiveness() int {
+	if s.OrDefault() == MessagingScopeSiblings {
+		return 1
+	}
+	return 0
+}
+
+// narrowerMessagingScope returns the more restrictive of a and b, each
+// normalised through OrDefault.
+func narrowerMessagingScope(a, b MessagingScope) MessagingScope {
+	if b.restrictiveness() < a.restrictiveness() {
+		return b.OrDefault()
+	}
+	return a.OrDefault()
+}
+
+// ResolveEffectiveMessagingScope computes a session's effective §7.2
+// messagingScope from the deployment/tenant/runtime configuration
+// hierarchy. Per the §7.2 "Effective scope" rule the result is the
+// narrowest of:
+//
+//   - the base scope, which is the tenant scope when set, otherwise the
+//     deployment defaultScope,
+//   - the top-most parent runtime scope when set, and
+//   - the deployment maxScope ceiling (no tenant or runtime can widen
+//     beyond it).
+//
+// tenantScope and runtimeScope are optional: an empty string means "no
+// override at this level" and is skipped rather than read as `direct`.
+// An empty deploymentDefault resolves to the §7.2 default `direct`
+// (siblings is opt-in). An empty deploymentMax imposes no ceiling beyond
+// the enum; only an explicit `direct` ceiling lowers the result. The
+// restrictiveness order is `direct` < `siblings`.
+//
+// spec: §7.2 lines 250-266 (configuration hierarchy; "Effective scope"
+// rule); §8.3 lines 321-324. F-7.2.6.
+func ResolveEffectiveMessagingScope(deploymentDefault, deploymentMax, tenantScope, runtimeScope MessagingScope) MessagingScope {
+	base := deploymentDefault.OrDefault()
+	if tenantScope != "" {
+		base = narrowerMessagingScope(base, tenantScope)
+	}
+	if runtimeScope != "" {
+		base = narrowerMessagingScope(base, runtimeScope)
+	}
+	// An unset maxScope leaves the ceiling at the widest enum value;
+	// only an explicit `direct` ceiling caps the resolved base.
+	if deploymentMax == MessagingScopeDirect {
+		return MessagingScopeDirect
+	}
+	return base
+}
