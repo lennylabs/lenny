@@ -4188,7 +4188,7 @@ Consequence: the `task_cleanup → sdk_connecting` versus `task_cleanup → drai
 
 - **Resolution:** Closed by F-4.6.7. The new `warmpool.PodReconciler` watches Nodes (with a `spec.nodeName` field index for Node→Pod fan-out) and maintains `lenny.dev/host-schedulable` on every managed pod, re-labeling all pods on a node within one reconcile cycle on cordon/uncordon. Resolved in commit 1f2bb711.
 
-### - [ ] F-6.1.11 — Per-slot concurrent-workspace directories `/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/` are not created [Medium] — OPEN
+### - [-] F-6.1.11 — Per-slot concurrent-workspace directories `/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/` are not created [Medium] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-6.4.2 — F-6.1.11 and F-6.4.2 both report the per-slot concurrent-workspace directory tree is not built; F-6.4.10 covers the distinct per-slot credentials path.
 
@@ -4200,6 +4200,8 @@ Spec §6.1 line 28 (Concurrent-mode credential lease lifecycle paragraph): "The 
 - `pkg/adapter/credentials.go:39` (`s.credSessionID`) is a single string; concurrent-slot lease accounting cannot be tracked.
 
 Consequence: concurrent-workspace mode (Phase 12c, BUILD-PROGRESS.md line 54) advertises support for `maxConcurrent: N`, but the per-slot credential file, session directory, and artifact directory described in §6.1/§6.4 do not exist. A concurrent-slot lease assignment overwrites the single shared `/run/lenny/credentials.json`. The "concurrent-mode credential lease lifecycle" paragraph in §6.1 cannot be honored.
+
+**Deferred:** Confirmed duplicate of F-6.4.2 (the finding text flags it at high confidence). Same blocker — the adapter single-session → per-slot multiplexing refactor (Phase 12c). Will close together with F-6.4.2; the per-slot credential file is tracked under F-6.4.10.
 
 ### - [x] F-6.1.12 — `executor.Close` retains stale `s.sessionID` on Close path; one-session-only enforced via `credSessionID` only [Medium] — CLOSED
 
@@ -4965,7 +4967,7 @@ Consequence: §6.4's "Session files (e.g., conversation logs, runtime state)" an
 
 - **Resolution:** Closed by `a4fa7a64`. `podVolumes` now declares a memory-backed `sessions` tmpfs (§6.4 line 380) and a disk-backed `artifacts` emptyDir (§6.4 line 414), and every agent container — the sidecar adapter and runtime, and the embedded runtime — mounts them at `/sessions` and `/artifacts`. The §6.4 data-at-rest medium split holds: `/sessions` and `/tmp` are tmpfs (contents gone on pod termination); `/workspace` and `/artifacts` are disk-backed. Regression test `TestBuildMountsSessionsAndArtifacts_spec_6_4`.
 
-### - [ ] F-6.4.2 — Concurrent-workspace per-slot tree (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`) is not built [High] — OPEN
+### - [-] F-6.4.2 — Concurrent-workspace per-slot tree (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`) is not built [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-6.1.11 — F-6.1.11 and F-6.4.2 both report the per-slot concurrent-workspace directory tree is not built; F-6.4.10 covers the distinct per-slot credentials path.
 
@@ -4977,13 +4979,17 @@ Test confirmation: `tests/tier7_load/scaffolds_test.go:289–302` (`TestConcurre
 
 Consequence: `executionMode: concurrent` + `concurrencyStyle: workspace` cannot actually run more than one session per pod with workspace isolation. Any concurrent slot assignment lands in the same `/workspace/current` and races the §4.7 single-session adapter state, violating §6.4's "MUST NOT assume a global `/workspace/current` path" requirement on the runtime side. Per-slot session files and per-slot artifacts have no destination either (H-1 + per-slot suffix).
 
-### - [ ] F-6.4.3 — `/workspace/shared/` read-only volume and `sharedAssets` field are not built [High] — OPEN
+**Deferred:** Closing this end-to-end requires the adapter's single-session → per-slot multiplexing refactor, which is the Phase 12c (§18.30) concurrent-execution-modes deliverable rather than a filesystem-layout patch. The adapter is architecturally single-session: `Server.sessionID`/`claimSession`/`checkSession` are scalar, `Runtime` is one `RuntimeProcess` (the `SocketRuntimeProcess` binds exactly one session and rejects a second), and the platform-MCP (`mcpCancel`), credential (`credSessionID`/`credLeases`), and expiry-timer state are all single-slot. Per-slot directory creation/removal, per-slot cwd derivation, and per-slot session/credential state must land together with N concurrent runtime processes per pod, threading the existing `SlotId` proto message through `PrepareWorkspace`/`FinalizeWorkspace`/`RunSetup`/`StartSession`/`AssignCredentials` and the gateway `BindSlot` dispatch (which already drives the full per-slot sequence keyed by `SessionID`). The other half of the §6.4 layout — the `/workspace/shared/` read-only shared-asset volume — is closed by F-6.4.3 (commit ed8d364d). Tracked together with F-6.1.11 (duplicate) and F-6.4.10 (per-slot credentials).
+
+### - [x] F-6.4.3 — `/workspace/shared/` read-only volume and `sharedAssets` field are not built [High] — CLOSED
 
 Spec §6.4 line 409 is normative: "The `/workspace/shared/` directory in concurrent-workspace mode is populated by the gateway during pod initialization (before any slot is assigned) from the Runtime's `sharedAssets` configuration — a list of artifact references or inline file specs. Once populated, `/workspace/shared/` is mounted read-only at the container level: the pod spec uses a separate `emptyDir` volume for `/workspace/shared/` with a `readOnly: true` volumeMount on the runtime container. This enforces immutability at the kernel level — any write attempt by the runtime process returns `EROFS` (read-only filesystem). The adapter does not create or modify files under `/workspace/shared/` after initial population. If no `sharedAssets` are configured on the Runtime, the `/workspace/shared/` directory is still mounted (empty, read-only) to prevent runtimes from using it as writable scratch space."
 
 The `Runtime` CRD type (`pkg/apis/lenny/v1/runtime_types.go:12–59`) has no `SharedAssets` field. A grep for `sharedAssets`, `SharedAssets`, `/workspace/shared`, or `WorkspaceShared` across `pkg/controller/sandbox/podspec/`, `pkg/sandbox/`, `pkg/apis/lenny/v1/`, `pkg/runtime/`, and `pkg/adapter/` returns no production matches. The only `/workspace/shared` references in the implementation are inline comments in `pkg/gateway/podclaim/slotclaimer.go:76,179`, `pkg/gateway/poolstore/poolstore.go:105`, and `pkg/gateway/podsession/slotbinder.go:78` — narrative text describing the spec's intent. `pkg/controller/sandbox/podspec/podspec.go` never adds a fourth volume; `podVolumes()` (lines 358–368) returns the same three volumes regardless of the runtime's execution mode.
 
 Consequence: the spec's `EROFS` kernel-level write boundary on shared assets does not exist. A concurrent-mode runtime expecting `/workspace/shared/` to exist sees `ENOENT`, and there is no operator path to populate cross-slot read-only assets. The "even empty, mount it read-only" defensive scrub-space prevention is also absent.
+
+**Resolution (ed8d364d):** All three consequences are closed. (1) **EROFS boundary:** `podspec.podVolumes` now emits a separate `shared` emptyDir, mounted read-only on the runtime container at `/workspace/shared` (read-write on the adapter container, the populator; read-write on the single embedded container, which is both — the same sidecar-only EROFS tradeoff the credential mount makes). (2) **Operator path:** `RuntimeSpec.SharedAssets` (`pkg/apis/lenny/v1/runtime_types.go`) declares inline file specs (path, content, mode); the sandbox reconciler encodes them through the new `pkg/adapter/sharedassets` package onto the adapter's `--shared-assets` flag, and `EnsureWarmWorkspaceLayout` materializes them read-only (0444 default, path-containment + setuid/setgid rejection at the adapter trust boundary) before the pod signals READY. (3) **Scrub-space prevention:** the volume mounts on every pod regardless of execution mode or whether any `sharedAssets` are configured; `ensureSharedAssets` creates the directory empty so the runtime cannot use the mountpoint as writable scratch. Artifact-reference shared assets (the §4.5 form delivered by the gateway during pod initialization) are not populated inline here and remain a thin gateway-side follow-on; the CRD and volume surface is in place for them. Regression: tier-1 across `pkg/adapter/sharedassets` (encode/decode round-trip, materialize content/mode/default-umask, path-escape + setuid rejection, empty-set no-op), `warmlayout_test` (populate, empty-when-no-assets, unconfigured-skip, escape-rejected), `podspec_test` (`TestBuildMountsSharedReadOnly_spec_6_4`, `TestBuildEmbeddedMountsShared_spec_6_4`, `TestBuildWiresSharedAssetsArgs_spec_6_4`), and the controller encode round-trip.
 
 ### - [x] F-6.4.4 — T4 dedicated-node enforcement is webhook-only — pool controller does not inject `lenny.dev/workspace-tier: t4`, the T4 `nodeSelector`, or the T4 toleration; the `Runtime` CRD has no `workspaceTier` field [High] — CLOSED
 
@@ -5078,13 +5084,15 @@ This is medium severity rather than high because it is a strict prerequisite of 
 
 **Resolution:** Added `workspaceTier` to `RuntimeSpec` (enum `T3`/`T4`, optional, defaults to `T3`) with the matching CRD schema entry in `charts/lenny/crds/lenny.dev_runtimes.yaml`. The runtime controller's `applyCRDFields` mirrors the value onto the gateway-side `runtimestore.WorkspaceTier` so the §5.2 cross-tenant-reuse rejection and the §6.4 dedicated-node injection both observe the deployer's declaration. Regression: `TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9`. Unblocks F-6.4.4.
 
-### - [ ] F-6.4.10 — Concurrent-mode per-slot credentials path (`/run/lenny/slots/{slotId}/credentials.json`) is not implemented [Medium] — OPEN
+### - [-] F-6.4.10 — Concurrent-mode per-slot credentials path (`/run/lenny/slots/{slotId}/credentials.json`) is not implemented [Medium] — DEFERRED
 
 Spec §6.1 line 28 (cross-referenced by §6.4's per-slot layout): "The adapter writes per-slot credential files at `/run/lenny/slots/{slotId}/credentials.json` (mode `0440`, tmpfs-backed, with the same adapter-owner + `lenny-cred-readers` group-ownership scheme as the single-slot file …) rather than a single global `/run/lenny/credentials.json`."
 
 `pkg/adapter/credfile/credfile.go:22` defines `FileName = "credentials.json"` (one file). `pkg/adapter/credentials.go:166–179` (`writeCredentialFile`) writes that one file to `s.CredentialsDir`. No `slotId` parameter exists, and no `/run/lenny/slots/` path is constructed anywhere. The credential mount path is the single `/run/lenny` (`pkg/controller/sandbox/podspec/podspec.go:71`).
 
 Consequence: combined with H-2, concurrent-mode credential leasing cannot honor §6.1's "Each active slot holds an independent credential lease … This ensures `maxConcurrentSessions` on pool credentials accurately reflects slot-level concurrency". The credential rotation isolation guarantee ("Other slots' LLM requests are unaffected by a rotation on a sibling slot") is unreachable because a rotation rewrites the single global file all (would-be) slots read from.
+
+**Deferred:** Same blocker as F-6.4.2 — per-slot credential files (`/run/lenny/slots/{slotId}/credentials.json`) require a `slot_id` on `AssignCredentialsRequest` and per-slot credential state (`credSessionID`/`credLeases`/`expiryTimers` keyed by slot) in the adapter, both part of the single-session → per-slot multiplexing refactor. The `credfile.Write` primitive already takes a target directory, so the per-slot path derivation is a small addition once the per-slot credential state exists. Will close with the Phase 12c concurrent-execution batch alongside F-6.4.2.
 
 ### - [-] F-6.4.11 — `lenny_warmpool_sdk_demotions_total` and the demotion-rate operator guidance feed an unbuilt enforcement path [Medium] — DEFERRED
 
