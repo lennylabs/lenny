@@ -19746,7 +19746,7 @@ plus a Helm chart MinIO-side configuration pass.
 
 ---
 
-### - [ ] F-12.6.5 — `WatchPods` violates the "no initial snapshot" contract [High] — OPEN
+### - [x] F-12.6.5 — `WatchPods` violates the "no initial snapshot" contract [High] — CLOSED
 
 **Spec.** §12.6 line 482: "The channel MUST NOT emit an initial state snapshot on creation. Consumers call `ListPodsByPool` for initial state, then `WatchPods` for subsequent deltas."
 
@@ -19756,9 +19756,11 @@ plus a Helm chart MinIO-side configuration pass.
 
 **Fix.** Seed `known` from a `ListPodsByPool` snapshot before entering the emit loop (do not emit on this first list). Replace `TestWatchPodsEmitsCreatedForExistingPod` with a test that confirms no event arrives for a pre-existing pod and that a subsequent state change produces `EventUpdated`.
 
+**Resolution:** Closed by `731e7590`. `watchLoop` now seeds `known` from a single `ListPodsByPool` call before the polling loop and emits nothing for it; the ticker wait moved to the top of the loop so only post-seed transitions produce frames. `TestWatchPodsEmitsCreatedForExistingPod` was replaced by `TestWatchPodsDoesNotEmitInitialSnapshot_spec_12_6_482` (no event for a stable pre-existing pod across many poll cycles; a subsequent state change yields `EventUpdated`).
+
 ---
 
-### - [ ] F-12.6.6 — `resync` event type required by `WatchPods` backpressure contract is missing [High] — OPEN
+### - [x] F-12.6.6 — `resync` event type required by `WatchPods` backpressure contract is missing [High] — CLOSED
 
 **Spec.** §12.6 line 482: "If the implementation detects that the channel has fallen behind ... it SHOULD send a synthetic `PodEvent` with `EventType = resync` carrying no `PodRecord` — the consumer treats this as a signal to re-read via `ListPodsByPool`."
 
@@ -19767,6 +19769,8 @@ plus a Helm chart MinIO-side configuration pass.
 **Impact.** Consumers have no documented recovery signal under backpressure; a missed event becomes a permanent divergence between the consumer's mental model and the registry's truth.
 
 **Fix.** Add an `EventResync` constant; have the watch loop emit a `PodEvent{EventType: EventResync}` (with the `PodRecord` zero value) whenever its polling cycle observes a deletion-without-prior-create or a state-transition gap.
+
+**Resolution:** Closed by `731e7590`. Added `EventResync = "resync"`. `trySend` delivers each delta non-blockingly; a full channel (the §12.6 line 480 "fallen behind" condition) sets a `pendingResync` flag under which the loop suppresses per-pod deltas, keeps its snapshot current via `syncKnown`, and hands the consumer a single `PodEvent{EventType: EventResync}` with the zero `PodRecord` once the buffer drains, then resumes normal delta emission against current truth. v1 uses channel saturation as the reliably-detectable backpressure trigger; skipped-intermediate-state detection is a Tier-4 `PostgresPodRegistry` (LISTEN/NOTIFY) concern. Test: `TestWatchPodsEmitsResyncUnderBackpressure_spec_12_6_482` drives a deterministic single-slot-buffer overflow and asserts a resync frame with empty PodID and zero PodRecord.
 
 ---
 
@@ -19782,7 +19786,7 @@ plus a Helm chart MinIO-side configuration pass.
 
 ---
 
-### - [ ] F-12.6.8 — `ClaimOpts` is missing `RequiresDemotion`, `Priority`, `ClusterID` [High] — OPEN
+### - [x] F-12.6.8 — `ClaimOpts` is missing `RequiresDemotion`, `Priority`, `ClusterID` [High] — CLOSED
 
 **Spec.** §12.6 line 424: `ClaimOpts` fields are `PoolID`, `TenantID`, `SessionID`, `RequiresDemotion` (bool), `Priority` (nullable `*int32`, nil when unset), `ClusterID` (nullable `*ClusterID`, always nil in v1).
 
@@ -19792,9 +19796,11 @@ plus a Helm chart MinIO-side configuration pass.
 
 **Fix.** Add the three fields. Priority and ClusterID are pointers so v1 callers leave them nil and the future Tier-4 / multi-cluster implementations branch on presence.
 
+**Resolution:** Closed by `731e7590`. `ClaimOpts` gained `RequiresDemotion bool`, `Priority *int32`, and `ClusterID *ClusterID`, plus the new `podregistry.ClusterID` typed string (§12.6 line 373). v1 callers leave the three nil/false; the claim path ignores them. Test `TestClaimOptsCarriesV1InertFields_spec_12_6_424` claims with all three set and confirms the claim still succeeds.
+
 ---
 
-### - [ ] F-12.6.9 — `PodRegistry.ClaimPod` does not set `SessionID` on the claimed pod [High] — OPEN
+### - [x] F-12.6.9 — `PodRegistry.ClaimPod` does not set `SessionID` on the claimed pod [High] — CLOSED
 
 **Spec.** §12.6 line 442 plus the cross-reference table line 421 — `PodRecord` carries `SessionID (nullable)` and the spec text frames `ClaimPod` as the call that pins a session to a pod. The migration schema (`agent_pod_state.session_id`) confirms the column is "set on claim".
 
@@ -19803,6 +19809,8 @@ plus a Helm chart MinIO-side configuration pass.
 **Impact.** The orphan-session reconciler — which the spec calls out as cross-referencing on the partial `session_id` index of `agent_pod_state` (line 476) — has no claim-time binding to follow. A pod claimed for session A reports an empty `SessionID` to every reader.
 
 **Fix.** Add a `SessionID` field to `Sandbox.Status` (or the equivalent state location), write it on claim, and project it into `PodRecord` via `toPodRecord`.
+
+**Resolution:** Closed by `731e7590`. Added `SandboxStatus.SessionID` (CRD status field, both chart and embedded manifests). `ClaimPod` writes `opts.SessionID` alongside the tenant pin; `ReleasePod` clears it (a released pod no longer reports as bound); `toPodRecord` projects it into `PodRecord.SessionID`. Test `TestClaimThenReleaseClearsSessionBinding_spec_12_6` exercises the full set-then-clear lifecycle and `TestClaimPodPicksIdleAndPins` now asserts the persisted binding.
 
 ---
 
@@ -19899,7 +19907,7 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 
 ---
 
-### - [ ] F-12.6.15 — `toPodRecord` drops `ExecutionMode` and `SessionID` [Medium] — OPEN
+### - [x] F-12.6.15 — `toPodRecord` drops `ExecutionMode` and `SessionID` [Medium] — CLOSED
 
 **Spec.** §12.6 line 421: `PodRecord` key fields include `SessionID (nullable)` and `ExecutionMode`.
 
@@ -19910,6 +19918,8 @@ Only three fields, none of `RuntimeDefinitionRef`, `WorkspacePlan`, or resource 
 **Impact.** Consumers reading `PodRecord` see empty `ExecutionMode` and `SessionID` and cannot rely on the type for either claim attribution or task-vs-session execution mode.
 
 **Fix.** Populate both fields. `ExecutionMode` should come from the resolved SandboxTemplate (already cached in the controller); `SessionID` follows F9.
+
+**Resolution:** Closed by `731e7590`. `toPodRecord` now projects `SessionID` (from `Sandbox.Status.SessionID`, per F-12.6.9) and `ExecutionMode`. Rather than have the registry resolve the SandboxTemplate on every read, `ExecutionMode` is denormalized onto `SandboxSpec` — the WarmPoolController copies `tmpl.Spec.ExecutionMode` onto each Sandbox at creation (the same copy-down already used for `IsolationProfile`), and `CreatePod` stamps the `PodSpec` execution-mode/isolation-profile fields it previously ignored. Tests: `TestToPodRecordProjectsExecutionModeAndSessionID_spec_12_6_421` and `TestCreatePodStampsExecutionModeAndIsolation_spec_12_6_422`.
 
 ---
 
