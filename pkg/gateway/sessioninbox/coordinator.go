@@ -156,6 +156,39 @@ func (c *Coordinator) DrainOnTerminal(ctx context.Context, tenantID, sessionID s
 	return len(all), nil
 }
 
+// ClearInboxOnAcquire emits the §7.2 line 284 `inbox_cleared` event on the
+// target session's own event stream when a new coordinator acquires a
+// session whose in-memory inbox did not survive the handoff. The gateway
+// calls it on the resume path (`POST /resume`), the v1 point at which a
+// coordinator re-establishes coordination of a recovering session that
+// lost its pod.
+//
+// In the default in-memory mode the prior coordinator's inbox is gone, so
+// the event signals the target client that buffered messages may have been
+// lost; `messagesPreservedInDLQ` reports how many were drained to the DLQ
+// on the `resume_pending` transition and will be redelivered on resume.
+// In durable mode the Redis inbox survives failover and the new
+// coordinator recovers it, so no `inbox_cleared` is emitted. A nil Emitter
+// or nil Coordinator is a no-op.
+//
+// spec: §7.2 line 284 (inbox_cleared on coordinator failover).
+func (c *Coordinator) ClearInboxOnAcquire(ctx context.Context, tenantID, sessionID string) (preservedInDLQ int, err error) {
+	if c == nil || c.emit == nil {
+		return 0, nil
+	}
+	if c.durable {
+		// Durable inbox survives coordinator failover; nothing was cleared.
+		return 0, nil
+	}
+	n, lerr := c.dlq.Len(ctx, tenantID, sessionID)
+	if lerr != nil {
+		return 0, lerr
+	}
+	c.emit.InboxCleared(tenantID, sessionID,
+		NewInboxClearedEvent(sessionID, n, c.now()))
+	return n, nil
+}
+
 // SweepExpired removes every DLQ entry whose TTL has elapsed and emits a
 // `message_expired` event with `reason: "dlq_ttl_expired"` on each
 // sender's stream. It is the periodic-sweeper hook a recovering session

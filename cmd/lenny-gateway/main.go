@@ -3391,6 +3391,13 @@ func main() {
 		WithBilling(billing).
 		WithTreeArchive(treeArchive).
 		WithTerminalHook(sessionSrv)
+	// spec: §7.2 lines 294, 341 — wire the DLQ TTL sweeper only when the
+	// messaging coordinator exists (Redis present). Passing a nil
+	// *Coordinator would create a typed-nil interface that defeats the
+	// watchdog's nil guard and force wasted List calls every tick.
+	if messagingCoord != nil {
+		wd = wd.WithMessaging(messagingCoord)
+	}
 	watchdogCtx, watchdogCancel := context.WithCancel(context.Background())
 	defer watchdogCancel()
 	go wd.Run(watchdogCtx, func(res watchdog.Result, err error) {

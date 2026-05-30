@@ -166,6 +166,72 @@ func TestCoordinator_SweepExpired_spec_7_2_341(t *testing.T) {
 	}
 }
 
+// spec: §7.2 line 284 — when a coordinator re-acquires a recovering
+// session (the resume path), the in-memory inbox is gone; inbox_cleared is
+// emitted on the target's own stream with messagesPreservedInDLQ set to the
+// count the DLQ still holds (drained there on resume_pending).
+func TestCoordinator_ClearInboxOnAcquire_InMemory_spec_7_2_284(t *testing.T) {
+	em := &recordingEmitter{}
+	c := NewCoordinator(Config{
+		Inbox: NewMemoryInbox(10), DLQ: NewDLQ(newRedisT(t), 10),
+		Emitter: em, Now: fixedClock(),
+	})
+	ctx := context.Background()
+	// Two messages survive in the DLQ (as if drained on resume_pending).
+	_, _ = c.dlq.Enqueue(ctx, "acme", "s", msg("m1", "snd-a"), time.Hour)
+	_, _ = c.dlq.Enqueue(ctx, "acme", "s", msg("m2", "snd-b"), time.Hour)
+	preserved, err := c.ClearInboxOnAcquire(ctx, "acme", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved != 2 {
+		t.Fatalf("preserved = %d, want 2", preserved)
+	}
+	if len(em.cleared) != 1 {
+		t.Fatalf("emitted %d inbox_cleared events, want 1", len(em.cleared))
+	}
+	ev := em.cleared[0]
+	if ev.Type != EventInboxCleared || ev.Reason != "coordinator_failover" {
+		t.Fatalf("event = %+v, want inbox_cleared / coordinator_failover", ev)
+	}
+	if ev.SessionID != "s" || ev.MessagesPreservedInDLQ != 2 {
+		t.Fatalf("event = %+v, want session s / preserved 2", ev)
+	}
+}
+
+// spec: §7.2 line 284 — in durable mode the Redis inbox survives the
+// handoff, so the new coordinator recovers it and no inbox_cleared is
+// emitted (the inbox was not lost).
+func TestCoordinator_ClearInboxOnAcquire_Durable_NoEvent_spec_7_2_284(t *testing.T) {
+	em := &recordingEmitter{}
+	rc := newRedisT(t)
+	c := NewCoordinator(Config{
+		Inbox: NewRedisInbox(rc, 10), DLQ: NewDLQ(rc, 10),
+		Emitter: em, Now: fixedClock(), Durable: true,
+	})
+	ctx := context.Background()
+	_, _ = c.dlq.Enqueue(ctx, "acme", "s", msg("m1", "snd"), time.Hour)
+	preserved, err := c.ClearInboxOnAcquire(ctx, "acme", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved != 0 || len(em.cleared) != 0 {
+		t.Fatalf("durable mode emitted preserved=%d events=%d, want 0/0", preserved, len(em.cleared))
+	}
+}
+
+// A nil Emitter disables inbox_cleared emission without error: the event is
+// best-effort and must never fail a resume.
+func TestCoordinator_ClearInboxOnAcquire_NilEmitter_spec_7_2_284(t *testing.T) {
+	c := NewCoordinator(Config{
+		Inbox: NewMemoryInbox(10), DLQ: NewDLQ(newRedisT(t), 10),
+		Now: fixedClock(),
+	})
+	if p, err := c.ClearInboxOnAcquire(context.Background(), "acme", "s"); p != 0 || err != nil {
+		t.Fatalf("ClearInboxOnAcquire with nil emitter = %d,%v, want 0,nil", p, err)
+	}
+}
+
 // A nil Coordinator no-ops every operation so a gateway without messaging
 // wired never panics on a state transition.
 func TestCoordinator_Nil_NoOp(t *testing.T) {
@@ -179,6 +245,9 @@ func TestCoordinator_Nil_NoOp(t *testing.T) {
 	}
 	if e, err := c.SweepExpired(ctx, "acme", "s"); e != 0 || err != nil {
 		t.Fatalf("SweepExpired on nil = %d,%v", e, err)
+	}
+	if p, err := c.ClearInboxOnAcquire(ctx, "acme", "s"); p != 0 || err != nil {
+		t.Fatalf("ClearInboxOnAcquire on nil = %d,%v", p, err)
 	}
 }
 

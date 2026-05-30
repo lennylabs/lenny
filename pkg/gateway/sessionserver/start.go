@@ -1417,6 +1417,12 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	// resume_pending → resuming → running chain collapses to the
 	// resolved state) before the richer session.resumed event below.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
+	// spec: §7.2 line 284 — the resume completes the v1 coordinator
+	// re-acquisition of a recovering session, so the gateway emits
+	// `inbox_cleared` on the target's own stream: the in-memory inbox from
+	// the prior coordinator is gone and the client learns how many messages
+	// survived in the DLQ. F-7.2.12.
+	s.clearInboxOnResume(r.Context(), updated)
 	// spec: §4.4 line 236 — partial-manifest cleanup runs on every
 	// resume regardless of whether the underlying reassembly
 	// succeeded. The cleaner deletes the chunk objects and

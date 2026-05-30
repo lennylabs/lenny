@@ -302,15 +302,29 @@ type RetryAttemptNotifier interface {
 	OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Session)
 }
 
+// DLQSweeper runs the §7.2 line 341 dead-letter-queue TTL sweep for one
+// recovering session, emitting a `message_expired` event with `reason:
+// "dlq_ttl_expired"` per expired entry and returning the count removed.
+// *sessioninbox.Coordinator satisfies it. A nil sweeper disables the
+// sweep. The §7.2 line 294 trimmer activates only while the session is in
+// a recovering state (`resume_pending` or `awaiting_client_action`); the
+// watchdog is the periodic background sweeper that enforces that scoping.
+//
+// spec: §7.2 lines 294, 341.
+type DLQSweeper interface {
+	SweepExpired(ctx context.Context, tenantID, sessionID string) (expired int, err error)
+}
+
 // Watchdog drives the periodic sweep.
 type Watchdog struct {
-	store    sessionstore.Store
-	tenants  TenantLister
-	cfg      Config
-	clock    func() time.Time
-	billing  billingstore.Store
-	archive  treearchive.Store
-	terminal TerminalHook
+	store     sessionstore.Store
+	tenants   TenantLister
+	cfg       Config
+	clock     func() time.Time
+	billing   billingstore.Store
+	archive   treearchive.Store
+	terminal  TerminalHook
+	messaging DLQSweeper
 }
 
 // New returns a Watchdog. The clock argument is optional; pass nil to
@@ -358,6 +372,19 @@ func (w *Watchdog) WithTerminalHook(hook TerminalHook) *Watchdog {
 	return w
 }
 
+// WithMessaging wires the §7.2 session-inbox coordinator so each sweep
+// runs the dead-letter-queue TTL sweep over every recovering session
+// (`resume_pending`, `awaiting_client_action`). The sweep emits a
+// `message_expired(dlq_ttl_expired)` event per expired DLQ entry, the
+// background-trimmer half of the §7.2 line 294 contract. A nil coordinator
+// (the dev / no-Redis posture) leaves the DLQ sweep disabled.
+//
+// spec: §7.2 lines 294, 341.
+func (w *Watchdog) WithMessaging(s DLQSweeper) *Watchdog {
+	w.messaging = s
+	return w
+}
+
 // Result captures the outcome of a sweep.
 type Result struct {
 	// ForcedFailures is the count of sessions transitioned to `failed`
@@ -380,6 +407,11 @@ type Result struct {
 	// PerResumingOutcome counts the §6.2 line 249 resuming-watchdog
 	// disposition.
 	PerResumingOutcome map[string]int
+	// DLQExpired is the count of dead-letter-queue entries removed by the
+	// §7.2 line 341 TTL sweep across every recovering session in this
+	// sweep. Each removed entry emits a `message_expired(dlq_ttl_expired)`
+	// event on its sender's stream.
+	DLQExpired int
 }
 
 // Tick runs a single sweep against every tenant returned by the
@@ -453,8 +485,45 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 		if err := w.sweepAwaitingClientAction(ctx, tenant, now, &res); err != nil {
 			return res, err
 		}
+		if err := w.sweepDLQExpiry(ctx, tenant, &res); err != nil {
+			return res, err
+		}
 	}
 	return res, nil
+}
+
+// sweepDLQExpiry runs the §7.2 line 341 dead-letter-queue TTL sweep over
+// every recovering session in tenant. The §7.2 line 294 trimmer is
+// state-gated: it activates only while a session is in `resume_pending` or
+// `awaiting_client_action`, so the sweep lists exactly those states and
+// asks the coordinator to expire past-TTL DLQ entries (emitting a
+// `message_expired(dlq_ttl_expired)` event per entry). A per-session sweep
+// error is dropped so a transient Redis blip on one session does not stall
+// the watchdog tick or the other sessions' sweeps; the next tick retries.
+// No-op when messaging is not wired.
+//
+// spec: §7.2 lines 294, 341.
+func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, res *Result) error {
+	if w.messaging == nil {
+		return nil
+	}
+	for _, st := range []session.State{
+		session.StateResumePending,
+		session.StateAwaitingClientAction,
+	} {
+		rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{State: st})
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			expired, serr := w.messaging.SweepExpired(ctx, tenant, row.ID)
+			if serr != nil {
+				continue
+			}
+			res.DLQExpired += expired
+		}
+	}
+	return nil
 }
 
 // sweepResumePending implements the §6.2 line 292 wall-clock cap. A
