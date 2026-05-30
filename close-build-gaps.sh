@@ -144,7 +144,7 @@ run_claude_capture() {
   local raw
   raw=$(mktemp)
   local cmd=(claude -p
-        --permission-mode bypassPermissions
+        --permission-mode auto
         --add-dir "$REPO"
         --model claude-opus-4-8
         --effort max
