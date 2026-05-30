@@ -22735,7 +22735,7 @@ Implementation:
   because Lenny pods are Linux only (the agent base image is Linux); the
   hazard surfaces only if a non-gateway caller misuses the API.
 
-**Resolution (1e6b8f7a):** `ValidateSymlinkTarget` now rejects any
+**Resolution (ed80e47f):** `ValidateSymlinkTarget` now rejects any
 `workspaceRoot` that is not a clean absolute slash path via the new
 `isCleanAbsSlashPath` guard (must start with `/`, contain no backslash, and
 equal its own `path.Clean` form), returning
@@ -22765,7 +22765,7 @@ Effect: minor admission of slightly-over-ratio archives. The corollary effect
 becomes practical only once H2 / H7 wire the validator into the extraction
 loop.
 
-**Resolution (1e6b8f7a):** `ValidateArchive` now cross-multiplies
+**Resolution (ed80e47f):** `ValidateArchive` now cross-multiplies
 (`a.DecompressedBytes > MaxDecompressionRatio*a.CompressedBytes`) instead of
 computing an integer-truncated ratio, so an archive whose true ratio is just
 above 100:1 (for example `(100, 10_050)` = 100.5:1) is rejected with
