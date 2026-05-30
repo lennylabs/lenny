@@ -20517,7 +20517,7 @@ is the existing §12.8 spec text. Migration 0096 provides the reserved
 
 **Impact:** A failed erasure job permanently locks the affected user out of session creation (`ERASURE_IN_PROGRESS`). The only recovery path is a direct database write under the `lenny_erasure` role, defeating the spec's intent that operators have an auditable recovery surface.
 
-### - [ ] F-12.8.11 — `--acknowledge-hold-override` recorded only in the gdpr.legal_hold_overridden event, not in the completion receipt's required fields [Medium] — OPEN
+### - [x] F-12.8.11 — `--acknowledge-hold-override` recorded only in the gdpr.legal_hold_overridden event, not in the completion receipt's required fields [Medium] — CLOSED
 
 **Potential overlap** (confidence: high) — F-12.8.23 — Both concern the legal-hold-override receipt/event but report different missing fields (override_at timestamp vs job_id in the event payload).
 
@@ -20526,6 +20526,8 @@ is the existing §12.8 spec text. Migration 0096 provides the reserved
 **Implementation:** `pkg/gateway/admin/erasure.go:125-138` captures the override fields into `overrideReceipt` and emits the `gdpr.legal_hold_overridden` event. However, the `override_at` timestamp is not set; only `legalHoldOverride`, `overrideBy`, `overrideJustification`, `overriddenHolds` are recorded. The receipt is also missing `job_id` on the `gdpr.legal_hold_overridden` event (the event's payload has `tenantId`, `userId`, `overrideBy`, `justification`, `holdCount`, `heldSessions` — no `jobId`).
 
 **Impact:** Minor — the override is still audit-visible but a compliance auditor reading `gdpr.legal_hold_overridden` cannot correlate to a specific erasure job ID directly; they must triangulate via `admin.user.erasure_initiated` on the same `userId` within the same window.
+
+**Resolution:** `handleEraseUser` now captures `overrideAt` (`rfc3339Nano(r.clock())`) into the override receipt, and the `gdpr.legal_hold_overridden` event is built by merging the override receipt and adding `jobId` so the event carries the same fields as the receipt (`legalHoldOverride`, `overrideBy`, `overrideJustification`, `overrideAt`, `overriddenHolds`) plus `jobId`. The `jobId` half (overlap with already-CLOSED F-12.8.23) was present; this batch added `override_at` and aligned the field names. (commit `1d8e640b`)
 
 ### - [ ] F-12.8.12 — Tenant `TenantState` enum (active/disabling/deleting/deleted) is absent from the schema and admin API [Medium] — OPEN
 
@@ -20550,13 +20552,15 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Suggested verification:** systematic grep `DeleteByUser\b` / `DeleteByTenant\b` across every store package called out in the §12.8 scope table.
 
-### - [ ] F-12.8.14 — Erasure-receipt missing `phase_log`, `verification_outcome`, `kms_key_destruction_record` fields [Medium] — OPEN
+### - [x] F-12.8.14 — Erasure-receipt missing `phase_log`, `verification_outcome`, `kms_key_destruction_record` fields [Medium] — CLOSED
 
 **Spec:** §12.8 line 851 ("The verification outcome is recorded in the erasure receipt"); §12.8 line 874 ("The scheduled deletion timestamp and provider-assigned key ARN/resource name are recorded in the erasure receipt"); §12.8 line 762 ("Each erasure job record persists a `phase` field").
 
 **Implementation:** `pkg/gateway/admin/erasure.go:174-194` builds the receipt: `tenantId`, `jobId`, `deleted`, `total`, optional `billingErasure: {disposition, pseudonymized, verified}`, and the override fields. There is no phase log, no KMS key destruction record, no per-store deletion timestamps, no salt-verification outcome (only the binary `verified` boolean from billing). The user-erasure path does not run KMS destruction (T4 KMS lifecycle is tenant-deletion-only), so this is acceptable for user erasure; but the tenant-deletion `Receipt` struct (`pkg/controller/tenantdeletion/lifecycle.go:184-196`) carries `PhaseTimestamps`, `DeletedCounts`, `KMSKeyDestroyed`, `CompletedAt` — which is correct — but is not consumed because the controller is not wired (F1).
 
 **Impact:** The user-erasure receipt is shallower than the spec implies; compliance auditors cannot reconstruct the per-store deletion sequence from a single receipt event.
+
+**Resolution:** `erasurejob.Job` gains a `PhaseLog []PhaseTransition` accumulated by the runner on every phase transition (initiated → store_deleting → [pseudonymizing → verifying] → completed/failed). The `gdpr.erasure_completed` receipt and the `GET /erasure-jobs/{id}` payload now carry `phaseLog` (`{phase, at}` entries) and a new `verificationOutcome` (`verified`/`exempt`/`not_applicable`) derived from `BillingErasureOutcome.VerificationOutcome()`. `kms_key_destruction_record` remains tenant-deletion-only per the finding (the user-erasure path runs no KMS destruction); it lands with the F-12.8.1 controller wiring. (commit `1d8e640b`)
 
 ### - [ ] F-12.8.15 — DataResidencyRegion enforcement in StoreRouter for erasure scope (Redis caches, semantic cache, experiment sticky, billing buffer) is not wired through the erasure orchestrator [Medium] — OPEN
 
@@ -20566,7 +20570,7 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Impact:** A region-scoped erasure may miss tenant data held in regional Redis caches the orchestrator does not enumerate. A "completed" receipt may then misrepresent the actual purge surface.
 
-### - [ ] F-12.8.16 — Helm chart lacks the `audit.gdprRetentionDays`, `storage.regions.<region>.legalHoldEscrow.*`, `backups.erasureReconciler.enabled` knobs the spec defines [Medium] — OPEN
+### - [x] F-12.8.16 — Helm chart lacks the `audit.gdprRetentionDays`, `storage.regions.<region>.legalHoldEscrow.*`, `backups.erasureReconciler.enabled` knobs the spec defines [Medium] — CLOSED
 
 **Spec:** §12.8 lines 839, 884, 906 define operator-tunable Helm knobs: `audit.gdprRetentionDays: 2555`, `storage.regions.<region>.legalHoldEscrow.{endpoint, bucket, kmsKeyId, escrowKekId}`, `backups.erasureReconciler.enabled`, `audit.retentionDays`.
 
@@ -20574,13 +20578,17 @@ I observed no DeleteByUser implementation on TokenStore (OAuth tokens), no Delet
 
 **Impact:** Deployers cannot configure the GDPR retention floor, the escrow buckets per region, or the reconciler toggle. The spec's mandated `CONFIG_INVALID` errors at chart render / `lenny-ops` startup do not trigger.
 
-### - [ ] F-12.8.17 — `compliance.billing_erasure_exempt_regulated` event not emitted on gateway startup [Medium] — OPEN
+**Resolution:** New `audit.ValidateGDPRRetentionDays` (mirroring `billingretention.ValidateRetentionDays`) rejects a value below the 2190-day floor when any active tenant has a regulated `complianceProfile`, returning the verbatim `CONFIG_INVALID: audit.gdprRetentionDays below compliance floor`; wired at gateway startup behind the new `--audit-gdpr-retention-days` flag (`LENNY_AUDIT_GDPR_RETENTION_DAYS`, default 2555) reusing the existing `activeComplianceProfiles` preflight. `values.yaml` gains `audit.gdprRetentionDays`, `audit.retentionDays`, `backups.erasureReconciler.enabled`, and a `storage.regions.<region>.legalHoldEscrow.{endpoint,bucket,kmsKeyId,escrowKekId}` template; the gateway deployment wires the gdpr env. The escrow/reconciler knobs are operator-tunable surface ahead of their consuming controllers (F-12.8.1/F-12.8.2/F-12.8.3). Subsumes already-CLOSED F-12.8.21 (the `audit.gdprRetentionDays` knob + validator subset) and satisfies F-12.8.22's retention-floor dependency. (commit `1d8e640b`)
+
+### - [x] F-12.8.17 — `compliance.billing_erasure_exempt_regulated` event not emitted on gateway startup [Medium] — CLOSED
 
 **Spec:** §12.8 line 863 ("The event is also emitted on every gateway startup when any active tenant has this combination, so the posture cannot silently persist across redeployments").
 
 **Implementation:** `pkg/gateway/admin/tenants.go:1009+ tests "compliance.billing_erasure_exempt_regulated"` confirms the event is emitted on create/update. But `grep -rn "compliance.billing_erasure_exempt_regulated.*startup\|on.*startup.*compliance"` returns no startup-time scan emitting this event for existing tenants.
 
 **Impact:** A tenant that was created with `(billingErasurePolicy=exempt, complianceProfile=hipaa)` before the gateway was upgraded does not re-emit the event on subsequent startups. Auditors cannot rely on the SIEM stream to discover the posture at restart.
+
+**Resolution:** Already implemented; the finding's grep evidence was stale. `admin.EmitBillingErasureExemptRegulatedStartup` scans every active tenant and emits the event for each exempt+regulated combination, and it is wired into the gateway boot at `cmd/lenny-gateway/main.go` (the §12.8 re-surface block). Verified by `TestEmitBillingErasureExemptRegulatedStartup`. No code change required this batch (verified at commit `1d8e640b`).
 
 ### - [x] F-12.8.18 — Legal-hold reconciler for checkpoint gaps (§12.8 line 739) is unimplemented [Medium] — CLOSED
 - **Resolution:** Closed by the F-4.5.14 fix (same root cause, same fix). The new `pkg/gateway/legalholdreconciler` package runs co-located with the GC sweep, emits `legal_hold.checkpoint_gap_detected` audit rows, and bumps `lenny_legal_hold_checkpoint_gaps_total{tenant_id=...}`. (commit `6b453d1`)
