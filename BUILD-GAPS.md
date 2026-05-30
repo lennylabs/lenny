@@ -22722,7 +22722,7 @@ Logged as Medium because the §13.4 isolation guarantee depends on this and
 the §7.4 line is normative ("the Upload Handler is isolated ... by its own
 goroutine pool, concurrency limits, and circuit breaker").
 
-### - [ ] F-13.4.13 — `pkg/upload`'s symlink-target check uses Unix paths even on Windows, but the call surface accepts arbitrary `workspaceRoot` [Medium] — OPEN
+### - [x] F-13.4.13 — `pkg/upload`'s symlink-target check uses Unix paths even on Windows, but the call surface accepts arbitrary `workspaceRoot` [Medium] — CLOSED
 Spec §13.4 line 665 ties the symlink-target check to `/workspace/current` and
 the four forbidden absolute prefixes (`/proc`, `/sys`, `/dev`, `/run/lenny`).
 
@@ -22735,7 +22735,19 @@ Implementation:
   because Lenny pods are Linux only (the agent base image is Linux); the
   hazard surfaces only if a non-gateway caller misuses the API.
 
-### - [ ] F-13.4.14 — Validator ratio check uses integer division and admits ratios just above the boundary [Medium] — OPEN
+**Resolution (1e6b8f7a):** `ValidateSymlinkTarget` now rejects any
+`workspaceRoot` that is not a clean absolute slash path via the new
+`isCleanAbsSlashPath` guard (must start with `/`, contain no backslash, and
+equal its own `path.Clean` form), returning
+`ValidationError{Reason: ReasonPathEscapesRoot}`. A relative root, an
+OS-native `C:\…` root, an empty root, a trailing-slash root, or a root with
+`.`/`..` segments is now an explicit typed rejection instead of silently
+admitting a relative root through the slash-based containment check. The
+canonical `/workspace/current` root is unaffected. Tier-1
+`TestValidateSymlinkTargetRejectsMalformedRoot_spec_13_4` covers each
+malformed form plus the canonical-root accept case.
+
+### - [x] F-13.4.14 — Validator ratio check uses integer division and admits ratios just above the boundary [Medium] — CLOSED
 Spec §13.4 line 659: "Maximum decompression ratio (compressed:uncompressed):
 100:1."
 
@@ -22752,6 +22764,17 @@ Implementation:
 Effect: minor admission of slightly-over-ratio archives. The corollary effect
 becomes practical only once H2 / H7 wire the validator into the extraction
 loop.
+
+**Resolution (1e6b8f7a):** `ValidateArchive` now cross-multiplies
+(`a.DecompressedBytes > MaxDecompressionRatio*a.CompressedBytes`) instead of
+computing an integer-truncated ratio, so an archive whose true ratio is just
+above 100:1 (for example `(100, 10_050)` = 100.5:1) is rejected with
+`ReasonMaxDecompressionRatio` while exactly 100:1 is still admitted. Both
+operands are bounded by the size ceilings checked earlier in the function, so
+the product cannot overflow int64. Tier-1
+`TestValidateArchiveRejectsRatioJustOverBoundary_spec_13_4` asserts the
+boundary-admit and just-over-reject cases; the existing
+`TestValidateArchiveAcceptsBoundaryRatio` continues to pass.
 
 ### - [x] F-13.4.15 — `pkg/upload.containsParentSegment` flags any segment that is exactly `..`, including reserved cases where the entry path begins or ends with `../` [Low] — CLOSED
 The check is correct (rejects on first `..` segment), but it does not
