@@ -9648,7 +9648,7 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 
 ### Findings
 
-### - [ ] F-8.8.1 — TaskRecord envelope is not modeled or persisted; no messages array, no usage / treeUsage, no sessionId on the wire [High] — OPEN
+### - [x] F-8.8.1 — TaskRecord envelope is not modeled or persisted; no messages array, no usage / treeUsage, no sessionId on the wire [High] — CLOSED
 - **Spec:** Lines 806–823 — the `TaskRecord` shape is `{schemaVersion, taskId, sessionId, state, messages: [{role: caller|agent, parts: OutputPart[], state?}], usage{}, treeUsage{}}`. Lines 825–827 make `schemaVersion` immutable once written and define the additive-only evolution contract.
 - **Evidence:**
   - `grep -rn "TaskRecord\b" /Users/joan/projects/lenny/pkg` shows only doc comments. No struct, no constructor, no JSON envelope.
@@ -9657,6 +9657,8 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
   - No migration writes a `task_records` (or similarly named) table: `grep -rn "task_record\|TaskRecord" /Users/joan/projects/lenny/migrations` returns nothing.
 - **Gap:** The §8.8 `TaskRecord` is the spec's primary durable contract for task-level observability and protocol bridging. With no struct, no schema version on the envelope, no `messages` carrier in the `caller/agent` shape, and no `usage`/`treeUsage` payload, the gateway has no way to materialize the contract for MCP Tasks (line 857) or for `GET /v1/sessions/{id}` consumers that expect §8.8 semantics. The forward-read rule in §15.5 item 7 cannot be exercised against a record that does not exist.
 - **Suggested resolution:** Define a `pkg/task/record.go` (or equivalent) with the §8.8 envelope, gate every write through a `SchemaVersion: 1` constant, and decide whether the row is materialized in Postgres (new `task_records` table joined to `sessions`) or projected on-read from `sessions` + `transcripts` + `usage`. Either path must carry the canonical `messages[{role, parts, state}]` envelope so the §15.5 forward-read rule applies.
+
+**Resolution:** New `pkg/task/record.go` models the canonical §8.8 envelope — `Record` (TaskRecord), `Result` (TaskResult), `Message{role caller|agent, parts, state}`, §15.4.1 `OutputPart`, `Usage`/`TreeUsage` — behind a single `task.SchemaVersion` producer constant, plus `ReconcileSchemaVersion` (envelope immutability) and `RetriesExhausted` helpers. The projection path chosen is on-read over the durable session row + §15.1 transcript (rather than a second persisted table that could drift): `Server.buildTaskRecord` maps the transcript's user/assistant/system roles onto caller/agent, wraps each line as a text `OutputPart`, and stamps the terminal task state on the final agent turn. `GET /v1/sessions/{id}` now surfaces the envelope as `taskRecord`. `usage`/`treeUsage` are left null (per-task usage accounting is F-8.8.3; §8.8 line 917 keeps `treeUsage` null until descendants settle). Commits `f860e544` (model + tests), `b4d16311` (projection + GET wiring + tests).
 
 ### - [ ] F-8.8.2 — TaskResult.output (parts + artifactRefs) is unimplemented [High] — OPEN
 
