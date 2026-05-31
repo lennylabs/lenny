@@ -34,6 +34,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"google.golang.org/grpc/peer"
 
+	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/leaseextension"
 )
 
@@ -299,6 +300,17 @@ type BudgetSource interface {
 	// layering. A zero return means the caller applies
 	// DefaultRejectionCoolOff.
 	RejectionCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration
+
+	// Deny marks the requesting subtree extension-denied and starts the
+	// §8.6 line 734 rejection cool-off, the durable record of a user's
+	// rejection of a budget elicitation. The elicitation coordinator
+	// calls it on the §8.6 line 729 reject path so subsequent requests
+	// from the subtree are auto-rejected during the cool-off. A Postgres
+	// implementation keys the flag with a per-row subtree id and persists
+	// it to delegation_tree_budget so a coordinator handoff cannot bypass
+	// the denial (§8.6 line 730); the in-memory source applies it
+	// tree-wide. spec: §8.6 line 729, line 734.
+	Deny(ctx context.Context, tenantID, rootSessionID, requestingSessionID string) error
 }
 
 // Sentinel errors a BudgetSource returns.
@@ -336,6 +348,23 @@ type Service struct {
 	serviceInstanceID string
 	batchIDGen        func() string
 	peerIPFn          func(context.Context) string
+
+	// coordinator drives the §8.6 line 714 elicitation-mode approval flow.
+	// It is nil when no Elicitor is wired, in which case an
+	// elicitation-mode request fails closed rather than auto-granting.
+	// F-8.6.2.
+	coordinator *elicitCoordinator
+
+	// autoLimiter enforces the §8.6 line 712 auto-mode rate limit. It is
+	// always present (in-memory counter when none is supplied) but inert
+	// unless a tree or the deployment default sets a positive
+	// maxAutoExtensionsPerMinute. F-8.6.7.
+	autoLimiter *autoExtensionLimiter
+
+	// defaultAutoMaxPerMinute is the §8.6 line 712 deployment-default
+	// maxAutoExtensionsPerMinute applied when a tree carries no more
+	// specific value. Zero means no limit. F-8.6.7.
+	defaultAutoMaxPerMinute int
 }
 
 // MetricEmitter is the §16 counter callback the Service drives on
@@ -356,6 +385,32 @@ type MetricEmitter interface {
 type Auditor interface {
 	// RecordExtension logs one §8.6 extension decision.
 	RecordExtension(ctx context.Context, e ExtensionAudit)
+
+	// RecordAutoRateLimitExceeded logs the §8.6 line 712
+	// `lease_extension_auto_rate_limit_exceeded` event: an auto-mode
+	// extension request tripped the tree's maxAutoExtensionsPerMinute, so
+	// the gateway paused auto-approval and fell back to elicitation for
+	// the remainder of the window. F-8.6.7.
+	RecordAutoRateLimitExceeded(ctx context.Context, e AutoRateLimitAudit)
+}
+
+// AutoRateLimitAudit is the §8.6 line 712 audit record for an auto-mode
+// rate-limit fallback. It carries the tree, the requesting session, and
+// the issuing replica so an operator can correlate the safety-valve
+// trip with the surrounding extension activity. F-8.6.7.
+type AutoRateLimitAudit struct {
+	TenantID         string
+	RootSessionID    string
+	RequestSessionID string
+	// MaxPerMinute is the resolved maxAutoExtensionsPerMinute the request
+	// exceeded. F-8.6.7.
+	MaxPerMinute int
+	// ServiceInstanceID is the §16.1.1 service.instance.id of the gateway
+	// replica that recorded the fallback.
+	ServiceInstanceID string
+	// ClientIP is the originating IP from the gRPC peer, empty for
+	// in-process callers and unit tests.
+	ClientIP string
 }
 
 // AuditOutcome is the §8.6 line 743 "outcome (approved/denied/capped)"
@@ -513,6 +568,31 @@ type Options struct {
 	// google.golang.org/grpc/peer; tests can substitute a deterministic
 	// fake. F-8.6.10.
 	PeerIPFn func(context.Context) string
+
+	// Elicitor presents the §8.6 line 718 generic budget elicitation and
+	// blocks for the user's decision. When set, ExtendLease enforces
+	// elicitation-mode consent: an elicitation-mode tree no longer
+	// auto-grants. When nil, an elicitation-mode request fails closed
+	// (the gateway cannot obtain consent), while auto-mode trees are
+	// unaffected. Production wires an Elicitor over the §9.2 interaction
+	// store and client event stream. F-8.6.2.
+	Elicitor Elicitor
+
+	// AutoExtensionCounter backs the §8.6 line 712 auto-mode rate limit.
+	// ExtendLease tracks auto-mode extension requests per tree per minute
+	// and falls back to elicitation once a tree exceeds its resolved
+	// maxAutoExtensionsPerMinute. Nil selects an in-memory per-replica
+	// counter; a Redis-backed counter makes the window cross-replica.
+	// F-8.6.7.
+	AutoExtensionCounter ratelimit.Counter
+
+	// DefaultAutoMaxPerMinute is the §8.6 line 712 deployment-default
+	// maxAutoExtensionsPerMinute. It applies to a tree that does not carry
+	// a more specific (tenant/runtime) value, so the safety valve is
+	// operable from a single deployment knob even before per-tree config
+	// is registered. Zero is the spec default (no limit). F-8.6.7.
+	// spec: §8.6 line 712
+	DefaultAutoMaxPerMinute int
 }
 
 // NewService returns a §8.6 ExtendLease Service.
@@ -535,7 +615,7 @@ func NewService(opts Options) (*Service, error) {
 	if peerFn == nil {
 		peerFn = defaultPeerIP
 	}
-	return &Service{
+	svc := &Service{
 		budgets:           opts.Budgets,
 		tenants:           opts.Tenants,
 		auditing:          opts.Auditing,
@@ -544,7 +624,13 @@ func NewService(opts Options) (*Service, error) {
 		serviceInstanceID: opts.ServiceInstanceID,
 		batchIDGen:        batchGen,
 		peerIPFn:          peerFn,
-	}, nil
+	}
+	if opts.Elicitor != nil {
+		svc.coordinator = newElicitCoordinator(opts.Elicitor, opts.Budgets, clock)
+	}
+	svc.autoLimiter = newAutoExtensionLimiter(opts.AutoExtensionCounter)
+	svc.defaultAutoMaxPerMinute = opts.DefaultAutoMaxPerMinute
+	return svc, nil
 }
 
 // ExtendLease handles the §8.6 adapter→gateway extension request. It
@@ -602,6 +688,21 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 		return rejectedResponse(sessionID, budget.CoolOffExpiry), nil
 	}
 
+	// §8.6 approval gate (F-8.6.2; F-8.6.7). In auto mode the request is
+	// granted independently up to the ceiling unless the tree has tripped
+	// its maxAutoExtensionsPerMinute, in which case it falls back to
+	// elicitation. In elicitation mode the gate solicits the user's
+	// consent before any budget moves; a rejection returns a terminal
+	// REJECTED response and persists the subtree denial. The resolved
+	// approver attribution flows into the §8.6 line 743 audit.
+	g := s.gate(ctx, mode, tenantID, budget, sessionID, requested)
+	if g.err != nil {
+		return nil, g.err
+	}
+	if !g.proceed {
+		return g.resp, nil
+	}
+
 	// spec: §8.6 line 643/648 — run the same Grant math over every
 	// extendable dimension against the smaller of its layered effective
 	// ceiling and its parent-lease cap (§8.6 line 648). Dimensions are
@@ -640,7 +741,7 @@ func (s *Service) ExtendLease(ctx context.Context, req *adapterv1.ExtendLeaseReq
 	status := statusFor(combined)
 	s.auditFull(ctx, tenantID, budget, sessionID, requested, granted,
 		auditOutcomeFor(combined),
-		auditExtras{approvalMode: mode, newLimits: newLimits})
+		auditExtras{approvalMode: mode, newLimits: newLimits, approverOverride: g.approver})
 	return &adapterv1.ExtendLeaseResponse{
 		Status:                  status,
 		GrantedTokens:           granted.Tokens,
@@ -827,6 +928,127 @@ func (s *Service) approvalModeFor(ctx context.Context, tenantID, rootSessionID s
 		return p.ApprovalMode(ctx, tenantID, rootSessionID)
 	}
 	return DefaultApprovalMode
+}
+
+// gateResult is the outcome of the §8.6 approval gate for one extension
+// request. Exactly one of proceed, resp, or err is meaningful: proceed
+// true means run the grant math under approver; resp non-nil is a
+// terminal REJECTED response; err non-nil is a handler error.
+type gateResult struct {
+	// proceed reports that the request may run the grant math.
+	proceed bool
+	// approver is the §8.6 line 743 approver attribution for the grant
+	// audit ("gateway-auto" or "client").
+	approver string
+	// resp is the terminal response when the gate rejects without an
+	// error (a user-denied elicitation).
+	resp *adapterv1.ExtendLeaseResponse
+	// err is a handler-level error (rate-limit store failure, elicitation
+	// transport failure, or a misconfigured elicitation mode).
+	err error
+}
+
+// gate applies the §8.6 approval decision before any budget moves. In
+// auto mode it grants independently unless the tree has tripped its
+// maxAutoExtensionsPerMinute, in which case it records the §8.6 line 712
+// fallback and proceeds through the elicitation path. In elicitation
+// mode it solicits the user's consent via the coordinator; a rejection
+// persists the subtree denial and returns a terminal REJECTED response.
+// F-8.6.2; F-8.6.7.
+func (s *Service) gate(ctx context.Context, mode ApprovalMode, tenantID string, budget TreeBudget, sessionID string, requested Dimensions) gateResult {
+	if mode == ApprovalModeAuto {
+		over, maxPerMin, err := s.autoOverLimit(ctx, tenantID, budget.RootSessionID)
+		if err != nil {
+			return gateResult{err: fmt.Errorf("leasecontrol: auto-mode rate check for tree %s: %w", budget.RootSessionID, err)}
+		}
+		if !over {
+			return gateResult{proceed: true, approver: "gateway-auto"}
+		}
+		// §8.6 line 712 — the tree exceeded maxAutoExtensionsPerMinute;
+		// pause auto-approval, log the fallback, and require elicitation
+		// for the remainder of the window.
+		s.recordAutoRateLimited(ctx, tenantID, budget.RootSessionID, sessionID, maxPerMin)
+	}
+
+	// Elicitation mode, or an auto-mode request that fell back to it.
+	if s.coordinator == nil {
+		// §8.6 line 714 — elicitation requires the user's consent. With no
+		// Elicitor wired the gateway cannot obtain it, so it fails closed
+		// rather than silently auto-granting, which is the bug F-8.6.2
+		// fixes. Production always wires an Elicitor.
+		return gateResult{err: fmt.Errorf("leasecontrol: elicitation approval mode for tree %s requires an elicitor; none configured", budget.RootSessionID)}
+	}
+	c, err := s.coordinator.requestConsent(ctx, tenantID, budget.RootSessionID, sessionID)
+	if err != nil {
+		return gateResult{err: fmt.Errorf("leasecontrol: elicitation for session %s: %w", sessionID, err)}
+	}
+	if !c.approved {
+		// §8.6 lines 727-734 — the user rejected; the coordinator persisted
+		// the subtree denial. Audit the denial and return the cool-off
+		// expiry so the adapter surfaces BUDGET_EXHAUSTED.
+		s.audit(ctx, tenantID, budget, sessionID, requested, AuditOutcomeDenied, mode)
+		expiry := s.clock().Add(s.resolveCoolOff(ctx, tenantID, budget.RootSessionID))
+		return gateResult{resp: rejectedResponse(sessionID, expiry)}
+	}
+	return gateResult{proceed: true, approver: c.approver}
+}
+
+// autoRateLimitProvider is the optional BudgetSource extension that
+// reports the tree's resolved §8.6 line 712 maxAutoExtensionsPerMinute.
+// MemoryBudgetSource implements it; a source that does not yields zero,
+// which disables the auto-mode rate limit for the tree. The pattern
+// mirrors approvalModeProvider so the core BudgetSource interface stays
+// minimal. F-8.6.7.
+// spec: §8.6 line 712
+type autoRateLimitProvider interface {
+	AutoExtensionsPerMinute(ctx context.Context, tenantID, rootSessionID string) int
+}
+
+// autoOverLimit reports whether the tree has exceeded its §8.6 line 712
+// auto-mode rate limit on this request, returning the resolved limit so
+// the audit can record it. It is a no-op (never over) when no counter is
+// wired or the tree sets no limit. F-8.6.7.
+func (s *Service) autoOverLimit(ctx context.Context, tenantID, rootSessionID string) (over bool, maxPerMin int, err error) {
+	if s.autoLimiter == nil {
+		return false, 0, nil
+	}
+	maxPerMin = s.autoMaxPerMinute(ctx, tenantID, rootSessionID)
+	if maxPerMin <= 0 {
+		return false, 0, nil
+	}
+	over, err = s.autoLimiter.over(ctx, tenantID, rootSessionID, maxPerMin, s.clock())
+	return over, maxPerMin, err
+}
+
+// autoMaxPerMinute resolves the tree's §8.6 line 712
+// maxAutoExtensionsPerMinute. A tree-specific (tenant/runtime) value wins;
+// otherwise the deployment default applies, following the §8.6 line 654
+// "more specific overrides" resolution. Zero means no limit. F-8.6.7.
+// spec: §8.6 line 712
+func (s *Service) autoMaxPerMinute(ctx context.Context, tenantID, rootSessionID string) int {
+	if p, ok := s.budgets.(autoRateLimitProvider); ok {
+		if v := p.AutoExtensionsPerMinute(ctx, tenantID, rootSessionID); v > 0 {
+			return v
+		}
+	}
+	return s.defaultAutoMaxPerMinute
+}
+
+// recordAutoRateLimited logs the §8.6 line 712
+// lease_extension_auto_rate_limit_exceeded fallback when an Auditor is
+// wired. F-8.6.7.
+func (s *Service) recordAutoRateLimited(ctx context.Context, tenantID, rootSessionID, sessionID string, maxPerMin int) {
+	if s.auditing == nil {
+		return
+	}
+	s.auditing.RecordAutoRateLimitExceeded(ctx, AutoRateLimitAudit{
+		TenantID:          tenantID,
+		RootSessionID:     rootSessionID,
+		RequestSessionID:  sessionID,
+		MaxPerMinute:      maxPerMin,
+		ServiceInstanceID: s.serviceInstanceID,
+		ClientIP:          s.peerIPFn(ctx),
+	})
 }
 
 // audit records one §8.6 extension cool-off rejection. No grant is

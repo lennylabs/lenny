@@ -176,7 +176,7 @@ func TestExtendLeaseAuditCarriesAllDimensions_Spec8_6_743(t *testing.T) {
 	budgets.RegisterTree("root-1", dimsTreeConfig())
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec,
+		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

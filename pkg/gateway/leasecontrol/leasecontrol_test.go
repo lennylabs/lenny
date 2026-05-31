@@ -30,6 +30,10 @@ func newService(t *testing.T, budgets *leasecontrol.MemoryBudgetSource, clock fu
 		Budgets: budgets,
 		Tenants: budgets,
 		Clock:   clock,
+		// Trees default to elicitation mode (§8.6 line 674); the
+		// auto-approving elicitor lets the grant-math tests exercise the
+		// consent path without a real client. F-8.6.2.
+		Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -226,7 +230,7 @@ func TestExtendLeaseRejectedResponseCarriesSpec15ErrorDetails_spec_15_1_line_108
 	base.AddSession("child-2", "root-1", "acme")
 	racing := &raceBudgetSource{inner: base, denyOnApply: true}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: racing, Tenants: base, Clock: clock,
+		Budgets: racing, Tenants: base, Clock: clock, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -461,6 +465,7 @@ func TestExtendLeaseAuditRecorded(t *testing.T) {
 		Budgets:  budgets,
 		Tenants:  budgets,
 		Auditing: rec,
+		Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -499,7 +504,7 @@ func TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743(t *testing.T) {
 	})
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec,
+		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -554,7 +559,7 @@ func TestExtendLeaseAuditOutcomeCeilingReachedIsCapped_spec_8_6_line_743(t *test
 	})
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec,
+		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -585,9 +590,10 @@ func TestExtendLeaseInFlightDenial(t *testing.T) {
 	// mid-request.
 	racing := &raceBudgetSource{inner: base, denyOnApply: true}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: racing,
-		Tenants: base,
-		Clock:   clock,
+		Budgets:  racing,
+		Tenants:  base,
+		Clock:    clock,
+		Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -621,9 +627,10 @@ func TestExtendLeaseInFlightDenialCustomCoolOff(t *testing.T) {
 	})
 	racing := &raceBudgetSource{inner: base, denyOnApply: true}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: racing,
-		Tenants: base,
-		Clock:   clock,
+		Budgets:  racing,
+		Tenants:  base,
+		Clock:    clock,
+		Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -788,7 +795,7 @@ func TestExtendLeaseDefaultBatchIDGenIsChronological_spec_8_6_line_743(t *testin
 	})
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec,
+		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -879,12 +886,25 @@ func (c *movableClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
 // recordingAuditor captures the §8.6 audit entries the Service emits.
 type recordingAuditor struct {
-	entries []leasecontrol.ExtensionAudit
+	entries   []leasecontrol.ExtensionAudit
+	rateLimit []leasecontrol.AutoRateLimitAudit
 }
 
 func (r *recordingAuditor) RecordExtension(_ context.Context, e leasecontrol.ExtensionAudit) {
 	r.entries = append(r.entries, e)
 }
+
+func (r *recordingAuditor) RecordAutoRateLimitExceeded(_ context.Context, e leasecontrol.AutoRateLimitAudit) {
+	r.rateLimit = append(r.rateLimit, e)
+}
+
+// autoApproveElicitor is an Elicitor that approves every elicitation
+// immediately, so the elicitation-mode grant-math tests exercise the
+// §8.6 consent path without a real client. Tests needing a rejecting or
+// blocking elicitor use the fakes in elicitation_test.go.
+type autoApproveElicitor struct{}
+
+func (autoApproveElicitor) Elicit(context.Context, string, string) (bool, error) { return true, nil }
 
 // raceBudgetSource wraps a MemoryBudgetSource and, when denyOnApply is
 // set, marks the tree denied just before ApplyGrant runs — modelling a
@@ -908,6 +928,10 @@ func (r *raceBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSession
 
 func (r *raceBudgetSource) RejectionCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration {
 	return r.inner.RejectionCoolOff(ctx, tenantID, rootSessionID)
+}
+
+func (r *raceBudgetSource) Deny(ctx context.Context, tenantID, rootSessionID, requestingSessionID string) error {
+	return r.inner.Deny(ctx, tenantID, rootSessionID, requestingSessionID)
 }
 
 // errTenantResolver is a TenantResolver that always fails, exercising
@@ -944,6 +968,10 @@ func (e errBudgetSource) ApplyGrant(context.Context, string, string, string, lea
 
 func (e errBudgetSource) RejectionCoolOff(context.Context, string, string) time.Duration {
 	return 0
+}
+
+func (e errBudgetSource) Deny(context.Context, string, string, string) error {
+	return e.err
 }
 
 // TestResolveApprovalMode_spec_8_6_line_654: the
@@ -1092,7 +1120,7 @@ func TestExtendLeaseInFlightDenialCoolOffActiveError_spec_15_1_line_1080(t *test
 	})
 	racing := &raceBudgetSource{inner: base, denyOnApply: true}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: racing, Tenants: base, Clock: clock,
+		Budgets: racing, Tenants: base, Clock: clock, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -1244,7 +1272,7 @@ func TestExtendLeaseSecondsDimensionAudited_spec_8_6_line_743(t *testing.T) {
 	})
 	rec := &recordingAuditor{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Auditing: rec,
+		Budgets: budgets, Tenants: budgets, Auditing: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -1279,7 +1307,7 @@ func TestExtendLeaseDrivesMetricEmitter_spec_16_line_66(t *testing.T) {
 	})
 	rec := &recordingMetrics{}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets: budgets, Tenants: budgets, Metrics: rec,
+		Budgets: budgets, Tenants: budgets, Metrics: rec, Elicitor: autoApproveElicitor{},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

@@ -101,6 +101,12 @@ type memTree struct {
 	// DefaultSuccessCoolOff once the dispatcher consumes it.
 	// spec: §8.6 line 675
 	successCoolOff time.Duration
+
+	// autoMaxPerMinute is the resolved §8.6 line 712
+	// maxAutoExtensionsPerMinute for the tree. Zero means no limit.
+	// F-8.6.7.
+	// spec: §8.6 line 712
+	autoMaxPerMinute int
 }
 
 // effectiveMaxDims resolves the tree's §8.6 per-dimension effective
@@ -205,6 +211,15 @@ type TreeConfig struct {
 	// post-approval window. Zero applies DefaultSuccessCoolOff.
 	// spec: §8.6 line 675
 	SuccessCoolOff time.Duration
+
+	// AutoMaxPerMinute is the §8.6 line 712 autoModeRateLimit
+	// maxAutoExtensionsPerMinute resolved for the tree through the
+	// deployment→tenant→runtime layering. Zero means no limit (the spec
+	// default), so auto mode grants independently without ever falling
+	// back to elicitation. A positive value caps auto-approved extensions
+	// per one-minute window before the fallback engages. F-8.6.7.
+	// spec: §8.6 line 712
+	AutoMaxPerMinute int
 }
 
 // SessionLease is the §8.6 line 648 "parent's own lease limits" snapshot
@@ -289,6 +304,7 @@ func (m *MemoryBudgetSource) RegisterTree(rootSessionID string, cfg TreeConfig) 
 		rejectionCoolOff: cfg.RejectionCoolOff,
 		approvalMode:     mode,
 		successCoolOff:   cfg.SuccessCoolOff,
+		autoMaxPerMinute: cfg.AutoMaxPerMinute,
 	}
 	m.sessionTree[rootSessionID] = rootSessionID
 	m.sessionTenant[rootSessionID] = cfg.TenantID
@@ -340,6 +356,31 @@ func (m *MemoryBudgetSource) MarkDenied(rootSessionID string) {
 	}
 	t.extensionDenied = true
 	t.coolOffExpiry = m.clock().Add(coolOff)
+}
+
+// Deny marks the requesting subtree extension-denied and starts the §8.6
+// line 734 rejection cool-off, satisfying the BudgetSource.Deny contract
+// the elicitation coordinator calls on a user rejection. The in-memory
+// source records the denial tree-wide (see memTree.extensionDenied),
+// keyed by the rootSessionID; the requestingSessionID and tenantID flow
+// through for the Postgres source, which keys the flag per subtree and
+// persists it to delegation_tree_budget. An unknown tree is a no-op so a
+// late rejection on a torn-down tree does not error. F-8.6.2.
+// spec: §8.6 line 729, line 734
+func (m *MemoryBudgetSource) Deny(_ context.Context, _ /*tenantID*/, rootSessionID, _ /*requestingSessionID*/ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.trees[rootSessionID]
+	if !ok {
+		return nil
+	}
+	coolOff := t.rejectionCoolOff
+	if coolOff <= 0 {
+		coolOff = DefaultRejectionCoolOff
+	}
+	t.extensionDenied = true
+	t.coolOffExpiry = m.clock().Add(coolOff)
+	return nil
 }
 
 // ClearDenial clears the §8.6 extension-denied flag for the tree,
@@ -498,6 +539,21 @@ func (m *MemoryBudgetSource) SuccessCoolOff(_ context.Context, tenantID, rootSes
 		return 0
 	}
 	return t.successCoolOff
+}
+
+// AutoExtensionsPerMinute returns the §8.6 line 712
+// maxAutoExtensionsPerMinute configured for the tree, or zero when none
+// is set so the auto-mode rate limiter treats the tree as unlimited. It
+// satisfies the autoRateLimitProvider seam the Service consults. F-8.6.7.
+// spec: §8.6 line 712
+func (m *MemoryBudgetSource) AutoExtensionsPerMinute(_ context.Context, tenantID, rootSessionID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, err := m.lookupLocked(tenantID, rootSessionID)
+	if err != nil {
+		return 0
+	}
+	return t.autoMaxPerMinute
 }
 
 // lookupLocked resolves the tree for sessionID and asserts the tenant

@@ -105,6 +105,29 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --spiffe-trust-domain=cluster.local
 
+  # spec: §8.6 line 712 — the auto-mode lease-extension rate-limit
+  # deployment default renders only when set; the spec default (no limit)
+  # omits the flag. F-8.6.7.
+  - it: renders --lease-extension-auto-max-per-min when gateway.leaseExtension.autoModeMaxPerMinute is set
+    set:
+      gateway.leaseExtension.autoModeMaxPerMinute: 30
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --lease-extension-auto-max-per-min=30
+
+  - it: omits --lease-extension-auto-max-per-min by default (no limit)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --lease-extension-auto-max-per-min=0
+
   # spec: §10.3 lines 316, 334 (NET-064) — the lenny-preflight Job reads
   # these annotations to enforce uniqueness across Lenny Deployments in
   # the same cluster; without them the collision check is a no-op.

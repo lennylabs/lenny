@@ -479,6 +479,8 @@ func main() {
 		"§9.2 platform-wide elicitation content-integrity floor (off | detect-only | enforce). The §15.1 admin GET endpoint reports the resolved effective mode as max(floor, tenantStored). A PUT below the floor is rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR. Empty defaults to `off` (no floor).")
 	grpcAddr := flag.String("grpc-addr", os.Getenv("LENNY_GRPC_ADDR"),
 		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — currently the ExtendLease lease-extension RPC — on this address. Empty disables the GatewayControl listener.")
+	leaseAutoMaxPerMin := flag.Int("lease-extension-auto-max-per-min", 0,
+		"§8.6 line 712 deployment-default autoModeRateLimit.maxAutoExtensionsPerMinute: the per-task-tree cap on auto-approved lease extensions per minute before the gateway pauses auto-approval and falls back to elicitation. Zero is the spec default (no limit). A tenant or runtime override (when registered) takes precedence. F-8.6.7.")
 	spiffeTrustDomain := flag.String("spiffe-trust-domain", os.Getenv("LENNY_SPIFFE_TRUST_DOMAIN"),
 		"§10.3 NET-060 SPIFFE trust domain (global.spiffeTrustDomain). When set together with --adapter-ca, the §8.6 GatewayControl listener validates each inbound pod certificate's spiffe://<trust-domain>/agent/{pool}/{pod} URI SAN at TLS handshake and rejects a foreign trust domain, a non-agent identity, or a revoked certificate with no gRPC response (logged pod_identity_mismatch). Empty disables SPIFFE peer validation (local development only).")
 	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
@@ -3375,7 +3377,21 @@ func main() {
 	// principal-bound context to satisfy §11.7 line 428 actor-tenant
 	// validation. F-8.6.10.
 	leaseExtensionAuditor := leaseExtensionAuditAdapter{appender: auditAppender}
-	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, mtlsDeny)
+	// §8.6 line 718 — the production Elicitor presents the generic budget
+	// elicitation on the requesting session's client stream over the §9.2
+	// interaction store and blocks for the user's decision. Built only when
+	// the GatewayControl listener is enabled. F-8.6.2.
+	var leaseElicit leasecontrol.Elicitor
+	if *grpcAddr != "" {
+		leaseElicit = &leaseElicitor{
+			sessions:     sessions,
+			interactions: interactions,
+			publish:      func(s, et, d string, n time.Time) { eventBus.Publish(s, et, d, n) },
+			clock:        clockinject.Now,
+			idgen:        func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("lease-elicit-%x", b[:]) },
+		}
+	}
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, rateLimiter, *leaseAutoMaxPerMin, replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, mtlsDeny)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
@@ -4358,7 +4374,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, replicaID, tlsCert, tlsKey, clientCA, trustDomain string, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, replicaID, tlsCert, tlsKey, clientCA, trustDomain string, denyList spiffe.DenyChecker) (*grpc.Server, net.Listener, error) {
 	if addr == "" {
 		return nil, nil, nil
 	}
@@ -4372,6 +4388,15 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		Auditing:          auditor,
 		ServiceInstanceID: replicaID,
 		Clock:             clockinject.Now,
+		// §8.6 line 714 — wire the elicitation path so elicitation-mode
+		// trees solicit the user's consent instead of auto-granting.
+		// F-8.6.2.
+		Elicitor: elicitor,
+		// §8.6 line 712 — the auto-mode rate-limit counter (reuses the
+		// §11.1 request-rate counter, Redis-backed when configured) and
+		// the deployment-default cap. F-8.6.7.
+		AutoExtensionCounter:    autoCounter,
+		DefaultAutoMaxPerMinute: defaultAutoMaxPerMin,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build GatewayControl service: %w", err)
@@ -4492,6 +4517,30 @@ func (a leaseExtensionAuditAdapter) RecordExtension(ctx context.Context, e lease
 		return
 	}
 	_, _ = a.appender.Append(ctx, e.TenantID, "delegation.lease_extended", json.RawMessage(data), clockinject.Now().UTC())
+}
+
+// RecordAutoRateLimitExceeded emits the §8.6 line 712
+// `delegation.lease_extension_auto_rate_limit_exceeded` audit row when an
+// auto-mode extension request trips the tree's maxAutoExtensionsPerMinute
+// and the gateway falls back to elicitation for the remainder of the
+// window. F-8.6.7.
+// spec: §8.6 line 712
+func (a leaseExtensionAuditAdapter) RecordAutoRateLimitExceeded(ctx context.Context, e leasecontrol.AutoRateLimitAudit) {
+	if a.appender == nil {
+		return
+	}
+	payload := map[string]any{
+		"session_id":          e.RequestSessionID,
+		"root_session_id":     e.RootSessionID,
+		"max_per_minute":      e.MaxPerMinute,
+		"service_instance_id": e.ServiceInstanceID,
+		"client_ip":           e.ClientIP,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, _ = a.appender.Append(ctx, e.TenantID, "delegation.lease_extension_auto_rate_limit_exceeded", json.RawMessage(data), clockinject.Now().UTC())
 }
 
 // verifyPostgresSchema fails fast when the gateway is pointed at a

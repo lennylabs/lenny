@@ -284,6 +284,12 @@ spec:
           args:
             - --addr=:{{ .Values.gateway.internalPort }}
             - --grpc-addr=:{{ .Values.gateway.grpcPort }}
+            # §8.6 line 712 — deployment-default auto-mode lease-extension
+            # rate limit. Rendered only when set; 0/unset keeps the spec
+            # default of no limit. F-8.6.7.
+            {{- if gt (int .Values.gateway.leaseExtension.autoModeMaxPerMinute) 0 }}
+            - --lease-extension-auto-max-per-min={{ .Values.gateway.leaseExtension.autoModeMaxPerMinute }}
+            {{- end }}
             - --no-environment-policy={{ .Values.gateway.noEnvironmentPolicy }}
             # spec: §15.5 item 1; docs/api/index.md line 124 —
             # F-15.5.11. Empty omits the flag so the middleware stays

@@ -1097,6 +1097,16 @@ gateway:
   # admitted by the agent-namespace allow-pod-egress-base NetworkPolicy.
   # The gateway serves the §8.6 GatewayControl listener on this port.
   grpcPort: 50051
+  # leaseExtension configures the §8.6 GatewayControl lease-extension
+  # control plane.
+  leaseExtension:
+    # autoModeMaxPerMinute is the §8.6 line 712 deployment-default
+    # autoModeRateLimit.maxAutoExtensionsPerMinute: the per-task-tree cap
+    # on auto-approved lease extensions per minute before the gateway
+    # pauses auto-approval and falls back to elicitation for the rest of
+    # the window. 0 is the spec default (no limit). A registered tenant or
+    # runtime override takes precedence over this deployment default.
+    autoModeMaxPerMinute: 0
   # metricsPort is the port the gateway serves Prometheus metrics on
   # (§13.2); the monitoring-scrape NetworkPolicy admits it. The gateway
   # binary serves /metrics on the same listener as the REST API
