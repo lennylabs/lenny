@@ -33,13 +33,14 @@
     "source": {
       "type": "object",
       "required": ["type"],
-      "discriminator": { "propertyName": "type" },
-      "oneOf": [
-        { "$ref": "#/$defs/inlineFile" },
-        { "$ref": "#/$defs/uploadFile" },
-        { "$ref": "#/$defs/uploadArchive" },
-        { "$ref": "#/$defs/mkdir" },
-        { "$ref": "#/$defs/gitClone" }
+      "properties": { "type": { "type": "string" } },
+      "description": "§14 line 336: known types are validated strictly; an unknown `type` matches no `if` branch and passes (the consumer skips it per the open-string discriminator). `allOf` + per-variant `if`/`then` expresses this; `oneOf` cannot, because it requires exactly-one-match and would reject an unknown type.",
+      "allOf": [
+        { "if": { "required": ["type"], "properties": { "type": { "const": "inlineFile" } } }, "then": { "$ref": "#/$defs/inlineFile" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "uploadFile" } } }, "then": { "$ref": "#/$defs/uploadFile" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "uploadArchive" } } }, "then": { "$ref": "#/$defs/uploadArchive" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "mkdir" } } }, "then": { "$ref": "#/$defs/mkdir" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "gitClone" } } }, "then": { "$ref": "#/$defs/gitClone" } }
       ]
     },
 

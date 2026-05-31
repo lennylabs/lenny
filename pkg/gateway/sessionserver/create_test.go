@@ -475,6 +475,42 @@ func TestCreateRejectsMalformedWorkspacePlan(t *testing.T) {
 	}
 }
 
+// spec: §14.1 line 326 — a plan whose schemaVersion exceeds what the
+// gateway understands is not a "bad plan" (400 WORKSPACE_PLAN_INVALID)
+// but a "gateway too old" condition: HTTP 422
+// WORKSPACE_PLAN_SCHEMA_UNSUPPORTED carrying details.knownVersion and
+// details.encounteredVersion so a rollback can be diagnosed. F-14.1.1.
+func TestCreateRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{})
+
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef:    "claude-code",
+		WorkspacePlan: json.RawMessage(`{"schemaVersion": 2, "sources": []}`),
+	})
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status: got %d, want 422; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Code != "WORKSPACE_PLAN_SCHEMA_UNSUPPORTED" {
+		t.Errorf("error code: got %q, want WORKSPACE_PLAN_SCHEMA_UNSUPPORTED", env.Error.Code)
+	}
+	if got, _ := env.Error.Details["knownVersion"].(float64); got != 1 {
+		t.Errorf("details.knownVersion: got %v, want 1", env.Error.Details["knownVersion"])
+	}
+	if got, _ := env.Error.Details["encounteredVersion"].(float64); got != 2 {
+		t.Errorf("details.encounteredVersion: got %v, want 2", env.Error.Details["encounteredVersion"])
+	}
+}
+
 // TestCreateMultiViolationReportsDetailsFields covers F-14.1.19 / §15.1
 // line 979: when multiple WorkspacePlan sub-errors are aggregated the
 // envelope rides under `details.fields` (plural — the JSON Schema

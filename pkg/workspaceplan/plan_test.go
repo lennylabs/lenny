@@ -103,6 +103,35 @@ func TestParseRejectsUnsupportedHigherSchemaVersion(t *testing.T) {
 	expectErr(t, err, workspaceplan.ReasonUnsupportedSchemaVersion)
 }
 
+// spec: §14.1 line 326 — the unsupported-schemaVersion error must carry
+// the version pair so the gateway can echo details.knownVersion /
+// details.encounteredVersion on the 422 envelope. A reason that is not
+// "too new" (e.g. a negative version → invalid) must leave them nil so
+// the gateway does not emit a misleading version pair. F-14.1.1.
+func TestUnsupportedSchemaVersionCarriesVersionPair_spec_14_1_326(t *testing.T) {
+	_, _, err := parse(t, `{"schemaVersion": 99, "sources": []}`)
+	var ve *workspaceplan.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected *ValidationError, got %T (%v)", err, err)
+	}
+	if ve.KnownVersion == nil || *ve.KnownVersion != workspaceplan.SchemaVersion {
+		t.Errorf("KnownVersion = %v, want %d", ve.KnownVersion, workspaceplan.SchemaVersion)
+	}
+	if ve.EncounteredVersion == nil || *ve.EncounteredVersion != 99 {
+		t.Errorf("EncounteredVersion = %v, want 99", ve.EncounteredVersion)
+	}
+
+	// A negative version is an invalid (not unsupported) plan; the version
+	// pair must stay nil.
+	_, _, err = parse(t, `{"schemaVersion": -1, "sources": []}`)
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected *ValidationError, got %T (%v)", err, err)
+	}
+	if ve.KnownVersion != nil || ve.EncounteredVersion != nil {
+		t.Errorf("invalid (negative) schemaVersion must not carry a version pair; got known=%v encountered=%v", ve.KnownVersion, ve.EncounteredVersion)
+	}
+}
+
 func TestParseRejectsNegativeSchemaVersion(t *testing.T) {
 	_, _, err := parse(t, `{"schemaVersion": -1, "sources": []}`)
 	expectErr(t, err, workspaceplan.ReasonInvalidSchemaVersion)

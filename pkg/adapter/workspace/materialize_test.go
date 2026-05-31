@@ -3,7 +3,6 @@
 package workspace_test
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -148,13 +147,59 @@ func TestMaterializeRejectsInvalidMode(t *testing.T) {
 	}
 }
 
-func TestMaterializeRejectsUnknownSourceType(t *testing.T) {
+// spec: §14 line 334 — an unknown source.type is skipped with a
+// workspace_plan_unknown_source_type warning, not rejected. A newer
+// gateway can inject a source type this adapter predates during a
+// rolling upgrade; aborting the whole materialization would crash the
+// session setup instead of gracefully degrading. F-14.1.2.
+func TestMaterializeSkipsUnknownSourceType_spec_14_334(t *testing.T) {
 	root := t.TempDir()
-	_, err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
+	warnings, err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("teleport", "x", "", ""),
 	})
-	if !errors.Is(err, workspace.ErrUnknownSourceType) {
-		t.Errorf("error = %v, want ErrUnknownSourceType", err)
+	if err != nil {
+		t.Fatalf("Materialize must skip an unknown source type, got error: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings: got %d, want 1: %+v", len(warnings), warnings)
+	}
+	w := warnings[0]
+	if w.Code != "workspace_plan_unknown_source_type" {
+		t.Errorf("warning code: got %q, want workspace_plan_unknown_source_type", w.Code)
+	}
+	if w.UnknownType != "teleport" {
+		t.Errorf("warning unknownType: got %q, want teleport", w.UnknownType)
+	}
+	if w.SourceIndex != 0 {
+		t.Errorf("warning sourceIndex: got %d, want 0", w.SourceIndex)
+	}
+}
+
+// spec: §14 line 334 — a known source preceding an unknown one is still
+// materialized; only the unknown entry is skipped. This guards against a
+// regression where an unknown type short-circuits the source loop.
+// F-14.1.2.
+func TestMaterializeSkipsUnknownButKeepsKnown_spec_14_334(t *testing.T) {
+	root := t.TempDir()
+	warnings, err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
+		source("inlineFile", "keep.txt", "hello", "0644"),
+		source("teleport", "x", "", ""),
+	})
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if len(warnings) != 1 || warnings[0].UnknownType != "teleport" {
+		t.Fatalf("warnings: got %+v, want one teleport skip", warnings)
+	}
+	if warnings[0].SourceIndex != 1 {
+		t.Errorf("warning sourceIndex: got %d, want 1", warnings[0].SourceIndex)
+	}
+	got, readErr := os.ReadFile(filepath.Join(root, "keep.txt"))
+	if readErr != nil {
+		t.Fatalf("known inlineFile was not materialized: %v", readErr)
+	}
+	if string(got) != "hello" {
+		t.Errorf("keep.txt content: got %q, want hello", got)
 	}
 }
 

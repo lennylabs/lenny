@@ -208,11 +208,27 @@ type Warning struct {
 
 // ValidationError is the §14 `400 WORKSPACE_PLAN_INVALID` envelope
 // payload. The gateway maps this to the REST error response verbatim.
+//
+// The schemaVersion gate is the one exception to the 400 mapping: when
+// Reason is ReasonUnsupportedSchemaVersion the gateway emits
+// `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` instead, carrying
+// KnownVersion / EncounteredVersion as `details.knownVersion` /
+// `details.encounteredVersion` so a client (and the §15.5 forward-read
+// durable-consumer contract) can distinguish "you submitted a bad plan"
+// from "this gateway is too old to read this plan." spec: §14.1 line
+// 326. F-14.1.1.
 type ValidationError struct {
 	Reason  string   `json:"reason"`
 	Field   string   `json:"field,omitempty"`
 	Message string   `json:"message"`
 	SubErrs []SubErr `json:"subErrors,omitempty"`
+
+	// KnownVersion / EncounteredVersion accompany a
+	// ReasonUnsupportedSchemaVersion error: the gateway's known schema
+	// revision and the higher revision the plan declared. Both are nil
+	// for every other reason. spec: §14.1 line 326. F-14.1.1.
+	KnownVersion       *int `json:"knownVersion,omitempty"`
+	EncounteredVersion *int `json:"encounteredVersion,omitempty"`
 }
 
 // SubErr captures a per-source validation error in the aggregate form
@@ -363,14 +379,22 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 			// schemaVersion > known → WORKSPACE_PLAN_SCHEMA_UNSUPPORTED.
 			// schemaVersion < known (e.g., negative) → INVALID.
 			reason := ReasonInvalidSchemaVersion
-			if *root.SchemaVersion > SchemaVersion {
-				reason = ReasonUnsupportedSchemaVersion
-			}
-			return Plan{}, nil, &ValidationError{
-				Reason:  reason,
+			ve := &ValidationError{
 				Field:   "schemaVersion",
 				Message: fmt.Sprintf("schemaVersion %d is not supported by this gateway (known: %d)", *root.SchemaVersion, SchemaVersion),
 			}
+			if *root.SchemaVersion > SchemaVersion {
+				reason = ReasonUnsupportedSchemaVersion
+				// spec: §14.1 line 326 — the gateway maps this reason to
+				// `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` and echoes the
+				// version pair so a rollback can be diagnosed. F-14.1.1.
+				known := SchemaVersion
+				encountered := *root.SchemaVersion
+				ve.KnownVersion = &known
+				ve.EncounteredVersion = &encountered
+			}
+			ve.Reason = reason
+			return Plan{}, nil, ve
 		}
 	}
 

@@ -100,6 +100,26 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
+	// spec: §14.1 line 326 — the adapter is a live consumer at
+	// materialization time and MUST reject a plan whose schemaVersion it
+	// does not understand before touching the filesystem; a stale adapter
+	// could otherwise misinterpret fields a newer gateway wrote during a
+	// rolling upgrade. The typed WORKSPACE_PLAN_SCHEMA_UNSUPPORTED code +
+	// version pair ride as a gRPC status detail so the gateway can map it
+	// to the §15.1 422 envelope. F-14.1.3.
+	schemaVersion := int(req.GetWorkspacePlan().GetSchemaVersion())
+	if err := workspace.CheckSchemaVersion(schemaVersion); err != nil {
+		st := status.New(codes.FailedPrecondition, err.Error())
+		if withDetail, dErr := st.WithDetails(&adapterv1.Error{
+			Code:      adapterv1.Error_ERROR_CODE_WORKSPACE_PLAN_SCHEMA_UNSUPPORTED,
+			Category:  adapterv1.Error_CATEGORY_PERMANENT,
+			Message:   err.Error(),
+			Retryable: false,
+		}); dErr == nil {
+			return nil, withDetail.Err()
+		}
+		return nil, st.Err()
+	}
 	// spec: §7.4 lines 458, 462 — F-7.4.4. The gateway delivers the
 	// per-Runtime allowSymlinks opt-in plus the absolute workspace root
 	// (slot-scoped paths in §6.4 concurrent runtimes) on FinalizeWorkspace.
@@ -126,14 +146,23 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 	// `stripComponents`) ride per §14 line 100.
 	resp := &adapterv1.FinalizeWorkspaceResponse{}
 	for _, w := range warnings {
-		resp.WorkspacePlanWarnings = append(resp.WorkspacePlanWarnings, &adapterv1.WorkspacePlanWarning{
+		pw := &adapterv1.WorkspacePlanWarning{
 			Code:            w.Code,
 			SourceIndex:     int32(w.SourceIndex),
 			EntryPath:       w.EntryPath,
 			SegmentCount:    int32(w.SegmentCount),
 			StripComponents: int32(w.StripComponents),
 			Message:         w.Message,
-		})
+		}
+		// spec: §14 line 334 — the unknown-source-type warning carries
+		// `unknownType` and the plan's `schemaVersion`. The materializer
+		// fills UnknownType; the plan version is stamped here, where the
+		// request (and thus the plan) is in scope. F-14.1.2.
+		if w.UnknownType != "" {
+			pw.UnknownType = w.UnknownType
+			pw.SchemaVersion = int32(schemaVersion)
+		}
+		resp.WorkspacePlanWarnings = append(resp.WorkspacePlanWarnings, pw)
 	}
 	return resp, nil
 }

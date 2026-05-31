@@ -1282,8 +1282,22 @@ type WorkspacePlanWarning struct {
 	// `workspace_plan_strip_components_skip` warnings; zero on other
 	// codes. F-14.1.18.
 	StripComponents int32 `protobuf:"varint,6,opt,name=strip_components,json=stripComponents,proto3" json:"strip_components,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// unknown_type is the open-string `source.type` discriminator the
+	// materializer did not recognize and skipped. spec: §14 line 334 —
+	// `unknownType`. Populated only on `workspace_plan_unknown_source_type`
+	// warnings the adapter raises when it is the live consumer of a plan
+	// carrying a source type a newer gateway injected; empty on other
+	// codes. F-14.1.2.
+	UnknownType string `protobuf:"bytes,7,opt,name=unknown_type,json=unknownType,proto3" json:"unknown_type,omitempty"`
+	// schema_version is the plan's declared §14.1 `schemaVersion`, copied
+	// onto the warning so a consumer correlating warnings to plans does
+	// not have to re-read the request body. spec: §14 line 334 —
+	// `schemaVersion`. Populated only on
+	// `workspace_plan_unknown_source_type` warnings; zero on other codes.
+	// F-14.1.2.
+	SchemaVersion int32 `protobuf:"varint,8,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *WorkspacePlanWarning) Reset() {
@@ -1354,6 +1368,20 @@ func (x *WorkspacePlanWarning) GetSegmentCount() int32 {
 func (x *WorkspacePlanWarning) GetStripComponents() int32 {
 	if x != nil {
 		return x.StripComponents
+	}
+	return 0
+}
+
+func (x *WorkspacePlanWarning) GetUnknownType() string {
+	if x != nil {
+		return x.UnknownType
+	}
+	return ""
+}
+
+func (x *WorkspacePlanWarning) GetSchemaVersion() int32 {
+	if x != nil {
+		return x.SchemaVersion
 	}
 	return 0
 }
@@ -4465,7 +4493,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x0eallow_symlinks\x18\x01 \x01(\bR\rallowSymlinks\x12%\n" +
 	"\x0eworkspace_root\x18\x02 \x01(\tR\rworkspaceRoot\"{\n" +
 	"\x19FinalizeWorkspaceResponse\x12^\n" +
-	"\x17workspace_plan_warnings\x18\x01 \x03(\v2&.lenny.adapter.v1.WorkspacePlanWarningR\x15workspacePlanWarnings\"\xd6\x01\n" +
+	"\x17workspace_plan_warnings\x18\x01 \x03(\v2&.lenny.adapter.v1.WorkspacePlanWarningR\x15workspacePlanWarnings\"\xa0\x02\n" +
 	"\x14WorkspacePlanWarning\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12!\n" +
 	"\fsource_index\x18\x02 \x01(\x05R\vsourceIndex\x12\x1d\n" +
@@ -4473,7 +4501,9 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"entry_path\x18\x03 \x01(\tR\tentryPath\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x12#\n" +
 	"\rsegment_count\x18\x05 \x01(\x05R\fsegmentCount\x12)\n" +
-	"\x10strip_components\x18\x06 \x01(\x05R\x0fstripComponents\"\xd6\x01\n" +
+	"\x10strip_components\x18\x06 \x01(\x05R\x0fstripComponents\x12!\n" +
+	"\funknown_type\x18\a \x01(\tR\vunknownType\x12%\n" +
+	"\x0eschema_version\x18\b \x01(\x05R\rschemaVersion\"\xd6\x01\n" +
 	"\x0fRunSetupRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12E\n" +

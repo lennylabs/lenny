@@ -459,6 +459,20 @@ message WorkspacePlanWarning {
   // `workspace_plan_strip_components_skip` warnings; zero on other
   // codes. F-14.1.18.
   int32 strip_components = 6;
+  // unknown_type is the open-string `source.type` discriminator the
+  // materializer did not recognize and skipped. spec: §14 line 334 —
+  // `unknownType`. Populated only on `workspace_plan_unknown_source_type`
+  // warnings the adapter raises when it is the live consumer of a plan
+  // carrying a source type a newer gateway injected; empty on other
+  // codes. F-14.1.2.
+  string unknown_type = 7;
+  // schema_version is the plan's declared §14.1 `schemaVersion`, copied
+  // onto the warning so a consumer correlating warnings to plans does
+  // not have to re-read the request body. spec: §14 line 334 —
+  // `schemaVersion`. Populated only on
+  // `workspace_plan_unknown_source_type` warnings; zero on other codes.
+  // F-14.1.2.
+  int32 schema_version = 8;
 }
 
 // RunSetupRequest carries the §14 WorkspacePlan setup commands the

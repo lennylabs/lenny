@@ -175,6 +175,70 @@ func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 	}
 }
 
+// spec: §14.1 line 326 — the adapter is a live consumer that MUST reject
+// a plan whose schemaVersion exceeds the known revision before touching
+// the filesystem, and surface the typed WORKSPACE_PLAN_SCHEMA_UNSUPPORTED
+// code. A source that would write a file proves the reject happens before
+// materialization. F-14.1.3.
+func TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testing.T) {
+	root := t.TempDir()
+	srv := &Server{WorkspaceRoot: root}
+	req := &adapterv1.FinalizeWorkspaceRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		WorkspacePlan: &adapterv1.WorkspacePlan{
+			SchemaVersion: workspace.MaxKnownSchemaVersion + 1,
+			Sources:       []*adapterv1.WorkspaceSource{wsSource("inlineFile", "written.txt", "x", "644")},
+		},
+	}
+	_, err := srv.FinalizeWorkspace(context.Background(), req)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("FinalizeWorkspace with a future schemaVersion = %v, want FailedPrecondition", err)
+	}
+	// The status carries the typed §15.1 error code so the gateway can
+	// map it to the 422 envelope.
+	st, _ := status.FromError(err)
+	var code adapterv1.Error_ErrorCode
+	for _, d := range st.Details() {
+		if e, ok := d.(*adapterv1.Error); ok {
+			code = e.GetCode()
+		}
+	}
+	if code != adapterv1.Error_ERROR_CODE_WORKSPACE_PLAN_SCHEMA_UNSUPPORTED {
+		t.Errorf("status error code detail = %v, want WORKSPACE_PLAN_SCHEMA_UNSUPPORTED", code)
+	}
+	// The reject must happen before any filesystem write.
+	if _, statErr := os.Stat(filepath.Join(root, "written.txt")); statErr == nil {
+		t.Error("materialization wrote a file despite the schemaVersion reject; the gate ran too late")
+	}
+}
+
+// spec: §14 line 334 — an unknown source.type is skipped with a
+// workspace_plan_unknown_source_type warning the adapter returns on
+// FinalizeWorkspaceResponse, carrying `unknownType` and the plan's
+// `schemaVersion`. F-14.1.2.
+func TestFinalizeWorkspaceSkipsUnknownSourceType_spec_14_334(t *testing.T) {
+	srv := &Server{WorkspaceRoot: t.TempDir()}
+	resp, err := srv.FinalizeWorkspace(context.Background(),
+		finalizeReq("sess-1", wsSource("teleport", "x", "", "")))
+	if err != nil {
+		t.Fatalf("FinalizeWorkspace must skip an unknown source type, got error: %v", err)
+	}
+	warns := resp.GetWorkspacePlanWarnings()
+	if len(warns) != 1 {
+		t.Fatalf("warnings: got %d, want 1: %+v", len(warns), warns)
+	}
+	w := warns[0]
+	if w.GetCode() != "workspace_plan_unknown_source_type" {
+		t.Errorf("warning code: got %q, want workspace_plan_unknown_source_type", w.GetCode())
+	}
+	if w.GetUnknownType() != "teleport" {
+		t.Errorf("warning unknownType: got %q, want teleport", w.GetUnknownType())
+	}
+	if w.GetSchemaVersion() != 1 {
+		t.Errorf("warning schemaVersion: got %d, want 1 (the plan's version)", w.GetSchemaVersion())
+	}
+}
+
 func TestRunSetupExecutesCommands(t *testing.T) {
 	root := t.TempDir()
 	srv := &Server{WorkspaceRoot: root}

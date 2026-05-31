@@ -24,10 +24,6 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// ErrUnknownSourceType reports a workspace source whose type is not a
-// recognized §14 source type.
-var ErrUnknownSourceType = errors.New("unknown workspace source type")
-
 // Warning is one non-fatal §14 advisory the adapter raised against a
 // workspace source during materialization. The fields mirror the
 // proto WorkspacePlanWarning so the adapter Server can transcribe a
@@ -54,9 +50,20 @@ type Warning struct {
 	// entry was tested against.
 	// spec: §14 line 100 — `stripComponents`. F-14.1.18.
 	StripComponents int
+	// UnknownType is the open-string `source.type` the materializer did
+	// not recognize and skipped. Populated only on
+	// `workspace_plan_unknown_source_type` warnings.
+	// spec: §14 line 334 — `unknownType`. F-14.1.2.
+	UnknownType string
 	// Message is a human-readable explanation.
 	Message string
 }
+
+// unknownSourceTypeSkipCode is the §14 closed-enum WarningCode for the
+// §14 line 334 "unknown source.type is skipped, not rejected" advisory.
+// The string matches pkg/workspaceplan.WarnUnknownSourceType so the two
+// definitions stay aligned. F-14.1.2.
+const unknownSourceTypeSkipCode = "workspace_plan_unknown_source_type"
 
 // ArchivePolicy is the §13.4 per-Runtime archive-extraction policy the
 // gateway hands the adapter on FinalizeWorkspace. AllowSymlinks lifts the
@@ -118,7 +125,20 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 	case "gitClone":
 		return nil, extractGitClone(root, stagingDir, src)
 	default:
-		return nil, ErrUnknownSourceType
+		// spec: §14 line 334 — a consumer that encounters an unknown
+		// source.type MUST skip the entry and emit a
+		// workspace_plan_unknown_source_type warning rather than reject
+		// the whole plan. The adapter is the live consumer at
+		// materialization time, so a newer gateway can inject a source
+		// type this adapter predates during a rolling upgrade. The
+		// `schemaVersion` warning field is stamped by FinalizeWorkspace,
+		// which holds the plan. F-14.1.2.
+		return []Warning{{
+			Code:        unknownSourceTypeSkipCode,
+			SourceIndex: sourceIndex,
+			UnknownType: src.GetType(),
+			Message:     fmt.Sprintf("unknown source type %q; skipped per §14 open-string discriminator", src.GetType()),
+		}}, nil
 	}
 }
 

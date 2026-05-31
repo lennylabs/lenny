@@ -1070,6 +1070,16 @@ func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
 			"stripComponents": w.GetStripComponents(),
 			"message":         w.GetMessage(),
 		}
+		// spec: §14 line 334 — the materializer-raised
+		// `workspace_plan_unknown_source_type` warning carries
+		// `unknownType` + `schemaVersion`; surface them only when set so
+		// the other warning codes keep their existing payload. F-14.1.2.
+		if w.GetUnknownType() != "" {
+			payload["unknownType"] = w.GetUnknownType()
+		}
+		if w.GetSchemaVersion() != 0 {
+			payload["schemaVersion"] = w.GetSchemaVersion()
+		}
 		s.publishEvent(result.TenantID, result.SessionID, "workspace_plan_warning", payload)
 		s.emitWorkspacePlanWarningOps(result.TenantID, result.SessionID, payload)
 	}
