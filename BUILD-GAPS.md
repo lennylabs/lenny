@@ -7536,7 +7536,7 @@ from `Options.PlatformAllowSelfRecursion`, runtime from
 `runtimestore.Resolve(...).AllowSelfRecursion`, policy from
 `delegationpolicystore.Get(rt.DelegationPolicyRef).AllowSelfRecursion`.
 
-### - [ ] F-8.2.4 — File-export materialization (steps 3, 4, 6, 7 of the §8.2 flow) is entirely unimplemented [High] — OPEN
+### - [x] F-8.2.4 — File-export materialization (steps 3, 4, 6, 7 of the §8.2 flow) is entirely unimplemented [High] — CLOSED
 
 Spec §8.2 lines 91–95 enumerate four steps of the delegation flow that move workspace files from parent to child:
 
@@ -7554,6 +7554,8 @@ Implementation:
 - No pod-streaming path exists either: there is no executor RPC that delivers a file set to a freshly-claimed pod before it starts.
 
 Consequence: a runtime cannot delegate any file-bearing subtask. The `workspaceFiles.export` spec is a no-op even if the schema were accepted. This also removes the file-channel prompt-injection mitigation specified in §8.3 (`scanExportedFiles`) — there is nothing for it to scan.
+
+**Resolution:** Closed by F-8.7.1 (commit d6a197a9). Steps 3, 4, 6, 7 are now implemented end-to-end: `lenny/delegate_task` accepts `fileExport`/`fileExportLimits`; `delegation.Service.Delegate` runs `materializeExport` (the §8.7 pipeline: parent-pod export over the pod registry → §13.4/§7.4 validation and optional §8.3 `scanExportedFiles` content scan → durable §4.5 blob persistence rebased to the child workspace root) before the child row is committed; and the resulting §14 upload sources are stamped on the child `WorkspacePlan` so the §6.3 binder streams them into the child at workspace materialization (steps 6, 7). The `scanExportedFiles` file-channel mitigation is reachable through this path. Verified against the wired path in `pkg/gateway/delegation` (export-wiring tests) and the `export`/`exportwire` packages.
 
 ### - [ ] F-8.2.5 — No audit emission for `delegation.self_recursion_allowed`, `delegation.cycle_warning`, `gateway.cycle_detection_mode_changed`, `delegation.export_*`, `delegation.export_scan_failed_open`, or `delegation_policy.export_scan_*` [High] — DEFERRED
 
@@ -7646,7 +7648,7 @@ delegation `Service.Delegate` enforces the same rule (new
 `ErrTargetNotAgent`) as defence-in-depth so REST and other non-MCP
 entry points cannot bypass the gate.
 
-### - [ ] F-8.2.9 — `contentPolicy.maxInputSize` and `contentPolicy.interceptorRef` are not enforced on the delegation path [High] — OPEN
+### - [ ] F-8.2.9 — `contentPolicy.maxInputSize` and `contentPolicy.interceptorRef` are not enforced on the delegation path [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-13.5.1, F-13.5.2 — All describe contentPolicy maxInputSize and interceptorRef being persisted but not enforced on the delegation path.
 
@@ -7659,6 +7661,8 @@ Implementation:
 - The `INPUT_TOO_LARGE` error code is not surfaced anywhere on the delegation path.
 
 Consequence: a runtime can submit an arbitrarily large `taskInput` and the gateway will accept it; deployer-configured content interceptors named on the `DelegationPolicy` are bypassed. The prompt-injection mitigation §8.3 names as primary is non-functional on the delegation hop.
+
+**DEFERRED (maxInputSize half resolved by F-13.5.1, commit 840b51c4):** The `maxInputSize` half of this finding is closed — the §4.8 `DelegationPolicyEvaluator` now enforces the parent runtime's effective `contentPolicy.maxInputSize` via the wired `ResolveMaxInputSize` resolver and the delegation path surfaces the canonical `INPUT_TOO_LARGE`. The `interceptorRef` half (resolve the policy-named `PreDelegation` interceptor and run only it) remains blocked: there is no named-interceptor-ref → `interceptor.Chain` registry, and `mcptools.Deps` carries no `DelegationPolicies` store, so the shim runs the gateway-wide PreDelegation chain unconditionally rather than the policy-selected ref. This is the same blocker as F-13.5.2 and F-4.8.15; closing it requires a named-interceptor registry, tracked there.
 
 ### - [x] F-8.2.10 — `independent` experiment-context propagation is not routed afresh through the `ExperimentRouter` [High] — CLOSED
 
@@ -23184,7 +23188,7 @@ runtime gate, per-policy resolution of `interceptorRef` — are also missing.
 
 ### Findings
 
-### - [ ] F-13.5.1 — `contentPolicy.maxInputSize` is stored but never enforced [High] — OPEN
+### - [x] F-13.5.1 — `contentPolicy.maxInputSize` is stored but never enforced [High] — CLOSED
 
 **Potential duplicate** (confidence: high) — F-13.5.2, F-8.2.9 — All describe contentPolicy maxInputSize and interceptorRef being persisted but not enforced on the delegation path.
 
@@ -23210,7 +23214,22 @@ A caller can submit a 100 MiB `taskInput` and only the optional in-process
 interceptor would refuse it (and only if the deployer wired one). The
 documented 128 KiB ceiling is structurally absent at runtime.
 
-### - [ ] F-13.5.2 — `contentPolicy.interceptorRef` is not resolved at delegation/message time [High] — OPEN
+**Resolution (commit 840b51c4):** The §4.8 `DelegationPolicyEvaluator`
+(PreDelegation, priority 250) already measured `len(TaskSpec.input)`
+against a cap but ran with a `nil` resolver, so only the cluster default
+applied and the per-policy `maxInputSize` was ignored. This batch wires
+`delegation.Service.ResolveMaxInputSize` (parent session → runtime →
+`DelegationPolicyRef` → `ContentPolicy.MaxInputSize`) as the evaluator's
+resolver via a deferred-assignment holder in `cmd/lenny-gateway/main.go`,
+so the effective per-policy cap is enforced; a runtime that names no
+active policy falls back to the operator-tunable default (`§8.3` 128 KiB).
+The `delegate_task` PreDelegation reject now surfaces the evaluator's
+canonical `INPUT_TOO_LARGE` code instead of masking it as
+`INTERCEPTOR_REJECTED`. Covered by tests in `pkg/gateway/delegation`
+(`ResolveMaxInputSize` matrix) and `pkg/gateway/mcptools`
+(over-cap surfaces `INPUT_TOO_LARGE`, within-cap admitted).
+
+### - [ ] F-13.5.2 — `contentPolicy.interceptorRef` is not resolved at delegation/message time [High] — DEFERRED
 
 **Potential duplicate** (confidence: high) — F-13.5.1, F-8.2.9 — All describe contentPolicy maxInputSize and interceptorRef being persisted but not enforced on the delegation path.
 
@@ -23241,6 +23260,17 @@ delegation/message regardless of which policy applies; a policy with
 `interceptorRef: null` still triggers any globally registered scanner; the
 identity-based restrictiveness rules in §8.3 cannot be enforced because the
 delegation path has no per-policy resolution.
+
+**DEFERRED — blocked on a named-interceptor registry.** Resolving a
+policy-named `interceptorRef` to a specific `interceptor.Chain` and running
+only that interceptor requires (a) a registry keyed by ref name and (b) a
+`DelegationPolicies` store on `mcptools.Deps` so the shim can read the
+effective policy's `contentPolicy.InterceptorRef`. Neither exists yet; the
+same missing registry blocks F-4.8.15 (live `scanExportedFiles` enforcement)
+and the `interceptorRef` half of F-8.2.9. The sibling `maxInputSize`
+enforcement landed via F-13.5.1 (commit 840b51c4); this ref-resolution work
+should land together with the named-interceptor-ref → Chain registry in a
+dedicated batch.
 
 ### - [ ] F-13.5.3 — `messagingScope` is not enforced [High] — OPEN
 
