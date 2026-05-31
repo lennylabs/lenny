@@ -16953,7 +16953,7 @@ sustained Postgres I/O saturation as described in §11.7 is absent.
 write-time hot path with both safety (timeout) and correctness
 (typed error code) dimensions.
 
-### - [ ] F-11.7.6 — 06  Write-time tenant validation (`AUDIT_TENANT_SCOPE_MISMATCH`) is not implemented [High] — OPEN
+### - [x] F-11.7.6 — 06  Write-time tenant validation (`AUDIT_TENANT_SCOPE_MISMATCH`) is not implemented [High] — CLOSED
 
 **Spec:** §11.7 lines 428 "Write-time tenant validation": `tenant_id`
 on every audit row MUST equal the authenticated caller's scope; the
@@ -16987,6 +16987,22 @@ caller from injecting forged-tenant events at write time in the first
 place") does not exist.
 
 **Severity:** High — security-named write-time gate is absent.
+
+**Resolution (`3614a9f4`):** New `pkg/gateway/auditscope.Validator` wraps the
+audit hash chain (Postgres `auditstore.Store` or the in-memory `ChainSet`
+via `NewChainSetChain`) and validates every caller-driven write at the
+boundary: the target `tenant_id` must equal the authenticated principal's
+JWT/session scope (`authmw.FromContext(ctx).TenantID`), never the
+payload. A mismatch is rejected with a typed `*TenantScopeError`
+(`Code() == AUDIT_TENANT_SCOPE_MISMATCH`) and records a
+`security.audit_write_rejected` row on the platform chain (carrying the
+attempted/authenticated tenants, actor subject, and caller_kind), written
+through the inner chain directly so the rejection record itself is not
+re-validated. Platform-scoped callers (`tenant == "platform"` or
+`platform-admin` role) write cross-tenant by design, and gateway-internal
+writers with no principal on ctx pass unchanged (not the forged-tenant
+vector). Wired in `cmd/lenny-gateway` over both the admin audit sink and
+the §4.8 policy-rejection sink. F-11.7.6.
 
 ### - [ ] F-11.7.7 — 07  `lenny_erasure` role is created but lacks the spec-mandated grant restrictions [High] — OPEN
 
@@ -17190,7 +17206,7 @@ endpoint does not exist.
 
 **Severity:** Medium — operability gap on the audit-recovery surface.
 
-### - [ ] F-11.7.13 — 13  `AuditEvent` plumbing omits `operation_id` and `caller_kind` fields [Medium] — OPEN
+### - [x] F-11.7.13 — 13  `AuditEvent` plumbing omits `operation_id` and `caller_kind` fields [Medium] — CLOSED
 
 **Spec:** §11.7 lines 347–348 — every audit event MUST carry the
 optional `operation_id` (from `X-Lenny-Operation-ID`) and
@@ -17217,6 +17233,21 @@ and post-incident operation correlation is unavailable.
 
 **Severity:** Medium — capability gap; the spec marks both fields
 optional, but the OCSF mapping and §25 reporting depend on them.
+
+**Resolution (`3614a9f4`):** `admin.AuditEvent` gains `OperationID` and
+`CallerKind` fields. `Router.emit` populates them from the correlation
+context (`corr.From(ctx).OperationID`, sourced from the
+`X-Lenny-Operation-ID` header by the correlation middleware) and the
+principal's OIDC `caller_type` claim (`p.CallerType`). `EmitAdminEvent`
+serializes both into the hash-chain payload as `operation_id` /
+`caller_kind`, omitting empty values; when the emitter leaves them unset
+(the credential, delegation, playground, and auth-failure auditors
+construct events directly), they are recovered from the request context
+(`corr.From(ctx)` / `authmw.FromContext(ctx).CallerType`). The existing
+§11.7 OCSF mapping already projects `operation_id` →
+`metadata.correlation_uid` and `caller_kind` → `actor.user.type` /
+`type_id`, so the §25.9 human-vs-agent breakdown and operation
+correlation now resolve. F-11.7.13.
 
 ### - [ ] F-11.7.14 — 14  `schemas/ocsf-mapping.yaml` and `schemas/audit-events/v*.json` registries are absent [Medium] — OPEN
 
