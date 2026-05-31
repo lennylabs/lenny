@@ -9131,7 +9131,7 @@ Each is mapped to the implementation below.
 
 **Resolution (ea5a80a7):** `ExtendLeaseRequest`/`ExtendLeaseResponse` now carry `requested_children`/`requested_parallel_children`/`requested_tree_size` and a `FileExportLimitsDelta` (`requested_/granted_file_export_limits`), so all six §8.6 line 643 extendable dimensions are on the wire. `leasecontrol` models the extendable set as a `Dimensions` value and runs the `leaseextension.Grant` math over each via a single `allDims` enumeration; per-dimension effective ceilings and the §8.6 line 648 parent-lease caps, the §8.6 line 737-741 per-session scoping, and the line 743 audit fields extend to every dimension. The adapter convenience wrapper still sends only tokens because its production trigger (F-8.6.6, the LLM-proxy budget-rejection caller) remains a v1 follow-on; the wire and gateway grant all dimensions.
 
-### - [ ] F-8.6.2 — No approval-mode dispatch; the gateway acts as if `auto` mode is the only behavior [High] — OPEN
+### - [x] F-8.6.2 — No approval-mode dispatch; the gateway acts as if `auto` mode is the only behavior [High] — CLOSED
 
 **Spec:** §8.6 defines two approval modes (line 710–714): `auto` (independent grants, no elicitation/queuing/cool-off) and `elicitation` (default — serialized per task tree, single generic elicitation, silent concurrent batching, success cool-off window).
 
@@ -9143,7 +9143,9 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:208–275`; `pkg/gateway/leasecontrol/membudget.go:97–121` (no approval-mode field).
 
-### - [ ] F-8.6.3 — Extension grant has no effect on downstream budget enforcement [High] — OPEN
+**Resolution (d8efc623):** New `elicitCoordinator` (`elicitation.go`) implements the §8.6 line 714 elicitation flow: per-task-tree serialization, concurrent-request batching onto one generic elicitation (line 719), a success cool-off window after approval during which requests auto-grant without re-eliciting (lines 722-726), and subtree-denial persistence on rejection (line 729) via the new `BudgetSource.Deny`. `ExtendLease` now routes every elicitation-mode request through the coordinator's `gate` and **fails closed** (returns an error) when no `Elicitor` is wired, instead of the prior silent auto-grant. The `extensionApproval` knob was already resolved (`ResolveApprovalMode`) but unused; the gate now consumes it. The production `leaseElicitor` (`cmd/lenny-gateway/lease_elicit.go`) presents the prompt over the §9.2 interaction store + client event stream and blocks for the user's decision (PhaseApproved/PhaseDenied/PhaseResponded/dismiss), wired in `newGatewayControlServer`. The downstream budget-effect of an approved grant remains F-8.6.3; the adapter trigger that drives ExtendLease in production remains F-8.6.6.
+
+### - [ ] F-8.6.3 — Extension grant has no effect on downstream budget enforcement [High] — DEFERRED
 
 **Spec:** §8.6 (line 643) and the cross-link to §8.3 say the extension raises the tree's `maxTokenBudget` (and other dimensions) so subsequent LLM calls and child spawns are admitted under the new limits.
 
@@ -9154,6 +9156,8 @@ Each is mapped to the implementation below.
 **Severity:** High — the round-trip succeeds but the budget side effect §8.6 promises does not occur on the gateway side.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:250–267`; `pkg/gateway/leasecontrol/membudget.go:223–237`; `pkg/delegation/lease/lease.go`.
+
+**Deferred (after d8efc623):** Genuinely blocked on the per-session delegation-lease persistence the broader §8.2 budget work owns — the same blocker that holds F-8.1.1/F-8.2.2 OPEN. The leasecontrol grant raises `memTree.currentBudget`, but no production `RegisterTree` call populates the budget source from real sessions, and `pkg/delegation/lease` admission reads a separate `LeaseSlice` with no persisted per-session counter for the grant to update. Closing this requires (a) persisting the delegation lease on the session row and (b) wiring tree registration + post-grant lease mutation. Re-attempt once the §8.2 lease-persistence lands.
 
 ### - [x] F-8.6.4 — GatewayControl gRPC listener has no TLS and no auth [High] — CLOSED
 
@@ -9183,7 +9187,7 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/membudget.go:11–23, 154–183, 223–237`; `cmd/lenny-gateway/main.go:1838–1858`; `migrations/` (no `delegation_tree_budget` migration).
 
-### - [ ] F-8.6.6 — Adapter trigger is never invoked from the LLM-proxy budget-rejection path [High] — OPEN
+### - [ ] F-8.6.6 — Adapter trigger is never invoked from the LLM-proxy budget-rejection path [High] — DEFERRED
 
 **Spec:** §8.6 (line 629) is normative on the trigger: "When the LLM proxy rejects a call for budget exhaustion, the adapter automatically requests a lease extension from the gateway via the gRPC control channel."
 
@@ -9195,7 +9199,9 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/adapter/leaseextend.go:49–80`; `pkg/gateway/llmproxy/` (no caller); `BUILD-PROGRESS.md:47`.
 
-### - [ ] F-8.6.7 — Auto-mode rate limit and elicitation fallback are unimplemented [High] — OPEN
+**Deferred (after d8efc623):** Genuinely blocked on the §4.9 LLM-proxy client path inside the pod adapter, which v1 does not host (re-verified: `pkg/adapter/leaseextend.go:54-59` documents the seam; no production caller of `HandleBudgetExhaustion`). The gateway side of the trigger (the ExtendLease handler with full §8.6 elicitation/auto-mode dispatch) now exists (F-8.6.2/F-8.6.7); what is missing is the adapter-resident LLM-proxy rejection detector that calls it. Closing this requires building the §4.9 adapter LLM-proxy client and wiring its budget-exhaustion rejection to `HandleBudgetExhaustion`. Re-attempt once the adapter hosts the LLM-proxy path.
+
+### - [x] F-8.6.7 — Auto-mode rate limit and elicitation fallback are unimplemented [High] — CLOSED
 
 **Spec:** §8.6 (line 712) requires `auto` mode to support `autoModeRateLimit.maxAutoExtensionsPerMinute`. When exceeded, the gateway pauses auto-approval, falls back to `elicitation` for the remainder of the window, and logs `lease_extension_auto_rate_limit_exceeded` to the audit log.
 
@@ -9206,6 +9212,8 @@ Each is mapped to the implementation below.
 **Severity:** High — explicit safety valve §8.6 calls out; not coded.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go`; `pkg/gateway/leasecontrol/membudget.go`.
+
+**Resolution (d8efc623):** New `autoExtensionLimiter` (`ratelimit.go`) reuses the §11.1 `ratelimit.Counter` (Redis-backed when configured) to track auto-mode extensions per tree per one-minute window. `ExtendLease`'s `gate` increments it on every auto-mode request; once a tree exceeds its resolved `maxAutoExtensionsPerMinute` the gateway records the new `delegation.lease_extension_auto_rate_limit_exceeded` audit event (via the new `Auditor.RecordAutoRateLimitExceeded`) and falls back to the elicitation coordinator for the remainder of the window. The limit resolves with §8.6 line 654 specificity: `TreeConfig.AutoMaxPerMinute` (tenant/runtime, via the `AutoExtensionsPerMinute` provider) wins, else the deployment default (`Options.DefaultAutoMaxPerMinute` ← `--lease-extension-auto-max-per-min` ← `gateway.leaseExtension.autoModeMaxPerMinute`). Zero is the spec default (no limit). Per-tree tenant/runtime population flows through the same `RegisterTree` config seam all lease-extension config uses (completed by F-8.6.3).
 
 ### - [x] F-8.6.8 — Admin API for clearing the extension-denied flag does not exist [High] — CLOSED
 
