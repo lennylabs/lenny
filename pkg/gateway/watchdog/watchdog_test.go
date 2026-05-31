@@ -594,3 +594,108 @@ func TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables(t *testing.T) {
 		t.Errorf("DefaultMaxSuspendedPodHoldSeconds = %d, want 900 (§11.3 line 233)", got)
 	}
 }
+
+// fakeAgeResolver is a watchdog.SessionAgeResolver that returns a fixed
+// per-runtime maxSessionAge cap keyed by RuntimeRef, modelling the §5.1
+// limits / §5.2 pool lookup the production sessionage.Resolver performs.
+// A missing key returns 0 (no per-config cap). spec: §11.3 line 198. F-11.3.3.
+type fakeAgeResolver map[string]int
+
+func (f fakeAgeResolver) EffectiveMaxSessionAgeSeconds(_ context.Context, sess sessionstore.Session) int {
+	return f[sess.RuntimeRef]
+}
+
+// spec: §11.3 line 198 — the maxSessionAge sweep honours a deployer's
+// per-runtime / per-pool cap, expiring a tightly-capped runtime's session
+// before the platform default while leaving an uncapped runtime's session
+// bounded only by the default. F-11.3.3.
+func TestMaxAgeHonorsPerRuntimeResolver_spec_11_3_198(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mustCreate(t, store, sessionstore.Session{
+		ID: "sess_short", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "short", CreatedAt: born, UpdatedAt: born,
+	})
+	mustCreate(t, store, sessionstore.Session{
+		ID: "sess_long", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "long", CreatedAt: born, UpdatedAt: born,
+	})
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithSessionAgeResolver(fakeAgeResolver{"short": 1800})
+
+	// One hour after birth: past the 1800s runtime cap, under the 7200s default.
+	res, err := w.Tick(context.Background(), born.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.Expirations != 1 {
+		t.Fatalf("Expirations: got %d, want 1 (only the short-cap runtime)", res.Expirations)
+	}
+	short, _ := store.Get(context.Background(), "acme", "sess_short")
+	if short.State != session.StateExpired {
+		t.Errorf("short-cap session: got %q, want expired", short.State)
+	}
+	long, _ := store.Get(context.Background(), "acme", "sess_long")
+	if long.State != session.StateRunning {
+		t.Errorf("uncapped session: got %q, want running (platform default 7200s not reached)", long.State)
+	}
+}
+
+// spec: §11.3 line 198 — most-restrictive-wins: a per-session
+// retryPolicy.maxSessionAgeSeconds clamps below the resolver's per-runtime
+// cap, so the tighter per-session value governs the deadline. F-11.3.3.
+func TestPerSessionRetryPolicyClampsBelowResolverCap_spec_11_3_198(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mustCreate(t, store, sessionstore.Session{
+		ID: "sess", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "rt", CreatedAt: born, UpdatedAt: born,
+		RetryPolicy: &session.RetryPolicy{MaxSessionAgeSeconds: 600},
+	})
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithSessionAgeResolver(fakeAgeResolver{"rt": 3600})
+
+	// 20 minutes in: past the 600s per-session cap, under the 3600s runtime cap.
+	res, err := w.Tick(context.Background(), born.Add(20*time.Minute))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.Expirations != 1 {
+		t.Fatalf("Expirations: got %d, want 1 (per-session 600s cap governs)", res.Expirations)
+	}
+}
+
+// spec: §11.3 line 198 — a 0 resolver result (neither runtime nor pool
+// declares a cap) falls through to the platform default, preserving the
+// prior single-default behaviour. F-11.3.3.
+func TestResolverZeroLeavesPlatformDefault_spec_11_3_198(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess", "acme", session.StateRunning, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithSessionAgeResolver(fakeAgeResolver{}) // no entry → returns 0
+
+	// One hour in: a 0 resolver result must leave the 7200s platform default.
+	res, err := w.Tick(context.Background(), born.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.Expirations != 0 {
+		t.Errorf("a zero resolver result must fall through to the platform default: Expirations=%d", res.Expirations)
+	}
+	// The platform default still expires it at 3h.
+	res, err = w.Tick(context.Background(), born.Add(3*time.Hour))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.Expirations != 1 {
+		t.Errorf("platform default 7200s must still expire at 3h: Expirations=%d", res.Expirations)
+	}
+}
+
+func mustCreate(t *testing.T, store sessionstore.Store, row sessionstore.Session) {
+	t.Helper()
+	if err := store.Create(context.Background(), row); err != nil {
+		t.Fatalf("seed %s: %v", row.ID, err)
+	}
+}

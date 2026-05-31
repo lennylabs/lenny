@@ -315,16 +315,33 @@ type DLQSweeper interface {
 	SweepExpired(ctx context.Context, tenantID, sessionID string) (expired int, err error)
 }
 
+// SessionAgeResolver resolves the §5.1 per-runtime / §5.2 per-pool
+// maxSessionAge cap (in seconds) for a session row so the maxSessionAge
+// sweep applies a deployer's per-runtime tuning instead of the single
+// platform default. A return of 0 means neither the runtime's `limits:`
+// block nor the assigned pool declares a cap, so the platform default (and
+// any tighter per-session retryPolicy value) applies. The resolver is
+// optional: a nil resolver preserves the platform-default behaviour and
+// the per-session retryPolicy clamp.
+//
+// spec: §11.3 line 198 — `maxSessionAge` is a deployer cap tuned per
+// runtime; §5.1 limits.maxSessionAgeSeconds; §5.2 pool maxSessionAgeSeconds.
+// F-11.3.3.
+type SessionAgeResolver interface {
+	EffectiveMaxSessionAgeSeconds(ctx context.Context, sess sessionstore.Session) int
+}
+
 // Watchdog drives the periodic sweep.
 type Watchdog struct {
-	store     sessionstore.Store
-	tenants   TenantLister
-	cfg       Config
-	clock     func() time.Time
-	billing   billingstore.Store
-	archive   treearchive.Store
-	terminal  TerminalHook
-	messaging DLQSweeper
+	store       sessionstore.Store
+	tenants     TenantLister
+	cfg         Config
+	clock       func() time.Time
+	billing     billingstore.Store
+	archive     treearchive.Store
+	terminal    TerminalHook
+	messaging   DLQSweeper
+	ageResolver SessionAgeResolver
 }
 
 // New returns a Watchdog. The clock argument is optional; pass nil to
@@ -382,6 +399,20 @@ func (w *Watchdog) WithTerminalHook(hook TerminalHook) *Watchdog {
 // spec: §7.2 lines 294, 341.
 func (w *Watchdog) WithMessaging(s DLQSweeper) *Watchdog {
 	w.messaging = s
+	return w
+}
+
+// WithSessionAgeResolver wires the §5.1 / §5.2 per-runtime / per-pool
+// maxSessionAge resolver so the maxSessionAge sweep honours a deployer's
+// per-runtime `limits.maxSessionAgeSeconds` (or per-pool
+// `maxSessionAgeSeconds`) instead of expiring every session at the single
+// platform default. Most-restrictive-wins: the resolver's cap clamps below
+// the platform default, and the per-session retryPolicy value clamps below
+// that. A nil resolver leaves the platform-default behaviour intact.
+//
+// spec: §11.3 line 198 — deployer cap tuned per runtime. F-11.3.3.
+func (w *Watchdog) WithSessionAgeResolver(r SessionAgeResolver) *Watchdog {
+	w.ageResolver = r
 	return w
 }
 
@@ -775,7 +806,7 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 		if session.IsTerminal(row.State) {
 			continue
 		}
-		if now.Sub(row.CreatedAt) <= effectiveMaxSessionAge(row, platformCap) {
+		if now.Sub(row.CreatedAt) <= w.effectiveAgeCap(ctx, row, platformCap) {
 			continue
 		}
 		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
@@ -801,6 +832,31 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 		}
 	}
 	return nil
+}
+
+// effectiveAgeCap resolves the §11.3 maxSessionAge deadline for one row,
+// applying the most-restrictive-wins precedence: the platform default
+// (w.cfg.MaxSessionAgeSeconds) is the outer bound; the §5.1 per-runtime
+// `limits.maxSessionAgeSeconds` / §5.2 per-pool `maxSessionAgeSeconds`
+// (via the SessionAgeResolver) clamps below it; and the §7.3 per-session
+// `retryPolicy.maxSessionAgeSeconds` clamps below that. A nil resolver or a
+// zero resolver result leaves the platform cap in place, so the prior
+// single-default behaviour is preserved when no per-runtime/pool tuning is
+// configured.
+//
+// spec: §11.3 line 198 — deployer cap tuned per runtime; §5.1 limits;
+// §5.2 pool. F-11.3.3.
+func (w *Watchdog) effectiveAgeCap(ctx context.Context, row sessionstore.Session, platformCap time.Duration) time.Duration {
+	cap := platformCap
+	if w.ageResolver != nil {
+		if secs := w.ageResolver.EffectiveMaxSessionAgeSeconds(ctx, row); secs > 0 {
+			d := time.Duration(secs) * time.Second
+			if cap <= 0 || d < cap {
+				cap = d
+			}
+		}
+	}
+	return effectiveMaxSessionAge(row, cap)
 }
 
 // effectiveMaxSessionAge resolves the §7.3 per-session retryPolicy

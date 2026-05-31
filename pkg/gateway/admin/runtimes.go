@@ -467,12 +467,14 @@ func validateSetupPolicy(p *runtimestore.SetupPolicy, maxFinalizingTimeoutSecond
 }
 
 // validateLimits checks a §5.1 limits block: non-negative session-age,
-// upload-size, and request-input-wait caps.
+// upload-size, request-input-wait, elicitation-wait, and
+// elicitations-per-session caps. spec: §11.3 lines 198-204.
 func validateLimits(l *runtimestore.Limits) error {
 	if l == nil {
 		return nil
 	}
-	if l.MaxSessionAgeSeconds < 0 || l.MaxUploadSizeBytes < 0 || l.MaxRequestInputWaitSeconds < 0 {
+	if l.MaxSessionAgeSeconds < 0 || l.MaxUploadSizeBytes < 0 || l.MaxRequestInputWaitSeconds < 0 ||
+		l.MaxElicitationWaitSeconds < 0 || l.MaxElicitationsPerSession < 0 {
 		return errors.New("limits fields must not be negative")
 	}
 	return nil

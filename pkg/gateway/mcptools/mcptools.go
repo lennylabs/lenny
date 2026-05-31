@@ -1159,6 +1159,30 @@ func Register(srv *mcp.Server, deps Deps) {
 				// log scrapers that only read content[0].text still
 				// pivot on the code string. F-8.5.10 / F-11.3.23.
 				expiredAt := clock().UTC().Format(time.RFC3339Nano)
+				// spec: §11.3 line 238 — on a request_input timeout the
+				// gateway emits a `request_input_expired` event on the
+				// parent's lenny/await_children stream so the awaiting parent
+				// can distinguish "child's input request timed out" from
+				// "child expired for other reasons". The event is published
+				// on the parent session's event stream (the channel the
+				// parent observes); the request_input caller is the child, so
+				// its ParentSessionID names the awaiter. A root session
+				// (no parent) calling request_input has no awaiter, so the
+				// publish is skipped. F-11.3.4.
+				if deps.Events != nil && row.ParentSessionID != "" {
+					evt, _ := json.Marshal(struct {
+						Type      string `json:"type"`
+						ChildID   string `json:"childId"`
+						RequestID string `json:"requestId"`
+						ExpiredAt string `json:"expiredAt"`
+					}{
+						Type:      "request_input_expired",
+						ChildID:   sessionID,
+						RequestID: requestID,
+						ExpiredAt: expiredAt,
+					})
+					deps.Events.Publish(row.ParentSessionID, "request_input_expired", string(evt), clock())
+				}
 				return mcp.ToolResult{}, mcp.NewToolError("REQUEST_INPUT_TIMEOUT",
 					fmt.Sprintf("REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s (expiredAt=%s)", requestID, callTimeout, expiredAt),
 					map[string]any{
@@ -1258,6 +1282,25 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if session.IsTerminal(row.State) {
 				return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
+			}
+			// spec: §11.3 lines 202-203 — maxElicitationWait and
+			// maxElicitationsPerSession are configurable per pool in the
+			// `limits:` block of the RuntimeDefinition. Resolve the
+			// effective runtime so a derived runtime's merged Override value
+			// applies, shadowing the platform-default closure values for
+			// this call only. Same lookup request_input performs for
+			// maxRequestInputWaitSeconds above. F-11.3.6.
+			maxElicitations := maxElicitations
+			elicitationTimeout := elicitationTimeout
+			if deps.Runtimes != nil && row.RuntimeRef != "" {
+				if rt, rerr := runtimestore.Resolve(ctx, deps.Runtimes, row.RuntimeRef); rerr == nil && rt.Limits != nil {
+					if rt.Limits.MaxElicitationsPerSession > 0 {
+						maxElicitations = rt.Limits.MaxElicitationsPerSession
+					}
+					if rt.Limits.MaxElicitationWaitSeconds > 0 {
+						elicitationTimeout = time.Duration(rt.Limits.MaxElicitationWaitSeconds) * time.Second
+					}
+				}
 			}
 			// spec: §9.2 line 88 — agent binaries cannot self-declare as a
 			// connector. lenny/request_elicitation is the agent surface; an

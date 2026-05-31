@@ -189,6 +189,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/semanticcache"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionage"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionlogstore"
@@ -3407,7 +3408,13 @@ func main() {
 	}, nil).
 		WithBilling(billing).
 		WithTreeArchive(treeArchive).
-		WithTerminalHook(sessionSrv)
+		WithTerminalHook(sessionSrv).
+		// spec: §11.3 line 198 — the maxSessionAge sweep honours a
+		// deployer's per-runtime `limits.maxSessionAgeSeconds` / per-pool
+		// `maxSessionAgeSeconds` (most-restrictive-wins below the platform
+		// default) instead of expiring every session at the single baked
+		// default. F-11.3.3.
+		WithSessionAgeResolver(sessionage.New(runtimes, pools))
 	// spec: §7.2 lines 294, 341 — wire the DLQ TTL sweeper only when the
 	// messaging coordinator exists (Redis present). Passing a nil
 	// *Coordinator would create a typed-nil interface that defeats the

@@ -607,6 +607,18 @@ type Limits struct {
 	// lenny/request_input timeout in seconds. Zero selects the platform
 	// default.
 	MaxRequestInputWaitSeconds int `json:"maxRequestInputWaitSeconds,omitempty"`
+
+	// MaxElicitationWaitSeconds is the §11.3 line 202 human-facing
+	// lenny/request_elicitation wait timeout in seconds, configurable per
+	// pool in the `limits:` block of the RuntimeDefinition (same placement
+	// as maxRequestInputWaitSeconds). Zero selects the platform default
+	// (600s). spec: §11.3 line 202.
+	MaxElicitationWaitSeconds int `json:"maxElicitationWaitSeconds,omitempty"`
+
+	// MaxElicitationsPerSession is the §11.3 line 203 per-session lifetime
+	// elicitation budget, configurable per pool in the `limits:` block.
+	// Zero selects the platform default (50). spec: §11.3 line 203.
+	MaxElicitationsPerSession int `json:"maxElicitationsPerSession,omitempty"`
 }
 
 // Clone returns a copy of the limits block. A nil receiver clones to nil.
