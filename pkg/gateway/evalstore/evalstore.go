@@ -25,6 +25,17 @@ import (
 // it to at most 100000.
 const DefaultMaxEvalsPerSession = 10000
 
+// IdempotencyWindow is the §10.7 eval-submission dedup horizon: a
+// repeat submission carrying the same idempotency key for the same
+// session within this window returns the originally-stored record
+// rather than inserting a duplicate. spec: §10.7 line 940.
+const IdempotencyWindow = 24 * time.Hour
+
+// MaxIdempotencyKeyBytes bounds the §10.7 optional idempotency key. A
+// longer key is rejected at the handler before any store call.
+// spec: §10.7 line 939.
+const MaxIdempotencyKeyBytes = 128
+
 // EvalResult is one §10.7 eval score stored against a session.
 type EvalResult struct {
 	// ID is the auto-generated record identifier.
@@ -53,6 +64,11 @@ type EvalResult struct {
 	// SubmittedAfterConclusion is true when the eval was submitted
 	// after the attributed experiment transitioned to concluded.
 	SubmittedAfterConclusion bool
+	// IdempotencyKey is the optional §10.7 caller-supplied dedup key.
+	// Empty when the submission carried none. A non-empty value is
+	// persisted so a repeat submission within IdempotencyWindow resolves
+	// to the original record. spec: §10.7 lines 939-940.
+	IdempotencyKey string
 	// CreatedAt is the server-generated UTC ingestion timestamp.
 	CreatedAt time.Time
 }
@@ -79,6 +95,12 @@ type Store interface {
 	// CountBySession returns the number of eval results stored for the
 	// session.
 	CountBySession(ctx context.Context, tenantID, sessionID string) (int, error)
+	// FindByIdempotencyKey returns the most recently stored eval result
+	// for (tenantID, sessionID, key) created at or after notBefore — the
+	// §10.7 dedup lookup. ok is false when no matching in-window record
+	// exists, so the caller proceeds to Put. An empty key always returns
+	// ok=false (keyless submissions never dedup). spec: §10.7 line 940.
+	FindByIdempotencyKey(ctx context.Context, tenantID, sessionID, key string, notBefore time.Time) (EvalResult, bool, error)
 	// ListBySession returns the session's eval results, oldest first.
 	ListBySession(ctx context.Context, tenantID, sessionID string) ([]EvalResult, error)
 	// ListByExperiment returns every eval result attributed to the
@@ -145,6 +167,35 @@ func (m *Memory) Put(_ context.Context, r EvalResult) (EvalResult, error) {
 	}
 	m.results[r.ID] = cloneResult(r)
 	return cloneResult(r), nil
+}
+
+// FindByIdempotencyKey implements Store — the §10.7 dedup lookup. It
+// returns the newest matching in-window record, mirroring the
+// pgstore's ORDER BY created_at DESC LIMIT 1.
+func (m *Memory) FindByIdempotencyKey(_ context.Context, tenantID, sessionID, key string, notBefore time.Time) (EvalResult, bool, error) {
+	if key == "" {
+		return EvalResult{}, false, nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var best EvalResult
+	found := false
+	for _, e := range m.results {
+		if e.TenantID != tenantID || e.SessionID != sessionID || e.IdempotencyKey != key {
+			continue
+		}
+		if e.CreatedAt.Before(notBefore) {
+			continue
+		}
+		if !found || e.CreatedAt.After(best.CreatedAt) {
+			best = e
+			found = true
+		}
+	}
+	if !found {
+		return EvalResult{}, false, nil
+	}
+	return cloneResult(best), true, nil
 }
 
 // CountBySession implements Store.

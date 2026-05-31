@@ -46,9 +46,10 @@ func TestRoleIsTenantScoped(t *testing.T) {
 }
 
 func TestAllPermissionsIsExhaustive(t *testing.T) {
-	// §10.2's permission matrix has 19 operation rows.
-	if got := len(AllPermissions()); got != 19 {
-		t.Errorf("AllPermissions() returned %d, want 19 per the §10.2 matrix", got)
+	// §10.2's permission matrix has 19 operation rows, plus the §10.7
+	// session:eval:write capability permission (F-10.7.4).
+	if got := len(AllPermissions()); got != 20 {
+		t.Errorf("AllPermissions() returned %d, want 20 (19 §10.2 matrix rows + §10.7 session:eval:write)", got)
 	}
 	seen := map[Permission]bool{}
 	for _, p := range AllPermissions() {
@@ -70,9 +71,10 @@ func TestPermissionIsValidRejectsUnknown(t *testing.T) {
 
 func TestTenantAdminPermissionsExcludesPlatformOnly(t *testing.T) {
 	// §10.2: tenant-admin holds every operation except the three the
-	// matrix reserves to platform-admin.
-	if got := len(TenantAdminPermissions()); got != 16 {
-		t.Errorf("TenantAdminPermissions() returned %d, want 16", got)
+	// matrix reserves to platform-admin, plus the §10.7
+	// session:eval:write capability permission (F-10.7.4).
+	if got := len(TenantAdminPermissions()); got != 17 {
+		t.Errorf("TenantAdminPermissions() returned %d, want 17", got)
 	}
 	platformOnly := []Permission{
 		PermIssueBillingCorrections, PermManagePlatformSettings, PermAccessCrossTenantData,
@@ -133,6 +135,7 @@ func TestRolePermissionsMatchMatrix(t *testing.T) {
 		{RoleBillingViewer, []Permission{PermViewUsage}},
 		{RoleUser, []Permission{
 			PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
+			PermSessionEvalWrite,
 		}},
 	}
 	for _, c := range cases {
@@ -166,6 +169,33 @@ func TestNonPlatformRolesAreBoundedByTenantAdmin(t *testing.T) {
 				t.Errorf("role %q holds %q, which exceeds the tenant-admin ceiling", r, p)
 			}
 		}
+	}
+}
+
+// TestSessionEvalWritePermission_spec_10_7_line_936 covers the §10.7
+// session:eval:write capability permission: the session-owning roles
+// hold it, the read-only viewer roles do not, and it is within the
+// tenant-admin ceiling so a tenant may grant it to a custom external-
+// scorer role. F-10.7.4.
+func TestSessionEvalWritePermission_spec_10_7_line_936(t *testing.T) {
+	if !PermSessionEvalWrite.IsValid() {
+		t.Fatal("session:eval:write must be a recognised permission")
+	}
+	grant := []Role{RolePlatformAdmin, RoleTenantAdmin, RoleUser}
+	for _, r := range grant {
+		if !RolesGrant([]Role{r}, PermSessionEvalWrite) {
+			t.Errorf("role %q must grant session:eval:write per §10.7 line 936", r)
+		}
+	}
+	deny := []Role{RoleTenantViewer, RoleBillingViewer}
+	for _, r := range deny {
+		if RolesGrant([]Role{r}, PermSessionEvalWrite) {
+			t.Errorf("read-only role %q must not grant session:eval:write", r)
+		}
+	}
+	// Within the tenant-admin ceiling: a custom scorer role may include it.
+	if !IsTenantAdminPermission(PermSessionEvalWrite) {
+		t.Error("session:eval:write must be within the tenant-admin ceiling so a custom role can grant it")
 	}
 }
 

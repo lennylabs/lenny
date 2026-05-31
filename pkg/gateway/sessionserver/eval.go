@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -22,6 +24,11 @@ type EvalRequest struct {
 	Score    *float64           `json:"score,omitempty"`
 	Scores   map[string]float64 `json:"scores,omitempty"`
 	Metadata map[string]any     `json:"metadata,omitempty"`
+	// IdempotencyKey is the optional §10.7 dedup key (≤128 bytes). A
+	// repeat submission carrying the same key for the same session within
+	// 24h returns 200 OK with the original record rather than inserting a
+	// duplicate. spec: §10.7 lines 939-940. F-10.7.4.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 // EvalResponse echoes the stored §10.7 EvalResult. spec: §10.7 lines
@@ -69,6 +76,62 @@ func evalEligible(st session.State) bool {
 	return st == session.StateRunning || st == session.StateCompleted || st == session.StateFailed
 }
 
+// checkEvalRateLimit enforces the §10.7 line 938 per-session and
+// per-tenant eval-submission rate limits. It returns false (after
+// writing a 429 with a Retry-After header) when either scope's
+// one-minute count exceeds its configured limit, and true otherwise. A
+// nil counter or a non-positive limit leaves the corresponding scope
+// unlimited. spec: §10.7 line 938. F-10.7.4 / F-11.2.19.
+func (s *Server) checkEvalRateLimit(w http.ResponseWriter, r *http.Request, tenantID, sessionID string) bool {
+	if s.evalRL == nil {
+		return true
+	}
+	now := s.clock()
+	if s.evalPerSessionPerMin > 0 {
+		if !s.checkEvalScope(w, r, "eval_session", "eval:s:"+tenantID+":"+sessionID, s.evalPerSessionPerMin, now) {
+			return false
+		}
+	}
+	if s.evalPerTenantPerMin > 0 {
+		if !s.checkEvalScope(w, r, "eval_tenant", "eval:t:"+tenantID, s.evalPerTenantPerMin, now) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkEvalScope increments one eval rate-limit scope's per-minute
+// counter and writes a 429 (with Retry-After) when the scope is over
+// limit. A transient counter error fails open, matching the §11.1
+// admission gate, so a Redis blip does not block scoring. spec: §10.7
+// line 938. F-10.7.4.
+func (s *Server) checkEvalScope(w http.ResponseWriter, r *http.Request, scope, key string, limit int, now time.Time) bool {
+	count, err := s.evalRL.Incr(r.Context(), key, now)
+	if err != nil {
+		if s.rlMetrics != nil {
+			s.rlMetrics.IncRateLimitCounterFailure()
+		}
+		log.Printf("sessionserver: §10.7 %s eval rate-limit counter unavailable key=%q err=%q fail_open=true",
+			scope, key, err.Error())
+		return true
+	}
+	if count > limit {
+		if s.rlMetrics != nil {
+			s.rlMetrics.IncRateLimitRejected(scope)
+		}
+		retryAfter := 60 - now.Second()
+		if retryAfter <= 0 {
+			retryAfter = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		s.writeError(w, http.StatusTooManyRequests, "RATE_LIMITED",
+			"the eval-submission rate limit was exceeded",
+			map[string]any{"scope": scope, "limitPerMinute": limit})
+		return false
+	}
+	return true
+}
+
 // handleEval implements POST /v1/sessions/{id}/eval — the §10.7
 // built-in eval-score ingestion endpoint. It validates the submission,
 // enforces the §10.7 per-session storage bound, and stores an
@@ -108,6 +171,23 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"fields": []map[string]string{{"field": "score"}}})
 		return
 	}
+	// §10.7 line 939 — the optional idempotency key is bounded at 128
+	// bytes. Reject an oversize key before any store work. F-10.7.4.
+	if len(req.IdempotencyKey) > evalstore.MaxIdempotencyKeyBytes {
+		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"idempotency_key must be at most 128 bytes",
+			map[string]any{"fields": []map[string]string{{"field": "idempotency_key"}}})
+		return
+	}
+
+	// §10.7 line 938 — per-session and per-tenant eval-submission rate
+	// limits, enforced before the session lookup so a flood against a
+	// single session (or across a tenant) is capped regardless of whether
+	// the target exists. Excess requests receive 429 with Retry-After.
+	// F-10.7.4 / F-11.2.19.
+	if !s.checkEvalRateLimit(w, r, tenantID, id) {
+		return
+	}
 
 	sess, err := s.store.Get(r.Context(), tenantID, id)
 	if err != nil {
@@ -124,16 +204,31 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// §10.7 line 940 — a repeat submission carrying the same idempotency
+	// key for this session within 24h resolves to the original record
+	// rather than inserting a duplicate, returning 200 OK. F-10.7.4.
+	if req.IdempotencyKey != "" {
+		notBefore := s.clock().Add(-evalstore.IdempotencyWindow)
+		if prior, ok, err := s.evals.FindByIdempotencyKey(r.Context(), tenantID, id, req.IdempotencyKey, notBefore); err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		} else if ok {
+			s.writeEvalResponse(w, prior, http.StatusOK)
+			return
+		}
+	}
+
 	// §10.7 gateway auto-association: copy the session's experiment
 	// context onto the eval result so the results API can aggregate by
 	// variant. An unenrolled session leaves the attribution empty.
 	result := evalstore.EvalResult{
-		TenantID:  tenantID,
-		SessionID: id,
-		Scorer:    req.Scorer,
-		Score:     req.Score,
-		Scores:    req.Scores,
-		Metadata:  req.Metadata,
+		TenantID:       tenantID,
+		SessionID:      id,
+		Scorer:         req.Scorer,
+		Score:          req.Score,
+		Scores:         req.Scores,
+		Metadata:       req.Metadata,
+		IdempotencyKey: req.IdempotencyKey,
 		// §10.7 line 905 — delegation_depth is auto-populated from the
 		// session's delegation lineage (0 for a root session). The depth
 		// is stamped on the session row at delegation time. F-10.7.5.
@@ -170,8 +265,16 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		s.observeEvalScore(tenantID, stored.Scorer, stored.VariantID, *stored.Score)
 	}
 
+	s.writeEvalResponse(w, stored, http.StatusCreated)
+}
+
+// writeEvalResponse encodes an EvalResult as the §10.7 EvalResponse with
+// the given status. A fresh insert uses 201 Created; an idempotent
+// replay of an earlier submission uses 200 OK with the original record.
+// spec: §10.7 lines 892-928, 940. F-10.7.4.
+func (s *Server) writeEvalResponse(w http.ResponseWriter, stored evalstore.EvalResult, status int) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(EvalResponse{
 		ID:                       stored.ID,
 		SessionID:                stored.SessionID,

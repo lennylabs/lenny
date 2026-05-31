@@ -34,6 +34,61 @@ func TestPutAssignsIDAndTimestamp(t *testing.T) {
 	}
 }
 
+// TestFindByIdempotencyKey_spec_10_7_940 covers the §10.7 dedup lookup:
+// an in-window match is returned, the newest match wins, and a missing
+// key, an out-of-window record, or a cross-session/cross-tenant key all
+// miss. F-10.7.4.
+func TestFindByIdempotencyKey_spec_10_7_940(t *testing.T) {
+	m := evalstore.NewMemory(0, nil)
+	ctx := context.Background()
+	t0 := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+
+	put := func(session, key string, at time.Time) evalstore.EvalResult {
+		r := result(session, "llm-judge")
+		r.IdempotencyKey = key
+		r.CreatedAt = at
+		stored, err := m.Put(ctx, r)
+		if err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		return stored
+	}
+
+	put("sess_1", "k1", t0)
+	newer := put("sess_1", "k1", t0.Add(time.Minute))
+	put("sess_2", "k1", t0)    // same key, other session
+	put("sess_1", "other", t0) // other key, same session
+	put("sess_1", "", t0)      // keyless row never dedups
+
+	notBefore := t0.Add(-evalstore.IdempotencyWindow)
+
+	// Newest in-window match wins.
+	got, ok, err := m.FindByIdempotencyKey(ctx, "acme", "sess_1", "k1", notBefore)
+	if err != nil {
+		t.Fatalf("FindByIdempotencyKey: %v", err)
+	}
+	if !ok || got.ID != newer.ID {
+		t.Errorf("lookup = (%q, %v), want newest match %q", got.ID, ok, newer.ID)
+	}
+
+	// Empty key never matches.
+	if _, ok, _ := m.FindByIdempotencyKey(ctx, "acme", "sess_1", "", notBefore); ok {
+		t.Error("empty key must not match any record")
+	}
+	// Unknown key misses.
+	if _, ok, _ := m.FindByIdempotencyKey(ctx, "acme", "sess_1", "absent", notBefore); ok {
+		t.Error("unknown key must miss")
+	}
+	// Out-of-window: notBefore after every record drops the match.
+	if _, ok, _ := m.FindByIdempotencyKey(ctx, "acme", "sess_1", "k1", t0.Add(time.Hour)); ok {
+		t.Error("record created before notBefore must be excluded")
+	}
+	// Cross-tenant isolation: the key exists under acme, not globex.
+	if _, ok, _ := m.FindByIdempotencyKey(ctx, "globex", "sess_1", "k1", notBefore); ok {
+		t.Error("a key under another tenant must not match")
+	}
+}
+
 func TestPutAndListBySession(t *testing.T) {
 	m := evalstore.NewMemory(0, nil)
 	ctx := context.Background()

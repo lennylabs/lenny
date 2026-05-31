@@ -12,9 +12,12 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -76,6 +79,167 @@ func postEval(t *testing.T, h http.Handler, sessionID string, body sessionserver
 }
 
 func evalScore(v float64) *float64 { return &v }
+
+// postEvalAs posts an eval submission carrying an authenticated
+// principal so the §10.7 session:eval:write gate evaluates against its
+// roles. F-10.7.4.
+func postEvalAs(t *testing.T, h http.Handler, sessionID string, body sessionserver.EvalRequest, p authmw.Principal) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+sessionID+"/eval", bytes.NewReader(b))
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), p))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// evalServerRL builds an eval server with the §10.7 rate-limit options
+// wired over an in-memory counter. F-10.7.4 / F-11.2.19.
+func evalServerRL(t *testing.T, perSession, perTenant int, seed ...sessionstore.Session) http.Handler {
+	t.Helper()
+	store := memstore.New()
+	for _, s := range seed {
+		if err := store.Create(context.Background(), s); err != nil {
+			t.Fatalf("seed session %q: %v", s.ID, err)
+		}
+	}
+	srv := sessionserver.New(store, sessionserver.Options{
+		Evals:                   evalstore.NewMemory(0, nil),
+		EvalRateLimitCounter:    ratelimit.NewMemory(),
+		EvalPerSessionPerMinute: perSession,
+		EvalPerTenantPerMinute:  perTenant,
+	})
+	return srv.Handler()
+}
+
+// TestEvalRequiresSessionEvalWritePermission_spec_10_7_936 pins §10.7
+// line 936: the eval endpoint is gated on session:eval:write. A role
+// without it (tenant-viewer) is rejected with 403; a session-owning
+// role (user) is admitted. F-10.7.4.
+func TestEvalRequiresSessionEvalWritePermission_spec_10_7_936(t *testing.T) {
+	h, _ := evalServer(t, 0, evalSession("sess_1", session.StateRunning))
+	body := sessionserver.EvalRequest{Scorer: "llm-judge", Score: evalScore(0.5)}
+
+	viewer := authmw.Principal{Subject: "scorer@acme.com", TenantID: "default", Roles: []auth.Role{auth.RoleTenantViewer}}
+	if rr := postEvalAs(t, h, "sess_1", body, viewer); rr.Code != http.StatusForbidden {
+		t.Fatalf("tenant-viewer eval: status %d, want 403 (lacks session:eval:write)", rr.Code)
+	}
+
+	user := authmw.Principal{Subject: "alice@acme.com", TenantID: "default", Roles: []auth.Role{auth.RoleUser}}
+	if rr := postEvalAs(t, h, "sess_1", body, user); rr.Code != http.StatusCreated {
+		t.Fatalf("user eval: status %d, want 201 (holds session:eval:write)", rr.Code)
+	}
+}
+
+// TestEvalRateLimitPerSession_spec_10_7_938 pins the per-session
+// eval-submission rate limit: a second submission within the same
+// minute against a session at limit 1 is rejected with 429 and a
+// Retry-After header. F-10.7.4 / F-11.2.19.
+func TestEvalRateLimitPerSession_spec_10_7_938(t *testing.T) {
+	// Disable the per-tenant scope so only the per-session limit fires.
+	h := evalServerRL(t, 1, -1, evalSession("sess_1", session.StateRunning))
+	body := sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)}
+	if rr := postEval(t, h, "sess_1", body); rr.Code != http.StatusCreated {
+		t.Fatalf("first eval: status %d, want 201", rr.Code)
+	}
+	rr := postEval(t, h, "sess_1", body)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("second eval: status %d, want 429", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("429 response must carry a Retry-After header per §10.7 line 938")
+	}
+	if !strings.Contains(rr.Body.String(), "RATE_LIMITED") {
+		t.Errorf("rejection should carry RATE_LIMITED: %s", rr.Body.String())
+	}
+}
+
+// TestEvalRateLimitPerTenant_spec_10_7_938 pins the per-tenant
+// eval-submission rate limit: a submission against a second session of
+// the same tenant trips the tenant scope even though each session is
+// under its own limit. F-10.7.4 / F-11.2.19.
+func TestEvalRateLimitPerTenant_spec_10_7_938(t *testing.T) {
+	// Disable the per-session scope so only the per-tenant limit fires.
+	h := evalServerRL(t, -1, 1,
+		evalSession("sess_a", session.StateRunning),
+		evalSession("sess_b", session.StateRunning))
+	body := sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)}
+	if rr := postEval(t, h, "sess_a", body); rr.Code != http.StatusCreated {
+		t.Fatalf("first tenant eval: status %d, want 201", rr.Code)
+	}
+	rr := postEval(t, h, "sess_b", body)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("second tenant eval (other session): status %d, want 429", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("per-tenant 429 must carry a Retry-After header")
+	}
+}
+
+// TestEvalIdempotencyReplay_spec_10_7_940 pins §10.7 line 940: a repeat
+// submission carrying the same idempotency key for a session returns
+// 200 OK with the original record rather than inserting a duplicate; a
+// different key inserts a fresh record. F-10.7.4.
+func TestEvalIdempotencyReplay_spec_10_7_940(t *testing.T) {
+	h, evals := evalServer(t, 0, evalSession("sess_1", session.StateRunning))
+
+	first := postEval(t, h, "sess_1", sessionserver.EvalRequest{
+		Scorer: "llm-judge", Score: evalScore(0.5), IdempotencyKey: "k1"})
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first submission: status %d, want 201", first.Code)
+	}
+	var firstResp sessionserver.EvalResponse
+	_ = json.Unmarshal(first.Body.Bytes(), &firstResp)
+
+	// Replay with the same key but a different score: returns 200 with the
+	// ORIGINAL record (id and score unchanged), no second row.
+	replay := postEval(t, h, "sess_1", sessionserver.EvalRequest{
+		Scorer: "llm-judge", Score: evalScore(0.99), IdempotencyKey: "k1"})
+	if replay.Code != http.StatusOK {
+		t.Fatalf("idempotent replay: status %d, want 200", replay.Code)
+	}
+	var replayResp sessionserver.EvalResponse
+	_ = json.Unmarshal(replay.Body.Bytes(), &replayResp)
+	if replayResp.ID != firstResp.ID {
+		t.Errorf("replay id = %q, want original %q", replayResp.ID, firstResp.ID)
+	}
+	if replayResp.Score == nil || *replayResp.Score != 0.5 {
+		t.Errorf("replay score = %v, want original 0.5 (no overwrite)", replayResp.Score)
+	}
+	if n, _ := evals.CountBySession(context.Background(), "default", "sess_1"); n != 1 {
+		t.Errorf("stored %d eval results after replay, want 1 (no duplicate)", n)
+	}
+
+	// A different key inserts a fresh record.
+	other := postEval(t, h, "sess_1", sessionserver.EvalRequest{
+		Scorer: "llm-judge", Score: evalScore(0.7), IdempotencyKey: "k2"})
+	if other.Code != http.StatusCreated {
+		t.Fatalf("distinct-key submission: status %d, want 201", other.Code)
+	}
+	if n, _ := evals.CountBySession(context.Background(), "default", "sess_1"); n != 2 {
+		t.Errorf("stored %d eval results, want 2 (distinct keys)", n)
+	}
+}
+
+// TestEvalRejectsOversizeIdempotencyKey_spec_10_7_939 pins §10.7 line
+// 939: an idempotency key over 128 bytes is rejected with 400 before any
+// store work. F-10.7.4.
+func TestEvalRejectsOversizeIdempotencyKey_spec_10_7_939(t *testing.T) {
+	h, evals := evalServer(t, 0, evalSession("sess_1", session.StateRunning))
+	rr := postEval(t, h, "sess_1", sessionserver.EvalRequest{
+		Scorer: "s", Score: evalScore(0.5),
+		IdempotencyKey: strings.Repeat("x", evalstore.MaxIdempotencyKeyBytes+1),
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("oversize idempotency_key: status %d, want 400", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "idempotency_key") {
+		t.Errorf("rejection should name the idempotency_key field: %s", rr.Body.String())
+	}
+	if n, _ := evals.CountBySession(context.Background(), "default", "sess_1"); n != 0 {
+		t.Errorf("oversize-key submission stored %d rows, want 0", n)
+	}
+}
 
 // capturedEvalScore records an ObserveEvalScore hook call.
 type capturedEvalScore struct {

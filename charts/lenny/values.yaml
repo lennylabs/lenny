@@ -1188,6 +1188,15 @@ gateway:
   # crash-recovery exposure. Values below 10 are clamped up by the binary.
   # Default 30. F-11.2.16.
   quotaSyncIntervalSeconds: 30
+  # evalRateLimit — §10.7 line 938. Per-session and per-tenant
+  # eval-submission rate limits on POST /v1/sessions/{id}/eval, enforced
+  # by the gateway via the §11.1 per-minute counter and returning 429
+  # with Retry-After on breach. A negative value disables the scope; the
+  # binary defaults (100 / 10000) apply when the key is omitted.
+  # F-10.7.4 / F-11.2.19.
+  evalRateLimit:
+    perSessionPerMinute: 100
+    perTenantPerMinute: 10000
   # uploadLimits — §11.1 lines 10-11 upload-admission caps. These are
   # the policy fairness caps, distinct from the §4.1 upload-handler
   # back-pressure semaphore (extractionThresholds.uploadHandler). Each

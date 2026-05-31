@@ -55,7 +55,7 @@ var _ evalstore.Store = (*Store)(nil)
 // struct's string field.
 const selectList = `id, tenant_id, session_id::text, experiment_id, variant_id,
 	scorer, score, scores, metadata, delegation_depth, inherited,
-	submitted_after_conclusion, created_at`
+	submitted_after_conclusion, idempotency_key, created_at`
 
 // Put assigns an ID and CreatedAt, enforces the §10.7 per-session
 // storage bound, and stores the result. The count and the insert run
@@ -83,20 +83,56 @@ func (s *Store) Put(ctx context.Context, r evalstore.EvalResult) (evalstore.Eval
 		_, err := tx.Exec(ctx, `INSERT INTO eval_results (
 			tenant_id, id, session_id, experiment_id, variant_id,
 			scorer, score, scores, metadata, delegation_depth, inherited,
-			submitted_after_conclusion, created_at
+			submitted_after_conclusion, idempotency_key, created_at
 		) VALUES (
-			$1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)`,
 			r.TenantID, r.ID, r.SessionID, r.ExperimentID, r.VariantID,
 			r.Scorer, r.Score, scoresArg(r.Scores), metadataArg(r.Metadata),
 			int64(r.DelegationDepth), r.Inherited, r.SubmittedAfterConclusion,
-			r.CreatedAt)
+			idempotencyArg(r.IdempotencyKey), r.CreatedAt)
 		return err
 	})
 	if err != nil {
 		return evalstore.EvalResult{}, err
 	}
 	return r, nil
+}
+
+// FindByIdempotencyKey returns the newest in-window eval result for
+// (tenantID, sessionID, key) — the §10.7 dedup lookup. An empty key
+// returns ok=false without a query. spec: §10.7 line 940.
+func (s *Store) FindByIdempotencyKey(ctx context.Context, tenantID, sessionID, key string, notBefore time.Time) (evalstore.EvalResult, bool, error) {
+	if key == "" {
+		return evalstore.EvalResult{}, false, nil
+	}
+	var (
+		out   evalstore.EvalResult
+		found bool
+	)
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM eval_results
+			 WHERE tenant_id = $1 AND session_id = $2::uuid
+			   AND idempotency_key = $3 AND created_at >= $4
+			 ORDER BY created_at DESC, id DESC
+			 LIMIT 1`,
+			tenantID, sessionID, key, notBefore)
+		r, err := scanResult(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		out = r
+		found = true
+		return nil
+	})
+	if err != nil {
+		return evalstore.EvalResult{}, false, err
+	}
+	return out, found, nil
 }
 
 // CountBySession returns the number of eval results stored for the
@@ -245,16 +281,20 @@ func scanResult(row pgx.Row) (evalstore.EvalResult, error) {
 		scoresJSON      []byte
 		metadataJSON    []byte
 		delegationDepth int64
+		idempotencyKey  *string
 	)
 	if err := row.Scan(
 		&r.ID, &r.TenantID, &r.SessionID, &r.ExperimentID, &r.VariantID,
 		&r.Scorer, &score, &scoresJSON, &metadataJSON, &delegationDepth,
-		&r.Inherited, &r.SubmittedAfterConclusion, &r.CreatedAt,
+		&r.Inherited, &r.SubmittedAfterConclusion, &idempotencyKey, &r.CreatedAt,
 	); err != nil {
 		return evalstore.EvalResult{}, err
 	}
 	r.Score = score
 	r.DelegationDepth = uint32(delegationDepth)
+	if idempotencyKey != nil {
+		r.IdempotencyKey = *idempotencyKey
+	}
 	if len(scoresJSON) > 0 {
 		scores := map[string]float64{}
 		if err := json.Unmarshal(scoresJSON, &scores); err != nil {
@@ -284,6 +324,16 @@ func scoresArg(scores map[string]float64) any {
 		return nil
 	}
 	return raw
+}
+
+// idempotencyArg renders the optional §10.7 idempotency key as a query
+// argument. An empty key becomes a SQL NULL so the partial dedup index
+// excludes keyless rows and the scan path reads it back as "".
+func idempotencyArg(key string) any {
+	if key == "" {
+		return nil
+	}
+	return key
 }
 
 // metadataArg renders an optional caller metadata map as a jsonb query

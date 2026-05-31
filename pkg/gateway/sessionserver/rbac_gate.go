@@ -17,9 +17,11 @@ import (
 //     permission. Held by platform-admin, tenant-admin, and user; not
 //     held by tenant-viewer or billing-viewer. Every state-mutating
 //     session endpoint (create, start, finalize, interrupt, terminate,
-//     resume, delete, derive, replay, upload, messages, eval,
+//     resume, delete, derive, replay, upload, messages,
 //     extend-retention, the tool-use approve/deny and elicitation
-//     respond/dismiss control calls) is gated on it.
+//     respond/dismiss control calls) is gated on it. The eval
+//     submission endpoint is gated separately on the §10.7
+//     session:eval:write capability permission (F-10.7.4).
 //   - "Read own session history" — the read_own_sessions permission.
 //     Held by platform-admin, tenant-admin, tenant-viewer, and user;
 //     not held by billing-viewer. Every session read endpoint (get,

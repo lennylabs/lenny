@@ -507,10 +507,12 @@ tests:
       # + LENNY_POSTGRES_WRITE_CEILING_IOPS (§12.3 line 123, F-12.3.8)
       # + LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES (§12.3 line 101,
       #   F-12.3.9)
-      # + LENNY_AUDIT_GDPR_RETENTION_DAYS (§12.8 line 839, F-12.8.16) = 39.
+      # + LENNY_AUDIT_GDPR_RETENTION_DAYS (§12.8 line 839, F-12.8.16)
+      # + LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN / _PER_TENANT_PER_MIN
+      #   (§10.7 line 938, F-10.7.4) = 41.
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 39
+          count: 41
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: POD_NAME
@@ -915,6 +917,45 @@ tests:
           content:
             name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
             value: "10"
+
+  # spec: §10.7 line 938 — the eval-submission rate limits flow from the
+  # chart defaults (100 / 10000) to the binary. F-10.7.4 / F-11.2.19.
+  - it: wires the eval rate-limit env vars from the chart defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN
+            value: "100"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN
+            value: "10000"
+
+  # spec: §10.7 line 938 — an operator override (a negative value
+  # disables the per-session scope) propagates to the binary. F-10.7.4.
+  - it: wires the eval rate-limit env vars from gateway.evalRateLimit overrides
+    set:
+      gateway.evalRateLimit.perSessionPerMinute: -1
+      gateway.evalRateLimit.perTenantPerMinute: 500
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN
+            value: "-1"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN
+            value: "500"
 
   # spec: §11.1 lines 10-11 — upload-admission caps. The chart default
   # (0) leaves each scope unlimited, so no env var is rendered. F-11.1.5,

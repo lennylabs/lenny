@@ -130,10 +130,22 @@ const (
 	PermManagePlatformSettings Permission = "manage_platform_settings"
 	// PermAccessCrossTenantData — §10.2 "Access other tenants' data".
 	PermAccessCrossTenantData Permission = "access_cross_tenant_data"
+	// PermSessionEvalWrite — §10.7 line 936 "session:eval:write". This
+	// is a capability permission the eval-submission contract introduces
+	// beyond the §10.2 operation matrix: the gateway gates
+	// POST /v1/sessions/{id}/eval on it so an external scorer pipeline
+	// can hold a dedicated grant without the broader manage_own_sessions
+	// authority. The session-owning built-in roles (user, tenant-admin,
+	// platform-admin) carry it so existing owners keep submitting; a
+	// tenant may grant it to a custom scorer role because it is within
+	// the tenant-admin ceiling. spec: §10.7 line 936.
+	PermSessionEvalWrite Permission = "session:eval:write"
 )
 
-// AllPermissions returns the closed §10.2 permission set in matrix
-// order.
+// AllPermissions returns the closed permission set: the §10.2
+// operation-matrix rows followed by the §10.7 session:eval:write
+// capability permission, which the eval-submission contract defines
+// outside the matrix.
 func AllPermissions() []Permission {
 	return []Permission{
 		PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
@@ -143,6 +155,7 @@ func AllPermissions() []Permission {
 		PermManageRBACConfig, PermManageEnvironments, PermManageDelegationPolicies,
 		PermManageEgressProfiles, PermIssueBillingCorrections,
 		PermManagePlatformSettings, PermAccessCrossTenantData,
+		PermSessionEvalWrite,
 	}
 }
 
@@ -200,7 +213,7 @@ func RolePermissions(r Role) []Permission {
 			PermManageCredentialPools, PermViewUsage, PermManageQuotas,
 			PermManageUsers, PermManageLegalHolds, PermManageWebhooks,
 			PermManageRBACConfig, PermManageEnvironments, PermManageDelegationPolicies,
-			PermManageEgressProfiles,
+			PermManageEgressProfiles, PermSessionEvalWrite,
 		}
 	case RoleTenantViewer:
 		return []Permission{
@@ -211,6 +224,7 @@ func RolePermissions(r Role) []Permission {
 	case RoleUser:
 		return []Permission{
 			PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
+			PermSessionEvalWrite,
 		}
 	default:
 		return nil

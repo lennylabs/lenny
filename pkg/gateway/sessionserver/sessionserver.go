@@ -155,7 +155,17 @@ type Server struct {
 	perRuntimePerMin int
 	perPoolPerMin    int
 	rlMetrics        AdmissionRateLimitMetrics
-	sealer           Sealer
+	// evalRL is the §10.7 eval-submission rate-limit counter (per-session
+	// and per-tenant). It shares the §11.1 Counter type with admissionRL;
+	// production wires the same Redis-backed instance. Nil disables eval
+	// rate limiting. spec: §10.7 line 938.
+	evalRL ratelimit.Counter
+	// evalPerSessionPerMin / evalPerTenantPerMin are the §10.7
+	// `evalRateLimit.perSessionPerMinute` / `perTenantPerMinute` limits.
+	// Non-positive disables the corresponding scope. spec: §10.7 line 938.
+	evalPerSessionPerMin int
+	evalPerTenantPerMin  int
+	sealer               Sealer
 	// sealMaxDuration bounds the §7.1 seal-and-export retry window
 	// (maxWorkspaceSealDurationSeconds). A non-positive value falls
 	// through to DefaultWorkspaceSealMaxDuration (300s).
@@ -367,6 +377,31 @@ type Server struct {
 // cap, the gateway falls back to `cancel_all` so orphans cannot
 // accumulate without bound.
 const DefaultMaxOrphanTasksPerTenant = 100
+
+// DefaultEvalPerSessionPerMin and DefaultEvalPerTenantPerMin are the
+// §10.7 eval-submission rate-limit defaults: 100 submissions per minute
+// keyed by session_id and 10000 per minute across a tenant's sessions.
+// Both are operator-tunable via the gateway flags
+// `--eval-rate-limit-per-session-per-min` / `-per-tenant-per-min`.
+// spec: §10.7 line 938. F-10.7.4.
+const (
+	DefaultEvalPerSessionPerMin = 100
+	DefaultEvalPerTenantPerMin  = 10000
+)
+
+// resolveEvalLimit maps an Options eval rate-limit value onto the
+// effective per-minute limit: zero selects def (the spec default), a
+// negative value disables the scope (returned as 0), and a positive
+// value is used verbatim.
+func resolveEvalLimit(v, def int) int {
+	if v == 0 {
+		return def
+	}
+	if v < 0 {
+		return 0
+	}
+	return v
+}
 
 // DefaultResumeWindow is the §4.2 line 159 default resume-eligibility
 // window. A session created without an explicit override is eligible
@@ -712,6 +747,26 @@ type Options struct {
 	// enforcing without observability. spec: §11.1 line 7. F-11.1.2.
 	RateLimitMetrics AdmissionRateLimitMetrics
 
+	// EvalRateLimitCounter is the §10.7 per-minute counter for the
+	// eval-submission rate limit (per-session and per-tenant scopes on
+	// POST /v1/sessions/{id}/eval). Nil disables eval rate limiting.
+	// Production wires the same Redis-backed counter as
+	// AdmissionRateLimitCounter so the limit holds across replicas.
+	// spec: §10.7 line 938. F-10.7.4.
+	EvalRateLimitCounter ratelimit.Counter
+
+	// EvalPerSessionPerMinute caps eval submissions against a single
+	// session per minute (§10.7 `evalRateLimit.perSessionPerMinute`).
+	// Zero selects DefaultEvalPerSessionPerMin (100); a negative value
+	// disables the per-session scope. spec: §10.7 line 938. F-10.7.4.
+	EvalPerSessionPerMinute int
+
+	// EvalPerTenantPerMinute caps eval submissions across all of a
+	// tenant's sessions per minute (§10.7 `evalRateLimit.perTenantPerMinute`).
+	// Zero selects DefaultEvalPerTenantPerMin (10000); a negative value
+	// disables the per-tenant scope. spec: §10.7 line 938. F-10.7.4.
+	EvalPerTenantPerMinute int
+
 	// Sealer, when set, takes the §7.1 final workspace snapshot when a
 	// session reaches a terminal state. Nil disables seal-and-export.
 	Sealer Sealer
@@ -1002,6 +1057,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		perRuntimePerMin:         opts.PerRuntimePerMinute,
 		perPoolPerMin:            opts.PerPoolPerMinute,
 		rlMetrics:                opts.RateLimitMetrics,
+		evalRL:                   opts.EvalRateLimitCounter,
+		evalPerSessionPerMin:     resolveEvalLimit(opts.EvalPerSessionPerMinute, DefaultEvalPerSessionPerMin),
+		evalPerTenantPerMin:      resolveEvalLimit(opts.EvalPerTenantPerMinute, DefaultEvalPerTenantPerMin),
 		sealer:                   opts.Sealer,
 		sealMaxDuration:          opts.WorkspaceSealMaxDuration,
 		sealSleep:                opts.SealSleep,
@@ -1120,6 +1178,12 @@ func (s *Server) Handler() http.Handler {
 	manage := func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requireSessionPermission(auth.PermManageOwnSessions, next)
 	}
+	// §10.7 line 936 — eval submission is gated on the dedicated
+	// session:eval:write capability so an external scorer pipeline holds
+	// it without the broader manage_own_sessions authority. F-10.7.4.
+	evalWrite := func(next http.HandlerFunc) http.HandlerFunc {
+		return s.requireSessionPermission(auth.PermSessionEvalWrite, next)
+	}
 	read := func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requireSessionPermission(auth.PermReadOwnSessions, next)
 	}
@@ -1146,7 +1210,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/derive", manage(s.handleDerive))
 	mux.HandleFunc("POST /v1/sessions/{id}/replay", manage(s.handleReplay))
 	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", manage(s.handleExtendRetention))
-	mux.HandleFunc("POST /v1/sessions/{id}/eval", manage(s.handleEval))
+	mux.HandleFunc("POST /v1/sessions/{id}/eval", evalWrite(s.handleEval))
 	mux.HandleFunc("POST /v1/sessions/{id}/memory", manage(s.handleMemoryWrite))
 	mux.HandleFunc("GET /v1/sessions/{id}/memory", read(s.handleMemoryQuery))
 	mux.HandleFunc("DELETE /v1/sessions/{id}/memory/{memoryId}", manage(s.handleMemoryDelete))

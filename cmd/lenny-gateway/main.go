@@ -334,6 +334,12 @@ func main() {
 		"§11.1 line 7 per-runtime session-creation requests-per-minute admission limit. Zero disables the per-runtime rate limit. F-11.1.2.")
 	rlPerPoolPerMin := flag.Int("rate-limit-per-pool-per-min", 0,
 		"§11.1 line 7 per-pool session-creation requests-per-minute admission limit (skipped when no warm pool resolves). Zero disables the per-pool rate limit. F-11.1.2.")
+	evalRLPerSessionPerMin := flag.Int("eval-rate-limit-per-session-per-min",
+		envInt("LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN", sessionserver.DefaultEvalPerSessionPerMin),
+		"§10.7 line 938 evalRateLimit.perSessionPerMinute: per-session eval-submission requests-per-minute limit on POST /v1/sessions/{id}/eval. Default 100. Negative disables the per-session scope. Override via LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN. F-10.7.4.")
+	evalRLPerTenantPerMin := flag.Int("eval-rate-limit-per-tenant-per-min",
+		envInt("LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN", sessionserver.DefaultEvalPerTenantPerMin),
+		"§10.7 line 938 evalRateLimit.perTenantPerMinute: per-tenant eval-submission requests-per-minute limit across all of a tenant's sessions. Default 10000. Negative disables the per-tenant scope. Override via LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN. F-10.7.4.")
 	// spec: §11.1 lines 10-11 — concurrent-upload and per-session
 	// upload-size admission caps, distinct from the §4.1 upload-handler
 	// back-pressure semaphore. Zero leaves each scope unlimited; operators
@@ -2147,8 +2153,14 @@ func main() {
 		PerRuntimePerMinute:       *rlPerRuntimePerMin,
 		PerPoolPerMinute:          *rlPerPoolPerMin,
 		RateLimitMetrics:          gwMetrics,
-		DefaultIsolationProfile:   isolation.Profile(*defaultIsolationProfile),
-		DevMode:                   *devMode,
+		// §10.7 line 938 — the eval-submission rate limit shares the same
+		// §11.1 per-minute counter (Redis-backed across replicas) keyed by
+		// session_id and tenant_id. F-10.7.4 / F-11.2.19.
+		EvalRateLimitCounter:    rateLimiter,
+		EvalPerSessionPerMinute: *evalRLPerSessionPerMin,
+		EvalPerTenantPerMinute:  *evalRLPerTenantPerMin,
+		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
+		DevMode:                 *devMode,
 		// spec: §10.2 lines 256–264. F-10.2.4. Multi-tenant deployments
 		// fail closed on a no-role principal at the session RBAC gate.
 		MultiTenant: *multiTenant,

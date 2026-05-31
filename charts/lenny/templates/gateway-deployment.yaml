@@ -524,6 +524,20 @@ spec:
             - name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
               value: {{ .Values.gateway.quotaSyncIntervalSeconds | quote }}
             {{- end }}
+            # §10.7 line 938 — per-session and per-tenant eval-submission
+            # rate limits on POST /v1/sessions/{id}/eval. Default 100 /
+            # 10000 per minute; a negative value disables the scope.
+            # F-10.7.4 / F-11.2.19.
+            {{- with .Values.gateway.evalRateLimit }}
+            {{- if hasKey . "perSessionPerMinute" }}
+            - name: LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN
+              value: {{ .perSessionPerMinute | quote }}
+            {{- end }}
+            {{- if hasKey . "perTenantPerMinute" }}
+            - name: LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN
+              value: {{ .perTenantPerMinute | quote }}
+            {{- end }}
+            {{- end }}
             # §11.1 lines 10-11 — concurrent-upload and per-session
             # upload-size admission caps, distinct from the §4.1 upload
             # handler back-pressure semaphore. Zero leaves each scope
