@@ -12,6 +12,12 @@
 //     guard clause that the GDPR erasure path depends on (§11.7
 //     item 7).
 //
+// It also hosts the §12.3 cloud-managed pooler defense
+// (VerifyCloudManagedPoolerDefense): under LENNY_POOLER_MODE=external
+// the per-transaction lenny_tenant_guard trigger is the load-bearing
+// RLS defense, so the gateway refuses to start when it is absent from a
+// tenant-scoped table.
+//
 // The gateway runs Verify at startup; lenny-preflight and the
 // periodic background integrity check reuse the same functions. A
 // superuser can grant UPDATE/DELETE access or disable a trigger after
@@ -139,6 +145,98 @@ func VerifyTriggersEnabled(ctx context.Context, db Querier) error {
 	}
 	if len(disabled) > 0 {
 		return fmt.Errorf("integrity: §11.7 triggers disabled: %s", strings.Join(disabled, ", "))
+	}
+	return nil
+}
+
+// TenantGuardCoverageGaps returns the names of tenant-scoped tables
+// that lack an enabled lenny_tenant_guard trigger. A table is
+// tenant-scoped for this purpose when it has row-level security enabled
+// and carries a tenant_id column. An empty result means every such
+// table is protected.
+//
+// The set is computed from the live catalog rather than a hard-coded
+// list, so it stays correct as migrations add tables, and it excludes
+// tables that are deliberately platform-global (RLS disabled — e.g. the
+// §12.5 artifact_store catalog), which carry a tenant_id column but are
+// read cross-tenant through annotated platform-admin paths.
+//
+// spec: §12.3 line 56 — the gateway "queries pg_trigger" for the
+// lenny_tenant_guard trigger on tenant-scoped tables. A trigger that has
+// been disabled (pg_trigger.tgenabled = 'D', e.g. via ALTER TABLE …
+// DISABLE TRIGGER) counts as a gap, matching the VerifyTriggersEnabled
+// posture.
+func TenantGuardCoverageGaps(ctx context.Context, db Querier) ([]string, error) {
+	rows, err := db.Query(ctx, `
+		SELECT c.relname
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind = 'r'
+		  AND n.nspname = current_schema()
+		  AND c.relrowsecurity
+		  AND EXISTS (
+		      SELECT 1 FROM pg_attribute a
+		      WHERE a.attrelid = c.oid
+		        AND a.attname = 'tenant_id'
+		        AND NOT a.attisdropped
+		  )
+		  AND NOT EXISTS (
+		      SELECT 1 FROM pg_trigger t
+		      WHERE t.tgrelid = c.oid
+		        AND t.tgname = 'lenny_tenant_guard'
+		        AND NOT t.tgisinternal
+		        AND t.tgenabled <> 'D'
+		  )
+		ORDER BY c.relname`)
+	if err != nil {
+		return nil, fmt.Errorf("integrity: query tenant-guard coverage: %w", err)
+	}
+	defer rows.Close()
+	var gaps []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("integrity: scan coverage row: %w", err)
+		}
+		gaps = append(gaps, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("integrity: iterate coverage rows: %w", err)
+	}
+	return gaps, nil
+}
+
+// CloudManagedPoolerFatalMessage is reproduced verbatim from §12.3
+// line 56. The gateway exits with this message when
+// LENNY_POOLER_MODE=external but the lenny_tenant_guard trigger is
+// absent from one or more tenant-scoped tables, so operators can match
+// it against the documented remediation.
+const CloudManagedPoolerFatalMessage = "FATAL: cloud-managed pooler mode (LENNY_POOLER_MODE=external) detected but lenny_tenant_guard trigger is absent from tenant-scoped tables — RLS tenant isolation defense is not active; run schema migrations before starting the gateway (Section 12.3)"
+
+// VerifyCloudManagedPoolerDefense enforces the §12.3 lines 49-56 /
+// §17.6 line 488 cloud-managed pooler defense at gateway startup. When
+// poolerMode is "external" the deployment fronts Postgres with a managed
+// proxy (RDS Proxy, Cloud SQL Auth Proxy, Azure PgBouncer integration)
+// that cannot run the connect_query __unset__ sentinel, so the
+// per-transaction lenny_tenant_guard trigger is the load-bearing RLS
+// defense. The check returns CloudManagedPoolerFatalMessage when any
+// tenant-scoped table is missing the trigger, so the caller refuses to
+// start. Any other poolerMode is a no-op: the in-cluster pooler enforces
+// the sentinel via connect_query and the trigger is defense-in-depth.
+//
+// The check runs independently of the §17.6 preflight Job so that it
+// also catches trigger removal after initial installation (e.g. a manual
+// migration rollback). spec: §12.3 line 56.
+func VerifyCloudManagedPoolerDefense(ctx context.Context, db Querier, poolerMode string) error {
+	if poolerMode != "external" {
+		return nil
+	}
+	gaps, err := TenantGuardCoverageGaps(ctx, db)
+	if err != nil {
+		return err
+	}
+	if len(gaps) > 0 {
+		return errors.New(CloudManagedPoolerFatalMessage)
 	}
 	return nil
 }

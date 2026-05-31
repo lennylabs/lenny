@@ -861,6 +861,18 @@ func main() {
 		if err := verifyPostgresSchema(context.Background(), pool); err != nil {
 			log.Fatalf("lenny-gateway: %v", err)
 		}
+		// spec: §12.3 lines 49-56 — cloud-managed pooler defense. Under
+		// LENNY_POOLER_MODE=external the managed proxy cannot run the
+		// connect_query __unset__ sentinel, so the per-transaction
+		// lenny_tenant_guard trigger is the load-bearing RLS defense.
+		// Refuse to start when the trigger is absent from any
+		// tenant-scoped table, independent of the §17.6 preflight Job so a
+		// post-install migration rollback is also caught. The fatal fires
+		// regardless of LENNY_ENV because external pooler mode is an
+		// explicit production posture. F-12.3.1 / F-12.2.14 / F-17.9.2.
+		if err := integrity.VerifyCloudManagedPoolerDefense(context.Background(), pool, *poolerMode); err != nil {
+			log.Fatalf("lenny-gateway: %v", err)
+		}
 		// §11.7 startup integrity check: the append-only ledgers must
 		// keep their grants, triggers, and erasure guard intact.
 		// Production refuses to start on a violation; other
