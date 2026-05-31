@@ -7471,7 +7471,7 @@ Classification: each finding is *Implemented*, *Partial*, *Missing*, *Deviates*,
 
 **Potential duplicate** (confidence: medium) — F-8.5.3, F-8.7.1 — All three report the delegate_task input schema omits the spec-mandated fields (target, LeaseSlice, fileExport), the same root cause and fix.
 
-**Progress (still OPEN):** The `fileExport` third of this finding is delivered by commit d6a197a9 (F-8.7.1): `lenny/delegate_task` now accepts `fileExport` + `fileExportLimits` and the materialization path runs end-to-end. The `LeaseSlice` request-tightening surface (maxTokenBudget, maxChildrenTotal, maxTreeSize, maxParallelChildren, perChildMaxAge) and the `target` opacity concern remain OPEN here; they are a distinct resource-budget surface from the §8.7 export path.
+**Progress (still OPEN):** The `fileExport` third of this finding is delivered by commit d6a197a9 (F-8.7.1): `lenny/delegate_task` now accepts `fileExport` + `fileExportLimits` and the materialization path runs end-to-end. The `LeaseSlice` request-tightening surface (maxTokenBudget, maxChildrenTotal, maxTreeSize, maxParallelChildren, perChildMaxAge) is now delivered by F-8.2.2: `lenny/delegate_task` accepts a `leaseSlice` object, the gateway validates it against the parent's granted budget, and rejects an over-budget slice with `BUDGET_EXHAUSTED`. The remaining OPEN gaps here are the `target` opacity rename (the field is still `runtimeRef`, not the opaque `target`), the `target`-resolver indirection, and the `task: TaskSpec` / `OutputPart[]` input envelope (the input is still a flat `taskInput` string). The `maxDepth` per-call parameter is retained but always resolved through the §8.2.bis precedence chain (F-8.2.6), so it is no longer taken verbatim.
 
 Spec §8.2 lines 13–34 define the signature as:
 
@@ -7498,7 +7498,7 @@ Gaps:
 
 Consequence: a runtime written against the §8.2 contract cannot invoke this tool, and the gateway cannot accept a normatively-shaped delegation. The field-naming leak undermines the runtime-agnosticism the §8.2 design rests on.
 
-### - [ ] F-8.2.2 — `LeaseSlice` admission and parent-budget validation is not wired into `lenny/delegate_task` [High] — OPEN
+### - [x] F-8.2.2 — `LeaseSlice` admission and parent-budget validation is not wired into `lenny/delegate_task` [High] — CLOSED
 
 Spec §8.2 lines 38–48 define `LeaseSlice` with five fields (`maxTokenBudget`, `maxChildrenTotal`, `maxTreeSize`, `maxParallelChildren`, `perChildMaxAge`) and require the gateway to reject any slice that exceeds the parent's remaining budget.
 
@@ -7510,6 +7510,21 @@ Implementation:
 - No `BUDGET_EXHAUSTED` error code path is wired from `delegate_task` (the §15.1 error catalog code is referenced from §8.2 line 127 but never returned).
 
 Consequence: §8.2's "the gateway rejects any `lease_slice` that exceeds the parent's remaining budget" is not enforced. A child session is admitted with no budget binding regardless of what the parent has remaining. The pure lease package exists but is dead code from the gateway path.
+
+**Resolution (this batch):** `delegation.Request` now carries a
+`LeaseSlice` field; `Service.Delegate` calls `lease.ValidateChildSlice`
+against the parent's granted slice before the child row is created and
+returns `*lease.BudgetExceededError` (mapped to the canonical
+`BUDGET_EXHAUSTED` envelope at the `lenny/delegate_task` handler) when
+any axis exceeds the parent budget. The granted slice is persisted on the
+child session row (new `sessions.delegation_lease` JSONB column, migration
+0099; `sessionstore.DelegationLease`) and stamped on every admitted child,
+so each descendant validates its own `lease_slice` against the ancestor
+ceiling. The MCP shim accepts the `leaseSlice` object and forwards it. A
+parent with no granted slice (root/standalone) leaves every axis zero and
+admits any child, matching `ValidateChildSlice`'s zero-axis contract. The
+per-call Redis debit of consumed tokens/children (the "remaining" budget
+beyond the static subtree ceiling) is the separate F-8.2.12 follow-on.
 
 ### - [x] F-8.2.3 — `lease.PolicyAllowSelfRec` and `lease.RuntimeAllowSelfRec` are hard-coded `false` — cycle gate's three-layer AND is structurally collapsed to "reject every self-recursion under enforce" [High] — CLOSED
 
@@ -9181,7 +9196,7 @@ Each is mapped to the implementation below.
 
 **Files:** `pkg/gateway/leasecontrol/leasecontrol.go:250–267`; `pkg/gateway/leasecontrol/membudget.go:223–237`; `pkg/delegation/lease/lease.go`.
 
-**Deferred (after d8efc623):** Genuinely blocked on the per-session delegation-lease persistence the broader §8.2 budget work owns — the same blocker that holds F-8.1.1/F-8.2.2 OPEN. The leasecontrol grant raises `memTree.currentBudget`, but no production `RegisterTree` call populates the budget source from real sessions, and `pkg/delegation/lease` admission reads a separate `LeaseSlice` with no persisted per-session counter for the grant to update. Closing this requires (a) persisting the delegation lease on the session row and (b) wiring tree registration + post-grant lease mutation. Re-attempt once the §8.2 lease-persistence lands.
+**Deferred (re-verified after F-8.2.2):** Part (a) — persisting the delegation lease on the session row — now exists: F-8.2.2 added `sessions.delegation_lease` (migration 0099) and `delegation.Service.Delegate` stamps + validates the granted slice. Part (b) remains the blocker: there is still no production `RegisterTree` call populating the leasecontrol budget source from those persisted slices, and no Redis-backed tree counter that a post-grant `ApplyGrant` mutation can raise so `pkg/delegation/lease` admission reads the extended limit. The static admission ceiling F-8.2.2 enforces is per-call (child slice ≤ ancestor slice); the live per-tree token/child counter the extension grant must raise is the F-8.2.12 Redis-counter machinery. Re-attempt once F-8.2.12 lands the tree-budget counter and the leasecontrol grant is wired to it.
 
 ### - [x] F-8.6.4 — GatewayControl gRPC listener has no TLS and no auth [High] — CLOSED
 

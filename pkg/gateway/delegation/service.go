@@ -75,6 +75,21 @@ type Request struct {
 	// means "inherit / use the resolved ceiling".
 	MaxDepth int
 
+	// LeaseSlice is the §8.2 `lease_slice` the caller declares on the
+	// child lease: the per-subtree resource ceiling (maxTokenBudget,
+	// maxChildrenTotal, maxTreeSize, maxParallelChildren, perChildMaxAge).
+	// Delegate validates it against the parent's granted slice
+	// (`parent.DelegationLease`): a child may tighten but never widen the
+	// parent's budget, and a slice that exceeds the parent's remaining
+	// budget on any axis is rejected with *lease.BudgetExceededError,
+	// which the §8.5 handler maps to BUDGET_EXHAUSTED. The resolved slice
+	// is stamped onto the child session row so the child's own
+	// descendants validate against it in turn. The zero value (no axes
+	// set) imposes no budget binding.
+	//
+	// spec: §8.2 lines 38-48, 127. F-8.2.2.
+	LeaseSlice lease.LeaseSlice
+
 	// UserID owns the child session. Inherits the parent's when
 	// blank.
 	UserID string
@@ -700,6 +715,26 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		return Result{}, err
 	}
 
+	// §8.2 lines 38-48: validate the caller's requested lease_slice
+	// against the parent's granted slice. A child may only tighten the
+	// budget; a slice that exceeds the parent's remaining budget on any
+	// axis is rejected with *lease.BudgetExceededError, which the §8.5
+	// handler maps to BUDGET_EXHAUSTED (spec line 127). The parent's
+	// granted slice (DelegationLease) is the v1 "remaining budget": the
+	// per-call Redis debit of consumed tokens/children is the §8.2.12
+	// follow-on, so admission here enforces the static subtree ceiling
+	// (a child can never request more than the ancestor ever held). A
+	// parent with no granted slice (root/standalone, or a child whose
+	// lease declared no slice) leaves every parent axis zero, and
+	// ValidateChildSlice admits any child against a zero axis. F-8.2.2.
+	parentSlice := leaseSliceFromStore(parent.DelegationLease)
+	if err := lease.ValidateChildSlice(
+		parentSlice, req.LeaseSlice,
+		parentSlice.MaxTokenBudget, parentSlice.MaxChildrenTotal, parentSlice.MaxTreeSize,
+	); err != nil {
+		return Result{}, err
+	}
+
 	userID := req.UserID
 	if userID == "" {
 		userID = parent.UserID
@@ -750,6 +785,11 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		// without re-walking the lineage on every submission. `depth` is
 		// the parent's depth resolved by buildLineage above. F-10.7.5.
 		DelegationDepth: uint32(depth + 1),
+		// §8.2 lines 38-48: stamp the granted lease_slice onto the child
+		// so the child's own descendants validate against this ceiling.
+		// Nil when the lease declared no slice (no budget binding at this
+		// scope). F-8.2.2.
+		DelegationLease: storeLeaseFromSlice(req.LeaseSlice),
 		// §8.3 lines 311-319: the monotonically-resolved visibility
 		// boundary (inherited from the parent or narrowed by the lease)
 		// is stamped on the child so lenny/get_task_tree scopes the
@@ -1250,6 +1290,40 @@ func copyTracingContext(src map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// leaseSliceFromStore translates the persisted §8.2 granted lease into
+// the pure lease.LeaseSlice the arithmetic operates on. A nil persisted
+// lease yields the zero slice (no budget binding), so ValidateChildSlice
+// admits any child against it. F-8.2.2.
+func leaseSliceFromStore(l *sessionstore.DelegationLease) lease.LeaseSlice {
+	if l == nil {
+		return lease.LeaseSlice{}
+	}
+	return lease.LeaseSlice{
+		MaxTokenBudget:      l.MaxTokenBudget,
+		MaxChildrenTotal:    l.MaxChildrenTotal,
+		MaxTreeSize:         l.MaxTreeSize,
+		MaxParallelChildren: l.MaxParallelChildren,
+		PerChildMaxAge:      l.PerChildMaxAge,
+	}
+}
+
+// storeLeaseFromSlice translates a caller-declared §8.2 lease_slice into
+// the persisted granted lease stamped on the child row. An all-zero
+// slice (no budget binding) yields nil so the column stays NULL. F-8.2.2.
+func storeLeaseFromSlice(s lease.LeaseSlice) *sessionstore.DelegationLease {
+	dl := &sessionstore.DelegationLease{
+		MaxTokenBudget:      s.MaxTokenBudget,
+		MaxChildrenTotal:    s.MaxChildrenTotal,
+		MaxTreeSize:         s.MaxTreeSize,
+		MaxParallelChildren: s.MaxParallelChildren,
+		PerChildMaxAge:      s.PerChildMaxAge,
+	}
+	if dl.IsZero() {
+		return nil
+	}
+	return dl
 }
 
 // randomChildID returns a fresh §12.6 UUIDv8 session identifier for a

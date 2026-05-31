@@ -86,7 +86,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	tracing_context, cascade_on_failure,
 	COALESCE(root_session_id::text, ''),
 	tree_visibility,
-	delegation_depth`
+	delegation_depth,
+	delegation_lease`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -144,7 +145,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		workspace_root,
 		tracing_context, cascade_on_failure,
 		tree_visibility,
-		delegation_depth
+		delegation_depth,
+		delegation_lease
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -172,7 +174,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$42,
 		$43::jsonb, $44,
 		$46,
-		$47
+		$47,
+		$48::jsonb
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -217,7 +220,14 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// $47 — §10.7 delegation_depth; 0 for a root session, stamped
 			// to parent.depth+1 by the §8.2 delegation Service. Invariant
 			// after creation, so it is absent from updateSQL. F-10.7.5.
-			int(sess.DelegationDepth))
+			int(sess.DelegationDepth),
+			// $48 — §8.2 delegation_lease; the granted lease_slice the
+			// §8.2 delegation Service stamps on every child it admits, so
+			// a descendant's own lease_slice can be validated against the
+			// ancestor ceiling. NULL for a root/standalone session and
+			// any child whose lease declared no slice. Invariant after
+			// creation, so it is absent from updateSQL. F-8.2.2.
+			delegationLeaseArg(sess.DelegationLease))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -586,6 +596,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		treeVisibility string
 		// §10.7 delegation_depth from migration 0095 (F-10.7.5).
 		delegationDepth int
+		// §8.2 delegation_lease granted lease_slice from migration 0099
+		// (F-8.2.2).
+		delegationLeaseJSON []byte
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -632,10 +645,24 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §10.7 line 905 — delegation_depth feeds the eval_results copy
 		// the Results API filters on; from migration 0095 (F-10.7.5).
 		&delegationDepth,
+		// §8.2 lines 38-48 — delegation_lease carries the granted
+		// lease_slice so a descendant's slice validates against the
+		// ancestor ceiling; from migration 0099 (F-8.2.2).
+		&delegationLeaseJSON,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
 	s.DelegationDepth = uint32(delegationDepth)
+	// spec: §8.2 lines 38-48 — decode the granted lease_slice. A
+	// nil/empty payload leaves DelegationLease nil, matching the
+	// "no explicit budget binding" case (root/standalone or a child
+	// whose lease declared no slice). F-8.2.2.
+	if len(delegationLeaseJSON) > 0 {
+		var dl sessionstore.DelegationLease
+		if err := json.Unmarshal(delegationLeaseJSON, &dl); err == nil && !dl.IsZero() {
+			s.DelegationLease = &dl
+		}
+	}
 	if len(policyJSON) > 0 {
 		s.PolicyEnforcementState = policyJSON
 	}
@@ -737,6 +764,21 @@ func jsonbArg(raw json.RawMessage) any {
 		return nil
 	}
 	return string(raw)
+}
+
+// delegationLeaseArg renders the §8.2 granted lease_slice as a jsonb
+// query argument. A nil or all-zero lease imposes no budget binding and
+// is stored as SQL NULL so the read path returns DelegationLease nil.
+// F-8.2.2.
+func delegationLeaseArg(l *sessionstore.DelegationLease) any {
+	if l.IsZero() {
+		return nil
+	}
+	b, err := json.Marshal(l)
+	if err != nil {
+		return nil
+	}
+	return string(b)
 }
 
 // policyEnforcementArg renders the §4.2 line 158 policy enforcement

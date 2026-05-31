@@ -128,6 +128,20 @@ type Session struct {
 	// §10.7 lines 868, 905. F-10.7.5.
 	DelegationDepth uint32
 
+	// DelegationLease is the §8.2 LeaseSlice granted to this session at
+	// delegation admission: the per-subtree resource ceiling the §8.2
+	// `lease_slice` parameter carried (maxTokenBudget, maxChildrenTotal,
+	// maxTreeSize, maxParallelChildren, perChildMaxAge). The §8.2
+	// delegation Service validates a child's requested slice against this
+	// granted slice (a child can only tighten, never widen, the parent's
+	// budget) and stamps the child's resolved slice here so the child's
+	// own descendants are bound in turn. Nil for a root/standalone
+	// session and for any child whose lease declared no slice — both mean
+	// "no explicit budget binding at this scope" and ValidateChildSlice
+	// admits any child against a zero parent axis. The value is invariant
+	// once the row is created. spec: §8.2 lines 38-48, 127. F-8.2.2.
+	DelegationLease *DelegationLease
+
 	// ParentWorkspaceRef is the §4.5 metadata lineage pointer to the
 	// parent session's workspace object. Audit / observability only;
 	// not a reference-counted dependency.
@@ -410,6 +424,35 @@ func VisibleTree(caller Session, all []Session, vis session.TreeVisibility) (Ses
 		// caller is its own root); root the response at the caller.
 		return caller, nil
 	}
+}
+
+// DelegationLease is the §8.2 lease-slice subset persisted on a session
+// row: the resource ceiling a delegation granted to the session's
+// subtree. It mirrors pkg/delegation/lease.LeaseSlice field-for-field;
+// the store stays free of a dependency on the lease package, and the
+// §8.2 delegation Service translates between the two. A zero field means
+// "no limit set at this scope". spec: §8.2 lines 38-48. F-8.2.2.
+type DelegationLease struct {
+	// MaxTokenBudget is the LLM token cap for the entire subtree.
+	MaxTokenBudget int64 `json:"maxTokenBudget,omitempty"`
+	// MaxChildrenTotal caps the total descendants the subtree may spawn.
+	MaxChildrenTotal int `json:"maxChildrenTotal,omitempty"`
+	// MaxTreeSize caps this branch's contribution to the tree-wide pod cap.
+	MaxTreeSize int `json:"maxTreeSize,omitempty"`
+	// MaxParallelChildren caps concurrent in-flight children.
+	MaxParallelChildren int `json:"maxParallelChildren,omitempty"`
+	// PerChildMaxAge is the wall-clock seconds budget per descendant.
+	PerChildMaxAge int `json:"perChildMaxAge,omitempty"`
+}
+
+// IsZero reports whether every axis is unset, in which case the lease
+// imposes no budget binding and the store omits the persisted column.
+func (l *DelegationLease) IsZero() bool {
+	if l == nil {
+		return true
+	}
+	return l.MaxTokenBudget == 0 && l.MaxChildrenTotal == 0 && l.MaxTreeSize == 0 &&
+		l.MaxParallelChildren == 0 && l.PerChildMaxAge == 0
 }
 
 // ExperimentContext is the §10.7 experiment enrollment recorded on a

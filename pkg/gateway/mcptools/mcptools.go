@@ -1738,7 +1738,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			// SpawnChild is one of the six §11.5 critical operations and
 			// the MCP path is its only client surface. spec: F-11.5.1,
 			// F-11.5.6.
-			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExport":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 fileExport entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace. Omit to deliver no exported files."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the fileExport set. Omit for the defaults (100 files, 100 MiB)."}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExport":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 fileExport entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace. Omit to deliver no exported files."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the fileExport set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
 			// principal so the §4 chain payload, §8.2 service Delegate, and
@@ -1782,6 +1782,18 @@ func Register(srv *mcp.Server, deps Deps) {
 					MaxFiles     int   `json:"maxFiles"`
 					MaxTotalSize int64 `json:"maxTotalSize"`
 				} `json:"fileExportLimits,omitempty"`
+				// LeaseSlice is the §8.2 lines 38-48 lease_slice the caller
+				// declares on the child lease. The service validates it
+				// against the parent's granted slice and rejects an
+				// over-budget request with BUDGET_EXHAUSTED. Omit for no
+				// budget binding. F-8.2.1 / F-8.2.2.
+				LeaseSlice *struct {
+					MaxTokenBudget      int64 `json:"maxTokenBudget"`
+					MaxChildrenTotal    int   `json:"maxChildrenTotal"`
+					MaxTreeSize         int   `json:"maxTreeSize"`
+					MaxParallelChildren int   `json:"maxParallelChildren"`
+					PerChildMaxAge      int   `json:"perChildMaxAge"`
+				} `json:"leaseSlice,omitempty"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, errInvalidArgs(err)
@@ -1947,6 +1959,20 @@ func Register(srv *mcp.Server, deps Deps) {
 					MaxTotalSize: in.FileExportLimits.MaxTotalSize,
 				}
 			}
+			// §8.2 lines 38-48: forward the caller-declared lease_slice
+			// so the service validates it against the parent's granted
+			// budget. Omitted (nil) leaves the zero slice (no budget
+			// binding). F-8.2.1 / F-8.2.2.
+			var leaseSlice lease.LeaseSlice
+			if in.LeaseSlice != nil {
+				leaseSlice = lease.LeaseSlice{
+					MaxTokenBudget:      in.LeaseSlice.MaxTokenBudget,
+					MaxChildrenTotal:    in.LeaseSlice.MaxChildrenTotal,
+					MaxTreeSize:         in.LeaseSlice.MaxTreeSize,
+					MaxParallelChildren: in.LeaseSlice.MaxParallelChildren,
+					PerChildMaxAge:      in.LeaseSlice.PerChildMaxAge,
+				}
+			}
 			res, err := deps.Delegation.Delegate(ctx, tenant, delegation.Request{
 				ParentSessionID:  in.ParentSessionID,
 				RuntimeRef:       in.RuntimeRef,
@@ -1954,6 +1980,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				MaxDepth:         in.MaxDepth,
 				IsolationProfile: resolvePoolIsolation(ctx, deps, in.PoolRef),
 				ApprovalMode:     lease.ApprovalMode(in.ApprovalMode),
+				LeaseSlice:       leaseSlice,
 				FileExport:       fileExport,
 				FileExportLimits: fileExportLimits,
 				// §8.3 lines 311-319: the lease visibility boundary. Empty
@@ -2040,6 +2067,18 @@ func Register(srv *mcp.Server, deps Deps) {
 					return mcp.ToolResult{}, mcp.NewToolError("INVALID_LEASE_FIELD",
 						err.Error(),
 						map[string]any{"field": "approvalMode", "value": iameErr.Value})
+				}
+				// spec: §8.2 lines 38-48, 127 — the caller's lease_slice
+				// exceeds the parent's granted budget on at least one
+				// axis. Surface the canonical BUDGET_EXHAUSTED envelope so
+				// REST and MCP share the same (category, retryable) pair,
+				// carrying the per-axis violations the service reported.
+				// F-8.2.2.
+				var budgetErr *lease.BudgetExceededError
+				if errors.As(err, &budgetErr) {
+					return mcp.ToolResult{}, mcp.NewToolError("BUDGET_EXHAUSTED",
+						err.Error(),
+						map[string]any{"violations": budgetErr.Violations})
 				}
 				// spec: §8.2 line 50 — the service-layer defence-in-depth
 				// type gate that mirrors the §10.6 shim. Surface the
