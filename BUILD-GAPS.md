@@ -13996,7 +13996,7 @@ configuration will be ignored at runtime.
 
 ---
 
-### - [ ] F-10.7.4 — 04  Eval submission endpoint omits idempotency, rate limiting, and `session:eval:write` permission gating [High] — OPEN
+### - [x] F-10.7.4 — 04  Eval submission endpoint omits idempotency, rate limiting, and `session:eval:write` permission gating [High] — CLOSED
 
 **Spec:** §10.7 lines 932–941 — the Eval Submission Contract mandates four
 distinct controls on `POST /v1/sessions/{id}/eval`:
@@ -14042,6 +14042,27 @@ The permission gap is the most significant: any holder of
 spec scopes the capability to a dedicated `session:eval:write` permission
 intended for external scorers. The missing rate limit removes the cost cap
 the spec relies on to prevent abusive eval flooding.
+
+**Resolution (e24cbbf4):** All three remaining dimensions wired.
+(1) Permission: new `auth.PermSessionEvalWrite` (`session:eval:write`,
+§10.7 line 936) — a capability permission outside the §10.2 matrix,
+granted to the session-owning built-in roles (user, tenant-admin,
+platform-admin) and within the tenant-admin ceiling so a tenant may
+grant it to a custom external-scorer role. `POST /v1/sessions/{id}/eval`
+is now gated on it (the new `evalWrite` wrapper) instead of
+`manage_own_sessions`. (2) Rate limit (§10.7 line 938): per-session
+(default 100/min) and per-tenant (default 10000/min) over the existing
+§11.1 `ratelimit.Counter`, returning `429 RATE_LIMITED` with `Retry-After`
+and failing open on a counter error, enforced before the session lookup;
+operator-tunable via `--eval-rate-limit-per-session/-tenant-per-min` and
+`gateway.evalRateLimit.*`. The platform-wide sliding-vs-fixed-window
+refinement remains F-11.2.3; a per-tenant config override remains future
+work consistent with `maxEvalsPerSession` also being a global default.
+(3) Idempotency (§10.7 lines 939-940): optional `idempotency_key`
+(≤128 bytes, `400` on oversize); a repeat for the same session within 24h
+returns `200` with the original record via `evalstore.FindByIdempotencyKey`
+over a new `eval_results.idempotency_key` column (migration 0098). The
+storage cap (dimension 4) was already wired.
 
 ---
 
@@ -15359,12 +15380,20 @@ Spec §11.2: "Quota reset periods are configurable per quota type: hourly, daily
 
 The tenant row carries `TokenQuotaPerWindow int64` (`tenantstore.go:57-63`); the reset period is a platform-wide `TenantStoreLimitsOptions.Period` (`tenantlimits.go:50`). A deployer cannot configure one tenant on `daily` and another on `monthly` — every tenant shares the platform setting, contradicting the spec's "per quota type" wording.
 
-### - [ ] F-11.2.19 — Eval submission rate limits (`evalRateLimit.perSessionPerMinute`, `evalRateLimit.perTenantPerMinute`) are not implemented [Medium] — OPEN
+### - [x] F-11.2.19 — Eval submission rate limits (`evalRateLimit.perSessionPerMinute`, `evalRateLimit.perTenantPerMinute`) are not implemented [Medium] — CLOSED
 
 The §11.2 budget table includes:
 > Eval submission rate limits — Per-session, per-tenant (configurable via `evalRateLimit.perSessionPerMinute`, `evalRateLimit.perTenantPerMinute`)
 
 `evalstore` enforces only a per-session storage cap (`evalstore.ErrQuotaExceeded` at `MaxEvalsPerSession`) — not a rate limit. Grep for `evalRateLimit` returns spec / docs only. The §10.7 design (`spec/10_gateway-internals.md:938`) specifies Redis sliding-window counters with `429 Too Many Requests` and a `Retry-After` header; none of that is wired.
+
+**Resolution (e24cbbf4):** Closed by F-10.7.4, which wired the
+per-session (default 100/min) and per-tenant (default 10000/min)
+eval-submission rate limits over the §11.1 `ratelimit.Counter` (the same
+Redis-backed counter the admission gate uses), returning `429 RATE_LIMITED`
+with a `Retry-After` header. The fixed-vs-sliding-window distinction is the
+platform-wide F-11.2.3 concern; the eval limiter shares the platform's
+counter so it inherits that refinement when it lands.
 
 ### - [ ] F-11.2.20 — `lenny_gateway_token_usage_anomaly_total` is not emitted [Medium] — OPEN
 
