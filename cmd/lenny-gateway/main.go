@@ -122,6 +122,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
+	"github.com/lennylabs/lenny/pkg/gateway/delegation/exportwire"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
@@ -2401,11 +2403,30 @@ func main() {
 	if pgPool != nil {
 		delegationPolicies = delegationpolicypg.New(pgPool)
 	}
+	// §8.7 / §8.2 steps 3, 4: the file-export materializer pulls declared
+	// fileExport sets from the running parent pod (over the pod-session
+	// registry's adapter client), validates + persists them to the §4.5
+	// blob store, and stamps the §14 child WorkspacePlan. It is wired only
+	// when the pod registry exists; a delegation that declares fileExport
+	// without it fails closed with EXPORT_NOT_CONFIGURED. The §8.3
+	// scanExportedFiles interceptor resolver is not yet wired, so a policy
+	// that mandates the export scan fails closed with
+	// EXPORT_FILE_SCAN_UNAVAILABLE until the interceptor registry lands.
+	// F-8.7.1.
+	var exportMaterializer delegation.ExportMaterializer
+	if podRegistry != nil {
+		exportMaterializer = export.NewMaterializer(
+			exportwire.NewPodExporter(podRegistry),
+			exportwire.NewBlobSink(blobs, 0),
+			mcpDelegationAuditor{sink: auditSink},
+		)
+	}
 	delegationSvc := delegation.NewService(sessions, delegation.Options{
-		Experiments: experiments,
-		Runtimes:    runtimes,
-		Policies:    delegationPolicies,
-		Clock:       clockinject.Now,
+		Experiments:        experiments,
+		Runtimes:           runtimes,
+		Policies:           delegationPolicies,
+		Clock:              clockinject.Now,
+		ExportMaterializer: exportMaterializer,
 		// §8.2 LayerPlatform — Helm value gateway.allowSelfRecursion.
 		PlatformAllowSelfRecursion: *gatewayAllowSelfRecursion,
 		// §8.2.bis line 89 — Helm value gateway.delegation.defaultMaxDepth.

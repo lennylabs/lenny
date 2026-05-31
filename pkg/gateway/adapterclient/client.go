@@ -321,6 +321,56 @@ func (c *Client) Checkpoint(ctx context.Context, sessionID string, deadline time
 	}, nil
 }
 
+// ExportSpec is one §8.7 fileExport entry passed to the adapter's
+// ExportPaths RPC: a source glob resolved inside the parent pod's
+// /workspace/current and the relative destPrefix the matched files are
+// rebased under in the child workspace.
+type ExportSpec struct {
+	Source     string
+	DestPrefix string
+}
+
+// ExportedFile is one rebased file the parent pod's adapter packaged
+// for a delegation export (§4.7 line 633 / §8.7). Path is the
+// child-workspace-relative destination after the §8.7 rebasing rule.
+type ExportedFile struct {
+	Path    string
+	Content []byte
+	SHA256  string
+	Size    int64
+}
+
+// ExportPaths runs the §4.7 / §8.7 ExportPaths RPC against the parent
+// session's pod adapter, asking it to resolve the export specs inside
+// /workspace/current, reject symlink-escaping matches, strip each
+// glob's base path, and re-root the matched files under each spec's
+// destPrefix. The gateway applies the lease fileExportLimits and the
+// optional content scan to the returned set before persisting it for
+// the child (§8.2 steps 3, 4).
+func (c *Client) ExportPaths(ctx context.Context, sessionID string, specs []ExportSpec) ([]ExportedFile, error) {
+	pb := make([]*adapterv1.ExportSpec, 0, len(specs))
+	for _, s := range specs {
+		pb = append(pb, &adapterv1.ExportSpec{Source: s.Source, DestPrefix: s.DestPrefix})
+	}
+	resp, err := c.rpc.ExportPaths(ctx, &adapterv1.ExportPathsRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Exports:   pb,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ExportedFile, 0, len(resp.GetFiles()))
+	for _, f := range resp.GetFiles() {
+		out = append(out, ExportedFile{
+			Path:    f.GetPath(),
+			Content: f.GetContent(),
+			SHA256:  f.GetSha256(),
+			Size:    f.GetSizeBytes(),
+		})
+	}
+	return out, nil
+}
+
 // ResumeParams carries the inputs to restore a session onto a replacement
 // pod. SessionID, Runtime, and CheckpointID are required; the rest
 // re-deliver the §15.4 adapter-manifest fields so the restored runtime

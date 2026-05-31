@@ -16,6 +16,7 @@ package delegation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -24,8 +25,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/experiment"
+	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
+	"github.com/lennylabs/lenny/pkg/gateway/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -98,6 +102,27 @@ type Request struct {
 	// spec: §8.3 lines 311-319; §8.5 line 540. F-8.5.2 / F-8.9.2 / F-13.5.8.
 	TreeVisibility session.TreeVisibility
 
+	// FileExport carries the §8.7 `fileExport` entries declared on the
+	// `lenny/delegate_task` lease: each names a source glob resolved
+	// inside the parent's /workspace/current and the relative destPrefix
+	// the matched files are rebased under in the child workspace. Empty
+	// (the spec default) skips the §8.7 export-materialization phase
+	// entirely. When non-empty, Delegate runs the export Materializer to
+	// pull, validate, scan, and persist the files before the child row is
+	// created, stamping the resulting §14 upload sources onto the child's
+	// WorkspacePlan so the §6.3 binder delivers them at materialization.
+	//
+	// spec: §8.7 (file export model); §8.2 lines 91-95 (steps 3, 4, 6).
+	FileExport []export.Spec
+
+	// FileExportLimits is the §8.3 line 264 lease `fileExportLimits`
+	// structural ceiling (max file count and aggregate bytes) enforced
+	// across all FileExport entries. The zero value selects the §8.3
+	// defaults (100 files, 100 MiB).
+	//
+	// spec: §8.3 line 264.
+	FileExportLimits fileexport.FileExportLimits
+
 	// EffectiveMessagingScope is the child's resolved effective §7.2
 	// messagingScope (the narrowest of deployment maxScope, tenant scope,
 	// and the top-most parent runtime scope). It is not a per-delegation
@@ -153,6 +178,34 @@ type ExperimentRouter interface {
 	ApplyExperimentRouting(ctx context.Context, row *sessionstore.Session) error
 }
 
+// ExportMaterializer runs the §8.7 gateway-side file-export pipeline for
+// one delegation: it pulls the declared `fileExport` specs from the
+// running parent pod, validates and optionally content-scans them,
+// persists each surviving file durably, and returns the §14 child
+// WorkspacePlan upload sources. *export.Materializer implements it. A nil
+// materializer on the Service makes a delegation that declares
+// `fileExport` entries fail with ErrExportNotConfigured rather than
+// silently dropping the export.
+//
+// spec: §8.7; §8.2 lines 91-95 (steps 3, 4, 6).
+type ExportMaterializer interface {
+	Materialize(ctx context.Context, p export.Params) (export.Result, error)
+}
+
+// ExportScanChainResolver resolves the §8.3 `contentPolicy.interceptorRef`
+// named RequestInterceptor into the PreExportMaterialization chain and the
+// §11.7 / §16.1 ExportScanContext used by the per-file content scan. It is
+// consulted only when the effective DelegationPolicy sets
+// `contentPolicy.scanExportedFiles: true`. A nil resolver makes a
+// scan-required export fail closed with ErrExportScanUnavailable: the
+// spec forbids honoring `scanExportedFiles` without a resolvable
+// interceptor (§8.3 rule 1).
+//
+// spec: §8.3 lines 160-181 (contentPolicy + fail-closed scan).
+type ExportScanChainResolver interface {
+	ResolveExportScanChain(ctx context.Context, tenantID, interceptorRef string) (*interceptor.Chain, interceptor.ExportScanContext, error)
+}
+
 // Service creates child sessions from a delegation request.
 type Service struct {
 	store            sessionstore.Store
@@ -183,6 +236,14 @@ type Service struct {
 	// by tests that exercise the rest of the admission path without
 	// the cooldown gate).
 	interceptorWeakeningCooldown time.Duration
+	// exportMat runs the §8.7 file-export materialization when a
+	// delegation declares `fileExport` entries. Nil makes such a
+	// delegation fail with ErrExportNotConfigured. F-8.7.1.
+	exportMat ExportMaterializer
+	// exportScanResolver resolves the §8.3 contentPolicy.interceptorRef
+	// chain for the optional per-file export content scan. Nil makes a
+	// `scanExportedFiles: true` policy fail closed. F-8.7.1.
+	exportScanResolver ExportScanChainResolver
 }
 
 // Options configures a Service.
@@ -267,6 +328,18 @@ type Options struct {
 	// (60s). A negative value disables the gate — tests that exercise
 	// the rest of the admission path can opt out. F-8.7.12 / F-13.5.7.
 	InterceptorWeakeningCooldown time.Duration
+
+	// ExportMaterializer, when set, runs the §8.7 file-export pipeline
+	// for a delegation that declares `fileExport` entries. Nil makes
+	// such a delegation fail with ErrExportNotConfigured; a delegation
+	// with no `fileExport` entries is unaffected. F-8.7.1.
+	ExportMaterializer ExportMaterializer
+
+	// ExportScanChainResolver, when set, resolves the §8.3
+	// contentPolicy.interceptorRef chain for the optional per-file
+	// export content scan. Nil makes a `scanExportedFiles: true` policy
+	// fail closed with ErrExportScanUnavailable. F-8.7.1.
+	ExportScanChainResolver ExportScanChainResolver
 }
 
 // NewService returns a delegation Service.
@@ -308,6 +381,8 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		platformAllowSelfRec:         opts.PlatformAllowSelfRecursion,
 		defaultMaxDepth:              maxDepth,
 		interceptorWeakeningCooldown: cooldown,
+		exportMat:                    opts.ExportMaterializer,
+		exportScanResolver:           opts.ExportScanChainResolver,
 	}
 }
 
@@ -342,6 +417,20 @@ var (
 	//
 	// spec: §8.4 line 521. F-8.4.1.
 	ErrDelegationDenied = errors.New("delegation: lease approvalMode=deny rejects this hop (§8.4)")
+
+	// ErrExportNotConfigured — the delegation declares §8.7 `fileExport`
+	// entries but the gateway wired no ExportMaterializer, so the export
+	// path cannot run. Failing closed prevents silently dropping the
+	// parent's declared files (which a caller would read as a successful
+	// export of an empty set). spec: §8.7. F-8.7.1.
+	ErrExportNotConfigured = errors.New("delegation: fileExport declared but no export materializer is configured (§8.7)")
+
+	// ErrExportScanUnavailable — the effective DelegationPolicy sets
+	// `contentPolicy.scanExportedFiles: true` but no ExportScanChainResolver
+	// is wired, so the mandated per-file scan cannot run. The §8.3 rule-1
+	// fail-closed posture rejects the export rather than materializing
+	// unscanned files. spec: §8.3 lines 160-181. F-8.7.1.
+	ErrExportScanUnavailable = errors.New("delegation: contentPolicy.scanExportedFiles is true but no export-scan interceptor is configured (§8.3)")
 )
 
 // InterceptorWeakeningCooldownError reports a §8.3 line 181 rejection:
@@ -548,6 +637,8 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		PlatformAllowSelfRec: s.platformAllowSelfRec,
 	}
 	var policyCeiling int
+	var effectivePolicy delegationpolicystore.DelegationPolicy
+	var haveEffectivePolicy bool
 	if s.runtimes != nil {
 		if rt, err := runtimestore.Resolve(ctx, s.runtimes, req.RuntimeRef); err == nil {
 			if rt.Type == runtimestore.TypeMCP {
@@ -556,6 +647,8 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 			settings.RuntimeAllowSelfRec = rt.AllowSelfRecursion
 			if s.policies != nil && rt.DelegationPolicyRef != "" {
 				if pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef); err == nil && pol.IsActive() {
+					effectivePolicy = pol
+					haveEffectivePolicy = true
 					// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) —
 					// reject every `delegate_task` whose effective
 					// DelegationPolicy is inside the cluster-scoped
@@ -612,6 +705,23 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		userID = parent.UserID
 	}
 	now := s.clock()
+	// §8.7 / §8.2 steps 3, 4, 6: when the lease declares `fileExport`
+	// entries, run the gateway-side export materialization before the
+	// child row is committed. The child id is minted here (rather than
+	// inline in the struct literal below) so the durable export blobs are
+	// keyed to the same id the child row carries. A materialization
+	// failure (validation, scan REJECT, persistence) aborts the
+	// delegation before any child row exists, so there is no partially
+	// materialized child workspace. F-8.7.1 / F-8.7.5 / F-8.7.6.
+	childID := s.idFn()
+	var childPlan json.RawMessage
+	if len(req.FileExport) > 0 {
+		plan, err := s.materializeExport(ctx, tenantID, req, parent, childID, effectivePolicy, haveEffectivePolicy)
+		if err != nil {
+			return Result{}, err
+		}
+		childPlan = plan
+	}
 	// spec: §8.9 line 1010 — every node in a delegation tree shares
 	// the same root_session_id (the session at the tree's apex). A
 	// child inherits its parent's RootSessionID rather than minting a
@@ -625,7 +735,7 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		rootSessionID = parent.ID
 	}
 	child := sessionstore.Session{
-		ID:               s.idFn(),
+		ID:               childID,
 		TenantID:         tenantID,
 		UserID:           userID,
 		RuntimeRef:       req.RuntimeRef,
@@ -651,8 +761,13 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		// §8.3 / §10.7: the parent's experimentContext propagates onto
 		// the child per the experiment's propagation mode.
 		ExperimentContext: s.propagateExperimentContext(ctx, tenantID, parent),
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		// §8.7 / §14: the materialized fileExport upload sources, stamped
+		// here so the §6.3 binder delivers the exported files when it
+		// materializes the child workspace (§8.2 step 6). Nil when the
+		// lease declared no fileExport entries. F-8.7.1.
+		WorkspacePlan: childPlan,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 	// spec: §8.2 line 90 / §10.7 — under `independent` propagation
 	// (or when the parent carries no experimentContext), the
@@ -710,6 +825,59 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		})
 	}
 	return Result{Child: child, Depth: childDepth}, nil
+}
+
+// materializeExport runs the §8.7 file-export pipeline for one delegation
+// and returns the §14 child WorkspacePlan JSON the caller stamps on the
+// child row. It resolves the §8.3 fileExportLimits ceiling (defaulting to
+// the §8.3 line 264 defaults when the lease left it unset) and, when the
+// effective DelegationPolicy sets contentPolicy.scanExportedFiles, the
+// per-file content-scan chain. A scan-required policy with no resolver
+// fails closed with ErrExportScanUnavailable so unscanned files are never
+// materialized (§8.3 rule 1). A nil materializer fails with
+// ErrExportNotConfigured. F-8.7.1 / F-8.7.5 / F-8.7.6.
+func (s *Service) materializeExport(ctx context.Context, tenantID string, req Request, parent sessionstore.Session, childID string, pol delegationpolicystore.DelegationPolicy, havePol bool) (json.RawMessage, error) {
+	if s.exportMat == nil {
+		return nil, ErrExportNotConfigured
+	}
+	// spec: §8.3 line 264 — fileExportLimits defaults to 100 files /
+	// 100 MiB when the lease omits it. The zero Request value selects the
+	// defaults; a partially-set limit is taken verbatim.
+	limits := req.FileExportLimits
+	if limits.MaxFiles == 0 && limits.MaxTotalSize == 0 {
+		limits = fileexport.DefaultFileExportLimits
+	}
+	params := export.Params{
+		ParentSessionID: parent.ID,
+		ChildSessionID:  childID,
+		TenantID:        tenantID,
+		Specs:           append([]export.Spec(nil), req.FileExport...),
+		Limits:          limits,
+	}
+	// spec: §8.3 lines 160-181 — the per-file content scan runs only when
+	// the effective DelegationPolicy enables scanExportedFiles. Without a
+	// resolvable interceptor the scan cannot run; fail closed rather than
+	// materialize unscanned files.
+	if havePol && pol.ContentPolicy.ScanExportedFiles {
+		if s.exportScanResolver == nil {
+			return nil, ErrExportScanUnavailable
+		}
+		chain, scanCtx, err := s.exportScanResolver.ResolveExportScanChain(ctx, tenantID, pol.ContentPolicy.InterceptorRef)
+		if err != nil {
+			return nil, err
+		}
+		params.Scan = export.ContentScan{
+			Enabled:     true,
+			MaxFileSize: pol.ContentPolicy.MaxExportedFileSize,
+			Chain:       chain,
+			ScanCtx:     scanCtx,
+		}
+	}
+	res, err := s.exportMat.Materialize(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	return res.WorkspacePlanJSON()
 }
 
 // recordCycleAudit emits the §8.2 / §16.7 cycle-gate audit pair:

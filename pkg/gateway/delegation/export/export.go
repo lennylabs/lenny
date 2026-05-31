@@ -22,6 +22,7 @@ package export
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -65,9 +66,11 @@ type ParentExporter interface {
 // step 4: "stores exported files durably") and returns the §14
 // uploadRef the child WorkspacePlan references. The production
 // implementation writes to the gateway blob store the §6.3 pod binder
-// reads at child workspace materialization (§8.2 step 6).
+// reads at child workspace materialization (§8.2 step 6). tenantID
+// scopes the durable key to the delegating tenant so a child blob is
+// never reachable across the §12.2 tenant boundary.
 type Sink interface {
-	Persist(ctx context.Context, childSessionID string, f ExportedFile) (uploadRef string, err error)
+	Persist(ctx context.Context, tenantID, childSessionID string, f ExportedFile) (uploadRef string, err error)
 }
 
 // Auditor emits the §8.7 line 793 delegation.export_overwrite audit
@@ -269,7 +272,7 @@ func (m *Materializer) Materialize(ctx context.Context, p Params) (Result, error
 	var finalBytes int64
 	for _, pth := range order {
 		f := byPath[pth]
-		ref, err := m.sink.Persist(ctx, p.ChildSessionID, f)
+		ref, err := m.sink.Persist(ctx, p.TenantID, p.ChildSessionID, f)
 		if err != nil {
 			return Result{}, fmt.Errorf("export: persist %q for child %s: %w", pth, p.ChildSessionID, err)
 		}
@@ -283,6 +286,62 @@ func (m *Materializer) Materialize(ctx context.Context, p Params) (Result, error
 		TotalBytes: finalBytes,
 		Overwrites: overwrites,
 	}, nil
+}
+
+// WorkspacePlanJSON renders the materialized upload sources as a §14
+// WorkspacePlan document the gateway stamps on the child session row.
+// The §6.3 pod binder re-parses it through workspaceplan.ParseStored at
+// child workspace materialization (§8.2 step 6) and streams each
+// uploadRef's bytes onto the child pod. It returns (nil, nil) when the
+// export produced no files so the caller leaves the child row's plan
+// unset rather than stamping an empty plan.
+//
+// A root-level exported archive carries an empty Materializer pathPrefix
+// (the §8.7 unpack-at-workspace-root case); §14 uploadArchive requires a
+// non-empty pathPrefix, so the renderer maps it to "." (the workspace
+// root) to keep the stamped plan ParseStored-valid.
+//
+// spec: §14 (WorkspacePlan); §8.2 line 95 (delegation flow step 6).
+func (r Result) WorkspacePlanJSON() (json.RawMessage, error) {
+	if len(r.Sources) == 0 {
+		return nil, nil
+	}
+	type wireSource struct {
+		Type       string `json:"type"`
+		Path       string `json:"path,omitempty"`
+		PathPrefix string `json:"pathPrefix,omitempty"`
+		UploadRef  string `json:"uploadRef"`
+		Format     string `json:"format,omitempty"`
+	}
+	type wirePlan struct {
+		SchemaVersion int          `json:"schemaVersion"`
+		Sources       []wireSource `json:"sources"`
+	}
+	plan := wirePlan{SchemaVersion: workspaceplan.SchemaVersion}
+	for i, src := range r.Sources {
+		switch v := src.Variant.(type) {
+		case workspaceplan.UploadFile:
+			plan.Sources = append(plan.Sources, wireSource{
+				Type:      workspaceplan.TypeUploadFile,
+				Path:      v.PathField,
+				UploadRef: v.UploadRef,
+			})
+		case workspaceplan.UploadArchive:
+			prefix := v.PathPrefix
+			if prefix == "" {
+				prefix = "."
+			}
+			plan.Sources = append(plan.Sources, wireSource{
+				Type:       workspaceplan.TypeUploadArchive,
+				PathPrefix: prefix,
+				UploadRef:  v.UploadRef,
+				Format:     v.Format,
+			})
+		default:
+			return nil, fmt.Errorf("export: source %d has unexpected variant %T", i, src.Variant)
+		}
+	}
+	return json.Marshal(plan)
 }
 
 // auditOverwrite emits the §8.7 line 793 delegation.export_overwrite

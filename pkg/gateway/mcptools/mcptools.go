@@ -42,6 +42,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/delegation/export"
+	"github.com/lennylabs/lenny/pkg/gateway/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
@@ -1736,7 +1738,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			// SpawnChild is one of the six §11.5 critical operations and
 			// the MCP path is its only client surface. spec: F-11.5.1,
 			// F-11.5.6.
-			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExport":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 fileExport entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace. Omit to deliver no exported files."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the fileExport set. Omit for the defaults (100 files, 100 MiB)."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
 			// principal so the §4 chain payload, §8.2 service Delegate, and
@@ -1765,6 +1767,21 @@ func Register(srv *mcp.Server, deps Deps) {
 				// + ignored here. spec: §11.5 line 277; F-11.5.1,
 				// F-11.5.6.
 				IdempotencyKey string `json:"idempotencyKey,omitempty"`
+				// FileExport is the §8.7 lease fileExport entry list. Each
+				// entry's source glob is resolved in the parent's
+				// /workspace/current and rebased under destPrefix in the
+				// child. Empty skips the export phase. F-8.7.1 / F-8.2.1 /
+				// F-8.5.3.
+				FileExport []struct {
+					Source     string `json:"source"`
+					DestPrefix string `json:"destPrefix"`
+				} `json:"fileExport,omitempty"`
+				// FileExportLimits is the optional §8.3 line 264 ceiling on
+				// the fileExport set; omit for the spec defaults. F-8.7.1.
+				FileExportLimits *struct {
+					MaxFiles     int   `json:"maxFiles"`
+					MaxTotalSize int64 `json:"maxTotalSize"`
+				} `json:"fileExportLimits,omitempty"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, errInvalidArgs(err)
@@ -1907,6 +1924,20 @@ func Register(srv *mcp.Server, deps Deps) {
 					taskInput = modified.Input
 				}
 			}
+			// §8.7: translate the lease fileExport entries into the
+			// delegation Request. The Service runs the export materializer
+			// when the slice is non-empty. F-8.7.1.
+			var fileExport []export.Spec
+			for _, e := range in.FileExport {
+				fileExport = append(fileExport, export.Spec{Source: e.Source, DestPrefix: e.DestPrefix})
+			}
+			var fileExportLimits fileexport.FileExportLimits
+			if in.FileExportLimits != nil {
+				fileExportLimits = fileexport.FileExportLimits{
+					MaxFiles:     in.FileExportLimits.MaxFiles,
+					MaxTotalSize: in.FileExportLimits.MaxTotalSize,
+				}
+			}
 			res, err := deps.Delegation.Delegate(ctx, tenant, delegation.Request{
 				ParentSessionID:  in.ParentSessionID,
 				RuntimeRef:       in.RuntimeRef,
@@ -1914,6 +1945,8 @@ func Register(srv *mcp.Server, deps Deps) {
 				MaxDepth:         in.MaxDepth,
 				IsolationProfile: resolvePoolIsolation(ctx, deps, in.PoolRef),
 				ApprovalMode:     lease.ApprovalMode(in.ApprovalMode),
+				FileExport:       fileExport,
+				FileExportLimits: fileExportLimits,
 				// §8.3 lines 311-319: the lease visibility boundary. Empty
 				// inherits the parent's effective value in the Service.
 				// EffectiveMessagingScope is left unset (resolves to the
@@ -2053,6 +2086,20 @@ func Register(srv *mcp.Server, deps Deps) {
 							"effectiveTreeVisibility": string(tvmErr.EffectiveTreeVisibility),
 							"requiredTreeVisibility":  string(session.VisibilityFull),
 						})
+				}
+				// §8.7 / §8.3: a fileExport that cannot be materialized
+				// because the export engine is unconfigured, or a
+				// scanExportedFiles policy with no resolvable interceptor,
+				// fails closed. Surface the canonical codes so REST and MCP
+				// envelopes share the same (category, retryable) pair.
+				// F-8.7.1.
+				if errors.Is(err, delegation.ErrExportNotConfigured) {
+					return mcp.ToolResult{}, mcp.NewToolError("EXPORT_NOT_CONFIGURED",
+						err.Error(), nil)
+				}
+				if errors.Is(err, delegation.ErrExportScanUnavailable) {
+					return mcp.ToolResult{}, mcp.NewToolError("EXPORT_FILE_SCAN_UNAVAILABLE",
+						err.Error(), nil)
 				}
 				return mcp.ToolResult{}, err
 			}

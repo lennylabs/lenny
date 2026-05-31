@@ -36,15 +36,17 @@ func (f *fakeExporter) ExportPaths(_ context.Context, _ string, spec export.Spec
 // blob ref so a test can assert the §8.2-step-4 durable hand-off.
 type fakeSink struct {
 	persisted []export.ExportedFile
+	tenants   []string
 	err       error
 }
 
-func (s *fakeSink) Persist(_ context.Context, child string, fl export.ExportedFile) (string, error) {
+func (s *fakeSink) Persist(_ context.Context, tenantID, child string, fl export.ExportedFile) (string, error) {
 	if s.err != nil {
 		return "", s.err
 	}
 	s.persisted = append(s.persisted, fl)
-	return "blob://" + child + "/" + fl.Path, nil
+	s.tenants = append(s.tenants, tenantID)
+	return "blob://" + tenantID + "/" + child + "/" + fl.Path, nil
 }
 
 // fakeAuditor records the §8.7 line 793 overwrite events.
@@ -350,5 +352,79 @@ func TestMaterializeEmptySpecs(t *testing.T) {
 	}
 	if res.FileCount != 0 || len(res.Sources) != 0 {
 		t.Fatalf("res = %+v, want an empty result", res)
+	}
+}
+
+// TestResultWorkspacePlanJSON_spec_14_F_8_7_1 asserts the materialized
+// upload sources render as a §14 WorkspacePlan the gateway can stamp on
+// the child row and re-parse through workspaceplan.ParseStored: a plain
+// file becomes an uploadFile and a detected archive becomes an
+// uploadArchive whose validators the child materialization inherits
+// (§8.7 line 792). The root-level archive's empty pathPrefix is mapped to
+// "." so the rendered plan stays ParseStored-valid.
+func TestResultWorkspacePlanJSON_spec_14_F_8_7_1(t *testing.T) {
+	exp := &fakeExporter{bySource: map[string][]export.ExportedFile{
+		"src/*.txt": {file("docs/a.txt", "alpha")},
+		"bundle":    {file("vendor/lib.tar.gz", "PK-bytes"), file("tools/top.zip", "zip-bytes")},
+	}}
+	res, err := newMat(exp, &fakeSink{}, nil).Materialize(context.Background(), export.Params{
+		ParentSessionID: "parent",
+		ChildSessionID:  "child",
+		TenantID:        "acme",
+		Specs: []export.Spec{
+			{Source: "src/*.txt", DestPrefix: ""},
+			{Source: "bundle", DestPrefix: ""},
+		},
+		Limits: fileexport.DefaultFileExportLimits,
+	})
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	raw, err := res.WorkspacePlanJSON()
+	if err != nil {
+		t.Fatalf("WorkspacePlanJSON: %v", err)
+	}
+	plan, warns, err := workspaceplan.ParseStored(raw)
+	if err != nil {
+		t.Fatalf("stamped plan must be ParseStored-valid: %v (raw=%s)", err, raw)
+	}
+	if len(warns) != 0 {
+		t.Errorf("unexpected parse warnings: %+v", warns)
+	}
+	if plan.SchemaVersion != workspaceplan.SchemaVersion {
+		t.Errorf("schemaVersion = %d, want %d", plan.SchemaVersion, workspaceplan.SchemaVersion)
+	}
+	var files, archives int
+	for _, s := range plan.Sources {
+		switch v := s.Variant.(type) {
+		case workspaceplan.UploadFile:
+			files++
+		case workspaceplan.UploadArchive:
+			archives++
+			if v.PathPrefix == "" {
+				t.Error("rendered uploadArchive pathPrefix must be non-empty (root maps to \".\")")
+			}
+			if v.Format == "" {
+				t.Errorf("uploadArchive %q has empty format", v.UploadRef)
+			}
+		}
+	}
+	if files != 1 {
+		t.Errorf("uploadFile count = %d, want 1", files)
+	}
+	if archives != 2 {
+		t.Errorf("uploadArchive count = %d, want 2 (.tar.gz + .zip)", archives)
+	}
+}
+
+// TestResultWorkspacePlanJSONEmpty asserts an export that produced no
+// files renders no plan so the caller leaves the child row's plan unset.
+func TestResultWorkspacePlanJSONEmpty(t *testing.T) {
+	raw, err := export.Result{}.WorkspacePlanJSON()
+	if err != nil {
+		t.Fatalf("WorkspacePlanJSON: %v", err)
+	}
+	if raw != nil {
+		t.Errorf("empty result must render nil plan, got %s", raw)
 	}
 }
